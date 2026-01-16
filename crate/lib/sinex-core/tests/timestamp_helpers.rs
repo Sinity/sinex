@@ -4,9 +4,10 @@ use sinex_core::types::utils::timestamp_helpers::{
     timestamp_with_nanos_to_datetime,
 };
 use sinex_test_utils::sinex_test;
+use sinex_test_utils::TestResult;
 
 #[sinex_test]
-fn timestamp_conversions_cover_common_units() -> color_eyre::eyre::Result<()> {
+fn timestamp_conversions_cover_common_units() -> TestResult<()> {
     let dt = timestamp_to_datetime(1_700_000_000).unwrap();
     assert_eq!(dt.timestamp(), 1_700_000_000);
 
@@ -22,7 +23,7 @@ fn timestamp_conversions_cover_common_units() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn flexible_parsing_handles_strings_and_numbers() -> color_eyre::eyre::Result<()> {
+fn flexible_parsing_handles_strings_and_numbers() -> TestResult<()> {
     let dt = parse_flexible_timestamp("2023-11-14T12:00:00Z").unwrap();
     assert_eq!(
         dt,
@@ -33,6 +34,9 @@ fn flexible_parsing_handles_strings_and_numbers() -> color_eyre::eyre::Result<()
 
     let dt = parse_flexible_timestamp("1700000000").unwrap();
     assert_eq!(dt.timestamp(), 1_700_000_000);
+
+    let dt = parse_flexible_timestamp("5000000001").unwrap();
+    assert_eq!(dt.timestamp(), 5_000_000_001);
 
     let dt = parse_flexible_timestamp("1700000000000").unwrap();
     assert_eq!(dt.timestamp_millis(), 1_700_000_000_000);

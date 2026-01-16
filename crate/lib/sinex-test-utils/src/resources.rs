@@ -115,7 +115,7 @@ mod tests {
     use crate::sinex_test;
 
     #[sinex_test]
-    async fn test_temp_dir_creation() -> color_eyre::eyre::Result<()> {
+    async fn test_temp_dir_creation() -> TestResult<()> {
         let temp_dir = temp_dir()?;
 
         // Directory should exist and be accessible
@@ -137,7 +137,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_create_test_file() -> color_eyre::eyre::Result<()> {
+    async fn test_create_test_file() -> TestResult<()> {
         let temp_dir = temp_dir()?;
         let content = "Test file content for validation";
 
@@ -157,7 +157,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_create_secure_test_dir() -> color_eyre::eyre::Result<()> {
+    async fn test_create_secure_test_dir() -> TestResult<()> {
         let test_dir = create_secure_test_dir("resources_test")?;
 
         // Directory should exist
@@ -174,7 +174,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_create_temp_test_file() -> color_eyre::eyre::Result<()> {
+    async fn test_create_temp_test_file() -> TestResult<()> {
         let content = "Temporary test file content";
         let file_path = create_temp_test_file("temp_file_test", content)?;
 
@@ -192,7 +192,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_create_test_binary_file() -> color_eyre::eyre::Result<()> {
+    async fn test_create_test_binary_file() -> TestResult<()> {
         let temp_dir = temp_dir()?;
         let binary_content = b"Binary test content\x00\x01\x02\xFF";
 
@@ -210,7 +210,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_path_validation_rejection() -> color_eyre::eyre::Result<()> {
+    async fn test_path_validation_rejection() -> TestResult<()> {
         // These should be rejected by the validation
         let dangerous_paths = ["/etc/passwd", "../../../etc/shadow", "/bin/sh", ""];
 

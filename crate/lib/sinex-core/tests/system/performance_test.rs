@@ -20,7 +20,6 @@
 // - **Resource usage**: High CPU/memory usage during tests
 // - **Baseline performance**: 1000+ events/second insertion rate
 
-use sinex_test_utils::TestResult;
 use sinex_core::types::events::{event_types, services, EventFactory};
 use sinex_test_utils::prelude::*;
 
@@ -30,7 +29,7 @@ use std::time::{Duration, Instant};
 // ==================== DATABASE PERFORMANCE TESTS ====================
 
 #[sinex_test(timeout = 60)]
-async fn test_database_insertion_performance(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_database_insertion_performance(ctx: TestContext) -> TestResult<()> {
     // Test: Basic database insertion performance
     let pool = ctx.pool().clone();
 
@@ -107,7 +106,7 @@ async fn test_database_insertion_performance(ctx: TestContext) -> color_eyre::ey
 }
 
 #[sinex_test(timeout = 60)]
-async fn test_concurrent_insertion_performance(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_concurrent_insertion_performance(ctx: TestContext) -> TestResult<()> {
     // Test: Concurrent database insertion
     let pool = ctx.pool().clone();
 
@@ -254,7 +253,7 @@ async fn test_high_volume_ingestion(ctx: TestContext) -> AnyhowResult<(), color_
 }
 
 #[sinex_test]
-async fn test_concurrent_processing_performance(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_concurrent_processing_performance(ctx: TestContext) -> TestResult<()> {
     // Insert test events
     for i in 0..100 {
         sinex_core::db::insert_event_with_validator(
@@ -350,7 +349,7 @@ async fn test_concurrent_processing_performance(ctx: TestContext) -> color_eyre:
 }
 
 #[sinex_test]
-async fn test_query_latency(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_query_latency(ctx: TestContext) -> TestResult<()> {
     // Insert test data
     for i in 0..1000 {
         sinex_core::db::insert_event_with_validator(
@@ -395,7 +394,7 @@ async fn test_query_latency(ctx: TestContext) -> color_eyre::eyre::Result<()> {
 // ==================== MEMORY USAGE TESTS ====================
 
 #[sinex_test]
-async fn test_memory_usage_under_load(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_memory_usage_under_load(ctx: TestContext) -> TestResult<()> {
     // Test memory usage during high-volume operations
     let pool = ctx.pool().clone();
     let initial_memory = get_memory_usage();
@@ -476,7 +475,7 @@ fn get_memory_usage() -> usize {
 // ==================== SCALING TESTS ====================
 
 #[sinex_test]
-async fn test_scaling_with_worker_count(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_scaling_with_worker_count(ctx: TestContext) -> TestResult<()> {
     // Test how performance scales with worker count
     let pool = ctx.pool().clone();
     let events_per_test = 500;
@@ -598,7 +597,7 @@ async fn test_scaling_with_worker_count(ctx: TestContext) -> color_eyre::eyre::R
 // ==================== RESOURCE USAGE TESTS ====================
 
 #[sinex_test]
-async fn test_database_connection_pooling(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_database_connection_pooling(ctx: TestContext) -> TestResult<()> {
     // Test database connection pool performance
     let pool = ctx.pool().clone();
     let concurrent_connections = 20;
@@ -658,7 +657,7 @@ async fn test_database_connection_pooling(ctx: TestContext) -> color_eyre::eyre:
 }
 
 #[sinex_test]
-async fn test_large_payload_performance(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_large_payload_performance(ctx: TestContext) -> TestResult<()> {
     // Test performance with large event payloads
     let pool = ctx.pool().clone();
     let payload_sizes = vec![1024, 10240, 102400]; // 1KB, 10KB, 100KB
@@ -703,7 +702,7 @@ async fn test_large_payload_performance(ctx: TestContext) -> color_eyre::eyre::R
 }
 
 #[sinex_test]
-async fn test_burst_load_handling(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_burst_load_handling(ctx: TestContext) -> TestResult<()> {
     // Test how system handles burst loads
     let pool = ctx.pool().clone();
     let burst_size = 1000;

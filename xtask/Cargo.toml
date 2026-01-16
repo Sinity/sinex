@@ -12,3 +12,10 @@ sha2 = "0.10"
 hex = { workspace = true }
 clap_complete = "4.5"
 tempfile = "3.14"
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+rusqlite = { version = "0.32", features = ["bundled"] }
+chrono = { workspace = true }
+console = "0.15"
+indicatif = "0.17"
+num_cpus = "1.16"

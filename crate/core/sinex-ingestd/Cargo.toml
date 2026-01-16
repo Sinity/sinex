@@ -50,6 +50,7 @@ bon = { workspace = true }
 # Concurrency
 parking_lot = "0.12"
 futures = { workspace = true }
+dashmap = { workspace = true }
 
 # Networking
 tokio-stream = { workspace = true, features = ["net"] }
@@ -66,7 +67,7 @@ libc = "0.2"
 
 # Local dependencies
 sinex-core = { path = "../../lib/sinex-core", features = [] }
-sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk", default-features = false }
+sinex-node-sdk = { path = "../../lib/sinex-node-sdk", default-features = false }
 
 [dev-dependencies]
 sinex-test-utils = { path = "../../lib/sinex-test-utils" }

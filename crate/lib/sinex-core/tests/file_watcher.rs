@@ -5,11 +5,12 @@ use camino::Utf8PathBuf;
 use sinex_core::types::utils::file_watcher::{FileChangeKind, FileWatcher, FileWatcherConfig};
 use sinex_core::types::validation::FileWatchingSecurityPolicy;
 use sinex_test_utils::sinex_test;
+use sinex_test_utils::TestResult;
 use tempfile::TempDir;
 use tokio::time::sleep;
 
 #[sinex_test]
-async fn file_watcher_builder_creates_instance() -> color_eyre::eyre::Result<()> {
+async fn file_watcher_builder_creates_instance() -> TestResult<()> {
     let temp_dir = TempDir::new().unwrap();
     let watcher = FileWatcher::new(
         FileWatcherConfig::builder()
@@ -27,7 +28,7 @@ async fn file_watcher_builder_creates_instance() -> color_eyre::eyre::Result<()>
 }
 
 #[sinex_test]
-async fn file_watcher_surfaces_file_events() -> color_eyre::eyre::Result<()> {
+async fn file_watcher_surfaces_file_events() -> TestResult<()> {
     let temp_dir = TempDir::new().unwrap();
     let test_file = temp_dir.path().join("test.txt");
 
@@ -57,7 +58,7 @@ async fn file_watcher_surfaces_file_events() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-async fn file_watcher_enforces_security_validation() -> color_eyre::eyre::Result<()> {
+async fn file_watcher_enforces_security_validation() -> TestResult<()> {
     let dangerous_config = FileWatcherConfig::builder()
         .watch_paths(vec![Utf8PathBuf::from("/etc/passwd")])
         .security_policy(FileWatchingSecurityPolicy::default())
@@ -73,7 +74,7 @@ async fn file_watcher_enforces_security_validation() -> color_eyre::eyre::Result
 }
 
 #[sinex_test]
-async fn file_watcher_respects_policy_modes() -> color_eyre::eyre::Result<()> {
+async fn file_watcher_respects_policy_modes() -> TestResult<()> {
     let temp_dir = TempDir::new().unwrap();
     let path = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
 

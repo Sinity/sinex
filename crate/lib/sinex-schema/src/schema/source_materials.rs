@@ -19,8 +19,8 @@ use sqlx::FromRow;
 /// **Table: `raw.source_material_registry`**
 ///
 /// This table is the manifest for all captured external data artifacts. It is
-/// exclusively managed by the `sensd` daemon and implements the "Stage-as-you-go"
-/// pattern. An entry is created with `status = 'sensing'` before the data is
+/// managed by capture pipelines using the "Stage-as-you-go" pattern. An entry is
+/// created with `status = 'sensing'` before the data is
 /// fully captured, providing a stable `id` that ingestors can immediately use
 /// for event provenance. The record is then updated to `status = 'completed'`
 /// upon finalization.

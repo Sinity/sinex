@@ -1,26 +1,55 @@
 pub use crate::replay_state_machine::ReplayScope;
 use crate::replay_state_machine::{ReplayOperation, ReplayState, ReplayStateMachine};
+use async_nats::connection::State as NatsState;
 use async_nats::{Client, Message};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use color_eyre::eyre::{eyre, Context, Result};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use sinex_core::environment::{environment, SinexEnvironment};
 use sinex_core::types::ulid::Ulid;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use tokio::time::{interval, Duration};
 use tracing::{error, info, warn};
 
+const REPLAY_CONTROL_SUBSCRIBE_ATTEMPTS: usize = 5;
+const REPLAY_CONTROL_SUBSCRIBE_BACKOFF_BASE: Duration = Duration::from_millis(200);
+const REPLAY_CONTROL_SUBSCRIBE_BACKOFF_MAX: Duration = Duration::from_secs(2);
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplayControlError {
+    pub message: String,
+    pub occurred_at: DateTime<Utc>,
+}
+
+impl ReplayControlError {
+    pub(crate) fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            occurred_at: Utc::now(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplayControlHealth {
+    pub connected: bool,
+    pub last_error: Option<ReplayControlError>,
+}
+
+#[derive(Debug, Default)]
+struct ReplayControlHealthState {
+    last_error: Option<ReplayControlError>,
+}
+
+/// Spawn the replay control bus and return a client handle.
 /// Spawn the replay control bus and return a client handle.
 pub async fn spawn_replay_control(
     replay: Arc<ReplayStateMachine>,
-    nats_url: &str,
+    client: Client,
 ) -> Result<ReplayControlClient> {
     let env = environment().clone();
-    let client = async_nats::connect(nats_url)
-        .await
-        .wrap_err("Failed to connect to NATS for replay control")?;
 
     let executor = ReplayExecutionEngine::new(replay.clone());
     ReplayTelemetry::new(replay.clone()).spawn();
@@ -37,12 +66,49 @@ pub async fn spawn_replay_control(
 pub struct ReplayControlClient {
     subject: String,
     client: Client,
+    health: Arc<Mutex<ReplayControlHealthState>>,
+}
+
+fn lock_recover<'a, T>(mutex: &'a Mutex<T>, context: &str) -> MutexGuard<'a, T> {
+    match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            warn!(mutex = context, "Mutex poisoned; recovering inner state");
+            poisoned.into_inner()
+        }
+    }
 }
 
 impl ReplayControlClient {
     fn new(env: SinexEnvironment, client: Client) -> Self {
         let subject = env.nats_subject("sinex.control.replay");
-        Self { subject, client }
+        Self {
+            subject,
+            client,
+            health: Arc::new(Mutex::new(ReplayControlHealthState::default())),
+        }
+    }
+
+    /// Get the underlying NATS client
+    pub fn nats_client(&self) -> &Client {
+        &self.client
+    }
+
+    pub fn health_snapshot(&self) -> ReplayControlHealth {
+        let connected = matches!(self.client.connection_state(), NatsState::Connected);
+        let last_error = {
+            let guard = lock_recover(&self.health, "replay_control_health");
+            guard.last_error.clone()
+        };
+        ReplayControlHealth {
+            connected,
+            last_error,
+        }
+    }
+
+    fn record_error(&self, message: impl Into<String>) {
+        let mut guard = lock_recover(&self.health, "replay_control_health");
+        guard.last_error = Some(ReplayControlError::new(message));
     }
 
     async fn send(&self, request: ReplayControlRequest) -> Result<ReplayControlResponse> {
@@ -51,18 +117,26 @@ impl ReplayControlClient {
             .client
             .request(self.subject.clone(), payload.into())
             .await
+            .map_err(|err| {
+                self.record_error(err.to_string());
+                err
+            })
             .wrap_err("Replay control request timed out")?;
 
-        let response: ReplayControlResponse =
-            serde_json::from_slice(&message.payload).wrap_err("Invalid replay control response")?;
+        let response: ReplayControlResponse = serde_json::from_slice(&message.payload)
+            .map_err(|err| {
+                self.record_error(err.to_string());
+                err
+            })
+            .wrap_err("Invalid replay control response")?;
 
         if response.status == "error" {
-            return Err(eyre!(
-                "{}",
-                response
-                    .message
-                    .unwrap_or_else(|| "Replay control request failed".to_string())
-            ));
+            let message = response
+                .message
+                .clone()
+                .unwrap_or_else(|| "Replay control request failed".to_string());
+            self.record_error(message.clone());
+            return Err(eyre!("{}", message));
         }
 
         Ok(response)
@@ -82,18 +156,26 @@ impl ReplayControlClient {
             .client
             .send_request(self.subject.clone(), nats_request)
             .await
+            .map_err(|err| {
+                self.record_error(err.to_string());
+                err
+            })
             .wrap_err("Replay control request timed out")?;
 
-        let response: ReplayControlResponse =
-            serde_json::from_slice(&message.payload).wrap_err("Invalid replay control response")?;
+        let response: ReplayControlResponse = serde_json::from_slice(&message.payload)
+            .map_err(|err| {
+                self.record_error(err.to_string());
+                err
+            })
+            .wrap_err("Invalid replay control response")?;
 
         if response.status == "error" {
-            return Err(eyre!(
-                "{}",
-                response
-                    .message
-                    .unwrap_or_else(|| "Replay control request failed".to_string())
-            ));
+            let message = response
+                .message
+                .clone()
+                .unwrap_or_else(|| "Replay control request failed".to_string());
+            self.record_error(message.clone());
+            return Err(eyre!("{}", message));
         }
 
         Ok(response)
@@ -219,10 +301,31 @@ impl ReplayControlServer {
 
     async fn spawn(self) -> Result<()> {
         let client = self.client.clone();
-        let mut subscription = client
-            .subscribe(self.subject.clone())
-            .await
-            .wrap_err("Failed to subscribe to replay control subject")?;
+        let subject = self.subject.clone();
+        let mut backoff = REPLAY_CONTROL_SUBSCRIBE_BACKOFF_BASE;
+        let mut attempt = 0usize;
+        let mut subscription = loop {
+            attempt += 1;
+            match client.subscribe(subject.clone()).await {
+                Ok(subscription) => break subscription,
+                Err(err) => {
+                    if attempt >= REPLAY_CONTROL_SUBSCRIBE_ATTEMPTS {
+                        return Err(err).wrap_err("Failed to subscribe to replay control subject");
+                    }
+                    warn!(
+                        attempt,
+                        backoff_ms = backoff.as_millis(),
+                        error = %err,
+                        "Replay control subscription failed; retrying"
+                    );
+                    tokio::time::sleep(backoff).await;
+                    backoff = std::cmp::min(
+                        backoff.saturating_mul(2),
+                        REPLAY_CONTROL_SUBSCRIBE_BACKOFF_MAX,
+                    );
+                }
+            }
+        };
         let replay = self.replay.clone();
         let executor = self.executor.clone();
 
@@ -453,10 +556,8 @@ impl ReplayTelemetry {
 
     #[cfg(test)]
     fn latest_snapshot(&self) -> ReplayTelemetrySnapshot {
-        self.latest
-            .lock()
-            .map(|guard| guard.clone())
-            .unwrap_or_default()
+        let guard = lock_recover(&self.latest, "replay_telemetry_snapshot");
+        guard.clone()
     }
 
     fn spawn(self) {
@@ -490,11 +591,8 @@ impl ReplayTelemetry {
             counts: counts.clone(),
         };
 
-        if let Ok(mut guard) = self.latest.lock() {
-            *guard = snapshot.clone();
-        } else {
-            warn!("Replay telemetry snapshot mutex poisoned");
-        }
+        let mut guard = lock_recover(&self.latest, "replay_telemetry_snapshot");
+        *guard = snapshot.clone();
 
         info!(
             total_operations = snapshot.total_operations,
@@ -649,10 +747,10 @@ mod tests {
     #[sinex_test]
     async fn replay_client_errors_when_broker_disappears(ctx: TestContext) -> Result<()> {
         let nats = EphemeralNats::start().await?;
-        let nats_url = format!("nats://{}", nats.client_url());
 
         let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
-        let client = spawn_replay_control(replay, &nats_url).await?;
+        let nats_client = nats.connect().await?;
+        let client = spawn_replay_control(replay, nats_client).await?;
 
         // Drop the broker to simulate a partition mid-flight.
         drop(nats);
@@ -671,15 +769,19 @@ mod tests {
                 || message.contains("no responders"),
             "unexpected error: {message}"
         );
+        let health = client.health_snapshot();
+        assert!(
+            health.last_error.is_some(),
+            "health snapshot should retain the last replay control error"
+        );
         Ok(())
     }
 
     #[sinex_test]
     async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
         let nats = EphemeralNats::start().await?;
-        let nats_url = format!("nats://{}", nats.client_url());
 
-        ctx.create_test_event(
+        ctx.publish_json_event(
             "fs-test",
             "file.created",
             json!({ "path": "/tmp/replay.txt" }),
@@ -687,7 +789,8 @@ mod tests {
         .await?;
 
         let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
-        let client = spawn_replay_control(replay, &nats_url).await?;
+        let nats_client = nats.connect().await?;
+        let client = spawn_replay_control(replay, nats_client).await?;
 
         let mut scope = sample_scope();
         let end = Utc::now();

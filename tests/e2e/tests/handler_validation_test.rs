@@ -5,9 +5,9 @@
 
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::json;
-use sinex_gateway::handlers::test_support as handler_test_support;
-use sinex_gateway::rpc_server::test_support as rpc_test_support;
 use sinex_core::types::ulid::Ulid;
+use sinex_gateway::handlers_test_support as handler_test_support;
+use sinex_gateway::rpc_server_test_support as rpc_test_support;
 
 // =============================================================================
 // Activity Heatmap Parameter Tests
@@ -133,8 +133,7 @@ fn test_entity_name_max_length() {
 
 #[test]
 fn test_entity_name_sql_injection_semicolon() {
-    let err =
-        handler_test_support::validate_entity_name("name; DROP TABLE entities;").unwrap_err();
+    let err = handler_test_support::validate_entity_name("name; DROP TABLE entities;").unwrap_err();
     assert_eq!(err.to_string(), "Entity name contains invalid characters");
 }
 
@@ -177,7 +176,8 @@ fn test_entity_link_self_reference() {
 
 #[test]
 fn test_entity_link_invalid_ulid() {
-    let err = handler_test_support::validate_entity_link("not-a-ulid", "also-not-ulid").unwrap_err();
+    let err =
+        handler_test_support::validate_entity_link("not-a-ulid", "also-not-ulid").unwrap_err();
     assert!(err
         .to_string()
         .contains("Invalid or missing from_entity_id"));

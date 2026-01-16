@@ -37,14 +37,15 @@ headline="${COLOR_BOLD_CYAN}   ${headline_text}${COLOR_RESET}"
 
 pg_host="${PGHOST:-localhost}"
 db_name="${DATABASE_NAME:-${PGDATABASE:-sinex_dev}}"
+pg_timeout="${SINEX_DEVENV_PG_TIMEOUT:-1}"
 db_status_symbol="${COLOR_RED}✗${COLOR_RESET}"
 db_status_message="PostgreSQL unavailable on ${pg_host}"
 
 if command -v pg_isready >/dev/null 2>&1; then
-  if pg_isready -h "${pg_host}" -d "${db_name}" >/dev/null 2>&1; then
+  if pg_isready -t "${pg_timeout}" -h "${pg_host}" -d "${db_name}" >/dev/null 2>&1; then
     db_status_symbol="${COLOR_GREEN}✓${COLOR_RESET}"
     db_status_message="${db_name} ready"
-  elif pg_isready -h "${pg_host}" >/dev/null 2>&1; then
+  elif pg_isready -t "${pg_timeout}" -h "${pg_host}" >/dev/null 2>&1; then
     db_status_symbol="${COLOR_YELLOW}⚠${COLOR_RESET}"
     db_status_message="Instance reachable; run 'createdb ${db_name}'"
   fi
@@ -59,8 +60,6 @@ printf 'Database:    %b  %s\n' "${db_status_symbol}" "${db_status_message}"
 printf 'Toolchain:   %s\n' "${toolchain}"
 printf 'Processes:   start via '\''%s'\''\n' "${process_hint}"
 printf '%sQuick commands:%s\n' "${COLOR_DIM}" "${COLOR_RESET}"
-printf '  xt           # cargo xtask (alias)\n'
-printf '  xt sqlx-prepare  # refresh .sqlx after migrations/queries\n'
-printf '  xt check     # sqlx check + fmt check + cargo check\n'
-printf '  xt test      # nextest (profile=reliable)\n'
+printf '  cargo xtask check     # fmt check + cargo check\n'
+printf '  cargo xtask test --prime  # nextest (profile=reliable)\n'
 printf '  devenv up nats ingestd gateway\n\n'

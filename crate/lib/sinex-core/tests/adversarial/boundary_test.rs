@@ -23,7 +23,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Test event payload approaching 1GB PostgreSQL JSONB limit
 #[sinex_test]
-async fn test_event_payload_approaching_1gb_limit(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_event_payload_approaching_1gb_limit(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
 
     println!("Testing JSONB 1GB limit:");
@@ -84,7 +84,7 @@ async fn test_event_payload_approaching_1gb_limit(ctx: TestContext) -> color_eyr
 
 /// Test connection pool exhaustion
 #[sinex_test]
-async fn test_connection_pool_exhaustion(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_connection_pool_exhaustion(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
 
     println!("Testing connection pool exhaustion:");
@@ -176,7 +176,7 @@ async fn test_connection_pool_exhaustion(ctx: TestContext) -> color_eyre::eyre::
 
 /// Test database transaction boundary limits
 #[sinex_test]
-async fn test_database_transaction_boundary_limits(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_database_transaction_boundary_limits(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
 
     println!("Testing database transaction limits:");
@@ -210,7 +210,7 @@ async fn test_database_transaction_boundary_limits(ctx: TestContext) -> color_ey
 
 /// Test database query complexity limits
 #[sinex_test]
-async fn test_database_query_complexity_limits(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_database_query_complexity_limits(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
 
     // Insert test data
@@ -260,7 +260,7 @@ async fn test_database_query_complexity_limits(ctx: TestContext) -> color_eyre::
 
 /// Test database DNS timeout
 #[sinex_test(timeout = 30)]
-async fn test_database_dns_timeout(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_database_dns_timeout(ctx: TestContext) -> TestResult<()> {
     // Test what happens when database hostname fails to resolve
 
     let fake_hostnames = vec![
@@ -306,7 +306,7 @@ async fn test_database_dns_timeout(ctx: TestContext) -> color_eyre::eyre::Result
 
 /// Test network partition during processing
 #[sinex_test(timeout = 15)]
-async fn test_network_partition_during_processing(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_network_partition_during_processing(ctx: TestContext) -> TestResult<()> {
     // Simulate network partition by creating workers that lose connectivity
 
     let pool = ctx.pool().clone();
@@ -411,7 +411,7 @@ async fn test_network_partition_during_processing(ctx: TestContext) -> color_eyr
 
 /// Test connection limit exhaustion
 #[sinex_test]
-async fn test_connection_limit_exhaustion(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_connection_limit_exhaustion(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
 
     println!("Testing connection limit exhaustion:");
@@ -474,7 +474,7 @@ async fn test_connection_limit_exhaustion(ctx: TestContext) -> color_eyre::eyre:
 
 /// Test ULID timestamp conversion overflow
 #[sinex_test]
-async fn test_ulid_timestamp_conversion_overflow_bug(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_ulid_timestamp_conversion_overflow_bug(ctx: TestContext) -> TestResult<()> {
     // Test ULID timestamp overflow conditions
 
     // Create a ULID with maximum timestamp value
@@ -522,7 +522,7 @@ async fn test_ulid_timestamp_conversion_overflow_bug(ctx: TestContext) -> color_
 
 /// Test ULID high frequency ordering limitations
 #[sinex_test]
-async fn test_ulid_high_frequency_ordering_limitation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_ulid_high_frequency_ordering_limitation(ctx: TestContext) -> TestResult<()> {
     // Test: Demonstrate potential ordering violations under high frequency
 
     let mut ulids = Vec::new();
@@ -567,7 +567,7 @@ async fn test_ulid_high_frequency_ordering_limitation(ctx: TestContext) -> color
 
 /// Test numeric overflow in event counters
 #[sinex_test]
-async fn test_numeric_overflow_in_event_counters(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_numeric_overflow_in_event_counters(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
 
     // Test with values near integer limits
@@ -629,7 +629,7 @@ async fn test_numeric_overflow_in_event_counters(ctx: TestContext) -> color_eyre
 
 /// Test floating point precision boundaries
 #[sinex_test]
-async fn test_floating_point_precision_boundaries(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_floating_point_precision_boundaries(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
 
     // Test floating point values at precision boundaries
@@ -711,7 +711,7 @@ async fn test_floating_point_precision_boundaries(ctx: TestContext) -> color_eyr
 
 /// Test memory allocation boundaries
 #[sinex_test]
-async fn test_memory_allocation_boundaries(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_memory_allocation_boundaries(ctx: TestContext) -> TestResult<()> {
     println!("Testing memory allocation boundaries:");
 
     // Test progressively larger memory allocations
@@ -754,7 +754,7 @@ async fn test_memory_allocation_boundaries(ctx: TestContext) -> color_eyre::eyre
 
 /// Test concurrent resource exhaustion
 #[sinex_test]
-async fn test_concurrent_resource_exhaustion(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_concurrent_resource_exhaustion(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
 
     println!("Testing concurrent resource exhaustion:");

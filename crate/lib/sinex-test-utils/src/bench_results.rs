@@ -1,8 +1,8 @@
 //! Benchmark Results - Storage and Analysis of Benchmark Data
 //!
 //! This module provides structures and utilities for collecting, storing, and
-//! analyzing benchmark results. It supports both timing measurements (from Divan)
-//! and hardware counter measurements (future support for Iai).
+//! analyzing benchmark results recorded via the benchmark context. Hardware
+//! counter measurements can be added later when Iai integration lands.
 //!
 //! # Architecture
 //!
@@ -21,10 +21,10 @@
 //! - Cross-branch comparisons
 //! - Regression detection
 
-use crate::TestResult;
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use crate::TestResult;
 
 /// A complete benchmark run with metadata and results
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -115,24 +115,11 @@ impl BenchmarkRun {
         })
     }
 
-    /// Collect results from current benchmark session
+    /// Collect results from the current benchmark session.
     ///
-    /// This reads results from various sources:
-    /// - Divan JSON output (if available)
-    /// - Iai results (future support)
-    /// - Manual recordings via BenchContext
+    /// Results are sourced from manual recordings via BenchContext.
     pub fn collect() -> TestResult<Self> {
         let mut run = Self::new()?;
-
-        // Collect from divan results if available
-        if let Ok(divan_results) = read_divan_results() {
-            run.benchmarks.extend(divan_results);
-        }
-
-        // Future: collect from iai results
-        // if let Ok(iai_results) = read_iai_results() {
-        //     run.benchmarks.extend(iai_results);
-        // }
 
         Ok(run)
     }
@@ -449,9 +436,18 @@ fn get_memory_gb() -> TestResult<f64> {
 }
 
 fn get_postgres_version() -> TestResult<String> {
-    // This would need a database connection to query
-    // For now, return a placeholder
-    Ok("unknown".to_string())
+    let output = std::process::Command::new("psql")
+        .args(["--version"])
+        .output()
+        .map_err(|e| color_eyre::eyre::eyre!("Failed to run psql: {}", e))?;
+
+    if !output.status.success() {
+        return Err(color_eyre::eyre::eyre!(
+            "psql exited with non-zero status"
+        ));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 fn get_rust_version() -> TestResult<String> {
@@ -464,13 +460,6 @@ fn get_rust_version() -> TestResult<String> {
         .collect::<String>()
         .trim()
         .to_string())
-}
-
-/// Read results from Divan JSON output
-fn read_divan_results() -> TestResult<Vec<BenchmarkResult>> {
-    // This would parse target/divan-results.json if it exists
-    // For now, return empty vec
-    Ok(Vec::new())
 }
 
 #[cfg(test)]

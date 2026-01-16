@@ -11,51 +11,25 @@
 // - **Query Interface**: API security and exploit prevention
 // - **Unicode Exploits**: Character encoding and normalization attacks
 
-use sinex_test_utils::TestResult;
 use sinex_test_utils::prelude::*;
 use sinex_core::db::validation::EventValidator;
 use sinex_core::db::models::{EventFactory, services, event_types};
 use std::fs;
 use std::collections::HashMap;
 
-/// Security test scenario definition
+/// Path traversal test scenario definition
 #[derive(Debug, Clone)]
-struct SecurityScenario {
+struct PathTraversalScenario {
     name: &'static str,
-    category: SecurityCategory,
-    payload: SecurityPayload,
+    payload: &'static str,
     expected_behavior: ExpectedBehavior,
-}
-
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-enum SecurityCategory {
-    PathTraversal,
-    SqlInjection,
-    CommandInjection,
-    XssInjection,
-    JsonAttack,
-    UnicodeExploit,
-    ResourceExhaustion,
-    ConfigurationInjection,
-    PrototypePollution,
-    FormatString,
-}
-
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-enum SecurityPayload {
-    String(String),
-    Json(Value),
-    Binary(Vec<u8>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 enum ExpectedBehavior {
-    Rejected,        // Should be rejected outright
-    Sanitized,       // Should be accepted but sanitized
-    AcceptedAsData,  // Should be accepted as harmless data
-    ResourceLimited, // Should hit resource limits
+    Rejected,       // Should be rejected outright
+    Sanitized,      // Should be accepted but sanitized
+    AcceptedAsData, // Should be accepted as harmless data
 }
 
 // =============================================================================
@@ -64,7 +38,7 @@ enum ExpectedBehavior {
 
 /// Test filesystem monitoring against path traversal attacks
 #[sinex_test]
-async fn test_filesystem_path_traversal_protection(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_filesystem_path_traversal_protection(ctx: TestContext) -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let watch_root = temp_dir.path();
 
@@ -159,38 +133,31 @@ async fn test_filesystem_path_traversal_protection(ctx: TestContext) -> color_ey
 
 /// Test various path traversal attack patterns
 #[sinex_test]
-async fn test_comprehensive_path_traversal_scenarios(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_comprehensive_path_traversal_scenarios(ctx: TestContext) -> TestResult<()> {
     let scenarios = vec![
-        SecurityScenario {
+        PathTraversalScenario {
             name: "path_traversal_basic",
-            category: SecurityCategory::PathTraversal,
-            payload: SecurityPayload::String("../../../etc/passwd".to_string()),
+            payload: "../../../etc/passwd",
             expected_behavior: ExpectedBehavior::Sanitized,
         },
-        SecurityScenario {
+        PathTraversalScenario {
             name: "path_traversal_windows",
-            category: SecurityCategory::PathTraversal,
-            payload: SecurityPayload::String(
-                "..\\..\\..\\windows\\system32\\config\\sam".to_string(),
-            ),
+            payload: "..\\..\\..\\windows\\system32\\config\\sam",
             expected_behavior: ExpectedBehavior::Sanitized,
         },
-        SecurityScenario {
+        PathTraversalScenario {
             name: "path_traversal_url_encoded",
-            category: SecurityCategory::PathTraversal,
-            payload: SecurityPayload::String("%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd".to_string()),
+            payload: "%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd",
             expected_behavior: ExpectedBehavior::Sanitized,
         },
-        SecurityScenario {
+        PathTraversalScenario {
             name: "path_traversal_double_encoded",
-            category: SecurityCategory::PathTraversal,
-            payload: SecurityPayload::String("..%252f..%252f..%252fetc%252fpasswd".to_string()),
+            payload: "..%252f..%252f..%252fetc%252fpasswd",
             expected_behavior: ExpectedBehavior::Sanitized,
         },
-        SecurityScenario {
+        PathTraversalScenario {
             name: "path_traversal_unicode",
-            category: SecurityCategory::PathTraversal,
-            payload: SecurityPayload::String("..%c0%af..%c0%af..%c0%afetc%c0%afpasswd".to_string()),
+            payload: "..%c0%af..%c0%af..%c0%afetc%c0%afpasswd",
             expected_behavior: ExpectedBehavior::Sanitized,
         },
     ];
@@ -199,24 +166,22 @@ async fn test_comprehensive_path_traversal_scenarios(ctx: TestContext) -> color_
     let mut security_failures = Vec::new();
 
     for scenario in scenarios {
-        if let SecurityPayload::String(path) = &scenario.payload {
-            let event = json!({
-                "path": path,
-                "size": 1024
-            });
+        let event = json!({
+            "path": scenario.payload,
+            "size": 1024
+        });
 
-            let result = validator.validate_with_rules("fs", "file.created", &event);
-            let behavior = match result {
-                Ok(_) => ExpectedBehavior::AcceptedAsData,
-                Err(_) => ExpectedBehavior::Rejected,
-            };
+        let result = validator.validate_with_rules("fs", "file.created", &event);
+        let behavior = match result {
+            Ok(_) => ExpectedBehavior::AcceptedAsData,
+            Err(_) => ExpectedBehavior::Rejected,
+        };
 
-            if behavior != scenario.expected_behavior {
-                security_failures.push(format!(
-                    "Scenario '{}': Expected {:?}, got {:?}",
-                    scenario.name, scenario.expected_behavior, behavior
-                ));
-            }
+        if behavior != scenario.expected_behavior {
+            security_failures.push(format!(
+                "Scenario '{}': Expected {:?}, got {:?}",
+                scenario.name, scenario.expected_behavior, behavior
+            ));
         }
     }
 
@@ -235,7 +200,7 @@ async fn test_comprehensive_path_traversal_scenarios(ctx: TestContext) -> color_
 
 /// Test SQL injection protection in event payloads
 #[sinex_test]
-async fn test_sql_injection_protection(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_sql_injection_protection(ctx: TestContext) -> TestResult<()> {
     let sql_injection_payloads = vec![
         "'; DROP TABLE events; --",
         "' OR '1'='1' --",
@@ -300,7 +265,7 @@ async fn test_sql_injection_protection(ctx: TestContext) -> color_eyre::eyre::Re
 
 /// Test Unicode normalization bypass attacks
 #[sinex_test]
-async fn test_unicode_normalization_attacks(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_unicode_normalization_attacks(ctx: TestContext) -> TestResult<()> {
     let unicode_attacks = vec![
         // Unicode normalization attacks
         ("admin\u{200B}", "admin with zero-width space"),
@@ -363,7 +328,7 @@ async fn test_unicode_normalization_attacks(ctx: TestContext) -> color_eyre::eyr
 
 /// Test null byte injection attacks
 #[sinex_test]
-async fn test_null_byte_injection(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_null_byte_injection(ctx: TestContext) -> TestResult<()> {
     let null_byte_attacks = vec![
         ("file.txt\0.exe", "null byte file extension bypass"),
         ("admin\0ignore", "null byte truncation"),
@@ -413,7 +378,7 @@ async fn test_null_byte_injection(ctx: TestContext) -> color_eyre::eyre::Result<
 
 /// Test protection against resource exhaustion attacks
 #[sinex_test]
-async fn test_resource_exhaustion_protection(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_resource_exhaustion_protection(ctx: TestContext) -> TestResult<()> {
     // Test 1: Large JSON payload
     let mut large_json = json!({
         "data": Vec::<String>::with_capacity(10000)
@@ -489,7 +454,7 @@ async fn test_resource_exhaustion_protection(ctx: TestContext) -> color_eyre::ey
 
 /// Test comprehensive input validation against malicious inputs
 #[sinex_test]
-async fn test_malicious_input_validation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_malicious_input_validation(ctx: TestContext) -> TestResult<()> {
     let malicious_inputs = vec![
         // Command injection
         ("; rm -rf /", "command injection"),
@@ -547,7 +512,7 @@ async fn test_malicious_input_validation(ctx: TestContext) -> color_eyre::eyre::
 
 /// Test query interface against exploitation attempts
 #[sinex_test]
-async fn test_query_interface_exploits(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_query_interface_exploits(ctx: TestContext) -> TestResult<()> {
     // Insert some test data
     let factory = EventFactory::new(sources::TEST);
     for i in 0..5 {

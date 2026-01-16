@@ -55,14 +55,21 @@ impl SearchService {
 
         let results = rows
             .into_iter()
-            .map(|row| SearchResult {
-                event_id: row.id,
-                source: row.source.into_string(),
-                event_type: row.event_type.into_string(),
-                host: row.host.into_string(),
-                timestamp: row.ts_ingest,
-                snippet: Self::extract_snippet(&row.payload, snippet_text),
-                score: 1.0,
+            .map(|row| {
+                let snippet = row
+                    .snippet
+                    .map(|value| value.replace("<b>", "").replace("</b>", ""))
+                    .unwrap_or_else(|| Self::extract_snippet(&row.payload, snippet_text));
+                let score = row.score.unwrap_or(1.0);
+                SearchResult {
+                    event_id: row.id,
+                    source: row.source.into_string(),
+                    event_type: row.event_type.into_string(),
+                    host: row.host.into_string(),
+                    timestamp: row.ts_ingest,
+                    snippet,
+                    score,
+                }
             })
             .collect();
 
@@ -179,9 +186,8 @@ impl PreparedSearch {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_test_utils::sinex_test;
+    use sinex_test_utils::{sinex_test, TestResult};
 
-    #[allow(dead_code)]
     #[sinex_test]
     fn prepared_search_clamps_pagination() -> TestResult<()> {
         let query = SearchQuery {

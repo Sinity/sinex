@@ -17,7 +17,28 @@ use std::time::Duration;
 use async_nats::jetstream::{self, consumer, stream};
 use color_eyre::eyre::eyre;
 use sinex_test_utils::prelude::*;
-use tokio::time::sleep;
+use sinex_test_utils::timing_utils::WaitHelpers;
+use tokio::sync::OnceCell;
+
+fn is_jetstream_no_messages_error(msg: &str) -> bool {
+    msg.contains("No Messages")
+        || msg.contains("No Messages Available")
+        || (msg.contains("404") && msg.contains("No Messages"))
+}
+
+static SHARED_NATS: OnceCell<Arc<EphemeralNats>> = OnceCell::const_new();
+
+async fn shared_nats() -> Result<Arc<EphemeralNats>> {
+    let arc = SHARED_NATS
+        .get_or_try_init(|| async { EphemeralNats::start().await.map(Arc::new) })
+        .await?;
+    Ok(arc.clone())
+}
+
+async fn shared_jetstream() -> Result<jetstream::Context> {
+    let nats = shared_nats().await?;
+    Ok(nats.jetstream().await?)
+}
 
 // =============================================================================
 // Stream Creation Tests
@@ -26,8 +47,7 @@ use tokio::time::sleep;
 /// Test that stream creation is idempotent.
 #[sinex_test]
 async fn test_stream_creation_idempotent() -> Result<()> {
-    let nats = EphemeralNats::start().await?;
-    let js = nats.jetstream().await?;
+    let js = shared_jetstream().await?;
 
     let stream_name = format!("TEST_IDEMPOTENT_{}", uuid::Uuid::new_v4().simple());
 
@@ -55,8 +75,7 @@ async fn test_stream_creation_idempotent() -> Result<()> {
 /// Test that stream creation fails with conflicting configuration.
 #[sinex_test]
 async fn test_stream_creation_config_conflict() -> Result<()> {
-    let nats = EphemeralNats::start().await?;
-    let js = nats.jetstream().await?;
+    let js = shared_jetstream().await?;
 
     let stream_name = format!("TEST_CONFLICT_{}", uuid::Uuid::new_v4().simple());
 
@@ -94,8 +113,7 @@ async fn test_stream_creation_config_conflict() -> Result<()> {
 /// Test stream creation with duplicate subjects fails.
 #[sinex_test]
 async fn test_stream_duplicate_subjects_handling() -> Result<()> {
-    let nats = EphemeralNats::start().await?;
-    let js = nats.jetstream().await?;
+    let js = shared_jetstream().await?;
 
     let stream1_name = format!("TEST_SUBJ1_{}", uuid::Uuid::new_v4().simple());
     let stream2_name = format!("TEST_SUBJ2_{}", uuid::Uuid::new_v4().simple());
@@ -138,8 +156,7 @@ async fn test_stream_duplicate_subjects_handling() -> Result<()> {
 /// Test durable consumer creation is idempotent.
 #[sinex_test]
 async fn test_consumer_creation_idempotent() -> Result<()> {
-    let nats = EphemeralNats::start().await?;
-    let js = nats.jetstream().await?;
+    let js = shared_jetstream().await?;
 
     let stream_name = format!("TEST_CONSUMER_{}", uuid::Uuid::new_v4().simple());
     let consumer_name = "test-durable";
@@ -177,8 +194,7 @@ async fn test_consumer_creation_idempotent() -> Result<()> {
 /// Test consumer creation with different config fails.
 #[sinex_test]
 async fn test_consumer_config_conflict() -> Result<()> {
-    let nats = EphemeralNats::start().await?;
-    let js = nats.jetstream().await?;
+    let js = shared_jetstream().await?;
 
     let stream_name = format!("TEST_CONS_CONF_{}", uuid::Uuid::new_v4().simple());
     let consumer_name = "config-conflict-consumer";
@@ -224,8 +240,7 @@ async fn test_consumer_config_conflict() -> Result<()> {
 /// Test consumer creation on non-existent stream fails.
 #[sinex_test]
 async fn test_consumer_on_nonexistent_stream() -> Result<()> {
-    let nats = EphemeralNats::start().await?;
-    let js = nats.jetstream().await?;
+    let js = shared_jetstream().await?;
 
     let stream_name = "NONEXISTENT_STREAM_12345";
 
@@ -242,7 +257,7 @@ async fn test_consumer_on_nonexistent_stream() -> Result<()> {
 /// Test concurrent stream creation from multiple instances.
 #[sinex_test]
 async fn test_concurrent_stream_creation() -> Result<()> {
-    let nats = EphemeralNats::start().await?;
+    let nats = shared_nats().await?;
     let nats_client = nats.connect().await?;
 
     let stream_name = format!("TEST_CONCURRENT_{}", uuid::Uuid::new_v4().simple());
@@ -312,7 +327,7 @@ async fn test_concurrent_stream_creation() -> Result<()> {
 /// Test concurrent consumer creation from multiple instances.
 #[sinex_test]
 async fn test_concurrent_consumer_creation() -> Result<()> {
-    let nats = EphemeralNats::start().await?;
+    let nats = shared_nats().await?;
     let nats_client = nats.connect().await?;
     let js = jetstream::new(nats_client.clone());
 
@@ -394,7 +409,7 @@ async fn test_concurrent_consumer_creation() -> Result<()> {
 /// Test stream with message limit enforces retention.
 #[sinex_test]
 async fn test_stream_message_limit_enforcement(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_nats().await?;
+    let ctx = ctx.with_shared_nats().await?;
     let js = ctx.jetstream().await?;
 
     let stream_name = format!("TEST_LIMIT_{}", uuid::Uuid::new_v4().simple());
@@ -436,7 +451,7 @@ async fn test_stream_message_limit_enforcement(ctx: TestContext) -> Result<()> {
 /// Test stream with storage limit enforces retention.
 #[sinex_test]
 async fn test_stream_storage_limit_enforcement(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_nats().await?;
+    let ctx = ctx.with_shared_nats().await?;
     let js = ctx.jetstream().await?;
 
     let stream_name = format!("TEST_STORAGE_{}", uuid::Uuid::new_v4().simple());
@@ -459,8 +474,25 @@ async fn test_stream_storage_limit_enforcement(ctx: TestContext) -> Result<()> {
             .await;
     }
 
-    // Give stream time to apply limits
-    sleep(Duration::from_millis(100)).await;
+    WaitHelpers::wait_for_condition(
+        || {
+            let js = js.clone();
+            let stream_name = stream_name.clone();
+            async move {
+                let mut stream = js
+                    .get_stream(&stream_name)
+                    .await
+                    .map_err(|e| SinexError::network(e.to_string()))?;
+                let info = stream
+                    .info()
+                    .await
+                    .map_err(|e| SinexError::network(e.to_string()))?;
+                Ok(info.state.bytes <= 1500)
+            }
+        },
+        5,
+    )
+    .await?;
 
     // Check stream info
     let mut stream = js.get_stream(&stream_name).await?;
@@ -486,7 +518,7 @@ async fn test_stream_storage_limit_enforcement(ctx: TestContext) -> Result<()> {
 /// Test that unacked messages are redelivered.
 #[sinex_test]
 async fn test_consumer_redelivery_on_timeout(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_nats().await?;
+    let ctx = ctx.with_shared_nats().await?;
     let js = ctx.jetstream().await?;
 
     let stream_name = format!("TEST_REDEL_{}", uuid::Uuid::new_v4().simple());
@@ -522,12 +554,31 @@ async fn test_consumer_redelivery_on_timeout(ctx: TestContext) -> Result<()> {
         // Intentionally not acking
     }
 
-    // Wait for ack timeout
-    sleep(Duration::from_millis(700)).await;
-
-    // Message should be redelivered
-    let mut messages = consumer.fetch().max_messages(1).messages().await?;
-    let redelivered = messages.next().await;
+    // Message should be redelivered after the ack wait.
+    let mut redelivered = None;
+    let start = std::time::Instant::now();
+    while redelivered.is_none() && start.elapsed() < Duration::from_secs(5) {
+        let fetch_result = consumer
+            .fetch()
+            .max_messages(1)
+            .expires(Duration::from_millis(200))
+            .messages()
+            .await;
+        match fetch_result {
+            Ok(mut messages) => {
+                if let Some(msg) = messages.next().await {
+                    redelivered = Some(msg.map_err(|e| eyre!(e))?);
+                }
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                if is_jetstream_no_messages_error(&msg) {
+                    continue;
+                }
+                return Err(eyre!(e));
+            }
+        }
+    }
 
     assert!(
         redelivered.is_some(),

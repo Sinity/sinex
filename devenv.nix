@@ -8,25 +8,21 @@
 let
   system = pkgs.stdenv.hostPlatform.system;
   hasFenix = inputs ? fenix;
-  fenixPkgs =
-    if hasFenix then
-      inputs.fenix.packages.${system}.complete
-    else
-      null;
+  fenixPkgs = if hasFenix then inputs.fenix.packages.${system}.complete else null;
   pg_jsonschema = pkgs.callPackage ./nix/pkgs/pg_jsonschema { };
-  postgresForSqlx =
-    pkgs.postgresql_16.withPackages (ps: [
-      ps.timescaledb
-      ps.pgvector
-      ps.pgx_ulid
-      pg_jsonschema
-    ]);
+  postgresForSqlx = pkgs.postgresql_16.withPackages (ps: [
+    ps.timescaledb
+    ps.pgvector
+    ps.pgx_ulid
+    pg_jsonschema
+  ]);
   pythonDeps = with pkgs.python3Packages; [
     click
     psycopg2
     rich
     pyyaml
   ];
+  tlsFixtures = ".devenv/tls";
   basePackages =
     with pkgs;
     [
@@ -49,14 +45,15 @@ let
       tokei
       cargo-audit
       cargo-machete
-      sqlx-cli
       mold
+      binutils
       python3
       nats-server
       postgresForSqlx
       mprocs
       btop
       jq
+      coreutils
       protobuf
       openssl
       pkg-config
@@ -69,10 +66,17 @@ let
       fzf
       bat
       ripgrep
-      sccache
+      nsc
     ]
     ++ pythonDeps;
   dbusLibPath = pkgs.lib.makeLibraryPath [ pkgs.dbus ];
+  homeDir = builtins.getEnv "HOME";
+  xdgStateHome = builtins.getEnv "XDG_STATE_HOME";
+  xdgCacheHome = builtins.getEnv "XDG_CACHE_HOME";
+  sinexStateDir =
+    if xdgStateHome != "" then "${xdgStateHome}/sinex" else "${homeDir}/.local/state/sinex";
+  sinexCacheDir =
+    if xdgCacheHome != "" then "${xdgCacheHome}/sinex" else "${homeDir}/.cache/sinex";
 in
 {
   devenv = {
@@ -87,7 +91,10 @@ in
 
   cachix = {
     enable = true;
-    pull = [ "sinity" "nix-community" ];
+    pull = [
+      "sinity"
+      "nix-community"
+    ];
   };
 
   packages = basePackages;
@@ -105,63 +112,127 @@ in
     # Keep devenv quiet.
     DEVENV_TASKS_QUIET = "1";
     SINEX_DEVENV_SYSTEM = system;
-    SINEX_DEVENV_TOOLCHAIN =
-      if hasFenix then "fenix (${system})" else "nixpkgs (${system})";
+    SINEX_DEVENV_TOOLCHAIN = if hasFenix then "fenix (${system})" else "nixpkgs (${system})";
     SINEX_DEVENV_PROCESS_HINT = "devenv up nats ingestd gateway";
-    SINEX_SCCACHE = "${pkgs.sccache}/bin/sccache";
-    SCCACHE_DIR = "$HOME/.cache/sccache";
-    SCCACHE_CACHE_SIZE = "2G";
-    CARGO_INCREMENTAL = "0";
+    SINEX_STATE_DIR = sinexStateDir;
+    SINEX_CACHE_DIR = sinexCacheDir;
+    SINEX_NATS_DIR = "${sinexStateDir}/nats";
+    SINEX_TEST_RESULTS_DIR = "${sinexCacheDir}/test-results";
+    SINEX_GATEWAY_TLS_CERT = "${tlsFixtures}/server.pem";
+    SINEX_GATEWAY_TLS_KEY = "${tlsFixtures}/server-key.pem";
+    SINEX_GATEWAY_TLS_CLIENT_CA = "${tlsFixtures}/ca.pem";
+    SINEX_RPC_URL = "https://127.0.0.1:9999";
+    SINEX_RPC_CA_CERT = "${tlsFixtures}/ca.pem";
+    SINEX_RPC_CLIENT_CERT = "${tlsFixtures}/client.pem";
+    SINEX_RPC_CLIENT_KEY = "${tlsFixtures}/client-key.pem";
   };
 
   enterShell = ''
-    export PATH="$PWD/target/debug:$PATH"
+    export PATH="$PWD/scripts:$PWD/target/debug:$PATH"
+    SINEX_STATE_DIR="''${SINEX_STATE_DIR:-''${XDG_STATE_HOME:-$HOME/.local/state}/sinex}"
+    SINEX_CACHE_DIR="''${SINEX_CACHE_DIR:-''${XDG_CACHE_HOME:-$HOME/.cache}/sinex}"
+    export SINEX_STATE_DIR SINEX_CACHE_DIR
+    export SINEX_NATS_DIR="''${SINEX_NATS_DIR:-$SINEX_STATE_DIR/nats}"
+    export SINEX_TEST_RESULTS_DIR="''${SINEX_TEST_RESULTS_DIR:-$SINEX_CACHE_DIR/test-results}"
     export LD_LIBRARY_PATH="${dbusLibPath}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-
-    # sqlx: no auto-check on entry to keep shell startup fast.
-    # Run `xt sqlx-prepare` (alias below) when queries/migrations change.
-
-    alias sinex-cli="python3 cli/exo.py"
-    xt() { cargo xtask "$@"; }
-    alias e2e-test="cargo nextest run -p sinex-e2e-tests"
-    alias vm-smoke="./tests/e2e/nixos-vm/run-vm-tests.sh -c smoke"
+    export NATS_CREDS="$SINEX_NATS_DIR/nsc/creds/sinex-dev/sinex-dev/sinex-dev.creds"
+    tls_dir="$PWD/${tlsFixtures}"
+    if [ ! -f "$tls_dir/server.pem" ] || [ ! -f "$tls_dir/client.pem" ]; then
+      if [ -x "$PWD/scripts/generate_tls_fixtures.sh" ]; then
+        mkdir -p "$tls_dir"
+        "$PWD/scripts/generate_tls_fixtures.sh" "$tls_dir" >/dev/null 2>&1 || true
+      fi
+    fi
 
     # Keep non-interactive `direnv exec` / scripts quiet and fast.
-    if [ -n "''${PS1:-}" ]; then
+    if [ -n "''${PS1:-}" ] && [ -t 1 ]; then
+      if [ -z "''${SINEX_DEVENV_SHELL_INIT:-}" ]; then
+        export SINEX_DEVENV_SHELL_INIT=1
+
+        # Bootstrap NATS Auth once, but never block the shell prompt.
+        if [ -z "''${SINEX_DEVENV_SKIP_NATS_BOOTSTRAP:-}" ] && [ -x "$PWD/scripts/bootstrap_nats_auth.sh" ]; then
+          nats_lock_dir="$PWD/.nats/.bootstrap.lock"
+          mkdir -p "$PWD/.nats"
+          if mkdir "$nats_lock_dir" 2>/dev/null; then
+            if command -v timeout >/dev/null 2>&1; then
+              SINEX_NATS_BOOTSTRAP_QUIET=1 timeout 15s "$PWD/scripts/bootstrap_nats_auth.sh" >/dev/null 2>&1 || true
+            fi
+            rmdir "$nats_lock_dir" 2>/dev/null || true
+          fi
+        fi
+      fi
+
+      alias sinex-cli="python3 cli/exo.py"
+      xt() { cargo xtask "$@"; }
+      alias e2e-test="cargo xtask test --profile fast -- -p sinex-e2e-tests"
+      alias vm-smoke="./tests/e2e/nixos-vm/run-vm-tests.sh -c smoke"
+
       if [ -x "$PWD/scripts/dev-env-banner.sh" ] && [ -z "''${SINEX_DEVENV_MOTD_ONCE:-}" ]; then
         "$PWD/scripts/dev-env-banner.sh" || true
         export SINEX_DEVENV_MOTD_ONCE=1
       fi
-      if [ -z "''${SINEX_MOTD_SILENT:-}" ]; then
-        echo ""
-        echo "xtask quick reference:"
-        echo "  xtask check        # sqlx check + fmt check + cargo check"
-        echo "  xtask lint         # clippy -D warnings"
-        echo "  xtask test         # nextest workspace (profile=reliable)"
-        echo "  xtask sqlx-prepare # refresh .sqlx after migrations"
+
+        if [ -z "''${DIRENV_IN_ENVRC:-}" ] \
+          && [ "''${SINEX_DEVENV_COMPLETIONS:-1}" != "0" ] \
+          && [ -z "''${SINEX_DEVENV_COMPLETIONS_ONCE:-}" ]; then
+          export SINEX_DEVENV_COMPLETIONS_ONCE=1
+          # Generate shell completions from the existing xtask binary to avoid an implicit cargo build.
+          XTASK_BIN="$PWD/target/debug/xtask"
+          COMPLETIONS_CACHE_DIR="$HOME/.cache/sinex-completions"
+          mkdir -p "$COMPLETIONS_CACHE_DIR"
+          generate_xtask_completions() {
+            gen_shell="$1"
+            gen_file="$2"
+            if [ ! -x "$XTASK_BIN" ]; then
+              return
+            fi
+            if [ ! -f "$gen_file" ] || [ "$XTASK_BIN" -nt "$gen_file" ]; then
+              tmp_file="$gen_file.$$"
+              timeout 6s "$XTASK_BIN" completions "$gen_shell" > "$tmp_file" 2>/dev/null || true
+              if [ -s "$tmp_file" ]; then
+                mv "$tmp_file" "$gen_file"
+              else
+                rm -f "$tmp_file"
+              fi
+            fi
+          }
+
+          if command -v timeout >/dev/null 2>&1; then
+            case "''${SHELL:-bash}" in
+              *zsh)
+                COMPLETIONS_FILE="$COMPLETIONS_CACHE_DIR/xtask-completions.zsh"
+                ;;
+              *)
+                COMPLETIONS_FILE="$COMPLETIONS_CACHE_DIR/xtask-completions.bash"
+                ;;
+            esac
+
+            if [ -f "$COMPLETIONS_FILE" ]; then
+              . "$COMPLETIONS_FILE" 2>/dev/null || true
+            elif [ -x "$XTASK_BIN" ]; then
+              (
+                case "''${SHELL:-bash}" in
+                  *zsh) generate_xtask_completions zsh "$COMPLETIONS_FILE" ;;
+                  *) generate_xtask_completions bash "$COMPLETIONS_FILE" ;;
+                esac
+              ) >/dev/null 2>&1 &
+              if command -v disown >/dev/null 2>&1; then
+                disown
+              fi
+            fi
+          fi
+        fi
       fi
-      # Generate shell completions once per interactive shell session (writes to /tmp)
-      case "''${SHELL:-bash}" in
-        *zsh)
-          cargo xtask completions zsh > /tmp/xtask-completions.zsh 2>/dev/null || true
-          . /tmp/xtask-completions.zsh 2>/dev/null || true
-          ;;
-        *)
-          cargo xtask completions bash > /tmp/xtask-completions.bash 2>/dev/null || true
-          . /tmp/xtask-completions.bash 2>/dev/null || true
-          ;;
-      esac
-    fi
   '';
 
   processes = {
-    nats.exec = "${pkgs.nats-server}/bin/nats-server -js";
+    nats.exec = "${pkgs.nats-server}/bin/nats-server -js -c $SINEX_NATS_DIR/nats.conf";
     ingestd.exec = "cargo run --bin sinex-ingestd";
     gateway.exec = "cargo run --bin sinex-gateway";
     fs-watcher.exec = "cargo run --bin sinex-fs-watcher";
-    terminal.exec = "cargo run --bin sinex-terminal-satellite";
-    desktop.exec = "cargo run --bin sinex-desktop-satellite";
-    system.exec = "cargo run --bin sinex-system-satellite";
+    terminal.exec = "cargo run --bin sinex-terminal-node";
+    desktop.exec = "cargo run --bin sinex-desktop-node";
+    system.exec = "cargo run --bin sinex-system-node";
     canonicalizer.exec = "cargo run --bin sinex-terminal-command-canonicalizer";
     health.exec = "cargo run --bin sinex-health-aggregator";
     document.exec = "cargo run --bin sinex-document-ingestor";

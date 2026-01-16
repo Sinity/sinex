@@ -9,7 +9,6 @@
 // - **JSON Attacks**: Circular references, billion laughs, expansion attacks
 // - **ULID Attacks**: Extreme dates, collision attempts, timestamp manipulation
 
-use sinex_test_utils::TestResult;
 use sinex_test_utils::prelude::*;
 use sinex_core::db::validation::EventValidator;
 use chrono::{Duration, TimeZone, Utc};
@@ -23,7 +22,7 @@ use std::collections::HashSet;
 
 /// Test event processing during DST transitions
 #[sinex_test]
-async fn test_event_processing_during_dst_change(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_event_processing_during_dst_change(ctx: TestContext) -> TestResult<()> {
     // Simulate DST transition (spring forward: 2:00 AM becomes 3:00 AM)
     let utc_base = Utc.with_ymd_and_hms(2024, 3, 10, 7, 0, 0).unwrap(); // 2 AM EST
 
@@ -76,7 +75,7 @@ async fn test_event_processing_during_dst_change(ctx: TestContext) -> color_eyre
 
 /// Test ULID generation with system clock regression
 #[sinex_test]
-async fn test_ulid_generation_with_system_clock_regression(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_ulid_generation_with_system_clock_regression(ctx: TestContext) -> TestResult<()> {
     // This test simulates what happens when system clock goes backwards
 
     // Generate ULID at "current" time
@@ -118,7 +117,7 @@ async fn test_ulid_generation_with_system_clock_regression(ctx: TestContext) -> 
 
 /// Test ULID uniqueness across simulated processes
 #[sinex_test]
-async fn test_ulid_uniqueness_across_processes(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_ulid_uniqueness_across_processes(ctx: TestContext) -> TestResult<()> {
     // Simulate multiple processes generating ULIDs simultaneously
     let mut process_handles = Vec::new();
     let ulids = Arc::new(parking_lot::Mutex::new(Vec::new()));
@@ -182,7 +181,7 @@ async fn test_ulid_uniqueness_across_processes(ctx: TestContext) -> color_eyre::
 
 /// Test circular JSON references handling
 #[sinex_test]
-async fn test_circular_json_references(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_circular_json_references(ctx: TestContext) -> TestResult<()> {
     // Test that Sinex's event validation handles circular JSON references safely
     let circular_json = json!({
         "data": {
@@ -238,7 +237,7 @@ async fn test_circular_json_references(ctx: TestContext) -> color_eyre::eyre::Re
 
 /// Test JSON billion laughs attack
 #[sinex_test]
-async fn test_json_billion_laughs_attack(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_json_billion_laughs_attack(ctx: TestContext) -> TestResult<()> {
     // Test that Sinex can handle exponentially expanding JSON without resource exhaustion
     let mut expanding_json = json!({
         "lol1": "lol".repeat(10),
@@ -307,7 +306,7 @@ async fn test_json_billion_laughs_attack(ctx: TestContext) -> color_eyre::eyre::
 
 /// Test JSON depth bomb attack
 #[sinex_test]
-async fn test_json_depth_bomb_attack(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_json_depth_bomb_attack(ctx: TestContext) -> TestResult<()> {
     // Create deeply nested JSON structure
     let mut deep_json = json!("core");
 
@@ -367,7 +366,7 @@ async fn test_json_depth_bomb_attack(ctx: TestContext) -> color_eyre::eyre::Resu
 
 /// Test ULID with extreme future date
 #[sinex_test]
-async fn test_ulid_extreme_future_date(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_ulid_extreme_future_date(ctx: TestContext) -> TestResult<()> {
     // Test that Sinex can handle extreme future dates for event timestamps
     let far_future = Utc.with_ymd_and_hms(9999, 12, 31, 23, 59, 59).unwrap();
 
@@ -410,7 +409,7 @@ async fn test_ulid_extreme_future_date(ctx: TestContext) -> color_eyre::eyre::Re
 
 /// Test ULID generation at the same nanosecond
 #[sinex_test]
-async fn test_ulid_generation_same_nanosecond(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_ulid_generation_same_nanosecond(ctx: TestContext) -> TestResult<()> {
     let generated = Arc::new(AtomicU64::new(0));
     let ulids = Arc::new(parking_lot::Mutex::new(Vec::new()));
 
@@ -453,7 +452,7 @@ async fn test_ulid_generation_same_nanosecond(ctx: TestContext) -> color_eyre::e
 
 /// Test ULID with zero timestamp
 #[sinex_test]
-async fn test_ulid_zero_timestamp(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_ulid_zero_timestamp(ctx: TestContext) -> TestResult<()> {
     // Create ULID with zero timestamp (Unix epoch)
     let epoch = Utc.timestamp_opt(0, 0).unwrap();
     let ulid = Ulid::from_datetime(epoch);
@@ -469,7 +468,7 @@ async fn test_ulid_zero_timestamp(ctx: TestContext) -> color_eyre::eyre::Result<
 
 /// Test ULID collision resistance
 #[sinex_test]
-async fn test_ulid_collision_resistance(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_ulid_collision_resistance(ctx: TestContext) -> TestResult<()> {
     let collision_attempts = 100_000;
     let mut ulids = HashSet::new();
 

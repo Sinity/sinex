@@ -14,7 +14,7 @@ pub fn parse_json<T: DeserializeOwned>(
     operation: &str,
 ) -> Result<T> {
     // First validate the JSON structure
-    let validated_value = crate::validate_json(json_str).map_err(|e| {
+    let validated_value = crate::validation::validate_json(json_str).map_err(|e| {
         SinexError::validation(format!(
             "Invalid JSON structure for {context_type} (operation: {operation}): {e}"
         ))
@@ -39,7 +39,7 @@ pub fn parse_json_file<T: DeserializeOwned>(
     operation: &str,
 ) -> Result<T> {
     // First validate the JSON structure
-    let validated_value = crate::validate_json(json_str).map_err(|e| {
+    let validated_value = crate::validation::validate_json(json_str).map_err(|e| {
         SinexError::validation(format!(
             "Invalid JSON structure in file {} (operation: {}): {}",
             file_path.as_ref().as_str(),
@@ -63,7 +63,7 @@ pub fn parse_json_file<T: DeserializeOwned>(
 /// Parse JSON Value from a string with error context and validation
 pub fn parse_json_value(json_str: &str, context_type: &str, operation: &str) -> Result<Value> {
     // Use sinex_types to parse and validate in one step
-    crate::validate_json(json_str).map_err(|e| {
+    crate::validation::validate_json(json_str).map_err(|e| {
         SinexError::validation(format!(
             "Invalid JSON structure for {context_type} (operation: {operation}): {e}"
         ))

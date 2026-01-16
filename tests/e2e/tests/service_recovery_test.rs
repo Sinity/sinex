@@ -11,17 +11,20 @@
 //! - Leadership coordination under failure conditions
 //! - JetStream consumer recovery
 
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
-
 use async_nats::jetstream;
+use chrono::{Duration as ChronoDuration, Utc};
 use color_eyre::eyre::eyre;
 use futures::StreamExt;
 use serde_json::json;
+use sinex_core::coordination::kv_client::{CoordinationKvClient, InstanceMetadata};
+use sinex_node_sdk::stream_processor::SchemaBroadcastEntry;
+use sinex_test_utils::nats::ensure_coordination_buckets;
 use sinex_test_utils::prelude::*;
+use sinex_test_utils::timing_utils::WaitHelpers;
 use sinex_test_utils::{start_test_ingestd_with_config, TestIngestdConfig};
-use tokio::time::sleep;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
+use tokio::time::{timeout, Duration};
 
 fn is_jetstream_no_messages_error(msg: &str) -> bool {
     msg.contains("No Messages")
@@ -57,6 +60,20 @@ async fn ensure_raw_event_streams(
     Ok(())
 }
 
+async fn wait_for_schema_broadcast(
+    subscription: &mut async_nats::Subscriber,
+) -> Result<Vec<SchemaBroadcastEntry>> {
+    let message = timeout(Duration::from_secs(10), subscription.next())
+        .await
+        .map_err(|_| eyre!("Timed out waiting for schema broadcast"))?
+        .ok_or_else(|| eyre!("Schema broadcast subscription closed"))?;
+    let entries: Vec<SchemaBroadcastEntry> = serde_json::from_slice(&message.payload)?;
+    if entries.is_empty() {
+        return Err(eyre!("Schema broadcast payload was empty"));
+    }
+    Ok(entries)
+}
+
 // =============================================================================
 // Database Pool Recovery Tests
 // =============================================================================
@@ -67,9 +84,10 @@ async fn ensure_raw_event_streams(
 /// become invalid and the pool must recover by establishing new ones.
 #[sinex_test]
 async fn test_pool_recovery_after_connection_invalidation(ctx: TestContext) -> Result<()> {
+    let ctx = ctx.with_nats().await?;
     // Create initial event to verify baseline functionality
     let baseline_event = ctx
-        .create_test_event("pool-recovery", "baseline", json!({"phase": "before"}))
+        .publish_json_event("pool-recovery", "baseline", json!({"phase": "before"}))
         .await?;
     assert!(baseline_event.id.is_some());
 
@@ -100,36 +118,34 @@ async fn test_pool_recovery_after_connection_invalidation(ctx: TestContext) -> R
         );
     }
 
-    // Give the pool a moment to detect invalid connections
-    sleep(Duration::from_millis(500)).await;
-
-    // Now create more events - the pool should have recovered
-    let mut recovery_success = false;
-    for attempt in 0..5 {
-        match ctx
-            .create_test_event(
-                "pool-recovery",
-                "after",
-                json!({"phase": "after", "attempt": attempt}),
-            )
-            .await
-        {
-            Ok(event) => {
-                assert!(event.id.is_some());
-                recovery_success = true;
-                break;
+    let attempt_counter = AtomicU32::new(0);
+    WaitHelpers::wait_for_condition(
+        || {
+            let attempt = attempt_counter.fetch_add(1, Ordering::SeqCst);
+            let ctx = &ctx;
+            async move {
+                match ctx
+                    .publish_json_event(
+                        "pool-recovery",
+                        "after",
+                        json!({"phase": "after", "attempt": attempt}),
+                    )
+                    .await
+                {
+                    Ok(event) => {
+                        assert!(event.id.is_some());
+                        Ok::<bool, sinex_test_utils::SinexError>(true)
+                    }
+                    Err(e) => {
+                        tracing::warn!("Recovery attempt {} failed: {}", attempt, e);
+                        Ok::<bool, sinex_test_utils::SinexError>(false)
+                    }
+                }
             }
-            Err(e) => {
-                tracing::warn!("Recovery attempt {} failed: {}", attempt, e);
-                sleep(Duration::from_millis(200)).await;
-            }
-        }
-    }
-
-    assert!(
-        recovery_success,
-        "Pool should recover and allow event creation"
-    );
+        },
+        5,
+    )
+    .await?;
 
     // Verify events are persisted
     let final_count = ctx.current_event_count().await?;
@@ -147,6 +163,7 @@ async fn test_pool_recovery_after_connection_invalidation(ctx: TestContext) -> R
 /// database maintenance or network instability.
 #[sinex_test]
 async fn test_pool_concurrent_stress_recovery(ctx: TestContext) -> Result<()> {
+    let ctx = ctx.with_nats().await?;
     let success_count = Arc::new(AtomicU32::new(0));
     let failure_count = Arc::new(AtomicU32::new(0));
 
@@ -187,7 +204,7 @@ async fn test_pool_concurrent_stress_recovery(ctx: TestContext) -> Result<()> {
                                 e
                             );
                             if attempt < 2 {
-                                tokio::time::sleep(Duration::from_millis(20 * (attempt + 1))).await;
+                                tokio::task::yield_now().await;
                                 continue;
                             }
                         }
@@ -199,7 +216,7 @@ async fn test_pool_concurrent_stress_recovery(ctx: TestContext) -> Result<()> {
                 }
 
                 // Small delay to allow for connection churn
-                sleep(Duration::from_millis(10)).await;
+                tokio::task::yield_now().await;
             }
         });
 
@@ -241,24 +258,25 @@ async fn test_pool_concurrent_stress_recovery(ctx: TestContext) -> Result<()> {
 #[sinex_test]
 async fn test_ingestd_restart_event_continuity(ctx: TestContext) -> Result<()> {
     ctx.ensure_clean().await?;
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
 
-    let ctx = ctx.with_nats().await?;
+    let ctx = ctx.with_shared_nats().await?;
     let nats_client = ctx.nats_client();
     let _js = jetstream::new(nats_client.clone());
+    let mut schema_subscription = nats_client
+        .subscribe(ctx.env().nats_subject("system.schemas.active"))
+        .await?;
 
     let ingest_config = TestIngestdConfig {
-        nats_url: format!(
-            "nats://{}",
-            ctx.nats_url().expect("NATS should be available")
-        ),
+        nats_url: ctx.nats_url().expect("NATS should be available"),
         database_url: ctx.database_url().to_string(),
         work_dir: None,
+        ..Default::default()
     };
 
     // Start first ingestd instance
     let mut ingest_handle =
         start_test_ingestd_with_config(ingest_config.clone(), Some(&ctx)).await?;
+    let _schemas = wait_for_schema_broadcast(&mut schema_subscription).await?;
 
     // Publish events to first instance
     let publisher = TestSatellitePublisher::new(nats_client.clone(), "restart-test");
@@ -292,9 +310,6 @@ async fn test_ingestd_restart_event_continuity(ctx: TestContext) -> Result<()> {
     // Stop first ingestd instance
     ingest_handle.stop().await?;
     tracing::info!("Ingestd stopped");
-
-    // Brief pause to simulate service downtime
-    sleep(Duration::from_millis(500)).await;
 
     // Start second ingestd instance
     let mut ingest_handle2 =
@@ -356,7 +371,6 @@ async fn test_ingestd_restart_event_continuity(ctx: TestContext) -> Result<()> {
 
     // Cleanup
     ingest_handle2.stop().await?;
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
 
     Ok(())
 }
@@ -369,11 +383,9 @@ async fn test_ingestd_restart_event_continuity(ctx: TestContext) -> Result<()> {
 ///
 /// This mirrors the VM multi-source test which verifies events from
 /// filesystem, terminal, desktop, and system satellites flow concurrently.
-#[sinex_test]
+#[sinex_serial_test]
 async fn test_multi_source_concurrent_ingestion(ctx: TestContext) -> Result<()> {
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
     ctx.ensure_clean().await?;
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
 
     // Be strict here: this test relies on per-source counts, so tolerate no residual events.
     let existing = ctx.pool.events().count_all().await?;
@@ -382,22 +394,18 @@ async fn test_multi_source_concurrent_ingestion(ctx: TestContext) -> Result<()> 
             "Database not empty after reset ({} events); forcing cleanup",
             existing
         );
-        ctx.force_cleanup().await?;
-        sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
         let after = ctx.pool.events().count_all().await?;
         assert_eq!(after, 0, "Database should be empty after forced cleanup");
     }
 
-    let ctx = ctx.with_nats().await?;
+    let ctx = ctx.with_shared_nats().await?;
     let nats_client = ctx.nats_client();
 
     let ingest_config = TestIngestdConfig {
-        nats_url: format!(
-            "nats://{}",
-            ctx.nats_url().expect("NATS should be available")
-        ),
+        nats_url: ctx.nats_url().expect("NATS should be available"),
         database_url: ctx.database_url().to_string(),
         work_dir: None,
+        ..Default::default()
     };
 
     let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
@@ -436,8 +444,7 @@ async fn test_multi_source_concurrent_ingestion(ctx: TestContext) -> Result<()> 
                     )
                     .await?;
 
-                // Stagger publishes slightly
-                sleep(Duration::from_millis(5)).await;
+                tokio::task::yield_now().await;
             }
             Ok::<(), color_eyre::Report>(())
         });
@@ -493,7 +500,6 @@ async fn test_multi_source_concurrent_ingestion(ctx: TestContext) -> Result<()> 
 
     // Cleanup
     ingest_handle.stop().await?;
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
 
     Ok(())
 }
@@ -508,135 +514,55 @@ async fn test_multi_source_concurrent_ingestion(ctx: TestContext) -> Result<()> 
 /// detect when a leader has failed and attempt takeover.
 #[sinex_test]
 async fn test_leadership_heartbeat_timeout_detection(ctx: TestContext) -> Result<()> {
-    // Setup: Create a leadership record with stale heartbeat
-    let service_name = "test-leadership-timeout";
-    let instance_id = uuid::Uuid::new_v4();
+    let ctx = ctx.with_nats().await?;
+    let nats_client = ctx.nats_client();
+    let js = async_nats::jetstream::new(nats_client.clone());
+    ensure_coordination_buckets(&js).await?;
 
-    // First, ensure satellite_instances has the row (FK requirement)
-    sqlx::query!(
-        r#"
-        INSERT INTO core.satellite_instances
-            (service_name, instance_id, version, start_time, last_heartbeat, host_name, metadata)
-        VALUES ($1, $2, '1.0.0', NOW(), NOW() - INTERVAL '60 seconds', 'test-host', '{}'::jsonb)
-        ON CONFLICT (instance_id) DO UPDATE
-            SET last_heartbeat = NOW() - INTERVAL '60 seconds'
-        "#,
-        service_name,
-        instance_id.to_string()
-    )
-    .execute(&ctx.pool)
-    .await?;
+    let service_name = format!("test-leadership-timeout-{}", uuid::Uuid::new_v4());
+    let stale_instance = uuid::Uuid::new_v4().to_string();
+    let standby_instance = uuid::Uuid::new_v4().to_string();
 
-    // Insert leadership record with old heartbeat (60 seconds ago)
-    sqlx::query!(
-        r#"
-        INSERT INTO core.service_leadership
-            (service_name, instance_id, acquired_at, last_heartbeat, version)
-        VALUES ($1, $2, NOW() - INTERVAL '120 seconds', NOW() - INTERVAL '60 seconds', '1.0.0')
-        ON CONFLICT (service_name) DO UPDATE
-            SET last_heartbeat = NOW() - INTERVAL '60 seconds',
-                instance_id = $2,
-                version = '1.0.0'
-        "#,
-        service_name,
-        instance_id.to_string()
-    )
-    .execute(&ctx.pool)
-    .await?;
+    let kv_client = CoordinationKvClient::new(js.clone(), service_name.clone());
 
-    // Query for stale leadership (heartbeat older than 30 seconds)
-    let stale_leaders: Vec<_> = sqlx::query!(
-        r#"
-        SELECT service_name, instance_id::text as "instance_id!", last_heartbeat
-        FROM core.service_leadership
-        WHERE service_name = $1
-          AND last_heartbeat < NOW() - INTERVAL '30 seconds'
-        "#,
-        service_name
-    )
-    .fetch_all(&ctx.pool)
-    .await?;
+    // Register leader with a stale heartbeat (60 seconds old)
+    let metadata = InstanceMetadata {
+        instance_id: stale_instance.clone(),
+        hostname: "stale-host".to_string(),
+        version: "1.0.0".to_string(),
+        started_at: (Utc::now() - ChronoDuration::seconds(120)).timestamp(),
+        last_heartbeat: (Utc::now() - ChronoDuration::seconds(60)).timestamp(),
+    };
+    kv_client.register_instance(&metadata).await?;
+    assert!(kv_client.acquire_leadership(&stale_instance).await?);
 
+    // Verify heartbeat is considered stale
+    let bucket = js.get_key_value("KV_sinex_instances").await?;
+    let key = format!("{}.{}", service_name, stale_instance);
+    let entry = bucket.entry(&key).await?.expect("metadata present");
+    let stored: InstanceMetadata = serde_json::from_slice(&entry.value)?;
+    assert!(stored.last_heartbeat < (Utc::now() - ChronoDuration::seconds(30)).timestamp());
+
+    // Standby registers and attempts takeover (should initially fail)
+    let standby_meta = InstanceMetadata {
+        instance_id: standby_instance.clone(),
+        hostname: "standby-host".to_string(),
+        version: "1.0.1".to_string(),
+        started_at: Utc::now().timestamp(),
+        last_heartbeat: Utc::now().timestamp(),
+    };
+    kv_client.register_instance(&standby_meta).await?;
     assert!(
-        !stale_leaders.is_empty(),
-        "Should detect stale leadership record"
+        !kv_client.acquire_leadership(&standby_instance).await?,
+        "Stale leader still holds CAS entry"
     );
 
-    assert_eq!(stale_leaders[0].service_name, service_name);
-    assert_eq!(stale_leaders[0].instance_id, instance_id.to_string());
-
-    // Simulate a standby detecting the timeout and attempting takeover
-    let new_instance_id = uuid::Uuid::new_v4();
-
-    // Register new instance
-    sqlx::query!(
-        r#"
-        INSERT INTO core.satellite_instances
-            (service_name, instance_id, version, start_time, last_heartbeat, host_name, metadata)
-        VALUES ($1, $2, '1.0.1', NOW(), NOW(), 'standby-host', '{}'::jsonb)
-        ON CONFLICT (instance_id) DO UPDATE
-            SET last_heartbeat = NOW()
-        "#,
-        service_name,
-        new_instance_id.to_string()
-    )
-    .execute(&ctx.pool)
-    .await?;
-
-    // Takeover leadership
-    let takeover_result: Option<_> = sqlx::query!(
-        r#"
-        UPDATE core.service_leadership
-        SET instance_id = $2,
-            acquired_at = NOW(),
-            last_heartbeat = NOW()
-        WHERE service_name = $1
-          AND last_heartbeat < NOW() - INTERVAL '30 seconds'
-        RETURNING service_name
-        "#,
-        service_name,
-        new_instance_id.to_string()
-    )
-    .fetch_optional(&ctx.pool)
-    .await?;
-
+    // Simulate timeout detector releasing stale leadership then retry
+    kv_client.release_leadership(&stale_instance).await?;
     assert!(
-        takeover_result.is_some(),
-        "Standby should be able to takeover stale leadership"
+        kv_client.acquire_leadership(&standby_instance).await?,
+        "Standby should take over once stale leader is released"
     );
-
-    // Verify new leader
-    let current_leader = sqlx::query!(
-        r#"
-        SELECT instance_id::text as "instance_id!"
-        FROM core.service_leadership
-        WHERE service_name = $1
-        "#,
-        service_name
-    )
-    .fetch_one(&ctx.pool)
-    .await?;
-
-    assert_eq!(
-        current_leader.instance_id,
-        new_instance_id.to_string(),
-        "New instance should be the leader"
-    );
-
-    // Cleanup
-    sqlx::query!(
-        "DELETE FROM core.service_leadership WHERE service_name = $1",
-        service_name
-    )
-    .execute(&ctx.pool)
-    .await?;
-
-    sqlx::query!(
-        "DELETE FROM core.satellite_instances WHERE service_name = $1",
-        service_name
-    )
-    .execute(&ctx.pool)
-    .await?;
 
     Ok(())
 }
@@ -647,97 +573,53 @@ async fn test_leadership_heartbeat_timeout_detection(ctx: TestContext) -> Result
 /// multiple instances attempt simultaneously.
 #[sinex_test]
 async fn test_concurrent_leadership_acquisition(ctx: TestContext) -> Result<()> {
+    let ctx = ctx.with_nats().await?;
+    let nats = ctx.nats_handle()?;
+    let js = async_nats::jetstream::new(ctx.nats_client());
+    ensure_coordination_buckets(&js).await?;
+
     let service_name = format!("test-concurrent-leadership-{}", uuid::Uuid::new_v4());
     let acquisition_count = Arc::new(AtomicU32::new(0));
 
-    // Ensure clean state
-    sqlx::query!(
-        "DELETE FROM core.service_leadership WHERE service_name = $1",
-        &service_name
-    )
-    .execute(&ctx.pool)
-    .await?;
-
     let mut handles = vec![];
 
-    // Spawn multiple instances trying to acquire leadership
-    for instance_num in 0..10 {
-        let pool = ctx.pool.clone();
+    for idx in 0..10 {
+        let nats = nats.clone();
         let service = service_name.clone();
-        let count = acquisition_count.clone();
+        let counter = acquisition_count.clone();
 
         let handle = tokio::spawn(async move {
-            let instance_id = uuid::Uuid::new_v4();
+            let client = nats.connect().await.unwrap();
+            let js = async_nats::jetstream::new(client);
+            let kv_client = CoordinationKvClient::new(js, service);
+            let instance_id = uuid::Uuid::new_v4().to_string();
 
-            // Register instance first
-            sqlx::query!(
-                r#"
-                INSERT INTO core.satellite_instances
-                    (service_name, instance_id, version, start_time, last_heartbeat, host_name, metadata)
-                VALUES ($1, $2, '1.0.0', NOW(), NOW(), $3, '{}'::jsonb)
-                ON CONFLICT (instance_id) DO NOTHING
-                "#,
-                &service,
-                instance_id.to_string(),
-                format!("instance-{}", instance_num)
-            )
-            .execute(&pool)
-            .await?;
+            let metadata = InstanceMetadata {
+                instance_id: instance_id.clone(),
+                hostname: format!("instance-{idx}"),
+                version: "1.0.0".to_string(),
+                started_at: Utc::now().timestamp(),
+                last_heartbeat: Utc::now().timestamp(),
+            };
+            kv_client.register_instance(&metadata).await.unwrap();
 
-            // Try to acquire leadership
-            let result: Option<_> = sqlx::query!(
-                r#"
-                INSERT INTO core.service_leadership
-                    (service_name, instance_id, acquired_at, last_heartbeat, version)
-                VALUES ($1, $2, NOW(), NOW(), '1.0.0')
-                ON CONFLICT (service_name) DO NOTHING
-                RETURNING service_name
-                "#,
-                &service,
-                instance_id.to_string()
-            )
-            .fetch_optional(&pool)
-            .await?;
-
-            if result.is_some() {
-                count.fetch_add(1, Ordering::SeqCst);
-                tracing::info!("Instance {} acquired leadership", instance_num);
+            if kv_client.acquire_leadership(&instance_id).await.unwrap() {
+                counter.fetch_add(1, Ordering::SeqCst);
             }
-
-            Ok::<_, sinex_core::SinexError>(())
         });
 
         handles.push(handle);
     }
 
-    // Wait for all attempts
     for handle in handles {
-        let _ = handle.await;
+        handle.await?;
     }
 
-    let acquisitions = acquisition_count.load(Ordering::SeqCst);
-
-    // Exactly one instance should have acquired leadership
     assert_eq!(
-        acquisitions, 1,
-        "Exactly one instance should acquire leadership, got {}",
-        acquisitions
+        acquisition_count.load(Ordering::SeqCst),
+        1,
+        "Only one instance should acquire leadership"
     );
-
-    // Cleanup
-    sqlx::query!(
-        "DELETE FROM core.service_leadership WHERE service_name = $1",
-        &service_name
-    )
-    .execute(&ctx.pool)
-    .await?;
-
-    sqlx::query!(
-        "DELETE FROM core.satellite_instances WHERE service_name = $1",
-        &service_name
-    )
-    .execute(&ctx.pool)
-    .await?;
 
     Ok(())
 }
@@ -752,7 +634,7 @@ async fn test_concurrent_leadership_acquisition(ctx: TestContext) -> Result<()> 
 /// acknowledged position after a disconnect/reconnect cycle.
 #[sinex_test]
 async fn test_jetstream_consumer_durable_recovery(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_nats().await?;
+    let ctx = ctx.with_shared_nats().await?;
     let nats_client = ctx.nats_client();
     let js = jetstream::new(nats_client.clone());
 
@@ -827,15 +709,10 @@ async fn test_jetstream_consumer_durable_recovery(ctx: TestContext) -> Result<()
             Err(e) => {
                 let msg = e.to_string();
                 if is_jetstream_no_messages_error(&msg) {
-                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     continue;
                 }
                 return Err(eyre!(e));
             }
-        }
-
-        if acked_count < 3 {
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
     }
     assert_eq!(
@@ -898,7 +775,6 @@ async fn test_jetstream_consumer_durable_recovery(ctx: TestContext) -> Result<()
             Err(e) => {
                 let msg = e.to_string();
                 if is_jetstream_no_messages_error(&msg) {
-                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     continue;
                 }
                 return Err(eyre!(e));
@@ -923,7 +799,7 @@ async fn test_jetstream_consumer_durable_recovery(ctx: TestContext) -> Result<()
 /// Verifies that the publisher handles temporary connection issues gracefully.
 #[sinex_test]
 async fn test_publisher_reconnection_resilience(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_nats().await?;
+    let ctx = ctx.with_shared_nats().await?;
     let nats_client = ctx.nats_client();
     ensure_raw_event_streams(&nats_client, ctx.env()).await?;
     let publisher = Arc::new(TestSatellitePublisher::new(

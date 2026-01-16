@@ -4,9 +4,10 @@ use serde_json::Value as JsonValue;
 use sinex_core::db::replay::{DryRunExecutor, ReplayConfig};
 use sinex_core::{Event, Id};
 use sinex_test_utils::sinex_test;
+use sinex_test_utils::TestResult;
 
 #[sinex_test]
-fn dry_run_executor_tracks_operations() -> color_eyre::eyre::Result<()> {
+fn dry_run_executor_tracks_operations() -> TestResult<()> {
     let mut executor = DryRunExecutor::new(ReplayConfig {
         dry_run: true,
         dry_run_verbose: true,
@@ -30,7 +31,7 @@ fn dry_run_executor_tracks_operations() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn dry_run_executor_captures_dependencies() -> color_eyre::eyre::Result<()> {
+fn dry_run_executor_captures_dependencies() -> TestResult<()> {
     let mut executor = DryRunExecutor::new(ReplayConfig::default());
     let event_id = Id::<Event<JsonValue>>::new();
     let deps = vec![Id::<Event<JsonValue>>::new(), Id::<Event<JsonValue>>::new()];

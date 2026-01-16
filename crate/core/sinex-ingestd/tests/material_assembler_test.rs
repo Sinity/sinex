@@ -1,10 +1,10 @@
 //! Material assembler corruption coverage.
 
-use async_nats::{jetstream, Client};
+use async_nats::jetstream;
 use serde_json::json;
 use sinex_ingestd::{IngestdResult, MaterialAssembler};
-use sinex_satellite_sdk::annex::{AnnexConfig, GitAnnex};
-use sinex_test_utils::{prelude::*, EphemeralNats};
+use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
+use sinex_test_utils::prelude::*;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
@@ -24,8 +24,6 @@ async fn fake_annex() -> TestResult<(Arc<GitAnnex>, tempfile::TempDir)> {
 
 async fn start_assembler(
     ctx: &TestContext,
-    nats: &EphemeralNats,
-    nats_client: Client,
     existing_state_path: Option<std::path::PathBuf>,
 ) -> TestResult<(
     tokio::task::JoinHandle<IngestdResult<()>>,
@@ -34,6 +32,8 @@ async fn start_assembler(
     Option<tempfile::TempDir>,
     std::path::PathBuf,
 )> {
+    let nats = ctx.nats_handle()?;
+    let nats_client = ctx.nats_client();
     let js = nats.jetstream_with_client(nats_client.clone());
 
     let (annex, annex_dir) = fake_annex().await?;
@@ -51,6 +51,8 @@ async fn start_assembler(
         ctx.pool.clone(),
         annex,
         state_path.clone(),
+        Some(ctx.pipeline_namespace().prefix().to_string()),
+        1_000,
     )?;
 
     let handle = tokio::spawn(async move { assembler.run().await });
@@ -59,56 +61,24 @@ async fn start_assembler(
 
 #[sinex_test]
 async fn assembler_rejects_corrupted_slice_and_records_dlq(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_nats().await?;
-    let nats = EphemeralNats::start().await?;
-    let nats_client = nats.connect().await?;
-    let (handle, js, _annex_guard, _state_guard, _) =
-        start_assembler(&ctx, &nats, nats_client.clone(), None).await?;
+    let ctx = ctx.with_shared_nats().await?;
+    let nats_client = ctx.nats_client();
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
+    let (handle, js, _annex_guard, _state_guard, _) = start_assembler(&ctx, None).await?;
 
     let material_id = sinex_core::types::ulid::Ulid::new();
-    let env = ctx.env();
-    let dlq_subject = env.nats_subject("events.dlq.ingestd");
+    let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.ingestd");
     let mut dlq_sub = nats_client.subscribe(dlq_subject.clone()).await?;
 
-    // Wait for assembler to bootstrap streams; skip silently if conflicting config exists.
-    let stream_names = [
-        env.nats_stream_name("SOURCE_MATERIAL_BEGIN"),
-        env.nats_stream_name("SOURCE_MATERIAL_SLICES"),
-        env.nats_stream_name("SOURCE_MATERIAL_END"),
-    ];
-    for name in stream_names {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-        loop {
-            match js.get_stream(&name).await {
-                Ok(_) => break,
-                Err(err) => {
-                    let msg = err.to_string();
-                    if msg.contains("different configuration")
-                        || msg.contains("stream name already in use with a different configuration")
-                    {
-                        handle.abort();
-                        return Ok(());
-                    }
-                    if tokio::time::Instant::now() > deadline {
-                        // If assembler died while bootstrapping, surface that; otherwise skip.
-                        if handle.is_finished() {
-                            if let Ok(res) = handle.await {
-                                if let Err(e) = res {
-                                    bail!("assembler exited early: {e}");
-                                }
-                            }
-                        }
-                        return Ok(());
-                    }
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                }
-            }
-        }
-    }
+    sinex_node_sdk::AcquisitionManager::bootstrap_streams_with_namespace(
+        &nats_client,
+        Some(&namespace),
+    )
+    .await?;
 
     // Publish begin
     js.publish(
-        env.nats_subject("source_material.begin"),
+        ctx.pipeline_namespace().subject("source_material.begin"),
         json!({
             "material_id": material_id.to_string(),
             "material_kind": "test",
@@ -130,7 +100,8 @@ async fn assembler_rejects_corrupted_slice_and_records_dlq(ctx: TestContext) -> 
     headers.insert("Chunk-Hash", "deadbeef");
 
     js.publish_with_headers(
-        env.nats_subject(&format!("source_material.slices.{}", material_id)),
+        ctx.pipeline_namespace()
+            .subject(&format!("source_material.slices.{}", material_id)),
         headers,
         b"payload".to_vec().into(),
     )
@@ -139,7 +110,7 @@ async fn assembler_rejects_corrupted_slice_and_records_dlq(ctx: TestContext) -> 
 
     // Publish end to trigger assembly.
     js.publish(
-        env.nats_subject("source_material.end"),
+        ctx.pipeline_namespace().subject("source_material.end"),
         json!({
             "material_id": material_id.to_string(),
             "ended_at": chrono::Utc::now().to_rfc3339(),
@@ -189,17 +160,19 @@ async fn assembler_rejects_corrupted_slice_and_records_dlq(ctx: TestContext) -> 
 
 #[sinex_test]
 async fn assembler_handles_early_slices_before_begin(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_nats().await?;
-    let nats = EphemeralNats::start().await?;
-    let nats_client = nats.connect().await?;
-    let (handle, js, _annex_guard, state_guard, state_path) =
-        start_assembler(&ctx, &nats, nats_client.clone(), None).await?;
+    let ctx = ctx.with_shared_nats().await?;
+    let nats_client = ctx.nats_client();
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
+    let (handle, js, _annex_guard, state_guard, state_path) = start_assembler(&ctx, None).await?;
 
     // Ensure streams are bootstrapped before publishing
-    sinex_satellite_sdk::AcquisitionManager::bootstrap_streams(&nats_client).await?;
+    sinex_node_sdk::AcquisitionManager::bootstrap_streams_with_namespace(
+        &nats_client,
+        Some(&namespace),
+    )
+    .await?;
 
     let material_id = sinex_core::types::ulid::Ulid::new();
-    let env = ctx.env();
 
     // 1. Publish Slice BEFORE Begin
     let data = b"early slice data";
@@ -209,19 +182,31 @@ async fn assembler_handles_early_slices_before_begin(ctx: TestContext) -> TestRe
     headers.insert("Chunk-Hash", chunk_hash.as_str());
 
     js.publish_with_headers(
-        env.nats_subject(&format!("source_material.slices.{}", material_id)),
+        ctx.pipeline_namespace()
+            .subject(&format!("source_material.slices.{}", material_id)),
         headers,
         data.to_vec().into(),
     )
     .await?
     .await?;
 
-    // Give it a moment to process slice (creating placeholder)
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    let material_state_dir = state_path.join(material_id.to_string());
+    sinex_test_utils::timing_utils::WaitHelpers::wait_for_condition(
+        || {
+            let material_state_dir = material_state_dir.clone();
+            async move {
+                Ok::<bool, sinex_core::types::error::SinexError>(
+                    material_state_dir.exists(),
+                )
+            }
+        },
+        5,
+    )
+    .await?;
 
     // 2. Publish Begin
     js.publish(
-        env.nats_subject("source_material.begin"),
+        ctx.pipeline_namespace().subject("source_material.begin"),
         json!({
             "material_id": material_id.to_string(),
             "material_kind": "test",
@@ -237,7 +222,7 @@ async fn assembler_handles_early_slices_before_begin(ctx: TestContext) -> TestRe
 
     // 3. Publish End
     js.publish(
-        env.nats_subject("source_material.end"),
+        ctx.pipeline_namespace().subject("source_material.end"),
         json!({
             "material_id": material_id.to_string(),
             "ended_at": chrono::Utc::now().to_rfc3339(),
@@ -271,12 +256,18 @@ async fn assembler_handles_early_slices_before_begin(ctx: TestContext) -> TestRe
     )
     .await?;
 
-    // Verify state directory was cleaned up
-    let material_state_dir = state_path.join(material_id.to_string());
-    assert!(
-        !material_state_dir.exists(),
-        "State directory should be removed after success"
-    );
+    sinex_test_utils::timing_utils::WaitHelpers::wait_for_condition(
+        || {
+            let material_state_dir = material_state_dir.clone();
+            async move {
+                Ok::<bool, sinex_core::types::error::SinexError>(
+                    !material_state_dir.exists(),
+                )
+            }
+        },
+        5,
+    )
+    .await?;
 
     // Keep guard alive
     let _ = state_guard;
@@ -286,23 +277,25 @@ async fn assembler_handles_early_slices_before_begin(ctx: TestContext) -> TestRe
 
 #[sinex_test]
 async fn assembler_routes_empty_material_to_dlq(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_nats().await?;
-    let nats = EphemeralNats::start().await?;
-    let nats_client = nats.connect().await?;
-    let (handle, js, _annex_guard, _state_guard, _) =
-        start_assembler(&ctx, &nats, nats_client.clone(), None).await?;
+    let ctx = ctx.with_shared_nats().await?;
+    let nats_client = ctx.nats_client();
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
+    let (handle, js, _annex_guard, _state_guard, _) = start_assembler(&ctx, None).await?;
 
     let material_id = sinex_core::types::ulid::Ulid::new();
-    let env = ctx.env();
-    let dlq_subject = env.nats_subject("events.dlq.ingestd");
+    let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.ingestd");
     let mut dlq_sub = nats_client.subscribe(dlq_subject.clone()).await?;
 
     // Ensure streams are bootstrapped
-    sinex_satellite_sdk::AcquisitionManager::bootstrap_streams(&nats_client).await?;
+    sinex_node_sdk::AcquisitionManager::bootstrap_streams_with_namespace(
+        &nats_client,
+        Some(&namespace),
+    )
+    .await?;
 
     // Publish Begin
     js.publish(
-        env.nats_subject("source_material.begin"),
+        ctx.pipeline_namespace().subject("source_material.begin"),
         json!({
             "material_id": material_id.to_string(),
             "material_kind": "test",
@@ -318,7 +311,7 @@ async fn assembler_routes_empty_material_to_dlq(ctx: TestContext) -> TestResult<
 
     // Publish End with 0 bytes
     js.publish(
-        env.nats_subject("source_material.end"),
+        ctx.pipeline_namespace().subject("source_material.end"),
         json!({
             "material_id": material_id.to_string(),
             "ended_at": chrono::Utc::now().to_rfc3339(),
@@ -355,22 +348,24 @@ async fn assembler_routes_empty_material_to_dlq(ctx: TestContext) -> TestResult<
 
 #[sinex_test]
 async fn assembler_cleans_up_state_on_corruption(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_nats().await?;
-    let nats = EphemeralNats::start().await?;
-    let nats_client = nats.connect().await?;
-    let (handle, js, _annex_guard, state_guard, state_path) =
-        start_assembler(&ctx, &nats, nats_client.clone(), None).await?;
+    let ctx = ctx.with_shared_nats().await?;
+    let nats_client = ctx.nats_client();
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
+    let (handle, js, _annex_guard, state_guard, state_path) = start_assembler(&ctx, None).await?;
 
     let material_id = sinex_core::types::ulid::Ulid::new();
-    let env = ctx.env();
-    let dlq_subject = env.nats_subject("events.dlq.ingestd");
+    let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.ingestd");
     let mut dlq_sub = nats_client.subscribe(dlq_subject.clone()).await?;
 
-    sinex_satellite_sdk::AcquisitionManager::bootstrap_streams(&nats_client).await?;
+    sinex_node_sdk::AcquisitionManager::bootstrap_streams_with_namespace(
+        &nats_client,
+        Some(&namespace),
+    )
+    .await?;
 
     // Begin
     js.publish(
-        env.nats_subject("source_material.begin"),
+        ctx.pipeline_namespace().subject("source_material.begin"),
         json!({
             "material_id": material_id.to_string(),
             "material_kind": "test",
@@ -386,7 +381,8 @@ async fn assembler_cleans_up_state_on_corruption(ctx: TestContext) -> TestResult
 
     // Slice
     js.publish(
-        env.nats_subject(&format!("source_material.slices.{}", material_id)),
+        ctx.pipeline_namespace()
+            .subject(&format!("source_material.slices.{}", material_id)),
         b"data".to_vec().into(),
     )
     .await?
@@ -394,7 +390,7 @@ async fn assembler_cleans_up_state_on_corruption(ctx: TestContext) -> TestResult
 
     // End with WRONG HASH
     js.publish(
-        env.nats_subject("source_material.end"),
+        ctx.pipeline_namespace().subject("source_material.end"),
         json!({
             "material_id": material_id.to_string(),
             "ended_at": chrono::Utc::now().to_rfc3339(),
@@ -408,15 +404,37 @@ async fn assembler_cleans_up_state_on_corruption(ctx: TestContext) -> TestResult
     .await?
     .await?;
 
-    // Wait for DLQ
-    let _ = timeout(Duration::from_secs(5), dlq_sub.next()).await?;
+    // Wait for DLQ entry for the corrupted material.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Ok(Some(msg)) = timeout(Duration::from_millis(500), dlq_sub.next()).await {
+            let payload: serde_json::Value = serde_json::from_slice(&msg.payload)?;
+            if payload["error"] == "material_hash_mismatch"
+                && payload["material_id"] == material_id.to_string()
+            {
+                break;
+            }
+        }
+
+        if tokio::time::Instant::now() > deadline {
+            bail!("timed out waiting for material_hash_mismatch DLQ entry");
+        }
+    }
 
     // Verify cleanup happened despite failure
     let material_state_dir = state_path.join(material_id.to_string());
-    assert!(
-        !material_state_dir.exists(),
-        "State directory should be removed after hash mismatch failure"
-    );
+    sinex_test_utils::timing_utils::WaitHelpers::wait_for_condition(
+        || {
+            let material_state_dir = material_state_dir.clone();
+            async move {
+                Ok::<bool, sinex_core::types::error::SinexError>(
+                    !material_state_dir.exists(),
+                )
+            }
+        },
+        10,
+    )
+    .await?;
 
     let _ = state_guard;
     handle.abort();
@@ -425,22 +443,24 @@ async fn assembler_cleans_up_state_on_corruption(ctx: TestContext) -> TestResult
 
 #[sinex_test]
 async fn assembler_handles_end_before_begin(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_nats().await?;
-    let nats = EphemeralNats::start().await?;
-    let nats_client = nats.connect().await?;
-    let (handle, js, _annex_guard, _state_guard, _) =
-        start_assembler(&ctx, &nats, nats_client.clone(), None).await?;
+    let ctx = ctx.with_shared_nats().await?;
+    let nats_client = ctx.nats_client();
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
+    let (handle, js, _annex_guard, _state_guard, state_path) = start_assembler(&ctx, None).await?;
 
     let material_id = sinex_core::types::ulid::Ulid::new();
-    let env = ctx.env();
-
-    sinex_satellite_sdk::AcquisitionManager::bootstrap_streams(&nats_client).await?;
+    sinex_node_sdk::AcquisitionManager::bootstrap_streams_with_namespace(
+        &nats_client,
+        Some(&namespace),
+    )
+    .await?;
 
     // 1. Slice
     let data = b"payload";
     let hash = blake3::hash(data).to_hex().to_string();
     js.publish(
-        env.nats_subject(&format!("source_material.slices.{}", material_id)),
+        ctx.pipeline_namespace()
+            .subject(&format!("source_material.slices.{}", material_id)),
         data.to_vec().into(),
     )
     .await?
@@ -448,7 +468,7 @@ async fn assembler_handles_end_before_begin(ctx: TestContext) -> TestResult<()> 
 
     // 2. End (should be buffered/retried because no Begin yet)
     js.publish(
-        env.nats_subject("source_material.end"),
+        ctx.pipeline_namespace().subject("source_material.end"),
         json!({
             "material_id": material_id.to_string(),
             "ended_at": chrono::Utc::now().to_rfc3339(),
@@ -462,11 +482,23 @@ async fn assembler_handles_end_before_begin(ctx: TestContext) -> TestResult<()> 
     .await?
     .await?;
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    let material_state_dir = state_path.join(material_id.to_string());
+    sinex_test_utils::timing_utils::WaitHelpers::wait_for_condition(
+        || {
+            let material_state_dir = material_state_dir.clone();
+            async move {
+                Ok::<bool, sinex_core::types::error::SinexError>(
+                    material_state_dir.exists(),
+                )
+            }
+        },
+        5,
+    )
+    .await?;
 
     // 3. Begin (arrives late)
     js.publish(
-        env.nats_subject("source_material.begin"),
+        ctx.pipeline_namespace().subject("source_material.begin"),
         json!({
             "material_id": material_id.to_string(),
             "material_kind": "test",
@@ -488,23 +520,21 @@ async fn assembler_handles_end_before_begin(ctx: TestContext) -> TestResult<()> 
 #[sinex_test]
 
 async fn assembler_is_idempotent_for_duplicate_slices(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_nats().await?;
+    let ctx = ctx.with_shared_nats().await?;
+    let nats_client = ctx.nats_client();
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
+    let (handle, js, _annex_guard, _state_guard, _) = start_assembler(&ctx, None).await?;
 
-    let nats = EphemeralNats::start().await?;
-
-    let nats_client = nats.connect().await?;
-
-    let (handle, js, _annex_guard, _state_guard, _) =
-        start_assembler(&ctx, &nats, nats_client.clone(), None).await?;
-
-    sinex_satellite_sdk::AcquisitionManager::bootstrap_streams(&nats_client).await?;
+    sinex_node_sdk::AcquisitionManager::bootstrap_streams_with_namespace(
+        &nats_client,
+        Some(&namespace),
+    )
+    .await?;
 
     let material_id = sinex_core::types::ulid::Ulid::new();
 
-    let env = ctx.env();
-
     js.publish(
-        env.nats_subject("source_material.begin"),
+        ctx.pipeline_namespace().subject("source_material.begin"),
         json!({
 
             "material_id": material_id.to_string(),
@@ -529,7 +559,8 @@ async fn assembler_is_idempotent_for_duplicate_slices(ctx: TestContext) -> TestR
     let chunk = b"data";
 
     js.publish_with_headers(
-        env.nats_subject(&format!("source_material.slices.{}", material_id)),
+        ctx.pipeline_namespace()
+            .subject(&format!("source_material.slices.{}", material_id)),
         {
             let mut h = async_nats::HeaderMap::new();
             h.insert("Offset", "0");
@@ -543,7 +574,8 @@ async fn assembler_is_idempotent_for_duplicate_slices(ctx: TestContext) -> TestR
     // Publish Slice 0 AGAIN
 
     js.publish_with_headers(
-        env.nats_subject(&format!("source_material.slices.{}", material_id)),
+        ctx.pipeline_namespace()
+            .subject(&format!("source_material.slices.{}", material_id)),
         {
             let mut h = async_nats::HeaderMap::new();
             h.insert("Offset", "0");
@@ -559,7 +591,7 @@ async fn assembler_is_idempotent_for_duplicate_slices(ctx: TestContext) -> TestR
     let hash = blake3::hash(chunk).to_hex().to_string();
 
     js.publish(
-        env.nats_subject("source_material.end"),
+        ctx.pipeline_namespace().subject("source_material.end"),
         json!({
 
             "material_id": material_id.to_string(),

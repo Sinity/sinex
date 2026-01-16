@@ -5,7 +5,7 @@
 > This README focuses on the crate itself; API-level details are in
 > `docs/overview.md` and `docs/testing_quality_overview.md`.
 
-A comprehensive testing framework for the Sinex event-driven data capture system, providing database isolation, fixture management, and robust testing patterns.
+A comprehensive testing framework for the Sinex event-driven data capture system, providing database isolation, dataset seeding, and robust testing patterns.
 
 ## Quick Start
 
@@ -13,13 +13,17 @@ A comprehensive testing framework for the Sinex event-driven data capture system
 use sinex_test_utils::prelude::*;
 
 #[sinex_test]
-async fn test_event_creation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    // Create test event using production APIs
-    let event = ctx.create_test_event(
-        "fs-watcher",
-        "file.created",
-        json!({"path": "/test.txt", "size": 1024})
-    ).await?;
+async fn test_event_creation(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().await?;
+
+    // Create test event using the real pipeline
+    let event = ctx
+        .publish_json_event(
+            "fs-watcher",
+            "file.created",
+            json!({"path": "/test.txt", "size": 1024})
+        )
+        .await?;
     
     // Query using direct repository access
     let events = ctx.pool.events().get_recent(10).await?;
@@ -37,7 +41,7 @@ async fn test_event_creation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
 
 - **Database Isolation**: Each test gets its own isolated database from a pooled set of databases
 - **Production API Usage**: Tests use real production APIs, not mocks or wrappers
-- **Rich Fixtures**: Pre-built fixtures for common testing scenarios
+- **Dataset Seeding**: Repeatable seed helpers for common testing scenarios
 - **Comprehensive Assertions**: Context-aware assertions with clear error messages
 - **Timing & Synchronization**: Tools for testing concurrent operations
 - **Property Testing**: Integration with proptest for robust edge case testing
@@ -73,15 +77,15 @@ costs amortized across the suite:
 - Databases are reset/cleaned on acquisition (so each test starts from a known-clean state)
 - Pool recycling for optimal performance
 
-#### Configuration knobs
+#### Pool sizing
 
-- `SINEX_TESTUTILS_POOL_SIZE`: number of pool DBs (default: `available_parallelism` clamped to `8..=32`)
-- `SINEX_TESTUTILS_CONN_BUDGET`: overall connection budget across the pool (default: `480`)
-- `SINEX_TESTUTILS_SLOT_MAX_CONNECTIONS`: per-test DB pool max connections (default: `4`)
-- `SINEX_TESTUTILS_ADMIN_MAX_CONNECTIONS`: admin pool max connections (default: `max(1, slot_max)` clamped to `<=8`)
+- Pool size defaults to 2× Nextest test threads (num-cpus by default), with a minimum of `64`.
+- The pool shrinks automatically if PostgreSQL `max_connections` would be exceeded.
+- Per-test DB pools cap at 4 connections; the admin pool caps at 8.
 
-Under `cargo nextest`, pool DBs are lazily provisioned (created from a shared template DB on-demand),
-which avoids doing heavy DDL in every per-test process.
+Under Nextest, pool DBs are lazily provisioned (created from a shared template DB on-demand). Use
+`cargo xtask test --prime` (or `cargo run -p sinex-test-utils --bin db_prime`) to pre-provision
+the pool before running the suite.
 
 ### Production API Integration
 
@@ -96,7 +100,7 @@ ctx.pool.events().insert(event).await?;
 let events = ctx.pool.events().get_by_source(&source, limit, offset).await?;
 
 // ✅ Test utilities for convenience
-let event = ctx.create_test_event("source", "type", json!({})).await?;
+let event = ctx.publish_json_event("source", "type", json!({})).await?;
 ```
 
 ## Core Components
@@ -112,8 +116,9 @@ pub struct TestContext {
 }
 
 impl TestContext {
-    // Event creation helpers
-    pub async fn create_test_event(&self, source: &str, event_type: &str, payload: JsonValue) -> Result<RawEvent>;
+    // Pipeline event helpers
+    pub async fn publish_json_event(&self, source: &str, event_type: &str, payload: JsonValue) -> TestResult<Event<JsonValue>>;
+    pub async fn publish_test_event(&self, event: &Event<JsonValue>) -> TestResult<Ulid>;
     
     // Rich assertions
     pub fn assert(&self, context: &str) -> AssertionBuilder;
@@ -128,23 +133,22 @@ impl TestContext {
 }
 ```
 
-### Fixtures
+### Dataset Seeding
 
-Reusable test data with proper lifecycle management:
+Reusable dataset seeds for repeatable setups:
 
 ```rust
-// Standard fixtures
-let session = fixtures::standard_user_session(&ctx).await?;
-let dataset = fixtures::performance_dataset(&ctx).await?;
-let errors = fixtures::error_scenarios(&ctx).await?;
+use sinex_test_utils::dataset_seeds::{seed_events_via_pipeline, EventSpec, SeedClock};
 
-// Parameterized fixtures
-let large_dataset = fixtures::performance_dataset_with_size(&ctx, 10_000).await?;
-let custom_session = fixtures::user_session_with_params(&ctx, 100, 10).await?;
-
-// Specialized fixtures
-let concurrency = fixtures::concurrency_test_fixture(&ctx, 5, 20).await?;
-let validation = fixtures::schema_validation_fixture(&ctx).await?;
+let clock = SeedClock::default();
+let specs = vec![
+    EventSpec::new("fs-watcher", "file.created", json!({"path": "/tmp/a"})),
+    EventSpec::new("terminal", "command.executed", json!({"command": "ls"})),
+];
+let ctx = ctx.with_nats().await?;
+let pipeline = ctx.pipeline().await?;
+let ids = seed_events_via_pipeline(&pipeline, &clock, &specs).await?;
+assert_eq!(ids.len(), 2);
 ```
 
 ### Rich Assertions
@@ -168,9 +172,9 @@ ctx.assert("user session validation")
 
 ```rust
 #[sinex_test]
-async fn test_filesystem_event_processing(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_filesystem_event_processing(ctx: TestContext) -> TestResult<()> {
     // Create filesystem event
-    let event = ctx.create_test_event(
+    let event = ctx.publish_json_event(
         "fs-watcher",
         "file.created",
         json!({
@@ -200,7 +204,7 @@ async fn test_filesystem_event_processing(ctx: TestContext) -> color_eyre::eyre:
 
 ```rust
 #[sinex_test]
-async fn test_concurrent_event_insertion(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_concurrent_event_insertion(ctx: TestContext) -> TestResult<()> {
     let barrier = ctx.timing().barrier(3);
     let mut handles = vec![];
     
@@ -244,46 +248,22 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> color_eyre::eyre::
 
 ```rust
 #[sinex_test]
-async fn test_full_event_pipeline(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    // Load realistic test scenario
-    let session = fixtures::standard_user_session(&ctx).await?;
-    
-    // Verify pipeline components
-    assert!(!session.event_ids.is_empty());
-    assert!(session.checkpoint_id.is_some());
-    
-    // Test query operations
+async fn test_full_event_pipeline(ctx: TestContext) -> TestResult<()> {
+    use sinex_test_utils::dataset_seeds::{seed_events_via_pipeline, EventSpec, SeedClock};
+
+    let clock = SeedClock::default();
+    let specs = vec![
+        EventSpec::new("fs-watcher", "file.created", json!({"path": "/tmp/a"})),
+        EventSpec::new("terminal", "command.executed", json!({"command": "ls"})),
+    ];
+    let ctx = ctx.with_nats().await?;
+    let pipeline = ctx.pipeline().await?;
+    let ids = seed_events_via_pipeline(&pipeline, &clock, &specs).await?;
+    assert!(!ids.is_empty());
+
     let recent_events = ctx.pool.events().get_recent(10).await?;
-    let checkpoint = ctx.pool.checkpoints()
-        .get_by_id(&session.checkpoint_id.unwrap())
-        .await?;
-    
-    ctx.assert("pipeline integration")
-        .not_empty(&recent_events)?
-        .some(&checkpoint)?;
-    
-    Ok(())
-}
-```
+    ctx.assert("pipeline integration").not_empty(&recent_events)?;
 
-## Error Testing
-
-```rust
-use sinex_test_utils::error_testing::*;
-
-#[sinex_test]
-async fn test_validation_errors(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    let tester = ValidationTester::new(&ctx);
-    
-    // Test invalid event source
-    let result = tester.test_validation_case("empty_source", || async {
-        ctx.create_test_event("", "valid.type", json!({})).await
-    }).await;
-    
-    assert!(result.is_err());
-    ctx.assert("validation error")
-        .error_contains(&result, "source")?;
-    
     Ok(())
 }
 ```
@@ -296,10 +276,10 @@ mod benchmarks {
     use super::*;
     
     #[sinex_bench(args = [100, 1000, 10000])]
-    async fn bench_batch_insert(count: usize) -> color_eyre::eyre::Result<()> {
+    async fn bench_batch_insert(count: usize) -> TestResult<()> {
         let events = generate_test_events(count);
         let (_, duration) = measure_operation(|| async {
-            insert_events_batch(&events).await
+            seed_events_via_scope(ctx.pipeline().await?, &SeedClock::default(), &events).await
         }).await?;
         
         println!("Inserted {} events in {:?}", count, duration);
@@ -316,10 +296,10 @@ The test utilities can be configured via environment variables:
 # Database settings (usually handled by nix develop)
 export DATABASE_URL="postgresql://sinex:***REDACTED_PASSWORD***@localhost/sinex_test_template"
 
-# Test-specific settings
-export SINEX_TEST_TIMEOUT=30        # Default test timeout in seconds
-export SINEX_TEST_DB_POOL_SIZE=64   # Number of test databases in pool
-export SINEX_TEST_CLEANUP=true      # Auto-cleanup after tests
+# Test harness overrides (optional)
+export SINEX_PROPTEST_CASES=256              # Override proptest cases
+export SINEX_PROPTEST_DIR=target/proptest-regressions
+export SINEX_TEST_FAIL_DIR=/tmp/sinex-failures
 ```
 
 ## Feature Flags
@@ -330,7 +310,7 @@ export SINEX_TEST_CLEANUP=true      # Auto-cleanup after tests
 
 ## Documentation
 
-- **[docs/overview.md](./docs/overview.md)** - API reference, fixtures, timing utilities, assertions
+- **[docs/overview.md](./docs/overview.md)** - API reference, dataset seeding, timing utilities, assertions
 - **[API Documentation](https://docs.rs/sinex-test-utils)** - Generated API docs
 - **[Examples](./tests/)** - Test examples and integration tests
 
@@ -353,16 +333,16 @@ tokio-test = "0.4"
 
 1. **Always use `#[sinex_test]`** instead of `#[test]` for database-dependent tests
 2. **Use production APIs directly** rather than creating test-specific wrappers
-3. **Leverage fixtures** for expensive setup rather than recreating data
+3. **Leverage dataset seeding helpers** for repeatable setup rather than ad hoc inserts
 4. **Use rich assertions** with context for clear failure messages
-5. **Test error conditions** explicitly using the error testing utilities
+5. **Test error conditions** explicitly using production error types and assertions
 6. **Measure performance** for operations that may impact production
 
 ## Common Pitfalls
 
 - ❌ Using `#[test]` instead of `#[sinex_test]` for database tests
 - ❌ Creating wrapper APIs instead of testing production code directly  
-- ❌ Not using fixtures for expensive test data
+- ❌ Not using dataset seeding helpers for expensive test data
 - ❌ Using `unwrap()` or `panic!` in test code
 - ❌ Not testing error conditions and edge cases
 

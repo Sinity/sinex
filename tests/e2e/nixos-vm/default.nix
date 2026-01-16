@@ -41,5 +41,9 @@
   "production-scale" = import ./production-scale.nix {
     inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
   };
-  
+
+  "mtls-enforcement" = import ./test-scenarios/mtls-enforcement.nix {
+    inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+  };
+
 }

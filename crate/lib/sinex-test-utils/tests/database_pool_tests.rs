@@ -3,37 +3,50 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use sinex_core::db::repositories::source_materials::legacy_material_types;
+use sinex_core::db::repositories::source_materials::material_types;
 use sinex_core::types::error::SinexError;
 use sinex_core::DbPoolExt;
 use sinex_core::{Event, EventSource, EventType, HostName, JsonValue, Provenance, SourceMaterial};
 use sinex_test_utils::db_common::verify_clean_state;
 use sinex_test_utils::{
     acquire_admin_connection, acquire_test_database, check_pool_health, get_pool_stats,
-    pool_slot_count, reset_pool, sinex_test,
+    pool_slot_count, reset_pool, sinex_serial_test, sinex_test,
 };
 use sqlx::postgres::PgConnection;
 use sqlx::Connection;
-use tokio::time::sleep;
+use tokio::sync::Barrier;
+use tokio::time::{sleep, timeout};
 
-#[sinex_test]
+#[sinex_serial_test]
 async fn test_pool_handles_concurrent_acquisition() -> sinex_test_utils::Result<()> {
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
     reset_pool().await?;
 
     // Initialize the pool and determine available slots.
     let warm_db = acquire_test_database().await?;
     let slot_count = pool_slot_count().await.max(1);
+    // Nextest runs tests across processes; other tests may hold pool slots.
+    // Cap concurrency to avoid flaking when the full pool isn't available.
+    let target_slots = slot_count.min(8);
     drop(warm_db);
 
-    let handles: Vec<_> = (0..slot_count)
+    let barrier = Arc::new(Barrier::new(target_slots));
+    let barrier_timeout = Duration::from_secs(30);
+
+    let handles: Vec<_> = (0..target_slots)
         .map(|_| {
+            let barrier = barrier.clone();
             tokio::spawn(async move {
                 let db = acquire_test_database().await?;
 
                 verify_clean_state(db.pool()).await.map_err(|e| {
                     SinexError::database(format!("failed to verify pool state: {e}"))
                 })?;
+
+                timeout(barrier_timeout, barrier.wait())
+                    .await
+                    .map_err(|_| {
+                        SinexError::service("database pool barrier wait timed out; not all slots acquired concurrently".to_string())
+                    })?;
 
                 tokio::time::sleep(Duration::from_millis(10)).await;
 
@@ -52,7 +65,7 @@ async fn test_pool_handles_concurrent_acquisition() -> sinex_test_utils::Result<
     }
 
     let unique_count = db_names.iter().collect::<HashSet<_>>().len();
-    assert_eq!(unique_count, slot_count, "All databases should be unique");
+    assert_eq!(unique_count, target_slots, "All databases should be unique");
 
     Ok(())
 }
@@ -212,7 +225,7 @@ async fn test_stress_concurrent_operations() -> sinex_test_utils::Result<()> {
                 .pool()
                 .source_materials()
                 .register_in_flight(
-                    legacy_material_types::STREAM,
+                    material_types::STREAM,
                     Some(&format!("stress-fixture-{i}")),
                     serde_json::json!({ "test": "stress" }),
                 )
@@ -281,10 +294,13 @@ async fn test_database_pool_provides_connection() -> sinex_test_utils::Result<()
 
 #[sinex_test]
 async fn test_concurrent_context_allocation() -> sinex_test_utils::Result<()> {
+    reset_pool().await?;
+    let slot_count = pool_slot_count().await.max(1);
+    let concurrent_tasks = slot_count.min(4);
     let success_count = Arc::new(AtomicU32::new(0));
 
     let mut handles = vec![];
-    for _ in 0..5 {
+    for _ in 0..concurrent_tasks {
         let counter = success_count.clone();
         let handle = tokio::spawn(async move {
             match acquire_test_database().await {
@@ -300,10 +316,15 @@ async fn test_concurrent_context_allocation() -> sinex_test_utils::Result<()> {
     }
 
     for handle in handles {
-        let _ = handle.await;
+        handle
+            .await
+            .map_err(|e| SinexError::service(format!("Task failed: {e}")))??;
     }
 
-    assert!(success_count.load(Ordering::SeqCst) > 0);
+    assert_eq!(
+        success_count.load(Ordering::SeqCst),
+        concurrent_tasks as u32
+    );
 
     Ok(())
 }

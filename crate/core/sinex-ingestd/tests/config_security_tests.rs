@@ -3,13 +3,14 @@
 use serde_json::{json, Value};
 use sinex_ingestd::IngestdConfig;
 use sinex_test_utils::sinex_test;
+use sinex_test_utils::TestResult;
 
 fn base_config_json() -> Value {
     serde_json::to_value(IngestdConfig::default()).expect("serialize default ingestd config")
 }
 
 #[sinex_test]
-async fn test_ingestd_config_deserialization_security() -> color_eyre::eyre::Result<()> {
+async fn test_ingestd_config_deserialization_security() -> TestResult<()> {
     let mut malicious_config = base_config_json();
     if let Value::Object(ref mut obj) = malicious_config {
         obj.insert("work_dir".to_string(), json!("../../../etc"));
@@ -33,7 +34,7 @@ async fn test_ingestd_config_deserialization_security() -> color_eyre::eyre::Res
 }
 
 #[sinex_test]
-async fn test_ingestd_default_path_security() -> color_eyre::eyre::Result<()> {
+async fn test_ingestd_default_path_security() -> TestResult<()> {
     let config = IngestdConfig::default();
     assert!(config.work_dir.is_absolute());
     assert!(!config.work_dir.as_str().contains(".."));
@@ -41,7 +42,7 @@ async fn test_ingestd_default_path_security() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-async fn test_ingestd_null_byte_rejection() -> color_eyre::eyre::Result<()> {
+async fn test_ingestd_null_byte_rejection() -> TestResult<()> {
     let mut malicious_config = base_config_json();
     if let Value::Object(ref mut obj) = malicious_config {
         obj.insert("work_dir".to_string(), json!("/tmp/test\u{0000}/evil"));
@@ -53,7 +54,7 @@ async fn test_ingestd_null_byte_rejection() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-async fn test_ingestd_configuration_validation_error_messages() -> color_eyre::eyre::Result<()> {
+async fn test_ingestd_configuration_validation_error_messages() -> TestResult<()> {
     let mut malicious_config = base_config_json();
     if let Value::Object(ref mut obj) = malicious_config {
         obj.insert("work_dir".to_string(), json!("../../../etc/passwd"));

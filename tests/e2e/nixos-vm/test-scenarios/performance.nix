@@ -117,18 +117,21 @@ let
             else:
                 print(f"{metric_name}: Query failed")
 
-    def work_queue_metrics():
-        # Work queue performance metrics
+    def pipeline_metrics():
+        # Pipeline throughput metrics derived from core.events
         cmd = """
         psql -d sinex -t -c "
         SELECT 
-            status,
-            COUNT(*) as count,
-            AVG(EXTRACT(EPOCH FROM (COALESCE(processed_at, NOW()) - created_at))) as avg_processing_time_sec
-        FROM sinex_schemas.work_queue 
-        WHERE created_at > NOW() - INTERVAL '15 minutes'
-        GROUP BY status 
-        ORDER BY status;
+            source,
+            event_type,
+            COUNT(*) as events,
+            MIN(ts_ingest) as first_ingest,
+            MAX(ts_ingest) as last_ingest
+        FROM core.events
+        WHERE ts_ingest > NOW() - INTERVAL '15 minutes'
+        GROUP BY source, event_type
+        ORDER BY events DESC
+        LIMIT 20;
         "
         """
         result = subprocess.run([
@@ -136,12 +139,12 @@ let
         ], capture_output=True, text=True)
         
         if result.returncode == 0:
-            print("Work queue processing metrics:")
+            print("Pipeline ingestion metrics (last 15 minutes):")
             lines = [line.strip() for line in result.stdout.split('\n') if line.strip()]
             for line in lines:
                 print(f"  {line}")
         else:
-            print(f"Work queue metrics failed: {result.stderr}")
+            print(f"Pipeline metrics failed: {result.stderr}")
 
     def system_resources():
         # System resource utilization
@@ -213,8 +216,8 @@ let
             latency_analysis()
         elif cmd == "db-perf":
             database_performance()
-        elif cmd == "queue-perf":
-            work_queue_metrics()
+        elif cmd == "pipeline":
+            pipeline_metrics()
         elif cmd == "resources":
             system_resources()
         elif cmd == "query-perf":
@@ -229,8 +232,8 @@ let
             latency_analysis()
             print("\n--- Database Performance ---")
             database_performance()
-            print("\n--- Work Queue Metrics ---")
-            work_queue_metrics()
+            print("\n--- Pipeline Metrics ---")
+            pipeline_metrics()
             print("\n--- System Resources ---")
             system_resources()
             print("\n--- Query Performance ---")

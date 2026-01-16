@@ -1,10 +1,10 @@
 use camino::Utf8PathBuf;
 use color_eyre::eyre::WrapErr;
 use sinex_gateway::ServiceContainer;
-use sinex_satellite_sdk::annex::GitAnnex;
-use sinex_test_utils::{sinex_test, TestContext};
+use sinex_node_sdk::annex::GitAnnex;
+use sinex_test_utils::timing_utils::WaitHelpers;
+use sinex_test_utils::{sinex_test, TestContext, TestResult};
 use tempfile::TempDir;
-use tokio::time::{sleep, Duration};
 use which::which;
 
 struct ReplayBypassGuard {
@@ -52,14 +52,14 @@ impl Drop for EnvVarGuard {
     }
 }
 
-fn require_git_annex() -> color_eyre::eyre::Result<()> {
+fn require_git_annex() -> TestResult<()> {
     which("git-annex")
         .wrap_err("git-annex binary is required for gateway blob forwarding tests")
         .map(|_| ())
 }
 
 #[sinex_test]
-async fn blob_routes_do_not_persist_events(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn blob_routes_do_not_persist_events(ctx: TestContext) -> TestResult<()> {
     require_git_annex()?;
     let _bypass = ReplayBypassGuard::enable();
     let temp_dir = TempDir::new()?;
@@ -87,7 +87,22 @@ async fn blob_routes_do_not_persist_events(ctx: TestContext) -> color_eyre::eyre
         )
         .await?;
 
-    sleep(Duration::from_millis(50)).await;
+    WaitHelpers::wait_for_condition(
+        || {
+            let pool = ctx.pool.clone();
+            async move {
+                let count: i64 = sqlx::query_scalar!(
+                    r#"SELECT COUNT(*) FROM core.events WHERE event_type = 'blob.ingested'"#
+                )
+                .fetch_one(&pool)
+                .await?
+                .unwrap_or(0);
+                Ok::<bool, sinex_test_utils::SinexError>(count == initial_count)
+            }
+        },
+        5,
+    )
+    .await?;
 
     let after_count: i64 = sqlx::query_scalar!(
         r#"SELECT COUNT(*) FROM core.events WHERE event_type = 'blob.ingested'"#

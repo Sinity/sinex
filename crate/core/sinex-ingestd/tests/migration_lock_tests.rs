@@ -1,6 +1,6 @@
 use sinex_ingestd::service::try_acquire_migration_lock;
+use sinex_test_utils::timing_utils::WaitHelpers;
 use sinex_test_utils::{sinex_test, TestContext};
-use tokio::time::{sleep, Duration, Instant};
 
 #[sinex_test]
 async fn migration_lock_blocks_second_holder(ctx: TestContext) -> sinex_test_utils::TestResult<()> {
@@ -15,22 +15,25 @@ async fn migration_lock_blocks_second_holder(ctx: TestContext) -> sinex_test_uti
     drop(first);
 
     // `ResourceGuard` cleanup runs asynchronously; wait briefly for `pg_advisory_unlock` to land.
-    let deadline = Instant::now() + Duration::from_secs(1);
-    loop {
-        match try_acquire_migration_lock(ctx.pool()).await {
-            Ok(third) => {
-                drop(third);
-                break;
-            }
-            Err(err) if err.to_string().contains("already applying migrations") => {
-                if Instant::now() >= deadline {
-                    return Err(err.into());
+    WaitHelpers::wait_for_condition(
+        || {
+            let pool = ctx.pool.clone();
+            async move {
+                match try_acquire_migration_lock(&pool).await {
+                    Ok(third) => {
+                        drop(third);
+                        Ok::<bool, sinex_test_utils::SinexError>(true)
+                    }
+                    Err(err) if err.to_string().contains("already applying migrations") => {
+                        Ok::<bool, sinex_test_utils::SinexError>(false)
+                    }
+                    Err(err) => Err(err.into()),
                 }
-                sleep(Duration::from_millis(10)).await;
             }
-            Err(err) => return Err(err.into()),
-        }
-    }
+        },
+        2,
+    )
+    .await?;
 
     Ok(())
 }

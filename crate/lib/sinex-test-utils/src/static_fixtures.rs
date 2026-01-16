@@ -45,7 +45,6 @@
 use crate::fixture_generator::{DatasetConfig, FixtureGenerator};
 use crate::Result;
 #[cfg(test)]
-use crate::TestResult;
 use chrono::{DateTime, Utc};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -447,10 +446,10 @@ mod tests {
 #[cfg(all(test, feature = "bench"))]
 mod benches {
     use super::*;
-    use crate::sinex_bench;
+    use crate::{sinex_bench, TestResult};
 
     #[sinex_bench]
-    fn bench_fixture_id_generation() -> color_eyre::eyre::Result<()> {
+    fn bench_fixture_id_generation() -> TestResult<()> {
         let manager = FixtureManager::new();
         let fixtures = FixtureSet::new()
             .with_events(DatasetSize::Medium, 1337)

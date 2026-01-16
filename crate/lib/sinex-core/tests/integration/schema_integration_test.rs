@@ -14,12 +14,12 @@ use sinex_core::db::models::event::{Event, Provenance, SourceMaterial};
 use sinex_core::db::validation::{EventValidator, ValidationError, DEFAULT_MAX_PAYLOAD_BYTES};
 use sinex_core::types::domain::{EventSource, EventType, HostName};
 use sinex_core::types::Id;
-use sinex_test_utils::{acquire_pool_test_guard, sinex_test, TestContext};
+use sinex_test_utils::{sinex_serial_test, sinex_test, TestContext};
 
 const FS_WATCHER_SOURCE: &str = "fs-watcher";
 
 #[sinex_test]
-async fn test_malformed_event_detection(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_malformed_event_detection(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool.clone();
     let validator = EventValidator::load_from_db(&pool).await?;
 
@@ -95,9 +95,8 @@ async fn test_malformed_event_detection(ctx: TestContext) -> color_eyre::eyre::R
     Ok(())
 }
 
-#[sinex_test]
-async fn test_schema_constraint_validation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    let _guard = acquire_pool_test_guard().await;
+#[sinex_serial_test]
+async fn test_schema_constraint_validation(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
     let pool = ctx.pool.clone();
     let validator = EventValidator::load_from_db(&pool).await?;
@@ -148,7 +147,7 @@ async fn test_schema_constraint_validation(ctx: TestContext) -> color_eyre::eyre
 
 /// Test JSON payload validation with various malformed scenarios
 #[sinex_test]
-async fn test_json_payload_validation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_json_payload_validation(ctx: TestContext) -> TestResult<()> {
     let validator = EventValidator::load_from_db(&ctx.pool).await?;
     let cases = vec![
         (json!("just a string"), "string payload should fail", false),
@@ -186,9 +185,7 @@ async fn test_json_payload_validation(ctx: TestContext) -> color_eyre::eyre::Res
 
 /// Test security validation against various injection attack patterns
 #[sinex_test]
-async fn test_security_validation_injection_attacks(
-    ctx: TestContext,
-) -> color_eyre::eyre::Result<()> {
+async fn test_security_validation_injection_attacks(ctx: TestContext) -> TestResult<()> {
     let validator = EventValidator::load_from_db(&ctx.pool).await?;
     let cases = vec![
         (
@@ -236,9 +233,7 @@ async fn test_security_validation_injection_attacks(
 }
 
 #[sinex_test]
-async fn test_schema_validation_performance_under_load(
-    ctx: TestContext,
-) -> color_eyre::eyre::Result<()> {
+async fn test_schema_validation_performance_under_load(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool.clone();
     let validator = EventValidator::load_from_db(&pool).await?;
 
@@ -290,12 +285,12 @@ async fn test_schema_validation_performance_under_load(
 }
 
 #[sinex_test]
-async fn test_comprehensive_integrity_validation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_comprehensive_integrity_validation(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool.clone();
     let validator = EventValidator::load_from_db(&pool).await?;
 
     let persisted = ctx
-        .create_test_event(
+        .publish_json_event(
             "schema.comprehensive",
             "valid_event",
             json!({"data": "valid"}),
@@ -366,7 +361,7 @@ async fn test_comprehensive_integrity_validation(ctx: TestContext) -> color_eyre
 
 /// Test malformed event anomaly detection with various problematic patterns
 #[sinex_test]
-async fn test_malformed_event_anomaly_detection(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_malformed_event_anomaly_detection(ctx: TestContext) -> TestResult<()> {
     let cases = vec![
         (
             "",
@@ -433,7 +428,7 @@ async fn test_malformed_event_anomaly_detection(ctx: TestContext) -> color_eyre:
 
 // Test schema validation with various event types
 #[sinex_test]
-async fn test_event_type_specific_validation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_event_type_specific_validation(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool.clone();
     let validator = EventValidator::load_from_db(&pool).await?;
 

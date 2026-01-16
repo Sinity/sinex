@@ -396,14 +396,12 @@ fn test_json_validation_edge_cases() -> TestResult {
 // =============================================================================
 
 #[sinex_test]
-async fn test_json_validation_database_integration(
-    ctx: TestContext,
-) -> TestResult {
+async fn test_json_validation_database_integration(ctx: TestContext) -> TestResult {
     // Test basic JSON validation with database integration
 
     // Should be able to create events and validate them
     let event = ctx
-        .create_test_event("test_source", "test.event", json!({"key": "value"}))
+        .publish_json_event("test_source", "test.event", json!({"key": "value"}))
         .await?;
 
     // Basic validation should not fail

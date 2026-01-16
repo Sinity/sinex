@@ -31,7 +31,7 @@ mod version_system_test;
 // =============================================================================
 
 #[sinex_test]
-fn test_ulid_basic_properties() -> color_eyre::eyre::Result<()> {
+fn test_ulid_basic_properties() -> TestResult<()> {
     let ulid1 = Ulid::new();
     let ulid2 = Ulid::new();
 
@@ -48,7 +48,7 @@ fn test_ulid_basic_properties() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn test_ulid_string_conversion() -> color_eyre::eyre::Result<()> {
+fn test_ulid_string_conversion() -> TestResult<()> {
     let ulid = Ulid::new();
     let ulid_str = ulid.to_string();
 
@@ -59,7 +59,7 @@ fn test_ulid_string_conversion() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn test_ulid_ordering_consistency() -> color_eyre::eyre::Result<()> {
+fn test_ulid_ordering_consistency() -> TestResult<()> {
     let mut ulids = Vec::new();
     for _ in 0..10 {
         ulids.push(Ulid::new());
@@ -88,7 +88,7 @@ fn test_ulid_ordering_consistency() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn test_ulid_specific_format() -> color_eyre::eyre::Result<()> {
+fn test_ulid_specific_format() -> TestResult<()> {
     // Test with a known ULID to ensure format consistency
     let ulid_str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
     let ulid = Ulid::from_str(ulid_str).expect("Should parse known valid ULID");
@@ -99,7 +99,7 @@ fn test_ulid_specific_format() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn test_ulid_invalid_strings() -> color_eyre::eyre::Result<()> {
+fn test_ulid_invalid_strings() -> TestResult<()> {
     let invalid_cases = vec![
         "",                                // Empty string
         "invalid",                         // Too short
@@ -121,7 +121,7 @@ fn test_ulid_invalid_strings() -> color_eyre::eyre::Result<()> {
 // =============================================================================
 
 #[sinex_test]
-fn test_generic_id_creation() -> color_eyre::eyre::Result<()> {
+fn test_generic_id_creation() -> TestResult<()> {
     let event_id = Id::<Event<JsonValue>>::new();
     let event_id2 = Id::<Event<JsonValue>>::new();
 
@@ -136,7 +136,7 @@ fn test_generic_id_creation() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn test_generic_id_type_safety() -> color_eyre::eyre::Result<()> {
+fn test_generic_id_type_safety() -> TestResult<()> {
     let event_id = Id::<Event<JsonValue>>::new();
 
     // The following should compile - same type
@@ -149,7 +149,7 @@ fn test_generic_id_type_safety() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn test_generic_id_string_conversion() -> color_eyre::eyre::Result<()> {
+fn test_generic_id_string_conversion() -> TestResult<()> {
     let id = Id::<Event<JsonValue>>::new();
     let id_str = id.to_string();
 
@@ -165,7 +165,7 @@ fn test_generic_id_string_conversion() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn test_generic_id_collections() -> color_eyre::eyre::Result<()> {
+fn test_generic_id_collections() -> TestResult<()> {
     // Test IDs work properly in collections
     let mut ids = Vec::new();
 
@@ -202,7 +202,7 @@ fn test_generic_id_collections() -> color_eyre::eyre::Result<()> {
 // =============================================================================
 
 #[sinex_test]
-fn test_event_source_creation() -> color_eyre::eyre::Result<()> {
+fn test_event_source_creation() -> TestResult<()> {
     // Static creation
     let source_static = EventSource::from_static("filesystem");
     assert_eq!(source_static.as_str(), "filesystem");
@@ -219,7 +219,7 @@ fn test_event_source_creation() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn test_event_type_creation() -> color_eyre::eyre::Result<()> {
+fn test_event_type_creation() -> TestResult<()> {
     // Static creation
     let type_static = EventType::from_static("file.created");
     assert_eq!(type_static.as_str(), "file.created");
@@ -236,7 +236,7 @@ fn test_event_type_creation() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn test_hostname_creation() -> color_eyre::eyre::Result<()> {
+fn test_hostname_creation() -> TestResult<()> {
     // Test hostname creation
     let hostname = HostName::new("test-host");
     assert_eq!(hostname.as_str(), "test-host");
@@ -248,7 +248,7 @@ fn test_hostname_creation() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn test_domain_type_validation() -> color_eyre::eyre::Result<()> {
+fn test_domain_type_validation() -> TestResult<()> {
     // Test empty string handling
     let empty_source = EventSource::new("");
     assert_eq!(empty_source.as_str(), "");
@@ -290,7 +290,7 @@ fn test_domain_types_with_various_values(#[case] source_name: &str, #[case] type
 // =============================================================================
 
 #[sinex_test]
-fn test_event_builder_basic() -> color_eyre::eyre::Result<()> {
+fn test_event_builder_basic() -> TestResult<()> {
     let source = EventSource::from_static("test-source");
     let event_type = EventType::from_static("test.event");
     let payload = json!({
@@ -311,7 +311,7 @@ fn test_event_builder_basic() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn test_event_builder_with_optional_fields() -> color_eyre::eyre::Result<()> {
+fn test_event_builder_with_optional_fields() -> TestResult<()> {
     let mut event = Event::<JsonValue>::test_event(
         EventSource::from_static("optional-test"),
         EventType::from_static("optional.event"),
@@ -327,7 +327,7 @@ fn test_event_builder_with_optional_fields() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn test_event_builder_with_timestamps() -> color_eyre::eyre::Result<()> {
+fn test_event_builder_with_timestamps() -> TestResult<()> {
     use chrono::Utc;
 
     let custom_timestamp = Utc::now() - chrono::Duration::hours(1);
@@ -367,13 +367,13 @@ fn test_event_builder_with_various_payloads(#[case] payload: serde_json::Value) 
 // =============================================================================
 
 #[sinex_test]
-fn test_result_type_compatibility() -> color_eyre::eyre::Result<()> {
+fn test_result_type_compatibility() -> TestResult<()> {
     // Test that our Result type works with color-eyre
-    fn returns_success() -> color_eyre::eyre::Result<String> {
+    fn returns_success() -> TestResult<String> {
         Ok("success".to_string())
     }
 
-    fn returns_error() -> color_eyre::eyre::Result<String> {
+    fn returns_error() -> TestResult<String> {
         Err(color_eyre::eyre::anyhow!("test error"))
     }
 
@@ -393,11 +393,11 @@ fn test_result_type_compatibility() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-async fn test_sinex_error_propagation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_sinex_error_propagation(ctx: TestContext) -> TestResult<()> {
     // Test that SinexError works properly with Result
 
     // This should work fine
-    ctx.create_test_event("error-test", "valid.test", json!({"test": true}))
+    ctx.publish_json_event("error-test", "valid.test", json!({"test": true}))
         .await?;
 
     // Test error handling with invalid data - empty source should work but be empty
@@ -412,7 +412,7 @@ async fn test_sinex_error_propagation(ctx: TestContext) -> color_eyre::eyre::Res
 // =============================================================================
 
 #[sinex_test]
-fn test_edge_case_strings() -> color_eyre::eyre::Result<()> {
+fn test_edge_case_strings() -> TestResult<()> {
     let long_string = "x".repeat(1000);
     let edge_cases = vec![
         ("empty", ""),
@@ -442,7 +442,7 @@ fn test_edge_case_strings() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn test_concurrent_ulid_generation() -> color_eyre::eyre::Result<()> {
+fn test_concurrent_ulid_generation() -> TestResult<()> {
     use std::sync::{Arc, Mutex};
     use std::thread;
 
@@ -484,7 +484,7 @@ fn test_concurrent_ulid_generation() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn test_large_payload_creation() -> color_eyre::eyre::Result<()> {
+fn test_large_payload_creation() -> TestResult<()> {
     // Test creating events with large payloads
     let large_string = "x".repeat(100_000); // 100KB string
 
@@ -523,7 +523,7 @@ fn test_large_payload_creation() -> color_eyre::eyre::Result<()> {
 // =============================================================================
 
 #[sinex_test]
-fn test_domain_type_serialization() -> color_eyre::eyre::Result<()> {
+fn test_domain_type_serialization() -> TestResult<()> {
     // Test that domain types serialize/deserialize correctly
     let source = EventSource::from_static("serialization-test");
     let event_type = EventType::from_static("serialize.test");
@@ -547,7 +547,7 @@ fn test_domain_type_serialization() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn test_event_json_roundtrip() -> color_eyre::eyre::Result<()> {
+fn test_event_json_roundtrip() -> TestResult<()> {
     let original_event = Event::<JsonValue>::test_event(
         EventSource::from_static("json-test"),
         EventType::from_static("roundtrip.test"),
@@ -581,7 +581,7 @@ fn test_event_json_roundtrip() -> color_eyre::eyre::Result<()> {
 // =============================================================================
 
 #[sinex_test]
-fn test_ulid_generation_performance() -> color_eyre::eyre::Result<()> {
+fn test_ulid_generation_performance() -> TestResult<()> {
     use std::time::Instant;
 
     let start = Instant::now();
@@ -611,7 +611,7 @@ fn test_ulid_generation_performance() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn test_event_creation_performance() -> color_eyre::eyre::Result<()> {
+fn test_event_creation_performance() -> TestResult<()> {
     use std::time::Instant;
 
     let start = Instant::now();
@@ -661,9 +661,8 @@ fn test_event_creation_performance() -> color_eyre::eyre::Result<()> {
 // REGRESSION TESTS - Preserve important behaviors
 // =============================================================================
 
-#[sinex_test]
-async fn test_event_ordering_preserved(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
+#[sinex_serial_test]
+async fn test_event_ordering_preserved(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
     let source = format!("ordering-test-{}", Ulid::new());
     // Create events with slight delays to ensure ordering
@@ -671,7 +670,7 @@ async fn test_event_ordering_preserved(ctx: TestContext) -> color_eyre::eyre::Re
 
     for i in 0..5 {
         let event = ctx
-            .create_test_event(&source, "sequential.event", json!({"sequence": i}))
+            .publish_json_event(&source, "sequential.event", json!({"sequence": i}))
             .await?;
         events.push(event);
 
@@ -706,20 +705,18 @@ async fn test_event_ordering_preserved(ctx: TestContext) -> color_eyre::eyre::Re
         assert!(a >= b, "Events should be in reverse insertion order");
     }
 
-    sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
-    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
     Ok(())
 }
 
 #[sinex_test]
-async fn test_builder_method_chaining_order(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_builder_method_chaining_order(ctx: TestContext) -> TestResult<()> {
     // Test event creation with different sources
     let event1 = ctx
-        .create_test_event("order1", "test", json!({"a": 1}))
+        .publish_json_event("order1", "test", json!({"a": 1}))
         .await?;
 
     let event2 = ctx
-        .create_test_event("order2", "test", json!({"a": 1}))
+        .publish_json_event("order2", "test", json!({"a": 1}))
         .await?;
 
     // Both should succeed despite different order
@@ -730,9 +727,9 @@ async fn test_builder_method_chaining_order(ctx: TestContext) -> color_eyre::eyr
 }
 
 #[sinex_test]
-async fn test_result_type_alias(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_result_type_alias(ctx: TestContext) -> TestResult<()> {
     // Test that Result is properly aliased
-    fn returns_test_result() -> color_eyre::eyre::Result<String> {
+    fn returns_test_result() -> TestResult<String> {
         Ok("success".to_string())
     }
 
@@ -740,7 +737,7 @@ async fn test_result_type_alias(ctx: TestContext) -> color_eyre::eyre::Result<()
     assert!(result.is_ok());
     assert_eq!(result?, "success");
 
-    fn returns_error() -> color_eyre::eyre::Result<()> {
+    fn returns_error() -> TestResult<()> {
         Err(color_eyre::eyre::anyhow!("test error"))
     }
 

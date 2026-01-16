@@ -7,12 +7,17 @@
 
 // Expose modules for testing and external use
 pub mod cascade_analyzer;
+pub mod client;
 pub mod handlers;
+#[cfg(feature = "test-support")]
+pub mod handlers_test_support;
 pub mod native_messaging;
 pub mod prelude;
 pub mod replay_control;
 pub mod replay_state_machine;
 pub mod rpc_server;
+#[cfg(feature = "test-support")]
+pub mod rpc_server_test_support;
 pub mod service_container;
 
 // Re-export commonly used types

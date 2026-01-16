@@ -4,12 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["channel-testing"]
+default = []
 bench = ["dep:divan", "dep:hostname", "dep:num_cpus", "dep:sysinfo"]
 slow-tests = []
 rstest-preview = []
 internal-tests = []
-channel-testing = []
 
 [dependencies]
 camino = { workspace = true }
@@ -19,6 +18,7 @@ color-eyre = { workspace = true }
 tokio = { version = "1.0", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+toml = { workspace = true }
 chrono = { version = "0.4", features = ["serde"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
@@ -41,14 +41,13 @@ pretty_assertions = "1.4"
 rstest = { workspace = true }
 insta = { workspace = true }
 tracing-test = { workspace = true }
-similar-asserts = { workspace = true }
 
 # Builder pattern
 bon = { workspace = true }
 
 # Sinex dependencies
 sinex-core = { path = "../sinex-core", features = ["testing"] }
-sinex-satellite-sdk = { path = "../sinex-satellite-sdk" }
+sinex-node-sdk = { path = "../sinex-node-sdk" }
 sinex-ingestd = { path = "../../core/sinex-ingestd" }
 sinex-schema = { path = "../sinex-schema" }
 # Internal macro crate (implementation detail)

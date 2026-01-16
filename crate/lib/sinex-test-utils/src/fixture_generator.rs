@@ -311,28 +311,7 @@ impl FixtureGenerator {
             sql.push_str(");\n");
         }
 
-        // Checkpoints
-        if self.config.checkpoint_interval > 0 {
-            sql.push_str("\n-- Insert checkpoints\n");
-            let checkpoint_count = events.len() / self.config.checkpoint_interval;
-
-            for i in 0..checkpoint_count {
-                let last_event_index = (i + 1) * self.config.checkpoint_interval - 1;
-                let last_event_id = &events[last_event_index].id;
-
-                sql.push_str(&format!(
-                    "INSERT INTO core.processor_checkpoints (processor_name, last_processed_event_id, processed_count, state) VALUES (\n  'fixture_processor_{}', '{}', {}, '{}'::jsonb\n);\n",
-                    i % 3,
-                    last_event_id.as_ref().map(|id| id.to_string()).unwrap_or_else(|| "UNKNOWN".to_string()),
-                    (i + 1) * self.config.checkpoint_interval,
-                    json!({
-                        "checkpoint": i,
-                        "dataset": self.config.name,
-                        "timestamp": Utc::now()
-                    })
-                ));
-            }
-        }
+        // Checkpoints are stored in NATS KV; no Postgres fixtures are generated here.
 
         // Operations
         if self.config.operation_count > 0 {
@@ -416,7 +395,7 @@ impl FixtureGenerator {
             checksum,
             file_size_bytes: sql_content.len() as u64,
             event_count: events.len(),
-            checkpoint_count: events.len() / self.config.checkpoint_interval.max(1),
+            checkpoint_count: 0,
             operation_count: self.config.operation_count,
         };
 
@@ -453,16 +432,6 @@ pub async fn verify_dataset(pool: &DbPool, metadata_path: &Utf8Path) -> Result<b
         return Ok(false);
     }
 
-    // Check checkpoint count
-    let checkpoint_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM core.processor_checkpoints")
-            .fetch_one(pool)
-            .await?;
-
-    if checkpoint_count != metadata.checkpoint_count as i64 {
-        return Ok(false);
-    }
-
     Ok(true)
 }
 
@@ -470,7 +439,6 @@ pub async fn verify_dataset(pool: &DbPool, metadata_path: &Utf8Path) -> Result<b
 mod tests {
     use super::*;
     use crate::sinex_test;
-    use crate::TestResult;
 
     #[sinex_test]
     fn test_dataset_configs() -> TestResult<()> {
@@ -511,10 +479,10 @@ mod tests {
 #[cfg(all(test, feature = "bench"))]
 mod benches {
     use super::*;
-    use crate::sinex_bench;
+    use crate::{sinex_bench, TestResult};
 
     #[sinex_bench]
-    fn bench_generate_small_dataset() -> color_eyre::eyre::Result<()> {
+    fn bench_generate_small_dataset() -> TestResult<()> {
         let mut gen = FixtureGenerator::new(DatasetConfig::small());
         let events = gen.generate_events();
         #[cfg(feature = "bench")]
@@ -525,7 +493,7 @@ mod benches {
     }
 
     #[sinex_bench]
-    fn bench_generate_sql() -> color_eyre::eyre::Result<()> {
+    fn bench_generate_sql() -> TestResult<()> {
         let mut gen = FixtureGenerator::new(DatasetConfig::small());
         let events = gen.generate_events();
         let sql = gen.generate_sql(&events)?;

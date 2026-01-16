@@ -65,9 +65,9 @@ pkgs.testers.nixosTest {
     satellites = [
         "sinex-fs-watcher-1.service",
         "sinex-fs-watcher-2.service",
-        "sinex-terminal-satellite-1.service",
-        "sinex-desktop-satellite-1.service",
-        "sinex-system-satellite-1.service"
+        "sinex-terminal-node-1.service",
+        "sinex-desktop-node-1.service",
+        "sinex-system-node-1.service"
     ]
     for unit in satellites:
         machine.wait_for_unit(unit)
@@ -85,6 +85,6 @@ pkgs.testers.nixosTest {
     # Verify generated units metadata exposed via option
     generated = machine.succeed("nixos-option services.sinex.satellite.generatedUnits")
     assert "sinex-fs-watcher-1" in generated
-    assert "sinex-terminal-satellite-1" in generated
+    assert "sinex-terminal-node-1" in generated
   '';
 }

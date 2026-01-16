@@ -3,7 +3,7 @@ use crate::types::ulid::Ulid;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use color_eyre::eyre::{eyre, Result};
 use serde::{Deserialize, Serialize};
-use sqlx::{PgPool, Postgres, QueryBuilder, Row, Transaction};
+use sqlx::{Executor, PgPool, Postgres, QueryBuilder, Row, Transaction};
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -317,6 +317,7 @@ impl ReplayStateMachine {
     /// Transition to new state
     pub async fn transition(&self, operation_id: Ulid, new_state: ReplayState) -> Result<()> {
         let mut tx = self.pool.begin().await?;
+        set_repeatable_read(&mut tx).await?;
         self.transition_with_tx(&mut tx, operation_id, new_state)
             .await?;
         tx.commit().await?;
@@ -550,15 +551,18 @@ impl ReplayStateMachine {
         operation_id: Ulid,
         checkpoint: &ReplayCheckpoint,
     ) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        set_repeatable_read(&mut tx).await?;
         let row = sqlx::query!(
             r#"
             SELECT preview_summary
             FROM core.operations_log
             WHERE id::uuid = $1::uuid
+            FOR UPDATE
             "#,
             Uuid::from_bytes(operation_id.to_bytes())
         )
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await?;
         let mut meta = Self::decode_meta_json(row.preview_summary)?;
         meta.checkpoint = checkpoint.clone();
@@ -572,8 +576,9 @@ impl ReplayStateMachine {
             Uuid::from_bytes(operation_id.to_bytes()),
             meta_json
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
+        tx.commit().await?;
 
         debug!(
             "Updated checkpoint for operation {}: {}/{}",
@@ -713,10 +718,23 @@ impl ReplayStateMachine {
         &self,
         filter_state: Option<ReplayState>,
     ) -> Result<Vec<ReplayOperation>> {
+        self.list_operations_with_executor(&self.pool, filter_state)
+            .await
+    }
+
+    /// List operations optionally filtered by state using a provided executor.
+    pub async fn list_operations_with_executor<'e, E>(
+        &self,
+        executor: E,
+        filter_state: Option<ReplayState>,
+    ) -> Result<Vec<ReplayOperation>>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
         let rows = sqlx::query(
             "SELECT id::uuid as id, operator, scope, preview_summary FROM core.operations_log WHERE operation_type = 'replay' ORDER BY id DESC",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(executor)
         .await?;
 
         let mut operations = Vec::new();
@@ -745,6 +763,13 @@ impl ReplayStateMachine {
 
         Ok(operations)
     }
+}
+
+async fn set_repeatable_read(tx: &mut Transaction<'_, Postgres>) -> Result<()> {
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
 }
 
 impl ReplayStateMachine {

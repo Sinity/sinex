@@ -4,9 +4,91 @@
 //! via consuming `restore()` method. Drop is not implemented because guards are
 //! consumed by restore() calls.
 
+use once_cell::sync::Lazy;
 use sqlx::{pool::PoolConnection, Postgres};
+use std::ffi::OsStr;
+use std::sync::{Mutex, MutexGuard};
 
 use crate::Result;
+
+static ENV_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
+/// Guard for serializing environment-variable mutations inside tests.
+///
+/// Tests frequently need to toggle gateway and RPC settings via env vars and those
+/// mutations can leak across parallel test execution. `EnvGuard` acquires a
+/// process-wide mutex and tracks the previous values for any keys it touches.
+/// Once dropped, every recorded variable is restored to its original state,
+/// ensuring deterministic behavior even under `cargo test -- --test-threads=N`.
+pub struct EnvGuard {
+    lock: Option<MutexGuard<'static, ()>>,
+    original: Vec<(String, Option<String>)>,
+}
+
+impl EnvGuard {
+    /// Acquire the global environment mutex and prepare to record changes.
+    pub fn new() -> Self {
+        let lock = ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        Self {
+            lock: Some(lock),
+            original: Vec::new(),
+        }
+    }
+
+    fn remember_original(&mut self, key: &str) {
+        if self.original.iter().any(|(existing, _)| existing == key) {
+            return;
+        }
+        let previous = std::env::var(key).ok();
+        self.original.push((key.to_string(), previous));
+    }
+
+    /// Set an environment variable while remembering the prior value.
+    pub fn set(&mut self, key: &str, value: impl AsRef<OsStr>) {
+        self.remember_original(key);
+        std::env::set_var(key, value);
+    }
+
+    /// Remove an environment variable for the duration of the guard.
+    pub fn clear(&mut self, key: &str) {
+        self.remember_original(key);
+        std::env::remove_var(key);
+    }
+
+    /// Convenience helper for optional values (None => clear, Some => set).
+    pub fn set_optional(&mut self, key: &str, value: Option<&str>) {
+        match value {
+            Some(v) => self.set(key, v),
+            None => self.clear(key),
+        }
+    }
+}
+
+impl Default for EnvGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        for (key, previous) in self.original.drain(..).rev() {
+            if let Some(value) = previous {
+                std::env::set_var(&key, value);
+            } else {
+                std::env::remove_var(&key);
+            }
+        }
+        // Explicitly drop the mutex guard last so other tests can proceed.
+        self.lock.take();
+    }
+}
+
+fn is_hypertable_trigger_toggle_error(err: &sqlx::Error) -> bool {
+    err.to_string().contains("hypertables do not support")
+}
 
 /// Guard that temporarily sets `session_replication_role = 'replica'`.
 pub struct ReplicationRoleGuard {
@@ -96,11 +178,18 @@ impl TriggersGuard {
             let table_name = table.as_ref();
             let query = format!("ALTER TABLE {} DISABLE TRIGGER ALL", table_name);
 
-            sqlx::query(&query)
-                .execute(conn.as_mut())
-                .await
-                .map_err(|e| crate::SinexError::database(e.to_string()))?;
-            disabled_tables.push(table_name.to_string());
+            match sqlx::query(&query).execute(conn.as_mut()).await {
+                Ok(_) => disabled_tables.push(table_name.to_string()),
+                Err(err) if is_hypertable_trigger_toggle_error(&err) => {
+                    tracing::warn!(
+                        table = %table_name,
+                        "Skipping trigger disable for hypertable during cleanup"
+                    );
+                }
+                Err(err) => {
+                    return Err(crate::SinexError::database(err.to_string()));
+                }
+            }
         }
 
         Ok(Self {
@@ -113,6 +202,13 @@ impl TriggersGuard {
         for table in &self.tables {
             let query = format!("ALTER TABLE {} ENABLE TRIGGER ALL", table);
             if let Err(e) = sqlx::query(&query).execute(conn.as_mut()).await {
+                if is_hypertable_trigger_toggle_error(&e) {
+                    tracing::warn!(
+                        table = %table,
+                        "Skipping trigger enable for hypertable after cleanup"
+                    );
+                    continue;
+                }
                 tracing::warn!(
                     error = %e,
                     table = %table,

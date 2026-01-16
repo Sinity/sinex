@@ -2,6 +2,7 @@
 //!
 //! This module contains all database-related functionality that was previously in sinex-db.
 
+pub mod advisory_lock;
 pub mod integrity;
 pub mod models;
 pub mod pool;
@@ -11,8 +12,6 @@ pub mod security;
 pub mod validation;
 
 // Core modules
-pub mod distributed_locking;
-
 // Repository pattern - the new way to access data
 pub mod replay;
 pub mod repositories;
@@ -21,15 +20,13 @@ pub mod repositories;
 pub use sinex_schema::schema;
 
 // Migration support
-#[cfg(feature = "migration")]
 pub mod migration;
-#[cfg(feature = "migration")]
 pub use migration::run_migrations_for_url;
 
 // Re-export query helpers for easier access
 pub use query_helpers::{
-    count, db_error, exists, is_retryable_db_error, with_retry_transaction, with_transaction,
-    RetryConfig,
+    count, db_error, exists, is_retryable_db_error, with_retry_transaction_idempotent,
+    with_transaction, IdempotentTransaction, RetryConfig,
 };
 
 // Re-export ULID conversion utilities from sinex-schema
@@ -40,16 +37,19 @@ pub use sinex_schema::ulid_conversions::{
 
 // Re-export repository pattern
 pub use repositories::{
-    Checkpoint, DbPoolExt, DbResult as RepoResult, EventPayloadSchema, EventSearchFilters,
-    NewSchema,
+    DbPoolExt, DbResult as RepoResult, EventPayloadSchema, EventSearchFilters, NewSchema,
 };
 
+use crate::types::Seconds;
+use crate::SinexError;
 use color_eyre::eyre::{eyre, Result};
+use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
+use sqlx::pool::PoolConnection;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{migrate::MigrateDatabase, PgPool, Postgres};
 use std::env;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tracing::{info, warn};
 use validator::Validate;
 
@@ -64,6 +64,60 @@ pub use sqlx::PgPool as SqlxPgPool;
 pub use crate::{JsonValue, Timestamp};
 pub type OptionalTimestamp = Option<Timestamp>;
 
+/// Acquire a database connection with a hard timeout.
+pub async fn acquire_with_timeout(
+    pool: &DbPool,
+    timeout: Duration,
+) -> std::result::Result<PoolConnection<Postgres>, SinexError> {
+    let warn_threshold = pool_acquire_warn_threshold();
+    let start = Instant::now();
+    let result = tokio::time::timeout(timeout, pool.acquire()).await;
+    let elapsed = start.elapsed();
+    if !warn_threshold.is_zero() && elapsed >= warn_threshold {
+        warn!(
+            acquire_latency_ms = elapsed.as_millis(),
+            pool_size = pool.size(),
+            pool_idle = pool.num_idle(),
+            warn_threshold_ms = warn_threshold.as_millis(),
+            "Database pool acquire latency exceeded threshold"
+        );
+    }
+
+    match result {
+        Ok(result) => result.map_err(SinexError::from),
+        Err(_) => Err(SinexError::timeout(format!(
+            "Timed out acquiring database connection after {timeout:?}"
+        ))),
+    }
+}
+
+const DEFAULT_POOL_ACQUIRE_WARN_MS: u64 = 100;
+static POOL_ACQUIRE_WARN_MS: OnceCell<u64> = OnceCell::new();
+const DEFAULT_POOL_ACQUIRE_TIMEOUT_SECS: Seconds = Seconds::from_secs(30);
+static POOL_ACQUIRE_TIMEOUT_SECS: OnceCell<Seconds> = OnceCell::new();
+
+fn pool_acquire_warn_threshold() -> Duration {
+    let ms = *POOL_ACQUIRE_WARN_MS.get_or_init(|| {
+        std::env::var("SINEX_POOL_ACQUIRE_WARN_MS")
+            .ok()
+            .and_then(|raw| raw.parse::<u64>().ok())
+            .unwrap_or(DEFAULT_POOL_ACQUIRE_WARN_MS)
+    });
+    Duration::from_millis(ms)
+}
+
+/// Default per-call hard timeout for pool acquisition.
+pub fn pool_acquire_timeout() -> Duration {
+    let secs = *POOL_ACQUIRE_TIMEOUT_SECS.get_or_init(|| {
+        env::var("SINEX_POOL_ACQUIRE_TIMEOUT_SECS")
+            .ok()
+            .and_then(|raw| raw.parse::<u64>().ok())
+            .map(Seconds::from_secs)
+            .unwrap_or(DEFAULT_POOL_ACQUIRE_TIMEOUT_SECS)
+    });
+    Duration::from_secs(secs.as_secs())
+}
+
 /// Configuration for database connection pool
 #[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct PoolConfig {
@@ -73,11 +127,11 @@ pub struct PoolConfig {
     #[validate(range(min = 0, max = 100))]
     pub min_connections: u32,
 
-    #[validate(range(min = 1, max = 300))]
-    pub acquire_timeout_secs: u64,
+    #[validate(custom(function = "validate_acquire_timeout_secs"))]
+    pub acquire_timeout_secs: Seconds,
 
-    #[validate(range(min = 0, max = 3600))]
-    pub idle_timeout_secs: u64,
+    #[validate(custom(function = "validate_idle_timeout_secs"))]
+    pub idle_timeout_secs: Seconds,
 
     pub validate_against_postgres_max: bool,
 }
@@ -87,11 +141,27 @@ impl Default for PoolConfig {
         Self {
             max_connections: 100, // Increased for high-throughput satellite constellation
             min_connections: 10,  // Increased minimum to handle baseline load
-            acquire_timeout_secs: 30,
-            idle_timeout_secs: 300, // 5 minutes
+            acquire_timeout_secs: Seconds::from_secs(30),
+            idle_timeout_secs: Seconds::from_secs(300), // 5 minutes
             validate_against_postgres_max: true,
         }
     }
+}
+
+fn validate_acquire_timeout_secs(value: &Seconds) -> Result<(), validator::ValidationError> {
+    let secs = value.as_secs();
+    if !(1..=300).contains(&secs) {
+        return Err(validator::ValidationError::new("range"));
+    }
+    Ok(())
+}
+
+fn validate_idle_timeout_secs(value: &Seconds) -> Result<(), validator::ValidationError> {
+    let secs = value.as_secs();
+    if secs > 3600 {
+        return Err(validator::ValidationError::new("range"));
+    }
+    Ok(())
 }
 
 /// Create a database connection pool with default settings
@@ -120,15 +190,15 @@ pub async fn create_pool_with_config(database_url: &str, config: &PoolConfig) ->
     let pool = PgPoolOptions::new()
         .max_connections(config.max_connections)
         .min_connections(config.min_connections)
-        .acquire_timeout(Duration::from_secs(config.acquire_timeout_secs))
-        .idle_timeout(Duration::from_secs(config.idle_timeout_secs))
+        .acquire_timeout(Duration::from_secs(config.acquire_timeout_secs.as_secs()))
+        .idle_timeout(Duration::from_secs(config.idle_timeout_secs.as_secs()))
         .connect(database_url)
         .await?;
 
     info!(
         max_connections = config.max_connections,
         min_connections = config.min_connections,
-        acquire_timeout_secs = config.acquire_timeout_secs,
+        acquire_timeout_secs = config.acquire_timeout_secs.as_secs(),
         "Database pool created successfully"
     );
     Ok(pool)
@@ -150,7 +220,7 @@ pub fn get_database_url() -> Result<String> {
     })?;
 
     // Apply environment namespacing to ensure isolation
-    environment().database_url(&base_url)
+    Ok(environment().database_url(&base_url)?)
 }
 
 /// Create a database connection pool
@@ -224,8 +294,8 @@ pub async fn create_test_pool(database_url: &str) -> Result<DbPool> {
     let test_config = PoolConfig {
         max_connections: 100, // High concurrency for tests
         min_connections: 10,
-        acquire_timeout_secs: 30,
-        idle_timeout_secs: 300,
+        acquire_timeout_secs: Seconds::from_secs(30),
+        idle_timeout_secs: Seconds::from_secs(300),
         validate_against_postgres_max: false, // Skip validation in tests
     };
 
@@ -234,8 +304,10 @@ pub async fn create_test_pool(database_url: &str) -> Result<DbPool> {
     let pool = PgPoolOptions::new()
         .max_connections(test_config.max_connections)
         .min_connections(test_config.min_connections)
-        .acquire_timeout(Duration::from_secs(test_config.acquire_timeout_secs))
-        .idle_timeout(Duration::from_secs(test_config.idle_timeout_secs))
+        .acquire_timeout(Duration::from_secs(
+            test_config.acquire_timeout_secs.as_secs(),
+        ))
+        .idle_timeout(Duration::from_secs(test_config.idle_timeout_secs.as_secs()))
         .test_before_acquire(false) // Skip connection testing for speed
         .connect(database_url)
         .await?;
@@ -253,25 +325,10 @@ pub async fn create_database_if_not_exists(database_url: &str) -> Result<()> {
     Ok(())
 }
 
-/// Run database migrations
-///
-/// This uses the new sea-orm-migration system. The migration feature must be enabled
-/// in Cargo.toml to use this function.
-#[cfg(feature = "migration")]
+/// Run database migrations using the SeaORM migration system.
 pub async fn run_migrations(pool: DbPoolRef<'_>) -> Result<()> {
     // Use the new migration system
     migration::run_migrations(pool).await?;
     info!("Database migrations completed");
     Ok(())
-}
-
-/// Run database migrations (stub when migration feature is disabled)
-#[cfg(not(feature = "migration"))]
-pub async fn run_migrations(_pool: DbPoolRef<'_>) -> Result<()> {
-    Err(eyre!(
-        "Database migration feature is not enabled. \
-         To enable migrations, add to your Cargo.toml:\n\
-         sinex-core = {{ version = \"*\", features = [\"migration\"] }}\n\n\
-         Or run migrations manually with: just migrate"
-    ))
 }

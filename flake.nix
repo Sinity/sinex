@@ -77,53 +77,8 @@
             EOF
           '';
 
-          # Helper to build Rust packages with current .sqlx offline design
-          buildRustPackage =
-            { name, manifestPath }:
-            let
-              manifestDir = builtins.dirOf manifestPath;
-            in
-            rustPlatform.buildRustPackage {
-              pname = name;
-              version = version;
-              src = ./.;
-              cargoLock.lockFile = ./Cargo.lock;
-              buildInputs = with pkgs; [
-                openssl
-                dbus
-                systemd
-              ];
-              nativeBuildInputs = with pkgs; [
-                pkg-config
-                protobuf
-                mold
-              ];
-              cargoBuildFlags = [
-                "--manifest-path"
-                manifestPath
-              ];
-              cargoInstallFlags = [
-                "--path"
-                manifestDir
-              ];
-              auditable = false;
-              doCheck = false;
-              SQLX_OFFLINE = "true";
-              postPatch = commonPostPatch;
-              preBuild = ''
-                if [ ! -d ".sqlx" ]; then
-                  echo "ERROR: .sqlx directory not found. Run 'cargo sqlx prepare' first."
-                  exit 1
-                fi
-              '';
-              postInstall = ''
-                # Database migrations ship via the sinex-schema crate/CLI
-                # Nothing extra to install here.
-              '';
-            };
-
           # Helper to build Rust packages using online SQLx against an ephemeral Postgres
-          buildRustPackageOnline =
+          buildRustPackage =
             { name, manifestPath }:
             let
               manifestDir = builtins.dirOf manifestPath;
@@ -154,7 +109,7 @@
               ];
               auditable = false;
               doCheck = false;
-              # Online SQLx: do not set SQLX_OFFLINE
+              # SQLx queries are validated against an ephemeral Postgres instance
               postPatch = commonPostPatch;
               preBuild = ''
                 # Ephemeral Postgres for SQLx online query checking
@@ -291,15 +246,7 @@
             name = "sinex-ingestd";
             manifestPath = "crate/core/sinex-ingestd/Cargo.toml";
           };
-          sinexIngestdOnline = buildRustPackageOnline {
-            name = "sinex-ingestd";
-            manifestPath = "crate/core/sinex-ingestd/Cargo.toml";
-          };
           sinexGateway = buildRustPackage {
-            name = "sinex-gateway";
-            manifestPath = "crate/core/sinex-gateway/Cargo.toml";
-          };
-          sinexGatewayOnline = buildRustPackageOnline {
             name = "sinex-gateway";
             manifestPath = "crate/core/sinex-gateway/Cargo.toml";
           };
@@ -314,16 +261,16 @@
             manifestPath = "crate/satellites/sinex-fs-watcher/Cargo.toml";
           };
           sinexTerminalSatellite = buildRustPackage {
-            name = "sinex-terminal-satellite";
-            manifestPath = "crate/satellites/sinex-terminal-satellite/Cargo.toml";
+            name = "sinex-terminal-node";
+            manifestPath = "crate/satellites/sinex-terminal-node/Cargo.toml";
           };
           sinexDesktopSatellite = buildRustPackage {
-            name = "sinex-desktop-satellite";
-            manifestPath = "crate/satellites/sinex-desktop-satellite/Cargo.toml";
+            name = "sinex-desktop-node";
+            manifestPath = "crate/satellites/sinex-desktop-node/Cargo.toml";
           };
           sinexSystemSatellite = buildRustPackage {
-            name = "sinex-system-satellite";
-            manifestPath = "crate/satellites/sinex-system-satellite/Cargo.toml";
+            name = "sinex-system-node";
+            manifestPath = "crate/satellites/sinex-system-node/Cargo.toml";
           };
           sinexDocumentIngestor = buildRustPackage {
             name = "sinex-document-ingestor";
@@ -350,25 +297,6 @@
             name = "sinex-suite";
             paths = [
               sinexIngestd
-              sinexGateway
-              sinexSatelliteSdk
-              sinexFsWatcher
-              sinexTerminalSatellite
-              sinexDesktopSatellite
-              sinexSystemSatellite
-              sinexDocumentIngestor
-              sinexTerminalCommandCanonicalizer
-              healthAggregator
-              sinexCli
-              sinexSchema
-            ];
-          };
-
-          sinexSuiteOnline = pkgs.symlinkJoin {
-            name = "sinex-suite-online";
-            paths = [
-              sinexIngestdOnline
-              sinexGatewayOnline
               sinexSatelliteSdk
               sinexFsWatcher
               sinexTerminalSatellite
@@ -385,9 +313,7 @@
           sinexPackages = {
             inherit
               sinexIngestd
-              sinexIngestdOnline
               sinexGateway
-              sinexGatewayOnline
               sinexSatelliteSdk
               sinexFsWatcher
               sinexTerminalSatellite
@@ -401,7 +327,6 @@
               sinexCli
               ;
             sinex = sinexSuite;
-            sinexOnline = sinexSuiteOnline;
             sinexPreflight = sinexSatelliteSdk;
 
             # Default package is now the ingestion daemon
@@ -452,7 +377,14 @@
     // {
       # NixOS module
       nixosModules = {
-        default = import ./nixos;
+        default =
+          { ... }:
+          {
+            imports = [
+              agenix.nixosModules.default
+              (import ./nixos)
+            ];
+          };
         sinex = args: (self.nixosModules.default args);
       };
 

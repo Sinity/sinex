@@ -4,11 +4,10 @@
 //! behaves sensibly when approaching storage and consumer limits.
 
 use async_nats::jetstream::{
-    consumer::{pull::Config as ConsumerConfig, AckPolicy, DeliverPolicy, Consumer},
+    consumer::{pull::Config as ConsumerConfig, AckPolicy, Consumer, DeliverPolicy},
     stream::{Config as StreamConfig, RetentionPolicy},
     Context as JetStream,
 };
-use sinex_test_utils::TestResult;
 use futures::StreamExt;
 use serde_json::json;
 use sinex_core::types::ulid::Ulid;
@@ -55,7 +54,7 @@ async fn create_consumer(
 }
 
 #[sinex_bench]
-async fn jetstream_backpressure_limits() -> color_eyre::eyre::Result<()> {
+async fn jetstream_backpressure_limits() -> TestResult<()> {
     let nats = EphemeralNats::start().await?;
     let client = nats.connect().await?;
     let js = JetStream::new(client);
@@ -87,7 +86,7 @@ async fn jetstream_backpressure_limits() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_bench]
-async fn jetstream_consumer_recovery() -> color_eyre::eyre::Result<()> {
+async fn jetstream_consumer_recovery() -> TestResult<()> {
     let nats = EphemeralNats::start().await?;
     let client = nats.connect().await?;
     let js = JetStream::new(client.clone());
@@ -167,7 +166,7 @@ async fn jetstream_consumer_recovery() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_bench]
-async fn jetstream_high_concurrency_publish() -> color_eyre::eyre::Result<()> {
+async fn jetstream_high_concurrency_publish() -> TestResult<()> {
     let nats = EphemeralNats::start().await?;
     let client = nats.connect().await?;
     let js = JetStream::new(client.clone());
@@ -202,7 +201,7 @@ async fn jetstream_high_concurrency_publish() -> color_eyre::eyre::Result<()> {
                 data = serde_json::to_vec(&json_val)?;
                 js.publish(&subject, data.into()).await?.await?;
             }
-            color_eyre::eyre::Result::<()>::Ok(())
+            TestResult::<()>::Ok(())
         });
     }
 
@@ -220,7 +219,8 @@ async fn jetstream_high_concurrency_publish() -> color_eyre::eyre::Result<()> {
     );
 
     let durable = format!("perf_concurrency_consumer_{}", Ulid::new());
-    let consumer = create_consumer(&js, &stream, &subject, &durable, Duration::from_secs(30)).await?;
+    let consumer =
+        create_consumer(&js, &stream, &subject, &durable, Duration::from_secs(30)).await?;
 
     let mut processed = 0usize;
     loop {

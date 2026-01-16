@@ -8,7 +8,6 @@ use serde::Serialize;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
-use std::time::Duration;
 
 /// Helper for advanced snapshot testing with custom redactions
 pub struct SnapshotTestHelper {
@@ -198,11 +197,7 @@ where
         Ok(()) => Ok(()),
         Err(err) => {
             persist_failure(test_name, err.to_string(), FailureContext::Borrowed(ctx));
-            // Best-effort recovery before retrying.
-            let _ = ctx.force_cleanup().await;
-            let _ = crate::db_common::reset_database(ctx.pool()).await;
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            f().await
+            Err(err)
         }
     }
 }

@@ -44,10 +44,10 @@ The mature system will support:
 
 ### Architectural Evolution
 
-The satellite architecture enables:
+The node architecture enables:
 - **Independent Evolution**: Each component can advance separately
 - **System Coherence**: Unified through message bus
-- **Horizontal Scaling**: Add satellites as needed
+- **Horizontal Scaling**: Add nodes as needed
 - **Feature Composition**: Combine simple parts for complex behavior
 
 ## Development Philosophy

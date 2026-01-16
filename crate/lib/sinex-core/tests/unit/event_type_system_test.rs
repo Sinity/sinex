@@ -21,10 +21,7 @@ use sinex_core::types::events::payloads::{
 };
 use sinex_core::{Event, Id, JsonValue, Provenance, Ulid};
 
-async fn ensure_material(
-    ctx: &TestContext,
-    label: &str,
-) -> color_eyre::eyre::Result<Id<SourceMaterial>> {
+async fn ensure_material(ctx: &TestContext, label: &str) -> TestResult<Id<SourceMaterial>> {
     let material_id = Id::<SourceMaterial>::from_ulid(Ulid::new());
     ctx.ensure_source_material(material_id, Some(label)).await?;
     Ok(material_id)
@@ -40,7 +37,7 @@ fn sp(path: impl AsRef<str>) -> SanitizedPath {
 
 /// Test event source constants and consistent naming patterns
 #[sinex_test]
-async fn test_event_source_patterns() -> color_eyre::eyre::Result<()> {
+async fn test_event_source_patterns() -> TestResult<()> {
     let sources = vec![
         FileCreatedPayload::SOURCE.to_string(),
         FileModifiedPayload::SOURCE.to_string(),
@@ -74,7 +71,7 @@ async fn test_event_source_patterns() -> color_eyre::eyre::Result<()> {
 
 /// Test that event sources follow consistent naming patterns  
 #[sinex_test]
-async fn test_source_naming_conventions() -> color_eyre::eyre::Result<()> {
+async fn test_source_naming_conventions() -> TestResult<()> {
     let validated_sources = ["fs-watcher", "clipboard", "system"];
     for source in validated_sources {
         let source_type = EventSource::new(source);
@@ -107,7 +104,7 @@ async fn test_source_naming_conventions() -> color_eyre::eyre::Result<()> {
 
 /// Test event type naming patterns and validation
 #[sinex_test]
-async fn test_event_type_validation() -> color_eyre::eyre::Result<()> {
+async fn test_event_type_validation() -> TestResult<()> {
     let test_cases = vec![
         ("file.created", true),
         ("file.modified", true),
@@ -146,7 +143,7 @@ async fn test_event_type_validation() -> color_eyre::eyre::Result<()> {
 
 /// Test event type hierarchical structure (object.action pattern)
 #[sinex_test]
-async fn test_event_type_hierarchical_structure() -> color_eyre::eyre::Result<()> {
+async fn test_event_type_hierarchical_structure() -> TestResult<()> {
     let test_cases = vec![
         ("file.created", "file", "created"),
         ("file.modified", "file", "modified"),
@@ -179,7 +176,7 @@ async fn test_event_type_hierarchical_structure() -> color_eyre::eyre::Result<()
 
 /// Test filesystem payload creation and validation
 #[sinex_test]
-async fn test_filesystem_payload_system(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_filesystem_payload_system(ctx: TestContext) -> TestResult<()> {
     // Test FileCreatedPayload
     let file_payload = FileCreatedPayload::test_default(sp("/test/file.txt"))
         .with_size(1024u64)
@@ -242,9 +239,8 @@ async fn test_filesystem_payload_system(ctx: TestContext) -> color_eyre::eyre::R
 }
 
 /// Test shell/terminal payload system
-#[sinex_test]
-async fn test_shell_payload_system(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
+#[sinex_serial_test]
+async fn test_shell_payload_system(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
     // Test KittyCommandExecutedPayload
     let kitty_payload = KittyCommandExecutedPayload::test_default("ls -la")
@@ -301,7 +297,7 @@ async fn test_shell_payload_system(ctx: TestContext) -> color_eyre::eyre::Result
 
 /// Test clipboard payload system
 #[sinex_test]
-async fn test_clipboard_payload_system(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_clipboard_payload_system(ctx: TestContext) -> TestResult<()> {
     // Test ClipboardCopiedPayload
     let clipboard_payload = ClipboardCopiedPayload::test_default("test-hash");
 
@@ -330,7 +326,7 @@ async fn test_clipboard_payload_system(ctx: TestContext) -> color_eyre::eyre::Re
 
 /// Test that sources consistently map to appropriate event types
 #[sinex_test]
-async fn test_source_event_type_mapping(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_source_event_type_mapping(ctx: TestContext) -> TestResult<()> {
     let test_cases = vec![
         (
             "fs-watcher",
@@ -387,7 +383,7 @@ async fn test_source_event_type_mapping(ctx: TestContext) -> color_eyre::eyre::R
             };
 
             let event = ctx
-                .create_test_event(source, event_type, test_payload)
+                .publish_json_event(source, event_type, test_payload)
                 .await?;
             created_events.push(event);
         }
@@ -431,7 +427,7 @@ async fn test_source_event_type_mapping(ctx: TestContext) -> color_eyre::eyre::R
 
 /// Test concurrent event creation maintains type safety
 #[sinex_test]
-async fn test_concurrent_event_creation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_concurrent_event_creation(ctx: TestContext) -> TestResult<()> {
     use std::sync::Arc;
     use tokio::task;
 
@@ -527,7 +523,7 @@ async fn test_concurrent_event_creation(ctx: TestContext) -> color_eyre::eyre::R
 
 /// Test that event IDs are unique even under concurrent creation
 #[sinex_test]
-async fn test_event_id_uniqueness_concurrent(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_event_id_uniqueness_concurrent(ctx: TestContext) -> TestResult<()> {
     use std::collections::HashSet;
     use std::sync::Arc;
     use tokio::task;
@@ -601,7 +597,7 @@ async fn test_event_id_uniqueness_concurrent(ctx: TestContext) -> color_eyre::ey
 
 /// Test payload validation and schema adherence
 #[sinex_test]
-async fn test_payload_validation_system(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_payload_validation_system(ctx: TestContext) -> TestResult<()> {
     // Test that valid payloads work correctly
     let valid_payload = FileCreatedPayload::test_default(sp("/valid/path.txt"))
         .with_size(1024u64)
@@ -636,7 +632,7 @@ async fn test_payload_validation_system(ctx: TestContext) -> color_eyre::eyre::R
 
 /// Test event type constants are consistent
 #[sinex_test]
-async fn test_event_type_constants_consistency(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_event_type_constants_consistency(ctx: TestContext) -> TestResult<()> {
     // Test that the EventPayload macro generates consistent event types
     let file_created = FileCreatedPayload::test_default(sp("/test"));
     let file_modified = FileModifiedPayload::test_default(sp("/test"));

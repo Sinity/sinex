@@ -5,6 +5,7 @@ use crate::{DbTransaction, Ulid};
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
 use sqlx::{FromRow, PgPool};
+use tracing::error;
 use uuid::Uuid;
 
 /// Convert ULID to UUID for database storage
@@ -119,52 +120,5 @@ pub trait EnhancedRepository<'a>: Repository<'a> {
             .map_err(|e| db_error(e, "Failed to check existence"))?;
 
         Ok(result.is_some())
-    }
-}
-
-/// Batch operations for repositories
-#[async_trait::async_trait]
-pub trait BatchRepository<'a, T>: Repository<'a>
-where
-    T: FromRow<'a, sqlx::postgres::PgRow> + Send + Unpin,
-{
-    /// Insert multiple records in a single transaction
-    async fn insert_batch(&self, records: Vec<T>) -> DbResult<Vec<Ulid>>;
-
-    /// Update multiple records in a single transaction
-    async fn update_batch(&self, records: Vec<(Ulid, T)>) -> DbResult<u64>;
-
-    /// Delete multiple records by IDs
-    async fn delete_batch(&self, ids: Vec<Ulid>) -> DbResult<u64>;
-}
-
-/// Transactional operations for repositories
-#[async_trait::async_trait]
-pub trait TransactionalRepository<'a>: Repository<'a> {
-    /// Execute a closure within a transaction
-    async fn with_transaction<F, R>(&self, f: F) -> DbResult<R>
-    where
-        F: for<'t> FnOnce(&'t mut DbTransaction<'_>) -> futures::future::BoxFuture<'t, DbResult<R>>
-            + Send,
-        R: Send,
-    {
-        let mut tx = self
-            .pool()
-            .begin()
-            .await
-            .map_err(|e| db_error(e, "Failed to begin transaction"))?;
-
-        match f(&mut tx).await {
-            Ok(result) => {
-                tx.commit()
-                    .await
-                    .map_err(|e| db_error(e, "Failed to commit transaction"))?;
-                Ok(result)
-            }
-            Err(e) => {
-                let _ = tx.rollback().await;
-                Err(e)
-            }
-        }
     }
 }

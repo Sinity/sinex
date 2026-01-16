@@ -4,7 +4,7 @@ members = [
   "crate/lib/sinex-core",
   "crate/lib/sinex-schema",
   "crate/lib/sinex-macros",
-  "crate/lib/sinex-satellite-sdk",
+  "crate/lib/sinex-node-sdk",
   "crate/lib/sinex-processor-runtime",
   "crate/lib/sinex-services",
   # Re-enabled to ensure tests compile
@@ -13,30 +13,29 @@ members = [
   # Core runtime crates
   "crate/core/sinex-ingestd",
   "crate/core/sinex-gateway",
-  "crate/core/sinex-rpc-dispatcher",
   
   # Satellite crates
-  "crate/satellites/sinex-terminal-satellite",
-  "crate/satellites/sinex-desktop-satellite",
-  "crate/satellites/sinex-system-satellite",
-  "crate/satellites/sinex-fs-watcher",
-  "crate/satellites/sinex-terminal-command-canonicalizer",
-  "crate/satellites/sinex-health-aggregator",
-  "crate/satellites/sinex-document-ingestor",
+  "crate/nodes/sinex-terminal-node",
+  "crate/nodes/sinex-desktop-node",
+  "crate/nodes/sinex-system-node",
+  "crate/nodes/sinex-fs-watcher",
+  "crate/nodes/sinex-terminal-command-canonicalizer",
+  "crate/nodes/sinex-health-aggregator",
+  "crate/nodes/sinex-document-ingestor",
   "tests/e2e",
 
   # Automaton crates
-  "crate/satellites/sinex-analytics-automaton",
-  "crate/satellites/sinex-search-automaton",
-  "crate/satellites/sinex-content-automaton",
-  "crate/satellites/sinex-pkm-automaton",
+  "crate/nodes/sinex-analytics-automaton",
+  "crate/nodes/sinex-search-automaton",
+  "crate/nodes/sinex-content-automaton",
+  "crate/nodes/sinex-pkm-automaton",
 
   # Developer tooling
   "xtask",
 
   # Keep experimental automata disabled until stabilized
-  # "crate/satellites/sinex-content-automaton",
-  # "crate/satellites/sinex-pkm-automaton",
+  # "crate/nodes/sinex-content-automaton",
+  # "crate/nodes/sinex-pkm-automaton",
   
   # Test modules are integration tests within the main workspace
   # "test/*", # Removed - tests are integration tests, not separate workspace members
@@ -135,6 +134,7 @@ bon = "2.3"
 
 # Data structures
 indexmap = "2.0"
+dashmap = "5.5"
 
 # Retry logic
 tokio-retry = "0.3"
@@ -161,7 +161,6 @@ proptest = "1"
 rstest = "0.18"
 insta = { version = "1.34", features = ["json", "yaml", "redactions"] }
 tracing-test = "0.2"
-similar-asserts = "1.5"
 
 # System
 gethostname = "0.4"
@@ -178,6 +177,7 @@ jsonschema = "0.17"
 validator = { version = "0.18", features = ["derive"] }
 figment = { version = "0.10.19", features = ["toml", "yaml", "json", "env"] }
 humantime-serde = "1.1"
+uncased = "0.9"
 
 # Build-time registry
 inventory = "0.3"
@@ -197,6 +197,10 @@ edition = "2021"
 authors = ["Sinex Exocortex Contributors"]
 repository = "https://github.com/sinex/exocortex"
 license = "MIT OR Apache-2.0"
+build = "build.rs"
+
+[build-dependencies]
+chrono = { workspace = true }
 
 [dev-dependencies]
 lazy_static = { workspace = true }
@@ -221,7 +225,7 @@ async-nats = { workspace = true }
 
 [dependencies]
 # Test utilities and dependencies for workspace-level integration tests
-sinex-satellite-sdk = { path = "crate/lib/sinex-satellite-sdk" }
+sinex-node-sdk = { path = "crate/lib/sinex-node-sdk" }
 
 # (Removed duplicate optional test deps; consolidated under dev-dependencies above)
 
@@ -233,3 +237,9 @@ debug = true
 split-debuginfo = "unpacked" # Faster debug info handling
 incremental = true
 codegen-units = 256          # Maximum parallelism for fast compilation
+
+[profile.dev-fast]
+# Ultra-fast check-only profile (no debug info, minimal checks)
+inherits = "dev"
+debug = false                # Skip debug info generation
+strip = true                 # Strip symbols for faster linking

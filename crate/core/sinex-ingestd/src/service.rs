@@ -6,14 +6,15 @@
 use crate::{
     config::IngestdConfig, validator::EventValidator, IngestdResult, JetStreamTopology, SinexError,
 };
+use sinex_core::JsonValue;
 
 // External crates
 use async_nats::{jetstream, Client as NatsClient};
 use serde::Serialize;
-use sinex_core::db::distributed_locking::AdvisoryLock;
+use sinex_core::db::advisory_lock::AdvisoryLock;
 use sinex_core::environment as sinex_environment;
 use sinex_core::types::utils::ResourceGuard;
-use sinex_satellite_sdk::annex::{AnnexConfig, GitAnnex};
+use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
 use sqlx::PgPool;
 
 // Standard library and common crates
@@ -75,36 +76,12 @@ impl IngestService {
         let (nats_client, jetstream) = if config.dry_run {
             (None, None)
         } else {
-            let client = async_nats::connect(&config.nats_url).await.map_err(|e| {
+            let client = config.nats.connect().await.map_err(|e| {
                 SinexError::network(format!("Failed to connect to NATS: {e}"))
                     .with_operation("service.connect_nats")
-                    .with_context("nats_url", config.nats_url.clone())
+                    .with_context("nats_url", config.nats.url.clone())
             })?;
             let js = jetstream::new(client.clone());
-
-            // Create or get the events stream (subjects namespaced by environment)
-            let env = sinex_environment();
-            let stream_config = jetstream::stream::Config {
-                name: config.nats_stream_name.clone(),
-                subjects: vec![env.nats_subject("events.raw.>")],
-                retention: jetstream::stream::RetentionPolicy::Limits,
-                max_messages: 10_000_000,
-                max_age: std::time::Duration::from_secs(7 * 24 * 60 * 60), // 7 days
-                storage: jetstream::stream::StorageType::File,
-                num_replicas: 1,
-                ..Default::default()
-            };
-
-            js.get_or_create_stream(stream_config).await.map_err(|e| {
-                SinexError::network(format!("Failed to create/get stream: {e}"))
-                    .with_operation("service.bootstrap_stream")
-                    .with_context("stream", config.nats_stream_name.clone())
-            })?;
-
-            info!(
-                "Connected to NATS JetStream stream: {}",
-                config.nats_stream_name
-            );
 
             (Some(client), Some(js))
         };
@@ -138,8 +115,10 @@ impl IngestService {
         };
 
         if let Some(ref nats_client) = nats_client {
-            if let Err(e) = Self::broadcast_active_schemas(&validator, nats_client).await {
-                warn!("Failed to broadcast schemas: {}", e);
+            if let Some(ref pool) = db_pool {
+                if let Err(e) = Self::broadcast_active_schemas(&validator, nats_client, pool).await {
+                    warn!("Failed to broadcast schemas: {}", e);
+                }
             }
         }
 
@@ -241,7 +220,12 @@ impl IngestService {
             &env,
             self.config.nats_stream_name.clone(),
             self.config.nats_consumer_name.clone(),
+            self.config.nats_namespace.as_deref(),
         );
+
+        let fetch_timeout = self.config.consumer_fetch_timeout_ms.as_duration();
+        let fetch_max = self.config.consumer_fetch_max_messages.max(1);
+        let max_ack_pending = self.config.consumer_max_ack_pending;
 
         tokio::spawn(async move {
             let consumer = crate::JetStreamConsumer::new(
@@ -249,7 +233,9 @@ impl IngestService {
                 pool.clone(),
                 validator.clone(),
                 topology,
-            );
+            )
+            .with_batch_fetch_config(fetch_max, fetch_timeout)
+            .with_max_ack_pending(max_ack_pending);
 
             tokio::select! {
                 result = consumer.run() => {
@@ -274,6 +260,8 @@ impl IngestService {
         let shutdown_flag = self.shutdown_flag.clone();
         let annex_repo_path = self.config.annex_repo_path.clone();
         let assembler_state_dir = self.config.assembler_state_dir.clone();
+        let namespace = self.config.nats_namespace.clone();
+        let slices_max_ack_pending = self.config.material_slices_max_ack_pending;
 
         tokio::spawn(async move {
             let annex_config = AnnexConfig {
@@ -296,25 +284,28 @@ impl IngestService {
 
             let state_dir: PathBuf = assembler_state_dir.into();
 
-            let assembler =
-                match crate::MaterialAssembler::new(nats_client, pool, git_annex, state_dir) {
-                    Ok(assembler) => assembler,
-                    Err(e) => {
-                        error!("Failed to create MaterialAssembler: {}", e);
-                        return;
-                    }
-                };
+            let assembler = match crate::MaterialAssembler::new(
+                nats_client,
+                pool,
+                git_annex,
+                state_dir,
+                namespace.clone(),
+                slices_max_ack_pending,
+            ) {
+                Ok(assembler) => assembler,
+                Err(e) => {
+                    error!("Failed to create MaterialAssembler: {}", e);
+                    return;
+                }
+            };
 
-            tokio::select! {
-                result = assembler.run() => {
-                    match result {
-                        Ok(()) => info!("MaterialAssembler completed"),
-                        Err(e) => error!("MaterialAssembler failed: {}", e),
-                    }
-                }
-                _ = shutdown_signal(&shutdown_flag) => {
-                    info!("MaterialAssembler shutting down");
-                }
+            let result = assembler.run_with_shutdown(shutdown_flag.clone()).await;
+            if shutdown_flag.load(Ordering::Relaxed) {
+                info!("MaterialAssembler shutting down");
+            }
+            match result {
+                Ok(()) => info!("MaterialAssembler completed"),
+                Err(e) => error!("MaterialAssembler failed: {}", e),
             }
         })
     }
@@ -338,7 +329,7 @@ impl IngestService {
                         if let Err(e) = validator_guard.reload_schemas(&pool).await {
                             warn!("Failed to reload schemas: {}", e);
                         } else if let Some(nc) = &nats_client {
-                            if let Err(e) = Self::broadcast_active_schemas(&validator_guard, nc).await {
+                            if let Err(e) = Self::broadcast_active_schemas(&validator_guard, nc, &pool).await {
                                 warn!("Failed to broadcast active schemas: {}", e);
                             }
                         }
@@ -499,6 +490,7 @@ impl IngestService {
     async fn broadcast_active_schemas(
         validator: &EventValidator,
         nats_client: &NatsClient,
+        pool: &PgPool,
     ) -> IngestdResult<()> {
         let env = sinex_environment();
         let subject = env.nats_subject("system.schemas.active");
@@ -514,6 +506,12 @@ impl IngestService {
             })
             .collect();
 
+        // Store full schemas in NATS KV for satellite-side validation
+        if let Err(e) = Self::store_schemas_in_kv(&entries, pool, &js).await {
+            warn!("Failed to store schemas in KV: {}", e);
+        }
+
+        // Broadcast metadata for cache invalidation signal
         js.publish(subject, serde_json::to_vec(&entries)?.into())
             .await
             .map_err(|e| SinexError::network(format!("Failed to publish schema broadcast: {e}")))?
@@ -523,6 +521,69 @@ impl IngestService {
         info!(
             count = entries.len(),
             "Broadcasted active schemas snapshot to JetStream"
+        );
+
+        Ok(())
+    }
+
+    /// Store full schema JSON in NATS KV for satellite validation
+    async fn store_schemas_in_kv(
+        entries: &[SchemaBroadcastEntry],
+        pool: &PgPool,
+        js: &jetstream::Context,
+    ) -> IngestdResult<()> {
+        use sinex_core::Ulid;
+
+        // Create or get KV bucket
+        let kv_config = jetstream::kv::Config {
+            bucket: "KV_sinex_schemas".to_string(),
+            history: 5,
+            ..Default::default()
+        };
+
+        let kv = match js.create_key_value(kv_config).await {
+            Ok(store) => store,
+            Err(_) => js
+                .get_key_value("KV_sinex_schemas")
+                .await
+                .map_err(|e| SinexError::kv(format!("Failed to get schema KV bucket: {e}")))?,
+        };
+
+        // For each schema entry, fetch full JSON from DB and store in KV
+        for entry in entries {
+            let schema_id = entry
+                .schema_id
+                .parse::<Ulid>()
+                .map_err(|e| SinexError::validation(format!("Invalid schema ID: {e}")))?;
+
+            // Fetch full schema from database using regular query to avoid ulid/uuid casting issues
+            let schema_json: Option<JsonValue> = sqlx::query_scalar(
+                r#"
+                SELECT schema_content
+                FROM sinex_schemas.event_payload_schemas
+                WHERE id::uuid = $1 AND is_active = true
+                "#,
+            )
+            .bind(schema_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| SinexError::database(format!("Failed to fetch schema: {e}")))?;
+
+            if let Some(json) = schema_json {
+                let key = format!("schema:{}", entry.schema_id);
+                let payload = serde_json::to_vec(&json).map_err(|e| {
+                    SinexError::serialization(format!("Failed to serialize schema: {e}"))
+                })?;
+
+                kv.put(&key, payload.into())
+                    .await
+                    .map_err(|e| SinexError::kv(format!("Failed to store schema in KV: {e}")))?;
+            }
+        }
+
+        info!(
+            count = entries.len(),
+            "Stored full schemas in NATS KV for satellite validation"
         );
 
         Ok(())

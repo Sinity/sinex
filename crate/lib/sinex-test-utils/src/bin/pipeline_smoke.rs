@@ -1,0 +1,22 @@
+use serde_json::json;
+use sinex_test_utils::{TestContext, TestResult};
+
+#[tokio::main]
+async fn main() -> TestResult<()> {
+    color_eyre::install()?;
+
+    let ctx = TestContext::with_name("pipeline_smoke")
+        .await?
+        .with_shared_nats()
+        .await?;
+    let scope = ctx.pipeline_scope().await?;
+
+    let event_id = scope
+        .publish("pipeline-smoke", "smoke.event", json!({"ok": true}))
+        .await?;
+    scope.wait_for_event_id(event_id).await?;
+
+    scope.shutdown().await?;
+    println!("pipeline smoke: ok");
+    Ok(())
+}

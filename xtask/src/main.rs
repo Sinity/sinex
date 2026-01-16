@@ -9,6 +9,8 @@ use std::{
 };
 use tempfile::NamedTempFile;
 
+mod bench;
+
 #[derive(Parser)]
 #[command(author, version, about = "Developer tasks for the Sinex workspace")]
 struct Cli {
@@ -18,11 +20,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Fast correctness checks (sqlx check, fmt check, cargo check)
+    /// Fast correctness checks (fmt check + cargo check)
     Check {
-        /// Skip sqlx metadata check
-        #[arg(long)]
-        skip_sqlx: bool,
         /// Skip fmt check
         #[arg(long)]
         skip_fmt: bool,
@@ -34,22 +33,17 @@ enum Commands {
     Lint,
     /// Run nextest (reliable profile by default)
     Test {
-        /// Disable SQLX_OFFLINE
-        #[arg(long)]
-        online_sqlx: bool,
         /// Nextest profile (default: reliable)
         #[arg(long, default_value = "reliable")]
         profile: String,
-    },
-    /// Regenerate .sqlx metadata (requires DB access)
-    SqlxPrepare,
-    /// Check .sqlx metadata without rewriting it
-    SqlxCheck {
-        /// Disable SQLX_OFFLINE
+        /// Prime the database pool before running tests
         #[arg(long)]
-        online: bool,
+        prime: bool,
+        /// Additional nextest args (use `--` before them)
+        #[arg(last = true)]
+        args: Vec<String>,
     },
-    /// Database utilities (setup/migrate/status/sqlx-prepare)
+    /// Database utilities (setup/migrate/status)
     Db {
         #[command(subcommand)]
         cmd: DbCommand,
@@ -61,10 +55,14 @@ enum Commands {
     },
     /// Forbidden pattern guard (tokio::test, #[test], raw sqlx::query)
     LintForbidden,
-    /// Quick CI preflight: sqlx-check, clippy, nextest reliable (offline)
+    /// Quick CI preflight: fmt/check, clippy, lint-forbidden, schema checks, nextest reliable
     CiPreflight,
-    /// Environment/health report (toolchain, sccache, Postgres, schema)
-    Doctor,
+    /// Environment/health report (toolchain, Postgres, schema)
+    Doctor {
+        /// Run pipeline smoke validation (ingestd + JetStream)
+        #[arg(long)]
+        pipelines: bool,
+    },
     /// Generate shell completions for xtask
     Completions {
         #[arg(value_enum)]
@@ -74,6 +72,13 @@ enum Commands {
     Ci {
         #[command(subcommand)]
         cmd: CiCommand,
+    },
+    /// Benchmark test suite performance
+    Bench(bench::BenchConfig),
+    /// Developer utilities
+    Dev {
+        #[command(subcommand)]
+        cmd: DevCommand,
     },
 }
 
@@ -141,6 +146,16 @@ enum CiCommand {
 }
 
 #[derive(Subcommand)]
+enum DevCommand {
+    /// Generate TLS fixtures for secure NATS tests
+    TlsFixtures {
+        /// Output directory for the generated PEM files
+        #[arg(long, default_value = "tests/fixtures/tls")]
+        output: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum SchemaCommand {
     /// Generate schemas from EventPayload types
     Generate {
@@ -151,11 +166,14 @@ enum SchemaCommand {
         #[arg(long)]
         sync: bool,
     },
-    /// Deploy schemas to the database (requires DATABASE_URL)
+    /// Deploy schemas to the database (requires DATABASE_URL or --database-url)
     Deploy {
         /// Input directory
         #[arg(long, default_value = "schemas/v1")]
         input: String,
+        /// Database URL (required; can also be set via DATABASE_URL)
+        #[arg(long, env = "DATABASE_URL")]
+        database_url: String,
     },
     /// Compatibility check against a base branch
     Compat {
@@ -190,32 +208,30 @@ enum DbCommand {
         #[arg(long)]
         yes: bool,
     },
-    /// Regenerate .sqlx metadata
-    PrepareSqlx,
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Check {
-            skip_sqlx,
             skip_fmt,
             skip_check,
-        } => check(skip_sqlx, skip_fmt, skip_check),
+        } => check(skip_fmt, skip_check),
         Commands::Lint => lint(),
         Commands::Test {
-            online_sqlx,
             profile,
-        } => test(online_sqlx, &profile),
-        Commands::SqlxPrepare => sqlx_prepare(),
-        Commands::SqlxCheck { online } => sqlx_check(online),
+            prime,
+            args,
+        } => test(&profile, prime, &args),
         Commands::Db { cmd } => db(cmd),
         Commands::Schema { cmd } => schema(cmd),
         Commands::LintForbidden => lint_forbidden(),
         Commands::CiPreflight => ci_preflight(),
-        Commands::Doctor => doctor(),
+        Commands::Doctor { pipelines } => doctor(pipelines),
         Commands::Completions { shell } => completions(shell),
         Commands::Ci { cmd } => ci(cmd),
+        Commands::Bench(config) => bench::run(config),
+        Commands::Dev { cmd } => dev(cmd),
     }
 }
 
@@ -234,6 +250,31 @@ fn run_cmd(name: &str, mut cmd: Command) -> Result<()> {
     Ok(())
 }
 
+fn dev(cmd: DevCommand) -> Result<()> {
+    match cmd {
+        DevCommand::TlsFixtures { output } => generate_tls_fixtures(&output),
+    }
+}
+
+fn generate_tls_fixtures(output: &str) -> Result<()> {
+    let script = Path::new("scripts").join("generate_tls_fixtures.sh");
+    if !script.exists() {
+        bail!("TLS fixture script missing at {}", script.to_string_lossy());
+    }
+
+    let status = Command::new(&script)
+        .arg(output)
+        .status()
+        .with_context(|| format!("failed to run {}", script.display()))?;
+
+    if !status.success() {
+        bail!("{} exited with {}", script.display(), status);
+    }
+
+    println!("TLS fixtures generated in {output}");
+    Ok(())
+}
+
 fn pg_command(binary: &str) -> Command {
     if let Ok(prefix) = env::var("SINEX_PG_BIN") {
         let mut path = PathBuf::from(prefix);
@@ -244,26 +285,7 @@ fn pg_command(binary: &str) -> Command {
     }
 }
 
-fn sqlx_check(online: bool) -> Result<()> {
-    let mut c = Command::new("cargo");
-    if !online {
-        c.env("SQLX_OFFLINE", "1");
-    }
-    c.arg("sqlx")
-        .arg("prepare")
-        .arg("--workspace")
-        .arg("--check")
-        .arg("--")
-        .arg("--all-targets")
-        .arg("--all-features");
-    run_cmd("sqlx prepare --check", c)
-}
-
-fn check(skip_sqlx: bool, skip_fmt: bool, skip_check: bool) -> Result<()> {
-    if !skip_sqlx {
-        sqlx_check(false)?;
-    }
-
+fn check(skip_fmt: bool, skip_check: bool) -> Result<()> {
     if !skip_fmt {
         let mut fmt = Command::new("cargo");
         fmt.arg("fmt").arg("--all").arg("--").arg("--check");
@@ -291,94 +313,42 @@ fn lint() -> Result<()> {
     run_cmd("cargo clippy -D warnings", cmd)
 }
 
-fn test(online_sqlx: bool, profile: &str) -> Result<()> {
-    let mut cmd = Command::new("cargo");
-    if !online_sqlx {
-        cmd.env("SQLX_OFFLINE", "1");
+fn test(profile: &str, prime: bool, args: &[String]) -> Result<()> {
+    if prime {
+        run_cmd("prime test pool", {
+            let mut c = Command::new("cargo");
+            c.args(["run", "-p", "sinex-test-utils", "--bin", "db_prime"]);
+            c
+        })?;
     }
+
+    let mut cmd = Command::new("cargo");
     cmd.arg("nextest")
         .arg("run")
+        .arg("--config-file")
+        .arg(".config/nextest.toml")
         .arg("--workspace")
         .arg("--profile")
         .arg(profile);
-    apply_ci_skip_filters(&mut cmd)?;
+    if args.iter().any(|arg| arg == "--") {
+        bail!("xtask test does not support passing test-binary args (remove '--').");
+    }
+    cmd.args(args);
     run_cmd("nextest", cmd)
 }
 
-fn apply_ci_skip_filters(cmd: &mut Command) -> Result<()> {
-    let ci_enabled = env::var("CI").is_ok();
-    if !ci_enabled {
-        return Ok(());
-    }
-
-    let skip_file = env::var("SINEX_CI_SKIP_FILE")
-        .ok()
-        .unwrap_or_else(|| "tests/ci/nextest.skip".to_string());
-    let skip_path = Path::new(&skip_file);
-    if !skip_path.exists() {
-        return Ok(());
-    }
-
-    let raw = fs::read_to_string(skip_path)
-        .with_context(|| format!("Failed to read CI skip file at {}", skip_path.display()))?;
-    let patterns: Vec<String> = raw
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .map(|line| line.to_string())
-        .collect();
-
-    if patterns.is_empty() {
-        return Ok(());
-    }
-
-    cmd.arg("--");
-    for pattern in patterns {
-        cmd.arg("--skip").arg(pattern);
-    }
-    Ok(())
-}
-
-fn sqlx_prepare() -> Result<()> {
-    let super_url = env::var("DATABASE_URL_SUPERUSER")
-        .or_else(|_| env::var("DATABASE_URL"))
-        .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
-
-    // Ensure the DB schema is up-to-date before validating queries.
-    run_cmd("migrate", {
-        let mut c = Command::new("cargo");
-        c.args([
-            "run",
-            "--manifest-path",
-            "crate/lib/sinex-schema/Cargo.toml",
-            "--bin",
-            "sinex-schema",
-            "--",
-            "up",
-        ])
-        .env("DATABASE_URL", &super_url);
-        c
-    })?;
-
-    let mut c = Command::new("cargo");
-    c.arg("sqlx")
-        .arg("prepare")
-        .arg("--workspace")
-        .arg("--")
-        .arg("--all-targets")
-        .arg("--all-features");
-    // `cargo sqlx prepare` should validate queries against a live DB, regardless of any global CI flag.
-    c.env_remove("SQLX_OFFLINE");
-    run_cmd("cargo sqlx prepare", c)
-}
-
 fn ci_preflight() -> Result<()> {
-    sqlx_check(false)?;
+    // Run fmt + cargo check first so contributors catch drift before heavier steps.
+    check(false, false)?;
     lint()?;
-    test(false, "reliable")
+    lint_forbidden()?;
+    // Regenerate schemas to ensure artifacts stay in sync with code.
+    schema_generate("schemas/v1", false)?;
+    ensure_schemas_clean()?;
+    test("reliable", false, &[])
 }
 
-fn doctor() -> Result<()> {
+fn doctor(pipelines: bool) -> Result<()> {
     heading("toolchain");
     run_cmd("rustc --version", {
         let mut c = Command::new("rustc");
@@ -393,13 +363,19 @@ fn doctor() -> Result<()> {
     })
     .ok();
 
-    heading("sccache");
-    if let Err(err) = run_cmd("sccache --show-stats", {
-        let mut c = Command::new("sccache");
-        c.arg("--show-stats");
-        c
-    }) {
-        eprintln!("sccache not available: {err}");
+    heading("nats-server");
+    let nats_bin = env::var("NATS_SERVER_BIN")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    let mut nats_cmd = Command::new(nats_bin.as_deref().unwrap_or("nats-server"));
+    let nats_status = nats_cmd.arg("--version").status();
+    match nats_status {
+        Ok(status) if status.success() => println!("NATS server available: yes"),
+        Ok(status) => println!("NATS server available: no (status {status})"),
+        Err(err) => println!("NATS server available: no ({err})"),
+    }
+    if let Some(path) = nats_bin {
+        println!("NATS_SERVER_BIN set: {path}");
     }
 
     heading("postgres reachability");
@@ -410,6 +386,57 @@ fn doctor() -> Result<()> {
         .map(|s| s.success())
         .unwrap_or(false);
     println!("Postgres reachable: {}", if pg_ok { "yes" } else { "no" });
+
+    if pg_ok {
+        heading("postgres extensions");
+        let mut cmd = pg_command("psql");
+        cmd.args(["-Atqc", "SELECT extname FROM pg_extension"]);
+        if let Ok(db_url) = env::var("DATABASE_URL") {
+            cmd.arg(db_url);
+        }
+        match cmd.output() {
+            Ok(output) if output.status.success() => {
+                let installed: Vec<String> = String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .map(str::to_string)
+                    .collect();
+                let required: &[(&str, &[&str])] = &[
+                    ("timescaledb", &["timescaledb"]),
+                    ("pg_jsonschema", &["pg_jsonschema"]),
+                    ("pgx_ulid/ulid", &["pgx_ulid", "ulid"]),
+                    ("vector", &["vector"]),
+                ];
+                let mut missing = Vec::new();
+                for (label, names) in required {
+                    if !names
+                        .iter()
+                        .any(|name| installed.iter().any(|ext| ext == name))
+                    {
+                        missing.push(*label);
+                    }
+                }
+                if missing.is_empty() {
+                    println!("Extensions installed: yes");
+                } else {
+                    println!("Missing extensions: {}", missing.join(", "));
+                }
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                println!("Extension query failed: {}", stderr.trim());
+            }
+            Err(err) => println!("Extension query failed: {err}"),
+        }
+    }
+
+    if pipelines {
+        heading("pipelines");
+        run_cmd("pipeline smoke", {
+            let mut c = Command::new("cargo");
+            c.args(["run", "-p", "sinex-test-utils", "--bin", "pipeline_smoke"]);
+            c
+        })?;
+    }
 
     Ok(())
 }
@@ -515,9 +542,9 @@ fn ci_postgres(
         writeln!(conf, "unix_socket_directories = '{}'", socket_dir.display())?;
         writeln!(conf, "listen_addresses = '127.0.0.1'")?;
         writeln!(conf, "port = {}", port)?;
-        // Tests assume a relatively high connection ceiling (NixOS module uses >=500). Keep the
+        // Tests assume a relatively high connection ceiling (NixOS module uses >=800). Keep the
         // ephemeral CI cluster aligned so parallel nextest runs don't wedge on connection limits.
-        writeln!(conf, "max_connections = 500")?;
+        writeln!(conf, "max_connections = 800")?;
         writeln!(conf, "shared_preload_libraries = 'timescaledb'")?;
     }
 
@@ -573,10 +600,7 @@ fn ci_postgres(
         .env("DATABASE_URL_APP", &app_url)
         .env("DATABASE_URL_SUPERUSER", &super_url)
         .env("SUPERUSER", &superuser)
-        .env("SINEX_OPERATION_ID", &operation_id)
-        // CI often exports `SQLX_OFFLINE=1` globally, but anything run under `ci postgres`
-        // should validate queries against the ephemeral DB.
-        .env_remove("SQLX_OFFLINE");
+        .env("SINEX_OPERATION_ID", &operation_id);
 
     let status = cmd
         .status()
@@ -907,31 +931,28 @@ fn ensure_schemas_clean() -> Result<()> {
 fn ci_workspace(target_dir: &str) -> Result<()> {
     ci_schema_only(target_dir, false)?;
 
-    run_cmd("lint forbidden patterns", {
-        let mut c = Command::new("cargo");
-        c.args(["xtask", "lint-forbidden"]);
-        c
-    })?;
+    // Ensure formatting, compilation, and clippy all pass before we spend time on e2e suites.
+    check(false, false)?;
+    lint()?;
+    lint_forbidden()?;
 
-    run_cmd("nextest e2e fast", {
+    run_cmd("xtask test e2e fast", {
         let mut c = Command::new("cargo");
         c.args([
-            "nextest",
-            "run",
-            "-p",
-            "sinex-e2e-tests",
+            "xtask",
+            "test",
             "--profile",
             "fast",
+            "--",
+            "-p",
+            "sinex-e2e-tests",
         ]);
-        // Use a smaller DB pool for fast e2e runs to keep first-time
-        // template + pool initialization well under the per-test timeout.
-        c.env("SINEX_TESTUTILS_POOL_SIZE", "8");
         c
     })?;
 
-    run_cmd("xtask test reliable", {
+    run_cmd("xtask test ci", {
         let mut c = Command::new("cargo");
-        c.args(["xtask", "test", "--online-sqlx", "--profile", "reliable"]);
+        c.args(["xtask", "test", "--profile", "ci", "--prime"]);
         c
     })?;
 
@@ -977,9 +998,6 @@ fn db(cmd: DbCommand) -> Result<()> {
             }
             run_db_migrate()?;
         }
-        DbCommand::PrepareSqlx => {
-            sqlx_prepare()?;
-        }
     }
     Ok(())
 }
@@ -993,7 +1011,10 @@ fn run_db_migrate() -> Result<()> {
 fn schema(cmd: SchemaCommand) -> Result<()> {
     match cmd {
         SchemaCommand::Generate { output, sync } => schema_generate(&output, sync),
-        SchemaCommand::Deploy { input } => schema_deploy(&input),
+        SchemaCommand::Deploy {
+            input,
+            database_url,
+        } => schema_deploy(&input, &database_url),
         SchemaCommand::Compat { base, glob } => schema_compat(base, &glob),
         SchemaCommand::CheckReady {
             database,
@@ -1011,20 +1032,20 @@ fn schema_generate(output: &str, sync: bool) -> Result<()> {
     run_cmd("schema generate", cmd)
 }
 
-fn schema_deploy(input: &str) -> Result<()> {
-    let db_url = env::var("DATABASE_URL")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
+fn schema_deploy(input: &str, database_url: &str) -> Result<()> {
+    let db_url = database_url.trim();
+    if db_url.is_empty() {
+        bail!("DATABASE_URL is required for schema deploy (use --database-url or env)");
+    }
 
     ensure_psql()?;
-    ensure_db_connection(&db_url)?;
+    ensure_db_connection(db_url)?;
 
     let required_exts = ["pg_jsonschema", "pgx_ulid", "timescaledb", "vector"];
     let mut missing = Vec::new();
     for ext in required_exts {
         if !psql_query_bool(
-            &db_url,
+            db_url,
             &format!("SELECT 1 FROM pg_extension WHERE extname='{ext}'"),
         )? {
             missing.push(ext);
@@ -1040,6 +1061,21 @@ fn schema_deploy(input: &str) -> Result<()> {
     let mut cmd = sinex_schema_cmd();
     cmd.arg("sync").arg("--input").arg(input);
     run_cmd("schema deploy", cmd)
+}
+
+#[cfg(test)]
+mod schema_deploy_tests {
+    use super::schema_deploy;
+
+    #[test]
+    fn schema_deploy_requires_database_url() {
+        let err = schema_deploy("schemas/v1", "").unwrap_err();
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("DATABASE_URL"),
+            "unexpected error: {message}"
+        );
+    }
 }
 
 fn schema_compat(base: Option<String>, glob: &str) -> Result<()> {
@@ -1247,12 +1283,12 @@ fn lint_forbidden() -> Result<()> {
         "crate/lib/sinex-test-utils/tests/channel_backpressure_test.rs",
         "crate/lib/sinex-test-utils/tests/select_cancellation_test.rs",
         "crate/core/sinex-ingestd/src/service.rs",
-        "crate/lib/sinex-satellite-sdk/src/lifecycle.rs",
+        "crate/lib/sinex-node-sdk/src/lifecycle.rs",
         "xtask/src/main.rs",
     ];
     let rust_test_allow = [
         "crate/lib/sinex-test-utils/macros/src/lib.rs",
-        "crate/satellites/sinex-desktop-satellite/src/window_manager.rs",
+        "crate/nodes/sinex-desktop-node/src/window_manager.rs",
         "crate/lib/sinex-core/src/db/sanitization.rs",
         "crate/core/sinex-ingestd/src/material_assembler.rs",
         "crate/core/sinex-gateway/src/native_messaging.rs",
@@ -1266,8 +1302,8 @@ fn lint_forbidden() -> Result<()> {
         "crate/core/sinex-gateway/src/cascade_analyzer.rs",
         "crate/lib/sinex-core/src/db/repositories/events.rs",
         "crate/lib/sinex-core/src/db/replay/state_machine.rs",
-        "crate/lib/sinex-satellite-sdk/src/preflight/database.rs",
-        "crate/lib/sinex-satellite-sdk/src/preflight/verification.rs",
+        "crate/lib/sinex-node-sdk/src/preflight/database.rs",
+        "crate/lib/sinex-node-sdk/src/preflight/verification.rs",
         "crate/lib/sinex-test-utils/src/database_pool.rs",
         "crate/lib/sinex-test-utils/src/db_common.rs",
         "crate/lib/sinex-test-utils/src/fixture_generator.rs",
@@ -1278,7 +1314,7 @@ fn lint_forbidden() -> Result<()> {
     ];
     let sqlx_query_as_allow = [
         "crate/lib/sinex-core/src/db/repositories/common.rs",
-        "crate/lib/sinex-satellite-sdk/src/preflight/database.rs",
+        "crate/lib/sinex-node-sdk/src/preflight/database.rs",
         "xtask/src/main.rs",
     ];
 

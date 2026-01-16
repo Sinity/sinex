@@ -41,9 +41,9 @@ let
   totalServiceCount = coreServiceCount + satelliteServiceCount + automataCount;
 
   perServiceConnections = max 1 db.connectionPool.maxConnections;
-  # Ensure reasonable minimum for dev/test workloads (500) even with no services
+  # Ensure reasonable minimum for dev/test workloads (800) even with no services
   # Production with services will compute higher based on service count
-  minConnectionsForTests = 500;
+  minConnectionsForTests = 800;
   baselineConnections = totalServiceCount * perServiceConnections + 50;
   computedMaxConnections = max minConnectionsForTests (max (perServiceConnections + 10) baselineConnections);
 

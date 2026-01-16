@@ -14,6 +14,9 @@
     ] ++ lib.optionals (config.virtualisation ? snapshotMode && config.virtualisation.snapshotMode) [
       # When running from snapshot, use copy-on-write
       "-snapshot"
+    ] ++ lib.optionals (config.virtualisation ? baseSnapshot && config.virtualisation.baseSnapshot != null) [
+      "-loadvm"
+      config.virtualisation.baseSnapshot
     ];
     
     # Custom disk image creation with qcow2 format

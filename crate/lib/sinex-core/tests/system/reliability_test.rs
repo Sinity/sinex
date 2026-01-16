@@ -20,10 +20,9 @@
 // - **Resource usage**: High CPU/memory usage, significant database load
 // - **Dependencies**: Full system integration with external services
 
-use sinex_test_utils::TestResult;
 use sinex_core::db::models::EventFactory;
-use sinex_test_utils::{acquire_test_database, wait_for_filtered_event_count};
 use sinex_test_utils::prelude::*;
+use sinex_test_utils::{acquire_test_database, wait_for_filtered_event_count};
 
 use sinex_core::types::ulid::Ulid;
 use std::fs;
@@ -32,7 +31,7 @@ use std::fs;
 
 /// Test startup sequence robustness and error handling
 #[sinex_test(timeout = 60)]
-async fn test_startup_sequence_robustness(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult<()> {
     println!("Testing startup sequence robustness...");
 
     // Test 1: Database initialization from scratch
@@ -107,16 +106,12 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> color_eyre::eyre:
         let test_db = acquire_test_database().await?;
         let pool = test_db.pool();
 
-        // Add some existing checkpoint data
-        let checkpoint_id = Ulid::new();
-        let last_processed_id = Ulid::new();
+        // Add some existing processor data
         sqlx::query!(
-            "INSERT INTO core.processor_checkpoints (id, processor_name, last_processed_id, checkpoint_data)
-                 VALUES ($1::uuid, $2, $3::uuid, $4)",
-            checkpoint_id.to_uuid(),
+            "INSERT INTO core.processor_manifests (processor_name, processor_type, version, description, anchor_rule_version)
+                 VALUES ($1, 'automaton', '1.0.0', $2, 1)",
             "existing_agent",
-            last_processed_id.to_uuid(),
-            json!({"version": "1.0.0", "description": "Pre-existing agent for startup test"})
+            "Pre-existing agent for startup test"
         )
         .execute(pool)
         .await?;
@@ -137,11 +132,13 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> color_eyre::eyre:
         run_migrations(&pool).await?;
 
         // Verify data integrity after restart - use timing utilities for better reliability
-        let checkpoint_count: i64 =
-            sqlx::query_scalar!("SELECT COUNT(*) FROM core.processor_checkpoints")
-                .fetch_one(pool)
-                .await?
-                .unwrap_or(0);
+        let manifest_count: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM core.processor_manifests WHERE processor_name = $1",
+            "existing_agent"
+        )
+        .fetch_one(pool)
+        .await?
+        .unwrap_or(0);
 
         // Use timing utility for event count verification with source filter
         let event_count =
@@ -149,19 +146,19 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> color_eyre::eyre:
                 .await
                 .unwrap_or(0);
 
-        Ok::<(i64, i64), color_eyre::eyre::Error>((checkpoint_count, event_count))
+        Ok::<(i64, i64), color_eyre::eyre::Error>((manifest_count, event_count))
     })
     .await;
 
     match existing_data_startup {
-        Ok(Ok((checkpoint_count, event_count))) => {
+        Ok(Ok((manifest_count, event_count))) => {
             println!("  ✓ Startup with existing data succeeded");
-            println!("    Checkpoints preserved: {}", checkpoint_count);
+            println!("    Manifests preserved: {}", manifest_count);
             println!("    Events preserved: {}", event_count);
 
             assert!(
-                checkpoint_count >= 1,
-                "Existing checkpoints should be preserved"
+                manifest_count >= 1,
+                "Existing manifests should be preserved"
             );
             assert!(event_count >= 10, "Existing events should be preserved");
         }
@@ -242,7 +239,9 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> color_eyre::eyre:
 
 /// Test shutdown sequence and graceful termination
 #[sinex_test]
-async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_shutdown_sequence_graceful_termination(
+    ctx: TestContext,
+) -> TestResult<()> {
     let pool = ctx.pool().clone();
 
     println!("Testing shutdown sequence and graceful termination...");
@@ -494,7 +493,9 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> color_
 
 /// Test configuration validation and hot reload scenarios
 #[sinex_test]
-async fn test_configuration_validation_and_reload(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_configuration_validation_and_reload(
+    ctx: TestContext,
+) -> TestResult<()> {
     println!("Testing configuration validation and hot reload scenarios...");
 
     let temp_dir = TempDir::new()?;
@@ -677,9 +678,7 @@ channel_buffer_size = 10000
                     } else if buffer_size <= 0 {
                         Err(eyre!("Invalid buffer_size"))
                     } else if max_conn == 1 && buffer_size > 5000 {
-                        Err(eyre!(
-                            "Resource conflict: low connections, high buffer"
-                        ))
+                        Err(eyre!("Resource conflict: low connections, high buffer"))
                     } else {
                         Ok(config)
                     }
@@ -791,7 +790,7 @@ channel_buffer_size = 10000
 
 /// Test data migration safety and version compatibility
 #[sinex_test]
-async fn test_data_migration_safety(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_data_migration_safety(ctx: TestContext) -> TestResult<()> {
     println!("Testing data migration safety and version compatibility...");
 
     // Create isolated test database for migration testing
@@ -847,7 +846,9 @@ async fn test_data_migration_safety(ctx: TestContext) -> color_eyre::eyre::Resul
         .await
         .unwrap_or_default();
 
-        Ok::<(Vec<String>, Vec<String>, Vec<String>), color_eyre::eyre::Error>((schemas, tables, extensions))
+        Ok::<(Vec<String>, Vec<String>, Vec<String>), color_eyre::eyre::Error>((
+            schemas, tables, extensions,
+        ))
     })
     .await;
 
@@ -934,16 +935,12 @@ async fn test_data_migration_safety(ctx: TestContext) -> color_eyre::eyre::Resul
         let test_db = acquire_test_database().await?;
         let pool = test_db.pool();
 
-        // Insert test checkpoint data before migration
-        let migration_checkpoint_id = Ulid::new();
-        let migration_last_processed_id = Ulid::new();
+        // Insert test processor data before migration
         sqlx::query!(
-            "INSERT INTO core.processor_checkpoints (id, processor_name, last_processed_id, checkpoint_data)
-                 VALUES ($1::uuid, $2, $3::uuid, $4)",
-            migration_checkpoint_id.to_uuid(),
+            "INSERT INTO core.processor_manifests (processor_name, processor_type, version, description, anchor_rule_version)
+                 VALUES ($1, 'automaton', '1.0.0', $2, 1)",
             "migration_test_agent",
-            migration_last_processed_id.to_uuid(),
-            json!({"version": "1.0.0", "description": "Agent for testing data preservation"})
+            "Agent for testing data preservation"
         )
         .execute(pool)
         .await?;
@@ -962,11 +959,13 @@ async fn test_data_migration_safety(ctx: TestContext) -> color_eyre::eyre::Resul
         }
 
         // Record initial state - use timing utilities for consistency
-        let initial_checkpoint_count: i64 =
-            sqlx::query_scalar!("SELECT COUNT(*) FROM core.processor_checkpoints")
-                .fetch_one(pool)
-                .await?
-                .unwrap_or(0);
+        let initial_manifest_count: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM core.processor_manifests WHERE processor_name = $1",
+            "migration_test_agent"
+        )
+        .fetch_one(pool)
+        .await?
+        .unwrap_or(0);
 
         // Use timing utility to wait for expected event count with source filter
         let initial_event_count = wait_for_filtered_event_count(
@@ -980,19 +979,21 @@ async fn test_data_migration_safety(ctx: TestContext) -> color_eyre::eyre::Resul
         .unwrap_or(0);
 
         println!(
-            "    Initial state: {} checkpoints, {} events",
-            initial_checkpoint_count, initial_event_count
+            "    Initial state: {} manifests, {} events",
+            initial_manifest_count, initial_event_count
         );
 
         // Run migrations again (simulating upgrade)
         run_migrations(&pool).await?;
 
         // Verify data preservation - use timing utilities for reliability
-        let final_checkpoint_count: i64 =
-            sqlx::query_scalar!("SELECT COUNT(*) FROM core.processor_checkpoints")
-                .fetch_one(pool)
-                .await?
-                .unwrap_or(0);
+        let final_manifest_count: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM core.processor_manifests WHERE processor_name = $1",
+            "migration_test_agent"
+        )
+        .fetch_one(pool)
+        .await?
+        .unwrap_or(0);
 
         // Use timing utility to ensure events are available after migration
         let final_event_count = wait_for_filtered_event_count(
@@ -1006,8 +1007,8 @@ async fn test_data_migration_safety(ctx: TestContext) -> color_eyre::eyre::Resul
         .unwrap_or(0);
 
         // Verify checkpoint data integrity
-        let checkpoint_data: Option<serde_json::Value> = sqlx::query_scalar!(
-            "SELECT checkpoint_data FROM core.processor_checkpoints
+        let manifest_description: Option<String> = sqlx::query_scalar!(
+            "SELECT description FROM core.processor_manifests
                  WHERE processor_name = 'migration_test_agent'"
         )
         .fetch_optional(pool)
@@ -1026,16 +1027,16 @@ async fn test_data_migration_safety(ctx: TestContext) -> color_eyre::eyre::Resul
                 i64,
                 i64,
                 i64,
-                Option<serde_json::Value>,
+                Option<String>,
                 Option<serde_json::Value>,
             ),
             color_eyre::eyre::Error,
         >((
-            initial_checkpoint_count,
+            initial_manifest_count,
             initial_event_count,
-            final_checkpoint_count,
+            final_manifest_count,
             final_event_count,
-            checkpoint_data,
+            manifest_description,
             sample_event,
         ))
     })
@@ -1043,24 +1044,24 @@ async fn test_data_migration_safety(ctx: TestContext) -> color_eyre::eyre::Resul
 
     match data_preservation_test {
         Ok(Ok((
-            init_checkpoints,
+            init_manifests,
             init_events,
-            final_checkpoints,
+            final_manifests,
             final_events,
-            checkpoint_data,
+            manifest_description,
             event_data,
         ))) => {
             println!("  ✓ Data preservation test completed");
             println!(
-                "    Checkpoints: {} -> {}",
-                init_checkpoints, final_checkpoints
+                "    Manifests: {} -> {}",
+                init_manifests, final_manifests
             );
             println!("    Events: {} -> {}", init_events, final_events);
 
             pretty_assertions::assert_eq!(
-                init_checkpoints,
-                final_checkpoints,
-                "Checkpoint count should be preserved"
+                init_manifests,
+                final_manifests,
+                "Manifest count should be preserved"
             );
             pretty_assertions::assert_eq!(
                 init_events,
@@ -1068,15 +1069,15 @@ async fn test_data_migration_safety(ctx: TestContext) -> color_eyre::eyre::Resul
                 "Event count should be preserved"
             );
             assert!(
-                checkpoint_data.is_some(),
-                "Checkpoint data should be preserved"
+                manifest_description.is_some(),
+                "Manifest data should be preserved"
             );
             assert!(event_data.is_some(), "Event data should be preserved");
 
-            if let Some(checkpoint_json) = checkpoint_data {
+            if let Some(description) = manifest_description {
                 assert!(
-                    checkpoint_json.get("description").is_some(),
-                    "Checkpoint content should be preserved"
+                    description.contains("data preservation"),
+                    "Manifest content should be preserved"
                 );
             }
 
@@ -1158,20 +1159,18 @@ async fn test_data_migration_safety(ctx: TestContext) -> color_eyre::eyre::Resul
 
 /// Test graceful degradation under database connectivity issues
 #[sinex_test]
-async fn test_graceful_degradation_database_failure(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_graceful_degradation_database_failure(
+    ctx: TestContext,
+) -> TestResult<()> {
     let pool = ctx.pool().clone();
 
-    // Create test checkpoint for degradation testing
+    // Create test processor manifest for degradation testing
     let agent_name = format!("degradation_test_{}", Ulid::new());
-    let degradation_checkpoint_id = Ulid::new();
-    let degradation_last_processed_id = Ulid::new();
     sqlx::query!(
-        "INSERT INTO core.processor_checkpoints (id, processor_name, last_processed_id, checkpoint_data)
-         VALUES ($1::uuid, $2, $3::uuid, $4)",
-        degradation_checkpoint_id.to_uuid(),
+        "INSERT INTO core.processor_manifests (processor_name, processor_type, version, description, anchor_rule_version)
+         VALUES ($1, 'automaton', '1.0.0', $2, 1)",
         agent_name,
-        degradation_last_processed_id.to_uuid(),
-        json!({"version": "1.0.0", "description": "Graceful degradation test"})
+        "Graceful degradation test"
     )
     .execute(&pool)
     .await?;
@@ -1228,11 +1227,10 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> color_e
     }
 
     async fn checkpoint_test(pool: DbPool) -> AnyhowResult<(), color_eyre::eyre::Error> {
-        let _checkpoint_check =
-            sqlx::query!("SELECT processor_name FROM core.processor_checkpoints LIMIT 1")
-                .fetch_one(&pool)
-                .await
-                .map_err(color_eyre::eyre::Error::from)?;
+        let _manifest_check = sqlx::query!("SELECT processor_name FROM core.processor_manifests LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .map_err(color_eyre::eyre::Error::from)?;
         Ok(())
     }
 
@@ -1341,7 +1339,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> color_e
         .await
         .ok();
     sqlx::query!(
-        "DELETE FROM core.processor_checkpoints WHERE processor_name = $1",
+        "DELETE FROM core.processor_manifests WHERE processor_name = $1",
         agent_name
     )
     .execute(&pool)
@@ -1352,7 +1350,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> color_e
 
 /// Test resource limits and monitoring under load
 #[sinex_test]
-async fn test_resource_limits_monitoring(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
 
     println!("Testing resource limits and monitoring under load...");
@@ -1516,7 +1514,7 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> color_eyre::eyre::
                 let mut conn = pool.acquire().await?;
 
                 // Perform a quick operation
-                sqlx::query_scalar!("SELECT COUNT(*) FROM core.processor_checkpoints")
+                sqlx::query_scalar!("SELECT COUNT(*) FROM core.processor_manifests")
                     .fetch_one(&mut *conn)
                     .await
                     .map(|opt| opt.unwrap_or(0))
@@ -1610,7 +1608,7 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> color_eyre::eyre::
 
 /// Test system behavior under resource exhaustion scenarios
 #[sinex_test]
-async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
 
     println!("Testing resource exhaustion scenarios...");

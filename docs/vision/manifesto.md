@@ -23,7 +23,7 @@ For the authoritative ingestion and operational checklist, see `docs/current/arc
 ### 1.2 Deep Oneness – Dissolving Arbitrary Boundaries
 - **Single event stream:** `raw` and `synthesis` share one append-only log; the
   presence (or absence) of `source_event_ids` conveys provenance.
-- **Senses vs. Automata:** every processor is a first-class "satellite" that
+- **Senses vs. Automata:** every processor is a first-class "node" that
   either interprets external material (ingestors) or reasons over internal
   events (automata). There is no second-class scripting tier.
 - **Using == Extending:** configuration, data exploration, and extension should
@@ -59,7 +59,7 @@ For the authoritative ingestion and operational checklist, see `docs/current/arc
 | **Short-Term Memory**| Register material | `raw.source_material_registry` issues "birth certificates" (ULID, checksum, offsets) for every blob staged into git-annex. |
 | **Perception**       | Interpret streams | Ingestors obey the **Stage-as-you-go** pattern: create an in-flight source-material record, emit events immediately, periodically finalize the blob. |
 | **Cognition**        | Synthesize knowledge | Declarative flows and specialised automata transform events into knowledge graph state (`core.entities`, `core.entity_relations`, `km.*`). |
-| **Action**           | Influence the world | Instructional events (`command.*`) share the same bus as observational events, enabling bidirectional satellites (e.g., Hyprland ingestor/actuator). |
+| **Action**           | Influence the world | Instructional events (`command.*`) share the same bus as observational events, enabling bidirectional nodes (e.g., Hyprland ingestor/actuator). |
 | **Consciousness**    | Keep humans in control | `exo explore`, curation tooling, and diagnostics expose state, provenance, and outstanding reconciliations. |
 
 ### 2.1 Provenance Fundamentals
@@ -73,7 +73,7 @@ For the authoritative ingestion and operational checklist, see `docs/current/arc
   flow engine.
 - **Stateful agent:** imperative Rust processor reserved for advanced heuristics
   (e.g., deduplication) or LLM-backed reasoning.
-- **Bidirectional satellite:** sensor + actuator combined, subscribing to
+- **Bidirectional node:** sensor + actuator combined, subscribing to
   observational and instructional events alike.
 
 ## 3. Strategic Trajectory
@@ -89,7 +89,7 @@ For the authoritative ingestion and operational checklist, see `docs/current/arc
    - Deliver an authoring experience where new automata are defined using flows
      plus optional inline scripts, not bespoke Rust crates.
 3. **Agency & Actuation (12 – 18 months)**
-   - Flesh out actuator satellites, closing observation/instruction loops for
+   - Flesh out actuator nodes, closing observation/instruction loops for
      desktop automation, knowledge capture, and remediation.
    - Introduce permissioned instructional event handling and audit dashboards.
 4. **Research Horizons (parallel track)**

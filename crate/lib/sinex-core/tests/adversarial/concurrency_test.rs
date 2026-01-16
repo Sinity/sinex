@@ -9,7 +9,6 @@
 // - **Database Concurrency**: Transaction isolation, lock contention, deadlock detection
 // - **Memory Concurrency**: Shared state, atomic operations, cache coherency
 
-use sinex_test_utils::TestResult;
 use sinex_test_utils::prelude::*;
 
 use chrono::Utc;

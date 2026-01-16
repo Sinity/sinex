@@ -2,11 +2,11 @@
 > **Last Updated:** 2025-11-13
 > This document describes the end-state architecture after the JetStream migration (phases 1–5) completes.
 > **Purpose:** System-level target state reference (use it to evaluate future proposals; implementation details live in component docs).
-> **Historical context:** Older sections mention sensd/gRPC pipelines for contrast. Those paths are retired; treat them as archival comparisons and follow `docs/current/architecture/Core_Architecture.md` for the live JetStream implementation.
+> **Historical context:** Older sections mention retired pipelines for contrast. Those paths are retired; treat them as archival comparisons and follow `docs/current/architecture/Core_Architecture.md` for the live JetStream implementation.
 
 Invariants Quick Reference (one-page)
 
-- Single-writer storage: Satellites publish raw slices/events to JetStream. `sinex-ingestd` is the exclusive writer of canonical Postgres rows and the sole publisher of confirmation events (`events.confirmations.*`). Satellites never write to Postgres directly.
+- Single-writer storage: nodes publish raw slices/events to JetStream. `sinex-ingestd` is the exclusive writer of canonical Postgres rows and the sole publisher of confirmation events (`events.confirmations.*`). nodes never write to Postgres directly.
 - Dual-layer provenance: External (material_id, anchor/offsets) XOR internal (source_event_ids) per event.
 - Idempotency for first-order events: UNIQUE(material_id, anchor_byte) when material_id is present.
 - Ledger append-only: `raw.temporal_ledger` forbids UPDATE/DELETE; unique(material_id, offset_start).
@@ -32,7 +32,7 @@ Contents
 8) Agents and proposal/judgment/finalizer
 9) Browser and terminal reconciliation templates
 10) Observability and telemetry (module-driven)
-11) Privacy posture (TBD placeholder)
+11) Privacy posture (TBD)
 12) Inclusion Rule
 13) Appendices
     A) Natural Keys Registry (consolidated)
@@ -58,7 +58,7 @@ Core principles:
 2) Architecture at a glance
 Roles:
 
-- Satellites: capture Source Material using AcquisitionManager (Stage-as-You-Go), publish slices/events directly to NATS JetStream.
+- nodes: capture Source Material using AcquisitionManager (Stage-as-You-Go), publish slices/events directly to NATS JetStream.
 - Ingestd: JetStream consumer that archives materials into git-annex, persists events to Postgres, publishes confirmations.
 - Automata: deterministic synthesizers producing higher‑order events from confirmed event streams.
 - Agents: stochastic processors producing proposals/insights with strict provenance.
@@ -73,10 +73,10 @@ Data plane:
 
 Ingest discipline (JetStream-first):
 
-- Satellites → NATS JetStream → ingestd consumer → Postgres (commit) → confirmations published to NATS → Automata consume. Satellites publish slices/events directly; ingestd is the single writer to canonical tables.
+- nodes → NATS JetStream → ingestd consumer → Postgres (commit) → confirmations published to NATS → Automata consume. nodes publish slices/events directly; ingestd is the single writer to canonical tables.
 - ingestd validation cache (fail-soft): ingestd consumes `events.raw.*`, keeps the latest active JSON Schemas keyed by (source, event_type), and validates payloads before persistence. Invalid payloads are NAKed and routed to the DLQ; missing/inactive schemas emit warnings but the event is still accepted so that database CHECK constraints and the provenance XOR invariant remain the final guardrails. Flow: consume → validate (warn-on-miss) → batch insert → commit → emit confirmations (`events.confirmations.*`).
 - Gateway request/response durability: Gateway may fast‑path responses to the client for UX, but all api.response.* must be persisted as events via ingestd (post‑commit property preserved). Failures are emitted as explicit error events.
-- Single‑writer enforcement: production credentials isolate canonical writes to ingestd (satellites carry read-only roles). In dev/CI we rely on the enforced JetStream path and an integration test that asserts the post‑commit publish property (events stay invisible on a separate connection until commit); we have not yet hard-disabled ad‑hoc direct database clients inside test fixtures.
+- Single‑writer enforcement: production credentials isolate canonical writes to ingestd (nodes carry read-only roles). In dev/CI we rely on the enforced JetStream path and an integration test that asserts the post‑commit publish property (events stay invisible on a separate connection until commit); we have not yet hard-disabled ad‑hoc direct database clients inside test fixtures.
 - Active inference safety (minimal): actuations execute only from trusted sources (deny‑by‑default); all actuations are events; side effects logged and auditable.
 
 3) Data model and provenance
@@ -93,10 +93,10 @@ Events (core.events):
 
 Processor control plane:
 
-- `core.processor_manifests` is the manifest/catalog for every ingestor, satellite, and automaton. Each row tracks `{ processor_name, version, processor_type, anchor_rule_version, description, config_schema }`. We migrated manifests here during the JetStream refactor (2024‑Q4) and deleted the legacy `raw.processor_registry`.
-- `core.processor_checkpoints` stores the resume position and opaque state for every processor. Recent schema work:
-  - 2025‑01: Added `checkpoint_data` (JSONB) for the unified checkpoint payload shared by ingestors and automata; retired the legacy `processor_offsets` table.
-  - 2025‑02: Added `checkpoint_version` (INT, default 1) and `created_at` so consumers can detect rewinds and we maintain a full audit trail.
+- `core.processor_manifests` is the manifest/catalog for every ingestor, node, and automaton. Each row tracks `{ processor_name, version, processor_type, anchor_rule_version, description, config_schema }`. We migrated manifests here during the JetStream refactor (2024‑Q4) and deleted the retired `raw.processor_registry`.
+- Checkpoints live in the NATS KV bucket `sinex_checkpoints`, keyed by processor + consumer identifiers. Recent checkpoint work:
+  - 2025‑01: Unified checkpoint payloads across ingestors and automata (now stored in KV) and retired offsets.
+  - 2025‑02: Added checkpoint versioning + activity timestamps so consumers can detect rewinds and track liveness.
   - `processed_count` remains the monotonic counter used for telemetry; optimistic concurrency relies on `(processor_name, consumer_group, consumer_name, checkpoint_version)`.
 - These columns replaced the old `processor_state` and `processor_offsets` shims. Any new checkpoint fields must be added here; there is no secondary table.
 - Archive‑on‑delete: BEFORE DELETE trigger moves rows to audit.archived_events; requires session operation_id; preserves superseded_by_event_id when applicable (application‑immutable: changes occur only via archive‑and‑replace).
@@ -121,9 +121,9 @@ Projections:
 4) Material Acquisition (Stage-as-You-Go)
 Concept:
 
-- Satellites own material acquisition using AcquisitionManager from SDK. Each satellite creates Source Material registry rows, publishes slices to JetStream, computes hashes, and writes temporal ledger entries. Ingestd assembles slices into git-annex and finalizes materials. Zero‑gap invariant: open the next before finalizing current for continuous streams; recovered_partial is used only for crash recovery.
+- nodes own material acquisition using AcquisitionManager from SDK. Each node creates Source Material registry rows, publishes slices to JetStream, computes hashes, and writes temporal ledger entries. Ingestd assembles slices into git-annex and finalizes materials. Zero‑gap invariant: open the next before finalizing current for continuous streams; recovered_partial is used only for crash recovery.
 
-AcquisitionManager API (in satellites):
+AcquisitionManager API (in nodes):
 
 - `begin(MaterialKind, source_identifier)`: Creates in-flight registry row, publishes source_material.begin to JetStream, returns SourceMaterialHandle.
 - `handle.append(bytes)`: Publishes slice to source_material.slices.<material_id>, updates ledger, computes incremental hash.
@@ -136,7 +136,7 @@ MaterialAssembler (in ingestd):
 - On source_material.end: verifies hash, moves to git-annex, updates registry status (sensing → completed), writes ledger
 - On hash mismatch: routes to events.dlq, marks material as failed
 
-Acquisition patterns (implemented by satellites):
+Acquisition patterns (implemented by nodes):
 
 - append_stream (logs, sockets, JSONL) - continuous streaming
 - batched_pull (API pagination; cursor/ETag) - paginated fetch
@@ -243,7 +243,7 @@ Terminal:
 
 - Minimal invariant while detailed policy is TBD:
   - Private mode emits an event and MUST be enforced by all processors (deny-by-default while private).
-  - Satellites MUST NOT capture sources marked private while private mode is active.
+  - nodes MUST NOT capture sources marked private while private mode is active.
   - All privacy toggles are auditable events.
   - Redaction/vaulting emits events; dependent syntheses are archived via replay using operation_id to preserve provenance integrity.
 - Detailed masking rules (e.g., Vector/VRL allowlist/masking) will be integrated later without violating archive‑on‑delete invariants or rebuildability.
@@ -275,7 +275,7 @@ A) Natural Keys Registry (consolidated)
 B) Material lifecycle and recovery
 
 - Statuses: sensing → completed | recovered_partial | failed.
-- Zero‑gap invariant for continuous materials: satellite stages next material before finalizing current.
+- Zero‑gap invariant for continuous materials: node stages next material before finalizing current.
 - Recovery: ingestd MaterialAssembler rebuilds state from JetStream on restart; orphaned in‑flight segments are finalized as recovered_partial; replay can close gaps using historical slices from JetStream; ledger continuity remains append‑only.
 
 C) Recommended indexes and invariants (readable form)
@@ -289,7 +289,7 @@ C) Recommended indexes and invariants (readable form)
 
 D) Processor Contracts (succinct checklists)
 
-Satellite (Material Acquisition via AcquisitionManager)
+node (Material Acquisition via AcquisitionManager)
 
 - [ ] Use AcquisitionManager to begin material (creates registry row, publishes source_material.begin)
 - [ ] Publish slices to source_material.slices.<material_id> with headers (Nats-Msg-Id, Slice-Index, Offset, Chunk-Hash)
@@ -407,7 +407,7 @@ Notes
 - These families name canonical event_type values and minimal payload keys; producers may add more fields, but canonical keys must exist when applicable.
 
 Minimal diagram (text)
-[Satellites (AcquisitionManager)] --(source_material.* + events.raw.*)--> [JetStream Streams]
+[nodes (AcquisitionManager)] --(source_material.* + events.raw.*)--> [JetStream Streams]
 [JetStream Streams] --(materials + events)--> [ingestd (MaterialAssembler + Event Consumer)]
 [ingestd] --(commit)--> [Postgres/git-annex] --(post-commit publish)--> [NATS JetStream] --> [Automata/Agents]
 [Automata/Agents] --(derived events via ingestd)--> [Postgres]

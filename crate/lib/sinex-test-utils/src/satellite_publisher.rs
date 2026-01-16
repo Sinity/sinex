@@ -7,6 +7,7 @@ use color_eyre::eyre::{eyre, Result};
 use gethostname::gethostname;
 use serde_json::json;
 use sinex_core::{environment::SinexEnvironment, types::ulid::Ulid};
+use sinex_node_sdk::acquisition_manager::{AcquisitionManager, RotationPolicy};
 use tokio::time::timeout;
 use tokio_stream::StreamExt;
 
@@ -17,9 +18,10 @@ pub struct TestSatellitePublisher {
     js: Context,
     env: SinexEnvironment,
     source: String,
+    namespace: Option<String>,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct EventOverrides {
     pub id: Option<Ulid>,
     pub ts_orig: Option<String>,
@@ -38,12 +40,22 @@ pub struct EventOverrides {
 impl TestSatellitePublisher {
     /// Create a publisher from a raw NATS client and logical source name.
     pub fn new(client: Client, source: impl Into<String>) -> Self {
+        Self::with_namespace(client, source, None)
+    }
+
+    /// Create a publisher with an explicit subject namespace.
+    pub fn with_namespace(
+        client: Client,
+        source: impl Into<String>,
+        namespace: Option<String>,
+    ) -> Self {
         let js = jetstream::new(client.clone());
         Self {
             client,
             js,
             env: sinex_core::environment().clone(),
             source: source.into(),
+            namespace,
         }
     }
 
@@ -53,7 +65,7 @@ impl TestSatellitePublisher {
         source: impl Into<String>,
     ) -> Result<Self> {
         let client = nats.connect().await?;
-        Ok(Self::new(client, source))
+        Ok(Self::with_namespace(client, source, None))
     }
 
     /// Publish an event to the standard `events.raw.<source>.<event_type>` subject.
@@ -152,6 +164,43 @@ impl TestSatellitePublisher {
         S: AsRef<[u8]>,
     {
         let material_id = Ulid::new();
+        self.publish_material_stream_with_id(material_id, slices).await
+    }
+
+    /// Publish a material stream via the AcquisitionManager (Stage-as-You-Go path).
+    pub async fn publish_material_stream_via_acquisition_manager<I, S>(&self, slices: I) -> Result<Ulid>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<[u8]>,
+    {
+        let source_identifier = format!("test://{}", self.source);
+        let manager = AcquisitionManager::new_with_namespace(
+            self.client.clone(),
+            RotationPolicy::default(),
+            self.source.clone(),
+            source_identifier.clone(),
+            self.namespace.clone(),
+        );
+
+        let mut handle = manager.begin_material(&source_identifier).await?;
+        for slice in slices.into_iter() {
+            manager.append_slice(&mut handle, slice.as_ref()).await?;
+        }
+        let material_id = handle.material_id;
+        manager.finalize(handle, "test").await?;
+        Ok(material_id)
+    }
+
+    /// Publish a synthetic material stream with a fixed material ULID.
+    pub async fn publish_material_stream_with_id<I, S>(
+        &self,
+        material_id: Ulid,
+        slices: I,
+    ) -> Result<Ulid>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<[u8]>,
+    {
         let material_kind = self.source.clone();
         let begin_payload = json!({
             "material_id": material_id.to_string(),
@@ -163,7 +212,7 @@ impl TestSatellitePublisher {
 
         self.js
             .publish(
-                self.env.nats_subject("source_material.begin"),
+                self.namespaced_subject("source_material.begin"),
                 serde_json::to_vec(&begin_payload)?.into(),
             )
             .await?
@@ -176,9 +225,8 @@ impl TestSatellitePublisher {
 
         for slice in slices.into_iter() {
             let data = slice.as_ref();
-            let subject = self
-                .env
-                .nats_subject(&format!("source_material.slices.{}", material_id));
+            let subject =
+                self.namespaced_subject(&format!("source_material.slices.{}", material_id));
 
             let mut headers = HeaderMap::new();
             headers.insert(
@@ -210,7 +258,7 @@ impl TestSatellitePublisher {
 
         self.js
             .publish(
-                self.env.nats_subject("source_material.end"),
+                self.namespaced_subject("source_material.end"),
                 serde_json::to_vec(&end_payload)?.into(),
             )
             .await?
@@ -228,7 +276,7 @@ impl TestSatellitePublisher {
     ) -> Result<()> {
         let subject = format!(
             "{}.{}",
-            self.env.nats_subject("events.confirmations"),
+            self.namespaced_subject("events.confirmations"),
             event_id
         );
 
@@ -256,10 +304,15 @@ impl TestSatellitePublisher {
     }
 
     fn event_subject(&self, event_type: &str) -> String {
-        self.env.nats_subject(&format!(
+        self.namespaced_subject(&format!(
             "events.raw.{}.{}",
             self.source.replace('.', "_"),
             event_type.replace('.', "_")
         ))
+    }
+
+    fn namespaced_subject(&self, base: &str) -> String {
+        self.env
+            .nats_subject_with_namespace(self.namespace.as_deref(), base)
     }
 }

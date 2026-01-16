@@ -343,11 +343,11 @@ fn is_ulid_type(ty: &Type) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_test_utils::sinex_test;
+    use sinex_test_utils::{sinex_test, TestResult};
     use syn::parse_quote;
 
     #[sinex_test]
-    fn test_db_query_parsing() -> color_eyre::eyre::Result<()> {
+    fn test_db_query_parsing() -> TestResult<()> {
         let input = quote! {
             async fn get_event_by_id(pool: &PgPool, id: Ulid) -> Option<Event<JsonValue>> {
                 "SELECT * FROM raw.events WHERE id = $1::uuid"
@@ -366,7 +366,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_db_transaction_parsing() -> color_eyre::eyre::Result<()> {
+    fn test_db_transaction_parsing() -> TestResult<()> {
         let input = quote! {
             async fn insert_multiple_events(pool: &PgPool, events: Vec<Event<JsonValue>>) -> Result<(), SinexError> {
                 for event in events {
@@ -386,7 +386,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_type_detection() -> color_eyre::eyre::Result<()> {
+    fn test_type_detection() -> TestResult<()> {
         let option_type: Type = parse_quote!(Option<Event<JsonValue>>);
         assert!(is_option_type(&option_type));
 

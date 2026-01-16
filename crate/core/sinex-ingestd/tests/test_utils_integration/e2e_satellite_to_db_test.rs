@@ -3,26 +3,35 @@ use serde_json::json;
 use sinex_ingestd::{
     validator::EventValidator, IngestdResult, JetStreamConsumer, JetStreamTopology,
 };
-use sinex_test_utils::{prelude::*, EphemeralNats, TestSatellitePublisher};
+use sinex_test_utils::timing_utils::WaitHelpers;
+use sinex_test_utils::{prelude::*, TestSatellitePublisher};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
-use tokio::time::{sleep, timeout};
+use tokio::time::timeout;
 
 async fn start_ingestd(
     ctx: &TestContext,
-    nats: &EphemeralNats,
-    nats_client: async_nats::Client,
     suffix: &str,
 ) -> TestResult<(
     tokio::task::JoinHandle<IngestdResult<()>>,
     jetstream::Context,
     JetStreamTopology,
 )> {
+    let nats = ctx.nats_handle()?;
+    let nats_client = ctx.nats_client();
     let js = nats.jetstream_with_client(nats_client.clone());
     let env = ctx.env();
-    let stream = env.nats_stream_name(&format!("SINEX_RAW_EVENTS_E2E_{suffix}"));
-    let topology = JetStreamTopology::new(&env, stream, format!("ingestd-e2e-{suffix}"));
+    let stream_base = format!("SINEX_RAW_EVENTS_E2E_{suffix}");
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
+    let stream = ctx.pipeline_namespace().stream(&stream_base);
+    let topology = JetStreamTopology::new(
+        &env,
+        stream,
+        ctx.pipeline_namespace()
+            .consumer_name(&format!("ingestd-e2e-{suffix}")),
+        Some(&namespace),
+    );
 
     let consumer = JetStreamConsumer::new(
         nats_client.clone(),
@@ -48,16 +57,21 @@ async fn start_ingestd(
 
 #[sinex_test]
 async fn end_to_end_single_satellite_full_flow(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_nats().await?;
-    let nats = EphemeralNats::start().await?;
-    let nats_client = nats.connect().await?;
+    let ctx = ctx.with_shared_nats().await?;
+    let nats_client = ctx.nats_client();
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
     let suffix = format!("e2e-{}", uuid::Uuid::new_v4());
-    let (handle, js, topology) = start_ingestd(&ctx, &nats, nats_client.clone(), &suffix).await?;
+    let (handle, js, topology) = start_ingestd(&ctx, &suffix).await?;
 
-    let confirmation_subject = ctx.env().nats_subject("events.confirmations.>").to_string();
-    let mut confirmation_sub = nats_client.subscribe(confirmation_subject).await?;
+    let mut confirmation_sub = nats_client
+        .subscribe(topology.confirmations_subject.clone())
+        .await?;
 
-    let publisher = TestSatellitePublisher::new(nats_client.clone(), format!("satellite.{suffix}"));
+    let publisher = TestSatellitePublisher::with_namespace(
+        nats_client.clone(),
+        format!("satellite.{suffix}"),
+        Some(namespace),
+    );
     let mut ids = Vec::new();
     for idx in 0..25u32 {
         let id = publisher
@@ -67,20 +81,22 @@ async fn end_to_end_single_satellite_full_flow(ctx: TestContext) -> TestResult<(
     }
 
     // Wait for persistence.
-    timeout(Duration::from_secs(20), async {
-        loop {
-            let count: i64 =
-                sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE source = $1")
-                    .bind(format!("satellite.{suffix}"))
-                    .fetch_one(&ctx.pool)
-                    .await?;
-            if count == 25 {
-                break Ok::<_, color_eyre::Report>(());
+    WaitHelpers::wait_for_condition(
+        || {
+            let pool = ctx.pool.clone();
+            let source = format!("satellite.{suffix}");
+            async move {
+                let count: i64 =
+                    sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE source = $1")
+                        .bind(source)
+                        .fetch_one(&pool)
+                        .await?;
+                Ok(count == 25)
             }
-            sleep(Duration::from_millis(50)).await;
-        }
-    })
-    .await??;
+        },
+        20,
+    )
+    .await?;
 
     // Confirmations observed for all events from the wildcard subscription.
     use std::collections::HashSet;

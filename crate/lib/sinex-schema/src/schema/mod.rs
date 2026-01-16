@@ -40,7 +40,6 @@ pub mod records {
     pub use super::entities::EntityRecord;
     pub use super::events::EventRecord;
     pub use super::outbox::OutboxRecord;
-    pub use super::processors::CheckpointRecord;
     pub use super::sinex_schemas::{EventPayloadSchemaRecord, ProcessorManifestRecord};
     pub use super::source_materials::SourceMaterialRecord;
     pub use super::temporal_ledger::TemporalLedgerRecord;

@@ -11,14 +11,12 @@
 use sinex_test_utils::prelude::*;
 
 // Additional specific imports
-use tokio::time::sleep;
 
 #[sinex_test]
-async fn test_process_heartbeat_emitter_basic_functionality(
-    ctx: TestContext,
-) -> color_eyre::eyre::Result<()> {
+async fn test_process_heartbeat_emitter_basic_functionality(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_shared_nats().await?;
     tracing::info!("Testing basic process heartbeat emitter functionality");
-    
+
     // Create heartbeat event using modern TestContext
     let heartbeat_payload = json!({
         "process_name": "test_process",
@@ -31,16 +29,19 @@ async fn test_process_heartbeat_emitter_basic_functionality(
         "health_status": "healthy",
         "custom_metrics": {}
     });
-    
-    let _heartbeat_event = ctx.create_test_event(
-        "sinex.process",
-        "process.heartbeat",
-        heartbeat_payload
-    ).await?;
+
+    let _heartbeat_event = ctx
+        .publish_json_event("sinex.process", "process.heartbeat", heartbeat_payload)
+        .await?;
 
     // Verify heartbeat event was created using repository pattern
-    let events = ctx.pool.events()
-        .get_by_source(&EventSource::from("sinex.process"), sinex_core::types::Pagination::new(Some(10), None))
+    let events = ctx
+        .pool
+        .events()
+        .get_by_source(
+            &EventSource::from("sinex.process"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
         .await?;
 
     let heartbeat_events: Vec<_> = events
@@ -64,9 +65,10 @@ async fn test_process_heartbeat_emitter_basic_functionality(
 }
 
 #[sinex_test]
-async fn test_process_lifecycle_events(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_process_lifecycle_events(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_shared_nats().await?;
     tracing::info!("Testing complete process lifecycle events");
-    
+
     let process_name = "lifecycle_test";
     let version = "2.0.0";
 
@@ -79,11 +81,9 @@ async fn test_process_lifecycle_events(ctx: TestContext) -> color_eyre::eyre::Re
         "build_time": Utc::now(),
         "config_hash": "ghi789"
     });
-    let _started_event = ctx.create_test_event(
-        "sinex.process",
-        "process.started",
-        started_payload
-    ).await?;
+    let _started_event = ctx
+        .publish_json_event("sinex.process", "process.started", started_payload)
+        .await?;
 
     // Emit heartbeat
     let heartbeat1_payload = json!({
@@ -97,11 +97,9 @@ async fn test_process_lifecycle_events(ctx: TestContext) -> color_eyre::eyre::Re
         "health_status": "healthy",
         "custom_metrics": {}
     });
-    let _heartbeat1_event = ctx.create_test_event(
-        "sinex.process",
-        "process.heartbeat",
-        heartbeat1_payload
-    ).await?;
+    let _heartbeat1_event = ctx
+        .publish_json_event("sinex.process", "process.heartbeat", heartbeat1_payload)
+        .await?;
 
     // Update metrics again
     // Emit another heartbeat
@@ -116,11 +114,9 @@ async fn test_process_lifecycle_events(ctx: TestContext) -> color_eyre::eyre::Re
         "health_status": "healthy",
         "custom_metrics": {}
     });
-    let _heartbeat2_event = ctx.create_test_event(
-        "sinex.process",
-        "process.heartbeat",
-        heartbeat2_payload
-    ).await?;
+    let _heartbeat2_event = ctx
+        .publish_json_event("sinex.process", "process.heartbeat", heartbeat2_payload)
+        .await?;
 
     // Emit process shutdown event
     let shutdown_payload = json!({
@@ -130,15 +126,18 @@ async fn test_process_lifecycle_events(ctx: TestContext) -> color_eyre::eyre::Re
         "graceful": true,
         "shutdown_reason": "Graceful shutdown requested"
     });
-    let _shutdown_event = ctx.create_test_event(
-        "sinex.process",
-        "process.shutdown",
-        shutdown_payload
-    ).await?;
+    let _shutdown_event = ctx
+        .publish_json_event("sinex.process", "process.shutdown", shutdown_payload)
+        .await?;
 
     // Verify all events were created in correct order using repository pattern
-    let all_events = ctx.pool.events()
-        .get_by_source(&EventSource::from("sinex.process"), sinex_core::types::Pagination::new(Some(10), None))
+    let all_events = ctx
+        .pool
+        .events()
+        .get_by_source(
+            &EventSource::from("sinex.process"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
         .await?;
 
     // Filter to only our process
@@ -156,19 +155,28 @@ async fn test_process_lifecycle_events(ctx: TestContext) -> color_eyre::eyre::Re
     assert_eq!(started_payload["version"], "2.0.0");
 
     // Check first heartbeat
-    assert_eq!(all_events[1].event_type, EventType::from("process.heartbeat"));
+    assert_eq!(
+        all_events[1].event_type,
+        EventType::from("process.heartbeat")
+    );
     let heartbeat1_payload: serde_json::Value = all_events[1].payload.clone();
     assert_eq!(heartbeat1_payload["uptime_seconds"], 10);
     assert_eq!(heartbeat1_payload["events_processed"], 15);
 
     // Check second heartbeat
-    assert_eq!(all_events[2].event_type, EventType::from("process.heartbeat"));
+    assert_eq!(
+        all_events[2].event_type,
+        EventType::from("process.heartbeat")
+    );
     let heartbeat2_payload: serde_json::Value = all_events[2].payload.clone();
     assert_eq!(heartbeat2_payload["uptime_seconds"], 20);
     assert_eq!(heartbeat2_payload["events_processed"], 40);
 
     // Check process.shutdown event
-    assert_eq!(all_events[3].event_type, EventType::from("process.shutdown"));
+    assert_eq!(
+        all_events[3].event_type,
+        EventType::from("process.shutdown")
+    );
     let shutdown_payload: serde_json::Value = all_events[3].payload.clone();
     assert_eq!(shutdown_payload["process_name"], "lifecycle_test");
     assert_eq!(
@@ -181,9 +189,10 @@ async fn test_process_lifecycle_events(ctx: TestContext) -> color_eyre::eyre::Re
 }
 
 #[sinex_test]
-async fn test_process_heartbeat_with_custom_metrics(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_process_heartbeat_with_custom_metrics(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_shared_nats().await?;
     tracing::info!("Testing process heartbeat with custom metrics");
-    
+
     let process_name = "custom_metrics_test";
     let version = "1.5.0";
 
@@ -196,7 +205,7 @@ async fn test_process_heartbeat_with_custom_metrics(ctx: TestContext) -> color_e
         metrics.insert("last_error".to_string(), json!("Connection timeout"));
         metrics
     };
-    
+
     let heartbeat_payload = json!({
         "process_name": process_name,
         "version": version,
@@ -208,16 +217,19 @@ async fn test_process_heartbeat_with_custom_metrics(ctx: TestContext) -> color_e
         "health_status": "healthy",
         "custom_metrics": custom_metrics
     });
-    
-    let _heartbeat_event = ctx.create_test_event(
-        "sinex.process",
-        "process.heartbeat",
-        heartbeat_payload
-    ).await?;
+
+    let _heartbeat_event = ctx
+        .publish_json_event("sinex.process", "process.heartbeat", heartbeat_payload)
+        .await?;
 
     // Verify custom metrics are included using repository pattern
-    let events = ctx.pool.events()
-        .get_by_source(&EventSource::from("sinex.process"), sinex_core::types::Pagination::new(Some(10), None))
+    let events = ctx
+        .pool
+        .events()
+        .get_by_source(
+            &EventSource::from("sinex.process"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
         .await?;
 
     // Filter to only our process heartbeats
@@ -241,9 +253,10 @@ async fn test_process_heartbeat_with_custom_metrics(ctx: TestContext) -> color_e
 }
 
 #[sinex_test]
-async fn test_health_aggregator_process_discovery(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_health_aggregator_process_discovery(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_shared_nats().await?;
     tracing::info!("Testing health aggregator process discovery");
-    
+
     // Create multiple processes with different states
     let processes = vec![
         ("web_server", "healthy", 3600, 512, 1000),
@@ -262,12 +275,10 @@ async fn test_health_aggregator_process_discovery(ctx: TestContext) -> color_eyr
             "build_time": Utc::now(),
             "config_hash": "ghi789"
         });
-        
-        let _started_event = ctx.create_test_event(
-            "sinex.process",
-            "process.started",
-            started_payload
-        ).await?;
+
+        let _started_event = ctx
+            .publish_json_event("sinex.process", "process.started", started_payload)
+            .await?;
 
         // Emit heartbeat with health status
         let heartbeat_payload = json!({
@@ -281,12 +292,10 @@ async fn test_health_aggregator_process_discovery(ctx: TestContext) -> color_eyr
             "health_status": status,
             "custom_metrics": {}
         });
-        
-        let _heartbeat_event = ctx.create_test_event(
-            "sinex.process",
-            "process.heartbeat",
-            heartbeat_payload
-        ).await?;
+
+        let _heartbeat_event = ctx
+            .publish_json_event("sinex.process", "process.heartbeat", heartbeat_payload)
+            .await?;
     }
 
     // Simulate health aggregator query (from the updated health aggregator)
@@ -343,14 +352,18 @@ async fn test_health_aggregator_process_discovery(ctx: TestContext) -> color_eyr
         ("healthy".to_string(), 7200, 64, 100)
     );
 
-    tracing::info!(processes_discovered = found_processes.len(), "Health aggregator discovery test completed");
+    tracing::info!(
+        processes_discovered = found_processes.len(),
+        "Health aggregator discovery test completed"
+    );
     Ok(())
 }
 
 #[sinex_test]
-async fn test_process_failure_detection(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_process_failure_detection(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_shared_nats().await?;
     tracing::info!("Testing process failure detection through events");
-    
+
     let process_name = "failing_process";
     let version = "1.0.0";
 
@@ -363,11 +376,9 @@ async fn test_process_failure_detection(ctx: TestContext) -> color_eyre::eyre::R
         "build_time": Utc::now(),
         "config_hash": "ghi789"
     });
-    let _started_event = ctx.create_test_event(
-        "sinex.process",
-        "process.started",
-        started_payload
-    ).await?;
+    let _started_event = ctx
+        .publish_json_event("sinex.process", "process.started", started_payload)
+        .await?;
 
     // First heartbeat - healthy
     let heartbeat1_payload = json!({
@@ -381,11 +392,9 @@ async fn test_process_failure_detection(ctx: TestContext) -> color_eyre::eyre::R
         "health_status": "healthy",
         "custom_metrics": {}
     });
-    let _heartbeat1_event = ctx.create_test_event(
-        "sinex.process",
-        "process.heartbeat",
-        heartbeat1_payload
-    ).await?;
+    let _heartbeat1_event = ctx
+        .publish_json_event("sinex.process", "process.heartbeat", heartbeat1_payload)
+        .await?;
 
     // Simulate degraded state
     let degraded_custom_metrics = {
@@ -406,18 +415,19 @@ async fn test_process_failure_detection(ctx: TestContext) -> color_eyre::eyre::R
         "health_status": "degraded",
         "custom_metrics": degraded_custom_metrics
     });
-    let _heartbeat2_event = ctx.create_test_event(
-        "sinex.process",
-        "process.heartbeat",
-        heartbeat2_payload
-    ).await?;
+    let _heartbeat2_event = ctx
+        .publish_json_event("sinex.process", "process.heartbeat", heartbeat2_payload)
+        .await?;
 
     // Simulate critical state
     let critical_custom_metrics = {
         let mut metrics = HashMap::new();
         metrics.insert("health_status".to_string(), json!("critical"));
         metrics.insert("error_count".to_string(), json!(15));
-        metrics.insert("last_error".to_string(), json!("Database connection failed"));
+        metrics.insert(
+            "last_error".to_string(),
+            json!("Database connection failed"),
+        );
         metrics
     };
 
@@ -432,11 +442,9 @@ async fn test_process_failure_detection(ctx: TestContext) -> color_eyre::eyre::R
         "health_status": "critical",
         "custom_metrics": critical_custom_metrics
     });
-    let _heartbeat3_event = ctx.create_test_event(
-        "sinex.process",
-        "process.heartbeat",
-        heartbeat3_payload
-    ).await?;
+    let _heartbeat3_event = ctx
+        .publish_json_event("sinex.process", "process.heartbeat", heartbeat3_payload)
+        .await?;
 
     // Simulate shutdown due to errors
     let shutdown_payload = json!({
@@ -446,15 +454,18 @@ async fn test_process_failure_detection(ctx: TestContext) -> color_eyre::eyre::R
         "graceful": false,
         "shutdown_reason": "Process terminated due to critical errors"
     });
-    let _shutdown_event = ctx.create_test_event(
-        "sinex.process",
-        "process.shutdown",
-        shutdown_payload
-    ).await?;
+    let _shutdown_event = ctx
+        .publish_json_event("sinex.process", "process.shutdown", shutdown_payload)
+        .await?;
 
     // Verify the failure progression is recorded using repository pattern
-    let events = ctx.pool.events()
-        .get_by_source(&EventSource::from("sinex.process"), sinex_core::types::Pagination::new(Some(10), None))
+    let events = ctx
+        .pool
+        .events()
+        .get_by_source(
+            &EventSource::from("sinex.process"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
         .await?;
 
     // Filter to only our process
@@ -508,9 +519,10 @@ async fn test_process_failure_detection(ctx: TestContext) -> color_eyre::eyre::R
 }
 
 #[sinex_test]
-async fn test_high_frequency_heartbeats(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_high_frequency_heartbeats(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_shared_nats().await?;
     tracing::info!("Testing high frequency heartbeat processing");
-    
+
     let process_name = "high_freq_test";
     let version = "1.0.0";
 
@@ -528,21 +540,23 @@ async fn test_high_frequency_heartbeats(ctx: TestContext) -> color_eyre::eyre::R
             "health_status": "healthy",
             "custom_metrics": {}
         });
-        
-        let _heartbeat_event = ctx.create_test_event(
-            "sinex.process",
-            "process.heartbeat",
-            heartbeat_payload
-        ).await?;
 
-        // Small delay to avoid overwhelming the database
-        sleep(tokio::time::Duration::from_millis(10)).await;
+        let _heartbeat_event = ctx
+            .publish_json_event("sinex.process", "process.heartbeat", heartbeat_payload)
+            .await?;
+
+        tokio::task::yield_now().await;
     }
     let duration = start_time.elapsed();
 
     // Verify all heartbeats were recorded using repository pattern
-    let all_events = ctx.pool.events()
-        .get_by_source(&EventSource::from("sinex.process"), sinex_core::types::Pagination::new(Some(30), None))
+    let all_events = ctx
+        .pool
+        .events()
+        .get_by_source(
+            &EventSource::from("sinex.process"),
+            sinex_core::types::Pagination::new(Some(30), None),
+        )
         .await?;
 
     // Count heartbeat events for our process
@@ -581,7 +595,10 @@ async fn test_high_frequency_heartbeats(ctx: TestContext) -> color_eyre::eyre::R
             .expect("id present")
             .as_ulid()
             .timestamp();
-        assert!(curr_ts >= prev_ts, "Heartbeats should be chronologically ordered");
+        assert!(
+            curr_ts >= prev_ts,
+            "Heartbeats should be chronologically ordered"
+        );
     }
 
     tracing::info!(

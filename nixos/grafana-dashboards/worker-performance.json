@@ -86,7 +86,7 @@
           "group": [],
           "metricColumn": "none",
           "rawQuery": true,
-          "rawSql": "SELECT COUNT(*) as value\nFROM sinex_schemas.promotion_queue\nWHERE status = 'pending'",
+          "rawSql": "SELECT COUNT(*) as value\nFROM core.events\nWHERE ts_ingest > NOW() - INTERVAL '1 minute'",
           "refId": "A",
           "select": [
             [
@@ -108,7 +108,7 @@
           ]
         }
       ],
-      "title": "Pending Queue Items",
+      "title": "Events (1 minute)",
       "type": "stat"
     },
     {
@@ -171,7 +171,7 @@
           "group": [],
           "metricColumn": "none",
           "rawQuery": true,
-          "rawSql": "SELECT COUNT(*) as value\nFROM sinex_schemas.promotion_queue\nWHERE status = 'processing'",
+          "rawSql": "SELECT COUNT(*) as value\nFROM core.events\nWHERE ts_ingest > NOW() - INTERVAL '5 minutes'",
           "refId": "A",
           "select": [
             [
@@ -193,7 +193,7 @@
           ]
         }
       ],
-      "title": "Processing Queue Items",
+      "title": "Events (5 minutes)",
       "type": "stat"
     },
     {
@@ -256,7 +256,7 @@
           "group": [],
           "metricColumn": "none",
           "rawQuery": true,
-          "rawSql": "SELECT COUNT(*) as value\nFROM sinex_schemas.promotion_queue\nWHERE status = 'failed'\n  AND created_at > NOW() - INTERVAL '1 hour'",
+          "rawSql": "SELECT COUNT(*) as value\nFROM sinex_schemas.dlq_events\nWHERE created_at > NOW() - INTERVAL '1 hour'",
           "refId": "A",
           "select": [
             [
@@ -278,7 +278,7 @@
           ]
         }
       ],
-      "title": "Failed Items (1h)",
+      "title": "DLQ Events (1h)",
       "type": "stat"
     },
     {
@@ -345,7 +345,7 @@
           "group": [],
           "metricColumn": "none",
           "rawQuery": true,
-          "rawSql": "SELECT \n  AVG(EXTRACT(EPOCH FROM (completed_at - started_at)) * 1000)::numeric(10,2) as value\nFROM sinex_schemas.promotion_queue\nWHERE status = 'succeeded'\n  AND completed_at > NOW() - INTERVAL '1 hour'",
+          "rawSql": "SELECT \n  AVG(EXTRACT(EPOCH FROM (ts_ingest - ts_orig)) * 1000)::numeric(10,2) as value\nFROM core.events\nWHERE ts_ingest > NOW() - INTERVAL '1 hour'",
           "refId": "A",
           "select": [
             [
@@ -367,7 +367,7 @@
           ]
         }
       ],
-      "title": "Avg Processing Time (1h)",
+      "title": "Avg Ingest Latency (1h)",
       "type": "stat"
     },
     {
@@ -454,7 +454,7 @@
           "group": [],
           "metricColumn": "none",
           "rawQuery": true,
-          "rawSql": "SELECT\n  date_trunc('minute', completed_at) AS time,\n  status,\n  COUNT(*) as count\nFROM sinex_schemas.promotion_queue\nWHERE completed_at >= NOW() - INTERVAL '2 hours'\nGROUP BY time, status\nORDER BY time ASC",
+          "rawSql": "SELECT\n  date_trunc('minute', ts_ingest) AS time,\n  source,\n  COUNT(*) as count\nFROM core.events\nWHERE ts_ingest >= NOW() - INTERVAL '2 hours'\nGROUP BY time, source\nORDER BY time ASC",
           "refId": "A",
           "select": [
             [
@@ -476,7 +476,7 @@
           ]
         }
       ],
-      "title": "Queue Processing Rate by Status",
+      "title": "Events per Source (2h)",
       "type": "timeseries"
     },
     {
@@ -563,7 +563,7 @@
           "group": [],
           "metricColumn": "none",
           "rawQuery": true,
-          "rawSql": "SELECT\n  date_trunc('minute', completed_at) AS time,\n  'p50' as percentile,\n  percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (completed_at - started_at)) * 1000) as \"Processing Time ms\"\nFROM sinex_schemas.promotion_queue\nWHERE status = 'succeeded'\n  AND completed_at >= NOW() - INTERVAL '2 hours'\nGROUP BY time\n\nUNION ALL\n\nSELECT\n  date_trunc('minute', completed_at) AS time,\n  'p95' as percentile,\n  percentile_cont(0.95) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (completed_at - started_at)) * 1000) as \"Processing Time ms\"\nFROM sinex_schemas.promotion_queue\nWHERE status = 'succeeded'\n  AND completed_at >= NOW() - INTERVAL '2 hours'\nGROUP BY time\n\nORDER BY time ASC",
+          "rawSql": "SELECT\n  date_trunc('minute', ts_ingest) AS time,\n  'p50' as percentile,\n  percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (ts_ingest - ts_orig)) * 1000) as \"Latency ms\"\nFROM core.events\nWHERE ts_ingest >= NOW() - INTERVAL '2 hours'\nGROUP BY time\n\nUNION ALL\n\nSELECT\n  date_trunc('minute', ts_ingest) AS time,\n  'p95' as percentile,\n  percentile_cont(0.95) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (ts_ingest - ts_orig)) * 1000) as \"Latency ms\"\nFROM core.events\nWHERE ts_ingest >= NOW() - INTERVAL '2 hours'\nGROUP BY time\n\nORDER BY time ASC",
           "refId": "A",
           "select": [
             [
@@ -585,7 +585,7 @@
           ]
         }
       ],
-      "title": "Processing Time Percentiles",
+      "title": "Ingest Latency Percentiles",
       "type": "timeseries"
     },
     {
@@ -624,7 +624,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "avg_processing_time_ms"
+              "options": "avg_latency_ms"
             },
             "properties": [
               {
@@ -658,78 +658,6 @@
                 }
               }
             ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "failed_count"
-            },
-            "properties": [
-              {
-                "id": "custom.cellOptions",
-                "value": {
-                  "type": "color-background"
-                }
-              },
-              {
-                "id": "thresholds",
-                "value": {
-                  "mode": "absolute",
-                  "steps": [
-                    {
-                      "color": "green",
-                      "value": null
-                    },
-                    {
-                      "color": "yellow",
-                      "value": 1
-                    },
-                    {
-                      "color": "red",
-                      "value": 10
-                    }
-                  ]
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "success_rate"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "percent"
-              },
-              {
-                "id": "custom.cellOptions",
-                "value": {
-                  "type": "color-background"
-                }
-              },
-              {
-                "id": "thresholds",
-                "value": {
-                  "mode": "absolute",
-                  "steps": [
-                    {
-                      "color": "red",
-                      "value": null
-                    },
-                    {
-                      "color": "yellow",
-                      "value": 90
-                    },
-                    {
-                      "color": "green",
-                      "value": 95
-                    }
-                  ]
-                }
-              }
-            ]
           }
         ]
       },
@@ -754,7 +682,7 @@
         "sortBy": [
           {
             "desc": true,
-            "displayName": "total_processed"
+            "displayName": "total_events"
           }
         ]
       },
@@ -768,7 +696,7 @@
           "group": [],
           "metricColumn": "none",
           "rawQuery": true,
-          "rawSql": "WITH worker_stats AS (\n  SELECT \n    worker_id,\n    COUNT(*) as total_processed,\n    COUNT(CASE WHEN status = 'succeeded' THEN 1 END) as succeeded_count,\n    COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed_count,\n    AVG(CASE WHEN status = 'succeeded' THEN EXTRACT(EPOCH FROM (completed_at - started_at)) * 1000 END) as avg_processing_time_ms,\n    MIN(started_at) as first_task,\n    MAX(completed_at) as last_task\n  FROM sinex_schemas.promotion_queue\n  WHERE completed_at > NOW() - INTERVAL '1 hour'\n    AND worker_id IS NOT NULL\n  GROUP BY worker_id\n)\nSELECT \n  worker_id,\n  total_processed,\n  succeeded_count,\n  failed_count,\n  ROUND(avg_processing_time_ms::numeric, 2) as avg_processing_time_ms,\n  ROUND((succeeded_count * 100.0 / NULLIF(total_processed, 0))::numeric, 2) as success_rate,\n  first_task,\n  last_task\nFROM worker_stats\nORDER BY total_processed DESC",
+          "rawSql": "WITH source_stats AS (\n  SELECT \n    source,\n    COUNT(*) as total_events,\n    AVG(EXTRACT(EPOCH FROM (ts_ingest - ts_orig)) * 1000) as avg_latency_ms,\n    MIN(ts_ingest) as first_seen,\n    MAX(ts_ingest) as last_seen\n  FROM core.events\n  WHERE ts_ingest > NOW() - INTERVAL '1 hour'\n  GROUP BY source\n)\nSELECT \n  source,\n  total_events,\n  ROUND(avg_latency_ms::numeric, 2) as avg_latency_ms,\n  first_seen,\n  last_seen\nFROM source_stats\nORDER BY total_events DESC\nLIMIT 20",
           "refId": "A",
           "select": [
             [
@@ -790,7 +718,7 @@
           ]
         }
       ],
-      "title": "Worker Performance Summary (1h)",
+      "title": "Source Activity Summary (1h)",
       "type": "table"
     },
     {
@@ -850,7 +778,7 @@
           "group": [],
           "metricColumn": "none",
           "rawQuery": true,
-          "rawSql": "SELECT \n  status,\n  COUNT(*) as count\nFROM sinex_schemas.promotion_queue\nWHERE completed_at > NOW() - INTERVAL '24 hours'\n  OR (status IN ('pending', 'processing') AND created_at > NOW() - INTERVAL '24 hours')\nGROUP BY status\nORDER BY count DESC",
+          "rawSql": "SELECT \n  event_type,\n  COUNT(*) as count\nFROM core.events\nWHERE ts_ingest > NOW() - INTERVAL '24 hours'\nGROUP BY event_type\nORDER BY count DESC\nLIMIT 10",
           "refId": "A",
           "select": [
             [
@@ -872,7 +800,7 @@
           ]
         }
       ],
-      "title": "Queue Status Distribution (24h)",
+      "title": "Event Type Distribution (24h)",
       "type": "piechart"
     },
     {
@@ -923,19 +851,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "started_at"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "dateTimeAsLocal"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "completed_at"
+              "options": "resolved_at"
             },
             "properties": [
               {
@@ -993,7 +909,7 @@
           "group": [],
           "metricColumn": "none",
           "rawQuery": true,
-          "rawSql": "SELECT \n  ulid_to_uuid(event_id)::text as event_id,\n  worker_id,\n  status,\n  created_at,\n  started_at,\n  completed_at,\n  CASE \n    WHEN error_message IS NOT NULL THEN \n      CASE \n        WHEN length(error_message) > 100 THEN substring(error_message from 1 for 100) || '...'\n        ELSE error_message\n      END\n    ELSE NULL\n  END as error_message\nFROM sinex_schemas.promotion_queue\nWHERE status = 'failed'\n  AND created_at > NOW() - INTERVAL '24 hours'\nORDER BY created_at DESC\nLIMIT 50",
+          "rawSql": "SELECT \n  id,\n  automaton_name,\n  created_at,\n  resolved_at,\n  error_category,\n  CASE \n    WHEN error_message IS NOT NULL THEN \n      CASE \n        WHEN length(error_message) > 100 THEN substring(error_message from 1 for 100) || '...'\n        ELSE error_message\n      END\n    ELSE NULL\n  END as error_message\nFROM sinex_schemas.dlq_events\nWHERE created_at > NOW() - INTERVAL '24 hours'\nORDER BY created_at DESC\nLIMIT 50",
           "refId": "A",
           "select": [
             [
@@ -1015,7 +931,7 @@
           ]
         }
       ],
-      "title": "Recent Failed Queue Items (24h)",
+      "title": "Recent DLQ Entries (24h)",
       "type": "table"
     },
     {
@@ -1102,7 +1018,7 @@
           "group": [],
           "metricColumn": "none",
           "rawQuery": true,
-          "rawSql": "SELECT\n  date_trunc('hour', created_at) AS time,\n  'Queue Size' as metric,\n  COUNT(*) as \"Queue Depth\"\nFROM sinex_schemas.promotion_queue\nWHERE created_at >= NOW() - INTERVAL '24 hours'\nGROUP BY time\nORDER BY time ASC",
+          "rawSql": "SELECT\n  date_trunc('hour', created_at) AS time,\n  'DLQ backlog' as metric,\n  COUNT(*) as \"Events\"\nFROM sinex_schemas.dlq_events\nWHERE created_at >= NOW() - INTERVAL '24 hours'\nGROUP BY time\nORDER BY time ASC",
           "refId": "A",
           "select": [
             [
@@ -1124,7 +1040,7 @@
           ]
         }
       ],
-      "title": "Queue Depth Over Time (24h)",
+      "title": "DLQ Volume Over Time (24h)",
       "type": "timeseries"
     }
   ],

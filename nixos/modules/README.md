@@ -10,12 +10,12 @@ to a systemd unit, CLI argument, or generated configuration file.
 | Namespace | Purpose |
 |-----------|---------|
 | `services.sinex.stateRoot` | Root that all derived paths cascade from (logs, spool, blobs, DLQ). |
-| `services.sinex.users` | `target` (captured workstation user) and `satellites` (service account). |
+| `services.sinex.users` | `target` (captured workstation user) and `nodes` (service account). |
 | `services.sinex.database` | PostgreSQL provisioning, connection pool sizing, and migrations. |
 | `services.sinex.nats` | NATS/JetStream provisioning and stream bootstrap. |
 | `services.sinex.storage` | Dead-letter queue handling and git-annex backed blob store. |
 | `services.sinex.core` | Ingestion (`sinex-ingestd`) and gateway service configuration. |
-| `services.sinex.satellites` | Filesystem/terminal/desktop/system collectors plus automata. |
+| `services.sinex.nodes` | Filesystem/terminal/desktop/system collectors plus automata. |
 | `services.sinex.observability` | Prometheus/Grafana/exporters and structured log retention. |
 | `services.sinex.lifecycle` | Pre-flight verification and coordinated update orchestration. |
 | `services.sinex.shell` | Developer ergonomics (asciinema capture, Kitty auto-config). |
@@ -44,8 +44,8 @@ values derived from `stateRoot` and the global `logLevel`.
       maxAge = "14d";
     };
 
-    satellites.filesystem.watchPaths = [ "/home/alice" "/workspace" ];
-    satellites.automata.canonicalizer.profile = "heavy";
+    nodes.filesystem.watchPaths = [ "/home/alice" "/workspace" ];
+    nodes.automata.canonicalizer.profile = "heavy";
 
     observability.monitoring = {
       enable = true;
@@ -78,17 +78,18 @@ disabled (e.g. staging migrations).
 - `nats.bootstrapStreams.enable` bootstraps standard JetStream streams via the `nats`
   CLI (requires `pkgs.natscli`).
 
-### Core & Satellites
+### Core & nodes
 - `core.ingestd` and `core.gateway` expose per-service resources, log levels,
-  batches, and extra CLI args.
-- Satellite defaults (`satellites.defaults`) cover instances, batching, and
-  resource limits. Individual satellites can override by setting their field to
+  batch/limits knobs, extra CLI args, TCP listen address, and optional
+  client-cert enforcement.
+- node defaults (`nodes.defaults`) cover instances, batching, and
+  resource limits. Individual nodes can override by setting their field to
   `null` (inherit) or a concrete value.
-- Automata use named profiles defined under `satellites.automata.profiles`; set
+- Automata use named profiles defined under `nodes.automata.profiles`; set
   `profile = "light"|"standard"|"heavy"` to select batch and MemoryMax/CPUQuota.
 - The module emits deterministic unit names (`sinex-filesystem-1`,
   `sinex-health-aggregator`, etc.) and publishes them via
-  `services.sinex.satellites.generatedUnits` for other subsystems (pre-flight,
+  `services.sinex.nodes.generatedUnits` for other subsystems (pre-flight,
   tests).
 
 ### Observability
@@ -121,7 +122,7 @@ disabled (e.g. staging migrations).
 - `blob-storage.nix` – git-annex initialization and maintenance timers.
 - `monitoring.nix` – Prometheus/Grafana/exporter configuration.
 - `preflight-verification.nix` – `sinex-preflight` and `sinex-update` units.
-- `satellite-services.nix` – Core ingest/gateway and satellite/automata units.
+- `node-services.nix` – Core ingest/gateway and node/automata units.
 - `kitty-shell-integration.nix` – Kitty auto-configuration helper.
 
 ## Testing Tips

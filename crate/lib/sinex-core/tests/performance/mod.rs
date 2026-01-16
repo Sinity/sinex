@@ -1,3 +1,5 @@
+#![cfg(feature = "slow-tests")]
+
 // # Performance and Scale Testing Suite
 //
 // Comprehensive performance tests that verify system behavior under various
@@ -17,7 +19,6 @@
 // - **Checkpoint Performance**: Persistence and recovery speed
 // - **Bottleneck Identification**: Tools for identifying JetStream stress cases
 
-use sinex_test_utils::TestResult;
 use sinex_test_utils::prelude::*;
 
 /// JetStream publish/consume performance tests

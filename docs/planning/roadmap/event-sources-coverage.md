@@ -8,31 +8,31 @@ This document tracks the current coverage of digital activity capture and outlin
 
 #### Filesystem Monitor (5% coverage)
 - File creation, modification, deletion events
-- Implemented in `sinex-fs-watcher` satellite
+- Implemented in `sinex-fs-watcher` node
 - Captures file system changes but not file content
 
 #### Clipboard Monitor (2% coverage)
 - Copy/paste events with git-annex storage
-- Part of `sinex-desktop-satellite`
+- Part of `sinex-desktop-node`
 - Stores clipboard content for text and images
 
 #### Terminal Sources (8% coverage)
 - Kitty terminal integration
 - Asciinema recording playback
 - Shell history import (bash, zsh, fish)
-- Implemented in `sinex-terminal-satellite`
+- Implemented in `sinex-terminal-node`
 
 #### Window Manager (5% coverage)
 - Hyprland IPC integration
 - Basic X11 window tracking
-- Part of `sinex-desktop-satellite`
+- Part of `sinex-desktop-node`
 - Captures workspace switches, window focus
 
 #### System Sources (15% coverage)
 - Git repository events
 - Downloads directory monitoring
 - SQLite history extraction
-- Implemented in `sinex-system-satellite`
+- Implemented in `sinex-system-node`
 
 ## Critical Gap: 65% of Digital Activity Not Captured
 
@@ -41,7 +41,7 @@ This document tracks the current coverage of digital activity capture and outlin
 #### Browser Activity Monitor (40-60% of knowledge work)
 **Impact**: Largest gap in coverage — most knowledge work happens in browsers
 - WebExtension captures page visits, interactions (forms, media), downloads, tab/window context
-- Native messaging host sends events to the gateway; satellite normalizes and submits via ingestd
+- Native messaging host sends events to the gateway; node normalizes and submits via ingestd
 - Event types: `browser.page_visit`, `browser.dom_event`, `browser.media_event`, `browser.download`
 - Privacy: opt‑in capture by domain/category; redact PII at source when configured
 
@@ -78,19 +78,19 @@ This document tracks the current coverage of digital activity capture and outlin
 ### Phase 1: Browser Integration (Q1)
 1. Develop WebExtension for Firefox/Chrome
 2. Implement native messaging host
-3. Create browser event satellite
+3. Create browser event node
 4. Target: +45% coverage (80% total)
 
 ### Phase 2: Process & Network Monitoring (Q2)
 1. Implement eBPF-based process tracking
 2. Add network activity monitoring
-3. Create system monitoring satellite
+3. Create system monitoring node
 4. Target: +10% coverage (90% total)
 
 ### Phase 3: Visual & Input Capture (Q3)
 1. Implement Wayland screen capture
 2. Add OCR processing pipeline
-3. Create input monitoring satellite
+3. Create input monitoring node
 4. Target: +5% coverage (95% total)
 
 ## Implementation Priority

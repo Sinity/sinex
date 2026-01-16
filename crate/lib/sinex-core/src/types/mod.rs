@@ -27,7 +27,7 @@ pub use validation::{
     deserialize_optional_sanitized_path, deserialize_optional_validated_utf8_path,
     deserialize_sanitized_path, deserialize_sanitized_path_vec, deserialize_validated_utf8_path,
     deserialize_validated_utf8_path_vec, sanitize_filename_component, validate_json, validate_path,
-    PathValidationLevel, SecurePath, ValidatedPathDeserializer, ValidationError,
+    PathValidationLevel, SecurePath, ValidationError,
 };
 
 // Re-export Result type alias for convenience
@@ -113,22 +113,21 @@ pub mod buffers {
 
 /// Retry and resilience constants
 pub mod retry {
+    use super::Seconds;
+
     /// Maximum number of retry attempts for failed operations
     pub const MAX_RETRY_ATTEMPTS: u32 = 3;
 
     /// Exponential backoff multiplier
     pub const BACKOFF_MULTIPLIER: u32 = 2;
 
-    /// Maximum time to wait for work queue items
-    pub const WORK_QUEUE_TIMEOUT_SECS: u64 = 60;
-
     /// Health check interval for monitoring
-    pub const HEALTH_CHECK_INTERVAL_SECS: u64 = 30;
+    pub const HEALTH_CHECK_INTERVAL_SECS: Seconds = Seconds::from_secs(30);
 }
 
 /// File system operation constants
 pub mod filesystem {
-    use super::Duration;
+    use super::{Bytes, Duration};
 
     /// Default interval for filesystem watch polls
     pub const DEFAULT_WATCH_INTERVAL: Duration = Duration::from_millis(100);
@@ -137,10 +136,10 @@ pub mod filesystem {
     pub const TERMINAL_SOCKET_WATCH_INTERVAL: Duration = Duration::from_millis(500);
 
     /// Maximum file size for direct processing (10 MB)
-    pub const MAX_DIRECT_PROCESS_SIZE: u64 = 10 * 1024 * 1024;
+    pub const MAX_DIRECT_PROCESS_SIZE: Bytes = Bytes::from_mebibytes(10);
 
     /// Minimum free space required for operations (100 MB)
-    pub const MIN_FREE_SPACE_BYTES: u64 = 100 * 1024 * 1024;
+    pub const MIN_FREE_SPACE_BYTES: Bytes = Bytes::from_mebibytes(100);
 
     /// Default permissions for created directories (0o755)
     pub const DEFAULT_DIR_PERMISSIONS: u32 = 0o755;
@@ -262,60 +261,6 @@ impl Display for ServiceKind {
 #[async_trait::async_trait]
 pub trait HealthCheck: Send + Sync {
     async fn check_health(&self) -> Result<HealthStatus>;
-}
-
-// ===== Metrics Types =====
-
-/// Metrics entry for database storage
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MetricsEntry {
-    pub id: Ulid,
-    pub metric_name: String,
-    pub metric_type: String,
-    pub value: f64,
-    pub labels: HashMap<String, String>,
-    pub timestamp: DateTime<Utc>,
-    pub namespace: String,
-    pub subsystem: String,
-}
-
-impl MetricsEntry {
-    pub fn new(
-        metric_name: String,
-        metric_type: String,
-        value: f64,
-        labels: HashMap<String, String>,
-        namespace: String,
-        subsystem: String,
-    ) -> Self {
-        Self {
-            id: Ulid::new(),
-            metric_name,
-            metric_type,
-            value,
-            labels,
-            timestamp: Utc::now(),
-            namespace,
-            subsystem,
-        }
-    }
-}
-
-/// Aggregated metrics data
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MetricsAggregation {
-    pub count: u64,
-    pub sum: f64,
-    pub avg: f64,
-    pub min: f64,
-    pub max: f64,
-}
-
-/// Common trait for components that emit metrics
-pub trait MetricsEmitter {
-    fn emit_counter(&self, name: &str, value: u64, tags: &[(&str, &str)]);
-    fn emit_gauge(&self, name: &str, value: f64, tags: &[(&str, &str)]);
-    fn emit_histogram(&self, name: &str, value: f64, tags: &[(&str, &str)]);
 }
 
 /// Utility functions for working with paths

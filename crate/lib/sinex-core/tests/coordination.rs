@@ -3,10 +3,11 @@ use std::time::Duration;
 
 use sinex_core::types::utils::coordination::{CoordinationPrimitive, ResetBehavior};
 use sinex_test_utils::sinex_test;
+use sinex_test_utils::TestResult;
 use tokio::time::sleep;
 
 #[sinex_test]
-async fn coordination_supports_event_counter_pattern() -> color_eyre::eyre::Result<()> {
+async fn coordination_supports_event_counter_pattern() -> TestResult<()> {
     let counter = CoordinationPrimitive::event_counter(3, "test_counter");
 
     assert_eq!(counter.get(), 0);
@@ -27,7 +28,7 @@ async fn coordination_supports_event_counter_pattern() -> color_eyre::eyre::Resu
 }
 
 #[sinex_test]
-async fn coordination_supports_synchronizer_pattern() -> color_eyre::eyre::Result<()> {
+async fn coordination_supports_synchronizer_pattern() -> TestResult<()> {
     let sync = CoordinationPrimitive::synchronizer("test_sync");
     assert_eq!(sync.reset_behavior(), ResetBehavior::Manual);
     assert!(!sync.is_ready());
@@ -42,7 +43,7 @@ async fn coordination_supports_synchronizer_pattern() -> color_eyre::eyre::Resul
 }
 
 #[sinex_test]
-async fn coordination_barrier_increments_generation() -> color_eyre::eyre::Result<()> {
+async fn coordination_barrier_increments_generation() -> TestResult<()> {
     let barrier = CoordinationPrimitive::barrier(3, "test_barrier");
     let baseline_generation = barrier.generation();
 
@@ -66,7 +67,7 @@ async fn coordination_barrier_increments_generation() -> color_eyre::eyre::Resul
 }
 
 #[sinex_test]
-async fn coordination_wait_times_out() -> color_eyre::eyre::Result<()> {
+async fn coordination_wait_times_out() -> TestResult<()> {
     let counter = CoordinationPrimitive::event_counter(5, "timeout_test");
     let err = counter
         .wait_for_threshold(Duration::from_millis(100))
@@ -77,7 +78,7 @@ async fn coordination_wait_times_out() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-async fn coordination_event_counter_factory_tracks_progress() -> color_eyre::eyre::Result<()> {
+async fn coordination_event_counter_factory_tracks_progress() -> TestResult<()> {
     let counter = CoordinationPrimitive::event_counter(100, "test_events");
     assert_eq!(counter.name(), "test_events");
     assert_eq!(counter.threshold(), 100);
@@ -99,7 +100,7 @@ async fn coordination_event_counter_factory_tracks_progress() -> color_eyre::eyr
 }
 
 #[sinex_test]
-async fn coordination_handles_concurrent_adders() -> color_eyre::eyre::Result<()> {
+async fn coordination_handles_concurrent_adders() -> TestResult<()> {
     let counter = Arc::new(CoordinationPrimitive::event_counter(1000, "concurrent"));
     let mut handles = Vec::new();
     for _ in 0..10 {
@@ -121,7 +122,7 @@ async fn coordination_handles_concurrent_adders() -> color_eyre::eyre::Result<()
 }
 
 #[sinex_test]
-async fn coordination_covers_edge_cases() -> color_eyre::eyre::Result<()> {
+async fn coordination_covers_edge_cases() -> TestResult<()> {
     let zero_barrier = CoordinationPrimitive::barrier(0, "zero_test");
     assert!(zero_barrier.is_ready());
 

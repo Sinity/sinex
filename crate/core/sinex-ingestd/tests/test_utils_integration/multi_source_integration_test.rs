@@ -1,10 +1,8 @@
 use async_trait::async_trait;
-use sinex_test_utils::TestResult;
 use sinex_core::db::models::{EventFactory, RawEvent};
 use sinex_test_utils::prelude::*;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tokio::time::sleep;
 
 // EventSource trait definition for test event sources
 #[async_trait]
@@ -78,7 +76,7 @@ impl EventSource for TestFilesystemSatellite {
             }
 
             self.events_sent += 1;
-            sleep(Duration::from_millis(10)).await;
+            tokio::task::yield_now().await;
         }
         Ok(())
     }
@@ -106,7 +104,7 @@ impl EventSource for TestCommandSatellite {
             }
 
             self.events_sent += 1;
-            sleep(Duration::from_millis(15)).await;
+            tokio::task::yield_now().await;
         }
         Ok(())
     }
@@ -132,7 +130,7 @@ impl EventSource for TestScannerSatellite {
             }
 
             self.items_scanned += 1;
-            sleep(Duration::from_millis(10)).await;
+            tokio::task::yield_now().await;
         }
         // Scanner completes naturally
         Ok(())
@@ -319,14 +317,16 @@ async fn test_satellite_operational_modes(ctx: TestContext) -> color_eyre::Resul
     // Start sensor mode in background
     let sensor_handle = tokio::spawn(async move { sensor_satellite.stream_events(sensor_tx).await });
 
-    // Wait a bit for sensor mode to start producing events
-    sleep(Duration::from_millis(500)).await;
+    let mut sensor_events = Vec::new();
+    let first_event = tokio::time::timeout(Duration::from_secs(2), sensor_rx.recv()).await??;
+    if let Some(event) = first_event {
+        sensor_events.push(event);
+    }
 
     // Stop sensor mode (it should still be running)
     sensor_handle.abort();
 
     // Collect sensor events
-    let mut sensor_events = Vec::new();
     while let Ok(event) = sensor_rx.try_recv() {
         sensor_events.push(event);
     }

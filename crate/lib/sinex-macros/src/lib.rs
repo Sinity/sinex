@@ -4,18 +4,13 @@
 
 //! Procedural macro toolkit that keeps Sinex ergonomics consistent across crates.
 
-// mod auto_metrics; // REMOVED: telemetry system removed
-// mod config_struct; // REMOVED: Used ValidationChain which is being replaced
 mod database_helpers;
 mod error_context;
 mod event_payload;
 mod event_registry;
 mod id_types;
-mod satellite_helpers;
-mod stream_processor;
 mod typed_event_envelope;
 mod validate_record;
-// mod validation_chain; // REMOVED: ValidationChain is being replaced with validator crate
 
 use proc_macro::TokenStream;
 
@@ -99,31 +94,6 @@ pub fn typed_event_envelope(attr: TokenStream, item: TokenStream) -> TokenStream
 
 // REMOVED: config_struct macro - Used ValidationChain which is being replaced with validator crate
 
-/// Macro for generating StatefulStreamProcessor implementations
-///
-/// Reduces boilerplate for implementing StatefulStreamProcessor trait.
-///
-/// # Examples
-///
-/// ```rust
-/// use sinex_macros::stream_processor;
-///
-/// #[stream_processor(
-///     processor_type = "ingestor",
-///     checkpoint_type = "external",
-///     source = "filesystem"
-/// )]
-/// pub struct FilesystemWatcher {
-///     config: FilesystemConfig,
-///     #[state]
-///     last_scan_time: Option<DateTime<Utc>>,
-/// }
-/// ```
-#[proc_macro_attribute]
-pub fn stream_processor(attr: TokenStream, item: TokenStream) -> TokenStream {
-    stream_processor::stream_processor(attr, item)
-}
-
 /// Macro for generating database query helpers with automatic ULID/UUID conversion
 ///
 /// Generates query functions with proper ULID/UUID handling.
@@ -164,119 +134,6 @@ pub fn db_query(input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn db_transaction(input: TokenStream) -> TokenStream {
     database_helpers::db_transaction(input)
-}
-
-// Satellite processing macros are temporarily disabled due to syn 2.x compatibility issues
-// These will be reimplemented with proper syn 2.x support in a future update
-
-/// Derive macro for basic satellite processor implementation
-///
-/// Generates basic StatefulStreamProcessor-compatible methods.
-/// This is a simplified version that demonstrates the concept.
-///
-/// # Examples
-///
-/// ```rust
-/// use sinex_macros::SatelliteProcessor;
-///
-/// #[derive(Default, SatelliteProcessor)]
-/// pub struct FilesystemProcessor {
-///     config: FilesystemConfig,
-/// }
-/// ```
-#[proc_macro_derive(SatelliteProcessor)]
-pub fn satellite_processor_derive(input: TokenStream) -> TokenStream {
-    satellite_helpers::satellite_processor_derive(input)
-}
-
-/// Derive macro for basic event handler implementation
-///
-/// Generates event processing methods with retry logic.
-/// This is a simplified version that demonstrates the concept.
-///
-/// # Examples
-///
-/// ```rust
-/// use sinex_macros::EventHandler;
-///
-/// #[derive(Default, EventHandler)]
-/// pub struct FileEventHandler;
-/// ```
-#[proc_macro_derive(EventHandler)]
-pub fn event_handler_derive(input: TokenStream) -> TokenStream {
-    satellite_helpers::event_handler_derive(input)
-}
-
-/// Derive macro for basic satellite configuration
-///
-/// Generates configuration loading and validation methods.
-/// This is a simplified version that demonstrates the concept.
-///
-/// # Examples
-///
-/// ```rust
-/// use sinex_macros::SatelliteConfig;
-///
-/// #[derive(Default, SatelliteConfig)]
-/// pub struct FilesystemConfig {
-///     pub watch_patterns: Vec<String>,
-///     pub debounce_ms: u64,
-/// }
-/// ```
-#[proc_macro_derive(SatelliteConfig)]
-pub fn satellite_config_derive(input: TokenStream) -> TokenStream {
-    satellite_helpers::satellite_config_derive(input)
-}
-
-/// Derive macro for basic payload extractor
-///
-/// Generates payload extraction methods with type safety.
-/// This is a simplified version that demonstrates the concept.
-///
-/// # Examples
-///
-/// ```rust
-/// use sinex_macros::PayloadExtractor;
-///
-/// #[derive(Default, PayloadExtractor)]
-/// pub struct FileCreatedExtractor;
-/// ```
-#[proc_macro_derive(PayloadExtractor)]
-pub fn payload_extractor_derive(input: TokenStream) -> TokenStream {
-    satellite_helpers::payload_extractor_derive(input)
-}
-
-// Telemetry macros are now no-ops since telemetry system has been removed
-// They remain for backward compatibility but do nothing
-
-#[proc_macro_attribute]
-pub fn auto_metrics(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    // No-op: telemetry system removed, just return the original item
-    item
-}
-
-#[proc_macro_attribute]
-pub fn auto_db_metrics(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    // No-op: telemetry system removed, just return the original item
-    item
-}
-
-#[proc_macro_attribute]
-pub fn auto_event_metrics(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    // No-op: telemetry system removed, just return the original item
-    item
-}
-
-#[proc_macro_attribute]
-pub fn auto_resource_metrics(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    // No-op: telemetry system removed, just return the original item
-    item
-}
-
-#[proc_macro_attribute]
-pub fn auto_satellite_metrics(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    // No-op: telemetry system removed, just return the original item
-    item
 }
 
 /// Macro for defining strongly-typed ID types based on ULID

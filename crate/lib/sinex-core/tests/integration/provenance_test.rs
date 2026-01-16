@@ -1,8 +1,9 @@
 use chrono::Utc;
 use serde_json::json;
+use sinex_core::db::models::Provenance;
 use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::db::validation::{EventValidator, ValidationError};
-use sinex_core::{Event, EventId, Ulid};
+use sinex_core::{Event, EventId, Id, JsonValue, Ulid};
 use sinex_test_utils::prelude::*;
 use tracing::info;
 
@@ -15,25 +16,33 @@ use tracing::info;
 
 #[sinex_test]
 async fn test_basic_event_creation_and_persistence(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_shared_nats().await?;
     let pool = ctx.pool().clone();
 
     info!("Testing basic event creation and persistence");
 
     // Create a test event using the test context convenience method
-    let event = ctx
-        .create_test_event(
-            "provenance-test",
-            "test.event",
-            json!({
-                "message": "test provenance tracking",
-                "step": 1
-            }),
-        )
-        .await?;
+    let mut event = Event::<JsonValue>::test_event(
+        "provenance-test",
+        "test.event",
+        json!({
+            "message": "test provenance tracking",
+            "step": 1
+        }),
+    );
+    event.id = Some(Id::new());
+
+    // Publish via pipeline
+    ctx.publish_test_event(&event).await?;
 
     // Verify the event was created
-    let event_id = event.id.expect("Event should have ID");
+    let event_id = event.id.clone().expect("Event should have ID");
     info!("Created event with ID: {}", event_id);
+
+    // Wait for persistence
+    ctx.timing()
+        .wait_for_source_events("provenance-test", 1)
+        .await?;
 
     // Verify we can query recent events using the repository API
     let recent_events = pool.events().get_recent(10).await?;
@@ -65,6 +74,7 @@ async fn test_basic_event_creation_and_persistence(ctx: TestContext) -> TestResu
 #[sinex_test]
 async fn test_multiple_event_sources(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
+    let ctx = ctx.with_shared_nats().await?;
     let suffix_a = format!("source-a-{}", Ulid::new());
     let suffix_b = format!("source-b-{}", Ulid::new());
     let suffix_c = format!("source-c-{}", Ulid::new());
@@ -73,26 +83,33 @@ async fn test_multiple_event_sources(ctx: TestContext) -> TestResult<()> {
     info!("Testing multiple event sources");
 
     // Create events from different sources
-    let event1 = ctx
-        .create_test_event(&suffix_a, "test.event", json!({"data": "from source A"}))
-        .await?;
+    let mut event1 =
+        Event::<JsonValue>::test_event(&*suffix_a, "test.event", json!({"data": "from source A"}));
+    event1.id = Some(Id::new());
+    ctx.publish_test_event(&event1).await?;
 
-    let event2 = ctx
-        .create_test_event(&suffix_b, "test.event", json!({"data": "from source B"}))
-        .await?;
+    let mut event2 =
+        Event::<JsonValue>::test_event(&*suffix_b, "test.event", json!({"data": "from source B"}));
+    event2.id = Some(Id::new());
+    ctx.publish_test_event(&event2).await?;
 
-    let event3 = ctx
-        .create_test_event(
-            &suffix_c,
-            "different.type",
-            json!({"data": "from source C"}),
-        )
-        .await?;
+    let mut event3 = Event::<JsonValue>::test_event(
+        &*suffix_c,
+        "different.type",
+        json!({"data": "from source C"}),
+    );
+    event3.id = Some(Id::new());
+    ctx.publish_test_event(&event3).await?;
 
     // Verify all events were created
     assert!(event1.id.is_some());
     assert!(event2.id.is_some());
     assert!(event3.id.is_some());
+
+    // Wait for persistence
+    ctx.timing().wait_for_source_events(&suffix_a, 1).await?;
+    ctx.timing().wait_for_source_events(&suffix_b, 1).await?;
+    ctx.timing().wait_for_source_events(&suffix_c, 1).await?;
 
     // Query events by source
     let events_from_a = pool
@@ -131,25 +148,33 @@ async fn test_multiple_event_sources(ctx: TestContext) -> TestResult<()> {
 }
 
 /// Test event querying by type
-#[sinex_test]
+#[sinex_serial_test]
 async fn test_event_querying_by_type(ctx: TestContext) -> TestResult<()> {
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
     ctx.ensure_clean().await?;
+    let ctx = ctx.with_shared_nats().await?;
     let pool = ctx.pool().clone();
 
     info!("Testing event querying by type");
 
     // Create events of different types
-    let _event1 = ctx
-        .create_test_event("test-source", "type.a", json!({"category": "A"}))
-        .await?;
+    let mut event1 =
+        Event::<JsonValue>::test_event("test-source", "type.a", json!({"category": "A"}));
+    event1.id = Some(Id::new());
+    ctx.publish_test_event(&event1).await?;
 
-    let _event2 = ctx
-        .create_test_event("test-source", "type.a", json!({"category": "A2"}))
-        .await?;
+    let mut event2 =
+        Event::<JsonValue>::test_event("test-source", "type.a", json!({"category": "A2"}));
+    event2.id = Some(Id::new());
+    ctx.publish_test_event(&event2).await?;
 
-    let _event3 = ctx
-        .create_test_event("test-source", "type.b", json!({"category": "B"}))
+    let mut event3 =
+        Event::<JsonValue>::test_event("test-source", "type.b", json!({"category": "B"}));
+    event3.id = Some(Id::new());
+    ctx.publish_test_event(&event3).await?;
+
+    // Wait for persistence (by source is reliable)
+    ctx.timing()
+        .wait_for_source_events("test-source", 3)
         .await?;
 
     // Query by event type
@@ -180,18 +205,14 @@ async fn test_event_querying_by_type(ctx: TestContext) -> TestResult<()> {
         .all(|e| e.event_type.as_str() == "type.b"));
 
     info!("✅ Event querying by type verified");
-    ctx.force_cleanup().await?;
     Ok(())
 }
 
 /// Test batch event creation
-#[sinex_test]
+#[sinex_serial_test]
 async fn test_batch_event_creation(ctx: TestContext) -> TestResult<()> {
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
-    ctx.force_cleanup().await?;
     ctx.ensure_clean().await?;
-    sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
-    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
+    let ctx = ctx.with_shared_nats().await?;
     let pool = ctx.pool().clone();
 
     info!("Testing batch event creation");
@@ -200,85 +221,57 @@ async fn test_batch_event_creation(ctx: TestContext) -> TestResult<()> {
     let mut event_ids = Vec::new();
 
     for i in 0..5 {
-        let event = ctx
-            .create_test_event(
-                "batch-test",
-                "batch.item",
-                json!({
-                    "index": i,
-                    "data": format!("batch item {}", i)
-                }),
-            )
-            .await?;
+        let mut event = Event::<JsonValue>::test_event(
+            "batch-test",
+            "batch.item",
+            json!({
+                "index": i,
+                "data": format!("batch item {}", i)
+            }),
+        );
+        event.id = Some(Id::new());
+        let id = event.id.clone().expect("Event should have ID");
 
-        event_ids.push(event.id.expect("Event should have ID"));
+        ctx.publish_test_event(&event).await?;
+        event_ids.push(id);
     }
 
-    // Verify all events were created (retry/top-up if persistence lags)
+    // Verify all events were created.
     assert_eq!(event_ids.len(), 5);
-    let mut attempts = 0;
-    loop {
-        let batch_events = pool
-            .events()
-            .get_by_source(
-                &EventSource::from("batch-test"),
-                sinex_core::types::Pagination::new(Some(10), None),
-            )
-            .await?;
-        let observed: i64 =
-            sqlx::query_scalar!("SELECT COUNT(*) FROM core.events WHERE source = 'batch-test'")
-                .fetch_one(&pool)
-                .await?
-                .unwrap_or(0);
-        if batch_events.len() >= 5 && observed >= 5 {
-            // Verify events are in correct order and have correct content
-            for event in &batch_events {
-                assert_eq!(event.source.as_str(), "batch-test");
-                assert_eq!(event.event_type.as_str(), "batch.item");
-                let index = event.payload["index"].as_i64().unwrap() as usize;
-                if index >= 5 {
-                    tracing::warn!(index, "Batch event backfill index outside baseline range");
-                }
-            }
-            break;
-        }
-        if attempts >= 5 {
-            assert!(
-                batch_events.len() >= 5 && observed >= 5,
-                "Expected 5 batch events after retries, saw len={} observed={}",
-                batch_events.len(),
-                observed
-            );
-        }
-        // Top up any missing events.
-        let deficit = 5usize.saturating_sub(observed as usize);
-        for j in 0..deficit {
-            let event = ctx
-                .create_test_event(
-                    "batch-test",
-                    "batch.item",
-                    json!({
-                        "index": 100 + attempts * 10 + j,
-                        "data": format!("backfill {}", j)
-                    }),
-                )
-                .await?;
-            event_ids.push(event.id.expect("Event should have ID"));
-        }
-        attempts += 1;
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    ctx.timing().wait_for_source_events("batch-test", 5).await?;
+
+    let batch_events = pool
+        .events()
+        .get_by_source(
+            &EventSource::from("batch-test"),
+            sinex_core::types::Pagination::new(Some(10), None),
+        )
+        .await?;
+    let observed = pool
+        .events()
+        .count_by_source(&EventSource::from("batch-test"))
+        .await?;
+    assert!(
+        batch_events.len() >= 5 && observed >= 5,
+        "Expected 5 batch events, saw len={} observed={}",
+        batch_events.len(),
+        observed
+    );
+
+    // Verify events are in correct order and have correct content
+    for event in &batch_events {
+        assert_eq!(event.source.as_str(), "batch-test");
+        assert_eq!(event.event_type.as_str(), "batch.item");
     }
 
     info!("✅ Batch event creation verified");
-    sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
-    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
-    ctx.force_cleanup().await?;
     Ok(())
 }
 
 /// Test event payload structure preservation
 #[sinex_test]
 async fn test_event_payload_preservation(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_shared_nats().await?;
     let pool = ctx.pool().clone();
 
     info!("Testing event payload structure preservation");
@@ -314,8 +307,15 @@ async fn test_event_payload_preservation(ctx: TestContext) -> TestResult<()> {
         }
     });
 
-    let _event = ctx
-        .create_test_event("payload-test", "complex.payload", complex_payload.clone())
+    let mut event =
+        Event::<JsonValue>::test_event("payload-test", "complex.payload", complex_payload.clone());
+    event.id = Some(Id::new());
+
+    ctx.publish_test_event(&event).await?;
+
+    // Wait for persistence
+    ctx.timing()
+        .wait_for_source_events("payload-test", 1)
         .await?;
 
     // Retrieve the event and verify payload integrity
@@ -375,21 +375,14 @@ async fn test_event_payload_preservation(ctx: TestContext) -> TestResult<()> {
     Ok(())
 }
 
-#[sinex_test]
+#[sinex_serial_test]
 async fn provenance_xor_constraint_enforced(ctx: TestContext) -> TestResult<()> {
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
-    ctx.force_cleanup().await?;
     ctx.ensure_clean().await?;
-    if let Err(e) = sinex_test_utils::db_common::reset_database(ctx.pool()).await {
-        tracing::warn!(error = %e, "Reset before XOR constraint test failed, retrying after force_cleanup");
-        ctx.force_cleanup().await?;
-        sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
-    }
-    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
+    let ctx = ctx.with_shared_nats().await?;
     let pool = ctx.pool();
     let material = ctx.create_source_material(Some("xor-constraint")).await?;
     let parent = ctx
-        .create_test_event("prov-parent", "prov.event", json!({ "p": true }))
+        .publish_json_event("prov-parent", "prov.event", json!({ "p": true }))
         .await?
         .id
         .expect("parent event id");
@@ -424,28 +417,12 @@ async fn provenance_xor_constraint_enforced(ctx: TestContext) -> TestResult<()> 
         message.contains("check constraint"),
         "expected check constraint violation, got: {message}"
     );
-
-    if let Err(e) = sinex_test_utils::db_common::reset_database(ctx.pool()).await {
-        tracing::warn!(error = %e, "Reset after XOR constraint test failed, retrying after force_cleanup");
-        ctx.force_cleanup().await?;
-        sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
-    }
-    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
-    ctx.force_cleanup().await?;
     Ok(())
 }
 
-#[sinex_test]
+#[sinex_serial_test]
 async fn malformed_source_event_ulid_rejected(ctx: TestContext) -> TestResult<()> {
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
-    ctx.force_cleanup().await?;
     ctx.ensure_clean().await?;
-    if let Err(e) = sinex_test_utils::db_common::reset_database(ctx.pool()).await {
-        tracing::warn!(error = %e, "Reset before malformed ULID test failed, retrying after force_cleanup");
-        ctx.force_cleanup().await?;
-        sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
-    }
-    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
     let pool = ctx.pool();
 
     let err = sqlx::query(
@@ -474,24 +451,105 @@ async fn malformed_source_event_ulid_rejected(ctx: TestContext) -> TestResult<()
         "malformed ULID payload should be rejected by the database"
     );
 
-    if let Err(e) = sinex_test_utils::db_common::reset_database(ctx.pool()).await {
-        tracing::warn!(error = %e, "Reset after malformed ULID test failed, retrying after force_cleanup");
-        ctx.force_cleanup().await?;
-        sinex_test_utils::db_common::reset_database(ctx.pool()).await?;
-    }
-    sinex_test_utils::db_common::verify_clean_state(ctx.pool()).await?;
-    ctx.force_cleanup().await?;
     Ok(())
 }
 
 #[sinex_test]
-async fn duplicate_parent_ids_rejected_by_validator() -> color_eyre::eyre::Result<()> {
+async fn synthesis_provenance_rejects_direct_cycles(ctx: TestContext) -> TestResult<()> {
+    ctx.ensure_clean().await?;
+    let pool = ctx.pool().clone();
+    let repo = pool.events();
+
+    let parent_id = Id::<Event<JsonValue>>::new();
+    let child_id = Id::<Event<JsonValue>>::new();
+
+    let mut parent_event = Event::dynamic("cycle-test", "cycle.parent", json!({"role": "parent"}))
+        .with_provenance(
+            Provenance::from_synthesis(vec![EventId::from_ulid(*child_id.as_ulid())])
+                .expect("non-empty"),
+        )
+        .build()?;
+    parent_event.id = Some(parent_id.clone());
+
+    repo.insert(parent_event).await?;
+
+    let mut child_event = Event::dynamic("cycle-test", "cycle.child", json!({"role": "child"}))
+        .with_provenance(
+            Provenance::from_synthesis(vec![EventId::from_ulid(*parent_id.as_ulid())])
+                .expect("non-empty"),
+        )
+        .build()?;
+    child_event.id = Some(child_id.clone());
+
+    let err = repo
+        .insert(child_event)
+        .await
+        .expect_err("cycle should fail");
+    assert!(
+        format!("{err}").contains("cycle"),
+        "error should mention cycle"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn synthesis_provenance_rejects_indirect_cycles(ctx: TestContext) -> TestResult<()> {
+    ctx.ensure_clean().await?;
+    let pool = ctx.pool().clone();
+    let repo = pool.events();
+
+    let ancestor_id = Id::<Event<JsonValue>>::new();
+    let parent_id = Id::<Event<JsonValue>>::new();
+    let child_id = Id::<Event<JsonValue>>::new();
+
+    let mut ancestor_event =
+        Event::dynamic("cycle-test", "cycle.ancestor", json!({"role": "ancestor"}))
+            .with_provenance(
+                Provenance::from_synthesis(vec![EventId::from_ulid(*child_id.as_ulid())])
+                    .expect("non-empty"),
+            )
+            .build()?;
+    ancestor_event.id = Some(ancestor_id.clone());
+    repo.insert(ancestor_event).await?;
+
+    let mut parent_event = Event::dynamic("cycle-test", "cycle.parent", json!({"role": "parent"}))
+        .with_provenance(
+            Provenance::from_synthesis(vec![EventId::from_ulid(*ancestor_id.as_ulid())])
+                .expect("non-empty"),
+        )
+        .build()?;
+    parent_event.id = Some(parent_id.clone());
+    repo.insert(parent_event).await?;
+
+    let mut child_event = Event::dynamic("cycle-test", "cycle.child", json!({"role": "child"}))
+        .with_provenance(
+            Provenance::from_synthesis(vec![EventId::from_ulid(*parent_id.as_ulid())])
+                .expect("non-empty"),
+        )
+        .build()?;
+    child_event.id = Some(child_id.clone());
+
+    let err = repo
+        .insert(child_event)
+        .await
+        .expect_err("cycle should fail");
+    assert!(
+        format!("{err}").contains("cycle"),
+        "error should mention cycle"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn duplicate_parent_ids_rejected_by_validator() -> TestResult<()> {
     let validator = EventValidator::new();
     let parent = EventId::new();
 
     let mut event = Event::dynamic("prov-security", "duplicate.parents", json!({"case": "dup"}))
-        .from_parents(vec![parent.clone(), parent])
-        .build();
+        .from_parents(vec![parent.clone(), parent])?
+        .build()?;
 
     event.id = Some(EventId::new());
 

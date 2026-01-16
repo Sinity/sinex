@@ -17,7 +17,7 @@ lazy_static::lazy_static! {
 // =============================================================================
 
 #[sinex_test]
-fn test_json_schema_basic_validation() -> color_eyre::eyre::Result<()> {
+fn test_json_schema_basic_validation() -> TestResult<()> {
     // Test basic JSON Schema validation using jsonschema crate directly
     use jsonschema::JSONSchema;
 
@@ -62,7 +62,7 @@ fn test_json_schema_basic_validation() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn test_schema_compilation_error_handling() -> color_eyre::eyre::Result<()> {
+fn test_schema_compilation_error_handling() -> TestResult<()> {
     // Test various malformed schemas to ensure robust error handling
     use jsonschema::JSONSchema;
 
@@ -107,7 +107,7 @@ fn test_schema_compilation_error_handling() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn test_nested_schema_validation() -> color_eyre::eyre::Result<()> {
+fn test_nested_schema_validation() -> TestResult<()> {
     // Test validation of deeply nested schemas
     use jsonschema::JSONSchema;
 
@@ -180,7 +180,7 @@ fn test_nested_schema_validation() -> color_eyre::eyre::Result<()> {
 // =============================================================================
 
 #[sinex_test]
-fn test_schema_content_hash_consistency() -> color_eyre::eyre::Result<()> {
+fn test_schema_content_hash_consistency() -> TestResult<()> {
     // Test that identical schema content produces consistent hashes
     use blake3::hash;
 
@@ -230,7 +230,7 @@ fn test_schema_content_hash_consistency() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn test_schema_version_string_validation() -> color_eyre::eyre::Result<()> {
+fn test_schema_version_string_validation() -> TestResult<()> {
     // Test validation of schema version strings
     let valid_versions = vec!["1.0.0", "v2.1.0", "1.0", "dev", "1.0.0-beta", "2023.01.01"];
 
@@ -278,7 +278,7 @@ fn test_schema_version_string_validation() -> color_eyre::eyre::Result<()> {
 // =============================================================================
 
 #[sinex_test]
-fn test_schema_registry_error_conditions() -> color_eyre::eyre::Result<()> {
+fn test_schema_registry_error_conditions() -> TestResult<()> {
     // Test various error conditions that the schema registry should handle gracefully
 
     // Test handling of very large schemas
@@ -324,7 +324,7 @@ fn test_schema_registry_error_conditions() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn test_event_source_and_type_patterns() -> color_eyre::eyre::Result<()> {
+fn test_event_source_and_type_patterns() -> TestResult<()> {
     // Test the regex patterns used for event source and type validation
 
     let valid_sources = vec![

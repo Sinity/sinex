@@ -6,12 +6,10 @@ This crate provides code generation macros to reduce boilerplate and improve
 maintainability across the Sinex codebase. The macros focus on common patterns
 that would benefit from automation:
 
-- Event type registration and handling
-- Validation chain construction
-- Configuration struct generation
-- Stream processor implementations
-- Database query helpers
-- Error context enrichment
+- Error context enrichment (`with_context`)
+- Event type registration (`event_registry`, `typed_event_envelope`)
+- Database query helpers (`db_query`, `db_transaction`)
+- Typed IDs and schema validation (`define_id_type`, `EventPayload`, `ValidateRecord`)
 
 # Usage
 
@@ -54,15 +52,17 @@ FILE_MODIFIED => event_types::file::MODIFIED with FileModifiedPayload,
 }
 ```
 
-### Configuration Struct Generation
+### Schema Validation
 ```rust
-config_struct! {
-pub struct DatabaseConfig {
-#[config(env = "DATABASE_URL", validate = "not_empty")]
-pub url: String,
+use sinex_macros::ValidateRecord;
+use sqlx::FromRow;
 
-#[config(env = "DATABASE_MAX_CONNECTIONS", default = 10)]
-pub max_connections: u32,
-}
+#[derive(FromRow, ValidateRecord)]
+#[validate_against(sinex_schema::Events)]
+pub struct EventRecord {
+    pub id: Ulid,
+    pub source: String,
+    pub event_type: String,
+    // ...
 }
 ```

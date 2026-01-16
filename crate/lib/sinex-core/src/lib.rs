@@ -20,7 +20,17 @@ pub mod db {
 }
 
 // Environment namespacing module
+// Environment namespacing module
 pub mod environment;
+
+// Filesystem helpers
+pub mod fs;
+
+// NATS configuration module
+pub mod nats;
+
+// Coordination module
+pub mod coordination;
 
 // Internal implementation modules (not directly exposed)
 #[path = "types/mod.rs"]
@@ -35,22 +45,8 @@ pub use sinex_macros::{db_query, db_transaction};
 
 // Re-export commonly used types and functions at crate level for convenience
 pub use types::{
-    domain,
-    error,
-    events,
-    utils,
-    // Export validation functions for backward compatibility
-    validate_json,
-    validate_path,
-    validation,
-    HealthCheck,
-    HealthStatus,
-    MetricsEntry,
-    OptionalTimestamp,
-    Result as SinexResult,
-    ServiceInfo,
-    ServiceKind,
-    SinexError,
+    domain, error, events, utils, validation, HealthCheck, HealthStatus, OptionalTimestamp,
+    Result as SinexResult, ServiceInfo, ServiceKind, SinexError,
 };
 
 // Re-export ID types - Ulid from sinex-schema, Id from local types
@@ -79,8 +75,8 @@ pub type EventResult<T = ()> = std::result::Result<T, SinexError>;
 // Note: DbResult is already re-exported from repositories
 
 pub use db::{
-    create_database_if_not_exists, create_pool, create_pool_strict, create_pool_with_config,
-    create_pool_with_config_strict, create_test_pool, distributed_locking, get_database_url,
+    acquire_with_timeout, create_database_if_not_exists, create_pool, create_pool_strict,
+    create_pool_with_config, create_pool_with_config_strict, create_test_pool, get_database_url,
     models, pool, query_helpers, repositories, run_migrations, sanitization, security, DbPool,
     DbPoolRef, PoolConfig,
 };
@@ -99,13 +95,12 @@ pub use sinex_schema::schema::records::{BlobRecord, EventRecord, SourceMaterialR
 
 // Re-export all repository traits and types at crate root for short imports
 pub use db::repositories::{
-    BatchRepository, BlobRepository, Checkpoint, CheckpointExt, CheckpointRecord,
-    CheckpointRepository, CommandCount, CreateEntity, CreateEntityRelation, DbPoolExt, DbResult,
+    BlobRepository, CommandCount, CreateEntity, CreateEntityRelation, DbPoolExt, DbResult,
     EnhancedRepository, EntityRecord, EntityRelationRecord, EntityType, EventAnnotation,
     EventPayloadSchema, EventRepository, EventRepositoryTx, EventSearchFilters, EventTypeCount,
     KnowledgeGraphRepository, NewSchema, Operation, OperationRecord, OperationStatistics,
     Repository, SourceActivity, SourceMaterialExt, SourceMaterialRepository, StateRepository,
-    StorageStats, SystemHealthReport, TableDef, TransactionSupport, TransactionalRepository,
+    StorageStats, SystemHealthReport, TableDef, TransactionSupport,
 };
 
 // Re-export all domain types at crate root for short imports
@@ -115,7 +110,6 @@ pub use types::domain::{
 };
 
 // Re-export migration functionality
-#[cfg(feature = "migration")]
 pub use db::migration;
 
 // Telemetry system has been removed - keeping this comment for historical context
@@ -123,8 +117,9 @@ pub use db::migration;
 // Re-export query helpers for easier access
 pub use query_helpers::{
     count, db_error, exists, from_db, is_retryable_db_error, opt_from_db, opt_to_db,
-    opt_vec_from_db, opt_vec_to_db, to_db, ulid_to_uuid, uuid_to_ulid, with_retry_transaction,
-    with_transaction, DbUuidCollectionExt, DbUuidExt, RetryConfig, UlidArrayExt, UlidExt,
+    opt_vec_from_db, opt_vec_to_db, to_db, ulid_to_uuid, uuid_to_ulid,
+    with_retry_transaction_idempotent, with_transaction, DbUuidCollectionExt, DbUuidExt,
+    IdempotentTransaction, RetryConfig, UlidArrayExt, UlidExt,
 };
 
 // Re-export repository pattern (DbPoolExt already re-exported above)
@@ -139,16 +134,15 @@ pub use repositories::DbResult as RepoResult;
 pub mod prelude {
     // Core data types - all available at crate root for convenience
     pub use crate::{
-        BlobRecord, CheckpointRepository, DbPoolExt, Entity, EntityRelation, Event, EventId,
-        EventRecord, EventRepository, EventSource, EventType, HostName, Id, JsonValue,
-        OptionalTimestamp, ProcessorName, Provenance, Repository, SourceMaterial,
-        SourceMaterialRecord, Timestamp, Ulid,
+        BlobRecord, DbPoolExt, Entity, EntityRelation, Event, EventId, EventRecord,
+        EventRepository, EventSource, EventType, HostName, Id, JsonValue, OptionalTimestamp,
+        ProcessorName, Provenance, Repository, SourceMaterial, SourceMaterialRecord, Timestamp,
+        Ulid,
     };
 
     // All commonly used nested types flattened for convenience
+    pub use crate::validation::{validate_json, validate_path};
     pub use crate::{
-        validate_json,
-        validate_path,
         // Domain types
         ConsumerGroup,
         ConsumerName,
@@ -177,12 +171,9 @@ pub mod prelude {
         to_db,
         ulid_to_uuid,
         uuid_to_ulid,
-        with_retry_transaction,
         with_transaction,
         // All repository types for convenience
         BlobRepository,
-        // Repository types
-        Checkpoint,
         // Connection management
         DbPool,
         DbPoolRef,
@@ -198,7 +189,6 @@ pub mod prelude {
         UlidArrayExt,
         UlidExt,
     };
-
     // Common external crates that are used throughout the codebase
     pub use color_eyre::eyre::{eyre, Result};
     pub use sqlx::{FromRow, Postgres, Transaction};

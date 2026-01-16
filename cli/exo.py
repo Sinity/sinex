@@ -108,13 +108,31 @@ def _report_db_unavailable(error: Exception) -> None:
     console.print(f"[yellow]Underlying error: {error}[/yellow]")
 
 
-def get_rpc_client(rpc_url: Optional[str] = None, rpc_token: Optional[str] = None) -> SinexRPCClient:
+def get_rpc_client(
+    rpc_url: Optional[str] = None,
+    rpc_token: Optional[str] = None,
+    rpc_ca_cert: Optional[str] = None,
+    rpc_client_cert: Optional[str] = None,
+    rpc_client_key: Optional[str] = None,
+) -> SinexRPCClient:
     """Get RPC client using environment variable or default."""
     if rpc_url is None:
-        rpc_url = os.environ.get('SINEX_RPC_URL', 'http://127.0.0.1:9999')
+        rpc_url = os.environ.get('SINEX_RPC_URL', 'https://127.0.0.1:9999')
+    if rpc_ca_cert is None:
+        rpc_ca_cert = os.environ.get('SINEX_RPC_CA_CERT')
+    if rpc_client_cert is None:
+        rpc_client_cert = os.environ.get('SINEX_RPC_CLIENT_CERT')
+    if rpc_client_key is None:
+        rpc_client_key = os.environ.get('SINEX_RPC_CLIENT_KEY')
     
     token = rpc_token or _GLOBAL_RPC_TOKEN or os.environ.get('SINEX_RPC_TOKEN')
-    return SinexRPCClient(rpc_url, token=token)
+    return SinexRPCClient(
+        rpc_url,
+        token=token,
+        ca_cert_path=rpc_ca_cert,
+        client_cert_path=rpc_client_cert,
+        client_key_path=rpc_client_key,
+    )
 
 
 def parse_time_delta(time_str: str) -> timedelta:
@@ -135,13 +153,30 @@ def parse_time_delta(time_str: str) -> timedelta:
     return timedelta(**{units[unit]: value})
 
 
-def _query_with_rpc(rpc_url: Optional[str], source: Optional[str], event_type: Optional[str],
-                   since: Optional[str], until: Optional[str], last: Optional[str], 
-                   limit: int, host: Optional[str], rpc_token: Optional[str]) -> List[Dict]:
+def _query_with_rpc(
+    rpc_url: Optional[str],
+    source: Optional[str],
+    event_type: Optional[str],
+    since: Optional[str],
+    until: Optional[str],
+    last: Optional[str],
+    limit: int,
+    host: Optional[str],
+    rpc_token: Optional[str],
+    rpc_ca_cert: Optional[str],
+    rpc_client_cert: Optional[str],
+    rpc_client_key: Optional[str],
+) -> List[Dict]:
     """Query events using RPC client."""
     try:
-        client = get_rpc_client(rpc_url, rpc_token=rpc_token)
-        events = client.query_events_compatible(
+        client = get_rpc_client(
+            rpc_url,
+            rpc_token=rpc_token,
+            rpc_ca_cert=rpc_ca_cert,
+            rpc_client_cert=rpc_client_cert,
+            rpc_client_key=rpc_client_key,
+        )
+        events = client.query_events(
             source=source,
             event_type=event_type,
             since=since,
@@ -214,10 +249,22 @@ def _query_with_database(source: Optional[str], event_type: Optional[str],
     return events
 
 
-def _sources_with_rpc(rpc_url: Optional[str], rpc_token: Optional[str]) -> List[Dict]:
+def _sources_with_rpc(
+    rpc_url: Optional[str],
+    rpc_token: Optional[str],
+    rpc_ca_cert: Optional[str],
+    rpc_client_cert: Optional[str],
+    rpc_client_key: Optional[str],
+) -> List[Dict]:
     """Get sources statistics using RPC client."""
     try:
-        client = get_rpc_client(rpc_url, rpc_token=rpc_token)
+        client = get_rpc_client(
+            rpc_url,
+            rpc_token=rpc_token,
+            rpc_ca_cert=rpc_ca_cert,
+            rpc_client_cert=rpc_client_cert,
+            rpc_client_key=rpc_client_key,
+        )
         sources = client.get_sources_statistics()
         return sources
     except SinexRPCError:
@@ -249,10 +296,22 @@ def _sources_with_database() -> List[Dict]:
     return sources
 
 
-def _stats_with_rpc(rpc_url: Optional[str], rpc_token: Optional[str]) -> None:
+def _stats_with_rpc(
+    rpc_url: Optional[str],
+    rpc_token: Optional[str],
+    rpc_ca_cert: Optional[str],
+    rpc_client_cert: Optional[str],
+    rpc_client_key: Optional[str],
+) -> None:
     """Show stats using RPC client - limited functionality."""
     try:
-        client = get_rpc_client(rpc_url, rpc_token=rpc_token)
+        client = get_rpc_client(
+            rpc_url,
+            rpc_token=rpc_token,
+            rpc_ca_cert=rpc_ca_cert,
+            rpc_client_cert=rpc_client_cert,
+            rpc_client_key=rpc_client_key,
+        )
         
         # Get basic event counts by source
         counts = client.get_event_count_by_source(days_back=7)
@@ -429,15 +488,30 @@ def parse_datetime(date_str: str) -> datetime:
 
 @click.group()
 @click.option('--interactive', '-i', is_flag=True, help='Launch interactive query builder')
-@click.option('--rpc-url', help='RPC server URL (default: http://127.0.0.1:9999)', envvar='SINEX_RPC_URL')
+@click.option('--rpc-url', help='RPC server URL (default: https://127.0.0.1:9999)', envvar='SINEX_RPC_URL')
+@click.option('--rpc-ca-cert', help='RPC CA certificate path (env: SINEX_RPC_CA_CERT)', envvar='SINEX_RPC_CA_CERT')
+@click.option('--rpc-client-cert', help='RPC client certificate path (env: SINEX_RPC_CLIENT_CERT)', envvar='SINEX_RPC_CLIENT_CERT')
+@click.option('--rpc-client-key', help='RPC client key path (env: SINEX_RPC_CLIENT_KEY)', envvar='SINEX_RPC_CLIENT_KEY')
 @click.option('--rpc-token', help='RPC authentication token (env: SINEX_RPC_TOKEN)', envvar='SINEX_RPC_TOKEN')
 @click.option('--use-db', is_flag=True, help='Use direct database connection instead of RPC')
 @click.pass_context
-def cli(ctx, interactive, rpc_url, rpc_token, use_db):
+def cli(
+    ctx,
+    interactive,
+    rpc_url,
+    rpc_ca_cert,
+    rpc_client_cert,
+    rpc_client_key,
+    rpc_token,
+    use_db,
+):
     """Sinex CLI - Query your digital memory."""
     # Store config in context for subcommands
     ctx.ensure_object(dict)
     ctx.obj['rpc_url'] = rpc_url
+    ctx.obj['rpc_ca_cert'] = rpc_ca_cert
+    ctx.obj['rpc_client_cert'] = rpc_client_cert
+    ctx.obj['rpc_client_key'] = rpc_client_key
     ctx.obj['rpc_token'] = rpc_token
     ctx.obj['use_db'] = use_db
     set_global_rpc_token(rpc_token)
@@ -489,6 +563,9 @@ def query(ctx, source: Optional[str], event_type: Optional[str], since: Optional
                 limit,
                 host,
                 ctx.obj.get('rpc_token'),
+                ctx.obj.get('rpc_ca_cert'),
+                ctx.obj.get('rpc_client_cert'),
+                ctx.obj.get('rpc_client_key'),
             )
         
         # Apply JQ filter if specified
@@ -741,17 +818,12 @@ def processor_status(processor_name: str):
                 console.print(f"[red]Processor not found: {processor_name}[/red]")
                 return
             
-            # Get recent checkpoints if this is an automaton
+            # Checkpoints are stored in NATS KV, not Postgres.
             checkpoints = []
             if processor['processor_type'] == 'automaton':
-                cur.execute("""
-                    SELECT processor_name, consumer_group, consumer_name,
-                           last_processed_id, processed_count, last_activity, checkpoint_data
-                    FROM core.processor_checkpoints
-                    WHERE processor_name = %s
-                    ORDER BY last_activity DESC
-                """, (processor_name,))
-                checkpoints = cur.fetchall()
+                console.print(
+                    "[yellow]Checkpoint state is stored in NATS KV (KV_sinex_checkpoints); database queries are no longer available.[/yellow]"
+                )
             
             # Display processor information
             console.print(f"\n[bold]Processor: {processor_name}[/bold]")
@@ -1149,7 +1221,13 @@ def sources(ctx):
             sources = _sources_with_database()
         else:
             # Use RPC (default mode)
-            sources = _sources_with_rpc(rpc_url, ctx.obj.get('rpc_token'))
+            sources = _sources_with_rpc(
+                rpc_url,
+                ctx.obj.get('rpc_token'),
+                ctx.obj.get('rpc_ca_cert'),
+                ctx.obj.get('rpc_client_cert'),
+                ctx.obj.get('rpc_client_key'),
+            )
         
         table = Table(title="Event Sources")
         table.add_column("Source", style="cyan")
@@ -2708,7 +2786,13 @@ def stats(ctx):
             _stats_with_database()
         else:
             # Use RPC (default mode) - limited functionality for now
-            _stats_with_rpc(rpc_url, ctx.obj.get('rpc_token'))
+            _stats_with_rpc(
+                rpc_url,
+                ctx.obj.get('rpc_token'),
+                ctx.obj.get('rpc_ca_cert'),
+                ctx.obj.get('rpc_client_cert'),
+                ctx.obj.get('rpc_client_key'),
+            )
             
     except SinexRPCError as e:
         handle_rpc_error(e, use_db=use_db)
@@ -3442,79 +3526,11 @@ def explore_source_state(ctx, satellite: str, verbose: bool):
         console.print(f"[bold blue]🔍 Sinex Source State Analysis[/bold blue]")
         console.print(f"Satellite: [cyan]{satellite}[/cyan]")
         
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                # Get checkpoints for this satellite's processor(s)
-                cur.execute("""
-                    SELECT 
-                        processor_name,
-                        consumer_group,
-                        consumer_name,
-                        last_processed_id,
-                        processed_count,
-                        last_activity,
-                        checkpoint_data
-                    FROM core.processor_checkpoints
-                    WHERE processor_name LIKE %s
-                    ORDER BY last_activity DESC
-                """, [f"%{satellite}%"])
-                
-                checkpoints = cur.fetchall()
-                
-                if not checkpoints:
-                    console.print(f"[yellow]No checkpoint found for satellite '{satellite}'[/yellow]")
-                    return
-                
-                console.print(f"\n[bold]Checkpoint Status:[/bold]")
-                
-                for checkpoint in checkpoints:
-                    console.print(
-                        f"  [cyan]{checkpoint['processor_name']}[/cyan] :: "
-                        f"{checkpoint['consumer_group']}/{checkpoint['consumer_name']}"
-                    )
-                    console.print(f"    Last processed: {checkpoint['last_processed_id'] or 'None'}")
-                    console.print(f"    Processed count: {checkpoint['processed_count']}")
-                    console.print(f"    Last activity: {checkpoint['last_activity']}")
-
-                    if verbose and checkpoint['checkpoint_data']:
-                        console.print(f"    State: {JSON(checkpoint['checkpoint_data'])}")
-                    
-                    console.print()
-                
-                # Get recent events from this satellite
-                satellite_pattern = f"%{satellite}%"
-                cur.execute("""
-                    SELECT 
-                        source,
-                        event_type,
-                        ts_orig,
-                        payload
-                    FROM core.events
-                    WHERE source LIKE %s
-                    ORDER BY ts_orig DESC
-                    LIMIT 10
-                """, [satellite_pattern])
-                
-                recent_events = cur.fetchall()
-                
-                if recent_events:
-                    console.print(f"[bold]Recent Events (last 10):[/bold]")
-                    table = Table()
-                    table.add_column("Source", style="cyan")
-                    table.add_column("Event Type", style="blue")
-                    table.add_column("Timestamp", style="dim")
-                    table.add_column("Payload Preview", style="dim")
-                    
-                    for event in recent_events:
-                        payload_preview = str(event['payload'])[:50] + "..." if len(str(event['payload'])) > 50 else str(event['payload'])
-                        table.add_row(
-                            event['source'],
-                            event['event_type'],
-                            event['ts_orig'].strftime('%Y-%m-%d %H:%M:%S'),
-                            payload_preview
-                        )
-                    
-                    console.print(table)
+        console.print(
+            "[yellow]Checkpoint state is stored in NATS KV (KV_sinex_checkpoints); "
+            "database-backed source-state queries are no longer available.[/yellow]"
+        )
+        return
                 
     except Exception as e:
         console.print(f"[red]❌ Source state analysis failed: {e}[/red]")
@@ -4134,13 +4150,29 @@ def telemetry():
 
 @telemetry.command('prometheus')
 @click.option('--rpc-url', help='RPC server URL', envvar='SINEX_RPC_URL')
+@click.option('--rpc-ca-cert', help='RPC CA certificate path', envvar='SINEX_RPC_CA_CERT')
+@click.option('--rpc-client-cert', help='RPC client certificate path', envvar='SINEX_RPC_CLIENT_CERT')
+@click.option('--rpc-client-key', help='RPC client key path', envvar='SINEX_RPC_CLIENT_KEY')
 @click.option('--format', '-f', type=click.Choice(['text', 'json']), default='text', 
               help='Output format (text for Prometheus format, json for structured data)')
 @click.pass_context
-def telemetry_prometheus(ctx, rpc_url: Optional[str], format: str):
+def telemetry_prometheus(
+    ctx,
+    rpc_url: Optional[str],
+    rpc_ca_cert: Optional[str],
+    rpc_client_cert: Optional[str],
+    rpc_client_key: Optional[str],
+    format: str,
+):
     """Export current Prometheus metrics."""
     try:
-        client = get_rpc_client(rpc_url, rpc_token=ctx.obj.get('rpc_token'))
+        client = get_rpc_client(
+            rpc_url,
+            rpc_token=ctx.obj.get('rpc_token'),
+            rpc_ca_cert=rpc_ca_cert or ctx.obj.get('rpc_ca_cert'),
+            rpc_client_cert=rpc_client_cert or ctx.obj.get('rpc_client_cert'),
+            rpc_client_key=rpc_client_key or ctx.obj.get('rpc_client_key'),
+        )
         
         # Call gateway RPC to get metrics
         response = client.call('telemetry.export_prometheus', {'format': format})
@@ -4195,7 +4227,13 @@ def telemetry_events(ctx, component: Optional[str], event_type: Optional[str],
     else:
         # Use RPC
         try:
-            client = get_rpc_client(ctx.obj.get('rpc_url'), rpc_token=ctx.obj.get('rpc_token'))
+            client = get_rpc_client(
+                ctx.obj.get('rpc_url'),
+                rpc_token=ctx.obj.get('rpc_token'),
+                rpc_ca_cert=ctx.obj.get('rpc_ca_cert'),
+                rpc_client_cert=ctx.obj.get('rpc_client_cert'),
+                rpc_client_key=ctx.obj.get('rpc_client_key'),
+            )
             response = client.call('telemetry.query_events', {
                 'component': component,
                 'event_type': event_type,
@@ -4227,11 +4265,28 @@ def telemetry_events(ctx, component: Optional[str], event_type: Optional[str],
 @click.option('--period', '-p', type=click.Choice(['1h', '24h', '7d', '30d']), default='24h',
               help='Time period for summary')
 @click.option('--rpc-url', help='RPC server URL', envvar='SINEX_RPC_URL')
+@click.option('--rpc-ca-cert', help='RPC CA certificate path', envvar='SINEX_RPC_CA_CERT')
+@click.option('--rpc-client-cert', help='RPC client certificate path', envvar='SINEX_RPC_CLIENT_CERT')
+@click.option('--rpc-client-key', help='RPC client key path', envvar='SINEX_RPC_CLIENT_KEY')
 @click.pass_context
-def telemetry_summary(ctx, component: Optional[str], period: str, rpc_url: Optional[str]):
+def telemetry_summary(
+    ctx,
+    component: Optional[str],
+    period: str,
+    rpc_url: Optional[str],
+    rpc_ca_cert: Optional[str],
+    rpc_client_cert: Optional[str],
+    rpc_client_key: Optional[str],
+):
     """Show telemetry summary statistics."""
     try:
-        client = get_rpc_client(rpc_url, rpc_token=ctx.obj.get('rpc_token'))
+        client = get_rpc_client(
+            rpc_url,
+            rpc_token=ctx.obj.get('rpc_token'),
+            rpc_ca_cert=rpc_ca_cert or ctx.obj.get('rpc_ca_cert'),
+            rpc_client_cert=rpc_client_cert or ctx.obj.get('rpc_client_cert'),
+            rpc_client_key=rpc_client_key or ctx.obj.get('rpc_client_key'),
+        )
         
         response = client.call('telemetry.summary', {
             'component': component,

@@ -4,7 +4,6 @@
 // coordinator, satellites for event collection, and NATS for message streaming.
 // This replaces the deprecated sinex_collector architecture.
 
-use sinex_test_utils::TestResult;
 use sinex_test_utils::prelude::*;
 use std::time::Duration;
 use tokio::time::timeout;
@@ -15,7 +14,7 @@ use tokio::time::timeout;
 
 /// Test that ingestd service can start with valid configuration
 #[sinex_test]
-async fn test_ingestd_service_startup(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_ingestd_service_startup(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing ingestd service startup with valid configuration");
 
     // Verify database connectivity
@@ -41,7 +40,7 @@ async fn test_ingestd_service_startup(ctx: TestContext) -> color_eyre::eyre::Res
 
 /// Test ingestd configuration loading from environment
 #[sinex_test]
-async fn test_ingestd_environment_config(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_ingestd_environment_config(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing ingestd environment-based configuration");
 
     // Test required environment variables
@@ -78,13 +77,13 @@ async fn test_ingestd_environment_config(ctx: TestContext) -> color_eyre::eyre::
 
 /// Test event ingestion flow through modern architecture
 #[sinex_test]
-async fn test_modern_event_ingestion_flow(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_modern_event_ingestion_flow(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing modern event ingestion flow");
 
     // Create test events directly using the modern API
     let events = ctx.events();
     
-    let test_event = ctx.create_test_event(
+    let test_event = ctx.publish_json_event(
         "test.collector",
         serde_json::json!({
             "test_type": "ingestion_flow",
@@ -120,13 +119,13 @@ async fn test_modern_event_ingestion_flow(ctx: TestContext) -> color_eyre::eyre:
 
 /// Test event filtering and validation in modern architecture
 #[sinex_test]
-async fn test_modern_event_filtering_and_validation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_modern_event_filtering_and_validation(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing modern event filtering and validation");
 
     let events = ctx.events();
 
     // Test valid event
-    let valid_event = ctx.create_test_event(
+    let valid_event = ctx.publish_json_event(
         "fs.file_created",
         serde_json::json!({
             "path": "/tmp/test_file.txt",
@@ -139,7 +138,7 @@ async fn test_modern_event_filtering_and_validation(ctx: TestContext) -> color_e
     assert!(!stored_valid.id.to_string().is_empty(), "Valid event should be stored");
 
     // Test event with minimal payload
-    let minimal_event = ctx.create_test_event(
+    let minimal_event = ctx.publish_json_event(
         "terminal.command_executed",
         serde_json::json!({
             "command": "ls -la",
@@ -168,7 +167,7 @@ async fn test_modern_event_filtering_and_validation(ctx: TestContext) -> color_e
 
 /// Test database output configuration in modern architecture
 #[sinex_test]
-async fn test_modern_database_output_config(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_modern_database_output_config(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing modern database output configuration");
 
     let events = ctx.events();
@@ -176,7 +175,7 @@ async fn test_modern_database_output_config(ctx: TestContext) -> color_eyre::eyr
     // Create multiple test events to verify database persistence
     let mut event_ids = Vec::new();
     for i in 0..5 {
-        let test_event = ctx.create_test_event(
+        let test_event = ctx.publish_json_event(
             "test.database_output",
             serde_json::json!({
                 "sequence": i,
@@ -231,7 +230,7 @@ async fn test_modern_database_output_config(ctx: TestContext) -> color_eyre::eyr
 
 /// Test event source integration with modern satellite architecture
 #[sinex_test]
-async fn test_satellite_integration_patterns(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_satellite_integration_patterns(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing satellite integration patterns");
 
     let events = ctx.events();
@@ -264,7 +263,7 @@ async fn test_satellite_integration_patterns(ctx: TestContext) -> color_eyre::ey
 
     let mut stored_events = Vec::new();
     for (source, payload) in satellite_events {
-        let event = ctx.create_test_event(source, payload).await?;
+        let event = ctx.publish_json_event(source, payload).await?;
         let stored = events.store(&event).await?;
         stored_events.push(stored);
     }
@@ -298,7 +297,7 @@ async fn test_satellite_integration_patterns(ctx: TestContext) -> color_eyre::ey
 
 /// Test concurrent event processing pipeline
 #[sinex_test]
-async fn test_concurrent_event_processing_pipeline(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_concurrent_event_processing_pipeline(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing concurrent event processing pipeline");
 
     let events = ctx.events();
@@ -308,7 +307,7 @@ async fn test_concurrent_event_processing_pipeline(ctx: TestContext) -> color_ey
     for i in 0..20 {
         let ctx_clone = ctx.clone();
         let task = tokio::spawn(async move {
-            let event = ctx_clone.create_test_event(
+            let event = ctx_clone.publish_json_event(
                 "test.concurrent_processing",
                 serde_json::json!({
                     "batch_id": i / 5,
@@ -361,13 +360,13 @@ async fn test_concurrent_event_processing_pipeline(ctx: TestContext) -> color_ey
 
 /// Test event processing error handling and recovery
 #[sinex_test]
-async fn test_event_processing_error_handling(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_event_processing_error_handling(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing event processing error handling and recovery");
 
     let events = ctx.events();
 
     // Test successful event processing
-    let valid_event = ctx.create_test_event(
+    let valid_event = ctx.publish_json_event(
         "test.error_handling",
         serde_json::json!({
             "test_case": "valid_event",
@@ -401,7 +400,7 @@ async fn test_event_processing_error_handling(ctx: TestContext) -> color_eyre::e
 
     let mut processed_count = 0;
     for (case_name, payload) in edge_cases {
-        let edge_event = ctx.create_test_event(
+        let edge_event = ctx.publish_json_event(
             "test.error_handling",
             payload
         ).await?;
@@ -420,7 +419,7 @@ async fn test_event_processing_error_handling(ctx: TestContext) -> color_eyre::e
     assert!(processed_count >= 3, "Most edge cases should be handled gracefully");
 
     // Verify system is still operational after edge case processing
-    let recovery_event = ctx.create_test_event(
+    let recovery_event = ctx.publish_json_event(
         "test.error_handling",
         serde_json::json!({
             "test_case": "post_recovery",
@@ -446,7 +445,7 @@ async fn test_event_processing_error_handling(ctx: TestContext) -> color_eyre::e
 
 /// Test event throughput and performance characteristics
 #[sinex_test]
-async fn test_event_throughput_performance(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_event_throughput_performance(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing event throughput and performance");
 
     let events = ctx.events();
@@ -457,7 +456,7 @@ async fn test_event_throughput_performance(ctx: TestContext) -> color_eyre::eyre
     let mut processed_events = 0;
 
     for i in 0..batch_size {
-        let event = ctx.create_test_event(
+        let event = ctx.publish_json_event(
             "test.throughput",
             serde_json::json!({
                 "sequence": i,
@@ -499,7 +498,7 @@ async fn test_event_throughput_performance(ctx: TestContext) -> color_eyre::eyre
 
 /// Test resource usage and memory management during event processing
 #[sinex_test]
-async fn test_resource_usage_management(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_resource_usage_management(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing resource usage and memory management");
 
     let events = ctx.events();
@@ -512,7 +511,7 @@ async fn test_resource_usage_management(ctx: TestContext) -> color_eyre::eyre::R
         let large_data = "x".repeat(payload_size);
         
         for i in 0..events_per_size {
-            let event = ctx.create_test_event(
+            let event = ctx.publish_json_event(
                 "test.resource_usage",
                 serde_json::json!({
                     "payload_size": payload_size,
@@ -531,7 +530,7 @@ async fn test_resource_usage_management(ctx: TestContext) -> color_eyre::eyre::R
     }
 
     // Verify system stability after processing various payload sizes
-    let stability_event = ctx.create_test_event(
+    let stability_event = ctx.publish_json_event(
         "test.resource_usage",
         serde_json::json!({
             "test_phase": "stability_check",

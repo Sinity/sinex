@@ -52,16 +52,25 @@ async fn test_generic_id_type_isolation(ctx: TestContext) -> Result<()> {
 #[sinex_test]
 async fn test_id_database_integration_type_safety(ctx: TestContext) -> Result<()> {
     // Create an event and verify its ID type is preserved through database operations
-    let event = ctx
-        .create_test_event(
-            "type-safety-test",
-            "id.type_safety",
-            json!({ "test": "id_type_safety" }),
-        )
-        .await?;
+    let ctx = ctx.with_shared_nats().await?;
+
+    // Create an event and verify its ID type is preserved through database operations
+    let mut event = Event::<JsonValue>::test_event(
+        "type-safety-test",
+        "id.type_safety",
+        json!({ "test": "id_type_safety" }),
+    );
+    event.id = Some(Id::new());
 
     // Extract the ID (should be Id<Event>)
-    let event_id = event.id.expect("Event should have ID");
+    let event_id = event.id.clone().expect("Event should have ID");
+
+    ctx.publish_test_event(&event).await?;
+
+    // Wait for ingestion
+    ctx.timing()
+        .wait_for_source_events("type-safety-test", 1)
+        .await?;
 
     // Query by ID using repository pattern
     let retrieved = ctx
@@ -84,28 +93,32 @@ async fn test_id_database_integration_type_safety(ctx: TestContext) -> Result<()
     Ok(())
 }
 
-#[sinex_test]
+#[sinex_serial_test]
 async fn test_id_collection_type_safety(ctx: TestContext) -> Result<()> {
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
     ctx.ensure_clean().await?;
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
+
+    let ctx = ctx.with_shared_nats().await?;
 
     // Create multiple events
     let source = format!("collection-test-{}", Ulid::new());
     let mut event_ids = Vec::new();
 
     for i in 0..5 {
-        let event = ctx
-            .create_test_event(&source, "id.collection_safety", json!({ "index": i }))
-            .await?;
+        let mut event =
+            Event::<JsonValue>::test_event(&*source, "id.collection_safety", json!({ "index": i }));
+        event.id = Some(Id::new());
+        let id = event.id.clone().expect("Event should have ID");
 
-        event_ids.push(event.id.expect("Event should have ID"));
+        ctx.publish_test_event(&event).await?;
+        event_ids.push(id);
     }
 
     // Verify all IDs are unique
     let id_set: HashSet<String> = event_ids.iter().map(|id| id.to_string()).collect();
     assert_eq!(id_set.len(), 5, "All IDs should be unique");
+
+    // Wait for persistence
+    ctx.timing().wait_for_source_events(&source, 5).await?;
 
     // Verify we can use the IDs to query events
     for event_id in &event_ids {
@@ -122,10 +135,7 @@ async fn test_id_collection_type_safety(ctx: TestContext) -> Result<()> {
         );
     }
 
-    let _ = sinex_test_utils::timing_utils::WaitHelpers::wait_for_source_events(
-        &ctx.pool, &source, 5, 30,
-    )
-    .await;
+    let _ = ctx.timing().wait_for_source_events(&source, 5).await;
     // Reconciling against DB count to avoid underflow on shared pools.
     let observed = ctx
         .pool
@@ -142,9 +152,6 @@ async fn test_id_collection_type_safety(ctx: TestContext) -> Result<()> {
         source,
         observed
     );
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
-    ctx.force_cleanup().await?;
     Ok(())
 }
 
@@ -154,30 +161,40 @@ async fn test_id_collection_type_safety(ctx: TestContext) -> Result<()> {
 
 #[sinex_test]
 async fn test_event_source_type_safety(ctx: TestContext) -> Result<()> {
+    let ctx = ctx.with_shared_nats().await?;
+
     // Test EventSource construction and validation
     let static_source = EventSource::from_static("test-source");
     let dynamic_source = EventSource::new("dynamic-test-source");
 
     // Verify both work for event creation
-    let event1 = ctx
-        .create_test_event(
-            static_source.as_str(),
-            "source.type_safety",
-            json!({ "source_type": "static" }),
-        )
-        .await?;
+    let mut event1 = Event::<JsonValue>::test_event(
+        static_source.as_str(),
+        "source.type_safety",
+        json!({ "source_type": "static" }),
+    );
+    event1.id = Some(Id::new());
+    ctx.publish_test_event(&event1).await?;
 
-    let event2 = ctx
-        .create_test_event(
-            dynamic_source.as_str(),
-            "source.type_safety",
-            json!({ "source_type": "dynamic" }),
-        )
-        .await?;
+    let mut event2 = Event::<JsonValue>::test_event(
+        dynamic_source.as_str(),
+        "source.type_safety",
+        json!({ "source_type": "dynamic" }),
+    );
+    event2.id = Some(Id::new());
+    ctx.publish_test_event(&event2).await?;
 
     // Verify sources are preserved correctly
     assert_eq!(event1.source.as_str(), "test-source");
     assert_eq!(event2.source.as_str(), "dynamic-test-source");
+
+    // Wait for persistence
+    ctx.timing()
+        .wait_for_source_events(static_source.as_str(), 1)
+        .await?;
+    ctx.timing()
+        .wait_for_source_events(dynamic_source.as_str(), 1)
+        .await?;
 
     // Verify we can query by source
     let static_events = ctx
@@ -206,30 +223,37 @@ async fn test_event_source_type_safety(ctx: TestContext) -> Result<()> {
 
 #[sinex_test]
 async fn test_event_type_safety(ctx: TestContext) -> Result<()> {
+    let ctx = ctx.with_shared_nats().await?;
+
     // Test EventType construction and validation
     let static_type = EventType::from_static("static.test");
     let dynamic_type = EventType::new("dynamic.test");
 
     // Create events with different type construction methods
-    let event1 = ctx
-        .create_test_event(
-            "type-safety-source",
-            static_type.as_str(),
-            json!({ "type_construction": "static" }),
-        )
-        .await?;
+    let mut event1 = Event::<JsonValue>::test_event(
+        "type-safety-source",
+        static_type.as_str(),
+        json!({ "type_construction": "static" }),
+    );
+    event1.id = Some(Id::new());
+    ctx.publish_test_event(&event1).await?;
 
-    let event2 = ctx
-        .create_test_event(
-            "type-safety-source",
-            dynamic_type.as_str(),
-            json!({ "type_construction": "dynamic" }),
-        )
-        .await?;
+    let mut event2 = Event::<JsonValue>::test_event(
+        "type-safety-source",
+        dynamic_type.as_str(),
+        json!({ "type_construction": "dynamic" }),
+    );
+    event2.id = Some(Id::new());
+    ctx.publish_test_event(&event2).await?;
 
     // Verify types are preserved
     assert_eq!(event1.event_type.as_str(), "static.test");
     assert_eq!(event2.event_type.as_str(), "dynamic.test");
+
+    // Wait for persistence
+    ctx.timing()
+        .wait_for_source_events("type-safety-source", 2)
+        .await?;
 
     // Verify type-based queries work
     let static_events = ctx
@@ -255,17 +279,23 @@ async fn test_event_type_safety(ctx: TestContext) -> Result<()> {
 
 #[sinex_test]
 async fn test_domain_string_const_support(ctx: TestContext) -> Result<()> {
+    let ctx = ctx.with_shared_nats().await?;
+
     // Test compile-time constants for domain strings
     const TEST_SOURCE: EventSource = EventSource::from_static("const-source");
     const TEST_TYPE: EventType = EventType::from_static("const.type");
 
     // Use const values in runtime
-    let event = ctx
-        .create_test_event(
-            TEST_SOURCE.as_str(),
-            TEST_TYPE.as_str(),
-            json!({ "const_test": true }),
-        )
+    let mut event = Event::<JsonValue>::test_event(
+        TEST_SOURCE.as_str(),
+        TEST_TYPE.as_str(),
+        json!({ "const_test": true }),
+    );
+    event.id = Some(Id::new());
+    ctx.publish_test_event(&event).await?;
+
+    ctx.timing()
+        .wait_for_source_events(TEST_SOURCE.as_str(), 1)
         .await?;
 
     // Verify const values work correctly
@@ -281,6 +311,8 @@ async fn test_domain_string_const_support(ctx: TestContext) -> Result<()> {
 
 #[sinex_test]
 async fn test_payload_validation_type_safety(ctx: TestContext) -> Result<()> {
+    let ctx = ctx.with_shared_nats().await?;
+
     // Test that payload validation preserves type safety
     let valid_payload = json!({
         "required_field": "value",
@@ -288,14 +320,20 @@ async fn test_payload_validation_type_safety(ctx: TestContext) -> Result<()> {
         "array_field": [1, 2, 3]
     });
 
-    let event = ctx
-        .create_test_event("payload-test", "payload.validation", valid_payload.clone())
-        .await?;
+    let mut event =
+        Event::<JsonValue>::test_event("payload-test", "payload.validation", valid_payload.clone());
+    event.id = Some(Id::new());
+    ctx.publish_test_event(&event).await?;
 
     // Verify payload structure is preserved
     assert_eq!(event.payload["required_field"], json!("value"));
     assert_eq!(event.payload["optional_field"], json!(42));
     assert_eq!(event.payload["array_field"], json!([1, 2, 3]));
+
+    // Wait for persistence
+    ctx.timing()
+        .wait_for_source_events("payload-test", 1)
+        .await?;
 
     // Verify queried event has same payload
     let retrieved = ctx
@@ -312,6 +350,8 @@ async fn test_payload_validation_type_safety(ctx: TestContext) -> Result<()> {
 
 #[sinex_test]
 async fn test_nested_payload_type_preservation(ctx: TestContext) -> Result<()> {
+    let ctx = ctx.with_shared_nats().await?;
+
     // Test deeply nested payload structure preservation
     let complex_payload = json!({
         "metadata": {
@@ -336,13 +376,13 @@ async fn test_nested_payload_type_preservation(ctx: TestContext) -> Result<()> {
         }
     });
 
-    let event = ctx
-        .create_test_event(
-            "complex-payload",
-            "nested.type_safety",
-            complex_payload.clone(),
-        )
-        .await?;
+    let mut event = Event::<JsonValue>::test_event(
+        "complex-payload",
+        "nested.type_safety",
+        complex_payload.clone(),
+    );
+    event.id = Some(Id::new());
+    ctx.publish_test_event(&event).await?;
 
     // Verify complex structure is preserved
     assert_eq!(event.payload["metadata"]["version"], json!("1.0.0"));
@@ -354,6 +394,11 @@ async fn test_nested_payload_type_preservation(ctx: TestContext) -> Result<()> {
         event.payload["data"]["checksums"]["md5"],
         json!("d41d8cd98f00b204e9800998ecf8427e")
     );
+
+    // Wait for persistence
+    ctx.timing()
+        .wait_for_source_events("complex-payload", 1)
+        .await?;
 
     // Test through database round-trip
     let retrieved = ctx
@@ -372,62 +417,52 @@ async fn test_nested_payload_type_preservation(ctx: TestContext) -> Result<()> {
 // REPOSITORY PATTERN TYPE SAFETY TESTS
 // =============================================================================
 
-#[sinex_test]
+#[sinex_serial_test]
 async fn test_repository_query_type_safety(ctx: TestContext) -> Result<()> {
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
     ctx.ensure_clean().await?;
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
-    ctx.force_cleanup().await?;
+    let ctx = ctx.with_shared_nats().await?;
 
     let primary_source = format!("repo-primary-{}", Ulid::new());
     let secondary_source = format!("repo-secondary-{}", Ulid::new());
     let repo_event_type = format!("repo.query.safety.{}", Ulid::new());
     let repo_type = EventType::new(&repo_event_type);
+    let repo_source = EventSource::new(&primary_source);
     let repo_source_primary = EventSource::new(&primary_source);
     let repo_source_secondary = EventSource::new(&secondary_source);
 
     // Create test data
-    let _events = vec![
-        ctx.create_test_event(
-            repo_source_primary.as_str(),
-            repo_type.as_str(),
-            json!({"index": 1}),
-        )
-        .await?,
-        ctx.create_test_event(
-            repo_source_primary.as_str(),
-            repo_type.as_str(),
-            json!({"index": 2}),
-        )
-        .await?,
-        ctx.create_test_event(
-            repo_source_secondary.as_str(),
-            repo_type.as_str(),
-            json!({"index": 3}),
-        )
-        .await?,
-    ];
+    let mut e1 = Event::<JsonValue>::test_event(
+        repo_source_primary.as_str(),
+        repo_type.as_str(),
+        json!({"index": 1}),
+    );
+    e1.id = Some(Id::new());
+    ctx.publish_test_event(&e1).await?;
+
+    let mut e2 = Event::<JsonValue>::test_event(
+        repo_source_primary.as_str(),
+        repo_type.as_str(),
+        json!({"index": 2}),
+    );
+    e2.id = Some(Id::new());
+    ctx.publish_test_event(&e2).await?;
+
+    let mut e3 = Event::<JsonValue>::test_event(
+        repo_source_secondary.as_str(),
+        repo_type.as_str(),
+        json!({"index": 3}),
+    );
+    e3.id = Some(Id::new());
+    ctx.publish_test_event(&e3).await?;
 
     // Test source-based queries return correct types
-    let repo_source = repo_source_primary.clone();
-    let repo_events = ctx
-        .pool
-        .events()
-        .get_by_source(&repo_source, sinex_core::types::Pagination::new(None, None))
+    ctx.timing()
+        .wait_for_source_events(repo_source_primary.as_str(), 2)
+        .await?;
+    ctx.timing()
+        .wait_for_source_events(repo_source_secondary.as_str(), 1)
         .await?;
 
-    if repo_events.len() < 2 {
-        let deficit = 2 - repo_events.len();
-        for i in 0..deficit {
-            ctx.create_test_event(
-                repo_source_primary.as_str(),
-                repo_type.as_str(),
-                json!({"index": 10 + i}),
-            )
-            .await?;
-        }
-    }
     let repo_events = ctx
         .pool
         .events()
@@ -442,26 +477,7 @@ async fn test_repository_query_type_safety(ctx: TestContext) -> Result<()> {
 
     // Test type-based queries
     let repo_event_type = repo_type.clone();
-    let safety_events = ctx
-        .pool
-        .events()
-        .get_by_event_type(
-            &repo_event_type,
-            sinex_core::types::Pagination::new(None, None),
-        )
-        .await?;
-
-    if safety_events.len() < 3 {
-        let deficit = 3 - safety_events.len();
-        for i in 0..deficit {
-            ctx.create_test_event(
-                repo_source_secondary.as_str(),
-                repo_type.as_str(),
-                json!({"index": 20 + i}),
-            )
-            .await?;
-        }
-    }
+    // No specific wait needed as we already waited for all events by source
     let safety_events = ctx
         .pool
         .events()
@@ -489,25 +505,29 @@ async fn test_repository_query_type_safety(ctx: TestContext) -> Result<()> {
         .iter()
         .all(|row| row.source.as_str() == repo_source_primary.as_str()));
 
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
-    ctx.force_cleanup().await?;
-
     Ok(())
 }
 
 #[sinex_test]
 async fn test_repository_id_query_type_safety(ctx: TestContext) -> Result<()> {
-    // Create an event
-    let event = ctx
-        .create_test_event(
-            "id-query-test",
-            "id.query_safety",
-            json!({ "test_data": "repository_id_safety" }),
-        )
-        .await?;
+    let ctx = ctx.with_shared_nats().await?;
 
-    let event_id = event.id.expect("Event should have ID");
+    // Create an event
+    let mut event = Event::<JsonValue>::test_event(
+        "id-query-test",
+        "id.query_safety",
+        json!({ "test_data": "repository_id_safety" }),
+    );
+    event.id = Some(Id::new());
+
+    // Extract the ID (should be Id<Event>)
+    let event_id = event.id.clone().expect("Event should have ID");
+
+    ctx.publish_test_event(&event).await?;
+
+    ctx.timing()
+        .wait_for_source_events("id-query-test", 1)
+        .await?;
 
     // Test ID-based query
     let retrieved = ctx
@@ -589,7 +609,7 @@ async fn test_concurrent_type_safety(ctx: TestContext) -> Result<()> {
     use std::sync::Arc;
     use tokio::task::JoinSet;
 
-    let ctx = Arc::new(ctx);
+    let ctx = Arc::new(ctx.with_shared_nats().await?);
     let mut join_set = JoinSet::new();
 
     // Create events concurrently with different type combinations
@@ -603,13 +623,16 @@ async fn test_concurrent_type_safety(ctx: TestContext) -> Result<()> {
     for (source, event_type, payload) in test_cases {
         let ctx_clone = ctx.clone();
         join_set.spawn(async move {
-            let event = ctx_clone
-                .create_test_event(source, event_type, payload)
-                .await?;
+            let mut event = Event::<JsonValue>::test_event(source, event_type, payload);
+            event.id = Some(Id::new());
+            let id = event.id.clone().unwrap();
+
+            ctx_clone.publish_test_event(&event).await?;
+
             Ok::<_, color_eyre::eyre::Error>((
                 event.source.as_str().to_string(),
                 event.event_type.as_str().to_string(),
-                event.id.unwrap(),
+                id,
             ))
         });
     }
@@ -622,6 +645,17 @@ async fn test_concurrent_type_safety(ctx: TestContext) -> Result<()> {
     }
 
     assert_eq!(results.len(), 4);
+
+    // Wait for persistence of concurrent events
+    // Since we have multiple sources/types, simply wait for count across all.
+    // Or wait for each specific one. Waiting for count is easiest if we trust the total.
+    // Wait for persistence of concurrent events
+    ctx.timing()
+        .wait_for_source_events("concurrent-1", 2)
+        .await?;
+    ctx.timing()
+        .wait_for_source_events("concurrent-2", 2)
+        .await?;
 
     // Verify all IDs are unique (type safety maintained under concurrency)
     let ids: HashSet<_> = results.iter().map(|(_, _, id)| id.to_string()).collect();
@@ -678,14 +712,20 @@ async fn test_ulid_type_conversion_safety(ctx: TestContext) -> Result<()> {
 async fn test_type_safety_boundary_conditions(ctx: TestContext) -> Result<()> {
     // Test type safety at system boundaries
 
+    let ctx = ctx.with_shared_nats().await?;
+
     // Empty but valid domain strings
-    let minimal_event = ctx
-        .create_test_event(
-            "a",       // Minimal valid source
-            "b",       // Minimal valid type
-            json!({}), // Minimal valid payload
-        )
-        .await?;
+    let mut minimal_event = Event::<JsonValue>::test_event(
+        "a",       // Minimal valid source
+        "b",       // Minimal valid type
+        json!({}), // Minimal valid payload
+    );
+    minimal_event.id = Some(Id::new());
+
+    ctx.publish_test_event(&minimal_event).await?;
+
+    // Wait for persistence
+    ctx.timing().wait_for_source_events("a", 1).await?;
 
     assert_eq!(minimal_event.source.as_str(), "a");
     assert_eq!(minimal_event.event_type.as_str(), "b");

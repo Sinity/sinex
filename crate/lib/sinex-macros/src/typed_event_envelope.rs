@@ -88,7 +88,7 @@ fn generate_to_json_event_impl(
                 let field_type = &fields.unnamed[0].ty;
                 if is_event_type(field_type) {
                     quote! {
-                        #enum_name::#variant_name(event) => event.to_json_event(),
+                        #enum_name::#variant_name(event) => event.to_json_event().map_err(Into::into),
                     }
                 } else {
                     quote! {
@@ -98,31 +98,31 @@ fn generate_to_json_event_impl(
             }
             Fields::Unit => {
                 // Handle unit variants
-                quote! {
-                    #enum_name::#variant_name => {
-                        // Generate a placeholder event for unit variants
-                        sinex_core::Event::dynamic(
-                            "unknown",
-                            stringify!(#variant_name),
-                            serde_json::Value::Null,
-                        )
-                        .build()
-                    },
-                }
+                    quote! {
+                        #enum_name::#variant_name => {
+                            // Generate a placeholder event for unit variants
+                            sinex_core::Event::dynamic(
+                                "unknown",
+                                stringify!(#variant_name),
+                                serde_json::Value::Null,
+                            )
+                            .build()
+                        },
+                    }
             }
             _ => {
                 // Handle other field types
-                quote! {
-                    #enum_name::#variant_name(..) => {
-                        // Default conversion for complex variants
-                        sinex_core::Event::dynamic(
-                            "unknown",
-                            stringify!(#variant_name),
-                            serde_json::Value::Null,
-                        )
-                        .build()
-                    },
-                }
+                    quote! {
+                        #enum_name::#variant_name(..) => {
+                            // Default conversion for complex variants
+                            sinex_core::Event::dynamic(
+                                "unknown",
+                                stringify!(#variant_name),
+                                serde_json::Value::Null,
+                            )
+                            .build()
+                        },
+                    }
             }
         }
     });
@@ -138,7 +138,7 @@ fn generate_to_json_event_impl(
     quote! {
         impl #enum_name {
             /// Convert this event envelope to a JSON event
-            pub fn to_json_event(self) -> sinex_core::Event<sinex_core::JsonValue> {
+            pub fn to_json_event(self) -> std::result::Result<sinex_core::Event<sinex_core::JsonValue>, sinex_core::SinexError> {
                 match self {
                     #(#match_arms)*
                 }
@@ -276,11 +276,11 @@ fn is_event_type(ty: &Type) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_test_utils::sinex_test;
+    use sinex_test_utils::{sinex_test, TestResult};
     use syn::parse_quote;
 
     #[sinex_test]
-    fn test_typed_event_envelope_parsing() -> color_eyre::eyre::Result<()> {
+    fn test_typed_event_envelope_parsing() -> TestResult<()> {
         let input = quote! {
             pub enum EventEnvelope {
                 FileCreated(Event<FileCreatedPayload>),
@@ -301,7 +301,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_event_type_detection() -> color_eyre::eyre::Result<()> {
+    fn test_event_type_detection() -> TestResult<()> {
         let event_type: Type = parse_quote!(Event<FileCreatedPayload>);
         assert!(is_event_type(&event_type));
 

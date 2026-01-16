@@ -1,7 +1,7 @@
 # TIM-HyprlandNativePluginDev: Hyprland Native C++ Plugin Development
 
 > **Operational note (2025-10-23)**  
-> JetStream ingestion is canonical. Any sensd/gRPC references here are historical context.
+> JetStream ingestion is canonical. Any retired pipeline references here are historical context.
 
 
 *   **Relevant ADR:** ADR‑003 Hyprland Compositor Integration Path (historical)
@@ -100,7 +100,7 @@ A key capability enabled by plugins is efficient screen/window frame capture.
     2.  **`wlr_renderer_read_pixels()` (Fallback, GPU-to-CPU Copy):**
         *   If DMA-BUF export fails or is not suitable, use `wlr_renderer_read_pixels()` to copy pixel data from a texture or output region into a CPU-accessible buffer.
         *   This data can then be sent over IPC as a raw pixel buffer or encoded (e.g., as PNG) within the plugin's worker thread before sending. Slower due to GPU-CPU transfer.
-*   **Triggering Capture:** Can be continuous (for video recording), on damage events (for efficient screen updates), or on demand (e.g., triggered by an `exo` command via a custom plugin dispatcher).
+*   **Triggering Capture:** Can be continuous (for video recording), on damage events (for efficient screen updates), or on demand (e.g., triggered by an `exo` command via a custom plugin bridge).
 
 ## 5. Security Risks and Mitigation Strategies [UG Sec 4.2.2]
 

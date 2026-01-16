@@ -12,12 +12,13 @@ color-eyre.workspace = true
 serde_json.workspace = true
 sinex-test-utils = { path = "../../crate/lib/sinex-test-utils" }
 tokio.workspace = true
+tokio-stream.workspace = true
 tempfile.workspace = true
 sinex-core = { path = "../../crate/lib/sinex-core" }
 sinex-ingestd = { path = "../../crate/core/sinex-ingestd" }
-sinex-satellite-sdk = { path = "../../crate/lib/sinex-satellite-sdk" }
+sinex-node-sdk = { path = "../../crate/lib/sinex-node-sdk" }
 sinex-services = { path = "../../crate/lib/sinex-services" }
-sinex-gateway = { path = "../../crate/core/sinex-gateway" }
+sinex-gateway = { path = "../../crate/core/sinex-gateway", features = ["test-support"] }
 async-nats.workspace = true
 uuid.workspace = true
 futures.workspace = true

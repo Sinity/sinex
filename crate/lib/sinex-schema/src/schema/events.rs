@@ -201,7 +201,35 @@ impl Events {
                 Self::schema_name(),
                 Self::table_name()
             ),
+            // GIN trigram index for payload text search (supports ILIKE on payload::text)
+            format!(
+                "CREATE INDEX IF NOT EXISTS ix_events_payload_trgm ON {}.{} USING GIN ((payload::text) gin_trgm_ops)",
+                Self::schema_name(),
+                Self::table_name()
+            ),
+            // GIN full-text index for payload search ranking/snippets
+            format!(
+                "CREATE INDEX IF NOT EXISTS ix_events_payload_fts ON {}.{} USING GIN (to_tsvector('simple', payload::text))",
+                Self::schema_name(),
+                Self::table_name()
+            ),
         ]
+    }
+
+    /// Generates the trigger enforcing append-only semantics for `core.events`.
+    pub fn create_no_update_trigger_sql() -> &'static str {
+        r#"
+        CREATE OR REPLACE FUNCTION core.fn_events_no_update()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          RAISE EXCEPTION 'UPDATE on core.events is forbidden';
+        END $$;
+
+        DROP TRIGGER IF EXISTS trg_events_no_update ON core.events;
+        CREATE TRIGGER trg_events_no_update
+        BEFORE UPDATE ON core.events
+        FOR EACH ROW EXECUTE FUNCTION core.fn_events_no_update();
+        "#
     }
 }
 
