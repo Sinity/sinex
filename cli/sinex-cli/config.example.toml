@@ -1,0 +1,46 @@
+# Sinexctl Configuration File
+# This file is automatically created in your config directory
+# Location: ~/.config/sinexctl/config.toml (Linux/macOS) or %APPDATA%\sinex\sinexctl\config.toml (Windows)
+
+# Gateway RPC URL
+rpc_url = "https://127.0.0.1:9999"
+
+# Authentication token (optional - prefer using token_file or SINEX_TOKEN env var)
+# token = "your-token-here"
+
+# Path to file containing authentication token
+# token_file = "~/.config/sinex/token"
+
+# TLS configuration
+# ca_cert = "/path/to/ca.pem"
+# client_cert = "/path/to/client.pem"
+# client_key = "/path/to/client-key.pem"
+
+# Accept invalid certificates (INSECURE - only for development!)
+insecure = false
+
+# Request timeout in seconds
+timeout = 30
+
+# Default output format: "table", "json", or "yaml"
+default_format = "table"
+
+# Editor for interactive mode (defaults to $EDITOR environment variable or "vim")
+editor = "vim"
+
+# Command aliases - shortcuts for common commands
+[aliases]
+# Example: sinexctl recent -> sinexctl query --since 1h --limit 50
+recent = ["query", "--since", "1h", "--limit", "50"]
+# Example: sinexctl watch-replay -> sinexctl replay watch --interval 1
+watch-replay = ["replay", "watch", "--interval", "1"]
+
+# UI Theme configuration
+[theme]
+# Table style: "rounded", "ascii", "modern", or "minimal"
+table_style = "rounded"
+
+# Colors for terminal output
+success_color = "green"
+error_color = "red"
+warning_color = "yellow"

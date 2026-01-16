@@ -1,0 +1,70 @@
+[package]
+name = "sinex-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+# CLI framework
+clap = { workspace = true, features = ["derive", "env"] }
+clap_complete = "4"
+
+# Async runtime
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+
+# Serialization
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+serde_yaml = "0.9"
+
+# Error handling
+color-eyre = { workspace = true }
+thiserror = { workspace = true }
+
+# Terminal output
+comfy-table = "7"
+indicatif = "0.17"
+console = "0.15"
+
+# Time
+chrono = { workspace = true, features = ["serde"] }
+
+# ULID support (for event IDs)
+sinex-schema = { path = "../../crate/lib/sinex-schema", features = ["arbitrary"] }
+
+# Configuration management
+figment = { version = "0.10", features = ["toml", "env"] }
+directories = "5.0"
+dirs = "5.0"
+
+# TLS
+rustls = "0.22"
+rustls-pemfile = "2.1"
+rustls-native-certs = "0.8"
+
+# Logging
+tracing = { workspace = true }
+
+# Interactive prompts
+inquire = "0.7"
+
+# Syntax highlighting
+syntect = "5.2"
+atty = "0.2"
+
+# TUI mode
+ratatui = "0.28"
+crossterm = "0.29"
+
+[dev-dependencies]
+sinex-test-utils = { path = "../../crate/lib/sinex-test-utils" }
+wiremock = "0.6"
+proptest = { workspace = true }
+insta = { workspace = true }
+assert_cmd = "2"
+predicates = "3"
+tempfile = "3"
