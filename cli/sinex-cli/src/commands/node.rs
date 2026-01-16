@@ -1,0 +1,81 @@
+use clap::Subcommand;
+
+use crate::client::GatewayClient;
+use crate::fmt::{format_json, format_table_nodes, format_yaml};
+use crate::model::{NodeRole, OutputFormat};
+use crate::Result;
+
+/// Node operations
+#[derive(Debug, Subcommand)]
+pub enum NodeCommands {
+    /// List all nodes
+    List {
+        /// Filter by role
+        #[arg(long)]
+        role: Option<NodeRole>,
+
+        /// Output format
+        #[arg(long, short = 'f', value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+
+    /// Show node status
+    Status {
+        /// Node ID or name
+        node: String,
+
+        /// Output format
+        #[arg(long, short = 'f', value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+}
+
+impl NodeCommands {
+    pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
+        match self {
+            Self::List { role, format } => {
+                let nodes = client.list_nodes(*role).await?;
+                match format {
+                    OutputFormat::Table => {
+                        if nodes.is_empty() {
+                            println!("No nodes found.");
+                        } else {
+                            println!("{}", format_table_nodes(&nodes));
+                        }
+                    }
+                    OutputFormat::Json => {
+                        for node in &nodes {
+                            println!("{}", format_json(node)?);
+                        }
+                    }
+                    OutputFormat::Yaml => {
+                        println!("{}", format_yaml(&nodes)?);
+                    }
+                }
+            }
+            Self::Status { node, format } => {
+                let node_info = client.node_status(node).await?;
+                match format {
+                    OutputFormat::Table => {
+                        println!("Node Status:");
+                        println!("  ID: {}", node_info.id);
+                        println!("  Name: {}", node_info.name);
+                        println!("  Role: {}", node_info.role);
+                        println!("  Status: {}", node_info.status);
+                        println!("  Last Heartbeat: {}", node_info.last_heartbeat);
+                        if let Some(is_leader) = node_info.is_leader {
+                            println!("  Leader: {}", if is_leader { "Yes" } else { "No" });
+                        }
+                    }
+                    OutputFormat::Json => {
+                        println!("{}", format_json(&node_info)?);
+                    }
+                    OutputFormat::Yaml => {
+                        println!("{}", format_yaml(&node_info)?);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}

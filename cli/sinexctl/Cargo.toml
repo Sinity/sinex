@@ -1,0 +1,18 @@
+[package]
+name = "sinexctl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "sinexctl"
+path = "src/main.rs"
+
+[dependencies]
+sinex-cli = { path = "../sinex-cli" }
+clap = { workspace = true, features = ["derive", "env"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+color-eyre = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }

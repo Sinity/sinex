@@ -33,6 +33,10 @@ members = [
   # Developer tooling
   "xtask",
 
+  # CLI tools
+  "cli/sinex-cli",
+  "cli/sinexctl",
+
   # Keep experimental automata disabled until stabilized
   # "crate/nodes/sinex-content-automaton",
   # "crate/nodes/sinex-pkm-automaton",

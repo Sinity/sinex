@@ -1,0 +1,45 @@
+[package]
+name = "sinex-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+# CLI framework
+clap = { workspace = true, features = ["derive", "env"] }
+
+# Async runtime
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+
+# Serialization
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+serde_yaml = "0.9"
+
+# Error handling
+color-eyre = { workspace = true }
+thiserror = { workspace = true }
+
+# Terminal output
+comfy-table = "7"
+indicatif = "0.17"
+console = "0.15"
+
+# Time
+chrono = { workspace = true, features = ["serde"] }
+
+# TLS
+rustls = "0.22"
+rustls-pemfile = "2.1"
+rustls-native-certs = "0.8"
+
+# Logging
+tracing = { workspace = true }
+
+[dev-dependencies]
+sinex-test-utils = { path = "../../crate/lib/sinex-test-utils" }
+wiremock = "0.6"
