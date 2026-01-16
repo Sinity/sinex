@@ -54,6 +54,10 @@ inquire = "0.7"
 syntect = "5.2"
 atty = "0.2"
 
+# TUI mode
+ratatui = "0.28"
+crossterm = "0.29"
+
 [dev-dependencies]
 sinex-test-utils = { path = "../../crate/lib/sinex-test-utils" }
 wiremock = "0.6"

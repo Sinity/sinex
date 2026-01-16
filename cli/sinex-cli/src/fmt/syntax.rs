@@ -72,7 +72,8 @@ mod tests {
     #[test]
     fn test_invalid_extension() {
         let result = highlight_code("test", "invalid_ext");
-        assert!(result.is_ok()); // syntect handles unknown extensions gracefully
+        // syntect returns error for unknown extensions
+        assert!(result.is_err());
     }
 
     #[test]

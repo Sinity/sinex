@@ -14,6 +14,7 @@ use crate::model::NodeRole;
 use crate::Result;
 
 /// Gateway RPC client
+#[derive(Clone)]
 pub struct GatewayClient {
     client: reqwest::Client,
     base_url: String,

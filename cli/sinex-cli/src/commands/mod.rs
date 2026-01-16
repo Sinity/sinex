@@ -6,6 +6,7 @@ pub mod node;
 pub mod ops;
 pub mod query;
 pub mod replay;
+pub mod tui;
 
 pub use audit::AuditCommand;
 pub use core::CoreCommands;
@@ -15,3 +16,4 @@ pub use node::NodeCommands;
 pub use ops::OpsCommands;
 pub use query::QueryCommand;
 pub use replay::ReplayCommands;
+pub use tui::TuiCommand;

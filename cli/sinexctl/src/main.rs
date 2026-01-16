@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
-use sinex_cli::client::{ClientConfig, GatewayClient};
-use sinex_cli::commands::{AuditCommand, CoreCommands, DlqCommands, GatewayCommands, NodeCommands, OpsCommands, QueryCommand, ReplayCommands};
+use sinex_cli::client::{ClientConfig, GatewayClient, RetryConfig};
+use sinex_cli::commands::{AuditCommand, CoreCommands, DlqCommands, GatewayCommands, NodeCommands, OpsCommands, QueryCommand, ReplayCommands, TuiCommand};
 use sinex_cli::model::OutputFormat;
 
 /// Sinex control CLI
@@ -95,6 +95,9 @@ enum Commands {
 
     /// Get audit trail for an operation
     Audit(AuditCommand),
+
+    /// Launch interactive TUI dashboard
+    Tui(TuiCommand),
 }
 
 #[tokio::main]
@@ -123,6 +126,7 @@ async fn main() -> color_eyre::Result<()> {
         client_key: cli.client_key,
         insecure: cli.insecure,
         timeout: cli.timeout,
+        retry_config: RetryConfig::default(),
     };
 
     // Create gateway client
@@ -138,6 +142,7 @@ async fn main() -> color_eyre::Result<()> {
         Commands::Query(cmd) => cmd.execute(&client).await?,
         Commands::Ops { cmd } => cmd.execute(&client).await?,
         Commands::Audit(cmd) => cmd.execute(&client).await?,
+        Commands::Tui(cmd) => cmd.execute(&client).await?,
     }
 
     Ok(())
