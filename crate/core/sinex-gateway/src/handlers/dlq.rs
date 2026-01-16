@@ -68,9 +68,10 @@ pub async fn handle_dlq_list(
     let config = DlqRetryConfig::default();
     let handler = DlqRetryHandler::new(nats_client.clone(), env.clone(), config);
 
-    let stats = handler.get_stats().await.map_err(|e| {
-        eyre!("Failed to get DLQ statistics: {}", e)
-    })?;
+    let stats = handler
+        .get_stats()
+        .await
+        .map_err(|e| eyre!("Failed to get DLQ statistics: {}", e))?;
 
     let response = DlqStatsResponse {
         total_messages: stats.total_messages,
@@ -91,8 +92,8 @@ pub async fn handle_dlq_peek(
     use async_nats::jetstream;
     use futures::StreamExt;
 
-    let peek_params: DlqPeekParams = serde_json::from_value(params)
-        .wrap_err("Invalid DLQ peek parameters")?;
+    let peek_params: DlqPeekParams =
+        serde_json::from_value(params).wrap_err("Invalid DLQ peek parameters")?;
 
     let js = jetstream::new(nats_client.clone());
     let dlq_stream_name = env.nats_stream_name("EVENTS_DLQ");
@@ -147,9 +148,7 @@ pub async fn handle_dlq_peek(
                     payload_str.to_string()
                 };
 
-                let sequence = msg.info()
-                    .map(|info| info.stream_sequence)
-                    .unwrap_or(0);
+                let sequence = msg.info().map(|info| info.stream_sequence).unwrap_or(0);
 
                 previews.push(DlqMessagePeek {
                     subject: msg.subject.to_string(),
@@ -180,23 +179,25 @@ pub async fn handle_dlq_requeue(
     env: &SinexEnvironment,
     params: Value,
 ) -> Result<Value> {
-    let requeue_params: DlqRequeueParams = serde_json::from_value(params)
-        .wrap_err("Invalid DLQ requeue parameters")?;
+    let requeue_params: DlqRequeueParams =
+        serde_json::from_value(params).wrap_err("Invalid DLQ requeue parameters")?;
 
     let config = DlqRetryConfig::default();
     let handler = DlqRetryHandler::new(nats_client.clone(), env.clone(), config);
 
     let requeued_count = if let Some(event_id) = requeue_params.event_id {
         // Requeue specific event
-        handler.retry_by_id(&event_id).await.map_err(|e| {
-            eyre!("Failed to requeue event {}: {}", event_id, e)
-        })?;
+        handler
+            .retry_by_id(&event_id)
+            .await
+            .map_err(|e| eyre!("Failed to requeue event {}: {}", event_id, e))?;
         1
     } else if requeue_params.all {
         // Requeue all events
-        handler.retry_all().await.map_err(|e| {
-            eyre!("Failed to requeue all DLQ messages: {}", e)
-        })?
+        handler
+            .retry_all()
+            .await
+            .map_err(|e| eyre!("Failed to requeue all DLQ messages: {}", e))?
     } else {
         return Err(eyre!("Must specify either 'event_id' or 'all: true'"));
     };
@@ -214,8 +215,8 @@ pub async fn handle_dlq_purge(
 ) -> Result<Value> {
     use async_nats::jetstream;
 
-    let purge_params: DlqPurgeParams = serde_json::from_value(params)
-        .wrap_err("Invalid DLQ purge parameters")?;
+    let purge_params: DlqPurgeParams =
+        serde_json::from_value(params).wrap_err("Invalid DLQ purge parameters")?;
 
     if !purge_params.confirm {
         return Err(eyre!("Purge operation requires 'confirm: true' parameter"));

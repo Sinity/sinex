@@ -1,6 +1,4 @@
-use sinex_terminal_node::shell_detection::{
-    detect_capabilities, detect_shell_type, ShellType,
-};
+use sinex_terminal_node::shell_detection::{detect_capabilities, detect_shell_type, ShellType};
 use sinex_test_utils::{sinex_test, TestResult};
 
 #[sinex_test]

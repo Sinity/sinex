@@ -35,10 +35,7 @@ impl JournalWatcher {
             .output()
             .await
             .map_err(|e| {
-                sinex_node_sdk::NodeError::Processing(format!(
-                    "journalctl not found: {}",
-                    e
-                ))
+                sinex_node_sdk::NodeError::Processing(format!("journalctl not found: {}", e))
             })?;
 
         if !check.status.success() {
@@ -143,10 +140,7 @@ impl JournalWatcher {
             .output()
             .await
             .map_err(|e| {
-                sinex_node_sdk::NodeError::Processing(format!(
-                    "Failed to run journalctl: {}",
-                    e
-                ))
+                sinex_node_sdk::NodeError::Processing(format!("Failed to run journalctl: {}", e))
             })?;
 
         if !output.status.success() {
@@ -313,15 +307,13 @@ impl JournalWatcher {
             .stderr(std::process::Stdio::piped())
             .spawn()
             .map_err(|e| {
-                sinex_node_sdk::NodeError::Processing(format!(
-                    "Failed to spawn journalctl: {}",
-                    e
-                ))
+                sinex_node_sdk::NodeError::Processing(format!("Failed to spawn journalctl: {}", e))
             })?;
 
-        let stdout = child.stdout.take().ok_or_else(|| {
-            sinex_node_sdk::NodeError::Processing("No stdout".to_string())
-        })?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| sinex_node_sdk::NodeError::Processing("No stdout".to_string()))?;
 
         let mut reader = BufReader::new(stdout);
         let mut line = String::new();
@@ -384,9 +376,7 @@ impl JournalWatcher {
         let cursor = obj
             .get("__CURSOR")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                sinex_node_sdk::NodeError::Processing("Missing cursor".to_string())
-            })?;
+            .ok_or_else(|| sinex_node_sdk::NodeError::Processing("Missing cursor".to_string()))?;
 
         let timestamp_us = obj
             .get("__REALTIME_TIMESTAMP")
@@ -563,10 +553,7 @@ impl JournalWatcher {
             atomic_write(std::path::Path::new(cursor_file), cursor.as_bytes())
                 .await
                 .map_err(|e| {
-                    sinex_node_sdk::NodeError::Processing(format!(
-                        "Failed to save cursor: {}",
-                        e
-                    ))
+                    sinex_node_sdk::NodeError::Processing(format!("Failed to save cursor: {}", e))
                 })?;
         }
         Ok(())

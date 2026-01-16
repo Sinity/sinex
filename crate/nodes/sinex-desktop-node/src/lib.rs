@@ -24,9 +24,8 @@ mod common {
     pub use sinex_node_sdk::{
         error_helpers::{parse_config_value, parse_typed_config, path_utils, processing_error},
         stream_processor::{
-            Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
-            ProcessorType, ScanArgs, ScanEstimate, ScanReport, Node,
-            TimeHorizon,
+            Checkpoint, Node, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
+            ProcessorType, ScanArgs, ScanEstimate, ScanReport, TimeHorizon,
         },
         NodeError, NodeResult,
     };

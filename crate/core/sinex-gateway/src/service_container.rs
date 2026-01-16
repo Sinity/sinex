@@ -165,7 +165,10 @@ impl ServiceContainer {
             Ok(client) => {
                 let js = async_nats::jetstream::new(client.clone());
                 // Use "sinex-gateway" as the service name for coordination queries
-                let coord = Some(Arc::new(CoordinationKvClient::new(js, "sinex-gateway".to_string())));
+                let coord = Some(Arc::new(CoordinationKvClient::new(
+                    js,
+                    "sinex-gateway".to_string(),
+                )));
                 (Some(client), coord)
             }
             Err(err) => {

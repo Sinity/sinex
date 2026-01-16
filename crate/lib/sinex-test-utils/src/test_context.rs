@@ -812,6 +812,9 @@ impl TestContext {
         Ok(self.current_event_count().await? - self.baseline_events)
     }
 
+    /// Helper for tests that need to set up source material registry entries.
+    /// Reserved for future test scenarios requiring explicit material setup.
+    #[allow(dead_code)]
     async fn ensure_material_entry(&self, id: &Id<SourceMaterial>) -> TestResult<()> {
         let material_ulid_uuid = id.to_uuid();
         let source_identifier = format!("test-material-{id}");
@@ -865,6 +868,9 @@ impl TestContext {
         Ok(())
     }
 
+    /// Helper for tests that need to set up temporal ledger entries.
+    /// Reserved for future test scenarios requiring explicit ledger setup.
+    #[allow(dead_code)]
     async fn ensure_temporal_ledger_entry(
         &self,
         id: &Id<SourceMaterial>,

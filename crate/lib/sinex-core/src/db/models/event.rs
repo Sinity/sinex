@@ -392,7 +392,10 @@ mod tests {
             println!("Ingestor version: {}", ver);
             // If git revision is available, it should be formatted correctly
             if ver.starts_with("git-") {
-                assert!(ver.len() > 4, "Git revision should have content after 'git-'");
+                assert!(
+                    ver.len() > 4,
+                    "Git revision should have content after 'git-'"
+                );
             }
         }
     }

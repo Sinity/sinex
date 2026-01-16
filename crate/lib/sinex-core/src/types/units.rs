@@ -50,7 +50,8 @@ impl Bytes {
         if self.0 > Self::MAX.0 {
             return Err(ValidationError::General(format!(
                 "Bytes value {} exceeds maximum of {} (1 GiB)",
-                self.0, Self::MAX.0
+                self.0,
+                Self::MAX.0
             )));
         }
         Ok(())
@@ -144,7 +145,8 @@ impl Seconds {
         if self.0 > Self::MAX.0 {
             return Err(ValidationError::General(format!(
                 "Seconds value {} exceeds maximum of {} (24 hours)",
-                self.0, Self::MAX.0
+                self.0,
+                Self::MAX.0
             )));
         }
         Ok(())
@@ -288,7 +290,9 @@ mod tests {
         // Invalid values exceeding maximum (> 1 GiB)
         assert!(Bytes::from_mebibytes(1025).validate().is_err());
         assert!(Bytes::from_gibibytes(2).validate().is_err());
-        assert!(Bytes::from_bytes(2 * 1024 * 1024 * 1024).validate().is_err());
+        assert!(Bytes::from_bytes(2 * 1024 * 1024 * 1024)
+            .validate()
+            .is_err());
     }
 
     #[test]

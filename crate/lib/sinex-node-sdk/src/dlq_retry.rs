@@ -85,13 +85,12 @@ impl DlqRetryHandler {
                 ..Default::default()
             })
             .await
-            .map_err(|e| {
-                NodeError::Processing(format!("Failed to create DLQ consumer: {}", e))
-            })?;
+            .map_err(|e| NodeError::Processing(format!("Failed to create DLQ consumer: {}", e)))?;
 
-        let mut messages = consumer.messages().await.map_err(|e| {
-            NodeError::Processing(format!("Failed to get DLQ messages: {}", e))
-        })?;
+        let mut messages = consumer
+            .messages()
+            .await
+            .map_err(|e| NodeError::Processing(format!("Failed to get DLQ messages: {}", e)))?;
 
         let mut retried = 0;
 
@@ -203,9 +202,7 @@ impl DlqRetryHandler {
             .headers
             .as_ref()
             .and_then(|h| h.get("Original-Subject"))
-            .ok_or_else(|| {
-                NodeError::Processing("Missing Original-Subject header".to_string())
-            })?;
+            .ok_or_else(|| NodeError::Processing("Missing Original-Subject header".to_string()))?;
 
         let mut headers = async_nats::HeaderMap::new();
         let retry_count_str = (retry_count + 1).to_string();
@@ -223,9 +220,7 @@ impl DlqRetryHandler {
             .await
             .map_err(|e| NodeError::Processing(format!("Failed to republish message: {}", e)))?
             .await
-            .map_err(|e| {
-                NodeError::Processing(format!("Failed to await publish ack: {}", e))
-            })?;
+            .map_err(|e| NodeError::Processing(format!("Failed to await publish ack: {}", e)))?;
 
         Ok(())
     }

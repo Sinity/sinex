@@ -21,18 +21,17 @@ use sinex_core::{
     },
     Event as CoreEvent, HostName, JsonValue, Provenance,
 };
-use sinex_processor_runtime::{
-    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
-};
 use sinex_node_sdk::{
     acquisition_manager::{AcquisitionManager, RotationPolicy},
     stage_as_you_go::StageAsYouGoContext,
     stream_processor::{
-        Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
-        ProcessorType, ScanArgs, ScanEstimate, ScanReport, ServiceInfo, Node,
-        TimeHorizon,
+        Checkpoint, Node, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
+        ProcessorType, ScanArgs, ScanEstimate, ScanReport, ServiceInfo, TimeHorizon,
     },
     NodeError, NodeResult,
+};
+use sinex_processor_runtime::{
+    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
 };
 use std::{
     collections::HashMap,
@@ -326,10 +325,7 @@ impl Node for FilesystemProcessor {
     type Config = FilesystemConfig;
 
     #[instrument(skip(self, init), fields(processor = "filesystem", service = %init.service_info().service_name()))]
-    async fn initialize(
-        &mut self,
-        init: ProcessorInitContext<Self::Config>,
-    ) -> NodeResult<()> {
+    async fn initialize(&mut self, init: ProcessorInitContext<Self::Config>) -> NodeResult<()> {
         let (config, runtime) = init.into_runtime();
         self.initialise_with_runtime_state(runtime, config).await
     }

@@ -164,11 +164,15 @@ impl TestSatellitePublisher {
         S: AsRef<[u8]>,
     {
         let material_id = Ulid::new();
-        self.publish_material_stream_with_id(material_id, slices).await
+        self.publish_material_stream_with_id(material_id, slices)
+            .await
     }
 
     /// Publish a material stream via the AcquisitionManager (Stage-as-You-Go path).
-    pub async fn publish_material_stream_via_acquisition_manager<I, S>(&self, slices: I) -> Result<Ulid>
+    pub async fn publish_material_stream_via_acquisition_manager<I, S>(
+        &self,
+        slices: I,
+    ) -> Result<Ulid>
     where
         I: IntoIterator<Item = S>,
         S: AsRef<[u8]>,

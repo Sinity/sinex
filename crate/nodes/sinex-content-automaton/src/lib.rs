@@ -17,19 +17,19 @@ mod common {
     };
 
     // SDK facade for common processor types
-    pub use sinex_processor_runtime::{
-        ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
-        SourceState,
-    };
     pub use sinex_node_sdk::{
         confirmation_handler::{ConfirmedEventHandler, ProvisionalEvent},
         event_processor::EventTransport,
         jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig},
         stream_processor::{
-            Checkpoint, EventSender, ProcessorInitContext, ProcessorRuntimeState, ProcessorType,
-            ScanArgs, ScanReport, Node, TimeHorizon,
+            Checkpoint, EventSender, Node, ProcessorInitContext, ProcessorRuntimeState,
+            ProcessorType, ScanArgs, ScanReport, TimeHorizon,
         },
-        ProcessingModel, NodeError, NodeResult,
+        NodeError, NodeResult, ProcessingModel,
+    };
+    pub use sinex_processor_runtime::{
+        ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
+        SourceState,
     };
 
     // External dependencies
@@ -202,9 +202,9 @@ impl ContentAutomaton {
     }
 
     fn runtime(&self) -> NodeResult<&ProcessorRuntimeState> {
-        self.runtime.as_ref().ok_or_else(|| {
-            NodeError::Lifecycle("Content automaton runtime not initialized".into())
-        })
+        self.runtime
+            .as_ref()
+            .ok_or_else(|| NodeError::Lifecycle("Content automaton runtime not initialized".into()))
     }
 
     fn db_pool(&self) -> NodeResult<&PgPool> {
@@ -225,9 +225,7 @@ impl ContentAutomaton {
         } else if let Some(sender) = self.event_sender.as_ref() {
             Ok(sender.clone())
         } else {
-            Err(NodeError::Processing(
-                "Event sender not initialized".into(),
-            ))
+            Err(NodeError::Processing("Event sender not initialized".into()))
         }
     }
 
@@ -258,9 +256,10 @@ impl ContentAutomaton {
         };
 
         self.ensure_event_channel();
-        let sender = self.incoming_tx.clone().ok_or_else(|| {
-            NodeError::Processing("Confirmed event channel unavailable".into())
-        })?;
+        let sender = self
+            .incoming_tx
+            .clone()
+            .ok_or_else(|| NodeError::Processing("Confirmed event channel unavailable".into()))?;
 
         let handler = Arc::new(ChannelConfirmedEventHandler::new(sender));
         let env = environment().clone();
@@ -346,10 +345,7 @@ impl ContentAutomaton {
         Ok(processed)
     }
 
-    async fn process_confirmed_event(
-        &mut self,
-        provisional: ProvisionalEvent,
-    ) -> NodeResult<u64> {
+    async fn process_confirmed_event(&mut self, provisional: ProvisionalEvent) -> NodeResult<u64> {
         let db_pool = self.db_pool()?;
         let event_sender = self.event_sender()?;
         let event_id = Id::from_ulid(provisional.event_id);
@@ -662,10 +658,7 @@ impl ContentAutomaton {
 impl Node for ContentAutomaton {
     type Config = ContentAutomatonConfig;
 
-    async fn initialize(
-        &mut self,
-        init: ProcessorInitContext<Self::Config>,
-    ) -> NodeResult<()> {
+    async fn initialize(&mut self, init: ProcessorInitContext<Self::Config>) -> NodeResult<()> {
         let (config, runtime) = init.into_runtime();
         self.initialise_with_runtime_state(runtime, config).await
     }

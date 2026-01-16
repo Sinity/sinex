@@ -573,11 +573,9 @@ impl SharedNatsProfile {
         match self {
             SharedNatsProfile::Default => EphemeralNats::builder(),
             SharedNatsProfile::SecureTls => {
-                let fixture_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../../tests/fixtures/tls");
-                let fixture_dir = fixture_dir
-                    .canonicalize()
-                    .unwrap_or(fixture_dir);
+                let fixture_dir =
+                    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/tls");
+                let fixture_dir = fixture_dir.canonicalize().unwrap_or(fixture_dir);
                 EphemeralNats::builder().with_tls_fixtures_path(fixture_dir)
             }
         }

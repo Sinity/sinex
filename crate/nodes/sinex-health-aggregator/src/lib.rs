@@ -17,16 +17,15 @@ mod common {
     };
 
     // Runtime/SDK facades
-    pub use sinex_processor_runtime::cli::{
-        CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
-    };
     pub use sinex_node_sdk::{
         stream_processor::{
-            Checkpoint, EventSender, ProcessorCapabilities, ProcessorInitContext,
-            ProcessorRuntimeState, ProcessorType, ScanArgs, ScanReport, Node,
-            TimeHorizon,
+            Checkpoint, EventSender, Node, ProcessorCapabilities, ProcessorInitContext,
+            ProcessorRuntimeState, ProcessorType, ScanArgs, ScanReport, TimeHorizon,
         },
         NodeResult,
+    };
+    pub use sinex_processor_runtime::cli::{
+        CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
     };
 
     // External dependencies
@@ -46,7 +45,7 @@ use crate::common::*;
 use sinex_node_sdk::{
     confirmation_handler::{ConfirmedEventHandler, ProvisionalEvent},
     jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig},
-    ProcessingModel, NodeError,
+    NodeError, ProcessingModel,
 };
 use std::sync::Arc;
 
@@ -142,9 +141,9 @@ impl HealthAggregator {
     }
 
     fn runtime(&self) -> NodeResult<&ProcessorRuntimeState> {
-        self.runtime.as_ref().ok_or_else(|| {
-            NodeError::Lifecycle("Processor runtime not initialized".to_string())
-        })
+        self.runtime
+            .as_ref()
+            .ok_or_else(|| NodeError::Lifecycle("Processor runtime not initialized".to_string()))
     }
 
     /// Initialize the confirmed event channel if needed.
@@ -257,15 +256,13 @@ impl HealthAggregator {
     }
 
     /// Process a confirmed event flowing from JetStream.
-    async fn process_confirmed_event(
-        &mut self,
-        provisional: ProvisionalEvent,
-    ) -> NodeResult<u64> {
+    async fn process_confirmed_event(&mut self, provisional: ProvisionalEvent) -> NodeResult<u64> {
         use sinex_core::db::repositories::DbPoolExt;
 
-        let db_pool = self.db_pool.as_ref().ok_or_else(|| {
-            NodeError::Processing("Database pool not initialized".to_string())
-        })?;
+        let db_pool = self
+            .db_pool
+            .as_ref()
+            .ok_or_else(|| NodeError::Processing("Database pool not initialized".to_string()))?;
         let event_sender = self
             .event_sender
             .as_ref()
@@ -754,10 +751,7 @@ impl ConfirmedEventHandler for ChannelConfirmedEventHandler {
 impl Node for HealthAggregator {
     type Config = HealthAggregatorConfig;
 
-    async fn initialize(
-        &mut self,
-        init: ProcessorInitContext<Self::Config>,
-    ) -> NodeResult<()> {
+    async fn initialize(&mut self, init: ProcessorInitContext<Self::Config>) -> NodeResult<()> {
         info!("Initializing health aggregator");
         let (config, runtime) = init.into_runtime();
         self.db_pool = Some(runtime.db_pool().clone());
@@ -795,9 +789,7 @@ impl Node for HealthAggregator {
                 self.ensure_consumer().await?;
 
                 let mut receiver = self.incoming_rx.take().ok_or_else(|| {
-                    NodeError::Processing(
-                        "Confirmed events channel not initialized".to_string(),
-                    )
+                    NodeError::Processing("Confirmed events channel not initialized".to_string())
                 })?;
 
                 let mut processed = self.aggregate_health_events(&from).await.unwrap_or(0);

@@ -578,7 +578,12 @@ async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
     let nats_ok = state
         .services
         .nats_client()
-        .map(|client| matches!(client.connection_state(), async_nats::connection::State::Connected))
+        .map(|client| {
+            matches!(
+                client.connection_state(),
+                async_nats::connection::State::Connected
+            )
+        })
         .unwrap_or(false);
 
     if db_ok && nats_ok {

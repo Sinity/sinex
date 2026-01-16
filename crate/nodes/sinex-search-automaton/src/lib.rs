@@ -16,17 +16,16 @@ mod common {
     };
 
     // Runtime/SDK facades
+    pub use sinex_node_sdk::{
+        stream_processor::{
+            Checkpoint, EventSender, Node, ProcessorCapabilities, ProcessorInitContext,
+            ProcessorRuntimeState, ProcessorType, ScanArgs, ScanReport, TimeHorizon,
+        },
+        NodeError, NodeResult,
+    };
     pub use sinex_processor_runtime::cli::{
         ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
         SourceState,
-    };
-    pub use sinex_node_sdk::{
-        stream_processor::{
-            Checkpoint, EventSender, ProcessorCapabilities, ProcessorInitContext,
-            ProcessorRuntimeState, ProcessorType, ScanArgs, ScanReport, Node,
-            TimeHorizon,
-        },
-        NodeError, NodeResult,
     };
 
     // External dependencies
@@ -170,9 +169,9 @@ impl SearchAutomaton {
     }
 
     fn runtime(&self) -> NodeResult<&ProcessorRuntimeState> {
-        self.runtime.as_ref().ok_or_else(|| {
-            NodeError::Lifecycle("Search automaton runtime not initialized".into())
-        })
+        self.runtime
+            .as_ref()
+            .ok_or_else(|| NodeError::Lifecycle("Search automaton runtime not initialized".into()))
     }
 
     fn db_pool(&self) -> NodeResult<&PgPool> {
@@ -193,9 +192,7 @@ impl SearchAutomaton {
         } else if let Some(sender) = self.event_sender.as_ref() {
             Ok(sender.clone())
         } else {
-            Err(NodeError::Processing(
-                "Event sender not initialized".into(),
-            ))
+            Err(NodeError::Processing("Event sender not initialized".into()))
         }
     }
 
@@ -266,9 +263,10 @@ impl SearchAutomaton {
         };
 
         self.ensure_event_channel();
-        let sender = self.incoming_tx.clone().ok_or_else(|| {
-            NodeError::Processing("Confirmed event channel unavailable".into())
-        })?;
+        let sender = self
+            .incoming_tx
+            .clone()
+            .ok_or_else(|| NodeError::Processing("Confirmed event channel unavailable".into()))?;
 
         let handler = Arc::new(ChannelConfirmedEventHandler::new(sender));
         let env = environment().clone();
@@ -341,10 +339,7 @@ impl SearchAutomaton {
         Ok(processed)
     }
 
-    async fn process_confirmed_event(
-        &mut self,
-        provisional: ProvisionalEvent,
-    ) -> NodeResult<u64> {
+    async fn process_confirmed_event(&mut self, provisional: ProvisionalEvent) -> NodeResult<u64> {
         let db_pool = self.db_pool()?;
         let event_id = EventId::from_ulid(provisional.event_id);
 
@@ -823,10 +818,7 @@ impl SearchAutomaton {
 impl Node for SearchAutomaton {
     type Config = SearchAutomatonConfig;
 
-    async fn initialize(
-        &mut self,
-        init: ProcessorInitContext<Self::Config>,
-    ) -> NodeResult<()> {
+    async fn initialize(&mut self, init: ProcessorInitContext<Self::Config>) -> NodeResult<()> {
         let (config, runtime) = init.into_runtime();
         self.db_pool = Some(runtime.db_pool().clone());
         self.event_sender = Some(runtime.event_sender());

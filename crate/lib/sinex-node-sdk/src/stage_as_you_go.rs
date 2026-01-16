@@ -433,10 +433,7 @@ impl StageAsYouGoContext {
             .await
             .remove(&id)
             .ok_or_else(|| {
-                NodeError::Processing(format!(
-                    "Missing acquisition handle for material {}",
-                    id
-                ))
+                NodeError::Processing(format!("Missing acquisition handle for material {}", id))
             })?;
 
         self.finalize_via_acquisition(
@@ -494,10 +491,7 @@ impl StageAsYouGoContext {
             .await
             .remove(&id)
             .ok_or_else(|| {
-                NodeError::Processing(format!(
-                    "Missing acquisition handle for material {}",
-                    id
-                ))
+                NodeError::Processing(format!("Missing acquisition handle for material {}", id))
             })?;
 
         let mut buffer = vec![0u8; MAX_SLICE_BYTES];

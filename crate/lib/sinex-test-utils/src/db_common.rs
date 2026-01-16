@@ -1251,17 +1251,19 @@ mod tests {
 #[cfg(all(test, feature = "bench"))]
 mod benches {
     use super::*;
-    use crate::bench_context::BenchContext;
+    use crate::database_pool::acquire_test_database;
     use crate::{sinex_bench, TestResult};
+    use sinex_core::db::repositories::DbPoolExt;
 
     /// Benchmark database reset operation
     ///
     /// This measures the time to completely clean a database with various
     /// amounts of existing data.
     #[sinex_bench]
-    fn bench_reset_empty_database(ctx: &BenchContext) -> TestResult<()> {
-        // Database is already empty from reset_and_load
-        reset_database(ctx.pool()).await?;
+    fn bench_reset_empty_database() -> TestResult<()> {
+        let db = acquire_test_database().await?;
+        // Database is already empty from acquisition
+        reset_database(db.pool()).await?;
         Ok(())
     }
 
@@ -1269,22 +1271,17 @@ mod benches {
     ///
     /// Measures reset performance when database contains events and related data
     #[sinex_bench]
-    fn bench_reset_populated_database(ctx: &BenchContext) -> TestResult<()> {
+    fn bench_reset_populated_database() -> TestResult<()> {
+        let db = acquire_test_database().await?;
+        let pool = db.pool();
+
         // Setup: Insert some data
-        use sinex_core::types::*;
         for i in 0..10 {
-            let event = EventQueries::insert_event(
-                "bench".to_string(),
-                "test".to_string(),
-                "test-host".to_string(),
+            let event = pool.events().insert_test_event(
+                "bench",
+                "test",
                 serde_json::json!({"index": i}),
-                None,
-                None,
-                None,
-                None,
-            )
-            .fetch_one::<sinex_core::types::Event<JsonValue>>(ctx.pool())
-            .await?;
+            ).await?;
 
             // Add annotation
             sqlx::query(
@@ -1292,63 +1289,61 @@ mod benches {
                  VALUES ($1, $2, 'test', '{}'::jsonb, 'bench')",
             )
             .bind(sinex_core::types::ulid::Ulid::new().to_uuid())
-            .bind(event.id.to_uuid())
-            .execute(ctx.pool())
+            .bind(event.id.expect("event should have id after insert").to_uuid())
+            .execute(pool)
             .await?;
         }
 
         // Perform the reset
-        reset_database(ctx.pool()).await?;
+        reset_database(pool).await?;
         Ok(())
     }
 
     /// Benchmark cache clearing operation
     #[sinex_bench]
-    fn bench_clear_pg_cache(ctx: &BenchContext) -> TestResult<()> {
-        clear_pg_cache(ctx.pool()).await?;
+    fn bench_clear_pg_cache() -> TestResult<()> {
+        let db = acquire_test_database().await?;
+        clear_pg_cache(db.pool()).await?;
         Ok(())
     }
 
     /// Benchmark row count collection
     #[sinex_bench]
-    fn bench_get_row_counts(ctx: &BenchContext) -> TestResult<()> {
+    fn bench_get_row_counts() -> TestResult<()> {
+        let db = acquire_test_database().await?;
+        let pool = db.pool();
+
         // Setup: Insert varied amounts of data
-        reset_database(ctx.pool()).await?;
+        reset_database(pool).await?;
 
         // Insert some events
-        use sinex_core::types::*;
         for i in 0..50 {
-            EventQueries::insert_event(
-                format!("source_{}", i % 5),
-                "test".to_string(),
-                "bench".to_string(),
+            pool.events().insert_test_event(
+                &format!("source_{}", i % 5),
+                "test",
                 serde_json::json!({}),
-                None,
-                None,
-                None,
-                None,
-            )
-            .execute(ctx.pool())
-            .await?;
+            ).await?;
         }
 
         // Perform the count
-        let counts = get_row_counts(ctx.pool()).await?;
+        let counts = get_row_counts(pool).await?;
         divan::black_box(counts);
         Ok(())
     }
 
     /// Benchmark database state verification
     #[sinex_bench]
-    fn bench_verify_clean_state(ctx: &BenchContext) -> TestResult<()> {
-        verify_clean_state(ctx.pool()).await?;
+    fn bench_verify_clean_state() -> TestResult<()> {
+        let db = acquire_test_database().await?;
+        verify_clean_state(db.pool()).await?;
         Ok(())
     }
 
     /// Benchmark applying test optimizations
     #[sinex_bench]
-    fn bench_apply_optimizations(ctx: &BenchContext) -> TestResult<()> {
-        apply_test_optimizations(ctx.pool()).await?;
+    fn bench_apply_optimizations() -> TestResult<()> {
+        let db = acquire_test_database().await?;
+        apply_test_optimizations(db.pool()).await?;
         Ok(())
     }
 }

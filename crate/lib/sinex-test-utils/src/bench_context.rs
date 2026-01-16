@@ -35,6 +35,7 @@
 //! ```
 
 use crate::db_common;
+use crate::TestResult;
 use color_eyre::eyre::{eyre, Result};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;

@@ -14,7 +14,6 @@ pub mod validation;
 pub use ids::Id;
 pub use sinex_schema::ulid::Ulid;
 
-use chrono::{DateTime, Utc};
 pub use error::{Result as SinexResult, SinexError};
 pub use query::{Pagination, TimeRange};
 use serde::{Deserialize, Serialize};

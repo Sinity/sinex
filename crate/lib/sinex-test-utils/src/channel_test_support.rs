@@ -197,9 +197,8 @@ impl<T: Send + Debug> ChannelSenderExt<T> for mpsc::Sender<T> {
     }
 
     fn try_send_or_log(&self, value: T, context: &str) -> Result<()> {
-        self.try_send(value).map_err(|err| {
-            SinexError::channel_send(format!("{context}: try_send failed: {err}"))
-        })
+        self.try_send(value)
+            .map_err(|err| SinexError::channel_send(format!("{context}: try_send failed: {err}")))
     }
 }
 
@@ -262,20 +261,14 @@ impl<T: Send + Debug> ChannelSenderExt<T> for MonitoredSender<T> {
 
 #[async_trait]
 pub trait ChannelReceiverExt<T> {
-    async fn recv_timeout(
-        &mut self,
-        wait: Duration,
-    ) -> std::result::Result<Option<T>, SinexError>;
+    async fn recv_timeout(&mut self, wait: Duration) -> std::result::Result<Option<T>, SinexError>;
     async fn recv_batch(&mut self, max_items: usize, wait: Duration) -> Vec<T>;
     async fn drain_all(&mut self) -> Vec<T>;
 }
 
 #[async_trait]
 impl<T: Send> ChannelReceiverExt<T> for mpsc::Receiver<T> {
-    async fn recv_timeout(
-        &mut self,
-        wait: Duration,
-    ) -> std::result::Result<Option<T>, SinexError> {
+    async fn recv_timeout(&mut self, wait: Duration) -> std::result::Result<Option<T>, SinexError> {
         match timeout(wait, self.recv()).await {
             Ok(value) => Ok(value),
             Err(_) => Err(SinexError::timeout("recv_timeout exceeded")),
@@ -310,10 +303,7 @@ impl<T: Send> ChannelReceiverExt<T> for mpsc::Receiver<T> {
 
 #[async_trait]
 impl<T: Send> ChannelReceiverExt<T> for MonitoredReceiver<T> {
-    async fn recv_timeout(
-        &mut self,
-        wait: Duration,
-    ) -> std::result::Result<Option<T>, SinexError> {
+    async fn recv_timeout(&mut self, wait: Duration) -> std::result::Result<Option<T>, SinexError> {
         match timeout(wait, self.inner.recv()).await {
             Ok(Some(value)) => {
                 self.monitor.record_receive();
@@ -545,9 +535,8 @@ pub mod behavior {
         let expected = value.clone();
         sender.send_or_log(value, context).await?;
         let received = receiver.recv_timeout(Duration::from_secs(1)).await?;
-        let received = received.ok_or_else(|| {
-            SinexError::channel_receive(format!("channel closed in {context}"))
-        })?;
+        let received = received
+            .ok_or_else(|| SinexError::channel_receive(format!("channel closed in {context}")))?;
         if received != expected {
             return Err(SinexError::validation(format!(
                 "value mismatch in {context}: got {received:?}, expected {expected:?}"
@@ -606,9 +595,7 @@ pub mod behavior {
             total += batch.len();
             loops += 1;
             if loops > 128 {
-                return Err(SinexError::validation(
-                    "batch_receive exceeded loop guard",
-                ));
+                return Err(SinexError::validation("batch_receive exceeded loop guard"));
             }
         }
         Ok(())

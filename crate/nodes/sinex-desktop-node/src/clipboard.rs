@@ -9,8 +9,8 @@ use sinex_node_sdk::stage_as_you_go::StageAsYouGoContext;
 use tokio::sync::watch;
 
 // Clipboard-specific imports
-use copypasta::{ClipboardContext, ClipboardProvider};
 use arboard::{Clipboard, GetExtLinux, LinuxClipboardKind};
+use copypasta::{ClipboardContext, ClipboardProvider};
 
 const DEFAULT_MAX_PREVIEW_LENGTH: usize = 100;
 const DEFAULT_MAX_CONTENT_SIZE: usize = 10 * 1024 * 1024; // 10MB
@@ -410,7 +410,11 @@ impl ClipboardWatcher {
     fn get_clipboard_content_native(&self) -> Option<String> {
         match Clipboard::new() {
             Ok(mut clipboard) => {
-                match clipboard.get().clipboard(LinuxClipboardKind::Clipboard).text() {
+                match clipboard
+                    .get()
+                    .clipboard(LinuxClipboardKind::Clipboard)
+                    .text()
+                {
                     Ok(text) => Some(text),
                     Err(e) => {
                         debug!("Failed to get CLIPBOARD contents via arboard: {}", e);
@@ -452,7 +456,11 @@ impl ClipboardWatcher {
         // Use arboard's GetExtLinux to read PRIMARY selection
         match Clipboard::new() {
             Ok(mut clipboard) => {
-                match clipboard.get().clipboard(LinuxClipboardKind::Primary).text() {
+                match clipboard
+                    .get()
+                    .clipboard(LinuxClipboardKind::Primary)
+                    .text()
+                {
                     Ok(text) => {
                         if text.is_empty() {
                             return None;

@@ -5,9 +5,7 @@
 // Use local facade for common types
 use crate::common::*;
 use sinex_node_sdk::error_helpers::{parse_config_value, parse_typed_config};
-use sinex_node_sdk::stream_processor::{
-    EventEmitter, ProcessorInitContext, ProcessorRuntimeState,
-};
+use sinex_node_sdk::stream_processor::{EventEmitter, ProcessorInitContext, ProcessorRuntimeState};
 
 // System-specific event payloads
 use serde_json::json;
@@ -16,7 +14,7 @@ use sinex_core::types::events::{SystemMonitoringStartedPayload, SystemSnapshotPa
 use sinex_core::types::Seconds;
 use sinex_core::JsonValue;
 
-use crate::{DbusWatcher, UnifiedJournalWatcher, UdevWatcher, WatcherMaterialContext};
+use crate::{DbusWatcher, UdevWatcher, UnifiedJournalWatcher, WatcherMaterialContext};
 use sinex_node_sdk::acquisition_manager::{AcquisitionManager, RotationPolicy};
 use sinex_node_sdk::event_processor::EventTransport;
 use std::sync::Arc;
@@ -213,9 +211,9 @@ impl SystemProcessor {
     }
 
     fn runtime(&self) -> NodeResult<&ProcessorRuntimeState> {
-        self.runtime.as_ref().ok_or_else(|| {
-            NodeError::Lifecycle("Processor runtime not initialized".to_string())
-        })
+        self.runtime
+            .as_ref()
+            .ok_or_else(|| NodeError::Lifecycle("Processor runtime not initialized".to_string()))
     }
 
     fn emitter(&self) -> NodeResult<&EventEmitter> {
@@ -372,8 +370,10 @@ impl SystemProcessor {
 
         if self.config.journal_enabled || self.config.systemd_enabled {
             if self.unified_journal_watcher.is_none() {
-                info!("Preparing unified journal watcher (journal: {}, systemd: {})",
-                      self.config.journal_enabled, self.config.systemd_enabled);
+                info!(
+                    "Preparing unified journal watcher (journal: {}, systemd: {})",
+                    self.config.journal_enabled, self.config.systemd_enabled
+                );
                 self.unified_journal_watcher = Some(WatcherHandle::initialized("unified_journal"));
             }
         } else {
@@ -538,11 +538,7 @@ impl SystemProcessor {
         Ok(())
     }
 
-
-    async fn spawn_dbus_task(
-        &self,
-        material: WatcherMaterialContext,
-    ) -> NodeResult<WatcherHandle> {
+    async fn spawn_dbus_task(&self, material: WatcherMaterialContext) -> NodeResult<WatcherHandle> {
         let emitter = self.emitter_clone()?;
         let (tx, rx) = mpsc::channel(WATCHER_CHANNEL_CAPACITY);
         let forwarder = spawn_forwarder("system.dbus.signal", rx, emitter);
@@ -572,13 +568,15 @@ impl SystemProcessor {
         let (systemd_tx, systemd_rx) = mpsc::channel(WATCHER_CHANNEL_CAPACITY);
 
         // Create forwarders for both channels
-        let journal_forwarder = spawn_forwarder("system.journal.entry", journal_rx, emitter.clone());
+        let journal_forwarder =
+            spawn_forwarder("system.journal.entry", journal_rx, emitter.clone());
         let systemd_forwarder = spawn_forwarder("system.systemd.unit_state", systemd_rx, emitter);
 
         let mut watcher = UnifiedJournalWatcher::new(
             self.config.journal_config.clone(),
             self.config.systemd_enabled,
-        ).await?;
+        )
+        .await?;
 
         let watcher_material = material.clone();
         let systemd_tx_opt = if self.config.systemd_enabled {
@@ -588,7 +586,10 @@ impl SystemProcessor {
         };
 
         let task = tokio::spawn(async move {
-            if let Err(err) = watcher.start_streaming(journal_tx, systemd_tx_opt, watcher_material).await {
+            if let Err(err) = watcher
+                .start_streaming(journal_tx, systemd_tx_opt, watcher_material)
+                .await
+            {
                 warn!(error = %err, "Unified journal watcher terminated");
             }
         });
@@ -606,10 +607,7 @@ impl SystemProcessor {
         ))
     }
 
-    async fn spawn_udev_task(
-        &self,
-        material: WatcherMaterialContext,
-    ) -> NodeResult<WatcherHandle> {
+    async fn spawn_udev_task(&self, material: WatcherMaterialContext) -> NodeResult<WatcherHandle> {
         let emitter = self.emitter_clone()?;
         let (tx, rx) = mpsc::channel(WATCHER_CHANNEL_CAPACITY);
         let forwarder = spawn_forwarder("system.udev.device", rx, emitter);
@@ -627,7 +625,6 @@ impl SystemProcessor {
             Some(material),
         ))
     }
-
 
     /// Perform historical scan on system sources
     async fn scan_historical_system_data(
@@ -648,14 +645,18 @@ impl SystemProcessor {
         let (systemd_tx, systemd_rx) = mpsc::channel(WATCHER_CHANNEL_CAPACITY);
 
         // Create forwarders for both channels
-        let journal_forwarder = spawn_forwarder("system.journal.entry", journal_rx, emitter.clone());
+        let journal_forwarder =
+            spawn_forwarder("system.journal.entry", journal_rx, emitter.clone());
         let systemd_forwarder = spawn_forwarder("system.systemd.unit_state", systemd_rx, emitter);
 
-        let material = self.new_watcher_material("unified-journal-historical").await?;
+        let material = self
+            .new_watcher_material("unified-journal-historical")
+            .await?;
         let mut watcher = UnifiedJournalWatcher::new(
             self.config.journal_config.clone(),
             self.config.systemd_enabled,
-        ).await?;
+        )
+        .await?;
 
         let systemd_tx_opt = if self.config.systemd_enabled {
             Some(systemd_tx)
@@ -663,10 +664,15 @@ impl SystemProcessor {
             None
         };
 
-        let count = match watcher.import_historical(&journal_tx, &systemd_tx_opt, &material).await {
+        let count = match watcher
+            .import_historical(&journal_tx, &systemd_tx_opt, &material)
+            .await
+        {
             Ok(count) => count,
             Err(err) => {
-                let _ = material.finalize("system-unified-journal historical scan").await;
+                let _ = material
+                    .finalize("system-unified-journal historical scan")
+                    .await;
                 return Err(err);
             }
         };
@@ -678,7 +684,9 @@ impl SystemProcessor {
             warn!(error = %err, "Historical journal forwarder task failed");
         }
 
-        material.finalize("system-unified-journal historical scan").await?;
+        material
+            .finalize("system-unified-journal historical scan")
+            .await?;
 
         Ok(count)
     }
@@ -695,10 +703,7 @@ impl Node for SystemProcessor {
     type Config = SystemConfig;
 
     #[instrument(skip(self, init), fields(processor = "system", service = %init.service_info().service_name()))]
-    async fn initialize(
-        &mut self,
-        init: ProcessorInitContext<Self::Config>,
-    ) -> NodeResult<()> {
+    async fn initialize(&mut self, init: ProcessorInitContext<Self::Config>) -> NodeResult<()> {
         let (mut config, runtime) = init.into_runtime();
         Self::apply_config_overrides(&mut config, &runtime);
         self.config = config;

@@ -21,10 +21,10 @@
 //! - Cross-branch comparisons
 //! - Regression detection
 
+use crate::TestResult;
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use crate::TestResult;
 
 /// A complete benchmark run with metadata and results
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -442,9 +442,7 @@ fn get_postgres_version() -> TestResult<String> {
         .map_err(|e| color_eyre::eyre::eyre!("Failed to run psql: {}", e))?;
 
     if !output.status.success() {
-        return Err(color_eyre::eyre::eyre!(
-            "psql exited with non-zero status"
-        ));
+        return Err(color_eyre::eyre::eyre!("psql exited with non-zero status"));
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())

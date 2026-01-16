@@ -243,16 +243,11 @@ impl WindowManagerWatcher {
     /// Connect to Hyprland event socket
     async fn connect_to_hyprland_events(&self) -> NodeResult<UnixStream> {
         let socket_path = self.socket_path.as_ref().ok_or_else(|| {
-            sinex_node_sdk::NodeError::Processing(
-                "No Hyprland socket configured".to_string(),
-            )
+            sinex_node_sdk::NodeError::Processing("No Hyprland socket configured".to_string())
         })?;
 
         UnixStream::connect(socket_path).await.map_err(|e| {
-            sinex_node_sdk::NodeError::Processing(format!(
-                "Failed to connect to Hyprland: {}",
-                e
-            ))
+            sinex_node_sdk::NodeError::Processing(format!("Failed to connect to Hyprland: {}", e))
         })
     }
 

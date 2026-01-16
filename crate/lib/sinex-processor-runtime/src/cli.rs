@@ -493,11 +493,8 @@ pub struct ProcessorCliRunner<
     processor: Option<T>,
 }
 
-impl<
-        T: sinex_node_sdk::stream_processor::Node
-            + ExplorationProvider
-            + 'static,
-    > ProcessorCliRunner<T>
+impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static>
+    ProcessorCliRunner<T>
 {
     /// Create new CLI runner with a processor instance
     pub fn new(processor: T) -> Self {

@@ -231,9 +231,7 @@ impl NodeInstance {
 /// Returns `NodeError::Configuration` if the satellite version is invalid
 pub fn satellite_version() -> crate::NodeResult<Version> {
     Version::from_str(option_env!("SATELLITE_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")))
-        .map_err(|e| {
-            crate::NodeError::Configuration(format!("Invalid satellite version: {}", e))
-        })
+        .map_err(|e| crate::NodeError::Configuration(format!("Invalid satellite version: {}", e)))
 }
 
 /// Get full version string with build metadata

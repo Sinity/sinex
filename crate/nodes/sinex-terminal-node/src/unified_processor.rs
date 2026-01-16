@@ -15,18 +15,17 @@ use sinex_core::{
     types::{domain::SanitizedPath, validate_path, Bytes, Seconds},
     Event as CoreEvent, Id, Provenance, Ulid,
 };
-use sinex_processor_runtime::{
-    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
-};
 use sinex_node_sdk::{
     acquisition_manager::{AcquisitionManager, RotationPolicy},
     stage_as_you_go::StageAsYouGoContext,
     stream_processor::{
-        Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
-        ProcessorType, ScanArgs, ScanEstimate, ScanReport, ServiceInfo, Node,
-        TimeHorizon,
+        Checkpoint, Node, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
+        ProcessorType, ScanArgs, ScanEstimate, ScanReport, ServiceInfo, TimeHorizon,
     },
     NodeError, NodeResult,
+};
+use sinex_processor_runtime::{
+    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
 };
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 use tokio::{
@@ -449,9 +448,7 @@ async fn process_command(
         .emit_event_with_provenance(event, material_id, Some(0), Some(bytes.len() as i64))
         .await
         .map(|_| ())
-        .map_err(|e| {
-            NodeError::General(eyre::eyre!("Failed to emit terminal event: {}", e))
-        })?;
+        .map_err(|e| NodeError::General(eyre::eyre!("Failed to emit terminal event: {}", e)))?;
 
     Ok(())
 }
@@ -525,9 +522,7 @@ impl TerminalProcessor {
         })?;
 
         let publisher = match runtime.transport() {
-            sinex_node_sdk::event_processor::EventTransport::Nats(publisher) => {
-                publisher.clone()
-            }
+            sinex_node_sdk::event_processor::EventTransport::Nats(publisher) => publisher.clone(),
         };
 
         AcquisitionManager::bootstrap_streams(publisher.nats_client())
@@ -614,10 +609,7 @@ impl Node for TerminalProcessor {
     type Config = TerminalConfig;
 
     #[instrument(skip(self, init), fields(processor = "terminal", service = %init.service_info().service_name()))]
-    async fn initialize(
-        &mut self,
-        init: ProcessorInitContext<Self::Config>,
-    ) -> NodeResult<()> {
+    async fn initialize(&mut self, init: ProcessorInitContext<Self::Config>) -> NodeResult<()> {
         let (config, runtime) = init.into_runtime();
         self.initialise_from_runtime(config, runtime).await
     }
@@ -888,9 +880,7 @@ mod tests {
         let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
 
         let publisher = match runtime.transport() {
-            sinex_node_sdk::event_processor::EventTransport::Nats(publisher) => {
-                publisher.clone()
-            }
+            sinex_node_sdk::event_processor::EventTransport::Nats(publisher) => publisher.clone(),
         };
         AcquisitionManager::bootstrap_streams(publisher.nats_client()).await?;
 
@@ -1014,9 +1004,7 @@ mod tests {
         let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
 
         let publisher = match runtime.transport() {
-            sinex_node_sdk::event_processor::EventTransport::Nats(publisher) => {
-                publisher.clone()
-            }
+            sinex_node_sdk::event_processor::EventTransport::Nats(publisher) => publisher.clone(),
         };
         AcquisitionManager::bootstrap_streams(publisher.nats_client()).await?;
 

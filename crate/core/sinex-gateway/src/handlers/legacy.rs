@@ -489,10 +489,7 @@ pub async fn handle_retrieve_blob(service: &ContentService, params: Value) -> Re
     Ok(blob_response_payload(&content, &metadata))
 }
 
-fn blob_response_payload(
-    content: &[u8],
-    metadata: &sinex_node_sdk::annex::BlobMetadata,
-) -> Value {
+fn blob_response_payload(content: &[u8], metadata: &sinex_node_sdk::annex::BlobMetadata) -> Value {
     json!({
         "content_base64": BASE64_STANDARD.encode(content),
         "mime_type": metadata.mime_type.clone(),

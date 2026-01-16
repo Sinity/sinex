@@ -55,8 +55,8 @@ pub use replay::{
     ReplayProgress, ReplayResult, ReplayService, ReplayStats,
 };
 pub use stream_processor::{
-    Checkpoint, EventSender, EventStream, ProcessorCapabilities, ProcessorType, ScanArgs,
-    ScanEstimate, ScanReport, Node, StreamProcessorRunner, TimeHorizon,
+    Checkpoint, EventSender, EventStream, Node, ProcessorCapabilities, ProcessorType, ScanArgs,
+    ScanEstimate, ScanReport, StreamProcessorRunner, TimeHorizon,
 };
 pub use version::{NodeInstance, NodeVersion};
 
@@ -291,9 +291,7 @@ pub enum NodeError {
 impl From<NodeError> for sinex_core::error::SinexError {
     fn from(e: NodeError) -> Self {
         match e {
-            NodeError::Config(_) => {
-                sinex_core::error::SinexError::configuration(e.to_string())
-            }
+            NodeError::Config(_) => sinex_core::error::SinexError::configuration(e.to_string()),
             NodeError::Configuration(_) => {
                 sinex_core::error::SinexError::configuration(e.to_string())
             }
@@ -310,9 +308,7 @@ impl From<NodeError> for sinex_core::error::SinexError {
             NodeError::OperationCancelled(_) => {
                 sinex_core::error::SinexError::unknown(e.to_string())
             }
-            NodeError::Validation(_) => {
-                sinex_core::error::SinexError::validation(e.to_string())
-            }
+            NodeError::Validation(_) => sinex_core::error::SinexError::validation(e.to_string()),
         }
     }
 }
@@ -320,18 +316,12 @@ impl From<NodeError> for sinex_core::error::SinexError {
 impl From<sinex_core::error::SinexError> for NodeError {
     fn from(e: sinex_core::error::SinexError) -> Self {
         match e {
-            sinex_core::error::SinexError::Configuration(_) => {
-                NodeError::Processing(e.to_string())
-            }
+            sinex_core::error::SinexError::Configuration(_) => NodeError::Processing(e.to_string()),
             sinex_core::error::SinexError::Database(_) => NodeError::Processing(e.to_string()),
-            sinex_core::error::SinexError::Serialization(_) => {
-                NodeError::Processing(e.to_string())
-            }
+            sinex_core::error::SinexError::Serialization(_) => NodeError::Processing(e.to_string()),
             sinex_core::error::SinexError::Io(_) => NodeError::Processing(e.to_string()),
             sinex_core::error::SinexError::Unknown(_) => NodeError::Processing(e.to_string()),
-            sinex_core::error::SinexError::Validation(_) => {
-                NodeError::Validation(e.to_string())
-            }
+            sinex_core::error::SinexError::Validation(_) => NodeError::Validation(e.to_string()),
             _ => NodeError::Processing(e.to_string()),
         }
     }

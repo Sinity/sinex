@@ -78,10 +78,7 @@ struct MonitorConfig {
 }
 
 /// Helper to create processing errors with consistent formatting
-fn dbus_error(
-    message: &str,
-    source: impl std::fmt::Display,
-) -> sinex_node_sdk::NodeError {
+fn dbus_error(message: &str, source: impl std::fmt::Display) -> sinex_node_sdk::NodeError {
     use sinex_node_sdk::NodeError::Processing;
     Processing(format!("{}: {}", message, source))
 }

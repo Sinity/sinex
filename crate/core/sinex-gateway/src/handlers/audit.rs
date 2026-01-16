@@ -48,8 +48,8 @@ struct AuditGetParams {
 
 /// Handle GET /audit/{operation_id} - get audit trail for an operation
 pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
-    let audit_params: AuditGetParams = serde_json::from_value(params)
-        .wrap_err("Invalid audit parameters")?;
+    let audit_params: AuditGetParams =
+        serde_json::from_value(params).wrap_err("Invalid audit parameters")?;
 
     // Fetch the operation record
     let operation = sqlx::query_as!(

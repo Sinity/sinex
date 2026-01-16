@@ -19,12 +19,13 @@ pub struct EventBuilder<T, P> {
     pub(crate) timestamp: Option<DateTime<Utc>>,
     pub(crate) hostname: Option<crate::types::domain::HostName>,
     pub(crate) ingestor_version: Option<String>,
-    pub(crate) schema_id: Option<String>, // Wait, event.rs uses Option<Ulid> for payload_schema_id?
-    // event.rs: pub payload_schema_id: Option<Ulid>,
+    pub(crate) schema_id: Option<String>,
     pub(crate) payload_schema_id: Option<Ulid>,
-    pub(crate) provenance: Option<P>, // In builder, P is state marker. But we hold generic P?
-    // Wait, reusing pattern from event.rs:
-    // pub struct EventBuilder<T, P = NoProvenance> { ... provenance: Option<Provenance>, ... }
+    /// Typestate marker field - stores P for type-level tracking of provenance state.
+    /// Actual provenance data is stored in `provenance_data`. This field exists to
+    /// constrain the generic P type parameter for compile-time safety.
+    #[allow(dead_code)]
+    pub(crate) provenance: Option<P>,
     pub(crate) provenance_data: Option<Provenance>,
     pub(crate) associated_blob_ids: Option<Vec<Ulid>>,
     pub(crate) _phantom: std::marker::PhantomData<P>,

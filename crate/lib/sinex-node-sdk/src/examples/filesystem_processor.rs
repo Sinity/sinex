@@ -5,8 +5,8 @@
 
 use crate::{
     stream_processor::{
-        Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
-        ProcessorType, ScanArgs, ScanEstimate, ScanReport, Node, TimeHorizon,
+        Checkpoint, Node, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
+        ProcessorType, ScanArgs, ScanEstimate, ScanReport, TimeHorizon,
     },
     NodeResult,
 };
@@ -231,10 +231,7 @@ impl FilesystemProcessor {
 impl Node for FilesystemProcessor {
     type Config = FilesystemProcessorConfig;
 
-    async fn initialize(
-        &mut self,
-        init: ProcessorInitContext<Self::Config>,
-    ) -> NodeResult<()> {
+    async fn initialize(&mut self, init: ProcessorInitContext<Self::Config>) -> NodeResult<()> {
         let (_config, raw_config, service_info, handles, work_dir_utf8) = init.into_parts();
         info!(
             processor = self.processor_name(),

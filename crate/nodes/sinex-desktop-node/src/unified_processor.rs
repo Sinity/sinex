@@ -230,7 +230,8 @@ impl DesktopProcessor {
             config.clipboard_poll_interval_secs = interval;
         }
 
-        if let Some(require_hyprland) = parse_config_value::<bool, _>("require_hyprland", &runtime) {
+        if let Some(require_hyprland) = parse_config_value::<bool, _>("require_hyprland", &runtime)
+        {
             config.require_hyprland = require_hyprland;
         }
 
@@ -359,13 +360,14 @@ impl DesktopProcessor {
         } else {
             None
         };
-        let shutdown_tx = if needs_watchers {
-            Some(self.shutdown_tx.as_ref().ok_or_else(|| {
-                NodeError::Lifecycle("Shutdown channel not initialized".into())
-            })?)
-        } else {
-            None
-        };
+        let shutdown_tx =
+            if needs_watchers {
+                Some(self.shutdown_tx.as_ref().ok_or_else(|| {
+                    NodeError::Lifecycle("Shutdown channel not initialized".into())
+                })?)
+            } else {
+                None
+            };
 
         // Initialize clipboard watcher
         if self.config.clipboard_enabled {
@@ -373,9 +375,7 @@ impl DesktopProcessor {
             if self.clipboard_watcher.is_none() {
                 let stage_context = stage_context
                     .as_ref()
-                    .ok_or_else(|| {
-                        NodeError::Lifecycle("Stage-as-you-go not available".into())
-                    })?
+                    .ok_or_else(|| NodeError::Lifecycle("Stage-as-you-go not available".into()))?
                     .clone();
                 let shutdown_tx = shutdown_tx
                     .as_ref()
@@ -423,9 +423,7 @@ impl DesktopProcessor {
             if self.window_manager_watcher.is_none() {
                 let stage_context = stage_context
                     .as_ref()
-                    .ok_or_else(|| {
-                        NodeError::Lifecycle("Stage-as-you-go not available".into())
-                    })?
+                    .ok_or_else(|| NodeError::Lifecycle("Stage-as-you-go not available".into()))?
                     .clone();
                 let shutdown_tx = shutdown_tx
                     .as_ref()
@@ -546,10 +544,7 @@ impl Node for DesktopProcessor {
     type Config = DesktopConfig;
 
     #[instrument(skip(self, init), fields(processor = "desktop", service = %init.service_info().service_name()))]
-    async fn initialize(
-        &mut self,
-        init: ProcessorInitContext<Self::Config>,
-    ) -> NodeResult<()> {
+    async fn initialize(&mut self, init: ProcessorInitContext<Self::Config>) -> NodeResult<()> {
         let (config, runtime) = init.into_runtime();
         self.initialise_with_runtime_state(runtime, config).await
     }
@@ -627,9 +622,7 @@ impl Node for DesktopProcessor {
                 let mut shutdown_rx = self
                     .shutdown_tx
                     .as_ref()
-                    .ok_or_else(|| {
-                        NodeError::Lifecycle("Shutdown channel not initialized".into())
-                    })?
+                    .ok_or_else(|| NodeError::Lifecycle("Shutdown channel not initialized".into()))?
                     .subscribe();
                 // Initialize watchers for continuous monitoring
                 debug!("Initializing watchers for continuous monitoring");
