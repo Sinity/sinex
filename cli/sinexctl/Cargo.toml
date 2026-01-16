@@ -1,0 +1,27 @@
+[package]
+name = "sinexctl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "sinexctl"
+path = "src/main.rs"
+
+[dependencies]
+sinex-cli = { path = "../sinex-cli" }
+clap = { workspace = true, features = ["derive", "env"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+color-eyre = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+insta = { workspace = true }
+tempfile = "3"
+wiremock = "0.6"
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+serde_json = { workspace = true }

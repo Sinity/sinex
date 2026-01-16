@@ -9,11 +9,11 @@ all() - (
   | (package(sinex-schema) & test(stress_tests::))
   | (package(sinex-services) & test(test_analytics_large_dataset_performance))
   | (package(sinex-services) & test(test_service_performance_integration))
-  | (package(sinex-satellite-sdk) & test(test_version_info_performance))
+  | (package(sinex-node-sdk) & test(test_version_info_performance))
   | (package(sinex-core) & test(stress_test_massive_concurrent_ulid_generation))
-  | (package(sinex-satellite-sdk) & test(stress_test_massive_concurrent_checkpoint_updates))
-  | (package(sinex-satellite-sdk) & test(test_version_info_concurrent_stress))
-  | (package(sinex-satellite-sdk) & binary(security))
+  | (package(sinex-node-sdk) & test(stress_test_massive_concurrent_checkpoint_updates))
+  | (package(sinex-node-sdk) & test(test_version_info_concurrent_stress))
+  | (package(sinex-node-sdk) & binary(security))
   | (package(sinex-core) & test(perf_ulid_sequence_ordering_validation))
   | (package(sinex-core) & test(perf_concurrent_ulid_generation_ordering))
   | (package(sinex-core) & test(perf_database_ordering_consistency))
@@ -87,11 +87,11 @@ all() - (
   | (package(sinex-schema) & test(stress_tests::))
   | (package(sinex-services) & test(test_analytics_large_dataset_performance))
   | (package(sinex-services) & test(test_service_performance_integration))
-  | (package(sinex-satellite-sdk) & test(test_version_info_performance))
+  | (package(sinex-node-sdk) & test(test_version_info_performance))
   | (package(sinex-core) & test(stress_test_massive_concurrent_ulid_generation))
-  | (package(sinex-satellite-sdk) & test(stress_test_massive_concurrent_checkpoint_updates))
-  | (package(sinex-satellite-sdk) & test(test_version_info_concurrent_stress))
-  | (package(sinex-satellite-sdk) & binary(security))
+  | (package(sinex-node-sdk) & test(stress_test_massive_concurrent_checkpoint_updates))
+  | (package(sinex-node-sdk) & test(test_version_info_concurrent_stress))
+  | (package(sinex-node-sdk) & binary(security))
   | (package(sinex-core) & test(perf_ulid_sequence_ordering_validation))
   | (package(sinex-core) & test(perf_concurrent_ulid_generation_ordering))
   | (package(sinex-core) & test(perf_database_ordering_consistency))
@@ -147,7 +147,7 @@ default-filter = '''
   | (package(sinex-schema) & test(stress_tests::))
   | (package(sinex-services) & test(test_analytics_large_dataset_performance))
   | (package(sinex-services) & test(test_service_performance_integration))
-  | (package(sinex-satellite-sdk) & test(test_version_info_performance))
+  | (package(sinex-node-sdk) & test(test_version_info_performance))
   | (package(sinex-core) & test(perf_ulid_sequence_ordering_validation))
   | (package(sinex-core) & test(perf_concurrent_ulid_generation_ordering))
   | (package(sinex-core) & test(perf_database_ordering_consistency))
@@ -162,8 +162,8 @@ retries = 0
 slow-timeout = { period = "900s", terminate-after = 1 }
 default-filter = '''
 (package(sinex-core) & test(stress_test_massive_concurrent_ulid_generation))
-  | (package(sinex-satellite-sdk) & test(stress_test_massive_concurrent_checkpoint_updates))
-  | (package(sinex-satellite-sdk) & test(test_version_info_concurrent_stress))
+  | (package(sinex-node-sdk) & test(stress_test_massive_concurrent_checkpoint_updates))
+  | (package(sinex-node-sdk) & test(test_version_info_concurrent_stress))
 '''
 
 [profile.external]
@@ -174,6 +174,6 @@ success-output = "never"
 retries = 0
 slow-timeout = { period = "900s", terminate-after = 1 }
 default-filter = '''
-(package(sinex-satellite-sdk) & binary(blob_manager_integration))
-  | (package(sinex-satellite-sdk) & binary(security))
+(package(sinex-node-sdk) & binary(blob_manager_integration))
+  | (package(sinex-node-sdk) & binary(security))
 '''
