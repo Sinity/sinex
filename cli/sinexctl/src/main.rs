@@ -1,7 +1,12 @@
-use clap::{Parser, Subcommand};
-use sinex_cli::client::{ClientConfig, GatewayClient, RetryConfig};
-use sinex_cli::commands::{AuditCommand, CoreCommands, DlqCommands, GatewayCommands, NodeCommands, OpsCommands, QueryCommand, ReplayCommands, TuiCommand};
+use clap::{CommandFactory, Parser, Subcommand};
+use sinex_cli::client::{ClientConfig, GatewayClient};
+use sinex_cli::commands::{
+    AuditCommand, CompletionsCommand, ConfigCommands, CoreCommands, DlqCommands, ErrorsCommand,
+    GatewayCommands, NodeCommands, OpsCommands, QueryCommand, RecentCommand, ReplayCommands,
+    StatusCommand, TuiCommand, WatchCommand,
+};
 use sinex_cli::model::OutputFormat;
+use sinex_cli::{default_rpc_url, Config};
 
 /// Sinex control CLI
 #[derive(Debug, Parser)]
@@ -98,6 +103,28 @@ enum Commands {
 
     /// Launch interactive TUI dashboard
     Tui(TuiCommand),
+
+    /// Configuration management
+    Config {
+        #[command(subcommand)]
+        cmd: ConfigCommands,
+    },
+
+    // ===== Shortcut Commands =====
+    /// Quick system status check
+    Status(StatusCommand),
+
+    /// Show recent events (last hour by default)
+    Recent(RecentCommand),
+
+    /// Show recent errors only
+    Errors(ErrorsCommand),
+
+    /// Watch events in real-time
+    Watch(WatchCommand),
+
+    /// Generate shell completions
+    Completions(CompletionsCommand),
 }
 
 #[tokio::main]
@@ -116,26 +143,52 @@ async fn main() -> color_eyre::Result<()> {
     // Parse CLI arguments
     let cli = Cli::parse();
 
-    // Create client config
-    let config = ClientConfig {
-        url: cli.rpc_url,
-        token: cli.token,
-        token_file: cli.token_file,
-        ca_cert: cli.ca_cert,
-        client_cert: cli.client_cert,
-        client_key: cli.client_key,
-        insecure: cli.insecure,
-        timeout: cli.timeout,
-        retry_config: RetryConfig::default(),
+    // Handle config commands early (they don't need a gateway client)
+    if let Commands::Config { cmd } = cli.command {
+        return cmd.execute().await;
+    }
+
+    // Handle completions command early (doesn't need a gateway client)
+    if let Commands::Completions(cmd) = cli.command {
+        let mut clap_cmd = Cli::command();
+        return cmd.execute(&mut clap_cmd);
+    }
+
+    // Load layered config (defaults < config file < env vars)
+    let mut config = Config::load().unwrap_or_else(|e| {
+        tracing::debug!("Failed to load config file: {}, using defaults", e);
+        Config::default()
+    });
+
+    // Override with explicit CLI args (only if they differ from defaults)
+    // This allows config file values to take effect unless explicitly overridden
+    let rpc_url_override = if cli.rpc_url != default_rpc_url() {
+        Some(cli.rpc_url.clone())
+    } else {
+        None
     };
 
-    // Create gateway client
-    let client = GatewayClient::new(config)?;
+    config.merge_cli_args(
+        rpc_url_override,
+        cli.token,
+        cli.token_file,
+        cli.ca_cert,
+        cli.client_cert,
+        cli.client_key,
+        cli.insecure,
+        Some(cli.timeout),
+        Some(cli.format),
+    );
 
-    // Execute command
+    // Convert to ClientConfig and create gateway client
+    let client_config = ClientConfig::from(&config);
+    let client = GatewayClient::new(client_config)?;
+
+    // Execute command (use merged config's format for commands that need it)
+    let format = config.default_format;
     match cli.command {
-        Commands::Gateway { cmd } => cmd.execute(&client, cli.format).await?,
-        Commands::Core { cmd } => cmd.execute(&client, cli.format).await?,
+        Commands::Gateway { cmd } => cmd.execute(&client, format).await?,
+        Commands::Core { cmd } => cmd.execute(&client, format).await?,
         Commands::Node { cmd } => cmd.execute(&client).await?,
         Commands::Replay { cmd } => cmd.execute(&client).await?,
         Commands::Dlq { cmd } => cmd.execute(&client).await?,
@@ -143,6 +196,12 @@ async fn main() -> color_eyre::Result<()> {
         Commands::Ops { cmd } => cmd.execute(&client).await?,
         Commands::Audit(cmd) => cmd.execute(&client).await?,
         Commands::Tui(cmd) => cmd.execute(&client).await?,
+        Commands::Config { .. } => unreachable!("Config command handled above"),
+        Commands::Status(cmd) => cmd.execute(&client).await?,
+        Commands::Recent(cmd) => cmd.execute(&client).await?,
+        Commands::Errors(cmd) => cmd.execute(&client).await?,
+        Commands::Watch(cmd) => cmd.execute(&client).await?,
+        Commands::Completions(_) => unreachable!("Completions command handled above"),
     }
 
     Ok(())

@@ -13,8 +13,8 @@ pub fn load_root_ca(ca_cert_path: &Path) -> Result<RootCertStore> {
     let ca_file = File::open(ca_cert_path)?;
     let mut reader = BufReader::new(ca_file);
 
-    let certs: Vec<CertificateDer> = rustls_pemfile::certs(&mut reader)
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let certs: Vec<CertificateDer> =
+        rustls_pemfile::certs(&mut reader).collect::<std::result::Result<Vec<_>, _>>()?;
 
     for cert in certs {
         root_store.add(cert)?;
@@ -31,8 +31,8 @@ pub fn load_client_cert(
     // Load certificate
     let cert_file = File::open(cert_path)?;
     let mut cert_reader = BufReader::new(cert_file);
-    let certs: Vec<CertificateDer> = rustls_pemfile::certs(&mut cert_reader)
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let certs: Vec<CertificateDer> =
+        rustls_pemfile::certs(&mut cert_reader).collect::<std::result::Result<Vec<_>, _>>()?;
 
     if certs.is_empty() {
         return Err(color_eyre::eyre::eyre!(

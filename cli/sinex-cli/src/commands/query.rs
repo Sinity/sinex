@@ -96,9 +96,9 @@ fn parse_time(s: &str) -> Result<DateTime<Utc>> {
 
     // Try date-only format (YYYY-MM-DD)
     if let Ok(naive_date) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-        let naive_datetime = naive_date.and_hms_opt(0, 0, 0).ok_or_else(|| {
-            color_eyre::eyre::eyre!("Invalid date: {}", s)
-        })?;
+        let naive_datetime = naive_date
+            .and_hms_opt(0, 0, 0)
+            .ok_or_else(|| color_eyre::eyre::eyre!("Invalid date: {}", s))?;
         return Ok(DateTime::from_naive_utc_and_offset(naive_datetime, Utc));
     }
 
@@ -216,6 +216,9 @@ mod tests {
     #[test]
     fn test_truncate_string() {
         assert_eq!(truncate_string("short", 10), "short");
-        assert_eq!(truncate_string("this is a very long string", 10), "this is...");
+        assert_eq!(
+            truncate_string("this is a very long string", 10),
+            "this is..."
+        );
     }
 }

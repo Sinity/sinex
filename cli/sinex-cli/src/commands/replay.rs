@@ -83,10 +83,7 @@ impl ReplayCommands {
                         println!("Replay Operation Started:");
                         println!("  Operation ID: {}", operation.id);
                         println!("  Status: {}", operation.status);
-                        println!(
-                            "  Total Events: {}",
-                            operation.total_events
-                        );
+                        println!("  Total Events: {}", operation.total_events);
                         println!(
                             "\nTo watch progress: sinexctl replay watch {}",
                             operation.id

@@ -61,6 +61,22 @@ impl Default for ClientConfig {
     }
 }
 
+impl From<&crate::config::Config> for ClientConfig {
+    fn from(config: &crate::config::Config) -> Self {
+        Self {
+            url: config.rpc_url.clone(),
+            token: config.token.clone(),
+            token_file: config.token_file.clone(),
+            ca_cert: config.ca_cert.clone(),
+            client_cert: config.client_cert.clone(),
+            client_key: config.client_key.clone(),
+            insecure: config.insecure,
+            timeout: config.timeout,
+            retry_config: RetryConfig::default(),
+        }
+    }
+}
+
 impl GatewayClient {
     /// Create a new gateway client
     pub fn new(config: ClientConfig) -> Result<Self> {
@@ -125,7 +141,9 @@ impl GatewayClient {
 
             match self.call_rpc_once(method, params.clone()).await {
                 Ok(result) => return Ok(result),
-                Err(e) if Self::is_retryable_error(&e) && attempt < self.retry_config.max_attempts => {
+                Err(e)
+                    if Self::is_retryable_error(&e) && attempt < self.retry_config.max_attempts =>
+                {
                     let backoff = self.retry_config.backoff_for_attempt(attempt);
                     tracing::debug!(
                         "RPC call to {} failed (attempt {}/{}), retrying after {:?}: {}",
@@ -250,19 +268,13 @@ impl GatewayClient {
     /// Ping the gateway
     pub async fn ping(&self) -> Result<String> {
         let result = self.call_rpc("ping", json!({})).await?;
-        Ok(result
-            .as_str()
-            .unwrap_or("pong")
-            .to_string())
+        Ok(result.as_str().unwrap_or("pong").to_string())
     }
 
     /// Get gateway version
     pub async fn version(&self) -> Result<String> {
         let result = self.call_rpc("version", json!({})).await?;
-        Ok(result
-            .as_str()
-            .unwrap_or("unknown")
-            .to_string())
+        Ok(result.as_str().unwrap_or("unknown").to_string())
     }
 
     // ==================== Core Commands ====================
@@ -334,12 +346,18 @@ impl GatewayClient {
     /// Submit a replay plan for execution
     pub async fn replay_submit(&self, plan_id: &str) -> Result<ReplayOperation> {
         // First approve
-        self.call_rpc("replay.approve_operation", json!({ "operation_id": plan_id }))
-            .await?;
+        self.call_rpc(
+            "replay.approve_operation",
+            json!({ "operation_id": plan_id }),
+        )
+        .await?;
 
         // Then execute
         let result = self
-            .call_rpc("replay.execute_operation", json!({ "operation_id": plan_id }))
+            .call_rpc(
+                "replay.execute_operation",
+                json!({ "operation_id": plan_id }),
+            )
             .await?;
         serde_json::from_value(result).map_err(Into::into)
     }

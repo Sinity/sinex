@@ -23,7 +23,11 @@ impl CoreCommands {
                         println!("  Node ID: {}", health.id);
                         println!(
                             "  Status: {}",
-                            if health.healthy { "✓ Healthy" } else { "✗ Unhealthy" }
+                            if health.healthy {
+                                "✓ Healthy"
+                            } else {
+                                "✗ Unhealthy"
+                            }
                         );
                         if let Some(details) = &health.details {
                             println!("  Details: {}", details);

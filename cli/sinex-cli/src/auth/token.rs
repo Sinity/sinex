@@ -29,7 +29,9 @@ pub fn load_token(explicit_token: Option<&str>, token_file: Option<&Path>) -> Re
         if path.exists() {
             return fs::read_to_string(path)
                 .map(|s| s.trim().to_string())
-                .map_err(|e| color_eyre::eyre::eyre!("Failed to read token from {:?}: {}", path, e));
+                .map_err(|e| {
+                    color_eyre::eyre::eyre!("Failed to read token from {:?}: {}", path, e)
+                });
         }
     }
 

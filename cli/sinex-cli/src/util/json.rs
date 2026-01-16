@@ -2,9 +2,7 @@ use serde_json::Value;
 
 /// Get a string value from a JSON object, returning "N/A" if not found or not a string
 pub fn get_str<'a>(obj: &'a Value, key: &str) -> &'a str {
-    obj.get(key)
-        .and_then(|v| v.as_str())
-        .unwrap_or("N/A")
+    obj.get(key).and_then(|v| v.as_str()).unwrap_or("N/A")
 }
 
 /// Get an owned string value from a JSON object

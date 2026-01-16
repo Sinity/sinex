@@ -38,8 +38,7 @@ pub fn validate_offset(offset: i32, field_name: &str) -> Result<()> {
 
 /// Validate a URL string
 pub fn validate_url(url: &str, field_name: &str) -> Result<()> {
-    Url::parse(url)
-        .map_err(|e| eyre!("{} is not a valid URL: {}", field_name, e))?;
+    Url::parse(url).map_err(|e| eyre!("{} is not a valid URL: {}", field_name, e))?;
     Ok(())
 }
 
@@ -66,10 +65,7 @@ pub fn validate_subject(subject: &str, field_name: &str) -> Result<()> {
         return Err(eyre!("{} cannot be empty", field_name));
     }
     if subject.len() > 256 {
-        return Err(eyre!(
-            "{} is too long (max 256 chars)",
-            field_name
-        ));
+        return Err(eyre!("{} is too long (max 256 chars)", field_name));
     }
     // Check for invalid characters
     if subject.contains(|c: char| c.is_whitespace()) {

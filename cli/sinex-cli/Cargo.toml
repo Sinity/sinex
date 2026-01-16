@@ -8,6 +8,7 @@ authors.workspace = true
 [dependencies]
 # CLI framework
 clap = { workspace = true, features = ["derive", "env"] }
+clap_complete = "4"
 
 # Async runtime
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
@@ -38,6 +39,7 @@ sinex-schema = { path = "../../crate/lib/sinex-schema", features = ["arbitrary"]
 # Configuration management
 figment = { version = "0.10", features = ["toml", "env"] }
 directories = "5.0"
+dirs = "5.0"
 
 # TLS
 rustls = "0.22"

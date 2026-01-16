@@ -14,7 +14,7 @@ pub mod util;
 pub mod validation;
 
 pub use client::GatewayClient;
-pub use config::Config;
+pub use config::{default_rpc_url, Config};
 pub use model::{NodeRole, OutputFormat};
 
 /// Result type for CLI operations
