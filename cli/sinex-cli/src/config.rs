@@ -1,0 +1,224 @@
+use directories::ProjectDirs;
+use figment::{
+    providers::{Env, Format, Toml},
+    Figment,
+};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::PathBuf;
+
+use crate::model::OutputFormat;
+use crate::Result;
+
+/// CLI configuration with layered sources
+/// Priority: CLI args > Environment variables > Config file > Defaults
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Config {
+    /// Gateway RPC URL
+    #[serde(default = "default_rpc_url")]
+    pub rpc_url: String,
+
+    /// Authentication token
+    pub token: Option<String>,
+
+    /// Token file path
+    pub token_file: Option<String>,
+
+    /// Root CA certificate path
+    pub ca_cert: Option<String>,
+
+    /// Client certificate path (for mTLS)
+    pub client_cert: Option<String>,
+
+    /// Client private key path (for mTLS)
+    pub client_key: Option<String>,
+
+    /// Accept invalid certificates (dev only!)
+    #[serde(default)]
+    pub insecure: bool,
+
+    /// Request timeout in seconds
+    #[serde(default = "default_timeout")]
+    pub timeout: u64,
+
+    /// Default output format
+    #[serde(default)]
+    pub default_format: OutputFormat,
+
+    /// User-defined command aliases
+    #[serde(default)]
+    pub aliases: HashMap<String, Vec<String>>,
+
+    /// UI theme settings
+    #[serde(default)]
+    pub theme: ThemeConfig,
+
+    /// Editor for interactive mode
+    #[serde(default = "default_editor")]
+    pub editor: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThemeConfig {
+    /// Table style: "rounded", "ascii", "modern", "minimal"
+    #[serde(default = "default_table_style")]
+    pub table_style: String,
+
+    /// Success color
+    #[serde(default = "default_success_color")]
+    pub success_color: String,
+
+    /// Error color
+    #[serde(default = "default_error_color")]
+    pub error_color: String,
+
+    /// Warning color
+    #[serde(default = "default_warning_color")]
+    pub warning_color: String,
+}
+
+impl Default for ThemeConfig {
+    fn default() -> Self {
+        Self {
+            table_style: default_table_style(),
+            success_color: default_success_color(),
+            error_color: default_error_color(),
+            warning_color: default_warning_color(),
+        }
+    }
+}
+
+fn default_rpc_url() -> String {
+    "https://127.0.0.1:9999".to_string()
+}
+
+fn default_timeout() -> u64 {
+    30
+}
+
+fn default_editor() -> String {
+    std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string())
+}
+
+fn default_table_style() -> String {
+    "rounded".to_string()
+}
+
+fn default_success_color() -> String {
+    "green".to_string()
+}
+
+fn default_error_color() -> String {
+    "red".to_string()
+}
+
+fn default_warning_color() -> String {
+    "yellow".to_string()
+}
+
+impl Config {
+    /// Load configuration from multiple sources
+    /// Priority: defaults < config file < env vars < CLI args
+    pub fn load() -> Result<Self> {
+        let config_path = Self::config_file_path()?;
+
+        let figment = Figment::new()
+            // Layer on config file (if it exists) - figment will use struct defaults for missing fields
+            .merge(Toml::file(config_path).nested())
+            // Layer on environment variables with SINEX_ prefix
+            .merge(Env::prefixed("SINEX_").split("_"));
+
+        let config: Config = figment.extract()?;
+        Ok(config)
+    }
+
+    /// Get the path to the config file
+    pub fn config_file_path() -> Result<PathBuf> {
+        let project_dirs = ProjectDirs::from("com", "sinex", "sinexctl")
+            .ok_or_else(|| color_eyre::eyre::eyre!("Could not determine config directory"))?;
+
+        let config_dir = project_dirs.config_dir();
+        Ok(config_dir.join("config.toml"))
+    }
+
+    /// Create a default config file if it doesn't exist
+    pub fn init_config_file() -> Result<PathBuf> {
+        let config_path = Self::config_file_path()?;
+
+        if config_path.exists() {
+            return Ok(config_path);
+        }
+
+        // Create parent directories
+        if let Some(parent) = config_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        // Write default config
+        let default_config = include_str!("../config.example.toml");
+        std::fs::write(&config_path, default_config)?;
+
+        Ok(config_path)
+    }
+
+    /// Merge CLI arguments into config
+    pub fn merge_cli_args(
+        &mut self,
+        rpc_url: Option<String>,
+        token: Option<String>,
+        token_file: Option<String>,
+        ca_cert: Option<String>,
+        client_cert: Option<String>,
+        client_key: Option<String>,
+        insecure: bool,
+        timeout: Option<u64>,
+        format: Option<OutputFormat>,
+    ) {
+        if let Some(url) = rpc_url {
+            self.rpc_url = url;
+        }
+        if let Some(t) = token {
+            self.token = Some(t);
+        }
+        if let Some(tf) = token_file {
+            self.token_file = Some(tf);
+        }
+        if let Some(ca) = ca_cert {
+            self.ca_cert = Some(ca);
+        }
+        if let Some(cert) = client_cert {
+            self.client_cert = Some(cert);
+        }
+        if let Some(key) = client_key {
+            self.client_key = Some(key);
+        }
+        if insecure {
+            self.insecure = true;
+        }
+        if let Some(t) = timeout {
+            self.timeout = t;
+        }
+        if let Some(f) = format {
+            self.default_format = f;
+        }
+    }
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            rpc_url: default_rpc_url(),
+            token: None,
+            token_file: None,
+            ca_cert: None,
+            client_cert: None,
+            client_key: None,
+            insecure: false,
+            timeout: default_timeout(),
+            default_format: OutputFormat::default(),
+            aliases: HashMap::new(),
+            theme: ThemeConfig::default(),
+            editor: default_editor(),
+        }
+    }
+}

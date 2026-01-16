@@ -32,6 +32,13 @@ console = "0.15"
 # Time
 chrono = { workspace = true, features = ["serde"] }
 
+# ULID support (for event IDs)
+sinex-schema = { path = "../../crate/lib/sinex-schema", features = ["arbitrary"] }
+
+# Configuration management
+figment = { version = "0.10", features = ["toml", "env"] }
+directories = "5.0"
+
 # TLS
 rustls = "0.22"
 rustls-pemfile = "2.1"
@@ -39,6 +46,9 @@ rustls-native-certs = "0.8"
 
 # Logging
 tracing = { workspace = true }
+
+# Interactive prompts
+inquire = "0.7"
 
 [dev-dependencies]
 sinex-test-utils = { path = "../../crate/lib/sinex-test-utils" }

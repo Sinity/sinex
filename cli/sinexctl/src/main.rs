@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 use sinex_cli::client::{ClientConfig, GatewayClient};
-use sinex_cli::commands::{CoreCommands, DlqCommands, GatewayCommands, NodeCommands, ReplayCommands};
+use sinex_cli::commands::{AuditCommand, CoreCommands, DlqCommands, GatewayCommands, NodeCommands, OpsCommands, QueryCommand, ReplayCommands};
 use sinex_cli::model::OutputFormat;
 
 /// Sinex control CLI
@@ -83,6 +83,18 @@ enum Commands {
         #[command(subcommand)]
         cmd: DlqCommands,
     },
+
+    /// Query/search events
+    Query(QueryCommand),
+
+    /// Operations log commands
+    Ops {
+        #[command(subcommand)]
+        cmd: OpsCommands,
+    },
+
+    /// Get audit trail for an operation
+    Audit(AuditCommand),
 }
 
 #[tokio::main]
@@ -123,6 +135,9 @@ async fn main() -> color_eyre::Result<()> {
         Commands::Node { cmd } => cmd.execute(&client).await?,
         Commands::Replay { cmd } => cmd.execute(&client).await?,
         Commands::Dlq { cmd } => cmd.execute(&client).await?,
+        Commands::Query(cmd) => cmd.execute(&client).await?,
+        Commands::Ops { cmd } => cmd.execute(&client).await?,
+        Commands::Audit(cmd) => cmd.execute(&client).await?,
     }
 
     Ok(())

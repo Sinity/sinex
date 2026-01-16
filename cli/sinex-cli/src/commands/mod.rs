@@ -1,11 +1,17 @@
+pub mod audit;
 pub mod core;
 pub mod dlq;
 pub mod gateway;
 pub mod node;
+pub mod ops;
+pub mod query;
 pub mod replay;
 
+pub use audit::AuditCommand;
 pub use core::CoreCommands;
 pub use dlq::DlqCommands;
 pub use gateway::GatewayCommands;
 pub use node::NodeCommands;
+pub use ops::OpsCommands;
+pub use query::QueryCommand;
 pub use replay::ReplayCommands;

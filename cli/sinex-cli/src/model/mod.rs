@@ -1,11 +1,13 @@
 pub mod nodes;
 pub mod replay;
+pub mod search;
 
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 
 /// Output format for CLI commands
-#[derive(Debug, Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, ValueEnum, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum OutputFormat {
     /// Human-readable table (default)
     Table,

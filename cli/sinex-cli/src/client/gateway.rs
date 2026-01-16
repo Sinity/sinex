@@ -6,8 +6,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::auth::{load_client_cert, load_root_ca, load_token};
+use crate::client::retry::RetryConfig;
 use crate::model::nodes::{NodeHealth, NodeInfo};
 use crate::model::replay::{DlqInfo, DlqMessage, ReplayOperation, ReplayPlan};
+use crate::model::search::{SearchQuery, SearchResult};
 use crate::model::NodeRole;
 use crate::Result;
 
@@ -16,6 +18,7 @@ pub struct GatewayClient {
     client: reqwest::Client,
     base_url: String,
     token: String,
+    retry_config: RetryConfig,
 }
 
 /// Client configuration
@@ -36,6 +39,8 @@ pub struct ClientConfig {
     pub insecure: bool,
     /// Request timeout in seconds
     pub timeout: u64,
+    /// Retry configuration for transient failures
+    pub retry_config: RetryConfig,
 }
 
 impl Default for ClientConfig {
@@ -50,6 +55,7 @@ impl Default for ClientConfig {
             client_key: None,
             insecure: false,
             timeout: 30,
+            retry_config: RetryConfig::default(),
         }
     }
 }
@@ -105,11 +111,38 @@ impl GatewayClient {
             client,
             base_url: config.url,
             token,
+            retry_config: config.retry_config,
         })
     }
 
-    /// Call a JSON-RPC method
+    /// Call a JSON-RPC method with retry logic
     async fn call_rpc(&self, method: &str, params: Value) -> Result<Value> {
+        let mut attempt = 0;
+
+        loop {
+            attempt += 1;
+
+            match self.call_rpc_once(method, params.clone()).await {
+                Ok(result) => return Ok(result),
+                Err(e) if Self::is_retryable_error(&e) && attempt < self.retry_config.max_attempts => {
+                    let backoff = self.retry_config.backoff_for_attempt(attempt);
+                    tracing::debug!(
+                        "RPC call to {} failed (attempt {}/{}), retrying after {:?}: {}",
+                        method,
+                        attempt,
+                        self.retry_config.max_attempts,
+                        backoff,
+                        e
+                    );
+                    tokio::time::sleep(backoff).await;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    /// Perform a single RPC call attempt (without retry)
+    async fn call_rpc_once(&self, method: &str, params: Value) -> Result<Value> {
         #[derive(Serialize)]
         struct JsonRpcRequest<'a> {
             jsonrpc: &'a str,
@@ -181,6 +214,36 @@ impl GatewayClient {
             .ok_or_else(|| color_eyre::eyre::eyre!("RPC response missing result field"))
     }
 
+    /// Determine if an error is retryable (transient network/server issues)
+    fn is_retryable_error(err: &color_eyre::Report) -> bool {
+        let err_str = err.to_string().to_lowercase();
+
+        // Retry connection errors
+        if err_str.contains("connection refused")
+            || err_str.contains("connection reset")
+            || err_str.contains("broken pipe")
+            || err_str.contains("network unreachable")
+            || err_str.contains("host unreachable")
+            || err_str.contains("timeout")
+            || err_str.contains("timed out")
+        {
+            return true;
+        }
+
+        // Retry 5xx server errors (but not 4xx client errors)
+        if err_str.contains("http 5") {
+            return true;
+        }
+
+        // Retry rate limit errors
+        if err_str.contains("http 429") || err_str.contains("rate limit") {
+            return true;
+        }
+
+        // Don't retry authentication errors, not found, bad request, etc.
+        false
+    }
+
     // ==================== Gateway Commands ====================
 
     /// Ping the gateway
@@ -247,6 +310,16 @@ impl GatewayClient {
         Ok(())
     }
 
+    /// Set node horizon (cutoff time for event processing)
+    pub async fn set_node_horizon(&self, node_id: &str, horizon: &str) -> Result<()> {
+        self.call_rpc(
+            "nodes.set_horizon",
+            json!({ "node_id": node_id, "horizon": horizon }),
+        )
+        .await?;
+        Ok(())
+    }
+
     // ==================== Replay Commands ====================
 
     /// Create a replay plan
@@ -303,5 +376,94 @@ impl GatewayClient {
         });
         let result = self.call_rpc("dlq.peek", params).await?;
         serde_json::from_value(result).map_err(Into::into)
+    }
+
+    /// Requeue messages from DLQ
+    pub async fn dlq_requeue(&self, event_id: Option<String>, all: bool) -> Result<()> {
+        let params = json!({
+            "event_id": event_id,
+            "all": all
+        });
+        self.call_rpc("dlq.requeue", params).await?;
+        Ok(())
+    }
+
+    /// Purge all messages from DLQ
+    pub async fn dlq_purge(&self, confirm: bool) -> Result<()> {
+        let params = json!({ "confirm": confirm });
+        self.call_rpc("dlq.purge", params).await?;
+        Ok(())
+    }
+
+    // ==================== Search Commands ====================
+
+    /// Search events
+    pub async fn search_events(&self, query: SearchQuery) -> Result<Vec<SearchResult>> {
+        let result = self
+            .call_rpc("search.search_events", serde_json::to_value(&query)?)
+            .await?;
+        serde_json::from_value(result).map_err(Into::into)
+    }
+
+    // ==================== Operations Log Commands ====================
+
+    /// Start a new operation
+    pub async fn ops_start(
+        &self,
+        operation_type: &str,
+        operator: &str,
+        scope: Option<Value>,
+    ) -> Result<String> {
+        let params = json!({
+            "operation_type": operation_type,
+            "operator": operator,
+            "scope": scope
+        });
+        let result = self.call_rpc("ops.start", params).await?;
+        Ok(result
+            .get("operation_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string())
+    }
+
+    /// List operations
+    pub async fn ops_list(
+        &self,
+        operation_type: Option<String>,
+        status: Option<String>,
+        limit: Option<i64>,
+    ) -> Result<Vec<Value>> {
+        let params = json!({
+            "operation_type": operation_type,
+            "status": status,
+            "limit": limit.unwrap_or(50)
+        });
+        let result = self.call_rpc("ops.list", params).await?;
+        serde_json::from_value(result).map_err(Into::into)
+    }
+
+    /// Get operation details
+    pub async fn ops_get(&self, operation_id: &str) -> Result<Value> {
+        let params = json!({ "operation_id": operation_id });
+        self.call_rpc("ops.get", params).await
+    }
+
+    /// Cancel an operation
+    pub async fn ops_cancel(&self, operation_id: &str, reason: Option<String>) -> Result<()> {
+        let params = json!({
+            "operation_id": operation_id,
+            "reason": reason
+        });
+        self.call_rpc("ops.cancel", params).await?;
+        Ok(())
+    }
+
+    // ==================== Audit Commands ====================
+
+    /// Get audit trail for an operation
+    pub async fn audit_get(&self, operation_id: &str) -> Result<Value> {
+        let params = json!({ "operation_id": operation_id });
+        self.call_rpc("audit.get", params).await
     }
 }

@@ -28,6 +28,27 @@ pub enum NodeCommands {
         #[arg(long, short = 'f', value_enum, default_value = "table")]
         format: OutputFormat,
     },
+
+    /// Drain a node for maintenance
+    Drain {
+        /// Node ID or name
+        node: String,
+    },
+
+    /// Resume a drained node
+    Resume {
+        /// Node ID or name
+        node: String,
+    },
+
+    /// Set node horizon (cutoff time for event processing)
+    SetHorizon {
+        /// Node ID or name
+        node: String,
+
+        /// Horizon timestamp (RFC3339 format or relative like "1h")
+        horizon: String,
+    },
 }
 
 impl NodeCommands {
@@ -74,6 +95,18 @@ impl NodeCommands {
                         println!("{}", format_yaml(&node_info)?);
                     }
                 }
+            }
+            Self::Drain { node } => {
+                client.drain_node(node).await?;
+                println!("Node {} drained successfully", node);
+            }
+            Self::Resume { node } => {
+                client.resume_node(node).await?;
+                println!("Node {} resumed successfully", node);
+            }
+            Self::SetHorizon { node, horizon } => {
+                client.set_node_horizon(node, horizon).await?;
+                println!("Node {} horizon set to {}", node, horizon);
             }
         }
         Ok(())

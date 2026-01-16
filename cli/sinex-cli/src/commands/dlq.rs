@@ -29,6 +29,24 @@ pub enum DlqCommands {
         #[arg(long, short = 'f', value_enum, default_value = "table")]
         format: OutputFormat,
     },
+
+    /// Requeue messages from DLQ back to processing
+    Requeue {
+        /// Specific event ID to requeue (optional)
+        #[arg(long)]
+        event_id: Option<String>,
+
+        /// Requeue all messages
+        #[arg(long)]
+        all: bool,
+    },
+
+    /// Purge all messages from DLQ
+    Purge {
+        /// Confirm purge operation
+        #[arg(long)]
+        confirm: bool,
+    },
 }
 
 impl DlqCommands {
@@ -90,6 +108,55 @@ impl DlqCommands {
                         println!("{}", format_yaml(&messages)?);
                     }
                 }
+            }
+            Self::Requeue { event_id, all } => {
+                if !all && event_id.is_none() {
+                    return Err(color_eyre::eyre::eyre!(
+                        "Must specify either --event-id or --all"
+                    ));
+                }
+                client.dlq_requeue(event_id.clone(), *all).await?;
+                if *all {
+                    println!("All messages requeued successfully");
+                } else if let Some(id) = event_id {
+                    println!("Event {} requeued successfully", id);
+                }
+            }
+            Self::Purge { confirm } => {
+                // First, check how many messages would be deleted
+                let queues = client.dlq_list().await?;
+                let message_count: u64 = queues.iter().map(|q| q.message_count).sum();
+
+                if message_count == 0 {
+                    println!("DLQ is already empty");
+                    return Ok(());
+                }
+
+                // Require confirmation flag
+                if !confirm {
+                    eprintln!("Purge would delete {} messages from DLQ", message_count);
+                    eprintln!();
+                    eprintln!("Use --confirm to proceed with purge");
+                    std::process::exit(1);
+                }
+
+                // Interactive confirmation for safety
+                let prompt_msg = format!(
+                    "Delete {} messages from DLQ? This cannot be undone.",
+                    message_count
+                );
+                let proceed = inquire::Confirm::new(&prompt_msg)
+                    .with_default(false)
+                    .prompt()?;
+
+                if !proceed {
+                    println!("Cancelled");
+                    return Ok(());
+                }
+
+                // Proceed with purge
+                client.dlq_purge(true).await?;
+                println!("Purged {} messages from DLQ", message_count);
             }
         }
         Ok(())
