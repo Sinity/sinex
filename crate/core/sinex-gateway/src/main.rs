@@ -1,13 +1,11 @@
 //! Sinex Gateway - Unified API gateway for CLI and browser extension
 //!
 //! This binary provides two modes:
-//! - RPC Server: JSON-RPC over Unix socket for CLI
+//! - RPC Server: JSON-RPC over TLS for CLI
 //! - Native Messaging: stdin/stdout protocol for browser extensions
 
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::Result;
-use sinex_core::SanitizedPath;
-use std::str::FromStr;
 use tracing::info;
 
 #[cfg(not(target_env = "msvc"))]
@@ -24,16 +22,8 @@ mod replay_state_machine;
 mod rpc_server;
 mod service_container;
 
-use crate::rpc_server::DEFAULT_SOCKET_PATH;
+use crate::rpc_server::DEFAULT_TCP_LISTEN;
 use service_container::ServiceContainer;
-
-/// Validate and parse socket path for RPC server
-pub fn validate_socket_path(s: &str) -> Result<SanitizedPath, String> {
-    if s.is_empty() {
-        return Err("Socket path cannot be empty".to_string());
-    }
-    SanitizedPath::from_str(s)
-}
 
 #[derive(Parser)]
 #[command(name = "sinex-gateway")]
@@ -47,13 +37,9 @@ struct Cli {
 enum Commands {
     /// Start RPC server for CLI communication
     RpcServer {
-        /// Socket path (default; set SINEX_GATEWAY_HOST to bind TCP)
-        #[arg(long, default_value = DEFAULT_SOCKET_PATH, value_parser = validate_socket_path)]
-        socket: SanitizedPath,
-
-        /// Optional TCP listen address in host:port form (or via SINEX_GATEWAY_TCP_LISTEN)
-        #[arg(long, env = "SINEX_GATEWAY_TCP_LISTEN")]
-        tcp_listen: Option<String>,
+        /// TCP listen address in host:port form (or via SINEX_GATEWAY_TCP_LISTEN)
+        #[arg(long, env = "SINEX_GATEWAY_TCP_LISTEN", default_value = DEFAULT_TCP_LISTEN)]
+        tcp_listen: String,
 
         /// Database URL
         #[arg(long, env = "DATABASE_URL")]
@@ -88,11 +74,10 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Commands::RpcServer {
-            socket,
             tcp_listen,
             database_url,
         } => {
-            info!("Starting RPC server on {:?}", socket);
+            info!("Starting RPC server on {}", tcp_listen);
 
             // Initialize service container
             let services = ServiceContainer::new(database_url).await.map_err(|e| {
@@ -100,7 +85,7 @@ async fn main() -> Result<()> {
             })?;
 
             // Start RPC server
-            rpc_server::run(socket, tcp_listen.as_deref(), services)
+            rpc_server::run(Some(tcp_listen.as_str()), services)
                 .await
                 .map_err(|e| color_eyre::eyre::eyre!("RPC server failed").wrap_err(e))?;
         }

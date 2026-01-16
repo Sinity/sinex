@@ -1,4 +1,3 @@
-use sinex_test_utils::prelude::DbPoolExt;
 use sinex_test_utils::{sinex_test, TestContext};
 
 #[sinex_test]

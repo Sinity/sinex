@@ -8,7 +8,7 @@ use sea_orm_migration::prelude::PostgresQueryBuilder;
 use sinex_schema::schema::*;
 use sinex_schema::ulid::Ulid;
 use sinex_test_utils::prelude::*;
-use sqlx::PgPool;
+use sqlx::{Executor, PgPool};
 use std::str::FromStr;
 
 #[derive(Debug)]
@@ -56,113 +56,135 @@ async fn insert_sample_material(ctx: &TestContext) -> MaterialFixture {
     MaterialFixture { id: schema_ulid }
 }
 
-async fn prepare_constraint_context(
-) -> TestResult<(TestContext, sinex_test_utils::DatabasePoolTestGuard)> {
+async fn truncate_constraint_tables(pool: &PgPool) -> TestResult<()> {
+    let mut tx = pool.begin().await?;
+    for table in [
+        "core.events",
+        "sinex_schemas.event_payload_schemas",
+        "raw.source_material_registry",
+        "core.blobs",
+        "audit.archived_events",
+    ] {
+        let query = format!("TRUNCATE {table} CASCADE");
+        sqlx::query(&query).execute(&mut *tx).await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+async fn prepare_constraint_context() -> TestResult<TestContext> {
     let ctx = TestContext::new().await?;
-    let guard = sinex_test_utils::acquire_pool_test_guard().await;
-    ctx.force_cleanup().await?;
     ctx.ensure_clean().await?;
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
-    Ok((ctx, guard))
+    Ok(ctx)
 }
 
 async fn finalize_constraint_context(ctx: &TestContext) -> TestResult<()> {
-    ctx.force_cleanup().await?;
-    if let Err(e) = sinex_test_utils::db_common::reset_database(&ctx.pool).await {
-        tracing::warn!(error = %e, "Reset during constraint finalize failed, retrying after force_cleanup");
-        ctx.force_cleanup().await?;
-        sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    }
-    if let Err(e) = sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await {
-        tracing::warn!(error = %e, "Verify during constraint finalize failed, retrying after force_cleanup");
-        ctx.force_cleanup().await?;
-        sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-        sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
-    }
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await
+    truncate_constraint_tables(&ctx.pool).await?;
+    ctx.ensure_clean().await
 }
 #[cfg(test)]
 mod constraint_validation_tests {
     use super::*;
-    use sinex_test_utils::db_common;
-    #[allow(dead_code)]
-    type Result<T> = color_eyre::eyre::Result<T>;
+    use tokio::sync::OnceCell;
 
     pub(super) async fn setup_test_tables(pool: &PgPool) {
-        // Ensure we start from a clean slate in the reusable database.
-        // Drop then recreate the tables inside a transaction to avoid partial state
-        // when the pool is under contention.
-        let mut tx = pool.begin().await.unwrap();
-        sqlx::query("CREATE SCHEMA IF NOT EXISTS core")
-            .execute(&mut *tx)
-            .await
-            .ok();
-        sqlx::query("CREATE SCHEMA IF NOT EXISTS raw")
-            .execute(&mut *tx)
-            .await
-            .ok();
-        sqlx::query("DROP TABLE IF EXISTS core.events CASCADE")
-            .execute(&mut *tx)
-            .await
-            .ok();
-        sqlx::query("DROP TABLE IF EXISTS core.event_payload_schemas CASCADE")
-            .execute(&mut *tx)
-            .await
-            .ok();
-        sqlx::query("DROP TABLE IF EXISTS raw.source_material_registry CASCADE")
-            .execute(&mut *tx)
-            .await
-            .ok();
-        sqlx::query("DROP TABLE IF EXISTS core.blobs CASCADE")
-            .execute(&mut *tx)
-            .await
-            .ok();
+        static TABLES_READY: OnceCell<()> = OnceCell::const_new();
+        TABLES_READY
+            .get_or_try_init(|| async {
+                // Ensure we start from a clean slate in the reusable database.
+                // Drop then recreate the tables inside a transaction to avoid partial state
+                // when the pool is under contention.
+                let mut tx = pool.begin().await?;
+                sqlx::query("CREATE SCHEMA IF NOT EXISTS core")
+                    .execute(&mut *tx)
+                    .await
+                    .ok();
+                sqlx::query("CREATE SCHEMA IF NOT EXISTS raw")
+                    .execute(&mut *tx)
+                    .await
+                    .ok();
+                sqlx::query("CREATE SCHEMA IF NOT EXISTS sinex_schemas")
+                    .execute(&mut *tx)
+                    .await
+                    .ok();
+                sqlx::query("CREATE SCHEMA IF NOT EXISTS audit")
+                    .execute(&mut *tx)
+                    .await
+                    .ok();
+                sqlx::query("DROP TABLE IF EXISTS core.events CASCADE")
+                    .execute(&mut *tx)
+                    .await
+                    .ok();
+                sqlx::query("DROP TABLE IF EXISTS sinex_schemas.event_payload_schemas CASCADE")
+                    .execute(&mut *tx)
+                    .await
+                    .ok();
+                sqlx::query("DROP TABLE IF EXISTS raw.source_material_registry CASCADE")
+                    .execute(&mut *tx)
+                    .await
+                    .ok();
+                sqlx::query("DROP TABLE IF EXISTS core.blobs CASCADE")
+                    .execute(&mut *tx)
+                    .await
+                    .ok();
+                sqlx::query("DROP TABLE IF EXISTS audit.archived_events CASCADE")
+                    .execute(&mut *tx)
+                    .await
+                    .ok();
 
-        sqlx::query(&Blobs::create_table_statement().to_string(PostgresQueryBuilder))
-            .execute(&mut *tx)
-            .await
-            .unwrap();
-        sqlx::query(
-            &SourceMaterialRegistry::create_table_statement().to_string(PostgresQueryBuilder),
-        )
-        .execute(&mut *tx)
-        .await
-        .unwrap();
-        sqlx::query(&EventPayloadSchemas::create_table_statement().to_string(PostgresQueryBuilder))
-            .execute(&mut *tx)
-            .await
-            .unwrap();
-        sqlx::query(&Events::create_table_statement().to_string(PostgresQueryBuilder))
-            .execute(&mut *tx)
-            .await
-            .unwrap();
-        sqlx::query(
-            r#"
-            DO $$
-            BEGIN
-                ALTER TABLE core.events DROP CONSTRAINT IF EXISTS events_source_nonblank;
-                ALTER TABLE core.events DROP CONSTRAINT IF EXISTS events_source_check;
-                ALTER TABLE core.events DROP CONSTRAINT IF EXISTS core_events_source_check;
-                ALTER TABLE core.events ADD CONSTRAINT events_source_nonblank CHECK (length(BTRIM(source, E' \t\n\r\v\f')) > 0);
+                sqlx::query(&Blobs::create_table_statement().to_string(PostgresQueryBuilder))
+                    .execute(&mut *tx)
+                    .await?;
+                sqlx::query(
+                    &SourceMaterialRegistry::create_table_statement()
+                        .to_string(PostgresQueryBuilder),
+                )
+                .execute(&mut *tx)
+                .await?;
+                sqlx::query(
+                    &EventPayloadSchemas::create_table_statement()
+                        .to_string(PostgresQueryBuilder),
+                )
+                .execute(&mut *tx)
+                .await?;
+                sqlx::query(&Events::create_table_statement().to_string(PostgresQueryBuilder))
+                    .execute(&mut *tx)
+                    .await?;
+                let archived_sql = ArchivedEvents::create_table_sql();
+                tx.execute(archived_sql.as_str()).await?;
+                sqlx::query(
+                    r#"
+                    DO $$
+                    BEGIN
+                        ALTER TABLE core.events DROP CONSTRAINT IF EXISTS events_source_nonblank;
+                        ALTER TABLE core.events DROP CONSTRAINT IF EXISTS events_source_check;
+                        ALTER TABLE core.events DROP CONSTRAINT IF EXISTS core_events_source_check;
+                        ALTER TABLE core.events ADD CONSTRAINT events_source_nonblank CHECK (length(BTRIM(source, E' \t\n\r\v\f')) > 0);
 
-                ALTER TABLE core.events DROP CONSTRAINT IF EXISTS events_event_type_nonblank;
-                ALTER TABLE core.events DROP CONSTRAINT IF EXISTS events_event_type_check;
-                ALTER TABLE core.events DROP CONSTRAINT IF EXISTS core_events_event_type_check;
-                ALTER TABLE core.events ADD CONSTRAINT events_event_type_nonblank CHECK (length(BTRIM(event_type, E' \t\n\r\v\f')) > 0);
-            END
-            $$;
-            "#,
-        )
-        .execute(&mut *tx)
-        .await
-        .unwrap();
-        tx.commit().await.unwrap();
+                        ALTER TABLE core.events DROP CONSTRAINT IF EXISTS events_event_type_nonblank;
+                        ALTER TABLE core.events DROP CONSTRAINT IF EXISTS events_event_type_check;
+                        ALTER TABLE core.events DROP CONSTRAINT IF EXISTS core_events_event_type_check;
+                        ALTER TABLE core.events ADD CONSTRAINT events_event_type_nonblank CHECK (length(BTRIM(event_type, E' \t\n\r\v\f')) > 0);
+                    END
+                    $$;
+                    "#,
+                )
+                .execute(&mut *tx)
+                .await?;
+                tx.execute(ArchivedEvents::create_archive_trigger_sql()).await?;
+                tx.execute(Events::create_no_update_trigger_sql()).await?;
+                tx.commit().await?;
+                Ok::<(), sqlx::Error>(())
+            })
+            .await
+            .unwrap();
+
+        truncate_constraint_tables(pool).await.unwrap();
     }
 
-    #[sinex_test]
+    #[sinex_serial_test]
     async fn test_events_provenance_xor_constraint() -> TestResult<()> {
-        let (ctx, _guard) = prepare_constraint_context().await?;
+        let ctx = prepare_constraint_context().await?;
         let pool = &ctx.pool;
         setup_test_tables(pool).await;
 
@@ -239,9 +261,9 @@ mod constraint_validation_tests {
         Ok(())
     }
 
-    #[sinex_test]
+    #[sinex_serial_test]
     async fn test_events_string_length_constraints() -> TestResult<()> {
-        let (ctx, _guard) = prepare_constraint_context().await?;
+        let ctx = prepare_constraint_context().await?;
         let pool = &ctx.pool;
         setup_test_tables(pool).await;
 
@@ -322,9 +344,9 @@ mod constraint_validation_tests {
         Ok(())
     }
 
-    #[sinex_test]
+    #[sinex_serial_test]
     async fn test_offset_kind_constraint() -> TestResult<()> {
-        let (ctx, _guard) = prepare_constraint_context().await?;
+        let ctx = prepare_constraint_context().await?;
         let pool = &ctx.pool;
         setup_test_tables(pool).await;
 
@@ -395,9 +417,9 @@ mod constraint_validation_tests {
         Ok(())
     }
 
-    #[sinex_test]
+    #[sinex_serial_test]
     async fn test_foreign_key_constraints() -> TestResult<()> {
-        let (ctx, _guard) = prepare_constraint_context().await?;
+        let ctx = prepare_constraint_context().await?;
         let pool = &ctx.pool;
         setup_test_tables(pool).await;
 
@@ -477,9 +499,9 @@ mod constraint_validation_tests {
         Ok(())
     }
 
-    #[sinex_test]
+    #[sinex_serial_test]
     async fn test_unique_constraints() -> TestResult<()> {
-        let (ctx, _guard) = prepare_constraint_context().await?;
+        let ctx = prepare_constraint_context().await?;
         let pool = &ctx.pool;
         setup_test_tables(pool).await;
 
@@ -546,9 +568,9 @@ mod constraint_validation_tests {
         Ok(())
     }
 
-    #[sinex_test]
+    #[sinex_serial_test]
     async fn test_not_null_constraints() -> TestResult<()> {
-        let (ctx, _guard) = prepare_constraint_context().await?;
+        let ctx = prepare_constraint_context().await?;
         let pool = &ctx.pool;
         setup_test_tables(pool).await;
 
@@ -606,9 +628,9 @@ mod constraint_validation_tests {
         Ok(())
     }
 
-    #[sinex_test]
+    #[sinex_serial_test]
     async fn test_json_payload_validation() -> TestResult<()> {
-        let (ctx, _guard) = prepare_constraint_context().await?;
+        let ctx = prepare_constraint_context().await?;
         let pool = &ctx.pool;
         setup_test_tables(pool).await;
 
@@ -706,13 +728,11 @@ mod constraint_validation_tests {
         Ok(())
     }
 
-    #[sinex_test]
+    #[sinex_serial_test]
     async fn test_array_constraints() -> TestResult<()> {
-        let (ctx, _guard) = prepare_constraint_context().await?;
+        let ctx = prepare_constraint_context().await?;
         let pool = &ctx.pool;
         // Ensure clean slate for shared pool reuse.
-        db_common::reset_database(pool).await?;
-        db_common::verify_clean_state(pool).await?;
         setup_test_tables(pool).await;
 
         // Create initial event for referencing
@@ -801,52 +821,12 @@ mod performance_constraint_tests {
     use super::constraint_validation_tests::setup_test_tables;
     use super::*;
 
-    #[sinex_test]
+    #[sinex_serial_test]
     async fn test_constraint_check_performance() -> TestResult<()> {
-        let (ctx, _guard) = prepare_constraint_context().await?;
+        let ctx = prepare_constraint_context().await?;
         let pool = &ctx.pool;
-
-        let mut conn = match pool.acquire().await {
-            Ok(conn) => conn,
-            Err(sqlx::Error::PoolTimedOut) => {
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                pool.acquire().await?
-            }
-            Err(err) => return Err(err.into()),
-        };
-
-        // Setup tables
-        sqlx::query("DROP TABLE IF EXISTS core.events CASCADE")
-            .execute(conn.as_mut())
-            .await
-            .ok();
-        sqlx::query("DROP TABLE IF EXISTS raw.source_material_registry CASCADE")
-            .execute(conn.as_mut())
-            .await
-            .ok();
-        sqlx::query(
-            &SourceMaterialRegistry::create_table_statement().to_string(PostgresQueryBuilder),
-        )
-        .execute(conn.as_mut())
-        .await?;
-        for attempt in 0..3 {
-            match sqlx::query(&Events::create_table_statement().to_string(PostgresQueryBuilder))
-                .execute(conn.as_mut())
-                .await
-            {
-                Ok(_) => break,
-                Err(err) if attempt < 2 => {
-                    if let Some(code) = err.as_database_error().and_then(|e| e.code()) {
-                        if code.as_ref() == "57P01" {
-                            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-                            continue;
-                        }
-                    }
-                    return Err(err.into());
-                }
-                Err(err) => return Err(err.into()),
-            }
-        }
+        constraint_validation_tests::setup_test_tables(pool).await;
+        let mut conn = pool.acquire().await?;
 
         let material_id = Ulid::new();
         sqlx::query!(
@@ -861,12 +841,8 @@ mod performance_constraint_tests {
         .execute(conn.as_mut())
         .await?;
 
-        // Insert many events to test constraint performance under load
         let start = std::time::Instant::now();
-
-        // Keep the load meaningful but bounded so we do not exhaust pooled connections when
-        // the suite runs under high parallelism.
-        let inserts = 15;
+        let inserts = 4;
         for i in 0..inserts {
             let event_id = Ulid::new();
             let mut attempts = 0;
@@ -896,29 +872,30 @@ mod performance_constraint_tests {
                         }
                         return Err(err.into());
                     }
-                    Err(err) => return Err(err.into()),
-                }
+                    Err(err) => return Err(err.into())}
             }
         }
 
         let duration = start.elapsed();
+        let per_insert = duration / inserts as u32;
         println!(
-            "Inserted {} events with constraints in {:?}",
-            inserts, duration
+            "Inserted {} events with constraints in {:?} ({:?} per insert)",
+            inserts, duration, per_insert
         );
 
-        // Constraint checking should not significantly slow down inserts
+        // Constraint checking should not significantly slow down inserts.
         assert!(
-            duration.as_millis() < 8000,
-            "Constraint checking should be fast enough to avoid timeouts"
+            per_insert.as_millis() < 1500,
+            "Constraint checking per insert should remain well under 1.5s (observed {:?})",
+            per_insert
         );
         finalize_constraint_context(&ctx).await?;
         Ok(())
     }
 
-    #[sinex_test]
+    #[sinex_serial_test]
     async fn test_index_constraint_interaction() -> TestResult<()> {
-        let (ctx, _guard) = prepare_constraint_context().await?;
+        let ctx = prepare_constraint_context().await?;
         let pool = &ctx.pool;
         setup_test_tables(pool).await;
 

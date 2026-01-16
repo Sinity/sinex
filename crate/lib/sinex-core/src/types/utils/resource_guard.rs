@@ -54,20 +54,15 @@ where
         self.resource.lock().await
     }
 
-    /// Take the resource, consuming the guard and running cleanup
+    /// Take the resource, consuming the guard and skipping cleanup.
     pub async fn take(mut self) -> Option<T> {
-        let resource = self.resource.lock().await.take();
-        if let (Some(resource), Some(sender)) = (resource, self.cleanup_sender.take()) {
-            let _ = sender.send(resource);
-        }
-        None // Resource moved to cleanup
+        self.cleanup_sender.take();
+        self.resource.lock().await.take()
     }
 
-    /// Release resource early without cleanup (for error cases)
+    /// Release resource early without cleanup (for error cases).
     pub async fn release_without_cleanup(self) -> Option<T> {
-        let resource = self.resource.lock().await.take();
-        // Drop cleanup_sender without sending
-        resource
+        self.take().await
     }
 }
 
@@ -117,18 +112,15 @@ where
         self.resource.as_mut().expect("Resource already taken")
     }
 
-    /// Take resource and run cleanup immediately
+    /// Take resource, consuming the guard and skipping cleanup.
     pub fn take(mut self) -> T {
-        let resource = self.resource.take().expect("Resource already taken");
-        if let Some(cleanup) = self.cleanup.take() {
-            cleanup(resource);
-        }
-        panic!("Resource consumed by cleanup")
+        self.cleanup.take();
+        self.resource.take().expect("Resource already taken")
     }
 
-    /// Release resource without cleanup
-    pub fn release(mut self) -> T {
-        self.resource.take().expect("Resource already taken")
+    /// Release resource without cleanup.
+    pub fn release(self) -> T {
+        self.take()
     }
 }
 

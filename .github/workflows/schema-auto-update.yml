@@ -1,4 +1,4 @@
-name: Schema and SQLx Auto Update
+name: Schema Auto Update
 
 on:
   schedule:
@@ -39,48 +39,5 @@ jobs:
           title: "chore: regenerate schemas"
           body: "Automated schema regeneration via GitHub Actions."
           branch: chore/auto-update-schemas
-          labels: automated-update
-          delete-branch: true
-
-  refresh_sqlx_cache:
-    runs-on: ubuntu-latest
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-    env:
-      DEVENV_ROOT: ${{ github.workspace }}
-      DEVENV_DOTFILE: ${{ github.workspace }}/.devenv
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: ./.github/actions/nix-bootstrap
-        with:
-          cache-name: sinity
-          cachix-auth-token: '${{ secrets.CACHIX_AUTH_TOKEN }}'
-
-      - name: Regenerate SQLx cache
-        shell: bash
-        run: |
-          nix develop --accept-flake-config --no-pure-eval --command bash -lc '
-            set -euo pipefail
-            cargo xtask ci postgres -- cargo xtask sqlx-prepare
-            if git diff --quiet .sqlx; then
-              echo "✅ SQLx metadata matches repository"
-            else
-              echo "::error::SQLx metadata is out of date. Run '\''cargo xtask sqlx-prepare'\'' locally and commit the results."
-              git status -sb .sqlx
-              git diff .sqlx || true
-              exit 1
-            fi
-            export CARGO_TARGET_DIR="$PWD/target-sqlx-offline"
-            SQLX_OFFLINE=1 cargo check --workspace --all-features
-            rm -rf "$CARGO_TARGET_DIR"
-          '
-
-      - name: Create SQLx cache PR
-        uses: peter-evans/create-pull-request@v5
-        with:
-          commit-message: "chore: refresh SQLx cache"
-          title: "chore: refresh SQLx cache"
-          body: "Automated SQLx cache regeneration via GitHub Actions."
-          branch: chore/auto-update-sqlx-cache
           labels: automated-update
           delete-branch: true

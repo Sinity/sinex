@@ -4,7 +4,12 @@
 # ingestd/NATS and PostgreSQL endpoints. Suitable for edge devices feeding a
 # central Sinex cluster.
 
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 
 {
   imports = [ ./modules ];
@@ -36,6 +41,10 @@
           SINEX_NATS_CA_CERT = config.sinex.secrets.paths."sinex-remote-nats-ca";
           SINEX_NATS_CLIENT_CERT = config.sinex.secrets.paths."sinex-remote-nats-cert";
           SINEX_NATS_CLIENT_KEY = config.sinex.secrets.paths."sinex-remote-nats-key";
+
+          # Enable True Edge Mode (no database dependency)
+          # Checkpoints will use NATS KV.
+          SINEX_EDGE_MODE = "1";
         };
       };
 
@@ -72,5 +81,8 @@
     createHome = true;
   };
 
-  environment.systemPackages = with pkgs; [ sinexCli jq ];
+  environment.systemPackages = with pkgs; [
+    sinexCli
+    jq
+  ];
 }

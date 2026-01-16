@@ -109,10 +109,7 @@
     script = ''
       set -e
       while true; do
-        ${pkgs.postgresql}/bin/psql "postgresql:///sinex_prod?host=/run/postgresql" -c           "SELECT service_name, COUNT(*) AS instances, MAX(last_heartbeat) AS latest
-             FROM core.satellite_instances
-            WHERE last_heartbeat > NOW() - INTERVAL '2 minutes'
-            GROUP BY service_name;"
+        ${pkgs.natscli}/bin/nats kv ls KV_sinex_instances
         sleep 60
       done
     '';

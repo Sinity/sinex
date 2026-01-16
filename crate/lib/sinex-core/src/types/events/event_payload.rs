@@ -1,7 +1,6 @@
 //! EventPayload trait for strongly-typed event payloads
 
 use crate::domain::{EventSource, EventType};
-use crate::error::SinexError;
 use schemars::JsonSchema;
 use serde::Serialize;
 
@@ -23,42 +22,6 @@ pub trait EventPayload: Serialize + JsonSchema + Send + Sync + 'static {
 
     /// The schema version (semantic versioning)
     const VERSION: &'static str;
-
-    /// Try to deserialize from a legacy version
-    ///
-    /// This method is called when deserializing events with older schema versions.
-    /// The default implementation attempts direct deserialization, which works
-    /// when new fields are optional.
-    ///
-    /// Override this method to handle breaking changes or provide custom migration logic.
-    ///
-    /// # Example
-    /// ```ignore
-    /// fn try_from_legacy(value: serde_json::Value, version: &str) -> Result<Self, SinexError>
-    /// where
-    ///     Self: Sized + DeserializeOwned
-    /// {
-    ///     match version {
-    ///         "1.0.0" => {
-    ///             let v1: FileCreatedPayloadV1 = serde_json::from_value(value)
-    ///                 .map_err(|e| SinexError::serialization(format!("Failed to deserialize v1: {}", e)))?;
-    ///             Ok(Self::from(v1))
-    ///         }
-    ///         _ => serde_json::from_value(value)
-    ///             .map_err(|e| SinexError::serialization(format!("Failed to deserialize {}: {}", version, e))),
-    ///     }
-    /// }
-    /// ```
-    fn try_from_legacy(value: serde_json::Value, version: &str) -> Result<Self, SinexError>
-    where
-        Self: Sized + serde::de::DeserializeOwned,
-    {
-        // Default: attempt direct deserialization
-        // This works when changes are backward-compatible (e.g., new optional fields)
-        let _ = version; // Unused in default implementation
-        serde_json::from_value(value)
-            .map_err(|e| SinexError::serialization(format!("Failed to deserialize {version}: {e}")))
-    }
 }
 
 // Re-export common types used with payloads
@@ -72,10 +35,5 @@ impl EventPayload for serde_json::Value {
     const EVENT_TYPE: EventType = EventType::from_static("generic");
     const VERSION: &'static str = "1.0.0";
 
-    fn try_from_legacy(value: serde_json::Value, _version: &str) -> Result<Self, SinexError>
-    where
-        Self: Sized + serde::de::DeserializeOwned,
-    {
-        Ok(value)
-    }
+    // JsonValue payloads are version-neutral.
 }

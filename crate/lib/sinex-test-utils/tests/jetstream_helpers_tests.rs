@@ -1,10 +1,11 @@
 use std::time::Duration;
 
-use async_nats::jetstream::consumer::pull::Config as ConsumerConfig;
+use async_nats::jetstream::{self, consumer::pull::Config as ConsumerConfig, consumer::AckPolicy};
 use color_eyre::eyre;
 use serde_json::json;
 use sinex_test_utils::{sinex_test, EphemeralNats, TestSatellitePublisher};
-use tokio::time::sleep;
+use tokio::time::{sleep, timeout};
+use tokio_stream::StreamExt;
 
 #[sinex_test]
 async fn ephemeral_nats_helpers_can_create_streams_and_wait() -> sinex_test_utils::TestResult<()> {
@@ -113,7 +114,10 @@ async fn test_satellite_publisher_emits_events_and_confirmations() -> TestResult
 
     // Publish a material stream and ensure begin/end messages exist.
     publisher
-        .publish_material_stream([b"chunk-a".as_slice(), b"chunk-b".as_slice()])
+        .publish_material_stream_via_acquisition_manager([
+            b"chunk-a".as_slice(),
+            b"chunk-b".as_slice(),
+        ])
         .await?;
     let mut begin_stream = publisher
         .jetstream()
@@ -162,5 +166,71 @@ async fn ephemeral_nats_with_chaos_refuses_connections() -> TestResult<()> {
             .contains("simulated connection failure"),
         "unexpected error: {err}"
     );
+    Ok(())
+}
+
+#[sinex_test]
+async fn jetstream_redelivery_increments_delivery_count() -> TestResult<()> {
+    let nats = EphemeralNats::start().await?;
+    let env = sinex_core::environment();
+    let subject_prefix = env.nats_subject("tests.redelivery");
+    let stream = env.nats_stream_name("TEST_REDELIVERY_STREAM");
+
+    let mut config = ConsumerConfig::default();
+    config.ack_policy = AckPolicy::Explicit;
+    config.ack_wait = Duration::from_millis(200);
+    config.max_deliver = 3;
+
+    let subject = format!("{subject_prefix}.>");
+    let (_stream_name, consumer) = nats
+        .ensure_stream_with_consumer(&stream, &[subject.as_str()], config)
+        .await?;
+
+    let client = nats.connect().await?;
+    client
+        .publish(format!("{subject_prefix}.one"), b"payload".to_vec().into())
+        .await?;
+
+    let mut messages = consumer
+        .fetch()
+        .max_messages(1)
+        .expires(Duration::from_secs(2))
+        .messages()
+        .await?;
+    let first = timeout(Duration::from_secs(2), messages.next())
+        .await
+        .map_err(|_| eyre::eyre!("timed out waiting for first delivery"))?
+        .ok_or_else(|| eyre::eyre!("no message delivered"))?;
+    let first = first.map_err(|err| eyre::eyre!(err.to_string()))?;
+    let first_info = first.info().map_err(|err| eyre::eyre!(err.to_string()))?;
+    first
+        .ack_with(jetstream::AckKind::Nak(Some(Duration::from_millis(50))))
+        .await
+        .map_err(|err| eyre::eyre!(err.to_string()))?;
+
+    let mut messages = consumer
+        .fetch()
+        .max_messages(1)
+        .expires(Duration::from_secs(2))
+        .messages()
+        .await?;
+    let second = timeout(Duration::from_secs(2), messages.next())
+        .await
+        .map_err(|_| eyre::eyre!("timed out waiting for redelivery"))?
+        .ok_or_else(|| eyre::eyre!("no redelivered message"))?;
+    let second = second.map_err(|err| eyre::eyre!(err.to_string()))?;
+    let second_info = second.info().map_err(|err| eyre::eyre!(err.to_string()))?;
+    assert!(
+        second_info.delivered > first_info.delivered,
+        "expected redelivery count to increase ({} -> {})",
+        first_info.delivered,
+        second_info.delivered
+    );
+    second
+        .ack()
+        .await
+        .map_err(|err| eyre::eyre!(err.to_string()))?;
+
+    nats.assert_log_does_not_contain(&["[ERR]", "[FTL]"], 200)?;
     Ok(())
 }

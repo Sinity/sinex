@@ -4,12 +4,23 @@ Implements the JSON-RPC 2.0 compliant server that fronts Sinex gateway services 
 
 ## Supported RPC Methods
 
-- `query_events` – query events with filtering and pagination.
-- `replay_analyze` – analyse replay cascades for a set of events.
-- `replay_create` – create a new replay operation.
-- `replay_approve` – mark a replay operation approved for execution.
-- `replay_status` – fetch replay operation status.
-- `health_check` – basic service health probe.
+- `system.health` – basic service health probe.
+- `analytics.event_count_by_source` – counts per source across a time window.
+- `analytics.activity_heatmap` – time-bucketed activity totals.
+- `analytics.sources_statistics` – per-source totals, ranges, and ingest delay.
+- `search.search_events` – query events with filters and pagination.
+- `pkm.create_note` – create a note annotation.
+- `pkm.create_entities_from_list` – create multiple entities.
+- `pkm.link_entities` – link entities together.
+- `content.store_blob` – store base64 payloads in git-annex.
+- `content.retrieve_blob` – fetch stored blobs.
+- `replay.create_operation` – create a new replay operation.
+- `replay.preview_operation` – preview replay cascades for a scope.
+- `replay.approve_operation` – mark a replay operation approved.
+- `replay.execute_operation` – start executing a replay operation.
+- `replay.cancel_operation` – cancel a replay operation.
+- `replay.operation_status` – fetch replay status.
+- `replay.list_operations` – list replay operations by state.
 
 ## Protocol Specification
 
@@ -22,7 +33,9 @@ Implements the JSON-RPC 2.0 compliant server that fronts Sinex gateway services 
 - CORS headers configured for local development.
 - Request/response logging for audit trails.
 - Error sanitisation to avoid leaking sensitive details.
-- Mandatory RPC auth token (`SINEX_RPC_TOKEN` or `SINEX_RPC_TOKEN_FILE`); requests must send `Authorization: Bearer <token>` (or `X-Sinex-Rpc-Token`). Set `SINEX_GATEWAY_ALLOW_INSECURE=1` only for tests.
+- TLS is mandatory for the RPC server; configure `SINEX_GATEWAY_TLS_CERT` + `SINEX_GATEWAY_TLS_KEY` (optional `SINEX_GATEWAY_TLS_CLIENT_CA` for mTLS).
+- Non-loopback binds require mTLS; set `SINEX_GATEWAY_TLS_CLIENT_CA` to a trusted client CA bundle.
+- Mandatory RPC auth token (`SINEX_RPC_TOKEN` or `SINEX_GATEWAY_ADMIN_TOKEN_FILE` / `SINEX_RPC_TOKEN_FILE`); requests must send `Authorization: Bearer <token>`.
 - Concurrency limit (`SINEX_GATEWAY_MAX_CONCURRENCY`, default 32) enforced via tower middleware.
 - Request timeout (`SINEX_GATEWAY_REQUEST_TIMEOUT_SECS`, default 30s) returns JSON-RPC gateway timeout errors.
 - Payload size cap (`SINEX_GATEWAY_MAX_BODY_BYTES`, default 2MB) returns 413 errors when exceeded.

@@ -4,14 +4,16 @@ use sinex_core::types::domain::SanitizedPath;
 use sinex_core::types::events::payloads::{FileCreatedPayload, KittyCommandExecutedPayload};
 use sinex_core::Id;
 use sinex_test_utils::sinex_test;
+use sinex_test_utils::TestResult;
 
 #[sinex_test]
-fn material_event_builder_sets_fields() -> color_eyre::eyre::Result<()> {
-    let payload =
-        FileCreatedPayload::test_default(SanitizedPath::from_str_validated("/test.txt")?);
+fn material_event_builder_sets_fields() -> TestResult<()> {
+    let payload = FileCreatedPayload::test_default(
+        SanitizedPath::from_str_validated("/test.txt").map_err(|e| color_eyre::eyre::eyre!(e))?,
+    );
     let event = Event::builder(payload)
         .from_material(Id::<SourceMaterial>::new(), 42)
-        .build();
+        .build()?;
 
     assert_eq!(event.source.as_str(), "fs-watcher");
     assert_eq!(event.event_type.as_str(), "file.created");
@@ -23,12 +25,12 @@ fn material_event_builder_sets_fields() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn synthesis_event_builder_tracks_parents() -> color_eyre::eyre::Result<()> {
+fn synthesis_event_builder_tracks_parents() -> TestResult<()> {
     let parent_ids = vec![EventId::new(), EventId::new()];
     let payload = KittyCommandExecutedPayload::test_default("analysis pipeline");
     let event = Event::builder(payload)
-        .from_parents(parent_ids.clone())
-        .build();
+        .from_parents(parent_ids.clone())?
+        .build()?;
 
     assert_eq!(event.source.as_str(), "shell.kitty");
     assert_eq!(event.event_type.as_str(), "command.executed");
@@ -40,20 +42,20 @@ fn synthesis_event_builder_tracks_parents() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn raw_event_alias_is_equivalent() -> color_eyre::eyre::Result<()> {
+fn raw_event_alias_is_equivalent() -> TestResult<()> {
     let event: Event<JsonValue> = Event::dynamic("test", "test.event", json!({"data": "value"}))
         .from_material(Id::<SourceMaterial>::new(), 0)
-        .build();
+        .build()?;
 
     let _: Event<JsonValue> = event;
     Ok(())
 }
 
 #[sinex_test]
-fn json_conversion_round_trips_payload() -> color_eyre::eyre::Result<()> {
+fn json_conversion_round_trips_payload() -> TestResult<()> {
     let original = Event::dynamic("test", "test.event", json!({"message": "hello"}))
         .from_material(Id::<SourceMaterial>::new(), 10)
-        .build();
+        .build()?;
 
     let raw = original.to_json_event()?;
     let recovered: Event<JsonValue> = raw.to_typed()?;

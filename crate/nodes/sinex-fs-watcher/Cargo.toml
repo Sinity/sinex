@@ -1,0 +1,54 @@
+[package]
+name = "sinex-fs-watcher"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "sinex-fs-watcher"
+path = "src/main.rs"
+
+[dependencies]
+camino = { workspace = true }
+mimalloc = { workspace = true }
+# Core dependencies
+color-eyre = { workspace = true }
+thiserror.workspace = true
+async-trait.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# Configuration
+clap = { workspace = true, features = ["derive"] }
+serde.workspace = true
+serde_json.workspace = true
+chrono = { workspace = true, features = ["serde"] }
+
+# Directory discovery for default paths
+dirs.workspace = true
+
+# Database
+sqlx = { workspace = true }
+
+# Streaming
+tokio-stream = { workspace = true, features = ["net"] }
+async-stream = "0.3"
+futures = { workspace = true }
+notify = { workspace = true }
+
+# Validation
+validator = { workspace = true }
+
+# Local dependencies
+sinex-node-sdk = { path = "../../lib/sinex-node-sdk", features = ["macros"] }
+sinex-processor-runtime = { path = "../../lib/sinex-processor-runtime" }
+sinex-core = { path = "../../lib/sinex-core", features = ["macros"] }
+
+[features]
+default = []
+metrics = []
+
+[dev-dependencies]
+sinex-test-utils = { path = "../../lib/sinex-test-utils" }
+tempfile = "3.8"

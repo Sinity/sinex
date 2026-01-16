@@ -1,10 +1,11 @@
 use camino::Utf8Path;
 use sinex_core::types::error::{ErrorDetails, Result, ResultExt, SinexError};
 use sinex_test_utils::sinex_test;
+use sinex_test_utils::TestResult;
 use std::collections::HashMap;
 
 #[sinex_test]
-fn error_display_matches_variants() -> color_eyre::eyre::Result<()> {
+fn error_display_matches_variants() -> TestResult<()> {
     let error = SinexError::database("Connection failed");
     assert_eq!(error.to_string(), "Database error: Connection failed");
 
@@ -14,7 +15,7 @@ fn error_display_matches_variants() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn error_context_appends_key_values() -> color_eyre::eyre::Result<()> {
+fn error_context_appends_key_values() -> TestResult<()> {
     let error = SinexError::database("Connection failed")
         .with_context("host", "localhost")
         .with_context("port", 5432);
@@ -27,7 +28,7 @@ fn error_context_appends_key_values() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn error_sources_chain() -> color_eyre::eyre::Result<()> {
+fn error_sources_chain() -> TestResult<()> {
     let error = SinexError::service("Processing failed")
         .with_source("Database connection timed out")
         .with_source("Network unreachable");
@@ -40,7 +41,7 @@ fn error_sources_chain() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn error_categorization_helpers() -> color_eyre::eyre::Result<()> {
+fn error_categorization_helpers() -> TestResult<()> {
     assert!(SinexError::timeout("test").is_retryable());
     assert!(SinexError::network("test").is_retryable());
     assert!(!SinexError::validation("test").is_retryable());
@@ -84,7 +85,7 @@ fn error_serializes_and_deserializes() -> TestResult<()> {
 
 #[sinex_test]
 fn sinex_error_integrates_with_anyhow() -> TestResult<()> {
-    fn returns_anyhow() -> color_eyre::eyre::Result<()> {
+    fn returns_anyhow() -> TestResult<()> {
         Err(SinexError::database("test"))?
     }
 
@@ -314,7 +315,7 @@ fn error_conversion_chain_preserves_message() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn channel_error_conversions_work() -> color_eyre::eyre::Result<()> {
+async fn channel_error_conversions_work() -> TestResult<()> {
     use tokio::sync::{mpsc, oneshot};
 
     let (tx, rx) = mpsc::channel::<i32>(1);
@@ -324,12 +325,12 @@ async fn channel_error_conversions_work() -> color_eyre::eyre::Result<()> {
         assert!(matches!(sinex_err, SinexError::ChannelSend(_)));
     }
 
-    let (tx, _rx) = oneshot::channel::<i32>();
+    let (tx, rx) = oneshot::channel::<i32>();
     drop(tx);
-    #[allow(dead_code)]
-    fn test_conversion(err: oneshot::error::RecvError) -> SinexError {
-        err.into()
-    }
+    let err = rx
+        .await
+        .expect_err("oneshot should error after sender drop");
+    let _sinex_err: SinexError = err.into();
     Ok(())
 }
 

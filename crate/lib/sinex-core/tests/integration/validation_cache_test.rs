@@ -2,15 +2,12 @@ use chrono::Utc;
 use serde_json::json;
 use sinex_core::db::repositories::schema_management::{NewEventSchema, SchemaManagementRepository};
 use sinex_core::types::Ulid;
-use sinex_test_utils::{sinex_test, TestContext};
+use sinex_test_utils::{sinex_serial_test, sinex_test, TestContext, TestResult};
 use sqlx::Row;
 
-#[sinex_test]
-async fn test_validation_cache_uses_payload_hash(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
+#[sinex_serial_test]
+async fn test_validation_cache_uses_payload_hash(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
     let pool = ctx.pool.clone();
 
     // Create a test schema
@@ -101,16 +98,11 @@ async fn test_validation_cache_uses_payload_hash(ctx: TestContext) -> color_eyre
         "Cache should not create duplicate entries"
     );
 
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
-    ctx.force_cleanup().await?;
     Ok(())
 }
 
 #[sinex_test]
-async fn test_validation_cache_with_invalid_payload(
-    ctx: TestContext,
-) -> color_eyre::eyre::Result<()> {
+async fn test_validation_cache_with_invalid_payload(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool.clone();
 
     // Create a test schema
@@ -185,7 +177,7 @@ async fn insert_test_schema(
     source: &str,
     event_type: &str,
     schema_json: serde_json::Value,
-) -> color_eyre::eyre::Result<sqlx::types::Uuid> {
+) -> TestResult<sqlx::types::Uuid> {
     let schema = NewEventSchema {
         source: source.to_string(),
         event_type: event_type.to_string(),

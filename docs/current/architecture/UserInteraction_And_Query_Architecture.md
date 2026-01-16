@@ -15,7 +15,7 @@ Last Verified: 2025-12-02 (manual review)
 
 | Component | Location | Role | Status |
 |-----------|----------|------|--------|
-| `sinex-gateway` | `crate/core/sinex-gateway` | Hosts a JSON-RPC server (Unix socket or TCP) and an optional native-messaging bridge | ✅ operational |
+| `sinex-gateway` | `crate/core/sinex-gateway` | Hosts a JSON-RPC server (TLS-only TCP) and an optional native-messaging bridge | ✅ operational |
 | `exo` CLI | `cli/exo.py` | Primary user tooling; prefers RPC, can fall back to direct Postgres access | ✅ operational |
 | Service layer | `crate/lib/sinex-services` | Analytics, search, PKM, and content APIs invoked by gateway handlers | ✅ operational |
 | JetStream command bus | — | Planned async command/response fabric | 🚧 planned |
@@ -24,9 +24,8 @@ Last Verified: 2025-12-02 (manual review)
 
 ### 2.1 Execution Modes
 - **RPC server (`sinex-gateway rpc-server`)**  
-  - Binds to a Unix socket by default; TCP is **opt-in** via `--tcp-listen <host:port>` (or `SINEX_GATEWAY_TCP_LISTEN`).
-  - Accepts JSON-RPC 2.0 POST requests at `/rpc` and `/`.
-  - Legacy `SINEX_GATEWAY_HOST`/`PORT` env vars remain for compatibility but do not auto-enable in development anymore.
+  - Binds to TLS TCP by default on `127.0.0.1:9999` (override with `--tcp-listen <host:port>` or `SINEX_GATEWAY_TCP_LISTEN`).
+  - Accepts JSON-RPC 2.0 POST requests at `/rpc`.
 - **Native messaging (`sinex-gateway native-messaging`)**  
   - Runs a stdin/stdout loop for a browser extension; reuses the same RPC dispatch table.
 
@@ -39,13 +38,17 @@ Last Verified: 2025-12-02 (manual review)
 **Key point:** the gateway does **not** publish or consume `api.command.*` / `api.response.*` events on JetStream today. All work is handled within the process using synchronous database calls.
 
 ### 2.3 Authentication & Transport Limits
-- RPC traffic is guarded by a shared secret exported via `SINEX_RPC_TOKEN` (or `SINEX_RPC_TOKEN_FILE`). Gateway startup fails if no token is present unless the explicit escape hatch `SINEX_GATEWAY_ALLOW_INSECURE=1` is set (tests/dev only).
-- Clients present the token via `Authorization: Bearer <token>` or the `X-Sinex-Rpc-Token` header. The CLI automatically injects the header when `--rpc-token`/`SINEX_RPC_TOKEN` is supplied.
+- RPC traffic is guarded by a shared secret exported via `SINEX_RPC_TOKEN` (or `SINEX_GATEWAY_ADMIN_TOKEN_FILE` / `SINEX_RPC_TOKEN_FILE`). Gateway startup fails if no token is present.
+- Clients present the token via `Authorization: Bearer <token>`. The CLI automatically injects the header when `--rpc-token`/`SINEX_RPC_TOKEN` is supplied.
+- TLS is mandatory; set `SINEX_GATEWAY_TLS_CERT` + `SINEX_GATEWAY_TLS_KEY` (optional `SINEX_GATEWAY_TLS_CLIENT_CA` for mTLS).
+- Non-loopback binds require mTLS; configure `SINEX_GATEWAY_TLS_CLIENT_CA` and pass `SINEX_RPC_CLIENT_CERT` + `SINEX_RPC_CLIENT_KEY` to clients.
+- Set `SINEX_GATEWAY_REQUIRE_CLIENT_TLS=1` to enforce mTLS even on loopback/test hosts.
 - Resource guards are configurable via:
   - `SINEX_GATEWAY_MAX_CONCURRENCY` (default 32).
   - `SINEX_GATEWAY_REQUEST_TIMEOUT_SECS` (default 30 seconds).
   - `SINEX_GATEWAY_MAX_BODY_BYTES` (default 2 MiB).
   - `SINEX_GATEWAY_MAX_BLOB_BYTES` (default 5 MiB) limits decoded blob payloads before writing to git-annex.
+- NixOS deployments should set these via `services.sinex.core.gateway.limits` rather than ad-hoc env vars.
 - Requests that exceed these guards receive JSON-RPC errors (`401` for missing token, `429/504/413` for the respective limits).
 
 ### 2.3 Method Surface (current)
@@ -58,7 +61,7 @@ Last Verified: 2025-12-02 (manual review)
 Adding a method requires extending `dispatch_rpc_method`, exposing functionality in `sinex-services`, and (optionally) wiring a CLI command.
 
 ### 2.4 Deployment Considerations
-- Guard Unix socket permissions (default) or secure the loopback HTTP port behind SSH tunnelling when accessed remotely.
+- Keep RPC on loopback unless you explicitly need remote access; enable mTLS + firewalling for non-local binds.
 - Gateway shares a database pool with the service layer; long-running queries block the handler thread. Move heavy work to background tasks before revisiting asynchronous fan-out.
 - Authentication and rate limiting are TODOs; current deployments rely on OS-level controls.
 
@@ -66,8 +69,10 @@ Adding a method requires extending `dispatch_rpc_method`, exposing functionality
 
 ### 3.1 Modes of Operation
 - **RPC mode (default):**  
-  - `exo` instantiates `SinexRPCClient`, targeting the gateway URL from `--rpc-url` or `SINEX_RPC_URL` (default `http://127.0.0.1:9999`).  
+  - `exo` instantiates `SinexRPCClient`, targeting the gateway URL from `--rpc-url` or `SINEX_RPC_URL` (default `https://127.0.0.1:9999`).  
   - Commands such as `query`, `sources`, and `stats` map directly to the gateway methods above.
+  - Use `--rpc-ca-cert` / `SINEX_RPC_CA_CERT` to trust a local/self-signed gateway CA.
+  - Use `--rpc-client-cert` + `--rpc-client-key` (or `SINEX_RPC_CLIENT_CERT` / `SINEX_RPC_CLIENT_KEY`) when mTLS is enabled.
 - **Database mode (`--use-db`):**  
   - Connects to PostgreSQL using `DATABASE_URL`.  
   - Unlocks low-level operations not yet exposed via RPC (schema introspection, DLQ management, blob utilities).

@@ -83,19 +83,33 @@ let
             print(f"Stats failed: {result.stderr}")
             return -1
 
-    def work_queue_stats():
-        cmd = "psql -d sinex -t -c \"SELECT status, COUNT(*) FROM sinex_schemas.work_queue GROUP BY status ORDER BY status;\""
+    def pipeline_activity():
+        cmd = """
+        psql -d sinex -t -c "
+        SELECT 
+            source,
+            event_type,
+            COUNT(*) AS events,
+            MIN(ts_ingest) AS first_seen,
+            MAX(ts_ingest) AS last_seen
+        FROM core.events
+        WHERE ts_ingest > NOW() - INTERVAL '10 minutes'
+        GROUP BY source, event_type
+        ORDER BY events DESC
+        LIMIT 15;
+        "
+        """
         result = subprocess.run([
             "su", "-", "postgres", "-c", cmd
         ], capture_output=True, text=True)
         
         if result.returncode == 0:
             lines = [line.strip() for line in result.stdout.split('\n') if line.strip()]
-            print("Work queue by status:")
+            print("Recent pipeline activity:")
             for line in lines:
                 print(f"  {line}")
         else:
-            print(f"Work queue stats failed: {result.stderr}")
+            print(f"Pipeline activity query failed: {result.stderr}")
 
     # Parse command line arguments
     if len(sys.argv) > 1:
@@ -105,8 +119,8 @@ let
             db_status()
         elif sys.argv[1] == "service-status":
             service_status()
-        elif sys.argv[1] == "queue":
-            work_queue_stats()
+        elif sys.argv[1] == "pipeline":
+            pipeline_activity()
         elif sys.argv[1] == "query":
             limit = 10
             source = None
@@ -518,8 +532,8 @@ host    all             all             ::1/128                 trust
         for i in range(3):
             machine.succeed(f"su - test -c 'echo worker-crash-{i} > /var/lib/sinex/watched/worker-crash-{i}.txt'")
         wait_for_event_pattern("worker-crash-2")
-        queue_snapshot = machine.succeed("sinex queue")
-        print(f"Work queue after worker recovery:\n{queue_snapshot}")
+        queue_snapshot = machine.succeed("sinex pipeline")
+        print(f"Pipeline activity after worker recovery:\n{queue_snapshot}")
 
     print("✓ Failure recovery smoke tests completed successfully")
   '';

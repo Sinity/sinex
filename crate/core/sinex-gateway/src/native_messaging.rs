@@ -15,11 +15,17 @@ use crate::service_container::ServiceContainer;
 
 /// Environment variable used to configure trusted native-messaging extensions.
 const TRUSTED_EXTENSION_ENV: &str = "SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS";
+/// Environment variable used to configure trusted native-messaging hosts.
+const TRUSTED_HOSTS_ENV: &str = "SINEX_NATIVE_MESSAGING_TRUSTED_HOSTS";
+/// Environment variable used to enforce a protocol version for native messaging.
+const PROTOCOL_VERSION_ENV: &str = "SINEX_NATIVE_MESSAGING_PROTOCOL_VERSION";
 
 /// Configuration knobs for the native messaging server.
 #[derive(Debug, Clone, Default)]
 pub struct NativeMessagingConfig {
     trusted_extensions: Vec<TrustedExtension>,
+    trusted_hosts: Vec<String>,
+    expected_protocol_version: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -45,44 +51,31 @@ impl NativeMessagingConfig {
             .ok()
             .map(parse_trusted_entries)
             .unwrap_or_default();
+        let trusted_hosts = std::env::var(TRUSTED_HOSTS_ENV)
+            .ok()
+            .map(parse_csv_entries)
+            .unwrap_or_default();
+        let expected_protocol_version = std::env::var(PROTOCOL_VERSION_ENV).ok().and_then(|raw| {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        });
 
-        Self { trusted_extensions }
-    }
-
-    /// Helper for tests to build configs with known trusted extensions.
-    #[allow(dead_code)]
-    pub fn with_trusted_extensions<I, S>(ids: I) -> Self
-    where
-        I: IntoIterator<Item = S>,
-        S: Into<String>,
-    {
         Self {
-            trusted_extensions: ids
-                .into_iter()
-                .map(|id| TrustedExtension {
-                    id: id.into(),
-                    secret: None,
-                })
-                .collect(),
+            trusted_extensions,
+            trusted_hosts,
+            expected_protocol_version,
         }
     }
 
-    #[allow(dead_code)]
-    pub fn with_trusted_entries<I, ID, SEC>(entries: I) -> Self
-    where
-        I: IntoIterator<Item = (ID, Option<SEC>)>,
-        ID: Into<String>,
-        SEC: Into<String>,
-    {
-        Self {
-            trusted_extensions: entries
-                .into_iter()
-                .map(|(id, secret)| TrustedExtension {
-                    id: id.into(),
-                    secret: secret.map(Into::into),
-                })
-                .collect(),
-        }
+    fn enforce_metadata(&self, message: &NativeMessage) -> Result<()> {
+        self.enforce_extension(message)?;
+        self.enforce_host(message)?;
+        self.enforce_protocol_version(message)?;
+        Ok(())
     }
 
     fn enforce_extension(&self, message: &NativeMessage) -> Result<()> {
@@ -148,6 +141,81 @@ impl NativeMessagingConfig {
         );
         Ok(())
     }
+
+    fn enforce_host(&self, message: &NativeMessage) -> Result<()> {
+        if self.trusted_hosts.is_empty() {
+            return Ok(());
+        }
+
+        let host = match message.host.as_deref() {
+            Some(host) => host,
+            None => {
+                warn!(
+                    event = "native_messaging.auth",
+                    reason = "missing_host",
+                    "Rejected native messaging call: host metadata missing"
+                );
+                return Err(eyre!("Missing host"));
+            }
+        };
+
+        if !self.trusted_hosts.iter().any(|allowed| allowed == host) {
+            warn!(
+                event = "native_messaging.auth",
+                host = host,
+                reason = "host_not_trusted",
+                "Host is not in the trusted allow-list"
+            );
+            return Err(eyre!("Host '{host}' is not in the trusted allow-list"));
+        }
+
+        debug!(
+            event = "native_messaging.auth",
+            host = host,
+            "Native messaging host authorized"
+        );
+        Ok(())
+    }
+
+    fn enforce_protocol_version(&self, message: &NativeMessage) -> Result<()> {
+        let expected = match self.expected_protocol_version.as_deref() {
+            Some(version) => version,
+            None => return Ok(()),
+        };
+
+        let provided = match message.protocol_version.as_deref() {
+            Some(version) => version,
+            None => {
+                warn!(
+                    event = "native_messaging.auth",
+                    expected_version = expected,
+                    reason = "missing_protocol_version",
+                    "Rejected native messaging call: protocol version missing"
+                );
+                return Err(eyre!("Missing protocol_version"));
+            }
+        };
+
+        if provided != expected {
+            warn!(
+                event = "native_messaging.auth",
+                expected_version = expected,
+                provided_version = provided,
+                reason = "protocol_version_mismatch",
+                "Rejected native messaging call: protocol version mismatch"
+            );
+            return Err(eyre!(
+                "Protocol version mismatch (expected '{expected}', got '{provided}')"
+            ));
+        }
+
+        debug!(
+            event = "native_messaging.auth",
+            protocol_version = provided,
+            "Native messaging protocol version authorized"
+        );
+        Ok(())
+    }
 }
 
 fn parse_trusted_entries(raw: String) -> Vec<TrustedExtension> {
@@ -172,6 +240,14 @@ fn parse_trusted_entries(raw: String) -> Vec<TrustedExtension> {
         .collect()
 }
 
+fn parse_csv_entries(raw: String) -> Vec<String> {
+    raw.split(',')
+        .map(|entry| entry.trim())
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| entry.to_string())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -184,6 +260,8 @@ mod tests {
             id: None,
             extension_id: Some("ext-1".to_string()),
             extension_secret: Some(secret.to_string()),
+            host: None,
+            protocol_version: None,
         }
     }
 
@@ -191,7 +269,14 @@ mod tests {
     fn secret_comparison_is_routed_through_constant_time_helper() {
         SECRET_COMPARE_CALLS.store(0, Ordering::Relaxed);
 
-        let config = NativeMessagingConfig::with_trusted_entries([("ext-1", Some("topsecret"))]);
+        let config = NativeMessagingConfig {
+            trusted_extensions: vec![TrustedExtension {
+                id: "ext-1".to_string(),
+                secret: Some("topsecret".to_string()),
+            }],
+            trusted_hosts: Vec::new(),
+            expected_protocol_version: None,
+        };
 
         // Successful path still calls the constant-time helper
         config
@@ -230,7 +315,6 @@ impl NativeMessagingTransport for StdioNativeMessagingTransport {
 
 const MAX_MESSAGE_SIZE: usize = 1024 * 1024; // 1MB
 
-#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Deserialize)]
 pub struct NativeMessage {
     #[serde(rename = "type")]
@@ -238,10 +322,14 @@ pub struct NativeMessage {
     method: Option<String>,
     params: Option<Value>,
     id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "origin")]
     extension_id: Option<String>,
     #[serde(default)]
     extension_secret: Option<String>,
+    #[serde(default)]
+    host: Option<String>,
+    #[serde(default)]
+    protocol_version: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -273,41 +361,6 @@ impl NativeResponse {
             error: Some(error),
             id,
         }
-    }
-
-    /// Inspect the message type (used by tests to assert auth failures).
-    #[allow(dead_code)]
-    pub fn message_type(&self) -> &str {
-        &self.msg_type
-    }
-}
-
-impl NativeMessage {
-    /// Convenience helper to build RPC messages for tests and harnesses.
-    #[allow(dead_code)]
-    pub fn rpc(method: impl Into<String>, params: Value, id: impl Into<String>) -> Self {
-        Self {
-            msg_type: "rpc".to_string(),
-            method: Some(method.into()),
-            params: Some(params),
-            id: Some(id.into()),
-            extension_id: None,
-            extension_secret: None,
-        }
-    }
-
-    /// Attach an extension identifier to the message metadata.
-    #[allow(dead_code)]
-    pub fn with_extension_id(mut self, extension_id: impl Into<String>) -> Self {
-        self.extension_id = Some(extension_id.into());
-        self
-    }
-
-    /// Attach an extension secret to the message metadata.
-    #[allow(dead_code)]
-    pub fn with_extension_secret(mut self, secret: impl Into<String>) -> Self {
-        self.extension_secret = Some(secret.into());
-        self
     }
 }
 
@@ -380,9 +433,22 @@ async fn process_message(
     message: NativeMessage,
 ) -> NativeResponse {
     let message_id = message.id.clone();
+    let span = tracing::info_span!(
+        "native_messaging.request",
+        extension_id = message
+            .extension_id
+            .as_deref()
+            .unwrap_or("unknown_extension"),
+        host = message.host.as_deref().unwrap_or("unknown_host"),
+        protocol_version = message
+            .protocol_version
+            .as_deref()
+            .unwrap_or("unknown_version")
+    );
+    let _guard = span.enter();
 
-    if let Err(err) = config.enforce_extension(&message) {
-        return NativeResponse::error(message_id, format!("Extension rejected: {}", err));
+    if let Err(err) = config.enforce_metadata(&message) {
+        return NativeResponse::error(message_id, format!("Native messaging rejected: {}", err));
     }
 
     // Handle different message types

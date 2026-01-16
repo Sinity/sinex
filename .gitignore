@@ -77,9 +77,6 @@ worktree-*
 scripts/compile-daemon.sh
 scripts/git-state-tracker.sh
 
-# SQLX offline cache - only allow at workspace root
-**/.sqlx/
-!/.sqlx/
 combined-bundles/
 postgres_data/
 
@@ -90,3 +87,7 @@ bench-results.txt
 # config
 .serena
 devenv.lock
+.nats/
+.claude/
+.agent-plot-venv/
+test-results/

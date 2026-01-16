@@ -8,23 +8,27 @@ use sinex_core::{Event, Provenance};
 use sinex_test_utils::{sinex_test, TestContext};
 
 #[sinex_test]
-async fn events_repository_inserts_typed_events(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn events_repository_inserts_typed_events(ctx: TestContext) -> TestResult<()> {
     let material_record = ctx
         .pool
         .source_materials()
         .register_in_flight(
-            sinex_core::db::repositories::source_materials::legacy_material_types::STREAM,
+            sinex_core::db::repositories::source_materials::material_types::STREAM,
             Some("test-event-source-material"),
             json!({ "test": true }),
         )
         .await?;
     let material_id = Id::<sinex_core::models::SourceMaterial>::from_ulid(material_record.id);
 
-    let mut payload = FileCreatedPayload::test_default(SanitizedPath::from_str_validated(
-        "/tmp/repo-insert.txt",
-    )?);
+    let mut payload = FileCreatedPayload::test_default(
+        SanitizedPath::from_str_validated("/tmp/repo-insert.txt")
+            .map_err(|e| color_eyre::eyre::eyre!(e))?,
+    );
     payload.size = 512;
-    let event = Event::new(payload, Provenance::from_material(material_id, 0, None, None));
+    let event = Event::new(
+        payload,
+        Provenance::from_material(material_id, 0, None, None),
+    );
     let expected_host = event.host.clone();
     let inserted = ctx.pool.events().insert(event).await?;
     assert_eq!(inserted.source.as_str(), "fs-watcher");
@@ -37,12 +41,12 @@ async fn events_repository_inserts_typed_events(ctx: TestContext) -> color_eyre:
 }
 
 #[sinex_test]
-async fn events_repository_preserves_provenance(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn events_repository_preserves_provenance(ctx: TestContext) -> TestResult<()> {
     let material_record = ctx
         .pool
         .source_materials()
         .register_in_flight(
-            sinex_core::db::repositories::source_materials::legacy_material_types::STREAM,
+            sinex_core::db::repositories::source_materials::material_types::STREAM,
             Some("test-source-material"),
             json!({ "test": true }),
         )
@@ -50,17 +54,21 @@ async fn events_repository_preserves_provenance(ctx: TestContext) -> color_eyre:
     let material_id = Id::<sinex_core::models::SourceMaterial>::from_ulid(material_record.id);
 
     let source_payload = KittyCommandExecutedPayload::test_default("echo provenance");
-    let source_event =
-        Event::new(source_payload, Provenance::from_material(material_id, 0, None, None));
+    let source_event = Event::new(
+        source_payload,
+        Provenance::from_material(material_id, 0, None, None),
+    );
 
     let source = ctx.pool.events().insert(source_event).await?;
     let source_id = source.id.unwrap();
 
-    let derived_payload =
-        FileCreatedPayload::test_default(SanitizedPath::from_str_validated("/tmp/derived.txt")?);
+    let derived_payload = FileCreatedPayload::test_default(
+        SanitizedPath::from_str_validated("/tmp/derived.txt")
+            .map_err(|e| color_eyre::eyre::eyre!(e))?,
+    );
     let derived_event = Event::builder(derived_payload)
-        .from_parents(vec![source_id.clone()])
-        .build();
+        .from_parents(vec![source_id.clone()])?
+        .build()?;
 
     let inserted = ctx.pool.events().insert(derived_event).await?;
     match inserted.provenance {
@@ -83,18 +91,23 @@ async fn cleanup_test_events_does_not_match_production_names(
         .pool
         .source_materials()
         .register_in_flight(
-            sinex_core::db::repositories::source_materials::legacy_material_types::STREAM,
+            sinex_core::db::repositories::source_materials::material_types::STREAM,
             Some("prod-source-material"),
             json!({ "note": "production" }),
         )
         .await?;
     let material_id = Id::<sinex_core::models::SourceMaterial>::from_ulid(material_record.id);
 
-    let payload =
-        FileCreatedPayload::test_default(SanitizedPath::from_str_validated("/tmp/release.txt")?);
-    let event = Event::new(payload, Provenance::from_material(material_id, 0, None, None))
-        .to_json_event()?
-        .with_host(HostName::new("latest-prod-node"));
+    let payload = FileCreatedPayload::test_default(
+        SanitizedPath::from_str_validated("/tmp/release.txt")
+            .map_err(|e| color_eyre::eyre::eyre!(e))?,
+    );
+    let event = Event::new(
+        payload,
+        Provenance::from_material(material_id, 0, None, None),
+    )
+    .to_json_event()?
+    .with_host(HostName::new("latest-prod-node"));
 
     let inserted = ctx.pool.events().insert(event).await?;
     let deleted = ctx
@@ -121,9 +134,7 @@ async fn cleanup_test_events_does_not_match_production_names(
 }
 
 #[sinex_test]
-async fn register_external_in_flight_uses_provided_id(
-    ctx: TestContext,
-) -> color_eyre::eyre::Result<()> {
+async fn register_external_in_flight_uses_provided_id(ctx: TestContext) -> TestResult<()> {
     let forced_id = sinex_core::types::ulid::Ulid::new();
     let identifier = format!("test-material-{}", forced_id);
     let record = ctx
@@ -131,7 +142,7 @@ async fn register_external_in_flight_uses_provided_id(
         .source_materials()
         .register_external_in_flight(
             forced_id,
-            sinex_core::db::repositories::source_materials::legacy_material_types::FILE,
+            sinex_core::db::repositories::source_materials::material_types::FILE,
             Some(&identifier),
             json!({"note": "external registration"}),
             Utc::now(),

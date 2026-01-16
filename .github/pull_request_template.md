@@ -15,7 +15,7 @@
 
 - [ ] I have added tests that prove my fix is effective or that my feature works
 - [ ] All new and existing tests pass locally
-- [ ] I have run `cargo nextest run --profile fast` to verify basic functionality
+- [ ] I have run `cargo xtask test --profile fast` to verify basic functionality
 
 ## Abstraction Compliance Checklist
 

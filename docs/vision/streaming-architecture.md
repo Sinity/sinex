@@ -1,7 +1,7 @@
 # Streaming Architecture & Backpressure
 
 > **Operational note (2025-10-23)**  
-> JetStream ingestion is canonical. Any sensd/gRPC references here are historical context.
+> JetStream ingestion is canonical. Any retired pipeline references here are historical context.
 
 
 This document consolidates our streaming/backpressure guidance and replaces ad‑hoc channel sizing approaches with a principled, durable pipeline built on NATS JetStream with confirmations. (The transactional outbox that once bridged Postgres→NATS was retired during the JetStream refactor; see the historical note below.)
@@ -17,7 +17,7 @@ This document consolidates our streaming/backpressure guidance and replaces ad�
 
 ## Data Flow (Current)
 ```
-Satellites → NATS (staging) → sinex-ingestd → Postgres (core.events)
+nodes → NATS (staging) → sinex-ingestd → Postgres (core.events)
                                          ↓
                                JetStream confirmations/DLQ → Automata & Replay
 ```
@@ -43,9 +43,10 @@ streams:
 ```
 
 Implementation pointers:
-- Satellite producers use the Stage-as-You-Go staging path (`crate/lib/sinex-satellite-sdk/src/stage_as_you_go.rs::process_with_staging`) to publish immediately to JetStream instead of buffering in local channels.
+- node producers use the Stage-as-You-Go staging path (`crate/lib/sinex-node-sdk/src/stage_as_you_go.rs::process_with_staging`) to publish immediately to JetStream instead of buffering in local channels.
 - Ingestd consumes staging subjects via the JetStream consumer (`crate/core/sinex-ingestd/src/jetstream_consumer.rs`) and persists slices before emitting confirmations/DLQ.
 - Channel drain helpers live behind the `channel-testing` feature in `sinex-test-utils`; production code should prefer streaming publishes over draining in-memory queues.
+- Default Nix bootstrap does **not** create a staging stream; add one via `services.sinex.nats.bootstrapStreams.streams` when you need explicit burst buffering.
 
 Purpose:
 - Replace brittle in‑process channels (e.g., fixed capacity mpsc).
@@ -60,17 +61,32 @@ In the JetStream‑first architecture, ingestd persists events inside a single d
 ### NATS JetStream (Events)
 Authoritative notifications for persisted events (consumers replay as needed).
 
-Example (illustrative):
+Example (illustrative, aligned with the default Nix bootstrap):
 ```yaml
 streams:
-  events:
-    subjects: ["events.>"]
+  events_raw:
+    subjects: ["events.raw.>"]
     max_age: 604800s   # 7 days
     storage: file
     discard: none
+  events_confirmations:
+    subjects: ["events.confirmations.>"]
+    max_age: 2592000s  # 30 days
+    max_msgs_per_subject: 1
+    storage: file
+    discard: none
+  source_material_begin:
+    subjects: ["source_material.begin"]
+    max_age: 604800s   # 7 days
+  source_material_slices:
+    subjects: ["source_material.slices.>"]
+    max_age: 604800s
+  source_material_end:
+    subjects: ["source_material.end"]
+    max_age: 604800s
 ```
 
-## Satellite Guidelines
+## node Guidelines
 - Do not collect unbounded data into memory (avoid building huge Vecs before send).
 - Stream transformations; chunk large sources; prefer backpressure‑aware pipelines.
 - Use bounded concurrency (e.g., buffer_unordered(n)) to limit parallel work.

@@ -527,6 +527,7 @@ sinex_proptest! {
 
 sinex_proptest! {
     // Test system events with extreme payloads.
+    #[cases(64)]
     fn test_system_events_robustness(
         payload in fuzzed_system_payloads(),
         source in prop_oneof![
@@ -811,7 +812,7 @@ mod additional_tests {
     }
 
     #[sinex_test]
-    fn test_panic_safety_with_catch_unwind() -> color_eyre::eyre::Result<()> {
+    fn test_panic_safety_with_catch_unwind() -> TestResult<()> {
         // Test that even if there were a panic, it would be caught
         let result = panic::catch_unwind(|| {
             let mut event = Event::test_event(

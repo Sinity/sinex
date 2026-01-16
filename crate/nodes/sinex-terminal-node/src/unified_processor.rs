@@ -1,0 +1,1091 @@
+#![doc = include_str!("../docs/overview.md")]
+
+//! Terminal processor that tails configured history files and emits structured
+//! command events. Each discovered command is captured as a source material via
+//! `AcquisitionManager` and published to JetStream, while the structured event
+//! is emitted through the shared Stage-as-You-Go channel.
+
+use async_trait::async_trait;
+use camino::Utf8PathBuf;
+use chrono::{DateTime, Utc};
+use color_eyre::eyre;
+use serde::{Deserialize, Serialize};
+use serde_json;
+use sinex_core::{
+    types::{domain::SanitizedPath, validate_path, Bytes, Seconds},
+    Event as CoreEvent, Id, Provenance, Ulid,
+};
+use sinex_processor_runtime::{
+    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
+};
+use sinex_node_sdk::{
+    acquisition_manager::{AcquisitionManager, RotationPolicy},
+    stage_as_you_go::StageAsYouGoContext,
+    stream_processor::{
+        Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
+        ProcessorType, ScanArgs, ScanEstimate, ScanReport, ServiceInfo, Node,
+        TimeHorizon,
+    },
+    NodeError, NodeResult,
+};
+use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
+use tokio::{
+    fs,
+    io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
+    sync::{watch, Mutex},
+};
+use tracing::{debug, info, instrument, warn};
+use validator::ValidationError;
+
+const MATERIAL_REASON_HISTORY: &str = "terminal-history";
+
+// Default configuration values
+const DEFAULT_POLLING_INTERVAL: Seconds = Seconds::from_secs(15);
+const DEFAULT_MAX_CAPTURE_BYTES: Bytes = Bytes::from_bytes(32 * 1024); // 32 KiB
+
+/// Configuration for a shell history source.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistorySourceConfig {
+    pub path: Utf8PathBuf,
+
+    /// Shell type (bash, zsh, fish, etc.)
+    pub shell: String,
+}
+
+fn validate_history_path(path: &Utf8PathBuf) -> Result<(), ValidationError> {
+    validate_path(path.as_str())
+        .map(|_| ())
+        .map_err(|_| ValidationError::new("invalid_history_path"))
+}
+
+/// Terminal processor configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalConfig {
+    /// Shell history sources to monitor.
+    pub history_sources: Vec<HistorySourceConfig>,
+
+    /// Polling interval for checking file changes (seconds)
+    pub polling_interval_secs: Seconds,
+
+    /// Maximum capture size per command (bytes)
+    pub max_capture_bytes: Bytes,
+}
+
+impl Default for TerminalConfig {
+    fn default() -> Self {
+        let home = dirs::home_dir()
+            .and_then(|p| Utf8PathBuf::from_path_buf(p).ok())
+            .unwrap_or_else(|| Utf8PathBuf::from("/tmp"));
+
+        let default_sources = vec![
+            HistorySourceConfig {
+                path: home.join(".bash_history"),
+                shell: "bash".to_string(),
+            },
+            HistorySourceConfig {
+                path: home.join(".zsh_history"),
+                shell: "zsh".to_string(),
+            },
+        ];
+
+        Self {
+            history_sources: default_sources,
+            polling_interval_secs: DEFAULT_POLLING_INTERVAL,
+            max_capture_bytes: DEFAULT_MAX_CAPTURE_BYTES,
+        }
+    }
+}
+
+impl TerminalConfig {
+    pub fn validate_config(&self) -> Result<(), String> {
+        if self.history_sources.is_empty() {
+            return Err("At least one history source must be configured".to_string());
+        }
+
+        for source in &self.history_sources {
+            validate_history_path(&source.path)
+                .map_err(|_| "Invalid history file path".to_string())?;
+            if source.shell.trim().is_empty() {
+                return Err("Shell type cannot be empty".to_string());
+            }
+        }
+
+        let polling_secs = self.polling_interval_secs.as_secs();
+        if !(1..=3600).contains(&polling_secs) {
+            return Err("Polling interval must be between 1 and 3600 seconds".to_string());
+        }
+
+        let max_bytes = self.max_capture_bytes.as_u64();
+        if !(64..=1 * 1024 * 1024).contains(&max_bytes) {
+            return Err("Max capture bytes must be between 64B and 1MB".to_string());
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TerminalState {
+    pub captured_at: DateTime<Utc>,
+    pub monitored_sources: Vec<Utf8PathBuf>,
+    pub host: String,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct HistoryState {
+    offset_bytes: u64,
+    line_number: u64,
+}
+
+#[derive(Clone)]
+struct HistoryWatcherContext {
+    acquisition: Arc<AcquisitionManager>,
+    stage_context: StageAsYouGoContext,
+    shell: String,
+    path: Utf8PathBuf,
+    max_capture_bytes: Bytes,
+    polling_interval: Duration,
+    state_path: Option<PathBuf>,
+    shutdown_rx: watch::Receiver<bool>,
+    processed_commands: Option<Arc<Mutex<Vec<String>>>>,
+}
+
+impl HistoryWatcherContext {
+    async fn monitor(self) {
+        let mut offset_bytes: u64 = 0;
+        let mut line_number: u64 = 0;
+        let mut shutdown_rx = self.shutdown_rx.clone();
+
+        if let Some(state) = self.load_state().await {
+            offset_bytes = state.offset_bytes;
+            line_number = state.line_number;
+            debug!(
+                path = %self.path,
+                offset = offset_bytes,
+                line_number,
+                "Restored terminal watcher state"
+            );
+        }
+
+        loop {
+            if *shutdown_rx.borrow() {
+                info!(path = %self.path, "History watcher shutdown requested");
+                break;
+            }
+
+            let _ = self
+                .poll_history_once(&mut offset_bytes, &mut line_number)
+                .await;
+
+            tokio::select! {
+                _ = tokio::time::sleep(self.polling_interval) => {},
+                shutdown_result = shutdown_rx.changed() => {
+                    if shutdown_result.is_err() || *shutdown_rx.borrow() {
+                        info!(path = %self.path, "History watcher shutdown requested");
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    async fn load_state(&self) -> Option<HistoryState> {
+        let path = self.state_path.as_ref()?;
+        match fs::read(path).await {
+            Ok(bytes) => match serde_json::from_slice::<HistoryState>(&bytes) {
+                Ok(state) => Some(state),
+                Err(e) => {
+                    warn!("Failed to decode history watcher state {:?}: {}", path, e);
+                    None
+                }
+            },
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+            Err(err) => {
+                warn!("Failed to load history watcher state {:?}: {}", path, err);
+                None
+            }
+        }
+    }
+
+    async fn persist_state(&self, offset_bytes: u64, line_number: u64) {
+        let path = match &self.state_path {
+            Some(path) => path,
+            None => return,
+        };
+
+        let state = HistoryState {
+            offset_bytes,
+            line_number,
+        };
+
+        match serde_json::to_vec_pretty(&state) {
+            Ok(serialized) => {
+                if let Some(parent) = path.parent() {
+                    if let Err(e) = fs::create_dir_all(parent).await {
+                        warn!(
+                            "Failed to create history watcher state dir {:?}: {}",
+                            parent, e
+                        );
+                        return;
+                    }
+                }
+
+                let file_name = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("history_state");
+                let temp_path = path
+                    .parent()
+                    .unwrap_or_else(|| std::path::Path::new("."))
+                    .join(format!("{}.{}.tmp", file_name, Ulid::new()));
+
+                match fs::OpenOptions::new()
+                    .create_new(true)
+                    .write(true)
+                    .open(&temp_path)
+                    .await
+                {
+                    Ok(mut file) => {
+                        if let Err(e) = file.write_all(&serialized).await {
+                            warn!(
+                                "Failed to persist history watcher state {:?}: {}",
+                                temp_path, e
+                            );
+                            let _ = fs::remove_file(&temp_path).await;
+                            return;
+                        }
+                        if let Err(e) = file.sync_all().await {
+                            warn!(
+                                "Failed to fsync history watcher state {:?}: {}",
+                                temp_path, e
+                            );
+                            let _ = fs::remove_file(&temp_path).await;
+                            return;
+                        }
+                        if let Err(e) = fs::rename(&temp_path, path).await {
+                            warn!("Failed to replace history watcher state {:?}: {}", path, e);
+                            let _ = fs::remove_file(&temp_path).await;
+                        }
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to create history watcher temp state {:?}: {}",
+                            temp_path, e
+                        );
+                    }
+                }
+            }
+            Err(e) => warn!("Failed to serialize history watcher state: {}", e),
+        }
+    }
+
+    async fn read_new_segment(&self, offset: u64) -> std::io::Result<String> {
+        use std::io::SeekFrom;
+
+        let mut file = tokio::fs::File::open(&self.path).await?;
+        file.seek(SeekFrom::Start(offset)).await?;
+
+        // Pre-allocate to reduce repeated growth; capped by max_capture_bytes.
+        let prealloc = self.max_capture_bytes.as_usize().min(32 * 1024);
+        let mut buffer = Vec::with_capacity(prealloc);
+        file.read_to_end(&mut buffer).await?;
+
+        Ok(String::from_utf8_lossy(&buffer).to_string())
+    }
+
+    async fn poll_history_once(&self, offset_bytes: &mut u64, line_number: &mut u64) -> usize {
+        let mut processed = 0usize;
+        match fs::metadata(&self.path).await {
+            Ok(metadata) => {
+                let file_size = metadata.len();
+
+                if file_size < *offset_bytes {
+                    debug!(
+                        path = %self.path,
+                        previous_offset = *offset_bytes,
+                        new_size = file_size,
+                        "History file truncated; resetting offsets"
+                    );
+                    *offset_bytes = 0;
+                    *line_number = 0;
+                    self.persist_state(*offset_bytes, *line_number).await;
+                    return processed;
+                }
+
+                if file_size == *offset_bytes {
+                    return processed;
+                }
+
+                match self.read_new_segment(*offset_bytes).await {
+                    Ok(new_segment) => {
+                        if new_segment.is_empty() {
+                            return processed;
+                        }
+
+                        let mut consumed_bytes: u64 = 0;
+
+                        for line in new_segment.split_inclusive('\n') {
+                            if !line.ends_with('\n') && new_segment.ends_with(line) {
+                                break;
+                            }
+
+                            let trimmed = line.trim_end_matches('\n');
+                            consumed_bytes += line.len() as u64;
+
+                            if trimmed.is_empty() {
+                                continue;
+                            }
+
+                            *line_number += 1;
+
+                            match process_command(self, trimmed, *line_number).await {
+                                Ok(()) => {
+                                    processed += 1;
+                                }
+                                Err(e) => {
+                                    warn!(
+                                        "Failed to process history entry from {}: {}",
+                                        self.path, e
+                                    );
+                                }
+                            };
+                        }
+
+                        if consumed_bytes > 0 {
+                            *offset_bytes = offset_bytes.saturating_add(consumed_bytes);
+                            self.persist_state(*offset_bytes, *line_number).await;
+                        }
+                    }
+                    Err(e) => warn!("History watcher unable to read {}: {}", self.path, e),
+                }
+            }
+            Err(e) => {
+                warn!("History watcher unable to stat {}: {}", self.path, e);
+            }
+        }
+
+        processed
+    }
+
+    async fn scan_history_once(&self) -> usize {
+        let mut offset_bytes = 0u64;
+        let mut line_number = 0u64;
+
+        if let Some(state) = self.load_state().await {
+            offset_bytes = state.offset_bytes;
+            line_number = state.line_number;
+        }
+
+        self.poll_history_once(&mut offset_bytes, &mut line_number)
+            .await
+    }
+}
+
+async fn process_command(
+    ctx: &HistoryWatcherContext,
+    command: &str,
+    line_number: u64,
+) -> NodeResult<()> {
+    let bytes = command.as_bytes();
+
+    if bytes.len() as u64 > ctx.max_capture_bytes.as_u64() {
+        warn!(
+            "Skipping command exceeding capture limit ({} bytes > {} limit)",
+            bytes.len(),
+            ctx.max_capture_bytes.as_u64()
+        );
+        return Ok(());
+    }
+
+    if let Some(commands) = &ctx.processed_commands {
+        commands.lock().await.push(command.to_string());
+    }
+
+    let mut handle = ctx
+        .acquisition
+        .begin_material(ctx.path.as_str())
+        .await
+        .map_err(|e| NodeError::General(eyre::eyre!("Failed to begin material: {}", e)))?;
+    let material_id = handle.material_id;
+
+    ctx.acquisition
+        .append_slice(&mut handle, bytes)
+        .await
+        .map_err(|e| NodeError::General(eyre::eyre!("Failed to append slice: {}", e)))?;
+
+    ctx.acquisition
+        .finalize(handle, MATERIAL_REASON_HISTORY)
+        .await
+        .map_err(|e| NodeError::General(eyre::eyre!("Failed to finalize material: {}", e)))?;
+
+    let payload = sinex_core::types::events::payloads::shell::HistoryCommandImportedPayload {
+        command: command.to_string(),
+        timestamp: Some(Utc::now()),
+        shell_type: ctx.shell.clone(),
+        source_file: ctx.path.to_string(),
+        line_number: Some(line_number as u32),
+    };
+
+    let provenance = Provenance::Material {
+        id: Id::from_ulid(material_id),
+        anchor_byte: 0,
+        offset_start: Some(0),
+        offset_end: Some(bytes.len() as i64),
+        offset_kind: sinex_core::OffsetKind::Byte,
+    };
+
+    let event = CoreEvent::create(
+        sinex_core::types::domain::EventSource::from_static("shell.history"),
+        sinex_core::types::domain::EventType::from_static("command.imported"),
+        serde_json::to_value(payload)
+            .map_err(|e| NodeError::General(eyre::eyre!("Failed to encode payload: {}", e)))?,
+        provenance,
+    );
+
+    let mut event = event;
+    event.id = Some(Id::from_ulid(Ulid::new()));
+
+    ctx.stage_context
+        .emit_event_with_provenance(event, material_id, Some(0), Some(bytes.len() as i64))
+        .await
+        .map(|_| ())
+        .map_err(|e| {
+            NodeError::General(eyre::eyre!("Failed to emit terminal event: {}", e))
+        })?;
+
+    Ok(())
+}
+
+/// Terminal processor that monitors history files.
+pub struct TerminalProcessor {
+    config: TerminalConfig,
+    stage_context: Option<StageAsYouGoContext>,
+    watch_handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
+    runtime: Option<ProcessorRuntimeState>,
+    state_dir: Option<PathBuf>,
+    shutdown_tx: Option<watch::Sender<bool>>,
+}
+
+impl TerminalProcessor {
+    pub fn new() -> Self {
+        Self {
+            config: TerminalConfig::default(),
+            stage_context: None,
+            watch_handles: Arc::new(Mutex::new(Vec::new())),
+            runtime: None,
+            state_dir: None,
+            shutdown_tx: None,
+        }
+    }
+
+    pub fn with_config(config: TerminalConfig) -> Self {
+        Self {
+            config,
+            stage_context: None,
+            watch_handles: Arc::new(Mutex::new(Vec::new())),
+            runtime: None,
+            state_dir: None,
+            shutdown_tx: None,
+        }
+    }
+
+    pub fn config(&self) -> &TerminalConfig {
+        &self.config
+    }
+
+    fn runtime(&self) -> NodeResult<&ProcessorRuntimeState> {
+        self.runtime.as_ref().ok_or_else(|| {
+            NodeError::General(eyre::eyre!(
+                "Terminal processor runtime not initialized prior to scan"
+            ))
+        })
+    }
+
+    fn service_info(&self) -> NodeResult<&ServiceInfo> {
+        Ok(self.runtime()?.service_info())
+    }
+
+    async fn initialise_from_runtime(
+        &mut self,
+        config: TerminalConfig,
+        runtime: ProcessorRuntimeState,
+    ) -> NodeResult<()> {
+        let service_info = runtime.service_info();
+        info!(
+            processor = self.processor_name(),
+            service = %service_info.service_name(),
+            "Initialising terminal processor"
+        );
+
+        config.validate_config().map_err(|e| {
+            NodeError::General(eyre::eyre!(
+                "Terminal configuration validation failed: {}",
+                e
+            ))
+        })?;
+
+        let publisher = match runtime.transport() {
+            sinex_node_sdk::event_processor::EventTransport::Nats(publisher) => {
+                publisher.clone()
+            }
+        };
+
+        AcquisitionManager::bootstrap_streams(publisher.nats_client())
+            .await
+            .map_err(NodeError::from)?;
+
+        let mut state_dir = service_info.work_dir().clone();
+        state_dir.push("terminal-history");
+
+        if let Err(e) = fs::create_dir_all(&state_dir).await {
+            return Err(NodeError::General(eyre::eyre!(
+                "Failed to create terminal state directory {}: {}",
+                state_dir.display(),
+                e
+            )));
+        }
+
+        self.state_dir = Some(state_dir);
+        self.stage_context = Some(StageAsYouGoContext::from_runtime(&runtime));
+        self.runtime = Some(runtime);
+        self.config = config;
+        self.watch_handles = Arc::new(Mutex::new(Vec::new()));
+        self.shutdown_tx = None;
+
+        Ok(())
+    }
+
+    fn build_history_contexts(
+        &self,
+        shutdown_rx: watch::Receiver<bool>,
+    ) -> NodeResult<Vec<HistoryWatcherContext>> {
+        let runtime = self.runtime()?;
+
+        let stage = self
+            .stage_context
+            .clone()
+            .ok_or_else(|| NodeError::General(eyre::eyre!("Stage context not initialized")))?;
+
+        let state_dir = self.state_dir.clone();
+        let mut contexts = Vec::new();
+        for source in &self.config.history_sources {
+            let acquisition = Arc::new(runtime.acquisition_manager(
+                RotationPolicy::default(),
+                "terminal-history",
+                source.path.to_string(),
+            )?);
+
+            let state_path = state_dir.as_ref().map(|dir| {
+                let hash = blake3::hash(source.path.as_str().as_bytes())
+                    .to_hex()
+                    .to_string();
+                dir.join(format!("{}.json", hash))
+            });
+
+            let stage_context = stage
+                .clone()
+                .with_acquisition_manager(Arc::clone(&acquisition));
+
+            contexts.push(HistoryWatcherContext {
+                acquisition,
+                stage_context,
+                shell: source.shell.clone(),
+                path: source.path.clone(),
+                max_capture_bytes: self.config.max_capture_bytes,
+                polling_interval: Duration::from_secs(self.config.polling_interval_secs.as_secs()),
+                state_path,
+                shutdown_rx: shutdown_rx.clone(),
+                processed_commands: None,
+            });
+        }
+
+        Ok(contexts)
+    }
+}
+
+impl Default for TerminalProcessor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl Node for TerminalProcessor {
+    type Config = TerminalConfig;
+
+    #[instrument(skip(self, init), fields(processor = "terminal", service = %init.service_info().service_name()))]
+    async fn initialize(
+        &mut self,
+        init: ProcessorInitContext<Self::Config>,
+    ) -> NodeResult<()> {
+        let (config, runtime) = init.into_runtime();
+        self.initialise_from_runtime(config, runtime).await
+    }
+
+    async fn scan(
+        &mut self,
+        from: Checkpoint,
+        until: TimeHorizon,
+        _args: ScanArgs,
+    ) -> NodeResult<ScanReport> {
+        match until {
+            TimeHorizon::Snapshot => {
+                let service_info = self.service_info()?;
+                let state = TerminalState {
+                    captured_at: Utc::now(),
+                    monitored_sources: self
+                        .config()
+                        .history_sources
+                        .iter()
+                        .map(|src| src.path.clone())
+                        .collect(),
+                    host: service_info.host().to_string(),
+                };
+
+                debug!(
+                    monitored = state.monitored_sources.len(),
+                    "Terminal snapshot captured"
+                );
+
+                Ok(ScanReport {
+                    events_processed: 0,
+                    duration: std::time::Duration::from_millis(0),
+                    final_checkpoint: from,
+                    time_range: None,
+                    processor_stats: HashMap::new(),
+                    successful_targets: vec!["snapshot".to_string()],
+                    failed_targets: Vec::new(),
+                    warnings: Vec::new(),
+                })
+            }
+            TimeHorizon::Historical { .. } => {
+                let (_, shutdown_rx) = watch::channel(false);
+                let contexts = self.build_history_contexts(shutdown_rx)?;
+                let mut events_processed = 0u64;
+
+                for ctx in contexts {
+                    events_processed =
+                        events_processed.saturating_add(ctx.scan_history_once().await as u64);
+                }
+
+                Ok(ScanReport {
+                    events_processed,
+                    duration: std::time::Duration::from_millis(0),
+                    final_checkpoint: from,
+                    time_range: None,
+                    processor_stats: HashMap::new(),
+                    successful_targets: vec!["historical".to_string()],
+                    failed_targets: Vec::new(),
+                    warnings: Vec::new(),
+                })
+            }
+            TimeHorizon::Continuous => {
+                let (shutdown_tx, _) = watch::channel(false);
+                self.shutdown_tx = Some(shutdown_tx.clone());
+                let contexts = self.build_history_contexts(shutdown_tx.subscribe())?;
+
+                let mut guard = self.watch_handles.lock().await;
+                for watch_ctx in contexts {
+                    let handle = tokio::spawn(watch_ctx.clone().monitor());
+                    guard.push(handle);
+                }
+
+                info!(
+                    watches = guard.len(),
+                    "Terminal watcher monitoring history sources"
+                );
+
+                let mut shutdown_rx = shutdown_tx.subscribe();
+                let _ = shutdown_rx.changed().await;
+
+                Ok(ScanReport {
+                    events_processed: 0,
+                    duration: std::time::Duration::from_millis(0),
+                    final_checkpoint: Checkpoint::None,
+                    time_range: None,
+                    processor_stats: HashMap::new(),
+                    successful_targets: vec!["continuous".to_string()],
+                    failed_targets: Vec::new(),
+                    warnings: Vec::new(),
+                })
+            }
+        }
+    }
+
+    fn processor_name(&self) -> &str {
+        "terminal-watcher"
+    }
+
+    fn processor_type(&self) -> ProcessorType {
+        ProcessorType::Ingestor
+    }
+
+    fn capabilities(&self) -> ProcessorCapabilities {
+        ProcessorCapabilities {
+            supports_snapshot: true,
+            supports_historical: true,
+            supports_continuous: true,
+            ..ProcessorCapabilities::default()
+        }
+    }
+
+    async fn current_checkpoint(&self) -> NodeResult<Checkpoint> {
+        Ok(Checkpoint::None)
+    }
+
+    async fn estimate_scan_scope(
+        &self,
+        _from: &Checkpoint,
+        _until: &TimeHorizon,
+        _args: &ScanArgs,
+    ) -> NodeResult<ScanEstimate> {
+        Ok(ScanEstimate {
+            estimated_events: (self.config.history_sources.len() as u64) * 100,
+            estimated_duration: std::time::Duration::from_secs(
+                self.config.polling_interval_secs.as_secs(),
+            ),
+            estimated_data_size: self.config.max_capture_bytes.as_u64()
+                * (self.config.history_sources.len() as u64),
+            estimated_targets: self.config.history_sources.len() as u64,
+            warnings: vec!["Terminal history estimation uses polling heuristics".to_string()],
+            confidence: 0.25,
+        })
+    }
+
+    async fn shutdown(&mut self) -> NodeResult<()> {
+        if let Some(shutdown_tx) = self.shutdown_tx.take() {
+            let _ = shutdown_tx.send(true);
+        }
+        let mut guard = self.watch_handles.lock().await;
+        for handle in guard.drain(..) {
+            handle.abort();
+        }
+        info!("Terminal watcher shutdown complete");
+        Ok(())
+    }
+}
+
+impl ExplorationProvider for TerminalProcessor {
+    fn get_source_state(&self) -> color_eyre::eyre::Result<SourceState> {
+        Ok(SourceState {
+            description: "Tails shell history files and emits command events".to_string(),
+            last_updated: Utc::now(),
+            total_items: Some(self.config.history_sources.len() as u64),
+            metadata: HashMap::from([(
+                "polling_interval_secs".to_string(),
+                serde_json::Value::Number(serde_json::Number::from(
+                    self.config.polling_interval_secs.as_secs(),
+                )),
+            )]),
+            healthy: true,
+            recent_activity: Vec::new(),
+        })
+    }
+
+    fn get_ingestion_history(
+        &self,
+        _limit: u64,
+    ) -> color_eyre::eyre::Result<Vec<IngestionHistoryEntry>> {
+        Ok(Vec::new())
+    }
+
+    fn get_coverage_analysis(
+        &self,
+        time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
+    ) -> color_eyre::eyre::Result<CoverageAnalysis> {
+        let time_range = time_range.unwrap_or_else(|| {
+            let now = Utc::now();
+            (now - chrono::Duration::hours(1), now)
+        });
+
+        Ok(CoverageAnalysis {
+            time_range,
+            coverage_percentage: 1.0,
+            missing_count: 0,
+            duplicate_count: 0,
+            source_total: self.config.history_sources.len() as u64,
+            sinex_total: 0,
+            missing_samples: Vec::new(),
+            recommendations: vec![
+                "Ensure history files are readable by the terminal satellite".to_string(),
+            ],
+        })
+    }
+
+    fn export_data(
+        &self,
+        _path: &SanitizedPath,
+        _format: ExportFormat,
+    ) -> color_eyre::eyre::Result<()> {
+        Err(eyre::eyre!("Terminal watcher does not support data export"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sinex_core::db::models::Provenance;
+    use sinex_core::db::query_helpers::ulid_to_uuid;
+    use sinex_core::Id;
+    use sinex_node_sdk::{acquisition_manager::RotationPolicy, AcquisitionManager};
+    use sinex_test_utils::{
+        prelude::*, start_test_ingestd_with_config, TestIngestdConfig, TestRuntime,
+        TestRuntimeBuilder,
+    };
+    use sinex_test_utils::{sinex_test, TestResult};
+    use std::sync::Arc;
+    use tokio::{
+        io::AsyncWriteExt,
+        time::{timeout, Duration},
+    };
+
+    #[sinex_test]
+    fn terminal_config_validation_allows_valid_configuration() -> TestResult<()> {
+        let config = TerminalConfig {
+            history_sources: vec![HistorySourceConfig {
+                path: Utf8PathBuf::from("/tmp/.bash_history"),
+                shell: "bash".to_string(),
+            }],
+            polling_interval_secs: Seconds::from_secs(30),
+            max_capture_bytes: Bytes::from_bytes(1024),
+        };
+
+        assert!(config.validate_config().is_ok());
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn terminal_config_validation_rejects_empty_sources() -> TestResult<()> {
+        let config = TerminalConfig {
+            history_sources: vec![],
+            polling_interval_secs: Seconds::from_secs(30),
+            max_capture_bytes: Bytes::from_bytes(1024),
+        };
+
+        assert!(config.validate_config().is_err());
+        Ok(())
+    }
+
+    #[sinex_serial_test]
+    async fn process_command_emits_event(ctx: TestContext) -> TestResult<()> {
+        ctx.ensure_clean().await?;
+
+        let TestRuntime {
+            runtime,
+            mut event_rx,
+            nats,
+        } = TestRuntimeBuilder::new(&ctx, "terminal-satellite-test")
+            .with_dry_run(false)
+            .build()
+            .await?;
+
+        let ingest_config = TestIngestdConfig {
+            nats_url: nats.client_url().to_string(),
+            database_url: ctx.database_url().to_string(),
+            work_dir: None,
+            ..Default::default()
+        };
+        let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
+
+        let publisher = match runtime.transport() {
+            sinex_node_sdk::event_processor::EventTransport::Nats(publisher) => {
+                publisher.clone()
+            }
+        };
+        AcquisitionManager::bootstrap_streams(publisher.nats_client()).await?;
+
+        let acquisition = Arc::new(runtime.acquisition_manager(
+            RotationPolicy::default(),
+            "terminal-history",
+            "/home/test/.bash_history",
+        )?);
+
+        let stage_context = StageAsYouGoContext::from_runtime(&runtime)
+            .with_acquisition_manager(Arc::clone(&acquisition));
+
+        let watcher_ctx = HistoryWatcherContext {
+            acquisition,
+            stage_context,
+            shell: "bash".to_string(),
+            path: Utf8PathBuf::from("/home/test/.bash_history"),
+            max_capture_bytes: Bytes::from_bytes(1024),
+            polling_interval: Duration::from_secs(1),
+            state_path: None,
+            shutdown_rx: tokio::sync::watch::channel(false).1,
+            #[cfg(test)]
+            processed_commands: None,
+        };
+
+        let command = "echo 'hello world'";
+        process_command(&watcher_ctx, command, 42).await?;
+
+        let event = timeout(Duration::from_secs(5), event_rx.recv())
+            .await?
+            .ok_or_else(|| color_eyre::eyre::eyre!("terminal event not emitted"))?;
+
+        assert_eq!(event.event_type.as_str(), "command.imported");
+
+        let material_ulid = match event.provenance {
+            Provenance::Material { ref id, .. } => *id.as_ulid(),
+            _ => {
+                return Err(color_eyre::eyre::eyre!(
+                    "expected material provenance in terminal event"
+                ))
+            }
+        };
+
+        let expected_bytes = command.as_bytes().len() as i64;
+        sinex_test_utils::timing_utils::WaitHelpers::wait_for_condition(
+            || {
+                let pool = ctx.pool.clone();
+                let material_ulid = material_ulid;
+                let expected = expected_bytes;
+                async move {
+                    if let Some(material) = pool
+                        .source_materials()
+                        .get_by_id(Id::from_ulid(material_ulid))
+                        .await?
+                    {
+                        if material.status.as_str() != "completed" {
+                            return Ok::<bool, sinex_test_utils::SinexError>(false);
+                        }
+                    } else {
+                        return Ok::<bool, sinex_test_utils::SinexError>(false);
+                    }
+
+                    let ledger_bytes: Option<i64> = sqlx::query_scalar(
+                        "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid ORDER BY ts_capture DESC LIMIT 1",
+                    )
+                    .bind(ulid_to_uuid(material_ulid))
+                    .fetch_optional(&pool)
+                    .await
+                    .map_err(|e| sinex_test_utils::SinexError::database(e.to_string()))?;
+                    Ok::<bool, sinex_test_utils::SinexError>(
+                        ledger_bytes.unwrap_or_default() == expected
+                    )
+                }
+            },
+            20,
+        )
+        .await?;
+
+        let record = ctx
+            .pool
+            .source_materials()
+            .get_by_id(Id::from_ulid(material_ulid))
+            .await?
+            .ok_or_else(|| color_eyre::eyre::eyre!("source material not persisted"))?;
+        assert_eq!(record.status.as_str(), "completed");
+
+        let total_bytes: Option<i64> = sqlx::query_scalar(
+            "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid ORDER BY ts_capture DESC LIMIT 1",
+        )
+        .bind(ulid_to_uuid(material_ulid))
+        .fetch_optional(&ctx.pool)
+        .await?;
+
+        assert_eq!(total_bytes.unwrap_or_default(), expected_bytes);
+
+        let payload_command = event
+            .payload
+            .get("command")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| color_eyre::eyre::eyre!("payload command missing"))?;
+        assert_eq!(payload_command, command);
+
+        ingest_handle.stop().await?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn terminal_watcher_tails_incrementally(ctx: TestContext) -> TestResult<()> {
+        let TestRuntime { runtime, nats, .. } =
+            TestRuntimeBuilder::new(&ctx, "terminal-watcher-incremental")
+                .with_dry_run(false)
+                .build()
+                .await?;
+
+        let ingest_config = TestIngestdConfig {
+            nats_url: nats.client_url().to_string(),
+            database_url: ctx.database_url().to_string(),
+            work_dir: None,
+            ..Default::default()
+        };
+        let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
+
+        let publisher = match runtime.transport() {
+            sinex_node_sdk::event_processor::EventTransport::Nats(publisher) => {
+                publisher.clone()
+            }
+        };
+        AcquisitionManager::bootstrap_streams(publisher.nats_client()).await?;
+
+        let acquisition = Arc::new(runtime.acquisition_manager(
+            RotationPolicy::default(),
+            "terminal-history",
+            "/tmp/history",
+        )?);
+        let stage_context = StageAsYouGoContext::from_runtime(&runtime)
+            .with_acquisition_manager(Arc::clone(&acquisition));
+
+        let temp_dir = tempfile::tempdir()?;
+        let history_path = temp_dir.path().join("history.txt");
+        tokio::fs::write(&history_path, "echo first\n").await?;
+        let state_path = temp_dir.path().join("history_state.json");
+
+        let history_utf8 = Utf8PathBuf::from_path_buf(history_path.clone())
+            .map_err(|path| color_eyre::eyre::eyre!("history path not utf8: {}", path.display()))?;
+
+        let mut watcher_ctx = HistoryWatcherContext {
+            acquisition,
+            stage_context,
+            shell: "bash".to_string(),
+            path: history_utf8,
+            max_capture_bytes: Bytes::from_bytes(2048),
+            polling_interval: Duration::from_millis(50),
+            state_path: Some(state_path),
+            shutdown_rx: tokio::sync::watch::channel(false).1,
+            #[cfg(test)]
+            processed_commands: None,
+        };
+
+        #[cfg(test)]
+        let processed_commands = Arc::new(Mutex::new(Vec::new()));
+        #[cfg(test)]
+        {
+            watcher_ctx.processed_commands = Some(processed_commands.clone());
+        }
+
+        let mut offset_bytes = 0u64;
+        let mut line_number = 0u64;
+
+        let _ = watcher_ctx
+            .poll_history_once(&mut offset_bytes, &mut line_number)
+            .await;
+
+        let mut history_file: tokio::fs::File = tokio::fs::OpenOptions::new()
+            .append(true)
+            .open(&history_path)
+            .await?;
+        history_file.write_all(b"echo second\n").await?;
+        history_file.write_all(b"echo third\n").await?;
+        history_file.flush().await?;
+
+        let _ = watcher_ctx
+            .poll_history_once(&mut offset_bytes, &mut line_number)
+            .await;
+
+        #[cfg(test)]
+        {
+            let commands = processed_commands.lock().await.clone();
+            assert_eq!(
+                commands,
+                vec!["echo first", "echo second", "echo third"],
+                "history watcher should append only new commands in order"
+            );
+        }
+
+        ingest_handle.stop().await?;
+        Ok(())
+    }
+}

@@ -77,7 +77,7 @@ Apply with:
 sudo nixos-rebuild switch --flake .#your-host
 ```
 
-> **Important**: When consuming the module from this flake, also add the provided overlay so `pkgs.sinex` is available (the module installs it by default). The CLI package is picked up automatically when present, but is optional.
+> **Important**: When consuming the module from this flake, either add the provided overlay so `pkgs.sinex`/`pkgs.sinexCli` are available, or set `services.sinex.package`/`services.sinex.cliPackage` directly from the flake outputs. The CLI package is optional, but wiring it explicitly avoids relying on overlays.
 > ```nix
 > {
 >   inputs.sinex.url = "github:.../sinex";
@@ -88,7 +88,11 @@ sudo nixos-rebuild switch --flake .#your-host
 >   };
 > }
 > ```
-> Omitting the overlay will raise an evaluation error because the module requires a concrete Sinex package.
+> If you skip the overlay, provide packages explicitly:
+> ```nix
+> services.sinex.package = inputs.sinex.packages.${pkgs.stdenv.hostPlatform.system}.sinex;
+> services.sinex.cliPackage = inputs.sinex.packages.${pkgs.stdenv.hostPlatform.system}.sinexCli;
+> ```
 
 ### Service Group Controls
 
@@ -414,19 +418,11 @@ sudo systemctl start sinex-satellite-system
 # Check which instances are running
 systemctl status 'sinex-*-*'
 
-# View leadership status  
-sudo -u sinex psql sinex_prod -c "
-SELECT service_name, version, acquired_at, last_heartbeat 
-FROM core.service_leadership;
-"
+# View leadership status (JetStream KV)
+nats kv get KV_sinex_leadership <service>
 
-# View all healthy instances
-sudo -u sinex psql sinex_prod -c "
-SELECT service_name, instance_id, version, host_name, last_heartbeat
-FROM core.satellite_instances 
-WHERE last_heartbeat > NOW() - INTERVAL '2 minutes'
-ORDER BY service_name, version DESC;
-"
+# List healthy instances (KV_sinex_instances uses `<service>.<instance>` keys)
+nats kv history KV_sinex_instances --subject '<service>.*'
 ```
 
 **Monitor coordination events:**
@@ -743,10 +739,7 @@ sudo systemctl start sinex-satellite-system
 **Database recovery:**
 ```bash
 # Reset checkpoints on corruption
-sudo -u sinex psql sinex_dev -c "
-UPDATE core.processor_checkpoints 
-SET last_processed_id = NULL 
-WHERE automaton_name = 'terminal-command-canonicalizer';"
+nats kv purge sinex_checkpoints --force
 
 # Rebuild indexes
 sudo -u sinex psql sinex_dev -c "REINDEX DATABASE sinex_dev;"

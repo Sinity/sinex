@@ -272,7 +272,6 @@ pub fn validate_json(json_str: &str) -> Result<Value> {
 }
 
 /// Validate a JSON Value with depth and structure limits
-#[allow(dead_code)]
 pub fn validate_json_value(value: &Value) -> Result<()> {
     // Validate structure (depth and key count)
     validate_json_structure(value, 0)?;
@@ -280,7 +279,6 @@ pub fn validate_json_value(value: &Value) -> Result<()> {
 }
 
 /// Deserialize JSON with validation and enhanced error handling
-#[allow(dead_code)]
 pub fn deserialize_json_with_validation<T>(json_str: &str) -> Result<T>
 where
     T: serde::de::DeserializeOwned,

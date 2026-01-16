@@ -157,7 +157,7 @@ Support for diverse cognitive styles and neurodivergent needs:
 
 ### Graceful Evolution & Openness
 - **Performance Scaling**: Database tuning, asynchronous processing, parallelization
-- **Schema Evolution**: Versioned migrations with backward compatibility
+- **Schema Evolution**: Versioned migrations with stable change tracking
 - **Open Architecture**: Open standards, open-source components, declarative configuration
 - **User Hackability**: Everything inspectable and modifiable
 
@@ -194,6 +194,6 @@ The Exocortex evolves with its user through:
 
 ## Conclusion
 
-The full vision of Sinex as a "sentient archive" requires significant additional development beyond the current operational system. However, the architectural foundation - satellite constellation, event substrate, and processing pipeline - provides a solid base for implementing these advanced features. 
+The full vision of Sinex as a "sentient archive" requires significant additional development beyond the current operational system. However, the architectural foundation - node constellation, event substrate, and processing pipeline - provides a solid base for implementing these advanced features. 
 
 Each enhancement should be driven by real user needs and implemented incrementally to maintain system stability and user trust. The goal is not just to build a system, but to cultivate a lifelong practice of attentive self-authorship and continuous learning through a deeply personal cognitive infrastructure.

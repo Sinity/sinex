@@ -2,8 +2,8 @@
 //!
 //! This module defines the `raw.temporal_ledger` table, a critical component
 //! for the "Source Material is Ground Truth" and "Provenance Everywhere" principles.
-//! It is a high-precision, immutable, append-only log that records *when* the
-//! `sensd` daemon physically acquired each slice of data.
+//! It is a high-precision, immutable, append-only log that records *when* each
+//! slice of data was physically acquired.
 
 use crate::schema::{SourceMaterialRegistry, TableDef};
 use crate::ulid::Ulid;

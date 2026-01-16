@@ -1,16 +1,18 @@
 use sinex_core::types::validation::config_validation::{
     ConfigValidation, DatabaseConfig, ServerConfig,
 };
+use sinex_core::types::Seconds;
 use sinex_core::validation::Validate;
 use sinex_test_utils::sinex_test;
+use sinex_test_utils::TestResult;
 
 #[sinex_test]
-async fn database_config_validates_fields() -> color_eyre::eyre::Result<()> {
+async fn database_config_validates_fields() -> TestResult<()> {
     let valid = DatabaseConfig {
         url: "postgresql://localhost/test".to_string(),
         max_connections: 50,
         min_connections: 5,
-        timeout_secs: 30,
+        timeout_secs: Seconds::from_secs(30),
     };
     assert!(valid.validate().is_ok());
 
@@ -18,14 +20,14 @@ async fn database_config_validates_fields() -> color_eyre::eyre::Result<()> {
         url: "not-a-url".to_string(),
         max_connections: 50,
         min_connections: 5,
-        timeout_secs: 30,
+        timeout_secs: Seconds::from_secs(30),
     };
     assert!(invalid.validate().is_err());
     Ok(())
 }
 
 #[sinex_test]
-async fn server_config_checks_required_fields() -> color_eyre::eyre::Result<()> {
+async fn server_config_checks_required_fields() -> TestResult<()> {
     let valid = ServerConfig {
         name: "test-server".to_string(),
         bind_address: "127.0.0.1".to_string(),
@@ -45,7 +47,7 @@ async fn server_config_checks_required_fields() -> color_eyre::eyre::Result<()> 
 }
 
 #[sinex_test]
-async fn config_validation_trait_surfaces_errors() -> color_eyre::eyre::Result<()> {
+async fn config_validation_trait_surfaces_errors() -> TestResult<()> {
     let config = ServerConfig {
         name: "test".to_string(),
         bind_address: "not-an-ip".to_string(),

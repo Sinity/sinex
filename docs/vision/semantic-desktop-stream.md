@@ -1,7 +1,7 @@
 # TIM-SemanticDesktopStream: Synthesizing Context for Advanced Agency
 
 > **Operational note (2025-10-23)**  
-> JetStream ingestion is canonical. Any sensd/gRPC references here are historical context.
+> JetStream ingestion is canonical. Any retired pipeline references here are historical context.
 
 
 *   **Purpose:** Details the architecture of the Semantic Desktop Stream, a synthesized, real-time model of the user's current desktop context and available actions, designed to enable advanced AI agency.

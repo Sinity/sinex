@@ -68,7 +68,14 @@ async fn jetstream_ack_backlog_detection() -> Result<()> {
     }
 
     let durable = format!("perf_bottleneck_consumer_{}", Ulid::new());
-    let consumer = create_consumer(&js, &stream, &subject, &durable, StdDuration::from_millis(600)).await?;
+    let consumer = create_consumer(
+        &js,
+        &stream,
+        &subject,
+        &durable,
+        StdDuration::from_millis(600),
+    )
+    .await?;
 
     let mut backlog_messages = Vec::new();
     // Consume but intentionally leave half unacked to build backlog.
@@ -154,7 +161,8 @@ async fn jetstream_detect_publish_pressure() -> Result<()> {
 
     // Consumer drains to confirm backlog clears quickly.
     let durable = format!("perf_bottleneck_publish_consumer_{}", Ulid::new());
-    let consumer = create_consumer(&js, &stream, &subject, &durable, StdDuration::from_secs(2)).await?;
+    let consumer =
+        create_consumer(&js, &stream, &subject, &durable, StdDuration::from_secs(2)).await?;
     let mut consumed = 0usize;
     while consumed < 500 {
         let mut batch = consumer

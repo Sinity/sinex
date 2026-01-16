@@ -7,6 +7,8 @@ module assertions and VM harness.
 ## Prerequisites
 
 - `nats-server` must be available on `$PATH` for the ingest pipeline tests.
+  The dev shell pins it via `NATS_SERVER_BIN` (see `devenv.nix`), so prefer
+  running under `direnv exec /realm/project/sinex` or `devenv shell`.
 - PostgreSQL must be reachable at the location used by `sinex_test_utils`
   (the standard dev shell sets the required environment variables).
 - Python 3 is required for the CLI smoke check (`python3 -m compileall`).

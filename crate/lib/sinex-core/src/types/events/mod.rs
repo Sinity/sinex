@@ -15,14 +15,6 @@ mod blanket_impls;
 // Schema registry
 pub mod schema_registry;
 
-// Version information
-mod version;
-pub use version::*;
-
-// Test helpers for payload migration
-pub mod test_helpers;
-pub use test_helpers::*;
-
 // All payload types
 pub mod payloads;
 

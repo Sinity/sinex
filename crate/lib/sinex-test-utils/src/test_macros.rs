@@ -30,6 +30,23 @@ macro_rules! rstest_async {
     };
 }
 
+/// Define a pipeline test that provisions a shared-NATS PipelineScope automatically.
+#[macro_export]
+macro_rules! sinex_pipeline_test {
+    (
+        $(#[$meta:meta])*
+        async fn $name:ident($scope:ident : $scope_ty:ty $(,)?) -> $ret:ty $body:block
+    ) => {
+        $(#[$meta])*
+        #[sinex_test]
+        async fn $name(ctx: $crate::TestContext) -> $ret {
+            let ctx = ctx.with_shared_nats().await?;
+            let $scope = ctx.pipeline_scope().await?;
+            $body
+        }
+    };
+}
+
 // Helper for snapshot testing with automatic test name detection
 #[macro_export]
 macro_rules! assert_snapshot_named {

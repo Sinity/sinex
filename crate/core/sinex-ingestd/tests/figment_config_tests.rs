@@ -1,23 +1,25 @@
 use sinex_core::types::{validation::config_validation::ConfigValidation, Seconds};
 use sinex_ingestd::IngestdConfig;
 use sinex_test_utils::sinex_test;
+use sinex_test_utils::TestResult;
 
 #[sinex_test]
-fn defaults_match_constants() -> color_eyre::eyre::Result<()> {
+fn defaults_match_constants() -> TestResult<()> {
     let config = IngestdConfig::default();
     assert_eq!(config.database_pool_size, 50);
     assert_eq!(config.batch_size, 1_000);
     assert_eq!(config.batch_timeout_secs, Seconds::from_secs(5));
     assert!(!config.dry_run);
     assert!(config.validate_schemas);
+    assert!(!config.nats.require_tls);
     Ok(())
 }
 
 #[sinex_test]
-fn validates_database_urls() -> color_eyre::eyre::Result<()> {
+fn validates_database_urls() -> TestResult<()> {
     let mut config = IngestdConfig::default();
     config.database_url = "postgresql://localhost/test".to_string();
-    config.nats_url = "nats://localhost:4222".to_string();
+    config.nats.url = "nats://localhost:4222".to_string();
 
     assert!(config.validate_config().is_ok());
 
@@ -27,20 +29,22 @@ fn validates_database_urls() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn constructs_from_args() -> color_eyre::eyre::Result<()> {
+fn constructs_from_args() -> TestResult<()> {
     let config = IngestdConfig::from_args(
         Some("postgresql://custom/db".to_string()),
         "nats://custom:4222".to_string(),
+        true,
         50,
         200,
-        10,
+        Seconds::from_secs(10),
         true,
         None,
         None,
     );
 
     assert_eq!(config.database_url, "postgresql://custom/db");
-    assert_eq!(config.nats_url, "nats://custom:4222");
+    assert_eq!(config.nats.url, "nats://custom:4222");
+    assert!(config.nats.require_tls);
     assert_eq!(config.database_pool_size, 50);
     assert_eq!(config.batch_size, 200);
     assert_eq!(config.batch_timeout_secs.as_secs(), 10);
@@ -49,7 +53,7 @@ fn constructs_from_args() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn loads_from_config_file() -> color_eyre::eyre::Result<()> {
+fn loads_from_config_file() -> TestResult<()> {
     use std::fs;
 
     let original_db = std::env::var("DATABASE_URL").ok();
@@ -62,17 +66,21 @@ fn loads_from_config_file() -> color_eyre::eyre::Result<()> {
         r#"
             [ingestd]
             database_url = "postgresql://example/config"
-            nats_url = "nats://example:4222"
             database_pool_size = 25
             batch_size = 128
             batch_timeout_secs = 9
             dry_run = true
+
+            [ingestd.nats]
+            url = "nats://example:4222"
+            require_tls = true
         "#,
     )?;
 
     let config = IngestdConfig::load_from_path(file_path.to_string_lossy())?;
     assert_eq!(config.database_url, "postgresql://example/config");
-    assert_eq!(config.nats_url, "nats://example:4222");
+    assert_eq!(config.nats.url, "nats://example:4222");
+    assert!(config.nats.require_tls);
     assert_eq!(config.database_pool_size, 25);
     assert_eq!(config.batch_size, 128);
     assert_eq!(config.batch_timeout_secs.as_secs(), 9);
@@ -81,6 +89,19 @@ fn loads_from_config_file() -> color_eyre::eyre::Result<()> {
     if let Some(url) = original_db {
         std::env::set_var("DATABASE_URL", url);
     }
+
+    Ok(())
+}
+
+#[sinex_test]
+fn requires_tls_when_enabled() -> TestResult<()> {
+    let mut config = IngestdConfig::default();
+    config.nats.require_tls = true;
+    config.nats.url = "nats://localhost:4222".to_string();
+    assert!(config.validate_config().is_err());
+
+    config.nats.url = "tls://localhost:4222".to_string();
+    assert!(config.validate_config().is_ok());
 
     Ok(())
 }

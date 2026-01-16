@@ -153,7 +153,6 @@ pub static OPERATIONS_FIXTURE: Lazy<FixtureSet> = Lazy::new(|| {
 mod tests {
     use super::*;
     use crate::sinex_test;
-    use crate::TestResult;
 
     #[sinex_test]
     fn test_standard_fixtures_have_unique_seeds() -> TestResult<()> {
@@ -196,25 +195,24 @@ mod tests {
 
 #[cfg(all(test, feature = "bench"))]
 mod benches {
-    // use super::*;
-    // use crate::bench_context::BenchContext;
-    // use crate::sinex_bench;
+    use super::*;
+    use crate::bench_context::BenchContext;
+    use crate::{sinex_bench, TestResult};
 
     // Benchmark the standard fixtures themselves
-    // TODO: These benchmarks need async support in sinex_bench macro
-    // #[sinex_bench]
-    // fn bench_time_series_small() -> color_eyre::eyre::Result<()> {
-    //     ctx.load_fixture(&TIME_SERIES_FIXTURE, DatasetSize::Small)
-    //         .await?;
-    //     // Just measure fixture load time
-    //     Ok(())
-    // }
+    #[sinex_bench]
+    fn bench_time_series_small(ctx: &BenchContext) -> TestResult<()> {
+        ctx.load_fixture(&TIME_SERIES_FIXTURE, DatasetSize::Small)
+            .await?;
+        // Just measure fixture load time
+        Ok(())
+    }
 
-    // #[sinex_bench]
-    // fn bench_query_fixture_medium() -> color_eyre::eyre::Result<()> {
-    //     ctx.load_fixture(&QUERY_BENCH_FIXTURE, DatasetSize::Medium)
-    //         .await?;
-    //     // Measure fixture generation/load
-    //     Ok(())
-    // }
+    #[sinex_bench]
+    fn bench_query_fixture_medium(ctx: &BenchContext) -> TestResult<()> {
+        ctx.load_fixture(&QUERY_BENCH_FIXTURE, DatasetSize::Medium)
+            .await?;
+        // Measure fixture generation/load
+        Ok(())
+    }
 }

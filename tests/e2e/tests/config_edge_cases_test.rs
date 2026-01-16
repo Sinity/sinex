@@ -10,6 +10,7 @@
 //! - Path validation edge cases
 //! - Connection test failure handling
 
+use sinex_core::nats::NatsConnectionConfig;
 use sinex_core::types::{Bytes, Seconds};
 use sinex_ingestd::config::IngestdConfig;
 use sinex_test_utils::prelude::*;
@@ -215,7 +216,7 @@ async fn test_config_database_url_must_be_postgres() -> Result<()> {
 #[sinex_test]
 async fn test_config_nats_url_empty() -> Result<()> {
     let config = IngestdConfig::builder()
-        .nats_url("")
+        .nats(NatsConnectionConfig::builder().url("".to_string()).build())
         .database_url("postgresql:///test")
         .build();
 
@@ -263,33 +264,38 @@ async fn test_config_consumer_name_empty() -> Result<()> {
 // Path Validation Tests
 // =============================================================================
 
-/// Test work_dir validation with non-existent path, exercising full async validation
-/// against real Postgres and NATS.
-#[sinex_test]
-async fn test_config_validate_creates_work_dir(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_nats().await?;
+mod async_validation {
+    use super::*;
 
-    let temp_dir = TempDir::new()?;
-    let work_dir = temp_dir.path().join("new_work_dir");
+    /// Full async validation should create the work_dir and exercise DB/NATS connectivity.
+    #[sinex_test]
+    async fn test_config_validate_creates_work_dir(ctx: TestContext) -> Result<()> {
+        let ctx = ctx.with_shared_nats().await?;
 
-    // Path doesn't exist yet
-    assert!(!work_dir.exists());
+        let temp_dir = TempDir::new()?;
+        let work_dir = temp_dir.path().join("new_work_dir");
 
-    let config = IngestdConfig::builder()
-        .work_dir(camino::Utf8PathBuf::try_from(work_dir.clone())?)
-        .database_url(ctx.database_url().to_string())
-        .nats_url(format!("nats://{}", ctx.nats_url().expect("nats url")))
-        .build();
+        assert!(!work_dir.exists());
 
-    // Full async validation should create the directory and validate DB/NATS connectivity.
-    config.validate().await?;
+        let config = IngestdConfig::builder()
+            .work_dir(camino::Utf8PathBuf::try_from(work_dir.clone())?)
+            .database_url(ctx.database_url().to_string())
+            .nats(
+                NatsConnectionConfig::builder()
+                    .url(ctx.nats_url().expect("nats url").to_string())
+                    .build(),
+            )
+            .build();
 
-    assert!(
-        work_dir.exists(),
-        "validate() should create the work_dir if it does not exist"
-    );
+        config.validate().await?;
 
-    Ok(())
+        assert!(
+            work_dir.exists(),
+            "validate() should create the work_dir if it does not exist"
+        );
+
+        Ok(())
+    }
 }
 
 /// Test assembler_state_dir validation with non-existent path.
@@ -403,7 +409,11 @@ async fn test_config_all_boundaries_valid() -> Result<()> {
         .batch_timeout_secs(Seconds::from_secs(1))
         .max_message_size(Bytes::from_bytes(1024))
         .database_url("postgresql:///test")
-        .nats_url("nats://localhost:4222")
+        .nats(
+            NatsConnectionConfig::builder()
+                .url("nats://localhost:4222".to_string())
+                .build(),
+        )
         .nats_stream_name("s")
         .nats_consumer_name("c")
         .work_dir(camino::Utf8PathBuf::try_from(
@@ -430,7 +440,7 @@ async fn test_config_multiple_validation_errors() -> Result<()> {
         .batch_timeout_secs(Seconds::from_secs(0)) // Invalid
         .max_message_size(Bytes::from_bytes(100)) // Invalid (< 1024)
         .database_url("mysql://localhost/db") // Invalid (not PostgreSQL)
-        .nats_url("") // Invalid (empty)
+        .nats(NatsConnectionConfig::builder().url("".to_string()).build()) // Invalid (empty)
         .nats_stream_name("") // Invalid (empty)
         .build();
 

@@ -4,9 +4,10 @@ use sinex_core::types::validation::file_watching_security::{
     FileWatchingSecurityPolicy,
 };
 use sinex_test_utils::sinex_test;
+use sinex_test_utils::TestResult;
 
 #[sinex_test]
-fn file_watching_policy_respects_forbidden_paths() -> color_eyre::eyre::Result<()> {
+fn file_watching_policy_respects_forbidden_paths() -> TestResult<()> {
     let policy = FileWatchingSecurityPolicy::default();
     assert!(validate_watch_path("/etc/shadow", &policy).is_err());
     assert!(validate_watch_path("/proc/version", &policy).is_err());
@@ -22,7 +23,7 @@ fn file_watching_policy_respects_forbidden_paths() -> color_eyre::eyre::Result<(
 }
 
 #[sinex_test]
-fn validating_multiple_watch_paths_returns_all() -> color_eyre::eyre::Result<()> {
+fn validating_multiple_watch_paths_returns_all() -> TestResult<()> {
     let policy = FileWatchingSecurityPolicy::default();
     let temp_dir = std::env::temp_dir();
     let temp_str = temp_dir.to_str().unwrap_or("/tmp");
@@ -37,7 +38,7 @@ fn validating_multiple_watch_paths_returns_all() -> color_eyre::eyre::Result<()>
 }
 
 #[sinex_test]
-fn path_depth_checks_enforce_limits() -> color_eyre::eyre::Result<()> {
+fn path_depth_checks_enforce_limits() -> TestResult<()> {
     let shallow_path = Utf8Path::new("home/user");
     let deep_path = Utf8Path::new("home/user/docs/projects/sinex/src/lib/core/types");
 
@@ -49,7 +50,7 @@ fn path_depth_checks_enforce_limits() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn discovered_file_validation_holds_roots() -> color_eyre::eyre::Result<()> {
+fn discovered_file_validation_holds_roots() -> TestResult<()> {
     let policy = FileWatchingSecurityPolicy::default();
     let temp_dir = std::env::temp_dir();
     let temp_str = temp_dir.to_str().unwrap_or("/tmp");

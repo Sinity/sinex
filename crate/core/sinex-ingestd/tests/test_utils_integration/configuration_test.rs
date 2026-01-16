@@ -3,7 +3,6 @@
 // This module provides systematic testing of all configuration options across
 // the Sinex ecosystem, including validation, compatibility, and environment testing.
 
-use sinex_test_utils::TestResult;
 use sinex_test_utils::prelude::*;
 use std::collections::HashMap;
 use std::env;
@@ -787,7 +786,7 @@ impl DefaultConfigValidator {
 // ============================================================================
 
 #[sinex_test]
-async fn test_configuration_coverage_analysis(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_configuration_coverage_analysis(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing configuration coverage analysis");
 
     let coverage = ConfigurationCoverage::build_coverage_analysis();
@@ -841,7 +840,7 @@ async fn test_configuration_coverage_analysis(ctx: TestContext) -> color_eyre::e
 }
 
 #[sinex_test]
-async fn test_configuration_compatibility_matrix(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_configuration_compatibility_matrix(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing configuration compatibility matrix");
 
     let matrix = ConfigCompatibilityMatrix::build_compatibility_matrix();
@@ -887,7 +886,7 @@ async fn test_configuration_compatibility_matrix(ctx: TestContext) -> color_eyre
 #[sinex_test]
 async fn test_environment_specific_configurations(
     ctx: TestContext,
-) -> color_eyre::eyre::Result<()> {
+) -> TestResult<()> {
     tracing::info!("Testing environment-specific configurations");
 
     let env_tester = EnvironmentConfigTester::build_environment_tester();
@@ -955,7 +954,7 @@ async fn test_environment_specific_configurations(
 }
 
 #[sinex_test]
-async fn test_default_configuration_validation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_default_configuration_validation(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing default configuration validation");
 
     let validator = DefaultConfigValidator::new();
@@ -1006,7 +1005,7 @@ async fn test_default_configuration_validation(ctx: TestContext) -> color_eyre::
 #[sinex_test]
 async fn test_configuration_validation_comprehensive(
     ctx: TestContext,
-) -> color_eyre::eyre::Result<()> {
+) -> TestResult<()> {
     tracing::info!("Testing comprehensive configuration validation");
 
     // Test environment variable handling
@@ -1035,7 +1034,7 @@ async fn test_configuration_validation_comprehensive(
 }
 
 #[sinex_test]
-async fn test_configuration_performance_impact(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_configuration_performance_impact(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing configuration performance impact");
 
     let start = std::time::Instant::now();
@@ -1087,7 +1086,7 @@ async fn test_configuration_performance_impact(ctx: TestContext) -> color_eyre::
 #[sinex_test]
 async fn test_configuration_documentation_completeness(
     ctx: TestContext,
-) -> color_eyre::eyre::Result<()> {
+) -> TestResult<()> {
     tracing::info!("Testing configuration documentation completeness");
 
     let coverage = ConfigurationCoverage::build_coverage_analysis();

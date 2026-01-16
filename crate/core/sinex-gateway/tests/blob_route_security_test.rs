@@ -5,11 +5,11 @@ use base64::Engine;
 use camino::Utf8PathBuf;
 use color_eyre::eyre::WrapErr;
 use sinex_gateway::handlers::handle_store_blob;
-use sinex_satellite_sdk::annex::{
+use sinex_node_sdk::annex::{
     blob_manager::BLOB_EVENT_CHANNEL_CAPACITY, AnnexConfig, BlobManager, GitAnnex,
 };
 use sinex_services::ContentService;
-use sinex_test_utils::{sinex_test, TestContext};
+use sinex_test_utils::{sinex_serial_test, sinex_test, TestContext, TestResult};
 use tempfile::TempDir;
 use tokio::sync::mpsc;
 use which::which;
@@ -37,16 +37,14 @@ impl Drop for EnvVarGuard {
     }
 }
 
-fn require_git_annex() -> color_eyre::eyre::Result<()> {
+fn require_git_annex() -> TestResult<()> {
     which("git-annex")
         .wrap_err("git-annex binary is required for gateway blob security tests")
         .map(|_| ())
 }
 
 #[sinex_test]
-async fn blob_routes_should_enforce_auth_and_quota(
-    ctx: TestContext,
-) -> color_eyre::eyre::Result<()> {
+async fn blob_routes_should_enforce_auth_and_quota(ctx: TestContext) -> TestResult<()> {
     require_git_annex()?;
     let _guard = EnvVarGuard::set("SINEX_GATEWAY_MAX_BLOB_BYTES", "1048576");
 
@@ -72,8 +70,7 @@ async fn blob_routes_should_enforce_auth_and_quota(
     let params = serde_json::json!({
         "filename": "oversized.bin",
         "content_type": "application/octet-stream",
-        "content": BASE64_STANDARD.encode(&oversized_blob),
-    });
+        "content": BASE64_STANDARD.encode(&oversized_blob)});
 
     let err = handle_store_blob(&content_service, params)
         .await
@@ -88,14 +85,9 @@ async fn blob_routes_should_enforce_auth_and_quota(
     Ok(())
 }
 
-#[sinex_test]
-async fn content_store_blob_does_not_insert_events(
-    ctx: TestContext,
-) -> color_eyre::eyre::Result<()> {
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
+#[sinex_serial_test]
+async fn content_store_blob_does_not_insert_events(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
     require_git_annex()?;
 
     let annex_dir = TempDir::new()?;
@@ -121,8 +113,7 @@ async fn content_store_blob_does_not_insert_events(
     let params = serde_json::json!({
         "filename": "note.txt",
         "content_type": "text/plain",
-        "content": BASE64_STANDARD.encode(b"hello gateway"),
-    });
+        "content": BASE64_STANDARD.encode(b"hello gateway")});
 
     handle_store_blob(&content_service, params).await?;
 
@@ -135,8 +126,5 @@ async fn content_store_blob_does_not_insert_events(
         "Gateway content RPC must not insert events directly; ingestion belongs to ingestd"
     );
 
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
-    ctx.force_cleanup().await?;
     Ok(())
 }

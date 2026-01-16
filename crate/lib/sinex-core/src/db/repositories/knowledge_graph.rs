@@ -1,9 +1,11 @@
 use crate::db::schema::Entities;
 use crate::repositories::{common::*, Repository};
-use crate::types::Id;
+use crate::types::error::SinexError;
+use crate::types::{Id, Ulid};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
+use std::collections::HashSet;
 
 use crate::models::{Entity, EntityRelation, Event, JsonValue};
 
@@ -317,16 +319,16 @@ impl<'a> KnowledgeGraphRepository<'a> {
                 $1, $2, $3, $4, $5, $6, $7, $8
             )
             RETURNING 
-                id as "id: Id<Entity>",
+                id::uuid as "id!: Id<Entity>",
                 entity_type as "entity_type!",
                 name as "name!",
                 canonical_name as "canonical_name!",
                 aliases as "aliases!",
                 properties as "properties!",
-                source_event_ids as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
+                source_event_ids::uuid[] as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
                 confidence_score as "confidence_score!",
                 is_merged as "is_merged!",
-                merged_into_id as "merged_into_id: Id<Entity>",
+                merged_into_id::uuid as "merged_into_id?: Id<Entity>",
                 created_at as "created_at!",
                 updated_at as "updated_at!"
             "#,
@@ -350,20 +352,20 @@ impl<'a> KnowledgeGraphRepository<'a> {
             EntityRecord,
             r#"
             SELECT 
-                id as "id: Id<Entity>",
+                id::uuid as "id!: Id<Entity>",
                 entity_type as "entity_type!",
                 name as "name!",
                 canonical_name as "canonical_name!",
                 aliases as "aliases!",
                 properties as "properties!",
-                source_event_ids as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
+                source_event_ids::uuid[] as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
                 confidence_score as "confidence_score!",
                 is_merged as "is_merged!",
-                merged_into_id as "merged_into_id: Id<Entity>",
+                merged_into_id::uuid as "merged_into_id?: Id<Entity>",
                 created_at as "created_at!",
                 updated_at as "updated_at!"
             FROM core.entities
-            WHERE id = $1
+            WHERE id::uuid = $1
             "#,
             *id.as_ulid() as _
         )
@@ -380,16 +382,16 @@ impl<'a> KnowledgeGraphRepository<'a> {
             EntityRecord,
             r#"
             SELECT 
-                id as "id: Id<Entity>",
+                id::uuid as "id!: Id<Entity>",
                 entity_type as "entity_type!",
                 name as "name!",
                 canonical_name as "canonical_name!",
                 aliases as "aliases!",
                 properties as "properties!",
-                source_event_ids as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
+                source_event_ids::uuid[] as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
                 confidence_score as "confidence_score!",
                 is_merged as "is_merged!",
-                merged_into_id as "merged_into_id: Id<Entity>",
+                merged_into_id::uuid as "merged_into_id?: Id<Entity>",
                 created_at as "created_at!",
                 updated_at as "updated_at!"
             FROM core.entities
@@ -422,16 +424,16 @@ impl<'a> KnowledgeGraphRepository<'a> {
                     EntityRecord,
                     r#"
                     SELECT 
-                        id as "id: Id<Entity>",
+                        id::uuid as "id!: Id<Entity>",
                         entity_type as "entity_type!",
                         name as "name!",
                         canonical_name as "canonical_name!",
                         aliases as "aliases!",
                         properties as "properties!",
-                        source_event_ids as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
+                        source_event_ids::uuid[] as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
                         confidence_score as "confidence_score!",
                         is_merged as "is_merged!",
-                        merged_into_id as "merged_into_id: Id<Entity>",
+                        merged_into_id::uuid as "merged_into_id?: Id<Entity>",
                         created_at as "created_at!",
                         updated_at as "updated_at!"
                     FROM core.entities
@@ -460,16 +462,16 @@ impl<'a> KnowledgeGraphRepository<'a> {
                     EntityRecord,
                     r#"
                     SELECT 
-                        id as "id: Id<Entity>",
+                        id::uuid as "id!: Id<Entity>",
                         entity_type as "entity_type!",
                         name as "name!",
                         canonical_name as "canonical_name!",
                         aliases as "aliases!",
                         properties as "properties!",
-                        source_event_ids as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
+                        source_event_ids::uuid[] as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
                         confidence_score as "confidence_score!",
                         is_merged as "is_merged!",
-                        merged_into_id as "merged_into_id: Id<Entity>",
+                        merged_into_id::uuid as "merged_into_id?: Id<Entity>",
                         created_at as "created_at!",
                         updated_at as "updated_at!"
                     FROM core.entities
@@ -512,18 +514,18 @@ impl<'a> KnowledgeGraphRepository<'a> {
                 aliases = COALESCE($4, aliases),
                 confidence_score = COALESCE($5, confidence_score),
                 updated_at = NOW()
-            WHERE id = $1
+            WHERE id::uuid = $1
             RETURNING 
-                id as "id: Id<Entity>",
+                id::uuid as "id!: Id<Entity>",
                 entity_type as "entity_type!",
                 name as "name!",
                 canonical_name as "canonical_name!",
                 aliases as "aliases!",
                 properties as "properties!",
-                source_event_ids as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
+                source_event_ids::uuid[] as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
                 confidence_score as "confidence_score!",
                 is_merged as "is_merged!",
-                merged_into_id as "merged_into_id: Id<Entity>",
+                merged_into_id::uuid as "merged_into_id?: Id<Entity>",
                 created_at as "created_at!",
                 updated_at as "updated_at!"
             "#,
@@ -544,31 +546,113 @@ impl<'a> KnowledgeGraphRepository<'a> {
         source_id: Id<Entity>,
         target_id: Id<Entity>,
     ) -> DbResult<()> {
-        // Update the source entity to point to target
+        if source_id == target_id {
+            return Err(SinexError::validation("Cannot merge an entity into itself"));
+        }
+
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| db_error(e, "begin entity merge transaction"))?;
+        set_repeatable_read(&mut tx).await?;
+
+        let (first_id, second_id) = if source_id.to_uuid() <= target_id.to_uuid() {
+            (source_id, target_id)
+        } else {
+            (target_id, source_id)
+        };
+
+        let first = fetch_entity_for_update(&mut tx, first_id).await?;
+        let second = fetch_entity_for_update(&mut tx, second_id).await?;
+        let (source, target) = if source_id == first.id {
+            (first, second)
+        } else {
+            (second, first)
+        };
+
+        if source.entity_type != target.entity_type {
+            return Err(SinexError::validation(
+                "Cannot merge entities with different types",
+            ));
+        }
+
+        if target.is_merged {
+            return Err(SinexError::validation(
+                "Cannot merge into an entity that is already merged",
+            ));
+        }
+
+        if source.is_merged && source.merged_into_id != Some(target_id) {
+            return Err(SinexError::validation(
+                "Source entity is already merged into another target",
+            ));
+        }
+
+        let (merged_aliases, aliases_added) = merge_aliases(&target, &source);
+        let (merged_properties, conflicts) =
+            merge_json_values(target.properties.clone(), source.properties.clone());
+        let (merged_source_event_ids, source_event_ids_added) =
+            merge_source_event_ids(&target, &source);
+        let merged_confidence = target.confidence_score.max(source.confidence_score);
+        let merged_created_at = if source.created_at < target.created_at {
+            source.created_at
+        } else {
+            target.created_at
+        };
+
         sqlx::query!(
             r#"
             UPDATE core.entities
-            SET merged_into_id = $2
-            WHERE id = $1
+            SET
+                aliases = $2,
+                properties = $3,
+                source_event_ids = $4,
+                confidence_score = $5,
+                created_at = $6,
+                updated_at = NOW()
+            WHERE id::uuid = $1
             "#,
-            *source_id.as_ulid() as _,
-            *target_id.as_ulid() as _
+            *target.id.as_ulid() as _,
+            &merged_aliases,
+            merged_properties,
+            merged_source_event_ids
+                .iter()
+                .map(|id| *id.as_ulid())
+                .collect::<Vec<_>>() as _,
+            merged_confidence,
+            merged_created_at
         )
-        .execute(self.pool)
+        .execute(&mut *tx)
         .await
-        .map_err(|e| db_error(e, "merge entities"))?;
+        .map_err(|e| db_error(e, "update merged target entity"))?;
+
+        sqlx::query!(
+            r#"
+            UPDATE core.entities
+            SET is_merged = true,
+                merged_into_id = $2,
+                updated_at = NOW()
+            WHERE id::uuid = $1
+            "#,
+            *source.id.as_ulid() as _,
+            *target.id.as_ulid() as _
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| db_error(e, "update merged source entity"))?;
 
         // Update all relations pointing to source to point to target
         sqlx::query!(
             r#"
             UPDATE core.entity_relations
             SET from_entity_id = $2
-            WHERE from_entity_id = $1
+            WHERE from_entity_id::uuid = $1
             "#,
-            *source_id.as_ulid() as _,
-            *target_id.as_ulid() as _
+            *source.id.as_ulid() as _,
+            *target.id.as_ulid() as _
         )
-        .execute(self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| db_error(e, "update source relations"))?;
 
@@ -576,14 +660,58 @@ impl<'a> KnowledgeGraphRepository<'a> {
             r#"
             UPDATE core.entity_relations
             SET to_entity_id = $2
-            WHERE to_entity_id = $1
+            WHERE to_entity_id::uuid = $1
             "#,
-            *source_id.as_ulid() as _,
-            *target_id.as_ulid() as _
+            *source.id.as_ulid() as _,
+            *target.id.as_ulid() as _
         )
-        .execute(self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| db_error(e, "update target relations"))?;
+
+        let scope = serde_json::json!({
+            "source_id": source.id.to_string(),
+            "target_id": target.id.to_string(),
+            "source_entity_type": source.entity_type,
+            "target_entity_type": target.entity_type,
+        });
+
+        let summary = serde_json::json!({
+            "merged_at": Utc::now(),
+            "aliases_added": aliases_added,
+            "source_event_ids_added": source_event_ids_added
+                .iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>(),
+            "conflicts": conflicts,
+            "resolution": "target_wins",
+        });
+
+        sqlx::query!(
+            r#"
+            INSERT INTO core.operations_log (
+                operation_type,
+                operator,
+                scope,
+                result_status,
+                result_message,
+                preview_summary
+            ) VALUES ($1, $2, $3, $4, $5, $6)
+            "#,
+            "entity_merge",
+            "knowledge_graph",
+            scope,
+            "success",
+            "merge complete",
+            summary
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| db_error(e, "log entity merge operation"))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| db_error(e, "commit entity merge transaction"))?;
 
         Ok(())
     }
@@ -611,12 +739,12 @@ impl<'a> KnowledgeGraphRepository<'a> {
                 $1, $2, $3, $4, $5, $6, $7, $8
             )
             RETURNING 
-                id as "id: Id<EntityRelation>",
-                from_entity_id as "from_entity_id!: Id<Entity>",
-                to_entity_id as "to_entity_id!: Id<Entity>",
+                id::uuid as "id!: Id<EntityRelation>",
+                from_entity_id::uuid as "from_entity_id!: Id<Entity>",
+                to_entity_id::uuid as "to_entity_id!: Id<Entity>",
                 relation_type as "relation_type!",
                 properties as "properties!",
-                source_event_ids as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
+                source_event_ids::uuid[] as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
                 confidence_score as "confidence_score!",
                 is_active as "is_active!",
                 created_at as "created_at!",
@@ -652,12 +780,12 @@ impl<'a> KnowledgeGraphRepository<'a> {
                     EntityRelationRecord,
                     r#"
                     SELECT 
-                        id as "id: Id<EntityRelation>",
-                        from_entity_id as "from_entity_id!: Id<Entity>",
-                        to_entity_id as "to_entity_id!: Id<Entity>",
+                        id::uuid as "id!: Id<EntityRelation>",
+                        from_entity_id::uuid as "from_entity_id!: Id<Entity>",
+                        to_entity_id::uuid as "to_entity_id!: Id<Entity>",
                         relation_type as "relation_type!",
                         properties as "properties!",
-                        source_event_ids as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
+                        source_event_ids::uuid[] as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
                         confidence_score as "confidence_score!",
                         is_active as "is_active!",
                         created_at as "created_at!",
@@ -680,12 +808,12 @@ impl<'a> KnowledgeGraphRepository<'a> {
                     EntityRelationRecord,
                     r#"
                     SELECT 
-                        id as "id: Id<EntityRelation>",
-                        from_entity_id as "from_entity_id!: Id<Entity>",
-                        to_entity_id as "to_entity_id!: Id<Entity>",
+                        id::uuid as "id!: Id<EntityRelation>",
+                        from_entity_id::uuid as "from_entity_id!: Id<Entity>",
+                        to_entity_id::uuid as "to_entity_id!: Id<Entity>",
                         relation_type as "relation_type!",
                         properties as "properties!",
-                        source_event_ids as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
+                        source_event_ids::uuid[] as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
                         confidence_score as "confidence_score!",
                         is_active as "is_active!",
                         created_at as "created_at!",
@@ -707,12 +835,12 @@ impl<'a> KnowledgeGraphRepository<'a> {
                     EntityRelationRecord,
                     r#"
                     SELECT 
-                        id as "id: Id<EntityRelation>",
-                        from_entity_id as "from_entity_id!: Id<Entity>",
-                        to_entity_id as "to_entity_id!: Id<Entity>",
+                        id::uuid as "id!: Id<EntityRelation>",
+                        from_entity_id::uuid as "from_entity_id!: Id<Entity>",
+                        to_entity_id::uuid as "to_entity_id!: Id<Entity>",
                         relation_type as "relation_type!",
                         properties as "properties!",
-                        source_event_ids as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
+                        source_event_ids::uuid[] as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
                         confidence_score as "confidence_score!",
                         is_active as "is_active!",
                         created_at as "created_at!",
@@ -733,19 +861,19 @@ impl<'a> KnowledgeGraphRepository<'a> {
                     EntityRelationRecord,
                     r#"
                     SELECT 
-                        id as "id: Id<EntityRelation>",
-                        from_entity_id as "from_entity_id!: Id<Entity>",
-                        to_entity_id as "to_entity_id!: Id<Entity>",
+                        id::uuid as "id!: Id<EntityRelation>",
+                        from_entity_id::uuid as "from_entity_id!: Id<Entity>",
+                        to_entity_id::uuid as "to_entity_id!: Id<Entity>",
                         relation_type as "relation_type!",
                         properties as "properties!",
-                        source_event_ids as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
+                        source_event_ids::uuid[] as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
                         confidence_score as "confidence_score!",
                         is_active as "is_active!",
                         created_at as "created_at!",
                         updated_at as "updated_at!"
                     FROM core.entity_relations
                     WHERE 
-                        from_entity_id = $1 OR to_entity_id = $1
+                        from_entity_id::uuid = $1 OR to_entity_id::uuid = $1
                     ORDER BY created_at DESC
                     "#,
                     *entity_id.as_ulid() as _
@@ -768,14 +896,14 @@ impl<'a> KnowledgeGraphRepository<'a> {
             r#"
             UPDATE core.entity_relations
             SET is_active = $2, updated_at = NOW()
-            WHERE id = $1
+            WHERE id::uuid = $1
             RETURNING 
-                id as "id: Id<EntityRelation>",
-                from_entity_id as "from_entity_id!: Id<Entity>",
-                to_entity_id as "to_entity_id!: Id<Entity>",
+                id::uuid as "id!: Id<EntityRelation>",
+                from_entity_id::uuid as "from_entity_id!: Id<Entity>",
+                to_entity_id::uuid as "to_entity_id!: Id<Entity>",
                 relation_type as "relation_type!",
                 properties as "properties!",
-                source_event_ids as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
+                source_event_ids::uuid[] as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
                 confidence_score as "confidence_score!",
                 is_active as "is_active!",
                 created_at as "created_at!",
@@ -792,14 +920,83 @@ impl<'a> KnowledgeGraphRepository<'a> {
     /// Find paths between two entities
     pub async fn find_paths(
         &self,
-        _from_entity: Id<Entity>,
-        _to_entity: Id<Entity>,
-        _max_depth: i32,
+        from_entity: Id<Entity>,
+        to_entity: Id<Entity>,
+        max_depth: i32,
     ) -> DbResult<Vec<Vec<EntityRelationRecord>>> {
-        // This is a placeholder for graph traversal logic
-        // In a real implementation, this would use recursive CTEs
-        // or a graph database for efficient path finding
-        Ok(vec![])
+        if max_depth <= 0 {
+            return Ok(Vec::new());
+        }
+
+        let rows = sqlx::query!(
+            r#"
+            WITH RECURSIVE path AS (
+                SELECT 
+                    ARRAY[id::uuid] AS relation_ids,
+                    from_entity_id,
+                    to_entity_id,
+                    1 AS depth
+                FROM core.entity_relations
+                WHERE from_entity_id::uuid = $1
+                  AND is_active = true
+
+                UNION ALL
+
+                SELECT
+                    path.relation_ids || rel.id::uuid,
+                    rel.from_entity_id,
+                    rel.to_entity_id,
+                    path.depth + 1
+                FROM path
+                JOIN core.entity_relations rel
+                  ON rel.from_entity_id = path.to_entity_id
+                WHERE path.depth < $3
+                  AND rel.is_active = true
+                  AND NOT rel.id::uuid = ANY(path.relation_ids)
+            )
+            SELECT relation_ids as "relation_ids!: Vec<Ulid>"
+            FROM path
+            WHERE to_entity_id::uuid = $2
+            "#,
+            *from_entity.as_ulid() as _,
+            *to_entity.as_ulid() as _,
+            max_depth
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "find paths"))?;
+
+        let mut paths = Vec::new();
+        for row in rows {
+            let relation_ids = row.relation_ids;
+            let records = sqlx::query_as!(
+                EntityRelationRecord,
+                r#"
+                SELECT 
+                    id::uuid as "id!: Id<EntityRelation>",
+                    from_entity_id::uuid as "from_entity_id!: Id<Entity>",
+                    to_entity_id::uuid as "to_entity_id!: Id<Entity>",
+                    relation_type as "relation_type!",
+                    properties as "properties!",
+                    source_event_ids::uuid[] as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
+                    confidence_score as "confidence_score!",
+                    is_active as "is_active!",
+                    created_at as "created_at!",
+                    updated_at as "updated_at!"
+                FROM core.entity_relations
+                WHERE id::uuid = ANY($1)
+                ORDER BY array_position($1, id::uuid)
+                "#,
+                &relation_ids as _
+            )
+            .fetch_all(self.pool)
+            .await
+            .map_err(|e| db_error(e, "load relation path"))?;
+
+            paths.push(records);
+        }
+
+        Ok(paths)
     }
 
     /// Get entity statistics
@@ -811,11 +1008,11 @@ impl<'a> KnowledgeGraphRepository<'a> {
             r#"
             WITH relation_counts AS (
                 SELECT 
-                    COUNT(CASE WHEN from_entity_id = $1 THEN 1 END) as outgoing_relations,
-                    COUNT(CASE WHEN to_entity_id = $1 THEN 1 END) as incoming_relations,
+                    COUNT(CASE WHEN from_entity_id::uuid = $1 THEN 1 END) as outgoing_relations,
+                    COUNT(CASE WHEN to_entity_id::uuid = $1 THEN 1 END) as incoming_relations,
                     COUNT(DISTINCT relation_type) as relation_types
                 FROM core.entity_relations
-                WHERE from_entity_id = $1 OR to_entity_id = $1
+                WHERE from_entity_id::uuid = $1 OR to_entity_id::uuid = $1
             )
             SELECT 
                 rc.outgoing_relations as "outgoing_relations!",
@@ -826,7 +1023,7 @@ impl<'a> KnowledgeGraphRepository<'a> {
                 ARRAY_LENGTH(e.aliases, 1) as alias_count
             FROM core.entities e
             CROSS JOIN relation_counts rc
-            WHERE e.id = $1
+            WHERE e.id::uuid = $1
             "#,
             *entity_id.as_ulid() as _
         )
@@ -845,6 +1042,159 @@ impl<'a> KnowledgeGraphRepository<'a> {
                 "updated_at": s.updated_at
             })),
             None => Ok(serde_json::json!({})),
+        }
+    }
+}
+
+async fn fetch_entity_for_update(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    id: Id<Entity>,
+) -> DbResult<EntityRecord> {
+    sqlx::query_as!(
+        EntityRecord,
+        r#"
+        SELECT 
+            id::uuid as "id!: Id<Entity>",
+            entity_type as "entity_type!",
+            name as "name!",
+            canonical_name as "canonical_name!",
+            aliases as "aliases!",
+            properties as "properties!",
+            source_event_ids::uuid[] as "source_event_ids!: Vec<Id<Event<JsonValue>>>",
+            confidence_score as "confidence_score!",
+            is_merged as "is_merged!",
+            merged_into_id::uuid as "merged_into_id?: Id<Entity>",
+            created_at as "created_at!",
+            updated_at as "updated_at!"
+        FROM core.entities
+        WHERE id::uuid = $1
+        FOR UPDATE
+        "#,
+        *id.as_ulid() as _
+    )
+    .fetch_one(tx.as_mut())
+    .await
+    .map_err(|e| db_error(e, "fetch entity for update"))
+}
+
+async fn set_repeatable_read(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>) -> DbResult<()> {
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| db_error(e, "set repeatable read isolation"))?;
+    Ok(())
+}
+
+fn merge_aliases(target: &EntityRecord, source: &EntityRecord) -> (Vec<String>, Vec<String>) {
+    let mut merged = Vec::new();
+    let mut added = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+
+    let mut push_alias = |alias: &str, track_added: bool| {
+        let trimmed = alias.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        let value = trimmed.to_string();
+        if seen.insert(value.clone()) {
+            merged.push(value.clone());
+            if track_added {
+                added.push(value);
+            }
+        }
+    };
+
+    for alias in &target.aliases {
+        push_alias(alias, false);
+    }
+
+    for alias in &source.aliases {
+        push_alias(alias, true);
+    }
+    push_alias(&source.name, true);
+    push_alias(&source.canonical_name, true);
+
+    (merged, added)
+}
+
+fn merge_source_event_ids(
+    target: &EntityRecord,
+    source: &EntityRecord,
+) -> (Vec<Id<Event<JsonValue>>>, Vec<Id<Event<JsonValue>>>) {
+    let mut merged = Vec::new();
+    let mut added = Vec::new();
+    let mut seen = HashSet::new();
+
+    for id in &target.source_event_ids {
+        merged.push(id.clone());
+        seen.insert(*id.as_ulid());
+    }
+
+    for id in &source.source_event_ids {
+        if seen.insert(*id.as_ulid()) {
+            merged.push(id.clone());
+            added.push(id.clone());
+        }
+    }
+
+    (merged, added)
+}
+
+fn merge_json_values(
+    mut target: serde_json::Value,
+    source: serde_json::Value,
+) -> (serde_json::Value, Vec<serde_json::Value>) {
+    let mut conflicts = Vec::new();
+    merge_json_value_in_place(&mut target, &source, "", &mut conflicts);
+    (target, conflicts)
+}
+
+fn merge_json_value_in_place(
+    target: &mut serde_json::Value,
+    source: &serde_json::Value,
+    path: &str,
+    conflicts: &mut Vec<serde_json::Value>,
+) {
+    match (target, source) {
+        (serde_json::Value::Object(target_map), serde_json::Value::Object(source_map)) => {
+            for (key, source_value) in source_map {
+                let next_path = if path.is_empty() {
+                    key.to_string()
+                } else {
+                    format!("{path}.{key}")
+                };
+                match target_map.get_mut(key) {
+                    Some(target_value) => {
+                        merge_json_value_in_place(
+                            target_value,
+                            source_value,
+                            &next_path,
+                            conflicts,
+                        );
+                    }
+                    None => {
+                        target_map.insert(key.clone(), source_value.clone());
+                    }
+                }
+            }
+        }
+        (serde_json::Value::Array(target_values), serde_json::Value::Array(source_values)) => {
+            for source_value in source_values {
+                if !target_values.contains(source_value) {
+                    target_values.push(source_value.clone());
+                }
+            }
+        }
+        (target_value, source_value) => {
+            if target_value != source_value {
+                let conflict_path = if path.is_empty() { "<root>" } else { path };
+                conflicts.push(serde_json::json!({
+                    "path": conflict_path,
+                    "target": target_value.clone(),
+                    "source": source_value.clone(),
+                    "resolution": "target",
+                }));
+            }
         }
     }
 }

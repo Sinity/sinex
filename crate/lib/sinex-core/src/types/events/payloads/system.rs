@@ -478,29 +478,3 @@ pub struct SystemSnapshotPayload {
     pub systemd_enabled: bool,
     pub snapshot_time: DateTime<Utc>,
 }
-
-// Historical scan placeholders
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "system", event_type = "journald.historical")]
-pub struct JournaldHistoricalPayload {
-    pub source: String,
-    pub scan_type: String,
-    pub note: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "system", event_type = "systemd.units_historical")]
-pub struct SystemdUnitsHistoricalPayload {
-    pub source: String,
-    pub scan_type: String,
-    pub note: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "system", event_type = "udev.device_historical")]
-pub struct UdevDeviceHistoricalPayload {
-    pub sources: Vec<String>,
-    pub scan_type: String,
-    pub note: String,
-}

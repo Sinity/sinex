@@ -64,9 +64,14 @@ mod basic_tests {
 
         let extracted_timestamp = ulid.timestamp();
 
+        // ULIDs have millisecond precision; compare on that boundary to avoid sub-ms flakiness.
+        let extracted_ms = extracted_timestamp.timestamp_millis();
+        let before_ms = before.timestamp_millis();
+        let after_ms = after.timestamp_millis();
+
         // Timestamp should be within reasonable bounds
-        assert!(extracted_timestamp >= before);
-        assert!(extracted_timestamp <= after);
+        assert!(extracted_ms >= before_ms);
+        assert!(extracted_ms <= after_ms);
     }
 
     #[test]
@@ -205,7 +210,7 @@ mod parsing_tests {
         let valid_cases = vec![
             "01ARZ3NDEKTSV4RRFFQ69G5FAV", // Example from ULID spec
             "01F4GNBM2PSMRGQ90N6C7N5J86", // Another valid ULID
-            "0000000000000000000000000",  // All zeros (nil)
+            "00000000000000000000000000", // All zeros (nil)
             "7ZZZZZZZZZZZZZZZZZZZZZZZZZ", // Max valid ULID
         ];
 
@@ -216,15 +221,20 @@ mod parsing_tests {
     }
 
     #[test]
+    fn test_lowercase_ulid_is_canonicalized() {
+        let lowercase = "01ARZ3NDEKTSV4RRFFQ69G5FaV";
+        let parsed = lowercase
+            .parse::<Ulid>()
+            .expect("Lowercase ULID should parse");
+        assert_eq!(parsed.to_string(), lowercase.to_ascii_uppercase());
+    }
+
+    #[test]
     fn test_invalid_ulid_strings() {
         let invalid_cases = vec![
             ("", "Empty string"),
             ("01ARZ3NDEKTSV4RRFFQ69G5FA", "Too short (25 chars)"),
             ("01ARZ3NDEKTSV4RRFFQ69G5FAVX", "Too long (27 chars)"),
-            (
-                "01ARZ3NDEKTSV4RRFFQ69G5FaV",
-                "Contains lowercase in wrong position",
-            ),
             (
                 "01ARZ3NDEKTSV4RRFFQ69G5FIV",
                 "Contains 'I' (invalid base32)",

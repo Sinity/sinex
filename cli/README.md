@@ -30,16 +30,30 @@ python3 cli/exo.py --use-db stats
 
 1. **Command line option** (highest priority):
    ```bash
-   python3 cli/exo.py --rpc-url http://custom-host:8888 query
+   python3 cli/exo.py --rpc-url https://custom-host:8888 query
    ```
 
 2. **Environment variable**:
    ```bash
-   export SINEX_RPC_URL=http://custom-host:8888
+   export SINEX_RPC_URL=https://custom-host:8888
    python3 cli/exo.py query
    ```
 
-3. **Default**: `http://127.0.0.1:9999`
+3. **Default**: `https://127.0.0.1:9999`
+
+4. **Custom CA (self-signed)**:
+   ```bash
+   export SINEX_RPC_CA_CERT=/path/to/ca.pem
+   # or: python3 cli/exo.py --rpc-ca-cert /path/to/ca.pem query
+   python3 cli/exo.py query
+   ```
+
+5. **mTLS client certs** (required for non-loopback gateways):
+   ```bash
+   export SINEX_RPC_CLIENT_CERT=/path/to/client.pem
+   export SINEX_RPC_CLIENT_KEY=/path/to/client-key.pem
+   python3 cli/exo.py query
+   ```
 
 ### Database Connection (Fallback Mode)
 
@@ -183,7 +197,8 @@ If you were using the CLI with direct database access:
 Update your environment variables:
 ```bash
 # Add RPC URL (optional, defaults to localhost:9999)
-export SINEX_RPC_URL=http://127.0.0.1:9999
+export SINEX_RPC_URL=https://127.0.0.1:9999
+export SINEX_RPC_CA_CERT=/path/to/ca.pem
 
 # Keep DATABASE_URL for fallback mode
 export DATABASE_URL=postgresql:///sinex_dev?host=/run/postgresql
@@ -221,11 +236,12 @@ python3 cli/exo.py stats
 
 ### Running Tests
 ```bash
-# Run RPC-specific tests
-python3 -m pytest test/integration/cli/test_exo_cli.py::TestRPCIntegration -v
+# Ensure pytest is available in your environment.
+
+# Run a single CLI test file (from repo root)
 
 # Run all CLI tests
-python3 -m pytest test/integration/cli/test_exo_cli.py -v
+python3 -m pytest cli/tests -v
 ```
 
 ## Performance Notes
@@ -249,7 +265,7 @@ python3 -m pytest test/integration/cli/test_exo_cli.py -v
 1. **"RPC server not responding"**
    - Check if sinex-gateway is running: `systemctl status sinex-gateway`
    - Verify RPC URL: `echo $SINEX_RPC_URL`
-   - Test connectivity: `curl http://127.0.0.1:9999` (should return method not allowed)
+   - Test connectivity: `curl https://127.0.0.1:9999` (should return method not allowed; add `--cacert` if using a local CA)
 
 2. **"Permission denied" in database mode**
    - Check database permissions

@@ -8,7 +8,7 @@ This document outlines the strategic vision and planned evolution of the Sinex a
 **Status**: In Progress  
 **Priority**: High
 
-Migrate all automata to use the `StatefulStreamProcessor` interface instead of the legacy `HotlogAutomaton` trait. This will achieve true "deep symmetry" between all satellite types.
+Migrate all automata to use the `StatefulStreamProcessor` interface instead of the previous `HotlogAutomaton` trait. This will achieve true "deep symmetry" between all node types.
 
 **Benefits**:
 - Consistent behavior across all components
@@ -80,7 +80,7 @@ Enable LLM-powered synthesis through natural language automaton definitions.
 Close the observation-action loop to enable the system to act on its understanding.
 
 **Components**:
-- Actuator satellites for system actions
+- Actuator nodes for system actions
 - Instructional event processing
 - Safety constraints and rollback
 - User approval workflows

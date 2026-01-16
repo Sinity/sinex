@@ -42,7 +42,7 @@ in
     ./monitoring.nix
     ./preflight-verification.nix
     ./kitty-shell-integration.nix
-    ./satellite-services.nix
+    ./node-services.nix
   ];
 
   options.services.sinex = with types; let
@@ -63,7 +63,7 @@ in
           };
         };
       };
-    resourceModule = { defaultMemory, defaultCpu }:
+    resourceModule = { defaultMemory, defaultCpu, defaultShutdownSec ? 90 }:
       submodule {
         options = {
           memoryMax = mkOption {
@@ -75,6 +75,11 @@ in
             type = str;
             default = defaultCpu;
             description = "systemd CPUQuota limit.";
+          };
+          shutdownTimeoutSec = mkOption {
+            type = positive;
+            default = defaultShutdownSec;
+            description = "systemd TimeoutStopSec in seconds.";
           };
         };
       };
@@ -455,6 +460,16 @@ in
                   default = {};
                   description = "Batch settings for ingestd.";
                 };
+                consumerMaxAckPending = mkOption {
+                  type = positive;
+                  default = 100;
+                  description = "JetStream max_ack_pending for the main ingestd consumer.";
+                };
+                materialSlicesMaxAckPending = mkOption {
+                  type = positive;
+                  default = 1000;
+                  description = "JetStream max_ack_pending for the material slices consumer.";
+                };
                 resources = mkOption {
                   type = resourceModule { defaultMemory = "1G"; defaultCpu = "100%"; };
                   default = {};
@@ -490,6 +505,44 @@ in
                   default = {};
                   description = "Resource limits for the gateway.";
                 };
+                listenAddress = mkOption {
+                  type = str;
+                  default = "127.0.0.1:9999";
+                  description = "TCP listen address for the RPC gateway (host:port).";
+                };
+                requireClientTLS = mkOption {
+                  type = bool;
+                  default = false;
+                  description = "Force mTLS even on loopback; when enabled, clients must present certificates.";
+                };
+                limits = mkOption {
+                  type = submodule {
+                    options = {
+                      maxConcurrency = mkOption {
+                        type = positive;
+                        default = 32;
+                        description = "Max concurrent RPC requests enforced by the gateway.";
+                      };
+                      requestTimeoutSec = mkOption {
+                        type = positive;
+                        default = 30;
+                        description = "RPC request timeout in seconds.";
+                      };
+                      maxBodyBytes = mkOption {
+                        type = positive;
+                        default = 2 * 1024 * 1024;
+                        description = "Maximum JSON-RPC payload size in bytes.";
+                      };
+                      maxBlobBytes = mkOption {
+                        type = positive;
+                        default = 5 * 1024 * 1024;
+                        description = "Maximum decoded blob upload size in bytes.";
+                      };
+                    };
+                  };
+                  default = {};
+                  description = "RPC resource guard configuration for the gateway.";
+                };
                 tlsCertFile = mkOption {
                   type = nullOr path;
                   default = null;
@@ -503,7 +556,7 @@ in
                 tlsClientCAFile = mkOption {
                   type = nullOr path;
                   default = null;
-                  description = "Optional client CA bundle to enable mTLS for gateway TCP bindings.";
+                  description = "Client CA bundle for gateway mTLS. Required for non-loopback bindings.";
                 };
                 extraArgs = mkOption {
                   type = strList;
@@ -1074,7 +1127,7 @@ in
           }
         ];
         environment.systemPackages = mkAfter (
-          [ pkgs.dbus ]
+          [ pkgs.dbus pkgs.git pkgs.git-annex ]
           ++ optionals cfg.shell.asciinema.autoRecord [ pkgs.asciinema ]
         );
       })

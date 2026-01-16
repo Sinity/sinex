@@ -1,7 +1,8 @@
 use crate::db::DbPool;
+use crate::types::error::{Result, SinexError};
 use crate::types::ulid::Ulid;
 use chrono::{DateTime, Duration, Utc};
-use color_eyre::eyre::Result;
+use std::collections::HashSet;
 
 #[derive(Debug, Clone)]
 pub struct IntegrityTestConfig {
@@ -11,6 +12,7 @@ pub struct IntegrityTestConfig {
     pub validate_checkpoints: bool,
     pub validate_ulid_ordering: bool,
     pub validate_schemas: bool,
+    pub checkpoint_snapshots: Option<Vec<CheckpointSnapshot>>,
 }
 
 impl Default for IntegrityTestConfig {
@@ -19,9 +21,10 @@ impl Default for IntegrityTestConfig {
             max_events_to_check: 1_000,
             check_window_hours: 24,
             include_deep_validation: false,
-            validate_checkpoints: true,
+            validate_checkpoints: false,
             validate_ulid_ordering: false,
             validate_schemas: false,
+            checkpoint_snapshots: None,
         }
     }
 }
@@ -47,28 +50,35 @@ impl<'a> IntegrityTester<'a> {
             });
         }
 
-        let mut processors =
-            sqlx::query_scalar!(r#"SELECT processor_name FROM core.processor_manifests"#)
-                .fetch_all(self.pool)
-                .await?;
+        let snapshots = config.checkpoint_snapshots.as_deref().ok_or_else(|| {
+            SinexError::configuration(
+                "Checkpoint validation enabled but no checkpoint snapshots provided",
+            )
+        })?;
 
-        let extra_processors = sqlx::query_scalar!(
-            r#"SELECT DISTINCT processor_name FROM core.processor_checkpoints"#
+        let mut processors = sqlx::query_scalar!(
+            r#"SELECT processor_name FROM core.processor_manifests ORDER BY processor_name"#
         )
         .fetch_all(self.pool)
         .await?;
 
-        for name in extra_processors {
-            if !processors.contains(&name) {
-                processors.push(name);
-            }
+        let mut extra_processors: HashSet<String> = snapshots
+            .iter()
+            .map(|snapshot| snapshot.processor_name.clone())
+            .collect();
+        for name in &processors {
+            extra_processors.remove(name);
         }
+        processors.extend(extra_processors.into_iter());
+        processors.sort();
 
         let mut issues = Vec::new();
         for processor in processors {
+            let snapshot = latest_snapshot_for_processor(snapshots, &processor);
             let mut detected = analyze_processor(
                 self.pool,
                 &processor,
+                snapshot,
                 config.max_events_to_check,
                 config.check_window_hours,
                 config.check_window_hours,
@@ -110,6 +120,40 @@ pub enum CheckpointInconsistencyType {
     InvalidCheckpointFormat,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckpointKind {
+    None,
+    Internal,
+    Stream,
+    External,
+    Timestamp,
+    Unknown,
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckpointSnapshot {
+    pub processor_name: String,
+    pub consumer_group: String,
+    pub consumer_name: String,
+    pub checkpoint_kind: CheckpointKind,
+    pub last_processed_id: Option<Ulid>,
+    pub processed_count: u64,
+    pub last_activity: DateTime<Utc>,
+}
+
+impl CheckpointSnapshot {
+    fn requires_event_id(&self) -> bool {
+        matches!(self.checkpoint_kind, CheckpointKind::Internal)
+    }
+
+    fn supports_event_correlation(&self) -> bool {
+        matches!(
+            self.checkpoint_kind,
+            CheckpointKind::Internal | CheckpointKind::Stream | CheckpointKind::None
+        )
+    }
+}
+
 pub mod checkpoint_verification {
     use super::*;
 
@@ -124,9 +168,11 @@ pub mod checkpoint_verification {
 
     pub async fn verify_automaton_checkpoint_consistency(
         pool: &DbPool,
+        snapshots: &[CheckpointSnapshot],
         processor_name: &str,
     ) -> color_eyre::eyre::Result<Vec<String>> {
-        let issues = analyze_processor(pool, processor_name, 1_000, 24, 24).await?;
+        let snapshot = latest_snapshot_for_processor(snapshots, processor_name);
+        let issues = analyze_processor(pool, processor_name, snapshot, 1_000, 24, 24).await?;
         Ok(issues.into_iter().map(|issue| issue.details).collect())
     }
 }
@@ -210,36 +256,14 @@ pub mod malformed_detection {
 async fn analyze_processor(
     pool: &DbPool,
     processor_name: &str,
+    snapshot: Option<&CheckpointSnapshot>,
     max_events: usize,
     stale_window_hours: i64,
     check_window_hours: i64,
 ) -> Result<Vec<CheckpointInconsistency>> {
-    struct Snapshot {
-        last_processed_id: Option<Ulid>,
-        last_activity: DateTime<Utc>,
-    }
-
-    let checkpoint = sqlx::query!(
-        r#"
-        SELECT 
-            last_processed_id::uuid as "last_processed_id?: Ulid",
-            last_activity
-        FROM core.processor_checkpoints
-        WHERE processor_name = $1
-        ORDER BY updated_at DESC
-        LIMIT 1
-        "#,
-        processor_name
-    )
-    .fetch_optional(pool)
-    .await?;
-
     let mut issues = Vec::new();
 
-    let Some(snapshot) = checkpoint.map(|row| Snapshot {
-        last_processed_id: row.last_processed_id,
-        last_activity: row.last_activity,
-    }) else {
+    let Some(snapshot) = snapshot else {
         issues.push(CheckpointInconsistency {
             processor_name: processor_name.to_string(),
             details: "No checkpoint found for processor".to_string(),
@@ -249,59 +273,80 @@ async fn analyze_processor(
         return Ok(issues);
     };
 
-    if let Some(last_processed_id) = snapshot.last_processed_id {
-        let exists = sqlx::query_scalar!(
-            r#"SELECT EXISTS(SELECT 1 FROM core.events WHERE id = $1::uuid::ulid)"#,
-            last_processed_id.as_uuid()
-        )
-        .fetch_one(pool)
-        .await?
-        .unwrap_or(false);
+    if snapshot.requires_event_id()
+        && snapshot.last_processed_id.is_none()
+        && snapshot.processed_count > 0
+    {
+        issues.push(CheckpointInconsistency {
+            processor_name: processor_name.to_string(),
+            details: format!(
+                "Checkpoint missing ULID reference despite processed_count={}",
+                snapshot.processed_count
+            ),
+            inconsistency_type: CheckpointInconsistencyType::InvalidCheckpointFormat,
+            events_potentially_missed: snapshot.processed_count,
+        });
+    }
 
-        if !exists {
-            issues.push(CheckpointInconsistency {
-                processor_name: processor_name.to_string(),
-                details: "Checkpoint references non-existent event".to_string(),
-                inconsistency_type: CheckpointInconsistencyType::MissingEventReference,
-                events_potentially_missed: 0,
-            });
+    if snapshot.supports_event_correlation() {
+        if let Some(last_processed_id) = snapshot.last_processed_id {
+            let exists = sqlx::query_scalar!(
+                r#"SELECT EXISTS(SELECT 1 FROM core.events WHERE id = $1::uuid::ulid)"#,
+                last_processed_id.as_uuid()
+            )
+            .fetch_one(pool)
+            .await?
+            .unwrap_or(false);
+
+            if !exists {
+                issues.push(CheckpointInconsistency {
+                    processor_name: processor_name.to_string(),
+                    details: "Checkpoint references non-existent event".to_string(),
+                    inconsistency_type: CheckpointInconsistencyType::MissingEventReference,
+                    events_potentially_missed: 0,
+                });
+            }
         }
     }
 
-    let window_cutoff = if check_window_hours > 0 {
-        Some(Utc::now() - Duration::hours(check_window_hours))
-    } else {
-        None
-    };
+    let newer_events: i64 = if snapshot.supports_event_correlation() {
+        let window_cutoff = if check_window_hours > 0 {
+            Some(Utc::now() - Duration::hours(check_window_hours))
+        } else {
+            None
+        };
 
-    let newer_events: i64 = if let Some(last_processed_id) = snapshot.last_processed_id {
-        if let Some(cutoff) = window_cutoff {
+        if let Some(last_processed_id) = snapshot.last_processed_id {
+            if let Some(cutoff) = window_cutoff {
+                sqlx::query_scalar!(
+                    r#"SELECT COUNT(*) as "count!" FROM core.events WHERE id > $1::uuid::ulid AND ts_orig >= $2"#,
+                    last_processed_id.as_uuid(),
+                    cutoff
+                )
+                .fetch_one(pool)
+                .await?
+            } else {
+                sqlx::query_scalar!(
+                    r#"SELECT COUNT(*) as "count!" FROM core.events WHERE id > $1::uuid::ulid"#,
+                    last_processed_id.as_uuid()
+                )
+                .fetch_one(pool)
+                .await?
+            }
+        } else if let Some(cutoff) = window_cutoff {
             sqlx::query_scalar!(
-                r#"SELECT COUNT(*) as "count!" FROM core.events WHERE id > $1::uuid::ulid AND ts_orig >= $2"#,
-                last_processed_id.as_uuid(),
+                r#"SELECT COUNT(*) as "count!" FROM core.events WHERE ts_orig >= $1"#,
                 cutoff
             )
             .fetch_one(pool)
             .await?
         } else {
-            sqlx::query_scalar!(
-                r#"SELECT COUNT(*) as "count!" FROM core.events WHERE id > $1::uuid::ulid"#,
-                last_processed_id.as_uuid()
-            )
-            .fetch_one(pool)
-            .await?
+            sqlx::query_scalar!(r#"SELECT COUNT(*) as "count!" FROM core.events"#)
+                .fetch_one(pool)
+                .await?
         }
-    } else if let Some(cutoff) = window_cutoff {
-        sqlx::query_scalar!(
-            r#"SELECT COUNT(*) as "count!" FROM core.events WHERE ts_orig >= $1"#,
-            cutoff
-        )
-        .fetch_one(pool)
-        .await?
     } else {
-        sqlx::query_scalar!(r#"SELECT COUNT(*) as "count!" FROM core.events"#)
-            .fetch_one(pool)
-            .await?
+        0
     };
 
     if newer_events > 0 {
@@ -327,4 +372,14 @@ async fn analyze_processor(
     }
 
     Ok(issues)
+}
+
+fn latest_snapshot_for_processor<'a>(
+    snapshots: &'a [CheckpointSnapshot],
+    processor_name: &str,
+) -> Option<&'a CheckpointSnapshot> {
+    snapshots
+        .iter()
+        .filter(|snapshot| snapshot.processor_name == processor_name)
+        .max_by_key(|snapshot| snapshot.last_activity)
 }

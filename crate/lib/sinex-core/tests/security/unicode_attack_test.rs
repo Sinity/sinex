@@ -7,7 +7,6 @@
 //! - Zero-width character injection
 //! - Encoding-based attacks
 
-use sinex_test_utils::TestResult;
 use sinex_core::db::sanitization::EventSanitizer;
 use sinex_test_utils::prelude::*;
 use std::collections::HashMap;
@@ -18,7 +17,7 @@ use unicode_normalization::UnicodeNormalization;
 // =============================================================================
 
 #[sinex_test]
-async fn test_unicode_homograph_attacks(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_unicode_homograph_attacks(ctx: TestContext) -> TestResult<()> {
     println!("Testing unicode homograph attacks...");
 
     // Collection of visually similar characters that could be used in attacks
@@ -65,7 +64,7 @@ async fn test_unicode_homograph_attacks(ctx: TestContext) -> color_eyre::eyre::R
                 "legitimate": legitimate,
                 "description": description
             }))
-            .build();
+            .build()?;
 
         // Insert event
         let insert_result = insert_event(pool, &event).await?;
@@ -108,7 +107,7 @@ async fn test_unicode_homograph_attacks(ctx: TestContext) -> color_eyre::eyre::R
 // =============================================================================
 
 #[sinex_test]
-async fn test_unicode_normalization_attacks(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_unicode_normalization_attacks(ctx: TestContext) -> TestResult<()> {
     println!("Testing unicode normalization attacks...");
 
     // Different unicode normalization forms can represent the same visual string
@@ -161,7 +160,7 @@ async fn test_unicode_normalization_attacks(ctx: TestContext) -> color_eyre::eyr
                     "value": form_value,
                     "description": description
                 }))
-                .build();
+                .build()?;
 
             insert_event(pool, &event).await?;
         }
@@ -201,7 +200,7 @@ async fn test_unicode_normalization_attacks(ctx: TestContext) -> color_eyre::eyr
 // =============================================================================
 
 #[sinex_test]
-async fn test_zero_width_character_attacks(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_zero_width_character_attacks(ctx: TestContext) -> TestResult<()> {
     println!("Testing zero-width character attacks...");
 
     let zero_width_tests = vec![
@@ -254,7 +253,7 @@ async fn test_zero_width_character_attacks(ctx: TestContext) -> color_eyre::eyre
                 "char_count": injected.chars().count(),
                 "byte_count": injected.as_bytes().len()
             }))
-            .build();
+            .build()?;
 
         // Test sanitization
         let mut sanitizable_event = event.clone();
@@ -280,7 +279,7 @@ async fn test_zero_width_character_attacks(ctx: TestContext) -> color_eyre::eyre
 // =============================================================================
 
 #[sinex_test]
-async fn test_direction_override_attacks(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_direction_override_attacks(ctx: TestContext) -> TestResult<()> {
     println!("Testing direction override attacks...");
 
     let direction_tests = vec![
@@ -329,7 +328,7 @@ async fn test_direction_override_attacks(ctx: TestContext) -> color_eyre::eyre::
                 "description": description,
                 "contains_bidi": contains_bidi_override(&attack)
             }))
-            .build();
+            .build()?;
 
         insert_event(pool, &event).await?;
 
@@ -349,7 +348,7 @@ async fn test_direction_override_attacks(ctx: TestContext) -> color_eyre::eyre::
 // =============================================================================
 
 #[sinex_test]
-async fn test_encoding_based_attacks(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_encoding_based_attacks(ctx: TestContext) -> TestResult<()> {
     println!("Testing encoding-based attacks...");
 
     let encoding_tests = vec![
@@ -384,7 +383,7 @@ async fn test_encoding_based_attacks(ctx: TestContext) -> color_eyre::eyre::Resu
                         "description": description,
                         "bytes": bytes
                     }))
-                    .build();
+                    .build()?;
 
                 match insert_event(pool, &event).await {
                     Ok(_) => println!("  ⚠️  Database accepted invalid encoding"),
@@ -405,7 +404,7 @@ async fn test_encoding_based_attacks(ctx: TestContext) -> color_eyre::eyre::Resu
 // =============================================================================
 
 #[sinex_test]
-async fn test_combined_unicode_attacks(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_combined_unicode_attacks(ctx: TestContext) -> TestResult<()> {
     println!("Testing combined unicode attacks...");
 
     let combined_attacks = vec![
@@ -445,7 +444,7 @@ async fn test_combined_unicode_attacks(ctx: TestContext) -> color_eyre::eyre::Re
                 "description": description,
                 "attack_vectors": attack_vectors
             }))
-            .build();
+            .build()?;
 
         insert_event(pool, &event).await?;
     }

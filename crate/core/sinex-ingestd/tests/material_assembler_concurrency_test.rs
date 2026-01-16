@@ -1,12 +1,14 @@
 //! Concurrency and ledger assertions for the material assembler.
 
-use async_nats::{jetstream, Client};
+use async_nats::jetstream;
 use blake3::Hasher;
 use futures::future::join_all;
 use serde_json::json;
+use sinex_core::types::ulid::Ulid;
 use sinex_ingestd::{IngestdResult, MaterialAssembler};
-use sinex_satellite_sdk::annex::{AnnexConfig, GitAnnex};
-use sinex_test_utils::{prelude::*, EphemeralNats};
+use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
+use sinex_test_utils::prelude::*;
+use sinex_test_utils::timing_utils::{WaitHelpers, DEFAULT_WAIT_SECS};
 use sqlx::Row;
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,14 +28,15 @@ async fn fake_annex() -> TestResult<(Arc<GitAnnex>, tempfile::TempDir)> {
 
 async fn start_assembler(
     ctx: &TestContext,
-    nats: &EphemeralNats,
-    nats_client: Client,
+    namespace: &str,
 ) -> TestResult<(
     tokio::task::JoinHandle<IngestdResult<()>>,
     jetstream::Context,
     tempfile::TempDir,
     tempfile::TempDir,
 )> {
+    let nats = ctx.nats_handle()?;
+    let nats_client = ctx.nats_client();
     let js = nats.jetstream_with_client(nats_client.clone());
     let (annex, annex_dir) = fake_annex().await?;
     let state_dir = tempfile::tempdir()?;
@@ -42,25 +45,39 @@ async fn start_assembler(
         ctx.pool.clone(),
         annex,
         state_dir.path().to_path_buf(),
+        Some(namespace.to_string()),
+        1_000,
     )?;
 
     let handle = tokio::spawn(async move { assembler.run().await });
     Ok((handle, js, annex_dir, state_dir))
 }
 
+fn namespaced_consumer(namespace: &str, base: &str) -> String {
+    let sanitized = namespace
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    format!("{sanitized}_{base}")
+}
+
 #[sinex_test(timeout = 120, trace = true)]
 async fn assembler_handles_concurrent_materials_and_records_ledger(
     ctx: TestContext,
 ) -> TestResult<()> {
-    let ctx = ctx.with_nats().await?;
-    let nats = EphemeralNats::start().await?;
-    let nats_client = nats.connect().await?;
-    let (handle, js, _annex_guard, _state_guard) =
-        start_assembler(&ctx, &nats, nats_client.clone()).await?;
-    let env = ctx.env();
-    let begin_stream = env.nats_stream_name("SOURCE_MATERIAL_BEGIN");
-    let slices_stream = env.nats_stream_name("SOURCE_MATERIAL_SLICES");
-    let end_stream = env.nats_stream_name("SOURCE_MATERIAL_END");
+    let ctx = ctx.with_shared_nats().await?;
+    let _nats_client = ctx.nats_client();
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
+    let (handle, js, _annex_guard, _state_guard) = start_assembler(&ctx, &namespace).await?;
+    let begin_stream = ctx.pipeline_namespace().stream("SOURCE_MATERIAL_BEGIN");
+    let slices_stream = ctx.pipeline_namespace().stream("SOURCE_MATERIAL_SLICES");
+    let end_stream = ctx.pipeline_namespace().stream("SOURCE_MATERIAL_END");
 
     println!(
         "assembler streams: begin={}, slices={}, end={}",
@@ -103,8 +120,25 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
         .await?;
     }
 
-    // Give the assembler a moment to bootstrap consumers on the prefixed streams.
-    tokio::time::sleep(Duration::from_millis(250)).await;
+    for stream in [&begin_stream, &slices_stream, &end_stream] {
+        WaitHelpers::wait_for_condition(
+            || {
+                let js = js.clone();
+                let stream = stream.to_string();
+                async move {
+                    let mut stream_handle = js.get_stream(&stream).await.map_err(|e| {
+                        sinex_core::types::error::SinexError::network(e.to_string())
+                    })?;
+                    let info = stream_handle.info().await.map_err(|e| {
+                        sinex_core::types::error::SinexError::network(e.to_string())
+                    })?;
+                    Ok::<bool, sinex_core::types::error::SinexError>(info.state.consumer_count > 0)
+                }
+            },
+            DEFAULT_WAIT_SECS,
+        )
+        .await?;
+    }
 
     if let Ok(info) = js.get_stream(&begin_stream).await?.info().await {
         assert_eq!(info.state.consumer_count, 1);
@@ -119,7 +153,7 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
     // Fire off begin messages for each material.
     for (material_id, _, _, _) in &material_plans {
         js.publish(
-            env.nats_subject("source_material.begin"),
+            ctx.pipeline_namespace().subject("source_material.begin"),
             json!({
                 "material_id": material_id.to_string(),
                 "material_kind": "annex",
@@ -149,7 +183,9 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
             headers.insert("Offset", offset.to_string().as_str());
             headers.insert("Chunk-Hash", "deadbeefcafebabe");
 
-            let subject = env.nats_subject(&format!("source_material.slices.{}", material_id));
+            let subject = ctx
+                .pipeline_namespace()
+                .subject(&format!("source_material.slices.{}", material_id));
             publish_futs.push(js.publish_with_headers(subject, headers, payload.into()));
         }
     }
@@ -160,7 +196,7 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
     // Send end markers.
     for (material_id, slices, total_size, hash) in &material_plans {
         js.publish(
-            env.nats_subject("source_material.end"),
+            ctx.pipeline_namespace().subject("source_material.end"),
             json!({
                 "material_id": material_id.to_string(),
                 "ended_at": chrono::Utc::now().to_rfc3339(),
@@ -197,7 +233,7 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
     if let Ok(mut consumer) = js
         .get_consumer_from_stream::<async_nats::jetstream::consumer::pull::Config, _, _>(
             &begin_stream,
-            "ingestd_material_begin",
+            namespaced_consumer(&namespace, "ingestd_material_begin"),
         )
         .await
     {
@@ -213,7 +249,7 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
     if let Ok(mut consumer) = js
         .get_consumer_from_stream::<async_nats::jetstream::consumer::pull::Config, _, _>(
             &slices_stream,
-            "ingestd_material_slices",
+            namespaced_consumer(&namespace, "ingestd_material_slices"),
         )
         .await
     {
@@ -229,7 +265,7 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
     if let Ok(mut consumer) = js
         .get_consumer_from_stream::<async_nats::jetstream::consumer::pull::Config, _, _>(
             &end_stream,
-            "ingestd_material_end",
+            namespaced_consumer(&namespace, "ingestd_material_end"),
         )
         .await
     {
@@ -247,27 +283,45 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
     let ledger_wait = async {
         for (material_id, _, total_size, _) in &material_plans {
             let material_id_uuid = sinex_core::db::query_helpers::ulid_to_uuid(*material_id);
-            loop {
-                let row = sqlx::query(
-                    r#"
-                    SELECT offset_end, offset_kind
-                    FROM raw.temporal_ledger
-                    WHERE source_material_id = $1::uuid::ulid
-                    "#,
-                )
-                .bind(material_id_uuid)
-                .fetch_optional(&ctx.pool)
-                .await?;
+            WaitHelpers::wait_for_condition(
+                || {
+                    let pool = ctx.pool.clone();
+                    async move {
+                        let row = sqlx::query(
+                            r#"
+                            SELECT offset_end, offset_kind
+                            FROM raw.temporal_ledger
+                            WHERE source_material_id = $1::uuid::ulid
+                            "#,
+                        )
+                        .bind(material_id_uuid)
+                        .fetch_optional(&pool)
+                        .await?;
 
-                if let Some(row) = row {
-                    let offset_end: i64 = row.try_get("offset_end")?;
-                    let offset_kind: String = row.try_get("offset_kind")?;
-                    assert_eq!(offset_end, *total_size);
-                    assert_eq!(offset_kind, "byte");
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
+                        if let Some(row) = row {
+                            let offset_end: i64 = row.try_get("offset_end")?;
+                            let offset_kind: String = row.try_get("offset_kind")?;
+                            if offset_end != *total_size {
+                                return Err(sinex_core::types::error::SinexError::database(
+                                    format!(
+                                        "ledger offset_end {offset_end} != expected {total_size}"
+                                    ),
+                                ));
+                            }
+                            if offset_kind != "byte" {
+                                return Err(sinex_core::types::error::SinexError::database(
+                                    format!("ledger offset_kind {offset_kind} != byte"),
+                                ));
+                            }
+                            Ok(true)
+                        } else {
+                            Ok(false)
+                        }
+                    }
+                },
+                30,
+            )
+            .await?;
         }
         Ok::<_, color_eyre::Report>(())
     };
@@ -296,7 +350,8 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
     }
 
     // DLQ should remain empty for valid slices.
-    let dlq_stream = ctx.env().nats_stream_name("SINEX_RAW_EVENTS_DLQ");
+    let base_stream = ctx.pipeline_namespace().stream("SINEX_RAW_EVENTS");
+    let dlq_stream = format!("{base_stream}_DLQ");
     if let Ok(mut stream) = js.get_stream(&dlq_stream).await {
         if let Ok(info) = stream.info().await {
             assert_eq!(
@@ -310,7 +365,10 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
     for (material_id, _, total_size, _) in &material_plans {
         let row = sqlx::query(
             r#"
-            SELECT status, optional_blob_id, metadata->>'file_size_bytes' AS file_size
+            SELECT
+                status,
+                optional_blob_id::uuid AS optional_blob_id,
+                metadata->>'file_size_bytes' AS file_size
             FROM raw.source_material_registry
             WHERE id = ($1::uuid)::ulid
             "#,
@@ -320,7 +378,7 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
         .await?;
 
         let status: Option<String> = row.try_get("status")?;
-        let blob: Option<uuid::Uuid> = row.try_get("optional_blob_id")?;
+        let blob: Option<Ulid> = row.try_get("optional_blob_id")?;
         let file_size: Option<String> = row.try_get("file_size")?;
 
         assert_eq!(status.as_deref(), Some("completed"));

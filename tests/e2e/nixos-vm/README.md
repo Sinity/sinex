@@ -22,6 +22,13 @@ NIX_CONFIG=$'experimental-features = nix-command flakes\naccept-flake-config = t
   ./tests/e2e/nixos-vm/run-vm-tests.sh -p 2 -c smoke
 ```
 
+## Host Requirements
+
+- Linux host with KVM enabled (`/dev/kvm` accessible for the current user).
+- Minimum 4 CPU cores (8+ recommended for integration/performance suites).
+- Minimum 8 GB RAM (16+ GB recommended for performance/parallel runs).
+- At least 20 GB free disk space (more if running performance + snapshot suites).
+
 ## CI Coverage
 
 - Flake checks (and CI) currently build/run only the `basic` smoke and `preflight` coordination suites for fast gating.
@@ -52,6 +59,13 @@ The enhanced test runner (`run-vm-tests.sh`) provides:
 # Custom timeout and output directory
 ./tests/e2e/nixos-vm/run-vm-tests.sh -t 3600 -o /tmp/test-results -c all
 ```
+
+## Snapshot Pinning
+
+VM snapshot runs use the `virtualisation.baseSnapshot` option (default: `after-services`)
+from `tests/e2e/nixos-vm/common/vm-snapshot-base.nix`. Enable snapshot mode by setting
+`virtualisation.snapshotMode = true` in a scenario, and ensure the named snapshot exists
+in the qcow2 image.
 
 ## Test Structure
 
@@ -245,7 +259,7 @@ cd /tmp/nix-build-*.drv-0/
 
 ## Future Improvements
 
-- [ ] VM snapshot/restore for faster test initialization
+- [ ] Automated snapshot creation + distribution for multi-host runs
 - [ ] Test result caching based on code changes
 - [ ] Distributed test execution across multiple machines
 - [ ] Integration with CI/CD pipelines

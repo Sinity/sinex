@@ -36,7 +36,7 @@ async fn test_nixos_module_config_validation(ctx: TestContext) -> TestResult<()>
         "Should have database config"
     );
     assert!(
-        sinex_config.get("satellite").is_some(),
+        sinex_config.get("nodes").is_some(),
         "Should have satellite config"
     );
     assert!(
@@ -50,18 +50,18 @@ async fn test_nixos_module_config_validation(ctx: TestContext) -> TestResult<()>
     assert!(db_config.get("port").is_some(), "Should have database port");
     assert!(db_config.get("name").is_some(), "Should have database name");
 
-    // Validate satellite event source configuration
-    let satellite_config = &sinex_config["satellite"];
+    // Validate node event source configuration
+    let node_config = &sinex_config["nodes"];
     assert!(
-        satellite_config.get("eventSources").is_some(),
-        "Satellite config should expose event sources"
+        node_config.get("eventSources").is_some(),
+        "Node config should expose event sources"
     );
 
-    let event_sources_config = &satellite_config["eventSources"];
+    let event_sources_config = &node_config["eventSources"];
     for source in ["filesystem", "terminal", "desktop", "system"] {
         assert!(
             event_sources_config.get(source).is_some(),
-            "Satellite configuration should expose {} source config",
+            "Node configuration should expose {} source config",
             source
         );
     }
@@ -94,9 +94,9 @@ async fn test_nixos_service_definitions() -> TestResult<()> {
         "sinex-ingestd",
         "sinex-gateway",
         "sinex-fs-watcher-1",
-        "sinex-terminal-satellite-1",
-        "sinex-desktop-satellite-1",
-        "sinex-system-satellite-1",
+        "sinex-terminal-node-1",
+        "sinex-desktop-node-1",
+        "sinex-system-node-1",
         "sinex-health-aggregator",
     ];
 
@@ -163,7 +163,7 @@ async fn test_nixos_module_options_schema() -> TestResult<()> {
     let module_options = create_test_module_options_schema();
 
     // Validate top-level option categories
-    let expected_categories = vec!["enable", "database", "satellite", "shell", "logging"];
+    let expected_categories = vec!["enable", "database", "nodes", "shell", "logging"];
 
     for category in expected_categories {
         assert!(
@@ -189,7 +189,7 @@ async fn test_nixos_module_options_schema() -> TestResult<()> {
     }
 
     // Validate source-specific options
-    let event_source_options = &module_options["satellite"]["options"]["eventSources"]["options"];
+    let event_source_options = &module_options["nodes"]["options"]["eventSources"]["options"];
     let source_types = vec!["filesystem", "terminal", "desktop", "system"];
 
     for source_type in source_types {
@@ -235,9 +235,9 @@ async fn test_service_dependency_chain() -> TestResult<()> {
 
     let watcher_services = [
         "sinex-fs-watcher-1",
-        "sinex-terminal-satellite-1",
-        "sinex-desktop-satellite-1",
-        "sinex-system-satellite-1",
+        "sinex-terminal-node-1",
+        "sinex-desktop-node-1",
+        "sinex-system-node-1",
     ];
 
     for watcher in watcher_services {
@@ -564,7 +564,7 @@ async fn test_module_upgrade_compatibility() -> TestResult<()> {
         let sinex_config = &config["services"]["sinex"];
 
         // Core options should be present in all versions
-        let core_options = vec!["enable", "database", "satellite", "shell"];
+        let core_options = vec!["enable", "database", "nodes", "shell"];
         for option in core_options {
             assert!(
                 sinex_config.get(option).is_some(),
@@ -622,7 +622,7 @@ fn create_test_module_config() -> serde_json::Value {
                     "name": "sinex",
                     "user": "sinex"
                 },
-                "satellite": {
+                "nodes": {
                     "enable": true,
                     "eventSources": {
                         "filesystem": {"enable": true, "watchPaths": ["/home"]},
@@ -709,36 +709,36 @@ fn create_test_service_definitions() -> HashMap<String, serde_json::Value> {
         }),
     );
 
-    services.insert("sinex-terminal-satellite-1".to_string(), json!({
+    services.insert("sinex-terminal-node-1".to_string(), json!({
         "description": "Sinex terminal event source (instance 1)",
         "wantedBy": ["multi-user.target"],
         "after": ["sinex-ingestd.service"],
         "serviceConfig": {
-            "ExecStart": "/nix/store/.../bin/sinex-terminal-satellite --service-name sinex-terminal-satellite",
+            "ExecStart": "/nix/store/.../bin/sinex-terminal-node --service-name sinex-terminal-node",
             "Restart": "on-failure",
             "User": "sinex",
             "Group": "sinex"
         }
     }));
 
-    services.insert("sinex-desktop-satellite-1".to_string(), json!({
+    services.insert("sinex-desktop-node-1".to_string(), json!({
         "description": "Sinex desktop event source (instance 1)",
         "wantedBy": ["multi-user.target"],
         "after": ["sinex-ingestd.service"],
         "serviceConfig": {
-            "ExecStart": "/nix/store/.../bin/sinex-desktop-satellite --service-name sinex-desktop-satellite",
+            "ExecStart": "/nix/store/.../bin/sinex-desktop-node --service-name sinex-desktop-node",
             "Restart": "on-failure",
             "User": "sinex",
             "Group": "sinex"
         }
     }));
 
-    services.insert("sinex-system-satellite-1".to_string(), json!({
+    services.insert("sinex-system-node-1".to_string(), json!({
         "description": "Sinex system event source (instance 1)",
         "wantedBy": ["multi-user.target"],
         "after": ["sinex-ingestd.service"],
         "serviceConfig": {
-            "ExecStart": "/nix/store/.../bin/sinex-system-satellite --service-name sinex-system-satellite",
+            "ExecStart": "/nix/store/.../bin/sinex-system-node --service-name sinex-system-node",
             "Restart": "on-failure",
             "User": "sinex",
             "Group": "sinex"
@@ -791,9 +791,9 @@ fn create_test_module_options_schema() -> serde_json::Value {
                 }
             }
         },
-        "satellite": {
+        "nodes": {
             "type": "submodule",
-            "description": "Satellite configuration",
+            "description": "Node configuration",
             "options": {
                 "enable": {
                     "type": "bool",
@@ -878,15 +878,15 @@ fn create_test_dependency_chain() -> HashMap<String, Vec<String>> {
         vec!["sinex-ingestd.service".to_string()],
     );
     deps.insert(
-        "sinex-terminal-satellite-1".to_string(),
+        "sinex-terminal-node-1".to_string(),
         vec!["sinex-ingestd.service".to_string()],
     );
     deps.insert(
-        "sinex-desktop-satellite-1".to_string(),
+        "sinex-desktop-node-1".to_string(),
         vec!["sinex-ingestd.service".to_string()],
     );
     deps.insert(
-        "sinex-system-satellite-1".to_string(),
+        "sinex-system-node-1".to_string(),
         vec!["sinex-ingestd.service".to_string()],
     );
     deps.insert(
@@ -1081,7 +1081,7 @@ fn create_test_version_configs() -> HashMap<String, serde_json::Value> {
                         "port": 5432,
                         "name": "sinex"
                     },
-                    "satellite": {
+                    "nodes": {
                         "enable": true
                     },
                     "shell": {
@@ -1104,7 +1104,7 @@ fn create_test_version_configs() -> HashMap<String, serde_json::Value> {
                         "name": "sinex",
                         "user": "sinex"
                     },
-                    "satellite": {
+                    "nodes": {
                         "enable": true,
                         "eventSources": {
                             "filesystem": {"enable": true}
@@ -1130,7 +1130,7 @@ fn create_test_version_configs() -> HashMap<String, serde_json::Value> {
                         "name": "sinex",
                         "user": "sinex"
                     },
-                    "satellite": {
+                    "nodes": {
                         "enable": true,
                         "eventSources": {
                             "filesystem": {"enable": true},

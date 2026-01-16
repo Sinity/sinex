@@ -13,6 +13,7 @@ use std::collections::HashSet;
 // Using shorter imports from sinex-core's re-exports
 use sinex_core::{Event, EventSource, EventType, HostName, Id, JsonValue, Ulid};
 use sinex_test_utils::sinex_proptest;
+use sinex_test_utils::TestResult;
 
 // =============================================================================
 // ULID PROPERTY TESTS - Invariants for time-ordered identifiers

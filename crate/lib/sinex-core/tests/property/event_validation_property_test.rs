@@ -1,5 +1,4 @@
 #![allow(unexpected_cfgs)]
-#![allow(dead_code)]
 
 //! Event Validation Property Tests
 //!
@@ -199,7 +198,7 @@ sinex_proptest! {
     #![cases(64)]
     fn test_valid_events_pass_validation(
         event in arbitrary_event()
-    ) -> color_eyre::eyre::Result<()> {
+    ) -> TestResult<()> {
         let result = validate_event(&event);
         prop_assert!(result.is_ok(), "Generated event should pass validation: {:?}", result);
         Ok(())
@@ -207,7 +206,7 @@ sinex_proptest! {
 
     fn test_empty_source_fails_validation(
         event in empty_source_event()
-    ) -> color_eyre::eyre::Result<()> {
+    ) -> TestResult<()> {
         let result = validate_event(&event);
         prop_assert!(result.is_err(), "Event with empty source should fail validation");
         if let Err(e) = result {
@@ -225,7 +224,7 @@ sinex_proptest! {
         event_type in "[a-z][a-z0-9_.]{0,99}",
         host in "[a-zA-Z0-9_.-]{1,255}",
         payload in event_payloads()
-    ) -> color_eyre::eyre::Result<()> {
+    ) -> TestResult<()> {
         let mut event = RawEvent::test_event(
             EventSource::new(source.clone()),
             EventType::new(event_type.clone()),
@@ -244,7 +243,7 @@ sinex_proptest! {
 
     fn test_payload_size_validation(
         size_kb in 1usize..=256usize
-    ) -> color_eyre::eyre::Result<()> {
+    ) -> TestResult<()> {
         let large_data = "x".repeat(size_kb * 1024);
         let payload = json!({
             "data": large_data,
@@ -270,7 +269,7 @@ sinex_proptest! {
 
     fn test_event_timestamp_consistency(
         event in arbitrary_event()
-    ) -> color_eyre::eyre::Result<()> {
+    ) -> TestResult<()> {
         if let (Some(id), Some(ts_orig)) = (event.id.clone(), event.ts_orig) {
             let ingest_ts = id.timestamp();
             prop_assert!(
@@ -290,7 +289,7 @@ sinex_proptest! {
 
     fn test_event_uniqueness_properties(
         events in proptest::collection::vec(arbitrary_event(), 2..32)
-    ) -> color_eyre::eyre::Result<()> {
+    ) -> TestResult<()> {
         let mut ids: Vec<Ulid> = events
             .iter()
             .filter_map(|e| e.id.clone().map(|id| id.into()))
@@ -309,7 +308,7 @@ sinex_proptest! {
 
     fn test_event_metadata_fields(
         event in metadata_rich_events()
-    ) -> color_eyre::eyre::Result<()> {
+    ) -> TestResult<()> {
         if let Value::Object(ref map) = event.payload {
             if let Some(metadata) = map.get("_metadata") {
                 prop_assert!(metadata.is_object(), "Metadata should be an object");
@@ -320,7 +319,7 @@ sinex_proptest! {
 
     fn test_boundary_condition_handling(
         event in boundary_condition_events()
-    ) -> color_eyre::eyre::Result<()> {
+    ) -> TestResult<()> {
         prop_assert!(!event.source.is_empty(), "Source should not be empty");
         prop_assert!(!event.event_type.is_empty(), "Event type should not be empty");
         if let Some(id) = event.id {
@@ -334,7 +333,7 @@ sinex_proptest! {
 
     fn test_validation_preserves_error_hierarchy(
         event in arbitrary_event()
-    ) -> color_eyre::eyre::Result<()> {
+    ) -> TestResult<()> {
         let result = validate_event(&event);
 
         if let Err(error) = result {
@@ -355,7 +354,7 @@ sinex_proptest! {
     #![cases(64)]
     fn property_payload_size_validation(
         size_kb in 1usize..=256usize
-    ) -> color_eyre::eyre::Result<()> {
+    ) -> TestResult<()> {
         // Property: Events should handle various payload sizes gracefully
         let large_data = "x".repeat(size_kb * 1024);
         let payload = json!({
@@ -386,7 +385,7 @@ sinex_proptest! {
 
     fn property_event_timestamp_consistency(
         event in arbitrary_event()
-    ) -> color_eyre::eyre::Result<()> {
+    ) -> TestResult<()> {
         // Property: ULID timestamp (ingest) should be close to ts_orig when both exist
         if let (Some(id), Some(ts_orig)) = (event.id.clone(), event.ts_orig) {
             let ingest_ts = id.timestamp();
@@ -407,7 +406,7 @@ sinex_proptest! {
 
     fn property_event_uniqueness(
         events in proptest::collection::vec(arbitrary_event(), 2..32)
-    ) -> color_eyre::eyre::Result<()> {
+    ) -> TestResult<()> {
         // Property: Events should have unique IDs and maintain ordering
         let mut ids: Vec<Ulid> = events
             .iter()
@@ -429,7 +428,7 @@ sinex_proptest! {
     fn property_source_event_id_validation(
         parent_events in proptest::collection::vec(Just(()).prop_map(|_| Ulid::new()), 0..10),
         _event in arbitrary_event()
-    ) -> color_eyre::eyre::Result<()> {
+    ) -> TestResult<()> {
         // Property: Source event IDs should be valid ULIDs
         // Note: source_event_ids field is not available in the current Event type
         // This property test validates the ULID values themselves
@@ -442,7 +441,7 @@ sinex_proptest! {
 
     fn property_json_schema_compatibility(
         event in arbitrary_event()
-    ) -> color_eyre::eyre::Result<()> {
+    ) -> TestResult<()> {
         // Property: Event payloads should be valid JSON that can be schema-validated
         let payload_str = serde_json::to_string(&event.payload);
         prop_assert!(payload_str.is_ok(), "Payload should serialize to JSON");
@@ -456,7 +455,7 @@ sinex_proptest! {
 
     fn property_event_metadata_fields(
         event in metadata_rich_events()
-    ) -> color_eyre::eyre::Result<()> {
+    ) -> TestResult<()> {
         // Property: Metadata-rich events should have expected optional fields
         // Note: source_material fields are not available in Event, focusing on payload metadata
 
@@ -471,7 +470,7 @@ sinex_proptest! {
 
     fn property_boundary_condition_handling(
         event in boundary_condition_events()
-    ) -> color_eyre::eyre::Result<()> {
+    ) -> TestResult<()> {
         // Property: Boundary condition events should be processable
         // Even boundary cases should have valid structure
         prop_assert!(!event.source.is_empty(), "Source should not be empty");
@@ -501,7 +500,7 @@ mod concurrent_tests {
     sinex_proptest! {
         fn property_concurrent_event_ordering(
             events in concurrent_operation_events()
-        ) -> color_eyre::eyre::Result<()> {
+        ) -> TestResult<()> {
             // Property: Concurrent events should maintain per-worker ordering
             let mut by_worker: std::collections::HashMap<usize, Vec<_>> =
                 std::collections::HashMap::new();
@@ -546,7 +545,7 @@ mod performance_tests {
     sinex_proptest! {
         fn property_event_creation_performance(
             events in performance_characteristic_events()
-        ) -> color_eyre::eyre::Result<()> {
+        ) -> TestResult<()> {
             // Property: Event creation should complete in reasonable time
             let start = Instant::now();
 
@@ -570,7 +569,7 @@ mod performance_tests {
             source in "[a-z]*", // May be empty
             event_type in "[a-z]*", // May be empty
             payload in event_payloads()
-        ) -> color_eyre::eyre::Result<()> {
+        ) -> TestResult<()> {
             // Property: Same invalid input should always produce same error
             if source.is_empty() || event_type.is_empty() {
                 let mut event1 = RawEvent::test_event(
@@ -605,7 +604,7 @@ mod performance_tests {
 
         fn property_validation_error_hierarchy(
             event in arbitrary_event()
-        ) -> color_eyre::eyre::Result<()> {
+        ) -> TestResult<()> {
             // Property: Validation errors should preserve proper error hierarchy
             let result = validate_event(&event);
 
@@ -635,22 +634,4 @@ mod performance_tests {
             Ok(())
         }
     }
-}
-
-// =============================================================================
-// Helper Functions for Property Tests
-// =============================================================================
-
-/// Helper function for property tests - generates arbitrary JSON values
-fn arbitrary_json_value() -> impl Strategy<Value = serde_json::Value> {
-    prop_oneof![
-        Just(serde_json::json!(null)),
-        Just(serde_json::json!({})),
-        Just(serde_json::json!([])),
-        Just(serde_json::json!("string")),
-        Just(serde_json::json!(42)),
-        Just(serde_json::json!(true)),
-        Just(serde_json::json!({"field": "value"})),
-        Just(serde_json::json!([1, 2, 3])),
-    ]
 }

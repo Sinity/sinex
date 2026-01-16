@@ -78,21 +78,20 @@ pub fn timestamp_nanos_to_datetime(timestamp_ns: i64) -> Result<DateTime<Utc>> {
 /// - ISO 8601 strings
 pub fn parse_flexible_timestamp(value: &str) -> Option<DateTime<Utc>> {
     // First try parsing as RFC3339/ISO8601
+    let value = value.trim();
     if let Ok(dt) = DateTime::parse_from_rfc3339(value) {
         return Some(dt.with_timezone(&Utc));
     }
 
     // Try parsing as numeric timestamp
     if let Ok(timestamp) = value.parse::<i64>() {
-        // Auto-detect format based on magnitude
-        match timestamp {
-            // Seconds: reasonable range is 1970-2100 (0 to ~4e9)
-            0..=5_000_000_000 => DateTime::from_timestamp(timestamp, 0),
-            // Milliseconds: up to year ~2100 (up to ~4e12)
-            5_000_000_001..=5_000_000_000_000 => DateTime::from_timestamp_millis(timestamp),
-            // Microseconds: up to year ~2100 (up to ~4e15)
-            5_000_000_000_001..=5_000_000_000_000_000 => DateTime::from_timestamp_micros(timestamp),
-            // Nanoseconds: anything larger
+        // Auto-detect format based on digit length to avoid misclassifying far-future seconds.
+        let digits = value.strip_prefix('-').unwrap_or(value);
+        match digits.len() {
+            0 => None,
+            1..=10 => DateTime::from_timestamp(timestamp, 0),
+            11..=13 => DateTime::from_timestamp_millis(timestamp),
+            14..=16 => DateTime::from_timestamp_micros(timestamp),
             _ => {
                 let secs = timestamp.checked_div(1_000_000_000).unwrap_or(0);
                 let nanos_remainder = timestamp.checked_rem(1_000_000_000).unwrap_or(0);

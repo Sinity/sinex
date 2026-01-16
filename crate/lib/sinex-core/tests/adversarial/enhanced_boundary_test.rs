@@ -19,18 +19,17 @@ async fn test_maximum_payload_sizes(ctx: TestContext) -> Result<()> {
 
     for size in payload_sizes {
         let large_data = "x".repeat(size);
-        let event = ctx.create_test_event(
-            "boundary_test",
-            &format!("large_payload_{}", size),
-            serde_json::json!({
-                "data": large_data,
-                "size": size,
-                "test_type": "boundary"
-            }),
-        );
-
-        // Test should handle large payloads gracefully
-        let result = ctx.pool.events().insert(event).await;
+        let result = ctx
+            .publish_json_event(
+                "boundary_test",
+                &format!("large_payload_{}", size),
+                serde_json::json!({
+                    "data": large_data,
+                    "size": size,
+                    "test_type": "boundary"
+                }),
+            )
+            .await;
 
         // Very large payloads might fail, but shouldn't crash
         if size <= 1024 * 1024 {
@@ -50,31 +49,27 @@ async fn test_maximum_payload_sizes(ctx: TestContext) -> Result<()> {
 #[sinex_test]
 async fn test_minimal_boundary_values(ctx: TestContext) -> Result<()> {
     // Test empty payload
-    let empty_event = ctx.create_test_event(
-        "boundary_test",
-        "empty_payload",
-        serde_json::json!({}),
-    );
-    ctx.pool.events().insert(empty_event).await?;
+    ctx.publish_json_event("boundary_test", "empty_payload", serde_json::json!({}))
+        .await?;
 
     // Test minimal string
-    let minimal_event = ctx.create_test_event(
+    ctx.publish_json_event(
         "boundary_test",
         "minimal_payload",
         serde_json::json!({"data": ""}),
-    );
-    ctx.pool.events().insert(minimal_event).await?;
+    )
+    .await?;
 
     // Test single character
-    let single_char_event = ctx.create_test_event(
+    ctx.publish_json_event(
         "boundary_test",
         "single_char",
         serde_json::json!({"data": "a"}),
-    );
-    ctx.pool.events().insert(single_char_event).await?;
+    )
+    .await?;
 
     // Test zero values
-    let zero_event = ctx.create_test_event(
+    ctx.publish_json_event(
         "boundary_test",
         "zero_values",
         serde_json::json!({
@@ -83,8 +78,8 @@ async fn test_minimal_boundary_values(ctx: TestContext) -> Result<()> {
             "array": [],
             "object": {}
         }),
-    );
-    ctx.pool.events().insert(zero_event).await?;
+    )
+    .await?;
 
     ctx.wait_for_event_count(4).await?;
     Ok(())
@@ -111,7 +106,7 @@ async fn test_unicode_boundary_cases(ctx: TestContext) -> Result<()> {
     ];
 
     for (name, text) in unicode_cases {
-        let event = ctx.create_test_event(
+        ctx.publish_json_event(
             "unicode_test",
             name,
             serde_json::json!({
@@ -119,9 +114,8 @@ async fn test_unicode_boundary_cases(ctx: TestContext) -> Result<()> {
                 "length": text.len(),
                 "chars": text.chars().count()
             }),
-        );
-
-        ctx.pool.events().insert(event).await?;
+        )
+        .await?;
     }
 
     ctx.wait_for_event_count(unicode_cases.len()).await?;
@@ -148,7 +142,7 @@ async fn test_timestamp_boundaries(ctx: TestContext) -> Result<()> {
     ];
 
     for (i, ts) in timestamp_cases.iter().enumerate() {
-        let event = ctx.create_test_event_with_timestamp(
+        ctx.publish_json_event_with_timestamp(
             "timestamp_test",
             &format!("boundary_{}", i),
             serde_json::json!({
@@ -156,9 +150,8 @@ async fn test_timestamp_boundaries(ctx: TestContext) -> Result<()> {
                 "epoch": ts.timestamp()
             }),
             *ts,
-        );
-
-        ctx.pool.events().insert(event).await?;
+        )
+        .await?;
     }
 
     Ok(())
@@ -168,28 +161,30 @@ async fn test_timestamp_boundaries(ctx: TestContext) -> Result<()> {
 #[sinex_test]
 async fn test_collection_boundaries(ctx: TestContext) -> Result<()> {
     // Empty arrays
-    let empty_array = ctx.create_test_event(
+    ctx.publish_json_event(
         "collection_test",
         "empty_array",
         serde_json::json!({
             "items": [],
             "count": 0
         }),
-    );
-    ctx.pool.events().insert(empty_array).await?;
+    )
+    .await?;
 
     // Large array
     let large_array: Vec<i32> = (0..10000).collect();
-    let large_array_event = ctx.create_test_event(
-        "collection_test",
-        "large_array",
-        serde_json::json!({
-            "items": large_array,
-            "count": 10000
-        }),
-    );
+    let result = ctx
+        .publish_json_event(
+            "collection_test",
+            "large_array",
+            serde_json::json!({
+                "items": large_array,
+                "count": 10000
+            }),
+        )
+        .await;
 
-    match ctx.pool.events().insert(large_array_event).await {
+    match result {
         Ok(_) => println!("Large array accepted"),
         Err(e) => println!("Large array rejected: {}", e),
     }
@@ -200,16 +195,18 @@ async fn test_collection_boundaries(ctx: TestContext) -> Result<()> {
         nested = serde_json::json!([nested]);
     }
 
-    let nested_event = ctx.create_test_event(
-        "collection_test",
-        "deeply_nested",
-        serde_json::json!({
-            "nested": nested,
-            "depth": 50
-        }),
-    );
+    let nested_result = ctx
+        .publish_json_event(
+            "collection_test",
+            "deeply_nested",
+            serde_json::json!({
+                "nested": nested,
+                "depth": 50
+            }),
+        )
+        .await;
 
-    match ctx.pool.events().insert(nested_event).await {
+    match nested_result {
         Ok(_) => println!("Deeply nested array accepted"),
         Err(e) => println!("Deeply nested array rejected: {}", e),
     }
@@ -234,16 +231,18 @@ async fn test_numeric_boundaries(ctx: TestContext) -> Result<()> {
     ];
 
     for (name, value) in numeric_cases {
-        let event = ctx.create_test_event(
-            "numeric_test",
-            name,
-            serde_json::json!({
-                "value": value,
-                "type": name
-            }),
-        );
+        let result = ctx
+            .publish_json_event(
+                "numeric_test",
+                name,
+                serde_json::json!({
+                    "value": value,
+                    "type": name
+                }),
+            )
+            .await;
 
-        match ctx.pool.events().insert(event).await {
+        match result {
             Ok(_) => println!("Numeric boundary {} accepted", name),
             Err(e) => println!("Numeric boundary {} rejected: {}", name, e),
         }
@@ -271,7 +270,7 @@ async fn test_concurrent_access_boundaries(ctx: TestContext) -> Result<()> {
             let pool = ctx_task.pool.clone();
             for i in 0..events_per_task {
                 let event = ctx_task
-                    .create_test_event(
+                    .publish_json_event(
                         "concurrent_test",
                         &format!("task_{}_event_{}", task_id, i),
                         serde_json::json!({
@@ -321,16 +320,18 @@ async fn test_string_length_boundaries(ctx: TestContext) -> Result<()> {
 
     for length in string_lengths {
         let text = "a".repeat(length);
-        let event = ctx.create_test_event(
-            "string_test",
-            &format!("length_{}", length),
-            serde_json::json!({
-                "text": text,
-                "length": length
-            }),
-        );
+        let result = ctx
+            .publish_json_event(
+                "string_test",
+                &format!("length_{}", length),
+                serde_json::json!({
+                    "text": text,
+                    "length": length
+                }),
+            )
+            .await;
 
-        match ctx.pool.events().insert(event).await {
+        match result {
             Ok(_) => println!("String length {} accepted", length),
             Err(e) => println!("String length {} rejected: {}", length, e),
         }
@@ -355,20 +356,21 @@ async fn test_property_based_boundaries(
         nested = serde_json::json!({ "child": nested });
     }
 
-    let event = ctx.create_test_event(
-        "property_test",
-        "boundary",
-        serde_json::json!({
-            "array": array,
-            "text": text,
-            "nested": nested,
-            "array_size": array_size,
-            "string_len": string_len,
-            "nest_depth": nest_depth
-        }),
-    );
+    let _ = ctx
+        .publish_json_event(
+            "property_test",
+            "boundary",
+            serde_json::json!({
+                "array": array,
+                "text": text,
+                "nested": nested,
+                "array_size": array_size,
+                "string_len": string_len,
+                "nest_depth": nest_depth
+            }),
+        )
+        .await;
 
     // We don't assert success, just that it doesn't panic
-    let _ = ctx.pool.events().insert(event).await;
     Ok(())
 }

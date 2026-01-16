@@ -1,10 +1,11 @@
 use camino::Utf8PathBuf;
 use sinex_core::types::utils::directory_manager::{DirectoryConfig, DirectoryManager};
 use sinex_test_utils::sinex_test;
+use sinex_test_utils::TestResult;
 use tempfile::TempDir;
 
 #[sinex_test]
-async fn directory_manager_creates_and_ensures_directories() -> color_eyre::eyre::Result<()> {
+async fn directory_manager_creates_and_ensures_directories() -> TestResult<()> {
     let temp_dir = TempDir::new().unwrap();
     let config = DirectoryConfig {
         base_path: Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap(),
@@ -23,7 +24,7 @@ async fn directory_manager_creates_and_ensures_directories() -> color_eyre::eyre
 }
 
 #[sinex_test]
-async fn directory_manager_lists_contents() -> color_eyre::eyre::Result<()> {
+async fn directory_manager_lists_contents() -> TestResult<()> {
     let temp_dir = TempDir::new().unwrap();
     let config = DirectoryConfig {
         base_path: Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap(),
@@ -47,7 +48,7 @@ async fn directory_manager_lists_contents() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-async fn directory_manager_removes_directories() -> color_eyre::eyre::Result<()> {
+async fn directory_manager_removes_directories() -> TestResult<()> {
     let temp_dir = TempDir::new().unwrap();
     let config = DirectoryConfig {
         base_path: Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap(),

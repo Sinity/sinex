@@ -80,12 +80,60 @@ impl MetadataBuilder {
     }
 }
 
+const CALLER_METADATA_KEY: &str = "caller_metadata";
+const SYSTEM_METADATA_KEY: &str = "_system_metadata";
+
+fn attach_system_metadata(
+    metadata: serde_json::Value,
+    system_metadata: serde_json::Value,
+) -> serde_json::Value {
+    match metadata {
+        serde_json::Value::Object(mut map) => {
+            let key = if map.contains_key(SYSTEM_METADATA_KEY) {
+                format!("{SYSTEM_METADATA_KEY}_generated")
+            } else {
+                SYSTEM_METADATA_KEY.to_string()
+            };
+            map.insert(key, system_metadata);
+            serde_json::Value::Object(map)
+        }
+        serde_json::Value::Null => {
+            json!({
+                SYSTEM_METADATA_KEY: system_metadata
+            })
+        }
+        other => {
+            json!({
+                CALLER_METADATA_KEY: other,
+                SYSTEM_METADATA_KEY: system_metadata
+            })
+        }
+    }
+}
+
 /// Entity type mapping with From trait for better maintainability
 struct EntityTypeMapper;
 
 impl EntityTypeMapper {
-    pub fn create_entity_from_type(name: &str, entity_type: &str) -> CreateEntity {
-        match entity_type {
+    const VALID_TYPES: [&'static str; 8] = [
+        "person",
+        "project",
+        "topic",
+        "organization",
+        "location",
+        "concept",
+        "tool",
+        "event",
+    ];
+
+    pub fn create_entity_from_type(name: &str, entity_type: &str) -> ServiceResult<CreateEntity> {
+        let normalized = entity_type.trim().to_lowercase();
+        if normalized.is_empty() {
+            return Err(SinexError::validation("Entity type is required")
+                .with_context("entity_type", entity_type));
+        }
+
+        let entity = match normalized.as_str() {
             "person" => CreateEntity::person(name),
             "project" => CreateEntity::project(name),
             "topic" => CreateEntity::topic(name),
@@ -94,8 +142,14 @@ impl EntityTypeMapper {
             "concept" => CreateEntity::concept(name),
             "tool" => CreateEntity::tool(name),
             "event" => CreateEntity::event(name),
-            _ => CreateEntity::concept(name), // Default fallback
-        }
+            _ => {
+                return Err(SinexError::validation("Unknown entity type")
+                    .with_context("entity_type", entity_type)
+                    .with_context("allowed_types", Self::VALID_TYPES.join(", ")))
+            }
+        };
+
+        Ok(entity)
     }
 }
 
@@ -167,7 +221,7 @@ impl PkmService {
                 .with_extraction_method("manual")
                 .build();
 
-            let entity = EntityTypeMapper::create_entity_from_type(&name, &entity_type)
+            let entity = EntityTypeMapper::create_entity_from_type(&name, &entity_type)?
                 .with_properties(serde_json::to_value(metadata)?);
 
             let entity = self.pool.knowledge_graph().create_entity(entity).await?;
@@ -193,11 +247,14 @@ impl PkmService {
         properties: HashMap<String, serde_json::Value>,
         source_material_id: Option<Ulid>,
     ) -> ServiceResult<Ulid> {
-        let mut metadata = serde_json::json!(properties);
+        let metadata = serde_json::json!(properties);
+        let mut system_metadata = serde_json::json!({});
 
         if let Some(sm_id) = source_material_id {
-            metadata["source_material_id"] = serde_json::json!(sm_id.to_string());
+            system_metadata["source_material_id"] = serde_json::json!(sm_id.to_string());
         }
+
+        let metadata = attach_system_metadata(metadata, system_metadata);
 
         let relationship = self
             .pool
@@ -265,12 +322,13 @@ impl PkmService {
         let content_preview = Self::create_safe_content_preview(content, mime_type);
 
         // Enhance metadata with file size, checksum, and mime type
-        let mut enhanced_metadata = metadata;
-        enhanced_metadata["file_size_bytes"] = json!(content.len() as i64);
-        enhanced_metadata["checksum"] = json!(checksum);
+        let mut system_metadata = serde_json::json!({});
+        system_metadata["file_size_bytes"] = json!(content.len() as i64);
+        system_metadata["checksum"] = json!(checksum);
         if let Some(mt) = mime_type {
-            enhanced_metadata["mime_type"] = json!(mt);
+            system_metadata["mime_type"] = json!(mt);
         }
+        let enhanced_metadata = attach_system_metadata(metadata, system_metadata);
 
         // Insert new source material
         let new_material = match material_type {

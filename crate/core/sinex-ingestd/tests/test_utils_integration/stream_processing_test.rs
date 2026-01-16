@@ -11,19 +11,28 @@ use sinex_test_utils::{prelude::*, EphemeralNats};
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::time::timeout;
+use tracing::{debug, info, warn};
+
+fn event_label(event: &serde_json::Value) -> &str {
+    event
+        .get("event_type")
+        .and_then(|value| value.as_str())
+        .unwrap_or("unknown")
+}
 
 /// Test basic NATS stream publishing and consuming
 #[sinex_test]
-async fn test_basic_stream_processing(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    let _ = ctx;
+async fn test_basic_stream_processing(ctx: TestContext) -> TestResult<()> {
+    let namespace = ctx.pipeline_namespace();
     let nats = EphemeralNats::start().await?;
-    let subject = "events.test.basic";
+    let subject = namespace.subject("events.test.basic");
+    let stream = namespace.stream("SINEX_TEST_BASIC");
     let (stream_name, consumer) = nats
         .ensure_stream_with_consumer(
-            "sinex-test-basic",
-            &[subject],
+            &stream,
+            &[subject.as_str()],
             ConsumerConfig {
-                durable_name: Some("test-basic-consumer".to_string()),
+                durable_name: Some(namespace.consumer_name("test-basic-consumer")),
                 ..Default::default()
             },
         )
@@ -55,7 +64,11 @@ async fn test_basic_stream_processing(ctx: TestContext) -> color_eyre::eyre::Res
         let ack = jetstream.publish(subject, event_bytes.into()).await?;
         ack.await?;
         
-        println!("Published event {}: {:?}", i + 1, event["event_type"]);
+        debug!(
+            event_index = i + 1,
+            event = event_label(event),
+            "Published basic stream event"
+        );
     }
 
     // Consume messages
@@ -86,26 +99,33 @@ async fn test_basic_stream_processing(ctx: TestContext) -> color_eyre::eyre::Res
         assert_eq!(original["payload"], received["payload"]);
     }
 
-    println!(
-        "✅ Basic stream processing test passed - processed {} events on stream {}",
-        received_events.len(),
-        stream_name
+    info!(
+        processed = received_events.len(),
+        stream = %stream_name,
+        "Basic stream processing test passed"
     );
     Ok(())
 }
 
 /// Test stream processing with multiple subjects
 #[sinex_test]
-async fn test_multi_subject_stream_processing(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    let _ = ctx;
+async fn test_multi_subject_stream_processing(ctx: TestContext) -> TestResult<()> {
+    let namespace = ctx.pipeline_namespace();
     let nats = EphemeralNats::start().await?;
-    let subjects = ["events.filesystem.*", "events.terminal.*", "events.system.*"];
-    let (_stream_name, consumer) = nats
+    let subjects = vec![
+        namespace.subject("events.filesystem.*"),
+        namespace.subject("events.terminal.*"),
+        namespace.subject("events.system.*"),
+    ];
+    let subject_refs: Vec<&str> = subjects.iter().map(String::as_str).collect();
+    let stream = namespace.stream("SINEX_TEST_MULTI_SUBJECT");
+    let consumer_name = namespace.consumer_name("test-multi-subject-consumer");
+    let (stream_name, _consumer) = nats
         .ensure_stream_with_consumer(
-            "sinex-test-multi-subject",
-            &subjects,
+            &stream,
+            &subject_refs,
             ConsumerConfig {
-                durable_name: Some("test-multi-subject-consumer".to_string()),
+                durable_name: Some(consumer_name.clone()),
                 ..Default::default()
             },
         )
@@ -114,50 +134,69 @@ async fn test_multi_subject_stream_processing(ctx: TestContext) -> color_eyre::e
 
     // Test events for different subjects
     let test_cases = vec![
-        ("events.filesystem.file_created", json!({
+        (
+            namespace.subject("events.filesystem.file_created"),
+            json!({
             "event_type": "file_created",
             "path": "/tmp/test.txt",
             "size": 1024,
-        })),
-        ("events.terminal.command_executed", json!({
+        }),
+        ),
+        (
+            namespace.subject("events.terminal.command_executed"),
+            json!({
             "event_type": "command_executed", 
             "command": "ls -la",
             "exit_code": 0,
-        })),
-        ("events.system.service_started", json!({
+        }),
+        ),
+        (
+            namespace.subject("events.system.service_started"),
+            json!({
             "event_type": "service_started",
             "service": "nginx",
             "status": "active",
-        })),
-        ("events.filesystem.file_deleted", json!({
+        }),
+        ),
+        (
+            namespace.subject("events.filesystem.file_deleted"),
+            json!({
             "event_type": "file_deleted",
             "path": "/tmp/old_file.txt",
-        })),
-        ("events.terminal.command_failed", json!({
+        }),
+        ),
+        (
+            namespace.subject("events.terminal.command_failed"),
+            json!({
             "event_type": "command_failed",
             "command": "invalid_command",
             "exit_code": 127,
-        })),
+        }),
+        ),
     ];
 
     // Publish events to different subjects
     for (subject, event) in &test_cases {
         let event_bytes = serde_json::to_vec(event)?;
         let ack = jetstream
-            .publish(subject, event_bytes.into())
+            .publish(subject.as_str(), event_bytes.into())
             .await?;
         ack.await?;
         
-        println!("Published to {}: {:?}", subject, event["event_type"]);
+        debug!(
+            subject = subject.as_str(),
+            event = event_label(event),
+            "Published multi-subject event"
+        );
     }
 
     // Create consumer
-    let stream = jetstream.get_stream(stream_name).await?;
+    let stream = jetstream.get_stream(&stream_name).await?;
     let consumer = stream
         .get_or_create_consumer(
-            "test-multi-subject-consumer",
+            &consumer_name,
             async_nats::jetstream::consumer::pull::Config {
-                durable_name: Some("test-multi-subject-consumer".to_string()),
+                durable_name: Some(consumer_name.clone()),
                 ..Default::default()
             },
         )
@@ -195,32 +234,34 @@ async fn test_multi_subject_stream_processing(ctx: TestContext) -> color_eyre::e
     // Verify subject routing worked correctly
     for (subject, _) in &test_cases {
         assert!(
-            received_by_subject.contains_key(*subject),
+            received_by_subject.contains_key(subject),
             "No events received for subject: {}",
             subject
         );
     }
 
-    println!("✅ Multi-subject stream processing test passed");
-    println!("  - Subjects processed: {}", received_by_subject.len()); 
-    println!("  - Total events: {}", total_received);
+    info!(
+        subjects = received_by_subject.len(),
+        total_events = total_received,
+        "Multi-subject stream processing test passed"
+    );
     
     Ok(())
 }
 
 /// Test consumer groups and load balancing
 #[sinex_test]
-async fn test_consumer_group_processing(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    let _ = ctx;
+async fn test_consumer_group_processing(ctx: TestContext) -> TestResult<()> {
+    let namespace = ctx.pipeline_namespace();
     let nats = EphemeralNats::start().await?;
-    let subject = "events.test.consumer_groups";
+    let subject = namespace.subject("events.test.consumer_groups");
 
     let (stream_name, _) = nats
         .ensure_stream_with_consumer(
-            "sinex-test-consumer-groups",
-            &[subject],
+            &namespace.stream("SINEX_TEST_CONSUMER_GROUPS"),
+            &[subject.as_str()],
             ConsumerConfig {
-                durable_name: Some("cg-bootstrap".to_string()),
+                durable_name: Some(namespace.consumer_name("cg-bootstrap")),
                 ..Default::default()
             },
         )
@@ -239,21 +280,24 @@ async fn test_consumer_group_processing(ctx: TestContext) -> color_eyre::eyre::R
         
         let event_bytes = serde_json::to_vec(&event)?;
         let ack = jetstream
-            .publish(subject, event_bytes.into())
+            .publish(subject.as_str(), event_bytes.into())
             .await?;
         ack.await?;
     }
 
-    println!("Published {} events for consumer group test", event_count);
+    info!(
+        events = event_count,
+        "Published events for consumer group test"
+    );
 
     // Create multiple consumers in the same consumer group
     let consumer_count = 3;
-    let consumer_group = "test-consumer-group";
+    let consumer_group = namespace.consumer_name("test-consumer-group");
     
     let mut consumers = Vec::new();
     for i in 0..consumer_count {
         let stream = jetstream.get_stream(&stream_name).await?;
-        let durable = format!("{}-{}", consumer_group, i);
+        let durable = format!("{}_{}", consumer_group, i);
         let consumer = stream
             .get_or_create_consumer(
                 &durable,
@@ -311,13 +355,20 @@ async fn test_consumer_group_processing(ctx: TestContext) -> color_eyre::eyre::R
     }
 
     // Verify load balancing worked
-    println!("Consumer group processing results:");
     for (consumer_id, count) in &messages_per_consumer {
-        println!("  Consumer {}: {} messages", consumer_id, count);
+        info!(
+            consumer_id = *consumer_id,
+            messages = *count,
+            "Consumer processed messages"
+        );
     }
     
     let total_processed = all_received_messages.len();
-    println!("  Total processed: {} / {}", total_processed, event_count);
+    info!(
+        processed = total_processed,
+        expected = event_count,
+        "Consumer group processing totals"
+    );
 
     // Verify we processed most/all messages (allowing for some timing variance)
     assert!(
@@ -338,23 +389,29 @@ async fn test_consumer_group_processing(ctx: TestContext) -> color_eyre::eyre::R
         );
     }
 
-    println!("✅ Consumer group processing test passed");
+    info!(
+        processed = total_processed,
+        expected = event_count,
+        "Consumer group processing test passed"
+    );
     Ok(())
 }
 
 /// Test stream processing with message ordering
 #[sinex_test]
-async fn test_ordered_stream_processing(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    let _ = ctx;
+async fn test_ordered_stream_processing(ctx: TestContext) -> TestResult<()> {
+    let namespace = ctx.pipeline_namespace();
     let nats = EphemeralNats::start().await?;
-    let subject = "events.test.ordering";
+    let subject = namespace.subject("events.test.ordering");
+    let stream = namespace.stream("SINEX_TEST_ORDERING");
+    let consumer_name = namespace.consumer_name("test-ordering-consumer");
 
-    let (stream_name, consumer) = nats
+    let (stream_name, _consumer) = nats
         .ensure_stream_with_consumer(
-            "sinex-test-ordering",
-            &[subject],
+            &stream,
+            &[subject.as_str()],
             ConsumerConfig {
-                durable_name: Some("test-ordering-consumer".to_string()),
+                durable_name: Some(consumer_name.clone()),
                 deliver_policy: async_nats::jetstream::consumer::DeliverPolicy::All,
                 ..Default::default()
             },
@@ -373,22 +430,20 @@ async fn test_ordered_stream_processing(ctx: TestContext) -> color_eyre::eyre::R
         });
         
         let event_bytes = serde_json::to_vec(&event)?;
-        let ack = jetstream.publish(subject, event_bytes.into()).await?;
+        let ack = jetstream.publish(subject.as_str(), event_bytes.into()).await?;
         ack.await?;
         
-        // Small delay to ensure ordering
-        tokio::time::sleep(Duration::from_millis(10)).await;
     }
 
-    println!("Published {} ordered events", sequence_length);
+    info!(events = sequence_length, "Published ordered events");
 
     // Create consumer
-    let stream = jetstream.get_stream(stream_name).await?;
+    let stream = jetstream.get_stream(&stream_name).await?;
     let consumer = stream
         .get_or_create_consumer(
-            "test-ordering-consumer",
+            &consumer_name,
             async_nats::jetstream::consumer::pull::Config {
-                durable_name: Some("test-ordering-consumer".to_string()),
+                durable_name: Some(consumer_name.clone()),
                 deliver_policy: async_nats::jetstream::consumer::DeliverPolicy::All,
                 ..Default::default()
             },
@@ -414,7 +469,7 @@ async fn test_ordered_stream_processing(ctx: TestContext) -> color_eyre::eyre::R
     }).await??;
 
     // Verify ordering was preserved
-    println!("Received sequence: {:?}", received_sequence);
+    debug!(?received_sequence, "Received ordered sequence");
     
     assert_eq!(received_sequence.len(), sequence_length);
     
@@ -425,23 +480,25 @@ async fn test_ordered_stream_processing(ctx: TestContext) -> color_eyre::eyre::R
         "Messages should be received in order"
     );
 
-    println!("✅ Ordered stream processing test passed");
+    info!(events = sequence_length, "Ordered stream processing test passed");
     Ok(())
 }
 
 /// Test stream processing error handling and recovery
 #[sinex_test]
-async fn test_stream_error_handling(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    let _ = ctx;
+async fn test_stream_error_handling(ctx: TestContext) -> TestResult<()> {
+    let namespace = ctx.pipeline_namespace();
     let nats = EphemeralNats::start().await?;
-    let subject = "events.test.errors";
+    let subject = namespace.subject("events.test.errors");
+    let stream = namespace.stream("SINEX_TEST_ERRORS");
+    let consumer_name = namespace.consumer_name("test-error-handling-consumer");
 
     let (stream_name, consumer) = nats
         .ensure_stream_with_consumer(
-            "sinex-test-error-handling",
-            &[subject],
+            &stream,
+            &[subject.as_str()],
             ConsumerConfig {
-                durable_name: Some("test-error-handling-consumer".to_string()),
+                durable_name: Some(consumer_name.clone()),
                 ..Default::default()
             },
         )
@@ -465,10 +522,14 @@ async fn test_stream_error_handling(ctx: TestContext) -> color_eyre::eyre::Resul
     // Publish all events
     for (i, event) in test_events.iter().enumerate() {
         let event_bytes = serde_json::to_vec(event)?;
-        let ack = jetstream.publish(subject, event_bytes.into()).await?;
+        let ack = jetstream.publish(subject.as_str(), event_bytes.into()).await?;
         ack.await?;
         
-        println!("Published event {}: {:?}", i + 1, event["event_type"]);
+        debug!(
+            event_index = i + 1,
+            event = event_label(event),
+            "Published error-handling event"
+        );
     }
 
     // Consume messages and handle errors gracefully
@@ -490,19 +551,25 @@ async fn test_stream_error_handling(ctx: TestContext) -> color_eyre::eyre::Resul
                     Ok(event) => {
                         // Simulate business logic that might reject certain events
                         if event["event_type"].as_str().unwrap_or("").contains("problematic") {
-                            println!("Processing failed for event: {:?}", event["event_type"]);
+                            warn!(
+                                event = event_label(&event),
+                                "Processing failed for event"
+                            );
                             processing_errors += 1;
                             // NACK or handle error (in real implementation)
                             // For test, we still ACK to avoid redelivery
                             message.ack().await?;
                         } else {
-                            println!("Successfully processed: {:?}", event["event_type"]);
+                            debug!(
+                                event = event_label(&event),
+                                "Successfully processed event"
+                            );
                             successfully_processed += 1;
                             message.ack().await?;
                         }
                     }
                     Err(e) => {
-                        println!("Failed to parse event: {}", e);
+                        warn!(error = %e, "Failed to parse event payload");
                         processing_errors += 1;
                         message.ack().await?; // ACK to avoid infinite redelivery
                     }
@@ -513,15 +580,17 @@ async fn test_stream_error_handling(ctx: TestContext) -> color_eyre::eyre::Resul
     }).await??;
 
     // Verify error handling worked
-    println!("Processing results:");
-    println!("  Successfully processed: {}", successfully_processed);
-    println!("  Processing errors: {}", processing_errors);
-    println!("  Total messages: {}", test_events.len());
+    info!(
+        processed = successfully_processed,
+        errors = processing_errors,
+        total = test_events.len(),
+        "Stream error handling results"
+    );
 
     assert_eq!(successfully_processed + processing_errors, test_events.len());
     assert!(successfully_processed > 0, "Should process at least some valid events");
     assert_eq!(processing_errors, 1, "Should have exactly 1 processing error (the problematic event)");
 
-    println!("✅ Stream error handling test passed");
+    info!("Stream error handling test passed");
     Ok(())
 }

@@ -3,6 +3,7 @@ use std::process::Command;
 
 use color_eyre::eyre::eyre;
 use sinex_test_utils::sinex_test;
+use sinex_test_utils::TestResult;
 
 #[sinex_test]
 fn exo_cli_stays_parseable() -> TestResult<()> {

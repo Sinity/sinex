@@ -1,7 +1,7 @@
 # Semantic Desktop Stream
 
 ## Overview
-Derive a higher‑level, semantically annotated stream of desktop activity (focus, windows, commands, documents) by correlating low‑level events across satellites into meaningful episodes and contexts.
+Derive a higher‑level, semantically annotated stream of desktop activity (focus, windows, commands, documents) by correlating low‑level events across nodes into meaningful episodes and contexts.
 
 ## Goals
 - Turn raw events into task/episode semantics
@@ -9,7 +9,7 @@ Derive a higher‑level, semantically annotated stream of desktop activity (focu
 - Enable richer queries and insights
 
 ## Architecture
-- Automata consume events from files, terminal, desktop, system satellites and synthesize `desktop.*` semantic events.
+- Automata consume events from files, terminal, desktop, system nodes and synthesize `desktop.*` semantic events.
 - Maintain links to source events (`source_event_ids`) and material where applicable.
 - Use stable schemas with versioned IDs; emit minimal payloads with references.
 

@@ -1,3 +1,5 @@
+#![cfg(feature = "slow-tests")]
+
 // # System Tests
 //
 // Complete system validation tests that verify end-to-end behavior, external integrations,

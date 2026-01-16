@@ -157,36 +157,6 @@ impl FileWatcher {
     }
 }
 
-/// Convert notify event to our file change event (legacy, non-secure version)
-#[allow(dead_code)]
-fn convert_notify_event(event: Event, allowed_kinds: &[FileChangeKind]) -> Option<FileChangeEvent> {
-    let kind = match event.kind {
-        EventKind::Create(_) => FileChangeKind::Created,
-        EventKind::Modify(_) => FileChangeKind::Modified,
-        EventKind::Remove(_) => FileChangeKind::Deleted,
-        EventKind::Other => FileChangeKind::Other,
-        _ => return None,
-    };
-
-    // Filter based on allowed kinds
-    if !allowed_kinds.contains(&kind) {
-        return None;
-    }
-
-    // Use the first path if multiple paths are present
-    let path = event
-        .paths
-        .into_iter()
-        .next()
-        .and_then(|p| camino::Utf8PathBuf::from_path_buf(p).ok())?;
-
-    Some(FileChangeEvent {
-        path,
-        kind,
-        timestamp: chrono::Utc::now(),
-    })
-}
-
 /// Convert notify event to our file change event with security validation
 fn convert_notify_event_secure(
     event: Event,

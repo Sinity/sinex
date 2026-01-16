@@ -20,7 +20,10 @@ Request example:
   "type": "request",
   "method": "query_events",
   "params": { "...": "..." },
-  "id": "unique_request_id"
+  "id": "unique_request_id",
+  "extension_id": "chrome-extension://trusted-sinex",
+  "host": "sinex-host",
+  "protocol_version": "1"
 }
 ```
 
@@ -49,4 +52,7 @@ Response example:
 - Trusted extensions must be declared via `SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS`.
   - Format: comma-separated entries such as `chrome-extension://abc123#shared-secret`.
   - Entries without `#secret` only check the extension ID; entries with secrets require matching `extension_secret` fields on every message.
+- Trusted native messaging hosts can be restricted via `SINEX_NATIVE_MESSAGING_TRUSTED_HOSTS`.
+  - Format: comma-separated host identifiers; when set, every message must include `host` matching one entry.
+- `SINEX_NATIVE_MESSAGING_PROTOCOL_VERSION` enforces a specific `protocol_version` value on each message.
 - Authentication decisions are logged as structured tracing events (`native_messaging.auth`) so operators can audit which extension IDs succeeded or failed, including reasons such as `missing_extension_id`, `not_trusted`, or `invalid_secret`.

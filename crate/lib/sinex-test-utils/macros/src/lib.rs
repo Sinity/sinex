@@ -19,6 +19,7 @@ use syn::{
 struct SinexTestConfig {
     timeout: Option<u64>,
     trace: bool,
+    serial: bool,
 }
 
 /// Parse sinex_test attributes
@@ -27,38 +28,48 @@ fn parse_sinex_test_attrs(attr: TokenStream) -> SinexTestConfig {
     let mut config = SinexTestConfig {
         timeout: None,
         trace: false,
+        serial: false,
     };
 
     if attr.is_empty() {
         return config;
     }
 
-    // Try to parse as a simple integer first (legacy timeout support)
-    let attr_str = attr.to_string();
-    if let Ok(timeout) = attr_str.trim().parse::<u64>() {
-        config.timeout = Some(timeout);
-        return config;
-    }
-
-    // Parse comma-separated attributes
-    if let Ok(meta_list) = syn::parse::<syn::MetaList>(attr.clone()) {
-        for nested in meta_list.tokens {
-            if let Ok(Meta::NameValue(nv)) = syn::parse2::<Meta>(quote! { #nested }) {
-                if nv.path.is_ident("timeout") {
-                    if let Expr::Lit(expr_lit) = &nv.value {
+    let attr_tokens = proc_macro2::TokenStream::from(attr.clone());
+    if let Ok(parsed) = Punctuated::<Meta, Comma>::parse_terminated.parse2(attr_tokens) {
+        for meta in parsed {
+            match meta {
+                Meta::NameValue(MetaNameValue { path, value, .. }) if path.is_ident("timeout") => {
+                    if let Expr::Lit(expr_lit) = &value {
                         if let Lit::Int(lit_int) = &expr_lit.lit {
                             config.timeout = lit_int.base10_parse().ok();
                         }
                     }
-                } else if nv.path.is_ident("trace") {
-                    if let Expr::Lit(expr_lit) = &nv.value {
+                }
+                Meta::NameValue(MetaNameValue { path, value, .. }) if path.is_ident("trace") => {
+                    if let Expr::Lit(expr_lit) = &value {
                         if let Lit::Bool(lit_bool) = &expr_lit.lit {
                             config.trace = lit_bool.value();
                         }
                     }
                 }
+                Meta::NameValue(MetaNameValue { path, value, .. }) if path.is_ident("serial") => {
+                    if let Expr::Lit(expr_lit) = &value {
+                        if let Lit::Bool(lit_bool) = &expr_lit.lit {
+                            config.serial = lit_bool.value();
+                        }
+                    }
+                }
+                Meta::Path(path) if path.is_ident("trace") => {
+                    config.trace = true;
+                }
+                Meta::Path(path) if path.is_ident("serial") => {
+                    config.serial = true;
+                }
+                _ => {}
             }
         }
+        return config;
     }
 
     // Also try simple name=value parsing
@@ -73,6 +84,12 @@ fn parse_sinex_test_attrs(attr: TokenStream) -> SinexTestConfig {
             if let Expr::Lit(expr_lit) = &nv.value {
                 if let Lit::Bool(lit_bool) = &expr_lit.lit {
                     config.trace = lit_bool.value();
+                }
+            }
+        } else if nv.path.is_ident("serial") {
+            if let Expr::Lit(expr_lit) = &nv.value {
+                if let Lit::Bool(lit_bool) = &expr_lit.lit {
+                    config.serial = lit_bool.value();
                 }
             }
         }
@@ -489,7 +506,7 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
         quote! {
             #fn_vis
             #[tokio::test(flavor = "multi_thread")]
-            async fn #fn_name() -> color_eyre::eyre::Result<()> {
+            async fn #fn_name() -> ::sinex_test_utils::TestResult<()> {
                 #async_body
             }
         }
@@ -497,7 +514,7 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
         quote! {
             #fn_vis
             #[test]
-            fn #fn_name() -> color_eyre::eyre::Result<()> {
+            fn #fn_name() -> ::sinex_test_utils::TestResult<()> {
                 #sync_body
             }
         }
@@ -701,7 +718,20 @@ pub fn sinex_proptest(input: TokenStream) -> TokenStream {
 
 #[proc_macro_attribute]
 pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let config = parse_sinex_test_attrs(attr);
     let input = parse_macro_input!(item as ItemFn);
+    expand_sinex_test(config, input)
+}
+
+#[proc_macro_attribute]
+pub fn sinex_serial_test(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let mut config = parse_sinex_test_attrs(attr);
+    config.serial = true;
+    let input = parse_macro_input!(item as ItemFn);
+    expand_sinex_test(config, input)
+}
+
+fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
     let fn_name = &input.sig.ident;
 
     // Check if function is async or sync
@@ -763,7 +793,6 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
     const DEFAULT_ASYNC_TIMEOUT: u64 = 30; // 30 seconds for async tests
 
     // Parse sinex_test configuration
-    let config = parse_sinex_test_attrs(attr);
     let timeout_secs = config.timeout.unwrap_or({
         if is_async {
             DEFAULT_ASYNC_TIMEOUT
@@ -772,6 +801,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     });
     let enable_tracing = config.trace;
+    let enable_serial = config.serial;
 
     let fn_body = *input.block.clone();
 
@@ -800,6 +830,15 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
         return syn::Error::new_spanned(
             &input.sig.output,
             "sinex_test functions must return Result<()> or Result<T>",
+        )
+        .to_compile_error()
+        .into();
+    }
+
+    if enable_serial && !is_async {
+        return syn::Error::new_spanned(
+            input.sig.fn_token,
+            "sinex_serial_test requires async functions",
         )
         .to_compile_error()
         .into();
@@ -858,6 +897,14 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
         let mut new_sig = input.sig.clone();
         new_sig.inputs = filtered_inputs.into_iter().collect();
 
+        let serial_guard = if enable_serial {
+            quote! {
+                let _serial_guard = sinex_test_utils::acquire_pool_test_guard().await;
+            }
+        } else {
+            quote! {}
+        };
+
         let tracing_block = if enable_tracing {
             quote! {
                 TestContext::init_tracing("debug");
@@ -868,12 +915,14 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
 
         let future_body = if has_ctx_param {
             quote! {
+                #serial_guard
                 #tracing_block
                 let ctx = TestContext::with_name(test_name).await?;
                 async { #fn_body }.await
             }
         } else {
             quote! {
+                #serial_guard
                 #tracing_block
                 async { #fn_body }.await
             }
@@ -927,7 +976,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
         quote! {
             #(#test_attrs)*
             #[test]
-            #fn_vis fn #fn_name() -> color_eyre::eyre::Result<()> {
+            #fn_vis fn #fn_name() -> ::sinex_test_utils::TestResult<()> {
                 use std::thread;
                 use std::time::{Duration, Instant};
 
@@ -956,7 +1005,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                 };
 
                 // Run the test
-                let result: color_eyre::eyre::Result<()> = (|| {
+                let result: ::sinex_test_utils::TestResult<()> = (|| {
                     #fn_body
                 })();
 
@@ -991,11 +1040,19 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     } else if takes_context {
         // Regular database test using universal pool system with proper cleanup
+        let serial_guard = if enable_serial {
+            quote! {
+                let _serial_guard = sinex_test_utils::acquire_pool_test_guard().await;
+            }
+        } else {
+            quote! {}
+        };
         quote! {
             #(#test_attrs)*
             #[tokio::test]
-            #fn_vis async fn #fn_name() -> color_eyre::eyre::Result<()> {
+            #fn_vis async fn #fn_name() -> ::sinex_test_utils::TestResult<()> {
                 let test_future = async {
+                    #serial_guard
                     let test_name = stringify!(#fn_name);
                     let start = std::time::Instant::now();
                     eprintln!("🔄 {} [timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
@@ -1003,7 +1060,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                     let ctx = TestContext::with_name(test_name).await?;
                     let ctx_failure_snapshot = ctx.failure_snapshot();
 
-                    let result: color_eyre::eyre::Result<()> = if #timeout_secs > 10 {
+                    let result: ::sinex_test_utils::TestResult<()> = if #timeout_secs > 10 {
                         let progress_task = tokio::spawn(async {
                             let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
                             interval.tick().await;
@@ -1057,17 +1114,27 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     } else {
         // Simple test - just timeout wrapper
+        let serial_guard = if enable_serial {
+            quote! {
+                let _serial_guard = sinex_test_utils::acquire_pool_test_guard().await;
+            }
+        } else {
+            quote! {}
+        };
         quote! {
             #(#test_attrs)*
             #[tokio::test]
-            #fn_vis async fn #fn_name() -> color_eyre::eyre::Result<()> {
+            #fn_vis async fn #fn_name() -> ::sinex_test_utils::TestResult<()> {
                 let test_name = stringify!(#fn_name);
                 let start = std::time::Instant::now();
                 eprintln!("🔄 {} [simple, timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
 
                 let result = tokio::time::timeout(
                     std::time::Duration::from_secs(#timeout_secs),
-                    async { #fn_body }
+                    async {
+                        #serial_guard
+                        #fn_body
+                    }
                 ).await
                 .map_err(|_| color_eyre::eyre::eyre!("Test timed out after {} seconds", #timeout_secs))?;
 
@@ -1238,7 +1305,7 @@ pub fn sinex_bench(attr: TokenStream, item: TokenStream) -> TokenStream {
 
                         bencher.bench_local(|| {
                             ctx.runtime.block_on(async {
-                                let result: color_eyre::eyre::Result<()> = async {
+                                let result: ::sinex_test_utils::TestResult<()> = async {
                                     let ctx = ctx;
                                     let arg = arg;
                                     #fn_body
@@ -1258,7 +1325,7 @@ pub fn sinex_bench(attr: TokenStream, item: TokenStream) -> TokenStream {
 
                         bencher.bench_local(|| {
                             ctx.runtime.block_on(async {
-                                let result: color_eyre::eyre::Result<()> = async {
+                                let result: ::sinex_test_utils::TestResult<()> = async {
                                     let ctx = ctx;
                                     #fn_body
                                 }.await;
@@ -1299,7 +1366,7 @@ pub fn sinex_bench(attr: TokenStream, item: TokenStream) -> TokenStream {
 
                         bencher.bench_local(|| {
                             runtime.block_on(async {
-                                let result: color_eyre::eyre::Result<()> = async {
+                                let result: ::sinex_test_utils::TestResult<()> = async {
                                     let arg = arg;
                                     #fn_body
                                 }.await;
@@ -1317,7 +1384,7 @@ pub fn sinex_bench(attr: TokenStream, item: TokenStream) -> TokenStream {
 
                         bencher.bench_local(|| {
                             runtime.block_on(async {
-                                let result: color_eyre::eyre::Result<()> = async {
+                                let result: ::sinex_test_utils::TestResult<()> = async {
                                     #fn_body
                                 }.await;
                                 result.unwrap()

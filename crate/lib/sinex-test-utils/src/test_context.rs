@@ -8,7 +8,7 @@
 //!
 //! TestContext manages:
 //! - **Database Isolation**: Each test gets its own database from the pool
-//! - **Test Coordination**: Timing, synchronization, and fixtures  
+//! - **Test Coordination**: Timing and synchronization
 //! - **Assertions**: Rich error messages with context
 //! - **Test Lifecycle**: Setup, cleanup, and monitoring
 //!
@@ -39,26 +39,39 @@
 //! ```
 
 use crate::database_pool::{acquire_test_database, TestDatabase};
-use crate::db_common::verify_clean_state;
-use crate::nats::EphemeralNats;
-use crate::timing_utils::TimingUtils;
+use crate::db_common::{self, verify_clean_state};
+use crate::nats::{
+    shared_ephemeral_nats_with_key, EphemeralNats, EphemeralNatsBuilder, SharedNatsProfile,
+};
+use crate::pipeline::{shared_nats_handle, shared_secure_nats_handle, PipelineHarness};
+use crate::pipeline_namespace::PipelineNamespace;
+use crate::pipeline_scope::PipelineScope;
+use crate::satellite_management_utils::{
+    start_test_ingestd_with_config, TestIngestdConfig, TestIngestdHandle,
+};
+use crate::snapshot_helper::{self, FailureContext};
+use crate::timing_utils::{TimingUtils, WaitHelpers, DEFAULT_WAIT_SECS};
 use crate::TestResult;
 use async_nats::{jetstream, Client as NatsClient};
-use color_eyre::eyre::eyre;
+use chrono::{DateTime, Utc};
+use color_eyre::eyre::{eyre, WrapErr};
 use futures::future::BoxFuture;
 use futures::FutureExt;
+use futures::StreamExt;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use serde_json::Value as JsonValue;
 use sinex_core::db::models::event::{Event, Provenance, SourceMaterial};
 use sinex_core::db::query_helpers::ulid_to_uuid;
 use sinex_core::environment::SinexEnvironment;
-use sinex_core::types::{DbPool, Id, Ulid};
+use sinex_core::types::{DbPool, Id, Timestamp, Ulid};
+use sinex_core::OffsetKind;
 use std::result::Result as StdResult;
 
 use sinex_core::DbPoolExt;
 use std::collections::HashSet;
 use std::mem;
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -72,6 +85,33 @@ use uuid::Uuid;
 
 const BOOTSTRAP_MATERIAL_ID: &str = "014D2PF2DBSQQZXQ5TK1V58CGG";
 const BOOTSTRAP_MATERIAL_IDENTIFIER: &str = "test-material-bootstrap";
+
+fn format_cleanup_failure_context(
+    message: &str,
+    namespace: &str,
+    diagnostics: &crate::database_pool::CleanupDiagnostics,
+    snapshot: Option<BackgroundSnapshot>,
+) -> String {
+    let (pending, labels) = match snapshot {
+        Some(snapshot) => {
+            let label_list = if snapshot.labels.is_empty() {
+                "none".to_string()
+            } else {
+                snapshot.labels.join(", ")
+            };
+            (snapshot.pending, label_list)
+        }
+        None => (0, "none".to_string()),
+    };
+
+    format!(
+        "{message}\nnamespace={}\nactive_hooks={}\nactive_hook_count={}\n{}",
+        namespace,
+        labels,
+        pending,
+        diagnostics.format_for_error()
+    )
+}
 
 /// Test context providing database isolation and test utilities
 ///
@@ -87,12 +127,11 @@ pub(crate) struct CreatedEventInfo {
 static CLEANUP_HANDLES: Lazy<AsyncMutex<Vec<tokio::task::JoinHandle<()>>>> =
     Lazy::new(|| AsyncMutex::new(Vec::new()));
 
+const CLEANUP_AWAIT_SECS: u64 = 2;
+const BACKGROUND_TIMEOUT_SECS: u64 = 10;
+
 async fn await_pending_cleanups() {
-    let timeout_secs = std::env::var("SINEX_TESTUTILS_CLEANUP_AWAIT_SECS")
-        .ok()
-        .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(2);
-    let timeout = Duration::from_secs(timeout_secs);
+    let timeout = Duration::from_secs(CLEANUP_AWAIT_SECS);
 
     let mut handles = CLEANUP_HANDLES.lock().await;
     let pending = mem::take(&mut *handles);
@@ -128,7 +167,44 @@ pub struct TestContext {
     _tracing_enabled: bool,
     nats: Option<Arc<EphemeralNats>>,
     nats_client: Option<NatsClient>,
+    nats_mode: NatsMode,
     env: SinexEnvironment,
+    pipeline_namespace: PipelineNamespace,
+    pipeline_ingestd: Arc<AsyncMutex<Option<TestIngestdHandle>>>,
+    _reaper: Arc<NamespaceReaper>,
+}
+
+struct NamespaceReaper {
+    namespace: PipelineNamespace,
+    nats: Mutex<Option<NatsClient>>,
+}
+
+impl Drop for NamespaceReaper {
+    fn drop(&mut self) {
+        if let Some(client) = self.nats.lock().take() {
+            let prefix = self.namespace.prefix().to_string();
+            // Spawn a detached task to clean up JetStream streams
+            // We can't await here, so we fire-and-forget
+            tokio::spawn(async move {
+                let js = async_nats::jetstream::new(client);
+
+                // List all streams and delete those starting with our prefix
+                let mut streams = js.streams();
+                while let Some(Ok(stream)) = streams.next().await {
+                    if stream.config.name.starts_with(&prefix) {
+                        let _ = js.delete_stream(stream.config.name).await;
+                    }
+                }
+            });
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NatsMode {
+    None,
+    Dedicated,
+    Shared,
 }
 
 #[derive(Clone)]
@@ -187,7 +263,7 @@ pub struct TestContextHandle {
 impl TestContextHandle {
     pub async fn quiesce_background_tasks(&self) {
         let mut guard = self.background.lock().await;
-        guard.quiesce().await;
+        guard.quiesce_tasks_only().await;
     }
 }
 
@@ -218,12 +294,13 @@ impl TestContext {
     pub fn try_current() -> Option<TestContextHandle> {
         Self::CURRENT_CTX.with(|cell| cell.borrow().clone())
     }
-    /// Backwards-compatible accessor for the shared database pool.
+    /// Accessor for the shared database pool.
     pub fn pool(&self) -> &DbPool {
         &self.pool
     }
 
-    pub(crate) fn sanitize_payload(value: &mut JsonValue) {
+    /// Recursively sanitize a JSON payload (strings and object keys).
+    pub fn sanitize_payload(value: &mut JsonValue) {
         match value {
             JsonValue::String(s) => {
                 *s = Self::sanitize_string(s);
@@ -324,17 +401,20 @@ impl TestContext {
         }
 
         if let Err(err) = verify_clean_state(&pool).await {
-            warn!(
-                "Database {} not clean on acquisition ({}); forcing cleanup",
-                db.name(),
-                err
-            );
-            db.force_cleanup().await?;
-            // Verify again after forced cleanup
-            verify_clean_state(&pool).await?;
+            let diagnostics = db.cleanup_diagnostics();
+            return Err(err).wrap_err_with(|| {
+                format_cleanup_failure_context(
+                    "database slot not clean on acquisition",
+                    test_name,
+                    &diagnostics,
+                    None,
+                )
+            });
         }
 
         let baseline_events = pool.events().count_all().await?;
+
+        let pipeline_namespace = PipelineNamespace::new(test_name);
 
         Ok(Self {
             pool,
@@ -348,7 +428,14 @@ impl TestContext {
             _tracing_enabled: false,
             nats: None,
             nats_client: None,
-            env: SinexEnvironment::new("dev")?,
+            nats_mode: NatsMode::None,
+            env: sinex_core::environment().clone(),
+            pipeline_namespace: pipeline_namespace.clone(),
+            pipeline_ingestd: Arc::new(AsyncMutex::new(None)),
+            _reaper: Arc::new(NamespaceReaper {
+                namespace: pipeline_namespace,
+                nats: Mutex::new(None),
+            }),
         })
     }
 
@@ -356,8 +443,9 @@ impl TestContext {
     ///
     /// This starts an ephemeral NATS server with JetStream enabled
     /// and connects a client to it. Required for JetStream integration tests.
-    pub async fn with_nats(mut self) -> TestResult<Self> {
-        let nats = EphemeralNats::start().await?;
+    /// Enable NATS/JetStream with custom configuration
+    pub async fn with_nats_builder(mut self, builder: EphemeralNatsBuilder) -> TestResult<Self> {
+        let nats = builder.start().await?;
         let client = nats.connect().await?;
         let shutdown_proc = nats.process_handle();
         self.register_background_handle("nats-server", shutdown_proc.clone());
@@ -368,19 +456,163 @@ impl TestContext {
             }
         })
         .await;
-        self.nats_client = Some(client);
+        self.nats_client = Some(client.clone());
         self.nats = Some(Arc::new(nats));
+        self.nats_mode = NatsMode::Dedicated;
+
+        // Register client with reaper for cleaning
+        self._reaper.nats.lock().replace(client);
+
+        self.install_current();
+        Ok(self)
+    }
+
+    /// Enable NATS/JetStream infrastructure for this test context
+    ///
+    /// This starts an ephemeral NATS server with JetStream enabled
+    /// and connects a client to it. Required for JetStream integration tests.
+    pub async fn with_nats(self) -> TestResult<Self> {
+        self.with_nats_builder(EphemeralNats::builder()).await
+    }
+
+    /// Attach to the shared process-wide NATS instance, required for pipeline scopes.
+    fn secure_shared_nats_requested() -> bool {
+        matches!(
+            std::env::var("SINEX_TEST_USE_TLS")
+                .unwrap_or_default()
+                .to_lowercase()
+                .as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    }
+
+    fn shared_nats_token() -> Option<String> {
+        std::env::var("SINEX_TEST_NATS_TOKEN")
+            .ok()
+            .map(|token| token.trim().to_string())
+            .filter(|token| !token.is_empty())
+    }
+
+    fn shared_nats_key_override() -> Option<String> {
+        std::env::var("SINEX_TEST_NATS_SHARED_KEY")
+            .ok()
+            .map(|key| key.trim().to_string())
+            .filter(|key| !key.is_empty())
+    }
+
+    fn shared_nats_config_file() -> Option<PathBuf> {
+        std::env::var("SINEX_TEST_NATS_CONFIG_FILE")
+            .ok()
+            .map(|path| PathBuf::from(path.trim()))
+            .filter(|path| !path.as_os_str().is_empty())
+    }
+
+    fn shared_nats_token_key(token: &str, secure_tls: bool) -> String {
+        let hash = blake3::hash(token.as_bytes());
+        if secure_tls {
+            format!("auth-token-tls-{}", hash.to_hex())
+        } else {
+            format!("auth-token-{}", hash.to_hex())
+        }
+    }
+
+    fn shared_nats_config_key(config_file: &PathBuf, secure_tls: bool) -> String {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(config_file.to_string_lossy().as_bytes());
+        hasher.update(if secure_tls { b":tls" } else { b":plain" });
+        format!("config-{}", hasher.finalize().to_hex())
+    }
+
+    pub async fn with_shared_nats(mut self) -> TestResult<Self> {
+        let token = Self::shared_nats_token();
+        let secure_tls = Self::secure_shared_nats_requested();
+        let config_file = Self::shared_nats_config_file();
+        let key_override = Self::shared_nats_key_override();
+        let mut builder = if secure_tls {
+            SharedNatsProfile::SecureTls.builder()
+        } else {
+            EphemeralNats::builder()
+        };
+        if let Some(config_path) = &config_file {
+            builder = builder.with_config_file(config_path.clone());
+        }
+        if let Some(token) = &token {
+            builder = builder.with_auth_token(token.clone());
+        }
+        let nats = if key_override.is_some() || token.is_some() || config_file.is_some() {
+            let key = if let Some(key) = key_override {
+                if let Some(token) = &token {
+                    let hash = blake3::hash(token.as_bytes());
+                    format!("{key}-token-{}", hash.to_hex())
+                } else {
+                    key
+                }
+            } else if let Some(token) = &token {
+                Self::shared_nats_token_key(token, secure_tls)
+            } else if let Some(config_path) = &config_file {
+                Self::shared_nats_config_key(config_path, secure_tls)
+            } else {
+                unreachable!("shared NATS key selection exhausted")
+            };
+            shared_ephemeral_nats_with_key(&key, builder).await?
+        } else if secure_tls {
+            shared_secure_nats_handle().await?
+        } else {
+            shared_nats_handle().await?
+        };
+        let client = nats.connect().await?;
+        self.nats_client = Some(client.clone());
+        self.nats = Some(nats);
+        self.nats_mode = NatsMode::Shared;
+
+        // Register client with reaper for cleaning
+        self._reaper.nats.lock().replace(client);
+
+        self.install_current();
+        Ok(self)
+    }
+
+    /// Attach to a shared NATS instance identified by the provided key.
+    pub async fn with_shared_nats_builder(
+        mut self,
+        key: &str,
+        builder: EphemeralNatsBuilder,
+    ) -> TestResult<Self> {
+        let nats = crate::nats::shared_ephemeral_nats_with_key(key, builder).await?;
+        let client = nats.connect().await?;
+        self.nats_client = Some(client.clone());
+        self.nats = Some(nats);
+        self.nats_mode = NatsMode::Shared;
+
+        // Register client with reaper for cleaning
+        self._reaper.nats.lock().replace(client);
+
+        self.install_current();
+        Ok(self)
+    }
+
+    /// Explicitly opt into the TLS-enabled shared NATS profile.
+    pub async fn with_secure_shared_nats(mut self) -> TestResult<Self> {
+        let nats = shared_secure_nats_handle().await?;
+        let client = nats.connect().await?;
+        self.nats_client = Some(client.clone());
+        self.nats = Some(nats);
+        self.nats_mode = NatsMode::Shared;
+
+        // Register client with reaper for cleaning
+        self._reaper.nats.lock().replace(client);
+
         self.install_current();
         Ok(self)
     }
 
     /// Get the NATS client for this test context
     ///
-    /// Panics if NATS was not enabled via `with_nats()`
+    /// Panics if NATS was not enabled via `with_nats()` or `with_shared_nats()`.
     pub fn nats_client(&self) -> NatsClient {
         self.nats_client
             .clone()
-            .expect("NATS not initialized - call with_nats() first")
+            .expect("NATS not initialized - call with_nats() or with_shared_nats() first")
     }
 
     /// Access the underlying EphemeralNats handle (lifetime-managed by the context).
@@ -388,16 +620,33 @@ impl TestContext {
         self.nats
             .as_ref()
             .cloned()
-            .ok_or_else(|| eyre!("NATS not initialized - call with_nats() first"))
+            .ok_or_else(|| eyre!("NATS not initialized - call with_nats() or with_shared_nats()"))
     }
 
     /// Get a JetStream context bound to this test's NATS instance.
     pub async fn jetstream(&self) -> TestResult<jetstream::Context> {
-        let nats = self
-            .nats
-            .as_ref()
-            .ok_or_else(|| eyre!("NATS not initialized - call with_nats() first"))?;
+        let nats = self.nats.as_ref().ok_or_else(|| {
+            eyre!("NATS not initialized - call with_nats() or with_shared_nats()")
+        })?;
         nats.jetstream().await
+    }
+
+    /// Get (or create) the default checkpoint KV bucket for tests.
+    pub async fn checkpoint_kv(&self) -> TestResult<jetstream::kv::Store> {
+        let js = self.jetstream().await?;
+        let bucket = sinex_node_sdk::checkpoint::checkpoint_bucket_name(None);
+        let kv_store = match js
+            .create_key_value(jetstream::kv::Config {
+                bucket: bucket.clone(),
+                history: 64,
+                ..Default::default()
+            })
+            .await
+        {
+            Ok(store) => Ok(store),
+            Err(_) => js.get_key_value(bucket).await,
+        }?;
+        Ok(kv_store)
     }
 
     /// Get the Sinex environment for this test context
@@ -405,9 +654,82 @@ impl TestContext {
         &self.env
     }
 
+    /// Access the per-test JetStream namespace used for pipeline resources.
+    pub fn pipeline_namespace(&self) -> &PipelineNamespace {
+        &self.pipeline_namespace
+    }
+
+    /// Create a pipeline scope that resets the DB slot and starts ingestd.
+    pub async fn pipeline_scope(&self) -> TestResult<PipelineScope<'_>> {
+        PipelineScope::new(self).await
+    }
+
+    async fn ensure_pipeline_ingestd(&self) -> TestResult<()> {
+        self.ensure_shared_nats()?;
+        let mut guard = self.pipeline_ingestd.lock().await;
+        if guard.is_some() {
+            return Ok(());
+        }
+
+        let nats = self.nats_handle()?;
+        let namespace = self.pipeline_namespace().prefix().to_string();
+        let mut config = TestIngestdConfig {
+            nats_url: nats.client_url().to_string(),
+            database_url: self.database_url().to_string(),
+            work_dir: None,
+            namespace: Some(namespace),
+            ..Default::default()
+        };
+        config.batch_size = 32;
+        config.consumer_fetch_max_messages = 32;
+        config.consumer_fetch_timeout_ms = 200;
+        let handle = start_test_ingestd_with_config(config, Some(self)).await?;
+        *guard = Some(handle);
+        drop(guard);
+
+        let ingestd_handle = self.pipeline_ingestd.clone();
+        self.register_shutdown_hook("pipeline-ingestd-shutdown", async move {
+            if let Some(mut handle) = ingestd_handle.lock().await.take() {
+                let _ = handle.stop().await;
+            }
+        })
+        .await;
+        Ok(())
+    }
+
+    pub(crate) fn ensure_shared_nats(&self) -> TestResult<()> {
+        match self.nats_mode {
+            NatsMode::Shared => Ok(()),
+            NatsMode::Dedicated => Err(eyre!(
+                "PipelineScope requires shared NATS; call with_shared_nats() instead of with_nats()"
+            )),
+            NatsMode::None => Err(eyre!(
+                "PipelineScope requires shared NATS; call with_shared_nats() first"
+            )),
+        }
+    }
+
+    /// Reset the underlying database slot and verify it is clean.
+    pub async fn reset_database_slot(&self) -> TestResult<()> {
+        self.quiesce_background_tasks().await?;
+        db_common::reset_database(&self.pool).await?;
+        db_common::verify_clean_state(&self.pool).await?;
+        Ok(())
+    }
+
     /// Get the NATS server URL if NATS is enabled
     pub fn nats_url(&self) -> Option<String> {
         self.nats.as_ref().map(|n| n.client_url().to_string())
+    }
+
+    /// Launch ingestd attached to this context and return a pipeline harness.
+    pub async fn pipeline(&self) -> TestResult<PipelineHarness<'_>> {
+        if self.nats.is_none() {
+            return Err(eyre!(
+                "Pipeline harness requires NATS - call with_nats() or with_shared_nats() first"
+            ));
+        }
+        PipelineHarness::new(self).await
     }
 
     /// Initialize tracing for tests (static method for use without context)
@@ -543,28 +865,90 @@ impl TestContext {
         Ok(())
     }
 
+    async fn ensure_temporal_ledger_entry(
+        &self,
+        id: &Id<SourceMaterial>,
+        offset_start: Option<i64>,
+        offset_end: Option<i64>,
+        offset_kind: OffsetKind,
+        ts_capture: DateTime<Utc>,
+    ) -> TestResult<()> {
+        let offset_start = match offset_start {
+            Some(start) => start,
+            None => return Ok(()),
+        };
+        let offset_end = offset_end.unwrap_or(offset_start);
+        let offset_kind = match offset_kind {
+            OffsetKind::Byte => "byte",
+            OffsetKind::Line => "line",
+            OffsetKind::Record => "rowid",
+            OffsetKind::Character => "logical",
+        };
+
+        sqlx::query!(
+            r#"
+                INSERT INTO raw.temporal_ledger
+                    (source_material_id, offset_start, offset_end, offset_kind, ts_capture, precision, clock, source_type)
+                VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7, $8)
+                ON CONFLICT (source_material_id, offset_start) DO NOTHING
+            "#,
+            id.to_uuid(),
+            offset_start,
+            offset_end,
+            offset_kind,
+            ts_capture,
+            "bounded",
+            "wall",
+            "realtime_capture"
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    fn record_created_event(&self, event_id: Ulid, material_id: Option<Ulid>) {
+        self.created_events.lock().push(CreatedEventInfo {
+            event_id,
+            material_id,
+        });
+    }
+
     /// Force cleanup of the underlying database (use with caution)
     pub async fn force_cleanup(&self) -> TestResult<()> {
         // Ensure no background work is still touching the database before wiping it.
         self.quiesce_background_tasks().await?;
-        self.db
-            .force_cleanup()
-            .await
-            .map_err(|e| color_eyre::eyre::eyre!(e))
+        self.db.force_cleanup().await.wrap_err_with(|| {
+            let diagnostics = self.db.cleanup_diagnostics();
+            let snapshot = self.background_snapshot();
+            format_cleanup_failure_context(
+                "cleanup failed",
+                self.pipeline_namespace.prefix(),
+                &diagnostics,
+                Some(snapshot),
+            )
+        })
     }
 
     /// Ensure database is in clean state before starting test
     ///
     /// This verifies that the database is empty and ready for use.
-    /// If not clean, attempts cleanup and verification.
+    /// If not clean, returns an error with diagnostics.
     pub async fn ensure_clean(&self) -> TestResult<()> {
         self.quiesce_background_tasks().await?;
         match crate::db_common::verify_clean_state(&self.pool).await {
             Ok(_) => Ok(()),
-            Err(_) => {
-                self.force_cleanup().await?;
-                crate::db_common::verify_clean_state(&self.pool).await?;
-                Ok(())
+            Err(err) => {
+                let diagnostics = self.db.cleanup_diagnostics();
+                Err(err).wrap_err_with(|| {
+                    let snapshot = self.background_snapshot();
+                    format_cleanup_failure_context(
+                        "database slot not clean before test",
+                        self.pipeline_namespace.prefix(),
+                        &diagnostics,
+                        Some(snapshot),
+                    )
+                })
             }
         }
     }
@@ -623,7 +1007,7 @@ impl TestContext {
     /// but available for tests that want deterministic cleanup points.
     pub async fn quiesce_background_tasks(&self) -> TestResult<()> {
         let mut guard = self.background.lock().await;
-        guard.quiesce().await;
+        guard.quiesce_tasks_only().await;
         Ok(())
     }
 
@@ -653,8 +1037,14 @@ impl TestContext {
         }
     }
 
-    /// Create and insert a test event
-    pub async fn create_test_event<S, T>(
+    /// Publish and persist a test event through the ingestion pipeline.
+    ///
+    /// This replaces the legacy direct-insert helpers with a pipeline-first path that:
+    /// 1. Builds a sanitized `Event<JsonValue>`
+    /// 2. Ensures a backing source material record exists
+    /// 3. Publishes the payload through NATS/ingestd
+    /// 4. Waits for persistence and returns the stored event
+    pub async fn publish_json_event<S, T>(
         &self,
         source: S,
         event_type: T,
@@ -664,32 +1054,86 @@ impl TestContext {
         S: AsRef<str>,
         T: AsRef<str>,
     {
+        self.publish_json_event_with_overrides(source, event_type, payload, None)
+            .await
+    }
+
+    /// Publish and persist a test event with an explicit timestamp override.
+    pub async fn publish_json_event_with_timestamp<S, T>(
+        &self,
+        source: S,
+        event_type: T,
+        payload: JsonValue,
+        timestamp: Timestamp,
+    ) -> TestResult<Event<JsonValue>>
+    where
+        S: AsRef<str>,
+        T: AsRef<str>,
+    {
+        self.publish_json_event_with_overrides(source, event_type, payload, Some(timestamp))
+            .await
+    }
+
+    async fn publish_json_event_with_overrides<S, T>(
+        &self,
+        source: S,
+        event_type: T,
+        payload: JsonValue,
+        timestamp_override: Option<Timestamp>,
+    ) -> TestResult<Event<JsonValue>>
+    where
+        S: AsRef<str>,
+        T: AsRef<str>,
+    {
+        if self.nats.is_none() {
+            return Err(eyre!(
+                "publish_json_event requires NATS - call with_nats() or with_shared_nats() first"
+            ));
+        }
+
         let mut sanitized_payload = payload;
-        Self::sanitize_payload(&mut sanitized_payload);
+        TestContext::sanitize_payload(&mut sanitized_payload);
 
         let mut event =
             Event::<JsonValue>::test_event(source.as_ref(), event_type.as_ref(), sanitized_payload);
+        if let Some(ts) = timestamp_override {
+            event.ts_orig = Some(ts);
+        }
+        if event.ingestor_version.is_none() {
+            event.ingestor_version = Some("test-ingestor".to_string());
+        }
+        let _event_id = event.id.get_or_insert_with(Id::new).clone();
 
-        event.ingestor_version = Some("test-ingestor".to_string());
-        // Replace the default bootstrap material with a unique identifier per event
         let material_id = Id::<SourceMaterial>::new();
+        self.ensure_source_material(material_id, Some(source.as_ref()))
+            .await?;
+        let material_ulid = material_id.as_ulid().clone();
         event.provenance = Provenance::from_material(material_id, 0, None, None);
 
-        // Ensure a matching source material exists for the new ID to satisfy FK
-        self.ensure_material_entry(&material_id).await?;
+        let persisted_id = self.publish_test_event(&event).await?;
+        let published_event_id = Id::<Event<JsonValue>>::from_ulid(persisted_id);
+        WaitHelpers::wait_for_event_id(&self.pool, published_event_id.clone(), DEFAULT_WAIT_SECS)
+            .await?;
 
-        let inserted = self.insert_with_provenance(event).await?;
-        if let Some(event_id) = &inserted.id {
-            let material_id = match &inserted.provenance {
-                Provenance::Material { id, .. } => Some(id.as_ulid().clone()),
-                _ => None,
-            };
-            self.created_events.lock().push(CreatedEventInfo {
-                event_id: event_id.as_ulid().clone(),
-                material_id,
-            });
-        }
-        Ok(inserted)
+        let stored = self
+            .pool
+            .events()
+            .get_by_id(published_event_id.clone())
+            .await?
+            .ok_or_else(|| {
+                eyre!(
+                    "Event {} not found after pipeline publish",
+                    published_event_id
+                )
+            })?;
+
+        let cleanup_material = match &stored.provenance {
+            Provenance::Material { id, .. } => Some(id.as_ulid().clone()),
+            _ => Some(material_ulid),
+        };
+        self.record_created_event(published_event_id.as_ulid().clone(), cleanup_material);
+
+        Ok(stored)
     }
 
     /// Ensure a source material record exists for tests that construct provenance manually.
@@ -771,7 +1215,7 @@ impl TestContext {
         Ok(id)
     }
 
-    /// Convenience helper returning a schema-layer ULID for compatibility tests.
+    /// Convenience helper returning a schema-layer ULID for tests.
     pub async fn ensure_schema_material(
         &self,
         source_identifier: Option<&str>,
@@ -780,73 +1224,14 @@ impl TestContext {
         Ok(id.as_ulid().clone())
     }
 
-    async fn insert_with_provenance(
-        &self,
-        event: Event<JsonValue>,
-    ) -> TestResult<Event<JsonValue>> {
-        let mut last_err: Option<sinex_core::types::error::SinexError> = None;
-
-        for attempt in 0..5 {
-            if let Provenance::Material { id, .. } = &event.provenance {
-                self.ensure_material_entry(id).await?;
-            }
-
-            match self.pool.events().insert(event.clone()).await {
-                Ok(inserted) => return Ok(inserted),
-                Err(err) => {
-                    let is_deadlock = err.to_string().to_lowercase().contains("deadlock");
-
-                    if is_deadlock {
-                        tracing::warn!(
-                            attempt,
-                            "Deadlock during insert_with_provenance; retrying after cleanup"
-                        );
-                        self.force_cleanup().await?;
-                    }
-
-                    last_err = Some(err.into());
-                    tokio::time::sleep(Duration::from_millis(50 * (attempt + 1) as u64)).await;
-                }
-            }
-        }
-
-        if let Some(err) = last_err {
-            return Err(err.into());
-        }
-
-        Err(eyre!("Event insert failed after retries"))
-    }
-
-    /// Insert multiple events (batch operation)
-    pub async fn insert_events(&self, events: &[Event<JsonValue>]) -> TestResult<()> {
-        for event in events {
-            if let Provenance::Material { id, .. } = &event.provenance {
-                self.ensure_material_entry(id).await?;
-            }
-            let inserted = self.pool.events().insert(event.clone()).await?;
-            if let Some(event_id) = inserted.id {
-                let material_id = match &inserted.provenance {
-                    Provenance::Material { id, .. } => Some(id.as_ulid().clone()),
-                    _ => None,
-                };
-                self.created_events.lock().push(CreatedEventInfo {
-                    event_id: event_id.as_ulid().clone(),
-                    material_id,
-                });
-            }
-        }
-        Ok(())
-    }
-
-    /// Access fixture utilities (placeholder - implement as needed)
-    pub fn fixtures(&self) -> &Self {
-        // TODO: Implement fixture access without wrapper abstractions
-        self
-    }
-
     /// Connection URL for the underlying test database.
     pub fn database_url(&self) -> &str {
         self.db.url()
+    }
+
+    /// Name of the dedicated database slot backing this context.
+    pub fn database_name(&self) -> &str {
+        self.db.name()
     }
 
     /// Access timing utilities
@@ -866,8 +1251,8 @@ impl TestContext {
     }
 
     /// Create contextual assertion helper
-    pub fn assert(&self, context: &str) -> ContextualAssert<'_> {
-        ContextualAssert::new(self, context)
+    pub fn assert(&self, context: &str) -> ContextualAssert {
+        ContextualAssert::new(context)
     }
 
     /// Assert that two events are equal with detailed comparison
@@ -900,6 +1285,67 @@ impl TestContext {
         Ok(())
     }
 
+    /// Assert the total event count matches expectation.
+    pub async fn assert_event_count(&self, expected: usize) -> TestResult<usize> {
+        let count = self.pool.events().count_all().await? as usize;
+        if count != expected {
+            color_eyre::eyre::bail!("Expected {expected} events, found {count}");
+        }
+        Ok(count)
+    }
+
+    /// Assert the total event count is at least the expectation.
+    pub async fn assert_event_count_at_least(&self, expected: usize) -> TestResult<usize> {
+        let count = self.pool.events().count_all().await? as usize;
+        if count < expected {
+            color_eyre::eyre::bail!("Expected at least {expected} events, found {count}");
+        }
+        Ok(count)
+    }
+
+    /// Assert the event count for a source matches expectation.
+    pub async fn assert_event_count_by_source(
+        &self,
+        source: &str,
+        expected: usize,
+    ) -> TestResult<usize> {
+        let event_source = sinex_core::EventSource::new(source);
+        let count = self.pool.events().count_by_source(&event_source).await? as usize;
+        if count != expected {
+            color_eyre::eyre::bail!("Expected {expected} events for '{source}', found {count}");
+        }
+        Ok(count)
+    }
+
+    /// Assert the event count for a source is at least the expectation.
+    pub async fn assert_event_count_by_source_at_least(
+        &self,
+        source: &str,
+        expected: usize,
+    ) -> TestResult<usize> {
+        let event_source = sinex_core::EventSource::new(source);
+        let count = self.pool.events().count_by_source(&event_source).await? as usize;
+        if count < expected {
+            color_eyre::eyre::bail!(
+                "Expected at least {expected} events for '{source}', found {count}"
+            );
+        }
+        Ok(count)
+    }
+
+    /// Assert that a collection of events has unique IDs.
+    pub fn assert_unique_event_ids(&self, events: &[Event<JsonValue>]) -> TestResult<()> {
+        let mut seen = HashSet::new();
+        for event in events {
+            if let Some(id) = event.id.as_ref() {
+                if !seen.insert(id.to_string()) {
+                    color_eyre::eyre::bail!("Duplicate event id detected: {id}");
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Capture log message for testing
     pub fn capture_log(&self, message: String) {
         self.captured_logs.lock().push(message);
@@ -923,17 +1369,6 @@ impl TestContext {
     /// Create inline snapshot for testing (delegates to insta)
     pub fn assert_inline_snapshot<T: serde::Serialize>(&self, value: &T) {
         insta::assert_json_snapshot!(value);
-    }
-
-    /// Assert similar values with detailed diff
-    pub fn assert_similar<T>(&self, left: &T, right: &T, msg: &str) -> TestResult<()>
-    where
-        T: std::fmt::Debug + PartialEq,
-    {
-        if left != right {
-            color_eyre::eyre::bail!("{}: {:?} != {:?}", msg, left, right);
-        }
-        Ok(())
     }
 
     /// Create a snapshot of a value using insta
@@ -971,6 +1406,38 @@ impl TestContext {
                 insta::assert_json_snapshot!(event);
             });
         }
+    }
+}
+
+impl TestContext {
+    /// Publish a test event to the ingestion pipeline via NATS.
+    ///
+    /// This is the preferred method for "Pipeline-First" testing. It sends the event
+    /// to NATS (simulating a satellite), where it will be picked up by ingestd,
+    /// validated, and inserted into the database.
+    ///
+    /// The event ID is returned so tests can wait for it using `WaitHelpers`.
+    pub async fn publish_test_event(&self, event: &Event<JsonValue>) -> TestResult<Ulid> {
+        self.ensure_pipeline_ingestd().await?;
+        let client = self.nats_client();
+        let mut envelope = event.clone();
+        if envelope.ingestor_version.is_none() {
+            envelope.ingestor_version = Some("test-ingestd".to_string());
+        }
+        let payload = serde_json::to_vec(&envelope)?;
+
+        let base_subject = format!("events.raw.{}", event.source);
+        let subject = self.pipeline_namespace().subject(&base_subject);
+
+        client.publish(subject, payload.into()).await?;
+
+        // Return the ID so the caller can wait for it
+        Ok(event
+            .id
+            .clone()
+            .expect("Test event must have an ID")
+            .as_ulid()
+            .clone())
     }
 }
 
@@ -1018,6 +1485,10 @@ pub(crate) struct BackgroundRegistry {
 }
 
 impl BackgroundRegistry {
+    fn background_timeout_secs() -> u64 {
+        BACKGROUND_TIMEOUT_SECS
+    }
+
     fn pending_count(&self) -> usize {
         self.tasks.len() + self.shutdown_hooks.len()
     }
@@ -1038,12 +1509,7 @@ impl BackgroundRegistry {
             .collect()
     }
 
-    async fn quiesce(&mut self) {
-        let timeout_secs: u64 = std::env::var("SINEX_TESTUTILS_BG_TIMEOUT_SECS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(10);
-
+    async fn run_shutdown_hooks(&mut self, timeout_secs: u64) {
         // Run shutdown hooks first so tasks can observe the signal.
         let hooks = std::mem::take(&mut self.shutdown_hooks);
         for (label, hook) in hooks {
@@ -1051,7 +1517,9 @@ impl BackgroundRegistry {
                 warn!(%label, ?err, "Timeout waiting for shutdown hook");
             }
         }
+    }
 
+    async fn wait_for_tasks(&mut self, timeout_secs: u64) {
         // Wait for tracked background tasks to finish, aborting on timeout.
         let tasks = std::mem::take(&mut self.tasks);
         for (label, handle) in tasks {
@@ -1074,18 +1542,29 @@ impl BackgroundRegistry {
             };
         }
     }
+
+    async fn quiesce(&mut self) {
+        let timeout_secs = Self::background_timeout_secs();
+        self.run_shutdown_hooks(timeout_secs).await;
+        self.wait_for_tasks(timeout_secs).await;
+    }
+
+    async fn quiesce_tasks_only(&mut self) {
+        let timeout_secs = Self::background_timeout_secs();
+        self.wait_for_tasks(timeout_secs).await;
+    }
 }
 
 /// Cleanup implementation for TestContext
 impl Drop for TestContext {
     fn drop(&mut self) {
-        let debug_drop = std::env::var("SINEX_TESTUTILS_DEBUG_DROP").is_ok();
-        let drop_start = std::time::Instant::now();
-        if debug_drop {
-            eprintln!(
-                "TestContext drop start for {} (pool: {})",
-                self.test_name,
-                self.db.name()
+        self.clear_current();
+        if std::thread::panicking() {
+            let snapshot = self.failure_snapshot();
+            snapshot_helper::persist_failure(
+                self.test_name(),
+                "TestContext dropped during panic",
+                FailureContext::Snapshot(snapshot),
             );
         }
         // Ensure any registered background work is flushed before returning the database.
@@ -1126,12 +1605,6 @@ impl Drop for TestContext {
                 futures::executor::block_on(quiesce_fut);
             }
         }
-        if debug_drop {
-            eprintln!(
-                "TestContext drop after quiesce ({:?})",
-                drop_start.elapsed()
-            );
-        }
 
         let pool = self.pool.clone();
         let records = {
@@ -1169,14 +1642,6 @@ impl Drop for TestContext {
             }
         }
 
-        if debug_drop {
-            eprintln!(
-                "TestContext drop complete in {:?} for {}",
-                drop_start.elapsed(),
-                self.test_name
-            );
-        }
-
         let duration = self.start_time.elapsed();
         if duration > Duration::from_secs(5) {
             eprintln!(
@@ -1188,15 +1653,13 @@ impl Drop for TestContext {
 }
 
 /// Rich assertion helper with contextual error messages
-pub struct ContextualAssert<'ctx> {
-    ctx: &'ctx TestContext,
+pub struct ContextualAssert {
     context: String,
 }
 
-impl<'ctx> ContextualAssert<'ctx> {
-    fn new(ctx: &'ctx TestContext, context: &str) -> Self {
+impl ContextualAssert {
+    fn new(context: &str) -> Self {
         Self {
-            ctx,
             context: context.to_string(),
         }
     }

@@ -6,13 +6,19 @@
 use color_eyre::Result as EyreResult;
 use sinex_gateway::ServiceContainer;
 use sinex_test_utils::sinex_test;
+use sinex_test_utils::TestResult;
 use std::env;
 use std::sync::Arc;
 use tempfile::TempDir;
 
+fn enable_replay_control_bypass() {
+    env::set_var("SINEX_ALLOW_REPLAY_CONTROL_BYPASS", "1");
+}
+
 /// Test successful initialization with valid database URL
 #[sinex_test]
 async fn test_service_container_initialization_success() -> TestResult<()> {
+    enable_replay_control_bypass();
     // Use the development database URL from nix environment
     let db_url = env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
@@ -48,6 +54,7 @@ async fn test_service_container_initialization_success() -> TestResult<()> {
 /// Test initialization with DATABASE_URL from environment
 #[sinex_test]
 async fn test_service_container_env_database_url() -> TestResult<()> {
+    enable_replay_control_bypass();
     // Set DATABASE_URL in environment
     let db_url = env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
@@ -90,9 +97,10 @@ async fn test_service_container_env_database_url() -> TestResult<()> {
 
 /// Test initialization fails gracefully with invalid database URL
 #[sinex_test]
-async fn test_service_container_invalid_database_url() -> color_eyre::eyre::Result<()> {
+async fn test_service_container_invalid_database_url() -> TestResult<()> {
+    enable_replay_control_bypass();
     // Use an invalid database URL
-    let invalid_url = "postgresql://invalid:invalid@nonexistent:5432/invalid".to_string();
+    let invalid_url = "not-a-postgres-url".to_string();
 
     // Create temporary directory for annex
     let temp_dir = TempDir::new().unwrap();
@@ -119,7 +127,8 @@ async fn test_service_container_invalid_database_url() -> color_eyre::eyre::Resu
 
 /// Test initialization fails when no database URL is provided
 #[sinex_test]
-async fn test_service_container_no_database_url() -> color_eyre::eyre::Result<()> {
+async fn test_service_container_no_database_url() -> TestResult<()> {
+    enable_replay_control_bypass();
     // Save and clear DATABASE_URL from environment
     let original_db_url = env::var("DATABASE_URL").ok();
     env::remove_var("DATABASE_URL");
@@ -157,6 +166,7 @@ async fn test_service_container_no_database_url() -> color_eyre::eyre::Result<()
 /// Test service container cloning
 #[sinex_test]
 async fn test_service_container_clone() -> TestResult<()> {
+    enable_replay_control_bypass();
     let db_url = env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
 
@@ -194,6 +204,7 @@ async fn test_service_container_clone() -> TestResult<()> {
 /// Test annex path configuration
 #[sinex_test]
 async fn test_service_container_annex_path_config() -> TestResult<()> {
+    enable_replay_control_bypass();
     let db_url = env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
 
@@ -227,6 +238,7 @@ async fn test_service_container_annex_path_config() -> TestResult<()> {
 /// Test concurrent service container initialization
 #[sinex_test]
 async fn test_service_container_concurrent_initialization() -> TestResult<()> {
+    enable_replay_control_bypass();
     let db_url = env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
 
@@ -257,6 +269,7 @@ async fn test_service_container_concurrent_initialization() -> TestResult<()> {
 /// Test service Arc reference counting
 #[sinex_test]
 async fn test_service_container_arc_references() -> TestResult<()> {
+    enable_replay_control_bypass();
     let db_url = env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
 

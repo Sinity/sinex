@@ -11,7 +11,7 @@ use figment::{
 use serde::{Deserialize, Serialize};
 use sinex_core::{
     environment::environment,
-    types::{deserialize_validated_utf8_path, validate_path, Bytes, Seconds},
+    types::{deserialize_validated_utf8_path, validate_path, Bytes, Milliseconds, Seconds},
 };
 use tracing::{debug, error, info, warn};
 use validator::{Validate, ValidationError};
@@ -34,10 +34,10 @@ pub struct IngestdConfig {
     #[builder(default = 50)]
     pub database_pool_size: u32,
 
-    /// NATS URL for message bus
-    #[validate(length(min = 1, message = "NATS URL cannot be empty"))]
-    #[builder(default = String::from("nats://localhost:4222"))]
-    pub nats_url: String,
+    /// NATS connection configuration
+    #[validate(custom(function = "validate_nats_config"))]
+    #[builder(default)]
+    pub nats: sinex_core::nats::NatsConnectionConfig,
 
     /// Batch size for database writes
     #[validate(range(min = 1, message = "Batch size must be greater than 0"))]
@@ -49,6 +49,35 @@ pub struct IngestdConfig {
     #[builder(default = default_batch_timeout_secs())]
     #[validate(custom(function = "validate_batch_timeout_secs"))]
     pub batch_timeout_secs: Seconds,
+    /// Maximum messages to fetch per JetStream pull batch
+    #[builder(default = default_consumer_fetch_max_messages())]
+    #[validate(range(
+        min = 1,
+        max = 10_000,
+        message = "Fetch batch size must be between 1 and 10000"
+    ))]
+    pub consumer_fetch_max_messages: usize,
+    /// JetStream pull expiration timeout in milliseconds
+    #[serde(default = "default_consumer_fetch_timeout_ms")]
+    #[builder(default = default_consumer_fetch_timeout_ms())]
+    #[validate(custom(function = "validate_fetch_timeout"))]
+    pub consumer_fetch_timeout_ms: Milliseconds,
+    /// Maximum unacknowledged messages for the main JetStream consumer
+    #[builder(default = default_consumer_max_ack_pending())]
+    #[validate(range(
+        min = 1,
+        max = 10_000,
+        message = "Consumer max_ack_pending must be between 1 and 10000"
+    ))]
+    pub consumer_max_ack_pending: i64,
+    /// Maximum unacknowledged messages for the material slices consumer
+    #[builder(default = default_material_slices_max_ack_pending())]
+    #[validate(range(
+        min = 1,
+        max = 100_000,
+        message = "Material slices max_ack_pending must be between 1 and 100000"
+    ))]
+    pub material_slices_max_ack_pending: i64,
 
     /// Enable dry-run mode (no database writes)
     #[builder(default = false)]
@@ -84,6 +113,10 @@ pub struct IngestdConfig {
     #[builder(default = String::from("ingestd"))]
     pub nats_consumer_name: String,
 
+    /// Optional namespace appended to all JetStream subjects/streams (used by tests).
+    #[serde(default)]
+    pub nats_namespace: Option<String>,
+
     /// git-annex repository path for assembled materials
     #[serde(deserialize_with = "deserialize_validated_utf8_path")]
     #[validate(custom(
@@ -114,33 +147,36 @@ impl IngestdConfig {
     /// Add shared environment variable layers for ingestd configuration.
     fn add_env(figment: Figment) -> Figment {
         figment
-            .merge(Env::prefixed("INGESTD_").split('_'))
-            .merge(Env::raw().only(&["DATABASE_URL"]))
+            .merge(Env::prefixed("SINEX_INGESTD_").split('_'))
+            .merge(Env::raw().only(&["DATABASE_URL", "SINEX_NATS_REQUIRE_TLS"]))
     }
 
     /// Load configuration from defaults, files, and environment overrides.
     pub fn load() -> Result<Self, figment::Error> {
-        Self::add_env(Self::build_figment_base()).extract()
+        Self::add_env(Self::build_figment_base())
+            .extract()
+            .map(Self::normalize)
     }
 
     /// Load configuration including a specific config file.
     pub fn load_from_path(path: impl AsRef<str>) -> Result<Self, figment::Error> {
         let figment = Self::merge_config_file(Self::build_figment_base(), path.as_ref());
-        Self::add_env(figment).extract()
+        Self::add_env(figment).extract().map(Self::normalize)
     }
 
     /// Load configuration from an existing Figment instance.
     pub fn from_figment(figment: Figment) -> Result<Self, figment::Error> {
-        Self::add_env(figment).extract()
+        Self::add_env(figment).extract().map(Self::normalize)
     }
 
     /// Create configuration from command line arguments using the builder
     pub fn from_args(
         database_url: Option<String>,
         nats_url: String,
+        nats_require_tls: bool,
         pool_size: u32,
         batch_size: usize,
-        batch_timeout_secs: u64,
+        batch_timeout_secs: Seconds,
         dry_run: bool,
         annex_repo_path: Option<String>,
         assembler_state_dir: Option<String>,
@@ -148,19 +184,24 @@ impl IngestdConfig {
         let skip_schema_sync = env_flag("SINEX_SKIP_SCHEMA_SYNC").unwrap_or(false);
         let validate_schemas = env_flag("SINEX_VALIDATE_SCHEMAS").unwrap_or(true);
 
-        let builder = Self::builder()
-            .nats_url(nats_url)
-            .database_pool_size(pool_size)
-            .batch_size(batch_size)
-            .batch_timeout_secs(Seconds::from_secs(batch_timeout_secs))
-            .dry_run(dry_run)
-            .skip_schema_sync(skip_schema_sync)
-            .validate_schemas(validate_schemas);
+        // Construct NatsConnectionConfig from args
+        // Note: CLI args for certs are not yet exposed in this helper, users should use env vars or config file for full TLS.
+        // We only map the basic URL and require_tls flag here as they are common CLI args.
+        let mut nats_config = sinex_core::nats::NatsConnectionConfig::from_env();
+        nats_config.url = nats_url.clone();
+        nats_config.require_tls = nats_require_tls;
+        let nats_config_clone = nats_config.clone();
 
         let db_url = database_url.unwrap_or_else(default_database_url);
-        let builder = builder.database_url(db_url);
-
-        let mut config = builder.build();
+        let mut config = Self::default();
+        config.database_url = db_url;
+        config.database_pool_size = pool_size;
+        config.batch_size = batch_size;
+        config.batch_timeout_secs = batch_timeout_secs;
+        config.dry_run = dry_run;
+        config.skip_schema_sync = skip_schema_sync;
+        config.validate_schemas = validate_schemas;
+        config.nats = nats_config_clone;
 
         if let Some(path) = annex_repo_path {
             config.annex_repo_path = Utf8PathBuf::from(path);
@@ -170,7 +211,18 @@ impl IngestdConfig {
             config.assembler_state_dir = Utf8PathBuf::from(path);
         }
 
-        config
+        config.normalize()
+    }
+
+    fn normalize(mut self) -> Self {
+        let default_batch_size = Self::default().batch_size;
+        if self.consumer_fetch_max_messages == default_consumer_fetch_max_messages()
+            && self.batch_size != default_batch_size
+        {
+            self.consumer_fetch_max_messages = self.batch_size;
+        }
+
+        self
     }
 
     /// Validate configuration and exit with appropriate status code
@@ -192,7 +244,12 @@ impl IngestdConfig {
     pub async fn validate(&self) -> IngestdResult<()> {
         use validator::Validate as ValidateTrait;
 
-        // Run validator crate validation first
+        // Fail fast on NATS TLS policy before running other validators.
+        self.nats.validate().map_err(|e| {
+            SinexError::configuration(e.to_string()).with_operation("config.validate_nats")
+        })?;
+
+        // Run validator crate validation for the rest of the fields.
         ValidateTrait::validate(self).map_err(|e| {
             SinexError::configuration(format!("Validation failed: {e}"))
                 .with_operation("config.validate_connection_strings")
@@ -267,19 +324,11 @@ impl IngestdConfig {
 
     /// Test NATS connection
     async fn test_nats_connection(&self) -> IngestdResult<()> {
-        use async_nats::ConnectOptions;
+        let client = self.nats.connect().await?;
 
-        let client = ConnectOptions::new()
-            .name("ingestd-test")
-            .connect(&self.nats_url)
-            .await
-            .map_err(|e| {
-                SinexError::configuration(format!("NATS connection test failed: {e}"))
-                    .with_operation("config.test_nats_connection")
-                    .with_context("nats_url", self.nats_url.clone())
-            })?;
+        // Connection successful logic is implicit in connect() success
+        // But we can check status if needed. connect() returns a connected client.
 
-        // Connection successful
         info!("NATS connection test passed");
         drop(client);
         Ok(())
@@ -326,9 +375,13 @@ impl Default for IngestdConfig {
         Self {
             database_url: default_database_url(),
             database_pool_size: 50,
-            nats_url: "nats://localhost:4222".to_string(),
-            batch_size: 1000,
+            nats: sinex_core::nats::NatsConnectionConfig::from_env(),
+            batch_size: default_batch_size(),
             batch_timeout_secs: default_batch_timeout_secs(),
+            consumer_fetch_max_messages: default_consumer_fetch_max_messages(),
+            consumer_fetch_timeout_ms: default_consumer_fetch_timeout_ms(),
+            consumer_max_ack_pending: default_consumer_max_ack_pending(),
+            material_slices_max_ack_pending: default_material_slices_max_ack_pending(),
             dry_run: false,
             validate_schemas: true,
             skip_schema_sync: false,
@@ -336,6 +389,7 @@ impl Default for IngestdConfig {
             max_message_size: default_max_message_size(),
             nats_stream_name: default_nats_stream_name(),
             nats_consumer_name: format!("ingestd-{}", env.name()),
+            nats_namespace: None,
             annex_repo_path: default_annex_repo_path(),
             assembler_state_dir: default_assembler_state_dir(),
         }
@@ -346,11 +400,14 @@ impl Default for IngestdConfig {
 
 /// Default database URL with environment namespacing
 fn default_database_url() -> String {
-    std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-        let env = environment();
-        let base_name = env.database_name("sinex");
-        format!("postgresql:///{base_name}?host=/run/postgresql")
-    })
+    match std::env::var("DATABASE_URL") {
+        Ok(url) => environment().database_url(&url).unwrap_or(url),
+        Err(_) => {
+            let env = environment();
+            let base_name = env.database_name("sinex");
+            format!("postgresql:///{base_name}?host=/run/postgresql")
+        }
+    }
 }
 
 /// Default work directory for ingestd with environment namespacing
@@ -377,6 +434,26 @@ fn default_batch_timeout_secs() -> Seconds {
     Seconds::from_secs(5)
 }
 
+fn default_batch_size() -> usize {
+    1000
+}
+
+fn default_consumer_fetch_max_messages() -> usize {
+    100
+}
+
+fn default_consumer_fetch_timeout_ms() -> Milliseconds {
+    Milliseconds::from_millis(1_000)
+}
+
+fn default_consumer_max_ack_pending() -> i64 {
+    100
+}
+
+fn default_material_slices_max_ack_pending() -> i64 {
+    1_000
+}
+
 fn default_max_message_size() -> Bytes {
     Bytes::from_mebibytes(16)
 }
@@ -400,6 +477,19 @@ fn validate_postgres_url(url: &str) -> Result<(), validator::ValidationError> {
         }
         Err(_) => Err(validator::ValidationError::new("invalid_url")),
     }
+}
+
+fn validate_nats_config(
+    config: &sinex_core::nats::NatsConnectionConfig,
+) -> Result<(), ValidationError> {
+    if config.url.trim().is_empty() {
+        return Err(ValidationError::new("nats_url_empty"));
+    }
+    if config.require_tls && !config.url.starts_with("tls://") && !config.url.starts_with("wss://")
+    {
+        return Err(ValidationError::new("nats_tls_required"));
+    }
+    Ok(())
 }
 
 fn validate_work_dir(path: &Utf8PathBuf) -> Result<(), validator::ValidationError> {
@@ -455,6 +545,16 @@ fn validate_max_message_size(value: &Bytes) -> Result<(), ValidationError> {
     let bytes = value.as_u64();
     if !(1024..=1_073_741_824).contains(&bytes) {
         return Err(ValidationError::new("range"));
+    }
+    Ok(())
+}
+
+fn validate_fetch_timeout(value: &Milliseconds) -> Result<(), ValidationError> {
+    let ms = value.as_millis();
+    if !(1..=60_000).contains(&ms) {
+        return Err(ValidationError::new(
+            "Fetch timeout must be between 1 and 60000 ms",
+        ));
     }
     Ok(())
 }

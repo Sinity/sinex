@@ -18,8 +18,7 @@ pub use core::{
 pub use config_validation::{
     deserialize_optional_sanitized_path, deserialize_optional_validated_utf8_path,
     deserialize_sanitized_path, deserialize_sanitized_path_vec, deserialize_validated_utf8_path,
-    deserialize_validated_utf8_path_vec, validated_path_deserializer, PathValidationLevel,
-    SecurePath, ValidatedPathDeserializer,
+    deserialize_validated_utf8_path_vec, PathValidationLevel, SecurePath,
 };
 
 // Re-export file watching security utilities

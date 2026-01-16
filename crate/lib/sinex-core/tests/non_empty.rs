@@ -1,8 +1,9 @@
 use sinex_core::types::non_empty::NonEmptyVec;
 use sinex_test_utils::sinex_test;
+use sinex_test_utils::TestResult;
 
 #[sinex_test]
-fn non_empty_vec_construction_variants_work() -> color_eyre::eyre::Result<()> {
+fn non_empty_vec_construction_variants_work() -> TestResult<()> {
     let nev = NonEmptyVec::single(1);
     assert_eq!(nev.len(), 1);
     assert_eq!(*nev.first(), 1);
@@ -15,7 +16,7 @@ fn non_empty_vec_construction_variants_work() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn non_empty_vec_from_vec_enforces_constraint() -> color_eyre::eyre::Result<()> {
+fn non_empty_vec_from_vec_enforces_constraint() -> TestResult<()> {
     assert!(NonEmptyVec::<i32>::from_vec(vec![]).is_none());
 
     let nev = NonEmptyVec::from_vec(vec![1, 2, 3]).unwrap();
@@ -24,7 +25,7 @@ fn non_empty_vec_from_vec_enforces_constraint() -> color_eyre::eyre::Result<()> 
 }
 
 #[sinex_test]
-fn non_empty_vec_serializes_and_deserializes() -> color_eyre::eyre::Result<()> {
+fn non_empty_vec_serializes_and_deserializes() -> TestResult<()> {
     let nev = NonEmptyVec::from_head_tail(1, vec![2, 3]);
     let json = serde_json::to_string(&nev)?;
     assert_eq!(json, "[1,2,3]");

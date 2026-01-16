@@ -1,17 +1,14 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use async_nats::jetstream;
-use color_eyre::eyre::Result;
 use serde_json::json;
 use sinex_core::db::query_helpers::ulid_to_uuid;
 use sinex_core::types::Ulid;
-use sinex_core::DbPool;
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
 use sinex_test_utils::{
-    acquire_pool_test_guard, db_common, sinex_test, timing_utils::WaitHelpers, EphemeralNats,
-    EventOverrides, TestContext, TestSatellitePublisher,
+    sinex_test, timing_utils::WaitHelpers, EventOverrides, TestContext, TestResult,
+    TestSatellitePublisher,
 };
 use tokio::sync::RwLock;
 use tokio::time::Duration;
@@ -19,19 +16,25 @@ use tokio::time::Duration;
 async fn spawn_consumer(
     ctx: &TestContext,
     durable: &str,
-) -> Result<(
-    EphemeralNats,
+) -> TestResult<(
     tokio::task::JoinHandle<sinex_ingestd::IngestdResult<()>>,
-    jetstream::Context,
+    String,
 )> {
-    let nats = EphemeralNats::start().await?;
-    let nats_client = nats.connect().await?;
+    let nats = ctx.nats_handle()?;
+    let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
     let validator = EventValidator::new(false);
     let js = nats.jetstream_with_client(nats_client.clone());
     let env = ctx.env().clone();
-    let stream_name = env.nats_stream_name("SINEX_RAW_EVENTS");
-    let topology = JetStreamTopology::new(&env, stream_name, format!("ingestd-{durable}"));
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
+    let stream_name = ctx.pipeline_namespace().stream("SINEX_RAW_EVENTS");
+    let topology = JetStreamTopology::new(
+        &env,
+        stream_name,
+        ctx.pipeline_namespace()
+            .consumer_name(&format!("ingestd-{durable}")),
+        Some(&namespace),
+    );
 
     let consumer = JetStreamConsumer::new(
         nats_client.clone(),
@@ -41,28 +44,22 @@ async fn spawn_consumer(
     );
     let consumer_handle = tokio::spawn(async move { consumer.run().await });
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    if consumer_handle.is_finished() {
-        let result = consumer_handle.await.expect("consumer task panicked");
-        panic!("consumer exited early: {:?}", result);
-    }
-
     nats.wait_for_stream(&js, &topology.events_stream, Duration::from_secs(5))
         .await?;
 
-    Ok((nats, consumer_handle, js))
+    Ok((consumer_handle, namespace))
 }
 
 #[sinex_test]
-async fn ingestion_handles_burst_under_latency_budget(ctx: TestContext) -> Result<()> {
-    let _guard = acquire_pool_test_guard().await;
-    ctx.ensure_clean().await?;
-    db_common::reset_database(&ctx.pool).await?;
-    db_common::verify_clean_state(&ctx.pool).await?;
-
-    let ctx = ctx.with_nats().await?;
-    let (nats, consumer_handle, _js) = spawn_consumer(&ctx, "latency").await?;
-    let publisher = TestSatellitePublisher::from_ephemeral(&nats, "latency-suite").await?;
+async fn ingestion_handles_burst_under_latency_budget(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_shared_nats().await?;
+    let (consumer_handle, namespace) = spawn_consumer(&ctx, "latency").await?;
+    let nats_client = ctx.nats_client();
+    let publisher = TestSatellitePublisher::with_namespace(
+        nats_client,
+        "latency-suite",
+        Some(namespace.clone()),
+    );
 
     let total_events = 120;
     let start = Instant::now();
@@ -97,48 +94,21 @@ async fn ingestion_handles_burst_under_latency_budget(ctx: TestContext) -> Resul
 
     consumer_handle.abort();
     let _ = consumer_handle.await;
-    db_common::reset_database(&ctx.pool).await?;
-    db_common::verify_clean_state(&ctx.pool).await?;
-    ctx.force_cleanup().await?;
     Ok(())
 }
 
 #[sinex_test]
-async fn replaying_events_after_restart_does_not_duplicate(ctx: TestContext) -> Result<()> {
-    let _guard = acquire_pool_test_guard().await;
-    ctx.ensure_clean().await?;
-    db_common::reset_database(&ctx.pool).await?;
-    db_common::verify_clean_state(&ctx.pool).await?;
-
-    let ctx = ctx.with_nats().await?;
-    let (nats, consumer_handle, _js) = spawn_consumer(&ctx, "restart").await?;
-    let publisher = TestSatellitePublisher::from_ephemeral(&nats, "restart-suite").await?;
+async fn replaying_events_after_restart_does_not_duplicate(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_shared_nats().await?;
+    let (consumer_handle, namespace) = spawn_consumer(&ctx, "restart").await?;
+    let nats_client = ctx.nats_client();
+    let publisher = TestSatellitePublisher::with_namespace(
+        nats_client,
+        "restart-suite",
+        Some(namespace.clone()),
+    );
 
     let ids: Vec<Ulid> = (0..10).map(|_| Ulid::new()).collect();
-    async fn ensure_events(label: &str, pool: &DbPool, ids: &[Ulid]) -> Result<()> {
-        let expected = ids.len() as i64;
-        let current: Option<i64> =
-            sqlx::query_scalar!("SELECT COUNT(*) FROM core.events WHERE source = 'restart-suite'")
-                .fetch_one(pool)
-                .await?;
-        let have = current.unwrap_or(0);
-        if have < expected {
-            let deficit = (expected - have) as usize;
-            tracing::warn!(%label, have, expected, "Backfilling missing restart events");
-            for (idx, id) in ids.iter().enumerate().take(deficit) {
-                sqlx::query!(
-                    "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig) VALUES ($1::uuid::ulid, 'restart-suite', $2, 'localhost', $3, NOW()) ON CONFLICT (id) DO NOTHING",
-                    id.to_uuid(),
-                    format!("restart.event.{idx}"),
-                    json!({"sequence": idx, "phase": label})
-                )
-                .execute(pool)
-                .await?;
-            }
-        }
-        Ok(())
-    }
-
     for (idx, id) in ids.iter().enumerate() {
         publisher
             .publish_event_with_overrides(
@@ -152,7 +122,7 @@ async fn replaying_events_after_restart_does_not_duplicate(ctx: TestContext) -> 
             .await?;
     }
 
-    if let Err(err) = WaitHelpers::wait_for_condition(
+    WaitHelpers::wait_for_condition(
         || {
             let pool = ctx.pool.clone();
             let expected = ids.len() as i64;
@@ -168,46 +138,19 @@ async fn replaying_events_after_restart_does_not_duplicate(ctx: TestContext) -> 
         },
         12,
     )
-    .await
-    {
-        tracing::warn!(error = %err, "Initial replay preparation timed out; republishing events");
-        for (idx, id) in ids.iter().enumerate() {
-            publisher
-                .publish_event_with_overrides(
-                    &format!("restart.event.{idx}"),
-                    json!({"sequence": idx, "phase": "initial-retry"}),
-                    EventOverrides {
-                        id: Some(*id),
-                        ..Default::default()
-                    },
-                )
-                .await?;
-        }
-        WaitHelpers::wait_for_condition(
-            || {
-                let pool = ctx.pool.clone();
-                let expected = ids.len() as i64;
-                async move {
-                    let stored: Option<i64> = sqlx::query_scalar!(
-                        "SELECT COUNT(*) FROM core.events WHERE source = 'restart-suite'"
-                    )
-                    .fetch_one(&pool)
-                    .await?;
-                    Ok(stored.unwrap_or(0) >= expected)
-                }
-            },
-            12,
-        )
-        .await?;
-    }
-    ensure_events("initial-backfill", &ctx.pool, &ids).await?;
+    .await?;
 
     consumer_handle.abort();
     let _ = consumer_handle.await;
 
     // Restart the consumer and replay the same events to ensure no duplicates.
-    let (nats, consumer_handle, _js) = spawn_consumer(&ctx, "restart-2").await?;
-    let publisher = TestSatellitePublisher::from_ephemeral(&nats, "restart-suite").await?;
+    let (consumer_handle, namespace) = spawn_consumer(&ctx, "restart-2").await?;
+    let nats_client = ctx.nats_client();
+    let publisher = TestSatellitePublisher::with_namespace(
+        nats_client,
+        "restart-suite",
+        Some(namespace.clone()),
+    );
     for (idx, id) in ids.iter().enumerate() {
         publisher
             .publish_event_with_overrides(
@@ -222,7 +165,7 @@ async fn replaying_events_after_restart_does_not_duplicate(ctx: TestContext) -> 
     }
 
     // Wait for the restarted consumer to read the re-sent events.
-    if let Err(err) = WaitHelpers::wait_for_condition(
+    WaitHelpers::wait_for_condition(
         || {
             let pool = ctx.pool.clone();
             let expected = ids.len() as i64;
@@ -237,39 +180,7 @@ async fn replaying_events_after_restart_does_not_duplicate(ctx: TestContext) -> 
         },
         12,
     )
-    .await
-    {
-        tracing::warn!(error = %err, "Replay after restart timed out; republishing events");
-        for (idx, id) in ids.iter().enumerate() {
-            publisher
-                .publish_event_with_overrides(
-                    &format!("restart.event.{idx}"),
-                    json!({"sequence": idx, "phase": "post-restart-retry"}),
-                    EventOverrides {
-                        id: Some(*id),
-                        ..Default::default()
-                    },
-                )
-                .await?;
-        }
-        WaitHelpers::wait_for_condition(
-            || {
-                let pool = ctx.pool.clone();
-                let expected = ids.len() as i64;
-                async move {
-                    let stored: Option<i64> = sqlx::query_scalar!(
-                        "SELECT COUNT(*) FROM core.events WHERE source = 'restart-suite'"
-                    )
-                    .fetch_one(&pool)
-                    .await?;
-                    Ok(stored.unwrap_or(0) >= expected)
-                }
-            },
-            12,
-        )
-        .await?;
-    }
-    ensure_events("replay-backfill", &ctx.pool, &ids).await?;
+    .await?;
 
     WaitHelpers::wait_for_condition(
         || {
@@ -304,8 +215,5 @@ async fn replaying_events_after_restart_does_not_duplicate(ctx: TestContext) -> 
 
     consumer_handle.abort();
     let _ = consumer_handle.await;
-    db_common::reset_database(&ctx.pool).await?;
-    db_common::verify_clean_state(&ctx.pool).await?;
-    ctx.force_cleanup().await?;
     Ok(())
 }

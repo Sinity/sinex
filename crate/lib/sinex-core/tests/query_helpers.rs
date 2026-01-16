@@ -2,9 +2,10 @@ use sinex_core::db::query_helpers::{is_retryable_db_error, RetryConfig};
 use sinex_core::types::error::SinexError;
 use sinex_core::types::{retry, timeouts};
 use sinex_test_utils::sinex_test;
+use sinex_test_utils::TestResult;
 
 #[sinex_test]
-async fn retry_config_default() -> color_eyre::eyre::Result<()> {
+async fn retry_config_default() -> TestResult<()> {
     let config = RetryConfig::default();
     assert_eq!(config.max_attempts, retry::MAX_RETRY_ATTEMPTS);
     assert_eq!(
@@ -17,7 +18,7 @@ async fn retry_config_default() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-async fn is_retryable_db_error_recognises_non_retryable_cases() -> color_eyre::eyre::Result<()> {
+async fn is_retryable_db_error_recognises_non_retryable_cases() -> TestResult<()> {
     let timeout_err = SinexError::timeout("test timeout");
     assert!(!is_retryable_db_error(&timeout_err));
 

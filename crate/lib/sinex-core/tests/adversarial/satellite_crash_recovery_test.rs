@@ -5,16 +5,16 @@
 //! to Postgres, we stand up a test `ingestd` to consume begin/slice/end messages
 //! and persist registry state.
 
-use color_eyre::eyre::Result;
 use serde_json::json;
-use sqlx::Row;
 use sinex_core::db::repositories::source_materials::status;
-use sinex_satellite_sdk::{
+use sinex_node_sdk::{
     AcquisitionManager, Checkpoint, CheckpointManager, CheckpointState, RotationPolicy,
 };
+use sinex_schema::ulid::Ulid;
 use sinex_test_utils::{
     prelude::*, start_test_ingestd_with_config, TestIngestdConfig, TestIngestdHandle,
 };
+use sqlx::Row;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc,
@@ -22,9 +22,10 @@ use std::sync::{
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
 use uuid::Uuid;
-use ulid::Ulid;
 
-async fn setup_ingestd(ctx: TestContext) -> Result<(TestContext, TestIngestdHandle, async_nats::Client)> {
+async fn setup_ingestd(
+    ctx: TestContext,
+) -> Result<(TestContext, TestIngestdHandle, async_nats::Client)> {
     let ctx = ctx.with_nats().await?;
     let nats_client = ctx.nats_client();
     AcquisitionManager::bootstrap_streams(&nats_client).await?;
@@ -32,11 +33,11 @@ async fn setup_ingestd(ctx: TestContext) -> Result<(TestContext, TestIngestdHand
     let ingest_config = TestIngestdConfig {
         nats_url: format!(
             "nats://{}",
-            ctx.nats_url()
-                .expect("with_nats should provide nats_url")
+            ctx.nats_url().expect("with_nats should provide nats_url")
         ),
         database_url: ctx.database_url().to_string(),
         work_dir: None,
+        ..Default::default()
     };
 
     let ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
@@ -44,7 +45,10 @@ async fn setup_ingestd(ctx: TestContext) -> Result<(TestContext, TestIngestdHand
     Ok((ctx, ingest_handle, nats_client))
 }
 
-async fn wait_for_material_row(ctx: &TestContext, material_id: Ulid) -> Result<sqlx::postgres::PgRow> {
+async fn wait_for_material_row(
+    ctx: &TestContext,
+    material_id: Ulid,
+) -> Result<sqlx::postgres::PgRow> {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         let row = sqlx::query(
@@ -88,7 +92,7 @@ async fn test_crash_during_early_material_acquisition(ctx: TestContext) -> Resul
 
     let row = wait_for_material_row(&ctx, material_id).await?;
     let status_val: String = row.try_get("status")?;
-    let optional_blob_id: Option<Uuid> = row.try_get("optional_blob_id")?;
+    let optional_blob_id: Option<Ulid> = row.try_get("optional_blob_id")?;
 
     assert_eq!(status_val, status::SENSING);
     assert!(optional_blob_id.is_none());
@@ -134,7 +138,7 @@ async fn test_crash_during_mid_material_acquisition(ctx: TestContext) -> Result<
 
     let row = wait_for_material_row(&ctx, material_id).await?;
     let status_val: String = row.try_get("status")?;
-    let optional_blob_id: Option<Uuid> = row.try_get("optional_blob_id")?;
+    let optional_blob_id: Option<Ulid> = row.try_get("optional_blob_id")?;
 
     assert_eq!(status_val, status::SENSING);
     assert!(optional_blob_id.is_none());
@@ -215,8 +219,10 @@ async fn test_orphaned_material_detection_and_recovery(ctx: TestContext) -> Resu
 /// Checkpoint manager round-trips a material+offset external checkpoint.
 #[sinex_test]
 async fn test_checkpoint_recovery_with_material_reference(ctx: TestContext) -> Result<()> {
+    let ctx = ctx.with_nats().await?;
+    let kv = ctx.checkpoint_kv().await?;
     let checkpoint_mgr = CheckpointManager::new(
-        ctx.pool.clone(),
+        kv,
         "crash-satellite".to_string(),
         "default".to_string(),
         "test-instance".to_string(),
@@ -240,7 +246,10 @@ async fn test_checkpoint_recovery_with_material_reference(ctx: TestContext) -> R
     let recovered = checkpoint_mgr.load_checkpoint().await?;
 
     match recovered.checkpoint {
-        Checkpoint::External { position, description } => {
+        Checkpoint::External {
+            position,
+            description,
+        } => {
             assert!(description.contains("Mid-acquisition"));
             let recovered_material_id = position["current_material_id"]
                 .as_str()
@@ -336,9 +345,7 @@ async fn test_concurrent_material_acquisition_with_random_crashes(ctx: TestConte
             break (completed, sensing);
         }
         if Instant::now() > deadline {
-            panic!(
-                "ingestd did not settle counts (completed={completed} sensing={sensing})"
-            );
+            panic!("ingestd did not settle counts (completed={completed} sensing={sensing})");
         }
         sleep(Duration::from_millis(100)).await;
     };
@@ -386,7 +393,7 @@ async fn test_crash_during_finalization(ctx: TestContext) -> Result<()> {
 
     let row = wait_for_material_row(&ctx, material_id).await?;
     let status_val: String = row.try_get("status")?;
-    let optional_blob_id: Option<Uuid> = row.try_get("optional_blob_id")?;
+    let optional_blob_id: Option<Ulid> = row.try_get("optional_blob_id")?;
 
     assert_eq!(status_val, status::SENSING);
     assert!(optional_blob_id.is_none());
@@ -418,9 +425,7 @@ async fn test_marking_crashed_materials_as_recovered_partial(ctx: TestContext) -
         "/test/recovery.log".to_string(),
     );
 
-    let mut handle = acquisition_mgr
-        .begin_material("recovery-source")
-        .await?;
+    let mut handle = acquisition_mgr.begin_material("recovery-source").await?;
     let material_id = handle.material_id;
     acquisition_mgr
         .append_slice(&mut handle, b"Partial data before crash\n")

@@ -14,7 +14,8 @@ This guide helps you quickly find and apply the reusable test patterns documente
 - **Database Isolation**: See [Section 1: Database Test Patterns](#database-test-patterns)
 - **Async Operations**: See [Section 2: Async Test Patterns](#async-test-patterns)
 - **Assertions**: See [Section 5: Assertion Patterns](#assertion-patterns)
-- **Performance**: See [Section 11: Performance Optimization](#performance-optimization)
+- **Timing & Synchronization**: See [Section 11: Timing & Synchronization Patterns](#timing--synchronization-patterns)
+- **Performance**: See [Section 12: Performance Optimization](#performance-optimization)
 
 ## Core Infrastructure
 
@@ -46,8 +47,11 @@ async fn traced_test(ctx: TestContext) -> Result<()> { }
 
 ### TestContext - Your Main Tool
 ```rust
-// Create events
-let event = ctx.create_test_event("source", "type", json!({})).await?;
+// Enable NATS / ingestd access for pipeline-first events
+let ctx = ctx.with_shared_nats().await?;
+
+// Create events via the real pipeline
+let event = ctx.publish_json_event("source", "type", json!({})).await?;
 
 // Query events directly
 let events = ctx.pool.events()
@@ -67,6 +71,49 @@ ctx.timing().wait_for_event_count(5).await?;
 let elapsed = ctx.elapsed();
 ```
 
+### Pipeline Quick Start (L2-L4)
+
+Use PipelineScope for pipeline boundaries (L2/L3/L4) so tests exercise NATS → ingestd → DB with
+namespace isolation. L1 tests stay on `TestContext`, and L0 tests require no harness.
+
+```rust
+#[sinex_test]
+async fn pipeline_flow(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_shared_nats().await?;
+    let scope = ctx.pipeline_scope().await?;
+
+    scope
+        .publish("fs-watcher", "file.created", json!({"path": "/tmp/demo"}))
+        .await?;
+    scope.wait_for_event_count(1).await?;
+
+    let events = ctx
+        .pool
+        .events()
+        .get_by_source(&EventSource::from("fs-watcher"), Some(10), None)
+        .await?;
+
+    ctx.assert("pipeline persisted").not_empty(&events)?;
+    Ok(())
+}
+```
+
+When you must provision streams or consumers manually, derive names from
+`ctx.pipeline_namespace()` instead of building subjects/streams directly.
+
+### Production Invariants
+
+Use these guardrails when writing assertions:
+
+- **Anchor uniqueness (hard)** — every material anchor belongs to exactly one live event chain.
+- **Provenance XOR (hard)** — events must have either material or synthesis provenance, never both.
+- **Single writer (hard)** — only ingestd writes to `core.events`; nodes publish to JetStream.
+- **Temporal ledger completeness (hard)** — ledger rows exist for every material offset persisted.
+- **Idempotency (best-effort)** — duplicate submissions may replay but must not corrupt state; do
+  not fabricate data inside tests to hide regressions.
+
+Call out explicitly when you test best-effort behavior so future changes keep the same semantics.
+
 ## 5-Minute Test Template
 
 Start with this structure for any test:
@@ -74,8 +121,10 @@ Start with this structure for any test:
 ```rust
 #[sinex_test]
 async fn test_my_feature(ctx: TestContext) -> Result<()> {
-    // ARRANGE: Set up test data
-    ctx.create_test_event(
+    let ctx = ctx.with_nats().await?;
+
+    // ARRANGE: Set up test data via pipeline
+    ctx.publish_json_event(
         "my-source",
         "my.event",
         json!({"key": "value"}),
@@ -103,7 +152,7 @@ async fn test_my_feature(ctx: TestContext) -> Result<()> {
 See: [Section 1.3: Fixture Insertion Patterns](#fixture-insertion-patterns)
 
 ```rust
-let event = ctx.create_test_event(
+let event = ctx.publish_json_event(
     "fs-watcher",
     "file.created",
     json!({"path": "/test.txt"}),
@@ -124,15 +173,15 @@ result
 See: [Section 3: Property Test Patterns](#property-test-patterns)
 
 ```rust
-use sinex_test_utils::property_testing::SinexStrategies;
+// Define filesystem_event_strategy() locally (see Section 3.1).
 
 #[sinex_prop(cases = 20)]
 async fn test_inputs(
     ctx: &TestContext,
-    #[strategy(SinexStrategies::filesystem_event())] event: (String, String, Value),
+    #[strategy(filesystem_event_strategy())] event: (String, String, Value),
 ) -> TestResult<()> {
     let (source, ty, payload) = event;
-    ctx.create_test_event(&source, &ty, payload).await?;
+    ctx.publish_json_event(&source, &ty, payload).await?;
     Ok(())
 }
 ```
@@ -168,8 +217,8 @@ async fn test_concurrent(ctx: TestContext) -> Result<()> {
 See: [Section 5.4: Temporal Assertions](#temporal-assertions-event-ordering)
 
 ```rust
-let first = ctx.create_test_event("src", "type1", json!({})).await?;
-let second = ctx.create_test_event("src", "type2", json!({})).await?;
+let first = ctx.publish_json_event("src", "type1", json!({})).await?;
+let second = ctx.publish_json_event("src", "type2", json!({})).await?;
 
 ctx.assert("ordering")
     .that(
@@ -196,8 +245,7 @@ async fn test_params(
 }
 ```
 
-### "I need custom fixtures"
-See: [Section 6: Reusable Fixtures](#reusable-fixtures)
+### "I need reusable inputs"
 
 ```rust
 #[fixture]
@@ -211,7 +259,7 @@ async fn test_with_fixture(
     ctx: TestContext,
 ) -> Result<()> {
     for source in sources {
-        ctx.create_test_event(source, "type", json!({})).await?;
+        ctx.publish_json_event(source, "type", json!({})).await?;
     }
     Ok(())
 }
@@ -222,18 +270,20 @@ async fn test_with_fixture(
 | Mistake | Problem | Solution |
 |---------|---------|----------|
 | `tokio::time::sleep(Duration::from_millis(100))` | Flaky tests, no error handling | Use `ctx.timing().wait_for_event_count()` |
-| Mocking Event types | Bypasses real validation | Use `Event::test_event()` directly |
+| Mocking Event types | Bypasses real validation | Use `Event::builder`/`Event::new`; `Event::dynamic`/`test_event` only for dynamic JSON |
 | Assuming event order | Tests fail randomly | Use ULID timestamp comparisons |
-| Not testing errors | Missing coverage | Use `ErrorAssertions` trait |
+| Not testing errors | Missing coverage | Assert on error types/messages explicitly |
 | Custom database cleanup | Interferes with pool | Trust TestContext drop |
 
 ## Performance Tips
 
-1. **Pool size**: Set `SINEX_TESTUTILS_POOL_SIZE` to match concurrent tests
+1. **Pool sizing**: Keep Nextest test threads aligned with Postgres capacity (pool defaults to
+   2× Nextest test threads, minimum 64).
 2. **Template cache**: Delete `target/sinex-test-utils/template_stamp.json` to force rebuild
 3. **Batch operations**: Insert events in groups when possible
 4. **Avoid sleep**: Use polling with timeouts
-5. **Connection limits**: Tune `SINEX_TESTUTILS_CONN_BUDGET`
+5. **Connection limits**: Slot pools cap at 4; admin pool caps at 8
+6. **Profiles**: Keep perf/stress/external suites gated behind explicit nextest profiles
 
 ## Debugging Tips
 
@@ -244,9 +294,9 @@ psql -l | grep sinex_test
 ```
 
 ### "Pool exhausted"
-Increase pool size:
+Reduce concurrency or raise PostgreSQL `max_connections`:
 ```bash
-export SINEX_TESTUTILS_POOL_SIZE=20
+cargo xtask test --profile fast
 ```
 
 ### "Events not appearing"
@@ -269,20 +319,18 @@ ctx.assert("specific scenario description")
 - **Test Context**: `src/test_context.rs` (617 lines)
 - **Assertions**: `src/test_context.rs` → ContextualAssert
 - **Property Testing**: `src/property_testing.rs` (735 lines)
-- **Error Testing**: `src/error_testing.rs`
+- **Dataset Seeds**: `src/dataset_seeds.rs`
 
 ## Key Files Structure
 
 ```
 sinex-test-utils/
 ├── src/
-│   ├── lib.rs                    # Prelude and fixtures
+│   ├── lib.rs                    # Prelude
 │   ├── database_pool.rs          # Database isolation
 │   ├── test_context.rs           # TestContext and assertions
 │   ├── property_testing.rs       # Property test strategies
-│   ├── builders.rs               # Fluent builders
-│   ├── error_testing.rs          # Error assertions
-│   ├── fixtures.rs               # Fixture management
+│   ├── dataset_seeds.rs          # Dataset seeding helpers
 │   ├── test_macros.rs            # Test helper macros
 │   └── nats.rs                   # NATS test utilities
 ├── macros/
@@ -295,20 +343,20 @@ sinex-test-utils/
 ## Quick Command Reference
 
 ```bash
-# Run tests with custom pool size
-SINEX_TESTUTILS_POOL_SIZE=20 cargo nextest run -p sinex-test-utils
+# Run tests for sinex-test-utils
+cargo xtask test --profile reliable --prime -- -p sinex-test-utils
 
 # Rebuild template database
-rm target/sinex-test-utils/template_stamp.json && cargo nextest run -p sinex-test-utils
+rm target/sinex-test-utils/template_stamp.json && cargo xtask test --profile reliable --prime -- -p sinex-test-utils
 
 # Run with tracing
-RUST_LOG=debug cargo nextest run -p sinex-test-utils
+RUST_LOG=debug cargo xtask test --profile reliable --prime -- -p sinex-test-utils
 
 # Run specific test
-cargo nextest run -p sinex-test-utils -E 'test(test_name)'
+cargo xtask test --profile reliable -- -p sinex-test-utils -E 'test(test_name)'
 
 # Update snapshots
-INSTA_UPDATE=always cargo nextest run -p sinex-test-utils
+INSTA_UPDATE=always cargo xtask test --profile reliable --prime -- -p sinex-test-utils
 
 # Check pool health (in test code)
 let report = check_pool_health().await?;

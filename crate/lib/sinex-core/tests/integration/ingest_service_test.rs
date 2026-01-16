@@ -20,13 +20,10 @@ use tokio::time::{sleep, timeout};
 // ============================================================================
 
 /// Test ingest service initialization patterns
-#[sinex_test]
+#[sinex_serial_test]
 async fn test_ingest_service_startup(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing ingest service startup and initialization");
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
     ctx.ensure_clean().await?;
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
 
     // Verify database connectivity for ingest service
     let pool = &ctx.pool;
@@ -53,9 +50,6 @@ async fn test_ingest_service_startup(ctx: TestContext) -> Result<()> {
         "Ingest service configuration validated"
     );
 
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
-    ctx.force_cleanup().await?;
     Ok(())
 }
 
@@ -66,7 +60,7 @@ async fn test_event_ingestion_flow(ctx: TestContext) -> Result<()> {
 
     // Create test event that would come from a satellite
     let satellite_event = ctx
-        .create_test_event(
+        .publish_json_event(
             "fs-watcher",
             "file.created",
             serde_json::json!({
@@ -78,7 +72,7 @@ async fn test_event_ingestion_flow(ctx: TestContext) -> Result<()> {
         )
         .await?;
 
-    // Event is automatically stored via create_test_event
+    // Event is automatically stored via publish_json_event
     assert_eq!(satellite_event.source.as_str(), "fs-watcher");
     assert_eq!(satellite_event.event_type.as_str(), "file.created");
     assert!(satellite_event.id.is_some());
@@ -91,8 +85,12 @@ async fn test_event_ingestion_flow(ctx: TestContext) -> Result<()> {
         "Event ingestion flow validated"
     );
 
-    // Verify event can be retrieved
+    // Wait for persistence
     let event_id = satellite_event.id.as_ref().unwrap().clone();
+    sinex_test_utils::timing_utils::WaitHelpers::wait_for_event_id(&ctx.pool, event_id.clone(), 10)
+        .await?;
+
+    // Verify event can be retrieved
     let retrieved_event = ctx.pool.events().get_by_id(event_id).await?;
     assert!(
         retrieved_event.is_some(),
@@ -107,17 +105,15 @@ async fn test_event_ingestion_flow(ctx: TestContext) -> Result<()> {
 }
 
 /// Test batch ingestion functionality
-#[sinex_test]
+#[sinex_serial_test]
 async fn test_batch_ingestion(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing batch event ingestion");
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
+    let ctx = ctx.with_shared_nats().await?;
     ctx.ensure_clean().await?;
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
 
     // Create multiple events as would be sent in a batch
     let batch_events = vec![
-        ctx.create_test_event(
+        ctx.publish_json_event(
             "fs-watcher",
             "file.created",
             serde_json::json!({
@@ -126,7 +122,7 @@ async fn test_batch_ingestion(ctx: TestContext) -> Result<()> {
             }),
         )
         .await?,
-        ctx.create_test_event(
+        ctx.publish_json_event(
             "terminal",
             "command.executed",
             serde_json::json!({
@@ -136,7 +132,7 @@ async fn test_batch_ingestion(ctx: TestContext) -> Result<()> {
             }),
         )
         .await?,
-        ctx.create_test_event(
+        ctx.publish_json_event(
             "desktop",
             "window.focused",
             serde_json::json!({
@@ -158,23 +154,24 @@ async fn test_batch_ingestion(ctx: TestContext) -> Result<()> {
     // Verify all events were persisted
     sinex_test_utils::timing_utils::WaitHelpers::wait_for_event_count(&ctx.pool, 3, 30).await?;
     for (idx, event_id) in stored_ids.iter().enumerate() {
-        let mut attempts = 0;
-        loop {
-            if let Some(retrieved) = ctx.pool.events().get_by_id(event_id.clone()).await? {
-                assert_eq!(
-                    retrieved.id,
-                    Some(event_id.clone()),
-                    "Batch event {} should match stored ID",
-                    idx
-                );
-                break;
-            }
-            attempts += 1;
-            if attempts >= 3 {
-                panic!("Batch event {} was not retrievable after retries", idx);
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
+        sinex_test_utils::timing_utils::WaitHelpers::wait_for_event_id(
+            &ctx.pool,
+            event_id.clone(),
+            10,
+        )
+        .await?;
+        let retrieved = ctx
+            .pool
+            .events()
+            .get_by_id(event_id.clone())
+            .await?
+            .expect("Batch event should be retrievable after wait");
+        assert_eq!(
+            retrieved.id,
+            Some(event_id.clone()),
+            "Batch event {} should match stored ID",
+            idx
+        );
     }
 
     tracing::info!(
@@ -183,8 +180,6 @@ async fn test_batch_ingestion(ctx: TestContext) -> Result<()> {
         "Batch ingestion validated"
     );
 
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
     Ok(())
 }
 
@@ -192,10 +187,11 @@ async fn test_batch_ingestion(ctx: TestContext) -> Result<()> {
 #[sinex_test]
 async fn test_ingestion_validation(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing event validation during ingestion");
+    let ctx = ctx.with_shared_nats().await?;
 
     // Test valid event with complete payload
     let valid_event = ctx
-        .create_test_event(
+        .publish_json_event(
             "fs-watcher",
             "file.created",
             serde_json::json!({
@@ -212,7 +208,7 @@ async fn test_ingestion_validation(ctx: TestContext) -> Result<()> {
 
     // Test edge case validation - minimal payload
     let minimal_event = ctx
-        .create_test_event(
+        .publish_json_event(
             "system",
             "service.started",
             serde_json::json!({
@@ -229,7 +225,7 @@ async fn test_ingestion_validation(ctx: TestContext) -> Result<()> {
     // Test large payload handling
     let large_payload = "x".repeat(10000); // 10KB payload
     let large_event_result = ctx
-        .create_test_event(
+        .publish_json_event(
             "application",
             "log.entry",
             serde_json::json!({
@@ -250,18 +246,11 @@ async fn test_ingestion_validation(ctx: TestContext) -> Result<()> {
 }
 
 /// Test source and event type patterns
-#[sinex_test]
+#[sinex_serial_test]
 async fn test_source_and_type_patterns(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing source and event type patterns");
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
-    ctx.force_cleanup().await?;
+    let ctx = ctx.with_shared_nats().await?;
     ctx.ensure_clean().await?;
-    if let Err(e) = sinex_test_utils::db_common::reset_database(&ctx.pool).await {
-        tracing::warn!(error = %e, "Reset before source and type patterns failed, retrying after cleanup");
-        ctx.force_cleanup().await?;
-        sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    }
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
 
     // Test events with different sources and types for pattern validation
     let test_patterns = vec![
@@ -301,7 +290,7 @@ async fn test_source_and_type_patterns(ctx: TestContext) -> Result<()> {
 
     let mut stored_events = Vec::new();
     for (source, event_type, payload) in test_patterns {
-        let event = ctx.create_test_event(source, event_type, payload).await?;
+        let event = ctx.publish_json_event(source, event_type, payload).await?;
         stored_events.push((source, event_type, event));
     }
 
@@ -350,13 +339,6 @@ async fn test_source_and_type_patterns(ctx: TestContext) -> Result<()> {
         unique_sources = events_by_source.len(),
         "Source and type patterns validated"
     );
-    if let Err(e) = sinex_test_utils::db_common::reset_database(&ctx.pool).await {
-        tracing::warn!(error = %e, "Reset after source and type patterns failed, retrying after cleanup");
-        ctx.force_cleanup().await?;
-        sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    }
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
-    ctx.force_cleanup().await?;
     Ok(())
 }
 
@@ -365,25 +347,18 @@ async fn test_source_and_type_patterns(ctx: TestContext) -> Result<()> {
 // ============================================================================
 
 /// Test ingestion performance characteristics
-#[sinex_test]
+#[sinex_serial_test]
 async fn test_ingestion_performance(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing ingestion service performance");
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
-    ctx.force_cleanup().await?;
+    let ctx = ctx.with_shared_nats().await?;
     ctx.ensure_clean().await?;
-    if let Err(e) = sinex_test_utils::db_common::reset_database(&ctx.pool).await {
-        tracing::warn!(error = %e, "Reset before ingestion_performance failed, retrying after force_cleanup");
-        ctx.force_cleanup().await?;
-        sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    }
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
 
     let start_time = std::time::Instant::now();
     let run_id = Ulid::new();
     let source = format!("performance-test-{}", run_id);
 
     // Generate a small batch of events to test throughput without hitting test timeouts.
-    let mut target_events = 20usize;
+    let target_events = 20usize;
     let max_attempts = target_events * 4;
     let mut processed_events = 0usize;
     let mut attempt = 0usize;
@@ -393,7 +368,7 @@ async fn test_ingestion_performance(ctx: TestContext) -> Result<()> {
         attempt += 1;
 
         match ctx
-            .create_test_event(
+            .publish_json_event(
                 &source,
                 "throughput.test",
                 serde_json::json!({
@@ -413,8 +388,7 @@ async fn test_ingestion_performance(ctx: TestContext) -> Result<()> {
                     error = %e,
                     "Event ingestion failed, will retry until target reached"
                 );
-                // Small delay to avoid hammering the same contention point
-                tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+                tokio::task::yield_now().await;
             }
         }
     }
@@ -425,7 +399,7 @@ async fn test_ingestion_performance(ctx: TestContext) -> Result<()> {
     );
 
     // Verify persistence with a longer retry loop to tolerate catalog latency on busy pools.
-    let mut persisted = match sinex_test_utils::timing_utils::WaitHelpers::wait_for_source_events(
+    let persisted = match sinex_test_utils::timing_utils::WaitHelpers::wait_for_source_events(
         &ctx.pool,
         &source,
         processed_events,
@@ -440,49 +414,11 @@ async fn test_ingestion_performance(ctx: TestContext) -> Result<()> {
                 error = %err,
                 "Wait for performance events timed out; reconciling with direct count"
             );
-            sqlx::query_scalar!(
-                "SELECT COUNT(*) FROM core.events WHERE source = $1",
-                &source
-            )
-            .fetch_one(&ctx.pool)
-            .await?
-            .unwrap_or(0) as usize
+            let event_source = sinex_core::EventSource::new(&source);
+            ctx.pool.events().count_by_source(&event_source).await? as usize
         }
     };
 
-    if persisted < processed_events {
-        let deficit = processed_events.saturating_sub(persisted);
-        tracing::warn!(
-            persisted,
-            expected = processed_events,
-            deficit,
-            "Detected missing events in performance run; backfilling to reach target"
-        );
-        for i in 0..deficit {
-            let sequence = processed_events + i;
-            ctx.create_test_event(
-                &source,
-                "throughput.test.backfill",
-                serde_json::json!({
-                    "sequence": sequence,
-                    "batch_size": target_events,
-                    "timestamp": chrono::Utc::now().to_rfc3339(),
-                    "payload_data": format!("Performance backfill event {}", sequence)
-                }),
-            )
-            .await?;
-        }
-        processed_events += deficit;
-        target_events += deficit;
-        persisted = sinex_test_utils::timing_utils::WaitHelpers::wait_for_source_events(
-            &ctx.pool,
-            &source,
-            processed_events,
-            15,
-        )
-        .await
-        .unwrap_or(persisted);
-    }
     assert!(
         persisted >= processed_events,
         "All performance test events should be persisted for source {} (saw {}, expected {})",
@@ -516,24 +452,15 @@ async fn test_ingestion_performance(ctx: TestContext) -> Result<()> {
         target_events
     );
 
-    if let Err(e) = sinex_test_utils::db_common::reset_database(&ctx.pool).await {
-        tracing::warn!(error = %e, "Reset after ingestion_performance failed, retrying after force_cleanup");
-        ctx.force_cleanup().await?;
-        sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    }
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
-    ctx.force_cleanup().await?;
     Ok(())
 }
 
 /// Test sequential ingestion handling (modified from concurrent due to TestContext constraints)
-#[sinex_test]
+#[sinex_serial_test]
 async fn test_sequential_ingestion(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing sequential event ingestion");
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
+    let ctx = ctx.with_shared_nats().await?;
     ctx.ensure_clean().await?;
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
 
     let source = format!("sequential-ingest-{}", Ulid::new());
 
@@ -547,7 +474,7 @@ async fn test_sequential_ingestion(ctx: TestContext) -> Result<()> {
         while attempts < 4 {
             attempts += 1;
             let event_result = ctx
-                .create_test_event(
+                .publish_json_event(
                     &source,
                     "sequential.test",
                     serde_json::json!({
@@ -586,35 +513,9 @@ async fn test_sequential_ingestion(ctx: TestContext) -> Result<()> {
         }
 
         if !created {
-            tracing::error!(sequence = i, "Failed to ingest event after retries");
-        }
-    }
-
-    if successful_ingests < total_events {
-        let mut backfill_attempt = 0;
-        while successful_ingests < total_events && backfill_attempt < 3 {
-            backfill_attempt += 1;
-            let idx = successful_ingests + backfill_attempt;
-            match ctx
-                .create_test_event(
-                    &source,
-                    "sequential.test",
-                    serde_json::json!({
-                        "worker_id": idx,
-                        "batch_id": idx / 5,
-                        "data": format!("Sequential ingestion backfill {}", idx)
-                    }),
-                )
-                .await
-            {
-                Ok(_) => successful_ingests += 1,
-                Err(err) => tracing::warn!(
-                    attempt = backfill_attempt,
-                    error = %err,
-                    "Backfill ingestion attempt failed"
-                ),
-            }
-            tokio::time::sleep(Duration::from_millis(25)).await;
+            return Err(color_eyre::eyre::eyre!(
+                "Failed to ingest event after retries (sequence={i})"
+            ));
         }
     }
 
@@ -624,85 +525,15 @@ async fn test_sequential_ingestion(ctx: TestContext) -> Result<()> {
     );
 
     // Verify events are in the database
-    let mut observed = match sinex_test_utils::timing_utils::WaitHelpers::wait_for_source_events(
+    let observed = sinex_test_utils::timing_utils::WaitHelpers::wait_for_source_events(
         &ctx.pool,
         &source,
         total_events as usize,
         25,
     )
-    .await
-    {
-        Ok(count) => count,
-        Err(err) => {
-            tracing::warn!(
-                error = %err,
-                source = %source,
-                expected = total_events,
-                "Sequential ingestion wait timed out; reconciling with DB count"
-            );
-            ctx.pool
-                .events()
-                .get_by_source(
-                    &EventSource::from(source.as_str()),
-                    sinex_core::types::Pagination::new(Some(64), None),
-                )
-                .await?
-                .len()
-        }
-    };
-
-    if observed < total_events {
-        let deficit = total_events - observed;
-        tracing::warn!(
-            source = %source,
-            observed,
-            expected = total_events,
-            deficit,
-            "Backfilling missing sequential events before final assertion"
-        );
-        for i in 0..deficit {
-            let idx = total_events + i;
-            ctx.create_test_event(
-                &source,
-                "sequential.test.backfill",
-                serde_json::json!({
-                    "worker_id": idx,
-                    "batch_id": idx / 5,
-                    "data": format!("Sequential ingestion backfill {}", idx)
-                }),
-            )
-            .await
-            .ok();
-        }
-        observed = match sinex_test_utils::timing_utils::WaitHelpers::wait_for_source_events(
-            &ctx.pool,
-            &source,
-            total_events as usize,
-            30,
-        )
-        .await
-        {
-            Ok(count) => count,
-            Err(err) => {
-                tracing::warn!(
-                    error = %err,
-                    source = %source,
-                    "Backfill wait timed out; using DB count for sequential ingestion"
-                );
-                ctx.pool
-                    .events()
-                    .get_by_source(
-                        &EventSource::from(source.as_str()),
-                        sinex_core::types::Pagination::new(Some(64), None),
-                    )
-                    .await?
-                    .len()
-            }
-        };
-    }
-
+    .await?;
     assert!(
-        observed >= total_events,
+        observed >= total_events as usize,
         "All sequential events should be persisted (observed {observed}, expected {total_events})"
     );
 
@@ -712,9 +543,6 @@ async fn test_sequential_ingestion(ctx: TestContext) -> Result<()> {
         "Sequential ingestion validated"
     );
 
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
-    ctx.force_cleanup().await?;
     Ok(())
 }
 
@@ -725,7 +553,7 @@ async fn test_ingestion_error_handling(ctx: TestContext) -> Result<()> {
 
     // Test successful ingestion
     let valid_event = ctx
-        .create_test_event(
+        .publish_json_event(
             "error-test",
             "error.handling",
             serde_json::json!({
@@ -781,7 +609,7 @@ async fn test_ingestion_error_handling(ctx: TestContext) -> Result<()> {
     let mut processed_count = 0;
     for (case_name, payload) in edge_cases {
         let edge_event_result = ctx
-            .create_test_event("error-test", "edge.case", payload)
+            .publish_json_event("error-test", "edge.case", payload)
             .await;
 
         match edge_event_result {
@@ -802,7 +630,7 @@ async fn test_ingestion_error_handling(ctx: TestContext) -> Result<()> {
 
     // Verify service recovery after edge case processing
     let recovery_event = ctx
-        .create_test_event(
+        .publish_json_event(
             "error-test",
             "error.recovery",
             serde_json::json!({
@@ -831,17 +659,10 @@ async fn test_ingestion_error_handling(ctx: TestContext) -> Result<()> {
 // ============================================================================
 
 /// Test schema patterns during ingestion
-#[sinex_test]
+#[sinex_serial_test]
 async fn test_schema_validation_patterns(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing schema validation patterns during ingestion");
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
     ctx.ensure_clean().await?;
-    if let Err(e) = sinex_test_utils::db_common::reset_database(&ctx.pool).await {
-        tracing::warn!(error = %e, "Reset before schema validation patterns failed, retrying after cleanup");
-        ctx.force_cleanup().await?;
-        sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    }
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
 
     // Test events with different schema patterns
     let schema_test_events = vec![
@@ -875,7 +696,7 @@ async fn test_schema_validation_patterns(ctx: TestContext) -> Result<()> {
     ];
 
     for (source, event_type, payload) in schema_test_events {
-        let event = ctx.create_test_event(source, event_type, payload).await?;
+        let event = ctx.publish_json_event(source, event_type, payload).await?;
 
         assert!(
             event.id.is_some(),
@@ -886,25 +707,15 @@ async fn test_schema_validation_patterns(ctx: TestContext) -> Result<()> {
     }
 
     tracing::info!("Schema validation patterns during ingestion verified");
-    if let Err(e) = sinex_test_utils::db_common::reset_database(&ctx.pool).await {
-        tracing::warn!(error = %e, "Reset after schema validation patterns failed, retrying after cleanup");
-        ctx.force_cleanup().await?;
-        sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    }
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
-    ctx.force_cleanup().await?;
 
     Ok(())
 }
 
 /// Test payload validation patterns
-#[sinex_test]
+#[sinex_serial_test]
 async fn test_payload_validation_patterns(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing payload validation patterns");
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
     ctx.ensure_clean().await?;
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
 
     // Test various payload structures that should be valid
     let validation_patterns = vec![
@@ -945,7 +756,7 @@ async fn test_payload_validation_patterns(ctx: TestContext) -> Result<()> {
 
     for (pattern_name, payload) in validation_patterns {
         let event = ctx
-            .create_test_event("validation-test", "payload.test", payload)
+            .publish_json_event("validation-test", "payload.test", payload)
             .await?;
 
         assert!(
@@ -959,9 +770,6 @@ async fn test_payload_validation_patterns(ctx: TestContext) -> Result<()> {
 
     tracing::info!("Payload validation patterns verified");
 
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
-    ctx.force_cleanup().await?;
     Ok(())
 }
 
@@ -970,18 +778,15 @@ async fn test_payload_validation_patterns(ctx: TestContext) -> Result<()> {
 // ============================================================================
 
 /// Test service health indicators
-#[sinex_test]
+#[sinex_serial_test]
 async fn test_service_health_monitoring(ctx: TestContext) -> Result<()> {
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
     ctx.ensure_clean().await?;
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
     let source = format!("health-monitor-{}", Ulid::new());
     tracing::info!("Testing service health monitoring");
 
     // Test basic health indicators through event processing
     let health_check_event = ctx
-        .create_test_event(
+        .publish_json_event(
             &source,
             "health.check",
             serde_json::json!({
@@ -1000,6 +805,10 @@ async fn test_service_health_monitoring(ctx: TestContext) -> Result<()> {
     let db_connection = ctx.pool.acquire().await?;
     drop(db_connection);
 
+    // Wait for persistence
+    sinex_test_utils::timing_utils::WaitHelpers::wait_for_source_events(&ctx.pool, &source, 1, 10)
+        .await?;
+
     // Test event retrieval (indicates service is operational)
     let recent_events = ctx.pool.events().get_recent(5).await?;
     assert!(
@@ -1010,7 +819,7 @@ async fn test_service_health_monitoring(ctx: TestContext) -> Result<()> {
     // Simulate service processing over time
     for i in 0..3 {
         let status_event = ctx
-            .create_test_event(
+            .publish_json_event(
                 &source,
                 "status.update",
                 serde_json::json!({
@@ -1026,47 +835,11 @@ async fn test_service_health_monitoring(ctx: TestContext) -> Result<()> {
             "Status update should be processed"
         );
 
-        // Brief delay to simulate time passage
-        tokio::time::sleep(Duration::from_millis(5)).await;
+        tokio::task::yield_now().await;
     }
 
-    if let Err(err) = sinex_test_utils::timing_utils::WaitHelpers::wait_for_source_events(
-        &ctx.pool, &source, 4, 12,
-    )
-    .await
-    {
-        tracing::warn!(error = %err, "Health monitoring wait timed out, reconciling via DB");
-        let current = ctx
-            .pool
-            .events()
-            .get_by_source(
-                &EventSource::from(source.as_str()),
-                sinex_core::types::Pagination::new(Some(16), None),
-            )
-            .await?
-            .len();
-        if current < 4 {
-            let deficit = 4 - current;
-            for i in 0..deficit {
-                ctx.create_test_event(
-                    &source,
-                    "status.update",
-                    serde_json::json!({
-                        "sequence": 100 + i,
-                        "uptime_seconds": 600 + i as i32,
-                        "events_processed": 1000 + i as i32
-                    }),
-                )
-                .await
-                .ok();
-            }
-            sinex_test_utils::timing_utils::WaitHelpers::wait_for_source_events(
-                &ctx.pool, &source, 4, 12,
-            )
-            .await
-            .ok();
-        }
-    }
+    sinex_test_utils::timing_utils::WaitHelpers::wait_for_source_events(&ctx.pool, &source, 4, 12)
+        .await?;
 
     // Verify service maintains health over time
     let status_events = ctx
@@ -1086,19 +859,16 @@ async fn test_service_health_monitoring(ctx: TestContext) -> Result<()> {
         health_events = status_events.len(),
         "Service health monitoring validated"
     );
-    ctx.force_cleanup().await?;
 
     Ok(())
 }
 
 /// Test resource management during ingestion
-#[sinex_test]
+#[sinex_serial_test]
 async fn test_resource_management(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing resource management during ingestion");
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
+    let ctx = ctx.with_shared_nats().await?;
     ctx.ensure_clean().await?;
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
     ctx.ensure_clean().await?;
 
     let source = format!("resource-test-{}", Ulid::new());
@@ -1117,7 +887,7 @@ async fn test_resource_management(ctx: TestContext) -> Result<()> {
 
         for i in 0..events_per_pattern {
             let event = ctx
-                .create_test_event(
+                .publish_json_event(
                     &source,
                     "resource.test",
                     serde_json::json!({
@@ -1139,7 +909,7 @@ async fn test_resource_management(ctx: TestContext) -> Result<()> {
 
     // Test service stability after resource variation
     let stability_event = ctx
-        .create_test_event(
+        .publish_json_event(
             &source,
             "stability.check",
             serde_json::json!({
@@ -1153,63 +923,17 @@ async fn test_resource_management(ctx: TestContext) -> Result<()> {
         "Service should remain stable after resource tests"
     );
 
-    // Verify persistence with a brief retry loop to avoid timing out on busy pools.
+    // Verify persistence with wait helpers instead of backfilling.
     let expected_events = resource_patterns.len() * events_per_pattern + 1;
-    if let Err(err) = sinex_test_utils::timing_utils::WaitHelpers::wait_for_condition(
-        || {
-            let pool = ctx.pool.clone();
-            let source = source.clone();
-            async move {
-                let observed: Option<i64> = sqlx::query_scalar!(
-                    "SELECT COUNT(*) FROM core.events WHERE source = $1",
-                    source
-                )
-                .fetch_one(&pool)
-                .await?;
-                Ok::<bool, sinex_test_utils::SinexError>(
-                    observed.unwrap_or(0) as usize >= expected_events,
-                )
-            }
-        },
+    let observed = sinex_test_utils::timing_utils::WaitHelpers::wait_for_source_events(
+        &ctx.pool,
+        &source,
+        expected_events,
         20,
     )
-    .await
-    {
-        tracing::warn!(
-            error = %err,
-            expected = expected_events,
-            "Resource events lagging; performing backfill"
-        );
-    }
-
-    let mut observed: i64 =
-        sqlx::query_scalar!("SELECT COUNT(*) FROM core.events WHERE source = $1", source)
-            .fetch_one(&ctx.pool)
-            .await?
-            .unwrap_or(0);
-    if (observed as usize) < expected_events {
-        let deficit = expected_events.saturating_sub(observed as usize);
-        for i in 0..deficit {
-            ctx.create_test_event(
-                &source,
-                "resource.test",
-                serde_json::json!({
-                    "pattern": "backfill",
-                    "payload_size": 64,
-                    "sequence": 10_000 + i,
-                    "data": "backfill"
-                }),
-            )
-            .await?;
-        }
-        observed =
-            sqlx::query_scalar!("SELECT COUNT(*) FROM core.events WHERE source = $1", source)
-                .fetch_one(&ctx.pool)
-                .await?
-                .unwrap_or(0);
-    }
+    .await?;
     assert!(
-        observed as usize >= expected_events,
+        observed >= expected_events,
         "Expected at least {expected_events} events for source {source}, saw {observed}"
     );
 
@@ -1219,7 +943,7 @@ async fn test_resource_management(ctx: TestContext) -> Result<()> {
         .events()
         .get_by_source(
             &EventSource::from(source.as_str()),
-            sinex_core::types::Pagination::new(Some(20), None),
+            sinex_core::types::Pagination::new(Some(expected_events as i64), None),
         )
         .await?;
     assert!(
@@ -1233,9 +957,6 @@ async fn test_resource_management(ctx: TestContext) -> Result<()> {
         "Resource management validated"
     );
 
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
-    ctx.force_cleanup().await?;
     Ok(())
 }
 
@@ -1243,16 +964,14 @@ async fn test_resource_management(ctx: TestContext) -> Result<()> {
 #[sinex_test]
 async fn test_timeout_and_deadline_handling(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing timeout and deadline handling");
-    ctx.force_cleanup().await?;
+    let ctx = ctx.with_shared_nats().await?;
     ctx.ensure_clean().await?;
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
 
     // Test normal operation within reasonable timeouts
     let timeout_duration = Duration::from_secs(5);
 
     let normal_operation = timeout(timeout_duration, async {
-        ctx.create_test_event(
+        ctx.publish_json_event(
             "timeout-test",
             "timeout.test",
             serde_json::json!({
@@ -1281,7 +1000,7 @@ async fn test_timeout_and_deadline_handling(ctx: TestContext) -> Result<()> {
 
         for i in 0..10 {
             let event = ctx
-                .create_test_event(
+                .publish_json_event(
                     "timeout-test",
                     "batch.timeout.test",
                     serde_json::json!({
@@ -1324,8 +1043,5 @@ async fn test_timeout_and_deadline_handling(ctx: TestContext) -> Result<()> {
         "Timeout and deadline handling validated"
     );
 
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
-    ctx.force_cleanup().await?;
     Ok(())
 }

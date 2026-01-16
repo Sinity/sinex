@@ -10,8 +10,12 @@
 use sinex_core::db::models::{Event, JsonValue};
 use sinex_core::types::domain::{EventSource, EventType, SanitizedPath};
 use sinex_core::types::events::payloads::{FileCreatedPayload, KittyCommandExecutedPayload};
-use sinex_core::{Id, Provenance, SourceMaterial, Ulid};
-use sinex_test_utils::{acquire_pool_test_guard, prelude::*};
+use sinex_core::types::Seconds;
+use sinex_core::{
+    acquire_with_timeout, create_pool_with_config, Id, PoolConfig, Provenance, SinexError,
+    SourceMaterial, Ulid,
+};
+use sinex_test_utils::prelude::*;
 
 // Additional specific imports
 use std::str::FromStr;
@@ -23,14 +27,13 @@ use tokio::time::{sleep, Duration};
 // =============================================================================
 
 #[sinex_test]
-async fn test_event_persistence_basics(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_event_persistence_basics(ctx: TestContext) -> TestResult<()> {
     // Test basic repository insertion using typed payloads.
-    let material_id = ctx
-        .create_source_material(Some("db-test-material"))
-        .await?;
+    let material_id = ctx.create_source_material(Some("db-test-material")).await?;
 
     let mut payload = FileCreatedPayload::test_default(
-        SanitizedPath::from_str_validated("/tmp/test.txt")?,
+        SanitizedPath::from_str_validated("/tmp/test.txt")
+            .map_err(|e| color_eyre::eyre::eyre!(e))?,
     );
     payload.size = 1024;
     payload.permissions = Some(0o644);
@@ -50,21 +53,24 @@ async fn test_event_persistence_basics(ctx: TestContext) -> color_eyre::eyre::Re
     assert_eq!(inserted.payload["size"], json!(1024));
     let retrieved = ctx.pool.events().get_by_id(event_id.clone()).await?;
     let retrieved = retrieved.expect("event should be retrievable by id");
-    assert_eq!(retrieved.id.expect("retrieved event should have id"), event_id);
+    assert_eq!(
+        retrieved.id.expect("retrieved event should have id"),
+        event_id
+    );
     assert_eq!(retrieved.payload["path"], json!("/tmp/test.txt"));
 
     Ok(())
 }
 
 #[sinex_test]
-async fn test_event_queries(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_event_queries(ctx: TestContext) -> TestResult<()> {
     // Test query pattern using production repository queries.
     let material_id = ctx
         .create_source_material(Some("db-query-material"))
         .await?;
 
     let fs_payload = FileCreatedPayload::test_default(
-        SanitizedPath::from_str_validated("/tmp/1.txt")?,
+        SanitizedPath::from_str_validated("/tmp/1.txt").map_err(|e| color_eyre::eyre::eyre!(e))?,
     );
     let fs_event = Event::new(
         fs_payload,
@@ -90,7 +96,9 @@ async fn test_event_queries(ctx: TestContext) -> color_eyre::eyre::Result<()> {
             sinex_core::types::Pagination::new(Some(10), None),
         )
         .await?;
-    assert!(fs_events.iter().any(|event| event.id == Some(fs_id)));
+    assert!(fs_events
+        .iter()
+        .any(|event| event.id == Some(fs_id.clone())));
 
     let command_events = ctx
         .pool
@@ -102,7 +110,7 @@ async fn test_event_queries(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         .await?;
     assert!(command_events
         .iter()
-        .any(|event| event.id == Some(terminal_id)));
+        .any(|event| event.id == Some(terminal_id.clone())));
 
     Ok(())
 }
@@ -112,7 +120,7 @@ async fn test_event_queries(ctx: TestContext) -> color_eyre::eyre::Result<()> {
 // =============================================================================
 
 #[sinex_test]
-async fn test_edge_case_payloads() -> color_eyre::eyre::Result<()> {
+async fn test_edge_case_payloads(ctx: TestContext) -> TestResult<()> {
     let test_cases = vec![
         ("empty_payload", json!({})),
         ("null_values", json!({"value": null, "data": null})),
@@ -135,17 +143,12 @@ async fn test_edge_case_payloads() -> color_eyre::eyre::Result<()> {
     ];
 
     for (test_name, payload) in test_cases {
-        let ctx = TestContext::new().await?;
-
-        // Each edge case should persist correctly
         let event = ctx
-            .create_test_event("edge-test", test_name, payload.clone())
+            .publish_json_event("edge-test", test_name, payload.clone())
             .await?;
 
-        // Verify payload preserved exactly
         assert_eq!(event.payload, payload);
 
-        // Retrieve and verify
         let event_id = event.id.unwrap();
         let retrieved = ctx.pool.events().get_by_id(event_id).await?.unwrap();
         assert_eq!(retrieved.payload, payload);
@@ -154,12 +157,9 @@ async fn test_edge_case_payloads() -> color_eyre::eyre::Result<()> {
     Ok(())
 }
 
-#[sinex_test]
-async fn test_concurrent_event_insertion(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    let _guard = acquire_pool_test_guard().await;
+#[sinex_serial_test]
+async fn test_concurrent_event_insertion(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
     // Test concurrent insertion from multiple tasks
     let num_tasks = 10;
     let events_per_task = 10;
@@ -169,7 +169,7 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> color_eyre::eyre::
     let barrier = Arc::new(tokio::sync::Barrier::new(num_tasks));
 
     let shared_ctx = Arc::new(ctx);
-    let pool_for_cleanup = shared_ctx.pool.clone();
+    let _pool_for_cleanup = shared_ctx.pool.clone();
     for task_id in 0..num_tasks {
         let barrier_clone = barrier.clone();
         let ctx_clone = Arc::clone(&shared_ctx);
@@ -183,7 +183,7 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> color_eyre::eyre::
             // Insert events concurrently
             for event_num in 0..events_per_task {
                 let inserted = ctx_clone
-                    .create_test_event(
+                    .publish_json_event(
                         &format!("task-{task_id}-{run_suffix}"),
                         "concurrent.test",
                         json!({
@@ -250,8 +250,6 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> color_eyre::eyre::
     assert_eq!(total_events, num_tasks * events_per_task);
     assert_eq!(all_id_strings.len(), total_events);
 
-    sinex_test_utils::db_common::reset_database(&pool_for_cleanup).await?;
-    sinex_test_utils::db_common::verify_clean_state(&pool_for_cleanup).await?;
     Ok(())
 }
 
@@ -259,22 +257,15 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> color_eyre::eyre::
 // TRANSACTION SEMANTICS
 // =============================================================================
 
-#[sinex_test]
-async fn test_transaction_rollback(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
-    if let Err(e) = sinex_test_utils::db_common::reset_database(&ctx.pool).await {
-        tracing::warn!(error = %e, "Reset before transaction rollback failed, retrying after force_cleanup");
-        ctx.force_cleanup().await?;
-        sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    }
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
+#[sinex_serial_test]
+async fn test_transaction_rollback(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
 
     let initial_count = ctx.pool.events().count_all().await?;
 
     // Test successful transaction
     let _success_event = ctx
-        .create_test_event("transaction-test", "success", json!({"test": "commit"}))
+        .publish_json_event("transaction-test", "success", json!({"test": "commit"}))
         .await?;
 
     let after_success = ctx.pool.events().count_all().await?;
@@ -283,7 +274,7 @@ async fn test_transaction_rollback(ctx: TestContext) -> color_eyre::eyre::Result
     // Note: Complex transaction rollback testing requires low-level database access
     // For now, we test that invalid events are properly rejected
     let invalid_result = ctx
-        .create_test_event(
+        .publish_json_event(
             "", // Empty source should be rejected
             "rollback",
             json!({"test": "rollback"}),
@@ -306,14 +297,6 @@ async fn test_transaction_rollback(ctx: TestContext) -> color_eyre::eyre::Result
         )
         .await?;
     assert_eq!(rollback_events.len(), 0);
-
-    if let Err(e) = sinex_test_utils::db_common::reset_database(&ctx.pool).await {
-        tracing::warn!(error = %e, "Reset after transaction rollback failed, retrying after force_cleanup");
-        ctx.force_cleanup().await?;
-        sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    }
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
-    ctx.force_cleanup().await?;
     Ok(())
 }
 
@@ -322,10 +305,10 @@ async fn test_transaction_rollback(ctx: TestContext) -> color_eyre::eyre::Result
 // =============================================================================
 
 #[sinex_test]
-async fn test_schema_validation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_schema_validation(ctx: TestContext) -> TestResult<()> {
     // Test creating events with valid payloads
     let valid_event = ctx
-        .create_test_event(
+        .publish_json_event(
             "schema-test",
             "valid.event",
             json!({
@@ -342,7 +325,7 @@ async fn test_schema_validation(ctx: TestContext) -> color_eyre::eyre::Result<()
     // We're testing the repository layer behavior
 
     let edge_case_event = ctx
-        .create_test_event(
+        .publish_json_event(
             "schema-test",
             "edge.case",
             json!({
@@ -364,7 +347,7 @@ async fn test_schema_validation(ctx: TestContext) -> color_eyre::eyre::Result<()
 // =============================================================================
 
 #[sinex_test]
-async fn test_bulk_insert_performance(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_bulk_insert_performance(ctx: TestContext) -> TestResult<()> {
     let batch_size = 100;
     let start_time = std::time::Instant::now();
     let bootstrap_material =
@@ -384,7 +367,7 @@ async fn test_bulk_insert_performance(ctx: TestContext) -> color_eyre::eyre::Res
             }),
         )
         .from_material(bootstrap_material, 0)
-        .build();
+        .build()?;
         events.push(event);
     }
 
@@ -418,12 +401,26 @@ async fn test_bulk_insert_performance(ctx: TestContext) -> color_eyre::eyre::Res
 }
 
 #[sinex_test]
-async fn test_query_performance(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    let _guard = sinex_test_utils::acquire_pool_test_guard().await;
-    ctx.force_cleanup().await?;
+async fn pool_acquire_timeout_is_reported(ctx: TestContext) -> TestResult<()> {
+    let config = PoolConfig {
+        max_connections: 1,
+        min_connections: 1,
+        acquire_timeout_secs: Seconds::from_secs(30),
+        idle_timeout_secs: Seconds::from_secs(300),
+        validate_against_postgres_max: false,
+    };
+    let pool = create_pool_with_config(ctx.database_url(), &config).await?;
+
+    let _conn = pool.acquire().await?;
+    let result = acquire_with_timeout(&pool, Duration::from_millis(50)).await;
+    assert!(matches!(result, Err(SinexError::Timeout(_))));
+
+    Ok(())
+}
+
+#[sinex_serial_test]
+async fn test_query_performance(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
 
     // Insert test data
     let num_events = 200;
@@ -484,10 +481,6 @@ async fn test_query_performance(ctx: TestContext) -> color_eyre::eyre::Result<()
         query_duration.as_millis()
     );
 
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
-    ctx.force_cleanup().await?;
-
     Ok(())
 }
 
@@ -496,7 +489,7 @@ async fn test_query_performance(ctx: TestContext) -> color_eyre::eyre::Result<()
 // =============================================================================
 
 #[sinex_test]
-async fn test_ulid_persistence(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_ulid_persistence(ctx: TestContext) -> TestResult<()> {
     // Test specific ULID edge cases
     let test_ulid = Ulid::from_str("01ARZ3NDEKTSV4RRFFQ69G5FAV")?;
 
@@ -527,7 +520,7 @@ async fn test_ulid_persistence(ctx: TestContext) -> color_eyre::eyre::Result<()>
 }
 
 #[sinex_test]
-async fn test_timestamp_handling(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_timestamp_handling(ctx: TestContext) -> TestResult<()> {
     use chrono::{Duration as ChronoDuration, TimeZone, Utc};
 
     // Test with specific original timestamp
@@ -583,12 +576,12 @@ async fn test_timestamp_handling(ctx: TestContext) -> color_eyre::eyre::Result<(
 // =============================================================================
 
 #[sinex_test]
-async fn test_constraint_violations(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_constraint_violations(ctx: TestContext) -> TestResult<()> {
     // Test handling of constraint violations gracefully
 
     // Empty source should be rejected
     let empty_source_result = ctx
-        .create_test_event(
+        .publish_json_event(
             "", // Empty source
             "test.event",
             json!({"data": "test"}),
@@ -598,7 +591,7 @@ async fn test_constraint_violations(ctx: TestContext) -> color_eyre::eyre::Resul
 
     // Empty event type should be rejected
     let empty_type_result = ctx
-        .create_test_event(
+        .publish_json_event(
             "test-source",
             "", // Empty event type
             json!({"data": "test"}),
@@ -615,7 +608,7 @@ async fn test_constraint_violations(ctx: TestContext) -> color_eyre::eyre::Resul
 }
 
 #[sinex_test]
-async fn test_database_recovery_scenarios(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_database_recovery_scenarios(ctx: TestContext) -> TestResult<()> {
     // Test various scenarios that could cause database issues
 
     // Large JSON payload
@@ -634,7 +627,7 @@ async fn test_database_recovery_scenarios(ctx: TestContext) -> color_eyre::eyre:
     });
 
     let large_event = ctx
-        .create_test_event("recovery-test", "large.payload", large_payload)
+        .publish_json_event("recovery-test", "large.payload", large_payload)
         .await?;
 
     assert!(large_event.id.is_some());

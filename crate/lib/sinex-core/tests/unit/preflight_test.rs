@@ -1,7 +1,7 @@
 // Preflight Unit Tests - Comprehensive verification phase testing
 
 use serde_json::Value;
-use sinex_satellite_sdk::preflight::{
+use sinex_node_sdk::preflight::{
     configuration, database, resources, services, verification, VerificationStatus,
 };
 use sinex_test_utils::prelude::*;
@@ -17,10 +17,10 @@ fn env_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
-async fn with_database_url<F, Fut, T>(database_url: &str, f: F) -> T
+async fn with_database_url<F, Fut, T>(database_url: &str, f: F) -> TestResult<T>
 where
     F: FnOnce() -> Fut,
-    Fut: Future<Output = T>,
+    Fut: Future<Output = TestResult<T>>,
 {
     let _guard = env_lock().lock().unwrap();
     let previous = env::var("DATABASE_URL").ok();
@@ -33,10 +33,10 @@ where
     result
 }
 
-async fn without_database_url<F, Fut, T>(f: F) -> T
+async fn without_database_url<F, Fut, T>(f: F) -> TestResult<T>
 where
     F: FnOnce() -> Fut,
-    Fut: Future<Output = T>,
+    Fut: Future<Output = TestResult<T>>,
 {
     let _guard = env_lock().lock().unwrap();
     let previous = env::var("DATABASE_URL").ok();
@@ -51,7 +51,7 @@ where
 
 /// Test basic VerificationStatus functionality
 #[sinex_test]
-async fn test_verification_status_basic() -> color_eyre::eyre::Result<()> {
+async fn test_verification_status_basic() -> TestResult<()> {
     // Test that VerificationStatus enum works correctly
     assert_eq!(VerificationStatus::Pass, VerificationStatus::Pass);
     assert_ne!(VerificationStatus::Pass, VerificationStatus::Fail);
@@ -66,7 +66,7 @@ async fn test_verification_status_basic() -> color_eyre::eyre::Result<()> {
 
 /// Test verification status comparisons
 #[sinex_test]
-async fn test_verification_status_comparisons() -> color_eyre::eyre::Result<()> {
+async fn test_verification_status_comparisons() -> TestResult<()> {
     // Test basic equality
     assert_eq!(VerificationStatus::Pass, VerificationStatus::Pass);
     assert_eq!(VerificationStatus::Warning, VerificationStatus::Warning);
@@ -84,9 +84,7 @@ async fn test_verification_status_comparisons() -> color_eyre::eyre::Result<()> 
 
 /// Test Phase 1: Database connectivity verification with valid connection
 #[sinex_test]
-async fn test_phase1_database_connectivity_success(
-    ctx: TestContext,
-) -> color_eyre::eyre::Result<()> {
+async fn test_phase1_database_connectivity_success(ctx: TestContext) -> TestResult<()> {
     let db_url = ctx.database_url().to_string();
     with_database_url(&db_url, || async {
         let (status, details, messages) = database::verify_database_connectivity().await?;
@@ -109,7 +107,7 @@ async fn test_phase1_database_connectivity_success(
 
 /// Test Phase 1: Database connectivity with invalid URL
 #[sinex_test]
-async fn test_phase1_database_connectivity_failure() -> color_eyre::eyre::Result<()> {
+async fn test_phase1_database_connectivity_failure() -> TestResult<()> {
     with_database_url("postgresql://invalid:5432/nonexistent", || async {
         let (status, _details, messages) = database::verify_database_connectivity().await?;
 
@@ -125,7 +123,7 @@ async fn test_phase1_database_connectivity_failure() -> color_eyre::eyre::Result
 
 /// Test Phase 1: Database connectivity timeout handling
 #[sinex_test]
-async fn test_phase1_database_connectivity_timeout() -> color_eyre::eyre::Result<()> {
+async fn test_phase1_database_connectivity_timeout() -> TestResult<()> {
     with_database_url("postgresql://192.0.2.1:5432/test", || async {
         let result = timeout(
             Duration::from_secs(10),
@@ -159,7 +157,7 @@ async fn test_phase1_database_connectivity_timeout() -> color_eyre::eyre::Result
 
 /// Test Phase 2: PostgreSQL extensions verification
 #[sinex_test]
-async fn test_phase2_postgresql_extensions(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_phase2_postgresql_extensions(ctx: TestContext) -> TestResult<()> {
     let db_url = ctx.database_url().to_string();
     with_database_url(&db_url, || async {
         let (_status, details, messages) = database::verify_postgresql_extensions().await?;
@@ -185,7 +183,7 @@ async fn test_phase2_postgresql_extensions(ctx: TestContext) -> color_eyre::eyre
 
 /// Test Phase 2: Extensions verification with database connection failure
 #[sinex_test]
-async fn test_phase2_extensions_db_failure() -> color_eyre::eyre::Result<()> {
+async fn test_phase2_extensions_db_failure() -> TestResult<()> {
     with_database_url("postgresql://invalid:5432/nonexistent", || async {
         let result = database::verify_postgresql_extensions().await;
         assert!(result.is_err());
@@ -200,7 +198,7 @@ async fn test_phase2_extensions_db_failure() -> color_eyre::eyre::Result<()> {
 
 /// Test Phase 3: Migration readiness verification
 #[sinex_test]
-async fn test_phase3_migration_readiness(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_phase3_migration_readiness(ctx: TestContext) -> TestResult<()> {
     let db_url = ctx.database_url().to_string();
     with_database_url(&db_url, || async {
         let (status, details, messages) = database::verify_migration_readiness().await?;
@@ -224,7 +222,7 @@ async fn test_phase3_migration_readiness(ctx: TestContext) -> color_eyre::eyre::
 
 /// Test Phase 3: Migration readiness with invalid database
 #[sinex_test]
-async fn test_phase3_migration_readiness_db_failure() -> color_eyre::eyre::Result<()> {
+async fn test_phase3_migration_readiness_db_failure() -> TestResult<()> {
     with_database_url("postgresql://invalid:5432/nonexistent", || async {
         let result = database::verify_migration_readiness().await;
         assert!(result.is_err());
@@ -239,7 +237,7 @@ async fn test_phase3_migration_readiness_db_failure() -> color_eyre::eyre::Resul
 
 /// Test Phase 4: System resources verification success
 #[sinex_test]
-async fn test_phase4_system_resources_success() -> color_eyre::eyre::Result<()> {
+async fn test_phase4_system_resources_success() -> TestResult<()> {
     let (_status, details, messages) = resources::verify_system_resources().await?;
 
     assert!(!messages.is_empty());
@@ -258,7 +256,7 @@ async fn test_phase4_system_resources_success() -> color_eyre::eyre::Result<()> 
 
 /// Test Phase 4: Filesystem permissions verification with temp directory
 #[sinex_test]
-async fn test_phase4_filesystem_permissions() -> color_eyre::eyre::Result<()> {
+async fn test_phase4_filesystem_permissions() -> TestResult<()> {
     // Create a temporary directory for testing using std::env::temp_dir
     let temp_dir = std::env::temp_dir();
     let test_file = temp_dir.join("sinex_test_file_temp");
@@ -283,7 +281,7 @@ async fn test_phase4_filesystem_permissions() -> color_eyre::eyre::Result<()> {
 
 /// Test Phase 5: Configuration verification success
 #[sinex_test]
-async fn test_phase5_configuration_success(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_phase5_configuration_success(ctx: TestContext) -> TestResult<()> {
     let db_url = ctx.database_url().to_string();
     with_database_url(&db_url, || async {
         let (_status, details, messages) = configuration::verify_configuration_generation().await?;
@@ -302,7 +300,7 @@ async fn test_phase5_configuration_success(ctx: TestContext) -> color_eyre::eyre
 
 /// Test Phase 5: Configuration with missing environment variables
 #[sinex_test]
-async fn test_phase5_configuration_missing_env() -> color_eyre::eyre::Result<()> {
+async fn test_phase5_configuration_missing_env() -> TestResult<()> {
     without_database_url(|| async {
         let (status, _details, messages) = configuration::verify_configuration_generation().await?;
 
@@ -320,7 +318,7 @@ async fn test_phase5_configuration_missing_env() -> color_eyre::eyre::Result<()>
 
 /// Test Phase 5: Configuration format validation
 #[sinex_test]
-async fn test_phase5_config_format_validation() -> color_eyre::eyre::Result<()> {
+async fn test_phase5_config_format_validation() -> TestResult<()> {
     // Test JSON configuration format (since we don't have toml crate)
     let test_config = r#"{
   "database": {
@@ -350,7 +348,7 @@ async fn test_phase5_config_format_validation() -> color_eyre::eyre::Result<()> 
 
 /// Test Phase 6: Service dependencies verification
 #[sinex_test]
-async fn test_phase6_service_dependencies() -> color_eyre::eyre::Result<()> {
+async fn test_phase6_service_dependencies() -> TestResult<()> {
     let (_status, details, messages) = services::verify_service_dependencies().await?;
 
     assert!(!messages.is_empty());
@@ -368,7 +366,7 @@ async fn test_phase6_service_dependencies() -> color_eyre::eyre::Result<()> {
 
 /// Test Phase 6: Binary availability verification
 #[sinex_test]
-async fn test_phase6_binary_availability() -> color_eyre::eyre::Result<()> {
+async fn test_phase6_binary_availability() -> TestResult<()> {
     // Test with a binary that should exist (ls)
     let output = std::process::Command::new("which")
         .arg("ls")
@@ -395,7 +393,7 @@ async fn test_phase6_binary_availability() -> color_eyre::eyre::Result<()> {
 
 /// Test Phase 7: End-to-end integration verification
 #[sinex_test]
-async fn test_phase7_integration_success(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_phase7_integration_success(ctx: TestContext) -> TestResult<()> {
     let db_url = ctx.database_url().to_string();
     with_database_url(&db_url, || async {
         let (status, details, messages) = verification::verify_end_to_end_integration().await?;
@@ -422,7 +420,7 @@ async fn test_phase7_integration_success(ctx: TestContext) -> color_eyre::eyre::
 
 /// Test Phase 7: Integration with database connection failure
 #[sinex_test]
-async fn test_phase7_integration_db_failure() -> color_eyre::eyre::Result<()> {
+async fn test_phase7_integration_db_failure() -> TestResult<()> {
     with_database_url("postgresql://invalid:5432/nonexistent", || async {
         let (status, _details, messages) = verification::verify_end_to_end_integration().await?;
 
@@ -442,7 +440,7 @@ async fn test_phase7_integration_db_failure() -> color_eyre::eyre::Result<()> {
 
 /// Test verification status basic properties
 #[sinex_test]
-async fn test_verification_status_properties() -> color_eyre::eyre::Result<()> {
+async fn test_verification_status_properties() -> TestResult<()> {
     // Test that VerificationStatus enum works correctly
     let statuses = vec![
         VerificationStatus::Pass,
@@ -465,7 +463,7 @@ async fn test_verification_status_properties() -> color_eyre::eyre::Result<()> {
 
 /// Test error message formatting and context
 #[sinex_test]
-async fn test_error_message_formatting() -> color_eyre::eyre::Result<()> {
+async fn test_error_message_formatting() -> TestResult<()> {
     // Test various error scenarios and verify message formatting
     let test_cases = vec![
         ("✓ Success message format", true),

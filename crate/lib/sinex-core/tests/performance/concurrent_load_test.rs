@@ -4,7 +4,6 @@
 // Focuses on measuring throughput, latency, and system stability
 // when multiple operations are running simultaneously.
 
-use sinex_test_utils::TestResult;
 use serde_json::json;
 use sinex_core::db::queries::{CheckpointQueries, EventQueries};
 use sinex_core::db::query_builder::{QueryBuilder, QueryParam};
@@ -158,7 +157,7 @@ impl ConcurrentLoadMetrics {
 
 /// Test concurrent event ingestion with multiple workers
 #[sinex_bench]
-async fn test_concurrent_event_ingestion(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_concurrent_event_ingestion(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
     let metrics = ConcurrentLoadMetrics::new();
 
@@ -289,7 +288,7 @@ async fn test_concurrent_event_ingestion(ctx: TestContext) -> color_eyre::eyre::
 
 /// Test mixed workload with different operation types
 #[sinex_bench]
-async fn test_mixed_concurrent_workload(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_mixed_concurrent_workload(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
     let metrics = ConcurrentLoadMetrics::new();
 
@@ -474,7 +473,7 @@ async fn test_mixed_concurrent_workload(ctx: TestContext) -> color_eyre::eyre::R
 
 /// Test system behavior under high concurrency with rate limiting
 #[sinex_bench]
-async fn test_rate_limited_concurrent_load(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_rate_limited_concurrent_load(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
     let metrics = ConcurrentLoadMetrics::new();
 
@@ -581,7 +580,7 @@ async fn test_rate_limited_concurrent_load(ctx: TestContext) -> color_eyre::eyre
 
 /// Test burst load handling
 #[sinex_bench]
-async fn test_burst_load_handling(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_burst_load_handling(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
     let metrics = ConcurrentLoadMetrics::new();
 

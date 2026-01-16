@@ -3,9 +3,10 @@ use sinex_core::validation::validation_chains::ValidateExt;
 use validator::Validate;
 
 use sinex_test_utils::sinex_test;
+use sinex_test_utils::TestResult;
 
 #[sinex_test]
-fn database_config_validation_flags_invalid_fields() -> color_eyre::eyre::Result<()> {
+fn database_config_validation_flags_invalid_fields() -> TestResult<()> {
     let valid_config = DatabaseConfig {
         connection_url: "postgresql://user:pass@localhost/db".to_string(),
         max_connections: 100,
@@ -29,7 +30,7 @@ fn database_config_validation_flags_invalid_fields() -> color_eyre::eyre::Result
 }
 
 #[sinex_test]
-fn event_validation_schema_enforces_rules() -> color_eyre::eyre::Result<()> {
+fn event_validation_schema_enforces_rules() -> TestResult<()> {
     let valid_event = EventValidation {
         event_type: "user.created".to_string(),
         source: "api".to_string(),
@@ -49,7 +50,7 @@ fn event_validation_schema_enforces_rules() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-fn friendly_error_formatting_mentions_fields() -> color_eyre::eyre::Result<()> {
+fn friendly_error_formatting_mentions_fields() -> TestResult<()> {
     let config = DatabaseConfig {
         connection_url: "invalid".to_string(),
         max_connections: 0,

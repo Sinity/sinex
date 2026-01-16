@@ -1,40 +1,6 @@
 -- PostgreSQL-native monitoring views for Sinex
 -- These views replace the telemetry system by querying state directly
 
--- Processing throughput from checkpoint data
-CREATE OR REPLACE VIEW metrics.processing_throughput AS
-SELECT 
-    processor_name,
-    processed_count,
-    CASE 
-        WHEN EXTRACT(epoch FROM (updated_at - created_at)) > 0 
-        THEN processed_count / EXTRACT(epoch FROM (updated_at - created_at))
-        ELSE 0
-    END as events_per_sec,
-    updated_at as last_update,
-    EXTRACT(epoch FROM (NOW() - last_activity)) as seconds_since_activity
-FROM core.processor_checkpoints
-WHERE consumer_group = 'default';
-
-COMMENT ON VIEW metrics.processing_throughput IS 'Real-time processing throughput calculated from checkpoint data';
-
--- Service health from checkpoint activity
-CREATE OR REPLACE VIEW metrics.service_health AS
-SELECT 
-    processor_name as service,
-    CASE 
-        WHEN EXTRACT(epoch FROM (NOW() - last_activity)) < 60 THEN 'healthy'
-        WHEN EXTRACT(epoch FROM (NOW() - last_activity)) < 300 THEN 'warning'
-        ELSE 'critical'
-    END as health_status,
-    last_activity,
-    processed_count as total_processed,
-    checkpoint_data->>'batch_size' as batch_size,
-    EXTRACT(epoch FROM (NOW() - last_activity)) as seconds_inactive
-FROM core.processor_checkpoints;
-
-COMMENT ON VIEW metrics.service_health IS 'Service health based on checkpoint activity';
-
 -- Error rates from operations log
 CREATE OR REPLACE VIEW metrics.error_rates AS
 SELECT 
@@ -70,38 +36,6 @@ GROUP BY source, event_type
 ORDER BY events_per_sec DESC;
 
 COMMENT ON VIEW metrics.ingestion_rates IS 'Event ingestion rates over the last 5 minutes';
-
--- Processing lag (events waiting to be processed)
-CREATE OR REPLACE VIEW metrics.processing_lag AS
-WITH latest_checkpoints AS (
-    SELECT 
-        processor_name,
-        last_processed_id,
-        last_activity
-    FROM core.processor_checkpoints
-    WHERE consumer_group = 'default'
-),
-unprocessed_counts AS (
-    SELECT 
-        cp.processor_name,
-        COUNT(e.id) as unprocessed_events,
-        MIN(e.ts_ingest) as oldest_unprocessed,
-        MAX(e.ts_ingest) as newest_unprocessed
-    FROM latest_checkpoints cp
-    LEFT JOIN core.events e ON e.id > cp.last_processed_id
-    GROUP BY cp.processor_name
-)
-SELECT 
-    processor_name,
-    unprocessed_events,
-    oldest_unprocessed,
-    newest_unprocessed,
-    EXTRACT(epoch FROM (NOW() - oldest_unprocessed)) as oldest_lag_seconds,
-    EXTRACT(epoch FROM (NOW() - newest_unprocessed)) as newest_lag_seconds
-FROM unprocessed_counts
-WHERE unprocessed_events > 0;
-
-COMMENT ON VIEW metrics.processing_lag IS 'Events waiting to be processed by each processor';
 
 -- Database connection stats (using pg_stat_database)
 CREATE OR REPLACE VIEW metrics.database_stats AS
@@ -162,38 +96,9 @@ ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC;
 
 COMMENT ON VIEW metrics.table_sizes IS 'Table sizes and maintenance statistics';
 
--- NATS stream state (placeholder - would need foreign data wrapper)
--- This is a stub showing how external state could be queried
-CREATE OR REPLACE FUNCTION metrics.nats_stream_state()
-RETURNS TABLE(
-    stream_name text,
-    messages bigint,
-    bytes bigint,
-    first_seq bigint,
-    last_seq bigint,
-    consumer_count int
-) AS $$
-BEGIN
-    -- In production, this would query NATS JetStream API
-    -- via HTTP or use a foreign data wrapper
-    -- For now, return empty result set
-    RETURN;
-END;
-$$ LANGUAGE plpgsql;
-
-COMMENT ON FUNCTION metrics.nats_stream_state() IS 'Query NATS JetStream state (requires FDW setup)';
-
 -- Combined system health dashboard query
 CREATE OR REPLACE VIEW metrics.system_dashboard AS
-WITH service_summary AS (
-    SELECT 
-        COUNT(*) as total_services,
-        COUNT(*) FILTER (WHERE health_status = 'healthy') as healthy_services,
-        COUNT(*) FILTER (WHERE health_status = 'warning') as warning_services,
-        COUNT(*) FILTER (WHERE health_status = 'critical') as critical_services
-    FROM metrics.service_health
-),
-ingestion_summary AS (
+WITH ingestion_summary AS (
     SELECT 
         SUM(events_per_sec) as total_ingestion_rate,
         COUNT(DISTINCT source) as active_sources
@@ -211,18 +116,13 @@ db_summary AS (
     FROM metrics.database_stats
 )
 SELECT 
-    ss.total_services,
-    ss.healthy_services,
-    ss.warning_services,
-    ss.critical_services,
     COALESCE(ins.total_ingestion_rate, 0) as total_events_per_sec,
     COALESCE(ins.active_sources, 0) as active_sources,
     COALESCE(es.avg_error_rate, 0) as avg_error_rate,
     ds.active_connections,
     ds.cache_hit_ratio,
     NOW() as snapshot_time
-FROM service_summary ss
-CROSS JOIN ingestion_summary ins
+FROM ingestion_summary ins
 CROSS JOIN error_summary es
 CROSS JOIN db_summary ds;
 

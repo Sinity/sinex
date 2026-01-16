@@ -8,13 +8,19 @@
 //! - Token extraction from various header formats
 //! - Constant-time comparison behavior
 //! - Environment variable token loading
-//! - Authentication mode transitions
+//! - Authentication mode enforcement
 
 use axum::http::{HeaderMap, HeaderValue};
-use sinex_gateway::rpc_server::test_support as rpc_test_support;
-use std::env;
+use sinex_gateway::rpc_server_test_support as rpc_test_support;
+use sinex_test_utils::EnvGuard;
 use std::fs;
 use tempfile::TempDir;
+
+fn reset_token_env(env: &mut EnvGuard) {
+    env.clear("SINEX_GATEWAY_ADMIN_TOKEN_FILE");
+    env.clear("SINEX_RPC_TOKEN_FILE");
+    env.clear("SINEX_RPC_TOKEN");
+}
 
 // =============================================================================
 // Token Extraction Tests
@@ -45,35 +51,6 @@ fn test_extract_token_bearer_with_extra_whitespace() {
 }
 
 #[test]
-fn test_extract_token_x_sinex_rpc_token_header() {
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        "x-sinex-rpc-token",
-        HeaderValue::from_static("direct-token"),
-    );
-
-    let token = rpc_test_support::extract_token(&headers);
-    assert_eq!(token, Some("direct-token".to_string()));
-}
-
-#[test]
-fn test_extract_token_bearer_takes_precedence() {
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        axum::http::header::AUTHORIZATION,
-        HeaderValue::from_static("Bearer bearer-token"),
-    );
-    headers.insert(
-        "x-sinex-rpc-token",
-        HeaderValue::from_static("x-header-token"),
-    );
-
-    let token = rpc_test_support::extract_token(&headers);
-    // Bearer should take precedence
-    assert_eq!(token, Some("bearer-token".to_string()));
-}
-
-#[test]
 fn test_extract_token_no_auth_header() {
     let headers = HeaderMap::new();
     let token = rpc_test_support::extract_token(&headers);
@@ -89,7 +66,7 @@ fn test_extract_token_authorization_without_bearer() {
     );
 
     let token = rpc_test_support::extract_token(&headers);
-    // Should fall through to x-sinex-rpc-token, which doesn't exist
+    // Non-bearer schemes should be ignored.
     assert_eq!(token, None);
 }
 
@@ -142,7 +119,10 @@ fn test_constant_time_eq_different() {
 
 #[test]
 fn test_constant_time_eq_different_lengths() {
-    assert!(!rpc_test_support::constant_time_eq(b"short", b"longer-token"));
+    assert!(!rpc_test_support::constant_time_eq(
+        b"short",
+        b"longer-token"
+    ));
 }
 
 #[test]
@@ -181,60 +161,78 @@ fn test_constant_time_eq_unicode() {
 
 #[test]
 fn test_read_token_from_env_direct() {
-    env::set_var("SINEX_RPC_TOKEN", "test-token-123");
-    env::remove_var("SINEX_RPC_TOKEN_FILE"); // Ensure file var is not set
+    let mut env = EnvGuard::new();
+    reset_token_env(&mut env);
+    env.set("SINEX_RPC_TOKEN", "test-token-123");
 
     let token = rpc_test_support::read_token_from_env().unwrap();
     assert_eq!(token, Some("test-token-123".to_string()));
-
-    env::remove_var("SINEX_RPC_TOKEN");
 }
 
 #[test]
 fn test_read_token_from_env_file() {
+    let mut env = EnvGuard::new();
+    reset_token_env(&mut env);
     let temp_dir = TempDir::new().unwrap();
     let token_file = temp_dir.path().join("token");
     fs::write(&token_file, "  file-based-token  \n").unwrap();
 
-    env::set_var("SINEX_RPC_TOKEN_FILE", token_file.to_str().unwrap());
-    env::remove_var("SINEX_RPC_TOKEN"); // Ensure direct var is not set
+    env.set("SINEX_RPC_TOKEN_FILE", token_file.to_str().unwrap());
 
     let token = rpc_test_support::read_token_from_env().unwrap();
     assert_eq!(token, Some("file-based-token".to_string()));
-
-    env::remove_var("SINEX_RPC_TOKEN_FILE");
 }
 
 #[test]
 fn test_read_token_file_takes_precedence() {
+    let mut env = EnvGuard::new();
+    reset_token_env(&mut env);
     let temp_dir = TempDir::new().unwrap();
     let token_file = temp_dir.path().join("token");
     fs::write(&token_file, "file-token").unwrap();
 
-    env::set_var("SINEX_RPC_TOKEN_FILE", token_file.to_str().unwrap());
-    env::set_var("SINEX_RPC_TOKEN", "direct-token");
+    env.set("SINEX_RPC_TOKEN_FILE", token_file.to_str().unwrap());
+    env.set("SINEX_RPC_TOKEN", "direct-token");
 
     let token = rpc_test_support::read_token_from_env().unwrap();
     assert_eq!(token, Some("file-token".to_string()));
+}
 
-    env::remove_var("SINEX_RPC_TOKEN_FILE");
-    env::remove_var("SINEX_RPC_TOKEN");
+#[test]
+fn test_admin_token_file_takes_precedence() {
+    let mut env = EnvGuard::new();
+    reset_token_env(&mut env);
+    let temp_dir = TempDir::new().unwrap();
+    let admin_file = temp_dir.path().join("admin-token");
+    let rpc_file = temp_dir.path().join("rpc-token");
+
+    fs::write(&admin_file, "admin-token").unwrap();
+    fs::write(&rpc_file, "rpc-token").unwrap();
+
+    env.set(
+        "SINEX_GATEWAY_ADMIN_TOKEN_FILE",
+        admin_file.to_str().unwrap(),
+    );
+    env.set("SINEX_RPC_TOKEN_FILE", rpc_file.to_str().unwrap());
+
+    let token = rpc_test_support::read_token_from_env().unwrap();
+    assert_eq!(token, Some("admin-token".to_string()));
 }
 
 #[test]
 fn test_read_token_from_nonexistent_file() {
-    env::set_var("SINEX_RPC_TOKEN_FILE", "/nonexistent/path/to/token");
-    env::remove_var("SINEX_RPC_TOKEN");
+    let mut env = EnvGuard::new();
+    reset_token_env(&mut env);
+    env.set("SINEX_RPC_TOKEN_FILE", "/nonexistent/path/to/token");
 
     assert!(rpc_test_support::read_token_from_env().is_err());
-
-    env::remove_var("SINEX_RPC_TOKEN_FILE");
 }
 
 #[test]
 fn test_read_token_empty_after_trim() {
-    env::set_var("SINEX_RPC_TOKEN", "   \n\t  ");
-    env::remove_var("SINEX_RPC_TOKEN_FILE");
+    let mut env = EnvGuard::new();
+    reset_token_env(&mut env);
+    env.set("SINEX_RPC_TOKEN", "   \n\t  ");
 
     let token = rpc_test_support::read_token_from_env().unwrap();
 
@@ -242,85 +240,6 @@ fn test_read_token_empty_after_trim() {
 
     // The actual GatewayAuth::from_env() should reject this
     // because token.trim().is_empty() would be true
-
-    env::remove_var("SINEX_RPC_TOKEN");
-}
-
-// =============================================================================
-// Insecure Auth Mode Tests
-// =============================================================================
-
-#[test]
-fn test_insecure_auth_allowed_1() {
-    env::set_var("SINEX_GATEWAY_ALLOW_INSECURE", "1");
-    assert!(rpc_test_support::insecure_auth_allowed());
-    env::remove_var("SINEX_GATEWAY_ALLOW_INSECURE");
-}
-
-#[test]
-fn test_insecure_auth_allowed_true() {
-    env::set_var("SINEX_GATEWAY_ALLOW_INSECURE", "true");
-    assert!(rpc_test_support::insecure_auth_allowed());
-    env::remove_var("SINEX_GATEWAY_ALLOW_INSECURE");
-}
-
-#[test]
-fn test_insecure_auth_allowed_yes() {
-    env::set_var("SINEX_GATEWAY_ALLOW_INSECURE", "yes");
-    assert!(rpc_test_support::insecure_auth_allowed());
-    env::remove_var("SINEX_GATEWAY_ALLOW_INSECURE");
-}
-
-#[test]
-fn test_insecure_auth_allowed_case_insensitive() {
-    env::set_var("SINEX_GATEWAY_ALLOW_INSECURE", "TRUE");
-    assert!(rpc_test_support::insecure_auth_allowed());
-
-    env::set_var("SINEX_GATEWAY_ALLOW_INSECURE", "Yes");
-    assert!(rpc_test_support::insecure_auth_allowed());
-
-    env::remove_var("SINEX_GATEWAY_ALLOW_INSECURE");
-}
-
-#[test]
-fn test_insecure_auth_not_allowed_0() {
-    env::set_var("SINEX_GATEWAY_ALLOW_INSECURE", "0");
-    assert!(!rpc_test_support::insecure_auth_allowed());
-    env::remove_var("SINEX_GATEWAY_ALLOW_INSECURE");
-}
-
-#[test]
-fn test_insecure_auth_not_allowed_false() {
-    env::set_var("SINEX_GATEWAY_ALLOW_INSECURE", "false");
-    assert!(!rpc_test_support::insecure_auth_allowed());
-    env::remove_var("SINEX_GATEWAY_ALLOW_INSECURE");
-}
-
-#[test]
-fn test_insecure_auth_not_allowed_no() {
-    env::set_var("SINEX_GATEWAY_ALLOW_INSECURE", "no");
-    assert!(!rpc_test_support::insecure_auth_allowed());
-    env::remove_var("SINEX_GATEWAY_ALLOW_INSECURE");
-}
-
-#[test]
-fn test_insecure_auth_not_allowed_empty() {
-    env::set_var("SINEX_GATEWAY_ALLOW_INSECURE", "");
-    assert!(!rpc_test_support::insecure_auth_allowed());
-    env::remove_var("SINEX_GATEWAY_ALLOW_INSECURE");
-}
-
-#[test]
-fn test_insecure_auth_not_allowed_unset() {
-    env::remove_var("SINEX_GATEWAY_ALLOW_INSECURE");
-    assert!(!rpc_test_support::insecure_auth_allowed());
-}
-
-#[test]
-fn test_insecure_auth_not_allowed_random_string() {
-    env::set_var("SINEX_GATEWAY_ALLOW_INSECURE", "maybe");
-    assert!(!rpc_test_support::insecure_auth_allowed());
-    env::remove_var("SINEX_GATEWAY_ALLOW_INSECURE");
 }
 
 // =============================================================================
@@ -328,35 +247,75 @@ fn test_insecure_auth_not_allowed_random_string() {
 // =============================================================================
 
 #[test]
-fn test_gateway_max_concurrency_default() {
-    env::remove_var("SINEX_GATEWAY_MAX_CONCURRENCY");
+fn test_gateway_limits_matrix() {
+    struct Case<'a> {
+        name: &'a str,
+        concurrency: Option<&'a str>,
+        timeout_secs: Option<&'a str>,
+        max_body_bytes: Option<&'a str>,
+        expected: rpc_test_support::RpcServerLimitsSnapshot,
+    }
 
-    let limits = rpc_test_support::rpc_server_limits_snapshot();
-    assert_eq!(limits.concurrency_limit, 32);
-}
+    let cases = vec![
+        Case {
+            name: "defaults",
+            concurrency: None,
+            timeout_secs: None,
+            max_body_bytes: None,
+            expected: rpc_test_support::RpcServerLimitsSnapshot {
+                concurrency_limit: 32,
+                request_timeout_secs: sinex_core::types::Seconds::from_secs(30),
+                max_body_bytes: sinex_core::types::Bytes::from_mebibytes(2),
+            },
+        },
+        Case {
+            name: "custom",
+            concurrency: Some("100"),
+            timeout_secs: Some("15"),
+            max_body_bytes: Some("1048576"),
+            expected: rpc_test_support::RpcServerLimitsSnapshot {
+                concurrency_limit: 100,
+                request_timeout_secs: sinex_core::types::Seconds::from_secs(15),
+                max_body_bytes: sinex_core::types::Bytes::from_mebibytes(1),
+            },
+        },
+    ];
 
-#[test]
-fn test_gateway_max_concurrency_custom() {
-    env::set_var("SINEX_GATEWAY_MAX_CONCURRENCY", "100");
+    let mut env = EnvGuard::new();
+    for case in cases {
+        env.clear("SINEX_GATEWAY_MAX_CONCURRENCY");
+        env.clear("SINEX_GATEWAY_REQUEST_TIMEOUT_SECS");
+        env.clear("SINEX_GATEWAY_MAX_BODY_BYTES");
 
-    let limits = rpc_test_support::rpc_server_limits_snapshot();
-    assert_eq!(limits.concurrency_limit, 100);
+        if let Some(value) = case.concurrency {
+            env.set("SINEX_GATEWAY_MAX_CONCURRENCY", value);
+        }
+        if let Some(value) = case.timeout_secs {
+            env.set("SINEX_GATEWAY_REQUEST_TIMEOUT_SECS", value);
+        }
+        if let Some(value) = case.max_body_bytes {
+            env.set("SINEX_GATEWAY_MAX_BODY_BYTES", value);
+        }
 
-    env::remove_var("SINEX_GATEWAY_MAX_CONCURRENCY");
-}
+        let limits = rpc_test_support::rpc_server_limits_snapshot();
+        assert_eq!(
+            limits.concurrency_limit, case.expected.concurrency_limit,
+            "case {} concurrency mismatch",
+            case.name
+        );
+        assert_eq!(
+            limits.request_timeout_secs, case.expected.request_timeout_secs,
+            "case {} timeout mismatch",
+            case.name
+        );
+        assert_eq!(
+            limits.max_body_bytes, case.expected.max_body_bytes,
+            "case {} max body mismatch",
+            case.name
+        );
+    }
 
-#[test]
-fn test_gateway_request_timeout_default() {
-    env::remove_var("SINEX_GATEWAY_REQUEST_TIMEOUT_SECS");
-
-    let limits = rpc_test_support::rpc_server_limits_snapshot();
-    assert_eq!(limits.request_timeout_secs, 30);
-}
-
-#[test]
-fn test_gateway_max_body_bytes_default() {
-    env::remove_var("SINEX_GATEWAY_MAX_BODY_BYTES");
-
-    let limits = rpc_test_support::rpc_server_limits_snapshot();
-    assert_eq!(limits.max_body_bytes, 2 * 1024 * 1024); // 2MB
+    env.clear("SINEX_GATEWAY_MAX_CONCURRENCY");
+    env.clear("SINEX_GATEWAY_REQUEST_TIMEOUT_SECS");
+    env.clear("SINEX_GATEWAY_MAX_BODY_BYTES");
 }
