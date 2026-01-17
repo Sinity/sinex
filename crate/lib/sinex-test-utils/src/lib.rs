@@ -37,17 +37,17 @@ pub use dataset_seeds::{
     AnalyticsDataset, DatasetVariant, EventSpec, QueryDataset, SeedClock, TimestampSpec,
 };
 pub use jetstream::ensure_material_streams;
+pub use jetstream_test_helper::JetStreamTestHelper;
 pub use pipeline::PipelineHarness;
 pub use pipeline_namespace::PipelineNamespace;
 pub use pipeline_scope::PipelineScope;
 pub use preflight::system_test_preflight;
-pub use satellite_publisher::{EventOverrides, TestSatellitePublisher};
+pub use node_publisher::{EventOverrides, TestNodePublisher, TestSatellitePublisher};
 pub use snapshot::TestSnapshot;
-pub use jetstream_test_helper::JetStreamTestHelper;
-pub use test_hooks::{TestCounters, TestHooks, TestHooksBuilder};
 pub use test_context::TestContextFailureSnapshot;
 pub use test_context::TestContextHandle;
 pub use test_context::TestEventBuilder;
+pub use test_hooks::{TestCounters, TestHooks, TestHooksBuilder};
 
 pub struct ProptestCasesGuard {
     previous: Option<String>,
@@ -97,9 +97,9 @@ mod pipeline_scope;
 pub mod preflight;
 mod property_testing;
 pub mod resources;
-mod satellite_management_utils;
-mod satellite_publisher;
-pub mod satellite_runtime;
+mod ingestd_test_utils;
+mod node_publisher;
+pub mod node_runtime;
 pub mod session_guards;
 mod snapshot;
 pub mod snapshot_helper;
@@ -131,18 +131,18 @@ pub mod prelude {
     pub use crate::dataset_seeds::{
         AnalyticsDataset, DatasetVariant, EventSpec, QueryDataset, SeedClock, TimestampSpec,
     };
+    pub use crate::jetstream_test_helper::JetStreamTestHelper;
     pub use crate::system_test_preflight;
+    pub use crate::test_context::TestEventBuilder;
+    pub use crate::test_hooks::{TestCounters, TestHooks};
+    pub use crate::timing_utils::{Timeouts, WaitHelpers, DEFAULT_WAIT_SECS};
     pub use crate::TestContext;
     pub use crate::TestResult;
     pub use crate::{sinex_prop, sinex_proptest, sinex_serial_test, sinex_test};
     pub use crate::{
         ChaosInjestor, EphemeralNats, EventOverrides, PipelineHarness, PipelineScope,
-        TestSatellitePublisher, TestSnapshot,
+        TestNodePublisher, TestSatellitePublisher, TestSnapshot,
     };
-    pub use crate::jetstream_test_helper::JetStreamTestHelper;
-    pub use crate::test_context::TestEventBuilder;
-    pub use crate::test_hooks::{TestCounters, TestHooks};
-    pub use crate::timing_utils::{Timeouts, WaitHelpers, DEFAULT_WAIT_SECS};
     pub use color_eyre::eyre::{bail, ensure, Context, Result};
 
     // Modern test infrastructure - fully integrated
@@ -324,10 +324,10 @@ pub use database_pool::{
 };
 pub use db_common::test_db_pool;
 pub use nats::EphemeralNats;
-pub use satellite_management_utils::{
+pub use ingestd_test_utils::{
     start_test_ingestd_with_config, TestIngestdConfig, TestIngestdHandle,
 };
-pub use satellite_runtime::{TestRuntime, TestRuntimeBuilder};
+pub use node_runtime::{TestRuntime, TestRuntimeBuilder};
 pub use session_guards::EnvGuard;
 pub use test_context::TestContext;
 // Macros are already exported at crate root via #[macro_export]

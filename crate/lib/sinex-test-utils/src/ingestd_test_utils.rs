@@ -1,5 +1,5 @@
-// Satellite test utilities for integration testing
-// Provides test handles for satellites, ingestd, and automata
+// Ingestd test utilities for integration testing
+// Provides test handles for ingestd instances
 
 use std::sync::Arc;
 use std::time::Duration;

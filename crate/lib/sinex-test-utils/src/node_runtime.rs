@@ -17,7 +17,7 @@ use tokio::sync::mpsc;
 
 use crate::{EphemeralNats, TestContext};
 
-/// Fully wired runtime scaffold for satellite integration tests.
+/// Fully wired runtime scaffold for node integration tests.
 pub struct TestRuntime {
     pub runtime: ProcessorRuntimeState,
     pub event_rx: mpsc::Receiver<Event<JsonValue>>,
@@ -106,7 +106,7 @@ impl<'ctx> TestRuntimeBuilder<'ctx> {
         let runtime = ProcessorRuntimeState::new(service_info, handles, raw_config, work_dir);
 
         // Track the runtime’s background pieces for deterministic teardown.
-        ctx.register_background_handle("satellite-runtime", nats.process_handle());
+        ctx.register_background_handle("node-runtime", nats.process_handle());
 
         Ok(TestRuntime {
             runtime,

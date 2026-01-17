@@ -11,15 +11,19 @@ use sinex_node_sdk::acquisition_manager::{AcquisitionManager, RotationPolicy};
 use tokio::time::timeout;
 use tokio_stream::StreamExt;
 
-/// Helper that mimics satellite publishing semantics for tests.
+/// Helper that mimics node publishing semantics for tests.
 #[derive(Clone)]
-pub struct TestSatellitePublisher {
+pub struct TestNodePublisher {
     client: Client,
     js: Context,
     env: SinexEnvironment,
     source: String,
     namespace: Option<String>,
 }
+
+/// Backward compatibility alias for TestNodePublisher.
+#[deprecated(since = "0.5.0", note = "Use TestNodePublisher instead")]
+pub type TestSatellitePublisher = TestNodePublisher;
 
 #[derive(Clone, Debug, Default)]
 pub struct EventOverrides {
@@ -37,7 +41,7 @@ pub struct EventOverrides {
     pub associated_blob_ids: Option<Vec<Ulid>>,
 }
 
-impl TestSatellitePublisher {
+impl TestNodePublisher {
     /// Create a publisher from a raw NATS client and logical source name.
     pub fn new(client: Client, source: impl Into<String>) -> Self {
         Self::with_namespace(client, source, None)
@@ -100,7 +104,7 @@ impl TestSatellitePublisher {
             "payload": payload,
             "ingestor_version": overrides
                 .ingestor_version
-                .unwrap_or_else(|| "test-satellite".to_string()),
+                .unwrap_or_else(|| "test-node".to_string()),
             "payload_schema_id": overrides
                 .payload_schema_id
                 .map(|id| id.to_string()),
@@ -210,7 +214,7 @@ impl TestSatellitePublisher {
             "material_id": material_id.to_string(),
             "material_kind": material_kind,
             "source_identifier": format!("test://{}", self.source),
-            "metadata": json!({"helper": "test_satellite_publisher"}),
+            "metadata": json!({"helper": "test_node_publisher"}),
             "started_at": Utc::now().to_rfc3339(),
         });
 
