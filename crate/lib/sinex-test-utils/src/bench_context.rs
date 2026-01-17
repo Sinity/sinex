@@ -237,8 +237,8 @@ impl BenchContext {
         &self,
         size: crate::static_fixtures::DatasetSize,
     ) -> TestResult<()> {
-        use crate::standard_fixtures::SATELLITE_BENCH_FIXTURE;
-        self.load_fixture(&SATELLITE_BENCH_FIXTURE, size).await
+        use crate::standard_fixtures::NODE_BENCH_FIXTURE;
+        self.load_fixture(&NODE_BENCH_FIXTURE, size).await
     }
 
     /// Load operations benchmark fixture

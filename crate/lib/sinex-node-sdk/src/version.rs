@@ -230,20 +230,20 @@ impl NodeInstance {
 /// # Errors
 /// Returns `NodeError::Configuration` if the node version is invalid
 pub fn node_version() -> crate::NodeResult<Version> {
-    Version::from_str(option_env!("SATELLITE_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")))
+    Version::from_str(option_env!("NODE_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")))
         .map_err(|e| crate::NodeError::Configuration(format!("Invalid node version: {}", e)))
 }
 
 /// Get full version string with build metadata
 pub fn node_full_version() -> String {
-    option_env!("SATELLITE_FULL_VERSION")
+    option_env!("NODE_FULL_VERSION")
         .unwrap_or(env!("CARGO_PKG_VERSION"))
         .to_string()
 }
 
 /// Get git commit hash (8 characters)
 pub fn node_commit_hash() -> String {
-    option_env!("SATELLITE_COMMIT_HASH")
+    option_env!("NODE_COMMIT_HASH")
         .unwrap_or("unknown")
         .to_string()
 }
@@ -253,7 +253,7 @@ pub fn node_commit_hash() -> String {
 /// # Errors
 /// Returns `NodeError::Configuration` if the commit count is invalid
 pub fn node_commit_count() -> crate::NodeResult<u32> {
-    option_env!("SATELLITE_COMMIT_COUNT")
+    option_env!("NODE_COMMIT_COUNT")
         .unwrap_or("0")
         .parse()
         .map_err(|e| crate::NodeError::Configuration(format!("Invalid commit count: {}", e)))
@@ -261,14 +261,14 @@ pub fn node_commit_count() -> crate::NodeResult<u32> {
 
 /// Get git branch name
 pub fn node_branch() -> String {
-    option_env!("SATELLITE_BRANCH")
+    option_env!("NODE_BRANCH")
         .unwrap_or("unknown")
         .to_string()
 }
 
 /// Get build timestamp
 pub fn node_build_timestamp() -> String {
-    option_env!("SATELLITE_BUILD_TIMESTAMP")
+    option_env!("NODE_BUILD_TIMESTAMP")
         .unwrap_or("unknown")
         .to_string()
 }
@@ -278,7 +278,7 @@ pub fn node_build_timestamp() -> String {
 /// # Errors
 /// Returns `NodeError::Configuration` if the dirty flag is invalid
 pub fn node_is_dirty() -> crate::NodeResult<bool> {
-    option_env!("SATELLITE_IS_DIRTY")
+    option_env!("NODE_IS_DIRTY")
         .unwrap_or("false")
         .parse()
         .map_err(|e| crate::NodeError::Configuration(format!("Invalid dirty flag: {}", e)))

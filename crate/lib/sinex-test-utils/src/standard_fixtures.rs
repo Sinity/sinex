@@ -117,7 +117,7 @@ pub static INTEGRATION_FIXTURE: Lazy<FixtureSet> = Lazy::new(|| {
 /// - Continuous streams (sensor mode)
 /// - Error scenarios
 /// - Retry patterns
-pub static SATELLITE_BENCH_FIXTURE: Lazy<FixtureSet> = Lazy::new(|| {
+pub static NODE_BENCH_FIXTURE: Lazy<FixtureSet> = Lazy::new(|| {
     FixtureSet::new()
         .with_events(DatasetSize::Small, 5555)
         .with_events(DatasetSize::Medium, 6666)
@@ -163,7 +163,7 @@ mod tests {
             &*QUERY_BENCH_FIXTURE,
             &*SMOKE_TEST_FIXTURE,
             &*INTEGRATION_FIXTURE,
-            &*SATELLITE_BENCH_FIXTURE,
+            &*NODE_BENCH_FIXTURE,
         ];
 
         let mut seeds = std::collections::HashSet::new();

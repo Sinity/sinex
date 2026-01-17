@@ -90,11 +90,11 @@ pub struct VersionInfo {
 impl VersionInfo {
     /// Create version info for the current component
     pub fn current(component_name: &str) -> Self {
-        let version = option_env!("SATELLITE_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"));
-        let git_revision = option_env!("SATELLITE_COMMIT_HASH")
+        let version = option_env!("NODE_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"));
+        let git_revision = option_env!("NODE_COMMIT_HASH")
             .or_else(|| option_env!("GIT_HASH"))
             .unwrap_or("unknown");
-        let mut binary_hash = option_env!("SATELLITE_BINARY_HASH")
+        let mut binary_hash = option_env!("NODE_BINARY_HASH")
             .or_else(|| option_env!("BINARY_HASH"))
             .or_else(|| option_env!("GIT_HASH"))
             .unwrap_or("unknown");
