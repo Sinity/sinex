@@ -19,20 +19,19 @@ use sinex_core::{
         validation::{validate_watch_path, FileWatchingSecurityPolicy},
         Bytes, Id, Ulid,
     },
-    Event as CoreEvent, HostName, JsonValue, Provenance,
-};
-use sinex_processor_runtime::{
-    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
+    EventBuilder, HostName, JsonValue, Provenance,
 };
 use sinex_node_sdk::{
     acquisition_manager::{AcquisitionManager, RotationPolicy},
     stage_as_you_go::StageAsYouGoContext,
     stream_processor::{
-        Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
-        ProcessorType, ScanArgs, ScanEstimate, ScanReport, ServiceInfo, Node,
-        TimeHorizon,
+        Checkpoint, Node, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
+        ProcessorType, ScanArgs, ScanEstimate, ScanReport, ServiceInfo, TimeHorizon,
     },
     NodeError, NodeResult,
+};
+use sinex_processor_runtime::{
+    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
 };
 use std::{
     collections::HashMap,
@@ -326,10 +325,7 @@ impl Node for FilesystemProcessor {
     type Config = FilesystemConfig;
 
     #[instrument(skip(self, init), fields(processor = "filesystem", service = %init.service_info().service_name()))]
-    async fn initialize(
-        &mut self,
-        init: ProcessorInitContext<Self::Config>,
-    ) -> NodeResult<()> {
+    async fn initialize(&mut self, init: ProcessorInitContext<Self::Config>) -> NodeResult<()> {
         let (config, runtime) = init.into_runtime();
         self.initialise_with_runtime_state(runtime, config).await
     }
@@ -844,14 +840,14 @@ async fn emit_filesystem_event(
         offset_kind: sinex_core::OffsetKind::Byte,
     };
 
-    let event = CoreEvent::create(
+    let mut event = EventBuilder::new(
         sinex_core::types::domain::EventSource::from_static("fs-watcher"),
         sinex_core::types::domain::EventType::from(event_type),
         payload,
-        provenance,
-    );
-
-    let mut event = event;
+    )
+    .with_provenance(provenance)
+    .build()
+    .map_err(|e| NodeError::General(eyre::eyre!("Failed to build event: {}", e)))?;
     event.id = Some(Id::from_ulid(Ulid::new()));
 
     ctx.stage_context

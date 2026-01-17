@@ -22,11 +22,10 @@ mod common {
     };
     // SDK facade for common processor types
     pub use sinex_node_sdk::{
-        error_helpers::{parse_config_value, parse_typed_config, path_utils, processing_error},
+        error_helpers::{parse_config_value, parse_typed_config, path_utils},
         stream_processor::{
-            Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
-            ProcessorType, ScanArgs, ScanEstimate, ScanReport, Node,
-            TimeHorizon,
+            Checkpoint, Node, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
+            ProcessorType, ScanArgs, ScanEstimate, ScanReport, TimeHorizon,
         },
         NodeError, NodeResult,
     };
@@ -42,7 +41,7 @@ mod common {
         },
         tokio::{
             process::Command,
-            time::{interval, timeout},
+            time::interval,
         },
         tracing::{debug, error, info, instrument, warn},
     };

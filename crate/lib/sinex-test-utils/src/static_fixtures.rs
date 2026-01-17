@@ -44,7 +44,6 @@
 
 use crate::fixture_generator::{DatasetConfig, FixtureGenerator};
 use crate::Result;
-#[cfg(test)]
 use chrono::{DateTime, Utc};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};

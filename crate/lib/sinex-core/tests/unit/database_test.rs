@@ -7,7 +7,7 @@
 //! - Transaction semantics
 //! - Performance characteristics
 
-use sinex_core::db::models::{Event, JsonValue};
+use sinex_core::db::models::{Event, EventBuilder, JsonValue};
 use sinex_core::types::domain::{EventSource, EventType, SanitizedPath};
 use sinex_core::types::events::payloads::{FileCreatedPayload, KittyCommandExecutedPayload};
 use sinex_core::types::Seconds;
@@ -358,7 +358,7 @@ async fn test_bulk_insert_performance(ctx: TestContext) -> TestResult<()> {
     // Create batch of events
     let mut events = Vec::new();
     for i in 0..batch_size {
-        let event = Event::dynamic(
+        let event = EventBuilder::new(
             EventSource::from("performance-test"),
             EventType::from("bulk.insert"),
             json!({

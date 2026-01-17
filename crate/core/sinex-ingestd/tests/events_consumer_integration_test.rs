@@ -6,9 +6,9 @@ use color_eyre::eyre::eyre;
 use serde_json::json;
 use sinex_core::{db::query_helpers::ulid_to_uuid, types::ulid::Ulid, DbPoolExt};
 use sinex_ingestd::{validator::EventValidator, JetStreamConsumer, JetStreamTopology};
-use sinex_test_utils::timing_utils::WaitHelpers;
+use sinex_test_utils::timing_utils::{Timeouts, WaitHelpers};
 use sinex_test_utils::{prelude::*, TestSatellitePublisher};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -16,57 +16,28 @@ use tokio::task::JoinHandle;
 use tokio::time::timeout;
 use tokio_stream::StreamExt;
 
-async fn start_consumer(
-    ctx: &TestContext,
-    suffix: &str,
-    ack_wait: Duration,
-    validate: bool,
-    fail_once: Option<Arc<AtomicBool>>,
-    processing_delay: Option<Duration>,
-    delivery_observer: Option<Arc<AtomicU64>>,
-    route_db_errors_to_dlq: bool,
-) -> TestResult<(
-    Client,
-    JoinHandle<sinex_ingestd::IngestdResult<()>>,
-    jetstream::Context,
-    JetStreamTopology,
-    String,
-)> {
-    start_consumer_with_hooks(
-        ctx,
-        suffix,
-        ack_wait,
-        validate,
-        fail_once,
-        processing_delay,
-        delivery_observer,
-        route_db_errors_to_dlq,
-        None,
-    )
-    .await
+/// Consumer setup result with all components needed for testing.
+struct ConsumerSetup {
+    nats_client: Client,
+    handle: JoinHandle<sinex_ingestd::IngestdResult<()>>,
+    js: jetstream::Context,
+    topology: JetStreamTopology,
+    namespace: String,
 }
 
+/// Start a consumer with the given hooks configuration.
+///
+/// Uses the TestHooks builder pattern for cleaner test setup.
 async fn start_consumer_with_hooks(
     ctx: &TestContext,
     suffix: &str,
     ack_wait: Duration,
-    validate: bool,
-    fail_once: Option<Arc<AtomicBool>>,
-    processing_delay: Option<Duration>,
-    delivery_observer: Option<Arc<AtomicU64>>,
-    route_db_errors_to_dlq: bool,
-    confirmation_failures_remaining: Option<Arc<AtomicUsize>>,
-) -> TestResult<(
-    Client,
-    JoinHandle<sinex_ingestd::IngestdResult<()>>,
-    jetstream::Context,
-    JetStreamTopology,
-    String,
-)> {
+    hooks: &TestHooks,
+) -> TestResult<ConsumerSetup> {
     let nats = ctx.nats_handle()?;
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
-    let validator = EventValidator::new(validate);
+    let validator = EventValidator::new(hooks.validate);
 
     let js = nats.jetstream_with_client(nats_client.clone());
     let env = ctx.env();
@@ -88,44 +59,42 @@ async fn start_consumer_with_hooks(
         Arc::new(RwLock::new(validator)),
         topology.clone(),
         ack_wait,
-        fail_once,
-        processing_delay,
-        delivery_observer,
-        route_db_errors_to_dlq,
-        confirmation_failures_remaining,
+        hooks.fail_once.clone(),
+        hooks.processing_delay,
+        hooks.delivery_counter.clone(),
+        hooks.route_db_errors_to_dlq,
+        hooks.confirmation_failures.clone(),
     );
     let handle = tokio::spawn(async move { consumer.run().await });
 
-    nats.wait_for_stream(&js, &topology.events_stream, Duration::from_secs(10))
+    let stream_timeout = Duration::from_secs(Timeouts::SHORT);
+    nats.wait_for_stream(&js, &topology.events_stream, stream_timeout)
         .await?;
-    nats.wait_for_stream(&js, &topology.confirmations_stream, Duration::from_secs(10))
+    nats.wait_for_stream(&js, &topology.confirmations_stream, stream_timeout)
         .await?;
-    nats.wait_for_stream(&js, &topology.dlq_stream, Duration::from_secs(10))
+    nats.wait_for_stream(&js, &topology.dlq_stream, stream_timeout)
         .await?;
 
-    Ok((nats_client, handle, js, topology, namespace))
+    Ok(ConsumerSetup {
+        nats_client,
+        handle,
+        js,
+        topology,
+        namespace,
+    })
 }
 
 #[sinex_test]
 async fn jetstream_consumer_processes_batches_without_dlq(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_shared_nats().await?;
     let suffix = format!("batch-{}", Ulid::new());
-    let (nats_client, handle, js, topology, namespace) = start_consumer(
-        &ctx,
-        &suffix,
-        Duration::from_secs(5),
-        false,
-        None,
-        None,
-        None,
-        false,
-    )
-    .await?;
+    let hooks = TestHooks::none();
+    let setup = start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(5), &hooks).await?;
 
     let publisher = TestSatellitePublisher::with_namespace(
-        nats_client.clone(),
+        setup.nats_client.clone(),
         format!("integration.{suffix}"),
-        Some(namespace.clone()),
+        Some(setup.namespace.clone()),
     );
 
     for idx in 0..100u32 {
@@ -142,15 +111,16 @@ async fn jetstream_consumer_processes_batches_without_dlq(ctx: TestContext) -> T
         .await?;
 
     // Confirm DLQ stayed empty.
-    let dlq_state = js
-        .get_stream(&topology.dlq_stream)
+    let dlq_state = setup
+        .js
+        .get_stream(&setup.topology.dlq_stream)
         .await?
         .info()
         .await?
         .state;
     assert_eq!(dlq_state.messages, 0, "DLQ must remain empty in happy path");
 
-    handle.abort();
+    setup.handle.abort();
     Ok(())
 }
 
@@ -158,32 +128,25 @@ async fn jetstream_consumer_processes_batches_without_dlq(ctx: TestContext) -> T
 async fn jetstream_consumer_survives_transient_db_failure(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_shared_nats().await?;
     let suffix = format!("retry-{}", Ulid::new());
-    let fail_once = Arc::new(AtomicBool::new(true));
-    let (nats_client, handle, js, topology, namespace) = start_consumer(
-        &ctx,
-        &suffix,
-        Duration::from_secs(2),
-        false,
-        Some(fail_once),
-        None,
-        None,
-        false,
-    )
-    .await?;
+    let (hooks, _counters) = TestHooks::builder().fail_once().build();
+    let setup = start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(2), &hooks).await?;
 
     let event_id = Ulid::new();
     let confirmation_subject = format!(
         "{}.{}",
         ctx.env()
-            .nats_subject_with_namespace(Some(&namespace), "events.confirmations"),
+            .nats_subject_with_namespace(Some(&setup.namespace), "events.confirmations"),
         event_id
     );
-    let mut confirmation_sub = nats_client.subscribe(confirmation_subject.clone()).await?;
+    let mut confirmation_sub = setup
+        .nats_client
+        .subscribe(confirmation_subject.clone())
+        .await?;
 
     let publisher = TestSatellitePublisher::with_namespace(
-        nats_client.clone(),
+        setup.nats_client.clone(),
         format!("retry.{suffix}"),
-        Some(namespace.clone()),
+        Some(setup.namespace.clone()),
     );
     publisher
         .publish_event_with_overrides(
@@ -206,30 +169,31 @@ async fn jetstream_consumer_survives_transient_db_failure(ctx: TestContext) -> T
                 Ok::<bool, sinex_test_utils::SinexError>(exists)
             }
         },
-        30,
+        Timeouts::STANDARD,
     )
     .await;
 
     // Confirmations stream should contain the successful confirmation.
-    if timeout(Duration::from_secs(10), confirmation_sub.next())
+    if timeout(Duration::from_secs(Timeouts::SHORT), confirmation_sub.next())
         .await
         .ok()
         .flatten()
         .is_none()
     {
-        handle.abort();
+        setup.handle.abort();
         return Err(eyre!("no confirmation on {confirmation_subject}"));
     }
 
     // Ensure the DLQ stayed empty even through the retry.
-    let dlq_state = js
-        .get_stream(&topology.dlq_stream)
+    let dlq_state = setup
+        .js
+        .get_stream(&setup.topology.dlq_stream)
         .await?
         .info()
         .await?
         .state;
     if dlq_state.messages != 0 {
-        handle.abort();
+        setup.handle.abort();
         return Err(eyre!(
             "DLQ should stay empty on transient DB failure (had {})",
             dlq_state.messages
@@ -243,14 +207,14 @@ async fn jetstream_consumer_survives_transient_db_failure(ctx: TestContext) -> T
             .fetch_one(&ctx.pool)
             .await?;
     if persisted.unwrap_or(0) != 1 {
-        handle.abort();
+        setup.handle.abort();
         return Err(eyre!(
             "redelivery must remain idempotent (got {})",
             persisted.unwrap_or(0)
         ));
     }
 
-    handle.abort();
+    setup.handle.abort();
     Ok(())
 }
 
@@ -258,22 +222,13 @@ async fn jetstream_consumer_survives_transient_db_failure(ctx: TestContext) -> T
 async fn confirmation_emitted_after_persistence(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_shared_nats().await?;
     let suffix = format!("confirm-{}", Ulid::new());
-    let (nats_client, handle, _js, _topology, namespace) = start_consumer(
-        &ctx,
-        &suffix,
-        Duration::from_secs(5),
-        false,
-        None,
-        None,
-        None,
-        false,
-    )
-    .await?;
+    let hooks = TestHooks::none();
+    let setup = start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(5), &hooks).await?;
 
     let publisher = TestSatellitePublisher::with_namespace(
-        nats_client.clone(),
+        setup.nats_client.clone(),
         format!("confirm.{suffix}"),
-        Some(namespace.clone()),
+        Some(setup.namespace.clone()),
     );
     let event_id = publisher
         .publish_event("confirmation.test", json!({"confirm": true}))
@@ -284,9 +239,12 @@ async fn confirmation_emitted_after_persistence(ctx: TestContext) -> TestResult<
         ctx.pipeline_namespace().subject("events.confirmations"),
         event_id
     );
-    let mut sub = nats_client.subscribe(confirmation_subject.clone()).await?;
+    let mut sub = setup
+        .nats_client
+        .subscribe(confirmation_subject.clone())
+        .await?;
 
-    let msg = timeout(Duration::from_secs(10), sub.next())
+    let msg = timeout(Duration::from_secs(Timeouts::SHORT), sub.next())
         .await?
         .ok_or_else(|| eyre!("no confirmation on {confirmation_subject}"))?;
     let payload: serde_json::Value = serde_json::from_slice(&msg.payload)?;
@@ -300,7 +258,7 @@ async fn confirmation_emitted_after_persistence(ctx: TestContext) -> TestResult<
         "confirmation observed before event persistence"
     );
 
-    handle.abort();
+    setup.handle.abort();
     Ok(())
 }
 
@@ -310,20 +268,11 @@ async fn jetstream_consumer_redelivers_when_confirmation_publish_fails(
 ) -> TestResult<()> {
     let ctx = ctx.with_shared_nats().await?;
     let suffix = format!("confirm-retry-{}", Ulid::new());
-    let delivery_counter = Arc::new(AtomicU64::new(0));
-    let confirmation_failures_remaining = Arc::new(AtomicUsize::new(3));
-    let (nats_client, handle, _js, _topology, namespace) = start_consumer_with_hooks(
-        &ctx,
-        &suffix,
-        Duration::from_secs(2),
-        false,
-        None,
-        None,
-        Some(delivery_counter.clone()),
-        false,
-        Some(confirmation_failures_remaining),
-    )
-    .await?;
+    let (hooks, counters) = TestHooks::builder()
+        .count_deliveries()
+        .fail_confirmations(3)
+        .build();
+    let setup = start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(2), &hooks).await?;
 
     let event_id = Ulid::new();
     let confirmation_subject = format!(
@@ -331,12 +280,15 @@ async fn jetstream_consumer_redelivers_when_confirmation_publish_fails(
         ctx.pipeline_namespace().subject("events.confirmations"),
         event_id
     );
-    let mut sub = nats_client.subscribe(confirmation_subject.clone()).await?;
+    let mut sub = setup
+        .nats_client
+        .subscribe(confirmation_subject.clone())
+        .await?;
 
     let publisher = TestSatellitePublisher::with_namespace(
-        nats_client.clone(),
+        setup.nats_client.clone(),
         format!("confirm-retry.{suffix}"),
-        Some(namespace.clone()),
+        Some(setup.namespace.clone()),
     );
     publisher
         .publish_event_with_overrides(
@@ -352,18 +304,21 @@ async fn jetstream_consumer_redelivers_when_confirmation_publish_fails(
     WaitHelpers::wait_for_event_id(&ctx.pool, event_id.into(), 20).await?;
     WaitHelpers::wait_for_condition(
         || {
-            let delivery_counter = delivery_counter.clone();
+            let deliveries = counters.deliveries.clone();
             async move {
                 Ok::<bool, sinex_test_utils::SinexError>(
-                    delivery_counter.load(Ordering::Relaxed) >= 2,
+                    deliveries
+                        .as_ref()
+                        .map(|d| d.load(Ordering::Relaxed) >= 2)
+                        .unwrap_or(false),
                 )
             }
         },
-        15,
+        Timeouts::MEDIUM,
     )
     .await?;
 
-    let msg = timeout(Duration::from_secs(15), sub.next())
+    let msg = timeout(Duration::from_secs(Timeouts::MEDIUM), sub.next())
         .await?
         .ok_or_else(|| eyre!("no confirmation on {confirmation_subject}"))?;
     let payload: serde_json::Value = serde_json::from_slice(&msg.payload)?;
@@ -380,7 +335,7 @@ async fn jetstream_consumer_redelivers_when_confirmation_publish_fails(
         "idempotency must hold under confirmation redelivery"
     );
 
-    handle.abort();
+    setup.handle.abort();
     Ok(())
 }
 
@@ -388,17 +343,8 @@ async fn jetstream_consumer_redelivers_when_confirmation_publish_fails(
 async fn jetstream_consumer_preserves_ts_orig_subnano(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_shared_nats().await?;
     let suffix = format!("ts-subnano-{}", Ulid::new());
-    let (nats_client, handle, _js, _topology, namespace) = start_consumer(
-        &ctx,
-        &suffix,
-        Duration::from_secs(5),
-        false,
-        None,
-        None,
-        None,
-        false,
-    )
-    .await?;
+    let hooks = TestHooks::none();
+    let setup = start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(5), &hooks).await?;
 
     let ts_orig = chrono::DateTime::<Utc>::from_timestamp(1_700_000_000, 123_456_789)
         .ok_or_else(|| eyre!("failed to build test timestamp"))?;
@@ -406,9 +352,9 @@ async fn jetstream_consumer_preserves_ts_orig_subnano(ctx: TestContext) -> TestR
     let expected_subnano = (ts_orig.nanosecond() % 1_000) as i32;
 
     let publisher = TestSatellitePublisher::with_namespace(
-        nats_client.clone(),
+        setup.nats_client.clone(),
         format!("subnano.{suffix}"),
-        Some(namespace.clone()),
+        Some(setup.namespace.clone()),
     );
     let event_id = publisher
         .publish_event_with_overrides(
@@ -421,7 +367,7 @@ async fn jetstream_consumer_preserves_ts_orig_subnano(ctx: TestContext) -> TestR
         )
         .await?;
 
-    WaitHelpers::wait_for_event_id(&ctx.pool, event_id.into(), 10).await?;
+    WaitHelpers::wait_for_event_id(&ctx.pool, event_id.into(), Timeouts::SHORT).await?;
 
     let stored: Option<i32> =
         sqlx::query_scalar("SELECT ts_orig_subnano FROM core.events WHERE id = $1::uuid::ulid")
@@ -430,7 +376,7 @@ async fn jetstream_consumer_preserves_ts_orig_subnano(ctx: TestContext) -> TestR
             .await?;
     assert_eq!(stored, Some(expected_subnano));
 
-    handle.abort();
+    setup.handle.abort();
     Ok(())
 }
 
@@ -438,25 +384,18 @@ async fn jetstream_consumer_preserves_ts_orig_subnano(ctx: TestContext) -> TestR
 async fn jetstream_consumer_redelivers_when_ack_wait_expires(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_shared_nats().await?;
     let suffix = format!("ackwait-{}", Ulid::new());
-    let delivery_counter = Arc::new(AtomicU64::new(0));
-
-    let (nats_client, handle, js, topology, namespace) = start_consumer(
-        &ctx,
-        &suffix,
-        Duration::from_millis(500),
-        false,
-        None,
-        Some(Duration::from_secs(2)),
-        Some(delivery_counter.clone()),
-        false,
-    )
-    .await?;
+    let (hooks, counters) = TestHooks::builder()
+        .count_deliveries()
+        .with_delay(Duration::from_secs(2))
+        .build();
+    let setup =
+        start_consumer_with_hooks(&ctx, &suffix, Duration::from_millis(500), &hooks).await?;
 
     let event_id = Ulid::new();
     let publisher = TestSatellitePublisher::with_namespace(
-        nats_client.clone(),
+        setup.nats_client.clone(),
         format!("ackwait.{suffix}"),
-        Some(namespace.clone()),
+        Some(setup.namespace.clone()),
     );
     publisher
         .publish_event_with_overrides(
@@ -473,7 +412,7 @@ async fn jetstream_consumer_redelivers_when_ack_wait_expires(ctx: TestContext) -
     WaitHelpers::wait_for_event_id(&ctx.pool, event_id.into(), 20).await?;
 
     // Expect at least one redelivery due to ack_wait expiring.
-    let attempts = delivery_counter.load(std::sync::atomic::Ordering::Relaxed);
+    let attempts = counters.delivery_count();
     assert!(
         attempts >= 2,
         "expected redelivery after ack_wait expiry, saw {attempts}"
@@ -488,8 +427,9 @@ async fn jetstream_consumer_redelivers_when_ack_wait_expires(ctx: TestContext) -
     assert_eq!(count, 1, "idempotency must hold under redelivery");
 
     // DLQ should stay empty.
-    let dlq_state = js
-        .get_stream(&topology.dlq_stream)
+    let dlq_state = setup
+        .js
+        .get_stream(&setup.topology.dlq_stream)
         .await?
         .info()
         .await?
@@ -499,7 +439,7 @@ async fn jetstream_consumer_redelivers_when_ack_wait_expires(ctx: TestContext) -
         "DLQ should not be used during ack_wait redelivery"
     );
 
-    handle.abort();
+    setup.handle.abort();
     Ok(())
 }
 
@@ -507,24 +447,15 @@ async fn jetstream_consumer_redelivers_when_ack_wait_expires(ctx: TestContext) -
 async fn jetstream_consumer_routes_validation_failures_to_dlq(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_shared_nats().await?;
     let suffix = format!("dlq-{}", Ulid::new());
-    let (nats_client, handle, js, topology, namespace) = start_consumer(
-        &ctx,
-        &suffix,
-        Duration::from_secs(5),
-        true,
-        None,
-        None,
-        None,
-        false,
-    )
-    .await?;
+    let hooks = TestHooks::with_validation();
+    let setup = start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(5), &hooks).await?;
 
     // One invalid payload (bad timestamp), one valid.
     let valid_event_id = Ulid::new();
     let publisher = TestSatellitePublisher::with_namespace(
-        nats_client.clone(),
+        setup.nats_client.clone(),
         "dlq-source",
-        Some(namespace.clone()),
+        Some(setup.namespace.clone()),
     );
     publisher
         .publish_event_with_overrides(
@@ -548,11 +479,12 @@ async fn jetstream_consumer_routes_validation_failures_to_dlq(ctx: TestContext) 
         .await?;
 
     // Valid event should persist.
-    WaitHelpers::wait_for_event_id(&ctx.pool, valid_event_id.into(), 10).await?;
+    WaitHelpers::wait_for_event_id(&ctx.pool, valid_event_id.into(), Timeouts::SHORT).await?;
 
     // DLQ should have the invalid payload.
-    let dlq_info = js
-        .get_stream(&topology.dlq_stream)
+    let dlq_info = setup
+        .js
+        .get_stream(&setup.topology.dlq_stream)
         .await?
         .info()
         .await?
@@ -562,7 +494,7 @@ async fn jetstream_consumer_routes_validation_failures_to_dlq(ctx: TestContext) 
         "expected DLQ to contain the invalid event"
     );
 
-    handle.abort();
+    setup.handle.abort();
     Ok(())
 }
 
@@ -570,22 +502,13 @@ async fn jetstream_consumer_routes_validation_failures_to_dlq(ctx: TestContext) 
 async fn jetstream_consumer_routes_malformed_json_to_dlq(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_shared_nats().await?;
     let suffix = format!("malformed-{}", Ulid::new());
-    let (nats_client, handle, js, topology, namespace) = start_consumer(
-        &ctx,
-        &suffix,
-        Duration::from_secs(5),
-        true,
-        None,
-        None,
-        None,
-        false,
-    )
-    .await?;
+    let hooks = TestHooks::with_validation();
+    let setup = start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(5), &hooks).await?;
 
     let publisher = TestSatellitePublisher::with_namespace(
-        nats_client.clone(),
+        setup.nats_client.clone(),
         format!("malformed.{suffix}"),
-        Some(namespace.clone()),
+        Some(setup.namespace.clone()),
     );
     // Malformed JSON bytes (not parseable).
     let malformed = br#"{ bad json"#;
@@ -596,8 +519,8 @@ async fn jetstream_consumer_routes_malformed_json_to_dlq(ctx: TestContext) -> Te
     // Expect DLQ to have at least one message; no event persisted.
     WaitHelpers::wait_for_condition(
         || {
-            let js = js.clone();
-            let dlq_stream = topology.dlq_stream.clone();
+            let js = setup.js.clone();
+            let dlq_stream = setup.topology.dlq_stream.clone();
             async move {
                 let mut stream = js
                     .get_stream(&dlq_stream)
@@ -611,11 +534,11 @@ async fn jetstream_consumer_routes_malformed_json_to_dlq(ctx: TestContext) -> Te
                 Ok(state.messages >= 1)
             }
         },
-        15,
+        Timeouts::MEDIUM,
     )
     .await?;
 
-    handle.abort();
+    setup.handle.abort();
     Ok(())
 }
 
@@ -623,25 +546,18 @@ async fn jetstream_consumer_routes_malformed_json_to_dlq(ctx: TestContext) -> Te
 async fn jetstream_consumer_routes_db_failures_to_dlq(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_shared_nats().await?;
     let suffix = format!("dbfail-{}", Ulid::new());
-    let fail_once = Arc::new(AtomicBool::new(true));
-    let (nats_client, handle, js, topology, namespace) = start_consumer(
-        &ctx,
-        &suffix,
-        Duration::from_secs(2),
-        false,
-        Some(fail_once.clone()),
-        None,
-        None,
-        true,
-    )
-    .await?;
+    let (hooks, counters) = TestHooks::builder()
+        .fail_once()
+        .route_db_errors_to_dlq()
+        .build();
+    let setup = start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(2), &hooks).await?;
 
     // Publish an event that will trigger the simulated DB failure.
     let event_id = Ulid::new();
     let publisher = TestSatellitePublisher::with_namespace(
-        nats_client.clone(),
+        setup.nats_client.clone(),
         "db-fail",
-        Some(namespace.clone()),
+        Some(setup.namespace.clone()),
     );
     publisher
         .publish_event_with_overrides(
@@ -659,20 +575,25 @@ async fn jetstream_consumer_routes_db_failures_to_dlq(ctx: TestContext) -> TestR
         // Ensure the consumer pulled the event and hit the fail-once hook.
         WaitHelpers::wait_for_condition(
             || {
-                let fail_once = fail_once.clone();
+                let fail_once = counters.fail_once.clone();
                 async move {
-                    Ok::<bool, sinex_test_utils::SinexError>(!fail_once.load(Ordering::SeqCst))
+                    Ok::<bool, sinex_test_utils::SinexError>(
+                        fail_once
+                            .as_ref()
+                            .map(|f| !f.load(Ordering::SeqCst))
+                            .unwrap_or(false),
+                    )
                 }
             },
-            5,
+            Timeouts::QUICK,
         )
         .await?;
 
         // Confirm the event is present in the raw stream.
         WaitHelpers::wait_for_condition(
             || {
-                let js = js.clone();
-                let events_stream = topology.events_stream.clone();
+                let js = setup.js.clone();
+                let events_stream = setup.topology.events_stream.clone();
                 async move {
                     let mut stream = js
                         .get_stream(&events_stream)
@@ -686,14 +607,14 @@ async fn jetstream_consumer_routes_db_failures_to_dlq(ctx: TestContext) -> TestR
                     Ok(state.messages >= 1)
                 }
             },
-            5,
+            Timeouts::QUICK,
         )
         .await?;
 
         let _stream_ready = WaitHelpers::wait_for_condition(
             || {
-                let js = js.clone();
-                let dlq_stream = topology.dlq_stream.clone();
+                let js = setup.js.clone();
+                let dlq_stream = setup.topology.dlq_stream.clone();
                 async move {
                     let mut stream = js
                         .get_stream(&dlq_stream)
@@ -707,7 +628,7 @@ async fn jetstream_consumer_routes_db_failures_to_dlq(ctx: TestContext) -> TestR
                     Ok(state.messages >= 1)
                 }
             },
-            10,
+            Timeouts::SHORT,
         )
         .await?;
 
@@ -719,12 +640,12 @@ async fn jetstream_consumer_routes_db_failures_to_dlq(ctx: TestContext) -> TestR
         );
 
         assert!(
-            !handle.is_finished(),
+            !setup.handle.is_finished(),
             "consumer should keep running after DB failure"
         );
 
-        handle.abort();
-        let _ = handle.await;
+        setup.handle.abort();
+        let _ = setup.handle.await;
         Ok::<_, color_eyre::Report>(())
     }
     .await;
@@ -736,26 +657,21 @@ async fn jetstream_consumer_routes_db_failures_to_dlq(ctx: TestContext) -> TestR
 async fn jetstream_consumer_dlq_reason_classification(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_shared_nats().await?;
     let suffix = format!("dlq-reasons-{}", Ulid::new());
-    let fail_once = Arc::new(AtomicBool::new(true));
-    let (nats_client, handle, _js, topology, namespace) = start_consumer(
-        &ctx,
-        &suffix,
-        Duration::from_secs(2),
-        true,
-        Some(fail_once.clone()),
-        None,
-        None,
-        true,
-    )
-    .await?;
+    let (hooks, _counters) = TestHooks::builder()
+        .validate()
+        .fail_once()
+        .route_db_errors_to_dlq()
+        .build();
+    let setup = start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(2), &hooks).await?;
 
     let publisher = TestSatellitePublisher::with_namespace(
-        nats_client.clone(),
+        setup.nats_client.clone(),
         format!("dlq.{suffix}"),
-        Some(namespace.clone()),
+        Some(setup.namespace.clone()),
     );
-    let mut dlq_sub = nats_client
-        .subscribe(topology.dlq_publish_subject.clone())
+    let mut dlq_sub = setup
+        .nats_client
+        .subscribe(setup.topology.dlq_publish_subject.clone())
         .await?;
 
     publisher
@@ -786,7 +702,7 @@ async fn jetstream_consumer_dlq_reason_classification(ctx: TestContext) -> TestR
 
     let mut errors = Vec::new();
     for _ in 0..3 {
-        let msg = timeout(Duration::from_secs(10), dlq_sub.next())
+        let msg = timeout(Duration::from_secs(Timeouts::SHORT), dlq_sub.next())
             .await
             .map_err(|_| eyre!("timed out waiting for DLQ entry"))?
             .ok_or_else(|| eyre!("DLQ subscription closed unexpectedly"))?;
@@ -812,7 +728,7 @@ async fn jetstream_consumer_dlq_reason_classification(ctx: TestContext) -> TestR
         "Expected persistence error in DLQ: {errors:?}"
     );
 
-    handle.abort();
+    setup.handle.abort();
     Ok(())
 }
 
@@ -820,23 +736,14 @@ async fn jetstream_consumer_dlq_reason_classification(ctx: TestContext) -> TestR
 async fn chaos_injector_produces_clean_snapshot(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_shared_nats().await?;
     let suffix = format!("chaos-{}", Ulid::new());
-    let (nats_client, handle, js, topology, namespace) = start_consumer(
-        &ctx,
-        &suffix,
-        Duration::from_secs(5),
-        false,
-        None,
-        None,
-        None,
-        false,
-    )
-    .await?;
+    let hooks = TestHooks::none();
+    let setup = start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(5), &hooks).await?;
 
     let chaos = ChaosInjestor::new(Duration::from_millis(5), 0.0);
     let publisher = TestSatellitePublisher::with_namespace(
-        nats_client.clone(),
+        setup.nats_client.clone(),
         format!("chaos.{suffix}"),
-        Some(namespace.clone()),
+        Some(setup.namespace.clone()),
     );
 
     // Small partition delay before we start the publish loop.
@@ -856,13 +763,18 @@ async fn chaos_injector_produces_clean_snapshot(ctx: TestContext) -> TestResult<
         })
         .await?;
 
-    let stored = WaitHelpers::wait_for_source_events(&ctx.pool, &format!("chaos.{suffix}"), 20, 15)
-        .await? as u64;
+    let stored = WaitHelpers::wait_for_source_events(
+        &ctx.pool,
+        &format!("chaos.{suffix}"),
+        20,
+        Timeouts::MEDIUM,
+    )
+    .await? as u64;
 
     WaitHelpers::wait_for_condition(
         || {
-            let js = js.clone();
-            let confirmations_stream = topology.confirmations_stream.clone();
+            let js = setup.js.clone();
+            let confirmations_stream = setup.topology.confirmations_stream.clone();
             async move {
                 let mut stream = js
                     .get_stream(&confirmations_stream)
@@ -877,18 +789,20 @@ async fn chaos_injector_produces_clean_snapshot(ctx: TestContext) -> TestResult<
                 Ok(msgs >= 20)
             }
         },
-        10,
+        Timeouts::SHORT,
     )
     .await?;
-    let confirmations = js
-        .get_stream(&topology.confirmations_stream)
+    let confirmations = setup
+        .js
+        .get_stream(&setup.topology.confirmations_stream)
         .await?
         .info()
         .await?
         .state
         .messages;
-    let dlq_entries = js
-        .get_stream(&topology.dlq_stream)
+    let dlq_entries = setup
+        .js
+        .get_stream(&setup.topology.dlq_stream)
         .await?
         .info()
         .await?
@@ -906,6 +820,6 @@ async fn chaos_injector_produces_clean_snapshot(ctx: TestContext) -> TestResult<
     snapshot.assert_confirmations_received(20)?;
     snapshot.assert_no_dlq_entries()?;
 
-    handle.abort();
+    setup.handle.abort();
     Ok(())
 }

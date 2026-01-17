@@ -4,7 +4,6 @@ use sinex_node_sdk::error_helpers::{
 };
 use sinex_node_sdk::NodeError;
 use sinex_test_utils::prelude::*;
-use sinex_test_utils::TestResult;
 use std::io::ErrorKind;
 
 #[sinex_test]

@@ -3,8 +3,7 @@ use sinex_core::types::validation::config_validation::{
 };
 use sinex_core::types::Seconds;
 use sinex_core::validation::Validate;
-use sinex_test_utils::sinex_test;
-use sinex_test_utils::TestResult;
+use sinex_test_utils::{sinex_test, TestResult};
 
 #[sinex_test]
 async fn database_config_validates_fields() -> TestResult<()> {

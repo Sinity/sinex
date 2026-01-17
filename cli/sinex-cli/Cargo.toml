@@ -36,6 +36,9 @@ chrono = { workspace = true, features = ["serde"] }
 # ULID support (for event IDs)
 sinex-schema = { path = "../../crate/lib/sinex-schema", features = ["arbitrary"] }
 
+# Core types - domain types, validation (no sqlx/nats)
+sinex-core = { path = "../../crate/lib/sinex-core", default-features = false, features = ["types-only"] }
+
 # Configuration management
 figment = { version = "0.10", features = ["toml", "env"] }
 directories = "5.0"

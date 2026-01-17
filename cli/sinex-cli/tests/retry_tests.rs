@@ -18,9 +18,10 @@ async fn test_retry_on_connection_failure() {
         token: Some("test-token".to_string()),
         insecure: true,
         timeout: 1, // Short timeout
-        retry_config: RetryConfig::new()
-            .with_max_attempts(3)
-            .with_initial_backoff(Duration::from_millis(10)),
+        retry_config: RetryConfig::builder()
+            .max_attempts(3)
+            .initial_delay(Duration::from_millis(10))
+            .build(),
         ..Default::default()
     };
 
@@ -60,9 +61,10 @@ async fn test_retry_on_server_error_then_success() {
         url: mock_server.uri(),
         token: Some("test-token".to_string()),
         insecure: true,
-        retry_config: RetryConfig::new()
-            .with_max_attempts(3)
-            .with_initial_backoff(Duration::from_millis(10)),
+        retry_config: RetryConfig::builder()
+            .max_attempts(3)
+            .initial_delay(Duration::from_millis(10))
+            .build(),
         ..Default::default()
     };
 
@@ -97,9 +99,10 @@ async fn test_no_retry_on_client_error() {
         url: mock_server.uri(),
         token: Some("test-token".to_string()),
         insecure: true,
-        retry_config: RetryConfig::new()
-            .with_max_attempts(3)
-            .with_initial_backoff(Duration::from_millis(10)),
+        retry_config: RetryConfig::builder()
+            .max_attempts(3)
+            .initial_delay(Duration::from_millis(10))
+            .build(),
         ..Default::default()
     };
 
@@ -133,9 +136,10 @@ async fn test_no_retry_on_auth_error() {
         url: mock_server.uri(),
         token: Some("test-token".to_string()),
         insecure: true,
-        retry_config: RetryConfig::new()
-            .with_max_attempts(3)
-            .with_initial_backoff(Duration::from_millis(10)),
+        retry_config: RetryConfig::builder()
+            .max_attempts(3)
+            .initial_delay(Duration::from_millis(10))
+            .build(),
         ..Default::default()
     };
 
@@ -151,9 +155,10 @@ async fn test_no_retry_on_auth_error() {
 
 #[tokio::test]
 async fn test_exponential_backoff_timing() {
-    let retry_config = RetryConfig::new()
-        .with_initial_backoff(Duration::from_millis(100))
-        .with_backoff_multiplier(2.0);
+    let retry_config = RetryConfig::builder()
+        .initial_delay(Duration::from_millis(100))
+        .multiplier(2.0)
+        .build();
 
     // Attempt 0: 100ms
     let backoff0 = retry_config.backoff_for_attempt(0);
@@ -190,10 +195,11 @@ async fn test_exponential_backoff_timing() {
 
 #[tokio::test]
 async fn test_backoff_capped_at_max() {
-    let retry_config = RetryConfig::new()
-        .with_initial_backoff(Duration::from_secs(1))
-        .with_max_backoff(Duration::from_secs(5))
-        .with_backoff_multiplier(10.0);
+    let retry_config = RetryConfig::builder()
+        .initial_delay(Duration::from_secs(1))
+        .max_delay(Duration::from_secs(5))
+        .multiplier(10.0)
+        .build();
 
     // Should be capped at 5 seconds
     let backoff = retry_config.backoff_for_attempt(10);

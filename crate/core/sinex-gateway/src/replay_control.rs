@@ -89,7 +89,9 @@ impl ReplayControlClient {
         }
     }
 
-    /// Get the underlying NATS client
+    /// Get the underlying NATS client.
+    /// Reserved for external consumers (e.g., custom replay coordination).
+    #[allow(dead_code)]
     pub fn nats_client(&self) -> &Client {
         &self.client
     }

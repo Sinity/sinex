@@ -5,10 +5,8 @@
 //! Unified system satellite that coordinates D-Bus, journal, udev, and systemd signals.
 
 mod dbus_watcher;
-mod journal_watcher;
 mod material_context;
 mod payloads;
-mod systemd_watcher;
 mod udev_watcher;
 mod unified_journal_watcher;
 mod watcher_lifecycle;
@@ -32,8 +30,8 @@ mod common {
     // SDK facade for common processor types
     pub use sinex_node_sdk::{
         stream_processor::{
-            Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport,
-            Node, TimeHorizon,
+            Checkpoint, Node, ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate,
+            ScanReport, TimeHorizon,
         },
         NodeError, NodeResult,
     };
@@ -49,10 +47,8 @@ mod common {
 }
 
 pub use dbus_watcher::DbusWatcher;
-pub use journal_watcher::JournalWatcher;
 pub(crate) use material_context::WatcherMaterialContext;
 pub use payloads::*;
-pub use systemd_watcher::{SystemdConfig, SystemdWatcher};
 pub use udev_watcher::UdevWatcher;
 pub use unified_journal_watcher::UnifiedJournalWatcher;
 pub use watcher_lifecycle::{WatcherHealth, WatcherLifecycle};

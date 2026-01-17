@@ -267,7 +267,7 @@ async fn test_ingestd_restart_event_continuity(ctx: TestContext) -> Result<()> {
         .await?;
 
     let ingest_config = TestIngestdConfig {
-        nats_url: ctx.nats_url().expect("NATS should be available"),
+        nats: ctx.nats_handle()?.connection_config(),
         database_url: ctx.database_url().to_string(),
         work_dir: None,
         ..Default::default()
@@ -402,7 +402,7 @@ async fn test_multi_source_concurrent_ingestion(ctx: TestContext) -> Result<()> 
     let nats_client = ctx.nats_client();
 
     let ingest_config = TestIngestdConfig {
-        nats_url: ctx.nats_url().expect("NATS should be available"),
+        nats: ctx.nats_handle()?.connection_config(),
         database_url: ctx.database_url().to_string(),
         work_dir: None,
         ..Default::default()

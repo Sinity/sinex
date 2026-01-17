@@ -11,8 +11,8 @@ use sinex_node_sdk::{
     event_processor::EventTransport,
     nats_publisher::NatsPublisher,
     stream_processor::{
-        EventEmitter, ProcessorCapabilities, ProcessorHandles, ProcessorInitContext, ProcessorType,
-        SchemaBroadcastEntry, Node, StreamProcessorRunner,
+        EventEmitter, Node, ProcessorCapabilities, ProcessorHandles, ProcessorInitContext,
+        ProcessorType, SchemaBroadcastEntry, StreamProcessorRunner,
     },
     NodeResult,
 };
@@ -36,10 +36,7 @@ impl EdgeTestProcessor {
 impl Node for EdgeTestProcessor {
     type Config = serde_json::Value;
 
-    async fn initialize(
-        &mut self,
-        _ctx: ProcessorInitContext<Self::Config>,
-    ) -> NodeResult<()> {
+    async fn initialize(&mut self, _ctx: ProcessorInitContext<Self::Config>) -> NodeResult<()> {
         Ok(())
     }
 
@@ -63,9 +60,7 @@ impl Node for EdgeTestProcessor {
         }
     }
 
-    async fn current_checkpoint(
-        &self,
-    ) -> NodeResult<sinex_node_sdk::stream_processor::Checkpoint> {
+    async fn current_checkpoint(&self) -> NodeResult<sinex_node_sdk::stream_processor::Checkpoint> {
         Ok(sinex_node_sdk::stream_processor::Checkpoint::stream(
             "0", None,
         ))

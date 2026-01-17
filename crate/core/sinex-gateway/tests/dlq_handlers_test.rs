@@ -1,0 +1,236 @@
+//! Comprehensive tests for DLQ (Dead Letter Queue) handlers
+//!
+//! Tests DLQ statistics and purge operations.
+//! Note: Peek tests are excluded because handle_dlq_peek waits indefinitely
+//! for messages from the consumer stream without timeout.
+
+use async_nats::jetstream;
+use serde_json::json;
+use sinex_core::environment;
+use sinex_gateway::handlers::dlq::{handle_dlq_list, handle_dlq_purge};
+use sinex_test_utils::{nats::EphemeralNats, prelude::*};
+
+async fn setup_dlq_stream(
+    client: &async_nats::Client,
+    env: &sinex_core::environment::SinexEnvironment,
+) -> color_eyre::Result<jetstream::stream::Stream> {
+    let js = jetstream::new(client.clone());
+    let stream_name = env.nats_stream_name("EVENTS_DLQ");
+
+    let stream = js
+        .get_or_create_stream(jetstream::stream::Config {
+            name: stream_name,
+            subjects: vec![env.nats_subject("events.dlq.>")],
+            retention: jetstream::stream::RetentionPolicy::Limits,
+            max_messages: 1000,
+            storage: jetstream::stream::StorageType::Memory,
+            ..Default::default()
+        })
+        .await?;
+
+    Ok(stream)
+}
+
+async fn publish_dlq_message(
+    client: &async_nats::Client,
+    env: &sinex_core::environment::SinexEnvironment,
+    event_id: &str,
+    payload: &str,
+    retry_count: u32,
+) -> color_eyre::Result<()> {
+    let mut headers = async_nats::HeaderMap::new();
+    headers.insert("Retry-Count", retry_count.to_string().as_str());
+    headers.insert("Original-Subject", "events.raw.test-source");
+    headers.insert("Event-Id", event_id);
+
+    let subject = env.nats_subject(&format!("events.dlq.{}", event_id));
+    client
+        .publish_with_headers(subject, headers, payload.to_owned().into())
+        .await?;
+    client.flush().await?;
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn dlq_list_returns_empty_for_new_stream() -> TestResult<()> {
+    let nats = EphemeralNats::start().await?;
+    let client = nats.connect().await?;
+    let env = environment();
+
+    setup_dlq_stream(&client, &env).await?;
+
+    let result = handle_dlq_list(&client, &env, json!({})).await?;
+
+    assert_eq!(result["total_messages"], 0);
+    assert_eq!(result["total_bytes"], 0);
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn dlq_list_counts_messages_correctly() -> TestResult<()> {
+    let nats = EphemeralNats::start().await?;
+    let client = nats.connect().await?;
+    let env = environment();
+
+    setup_dlq_stream(&client, &env).await?;
+
+    // Publish 3 messages
+    for i in 0..3 {
+        publish_dlq_message(&client, &env, &format!("event-{}", i), r#"{"test": true}"#, 1).await?;
+    }
+
+    // Allow JetStream to process
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    let result = handle_dlq_list(&client, &env, json!({})).await?;
+
+    assert_eq!(result["total_messages"], 3);
+    assert!(result["total_bytes"].as_u64().unwrap() > 0);
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn dlq_list_shows_sequence_info() -> TestResult<()> {
+    let nats = EphemeralNats::start().await?;
+    let client = nats.connect().await?;
+    let env = environment();
+
+    setup_dlq_stream(&client, &env).await?;
+
+    // Publish messages
+    for i in 0..3 {
+        publish_dlq_message(&client, &env, &format!("event-{}", i), r#"{"test": true}"#, 1).await?;
+    }
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    let result = handle_dlq_list(&client, &env, json!({})).await?;
+
+    // Should have valid sequence numbers
+    assert!(result["first_seq"].as_u64().unwrap() > 0);
+    assert!(result["last_seq"].as_u64().unwrap() >= result["first_seq"].as_u64().unwrap());
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn dlq_purge_requires_confirm_parameter() -> TestResult<()> {
+    let nats = EphemeralNats::start().await?;
+    let client = nats.connect().await?;
+    let env = environment();
+
+    setup_dlq_stream(&client, &env).await?;
+
+    // Try purge without confirm
+    let err = handle_dlq_purge(&client, &env, json!({"confirm": false}))
+        .await
+        .unwrap_err();
+
+    assert!(err.to_string().contains("confirm: true"));
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn dlq_purge_clears_all_messages() -> TestResult<()> {
+    let nats = EphemeralNats::start().await?;
+    let client = nats.connect().await?;
+    let env = environment();
+
+    setup_dlq_stream(&client, &env).await?;
+
+    // Publish some messages
+    for i in 0..5 {
+        publish_dlq_message(&client, &env, &format!("event-{}", i), r#"{"test": true}"#, 1).await?;
+    }
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    // Verify messages exist
+    let before = handle_dlq_list(&client, &env, json!({})).await?;
+    assert_eq!(before["total_messages"], 5);
+
+    // Purge with confirmation
+    let result = handle_dlq_purge(&client, &env, json!({"confirm": true})).await?;
+
+    assert_eq!(result["purged"], 5);
+    assert_eq!(result["status"], "success");
+
+    // Verify stream is empty
+    let after = handle_dlq_list(&client, &env, json!({})).await?;
+    assert_eq!(after["total_messages"], 0);
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn dlq_purge_handles_empty_stream() -> TestResult<()> {
+    let nats = EphemeralNats::start().await?;
+    let client = nats.connect().await?;
+    let env = environment();
+
+    setup_dlq_stream(&client, &env).await?;
+
+    // Purge empty stream should succeed
+    let result = handle_dlq_purge(&client, &env, json!({"confirm": true})).await?;
+
+    assert_eq!(result["purged"], 0);
+    assert_eq!(result["status"], "success");
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn dlq_purge_requires_missing_confirm_field() -> TestResult<()> {
+    let nats = EphemeralNats::start().await?;
+    let client = nats.connect().await?;
+    let env = environment();
+
+    setup_dlq_stream(&client, &env).await?;
+
+    // Try purge without confirm field at all - should fail validation
+    let err = handle_dlq_purge(&client, &env, json!({})).await.unwrap_err();
+
+    assert!(err
+        .to_string()
+        .to_lowercase()
+        .contains("invalid")
+        || err.to_string().contains("missing"));
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn dlq_list_after_publish_and_purge_cycle() -> TestResult<()> {
+    let nats = EphemeralNats::start().await?;
+    let client = nats.connect().await?;
+    let env = environment();
+
+    setup_dlq_stream(&client, &env).await?;
+
+    // First cycle
+    for i in 0..3 {
+        publish_dlq_message(&client, &env, &format!("cycle1-{}", i), r#"{"cycle": 1}"#, 1).await?;
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    let mid1 = handle_dlq_list(&client, &env, json!({})).await?;
+    assert_eq!(mid1["total_messages"], 3);
+
+    // Purge
+    handle_dlq_purge(&client, &env, json!({"confirm": true})).await?;
+
+    // Second cycle
+    for i in 0..2 {
+        publish_dlq_message(&client, &env, &format!("cycle2-{}", i), r#"{"cycle": 2}"#, 1).await?;
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    let mid2 = handle_dlq_list(&client, &env, json!({})).await?;
+    assert_eq!(mid2["total_messages"], 2);
+
+    Ok(())
+}

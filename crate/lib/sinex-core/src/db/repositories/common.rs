@@ -5,7 +5,6 @@ use crate::{DbTransaction, Ulid};
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
 use sqlx::{FromRow, PgPool};
-use tracing::error;
 use uuid::Uuid;
 
 /// Convert ULID to UUID for database storage

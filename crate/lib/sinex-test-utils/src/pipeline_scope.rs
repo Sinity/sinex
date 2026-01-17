@@ -143,6 +143,126 @@ impl<'ctx> PipelineScope<'ctx> {
         WaitHelpers::wait_for_event_id(&self.ctx.pool, event_id, DEFAULT_WAIT_SECS).await
     }
 
+    // ========================================================================
+    // Batch Publishing Methods
+    // ========================================================================
+
+    /// Publish multiple events and wait for all to be persisted.
+    ///
+    /// This is a convenience method for tests that need to publish many events.
+    /// Each event is published through the pipeline and the method waits for
+    /// all events to be persisted before returning.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let ids = scope.publish_batch(
+    ///     10,
+    ///     "test-source",
+    ///     "test.event",
+    ///     |i| json!({ "index": i, "data": format!("item-{}", i) })
+    /// ).await?;
+    /// assert_eq!(ids.len(), 10);
+    /// ```
+    pub async fn publish_batch<F>(
+        &self,
+        count: usize,
+        source: &str,
+        event_type: &str,
+        payload_fn: F,
+    ) -> TestResult<Vec<EventId>>
+    where
+        F: Fn(usize) -> serde_json::Value,
+    {
+        let mut ids = Vec::with_capacity(count);
+        for i in 0..count {
+            let payload = payload_fn(i);
+            let id = self.publish(source, event_type, payload).await?;
+            ids.push(id);
+        }
+        // All events should already be persisted since publish() waits,
+        // but we do a sanity check
+        self.wait_for_source_events(source, count).await?;
+        Ok(ids)
+    }
+
+    /// Publish multiple events with a simple incrementing payload.
+    ///
+    /// Each event gets a payload of `{ "index": N }` where N is 0..count.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let ids = scope.publish_batch_simple(100, "test-source", "test.event").await?;
+    /// ```
+    pub async fn publish_batch_simple(
+        &self,
+        count: usize,
+        source: &str,
+        event_type: &str,
+    ) -> TestResult<Vec<EventId>> {
+        self.publish_batch(count, source, event_type, |i| {
+            serde_json::json!({ "index": i })
+        })
+        .await
+    }
+
+    /// Publish multiple events with timestamps spread over a time range.
+    ///
+    /// Events are published with timestamps evenly distributed between
+    /// `start` and `end`. Useful for testing time-range queries.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use chrono::{Duration, Utc};
+    /// let now = Utc::now();
+    /// let ids = scope.publish_batch_with_timestamps(
+    ///     10,
+    ///     "test-source",
+    ///     "test.event",
+    ///     now - Duration::hours(1),
+    ///     now,
+    ///     |i| json!({ "index": i })
+    /// ).await?;
+    /// ```
+    pub async fn publish_batch_with_timestamps<F>(
+        &self,
+        count: usize,
+        source: &str,
+        event_type: &str,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        payload_fn: F,
+    ) -> TestResult<Vec<EventId>>
+    where
+        F: Fn(usize) -> serde_json::Value,
+    {
+        if count == 0 {
+            return Ok(vec![]);
+        }
+
+        let duration = end.signed_duration_since(start);
+        let step = if count > 1 {
+            duration / (count as i32 - 1)
+        } else {
+            chrono::Duration::zero()
+        };
+
+        let mut ids = Vec::with_capacity(count);
+        for i in 0..count {
+            let timestamp = start + step * (i as i32);
+            let payload = payload_fn(i);
+            let id = self
+                .publish_with_timestamp(source, event_type, payload, timestamp)
+                .await?;
+            ids.push(id);
+        }
+
+        self.wait_for_source_events(source, count).await?;
+        Ok(ids)
+    }
+
     /// Stop the ingestd instance backing this scope.
     pub async fn shutdown(mut self) -> TestResult<()> {
         if let Some(harness) = self.harness.take() {

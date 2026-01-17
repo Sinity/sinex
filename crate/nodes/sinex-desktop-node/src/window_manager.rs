@@ -10,7 +10,7 @@ use sinex_core::payloads::{
     HyprlandWorkspaceSwitchedPayload, WindowGeometry,
 };
 use sinex_core::types::domain::{EventSource, EventType};
-use sinex_core::{Event as CoreEvent, Id, OffsetKind, Provenance, Ulid};
+use sinex_core::{Event as CoreEvent, EventBuilder, Id, OffsetKind, Provenance, Ulid};
 use sinex_node_sdk::stage_as_you_go::StageAsYouGoContext;
 use std::{fmt, str::FromStr, time::SystemTime};
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -243,16 +243,11 @@ impl WindowManagerWatcher {
     /// Connect to Hyprland event socket
     async fn connect_to_hyprland_events(&self) -> NodeResult<UnixStream> {
         let socket_path = self.socket_path.as_ref().ok_or_else(|| {
-            sinex_node_sdk::NodeError::Processing(
-                "No Hyprland socket configured".to_string(),
-            )
+            sinex_node_sdk::NodeError::Processing("No Hyprland socket configured".to_string())
         })?;
 
         UnixStream::connect(socket_path).await.map_err(|e| {
-            sinex_node_sdk::NodeError::Processing(format!(
-                "Failed to connect to Hyprland: {}",
-                e
-            ))
+            sinex_node_sdk::NodeError::Processing(format!("Failed to connect to Hyprland: {}", e))
         })
     }
 
@@ -339,12 +334,14 @@ impl WindowManagerWatcher {
                         offset_end: Some(payload_bytes.len() as i64),
                         offset_kind: OffsetKind::Byte,
                     };
-                    let event = CoreEvent::create(
+                    let event = EventBuilder::new(
                         EventSource::from_static("wm.hyprland"),
                         EventType::from_static("wm.unhandled"),
                         payload,
-                        provenance,
-                    );
+                    )
+                    .with_provenance(provenance)
+                    .build()
+                    .map_err(|e| sinex_node_sdk::NodeError::Processing(format!("Failed to build event: {e}")))?;
                     self.emit_material_event(material_id, payload_bytes, event)
                         .await?;
                 }

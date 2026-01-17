@@ -58,7 +58,8 @@ async fn publish_and_fetch(
     let stored = ctx
         .pool
         .events()
-        .get_by_id(&Id::<Event<JsonValue>>::from_ulid(id))
-        .await?;
+        .get_by_id(Id::<Event<JsonValue>>::from_ulid(id))
+        .await?
+        .ok_or_else(|| color_eyre::eyre::eyre!("Event not found"))?;
     Ok(stored)
 }

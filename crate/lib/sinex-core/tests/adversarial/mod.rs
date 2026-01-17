@@ -11,6 +11,7 @@
 // - **Boundary Cases**: Large payloads, edge values, invalid data
 // - **Network Issues**: Distributed system edge cases
 // - **State Violations**: Invalid state transitions
+// - **Chaos Engineering**: System resilience under failure conditions
 
 // Boundary tests for system limits
 pub mod boundary_test;
@@ -24,7 +25,18 @@ pub mod ulid_edge_cases_test;
 // Crash recovery adversarial tests for Stage-as-You-Go materials
 pub mod satellite_crash_recovery_test;
 
-// Other adversarial tests have been consolidated or are being migrated
+// Chaos Engineering Tests (split from chaos_engineering_test.rs)
+// Agent lifecycle chaos: concurrent registration, heartbeat failures
+pub mod agent_lifecycle_chaos_test;
+
+// Filesystem edge cases: permission changes, mount failures
+pub mod filesystem_chaos_test;
+
+// State machine violations: shutdown during init, concurrent shutdowns
+pub mod state_machine_chaos_test;
+
+// Database resilience: connection failures, stream failures
+pub mod database_resilience_chaos_test;
 
 /// Common utilities for adversarial testing
 pub mod utils {

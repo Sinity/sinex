@@ -2,6 +2,8 @@ use chrono::{DateTime, Duration, Utc};
 use clap::Args;
 use console::style;
 use inquire::{MultiSelect, Select, Text};
+use sinex_core::types::domain::{EventSource, EventType};
+use sinex_core::types::utils::timestamp_helpers::parse_relative_duration;
 
 use crate::client::GatewayClient;
 use crate::fmt::{format_json, format_yaml};
@@ -50,11 +52,11 @@ pub struct QueryCommand {
 
     /// Filter by source (can be specified multiple times)
     #[arg(long)]
-    source: Vec<String>,
+    source: Vec<EventSource>,
 
     /// Filter by event type (can be specified multiple times)
     #[arg(long)]
-    event_type: Vec<String>,
+    event_type: Vec<EventType>,
 
     /// Time range start: "1h", "2d", "2025-01-15", "2025-01-15T10:00:00Z"
     #[arg(long, short = 's')]
@@ -86,8 +88,8 @@ impl QueryCommand {
 
         let query = SearchQuery {
             text: self.query.clone(),
-            sources: self.source.clone(),
-            event_types: self.event_type.clone(),
+            sources: self.source.iter().map(|s| s.to_string()).collect(),
+            event_types: self.event_type.iter().map(|t| t.to_string()).collect(),
             start_time: self.since.as_ref().map(|s| parse_time(s)).transpose()?,
             end_time: self.until.as_ref().map(|s| parse_time(s)).transpose()?,
             limit: self.limit,
@@ -288,9 +290,9 @@ fn parse_preset_time(preset: &str) -> DateTime<Utc> {
 /// - Relative: "1h", "2d", "30m", "1w"
 /// - Absolute: "2025-01-15", "2025-01-15T10:00:00Z"
 fn parse_time(s: &str) -> Result<DateTime<Utc>> {
-    // Try relative time first (e.g., "1h", "2d")
-    if let Some(duration) = parse_relative_time(s) {
-        return Ok(Utc::now() - duration);
+    // Try relative time first using sinex-core's parse_relative_duration
+    if let Some(chrono_duration) = parse_relative_duration(s) {
+        return Ok(Utc::now() - chrono_duration);
     }
 
     // Try absolute timestamp
@@ -310,37 +312,6 @@ fn parse_time(s: &str) -> Result<DateTime<Utc>> {
         "Invalid time format: '{}'\nSupported formats:\n  Relative: 1h, 2d, 30m, 1w\n  Absolute: 2025-01-15, 2025-01-15T10:00:00Z",
         s
     ))
-}
-
-/// Parse relative time string (e.g., "1h", "2d", "30m")
-fn parse_relative_time(s: &str) -> Option<Duration> {
-    let s = s.trim();
-    if s.is_empty() {
-        return None;
-    }
-
-    // Split into number and unit
-    let mut num_str = String::new();
-    let mut unit = String::new();
-
-    for ch in s.chars() {
-        if ch.is_ascii_digit() {
-            num_str.push(ch);
-        } else {
-            unit.push(ch);
-        }
-    }
-
-    let num: i64 = num_str.parse().ok()?;
-
-    match unit.as_str() {
-        "s" | "sec" | "second" | "seconds" => Some(Duration::seconds(num)),
-        "m" | "min" | "minute" | "minutes" => Some(Duration::minutes(num)),
-        "h" | "hr" | "hour" | "hours" => Some(Duration::hours(num)),
-        "d" | "day" | "days" => Some(Duration::days(num)),
-        "w" | "week" | "weeks" => Some(Duration::weeks(num)),
-        _ => None,
-    }
 }
 
 /// Format search results as a table
@@ -393,20 +364,21 @@ mod tests {
     use proptest::prelude::*;
 
     #[test]
-    fn test_parse_relative_time() {
-        assert_eq!(parse_relative_time("1h"), Some(Duration::hours(1)));
-        assert_eq!(parse_relative_time("2d"), Some(Duration::days(2)));
-        assert_eq!(parse_relative_time("30m"), Some(Duration::minutes(30)));
-        assert_eq!(parse_relative_time("1w"), Some(Duration::weeks(1)));
-        assert_eq!(parse_relative_time("15s"), Some(Duration::seconds(15)));
+    fn test_parse_relative_duration() {
+        // Tests for sinex-core's parse_relative_duration integrated via parse_time
+        assert_eq!(parse_relative_duration("1h"), Some(Duration::hours(1)));
+        assert_eq!(parse_relative_duration("2d"), Some(Duration::days(2)));
+        assert_eq!(parse_relative_duration("30m"), Some(Duration::minutes(30)));
+        assert_eq!(parse_relative_duration("1w"), Some(Duration::weeks(1)));
+        assert_eq!(parse_relative_duration("15s"), Some(Duration::seconds(15)));
 
         // Alternative forms
-        assert_eq!(parse_relative_time("1hour"), Some(Duration::hours(1)));
-        assert_eq!(parse_relative_time("2days"), Some(Duration::days(2)));
+        assert_eq!(parse_relative_duration("1hour"), Some(Duration::hours(1)));
+        assert_eq!(parse_relative_duration("2days"), Some(Duration::days(2)));
 
         // Invalid
-        assert_eq!(parse_relative_time("invalid"), None);
-        assert_eq!(parse_relative_time(""), None);
+        assert_eq!(parse_relative_duration("invalid"), None);
+        assert_eq!(parse_relative_duration(""), None);
     }
 
     #[test]
@@ -432,35 +404,35 @@ mod tests {
         #[test]
         fn prop_relative_hours_parses(hours in 1i64..1000) {
             let input = format!("{}h", hours);
-            let result = parse_relative_time(&input);
+            let result = parse_relative_duration(&input);
             prop_assert_eq!(result, Some(Duration::hours(hours)));
         }
 
         #[test]
         fn prop_relative_days_parses(days in 1i64..365) {
             let input = format!("{}d", days);
-            let result = parse_relative_time(&input);
+            let result = parse_relative_duration(&input);
             prop_assert_eq!(result, Some(Duration::days(days)));
         }
 
         #[test]
         fn prop_relative_minutes_parses(mins in 1i64..10000) {
             let input = format!("{}m", mins);
-            let result = parse_relative_time(&input);
+            let result = parse_relative_duration(&input);
             prop_assert_eq!(result, Some(Duration::minutes(mins)));
         }
 
         #[test]
         fn prop_relative_seconds_parses(secs in 1i64..100000) {
             let input = format!("{}s", secs);
-            let result = parse_relative_time(&input);
+            let result = parse_relative_duration(&input);
             prop_assert_eq!(result, Some(Duration::seconds(secs)));
         }
 
         #[test]
         fn prop_relative_weeks_parses(weeks in 1i64..52) {
             let input = format!("{}w", weeks);
-            let result = parse_relative_time(&input);
+            let result = parse_relative_duration(&input);
             prop_assert_eq!(result, Some(Duration::weeks(weeks)));
         }
 
@@ -486,24 +458,24 @@ mod tests {
         }
 
         #[test]
-        fn prop_relative_time_with_long_form_hour(hours in 1i64..100) {
+        fn prop_relative_duration_with_long_form_hour(hours in 1i64..100) {
             let input = format!("{}hour", hours);
-            let result = parse_relative_time(&input);
+            let result = parse_relative_duration(&input);
             prop_assert_eq!(result, Some(Duration::hours(hours)));
 
             let input_plural = format!("{}hours", hours);
-            let result_plural = parse_relative_time(&input_plural);
+            let result_plural = parse_relative_duration(&input_plural);
             prop_assert_eq!(result_plural, Some(Duration::hours(hours)));
         }
 
         #[test]
-        fn prop_relative_time_with_long_form_day(days in 1i64..100) {
+        fn prop_relative_duration_with_long_form_day(days in 1i64..100) {
             let input = format!("{}day", days);
-            let result = parse_relative_time(&input);
+            let result = parse_relative_duration(&input);
             prop_assert_eq!(result, Some(Duration::days(days)));
 
             let input_plural = format!("{}days", days);
-            let result_plural = parse_relative_time(&input_plural);
+            let result_plural = parse_relative_duration(&input_plural);
             prop_assert_eq!(result_plural, Some(Duration::days(days)));
         }
 

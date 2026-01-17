@@ -1,7 +1,5 @@
-use sinex_terminal_node::shell_detection::{
-    detect_capabilities, detect_shell_type, ShellType,
-};
-use sinex_test_utils::{sinex_test, TestResult};
+use sinex_terminal_node::shell_detection::{detect_capabilities, detect_shell_type, ShellType};
+use sinex_test_utils::sinex_test;
 
 #[sinex_test]
 fn detects_common_shell_types() -> TestResult<()> {

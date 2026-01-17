@@ -11,8 +11,12 @@ use sinex_core::{db::SqlxPgPool, SanitizedPath};
 use sinex_node_sdk::event_processor::EventTransport;
 use sinex_node_sdk::{
     config::ReplayConfig,
-    stream_processor::{Checkpoint, ScanReport, TimeHorizon},
+    stream_processor::{Checkpoint, TimeHorizon},
 };
+
+// Re-export common types from sinex_node_sdk::automaton_base
+// These are the canonical definitions used by all automatons
+pub use sinex_node_sdk::automaton_base::{ActivityEntry, IngestionHistoryEntry};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -247,7 +251,7 @@ pub fn parse_checkpoint(checkpoint_str: &str) -> eyre::Result<Checkpoint> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_test_utils::{sinex_test, TestResult};
+    use sinex_test_utils::sinex_test;
 
     #[sinex_test]
     fn scan_mode_emits_heartbeats() -> TestResult<()> {
@@ -371,40 +375,8 @@ pub struct SourceState {
     pub recent_activity: Vec<ActivityEntry>,
 }
 
-/// Activity entry for source state
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ActivityEntry {
-    /// Timestamp of activity
-    pub timestamp: DateTime<Utc>,
-
-    /// Activity description
-    pub description: String,
-
-    /// Optional associated data
-    pub data: Option<serde_json::Value>,
-}
-
-/// Ingestion history entry
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IngestionHistoryEntry {
-    /// Scan/ingestion ID
-    pub id: String,
-
-    /// Start time
-    pub started_at: DateTime<Utc>,
-
-    /// End time (if completed)
-    pub completed_at: Option<DateTime<Utc>>,
-
-    /// Number of events generated
-    pub events_generated: u64,
-
-    /// Scan report summary
-    pub scan_report: Option<ScanReport>,
-
-    /// Error message if failed
-    pub error: Option<String>,
-}
+// ActivityEntry and IngestionHistoryEntry are re-exported from sinex_node_sdk::automaton_base
+// at the top of this file
 
 /// Coverage analysis comparing source vs Sinex
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -493,11 +465,8 @@ pub struct ProcessorCliRunner<
     processor: Option<T>,
 }
 
-impl<
-        T: sinex_node_sdk::stream_processor::Node
-            + ExplorationProvider
-            + 'static,
-    > ProcessorCliRunner<T>
+impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static>
+    ProcessorCliRunner<T>
 {
     /// Create new CLI runner with a processor instance
     pub fn new(processor: T) -> Self {

@@ -102,6 +102,18 @@ pub enum SinexError {
 
     /// KV Store error: {0}
     Kv(ErrorDetails),
+
+    /// Automaton error: {0}
+    Automaton(ErrorDetails),
+
+    /// Checkpoint error: {0}
+    Checkpoint(ErrorDetails),
+
+    /// Lifecycle error: {0}
+    Lifecycle(ErrorDetails),
+
+    /// Processing error: {0}
+    Processing(ErrorDetails),
 }
 
 /// Detailed error information including message, context, and sources.
@@ -322,6 +334,26 @@ impl SinexError {
         SinexError::Kv(ErrorDetails::new(msg))
     }
 
+    /// Create an automaton error
+    pub fn automaton(msg: impl Into<String>) -> Self {
+        SinexError::Automaton(ErrorDetails::new(msg))
+    }
+
+    /// Create a checkpoint error
+    pub fn checkpoint(msg: impl Into<String>) -> Self {
+        SinexError::Checkpoint(ErrorDetails::new(msg))
+    }
+
+    /// Create a lifecycle error
+    pub fn lifecycle(msg: impl Into<String>) -> Self {
+        SinexError::Lifecycle(ErrorDetails::new(msg))
+    }
+
+    /// Create a processing error
+    pub fn processing(msg: impl Into<String>) -> Self {
+        SinexError::Processing(ErrorDetails::new(msg))
+    }
+
     // Builder-style context methods
     pub fn with_context(mut self, key: impl Into<String>, value: impl ToString) -> Self {
         use SinexError::*;
@@ -345,7 +377,11 @@ impl SinexError {
             | MaxRetriesExceeded(d)
             | ResourceExhausted(d)
             | Unknown(d)
-            | Kv(d) => d,
+            | Kv(d)
+            | Automaton(d)
+            | Checkpoint(d)
+            | Lifecycle(d)
+            | Processing(d) => d,
         };
         details.context.insert(key.into(), value.to_string());
         self
@@ -372,6 +408,10 @@ impl SinexError {
             | Cancelled(d)
             | MaxRetriesExceeded(d)
             | ResourceExhausted(d)
+            | Automaton(d)
+            | Checkpoint(d)
+            | Lifecycle(d)
+            | Processing(d)
             | Unknown(d)
             | Kv(d) => d,
         };
@@ -533,7 +573,11 @@ impl SinexError {
             | MaxRetriesExceeded(d)
             | ResourceExhausted(d)
             | Unknown(d)
-            | Kv(d) => d,
+            | Kv(d)
+            | Automaton(d)
+            | Checkpoint(d)
+            | Lifecycle(d)
+            | Processing(d) => d,
         };
         &details.context
     }
@@ -561,7 +605,11 @@ impl SinexError {
             | MaxRetriesExceeded(d)
             | ResourceExhausted(d)
             | Unknown(d)
-            | Kv(d) => d,
+            | Kv(d)
+            | Automaton(d)
+            | Checkpoint(d)
+            | Lifecycle(d)
+            | Processing(d) => d,
         };
         &details.message
     }
@@ -587,6 +635,10 @@ impl SinexError {
             | Timeout(d)
             | Cancelled(d)
             | MaxRetriesExceeded(d)
+            | Automaton(d)
+            | Checkpoint(d)
+            | Lifecycle(d)
+            | Processing(d)
             | ResourceExhausted(d)
             | Unknown(d)
             | Kv(d) => d,
@@ -617,6 +669,10 @@ impl SinexError {
             SinexError::ResourceExhausted(_) => "ResourceExhausted",
             SinexError::Unknown(_) => "Unknown",
             SinexError::Kv(_) => "Kv",
+            SinexError::Automaton(_) => "Automaton",
+            SinexError::Checkpoint(_) => "Checkpoint",
+            SinexError::Lifecycle(_) => "Lifecycle",
+            SinexError::Processing(_) => "Processing",
         }
     }
 }
@@ -634,6 +690,7 @@ impl From<serde_json::Error> for SinexError {
     }
 }
 
+#[cfg(feature = "sqlx")]
 impl From<sqlx::Error> for SinexError {
     fn from(e: sqlx::Error) -> Self {
         SinexError::Database(ErrorDetails::new(e.to_string()))

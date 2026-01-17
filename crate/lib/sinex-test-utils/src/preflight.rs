@@ -1,8 +1,8 @@
 //! Preflight diagnostics for system tests that rely on external tools.
 
+use crate::TestResult;
 use color_eyre::eyre::eyre;
 use std::fs;
-use crate::TestResult;
 
 pub fn system_test_preflight() -> TestResult<()> {
     let mut issues = Vec::new();

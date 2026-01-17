@@ -1,7 +1,6 @@
 use sinex_core::types::{validation::config_validation::ConfigValidation, Seconds};
 use sinex_ingestd::IngestdConfig;
-use sinex_test_utils::sinex_test;
-use sinex_test_utils::TestResult;
+use sinex_test_utils::{sinex_test, TestResult};
 
 #[sinex_test]
 fn defaults_match_constants() -> TestResult<()> {

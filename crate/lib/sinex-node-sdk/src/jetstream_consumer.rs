@@ -106,9 +106,7 @@ impl JetStreamEventConsumer {
         {
             let mut running = self.running.write().await;
             if *running {
-                return Err(NodeError::Lifecycle(
-                    "Consumer already running".to_string(),
-                ));
+                return Err(NodeError::Lifecycle("Consumer already running".to_string()));
             }
             *running = true;
         }
@@ -243,9 +241,10 @@ impl JetStreamEventConsumer {
                 NodeError::Processing(format!("Failed to get or create consumer: {}", e))
             })?;
 
-        let info = consumer.info().await.map_err(|e| {
-            NodeError::Processing(format!("Failed to read consumer info: {}", e))
-        })?;
+        let info = consumer
+            .info()
+            .await
+            .map_err(|e| NodeError::Processing(format!("Failed to read consumer info: {}", e)))?;
         self.validate_consumer_config(
             stream_name,
             &filter_subject,

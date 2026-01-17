@@ -21,7 +21,7 @@ async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
 
     // Start ingestd (includes MaterialAssembler)
     let ingest_config = TestIngestdConfig {
-        nats_url: nats.client_url().to_string(),
+        nats: nats.connection_config(),
         database_url: ctx.database_url().to_string(),
         work_dir: None,
         ..Default::default()
@@ -108,7 +108,7 @@ async fn material_acquisition_cancel_mid_slice(ctx: TestContext) -> Result<()> {
     let nats_client = nats.connect().await?;
 
     let ingest_config = TestIngestdConfig {
-        nats_url: nats.client_url().to_string(),
+        nats: nats.connection_config(),
         database_url: ctx.database_url().to_string(),
         work_dir: None,
         ..Default::default()
@@ -177,7 +177,7 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
     let nats_client = nats.connect().await?;
 
     let ingest_config = TestIngestdConfig {
-        nats_url: nats.client_url().to_string(),
+        nats: nats.connection_config(),
         database_url: ctx.database_url().to_string(),
         work_dir: None,
         ..Default::default()
@@ -335,7 +335,7 @@ async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
     let nats_client = nats.connect().await?;
 
     let ingest_config = TestIngestdConfig {
-        nats_url: nats.client_url().to_string(),
+        nats: nats.connection_config(),
         database_url: ctx.database_url().to_string(),
         work_dir: None,
         ..Default::default()
@@ -462,7 +462,7 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
     let work_dir_path = work_dir.path().to_path_buf();
 
     let config = TestIngestdConfig {
-        nats_url: nats.client_url().to_string(),
+        nats: nats.connection_config(),
         database_url: ctx.database_url().to_string(),
         work_dir: Some(work_dir_path.clone()),
         consumer_fetch_timeout_ms: 200,
@@ -614,7 +614,7 @@ async fn material_acquisition_concurrent_sessions_isolated(mut ctx: TestContext)
     let js = nats.jetstream_with_client(nats_client.clone());
 
     let ingest_config = TestIngestdConfig {
-        nats_url: nats.client_url().to_string(),
+        nats: nats.connection_config(),
         database_url: ctx.database_url().to_string(),
         work_dir: None,
         ..Default::default()
@@ -694,7 +694,7 @@ async fn material_acquisition_rotation_by_size(ctx: TestContext) -> Result<()> {
     let js = nats.jetstream_with_client(nats_client.clone());
 
     let ingest_config = TestIngestdConfig {
-        nats_url: nats.client_url().to_string(),
+        nats: nats.connection_config(),
         database_url: ctx.database_url().to_string(),
         work_dir: None,
         ..Default::default()

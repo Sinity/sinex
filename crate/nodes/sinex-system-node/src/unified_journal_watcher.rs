@@ -14,13 +14,12 @@ use sinex_core::fs::atomic_write;
 use sinex_core::{Event, JsonValue};
 
 use crate::payloads::*;
-use crate::systemd_watcher::{SystemdUnitState, SystemdUnitType};
 use crate::WatcherMaterialContext;
 use sinex_core::types::events::{
     JournalEntryWrittenPayload as EventJournalEntryWrittenPayload,
-    JournalSyncCompletedPayload as EventJournalSyncCompletedPayload,
-    SystemdTimerTriggeredPayload, SystemdUnitFailedPayload, SystemdUnitReloadedPayload,
-    SystemdUnitStartedPayload, SystemdUnitStoppedPayload,
+    JournalSyncCompletedPayload as EventJournalSyncCompletedPayload, SystemdTimerTriggeredPayload,
+    SystemdUnitFailedPayload, SystemdUnitReloadedPayload, SystemdUnitStartedPayload,
+    SystemdUnitStoppedPayload,
 };
 use sinex_node_sdk::NodeResult;
 use std::collections::{HashMap, HashSet};
@@ -51,10 +50,7 @@ pub struct UnifiedJournalWatcher {
 
 impl UnifiedJournalWatcher {
     /// Create new unified journal watcher
-    pub async fn new(
-        journal_config: JournalConfig,
-        systemd_enabled: bool,
-    ) -> NodeResult<Self> {
+    pub async fn new(journal_config: JournalConfig, systemd_enabled: bool) -> NodeResult<Self> {
         info!(
             "Unified journal watcher initialized (journal: {}, systemd: {})",
             true, systemd_enabled
@@ -66,10 +62,7 @@ impl UnifiedJournalWatcher {
             .output()
             .await
             .map_err(|e| {
-                sinex_node_sdk::NodeError::Processing(format!(
-                    "journalctl not found: {}",
-                    e
-                ))
+                sinex_node_sdk::NodeError::Processing(format!("journalctl not found: {}", e))
             })?;
 
         if !check.status.success() {
@@ -88,7 +81,10 @@ impl UnifiedJournalWatcher {
             None
         };
 
-        info!("Unified journal watcher initialized, last cursor: {:?}", last_cursor);
+        info!(
+            "Unified journal watcher initialized, last cursor: {:?}",
+            last_cursor
+        );
 
         Ok(Self {
             journal_config,
@@ -119,14 +115,18 @@ impl UnifiedJournalWatcher {
 
         // Import historical entries if configured
         if self.journal_config.import_on_startup {
-            if let Err(e) = self.import_historical(&journal_tx, &systemd_tx, &material).await {
+            if let Err(e) = self
+                .import_historical(&journal_tx, &systemd_tx, &material)
+                .await
+            {
                 error!("Failed to import historical journal entries: {}", e);
             }
         }
 
         // Follow journal if configured
         if self.journal_config.follow {
-            self.follow_journal(journal_tx, systemd_tx, &material).await?;
+            self.follow_journal(journal_tx, systemd_tx, &material)
+                .await?;
         }
 
         Ok(())
@@ -185,10 +185,7 @@ impl UnifiedJournalWatcher {
             .output()
             .await
             .map_err(|e| {
-                sinex_node_sdk::NodeError::Processing(format!(
-                    "Failed to run journalctl: {}",
-                    e
-                ))
+                sinex_node_sdk::NodeError::Processing(format!("Failed to run journalctl: {}", e))
             })?;
 
         if !output.status.success() {
@@ -230,7 +227,8 @@ impl UnifiedJournalWatcher {
 
                         if batch.len() >= self.journal_config.batch_size {
                             for event in batch.drain(..) {
-                                Self::send_event(journal_tx, event, "journal_batch", material).await?;
+                                Self::send_event(journal_tx, event, "journal_batch", material)
+                                    .await?;
                             }
                         }
                     }
@@ -239,7 +237,8 @@ impl UnifiedJournalWatcher {
                     if self.systemd_enabled {
                         if let Some(systemd_event) = self.parse_systemd_entry(&entry, material) {
                             if let Some(ref tx) = systemd_tx {
-                                Self::send_event(tx, systemd_event, "systemd_batch", material).await?;
+                                Self::send_event(tx, systemd_event, "systemd_batch", material)
+                                    .await?;
                             }
                         }
                     }
@@ -306,7 +305,8 @@ impl UnifiedJournalWatcher {
         systemd_tx: Option<mpsc::Sender<Event<JsonValue>>>,
         material: &WatcherMaterialContext,
     ) -> NodeResult<()> {
-        self.follow_journal_inner(&journal_tx, systemd_tx, material).await
+        self.follow_journal_inner(&journal_tx, systemd_tx, material)
+            .await
     }
 
     /// Inner journal following loop
@@ -364,19 +364,17 @@ impl UnifiedJournalWatcher {
             .stderr(std::process::Stdio::piped())
             .spawn()
             .map_err(|e| {
-                sinex_node_sdk::NodeError::Processing(format!(
-                    "Failed to spawn journalctl: {}",
-                    e
-                ))
+                sinex_node_sdk::NodeError::Processing(format!("Failed to spawn journalctl: {}", e))
             })?;
 
         // Store child process for lifecycle management
         let child_id = child.id();
         info!("Spawned journalctl process with PID: {:?}", child_id);
 
-        let stdout = child.stdout.take().ok_or_else(|| {
-            sinex_node_sdk::NodeError::Processing("No stdout".to_string())
-        })?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| sinex_node_sdk::NodeError::Processing("No stdout".to_string()))?;
 
         let mut reader = BufReader::new(stdout);
         let mut line = String::new();
@@ -404,16 +402,28 @@ impl UnifiedJournalWatcher {
                                     self.save_cursor(cursor).await?;
                                 }
 
-                                Self::send_event(journal_tx, event, "journal_follow_event", material)
-                                    .await?;
+                                Self::send_event(
+                                    journal_tx,
+                                    event,
+                                    "journal_follow_event",
+                                    material,
+                                )
+                                .await?;
                             }
 
                             // Emit systemd event if applicable
                             if self.systemd_enabled {
-                                if let Some(systemd_event) = self.parse_systemd_entry(&entry, material) {
+                                if let Some(systemd_event) =
+                                    self.parse_systemd_entry(&entry, material)
+                                {
                                     if let Some(ref tx) = systemd_tx {
-                                        Self::send_event(tx, systemd_event, "systemd_follow_event", material)
-                                            .await?;
+                                        Self::send_event(
+                                            tx,
+                                            systemd_event,
+                                            "systemd_follow_event",
+                                            material,
+                                        )
+                                        .await?;
                                     }
                                 }
                             }
@@ -450,9 +460,7 @@ impl UnifiedJournalWatcher {
         let cursor = obj
             .get("__CURSOR")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                sinex_node_sdk::NodeError::Processing("Missing cursor".to_string())
-            })?;
+            .ok_or_else(|| sinex_node_sdk::NodeError::Processing("Missing cursor".to_string()))?;
 
         let timestamp_us = obj
             .get("__REALTIME_TIMESTAMP")
@@ -678,9 +686,7 @@ impl UnifiedJournalWatcher {
                         pid: entry["_PID"].as_str().map(String::from),
                         uid: entry["_UID"].as_str().map(String::from),
                         timestamp: chrono::Utc::now().to_rfc3339(),
-                        journal_timestamp: entry["__REALTIME_TIMESTAMP"]
-                            .as_str()
-                            .map(String::from),
+                        journal_timestamp: entry["__REALTIME_TIMESTAMP"].as_str().map(String::from),
                     },
                     material.initial_provenance(),
                 )
@@ -697,9 +703,7 @@ impl UnifiedJournalWatcher {
                         pid: entry["_PID"].as_str().map(String::from),
                         uid: entry["_UID"].as_str().map(String::from),
                         timestamp: chrono::Utc::now().to_rfc3339(),
-                        journal_timestamp: entry["__REALTIME_TIMESTAMP"]
-                            .as_str()
-                            .map(String::from),
+                        journal_timestamp: entry["__REALTIME_TIMESTAMP"].as_str().map(String::from),
                     },
                     material.initial_provenance(),
                 )
@@ -716,9 +720,7 @@ impl UnifiedJournalWatcher {
                         pid: entry["_PID"].as_str().map(String::from),
                         uid: entry["_UID"].as_str().map(String::from),
                         timestamp: chrono::Utc::now().to_rfc3339(),
-                        journal_timestamp: entry["__REALTIME_TIMESTAMP"]
-                            .as_str()
-                            .map(String::from),
+                        journal_timestamp: entry["__REALTIME_TIMESTAMP"].as_str().map(String::from),
                     },
                     material.initial_provenance(),
                 )
@@ -741,10 +743,7 @@ impl UnifiedJournalWatcher {
             atomic_write(std::path::Path::new(cursor_file), cursor.as_bytes())
                 .await
                 .map_err(|e| {
-                    sinex_node_sdk::NodeError::Processing(format!(
-                        "Failed to save cursor: {}",
-                        e
-                    ))
+                    sinex_node_sdk::NodeError::Processing(format!("Failed to save cursor: {}", e))
                 })?;
         }
         Ok(())
@@ -767,7 +766,9 @@ impl UnifiedJournalWatcher {
         Ok(())
     }
 
-    /// Update event tracking
+    /// Update event tracking.
+    /// Reserved for metrics and diagnostics integration.
+    #[allow(dead_code)]
     fn record_event(&self) {
         if let Ok(mut last_event) = self.last_event_time.lock() {
             *last_event = Some(Instant::now());
@@ -775,7 +776,9 @@ impl UnifiedJournalWatcher {
         self.event_count.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Record an error
+    /// Record an error.
+    /// Reserved for metrics and diagnostics integration.
+    #[allow(dead_code)]
     fn record_error(&self, error: String) {
         if let Ok(mut last_error) = self.last_error.lock() {
             *last_error = Some(error);
@@ -795,7 +798,10 @@ impl WatcherLifecycle for UnifiedJournalWatcher {
     }
 
     async fn shutdown(&mut self, graceful: bool) -> NodeResult<()> {
-        info!("Shutting down unified journal watcher (graceful: {})", graceful);
+        info!(
+            "Shutting down unified journal watcher (graceful: {})",
+            graceful
+        );
 
         // Signal cancellation
         self.cancel_token.cancel();
@@ -804,10 +810,8 @@ impl WatcherLifecycle for UnifiedJournalWatcher {
         if let Some(ref mut child) = self.child_process {
             if graceful {
                 // Try graceful shutdown with timeout
-                match tokio::time::timeout(
-                    tokio::time::Duration::from_secs(30),
-                    child.wait()
-                ).await {
+                match tokio::time::timeout(tokio::time::Duration::from_secs(30), child.wait()).await
+                {
                     Ok(Ok(status)) => {
                         info!("Journal watcher process exited: {:?}", status);
                     }

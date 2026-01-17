@@ -3,6 +3,7 @@
 //! Consolidates the legacy `tests/integration` suites that focus on repository
 //! and schema behaviour provided directly by `sinex-core`.
 
+pub mod checkpoint_test_helpers;
 pub mod checkpoint_consistency_test;
 pub mod event_ordering_test;
 pub mod ingest_service_test;

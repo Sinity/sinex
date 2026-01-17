@@ -1,62 +1,53 @@
+//! CLI-specific validation utilities
+//!
+//! This module provides validators for CLI arguments. Most validation is now delegated
+//! to sinex-core's query_validation module, using unified `SinexError` types with
+//! CLI-specific field name context.
+
 use chrono::{DateTime, Utc};
 use color_eyre::eyre::{eyre, Result};
 use reqwest::Url;
+use sinex_core::types::validation::query_validation;
 
 /// Validate a ULID or generic ID string
+///
+/// Delegates to sinex-core's validate_id with CLI-specific field context.
 pub fn validate_id(id: &str, field_name: &str) -> Result<()> {
-    if id.is_empty() {
-        return Err(eyre!("{} cannot be empty", field_name));
-    }
-    if id.len() > 128 {
-        return Err(eyre!("{} is too long (max 128 chars)", field_name));
-    }
-    Ok(())
+    query_validation::validate_id(id).map_err(|e| eyre!("{}: {}", field_name, e))
 }
 
 /// Validate a limit parameter
+///
+/// Delegates to sinex-core's validate_limit with CLI-specific field context.
 pub fn validate_limit(limit: i32, field_name: &str) -> Result<()> {
-    if limit <= 0 {
+    if limit < 0 {
         return Err(eyre!("{} must be positive, got {}", field_name, limit));
     }
-    if limit > 10000 {
-        return Err(eyre!(
-            "{} is too large (max 10000), got {}",
-            field_name,
-            limit
-        ));
-    }
-    Ok(())
+    query_validation::validate_limit(limit as u32, query_validation::DEFAULT_MAX_LIMIT)
+        .map_err(|e| eyre!("{}: {}", field_name, e))
 }
 
 /// Validate an offset parameter
+///
+/// Delegates to sinex-core's validate_offset with CLI-specific field context.
 pub fn validate_offset(offset: i32, field_name: &str) -> Result<()> {
-    if offset < 0 {
-        return Err(eyre!("{} cannot be negative, got {}", field_name, offset));
-    }
-    Ok(())
+    query_validation::validate_offset(offset as i64).map_err(|e| eyre!("{}: {}", field_name, e))
 }
 
-/// Validate a URL string
+/// Validate a URL string (CLI-specific, not in core)
 pub fn validate_url(url: &str, field_name: &str) -> Result<()> {
     Url::parse(url).map_err(|e| eyre!("{} is not a valid URL: {}", field_name, e))?;
     Ok(())
 }
 
 /// Validate a time range (since must be before until)
+///
+/// Delegates to sinex-core's validate_time_range with CLI-specific context.
 pub fn validate_time_range(
     since: Option<DateTime<Utc>>,
     until: Option<DateTime<Utc>>,
 ) -> Result<()> {
-    if let (Some(start), Some(end)) = (since, until) {
-        if start >= end {
-            return Err(eyre!(
-                "Invalid time range: --since ({}) must be before --until ({})",
-                start,
-                end
-            ));
-        }
-    }
-    Ok(())
+    query_validation::validate_time_range(since, until).map_err(|e| eyre!("Invalid time range: {}", e))
 }
 
 /// Validate a subject/topic name (no wildcards in operations, simple validation)

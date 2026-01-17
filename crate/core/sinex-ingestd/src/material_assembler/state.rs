@@ -148,7 +148,8 @@ impl AssemblerState {
     }
 }
 
-pub(super) fn _take_buffered_slice(
+#[cfg(test)]
+pub(super) fn take_buffered_slice(
     state: &mut AssemblerState,
     material_id: Ulid,
     offset: i64,
@@ -386,6 +387,7 @@ mod tests {
             material_id,
             temp_path: temp_dir.path().join(TEMP_FILE_NAME),
             temp_file: None,
+            wal_file: None,
             expected_offset: 0,
             slice_count: 0,
             buffered_slices: BTreeMap::new(),

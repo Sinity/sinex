@@ -5,7 +5,6 @@ use crate::replay_state_machine::{ReplayScope, ReplayState};
 use crate::service_container::ServiceContainer;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
-use chrono::Utc;
 use color_eyre::eyre::{eyre, Context, ContextCompat, Result};
 use serde_json::{json, Value};
 use sinex_core::{
@@ -489,10 +488,7 @@ pub async fn handle_retrieve_blob(service: &ContentService, params: Value) -> Re
     Ok(blob_response_payload(&content, &metadata))
 }
 
-fn blob_response_payload(
-    content: &[u8],
-    metadata: &sinex_node_sdk::annex::BlobMetadata,
-) -> Value {
+fn blob_response_payload(content: &[u8], metadata: &sinex_node_sdk::annex::BlobMetadata) -> Value {
     json!({
         "content_base64": BASE64_STANDARD.encode(content),
         "mime_type": metadata.mime_type.clone(),
@@ -504,7 +500,7 @@ fn blob_response_payload(
 mod tests {
     use super::*;
     use sinex_core::Blob;
-    use sinex_test_utils::{sinex_test, TestResult};
+    use sinex_test_utils::sinex_test;
 
     #[sinex_test]
     fn blob_response_payload_encodes_base64() -> TestResult<()> {

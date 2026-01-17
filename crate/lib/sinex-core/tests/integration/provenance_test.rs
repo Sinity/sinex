@@ -3,7 +3,7 @@ use serde_json::json;
 use sinex_core::db::models::Provenance;
 use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::db::validation::{EventValidator, ValidationError};
-use sinex_core::{Event, EventId, Id, JsonValue, Ulid};
+use sinex_core::{Event, EventBuilder, EventId, Id, JsonValue, Ulid};
 use sinex_test_utils::prelude::*;
 use tracing::info;
 
@@ -463,7 +463,7 @@ async fn synthesis_provenance_rejects_direct_cycles(ctx: TestContext) -> TestRes
     let parent_id = Id::<Event<JsonValue>>::new();
     let child_id = Id::<Event<JsonValue>>::new();
 
-    let mut parent_event = Event::dynamic("cycle-test", "cycle.parent", json!({"role": "parent"}))
+    let mut parent_event = EventBuilder::new("cycle-test".into(), "cycle.parent".into(), json!({"role": "parent"}))
         .with_provenance(
             Provenance::from_synthesis(vec![EventId::from_ulid(*child_id.as_ulid())])
                 .expect("non-empty"),
@@ -473,7 +473,7 @@ async fn synthesis_provenance_rejects_direct_cycles(ctx: TestContext) -> TestRes
 
     repo.insert(parent_event).await?;
 
-    let mut child_event = Event::dynamic("cycle-test", "cycle.child", json!({"role": "child"}))
+    let mut child_event = EventBuilder::new("cycle-test".into(), "cycle.child".into(), json!({"role": "child"}))
         .with_provenance(
             Provenance::from_synthesis(vec![EventId::from_ulid(*parent_id.as_ulid())])
                 .expect("non-empty"),
@@ -504,7 +504,7 @@ async fn synthesis_provenance_rejects_indirect_cycles(ctx: TestContext) -> TestR
     let child_id = Id::<Event<JsonValue>>::new();
 
     let mut ancestor_event =
-        Event::dynamic("cycle-test", "cycle.ancestor", json!({"role": "ancestor"}))
+        EventBuilder::new("cycle-test".into(), "cycle.ancestor".into(), json!({"role": "ancestor"}))
             .with_provenance(
                 Provenance::from_synthesis(vec![EventId::from_ulid(*child_id.as_ulid())])
                     .expect("non-empty"),
@@ -513,7 +513,7 @@ async fn synthesis_provenance_rejects_indirect_cycles(ctx: TestContext) -> TestR
     ancestor_event.id = Some(ancestor_id.clone());
     repo.insert(ancestor_event).await?;
 
-    let mut parent_event = Event::dynamic("cycle-test", "cycle.parent", json!({"role": "parent"}))
+    let mut parent_event = EventBuilder::new("cycle-test".into(), "cycle.parent".into(), json!({"role": "parent"}))
         .with_provenance(
             Provenance::from_synthesis(vec![EventId::from_ulid(*ancestor_id.as_ulid())])
                 .expect("non-empty"),
@@ -522,7 +522,7 @@ async fn synthesis_provenance_rejects_indirect_cycles(ctx: TestContext) -> TestR
     parent_event.id = Some(parent_id.clone());
     repo.insert(parent_event).await?;
 
-    let mut child_event = Event::dynamic("cycle-test", "cycle.child", json!({"role": "child"}))
+    let mut child_event = EventBuilder::new("cycle-test".into(), "cycle.child".into(), json!({"role": "child"}))
         .with_provenance(
             Provenance::from_synthesis(vec![EventId::from_ulid(*parent_id.as_ulid())])
                 .expect("non-empty"),
@@ -547,7 +547,7 @@ async fn duplicate_parent_ids_rejected_by_validator() -> TestResult<()> {
     let validator = EventValidator::new();
     let parent = EventId::new();
 
-    let mut event = Event::dynamic("prov-security", "duplicate.parents", json!({"case": "dup"}))
+    let mut event = EventBuilder::new("prov-security".into(), "duplicate.parents".into(), json!({"case": "dup"}))
         .from_parents(vec![parent.clone(), parent])?
         .build()?;
 

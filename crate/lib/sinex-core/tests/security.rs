@@ -1,6 +1,5 @@
 use sinex_core::db::security::SecurityValidator;
-use sinex_test_utils::sinex_test;
-use sinex_test_utils::TestResult;
+use sinex_test_utils::{sinex_test, TestResult};
 
 #[sinex_test]
 async fn path_sanitization_rejects_traversal() -> TestResult<()> {

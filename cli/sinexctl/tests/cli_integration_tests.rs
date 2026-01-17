@@ -3,12 +3,13 @@
 //! These tests verify CLI argument parsing, help text, completions,
 //! and error handling without requiring a running gateway.
 
+use assert_cmd::cargo;
 use assert_cmd::Command;
 use predicates::prelude::*;
 
 /// Helper to create a sinexctl command
 fn sinexctl() -> Command {
-    Command::cargo_bin("sinexctl").unwrap()
+    Command::new(cargo::cargo_bin!("sinexctl"))
 }
 
 mod help_tests {

@@ -17,20 +17,20 @@ use sinex_core::{
         domain::{EventSource, EventType, SanitizedPath},
         ulid::Ulid,
     },
-    Event as CoreEvent, Id, OffsetKind, Provenance,
-};
-use sinex_processor_runtime::{
-    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
+    EventBuilder, Id, OffsetKind, Provenance,
 };
 use sinex_node_sdk::{
     acquisition_manager::{AcquisitionManager, RotationPolicy},
     event_processor::EventTransport,
     stage_as_you_go::StageAsYouGoContext,
     stream_processor::{
-        Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
-        ProcessorType, ScanArgs, ScanEstimate, ScanReport, Node, TimeHorizon,
+        Checkpoint, Node, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
+        ProcessorType, ScanArgs, ScanEstimate, ScanReport, TimeHorizon,
     },
     NodeError, NodeResult,
+};
+use sinex_processor_runtime::{
+    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
 };
 use std::{collections::HashMap, sync::Arc, time::Instant};
 use tokio::{fs, io::AsyncReadExt};
@@ -162,9 +162,10 @@ impl DocumentProcessor {
             .stage_context
             .as_ref()
             .ok_or_else(|| NodeError::Lifecycle("Stage context not initialized".into()))?;
-        let acquisition = self.acquisition.as_ref().ok_or_else(|| {
-            NodeError::Lifecycle("Acquisition manager not initialized".into())
-        })?;
+        let acquisition = self
+            .acquisition
+            .as_ref()
+            .ok_or_else(|| NodeError::Lifecycle("Acquisition manager not initialized".into()))?;
 
         let path_buf = std::path::PathBuf::from(target);
         let utf8_path = Utf8PathBuf::from_path_buf(path_buf.clone()).map_err(|_| {
@@ -277,12 +278,14 @@ impl DocumentProcessor {
             offset_kind: OffsetKind::Byte,
         };
 
-        let mut event = CoreEvent::create(
+        let mut event = EventBuilder::new(
             EventSource::from_static("document_ingestor"),
             EventType::from("document.ingested"),
             payload,
-            provenance,
-        );
+        )
+        .with_provenance(provenance)
+        .build()
+        .map_err(|e| NodeError::Processing(format!("Failed to build event: {e}")))?;
         event.id = Some(Id::from_ulid(Ulid::new()));
 
         stage_context
@@ -327,10 +330,7 @@ impl DocumentProcessor {
 impl Node for DocumentProcessor {
     type Config = DocumentIngestorConfig;
 
-    async fn initialize(
-        &mut self,
-        init: ProcessorInitContext<Self::Config>,
-    ) -> NodeResult<()> {
+    async fn initialize(&mut self, init: ProcessorInitContext<Self::Config>) -> NodeResult<()> {
         let (config, runtime) = init.into_runtime();
         self.initialise_with_runtime_state(runtime, config).await
     }
