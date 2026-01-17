@@ -80,6 +80,16 @@ enum Commands {
         #[command(subcommand)]
         cmd: DevCommand,
     },
+    /// Code coverage reporting
+    Coverage {
+        #[command(subcommand)]
+        cmd: CoverageCommand,
+    },
+    /// Security fuzzing
+    Fuzz {
+        #[command(subcommand)]
+        cmd: FuzzCommand,
+    },
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -152,6 +162,70 @@ enum DevCommand {
         /// Output directory for the generated PEM files
         #[arg(long, default_value = "tests/fixtures/tls")]
         output: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum CoverageCommand {
+    /// Generate HTML coverage report
+    Html {
+        /// Output directory for HTML report
+        #[arg(long, default_value = "target/coverage/html")]
+        output: String,
+        /// Open report in browser after generation
+        #[arg(long)]
+        open: bool,
+        /// Package to measure (default: all)
+        #[arg(short, long)]
+        package: Option<String>,
+    },
+    /// Generate LCOV coverage report (for CI integration)
+    Lcov {
+        /// Output file path
+        #[arg(long, default_value = "target/coverage/lcov.info")]
+        output: String,
+        /// Package to measure (default: all)
+        #[arg(short, long)]
+        package: Option<String>,
+    },
+    /// Print coverage summary to stdout
+    Summary {
+        /// Package to measure (default: all)
+        #[arg(short, long)]
+        package: Option<String>,
+        /// Show file-level detail
+        #[arg(long)]
+        files: bool,
+    },
+    /// Clean coverage artifacts
+    Clean,
+}
+
+#[derive(Subcommand)]
+enum FuzzCommand {
+    /// Initialize fuzzing infrastructure for a crate
+    Init {
+        /// Target crate to add fuzzing to
+        #[arg(short, long)]
+        package: String,
+    },
+    /// List available fuzz targets
+    List,
+    /// Run a specific fuzz target
+    Run {
+        /// Fuzz target name (format: crate::target)
+        target: String,
+        /// Maximum runtime in seconds (0 = unlimited)
+        #[arg(long, default_value_t = 60)]
+        max_time: u64,
+        /// Number of jobs (default: num CPUs)
+        #[arg(long)]
+        jobs: Option<usize>,
+    },
+    /// Show fuzzing corpus for a target
+    Corpus {
+        /// Fuzz target name
+        target: String,
     },
 }
 
@@ -232,6 +306,8 @@ fn main() -> Result<()> {
         Commands::Ci { cmd } => ci(cmd),
         Commands::Bench(config) => bench::run(config),
         Commands::Dev { cmd } => dev(cmd),
+        Commands::Coverage { cmd } => coverage(cmd),
+        Commands::Fuzz { cmd } => fuzz(cmd),
     }
 }
 
@@ -1402,4 +1478,400 @@ where
 
 fn is_tests_path(path: &str) -> bool {
     path.contains("/tests/") || path.starts_with("tests/")
+}
+
+// =============================================================================
+// Coverage Functions
+// =============================================================================
+
+fn coverage(cmd: CoverageCommand) -> Result<()> {
+    match cmd {
+        CoverageCommand::Html {
+            output,
+            open,
+            package,
+        } => coverage_html(&output, open, package.as_deref()),
+        CoverageCommand::Lcov { output, package } => coverage_lcov(&output, package.as_deref()),
+        CoverageCommand::Summary { package, files } => coverage_summary(package.as_deref(), files),
+        CoverageCommand::Clean => coverage_clean(),
+    }
+}
+
+fn coverage_html(output: &str, open: bool, package: Option<&str>) -> Result<()> {
+    heading("coverage html report");
+
+    // Check for cargo-llvm-cov
+    check_llvm_cov_installed()?;
+
+    let mut cmd = Command::new("cargo");
+    cmd.arg("llvm-cov")
+        .arg("--html")
+        .arg("--output-dir")
+        .arg(output)
+        .arg("--ignore-filename-regex")
+        .arg("(tests?/|test_|_test\\.rs|/target/)");
+
+    if let Some(pkg) = package {
+        cmd.arg("--package").arg(pkg);
+    } else {
+        cmd.arg("--workspace");
+    }
+
+    // Exclude test utilities from coverage measurement
+    cmd.arg("--exclude").arg("sinex-test-utils");
+    cmd.arg("--exclude").arg("xtask");
+
+    run_cmd("cargo llvm-cov --html", cmd)?;
+
+    println!("Coverage report generated at: {output}/html/index.html");
+
+    if open {
+        let index_path = Path::new(output).join("html").join("index.html");
+        if index_path.exists() {
+            let _ = Command::new("xdg-open")
+                .arg(&index_path)
+                .spawn()
+                .or_else(|_| Command::new("open").arg(&index_path).spawn());
+        }
+    }
+
+    Ok(())
+}
+
+fn coverage_lcov(output: &str, package: Option<&str>) -> Result<()> {
+    heading("coverage lcov report");
+
+    check_llvm_cov_installed()?;
+
+    // Ensure output directory exists
+    if let Some(parent) = Path::new(output).parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let mut cmd = Command::new("cargo");
+    cmd.arg("llvm-cov")
+        .arg("--lcov")
+        .arg("--output-path")
+        .arg(output)
+        .arg("--ignore-filename-regex")
+        .arg("(tests?/|test_|_test\\.rs|/target/)");
+
+    if let Some(pkg) = package {
+        cmd.arg("--package").arg(pkg);
+    } else {
+        cmd.arg("--workspace");
+    }
+
+    cmd.arg("--exclude").arg("sinex-test-utils");
+    cmd.arg("--exclude").arg("xtask");
+
+    run_cmd("cargo llvm-cov --lcov", cmd)?;
+
+    println!("LCOV report generated at: {output}");
+    Ok(())
+}
+
+fn coverage_summary(package: Option<&str>, files: bool) -> Result<()> {
+    heading("coverage summary");
+
+    check_llvm_cov_installed()?;
+
+    let mut cmd = Command::new("cargo");
+    cmd.arg("llvm-cov")
+        .arg("--ignore-filename-regex")
+        .arg("(tests?/|test_|_test\\.rs|/target/)");
+
+    if files {
+        cmd.arg("--show-missing-lines");
+    }
+
+    if let Some(pkg) = package {
+        cmd.arg("--package").arg(pkg);
+    } else {
+        cmd.arg("--workspace");
+    }
+
+    cmd.arg("--exclude").arg("sinex-test-utils");
+    cmd.arg("--exclude").arg("xtask");
+
+    run_cmd("cargo llvm-cov", cmd)
+}
+
+fn coverage_clean() -> Result<()> {
+    heading("clean coverage artifacts");
+
+    let mut cmd = Command::new("cargo");
+    cmd.arg("llvm-cov").arg("clean").arg("--workspace");
+    run_cmd("cargo llvm-cov clean", cmd)?;
+
+    // Also remove the output directory
+    let coverage_dir = Path::new("target/coverage");
+    if coverage_dir.exists() {
+        fs::remove_dir_all(coverage_dir)?;
+        println!("Removed {}", coverage_dir.display());
+    }
+
+    Ok(())
+}
+
+fn check_llvm_cov_installed() -> Result<()> {
+    let output = Command::new("cargo")
+        .args(["llvm-cov", "--version"])
+        .output();
+
+    match output {
+        Ok(out) if out.status.success() => Ok(()),
+        _ => bail!(
+            "cargo-llvm-cov is not installed. Install with:\n  \
+             cargo install cargo-llvm-cov\n  \
+             or via nix: nix-env -iA nixpkgs.cargo-llvm-cov"
+        ),
+    }
+}
+
+// =============================================================================
+// Fuzzing Functions
+// =============================================================================
+
+fn fuzz(cmd: FuzzCommand) -> Result<()> {
+    match cmd {
+        FuzzCommand::Init { package } => fuzz_init(&package),
+        FuzzCommand::List => fuzz_list(),
+        FuzzCommand::Run {
+            target,
+            max_time,
+            jobs,
+        } => fuzz_run(&target, max_time, jobs),
+        FuzzCommand::Corpus { target } => fuzz_corpus(&target),
+    }
+}
+
+fn fuzz_init(package: &str) -> Result<()> {
+    heading(&format!("initialize fuzzing for {package}"));
+
+    // Find the crate directory
+    let crate_dir = find_crate_dir(package)?;
+    let fuzz_dir = crate_dir.join("fuzz");
+
+    if fuzz_dir.exists() {
+        println!("Fuzz directory already exists at {}", fuzz_dir.display());
+        return Ok(());
+    }
+
+    // Create fuzz directory structure
+    fs::create_dir_all(fuzz_dir.join("fuzz_targets"))?;
+    fs::create_dir_all(fuzz_dir.join("corpus"))?;
+
+    // Create Cargo.toml for fuzz crate
+    let fuzz_cargo = format!(
+        r#"[package]
+name = "{package}-fuzz"
+version = "0.0.0"
+authors = ["Automatically generated"]
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = {{ version = "1", features = ["derive"] }}
+
+[dependencies.{package}]
+path = ".."
+
+[[bin]]
+name = "fuzz_input_validation"
+path = "fuzz_targets/fuzz_input_validation.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]
+"#
+    );
+
+    fs::write(fuzz_dir.join("Cargo.toml"), fuzz_cargo)?;
+
+    // Create example fuzz target
+    let fuzz_target = format!(
+        r#"#![no_main]
+
+use libfuzzer_sys::fuzz_target;
+use arbitrary::Arbitrary;
+
+// Example fuzz target - customize for your crate
+fuzz_target!(|data: &[u8]| {{
+    // Add fuzzing logic here
+    // Example: parse input, validate, etc.
+    let _ = std::hint::black_box(data);
+}});
+"#
+    );
+
+    fs::write(
+        fuzz_dir.join("fuzz_targets/fuzz_input_validation.rs"),
+        fuzz_target,
+    )?;
+
+    // Create .gitignore for fuzz artifacts
+    let gitignore = "target/\ncorpus/\nartifacts/\n";
+    fs::write(fuzz_dir.join(".gitignore"), gitignore)?;
+
+    println!("Initialized fuzzing infrastructure at {}", fuzz_dir.display());
+    println!("\nNext steps:");
+    println!("  1. Edit {}/fuzz_targets/fuzz_input_validation.rs", fuzz_dir.display());
+    println!("  2. Run: cargo xtask fuzz run {}::fuzz_input_validation", package);
+
+    Ok(())
+}
+
+fn fuzz_list() -> Result<()> {
+    heading("available fuzz targets");
+
+    let mut found = false;
+
+    // Search for fuzz directories in crates
+    for entry in walkdir::WalkDir::new("crate")
+        .max_depth(4)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
+        let path = entry.path();
+        if path.ends_with("fuzz/Cargo.toml") {
+            if let Ok(content) = fs::read_to_string(path) {
+                // Extract package name and targets
+                let pkg_name = content
+                    .lines()
+                    .find(|l| l.starts_with("name = "))
+                    .and_then(|l| l.split('"').nth(1))
+                    .unwrap_or("unknown");
+
+                println!("Package: {pkg_name}");
+
+                // Find [[bin]] entries
+                for line in content.lines() {
+                    if line.starts_with("name = \"fuzz_") {
+                        if let Some(target) = line.split('"').nth(1) {
+                            println!("  - {}", target);
+                            found = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if !found {
+        println!("No fuzz targets found.");
+        println!("\nTo add fuzzing to a crate, run:");
+        println!("  cargo xtask fuzz init --package <crate-name>");
+    }
+
+    Ok(())
+}
+
+fn fuzz_run(target: &str, max_time: u64, jobs: Option<usize>) -> Result<()> {
+    heading(&format!("fuzzing {target}"));
+
+    // Parse target format: crate::target_name
+    let parts: Vec<&str> = target.split("::").collect();
+    if parts.len() != 2 {
+        bail!("Target format must be 'crate::target_name' (e.g., sinex-core::fuzz_input_validation)");
+    }
+
+    let crate_name = parts[0];
+    let target_name = parts[1];
+
+    let crate_dir = find_crate_dir(crate_name)?;
+    let fuzz_dir = crate_dir.join("fuzz");
+
+    if !fuzz_dir.exists() {
+        bail!(
+            "Fuzz directory not found for {crate_name}. Run:\n  cargo xtask fuzz init --package {crate_name}"
+        );
+    }
+
+    let mut cmd = Command::new("cargo");
+    cmd.current_dir(&fuzz_dir)
+        .arg("+nightly")
+        .arg("fuzz")
+        .arg("run")
+        .arg(target_name);
+
+    if max_time > 0 {
+        cmd.arg("--")
+            .arg(format!("-max_total_time={max_time}"));
+    }
+
+    if let Some(j) = jobs {
+        cmd.arg(format!("-jobs={j}"));
+    }
+
+    println!("Running in: {}", fuzz_dir.display());
+    println!("Target: {target_name}");
+    if max_time > 0 {
+        println!("Max time: {max_time}s");
+    }
+
+    run_cmd("cargo +nightly fuzz run", cmd)
+}
+
+fn fuzz_corpus(target: &str) -> Result<()> {
+    heading(&format!("corpus for {target}"));
+
+    let parts: Vec<&str> = target.split("::").collect();
+    if parts.len() != 2 {
+        bail!("Target format must be 'crate::target_name'");
+    }
+
+    let crate_name = parts[0];
+    let target_name = parts[1];
+
+    let crate_dir = find_crate_dir(crate_name)?;
+    let corpus_dir = crate_dir.join("fuzz").join("corpus").join(target_name);
+
+    if !corpus_dir.exists() {
+        println!("No corpus found at {}", corpus_dir.display());
+        println!("Run the fuzzer first to generate corpus entries.");
+        return Ok(());
+    }
+
+    let entries: Vec<_> = fs::read_dir(&corpus_dir)?
+        .filter_map(Result::ok)
+        .collect();
+
+    println!("Corpus directory: {}", corpus_dir.display());
+    println!("Entries: {}", entries.len());
+
+    for entry in entries.iter().take(10) {
+        println!("  - {}", entry.file_name().to_string_lossy());
+    }
+
+    if entries.len() > 10 {
+        println!("  ... and {} more", entries.len() - 10);
+    }
+
+    Ok(())
+}
+
+fn find_crate_dir(crate_name: &str) -> Result<PathBuf> {
+    // Try common locations
+    let locations = [
+        format!("crate/lib/{crate_name}"),
+        format!("crate/core/{crate_name}"),
+        format!("crate/nodes/{crate_name}"),
+        format!("cli/{crate_name}"),
+    ];
+
+    for loc in &locations {
+        let path = PathBuf::from(loc);
+        if path.join("Cargo.toml").exists() {
+            return Ok(path);
+        }
+    }
+
+    bail!("Could not find crate directory for '{crate_name}'")
 }

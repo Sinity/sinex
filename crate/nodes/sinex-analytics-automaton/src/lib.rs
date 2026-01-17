@@ -9,21 +9,20 @@
 
 mod common {
     pub use sinex_core::{
-        db::models::{Event, EventId, Provenance},
+        db::models::{Event, EventBuilder, EventId, Provenance},
         db::repositories::DbPoolExt,
         types::{domain::EventType, Seconds},
         JsonValue,
     };
     pub use sinex_processor_runtime::cli::{
-        ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
-        SourceState,
+        CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
     };
 
     pub use sinex_node_sdk::{
+        automaton_base::{AutomatonFields, ChannelConfirmedEventHandler},
         stream_processor::{
-            Checkpoint, EventSender, ProcessorCapabilities, ProcessorInitContext,
-            ProcessorRuntimeState, ProcessorType, ScanArgs, ScanReport, Node,
-            TimeHorizon,
+            Checkpoint, EventSender, Node, ProcessorCapabilities, ProcessorInitContext,
+            ProcessorRuntimeState, ProcessorType, ScanArgs, ScanReport, TimeHorizon,
         },
         NodeError, NodeResult,
     };
@@ -34,7 +33,6 @@ mod common {
         serde::{Deserialize, Serialize},
         sqlx::PgPool,
         std::time::Duration,
-        tokio::sync::mpsc,
         tracing::{error, info, warn},
     };
 }
@@ -43,27 +41,19 @@ use crate::common::*;
 use serde_json::json;
 use sinex_core::{environment, types::Result as CoreResult, Ulid};
 use sinex_node_sdk::{
-    confirmation_handler::{ConfirmedEventHandler, ProvisionalEvent},
+    confirmation_handler::ProvisionalEvent,
     event_processor::EventTransport,
     jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig},
     ProcessingModel,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
-use tokio::task::JoinHandle;
 
 const MAX_ANALYTICS_EVENTS: usize = 768;
 const DEFAULT_BATCH_SIZE: usize = 128;
 const MAX_PROVENANCE_IDS: usize = 8;
-const CONFIRMED_CHANNEL_CAPACITY: usize = 1024;
-const MAX_HISTORY_ENTRIES: usize = 32;
 
-#[derive(Default)]
-struct AnalyticsAutomatonStats {
-    inputs_seen: u64,
-    outputs_emitted: u64,
-    last_activity: Option<DateTime<Utc>>,
-}
+// Use common constants from AutomatonFields for channel/history sizes
 
 /// Configuration for Analytics Automaton
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -101,123 +91,44 @@ impl Default for AnalyticsAutomatonConfig {
 /// - Cross-domain correlation analysis
 /// - Usage insights and behavioral patterns
 pub struct AnalyticsAutomaton {
-    runtime: Option<ProcessorRuntimeState>,
-    config: AnalyticsAutomatonConfig,
-    event_sender: Option<EventSender>,
-    db_pool: Option<PgPool>,
+    /// Common automaton infrastructure (runtime, config, channels, stats, history)
+    fields: AutomatonFields<AnalyticsAutomatonConfig>,
+    /// Automaton-specific analytics state
     state: AnalyticsState,
-    incoming_tx: Option<mpsc::Sender<ProvisionalEvent>>,
-    incoming_rx: Option<mpsc::Receiver<ProvisionalEvent>>,
-    consumer: Option<Arc<JetStreamEventConsumer>>,
-    consumer_handle: Option<JoinHandle<()>>,
-    history: VecDeque<IngestionHistoryEntry>,
-    stats: AnalyticsAutomatonStats,
 }
 
 impl AnalyticsAutomaton {
     pub fn new() -> Self {
         Self {
-            runtime: None,
-            config: AnalyticsAutomatonConfig::default(),
-            event_sender: None,
-            db_pool: None,
+            fields: AutomatonFields::new(),
             state: AnalyticsState::default(),
-            incoming_tx: None,
-            incoming_rx: None,
-            consumer: None,
-            consumer_handle: None,
-            history: VecDeque::new(),
-            stats: AnalyticsAutomatonStats::default(),
         }
     }
 
+    // Delegate to AutomatonFields for common infrastructure
     fn runtime(&self) -> NodeResult<&ProcessorRuntimeState> {
-        self.runtime.as_ref().ok_or_else(|| {
-            NodeError::Lifecycle("Analytics automaton runtime not initialized".into())
-        })
+        self.fields.runtime()
     }
 
     fn db_pool(&self) -> NodeResult<&PgPool> {
-        if let Some(runtime) = self.runtime.as_ref() {
-            Ok(runtime.db_pool())
-        } else if let Some(pool) = self.db_pool.as_ref() {
-            Ok(pool)
-        } else {
-            Err(NodeError::Processing(
-                "Database pool not initialized".into(),
-            ))
-        }
+        self.fields.db_pool()
     }
 
     fn event_sender(&self) -> NodeResult<EventSender> {
-        if let Some(runtime) = self.runtime.as_ref() {
-            Ok(runtime.event_sender())
-        } else if let Some(sender) = self.event_sender.as_ref() {
-            Ok(sender.clone())
-        } else {
-            Err(NodeError::Processing(
-                "Event sender not initialized".into(),
-            ))
-        }
-    }
-
-    fn ensure_event_channel(&mut self) {
-        if self.incoming_tx.is_none() || self.incoming_rx.is_none() {
-            let (tx, rx) = mpsc::channel(CONFIRMED_CHANNEL_CAPACITY);
-            self.incoming_tx = Some(tx);
-            self.incoming_rx = Some(rx);
-        }
-    }
-
-    fn record_history(&mut self, entry: IngestionHistoryEntry) {
-        self.history.push_front(entry);
-        while self.history.len() > MAX_HISTORY_ENTRIES {
-            self.history.pop_back();
-        }
-    }
-
-    fn record_input(&mut self, count: usize) {
-        if count == 0 {
-            return;
-        }
-        self.stats.inputs_seen = self.stats.inputs_seen.saturating_add(count as u64);
-        self.stats.last_activity = Some(Utc::now());
-    }
-
-    fn record_output(&mut self, count: u64) {
-        if count == 0 {
-            return;
-        }
-        self.stats.outputs_emitted = self.stats.outputs_emitted.saturating_add(count);
-        self.stats.last_activity = Some(Utc::now());
-    }
-
-    fn recent_activity(&self) -> Vec<ActivityEntry> {
-        self.history
-            .iter()
-            .take(5)
-            .map(|entry| ActivityEntry {
-                timestamp: entry.completed_at.unwrap_or(entry.started_at),
-                description: format!("Processed {} events", entry.events_generated),
-                data: entry.scan_report.as_ref().map(|report| {
-                    serde_json::json!({
-                        "events_processed": report.events_processed,
-                        "warnings": report.warnings,
-                    })
-                }),
-            })
-            .collect()
+        self.fields.event_sender()
     }
 
     async fn ensure_consumer(&mut self) -> NodeResult<()> {
-        if let Some(handle) = self.consumer_handle.as_ref() {
+        // Check if existing consumer is still running
+        if let Some(handle) = self.fields.consumer_handle.as_ref() {
             if !handle.is_finished() {
                 return Ok(());
             }
         }
 
-        self.consumer = None;
-        self.consumer_handle = None;
+        // Clean up old consumer
+        self.fields.consumer = None;
+        self.fields.consumer_handle = None;
 
         let runtime = self.runtime()?;
         let transport = runtime.transport().clone();
@@ -227,10 +138,12 @@ impl AnalyticsAutomaton {
             EventTransport::Nats(publisher) => publisher,
         };
 
-        self.ensure_event_channel();
-        let sender = self.incoming_tx.clone().ok_or_else(|| {
-            NodeError::Processing("Confirmed event channel unavailable".into())
-        })?;
+        self.fields.ensure_event_channel();
+        let sender = self
+            .fields
+            .incoming_tx
+            .clone()
+            .ok_or_else(|| NodeError::Processing("Confirmed event channel unavailable".into()))?;
 
         let handler = Arc::new(ChannelConfirmedEventHandler::new(sender));
         let env = environment().clone();
@@ -258,8 +171,7 @@ impl AnalyticsAutomaton {
             }
         });
 
-        self.consumer = Some(consumer);
-        self.consumer_handle = Some(handle);
+        self.fields.set_consumer(consumer, handle);
 
         Ok(())
     }
@@ -275,10 +187,10 @@ impl AnalyticsAutomaton {
             return Ok(0);
         }
 
-        self.record_input(events.len());
+        self.fields.stats.record_input(events.len());
         self.state.integrate(
             events,
-            self.config.analysis_window_seconds,
+            self.fields.config.analysis_window_seconds,
             MAX_ANALYTICS_EVENTS,
         );
         self.emit_insights().await
@@ -289,7 +201,7 @@ impl AnalyticsAutomaton {
         let mut processed = self.analyze_snapshot(Utc::now()).await.unwrap_or(0);
 
         self.ensure_consumer().await?;
-        let mut receiver = self.incoming_rx.take().ok_or_else(|| {
+        let mut receiver = self.fields.take_incoming_rx().ok_or_else(|| {
             NodeError::Processing("Confirmed events channel not initialized".into())
         })?;
 
@@ -298,18 +210,15 @@ impl AnalyticsAutomaton {
         }
 
         info!("Confirmed event channel closed; exiting analytics continuous loop");
-        self.incoming_tx = None;
-        self.consumer_handle = None;
-        self.consumer = None;
+        self.fields.incoming_tx = None;
+        self.fields.consumer_handle = None;
+        self.fields.consumer = None;
         drop(from);
 
         Ok(processed)
     }
 
-    async fn process_confirmed_event(
-        &mut self,
-        provisional: ProvisionalEvent,
-    ) -> NodeResult<u64> {
+    async fn process_confirmed_event(&mut self, provisional: ProvisionalEvent) -> NodeResult<u64> {
         let db_pool = self.db_pool()?;
         let event_sender = self.event_sender()?;
         let event_id = EventId::from_ulid(provisional.event_id);
@@ -327,10 +236,10 @@ impl AnalyticsAutomaton {
             }
         };
 
-        self.record_input(1);
+        self.fields.stats.record_input(1);
         self.state.integrate(
             vec![persisted],
-            self.config.analysis_window_seconds,
+            self.fields.config.analysis_window_seconds,
             MAX_ANALYTICS_EVENTS,
         );
 
@@ -350,7 +259,7 @@ impl AnalyticsAutomaton {
 
         let mut events_processed = 0u64;
 
-        if self.config.enable_frequency_analysis {
+        if self.fields.config.enable_frequency_analysis {
             if let Some(event) = self.generate_frequency_analysis(&snapshot) {
                 match sender.send(event).await {
                     Ok(_) => events_processed += 1,
@@ -359,7 +268,7 @@ impl AnalyticsAutomaton {
             }
         }
 
-        if self.config.enable_pattern_detection {
+        if self.fields.config.enable_pattern_detection {
             for pattern_event in self.detect_patterns(&snapshot) {
                 match sender.send(pattern_event).await {
                     Ok(_) => events_processed += 1,
@@ -368,7 +277,7 @@ impl AnalyticsAutomaton {
             }
         }
 
-        if self.config.enable_correlation_analysis {
+        if self.fields.config.enable_correlation_analysis {
             if let Some(event) = self.detect_correlations(&snapshot) {
                 match sender.send(event).await {
                     Ok(_) => events_processed += 1,
@@ -377,7 +286,7 @@ impl AnalyticsAutomaton {
             }
         }
 
-        self.record_output(events_processed);
+        self.fields.stats.record_output(events_processed);
         Ok(events_processed)
     }
 
@@ -387,10 +296,10 @@ impl AnalyticsAutomaton {
         end_time: DateTime<Utc>,
     ) -> CoreResult<Vec<Event<JsonValue>>> {
         let start_time = end_time
-            - ChronoDuration::seconds(self.config.analysis_window_seconds.as_secs().max(60) as i64);
+            - ChronoDuration::seconds(self.fields.config.analysis_window_seconds.as_secs().max(60) as i64);
 
         let mut collected = Vec::new();
-        if self.config.target_event_types.is_empty() {
+        if self.fields.config.target_event_types.is_empty() {
             let mut events = db_pool
                 .events()
                 .get_by_time_range(
@@ -401,7 +310,7 @@ impl AnalyticsAutomaton {
                 .await?;
             collected.append(&mut events);
         } else {
-            for event_type_str in &self.config.target_event_types {
+            for event_type_str in &self.fields.config.target_event_types {
                 let event_type = EventType::from(event_type_str.as_str());
                 let mut events = db_pool
                     .events()
@@ -449,7 +358,7 @@ impl AnalyticsAutomaton {
         top_sources.truncate(5);
 
         let total = events.len() as f64;
-        let window_seconds = self.config.analysis_window_seconds.as_secs().max(60);
+        let window_seconds = self.fields.config.analysis_window_seconds.as_secs().max(60);
         let window_minutes = (window_seconds as f64) / 60.0;
         let events_per_minute = (total / window_minutes).max(0.1);
 
@@ -477,7 +386,7 @@ impl AnalyticsAutomaton {
     }
 
     fn detect_patterns(&self, events: &[Event<JsonValue>]) -> Vec<Event<JsonValue>> {
-        if events.len() < self.config.min_events_for_pattern {
+        if events.len() < self.fields.config.min_events_for_pattern {
             return Vec::new();
         }
 
@@ -500,7 +409,7 @@ impl AnalyticsAutomaton {
 
         let mut patterns = Vec::new();
         for ((from, to), stats) in transitions {
-            if stats.count < self.config.min_events_for_pattern.saturating_sub(1) {
+            if stats.count < self.fields.config.min_events_for_pattern.saturating_sub(1) {
                 continue;
             }
 
@@ -520,13 +429,15 @@ impl AnalyticsAutomaton {
             });
 
             let provenance = provenance_from_ids(&stats.sample_ids);
-            let event = Event::create(
-                "analytics-automaton",
-                "analytics.pattern.detected",
+            let event = EventBuilder::new(
+                "analytics-automaton".into(),
+                "analytics.pattern.detected".into(),
                 payload,
-                provenance,
             )
-            .at_time(Utc::now());
+            .with_provenance(provenance)
+            .at_time(Utc::now())
+            .build()
+            .expect("infallible: provenance set via with_provenance");
             patterns.push(event);
         }
 
@@ -539,7 +450,7 @@ impl AnalyticsAutomaton {
         }
 
         let mut correlation_map: HashMap<(String, String), CorrelationStats> = HashMap::new();
-        let lookahead = (self.config.analysis_window_seconds.as_secs() / 6).max(120);
+        let lookahead = (self.fields.config.analysis_window_seconds.as_secs() / 6).max(120);
         let horizon = ChronoDuration::seconds(lookahead as i64);
 
         for (idx, event) in events.iter().enumerate() {
@@ -596,18 +507,20 @@ impl AnalyticsAutomaton {
         let payload = json!({
             "analysis_type": "correlation",
             "pairs": summary,
-            "window_seconds": self.config.analysis_window_seconds.as_secs(),
+            "window_seconds": self.fields.config.analysis_window_seconds.as_secs(),
         });
 
         let provenance = provenance_from_ids(&top_pairs[0].1.sample_ids);
         Some(
-            Event::create(
-                "analytics-automaton",
-                "analytics.correlation",
+            EventBuilder::new(
+                "analytics-automaton".into(),
+                "analytics.correlation".into(),
                 payload,
-                provenance,
             )
-            .at_time(Utc::now()),
+            .with_provenance(provenance)
+            .at_time(Utc::now())
+            .build()
+            .expect("infallible: provenance set via with_provenance"),
         )
     }
 }
@@ -616,15 +529,12 @@ impl AnalyticsAutomaton {
 impl Node for AnalyticsAutomaton {
     type Config = AnalyticsAutomatonConfig;
 
-    async fn initialize(
-        &mut self,
-        init: ProcessorInitContext<Self::Config>,
-    ) -> NodeResult<()> {
+    async fn initialize(&mut self, init: ProcessorInitContext<Self::Config>) -> NodeResult<()> {
         let (config, runtime) = init.into_runtime();
-        self.db_pool = Some(runtime.db_pool().clone());
-        self.event_sender = Some(runtime.event_sender());
-        self.runtime = Some(runtime);
-        self.config = config;
+        self.fields.db_pool = Some(runtime.db_pool().clone());
+        self.fields.event_sender = Some(runtime.event_sender());
+        self.fields.runtime = Some(runtime);
+        self.fields.config = config;
         Ok(())
     }
 
@@ -655,15 +565,15 @@ impl Node for AnalyticsAutomaton {
                 ("window_events".into(), snapshot_size as u64),
                 (
                     "frequency_enabled".into(),
-                    self.config.enable_frequency_analysis as u64,
+                    self.fields.config.enable_frequency_analysis as u64,
                 ),
                 (
                     "pattern_enabled".into(),
-                    self.config.enable_pattern_detection as u64,
+                    self.fields.config.enable_pattern_detection as u64,
                 ),
                 (
                     "correlation_enabled".into(),
-                    self.config.enable_correlation_analysis as u64,
+                    self.fields.config.enable_correlation_analysis as u64,
                 ),
             ]),
             successful_targets: vec!["analytics".to_string()],
@@ -671,7 +581,7 @@ impl Node for AnalyticsAutomaton {
             warnings: Vec::new(),
         };
 
-        self.record_history(IngestionHistoryEntry {
+        self.fields.record_history(IngestionHistoryEntry {
             id: Ulid::new().to_string(),
             started_at: start_time,
             completed_at: Some(Utc::now()),
@@ -706,16 +616,16 @@ impl Node for AnalyticsAutomaton {
     }
 
     async fn shutdown(&mut self) -> NodeResult<()> {
-        if let Some(consumer) = self.consumer.take() {
+        if let Some(consumer) = self.fields.consumer.take() {
             consumer.stop().await;
         }
-        if let Some(handle) = self.consumer_handle.take() {
+        if let Some(handle) = self.fields.consumer_handle.take() {
             if let Err(err) = handle.await {
                 warn!("Failed to join analytics consumer task: {err}");
             }
         }
-        self.incoming_tx = None;
-        self.incoming_rx = None;
+        self.fields.incoming_tx = None;
+        self.fields.incoming_rx = None;
         Ok(())
     }
 }
@@ -723,38 +633,38 @@ impl Node for AnalyticsAutomaton {
 impl ExplorationProvider for AnalyticsAutomaton {
     fn get_source_state(&self) -> color_eyre::eyre::Result<SourceState> {
         let window_events = self.state.len() as u64;
-        let last_updated = self.stats.last_activity.unwrap_or_else(Utc::now);
+        let last_updated = self.fields.stats.last_activity.unwrap_or_else(Utc::now);
 
         Ok(SourceState {
             description: "Analytics automaton summarizing frequency/pattern data".to_string(),
             last_updated,
-            total_items: Some(self.stats.inputs_seen),
+            total_items: Some(self.fields.stats.inputs_seen),
             metadata: HashMap::from([
                 (
                     "analysis_window_seconds".to_string(),
-                    json!(self.config.analysis_window_seconds),
+                    json!(self.fields.config.analysis_window_seconds),
                 ),
                 ("window_events".to_string(), json!(window_events)),
                 (
                     "frequency_enabled".to_string(),
-                    json!(self.config.enable_frequency_analysis),
+                    json!(self.fields.config.enable_frequency_analysis),
                 ),
                 (
                     "pattern_enabled".to_string(),
-                    json!(self.config.enable_pattern_detection),
+                    json!(self.fields.config.enable_pattern_detection),
                 ),
                 (
                     "correlation_enabled".to_string(),
-                    json!(self.config.enable_correlation_analysis),
+                    json!(self.fields.config.enable_correlation_analysis),
                 ),
-                ("inputs_seen".to_string(), json!(self.stats.inputs_seen)),
+                ("inputs_seen".to_string(), json!(self.fields.stats.inputs_seen)),
                 (
                     "outputs_emitted".to_string(),
-                    json!(self.stats.outputs_emitted),
+                    json!(self.fields.stats.outputs_emitted),
                 ),
             ]),
             healthy: true,
-            recent_activity: self.recent_activity(),
+            recent_activity: self.fields.recent_activity(),
         })
     }
 
@@ -764,11 +674,11 @@ impl ExplorationProvider for AnalyticsAutomaton {
     ) -> color_eyre::eyre::Result<Vec<IngestionHistoryEntry>> {
         let limit = usize::try_from(limit).unwrap_or(0);
         let take = if limit == 0 {
-            self.history.len()
+            self.fields.history.len()
         } else {
-            std::cmp::min(limit, self.history.len())
+            std::cmp::min(limit, self.fields.history.len())
         };
-        Ok(self.history.iter().take(take).cloned().collect())
+        Ok(self.fields.history.iter().take(take).cloned().collect())
     }
 
     fn get_coverage_analysis(
@@ -779,13 +689,13 @@ impl ExplorationProvider for AnalyticsAutomaton {
         let (start, end) = time_range.unwrap_or_else(|| {
             (
                 now - ChronoDuration::seconds(
-                    self.config.analysis_window_seconds.as_secs().max(60) as i64,
+                    self.fields.config.analysis_window_seconds.as_secs().max(60) as i64,
                 ),
                 now,
             )
         });
-        let source_total = self.stats.inputs_seen;
-        let sinex_total = self.stats.outputs_emitted;
+        let source_total = self.fields.stats.inputs_seen;
+        let sinex_total = self.fields.stats.outputs_emitted;
         let capped = std::cmp::min(source_total, sinex_total);
         let coverage_percentage = if source_total == 0 {
             0.0
@@ -950,36 +860,19 @@ impl AnalyticsAutomaton {
             sample.iter().collect::<Vec<&Event<JsonValue>>>(),
             MAX_PROVENANCE_IDS,
         ));
-        Event::create("analytics-automaton", event_type, payload, provenance).at_time(Utc::now())
+        EventBuilder::new(
+            "analytics-automaton".into(),
+            event_type.into(),
+            payload,
+        )
+        .with_provenance(provenance)
+        .at_time(Utc::now())
+        .build()
+        .expect("infallible: provenance set via with_provenance")
     }
 }
 
-#[derive(Clone)]
-struct ChannelConfirmedEventHandler {
-    sender: mpsc::Sender<ProvisionalEvent>,
-}
-
-impl ChannelConfirmedEventHandler {
-    fn new(sender: mpsc::Sender<ProvisionalEvent>) -> Self {
-        Self { sender }
-    }
-}
-
-#[async_trait]
-impl ConfirmedEventHandler for ChannelConfirmedEventHandler {
-    async fn handle_confirmed(&self, event: &ProvisionalEvent) -> NodeResult<()> {
-        match self.sender.try_send(event.clone()) {
-            Ok(()) => Ok(()),
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                warn!("Analytics confirmed event channel full; dropping event");
-                Ok(())
-            }
-            Err(mpsc::error::TrySendError::Closed(_)) => Err(NodeError::Processing(
-                "Failed to forward confirmed analytics event: channel closed".into(),
-            )),
-        }
-    }
-}
+// ChannelConfirmedEventHandler is now imported from sinex_node_sdk::automaton_base
 
 #[cfg(test)]
 mod tests {
@@ -991,8 +884,11 @@ mod tests {
     fn test_event(event_type: &str, minutes_ago: i64) -> Event<JsonValue> {
         let provenance = default_provenance();
         let payload = json!({ "value": 1 });
-        let mut event = Event::create("test", event_type, payload, provenance)
-            .at_time(Utc::now() - ChronoDuration::minutes(minutes_ago));
+        let mut event = EventBuilder::new("test".into(), event_type.into(), payload)
+            .with_provenance(provenance)
+            .at_time(Utc::now() - ChronoDuration::minutes(minutes_ago))
+            .build()
+            .expect("infallible: test provenance set");
         event.id = Some(Id::new());
         event
     }
@@ -1014,7 +910,7 @@ mod tests {
     #[sinex_test]
     fn pattern_detection_emits_transition_event() -> TestResult<()> {
         let mut automaton = AnalyticsAutomaton::new();
-        automaton.config.min_events_for_pattern = 2;
+        automaton.fields.config.min_events_for_pattern = 2;
         let events = vec![
             test_event("a", 5),
             test_event("b", 4),
@@ -1034,7 +930,7 @@ mod tests {
     #[sinex_test]
     fn correlation_detection_picks_pairs() -> TestResult<()> {
         let mut automaton = AnalyticsAutomaton::new();
-        let config = &mut automaton.config;
+        let config = &mut automaton.fields.config;
         config.analysis_window_seconds = Seconds::from_secs(600);
         config.enable_correlation_analysis = true;
         let events = vec![

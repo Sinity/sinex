@@ -47,7 +47,7 @@ use crate::{Result, TestContext, TestResult};
 
 use camino::Utf8PathBuf;
 use color_eyre::eyre::eyre;
-use futures::{future::BoxFuture, Future};
+use futures::future::BoxFuture;
 use once_cell::sync::Lazy;
 use sinex_core::db::DbPool;
 use sinex_core::types::error::SinexError;
@@ -600,50 +600,6 @@ pub async fn reset_database(pool: &DbPool) -> TestResult<()> {
     .await
 }
 
-pub async fn with_operation_id<F, Fut, T>(
-    conn: &mut PoolConnection<Postgres>,
-    operation_id: &str,
-    f: F,
-) -> TestResult<T>
-where
-    F: FnOnce(&mut PoolConnection<Postgres>) -> Fut,
-    Fut: Future<Output = Result<T>>,
-{
-    let previous = sqlx::query_scalar::<_, Option<String>>(
-        "SELECT current_setting('sinex.operation_id', true)",
-    )
-    .fetch_optional(conn.as_mut())
-    .await?
-    .flatten();
-
-    sqlx::query("SELECT set_config('sinex.operation_id', $1, false)")
-        .bind(operation_id)
-        .execute(conn.as_mut())
-        .await?;
-
-    let result = f(conn).await;
-
-    let restore_result = if let Some(prev) = previous {
-        sqlx::query("SELECT set_config('sinex.operation_id', $1, false)")
-            .bind(prev)
-            .execute(conn.as_mut())
-            .await
-    } else {
-        sqlx::query("RESET sinex.operation_id")
-            .execute(conn.as_mut())
-            .await
-    };
-
-    if let Err(e) = restore_result {
-        tracing::warn!(
-            "Failed to restore sinex.operation_id session setting after cleanup: {}",
-            e
-        );
-    }
-
-    result.map_err(Into::into)
-}
-
 /// Load a named dataset fixture into the database
 ///
 /// Fixtures are pre-generated SQL files containing test/benchmark data.
@@ -1078,10 +1034,7 @@ mod tests {
         verify_clean_state(pool).await?;
 
         // Insert some test data
-        use sinex_core::{
-            Blob, BlobRecord, Entity, EntityRecord, EntityRelation, Event, JsonValue, Operation,
-            OperationRecord, Provenance, SourceMaterial,
-        };
+        use sinex_core::{Event, JsonValue, SourceMaterial};
 
         let new_event = Event::<JsonValue>::test_event(
             EventSource::new("test"),
@@ -1145,10 +1098,7 @@ mod tests {
                 .unwrap_or(0);
 
         // Add data
-        use sinex_core::{
-            Blob, BlobRecord, Entity, EntityRecord, EntityRelation, Event, JsonValue, Operation,
-            OperationRecord, Provenance, SourceMaterial,
-        };
+        use sinex_core::{Event, JsonValue, SourceMaterial};
 
         let material_record = pool
             .source_materials()
@@ -1160,13 +1110,15 @@ mod tests {
             .await?;
         let material_id = Id::<SourceMaterial>::from_ulid(material_record.id);
 
-        let new_event = Event::<JsonValue>::create(
+        let new_event = sinex_core::db::models::event_builder::EventBuilder::new(
             EventSource::new("test"),
             EventType::new("test"),
             serde_json::json!({}),
-            Provenance::from_material(material_id, 0, None, None),
         )
-        .with_host(HostName::new("test"));
+        .hostname(HostName::new("test"))
+        .from_material(material_id, 0)
+        .build()
+        .expect("Event should build for cleanup test");
         pool.events().insert(new_event).await?;
 
         // Verification should now force-clean and succeed even when data is present.
@@ -1251,17 +1203,19 @@ mod tests {
 #[cfg(all(test, feature = "bench"))]
 mod benches {
     use super::*;
-    use crate::bench_context::BenchContext;
+    use crate::database_pool::acquire_test_database;
     use crate::{sinex_bench, TestResult};
+    use sinex_core::db::repositories::DbPoolExt;
 
     /// Benchmark database reset operation
     ///
     /// This measures the time to completely clean a database with various
     /// amounts of existing data.
     #[sinex_bench]
-    fn bench_reset_empty_database(ctx: &BenchContext) -> TestResult<()> {
-        // Database is already empty from reset_and_load
-        reset_database(ctx.pool()).await?;
+    fn bench_reset_empty_database() -> TestResult<()> {
+        let db = acquire_test_database().await?;
+        // Database is already empty from acquisition
+        reset_database(db.pool()).await?;
         Ok(())
     }
 
@@ -1269,22 +1223,17 @@ mod benches {
     ///
     /// Measures reset performance when database contains events and related data
     #[sinex_bench]
-    fn bench_reset_populated_database(ctx: &BenchContext) -> TestResult<()> {
+    fn bench_reset_populated_database() -> TestResult<()> {
+        let db = acquire_test_database().await?;
+        let pool = db.pool();
+
         // Setup: Insert some data
-        use sinex_core::types::*;
         for i in 0..10 {
-            let event = EventQueries::insert_event(
-                "bench".to_string(),
-                "test".to_string(),
-                "test-host".to_string(),
+            let event = pool.events().insert_test_event(
+                "bench",
+                "test",
                 serde_json::json!({"index": i}),
-                None,
-                None,
-                None,
-                None,
-            )
-            .fetch_one::<sinex_core::types::Event<JsonValue>>(ctx.pool())
-            .await?;
+            ).await?;
 
             // Add annotation
             sqlx::query(
@@ -1292,63 +1241,61 @@ mod benches {
                  VALUES ($1, $2, 'test', '{}'::jsonb, 'bench')",
             )
             .bind(sinex_core::types::ulid::Ulid::new().to_uuid())
-            .bind(event.id.to_uuid())
-            .execute(ctx.pool())
+            .bind(event.id.expect("event should have id after insert").to_uuid())
+            .execute(pool)
             .await?;
         }
 
         // Perform the reset
-        reset_database(ctx.pool()).await?;
+        reset_database(pool).await?;
         Ok(())
     }
 
     /// Benchmark cache clearing operation
     #[sinex_bench]
-    fn bench_clear_pg_cache(ctx: &BenchContext) -> TestResult<()> {
-        clear_pg_cache(ctx.pool()).await?;
+    fn bench_clear_pg_cache() -> TestResult<()> {
+        let db = acquire_test_database().await?;
+        clear_pg_cache(db.pool()).await?;
         Ok(())
     }
 
     /// Benchmark row count collection
     #[sinex_bench]
-    fn bench_get_row_counts(ctx: &BenchContext) -> TestResult<()> {
+    fn bench_get_row_counts() -> TestResult<()> {
+        let db = acquire_test_database().await?;
+        let pool = db.pool();
+
         // Setup: Insert varied amounts of data
-        reset_database(ctx.pool()).await?;
+        reset_database(pool).await?;
 
         // Insert some events
-        use sinex_core::types::*;
         for i in 0..50 {
-            EventQueries::insert_event(
-                format!("source_{}", i % 5),
-                "test".to_string(),
-                "bench".to_string(),
+            pool.events().insert_test_event(
+                &format!("source_{}", i % 5),
+                "test",
                 serde_json::json!({}),
-                None,
-                None,
-                None,
-                None,
-            )
-            .execute(ctx.pool())
-            .await?;
+            ).await?;
         }
 
         // Perform the count
-        let counts = get_row_counts(ctx.pool()).await?;
+        let counts = get_row_counts(pool).await?;
         divan::black_box(counts);
         Ok(())
     }
 
     /// Benchmark database state verification
     #[sinex_bench]
-    fn bench_verify_clean_state(ctx: &BenchContext) -> TestResult<()> {
-        verify_clean_state(ctx.pool()).await?;
+    fn bench_verify_clean_state() -> TestResult<()> {
+        let db = acquire_test_database().await?;
+        verify_clean_state(db.pool()).await?;
         Ok(())
     }
 
     /// Benchmark applying test optimizations
     #[sinex_bench]
-    fn bench_apply_optimizations(ctx: &BenchContext) -> TestResult<()> {
-        apply_test_optimizations(ctx.pool()).await?;
+    fn bench_apply_optimizations() -> TestResult<()> {
+        let db = acquire_test_database().await?;
+        apply_test_optimizations(db.pool()).await?;
         Ok(())
     }
 }

@@ -4,7 +4,6 @@ use serde_json::Value as JsonValue;
 use sinex_core::db::replay::{DryRunExecutor, ReplayConfig};
 use sinex_core::{Event, Id};
 use sinex_test_utils::sinex_test;
-use sinex_test_utils::TestResult;
 
 #[sinex_test]
 fn dry_run_executor_tracks_operations() -> TestResult<()> {

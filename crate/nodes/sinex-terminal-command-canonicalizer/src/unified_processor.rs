@@ -12,15 +12,15 @@ use sinex_core::types::ulid::Ulid;
 use sinex_core::DbPoolExt;
 use sinex_core::EventType;
 use sinex_core::{Event, JsonValue};
-use sinex_processor_runtime::{
-    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
-};
 use sinex_node_sdk::{
     stream_processor::{
-        Checkpoint, ProcessingStats, ProcessorInitContext, ProcessorRuntimeState, ProcessorType,
-        ScanArgs, ScanReport, Node, TimeHorizon,
+        Checkpoint, Node, ProcessingStats, ProcessorInitContext, ProcessorRuntimeState,
+        ProcessorType, ScanArgs, ScanReport, TimeHorizon,
     },
     NodeError, NodeResult,
+};
+use sinex_processor_runtime::{
+    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
 };
 use sqlx::PgPool;
 use std::collections::HashMap;
@@ -57,6 +57,7 @@ mod tests {
     use super::*;
     use sinex_core::db::models::{Event, SourceMaterial};
     use sinex_core::types::Id;
+    use sinex_core::EventBuilder;
     use sinex_test_utils::sinex_test;
 
     #[sinex_test]
@@ -85,7 +86,7 @@ mod tests {
         payload: serde_json::Value,
     ) -> sinex_test_utils::TestResult<Event<JsonValue>> {
         let material_id = Id::<SourceMaterial>::from_ulid(Ulid::new());
-        Event::dynamic(source, "command.executed", payload)
+        EventBuilder::new(source.into(), "command.executed".into(), payload)
             .from_material(material_id, 0)
             .build()
             .map_err(Into::into)
@@ -314,10 +315,7 @@ impl TerminalCommandCanonicalizer {
 impl Node for TerminalCommandCanonicalizer {
     type Config = ();
 
-    async fn initialize(
-        &mut self,
-        init: ProcessorInitContext<Self::Config>,
-    ) -> NodeResult<()> {
+    async fn initialize(&mut self, init: ProcessorInitContext<Self::Config>) -> NodeResult<()> {
         let (_config, runtime) = init.into_runtime();
         self.initialise_with_runtime_state(runtime).await
     }

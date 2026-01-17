@@ -27,6 +27,7 @@ use std::time::Duration as StdDuration;
 /// Test batch insertion of multiple events using modern patterns
 #[sinex_serial_test]
 async fn test_batch_event_insertion(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_shared_nats().await?;
     ctx.ensure_clean().await?;
     let source = format!("fs-watcher-{}", Ulid::new());
     // Create test events using modern test utilities
@@ -85,6 +86,7 @@ async fn test_batch_event_insertion(ctx: TestContext) -> TestResult<()> {
 /// Test querying events by source using modern patterns
 #[sinex_serial_test]
 async fn test_query_events_by_source(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_shared_nats().await?;
     ctx.ensure_clean().await?;
     let fs_source = format!("fs-watcher-{}", Ulid::new());
     let terminal_source = format!("shell-{}", Ulid::new());
@@ -146,6 +148,7 @@ async fn test_query_events_by_source(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 #[traced_test]
 async fn test_ulid_time_ordering(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_shared_nats().await?;
     tracing::info!("Testing ULID time ordering");
 
     // Insert events with a small delay to ensure different timestamps
@@ -185,6 +188,7 @@ async fn test_ulid_time_ordering(ctx: TestContext) -> TestResult<()> {
 #[sinex_serial_test]
 #[traced_test]
 async fn test_ulid_ordering_in_database(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_shared_nats().await?;
     tracing::info!("Testing ULID ordering in database queries");
     ctx.ensure_clean().await?;
 
@@ -261,6 +265,7 @@ async fn test_ulid_uuid_conversion_consistency() -> TestResult<()> {
 #[sinex_serial_test]
 #[traced_test]
 async fn test_basic_event_creation_patterns(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_shared_nats().await?;
     tracing::info!("Testing various event creation patterns");
     ctx.ensure_clean().await?;
 
@@ -312,6 +317,7 @@ async fn test_basic_event_creation_patterns(ctx: TestContext) -> TestResult<()> 
 /// Test event creation with various payload types
 #[sinex_serial_test]
 async fn test_event_payload_validation(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_shared_nats().await?;
     ctx.ensure_clean().await?;
     // Test with different payload structures
     let simple_event = ctx

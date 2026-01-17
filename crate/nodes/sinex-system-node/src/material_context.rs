@@ -97,10 +97,7 @@ impl WatcherMaterialContext {
                 .finalize(handle, reason)
                 .await
                 .map_err(|e| {
-                    NodeError::General(eyre!(
-                        "Failed to finalize system watcher material: {}",
-                        e
-                    ))
+                    NodeError::General(eyre!("Failed to finalize system watcher material: {}", e))
                 })?;
         }
 
@@ -120,9 +117,7 @@ impl WatcherMaterialContext {
             self.acquisition
                 .append_slice(handle, payload_bytes)
                 .await
-                .map_err(|e| {
-                    NodeError::General(eyre!("Failed to append system payload: {}", e))
-                })?;
+                .map_err(|e| NodeError::General(eyre!("Failed to append system payload: {}", e)))?;
         }
 
         guard.bytes_written = offset_end;

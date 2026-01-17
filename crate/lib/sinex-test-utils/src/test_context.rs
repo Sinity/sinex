@@ -53,7 +53,6 @@ use crate::snapshot_helper::{self, FailureContext};
 use crate::timing_utils::{TimingUtils, WaitHelpers, DEFAULT_WAIT_SECS};
 use crate::TestResult;
 use async_nats::{jetstream, Client as NatsClient};
-use chrono::{DateTime, Utc};
 use color_eyre::eyre::{eyre, WrapErr};
 use futures::future::BoxFuture;
 use futures::FutureExt;
@@ -65,7 +64,6 @@ use sinex_core::db::models::event::{Event, Provenance, SourceMaterial};
 use sinex_core::db::query_helpers::ulid_to_uuid;
 use sinex_core::environment::SinexEnvironment;
 use sinex_core::types::{DbPool, Id, Timestamp, Ulid};
-use sinex_core::OffsetKind;
 use std::result::Result as StdResult;
 
 use sinex_core::DbPoolExt;
@@ -674,7 +672,7 @@ impl TestContext {
         let nats = self.nats_handle()?;
         let namespace = self.pipeline_namespace().prefix().to_string();
         let mut config = TestIngestdConfig {
-            nats_url: nats.client_url().to_string(),
+            nats: nats.connection_config(),
             database_url: self.database_url().to_string(),
             work_dir: None,
             namespace: Some(namespace),
@@ -810,101 +808,6 @@ impl TestContext {
     /// Difference between current and baseline event count
     pub async fn event_delta(&self) -> TestResult<i64> {
         Ok(self.current_event_count().await? - self.baseline_events)
-    }
-
-    async fn ensure_material_entry(&self, id: &Id<SourceMaterial>) -> TestResult<()> {
-        let material_ulid_uuid = id.to_uuid();
-        let source_identifier = format!("test-material-{id}");
-
-        let identifier = if id.to_string() == BOOTSTRAP_MATERIAL_ID {
-            BOOTSTRAP_MATERIAL_IDENTIFIER.to_string()
-        } else {
-            source_identifier
-        };
-
-        let update_result = sqlx::query!(
-            r#"
-                UPDATE raw.source_material_registry
-                SET id = $1::uuid::ulid,
-                    material_kind = $2,
-                    status = $4,
-                    timing_info_type = $5
-                WHERE source_identifier = $3
-            "#,
-            material_ulid_uuid,
-            "annex",
-            identifier,
-            "completed",
-            "realtime"
-        )
-        .execute(&self.pool)
-        .await?;
-
-        if update_result.rows_affected() == 0 {
-            sqlx::query!(
-                r#"
-                    INSERT INTO raw.source_material_registry 
-                        (id, material_kind, source_identifier, status, timing_info_type)
-                    VALUES ($1::uuid::ulid, $2, $3, $4, $5)
-                    ON CONFLICT (id) DO UPDATE
-                    SET material_kind = EXCLUDED.material_kind,
-                        status = EXCLUDED.status,
-                        timing_info_type = EXCLUDED.timing_info_type,
-                        source_identifier = EXCLUDED.source_identifier
-                "#,
-                material_ulid_uuid,
-                "annex",
-                identifier,
-                "completed",
-                "realtime"
-            )
-            .execute(&self.pool)
-            .await?;
-        }
-
-        Ok(())
-    }
-
-    async fn ensure_temporal_ledger_entry(
-        &self,
-        id: &Id<SourceMaterial>,
-        offset_start: Option<i64>,
-        offset_end: Option<i64>,
-        offset_kind: OffsetKind,
-        ts_capture: DateTime<Utc>,
-    ) -> TestResult<()> {
-        let offset_start = match offset_start {
-            Some(start) => start,
-            None => return Ok(()),
-        };
-        let offset_end = offset_end.unwrap_or(offset_start);
-        let offset_kind = match offset_kind {
-            OffsetKind::Byte => "byte",
-            OffsetKind::Line => "line",
-            OffsetKind::Record => "rowid",
-            OffsetKind::Character => "logical",
-        };
-
-        sqlx::query!(
-            r#"
-                INSERT INTO raw.temporal_ledger
-                    (source_material_id, offset_start, offset_end, offset_kind, ts_capture, precision, clock, source_type)
-                VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7, $8)
-                ON CONFLICT (source_material_id, offset_start) DO NOTHING
-            "#,
-            id.to_uuid(),
-            offset_start,
-            offset_end,
-            offset_kind,
-            ts_capture,
-            "bounded",
-            "wall",
-            "realtime_capture"
-        )
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
     }
 
     fn record_created_event(&self, event_id: Ulid, material_id: Option<Ulid>) {
@@ -1134,6 +1037,37 @@ impl TestContext {
         self.record_created_event(published_event_id.as_ulid().clone(), cleanup_material);
 
         Ok(stored)
+    }
+
+    /// Create a fluent event builder for publishing test events.
+    ///
+    /// This provides an ergonomic alternative to `publish_json_event()` with a builder pattern.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// // Basic event with default empty payload
+    /// ctx.event("fs-watcher", "file.created").publish().await?;
+    ///
+    /// // Event with custom payload
+    /// ctx.event("terminal", "command.executed")
+    ///     .payload(json!({"command": "ls", "exit_code": 0}))
+    ///     .publish()
+    ///     .await?;
+    ///
+    /// // Event with timestamp
+    /// ctx.event("system", "health.check")
+    ///     .at(Utc::now())
+    ///     .payload(json!({"status": "healthy"}))
+    ///     .publish()
+    ///     .await?;
+    /// ```
+    pub fn event<'a, S, T>(&'a self, source: S, event_type: T) -> TestEventBuilder<'a>
+    where
+        S: Into<String>,
+        T: Into<String>,
+    {
+        TestEventBuilder::new(self, source.into(), event_type.into())
     }
 
     /// Ensure a source material record exists for tests that construct provenance manually.
@@ -1755,5 +1689,91 @@ impl ContextualAssert {
             }
         }
         Ok(self)
+    }
+}
+
+/// Fluent builder for publishing test events.
+///
+/// Created via `TestContext::event()`. Allows ergonomic event publishing
+/// with optional payload and timestamp.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// // Minimal event (empty payload)
+/// ctx.event("source", "event.type").publish().await?;
+///
+/// // With payload
+/// ctx.event("source", "event.type")
+///     .payload(json!({"key": "value"}))
+///     .publish()
+///     .await?;
+///
+/// // With timestamp
+/// ctx.event("source", "event.type")
+///     .at(Utc::now())
+///     .publish()
+///     .await?;
+///
+/// // Full options
+/// ctx.event("source", "event.type")
+///     .payload(json!({"key": "value"}))
+///     .at(Utc::now())
+///     .publish()
+///     .await?;
+/// ```
+pub struct TestEventBuilder<'a> {
+    ctx: &'a TestContext,
+    source: String,
+    event_type: String,
+    payload: JsonValue,
+    timestamp: Option<Timestamp>,
+}
+
+impl<'a> TestEventBuilder<'a> {
+    fn new(ctx: &'a TestContext, source: String, event_type: String) -> Self {
+        Self {
+            ctx,
+            source,
+            event_type,
+            payload: serde_json::json!({}),
+            timestamp: None,
+        }
+    }
+
+    /// Set the event payload.
+    ///
+    /// If not called, defaults to an empty JSON object `{}`.
+    pub fn payload(mut self, payload: JsonValue) -> Self {
+        self.payload = payload;
+        self
+    }
+
+    /// Set a specific timestamp for the event.
+    ///
+    /// Accepts any type that can be converted to `Timestamp`, including:
+    /// - `chrono::DateTime<Utc>`
+    /// - `Timestamp`
+    pub fn at<T: Into<Timestamp>>(mut self, timestamp: T) -> Self {
+        self.timestamp = Some(timestamp.into());
+        self
+    }
+
+    /// Publish the event and wait for it to be persisted.
+    ///
+    /// Returns the persisted event from the database.
+    pub async fn publish(self) -> TestResult<Event<JsonValue>> {
+        match self.timestamp {
+            Some(ts) => {
+                self.ctx
+                    .publish_json_event_with_timestamp(&self.source, &self.event_type, self.payload, ts)
+                    .await
+            }
+            None => {
+                self.ctx
+                    .publish_json_event(&self.source, &self.event_type, self.payload)
+                    .await
+            }
+        }
     }
 }

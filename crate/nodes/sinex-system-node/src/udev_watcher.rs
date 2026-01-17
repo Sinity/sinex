@@ -6,6 +6,7 @@
 //! device event detection with <100ms latency.
 
 use crate::WatcherMaterialContext;
+use notify::{Event as NotifyEvent, EventKind, RecursiveMode, Watcher as NotifyWatcher};
 use sinex_core::db::models::event::Event;
 use sinex_core::types::events::{
     UdevDeviceChangedPayload, UdevDeviceConnectedPayload, UdevDeviceDisconnectedPayload,
@@ -13,10 +14,9 @@ use sinex_core::types::events::{
 };
 use sinex_core::JsonValue;
 use sinex_node_sdk::NodeResult;
+use std::path::Path;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
-use notify::{Watcher as NotifyWatcher, RecursiveMode, Event as NotifyEvent, EventKind};
-use std::path::Path;
 
 // Macro to create udev events with common fields
 macro_rules! create_udev_event {
@@ -187,17 +187,19 @@ impl UdevWatcher {
         let (notify_tx, mut notify_rx) = mpsc::channel::<Result<NotifyEvent, notify::Error>>(100);
 
         // Create watcher with inotify backend
-        let mut watcher = notify::recommended_watcher(move |res: Result<NotifyEvent, notify::Error>| {
-            // Send event to async channel
-            if let Err(e) = notify_tx.blocking_send(res) {
-                error!("Failed to send inotify event: {}", e);
-            }
-        }).map_err(|e| {
-            sinex_node_sdk::NodeError::Processing(format!(
-                "Failed to create inotify watcher: {}",
-                e
-            ))
-        })?;
+        let mut watcher =
+            notify::recommended_watcher(move |res: Result<NotifyEvent, notify::Error>| {
+                // Send event to async channel
+                if let Err(e) = notify_tx.blocking_send(res) {
+                    error!("Failed to send inotify event: {}", e);
+                }
+            })
+            .map_err(|e| {
+                sinex_node_sdk::NodeError::Processing(format!(
+                    "Failed to create inotify watcher: {}",
+                    e
+                ))
+            })?;
 
         // Watch interesting device class directories
         let watch_paths = vec![
@@ -259,7 +261,8 @@ impl UdevWatcher {
 
             // Extract device class from path
             let class_name = if let Some(parent) = path.parent() {
-                parent.file_name()
+                parent
+                    .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("unknown")
             } else {
@@ -283,13 +286,8 @@ impl UdevWatcher {
                 std::collections::HashMap::with_capacity(8)
             };
 
-            let raw_event = self.create_device_event(
-                action,
-                &device_path,
-                device_type,
-                properties,
-                material,
-            )?;
+            let raw_event =
+                self.create_device_event(action, &device_path, device_type, properties, material)?;
 
             Self::send_event(tx, raw_event, &format!("udev_{}", action), material).await?;
 

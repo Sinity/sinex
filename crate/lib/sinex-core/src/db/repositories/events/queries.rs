@@ -1101,7 +1101,7 @@ pub(crate) fn extract_plan_rows(plan: serde_json::Value) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::extract_plan_rows;
-    use sinex_test_utils::{sinex_test, TestResult};
+    use sinex_test_utils::sinex_test;
 
     #[sinex_test]
     async fn extract_plan_rows_reads_estimate() -> TestResult<()> {

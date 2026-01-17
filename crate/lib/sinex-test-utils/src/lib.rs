@@ -43,8 +43,11 @@ pub use pipeline_scope::PipelineScope;
 pub use preflight::system_test_preflight;
 pub use satellite_publisher::{EventOverrides, TestSatellitePublisher};
 pub use snapshot::TestSnapshot;
+pub use jetstream_test_helper::JetStreamTestHelper;
+pub use test_hooks::{TestCounters, TestHooks, TestHooksBuilder};
 pub use test_context::TestContextFailureSnapshot;
 pub use test_context::TestContextHandle;
+pub use test_context::TestEventBuilder;
 
 pub struct ProptestCasesGuard {
     previous: Option<String>,
@@ -101,6 +104,7 @@ pub mod session_guards;
 mod snapshot;
 pub mod snapshot_helper;
 mod test_context;
+pub mod test_hooks;
 #[macro_use]
 mod test_macros;
 pub mod timing_utils;
@@ -115,6 +119,7 @@ pub mod bench_results;
 pub mod db_common;
 #[cfg(feature = "bench")]
 pub mod fixture_generator;
+pub mod jetstream_test_helper;
 #[cfg(feature = "bench")]
 pub mod standard_fixtures;
 #[cfg(feature = "bench")]
@@ -134,6 +139,10 @@ pub mod prelude {
         ChaosInjestor, EphemeralNats, EventOverrides, PipelineHarness, PipelineScope,
         TestSatellitePublisher, TestSnapshot,
     };
+    pub use crate::jetstream_test_helper::JetStreamTestHelper;
+    pub use crate::test_context::TestEventBuilder;
+    pub use crate::test_hooks::{TestCounters, TestHooks};
+    pub use crate::timing_utils::{Timeouts, WaitHelpers, DEFAULT_WAIT_SECS};
     pub use color_eyre::eyre::{bail, ensure, Context, Result};
 
     // Modern test infrastructure - fully integrated
@@ -214,9 +223,6 @@ pub mod prelude {
     pub use crate::path_validation::{
         create_test_temp_dir, create_test_temp_file, remove_test_dir, validate_test_path,
     };
-
-    // Snapshot testing utilities
-    pub use crate::snapshot_helper::SnapshotTestHelper;
 
     // JSON handling - essential for tests
     pub use serde_json::{json, Value};

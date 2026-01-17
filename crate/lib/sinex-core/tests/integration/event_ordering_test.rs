@@ -71,7 +71,7 @@ async fn test_ulid_sequence_ordering_validation(ctx: TestContext) -> Result<()> 
 
 #[sinex_test]
 async fn test_timestamp_progression_verification(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let _ctx = ctx.with_shared_nats().await?;
     // Create events with specific timestamp patterns
     let base_time = chrono::Utc::now() - chrono::TimeDelta::try_hours(1).unwrap();
     let mut test_ulids = Vec::new();

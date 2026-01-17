@@ -63,8 +63,8 @@ impl StageCleanupConfig {
 mod tests {
     use super::StageAsYouGoContext;
     use crate::stream_processor::EventEmitter;
-    use sinex_core::{Event, EventId, Provenance, Ulid};
-    use sinex_test_utils::{sinex_test, TestResult};
+    use sinex_core::{EventBuilder, EventId, Provenance, Ulid};
+    use sinex_test_utils::sinex_test;
     use tokio::sync::mpsc;
     use tokio::time::{timeout, Duration};
 
@@ -74,12 +74,17 @@ mod tests {
         let emitter = EventEmitter::new(tx, false);
         let context = StageAsYouGoContext::from_optional_emitter(emitter);
 
-        let event = Event::create(
-            "stage.test",
-            "line.captured",
+        let event = EventBuilder::new(
+            "stage.test".into(),
+            "line.captured".into(),
             serde_json::json!({"line": "hello"}),
-            Provenance::from_synthesis_safe(EventId::from_ulid(Ulid::new()), Vec::new()),
-        );
+        )
+        .with_provenance(Provenance::from_synthesis_safe(
+            EventId::from_ulid(Ulid::new()),
+            Vec::new(),
+        ))
+        .build()
+        .expect("infallible: test provenance set");
         let material_id = Ulid::new();
         let emitted_id = context
             .emit_event_with_provenance(event, material_id, Some(12), Some(34))
@@ -433,10 +438,7 @@ impl StageAsYouGoContext {
             .await
             .remove(&id)
             .ok_or_else(|| {
-                NodeError::Processing(format!(
-                    "Missing acquisition handle for material {}",
-                    id
-                ))
+                NodeError::Processing(format!("Missing acquisition handle for material {}", id))
             })?;
 
         self.finalize_via_acquisition(
@@ -494,10 +496,7 @@ impl StageAsYouGoContext {
             .await
             .remove(&id)
             .ok_or_else(|| {
-                NodeError::Processing(format!(
-                    "Missing acquisition handle for material {}",
-                    id
-                ))
+                NodeError::Processing(format!("Missing acquisition handle for material {}", id))
             })?;
 
         let mut buffer = vec![0u8; MAX_SLICE_BYTES];

@@ -422,7 +422,7 @@ pub async fn load_dataset(pool: &DbPool, dataset_path: &Utf8Path) -> crate::Resu
 
 /// Verify dataset integrity
 pub async fn verify_dataset(pool: &DbPool, metadata_path: &Utf8Path) -> Result<bool> {
-    let metadata: DatasetMetadata = serde_json::from_str(&fs::read_to_string(metadata_path)?)?;
+    let metadata: DatasetMetadata = serde_json::from_str(&std::fs::read_to_string(metadata_path)?)?;
 
     // Check event count
     use sinex_core::*;

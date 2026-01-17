@@ -6,10 +6,8 @@ use sinex_core::db::query_helpers::ulid_to_uuid;
 use sinex_core::types::Ulid;
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
-use sinex_test_utils::{
-    sinex_test, timing_utils::WaitHelpers, EventOverrides, TestContext, TestResult,
-    TestSatellitePublisher,
-};
+use sinex_test_utils::timing_utils::{Timeouts, WaitHelpers};
+use sinex_test_utils::{sinex_test, EventOverrides, TestContext, TestResult, TestSatellitePublisher};
 use tokio::sync::RwLock;
 use tokio::time::Duration;
 
@@ -44,7 +42,7 @@ async fn spawn_consumer(
     );
     let consumer_handle = tokio::spawn(async move { consumer.run().await });
 
-    nats.wait_for_stream(&js, &topology.events_stream, Duration::from_secs(5))
+    nats.wait_for_stream(&js, &topology.events_stream, Duration::from_secs(Timeouts::QUICK))
         .await?;
 
     Ok((consumer_handle, namespace))
@@ -81,7 +79,7 @@ async fn ingestion_handles_burst_under_latency_budget(ctx: TestContext) -> TestR
                 Ok(stored.unwrap_or(0) >= total_events)
             }
         },
-        20,
+        Timeouts::MEDIUM,
     )
     .await?;
 
@@ -136,7 +134,7 @@ async fn replaying_events_after_restart_does_not_duplicate(ctx: TestContext) -> 
                 Ok(stored.unwrap_or(0) >= expected)
             }
         },
-        12,
+        Timeouts::SHORT,
     )
     .await?;
 
@@ -178,7 +176,7 @@ async fn replaying_events_after_restart_does_not_duplicate(ctx: TestContext) -> 
                 Ok(stored.unwrap_or(0) >= expected)
             }
         },
-        12,
+        Timeouts::SHORT,
     )
     .await?;
 
@@ -195,7 +193,7 @@ async fn replaying_events_after_restart_does_not_duplicate(ctx: TestContext) -> 
                 Ok(stored.unwrap_or(0) >= expected)
             }
         },
-        12,
+        Timeouts::SHORT,
     )
     .await?;
 

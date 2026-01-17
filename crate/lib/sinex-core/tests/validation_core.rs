@@ -4,8 +4,7 @@ use sinex_core::types::validation::{
     contains_shell_metacharacters, deserialize_json_with_validation, normalize_unicode,
     sanitize_filename_component, validate_json, validate_json_value, validate_path,
 };
-use sinex_test_utils::sinex_test;
-use sinex_test_utils::TestResult;
+use sinex_test_utils::{sinex_test, TestResult};
 
 #[sinex_test]
 fn path_validation_blocks_traversal() -> TestResult<()> {

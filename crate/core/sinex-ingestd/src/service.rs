@@ -116,7 +116,8 @@ impl IngestService {
 
         if let Some(ref nats_client) = nats_client {
             if let Some(ref pool) = db_pool {
-                if let Err(e) = Self::broadcast_active_schemas(&validator, nats_client, pool).await {
+                if let Err(e) = Self::broadcast_active_schemas(&validator, nats_client, pool).await
+                {
                     warn!("Failed to broadcast schemas: {}", e);
                 }
             }

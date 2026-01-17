@@ -12,7 +12,8 @@ pub use event_payload::*;
 // Blanket implementations
 mod blanket_impls;
 
-// Schema registry
+// Schema registry (only with sqlx feature - uses database)
+#[cfg(feature = "sqlx")]
 pub mod schema_registry;
 
 // All payload types

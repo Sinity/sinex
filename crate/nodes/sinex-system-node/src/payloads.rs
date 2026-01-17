@@ -4,6 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
+use sinex_core::types::Seconds;
 use std::collections::HashMap;
 
 // Default configuration values for systemd journal monitoring
@@ -307,6 +308,111 @@ impl Default for JournalConfig {
             ],
             cursor_file: Some("/var/lib/sinex/journal.cursor".to_string()),
             batch_size: DEFAULT_JOURNAL_BATCH_SIZE,
+        }
+    }
+}
+
+/// SystemD unit types
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SystemdUnitType {
+    Service,
+    Timer,
+    Socket,
+    Target,
+    Mount,
+    Other,
+}
+
+impl SystemdUnitType {
+    /// Determine unit type from unit name
+    pub fn from_unit_name(unit_name: &str) -> Self {
+        if unit_name.ends_with(".service") {
+            Self::Service
+        } else if unit_name.ends_with(".timer") {
+            Self::Timer
+        } else if unit_name.ends_with(".socket") {
+            Self::Socket
+        } else if unit_name.ends_with(".target") {
+            Self::Target
+        } else if unit_name.ends_with(".mount") {
+            Self::Mount
+        } else {
+            Self::Other
+        }
+    }
+}
+
+impl std::fmt::Display for SystemdUnitType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Service => write!(f, "service"),
+            Self::Timer => write!(f, "timer"),
+            Self::Socket => write!(f, "socket"),
+            Self::Target => write!(f, "target"),
+            Self::Mount => write!(f, "mount"),
+            Self::Other => write!(f, "other"),
+        }
+    }
+}
+
+/// SystemD unit states
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SystemdUnitState {
+    Active,
+    Inactive,
+    Failed,
+    Activating,
+    Deactivating,
+    Unknown,
+}
+
+impl SystemdUnitState {
+    /// Parse unit state from systemctl output
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "active" => Self::Active,
+            "inactive" => Self::Inactive,
+            "failed" => Self::Failed,
+            "activating" => Self::Activating,
+            "deactivating" => Self::Deactivating,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+impl std::fmt::Display for SystemdUnitState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Active => write!(f, "active"),
+            Self::Inactive => write!(f, "inactive"),
+            Self::Failed => write!(f, "failed"),
+            Self::Activating => write!(f, "activating"),
+            Self::Deactivating => write!(f, "deactivating"),
+            Self::Unknown => write!(f, "unknown"),
+        }
+    }
+}
+
+/// Systemd watcher configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SystemdConfig {
+    /// Monitor service state changes
+    pub monitor_services: bool,
+    /// Monitor timer state changes
+    pub monitor_timers: bool,
+    /// Monitor all unit types
+    pub monitor_all_units: bool,
+    /// systemctl monitor timeout in seconds
+    pub monitor_timeout_secs: Seconds,
+}
+
+impl Default for SystemdConfig {
+    fn default() -> Self {
+        Self {
+            monitor_services: true,
+            monitor_timers: true,
+            monitor_all_units: false, // Start conservative
+            monitor_timeout_secs: Seconds::from_secs(5),
         }
     }
 }

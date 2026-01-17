@@ -78,6 +78,12 @@
 // === Complete System Validation ===
 
 mod performance_test;
-mod reliability_test;
 mod stress_test;
 mod temporal_chaos_test;
+
+// === Reliability Tests (split into focused modules) ===
+mod configuration_validation_test;
+mod database_degradation_test;
+mod migration_safety_test;
+mod resource_monitoring_test;
+mod startup_shutdown_test;

@@ -5,6 +5,7 @@
 //! rstest drives the cases and `#[sinex_test]` wires up the Tokio runtime
 //! plus a fresh `TestContext` for each case.
 
+use color_eyre::eyre::eyre;
 use rstest::rstest;
 use serde_json::{json, Value as JsonValue};
 use sinex_core::db::models::event::Event;
@@ -102,7 +103,8 @@ async fn publish_and_fetch(
     let stored = ctx
         .pool
         .events()
-        .get_by_id(&Id::<Event<JsonValue>>::from_ulid(id))
-        .await?;
+        .get_by_id(Id::<Event<JsonValue>>::from_ulid(id))
+        .await?
+        .ok_or_else(|| eyre!("Event not found after publishing"))?;
     Ok(stored)
 }

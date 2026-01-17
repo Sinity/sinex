@@ -11,22 +11,22 @@
 mod common {
     // Core types facade
     pub use sinex_core::{
-        db::models::{EventId, Provenance},
+        db::models::{EventBuilder, EventId, Provenance},
         types::{Id, Seconds, Ulid},
         Event, JsonValue,
     };
 
     // Runtime/SDK facades
-    pub use sinex_processor_runtime::cli::{
-        CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
-    };
     pub use sinex_node_sdk::{
+        automaton_base::{AutomatonFields, ChannelConfirmedEventHandler, IngestionHistoryEntry},
         stream_processor::{
-            Checkpoint, EventSender, ProcessorCapabilities, ProcessorInitContext,
-            ProcessorRuntimeState, ProcessorType, ScanArgs, ScanReport, Node,
-            TimeHorizon,
+            Checkpoint, EventSender, Node, ProcessorCapabilities, ProcessorInitContext,
+            ProcessorType, ScanArgs, ScanReport, TimeHorizon,
         },
         NodeResult,
+    };
+    pub use sinex_processor_runtime::cli::{
+        CoverageAnalysis, ExplorationProvider, ExportFormat, SourceState,
     };
 
     // External dependencies
@@ -44,16 +44,14 @@ mod common {
 // Use local facade for common types
 use crate::common::*;
 use sinex_node_sdk::{
-    confirmation_handler::{ConfirmedEventHandler, ProvisionalEvent},
+    confirmation_handler::ProvisionalEvent,
     jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig},
-    ProcessingModel, NodeError,
+    NodeError, ProcessingModel,
 };
 use std::sync::Arc;
 
 // Default batch size for health event processing
 const DEFAULT_HEALTH_BATCH_SIZE: usize = 128;
-const CONFIRMED_CHANNEL_CAPACITY: usize = 1024;
-use tokio::sync::mpsc;
 
 /// Configuration for Health Aggregator
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -115,58 +113,29 @@ pub enum HealthStatus {
 /// - Health trend analysis
 /// - Alert generation for unhealthy components
 pub struct HealthAggregator {
-    runtime: Option<ProcessorRuntimeState>,
-    config: HealthAggregatorConfig,
-    event_sender: Option<EventSender>,
-    db_pool: Option<PgPool>,
+    fields: AutomatonFields<HealthAggregatorConfig>,
     component_health: HashMap<String, ComponentHealth>,
-    incoming_tx: Option<mpsc::Sender<ProvisionalEvent>>,
-    incoming_rx: Option<mpsc::Receiver<ProvisionalEvent>>,
-    consumer: Option<Arc<JetStreamEventConsumer>>,
-    consumer_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl HealthAggregator {
     pub fn new() -> Self {
         Self {
-            runtime: None,
-            config: HealthAggregatorConfig::default(),
-            event_sender: None,
-            db_pool: None,
+            fields: AutomatonFields::new(),
             component_health: HashMap::new(),
-            incoming_tx: None,
-            incoming_rx: None,
-            consumer: None,
-            consumer_handle: None,
-        }
-    }
-
-    fn runtime(&self) -> NodeResult<&ProcessorRuntimeState> {
-        self.runtime.as_ref().ok_or_else(|| {
-            NodeError::Lifecycle("Processor runtime not initialized".to_string())
-        })
-    }
-
-    /// Initialize the confirmed event channel if needed.
-    fn ensure_event_channel(&mut self) {
-        if self.incoming_tx.is_none() || self.incoming_rx.is_none() {
-            let (tx, rx) = mpsc::channel(CONFIRMED_CHANNEL_CAPACITY);
-            self.incoming_tx = Some(tx);
-            self.incoming_rx = Some(rx);
         }
     }
 
     /// Lazily start a JetStream consumer that forwards confirmed events into the local channel.
     async fn ensure_consumer(&mut self) -> NodeResult<()> {
-        if let Some(handle) = self.consumer_handle.as_ref() {
+        if let Some(handle) = self.fields.consumer_handle.as_ref() {
             if !handle.is_finished() {
                 return Ok(());
             }
         }
-        self.consumer_handle = None;
-        self.consumer = None;
+        self.fields.consumer_handle = None;
+        self.fields.consumer = None;
 
-        let runtime = self.runtime()?;
+        let runtime = self.fields.runtime()?;
         let transport = runtime.transport().clone();
         let service_name = runtime.service_info().service_name().to_string();
 
@@ -175,8 +144,8 @@ impl HealthAggregator {
             sinex_node_sdk::event_processor::EventTransport::Nats(publisher) => publisher,
         };
 
-        self.ensure_event_channel();
-        let sender = self.incoming_tx.clone().ok_or_else(|| {
+        self.fields.ensure_event_channel();
+        let sender = self.fields.incoming_tx.clone().ok_or_else(|| {
             NodeError::Processing("Confirmed event channel unavailable".to_string())
         })?;
 
@@ -206,8 +175,7 @@ impl HealthAggregator {
             }
         });
 
-        self.consumer = Some(consumer);
-        self.consumer_handle = Some(handle);
+        self.fields.set_consumer(consumer, handle);
 
         Ok(())
     }
@@ -216,7 +184,7 @@ impl HealthAggregator {
     async fn emit_reports(&self, event_sender: &EventSender) -> NodeResult<u64> {
         let mut events_processed = 0u64;
 
-        if self.config.enable_component_health_reports {
+        if self.fields.config.enable_component_health_reports {
             for (component_name, health) in &self.component_health {
                 if let Ok(event) = self
                     .generate_component_health_report(component_name, health)
@@ -234,7 +202,7 @@ impl HealthAggregator {
             }
         }
 
-        if self.config.enable_system_health_status {
+        if self.fields.config.enable_system_health_status {
             if let Ok(event) = self.generate_system_health_status().await {
                 if let Err(err) = event_sender.send(event).await {
                     warn!("Failed to send system health status: {}", err);
@@ -257,17 +225,15 @@ impl HealthAggregator {
     }
 
     /// Process a confirmed event flowing from JetStream.
-    async fn process_confirmed_event(
-        &mut self,
-        provisional: ProvisionalEvent,
-    ) -> NodeResult<u64> {
+    async fn process_confirmed_event(&mut self, provisional: ProvisionalEvent) -> NodeResult<u64> {
         use sinex_core::db::repositories::DbPoolExt;
 
-        let db_pool = self.db_pool.as_ref().ok_or_else(|| {
-            NodeError::Processing("Database pool not initialized".to_string())
-        })?;
+        let db_pool = self
+            .fields.db_pool
+            .as_ref()
+            .ok_or_else(|| NodeError::Processing("Database pool not initialized".to_string()))?;
         let event_sender = self
-            .event_sender
+            .fields.event_sender
             .as_ref()
             .ok_or_else(|| NodeError::Processing("Event sender not initialized".to_string()))?
             .clone();
@@ -299,11 +265,11 @@ impl HealthAggregator {
     /// Aggregate health events and produce health status reports
     async fn aggregate_health_events(&mut self, from: &Checkpoint) -> NodeResult<u64> {
         let db_pool = self
-            .db_pool
+            .fields.db_pool
             .as_ref()
             .ok_or_else(|| color_eyre::eyre::eyre!("Database pool not initialized"))?;
         let event_sender = self
-            .event_sender
+            .fields.event_sender
             .as_ref()
             .ok_or_else(|| color_eyre::eyre::eyre!("Event sender not initialized"))?
             .clone();
@@ -328,7 +294,7 @@ impl HealthAggregator {
         _from: &Checkpoint,
     ) -> NodeResult<Vec<Event<JsonValue>>> {
         let window_start = Utc::now()
-            - chrono::Duration::seconds(self.config.aggregation_window_seconds.as_secs() as i64);
+            - chrono::Duration::seconds(self.fields.config.aggregation_window_seconds.as_secs() as i64);
 
         // Query events that might contain health information
         let health_event_types = vec![
@@ -405,7 +371,7 @@ impl HealthAggregator {
 
         // Check for stale components (haven't reported in a while)
         let stale_threshold =
-            Utc::now() - chrono::Duration::minutes(self.config.unhealthy_threshold_minutes as i64);
+            Utc::now() - chrono::Duration::minutes(self.fields.config.unhealthy_threshold_minutes as i64);
         for component_health in self.component_health.values_mut() {
             if component_health.last_seen < stale_threshold {
                 component_health.status = HealthStatus::Critical;
@@ -580,12 +546,14 @@ impl HealthAggregator {
                 Provenance::from_synthesis_safe(system_bootstrap_id, vec![])
             });
 
-        let event = Event::create(
-            "health-aggregator",
-            "health.component_report",
+        let event = EventBuilder::new(
+            "health-aggregator".into(),
+            "health.component_report".into(),
             report_payload,
-            provenance,
-        );
+        )
+        .with_provenance(provenance)
+        .build()
+        .expect("infallible: provenance set via with_provenance");
 
         Ok(event)
     }
@@ -650,12 +618,14 @@ impl HealthAggregator {
             Provenance::from_synthesis_safe(system_bootstrap_id, vec![])
         });
 
-        let event = Event::create(
-            "health-aggregator",
-            "health.system_status",
+        let event = EventBuilder::new(
+            "health-aggregator".into(),
+            "health.system_status".into(),
             system_health_payload,
-            provenance,
-        );
+        )
+        .with_provenance(provenance)
+        .build()
+        .expect("infallible: provenance set via with_provenance");
 
         Ok(event)
     }
@@ -664,7 +634,7 @@ impl HealthAggregator {
     async fn generate_health_alerts(&self) -> NodeResult<Vec<Event<JsonValue>>> {
         let mut alerts = Vec::new();
         let alert_threshold =
-            Utc::now() - chrono::Duration::minutes(self.config.unhealthy_threshold_minutes as i64);
+            Utc::now() - chrono::Duration::minutes(self.fields.config.unhealthy_threshold_minutes as i64);
 
         for (component_name, health) in &self.component_health {
             let should_alert = match health.status {
@@ -701,12 +671,14 @@ impl HealthAggregator {
                         Provenance::from_synthesis_safe(system_bootstrap_id, vec![])
                     });
 
-                let alert_event = Event::create(
-                    "health-aggregator",
-                    "health.alert",
+                let alert_event = EventBuilder::new(
+                    "health-aggregator".into(),
+                    "health.alert".into(),
                     alert_payload,
-                    provenance,
-                );
+                )
+                .with_provenance(provenance)
+                .build()
+                .expect("infallible: provenance set via with_provenance");
 
                 alerts.push(alert_event);
             }
@@ -723,52 +695,22 @@ struct ComponentHealthInfo {
     metrics: HashMap<String, f64>,
 }
 
-#[derive(Clone)]
-struct ChannelConfirmedEventHandler {
-    sender: mpsc::Sender<ProvisionalEvent>,
-}
-
-impl ChannelConfirmedEventHandler {
-    fn new(sender: mpsc::Sender<ProvisionalEvent>) -> Self {
-        Self { sender }
-    }
-}
-
-#[async_trait]
-impl ConfirmedEventHandler for ChannelConfirmedEventHandler {
-    async fn handle_confirmed(&self, event: &ProvisionalEvent) -> NodeResult<()> {
-        match self.sender.try_send(event.clone()) {
-            Ok(()) => Ok(()),
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                warn!("Health aggregator confirmed event channel full; dropping event");
-                Ok(())
-            }
-            Err(mpsc::error::TrySendError::Closed(_)) => Err(NodeError::Processing(
-                "Failed to forward confirmed event: channel closed".into(),
-            )),
-        }
-    }
-}
-
 #[async_trait]
 impl Node for HealthAggregator {
     type Config = HealthAggregatorConfig;
 
-    async fn initialize(
-        &mut self,
-        init: ProcessorInitContext<Self::Config>,
-    ) -> NodeResult<()> {
+    async fn initialize(&mut self, init: ProcessorInitContext<Self::Config>) -> NodeResult<()> {
         info!("Initializing health aggregator");
         let (config, runtime) = init.into_runtime();
-        self.db_pool = Some(runtime.db_pool().clone());
-        self.event_sender = Some(runtime.event_sender());
-        self.runtime = Some(runtime);
-        self.config = config;
+        self.fields.db_pool = Some(runtime.db_pool().clone());
+        self.fields.event_sender = Some(runtime.event_sender());
+        self.fields.runtime = Some(runtime);
+        self.fields.config = config;
 
         info!(
             "Health aggregator configured - monitoring {} components, aggregation window: {}s",
-            self.config.component_check_intervals.len(),
-            self.config.aggregation_window_seconds.as_secs()
+            self.fields.config.component_check_intervals.len(),
+            self.fields.config.aggregation_window_seconds.as_secs()
         );
 
         Ok(())
@@ -794,10 +736,8 @@ impl Node for HealthAggregator {
             TimeHorizon::Continuous => {
                 self.ensure_consumer().await?;
 
-                let mut receiver = self.incoming_rx.take().ok_or_else(|| {
-                    NodeError::Processing(
-                        "Confirmed events channel not initialized".to_string(),
-                    )
+                let mut receiver = self.fields.take_incoming_rx().ok_or_else(|| {
+                    NodeError::Processing("Confirmed events channel not initialized".to_string())
                 })?;
 
                 let mut processed = self.aggregate_health_events(&from).await.unwrap_or(0);
@@ -807,10 +747,10 @@ impl Node for HealthAggregator {
                 }
 
                 info!("Confirmed event channel closed; exiting continuous aggregation loop");
-                self.incoming_tx = None;
-                self.incoming_rx = None;
-                self.consumer_handle = None;
-                self.consumer = None;
+                self.fields.incoming_tx = None;
+                self.fields.incoming_rx = None;
+                self.fields.consumer_handle = None;
+                self.fields.consumer = None;
                 processed
             }
         };
@@ -877,18 +817,18 @@ impl Node for HealthAggregator {
     async fn shutdown(&mut self) -> NodeResult<()> {
         info!("Shutting down health aggregator");
 
-        if let Some(consumer) = self.consumer.take() {
+        if let Some(consumer) = self.fields.consumer.take() {
             consumer.stop().await;
         }
 
-        if let Some(handle) = self.consumer_handle.take() {
+        if let Some(handle) = self.fields.consumer_handle.take() {
             if let Err(err) = handle.await {
                 warn!("Failed to join consumer task: {err}");
             }
         }
 
-        self.incoming_tx = None;
-        self.incoming_rx = None;
+        self.fields.incoming_tx = None;
+        self.fields.incoming_rx = None;
 
         Ok(())
     }
@@ -925,13 +865,13 @@ impl ExplorationProvider for HealthAggregator {
                 (
                     "aggregation_window_seconds".to_string(),
                     serde_json::Value::Number(serde_json::Number::from(
-                        self.config.aggregation_window_seconds.as_secs(),
+                        self.fields.config.aggregation_window_seconds.as_secs(),
                     )),
                 ),
                 (
                     "unhealthy_threshold_minutes".to_string(),
                     serde_json::Value::Number(serde_json::Number::from(
-                        self.config.unhealthy_threshold_minutes,
+                        self.fields.config.unhealthy_threshold_minutes,
                     )),
                 ),
             ]),

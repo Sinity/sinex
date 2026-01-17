@@ -27,7 +27,6 @@ pub struct ServiceContainer {
     pub replay_control: Option<ReplayControlClient>,
     pub coordination: Option<Arc<CoordinationKvClient>>,
     nats_client: Option<async_nats::Client>,
-    db_pool: sqlx::PgPool,
     env: sinex_core::environment::SinexEnvironment,
     replay_control_bypass: bool,
     replay_control_init_error: Option<ReplayControlError>,
@@ -165,7 +164,10 @@ impl ServiceContainer {
             Ok(client) => {
                 let js = async_nats::jetstream::new(client.clone());
                 // Use "sinex-gateway" as the service name for coordination queries
-                let coord = Some(Arc::new(CoordinationKvClient::new(js, "sinex-gateway".to_string())));
+                let coord = Some(Arc::new(CoordinationKvClient::new(
+                    js,
+                    "sinex-gateway".to_string(),
+                )));
                 (Some(client), coord)
             }
             Err(err) => {
@@ -188,13 +190,12 @@ impl ServiceContainer {
             .map(|value| *value as usize)
             .sum(),
             analytics: Arc::new(AnalyticsService::new(analytics_pool)),
-            content: Arc::new(ContentService::new(content_pool.clone(), blob_manager)),
+            content: Arc::new(ContentService::new(content_pool, blob_manager)),
             pkm: Arc::new(PkmService::new(pkm_pool)),
             search: Arc::new(SearchService::new(search_pool)),
             replay_control: control_client,
             coordination: coordination_client,
             nats_client,
-            db_pool: content_pool,
             env,
             replay_control_bypass: allow_replay_bypass,
             replay_control_init_error,

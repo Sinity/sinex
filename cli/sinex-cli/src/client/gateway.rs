@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::auth::{load_client_cert, load_root_ca, load_token};
-use crate::client::retry::RetryConfig;
+use crate::client::RetryConfig;
 use crate::model::nodes::{NodeHealth, NodeInfo};
 use crate::model::replay::{DlqInfo, DlqMessage, ReplayOperation, ReplayPlan};
 use crate::model::search::{SearchQuery, SearchResult};
@@ -56,7 +56,10 @@ impl Default for ClientConfig {
             client_key: None,
             insecure: false,
             timeout: 30,
-            retry_config: RetryConfig::default(),
+            // Use 10s max delay for network retries (longer than core's default 1s)
+            retry_config: RetryConfig::builder()
+                .max_delay(Duration::from_secs(10))
+                .build(),
         }
     }
 }
@@ -72,7 +75,10 @@ impl From<&crate::config::Config> for ClientConfig {
             client_key: config.client_key.clone(),
             insecure: config.insecure,
             timeout: config.timeout,
-            retry_config: RetryConfig::default(),
+            // Use 10s max delay for network retries
+            retry_config: RetryConfig::builder()
+                .max_delay(Duration::from_secs(10))
+                .build(),
         }
     }
 }

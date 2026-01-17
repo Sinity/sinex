@@ -844,14 +844,23 @@ fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
         .into();
     }
 
+    // Helper to check if a type is TestContext (handles both Type::Path and Type::Reference)
+    fn is_test_context_type(ty: &syn::Type) -> bool {
+        match ty {
+            syn::Type::Reference(r) => is_test_context_type(&r.elem),
+            syn::Type::Path(type_path) => type_path
+                .path
+                .segments
+                .last()
+                .map_or(false, |seg| seg.ident == "TestContext"),
+            _ => false,
+        }
+    }
+
     // Check if function takes TestContext parameter
     let takes_context = input.sig.inputs.iter().any(|arg| {
         if let syn::FnArg::Typed(pat_type) = arg {
-            if let syn::Type::Path(type_path) = pat_type.ty.as_ref() {
-                if let Some(last_segment) = type_path.path.segments.last() {
-                    return last_segment.ident == "TestContext";
-                }
-            }
+            return is_test_context_type(pat_type.ty.as_ref());
         }
         false
     });

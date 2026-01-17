@@ -2,6 +2,7 @@ use chrono::{Duration as ChronoDuration, Utc};
 use color_eyre::eyre::eyre;
 use serde_json::{json, Value as JsonValue};
 use sinex_core::db::models::event::Event;
+use sinex_core::db::DbPoolExt;
 use sinex_core::types::Id;
 use sinex_processor_runtime::replay::{ReplayMode, ReplayProgress, ReplayRuntimeExt};
 use sinex_test_utils::timing_utils::WaitHelpers;
@@ -64,7 +65,7 @@ async fn publish_event(
     WaitHelpers::wait_for_source_events(&ctx.pool, source, 1, 20).await?;
     ctx.pool
         .events()
-        .get_by_id(&Id::<Event<JsonValue>>::from_ulid(id))
+        .get_by_id(Id::<Event<JsonValue>>::from_ulid(id))
         .await?;
     Ok(())
 }

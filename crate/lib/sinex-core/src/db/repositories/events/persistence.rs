@@ -1,6 +1,6 @@
 use super::conversions::{extract_provenance, EventRecordExt};
 use crate::db::schema::Events;
-use crate::models::{Event, JsonValue, Provenance};
+use crate::models::{Event, EventBuilder, JsonValue, Provenance};
 use crate::repositories::common::{db_error, DbResult, EnhancedRepository, Repository};
 use crate::types::domain::{EventSource, EventType, SchemaVersion};
 use crate::types::error::SinexError;
@@ -923,7 +923,7 @@ impl<'a> EventRepository<'a> {
             )
             .await
             .map_err(|e| e.with_context("operation", "register test source material"))?;
-        let event = Event::dynamic(
+        let event = EventBuilder::new(
             EventSource::new(source.to_string()),
             EventType::new(event_type.to_string()),
             payload,

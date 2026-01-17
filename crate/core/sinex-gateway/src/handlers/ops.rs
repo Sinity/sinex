@@ -11,7 +11,6 @@
 use color_eyre::eyre::{eyre, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sinex_core::types::ulid::Ulid;
 use sqlx::PgPool;
 
 /// Operation record from database
@@ -66,8 +65,8 @@ struct OpsCancelParams {
 
 /// Handle POST /ops/start - start a new operation
 pub async fn handle_ops_start(pool: &PgPool, params: Value) -> Result<Value> {
-    let start_params: OpsStartParams = serde_json::from_value(params)
-        .wrap_err("Invalid ops start parameters")?;
+    let start_params: OpsStartParams =
+        serde_json::from_value(params).wrap_err("Invalid ops start parameters")?;
 
     // Parse scope as JSONB if provided
     let scope_jsonb = start_params.scope.unwrap_or(json!({}));
@@ -114,13 +113,12 @@ pub async fn handle_ops_start(pool: &PgPool, params: Value) -> Result<Value> {
 
 /// Handle GET /ops - list operations with optional filtering
 pub async fn handle_ops_list(pool: &PgPool, params: Value) -> Result<Value> {
-    let list_params: OpsListParams = serde_json::from_value(params).unwrap_or_else(|_| {
-        OpsListParams {
+    let list_params: OpsListParams =
+        serde_json::from_value(params).unwrap_or_else(|_| OpsListParams {
             operation_type: None,
             status: None,
             limit: default_ops_limit(),
-        }
-    });
+        });
 
     // Build dynamic query based on filters
     let operations = if list_params.operation_type.is_some() && list_params.status.is_some() {
@@ -226,8 +224,8 @@ pub async fn handle_ops_list(pool: &PgPool, params: Value) -> Result<Value> {
 
 /// Handle GET /ops/{id} - get operation details
 pub async fn handle_ops_get(pool: &PgPool, params: Value) -> Result<Value> {
-    let get_params: OpsGetParams = serde_json::from_value(params)
-        .wrap_err("Invalid ops get parameters")?;
+    let get_params: OpsGetParams =
+        serde_json::from_value(params).wrap_err("Invalid ops get parameters")?;
 
     let operation = sqlx::query_as!(
         Operation,
@@ -260,8 +258,8 @@ pub async fn handle_ops_get(pool: &PgPool, params: Value) -> Result<Value> {
 
 /// Handle POST /ops/{id}/cancel - cancel a running operation
 pub async fn handle_ops_cancel(pool: &PgPool, params: Value) -> Result<Value> {
-    let cancel_params: OpsCancelParams = serde_json::from_value(params)
-        .wrap_err("Invalid ops cancel parameters")?;
+    let cancel_params: OpsCancelParams =
+        serde_json::from_value(params).wrap_err("Invalid ops cancel parameters")?;
 
     // Check if operation exists and is running
     let operation = sqlx::query!(
@@ -288,7 +286,9 @@ pub async fn handle_ops_cancel(pool: &PgPool, params: Value) -> Result<Value> {
     }
 
     // Mark operation as cancelled
-    let reason = cancel_params.reason.unwrap_or_else(|| "Cancelled by user".to_string());
+    let reason = cancel_params
+        .reason
+        .unwrap_or_else(|| "Cancelled by user".to_string());
 
     sqlx::query!(
         r#"
@@ -336,7 +336,7 @@ pub async fn handle_ops_cancel(pool: &PgPool, params: Value) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_test_utils::{sinex_test, TestContext, TestResult};
+    use sinex_test_utils::{sinex_test, TestContext};
 
     #[sinex_test]
     async fn ops_start_creates_operation(ctx: &TestContext) -> TestResult<()> {

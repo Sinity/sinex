@@ -6,23 +6,23 @@ use serde_json::json;
 use sinex_core::{db::query_helpers::ulid_to_uuid, types::Ulid, DbPoolExt, SinexError};
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
-use sinex_test_utils::timing_utils::WaitHelpers;
-use sinex_test_utils::{sinex_test, EventOverrides, TestContext, TestSatellitePublisher};
+use sinex_test_utils::timing_utils::{Timeouts, WaitHelpers};
+use sinex_test_utils::{sinex_test, EventOverrides, TestContext, TestResult, TestSatellitePublisher};
 use sqlx::Row;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio::time::timeout;
 
-async fn start_isolated_consumer(
-    ctx: &TestContext,
-    suffix: &str,
-) -> color_eyre::Result<(
-    tokio::task::JoinHandle<sinex_ingestd::IngestdResult<()>>,
-    jetstream::Context,
-    JetStreamTopology,
-    String,
-)> {
+/// Isolated consumer setup for tests.
+struct ConsumerSetup {
+    handle: tokio::task::JoinHandle<sinex_ingestd::IngestdResult<()>>,
+    js: jetstream::Context,
+    topology: JetStreamTopology,
+    namespace: String,
+}
+
+async fn start_isolated_consumer(ctx: &TestContext, suffix: &str) -> TestResult<ConsumerSetup> {
     let nats = ctx.nats_handle()?;
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
@@ -48,12 +48,20 @@ async fn start_isolated_consumer(
         Arc::new(RwLock::new(validator)),
         topology.clone(),
     );
-    let consumer_handle = tokio::spawn(async move { consumer.run().await });
+    let handle = tokio::spawn(async move { consumer.run().await });
 
-    nats.wait_for_stream(&js, &topology.events_stream, Duration::from_secs(5))
+    let stream_timeout = Duration::from_secs(Timeouts::QUICK);
+    nats.wait_for_stream(&js, &topology.events_stream, stream_timeout)
+        .await?;
+    nats.wait_for_stream(&js, &topology.dlq_stream, stream_timeout)
         .await?;
 
-    Ok((consumer_handle, js, topology, namespace))
+    Ok(ConsumerSetup {
+        handle,
+        js,
+        topology,
+        namespace,
+    })
 }
 
 #[sinex_test]
@@ -85,7 +93,7 @@ async fn consume_event_from_jetstream() -> color_eyre::Result<()> {
     );
     let consumer_handle = tokio::spawn(async move { consumer.run().await });
 
-    nats.wait_for_stream(&js, &events_stream, Duration::from_secs(5))
+    nats.wait_for_stream(&js, &events_stream, Duration::from_secs(Timeouts::QUICK))
         .await?;
 
     let publisher = TestSatellitePublisher::with_namespace(
@@ -151,9 +159,10 @@ async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
     );
     let consumer_handle = tokio::spawn(async move { consumer.run().await });
 
-    nats.wait_for_stream(&js, &events_stream, Duration::from_secs(5))
+    let stream_timeout = Duration::from_secs(Timeouts::QUICK);
+    nats.wait_for_stream(&js, &events_stream, stream_timeout)
         .await?;
-    nats.wait_for_stream(&js, &confirmations_stream, Duration::from_secs(5))
+    nats.wait_for_stream(&js, &confirmations_stream, stream_timeout)
         .await?;
 
     let publisher = TestSatellitePublisher::with_namespace(
@@ -180,7 +189,7 @@ async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
         )
         .await?;
 
-    let confirmation = timeout(Duration::from_secs(10), confirmation_sub.next())
+    let confirmation = timeout(Duration::from_secs(Timeouts::SHORT), confirmation_sub.next())
         .await?
         .expect("confirmation message");
     let confirm_payload: serde_json::Value = serde_json::from_slice(&confirmation.payload)?;
@@ -218,7 +227,7 @@ async fn consumer_persists_offset_kind(ctx: TestContext) -> color_eyre::Result<(
     );
     let consumer_handle = tokio::spawn(async move { consumer.run().await });
 
-    nats.wait_for_stream(&js, &events_stream, Duration::from_secs(5))
+    nats.wait_for_stream(&js, &events_stream, Duration::from_secs(Timeouts::QUICK))
         .await?;
 
     let material_record = ctx
@@ -306,9 +315,10 @@ async fn invalid_timestamp_routes_to_dlq_and_allows_progress() -> color_eyre::Re
     );
     let consumer_handle = tokio::spawn(async move { consumer.run().await });
 
-    nats.wait_for_stream(&js, &events_stream, Duration::from_secs(5))
+    let stream_timeout = Duration::from_secs(Timeouts::QUICK);
+    nats.wait_for_stream(&js, &events_stream, stream_timeout)
         .await?;
-    nats.wait_for_stream(&js, &dlq_stream, Duration::from_secs(5))
+    nats.wait_for_stream(&js, &dlq_stream, stream_timeout)
         .await?;
 
     let publisher = TestSatellitePublisher::with_namespace(
@@ -331,7 +341,7 @@ async fn invalid_timestamp_routes_to_dlq_and_allows_progress() -> color_eyre::Re
         .publish_event("test.good", json!({"data": "ok"}))
         .await?;
 
-    WaitHelpers::wait_for_event_id(&ctx.pool, good_event_id.into(), 10).await?;
+    WaitHelpers::wait_for_event_id(&ctx.pool, good_event_id.into(), Timeouts::SHORT).await?;
 
     WaitHelpers::wait_for_condition(
         || {
@@ -350,7 +360,7 @@ async fn invalid_timestamp_routes_to_dlq_and_allows_progress() -> color_eyre::Re
                 Ok(state.messages > 0)
             }
         },
-        10,
+        Timeouts::SHORT,
     )
     .await?;
 
@@ -367,14 +377,16 @@ async fn invalid_timestamp_routes_to_dlq_and_allows_progress() -> color_eyre::Re
 }
 
 #[sinex_test]
-async fn duplicate_events_are_idempotent(ctx: TestContext) -> color_eyre::Result<()> {
+async fn duplicate_events_are_idempotent(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_shared_nats().await?;
 
-    let (consumer_handle, _js, _topology, namespace) =
-        start_isolated_consumer(&ctx, "idempotency").await?;
+    let setup = start_isolated_consumer(&ctx, "idempotency").await?;
     let nats_client = ctx.nats_client();
-    let publisher =
-        TestSatellitePublisher::with_namespace(nats_client, "idempotency", Some(namespace.clone()));
+    let publisher = TestSatellitePublisher::with_namespace(
+        nats_client,
+        "idempotency",
+        Some(setup.namespace.clone()),
+    );
 
     let event_id = Ulid::new();
     let overrides = EventOverrides {
@@ -386,7 +398,7 @@ async fn duplicate_events_are_idempotent(ctx: TestContext) -> color_eyre::Result
         .publish_event_with_overrides("pipeline.event", json!({"sequence": 1}), overrides.clone())
         .await?;
 
-    WaitHelpers::wait_for_event_id(&ctx.pool, event_id.into(), 10).await?;
+    WaitHelpers::wait_for_event_id(&ctx.pool, event_id.into(), Timeouts::SHORT).await?;
 
     // Publish the exact same payload again to simulate replay / duplicate delivery.
     publisher
@@ -412,26 +424,25 @@ async fn duplicate_events_are_idempotent(ctx: TestContext) -> color_eyre::Result
     )
     .await?;
 
-    consumer_handle.abort();
+    setup.handle.abort();
     Ok(())
 }
 
 #[sinex_test]
-async fn dlq_captures_multiple_validation_failures(ctx: TestContext) -> color_eyre::Result<()> {
+async fn dlq_captures_multiple_validation_failures(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_shared_nats().await?;
 
-    let (consumer_handle, js, topology, namespace) =
-        start_isolated_consumer(&ctx, "validation").await?;
-    let dlq_stream = topology.dlq_stream.clone();
-    let nats = ctx.nats_handle()?;
-    nats.wait_for_stream(&js, &dlq_stream, Duration::from_secs(5))
-        .await?;
+    let setup = start_isolated_consumer(&ctx, "validation").await?;
+    let dlq_stream = setup.topology.dlq_stream.clone();
 
-    let mut dlq_stream_handle = js.get_stream(&dlq_stream).await?;
+    let mut dlq_stream_handle = setup.js.get_stream(&dlq_stream).await?;
     let initial_messages = dlq_stream_handle.info().await?.state.messages;
     let nats_client = ctx.nats_client();
-    let publisher =
-        TestSatellitePublisher::with_namespace(nats_client, "validation", Some(namespace.clone()));
+    let publisher = TestSatellitePublisher::with_namespace(
+        nats_client,
+        "validation",
+        Some(setup.namespace.clone()),
+    );
 
     // Publish a handful of invalid events (missing payload field) to exercise DLQ throughput.
     let invalid_total = 5;
@@ -453,13 +464,13 @@ async fn dlq_captures_multiple_validation_failures(ctx: TestContext) -> color_ey
         .publish_event("validation.good", json!({"ok": true}))
         .await?;
 
-    WaitHelpers::wait_for_event_id(&ctx.pool, good_id.into(), 10).await?;
+    WaitHelpers::wait_for_event_id(&ctx.pool, good_id.into(), Timeouts::SHORT).await?;
 
     // Wait until the DLQ stream registers all invalid events.
     let expected_messages = initial_messages + invalid_total as u64;
     WaitHelpers::wait_for_condition(
         || {
-            let js = js.clone();
+            let js = setup.js.clone();
             let dlq_stream = dlq_stream.clone();
             async move {
                 let mut stream = js
@@ -474,10 +485,10 @@ async fn dlq_captures_multiple_validation_failures(ctx: TestContext) -> color_ey
                 Ok(state.messages >= expected_messages)
             }
         },
-        10,
+        Timeouts::SHORT,
     )
     .await?;
 
-    consumer_handle.abort();
+    setup.handle.abort();
     Ok(())
 }

@@ -48,8 +48,8 @@ struct AuditGetParams {
 
 /// Handle GET /audit/{operation_id} - get audit trail for an operation
 pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
-    let audit_params: AuditGetParams = serde_json::from_value(params)
-        .wrap_err("Invalid audit parameters")?;
+    let audit_params: AuditGetParams =
+        serde_json::from_value(params).wrap_err("Invalid audit parameters")?;
 
     // Fetch the operation record
     let operation = sqlx::query_as!(
@@ -97,18 +97,19 @@ pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_test_utils::{sinex_test, TestContext, TestResult};
+    use sinex_test_utils::{sinex_test, TestContext};
 
     #[sinex_test]
     async fn audit_get_returns_operation(ctx: &TestContext) -> TestResult<()> {
         // Create a test operation using the database function
-        let operation_id = sqlx::query_scalar!(
+        let operation_id: String = sqlx::query_scalar!(
             r#"
-            SELECT core.start_operation('test-audit', 'test-user', '{}'::jsonb)
+            SELECT core.start_operation('test-audit', 'test-user', '{}'::jsonb)::text
             "#
         )
         .fetch_one(ctx.pool())
-        .await?;
+        .await?
+        .expect("operation_id should be returned");
 
         // Fetch audit trail
         let result = handle_audit_get(ctx.pool(), json!({ "operation_id": operation_id })).await?;

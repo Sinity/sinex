@@ -2,7 +2,7 @@ use chrono::{Duration, Utc};
 use serde_json::json;
 use sinex_core::db::validation::{EventValidator, ValidationError};
 use sinex_core::db::DbPool;
-use sinex_core::{Event, Id, JsonValue, SourceMaterial, Ulid};
+use sinex_core::{EventBuilder, Id, JsonValue, SourceMaterial, Ulid};
 use sinex_test_utils::prelude::*;
 
 #[sinex_test]
@@ -31,9 +31,9 @@ async fn event_validator_blocks_ulid_time_skew_attack(
     let validator = EventValidator::new();
     let future_ulid = Ulid::from_datetime(Utc::now() + Duration::hours(1));
 
-    let mut event = Event::dynamic(
-        "ulid-security",
-        "time.attack",
+    let mut event = EventBuilder::new(
+        "ulid-security".into(),
+        "time.attack".into(),
         json!({"scenario": "future-id"}),
     )
     .from_material(Id::<SourceMaterial>::new(), 0)

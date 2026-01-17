@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use sinex_node_sdk::stream_processor::{
-    Checkpoint, ProcessorCapabilities, ProcessorInitContext, ProcessorType, ScanArgs, ScanReport,
-    Node, TimeHorizon,
+    Checkpoint, Node, ProcessorCapabilities, ProcessorInitContext, ProcessorType, ScanArgs,
+    ScanReport, TimeHorizon,
 };
 use sinex_node_sdk::NodeResult;
 use sinex_test_utils::{sinex_test, TestContext, TestResult};
@@ -21,10 +21,7 @@ struct HangingProcessor {
 impl Node for HangingProcessor {
     type Config = ();
 
-    async fn initialize(
-        &mut self,
-        _init: ProcessorInitContext<Self::Config>,
-    ) -> NodeResult<()> {
+    async fn initialize(&mut self, _init: ProcessorInitContext<Self::Config>) -> NodeResult<()> {
         Ok(())
     }
 

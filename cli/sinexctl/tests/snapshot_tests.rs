@@ -3,11 +3,12 @@
 //! These tests use insta for snapshot management.
 //! Run `cargo insta review` to review/accept snapshot changes.
 
-use assert_cmd::Command;
+use assert_cmd::cargo;
+use std::process::Command;
 
 /// Helper to create a sinexctl command
 fn sinexctl() -> Command {
-    Command::cargo_bin("sinexctl").unwrap()
+    Command::new(cargo::cargo_bin!("sinexctl"))
 }
 
 #[test]

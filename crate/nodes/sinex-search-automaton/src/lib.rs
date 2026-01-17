@@ -9,24 +9,23 @@
 mod common {
     // Core facades
     pub use sinex_core::{
-        db::models::{Event, EventId, Provenance},
+        db::models::{Event, EventBuilder, EventId, Provenance},
         db::repositories::DbPoolExt,
         types::{domain::EventType, Id, Seconds},
         JsonValue,
     };
 
     // Runtime/SDK facades
-    pub use sinex_processor_runtime::cli::{
-        ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
-        SourceState,
-    };
     pub use sinex_node_sdk::{
+        automaton_base::{AutomatonFields, ChannelConfirmedEventHandler, IngestionHistoryEntry},
         stream_processor::{
-            Checkpoint, EventSender, ProcessorCapabilities, ProcessorInitContext,
-            ProcessorRuntimeState, ProcessorType, ScanArgs, ScanReport, Node,
-            TimeHorizon,
+            Checkpoint, EventSender, Node, ProcessorCapabilities, ProcessorInitContext,
+            ProcessorRuntimeState, ProcessorType, ScanArgs, ScanReport, TimeHorizon,
         },
         NodeError, NodeResult,
+    };
+    pub use sinex_processor_runtime::cli::{
+        CoverageAnalysis, ExplorationProvider, ExportFormat, SourceState,
     };
 
     // External dependencies
@@ -37,7 +36,6 @@ mod common {
         serde_json,
         sqlx::PgPool,
         std::time::Duration,
-        tokio::sync::mpsc,
         tracing::{error, info, warn},
     };
 }
@@ -46,27 +44,19 @@ use crate::common::*;
 use serde_json::json;
 use sinex_core::{environment, types::Result as CoreResult, Ulid};
 use sinex_node_sdk::{
-    confirmation_handler::{ConfirmedEventHandler, ProvisionalEvent},
+    confirmation_handler::ProvisionalEvent,
     event_processor::EventTransport,
     jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig},
     ProcessingModel,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
-use tokio::task::JoinHandle;
 
 const MAX_SEARCH_EVENTS: usize = 1024;
 const MAX_PROVENANCE_IDS: usize = 8;
 const DEFAULT_BATCH_SIZE: usize = 128;
-const CONFIRMED_CHANNEL_CAPACITY: usize = 1024;
-const MAX_HISTORY_ENTRIES: usize = 32;
 
-#[derive(Default)]
-struct SearchAutomatonStats {
-    inputs_seen: u64,
-    outputs_emitted: u64,
-    last_activity: Option<DateTime<Utc>>,
-}
+// Use common constants from AutomatonFields for channel/history sizes
 
 /// Configuration for Search Automaton
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -135,127 +125,50 @@ pub struct SearchQueryPattern {
 
 /// Search Automaton using unified Node architecture
 pub struct SearchAutomaton {
-    runtime: Option<ProcessorRuntimeState>,
-    config: SearchAutomatonConfig,
-    event_sender: Option<EventSender>,
-    db_pool: Option<PgPool>,
+    /// Common automaton infrastructure (runtime, config, channels, stats, history)
+    fields: AutomatonFields<SearchAutomatonConfig>,
+    /// Automaton-specific search index
     search_index: Vec<SearchIndexEntry>,
+    /// Recent events for deduplication
     recent_events: VecDeque<Event<JsonValue>>,
+    /// IDs of recent events
     recent_event_ids: HashSet<Ulid>,
-    incoming_tx: Option<mpsc::Sender<ProvisionalEvent>>,
-    incoming_rx: Option<mpsc::Receiver<ProvisionalEvent>>,
-    consumer: Option<Arc<JetStreamEventConsumer>>,
-    consumer_handle: Option<JoinHandle<()>>,
-    history: VecDeque<IngestionHistoryEntry>,
-    stats: SearchAutomatonStats,
 }
 
 impl SearchAutomaton {
     pub fn new() -> Self {
         Self {
-            runtime: None,
-            config: SearchAutomatonConfig::default(),
-            event_sender: None,
-            db_pool: None,
+            fields: AutomatonFields::new(),
             search_index: Vec::new(),
             recent_events: VecDeque::new(),
             recent_event_ids: HashSet::new(),
-            incoming_tx: None,
-            incoming_rx: None,
-            consumer: None,
-            consumer_handle: None,
-            history: VecDeque::new(),
-            stats: SearchAutomatonStats::default(),
         }
     }
 
+    // Delegate to AutomatonFields for common infrastructure
     fn runtime(&self) -> NodeResult<&ProcessorRuntimeState> {
-        self.runtime.as_ref().ok_or_else(|| {
-            NodeError::Lifecycle("Search automaton runtime not initialized".into())
-        })
+        self.fields.runtime()
     }
 
     fn db_pool(&self) -> NodeResult<&PgPool> {
-        if let Some(runtime) = self.runtime.as_ref() {
-            Ok(runtime.db_pool())
-        } else if let Some(pool) = self.db_pool.as_ref() {
-            Ok(pool)
-        } else {
-            Err(NodeError::Processing(
-                "Database pool not initialized".into(),
-            ))
-        }
+        self.fields.db_pool()
     }
 
     fn event_sender(&self) -> NodeResult<EventSender> {
-        if let Some(runtime) = self.runtime.as_ref() {
-            Ok(runtime.event_sender())
-        } else if let Some(sender) = self.event_sender.as_ref() {
-            Ok(sender.clone())
-        } else {
-            Err(NodeError::Processing(
-                "Event sender not initialized".into(),
-            ))
-        }
-    }
-
-    fn ensure_event_channel(&mut self) {
-        if self.incoming_tx.is_none() || self.incoming_rx.is_none() {
-            let (tx, rx) = mpsc::channel(CONFIRMED_CHANNEL_CAPACITY);
-            self.incoming_tx = Some(tx);
-            self.incoming_rx = Some(rx);
-        }
-    }
-
-    fn record_history(&mut self, entry: IngestionHistoryEntry) {
-        self.history.push_front(entry);
-        while self.history.len() > MAX_HISTORY_ENTRIES {
-            self.history.pop_back();
-        }
-    }
-
-    fn record_input(&mut self, count: usize) {
-        if count == 0 {
-            return;
-        }
-        self.stats.inputs_seen = self.stats.inputs_seen.saturating_add(count as u64);
-        self.stats.last_activity = Some(Utc::now());
-    }
-
-    fn record_output(&mut self, count: u64) {
-        if count == 0 {
-            return;
-        }
-        self.stats.outputs_emitted = self.stats.outputs_emitted.saturating_add(count);
-        self.stats.last_activity = Some(Utc::now());
-    }
-
-    fn recent_activity(&self) -> Vec<ActivityEntry> {
-        self.history
-            .iter()
-            .take(5)
-            .map(|entry| ActivityEntry {
-                timestamp: entry.completed_at.unwrap_or(entry.started_at),
-                description: format!("Processed {} events", entry.events_generated),
-                data: entry.scan_report.as_ref().map(|report| {
-                    serde_json::json!({
-                        "events_processed": report.events_processed,
-                        "warnings": report.warnings,
-                    })
-                }),
-            })
-            .collect()
+        self.fields.event_sender()
     }
 
     async fn ensure_consumer(&mut self) -> NodeResult<()> {
-        if let Some(handle) = self.consumer_handle.as_ref() {
+        // Check if existing consumer is still running
+        if let Some(handle) = self.fields.consumer_handle.as_ref() {
             if !handle.is_finished() {
                 return Ok(());
             }
         }
 
-        self.consumer_handle = None;
-        self.consumer = None;
+        // Clean up old consumer
+        self.fields.consumer_handle = None;
+        self.fields.consumer = None;
 
         let runtime = self.runtime()?;
         let transport = runtime.transport().clone();
@@ -265,10 +178,12 @@ impl SearchAutomaton {
             EventTransport::Nats(publisher) => publisher,
         };
 
-        self.ensure_event_channel();
-        let sender = self.incoming_tx.clone().ok_or_else(|| {
-            NodeError::Processing("Confirmed event channel unavailable".into())
-        })?;
+        self.fields.ensure_event_channel();
+        let sender = self
+            .fields
+            .incoming_tx
+            .clone()
+            .ok_or_else(|| NodeError::Processing("Confirmed event channel unavailable".into()))?;
 
         let handler = Arc::new(ChannelConfirmedEventHandler::new(sender));
         let env = environment().clone();
@@ -296,8 +211,7 @@ impl SearchAutomaton {
             }
         });
 
-        self.consumer = Some(consumer);
-        self.consumer_handle = Some(handle);
+        self.fields.set_consumer(consumer, handle);
 
         Ok(())
     }
@@ -323,7 +237,7 @@ impl SearchAutomaton {
         let mut processed = self.process_snapshot(Utc::now()).await.unwrap_or(0);
         self.ensure_consumer().await?;
 
-        let mut receiver = self.incoming_rx.take().ok_or_else(|| {
+        let mut receiver = self.fields.take_incoming_rx().ok_or_else(|| {
             NodeError::Processing("Confirmed events channel not initialized".into())
         })?;
 
@@ -332,19 +246,16 @@ impl SearchAutomaton {
         }
 
         info!("Confirmed event channel closed; exiting search continuous loop");
-        self.incoming_tx = None;
-        self.consumer_handle = None;
-        self.consumer = None;
+        self.fields.incoming_tx = None;
+        self.fields.consumer_handle = None;
+        self.fields.consumer = None;
         drop(from);
 
-        self.record_output(processed);
+        self.fields.stats.record_output(processed);
         Ok(processed)
     }
 
-    async fn process_confirmed_event(
-        &mut self,
-        provisional: ProvisionalEvent,
-    ) -> NodeResult<u64> {
+    async fn process_confirmed_event(&mut self, provisional: ProvisionalEvent) -> NodeResult<u64> {
         let db_pool = self.db_pool()?;
         let event_id = EventId::from_ulid(provisional.event_id);
 
@@ -369,7 +280,7 @@ impl SearchAutomaton {
         let mut processed = 0u64;
         let sender = self.event_sender()?;
 
-        if self.config.enable_fulltext_indexing && !self.search_index.is_empty() {
+        if self.fields.config.enable_fulltext_indexing && !self.search_index.is_empty() {
             match self.generate_search_index_event() {
                 Ok(event) => {
                     if let Err(err) = sender.send(event).await {
@@ -382,7 +293,7 @@ impl SearchAutomaton {
             }
         }
 
-        if self.config.enable_search_analytics {
+        if self.fields.config.enable_search_analytics {
             let snapshot = self.recent_snapshot();
             match self.generate_search_analytics(&snapshot).await {
                 Ok(events) => {
@@ -425,14 +336,14 @@ impl SearchAutomaton {
                 }
             }
         }
-        self.record_input(added);
+        self.fields.stats.record_input(added);
         self.prune_recent_events();
         self.rebuild_search_index();
     }
 
     fn prune_recent_events(&mut self) {
         let cutoff = Utc::now()
-            - ChronoDuration::seconds(self.config.indexing_window_seconds.as_secs().max(60) as i64);
+            - ChronoDuration::seconds(self.fields.config.indexing_window_seconds.as_secs().max(60) as i64);
         while let Some(front) = self.recent_events.front() {
             let outdated = event_timestamp(front) < cutoff;
             if outdated || self.recent_events.len() > MAX_SEARCH_EVENTS {
@@ -468,7 +379,7 @@ impl SearchAutomaton {
                 .partial_cmp(&a.search_score)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-        entries.truncate(self.config.max_index_size);
+        entries.truncate(self.fields.config.max_index_size);
         self.search_index = entries;
     }
 
@@ -484,10 +395,10 @@ impl SearchAutomaton {
         end_time: DateTime<Utc>,
     ) -> CoreResult<Vec<Event<JsonValue>>> {
         let start_time = end_time
-            - ChronoDuration::seconds(self.config.indexing_window_seconds.as_secs().max(60) as i64);
+            - ChronoDuration::seconds(self.fields.config.indexing_window_seconds.as_secs().max(60) as i64);
 
         let mut collected = Vec::new();
-        if self.config.searchable_event_types.is_empty() {
+        if self.fields.config.searchable_event_types.is_empty() {
             let mut events = db_pool
                 .events()
                 .get_by_time_range(
@@ -498,7 +409,7 @@ impl SearchAutomaton {
                 .await?;
             collected.append(&mut events);
         } else {
-            for event_type_str in &self.config.searchable_event_types {
+            for event_type_str in &self.fields.config.searchable_event_types {
                 let event_type = EventType::from(event_type_str.as_str());
                 let mut events = db_pool
                     .events()
@@ -527,8 +438,9 @@ impl SearchAutomaton {
 
     /// Create a search index entry from an event
     fn create_search_index_entry(&self, event: &Event<JsonValue>) -> Option<SearchIndexEntry> {
-        if !self.config.searchable_event_types.is_empty()
+        if !self.fields.config.searchable_event_types.is_empty()
             && !self
+                .fields
                 .config
                 .searchable_event_types
                 .iter()
@@ -541,7 +453,7 @@ impl SearchAutomaton {
         let id = event.id.as_ref()?.clone();
         let title = self.extract_title(&payload, event);
         let content = self.extract_searchable_content(&payload)?;
-        if content.len() < self.config.min_content_length {
+        if content.len() < self.fields.config.min_content_length {
             return None;
         }
         let keywords = self.extract_search_keywords(&payload, &content);
@@ -691,13 +603,19 @@ impl SearchAutomaton {
             "analysis_type": "search.analytics",
             "top_content_types": top_types,
             "index_size": self.search_index.len(),
-            "semantic_enabled": self.config.enable_semantic_search,
+            "semantic_enabled": self.fields.config.enable_semantic_search,
         });
 
         let provenance = self.provenance_from_index();
-        let analytics_event =
-            Event::create("search-automaton", "search.analytics", payload, provenance)
-                .at_time(Utc::now());
+        let analytics_event = EventBuilder::new(
+            "search-automaton".into(),
+            "search.analytics".into(),
+            payload,
+        )
+        .with_provenance(provenance)
+        .at_time(Utc::now())
+        .build()
+        .expect("infallible: provenance set via with_provenance");
 
         Ok(vec![analytics_event])
     }
@@ -737,13 +655,15 @@ impl SearchAutomaton {
             ],
         });
 
-        let event = Event::create(
-            "search-automaton",
-            "search.discoverability",
+        let event = EventBuilder::new(
+            "search-automaton".into(),
+            "search.discoverability".into(),
             payload,
-            self.provenance_from_index(),
         )
-        .at_time(Utc::now());
+        .with_provenance(self.provenance_from_index())
+        .at_time(Utc::now())
+        .build()
+        .expect("infallible: provenance set via with_provenance");
 
         Ok(vec![event])
     }
@@ -804,18 +724,20 @@ impl SearchAutomaton {
             "content_type_distribution": content_type_distribution,
             "avg_score_by_type": avg_score_by_type,
             "top_entries": top_summary,
-            "index_size_limit": self.config.max_index_size,
-            "indexing_window_hours": self.config.indexing_window_seconds.as_secs() / 3600,
+            "index_size_limit": self.fields.config.max_index_size,
+            "indexing_window_hours": self.fields.config.indexing_window_seconds.as_secs() / 3600,
             "generated_at": Utc::now(),
         });
 
-        Ok(Event::create(
-            "search-automaton",
-            "search.index_built",
+        Ok(EventBuilder::new(
+            "search-automaton".into(),
+            "search.index_built".into(),
             payload,
-            self.provenance_from_index(),
         )
-        .at_time(Utc::now()))
+        .with_provenance(self.provenance_from_index())
+        .at_time(Utc::now())
+        .build()
+        .expect("infallible: provenance set via with_provenance"))
     }
 }
 
@@ -823,15 +745,12 @@ impl SearchAutomaton {
 impl Node for SearchAutomaton {
     type Config = SearchAutomatonConfig;
 
-    async fn initialize(
-        &mut self,
-        init: ProcessorInitContext<Self::Config>,
-    ) -> NodeResult<()> {
+    async fn initialize(&mut self, init: ProcessorInitContext<Self::Config>) -> NodeResult<()> {
         let (config, runtime) = init.into_runtime();
-        self.db_pool = Some(runtime.db_pool().clone());
-        self.event_sender = Some(runtime.event_sender());
-        self.runtime = Some(runtime);
-        self.config = config;
+        self.fields.db_pool = Some(runtime.db_pool().clone());
+        self.fields.event_sender = Some(runtime.event_sender());
+        self.fields.runtime = Some(runtime);
+        self.fields.config = config;
         Ok(())
     }
 
@@ -864,11 +783,11 @@ impl Node for SearchAutomaton {
                 ),
                 (
                     "fulltext_indexing_enabled".to_string(),
-                    self.config.enable_fulltext_indexing as u64,
+                    self.fields.config.enable_fulltext_indexing as u64,
                 ),
                 (
                     "search_analytics_enabled".to_string(),
-                    self.config.enable_search_analytics as u64,
+                    self.fields.config.enable_search_analytics as u64,
                 ),
             ]),
             successful_targets: vec!["search".to_string()],
@@ -876,7 +795,7 @@ impl Node for SearchAutomaton {
             warnings: Vec::new(),
         };
 
-        self.record_history(IngestionHistoryEntry {
+        self.fields.record_history(IngestionHistoryEntry {
             id: Ulid::new().to_string(),
             started_at: start_time,
             completed_at: Some(Utc::now()),
@@ -911,16 +830,16 @@ impl Node for SearchAutomaton {
     }
 
     async fn shutdown(&mut self) -> NodeResult<()> {
-        if let Some(consumer) = self.consumer.take() {
+        if let Some(consumer) = self.fields.consumer.take() {
             consumer.stop().await;
         }
-        if let Some(handle) = self.consumer_handle.take() {
+        if let Some(handle) = self.fields.consumer_handle.take() {
             if let Err(err) = handle.await {
                 warn!("Failed to join search consumer task: {err}");
             }
         }
-        self.incoming_tx = None;
-        self.incoming_rx = None;
+        self.fields.incoming_tx = None;
+        self.fields.incoming_rx = None;
         Ok(())
     }
 }
@@ -943,7 +862,7 @@ impl ExplorationProvider for SearchAutomaton {
             0.0
         };
 
-        let last_updated = self.stats.last_activity.unwrap_or_else(Utc::now);
+        let last_updated = self.fields.stats.last_activity.unwrap_or_else(Utc::now);
 
         Ok(SourceState {
             description: "Search automaton for content indexing and search analytics".to_string(),
@@ -956,29 +875,29 @@ impl ExplorationProvider for SearchAutomaton {
                 ),
                 (
                     "max_index_size".to_string(),
-                    json!(self.config.max_index_size),
+                    json!(self.fields.config.max_index_size),
                 ),
                 ("avg_search_score".to_string(), json!(avg_search_score)),
                 (
                     "fulltext_indexing".to_string(),
-                    json!(self.config.enable_fulltext_indexing),
+                    json!(self.fields.config.enable_fulltext_indexing),
                 ),
                 (
                     "semantic_search".to_string(),
-                    json!(self.config.enable_semantic_search),
+                    json!(self.fields.config.enable_semantic_search),
                 ),
                 (
                     "search_analytics".to_string(),
-                    json!(self.config.enable_search_analytics),
+                    json!(self.fields.config.enable_search_analytics),
                 ),
-                ("inputs_seen".to_string(), json!(self.stats.inputs_seen)),
+                ("inputs_seen".to_string(), json!(self.fields.stats.inputs_seen)),
                 (
                     "outputs_emitted".to_string(),
-                    json!(self.stats.outputs_emitted),
+                    json!(self.fields.stats.outputs_emitted),
                 ),
             ]),
             healthy: true,
-            recent_activity: self.recent_activity(),
+            recent_activity: self.fields.recent_activity(),
         })
     }
 
@@ -988,11 +907,11 @@ impl ExplorationProvider for SearchAutomaton {
     ) -> color_eyre::eyre::Result<Vec<IngestionHistoryEntry>> {
         let limit = usize::try_from(limit).unwrap_or(0);
         let take = if limit == 0 {
-            self.history.len()
+            self.fields.history.len()
         } else {
-            std::cmp::min(limit, self.history.len())
+            std::cmp::min(limit, self.fields.history.len())
         };
-        Ok(self.history.iter().take(take).cloned().collect())
+        Ok(self.fields.history.iter().take(take).cloned().collect())
     }
 
     fn get_coverage_analysis(
@@ -1003,13 +922,13 @@ impl ExplorationProvider for SearchAutomaton {
         let (start, end) = time_range.unwrap_or_else(|| {
             (
                 now - ChronoDuration::seconds(
-                    self.config.indexing_window_seconds.as_secs().max(60) as i64,
+                    self.fields.config.indexing_window_seconds.as_secs().max(60) as i64,
                 ),
                 now,
             )
         });
-        let source_total = self.stats.inputs_seen;
-        let sinex_total = self.stats.outputs_emitted;
+        let source_total = self.fields.stats.inputs_seen;
+        let sinex_total = self.fields.stats.outputs_emitted;
         let capped = std::cmp::min(source_total, sinex_total);
         let coverage_percentage = if source_total == 0 {
             0.0
@@ -1077,32 +996,7 @@ fn default_provenance() -> Provenance {
     Provenance::from_synthesis_safe(bootstrap, vec![])
 }
 
-#[derive(Clone)]
-struct ChannelConfirmedEventHandler {
-    sender: mpsc::Sender<ProvisionalEvent>,
-}
-
-impl ChannelConfirmedEventHandler {
-    fn new(sender: mpsc::Sender<ProvisionalEvent>) -> Self {
-        Self { sender }
-    }
-}
-
-#[async_trait]
-impl ConfirmedEventHandler for ChannelConfirmedEventHandler {
-    async fn handle_confirmed(&self, event: &ProvisionalEvent) -> NodeResult<()> {
-        match self.sender.try_send(event.clone()) {
-            Ok(()) => Ok(()),
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                warn!("Search automaton confirmed event channel full; dropping event");
-                Ok(())
-            }
-            Err(mpsc::error::TrySendError::Closed(_)) => Err(NodeError::Processing(
-                "Failed to forward confirmed search event: channel closed".into(),
-            )),
-        }
-    }
-}
+// ChannelConfirmedEventHandler is now imported from sinex_node_sdk::automaton_base
 
 #[cfg(test)]
 mod tests {
@@ -1113,13 +1007,15 @@ mod tests {
     use tokio::runtime::Runtime;
 
     fn make_event(event_type: &str, minutes_ago: i64, content: &str) -> Event<JsonValue> {
-        let mut event = Event::create(
-            "test",
-            event_type,
+        let mut event = EventBuilder::new(
+            "test".into(),
+            event_type.into(),
             json!({ "content": content, "title": "Test" }),
-            default_provenance(),
         )
-        .at_time(Utc::now() - ChronoDuration::minutes(minutes_ago));
+        .with_provenance(default_provenance())
+        .at_time(Utc::now() - ChronoDuration::minutes(minutes_ago))
+        .build()
+        .expect("infallible: test provenance set");
         event.id = Some(Id::new());
         event
     }

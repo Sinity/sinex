@@ -9,14 +9,14 @@
 pub mod cascade_analyzer;
 pub mod client;
 pub mod handlers;
-#[cfg(feature = "test-support")]
+#[cfg(any(feature = "test-support", test))]
 pub mod handlers_test_support;
 pub mod native_messaging;
 pub mod prelude;
 pub mod replay_control;
 pub mod replay_state_machine;
 pub mod rpc_server;
-#[cfg(feature = "test-support")]
+#[cfg(any(feature = "test-support", test))]
 pub mod rpc_server_test_support;
 pub mod service_container;
 

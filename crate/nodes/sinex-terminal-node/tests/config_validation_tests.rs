@@ -1,7 +1,7 @@
 use camino::Utf8PathBuf;
 use sinex_core::types::{Bytes, Seconds};
 use sinex_terminal_node::unified_processor::{HistorySourceConfig, TerminalConfig};
-use sinex_test_utils::{sinex_test, TestResult};
+use sinex_test_utils::sinex_test;
 
 #[sinex_test]
 fn valid_configuration_passes_validation() -> TestResult<()> {

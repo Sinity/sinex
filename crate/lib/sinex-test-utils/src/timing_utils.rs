@@ -22,6 +22,36 @@ pub const DEFAULT_WAIT_SECS: u64 = 30;
 pub const INTEGRATION_WAIT_SECS: u64 = 60;
 pub const STRESS_WAIT_SECS: u64 = 90;
 
+/// Named timeout presets for consistent test timing.
+///
+/// Use these constants instead of hardcoded magic numbers in tests:
+/// ```rust
+/// use sinex_test_utils::timing_utils::Timeouts;
+///
+/// // Instead of: WaitHelpers::wait_for_event_count(&pool, 5, 10).await?
+/// // Use:        WaitHelpers::wait_for_event_count(&pool, 5, Timeouts::SHORT).await?
+/// ```
+pub struct Timeouts;
+
+impl Timeouts {
+    /// Very quick waits (5 seconds) - fast operations, simple checks
+    pub const QUICK: u64 = 5;
+    /// Short waits (10 seconds) - typical unit test operations
+    pub const SHORT: u64 = 10;
+    /// Medium waits (15 seconds) - moderate operations
+    pub const MEDIUM: u64 = 15;
+    /// Standard waits (30 seconds) - default for most tests (= DEFAULT_WAIT_SECS)
+    pub const STANDARD: u64 = DEFAULT_WAIT_SECS;
+    /// Long waits (60 seconds) - integration tests (= INTEGRATION_WAIT_SECS)
+    pub const LONG: u64 = INTEGRATION_WAIT_SECS;
+    /// Stress test waits (90 seconds) - heavy operations (= STRESS_WAIT_SECS)
+    pub const STRESS: u64 = STRESS_WAIT_SECS;
+    /// Extended waits (120 seconds) - very slow operations
+    pub const EXTENDED: u64 = 120;
+    /// CI-specific waits (180 seconds) - for slow CI environments
+    pub const CI: u64 = 180;
+}
+
 /// Deterministic synchronization primitive to replace arbitrary sleeps
 pub struct TestSynchronizer {
     tx: tokio::sync::watch::Sender<bool>,
@@ -984,9 +1014,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_wait_helpers_multiple_conditions(
-        ctx: TestContext,
-    ) -> TestResult<()> {
+    async fn test_wait_helpers_multiple_conditions(ctx: TestContext) -> TestResult<()> {
         let counter1 = Arc::new(AtomicUsize::new(0));
         let counter2 = Arc::new(AtomicUsize::new(0));
 
@@ -1027,9 +1055,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_timing_patterns_event_processing(
-        ctx: TestContext,
-    ) -> TestResult<()> {
+    async fn test_timing_patterns_event_processing(ctx: TestContext) -> TestResult<()> {
         let counter = TimingPatterns::wait_for_event_processing(5, Duration::from_secs(5))
             .await
             .map_err(|_| SinexError::unknown("Failed to create counter"))?;

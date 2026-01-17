@@ -161,9 +161,10 @@ async fn maybe_start_schema_listener(
     };
     let env = sinex_core::environment();
     let subject = env.nats_subject("system.schemas.active");
-    let mut sub = client.subscribe(subject.clone()).await.map_err(|e| {
-        NodeError::General(eyre!("Failed to subscribe to schema broadcasts: {e}"))
-    })?;
+    let mut sub = client
+        .subscribe(subject.clone())
+        .await
+        .map_err(|e| NodeError::General(eyre!("Failed to subscribe to schema broadcasts: {e}")))?;
 
     // Create schema cache and validator
     let cache = Arc::new(SchemaBroadcastCache::default());
@@ -244,8 +245,7 @@ pub struct ScanReport {
 pub trait Node: Send + Sync {
     type Config: for<'de> Deserialize<'de> + Default + Send + Sync;
 
-    async fn initialize(&mut self, init: ProcessorInitContext<Self::Config>)
-        -> NodeResult<()>;
+    async fn initialize(&mut self, init: ProcessorInitContext<Self::Config>) -> NodeResult<()>;
 
     async fn scan(
         &mut self,
@@ -820,9 +820,10 @@ impl<T: Node + 'static> StreamProcessorRunner<T> {
     }
 
     async fn run_automaton_event_bridge(&mut self, from: Checkpoint) -> NodeResult<()> {
-        let handles = self.handles.as_ref().ok_or_else(|| {
-            NodeError::Lifecycle("Runner handles not initialized".to_string())
-        })?;
+        let handles = self
+            .handles
+            .as_ref()
+            .ok_or_else(|| NodeError::Lifecycle("Runner handles not initialized".to_string()))?;
 
         let db_pool = handles.db_pool().cloned();
         let transport = handles.transport().clone();
@@ -995,9 +996,7 @@ impl<T: Node + 'static> StreamProcessorRunner<T> {
         let provenance = match (published.source_material_id, published.source_event_ids) {
             (Some(material_id), None) => {
                 let anchor = published.anchor_byte.ok_or_else(|| {
-                    NodeError::Processing(
-                        "Material provenance missing anchor_byte".to_string(),
-                    )
+                    NodeError::Processing("Material provenance missing anchor_byte".to_string())
                 })?;
                 let material_ulid = Self::parse_ulid(&material_id, "source_material_id")?;
                 Provenance::Material {

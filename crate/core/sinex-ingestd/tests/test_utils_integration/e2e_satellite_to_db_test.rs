@@ -3,7 +3,7 @@ use serde_json::json;
 use sinex_ingestd::{
     validator::EventValidator, IngestdResult, JetStreamConsumer, JetStreamTopology,
 };
-use sinex_test_utils::timing_utils::WaitHelpers;
+use sinex_test_utils::timing_utils::{Timeouts, WaitHelpers};
 use sinex_test_utils::{prelude::*, TestSatellitePublisher};
 use std::sync::Arc;
 use std::time::Duration;
@@ -42,12 +42,13 @@ async fn start_ingestd(
     let handle = tokio::spawn(async move { consumer.run().await });
 
     // Ensure streams exist before publishing.
-    timeout(Duration::from_secs(5), async {
-        nats.wait_for_stream(&js, &topology.events_stream, Duration::from_secs(5))
+    let stream_timeout = Duration::from_secs(Timeouts::QUICK);
+    timeout(stream_timeout, async {
+        nats.wait_for_stream(&js, &topology.events_stream, stream_timeout)
             .await?;
-        nats.wait_for_stream(&js, &topology.confirmations_stream, Duration::from_secs(5))
+        nats.wait_for_stream(&js, &topology.confirmations_stream, stream_timeout)
             .await?;
-        nats.wait_for_stream(&js, &topology.dlq_stream, Duration::from_secs(5))
+        nats.wait_for_stream(&js, &topology.dlq_stream, stream_timeout)
             .await
     })
     .await??;
@@ -94,7 +95,7 @@ async fn end_to_end_single_satellite_full_flow(ctx: TestContext) -> TestResult<(
                 Ok(count == 25)
             }
         },
-        20,
+        Timeouts::MEDIUM,
     )
     .await?;
 
@@ -102,7 +103,7 @@ async fn end_to_end_single_satellite_full_flow(ctx: TestContext) -> TestResult<(
     use std::collections::HashSet;
     let expected: HashSet<_> = ids.iter().map(|id| id.to_string()).collect();
     let mut seen: HashSet<String> = HashSet::new();
-    timeout(Duration::from_secs(10), async {
+    timeout(Duration::from_secs(Timeouts::SHORT), async {
         while seen.len() < expected.len() {
             if let Some(msg) = confirmation_sub.next().await {
                 let payload: serde_json::Value = serde_json::from_slice(&msg.payload)?;

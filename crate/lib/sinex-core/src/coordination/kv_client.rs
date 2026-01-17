@@ -236,7 +236,9 @@ impl CoordinationKvClient {
 
         if let Some(entry) = entry {
             let leader = std::str::from_utf8(&entry)
-                .map_err(|e| SinexError::serialization(format!("Invalid leader ID encoding: {}", e)))?
+                .map_err(|e| {
+                    SinexError::serialization(format!("Invalid leader ID encoding: {}", e))
+                })?
                 .to_string();
             Ok(Some(leader))
         } else {
@@ -247,7 +249,10 @@ impl CoordinationKvClient {
     /// Get instance metadata by ID
     ///
     /// Returns the metadata for a specific instance if it exists.
-    pub async fn get_instance(&self, instance_id: &str) -> Result<Option<InstanceMetadata>, SinexError> {
+    pub async fn get_instance(
+        &self,
+        instance_id: &str,
+    ) -> Result<Option<InstanceMetadata>, SinexError> {
         let bucket = self.instances_bucket().await?;
         let key = format!("{}.{}", self.service_name, instance_id);
 
@@ -257,8 +262,9 @@ impl CoordinationKvClient {
             .map_err(|e| SinexError::kv(format!("Failed to get instance: {}", e)))?;
 
         if let Some(entry) = entry {
-            let metadata = serde_json::from_slice::<InstanceMetadata>(&entry)
-                .map_err(|e| SinexError::serialization(format!("Failed to deserialize instance metadata: {}", e)))?;
+            let metadata = serde_json::from_slice::<InstanceMetadata>(&entry).map_err(|e| {
+                SinexError::serialization(format!("Failed to deserialize instance metadata: {}", e))
+            })?;
             Ok(Some(metadata))
         } else {
             Ok(None)

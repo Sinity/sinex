@@ -33,6 +33,45 @@ pub struct RetryConfig {
     pub jitter: bool,
 }
 
+impl RetryConfig {
+    /// Calculate backoff duration for a given attempt number (0-indexed).
+    ///
+    /// This is useful for manual retry loops where you need to calculate
+    /// the delay between attempts without using tokio-retry strategies.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use sinex_core::types::utils::wait_helpers::RetryConfig;
+    /// use std::time::Duration;
+    ///
+    /// let config = RetryConfig::builder()
+    ///     .initial_delay(Duration::from_millis(100))
+    ///     .max_delay(Duration::from_secs(10))
+    ///     .multiplier(2.0)
+    ///     .build();
+    ///
+    /// // Attempt 0: initial delay (100ms)
+    /// assert_eq!(config.backoff_for_attempt(0), Duration::from_millis(100));
+    /// // Attempt 1: 100ms * 2^0 = 100ms
+    /// assert_eq!(config.backoff_for_attempt(1), Duration::from_millis(100));
+    /// // Attempt 2: 100ms * 2^1 = 200ms
+    /// assert_eq!(config.backoff_for_attempt(2), Duration::from_millis(200));
+    /// ```
+    pub fn backoff_for_attempt(&self, attempt: u32) -> Duration {
+        if attempt == 0 {
+            return self.initial_delay;
+        }
+
+        let multiplier = self.multiplier.powi(attempt as i32 - 1);
+        let backoff_nanos = self.initial_delay.as_nanos() as f64 * multiplier;
+        let backoff = Duration::from_nanos(backoff_nanos.min(u64::MAX as f64) as u64);
+
+        // Cap at max_delay
+        backoff.min(self.max_delay)
+    }
+}
+
 /// Generic wait for condition with exponential backoff
 pub async fn wait_for_condition<F, Fut>(
     condition_fn: F,

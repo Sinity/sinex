@@ -5,13 +5,13 @@ use serde_json::json;
 use sinex_core::types::{error::SinexError, Ulid};
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
-use sinex_test_utils::timing_utils::{WaitHelpers, DEFAULT_WAIT_SECS};
-use sinex_test_utils::{sinex_test, EventOverrides, TestContext, TestSatellitePublisher};
+use sinex_test_utils::timing_utils::{Timeouts, WaitHelpers};
+use sinex_test_utils::{sinex_test, EventOverrides, TestContext, TestResult, TestSatellitePublisher};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 
-async fn wait_for_consumer(js: &jetstream::Context, base_stream: &str) -> color_eyre::Result<()> {
+async fn wait_for_consumer(js: &jetstream::Context, base_stream: &str) -> TestResult<()> {
     WaitHelpers::wait_for_condition(
         || {
             let js = js.clone();
@@ -28,14 +28,14 @@ async fn wait_for_consumer(js: &jetstream::Context, base_stream: &str) -> color_
                 Ok(info.state.consumer_count > 0)
             }
         },
-        DEFAULT_WAIT_SECS,
+        Timeouts::STANDARD,
     )
     .await?;
     Ok(())
 }
 
 #[sinex_test]
-async fn test_dlq_cases_table() -> color_eyre::Result<()> {
+async fn test_dlq_cases_table() -> TestResult<()> {
     let ctx = TestContext::new().await?.with_shared_nats().await?;
     let nats = ctx.nats_handle()?;
     let nats_client = ctx.nats_client();
@@ -113,7 +113,7 @@ async fn test_dlq_cases_table() -> color_eyre::Result<()> {
                         Ok(info.state.messages >= expected_messages)
                     }
                 },
-                DEFAULT_WAIT_SECS,
+                Timeouts::STANDARD,
             )
             .await
         }

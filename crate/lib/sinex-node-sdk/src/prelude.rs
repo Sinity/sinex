@@ -13,8 +13,8 @@
 
 // Core processor traits and types
 pub use crate::{Checkpoint, CheckpointManager, CheckpointState};
-pub use crate::{ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport};
 pub use crate::{Node, TimeHorizon};
+pub use crate::{ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport};
 
 // Configuration and coordination
 pub use crate::{AutomatonConfig, EventSourceConfig, NodeConfig};

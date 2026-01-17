@@ -99,7 +99,7 @@ async fn restore_state_params(
         .map_err(|e| SinexError::io(format!("Failed to read WAL for {}: {}", material_id, e)))?;
 
     let cursor = std::io::Cursor::new(content_buffer);
-    let mut deserializer = serde_json::Deserializer::from_reader(cursor);
+    let deserializer = serde_json::Deserializer::from_reader(cursor);
     let mut iterator = deserializer.into_iter::<WalEntry>();
 
     while let Some(item) = iterator.next() {

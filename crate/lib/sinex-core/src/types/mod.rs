@@ -14,7 +14,6 @@ pub mod validation;
 pub use ids::Id;
 pub use sinex_schema::ulid::Ulid;
 
-use chrono::{DateTime, Utc};
 pub use error::{Result as SinexResult, SinexError};
 pub use query::{Pagination, TimeRange};
 use serde::{Deserialize, Serialize};
@@ -37,7 +36,10 @@ pub type Result<T> = std::result::Result<T, SinexError>;
 pub type JsonValue = serde_json::Value;
 pub type Timestamp = chrono::DateTime<chrono::Utc>;
 pub type OptionalTimestamp = Option<chrono::DateTime<chrono::Utc>>;
+
+#[cfg(feature = "sqlx")]
 pub type DbPool = sqlx::PgPool;
+#[cfg(feature = "sqlx")]
 pub type DbPoolRef<'a> = &'a sqlx::PgPool;
 
 /// Timeout constants for various operations

@@ -3,7 +3,6 @@ use sinex_core::validation::validation_chains::ValidateExt;
 use validator::Validate;
 
 use sinex_test_utils::sinex_test;
-use sinex_test_utils::TestResult;
 
 #[sinex_test]
 fn database_config_validation_flags_invalid_fields() -> TestResult<()> {

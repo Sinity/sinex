@@ -6,6 +6,7 @@
 pub mod config_validation;
 mod core;
 pub mod file_watching_security;
+pub mod query_validation;
 pub mod validation_chains;
 
 // Re-export main validation utilities

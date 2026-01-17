@@ -10,7 +10,6 @@ use color_eyre::eyre::{eyre, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sinex_core::environment::SinexEnvironment;
-use sinex_core::types::ulid::Ulid;
 
 /// Node status information
 #[derive(Debug, Serialize, Deserialize)]
@@ -46,7 +45,7 @@ struct NodeSetHorizonParams {
 /// Handle GET /nodes request - list all nodes
 pub async fn handle_nodes_list(
     nats_client: &async_nats::Client,
-    env: &SinexEnvironment,
+    _env: &SinexEnvironment, // Reserved for environment-specific KV bucket naming
     _params: Value,
 ) -> Result<Value> {
     // Query node status from KV store
@@ -69,9 +68,10 @@ pub async fn handle_nodes_list(
     let mut nodes = Vec::new();
 
     // Watch for all entries (one-time scan)
-    let mut entries = kv.keys().await.map_err(|e| {
-        eyre!("Failed to list node keys: {}", e)
-    })?;
+    let mut entries = kv
+        .keys()
+        .await
+        .map_err(|e| eyre!("Failed to list node keys: {}", e))?;
 
     use futures::StreamExt;
     while let Some(key) = entries.next().await {
@@ -98,11 +98,14 @@ pub async fn handle_nodes_drain(
     env: &SinexEnvironment,
     params: Value,
 ) -> Result<Value> {
-    let drain_params: NodeDrainParams = serde_json::from_value(params)
-        .wrap_err("Invalid node drain parameters")?;
+    let drain_params: NodeDrainParams =
+        serde_json::from_value(params).wrap_err("Invalid node drain parameters")?;
 
     // Publish drain command to NATS control subject
-    let subject = env.nats_subject(&format!("sinex.control.nodes.{}.drain", drain_params.node_id));
+    let subject = env.nats_subject(&format!(
+        "sinex.control.nodes.{}.drain",
+        drain_params.node_id
+    ));
 
     let payload = json!({
         "action": "drain",
@@ -128,11 +131,14 @@ pub async fn handle_nodes_resume(
     env: &SinexEnvironment,
     params: Value,
 ) -> Result<Value> {
-    let resume_params: NodeResumeParams = serde_json::from_value(params)
-        .wrap_err("Invalid node resume parameters")?;
+    let resume_params: NodeResumeParams =
+        serde_json::from_value(params).wrap_err("Invalid node resume parameters")?;
 
     // Publish resume command to NATS control subject
-    let subject = env.nats_subject(&format!("sinex.control.nodes.{}.resume", resume_params.node_id));
+    let subject = env.nats_subject(&format!(
+        "sinex.control.nodes.{}.resume",
+        resume_params.node_id
+    ));
 
     let payload = json!({
         "action": "resume",
@@ -157,15 +163,18 @@ pub async fn handle_nodes_set_horizon(
     env: &SinexEnvironment,
     params: Value,
 ) -> Result<Value> {
-    let horizon_params: NodeSetHorizonParams = serde_json::from_value(params)
-        .wrap_err("Invalid set horizon parameters")?;
+    let horizon_params: NodeSetHorizonParams =
+        serde_json::from_value(params).wrap_err("Invalid set horizon parameters")?;
 
     // Validate horizon timestamp
     let _horizon_dt = chrono::DateTime::parse_from_rfc3339(&horizon_params.horizon)
         .wrap_err("Invalid horizon timestamp format (expected RFC3339)")?;
 
     // Publish set-horizon command to NATS control subject
-    let subject = env.nats_subject(&format!("sinex.control.nodes.{}.set-horizon", horizon_params.node_id));
+    let subject = env.nats_subject(&format!(
+        "sinex.control.nodes.{}.set-horizon",
+        horizon_params.node_id
+    ));
 
     let payload = json!({
         "action": "set_horizon",
@@ -190,7 +199,7 @@ pub async fn handle_nodes_set_horizon(
 mod tests {
     use super::*;
     use sinex_core::environment;
-    use sinex_test_utils::{sinex_test, EphemeralNats, TestResult};
+    use sinex_test_utils::{sinex_test, EphemeralNats};
 
     #[sinex_test]
     async fn nodes_list_returns_empty_when_no_bucket() -> TestResult<()> {

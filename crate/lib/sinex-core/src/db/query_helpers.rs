@@ -128,6 +128,13 @@ where
                 return Ok(result);
             }
             Err(e) if is_retryable_db_error(&e) && attempts < config.max_attempts => {
+                // Explicitly rollback to ensure the connection is clean before returning to pool
+                if let Err(rollback_err) = tx.rollback().await {
+                    warn!(
+                        "Failed to rollback transaction (attempt {}/{}): {}",
+                        attempts, config.max_attempts, rollback_err
+                    );
+                }
                 warn!(
                     "Retryable database error (attempt {}/{}): {}",
                     attempts, config.max_attempts, e
@@ -136,17 +143,22 @@ where
                 delay = std::cmp::min(delay.mul_f64(config.exponential_base), config.max_delay);
                 continue;
             }
-            Err(e) => return Err(e),
+            Err(e) => {
+                // Explicitly rollback to ensure the connection is clean before returning to pool
+                let _ = tx.rollback().await;
+                return Err(e);
+            }
         }
     }
 }
 
-/// Check if a database error is retryable (deadlock, serialization failure)
+/// Check if a database error is retryable (deadlock, serialization failure, aborted transaction)
 pub fn is_retryable_db_error(err: &SinexError) -> bool {
     let msg = err.to_string();
     msg.contains("deadlock detected")
         || msg.contains("could not serialize access")
         || msg.contains("transaction rollback")
+        || msg.contains("current transaction is aborted")
 }
 
 /// Check if a record exists

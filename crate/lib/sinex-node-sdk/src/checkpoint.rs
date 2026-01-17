@@ -285,9 +285,11 @@ impl CheckpointManager {
     }
 
     async fn load_checkpoint_for_key(&self, key: &str) -> NodeResult<Option<CheckpointState>> {
-        let data = self.kv.get(key).await.map_err(|e| {
-            NodeError::Checkpoint(format!("Failed to read checkpoint KV: {e}"))
-        })?;
+        let data = self
+            .kv
+            .get(key)
+            .await
+            .map_err(|e| NodeError::Checkpoint(format!("Failed to read checkpoint KV: {e}")))?;
 
         let Some(data) = data else {
             return Ok(None);
@@ -320,9 +322,11 @@ impl CheckpointManager {
 
         let mut latest: Option<(i128, CheckpointState)> = None;
 
-        while let Some(key) = keys.try_next().await.map_err(|e| {
-            NodeError::Checkpoint(format!("Failed to scan checkpoint KV keys: {e}"))
-        })? {
+        while let Some(key) = keys
+            .try_next()
+            .await
+            .map_err(|e| NodeError::Checkpoint(format!("Failed to scan checkpoint KV keys: {e}")))?
+        {
             if !key.starts_with(&prefix) {
                 continue;
             }
@@ -376,9 +380,7 @@ impl CheckpointManager {
     /// - `Err(NodeError::Serialization)`: Checkpoint serialization error
     pub async fn save_checkpoint(&self, state: &CheckpointState) -> NodeResult<()> {
         let processed_count: i64 = state.processed_count.try_into().map_err(|_| {
-            NodeError::Checkpoint(
-                "processed_count exceeds supported range for storage".to_string(),
-            )
+            NodeError::Checkpoint("processed_count exceeds supported range for storage".to_string())
         })?;
 
         // Save to NATS KV only
@@ -429,9 +431,11 @@ impl CheckpointManager {
             return Ok(Vec::new());
         }
 
-        let entry = self.kv.get(&self.kv_key()).await.map_err(|e| {
-            NodeError::Checkpoint(format!("Failed to read checkpoint KV: {e}"))
-        })?;
+        let entry = self
+            .kv
+            .get(&self.kv_key())
+            .await
+            .map_err(|e| NodeError::Checkpoint(format!("Failed to read checkpoint KV: {e}")))?;
 
         let Some(entry) = entry else {
             return Ok(Vec::new());
@@ -473,9 +477,11 @@ impl CheckpointManager {
 
     /// Get checkpoint statistics
     pub async fn get_checkpoint_stats(&self) -> NodeResult<CheckpointStats> {
-        let entry = self.kv.get(&self.kv_key()).await.map_err(|e| {
-            NodeError::Checkpoint(format!("Failed to read checkpoint KV: {e}"))
-        })?;
+        let entry = self
+            .kv
+            .get(&self.kv_key())
+            .await
+            .map_err(|e| NodeError::Checkpoint(format!("Failed to read checkpoint KV: {e}")))?;
 
         let (processed_count, last_update) = if let Some(entry) = entry {
             if let Ok(state) = serde_json::from_slice::<CheckpointState>(&entry) {

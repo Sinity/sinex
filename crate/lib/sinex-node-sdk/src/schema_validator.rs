@@ -27,7 +27,11 @@ use crate::stream_processor::SchemaBroadcastEntry;
 use crate::NodeResult;
 
 /// Compiled schema cache entry
+///
+/// Metadata fields (schema_id, source, event_type, version) are stored for
+/// debugging, logging, and potential future introspection of cached schemas.
 #[derive(Clone)]
+#[allow(dead_code)]
 struct CompiledSchema {
     schema_id: Ulid,
     source: String,
@@ -217,7 +221,9 @@ impl SatelliteSchemaValidator {
         // Try cache first
         let schema_id_opt = {
             let lookup = self.lookup.read();
-            lookup.get(&(source.to_string(), event_type.to_string())).copied()
+            lookup
+                .get(&(source.to_string(), event_type.to_string()))
+                .copied()
         };
 
         let schema_id = match schema_id_opt {
