@@ -4,9 +4,46 @@ These features represent the long-term vision for Sinex SDK improvements. They a
 
 ---
 
+## Holographic DX: The Unifying Vision
+
+**The system IS the development environment.**
+
+Current Sinex development follows the traditional model:
+```
+DEVELOPER ──> Write Rust ──> cargo build ──> restart service ──> lose state ──> replay events
+```
+
+The holographic model makes the compile/deploy cycle invisible:
+```
+DEVELOPER ──> Edit Rust ──> [auto-rebuilds] ──> [state transfers] ──> continue from where you were
+                              (invisible)       (automatic)
+```
+
+### Inspirations
+
+| System | Insight |
+|--------|---------|
+| **Smalltalk** | The image IS development. Code changes are live. No external build step. |
+| **Erlang/OTP** | Hot code reload. Running system accepts new modules without restart. |
+| **Lisp machines** | Development environment and runtime are the same thing. |
+| **Jupyter** | Interactive exploration with persistent state across cell executions. |
+| **Unreal Engine** | Hot reload of C++ with state preservation during game development. |
+
+### The Three Pillars
+
+1. **Invisible Compilation** (`sx dev`): File watcher triggers rebuild, state serializes automatically, new binary resumes from checkpoint.
+
+2. **The Tether** (`sx dev --tether prod`): Connect to production event streams for testing with real data, writes go to local shadow DB.
+
+3. **State Continuity**: State survives code changes, crashes, restarts, and version upgrades through automatic checkpoint management.
+
+All features below are unified by this vision. SimpleProcessor makes state management automatic. The Aggregation Runner handles hot reload gracefully. The sx tool orchestrates the holographic experience. Wasm plugins provide instant reload for extension logic.
+
+---
+
 ## 1. SimpleProcessor Trait
 
-**Goal:** 90% of nodes don't need manual checkpoint/state management. Provide a high-level abstraction.
+**Goal:** 90% of nodes don't need manual checkpoint/state management. Provide a high-level abstraction with **automatic state persistence that survives hot reload**.
 
 ### Current Problem
 
@@ -16,17 +53,23 @@ All nodes must implement `Node` trait, which requires:
 - Full NATS consumer group coordination
 - Scan operation implementation
 
-### Solution: High-Level Abstraction
+### Solution: High-Level Abstraction with State
 
 ```rust
-/// Simple processor for stateless or auto-managed state nodes
+/// Simple processor with auto-managed state
 #[async_trait]
 pub trait SimpleProcessor: Send + Sync {
+    /// Custom state - automatically persisted and restored
+    type State: Serialize + DeserializeOwned + Default;
     type Input: DeserializeOwned;
     type Output: Serialize;
 
-    /// Process a single event
-    async fn process(&mut self, input: Self::Input) -> Result<Option<Self::Output>>;
+    /// Process a single event with access to persistent state
+    async fn process(
+        &mut self,
+        state: &mut Self::State,
+        input: Self::Input,
+    ) -> Result<Option<Self::Output>>;
 
     /// Optional: custom error handling
     fn handle_error(&self, error: Error) -> ErrorAction {
@@ -47,42 +90,41 @@ where
 {
     // Automatically handles:
     // - NATS consumption
-    // - Checkpoint persistence
+    // - Checkpoint persistence (includes custom state)
     // - Provenance tracking
     // - Error routing (DLQ)
-    // - State management (if needed)
+    // - State serialization on SIGTERM
+    // - State restoration from --restore-state flag
 }
 ```
 
 ### Example Usage
 
 ```rust
-// Before (manual Node implementation): 50+ lines
-impl Node for TerminalCanonicalizer {
-    async fn initialize(&mut self, ctx: &mut StreamContext) -> Result<()> {
-        // Load checkpoint manually
-        // Setup NATS consumer
-        // Initialize state
-    }
-
-    async fn process_batch(&mut self, events: Vec<Event>) -> Result<Vec<Event>> {
-        // Manual batch processing
-        // Error handling
-        // Checkpoint updates
-    }
-    // ... more boilerplate
+// Developer's node - just implement business logic
+#[derive(Serialize, Deserialize, Default)]
+struct MyState {
+    command_counts: HashMap<String, u64>,
+    last_seen: Option<DateTime<Utc>>,
 }
 
-// After (SimpleProcessor): 10 lines
 struct TerminalCanonicalizer;
 
 #[async_trait]
 impl SimpleProcessor for TerminalCanonicalizer {
+    type State = MyState;
     type Input = TerminalCommandEvent;
     type Output = CanonicalCommandEvent;
 
-    async fn process(&mut self, input: Self::Input) -> Result<Option<Self::Output>> {
-        // Just the business logic
+    async fn process(
+        &mut self,
+        state: &mut MyState,
+        input: Self::Input,
+    ) -> Result<Option<Self::Output>> {
+        // Business logic only - state is auto-persisted
+        *state.command_counts.entry(input.command.clone()).or_default() += 1;
+        state.last_seen = Some(Utc::now());
+
         let canonical = canonicalize_command(&input.command);
         Ok(Some(CanonicalCommandEvent { canonical }))
     }
@@ -93,6 +135,8 @@ impl SimpleProcessor for TerminalCanonicalizer {
 
 - NATS subscription + consumer group setup
 - Checkpoint persistence to KV (auto-save every 10s or 1000 events)
+- **State serialization on SIGTERM** (enables hot reload)
+- **State restoration from temp file** (continues after rebuild)
 - Provenance auto-assignment (synthesis from input event)
 - DLQ routing on errors
 - Metrics (events processed, errors, latency)
@@ -108,7 +152,7 @@ impl SimpleProcessor for TerminalCanonicalizer {
 
 ## 2. Standard Aggregation Runner
 
-**Goal:** Eliminate bespoke reducer logic in stateful automata.
+**Goal:** Eliminate bespoke reducer logic in stateful automata, with **state that survives hot reload**.
 
 ### Problem
 
@@ -152,12 +196,13 @@ pub struct AggregationRunner<A: Aggregator> {
 impl<A: Aggregator> AggregationRunner<A> {
     /// Automatically handles:
     /// - NATS consumption
-    /// - State hydration from KV snapshot
+    /// - State hydration from KV snapshot OR temp file (hot reload)
     /// - Reduce loop
     /// - Periodic state snapshots to KV
+    /// - State serialization on SIGTERM
     /// - Replay isolation
     pub async fn run(&mut self) -> Result<()> {
-        // Load latest snapshot from KV
+        // Load state (KV snapshot or --restore-state temp file)
         self.hydrate_state().await?;
 
         // Subscribe to input stream
@@ -224,24 +269,19 @@ impl Aggregator for HealthAggregatorLogic {
 
 ---
 
-## 3. `sx` Unified Developer Tool
+## 3. `sx` Holographic Developer Tool
 
-**Goal:** Single binary for all development and operations.
+**Goal:** Single binary that makes the compile/deploy cycle invisible.
 
-**Note:** This is distinct from `sinexctl` (production RPC client). `sx` is for local development.
+**Note:** This is distinct from `sinexctl` (production RPC client). `sx` is the holographic development orchestrator.
 
 ### Command Structure
 
 ```bash
 sx
-  # Development
+  # Development (core holographic experience)
   dev [node]               # Holographic dev environment
   dev --tether prod        # Live debugging against production
-
-  # Deployment
-  deploy                   # Build artifacts from devenv.nix
-  deploy --oci             # Build OCI container
-  deploy --systemd         # Generate systemd units
 
   # Operations (wraps sinexctl for convenience)
   run seal                 # Seal current run, archive events
@@ -251,6 +291,7 @@ sx
   schema check             # Verify schema consistency
   schema migrate           # Apply migrations
   tls bootstrap            # Generate TLS fixtures
+  plugin reload [name]     # Hot-reload Wasm plugin
 
   # Monitoring (TUI)
   monitor                  # Real-time dashboard
@@ -270,72 +311,100 @@ $ sx dev analytics-automaton
 [sx] NATS: nats://localhost:4222
 [sx] DB: postgresql:///sinex_dev?host=/tmp/pg_tmp_...
 [sx] Mock terminal emitting events every 5s
+[sx] Watching src/ for changes...
 
-# Auto-reload on code changes (preserve state)
+# Developer edits src/main.rs
+
 [sx] File changed: src/main.rs
-[sx] Stopping v1 gracefully...
-[sx] V1 serialized state to /tmp/sx-state-...
-[sx] Starting v2...
-[sx] V2 resumed from checkpoint
+[sx] V1 graceful shutdown, serializing state...
+[sx] State saved: 47 events processed, checkpoint at ulid_xyz
+[sx] Building V2...
+[sx] V2 started, restored from checkpoint
+[sx] Continuing from event 48...
 ```
 
-### The Tether (Live Debugging)
+**What happens invisibly:**
+1. File watcher (notify-rs) detects change
+2. Current process receives graceful shutdown signal
+3. Process serializes CheckpointState + custom state to temp file
+4. `cargo build` runs in background
+5. New binary starts with `--restore-state /tmp/sx-state-xxx`
+6. Processing continues from exact position
+
+---
+
+## 4. The Tether (Live Production Debugging)
+
+**Goal:** Test against real production events without affecting production.
+
+This is a major feature that enables debugging with actual production data patterns.
+
+### How It Works
 
 ```bash
-$ sx dev --tether prod
+$ sx dev --tether prod terminal-canonicalizer
 
 # Establishes mTLS tunnel to production
 [sx] Connecting to prod gateway: https://prod.example.com:9999
 [sx] Authenticating via mTLS...
-[sx] Connected
+[sx] Connected ✓
 
 # Shadow consumer (fan-out, not steal)
-[sx] Creating shadow consumer group: dev-user-20250115
-[sx] Subscribing to: sinex.events.terminal.*
-[sx] Receiving production events (read-only)
+[sx] Creating shadow consumer: dev-sinity-20250117
+[sx] Subscribing to: sinex.events.terminal.* (read-only fan-out)
+[sx] Local writes → shadow DB only
 
-# Writes redirected to local shadow tables
-[sx] Warning: Writes will go to local DB only
-[sx] Production data is READ-ONLY
+[sx] Receiving production events...
+[sx] Event #1: terminal.command.executed (git status)
+[sx] Event #2: terminal.command.executed (cargo build)
+...
 ```
 
-### Deployment Artifact Generation
+### Architecture
 
-```bash
-$ sx deploy --oci
-
-# Reads devenv.nix, builds OCI container
-[sx] Building container from devenv.nix
-[sx] Services included:
-     - sinex-ingestd
-     - sinex-gateway
-     - sinex-terminal-node
-     - sinex-analytics-node
-[sx] State volume: /var/lib/sinex (must be mounted)
-[sx] Image: sinex:latest
-[sx] Size: 487 MB
-
-$ sx deploy --systemd
-
-# Generates systemd units
-[sx] Generated:
-     - /etc/systemd/system/sinex-ingestd.service
-     - /etc/systemd/system/sinex-gateway.service
-     - /etc/systemd/system/sinex-terminal-node@.service (template)
-[sx] State directory: /var/lib/sinex
-[sx] Run: systemctl daemon-reload && systemctl start sinex-ingestd
 ```
+Production                          Development Machine
+┌─────────────┐                    ┌─────────────────────────┐
+│ NATS Cluster│                    │  sx dev --tether prod   │
+│             │                    │                         │
+│  terminal.* ├────────────────────┤  Shadow Consumer        │
+│  events     │   mTLS tunnel      │  (fan-out, not steal)   │
+│             │                    │                         │
+└─────────────┘                    │         │               │
+                                   │         v               │
+┌─────────────┐                    │  ┌─────────────────┐    │
+│ Production  │                    │  │ Your Node       │    │
+│ PostgreSQL  │  (read-only)       │  │ (local process) │    │
+│             │◄───────────────────│  └────────┬────────┘    │
+└─────────────┘                    │           │             │
+                                   │           v             │
+                                   │  ┌─────────────────┐    │
+                                   │  │ Shadow DB       │    │
+                                   │  │ (local pg_tmp)  │    │
+                                   │  └─────────────────┘    │
+                                   └─────────────────────────┘
+```
+
+### What This Enables
+
+- Test against REAL production event patterns
+- No need to craft synthetic test data
+- Debug issues with actual problematic events
+- Shadow tables prevent production pollution
+- Combined with hot reload: edit code, see results with real data
 
 ---
 
-## 4. Wasm Runtime Integration
+## 5. Wasm Runtime Integration
 
-**Goal:** Hot-swappable plugins with memory isolation.
+**Goal:** Hot-swappable plugins with memory isolation - instant reload for extension logic.
 
 ### Architecture
 
 - **Core Logic:** Native binaries (Rust) for privileged I/O
 - **Refinement Logic:** Wasm modules (WASI) for transformations/enrichments
+
+Wasm plugins complement the holographic DX by providing instant reload for extension logic without any compilation wait.
 
 ### Use Cases
 
@@ -425,12 +494,25 @@ Update docs immediately when code changes. Prevents drift.
 
 ---
 
-## Implementation Priority
+## What Already Exists (Infrastructure)
 
-| Feature | Effort | ROI | Dependencies |
-|---------|--------|-----|--------------|
-| SimpleProcessor | 2-3 weeks | High | None |
-| Aggregation Runner | 2-3 weeks | High | SimpleProcessor helpful |
-| `sx dev` | 3-4 weeks | High | None |
-| `sx deploy` | 2-3 weeks | Medium | `sx` foundation |
-| Wasm Runtime | 4-6 weeks | Medium | Gateway stable |
+| Component | Status | Location |
+|-----------|--------|----------|
+| CheckpointState with custom data | ✅ | `sinex-node-sdk/src/checkpoint.rs` |
+| NATS KV checkpoint persistence | ✅ | `sinex-node-sdk/src/checkpoint.rs` |
+| Graceful shutdown in SDK | ✅ | `sinex-node-sdk/src/runtime/` |
+| mTLS gateway auth | ✅ | `sinex-gateway/` |
+| Replay state machine | ✅ | `sinex-core/src/db/replay/` |
+| ProcessorRuntimeState | ✅ | `sinex-node-sdk/src/runtime/stream/runtime_state.rs` |
+
+## What's Missing (To Build)
+
+| Component | Description |
+|-----------|-------------|
+| State-on-SIGTERM hook | Serialize custom state when receiving shutdown signal |
+| `--restore-state` flag | CLI flag to load state from temp file on startup |
+| File watcher integration | notify-rs watching src/, triggering rebuild |
+| Process supervisor | Manages child process lifecycle, state handoff |
+| Shadow consumer API | Gateway endpoint to create read-only fan-out consumer |
+| Shadow DB routing | Redirect writes to local DB when tethered |
+| `sx` CLI scaffolding | Unified dev tool binary |
