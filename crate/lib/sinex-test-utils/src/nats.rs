@@ -191,6 +191,23 @@ impl EphemeralNats {
         &self.url
     }
 
+    /// Return a `NatsConnectionConfig` suitable for connecting to this server.
+    /// Includes TLS certificates if the server was started with TLS.
+    pub fn connection_config(&self) -> NatsConnectionConfig {
+        let mut config = NatsConnectionConfig::default();
+        config.url = self.url.clone();
+        config.require_tls = self.tls.is_some();
+        if let Some(tls) = &self.tls {
+            config.ca_cert = Some(tls.ca_cert.clone());
+            config.client_cert = Some(tls.client_cert.clone());
+            config.client_key = Some(tls.client_key.clone());
+        }
+        if let Some(token) = &self.token {
+            config.token = Some(token.clone());
+        }
+        config
+    }
+
     /// Return the tail of the NATS log file, if logging is enabled.
     pub fn log_tail(&self, max_lines: usize) -> Option<String> {
         let path = self.log_path.as_ref()?;

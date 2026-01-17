@@ -42,7 +42,7 @@ impl<'ctx> PipelineHarness<'ctx> {
         let namespace = ctx.pipeline_namespace().prefix().to_string();
         let pipeline_permit = Some(acquire_pipeline_permit(&namespace).await?);
         let mut config = TestIngestdConfig {
-            nats_url: nats.client_url().to_string(),
+            nats: nats.connection_config(),
             database_url: ctx.database_url().to_string(),
             work_dir: None,
             namespace: Some(namespace.clone()),

@@ -28,6 +28,7 @@ impl From<std::io::Error> for ValidationError {
     }
 }
 
+#[cfg(feature = "sqlx")]
 impl From<sqlx::Error> for ValidationError {
     fn from(e: sqlx::Error) -> Self {
         ValidationError::General(format!("Database error: {e}"))

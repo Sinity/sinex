@@ -263,7 +263,7 @@ mod tests {
     use super::*;
     use async_nats::jetstream;
     use sinex_core::environment;
-    use sinex_test_utils::{sinex_test, EphemeralNats, TestResult};
+    use sinex_test_utils::{sinex_test, EphemeralNats};
 
     #[sinex_test]
     fn test_dlq_retry_config_defaults() -> TestResult<()> {

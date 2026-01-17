@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sinex_core::db::models::Event;
+use sinex_core::db::models::EventBuilder;
 use sinex_core::types::events::{DirDiscoveredPayload, FileDiscoveredPayload};
 use sinex_core::SanitizedPath;
 use std::collections::HashMap;
@@ -129,9 +129,9 @@ impl FilesystemProcessor {
                         permissions: Some(metadata.permissions().mode()),
                     };
 
-                    Event::dynamic(
-                        "filesystem-processor",
-                        "file.discovered",
+                    EventBuilder::new(
+                        "filesystem-processor".into(),
+                        "file.discovered".into(),
                         serde_json::to_value(payload).unwrap(),
                     )
                     .with_provenance(sinex_core::Provenance::Synthesis {
@@ -156,9 +156,9 @@ impl FilesystemProcessor {
                         modified_at: modified_time,
                     };
 
-                    Event::dynamic(
-                        "filesystem-processor",
-                        "dir.discovered",
+                    EventBuilder::new(
+                        "filesystem-processor".into(),
+                        "dir.discovered".into(),
                         serde_json::to_value(payload).unwrap(),
                     )
                     .with_provenance(sinex_core::Provenance::Synthesis {

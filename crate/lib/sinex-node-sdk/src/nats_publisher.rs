@@ -197,8 +197,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::{build_publish_payload, wait_for_publish_ack};
-    use sinex_core::{Event, EventId, Provenance, Ulid};
-    use sinex_test_utils::{sinex_test, TestResult};
+    use sinex_core::{EventBuilder, EventId, Provenance, Ulid};
+    use sinex_test_utils::sinex_test;
     use std::{future, io, time::Duration};
 
     #[sinex_test]
@@ -212,12 +212,17 @@ mod tests {
 
     #[sinex_test]
     async fn publish_payload_serializes_json_once() -> TestResult<()> {
-        let mut event = Event::create(
-            "publisher.test",
-            "payload.check",
+        let mut event = EventBuilder::new(
+            "publisher.test".into(),
+            "payload.check".into(),
             serde_json::json!({"nested": {"a": 1}}),
-            Provenance::from_synthesis_safe(EventId::from_ulid(Ulid::new()), Vec::new()),
-        );
+        )
+        .with_provenance(Provenance::from_synthesis_safe(
+            EventId::from_ulid(Ulid::new()),
+            Vec::new(),
+        ))
+        .build()
+        .expect("infallible: test provenance set");
         event.id = Some(sinex_core::Id::from_ulid(Ulid::new()));
 
         let (event_id, payload) = build_publish_payload(&event, None, None, None, None, None, None)

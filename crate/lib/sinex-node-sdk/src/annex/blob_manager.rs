@@ -17,7 +17,7 @@ use sinex_core::types::events::{
     BlobIngestedPayload, BlobRetrievedPayload, BlobVerifiedPayload, StorageStatisticsPayload,
 };
 use sinex_core::DbPoolExt;
-use sinex_core::{Blob, Event, Id, JsonValue, SourceMaterial};
+use sinex_core::{Blob, Event, EventBuilder, Id, JsonValue, SourceMaterial};
 use std::time::Instant;
 use tracing::{debug, info, warn};
 
@@ -63,10 +63,14 @@ impl BlobManager {
         payload: T,
         material_id: Id<SourceMaterial>,
     ) -> Result<Event<JsonValue>> {
-        Event::dynamic("blob-manager", event_type, serde_json::to_value(payload)?)
-            .from_material(material_id, 0)
-            .build()
-            .map_err(|err| eyre!("{err}"))
+        EventBuilder::new(
+            "blob-manager".into(),
+            event_type.into(),
+            serde_json::to_value(payload)?,
+        )
+        .from_material(material_id, 0)
+        .build()
+        .map_err(|err| eyre!("{err}"))
     }
 
     async fn ensure_material_for_blob(&self, blob: &Blob) -> Result<Id<SourceMaterial>> {

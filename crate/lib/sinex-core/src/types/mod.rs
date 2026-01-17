@@ -36,7 +36,10 @@ pub type Result<T> = std::result::Result<T, SinexError>;
 pub type JsonValue = serde_json::Value;
 pub type Timestamp = chrono::DateTime<chrono::Utc>;
 pub type OptionalTimestamp = Option<chrono::DateTime<chrono::Utc>>;
+
+#[cfg(feature = "sqlx")]
 pub type DbPool = sqlx::PgPool;
+#[cfg(feature = "sqlx")]
 pub type DbPoolRef<'a> = &'a sqlx::PgPool;
 
 /// Timeout constants for various operations

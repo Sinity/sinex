@@ -17,7 +17,8 @@ use tokio::task::JoinHandle;
 /// Configuration for test ingestd instance
 #[derive(Debug, Clone)]
 pub struct TestIngestdConfig {
-    pub nats_url: String,
+    /// NATS connection configuration (includes TLS settings if needed)
+    pub nats: sinex_core::nats::NatsConnectionConfig,
     pub database_url: String,
     pub work_dir: Option<std::path::PathBuf>,
     pub batch_size: usize,
@@ -27,10 +28,22 @@ pub struct TestIngestdConfig {
     pub namespace: Option<String>,
 }
 
+impl TestIngestdConfig {
+    /// Create config with a simple NATS URL (no TLS)
+    pub fn with_nats_url(nats_url: impl Into<String>) -> Self {
+        Self {
+            nats: sinex_core::nats::NatsConnectionConfig::builder()
+                .url(nats_url.into())
+                .build(),
+            ..Default::default()
+        }
+    }
+}
+
 impl Default for TestIngestdConfig {
     fn default() -> Self {
         Self {
-            nats_url: "nats://127.0.0.1:4222".to_string(),
+            nats: sinex_core::nats::NatsConnectionConfig::default(),
             database_url: "postgresql:///sinex_test?host=/run/postgresql".to_string(),
             work_dir: None,
             batch_size: 1,
@@ -49,7 +62,7 @@ pub struct TestIngestdHandle {
     service: Option<IngestService>,
     join_handle: Arc<AsyncMutex<Option<JoinHandle<()>>>>,
     _work_dir: Option<tempfile::TempDir>,
-    nats_url: String,
+    nats_config: sinex_core::nats::NatsConnectionConfig,
     cleanup_streams: Vec<String>,
 }
 
@@ -74,10 +87,7 @@ impl TestIngestdHandle {
         }
 
         if !self.cleanup_streams.is_empty() {
-            let nats_config = sinex_core::nats::NatsConnectionConfig::builder()
-                .url(self.nats_url.clone())
-                .build();
-            match nats_config.connect().await {
+            match self.nats_config.connect().await {
                 Ok(client) => {
                     let js = async_nats::jetstream::new(client);
                     for stream in &self.cleanup_streams {
@@ -92,7 +102,7 @@ impl TestIngestdHandle {
                 }
                 Err(err) => {
                     tracing::warn!(
-                        url = %self.nats_url,
+                        url = %self.nats_config.url,
                         error = %err,
                         "Failed to connect to NATS for ingestd cleanup"
                     );
@@ -152,20 +162,21 @@ pub async fn start_test_ingestd_with_config(
     let confirmations_stream = format!("{stream_name}_CONFIRMATIONS");
     let dlq_stream = format!("{stream_name}_DLQ");
 
-    tracing::debug!("Starting ingestd with NATS {}", config.nats_url);
-    eprintln!("ingestd connecting to {}", config.nats_url);
+    tracing::debug!("Starting ingestd with NATS {}", config.nats.url);
+    eprintln!("ingestd connecting to {}", config.nats.url);
     let mut attempts = 0;
     let nats_client = loop {
         attempts += 1;
-        if let Err(err) =
-            tokio::net::TcpStream::connect(&config.nats_url.trim_start_matches("nats://")).await
-        {
+        // Extract host:port for TCP check, handling both nats:// and tls:// schemes
+        let host_port = config
+            .nats
+            .url
+            .trim_start_matches("nats://")
+            .trim_start_matches("tls://");
+        if let Err(err) = tokio::net::TcpStream::connect(host_port).await {
             eprintln!("tcp connect failed (attempt {attempts}): {err}");
         }
-        let nats_config = sinex_core::nats::NatsConnectionConfig::builder()
-            .url(config.nats_url.clone())
-            .build();
-        match nats_config.connect().await {
+        match config.nats.connect().await {
             Ok(client) => break client,
             Err(err) if attempts < 10 => {
                 eprintln!("retrying ingestd NATS connect (attempt {attempts}): {err}");
@@ -190,11 +201,7 @@ pub async fn start_test_ingestd_with_config(
 
     let mut ingest_config = IngestdConfig::builder()
         .database_url(config.database_url.clone())
-        .nats(
-            sinex_core::nats::NatsConnectionConfig::builder()
-                .url(config.nats_url.clone())
-                .build(),
-        )
+        .nats(config.nats.clone())
         .batch_size(config.batch_size)
         .batch_timeout_secs(config.batch_timeout_secs)
         .consumer_fetch_timeout_ms(config.consumer_fetch_timeout_ms.into())
@@ -270,7 +277,7 @@ pub async fn start_test_ingestd_with_config(
         service: Some(service),
         join_handle: Arc::new(AsyncMutex::new(Some(join_handle))),
         _work_dir: work_dir_temp,
-        nats_url: config.nats_url.clone(),
+        nats_config: config.nats.clone(),
         cleanup_streams,
     };
 
@@ -319,7 +326,7 @@ mod tests {
     async fn test_ingestd_config_default() -> TestResult<()> {
         let config = TestIngestdConfig::default();
 
-        assert_eq!(config.nats_url, "nats://127.0.0.1:4222");
+        assert_eq!(config.nats.url, "nats://localhost:4222");
         assert_eq!(
             config.database_url,
             "postgresql:///sinex_test?host=/run/postgresql"
@@ -337,7 +344,7 @@ mod tests {
             .map_err(|e| SinexError::service(format!("failed to create temp work dir: {e}")))?;
 
         let config = TestIngestdConfig {
-            nats_url: nats.client_url().to_string(),
+            nats: nats.connection_config(),
             database_url: ctx.database_url().to_string(),
             work_dir: Some(work_dir.path().to_path_buf()),
             ..Default::default()
@@ -360,7 +367,7 @@ mod tests {
             .map_err(|e| SinexError::service(format!("failed to create temp work dir: {e}")))?;
 
         let config = TestIngestdConfig {
-            nats_url: nats.client_url().to_string(),
+            nats: nats.connection_config(),
             database_url: ctx.database_url().to_string(),
             work_dir: Some(work_dir.path().to_path_buf()),
             ..Default::default()
@@ -385,7 +392,7 @@ mod tests {
             service: None,
             join_handle: Arc::new(AsyncMutex::new(None)),
             _work_dir: None,
-            nats_url: String::new(),
+            nats_config: sinex_core::nats::NatsConnectionConfig::default(),
             cleanup_streams: Vec::new(),
         };
 

@@ -101,9 +101,9 @@ fn generate_to_json_event_impl(
                     quote! {
                         #enum_name::#variant_name => {
                             // Generate a placeholder event for unit variants
-                            sinex_core::Event::dynamic(
-                                "unknown",
-                                stringify!(#variant_name),
+                            sinex_core::EventBuilder::new(
+                                "unknown".into(),
+                                stringify!(#variant_name).into(),
                                 serde_json::Value::Null,
                             )
                             .build()
@@ -115,9 +115,9 @@ fn generate_to_json_event_impl(
                     quote! {
                         #enum_name::#variant_name(..) => {
                             // Default conversion for complex variants
-                            sinex_core::Event::dynamic(
-                                "unknown",
-                                stringify!(#variant_name),
+                            sinex_core::EventBuilder::new(
+                                "unknown".into(),
+                                stringify!(#variant_name).into(),
                                 serde_json::Value::Null,
                             )
                             .build()
@@ -276,7 +276,7 @@ fn is_event_type(ty: &Type) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_test_utils::{sinex_test, TestResult};
+    use sinex_test_utils::sinex_test;
     use syn::parse_quote;
 
     #[sinex_test]

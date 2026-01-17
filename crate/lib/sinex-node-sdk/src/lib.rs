@@ -7,6 +7,7 @@
 // Macro re-exports removed; prefer explicit imports from `sinex-macros` if needed.
 pub mod acquisition_manager;
 pub mod annex;
+pub mod automaton_base;
 pub mod automaton_event_handler;
 pub mod checkpoint;
 pub mod config;
@@ -35,6 +36,10 @@ pub mod version;
 
 pub use acquisition_manager::{
     AcquisitionManager, AppendStreamAcquirer, RotationPolicy, SourceMaterialHandle,
+};
+pub use automaton_base::{
+    ActivityEntry, AutomatonFields, AutomatonStats, ChannelConfirmedEventHandler,
+    IngestionHistoryEntry, DEFAULT_CHANNEL_CAPACITY, DEFAULT_MAX_HISTORY_ENTRIES,
 };
 pub use automaton_event_handler::AutomatonEventHandler;
 pub use checkpoint::{CheckpointManager, CheckpointState};
@@ -290,38 +295,39 @@ pub enum NodeError {
 
 impl From<NodeError> for sinex_core::error::SinexError {
     fn from(e: NodeError) -> Self {
+        use sinex_core::error::SinexError;
         match e {
-            NodeError::Config(_) => sinex_core::error::SinexError::configuration(e.to_string()),
-            NodeError::Configuration(_) => {
-                sinex_core::error::SinexError::configuration(e.to_string())
-            }
-            NodeError::Database(_) => sinex_core::error::SinexError::database(e.to_string()),
-            NodeError::Serialization(_) => {
-                sinex_core::error::SinexError::serialization(e.to_string())
-            }
-            NodeError::Io(_) => sinex_core::error::SinexError::io(e.to_string()),
-            NodeError::General(_) => sinex_core::error::SinexError::unknown(e.to_string()),
-            NodeError::Processing(_) => sinex_core::error::SinexError::unknown(e.to_string()),
-            NodeError::Automaton(_) => sinex_core::error::SinexError::unknown(e.to_string()),
-            NodeError::Checkpoint(_) => sinex_core::error::SinexError::unknown(e.to_string()),
-            NodeError::Lifecycle(_) => sinex_core::error::SinexError::unknown(e.to_string()),
-            NodeError::OperationCancelled(_) => {
-                sinex_core::error::SinexError::unknown(e.to_string())
-            }
-            NodeError::Validation(_) => sinex_core::error::SinexError::validation(e.to_string()),
+            NodeError::Config(_) => SinexError::configuration(e.to_string()),
+            NodeError::Configuration(_) => SinexError::configuration(e.to_string()),
+            NodeError::Database(_) => SinexError::database(e.to_string()),
+            NodeError::Serialization(_) => SinexError::serialization(e.to_string()),
+            NodeError::Io(_) => SinexError::io(e.to_string()),
+            NodeError::General(_) => SinexError::unknown(e.to_string()),
+            NodeError::Processing(_) => SinexError::processing(e.to_string()),
+            NodeError::Automaton(_) => SinexError::automaton(e.to_string()),
+            NodeError::Checkpoint(_) => SinexError::checkpoint(e.to_string()),
+            NodeError::Lifecycle(_) => SinexError::lifecycle(e.to_string()),
+            NodeError::OperationCancelled(_) => SinexError::cancelled(e.to_string()),
+            NodeError::Validation(_) => SinexError::validation(e.to_string()),
         }
     }
 }
 
 impl From<sinex_core::error::SinexError> for NodeError {
     fn from(e: sinex_core::error::SinexError) -> Self {
+        use sinex_core::error::SinexError;
         match e {
-            sinex_core::error::SinexError::Configuration(_) => NodeError::Processing(e.to_string()),
-            sinex_core::error::SinexError::Database(_) => NodeError::Processing(e.to_string()),
-            sinex_core::error::SinexError::Serialization(_) => NodeError::Processing(e.to_string()),
-            sinex_core::error::SinexError::Io(_) => NodeError::Processing(e.to_string()),
-            sinex_core::error::SinexError::Unknown(_) => NodeError::Processing(e.to_string()),
-            sinex_core::error::SinexError::Validation(_) => NodeError::Validation(e.to_string()),
+            SinexError::Configuration(_) => NodeError::Configuration(e.to_string()),
+            SinexError::Database(_) => NodeError::Database(sqlx::Error::Protocol(e.to_string())),
+            SinexError::Serialization(_) => NodeError::Processing(e.to_string()),
+            SinexError::Io(_) => NodeError::Io(std::io::Error::other(e.to_string())),
+            SinexError::Unknown(_) => NodeError::Processing(e.to_string()),
+            SinexError::Validation(_) => NodeError::Validation(e.to_string()),
+            SinexError::Processing(_) => NodeError::Processing(e.to_string()),
+            SinexError::Automaton(_) => NodeError::Automaton(e.to_string()),
+            SinexError::Checkpoint(_) => NodeError::Checkpoint(e.to_string()),
+            SinexError::Lifecycle(_) => NodeError::Lifecycle(e.to_string()),
+            SinexError::Cancelled(_) => NodeError::OperationCancelled(e.to_string()),
             _ => NodeError::Processing(e.to_string()),
         }
     }

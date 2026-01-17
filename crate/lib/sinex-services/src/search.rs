@@ -186,7 +186,7 @@ impl PreparedSearch {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_test_utils::{sinex_test, TestResult};
+    use sinex_test_utils::sinex_test;
 
     #[sinex_test]
     fn prepared_search_clamps_pagination() -> TestResult<()> {

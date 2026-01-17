@@ -47,11 +47,12 @@ fn derive_event_payload_inner(input: DeriveInput) -> syn::Result<TokenStream> {
 
     // Generate the implementation
     // We use crate:: to work within sinex_types itself
+    // The schema_registry code is conditionally compiled only when sqlx feature is enabled
     let expanded = quote! {
         const _: () = {
             // Import types we need - these should work from within events module
             use crate::domain::{EventSource, EventType};
-            use crate::events::{EventPayload, schema_registry};
+            use crate::events::EventPayload;
 
             impl EventPayload for #name {
                 const SOURCE: EventSource = EventSource::from_static(#source);
@@ -59,19 +60,24 @@ fn derive_event_payload_inner(input: DeriveInput) -> syn::Result<TokenStream> {
                 const VERSION: &'static str = #version;
             }
 
-            // Register this payload type with inventory
-            ::inventory::submit! {
-                schema_registry::PayloadInfo {
-                    type_name: ::std::concat!(::std::module_path!(), "::", ::std::stringify!(#name)),
-                    source: #source,
-                    event_type: #event_type,
-                    version: #version,
-                    schema_fn: || {
-                        let schema = ::schemars::schema_for!(#name);
-                        ::serde_json::to_value(&schema).expect("Schema must serialize")
-                    },
+            // Register this payload type with inventory (only when sqlx feature enables schema_registry)
+            #[cfg(feature = "sqlx")]
+            const _: () = {
+                use crate::events::schema_registry;
+
+                ::inventory::submit! {
+                    schema_registry::PayloadInfo {
+                        type_name: ::std::concat!(::std::module_path!(), "::", ::std::stringify!(#name)),
+                        source: #source,
+                        event_type: #event_type,
+                        version: #version,
+                        schema_fn: || {
+                            let schema = ::schemars::schema_for!(#name);
+                            ::serde_json::to_value(&schema).expect("Schema must serialize")
+                        },
+                    }
                 }
-            }
+            };
         };
 
         #builder_impl

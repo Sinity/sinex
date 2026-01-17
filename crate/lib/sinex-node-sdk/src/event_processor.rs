@@ -354,8 +354,8 @@ pub fn spawn_event_processor(
 #[cfg(test)]
 mod tests {
     use super::EventProcessor;
-    use sinex_core::{Event, EventId, Provenance, Ulid};
-    use sinex_test_utils::{sinex_test, TestResult};
+    use sinex_core::{EventBuilder, EventId, Provenance, Ulid};
+    use sinex_test_utils::sinex_test;
     use std::fs;
     use tempfile::tempdir;
 
@@ -368,12 +368,17 @@ mod tests {
         read_only.set_readonly(true);
         fs::set_permissions(temp_dir.path(), read_only)?;
 
-        let event = Event::create(
-            "dlq.test",
-            "dead_letter.failure",
+        let event = EventBuilder::new(
+            "dlq.test".into(),
+            "dead_letter.failure".into(),
             serde_json::json!({"ok": true}),
-            Provenance::from_synthesis_safe(EventId::from_ulid(Ulid::new()), Vec::new()),
-        );
+        )
+        .with_provenance(Provenance::from_synthesis_safe(
+            EventId::from_ulid(Ulid::new()),
+            Vec::new(),
+        ))
+        .build()
+        .expect("infallible: test provenance set");
         let result =
             EventProcessor::store_dead_letter_events_at_path(&[event], &dead_letter_path).await;
 

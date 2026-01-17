@@ -86,7 +86,7 @@ impl ConfirmedEventHandler for AutomatonEventHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_test_utils::{sinex_test, TestResult};
+    use sinex_test_utils::sinex_test;
 
     #[sinex_test]
     async fn test_automaton_event_handler_basic() -> TestResult<()> {

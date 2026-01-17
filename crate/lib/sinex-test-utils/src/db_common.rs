@@ -47,7 +47,7 @@ use crate::{Result, TestContext, TestResult};
 
 use camino::Utf8PathBuf;
 use color_eyre::eyre::eyre;
-use futures::{future::BoxFuture, Future};
+use futures::future::BoxFuture;
 use once_cell::sync::Lazy;
 use sinex_core::db::DbPool;
 use sinex_core::types::error::SinexError;
@@ -600,50 +600,6 @@ pub async fn reset_database(pool: &DbPool) -> TestResult<()> {
     .await
 }
 
-pub async fn with_operation_id<F, Fut, T>(
-    conn: &mut PoolConnection<Postgres>,
-    operation_id: &str,
-    f: F,
-) -> TestResult<T>
-where
-    F: FnOnce(&mut PoolConnection<Postgres>) -> Fut,
-    Fut: Future<Output = Result<T>>,
-{
-    let previous = sqlx::query_scalar::<_, Option<String>>(
-        "SELECT current_setting('sinex.operation_id', true)",
-    )
-    .fetch_optional(conn.as_mut())
-    .await?
-    .flatten();
-
-    sqlx::query("SELECT set_config('sinex.operation_id', $1, false)")
-        .bind(operation_id)
-        .execute(conn.as_mut())
-        .await?;
-
-    let result = f(conn).await;
-
-    let restore_result = if let Some(prev) = previous {
-        sqlx::query("SELECT set_config('sinex.operation_id', $1, false)")
-            .bind(prev)
-            .execute(conn.as_mut())
-            .await
-    } else {
-        sqlx::query("RESET sinex.operation_id")
-            .execute(conn.as_mut())
-            .await
-    };
-
-    if let Err(e) = restore_result {
-        tracing::warn!(
-            "Failed to restore sinex.operation_id session setting after cleanup: {}",
-            e
-        );
-    }
-
-    result.map_err(Into::into)
-}
-
 /// Load a named dataset fixture into the database
 ///
 /// Fixtures are pre-generated SQL files containing test/benchmark data.
@@ -1078,10 +1034,7 @@ mod tests {
         verify_clean_state(pool).await?;
 
         // Insert some test data
-        use sinex_core::{
-            Blob, BlobRecord, Entity, EntityRecord, EntityRelation, Event, JsonValue, Operation,
-            OperationRecord, Provenance, SourceMaterial,
-        };
+        use sinex_core::{Event, JsonValue, SourceMaterial};
 
         let new_event = Event::<JsonValue>::test_event(
             EventSource::new("test"),
@@ -1145,10 +1098,7 @@ mod tests {
                 .unwrap_or(0);
 
         // Add data
-        use sinex_core::{
-            Blob, BlobRecord, Entity, EntityRecord, EntityRelation, Event, JsonValue, Operation,
-            OperationRecord, Provenance, SourceMaterial,
-        };
+        use sinex_core::{Event, JsonValue, SourceMaterial};
 
         let material_record = pool
             .source_materials()
@@ -1160,13 +1110,15 @@ mod tests {
             .await?;
         let material_id = Id::<SourceMaterial>::from_ulid(material_record.id);
 
-        let new_event = Event::<JsonValue>::create(
+        let new_event = sinex_core::db::models::event_builder::EventBuilder::new(
             EventSource::new("test"),
             EventType::new("test"),
             serde_json::json!({}),
-            Provenance::from_material(material_id, 0, None, None),
         )
-        .with_host(HostName::new("test"));
+        .hostname(HostName::new("test"))
+        .from_material(material_id, 0)
+        .build()
+        .expect("Event should build for cleanup test");
         pool.events().insert(new_event).await?;
 
         // Verification should now force-clean and succeed even when data is present.

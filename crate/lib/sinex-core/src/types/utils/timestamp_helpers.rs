@@ -70,6 +70,66 @@ pub fn timestamp_nanos_to_datetime(timestamp_ns: i64) -> Result<DateTime<Utc>> {
     })
 }
 
+/// Parse a human-friendly relative time string (e.g., "1h", "2d", "30m")
+///
+/// Supported formats:
+/// - Seconds: `s`, `sec`, `second`, `seconds`
+/// - Minutes: `m`, `min`, `minute`, `minutes`
+/// - Hours: `h`, `hr`, `hour`, `hours`
+/// - Days: `d`, `day`, `days`
+/// - Weeks: `w`, `week`, `weeks`
+///
+/// Returns the duration as chrono::Duration, or None if parsing fails.
+///
+/// # Examples
+///
+/// ```
+/// use sinex_core::types::utils::timestamp_helpers::parse_relative_duration;
+/// use chrono::Duration;
+///
+/// assert_eq!(parse_relative_duration("1h"), Some(Duration::hours(1)));
+/// assert_eq!(parse_relative_duration("30m"), Some(Duration::minutes(30)));
+/// assert_eq!(parse_relative_duration("2d"), Some(Duration::days(2)));
+/// assert_eq!(parse_relative_duration("invalid"), None);
+/// ```
+pub fn parse_relative_duration(s: &str) -> Option<chrono::Duration> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+
+    // Split into number and unit
+    let mut num_str = String::new();
+    let mut unit = String::new();
+
+    for ch in s.chars() {
+        if ch.is_ascii_digit() {
+            num_str.push(ch);
+        } else {
+            unit.push(ch);
+        }
+    }
+
+    let num: i64 = num_str.parse().ok()?;
+
+    match unit.as_str() {
+        "s" | "sec" | "second" | "seconds" => Some(chrono::Duration::seconds(num)),
+        "m" | "min" | "minute" | "minutes" => Some(chrono::Duration::minutes(num)),
+        "h" | "hr" | "hour" | "hours" => Some(chrono::Duration::hours(num)),
+        "d" | "day" | "days" => Some(chrono::Duration::days(num)),
+        "w" | "week" | "weeks" => Some(chrono::Duration::weeks(num)),
+        _ => None,
+    }
+}
+
+/// Parse a human-friendly relative time string, returning std::time::Duration
+///
+/// This is a convenience wrapper around `parse_relative_duration` that returns
+/// `std::time::Duration` instead of `chrono::Duration`.
+pub fn parse_relative_std_duration(s: &str) -> Option<std::time::Duration> {
+    parse_relative_duration(s).and_then(|d| d.to_std().ok())
+}
+
 /// Try to parse a timestamp from various common formats
 ///
 /// Attempts to parse:
@@ -101,5 +161,56 @@ pub fn parse_flexible_timestamp(value: &str) -> Option<DateTime<Utc>> {
         }
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Duration;
+
+    #[test]
+    fn test_parse_relative_duration_basic() {
+        assert_eq!(parse_relative_duration("1h"), Some(Duration::hours(1)));
+        assert_eq!(parse_relative_duration("2d"), Some(Duration::days(2)));
+        assert_eq!(parse_relative_duration("30m"), Some(Duration::minutes(30)));
+        assert_eq!(parse_relative_duration("1w"), Some(Duration::weeks(1)));
+        assert_eq!(parse_relative_duration("15s"), Some(Duration::seconds(15)));
+    }
+
+    #[test]
+    fn test_parse_relative_duration_long_form() {
+        assert_eq!(parse_relative_duration("1hour"), Some(Duration::hours(1)));
+        assert_eq!(parse_relative_duration("2days"), Some(Duration::days(2)));
+        assert_eq!(parse_relative_duration("30minutes"), Some(Duration::minutes(30)));
+        assert_eq!(parse_relative_duration("1week"), Some(Duration::weeks(1)));
+        assert_eq!(parse_relative_duration("15seconds"), Some(Duration::seconds(15)));
+    }
+
+    #[test]
+    fn test_parse_relative_duration_invalid() {
+        assert_eq!(parse_relative_duration("invalid"), None);
+        assert_eq!(parse_relative_duration(""), None);
+        assert_eq!(parse_relative_duration("5x"), None);
+        assert_eq!(parse_relative_duration("h"), None); // No number
+    }
+
+    #[test]
+    fn test_parse_relative_duration_whitespace() {
+        assert_eq!(parse_relative_duration("  1h  "), Some(Duration::hours(1)));
+        assert_eq!(parse_relative_duration("\t30m\n"), Some(Duration::minutes(30)));
+    }
+
+    #[test]
+    fn test_parse_relative_std_duration() {
+        assert_eq!(
+            parse_relative_std_duration("1h"),
+            Some(std::time::Duration::from_secs(3600))
+        );
+        assert_eq!(
+            parse_relative_std_duration("30m"),
+            Some(std::time::Duration::from_secs(1800))
+        );
+        assert_eq!(parse_relative_std_duration("invalid"), None);
     }
 }
