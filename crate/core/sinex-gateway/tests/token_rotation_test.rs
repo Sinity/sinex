@@ -1,6 +1,6 @@
 //! Integration tests for RPC token hot-reload functionality
 
-use sinex_test_utils::{sinex_test, TestResult};
+use sinex_test_utils::sinex_test;
 use std::fs;
 use std::time::Duration;
 use tempfile::TempDir;

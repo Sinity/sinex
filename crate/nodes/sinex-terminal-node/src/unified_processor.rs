@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json;
 use sinex_core::{
     types::{domain::SanitizedPath, validate_path, Bytes, Seconds},
-    Event as CoreEvent, Id, Provenance, Ulid,
+    EventBuilder, Id, Provenance, Ulid,
 };
 use sinex_node_sdk::{
     acquisition_manager::{AcquisitionManager, RotationPolicy},
@@ -433,15 +433,15 @@ async fn process_command(
         offset_kind: sinex_core::OffsetKind::Byte,
     };
 
-    let event = CoreEvent::create(
+    let mut event = EventBuilder::new(
         sinex_core::types::domain::EventSource::from_static("shell.history"),
         sinex_core::types::domain::EventType::from_static("command.imported"),
         serde_json::to_value(payload)
             .map_err(|e| NodeError::General(eyre::eyre!("Failed to encode payload: {}", e)))?,
-        provenance,
-    );
-
-    let mut event = event;
+    )
+    .with_provenance(provenance)
+    .build()
+    .map_err(|e| NodeError::General(eyre::eyre!("Failed to build event: {}", e)))?;
     event.id = Some(Id::from_ulid(Ulid::new()));
 
     ctx.stage_context
@@ -872,7 +872,7 @@ mod tests {
             .await?;
 
         let ingest_config = TestIngestdConfig {
-            nats_url: nats.client_url().to_string(),
+            nats: nats.connection_config(),
             database_url: ctx.database_url().to_string(),
             work_dir: None,
             ..Default::default()
@@ -996,7 +996,7 @@ mod tests {
                 .await?;
 
         let ingest_config = TestIngestdConfig {
-            nats_url: nats.client_url().to_string(),
+            nats: nats.connection_config(),
             database_url: ctx.database_url().to_string(),
             work_dir: None,
             ..Default::default()

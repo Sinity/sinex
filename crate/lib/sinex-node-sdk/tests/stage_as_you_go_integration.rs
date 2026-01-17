@@ -28,10 +28,7 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
     AcquisitionManager::bootstrap_streams(&nats_client).await?;
 
     let ingest_config = TestIngestdConfig {
-        nats_url: format!(
-            "nats://{}",
-            ctx.nats_url().expect("with_nats should provide nats_url")
-        ),
+        nats: ctx.nats_handle()?.connection_config(),
         database_url: ctx.database_url().to_string(),
         work_dir: None,
         ..Default::default()

@@ -26,7 +26,7 @@ use tokio::task::yield_now;
 async fn start_ingestd(ctx: &TestContext) -> TestResult<TestIngestdHandle> {
     let nats = ctx.nats_handle()?;
     let config = TestIngestdConfig {
-        nats_url: nats.client_url().to_string(),
+        nats: nats.connection_config(),
         database_url: ctx.database_url().to_string(),
         work_dir: None,
         ..Default::default()

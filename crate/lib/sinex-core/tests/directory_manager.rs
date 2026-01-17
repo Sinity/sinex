@@ -1,7 +1,6 @@
 use camino::Utf8PathBuf;
 use sinex_core::types::utils::directory_manager::{DirectoryConfig, DirectoryManager};
-use sinex_test_utils::sinex_test;
-use sinex_test_utils::TestResult;
+use sinex_test_utils::{sinex_test, TestResult};
 use tempfile::TempDir;
 
 #[sinex_test]

@@ -11,7 +11,6 @@
 use color_eyre::eyre::{eyre, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sinex_core::types::ulid::Ulid;
 use sqlx::PgPool;
 
 /// Operation record from database
@@ -337,7 +336,7 @@ pub async fn handle_ops_cancel(pool: &PgPool, params: Value) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_test_utils::{sinex_test, TestContext, TestResult};
+    use sinex_test_utils::{sinex_test, TestContext};
 
     #[sinex_test]
     async fn ops_start_creates_operation(ctx: &TestContext) -> TestResult<()> {

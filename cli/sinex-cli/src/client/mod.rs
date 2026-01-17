@@ -1,5 +1,5 @@
 pub mod gateway;
-pub mod retry;
 
 pub use gateway::{ClientConfig, GatewayClient};
-pub use retry::RetryConfig;
+// Re-export RetryConfig from core's wait_helpers
+pub use sinex_core::types::utils::wait_helpers::RetryConfig;

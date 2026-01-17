@@ -253,7 +253,7 @@ pub async fn handle_dlq_purge(
 mod tests {
     use super::*;
     use sinex_core::environment;
-    use sinex_test_utils::{sinex_test, EphemeralNats, TestResult};
+    use sinex_test_utils::{sinex_test, EphemeralNats};
 
     #[sinex_test]
     async fn dlq_list_returns_stats() -> TestResult<()> {

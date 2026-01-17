@@ -17,7 +17,7 @@ use sinex_core::{
         domain::{EventSource, EventType, SanitizedPath},
         ulid::Ulid,
     },
-    Event as CoreEvent, Id, OffsetKind, Provenance,
+    EventBuilder, Id, OffsetKind, Provenance,
 };
 use sinex_node_sdk::{
     acquisition_manager::{AcquisitionManager, RotationPolicy},
@@ -278,12 +278,14 @@ impl DocumentProcessor {
             offset_kind: OffsetKind::Byte,
         };
 
-        let mut event = CoreEvent::create(
+        let mut event = EventBuilder::new(
             EventSource::from_static("document_ingestor"),
             EventType::from("document.ingested"),
             payload,
-            provenance,
-        );
+        )
+        .with_provenance(provenance)
+        .build()
+        .map_err(|e| NodeError::Processing(format!("Failed to build event: {e}")))?;
         event.id = Some(Id::from_ulid(Ulid::new()));
 
         stage_context

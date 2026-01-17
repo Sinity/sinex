@@ -11,26 +11,26 @@
 mod common {
     // Core types facade
     pub use sinex_core::{
-        db::{models::Event, repositories::DbPoolExt},
+        db::{models::{Event, EventBuilder}, repositories::DbPoolExt},
         types::{Bytes, Id, JsonValue, Seconds},
         Ulid,
     };
 
     // SDK facade for common processor types
     pub use sinex_node_sdk::{
-        confirmation_handler::{ConfirmedEventHandler, ProvisionalEvent},
+        automaton_base::{
+            ActivityEntry, AutomatonFields, ChannelConfirmedEventHandler, IngestionHistoryEntry,
+        },
+        confirmation_handler::ProvisionalEvent,
         event_processor::EventTransport,
         jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig},
         stream_processor::{
-            Checkpoint, EventSender, Node, ProcessorInitContext, ProcessorRuntimeState,
-            ProcessorType, ScanArgs, ScanReport, TimeHorizon,
+            Checkpoint, EventSender, Node, ProcessorInitContext, ProcessorType, ScanArgs,
+            ScanReport, TimeHorizon,
         },
         NodeError, NodeResult, ProcessingModel,
     };
-    pub use sinex_processor_runtime::{
-        ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
-        SourceState,
-    };
+    pub use sinex_processor_runtime::{CoverageAnalysis, ExplorationProvider, ExportFormat, SourceState};
 
     // External dependencies
     pub use {
@@ -40,11 +40,10 @@ mod common {
         serde_json,
         sqlx::PgPool,
         std::{
-            collections::{HashMap, VecDeque},
+            collections::HashMap,
             sync::Arc,
             time::Duration,
         },
-        tokio::{sync::mpsc, task::JoinHandle},
         tracing::{error, info, warn},
     };
 }
@@ -90,15 +89,6 @@ impl Default for ContentAutomatonConfig {
 }
 
 const DEFAULT_BATCH_SIZE: usize = 128;
-const CONFIRMED_CHANNEL_CAPACITY: usize = 1024;
-const MAX_HISTORY_ENTRIES: usize = 32;
-
-#[derive(Default)]
-struct ContentAutomatonStats {
-    inputs_seen: u64,
-    outputs_emitted: u64,
-    last_activity: Option<DateTime<Utc>>,
-}
 
 /// Content Automaton using unified Node architecture
 ///
@@ -108,37 +98,19 @@ struct ContentAutomatonStats {
 /// - Content classification and categorization
 /// - Content similarity detection
 pub struct ContentAutomaton {
-    runtime: Option<ProcessorRuntimeState>,
-    config: ContentAutomatonConfig,
-    event_sender: Option<EventSender>,
-    db_pool: Option<PgPool>,
-    incoming_tx: Option<mpsc::Sender<ProvisionalEvent>>,
-    incoming_rx: Option<mpsc::Receiver<ProvisionalEvent>>,
-    consumer: Option<Arc<JetStreamEventConsumer>>,
-    consumer_handle: Option<JoinHandle<()>>,
-    history: VecDeque<IngestionHistoryEntry>,
-    stats: ContentAutomatonStats,
+    fields: AutomatonFields<ContentAutomatonConfig>,
 }
 
 impl ContentAutomaton {
     pub fn new() -> Self {
         Self {
-            runtime: None,
-            config: ContentAutomatonConfig::default(),
-            event_sender: None,
-            db_pool: None,
-            incoming_tx: None,
-            incoming_rx: None,
-            consumer: None,
-            consumer_handle: None,
-            history: VecDeque::new(),
-            stats: ContentAutomatonStats::default(),
+            fields: AutomatonFields::new(),
         }
     }
 
     async fn initialise_with_runtime_state(
         &mut self,
-        runtime: ProcessorRuntimeState,
+        runtime: sinex_node_sdk::stream_processor::ProcessorRuntimeState,
         config: ContentAutomatonConfig,
     ) -> NodeResult<()> {
         info!(
@@ -147,45 +119,23 @@ impl ContentAutomaton {
             "Initializing content automaton"
         );
 
-        self.db_pool = Some(runtime.db_pool().clone());
-        self.event_sender = Some(runtime.event_sender());
-        self.config = config;
-        self.runtime = Some(runtime);
+        self.fields.db_pool = Some(runtime.db_pool().clone());
+        self.fields.event_sender = Some(runtime.event_sender());
+        self.fields.config = config;
+        self.fields.runtime = Some(runtime);
 
         info!(
             "Content automaton configured - analyzing {} event types, max content size: {} bytes",
-            self.config.target_event_types.len(),
-            self.config.max_content_size_bytes.as_u64()
+            self.fields.config.target_event_types.len(),
+            self.fields.config.max_content_size_bytes.as_u64()
         );
 
         Ok(())
     }
 
-    fn record_history(&mut self, entry: IngestionHistoryEntry) {
-        self.history.push_front(entry);
-        while self.history.len() > MAX_HISTORY_ENTRIES {
-            self.history.pop_back();
-        }
-    }
-
-    fn record_input(&mut self, count: usize) {
-        if count == 0 {
-            return;
-        }
-        self.stats.inputs_seen = self.stats.inputs_seen.saturating_add(count as u64);
-        self.stats.last_activity = Some(Utc::now());
-    }
-
-    fn record_output(&mut self, count: u64) {
-        if count == 0 {
-            return;
-        }
-        self.stats.outputs_emitted = self.stats.outputs_emitted.saturating_add(count);
-        self.stats.last_activity = Some(Utc::now());
-    }
-
     fn recent_activity(&self) -> Vec<ActivityEntry> {
-        self.history
+        self.fields
+            .history
             .iter()
             .take(5)
             .map(|entry| ActivityEntry {
@@ -201,53 +151,17 @@ impl ContentAutomaton {
             .collect()
     }
 
-    fn runtime(&self) -> NodeResult<&ProcessorRuntimeState> {
-        self.runtime
-            .as_ref()
-            .ok_or_else(|| NodeError::Lifecycle("Content automaton runtime not initialized".into()))
-    }
-
-    fn db_pool(&self) -> NodeResult<&PgPool> {
-        if let Some(runtime) = self.runtime.as_ref() {
-            Ok(runtime.db_pool())
-        } else if let Some(pool) = self.db_pool.as_ref() {
-            Ok(pool)
-        } else {
-            Err(NodeError::Processing(
-                "Database pool not initialized".into(),
-            ))
-        }
-    }
-
-    fn event_sender(&self) -> NodeResult<EventSender> {
-        if let Some(runtime) = self.runtime.as_ref() {
-            Ok(runtime.event_sender())
-        } else if let Some(sender) = self.event_sender.as_ref() {
-            Ok(sender.clone())
-        } else {
-            Err(NodeError::Processing("Event sender not initialized".into()))
-        }
-    }
-
-    fn ensure_event_channel(&mut self) {
-        if self.incoming_tx.is_none() || self.incoming_rx.is_none() {
-            let (tx, rx) = mpsc::channel(CONFIRMED_CHANNEL_CAPACITY);
-            self.incoming_tx = Some(tx);
-            self.incoming_rx = Some(rx);
-        }
-    }
-
     async fn ensure_consumer(&mut self) -> NodeResult<()> {
-        if let Some(handle) = self.consumer_handle.as_ref() {
+        if let Some(handle) = self.fields.consumer_handle.as_ref() {
             if !handle.is_finished() {
                 return Ok(());
             }
         }
 
-        self.consumer_handle = None;
-        self.consumer = None;
+        self.fields.consumer_handle = None;
+        self.fields.consumer = None;
 
-        let runtime = self.runtime()?;
+        let runtime = self.fields.runtime()?;
         let transport = runtime.transport().clone();
         let service_name = runtime.service_info().service_name().to_string();
 
@@ -255,8 +169,9 @@ impl ContentAutomaton {
             EventTransport::Nats(publisher) => publisher,
         };
 
-        self.ensure_event_channel();
+        self.fields.ensure_event_channel();
         let sender = self
+            .fields
             .incoming_tx
             .clone()
             .ok_or_else(|| NodeError::Processing("Confirmed event channel unavailable".into()))?;
@@ -287,21 +202,20 @@ impl ContentAutomaton {
             }
         });
 
-        self.consumer = Some(consumer);
-        self.consumer_handle = Some(handle);
+        self.fields.set_consumer(consumer, handle);
 
         Ok(())
     }
 
     /// Process content events and generate content insights
     async fn process_content_events(&mut self, from: &Checkpoint) -> NodeResult<u64> {
-        let db_pool = self.db_pool()?;
-        let event_sender = self.event_sender()?;
+        let db_pool = self.fields.db_pool()?;
+        let event_sender = self.fields.event_sender()?;
 
         // Query recent content events for analysis
         let events = self.query_content_events(db_pool, from).await?;
         info!("Processing {} content events for analysis", events.len());
-        self.record_input(events.len());
+        self.fields.stats.record_input(events.len());
 
         let mut events_processed = 0u64;
 
@@ -321,13 +235,13 @@ impl ContentAutomaton {
             }
         }
 
-        self.record_output(events_processed);
+        self.fields.stats.record_output(events_processed);
         Ok(events_processed)
     }
 
     async fn run_continuous(&mut self, from: Checkpoint) -> NodeResult<u64> {
         self.ensure_consumer().await?;
-        let mut receiver = self.incoming_rx.take().ok_or_else(|| {
+        let mut receiver = self.fields.take_incoming_rx().ok_or_else(|| {
             NodeError::Processing("Confirmed events channel not initialized".into())
         })?;
 
@@ -337,17 +251,17 @@ impl ContentAutomaton {
         }
 
         info!("Confirmed event channel closed; exiting content automaton continuous loop");
-        self.incoming_tx = None;
-        self.consumer_handle = None;
-        self.consumer = None;
+        self.fields.incoming_tx = None;
+        self.fields.consumer_handle = None;
+        self.fields.consumer = None;
         drop(from);
 
         Ok(processed)
     }
 
     async fn process_confirmed_event(&mut self, provisional: ProvisionalEvent) -> NodeResult<u64> {
-        let db_pool = self.db_pool()?;
-        let event_sender = self.event_sender()?;
+        let db_pool = self.fields.db_pool()?;
+        let event_sender = self.fields.event_sender()?;
         let event_id = Id::from_ulid(provisional.event_id);
 
         let persisted = match db_pool.events().get_by_id(event_id).await {
@@ -363,11 +277,11 @@ impl ContentAutomaton {
             }
         };
 
-        self.record_input(1);
+        self.fields.stats.record_input(1);
         let processed = self
             .emit_analysis_for_event(&persisted, &event_sender)
             .await?;
-        self.record_output(processed);
+        self.fields.stats.record_output(processed);
         Ok(processed)
     }
 
@@ -379,16 +293,16 @@ impl ContentAutomaton {
         let mut events_processed = 0u64;
 
         if let Some(content) = self.extract_content_from_event(event) {
-            if content.len() > self.config.max_content_size_bytes.as_usize() {
+            if content.len() > self.fields.config.max_content_size_bytes.as_usize() {
                 warn!(
                     "Skipping content analysis - size {} exceeds limit {}",
                     content.len(),
-                    self.config.max_content_size_bytes.as_u64()
+                    self.fields.config.max_content_size_bytes.as_u64()
                 );
                 return Ok(0);
             }
 
-            if self.config.enable_text_analysis {
+            if self.fields.config.enable_text_analysis {
                 if let Ok(analysis_event) = self.analyze_text_content(&content, event).await {
                     match event_sender.send(analysis_event).await {
                         Ok(_) => events_processed += 1,
@@ -397,7 +311,7 @@ impl ContentAutomaton {
                 }
             }
 
-            if self.config.enable_content_classification {
+            if self.fields.config.enable_content_classification {
                 if let Ok(classification_event) = self.classify_content(&content, event).await {
                     match event_sender.send(classification_event).await {
                         Ok(_) => events_processed += 1,
@@ -417,7 +331,7 @@ impl ContentAutomaton {
         _from: &Checkpoint,
     ) -> NodeResult<Vec<Event<JsonValue>>> {
         let window_start = Utc::now()
-            - chrono::Duration::seconds(self.config.processing_window_seconds.as_secs() as i64);
+            - chrono::Duration::seconds(self.fields.config.processing_window_seconds.as_secs() as i64);
 
         let events = db_pool
             .events()
@@ -427,7 +341,7 @@ impl ContentAutomaton {
             .into_iter()
             .filter(|event| event.ts_orig.map(|ts| ts > window_start).unwrap_or(true))
             .filter(|event| {
-                self.config
+                self.fields.config
                     .target_event_types
                     .iter()
                     .any(|t| event.event_type.as_str() == t)
@@ -512,10 +426,14 @@ impl ContentAutomaton {
         let parents = source_event.id.clone().into_iter().collect::<Vec<_>>();
 
         // Create synthesized event with proper provenance
-        let event = Event::dynamic("content-automaton", "content.analyzed", analysis_payload)
-            .from_parents(parents)?
-            .at_time(Utc::now())
-            .build()?;
+        let event = EventBuilder::new(
+            "content-automaton".into(),
+            "content.analyzed".into(),
+            analysis_payload,
+        )
+        .from_parents(parents)?
+        .at_time(Utc::now())
+        .build()?;
 
         Ok(event.into())
     }
@@ -575,9 +493,9 @@ impl ContentAutomaton {
         let parents = source_event.id.clone().into_iter().collect::<Vec<_>>();
 
         // Create synthesized event with proper provenance
-        let event = Event::dynamic(
-            "content-automaton",
-            "content.classified",
+        let event = EventBuilder::new(
+            "content-automaton".into(),
+            "content.classified".into(),
             classification_payload,
         )
         .from_parents(parents)?
@@ -619,9 +537,9 @@ impl ContentAutomaton {
                     "generated_at": Utc::now(),
                 });
 
-                let similarity_event = Event::dynamic(
-                    "content-automaton",
-                    "content.similarity_detected",
+                let similarity_event = EventBuilder::new(
+                    "content-automaton".into(),
+                    "content.similarity_detected".into(),
                     similarity_payload,
                 )
                 .from_parents(event_ids)?
@@ -697,11 +615,11 @@ impl Node for ContentAutomaton {
                 ("content_events_processed".to_string(), events_processed),
                 (
                     "max_content_size_bytes".to_string(),
-                    self.config.max_content_size_bytes.as_u64(),
+                    self.fields.config.max_content_size_bytes.as_u64(),
                 ),
                 (
                     "text_analysis_enabled".to_string(),
-                    self.config.enable_text_analysis as u64,
+                    self.fields.config.enable_text_analysis as u64,
                 ),
             ]),
             successful_targets: vec!["content".to_string()],
@@ -709,7 +627,7 @@ impl Node for ContentAutomaton {
             warnings: Vec::new(),
         };
 
-        self.record_history(IngestionHistoryEntry {
+        self.fields.record_history(IngestionHistoryEntry {
             id: Ulid::new().to_string(),
             started_at: start_time,
             completed_at: Some(Utc::now()),
@@ -743,40 +661,40 @@ impl Default for ContentAutomaton {
 
 impl ExplorationProvider for ContentAutomaton {
     fn get_source_state(&self) -> color_eyre::eyre::Result<SourceState> {
-        let last_updated = self.stats.last_activity.unwrap_or_else(Utc::now);
+        let last_updated = self.fields.stats.last_activity.unwrap_or_else(Utc::now);
 
         Ok(SourceState {
             description: "Content automaton for text and media content analysis".to_string(),
             last_updated,
-            total_items: Some(self.stats.inputs_seen),
+            total_items: Some(self.fields.stats.inputs_seen),
             metadata: HashMap::from([
                 (
                     "target_event_types".to_string(),
-                    serde_json::json!(self.config.target_event_types),
+                    serde_json::json!(self.fields.config.target_event_types),
                 ),
                 (
                     "text_analysis".to_string(),
-                    serde_json::json!(self.config.enable_text_analysis),
+                    serde_json::json!(self.fields.config.enable_text_analysis),
                 ),
                 (
                     "media_analysis".to_string(),
-                    serde_json::json!(self.config.enable_media_analysis),
+                    serde_json::json!(self.fields.config.enable_media_analysis),
                 ),
                 (
                     "content_classification".to_string(),
-                    serde_json::json!(self.config.enable_content_classification),
+                    serde_json::json!(self.fields.config.enable_content_classification),
                 ),
                 (
                     "max_content_size".to_string(),
-                    serde_json::json!(self.config.max_content_size_bytes),
+                    serde_json::json!(self.fields.config.max_content_size_bytes),
                 ),
                 (
                     "inputs_seen".to_string(),
-                    serde_json::json!(self.stats.inputs_seen),
+                    serde_json::json!(self.fields.stats.inputs_seen),
                 ),
                 (
                     "outputs_emitted".to_string(),
-                    serde_json::json!(self.stats.outputs_emitted),
+                    serde_json::json!(self.fields.stats.outputs_emitted),
                 ),
             ]),
             healthy: true,
@@ -790,11 +708,11 @@ impl ExplorationProvider for ContentAutomaton {
     ) -> color_eyre::eyre::Result<Vec<IngestionHistoryEntry>> {
         let limit = usize::try_from(limit).unwrap_or(0);
         let take = if limit == 0 {
-            self.history.len()
+            self.fields.history.len()
         } else {
-            std::cmp::min(limit, self.history.len())
+            std::cmp::min(limit, self.fields.history.len())
         };
-        Ok(self.history.iter().take(take).cloned().collect())
+        Ok(self.fields.history.iter().take(take).cloned().collect())
     }
 
     fn get_coverage_analysis(
@@ -805,13 +723,13 @@ impl ExplorationProvider for ContentAutomaton {
         let (start, end) = time_range.unwrap_or_else(|| {
             (
                 now - chrono::Duration::seconds(
-                    self.config.processing_window_seconds.as_secs().max(60) as i64,
+                    self.fields.config.processing_window_seconds.as_secs().max(60) as i64,
                 ),
                 now,
             )
         });
-        let source_total = self.stats.inputs_seen;
-        let sinex_total = self.stats.outputs_emitted;
+        let source_total = self.fields.stats.inputs_seen;
+        let sinex_total = self.fields.stats.outputs_emitted;
         let capped = std::cmp::min(source_total, sinex_total);
         let coverage_percentage = if source_total == 0 {
             0.0
@@ -840,32 +758,5 @@ impl ExplorationProvider for ContentAutomaton {
         _format: ExportFormat,
     ) -> color_eyre::eyre::Result<()> {
         Ok(())
-    }
-}
-
-#[derive(Clone)]
-struct ChannelConfirmedEventHandler {
-    sender: mpsc::Sender<ProvisionalEvent>,
-}
-
-impl ChannelConfirmedEventHandler {
-    fn new(sender: mpsc::Sender<ProvisionalEvent>) -> Self {
-        Self { sender }
-    }
-}
-
-#[async_trait]
-impl ConfirmedEventHandler for ChannelConfirmedEventHandler {
-    async fn handle_confirmed(&self, event: &ProvisionalEvent) -> NodeResult<()> {
-        match self.sender.try_send(event.clone()) {
-            Ok(()) => Ok(()),
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                warn!("Content automaton confirmed event channel full; dropping event");
-                Ok(())
-            }
-            Err(mpsc::error::TrySendError::Closed(_)) => Err(NodeError::Processing(
-                "Failed to forward confirmed content event: channel closed".into(),
-            )),
-        }
     }
 }

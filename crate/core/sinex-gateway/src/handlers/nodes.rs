@@ -10,7 +10,6 @@ use color_eyre::eyre::{eyre, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sinex_core::environment::SinexEnvironment;
-use sinex_core::types::ulid::Ulid;
 
 /// Node status information
 #[derive(Debug, Serialize, Deserialize)]
@@ -46,7 +45,7 @@ struct NodeSetHorizonParams {
 /// Handle GET /nodes request - list all nodes
 pub async fn handle_nodes_list(
     nats_client: &async_nats::Client,
-    env: &SinexEnvironment,
+    _env: &SinexEnvironment, // Reserved for environment-specific KV bucket naming
     _params: Value,
 ) -> Result<Value> {
     // Query node status from KV store
@@ -200,7 +199,7 @@ pub async fn handle_nodes_set_horizon(
 mod tests {
     use super::*;
     use sinex_core::environment;
-    use sinex_test_utils::{sinex_test, EphemeralNats, TestResult};
+    use sinex_test_utils::{sinex_test, EphemeralNats};
 
     #[sinex_test]
     async fn nodes_list_returns_empty_when_no_bucket() -> TestResult<()> {

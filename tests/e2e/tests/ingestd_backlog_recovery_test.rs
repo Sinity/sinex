@@ -37,7 +37,7 @@ async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResul
         .nats_consumer_name(consumer_name)
         .batch_size(16)
         .consumer_fetch_max_messages(32)
-        .consumer_fetch_timeout_ms(200)
+        .consumer_fetch_timeout_ms(200.into())
         .validate_schemas(false)
         .skip_schema_sync(true)
         .work_dir(work_dir_utf8.clone())

@@ -14,7 +14,6 @@ use sinex_core::fs::atomic_write;
 use sinex_core::{Event, JsonValue};
 
 use crate::payloads::*;
-use crate::systemd_watcher::{SystemdUnitState, SystemdUnitType};
 use crate::WatcherMaterialContext;
 use sinex_core::types::events::{
     JournalEntryWrittenPayload as EventJournalEntryWrittenPayload,
@@ -767,7 +766,9 @@ impl UnifiedJournalWatcher {
         Ok(())
     }
 
-    /// Update event tracking
+    /// Update event tracking.
+    /// Reserved for metrics and diagnostics integration.
+    #[allow(dead_code)]
     fn record_event(&self) {
         if let Ok(mut last_event) = self.last_event_time.lock() {
             *last_event = Some(Instant::now());
@@ -775,7 +776,9 @@ impl UnifiedJournalWatcher {
         self.event_count.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Record an error
+    /// Record an error.
+    /// Reserved for metrics and diagnostics integration.
+    #[allow(dead_code)]
     fn record_error(&self, error: String) {
         if let Ok(mut last_error) = self.last_error.lock() {
             *last_error = Some(error);

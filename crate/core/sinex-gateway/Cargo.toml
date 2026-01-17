@@ -70,6 +70,9 @@ tempfile = "3.10"
 which = "6"
 rcgen = "0.13"
 
+# Enable test-support feature for integration tests
+sinex-gateway = { path = ".", features = ["test-support"] }
+
 [features]
 default = []
 test-support = []

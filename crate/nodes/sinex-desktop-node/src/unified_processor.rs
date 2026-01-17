@@ -942,7 +942,7 @@ mod tests {
         Checkpoint, ProcessorInitContext, ScanArgs, TimeHorizon,
     };
     use sinex_test_utils::{
-        satellite_runtime::TestRuntimeBuilder, sinex_test, TestContext, TestResult,
+        satellite_runtime::TestRuntimeBuilder, sinex_test, TestContext,
     };
 
     #[sinex_test]

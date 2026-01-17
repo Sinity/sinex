@@ -1305,7 +1305,7 @@ fn spawn_forwarder(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_test_utils::{sinex_test, TestResult};
+    use sinex_test_utils::sinex_test;
     use std::sync::Arc;
 
     fn enabled_config() -> SystemConfig {

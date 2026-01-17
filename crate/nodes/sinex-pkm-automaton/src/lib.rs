@@ -10,26 +10,26 @@
 mod common {
     // Core types facade
     pub use sinex_core::{
-        db::{models::Event, repositories::DbPoolExt},
+        db::{models::{Event, EventBuilder}, repositories::DbPoolExt},
         types::{Id, JsonValue, Seconds},
         Ulid,
     };
 
-    pub use sinex_processor_runtime::{
-        ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
-        SourceState,
-    };
     // SDK facade for common processor types
     pub use sinex_node_sdk::{
-        confirmation_handler::{ConfirmedEventHandler, ProvisionalEvent},
+        automaton_base::{
+            ActivityEntry, AutomatonFields, ChannelConfirmedEventHandler, IngestionHistoryEntry,
+        },
+        confirmation_handler::ProvisionalEvent,
         event_processor::EventTransport,
         jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig},
         stream_processor::{
-            Checkpoint, EventSender, Node, ProcessorInitContext, ProcessorRuntimeState,
-            ProcessorType, ScanArgs, ScanReport, TimeHorizon,
+            Checkpoint, EventSender, Node, ProcessorInitContext, ProcessorType, ScanArgs,
+            ScanReport, TimeHorizon,
         },
         NodeError, NodeResult, ProcessingModel,
     };
+    pub use sinex_processor_runtime::{CoverageAnalysis, ExplorationProvider, ExportFormat, SourceState};
 
     // External dependencies
     pub use {
@@ -39,11 +39,10 @@ mod common {
         serde_json,
         sqlx::PgPool,
         std::{
-            collections::{HashMap, VecDeque},
+            collections::HashMap,
             sync::Arc,
             time::Duration,
         },
-        tokio::{sync::mpsc, task::JoinHandle},
         tracing::{error, info, warn},
     };
 }
@@ -92,15 +91,6 @@ impl Default for PKMAutomatonConfig {
 }
 
 const DEFAULT_BATCH_SIZE: usize = 128;
-const CONFIRMED_CHANNEL_CAPACITY: usize = 1024;
-const MAX_HISTORY_ENTRIES: usize = 32;
-
-#[derive(Default)]
-struct PkmAutomatonStats {
-    inputs_seen: u64,
-    outputs_emitted: u64,
-    last_activity: Option<DateTime<Utc>>,
-}
 
 /// Knowledge item extracted from events
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -134,99 +124,21 @@ pub enum KnowledgeItemType {
 /// - Knowledge graph relationship building
 /// - Personal workflow pattern recognition
 pub struct PKMAutomaton {
-    runtime: Option<ProcessorRuntimeState>,
-    config: PKMAutomatonConfig,
-    event_sender: Option<EventSender>,
-    db_pool: Option<PgPool>,
+    fields: AutomatonFields<PKMAutomatonConfig>,
     knowledge_items: Vec<KnowledgeItem>,
-    incoming_tx: Option<mpsc::Sender<ProvisionalEvent>>,
-    incoming_rx: Option<mpsc::Receiver<ProvisionalEvent>>,
-    consumer: Option<Arc<JetStreamEventConsumer>>,
-    consumer_handle: Option<JoinHandle<()>>,
-    history: VecDeque<IngestionHistoryEntry>,
-    stats: PkmAutomatonStats,
 }
 
 impl PKMAutomaton {
     pub fn new() -> Self {
         Self {
-            runtime: None,
-            config: PKMAutomatonConfig::default(),
-            event_sender: None,
-            db_pool: None,
+            fields: AutomatonFields::new(),
             knowledge_items: Vec::new(),
-            incoming_tx: None,
-            incoming_rx: None,
-            consumer: None,
-            consumer_handle: None,
-            history: VecDeque::new(),
-            stats: PkmAutomatonStats::default(),
         }
-    }
-
-    fn runtime(&self) -> NodeResult<&ProcessorRuntimeState> {
-        self.runtime
-            .as_ref()
-            .ok_or_else(|| NodeError::Lifecycle("PKM automaton runtime not initialized".into()))
-    }
-
-    fn db_pool(&self) -> NodeResult<&PgPool> {
-        if let Some(runtime) = self.runtime.as_ref() {
-            Ok(runtime.db_pool())
-        } else if let Some(pool) = self.db_pool.as_ref() {
-            Ok(pool)
-        } else {
-            Err(NodeError::General(color_eyre::eyre::eyre!(
-                "Database pool not initialized"
-            )))
-        }
-    }
-
-    fn event_sender(&self) -> NodeResult<EventSender> {
-        if let Some(runtime) = self.runtime.as_ref() {
-            Ok(runtime.event_sender())
-        } else if let Some(sender) = self.event_sender.as_ref() {
-            Ok(sender.clone())
-        } else {
-            Err(NodeError::General(color_eyre::eyre::eyre!(
-                "Event sender not initialized"
-            )))
-        }
-    }
-
-    fn ensure_event_channel(&mut self) {
-        if self.incoming_tx.is_none() || self.incoming_rx.is_none() {
-            let (tx, rx) = mpsc::channel(CONFIRMED_CHANNEL_CAPACITY);
-            self.incoming_tx = Some(tx);
-            self.incoming_rx = Some(rx);
-        }
-    }
-
-    fn record_history(&mut self, entry: IngestionHistoryEntry) {
-        self.history.push_front(entry);
-        while self.history.len() > MAX_HISTORY_ENTRIES {
-            self.history.pop_back();
-        }
-    }
-
-    fn record_input(&mut self, count: usize) {
-        if count == 0 {
-            return;
-        }
-        self.stats.inputs_seen = self.stats.inputs_seen.saturating_add(count as u64);
-        self.stats.last_activity = Some(Utc::now());
-    }
-
-    fn record_output(&mut self, count: u64) {
-        if count == 0 {
-            return;
-        }
-        self.stats.outputs_emitted = self.stats.outputs_emitted.saturating_add(count);
-        self.stats.last_activity = Some(Utc::now());
     }
 
     fn recent_activity(&self) -> Vec<ActivityEntry> {
-        self.history
+        self.fields
+            .history
             .iter()
             .take(5)
             .map(|entry| ActivityEntry {
@@ -243,16 +155,16 @@ impl PKMAutomaton {
     }
 
     async fn ensure_consumer(&mut self) -> NodeResult<()> {
-        if let Some(handle) = self.consumer_handle.as_ref() {
+        if let Some(handle) = self.fields.consumer_handle.as_ref() {
             if !handle.is_finished() {
                 return Ok(());
             }
         }
 
-        self.consumer_handle = None;
-        self.consumer = None;
+        self.fields.consumer_handle = None;
+        self.fields.consumer = None;
 
-        let runtime = self.runtime()?;
+        let runtime = self.fields.runtime()?;
         let transport = runtime.transport().clone();
         let service_name = runtime.service_info().service_name().to_string();
 
@@ -260,8 +172,9 @@ impl PKMAutomaton {
             EventTransport::Nats(publisher) => publisher,
         };
 
-        self.ensure_event_channel();
+        self.fields.ensure_event_channel();
         let sender = self
+            .fields
             .incoming_tx
             .clone()
             .ok_or_else(|| NodeError::Processing("Confirmed event channel unavailable".into()))?;
@@ -292,16 +205,15 @@ impl PKMAutomaton {
             }
         });
 
-        self.consumer = Some(consumer);
-        self.consumer_handle = Some(handle);
+        self.fields.set_consumer(consumer, handle);
 
         Ok(())
     }
 
     /// Process knowledge events and generate PKM insights
     async fn process_knowledge_events(&mut self, from: &Checkpoint) -> NodeResult<u64> {
-        let db_pool = self.db_pool()?;
-        let event_sender = self.event_sender()?;
+        let db_pool = self.fields.db_pool()?;
+        let event_sender = self.fields.event_sender()?;
 
         // Query recent knowledge events
         let events = self.query_knowledge_events(db_pool, from).await?;
@@ -311,7 +223,7 @@ impl PKMAutomaton {
 
     async fn run_continuous(&mut self, from: Checkpoint) -> NodeResult<u64> {
         self.ensure_consumer().await?;
-        let mut receiver = self.incoming_rx.take().ok_or_else(|| {
+        let mut receiver = self.fields.take_incoming_rx().ok_or_else(|| {
             NodeError::Processing("Confirmed events channel not initialized".into())
         })?;
 
@@ -321,17 +233,17 @@ impl PKMAutomaton {
         }
 
         info!("Confirmed event channel closed; exiting PKM automaton continuous loop");
-        self.incoming_tx = None;
-        self.consumer_handle = None;
-        self.consumer = None;
+        self.fields.incoming_tx = None;
+        self.fields.consumer_handle = None;
+        self.fields.consumer = None;
         drop(from);
 
         Ok(processed)
     }
 
     async fn process_confirmed_event(&mut self, provisional: ProvisionalEvent) -> NodeResult<u64> {
-        let db_pool = self.db_pool()?;
-        let event_sender = self.event_sender()?;
+        let db_pool = self.fields.db_pool()?;
+        let event_sender = self.fields.event_sender()?;
         let event_id = Id::from_ulid(provisional.event_id);
 
         let persisted = match db_pool.events().get_by_id(event_id).await {
@@ -356,14 +268,14 @@ impl PKMAutomaton {
         events: &[Event<JsonValue>],
         event_sender: &EventSender,
     ) -> NodeResult<u64> {
-        self.record_input(events.len());
+        self.fields.stats.record_input(events.len());
         // Extract knowledge items from events
         self.extract_knowledge_items(events).await;
 
         let mut events_processed = 0u64;
 
         // Generate knowledge extraction insights if enabled
-        if self.config.enable_knowledge_extraction && !self.knowledge_items.is_empty() {
+        if self.fields.config.enable_knowledge_extraction && !self.knowledge_items.is_empty() {
             if let Ok(extraction_event) = self.generate_knowledge_extraction_insights().await {
                 match event_sender.send(extraction_event).await {
                     Ok(_) => events_processed += 1,
@@ -373,7 +285,7 @@ impl PKMAutomaton {
         }
 
         // Generate learning session tracking if enabled
-        if self.config.enable_learning_tracking {
+        if self.fields.config.enable_learning_tracking {
             if let Ok(learning_events) = self.track_learning_sessions(events).await {
                 for learning_event in learning_events {
                     match event_sender.send(learning_event).await {
@@ -385,8 +297,8 @@ impl PKMAutomaton {
         }
 
         // Generate knowledge graph insights if enabled
-        if self.config.enable_knowledge_graph
-            && self.knowledge_items.len() >= self.config.min_knowledge_items_for_patterns
+        if self.fields.config.enable_knowledge_graph
+            && self.knowledge_items.len() >= self.fields.config.min_knowledge_items_for_patterns
         {
             if let Ok(graph_events) = self.build_knowledge_graph_insights().await {
                 for graph_event in graph_events {
@@ -408,7 +320,7 @@ impl PKMAutomaton {
             }
         }
 
-        self.record_output(events_processed);
+        self.fields.stats.record_output(events_processed);
         Ok(events_processed)
     }
 
@@ -419,7 +331,7 @@ impl PKMAutomaton {
         _from: &Checkpoint,
     ) -> NodeResult<Vec<Event<JsonValue>>> {
         let window_start = Utc::now()
-            - chrono::Duration::seconds(self.config.analysis_window_seconds.as_secs() as i64);
+            - chrono::Duration::seconds(self.fields.config.analysis_window_seconds.as_secs() as i64);
 
         let events = db_pool
             .events()
@@ -429,7 +341,7 @@ impl PKMAutomaton {
             .into_iter()
             .filter(|event| event.ts_orig.map(|ts| ts > window_start).unwrap_or(true))
             .filter(|event| {
-                self.config
+                self.fields.config
                     .knowledge_event_types
                     .iter()
                     .any(|t| event.event_type.as_str() == t)
@@ -724,13 +636,13 @@ impl PKMAutomaton {
             "type_distribution": type_counts,
             "top_keywords": keyword_pairs,
             "recent_items": recent_items,
-            "time_window_hours": self.config.analysis_window_seconds.as_secs() / 3600,
+            "time_window_hours": self.fields.config.analysis_window_seconds.as_secs() / 3600,
             "generated_at": Utc::now(),
         });
 
-        let event = Event::dynamic(
-            "pkm-automaton",
-            "pkm.knowledge_extraction",
+        let event = EventBuilder::new(
+            "pkm-automaton".into(),
+            "pkm.knowledge_extraction".into(),
             insights_payload,
         )
         .from_parents(source_event_ids.into_iter())?
@@ -834,10 +746,14 @@ impl PKMAutomaton {
         });
 
         let parents = session.events.clone();
-        let event = Event::dynamic("pkm-automaton", "pkm.learning_session", session_payload)
-            .from_parents(parents)?
-            .at_time(Utc::now())
-            .build()?;
+        let event = EventBuilder::new(
+            "pkm-automaton".into(),
+            "pkm.learning_session".into(),
+            session_payload,
+        )
+        .from_parents(parents)?
+        .at_time(Utc::now())
+        .build()?;
 
         Ok(event.into())
     }
@@ -899,10 +815,14 @@ impl PKMAutomaton {
                 "generated_at": Utc::now(),
             });
 
-            let graph_event = Event::dynamic("pkm-automaton", "pkm.knowledge_graph", graph_payload)
-                .from_parents(all_event_ids)?
-                .at_time(Utc::now())
-                .build()?;
+            let graph_event = EventBuilder::new(
+                "pkm-automaton".into(),
+                "pkm.knowledge_graph".into(),
+                graph_payload,
+            )
+            .from_parents(all_event_ids)?
+            .at_time(Utc::now())
+            .build()?;
 
             graph_events.push(graph_event.into());
         }
@@ -961,11 +881,14 @@ impl PKMAutomaton {
                     "generated_at": Utc::now(),
                 });
 
-                let pattern_event =
-                    Event::dynamic("pkm-automaton", "pkm.workflow_pattern", workflow_payload)
-                        .from_parents(pattern_event_ids)?
-                        .at_time(Utc::now())
-                        .build()?;
+                let pattern_event = EventBuilder::new(
+                    "pkm-automaton".into(),
+                    "pkm.workflow_pattern".into(),
+                    workflow_payload,
+                )
+                .from_parents(pattern_event_ids)?
+                .at_time(Utc::now())
+                .build()?;
 
                 pattern_events.push(pattern_event.into());
             }
@@ -1006,15 +929,15 @@ impl Node for PKMAutomaton {
 
     async fn initialize(&mut self, init: ProcessorInitContext<Self::Config>) -> NodeResult<()> {
         let (config, runtime) = init.into_runtime();
-        self.db_pool = Some(runtime.db_pool().clone());
-        self.event_sender = Some(runtime.event_sender());
-        self.runtime = Some(runtime);
-        self.config = config;
+        self.fields.db_pool = Some(runtime.db_pool().clone());
+        self.fields.event_sender = Some(runtime.event_sender());
+        self.fields.runtime = Some(runtime);
+        self.fields.config = config;
 
         info!(
             "PKM automaton configured - analyzing {} event types, window: {} hours",
-            self.config.knowledge_event_types.len(),
-            self.config.analysis_window_seconds.as_secs() / 3600
+            self.fields.config.knowledge_event_types.len(),
+            self.fields.config.analysis_window_seconds.as_secs() / 3600
         );
 
         Ok(())
@@ -1057,15 +980,15 @@ impl Node for PKMAutomaton {
                 ),
                 (
                     "analysis_window_hours".to_string(),
-                    (self.config.analysis_window_seconds.as_secs() / 3600) as u64,
+                    (self.fields.config.analysis_window_seconds.as_secs() / 3600) as u64,
                 ),
                 (
                     "knowledge_extraction_enabled".to_string(),
-                    self.config.enable_knowledge_extraction as u64,
+                    self.fields.config.enable_knowledge_extraction as u64,
                 ),
                 (
                     "learning_tracking_enabled".to_string(),
-                    self.config.enable_learning_tracking as u64,
+                    self.fields.config.enable_learning_tracking as u64,
                 ),
             ]),
             successful_targets: vec!["pkm".to_string()],
@@ -1073,7 +996,7 @@ impl Node for PKMAutomaton {
             warnings: Vec::new(),
         };
 
-        self.record_history(IngestionHistoryEntry {
+        self.fields.record_history(IngestionHistoryEntry {
             id: Ulid::new().to_string(),
             started_at: start_time,
             completed_at: Some(Utc::now()),
@@ -1107,12 +1030,12 @@ impl Default for PKMAutomaton {
 
 impl ExplorationProvider for PKMAutomaton {
     fn get_source_state(&self) -> color_eyre::eyre::Result<SourceState> {
-        let last_updated = self.stats.last_activity.unwrap_or_else(Utc::now);
+        let last_updated = self.fields.stats.last_activity.unwrap_or_else(Utc::now);
 
         Ok(SourceState {
             description: "PKM automaton for Personal Knowledge Management insights".to_string(),
             last_updated,
-            total_items: Some(self.stats.inputs_seen),
+            total_items: Some(self.fields.stats.inputs_seen),
             metadata: HashMap::from([
                 (
                     "knowledge_items".to_string(),
@@ -1120,27 +1043,27 @@ impl ExplorationProvider for PKMAutomaton {
                 ),
                 (
                     "analysis_window_hours".to_string(),
-                    serde_json::json!(self.config.analysis_window_seconds.as_secs() / 3600),
+                    serde_json::json!(self.fields.config.analysis_window_seconds.as_secs() / 3600),
                 ),
                 (
                     "knowledge_extraction".to_string(),
-                    serde_json::json!(self.config.enable_knowledge_extraction),
+                    serde_json::json!(self.fields.config.enable_knowledge_extraction),
                 ),
                 (
                     "knowledge_graph".to_string(),
-                    serde_json::json!(self.config.enable_knowledge_graph),
+                    serde_json::json!(self.fields.config.enable_knowledge_graph),
                 ),
                 (
                     "learning_tracking".to_string(),
-                    serde_json::json!(self.config.enable_learning_tracking),
+                    serde_json::json!(self.fields.config.enable_learning_tracking),
                 ),
                 (
                     "inputs_seen".to_string(),
-                    serde_json::json!(self.stats.inputs_seen),
+                    serde_json::json!(self.fields.stats.inputs_seen),
                 ),
                 (
                     "outputs_emitted".to_string(),
-                    serde_json::json!(self.stats.outputs_emitted),
+                    serde_json::json!(self.fields.stats.outputs_emitted),
                 ),
             ]),
             healthy: true,
@@ -1154,11 +1077,11 @@ impl ExplorationProvider for PKMAutomaton {
     ) -> color_eyre::eyre::Result<Vec<IngestionHistoryEntry>> {
         let limit = usize::try_from(limit).unwrap_or(0);
         let take = if limit == 0 {
-            self.history.len()
+            self.fields.history.len()
         } else {
-            std::cmp::min(limit, self.history.len())
+            std::cmp::min(limit, self.fields.history.len())
         };
-        Ok(self.history.iter().take(take).cloned().collect())
+        Ok(self.fields.history.iter().take(take).cloned().collect())
     }
 
     fn get_coverage_analysis(
@@ -1169,13 +1092,13 @@ impl ExplorationProvider for PKMAutomaton {
         let (start, end) = time_range.unwrap_or_else(|| {
             (
                 now - chrono::Duration::seconds(
-                    self.config.analysis_window_seconds.as_secs().max(60) as i64,
+                    self.fields.config.analysis_window_seconds.as_secs().max(60) as i64,
                 ),
                 now,
             )
         });
-        let source_total = self.stats.inputs_seen;
-        let sinex_total = self.stats.outputs_emitted;
+        let source_total = self.fields.stats.inputs_seen;
+        let sinex_total = self.fields.stats.outputs_emitted;
         let capped = std::cmp::min(source_total, sinex_total);
         let coverage_percentage = if source_total == 0 {
             0.0
@@ -1205,32 +1128,5 @@ impl ExplorationProvider for PKMAutomaton {
         _format: ExportFormat,
     ) -> color_eyre::eyre::Result<()> {
         Ok(())
-    }
-}
-
-#[derive(Clone)]
-struct ChannelConfirmedEventHandler {
-    sender: mpsc::Sender<ProvisionalEvent>,
-}
-
-impl ChannelConfirmedEventHandler {
-    fn new(sender: mpsc::Sender<ProvisionalEvent>) -> Self {
-        Self { sender }
-    }
-}
-
-#[async_trait]
-impl ConfirmedEventHandler for ChannelConfirmedEventHandler {
-    async fn handle_confirmed(&self, event: &ProvisionalEvent) -> NodeResult<()> {
-        match self.sender.try_send(event.clone()) {
-            Ok(()) => Ok(()),
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                warn!("PKM confirmed event channel full; dropping event");
-                Ok(())
-            }
-            Err(mpsc::error::TrySendError::Closed(_)) => Err(NodeError::Processing(
-                "Failed to forward confirmed PKM event: channel closed".into(),
-            )),
-        }
     }
 }

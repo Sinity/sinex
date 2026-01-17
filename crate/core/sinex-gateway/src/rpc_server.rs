@@ -277,7 +277,12 @@ impl GatewayAuth {
     }
 }
 
-pub(crate) fn read_token_from_env() -> color_eyre::eyre::Result<Option<String>> {
+/// Read RPC token from environment variables.
+/// Priority: SINEX_GATEWAY_ADMIN_TOKEN_FILE > SINEX_RPC_TOKEN_FILE > SINEX_RPC_TOKEN
+///
+/// Reserved for CLI tools and external consumers that need token access.
+#[allow(dead_code)]
+pub fn read_token_from_env() -> color_eyre::eyre::Result<Option<String>> {
     let (token, _) = read_token_and_path_from_env()?;
     Ok(token)
 }
@@ -806,13 +811,12 @@ fn require_mtls_for_remote(
 }
 
 fn warn_if_remote_bind(bind_address: &BindAddress) {
-    if let BindAddress::Tcp { host, .. } = bind_address {
-        if !is_loopback_host(host) {
-            warn!(
-                bind_host = %host,
-                "Gateway RPC is exposed beyond loopback; ensure mTLS and firewalling are configured"
-            );
-        }
+    let BindAddress::Tcp { host, .. } = bind_address;
+    if !is_loopback_host(host) {
+        warn!(
+            bind_host = %host,
+            "Gateway RPC is exposed beyond loopback; ensure mTLS and firewalling are configured"
+        );
     }
 }
 
@@ -1080,13 +1084,9 @@ mod tests {
 
         let addr = BindAddress::from_env_or_default(None)?;
 
-        match addr {
-            BindAddress::Tcp { host, port } => {
-                assert_eq!(&host, "127.0.0.1");
-                assert_eq!(port, 7777);
-            }
-            _ => panic!("expected TCP bind"),
-        }
+        let BindAddress::Tcp { host, port } = addr;
+        assert_eq!(&host, "127.0.0.1");
+        assert_eq!(port, 7777);
 
         clear_tcp_env();
         Ok(())
@@ -1100,13 +1100,9 @@ mod tests {
 
         let addr = BindAddress::from_env_or_default(Some("127.0.0.1:8888"))?;
 
-        match addr {
-            BindAddress::Tcp { host, port } => {
-                assert_eq!(&host, "127.0.0.1");
-                assert_eq!(port, 8888);
-            }
-            _ => panic!("expected TCP bind"),
-        }
+        let BindAddress::Tcp { host, port } = addr;
+        assert_eq!(&host, "127.0.0.1");
+        assert_eq!(port, 8888);
 
         clear_tcp_env();
         Ok(())
@@ -1171,7 +1167,7 @@ mod tests {
     async fn gateway_auth_blocks_missing_token() -> TestResult<()> {
         let auth = GatewayAuth::with_test_token("secret");
         let headers = HeaderMap::new();
-        assert!(matches!(auth.verify(&headers), Err(AuthError::Missing)));
+        assert!(matches!(auth.verify(&headers).await, Err(AuthError::Missing)));
         Ok(())
     }
 
@@ -1183,7 +1179,7 @@ mod tests {
             axum::http::header::AUTHORIZATION,
             HeaderValue::from_static("Bearer secret"),
         );
-        assert!(auth.verify(&headers).is_ok());
+        assert!(auth.verify(&headers).await.is_ok());
         Ok(())
     }
 }

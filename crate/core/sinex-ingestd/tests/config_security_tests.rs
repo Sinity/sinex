@@ -2,8 +2,7 @@
 
 use serde_json::{json, Value};
 use sinex_ingestd::IngestdConfig;
-use sinex_test_utils::sinex_test;
-use sinex_test_utils::TestResult;
+use sinex_test_utils::{sinex_test, TestResult};
 
 fn base_config_json() -> Value {
     serde_json::to_value(IngestdConfig::default()).expect("serialize default ingestd config")

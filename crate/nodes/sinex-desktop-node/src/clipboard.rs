@@ -15,6 +15,8 @@ use copypasta::{ClipboardContext, ClipboardProvider};
 const DEFAULT_MAX_PREVIEW_LENGTH: usize = 100;
 const DEFAULT_MAX_CONTENT_SIZE: usize = 10 * 1024 * 1024; // 10MB
 const DEFAULT_MAX_HISTORY_ENTRIES: usize = 1000;
+// Reserved for future use when external clipboard commands are implemented
+#[allow(dead_code)]
 const CLIPBOARD_COMMAND_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Rich clipboard content information
@@ -61,12 +63,12 @@ pub struct ClipboardWatcher {
 impl ClipboardWatcher {
     /// Create new clipboard watcher with Stage-as-You-Go integration
     pub async fn new(
-        poll_interval_secs: Seconds,
+        _poll_interval_secs: Seconds, // Reserved for future configurability
         stage_context: StageAsYouGoContext,
         shutdown_rx: watch::Receiver<bool>,
     ) -> NodeResult<Self> {
         // Use 100ms for native clipboard API (fast and efficient)
-        // Ignore the poll_interval_secs parameter for now since native APIs are cheap
+        // The poll_interval_secs parameter is reserved for future configurability
         let poll_interval = Duration::from_millis(100);
 
         let watcher = Self {

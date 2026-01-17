@@ -3,7 +3,6 @@ use sinex_ingestd::MaterialAssembler;
 use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
 use sinex_test_utils::prelude::*;
 use std::sync::Arc;
-use std::time::Duration;
 
 #[sinex_test]
 #[ignore]

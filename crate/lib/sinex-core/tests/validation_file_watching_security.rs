@@ -4,7 +4,6 @@ use sinex_core::types::validation::file_watching_security::{
     FileWatchingSecurityPolicy,
 };
 use sinex_test_utils::sinex_test;
-use sinex_test_utils::TestResult;
 
 #[sinex_test]
 fn file_watching_policy_respects_forbidden_paths() -> TestResult<()> {

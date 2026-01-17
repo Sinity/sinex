@@ -341,6 +341,26 @@ impl IngestdConfig {
             .acquire_timeout(std::time::Duration::from_secs(30))
             .idle_timeout(std::time::Duration::from_secs(600))
             .max_lifetime(std::time::Duration::from_secs(1800))
+            .before_acquire(|conn, _meta| {
+                Box::pin(async move {
+                    // Clean up any lingering transaction state before returning to caller.
+                    // This handles cases where connections are returned to the pool with
+                    // aborted transactions (e.g., after a failed query or lost connection).
+                    // Note: Must execute as separate queries because prepared statements
+                    // can't contain multiple commands.
+                    if let Err(e) = sqlx::query("ROLLBACK").execute(&mut *conn).await {
+                        // If ROLLBACK fails, the connection is truly broken.
+                        warn!("Connection ROLLBACK failed, discarding: {e}");
+                        return Ok(false);
+                    }
+                    // Reset session state to defaults (timeout, search_path, etc.)
+                    if let Err(e) = sqlx::query("RESET ALL").execute(&mut *conn).await {
+                        warn!("Connection RESET ALL failed, discarding: {e}");
+                        return Ok(false);
+                    }
+                    Ok(true)
+                })
+            })
     }
 }
 

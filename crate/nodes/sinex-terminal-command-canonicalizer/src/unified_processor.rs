@@ -57,6 +57,7 @@ mod tests {
     use super::*;
     use sinex_core::db::models::{Event, SourceMaterial};
     use sinex_core::types::Id;
+    use sinex_core::EventBuilder;
     use sinex_test_utils::sinex_test;
 
     #[sinex_test]
@@ -85,7 +86,7 @@ mod tests {
         payload: serde_json::Value,
     ) -> sinex_test_utils::TestResult<Event<JsonValue>> {
         let material_id = Id::<SourceMaterial>::from_ulid(Ulid::new());
-        Event::dynamic(source, "command.executed", payload)
+        EventBuilder::new(source.into(), "command.executed".into(), payload)
             .from_material(material_id, 0)
             .build()
             .map_err(Into::into)
