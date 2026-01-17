@@ -28,6 +28,8 @@ pub mod prelude;
 pub mod replay;
 pub mod runtime;
 pub mod schema_validator;
+pub mod shutdown;
+pub mod simple_processor;
 pub mod stage_as_you_go;
 pub mod stream_processor {
     pub use crate::runtime::stream::*;
@@ -58,6 +60,11 @@ pub use nats_publisher::NatsPublisher;
 pub use replay::{
     MetricsSnapshot, ProgressTracker, ReplayController, ReplayFilters, ReplayMetrics, ReplayMode,
     ReplayProgress, ReplayResult, ReplayService, ReplayStats,
+};
+pub use shutdown::{default_checkpoint_path, ShutdownConfig, ShutdownHandler, ShutdownSignal};
+pub use simple_processor::{
+    ErrorAction, PersistedState, SimpleProcessor, SimpleProcessorConfig, SimpleProcessorError,
+    SimpleProcessorNode,
 };
 pub use stream_processor::{
     Checkpoint, EventSender, EventStream, Node, ProcessorCapabilities, ProcessorType, ScanArgs,
