@@ -4,6 +4,7 @@
 //! for developing SimpleProcessor nodes.
 
 mod dev;
+mod tether;
 mod watcher;
 
 use clap::{Parser, Subcommand};

@@ -6204,11 +6204,13 @@ name = "sx"
 version = "0.1.0"
 dependencies = [
  "camino",
+ "chrono",
  "clap",
  "color-eyre",
  "nix 0.27.1",
  "notify",
  "notify-debouncer-mini",
+ "reqwest 0.12.24",
  "serde",
  "serde_json",
  "tempfile",
