@@ -1,7 +1,8 @@
-# node-Side Schema Validation Implementation Plan
+# Node-Side Schema Validation Implementation Plan
 
-**Status:** TODO / Aspirational
+**Status:** ✅ Implemented
 **Created:** 2025-01-15
+**Completed:** 2025-01-17
 **Priority:** Medium (optimization, not critical)
 
 ## Current Architecture
@@ -553,13 +554,34 @@ let event_emitter = EventEmitter::new(event_sender_raw.clone(), dry_run, validat
 ## Current Status
 
 **Infrastructure:** ✅ Schema broadcasts working, cache populating
-**Validation:** ❌ Not implemented
-**Recommendation:** Defer until needed (current architecture works well)
+**Validation:** ✅ Fully implemented
+**Status:** Complete - all phases implemented
+
+### What's Implemented
+
+1. **NATS KV Schema Storage** (`crate/core/sinex-ingestd/src/service.rs`)
+   - `store_schemas_in_kv()` stores full schema JSON in `KV_sinex_schemas` bucket
+   - Triggered on schema broadcasts every 5 minutes
+
+2. **NodeSchemaValidator** (`crate/lib/sinex-node-sdk/src/schema_validator.rs`)
+   - Edge mode (no DB) and Full mode (with DB fallback)
+   - Compiles JSON schemas using `jsonschema` crate
+   - Cache-first validation strategy
+
+3. **EventEmitter Integration** (`crate/lib/sinex-node-sdk/src/runtime/stream/handles.rs`)
+   - `with_validator()` constructor for validation-enabled emitter
+   - Validates payload before sending to NATS
+
+4. **StreamProcessorRunner Wiring** (`crate/lib/sinex-node-sdk/src/runtime/stream/mod.rs`)
+   - `maybe_start_schema_listener()` creates cache + validator
+   - Background task updates validator on schema broadcasts
+   - Validator passed to EventEmitter
 
 ---
 
-**Last Updated:** 2025-01-15
+**Last Updated:** 2025-01-17
 **Related Files:**
-- `crate/lib/sinex-node-sdk/src/runtime/stream/mod.rs` (cache listener)
-- `crate/core/sinex-ingestd/src/service.rs` (schema broadcasts)
-- `crate/lib/sinex-core/src/db/validation.rs` (validator reference)
+- `crate/lib/sinex-node-sdk/src/schema_validator.rs` (NodeSchemaValidator)
+- `crate/lib/sinex-node-sdk/src/runtime/stream/mod.rs` (cache listener + wiring)
+- `crate/lib/sinex-node-sdk/src/runtime/stream/handles.rs` (EventEmitter integration)
+- `crate/core/sinex-ingestd/src/service.rs` (schema broadcasts + KV storage)
