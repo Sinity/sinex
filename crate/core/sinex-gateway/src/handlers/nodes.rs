@@ -1,6 +1,6 @@
 //! Node operations handlers
 //!
-//! This module provides RPC endpoints for managing satellite node operations:
+//! This module provides RPC endpoints for managing node operations:
 //! - List nodes and their status
 //! - Drain nodes (pause event processing)
 //! - Resume nodes (restart event processing)

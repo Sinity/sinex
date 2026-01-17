@@ -137,6 +137,134 @@ impl Default for CheckpointState {
     }
 }
 
+impl CheckpointState {
+    /// Save checkpoint state to a local file.
+    ///
+    /// Used for hot reload state continuity. When a SIGTERM is received,
+    /// the state is quickly saved to a local file so it can be restored
+    /// when the process restarts.
+    ///
+    /// The file format is JSON with a magic header for validation.
+    pub fn save_to_file(&self, path: &std::path::Path) -> std::io::Result<()> {
+        use std::io::Write;
+
+        let wrapper = FileCheckpointWrapper {
+            magic: FILE_CHECKPOINT_MAGIC.to_string(),
+            version: FILE_CHECKPOINT_VERSION,
+            state: self.clone(),
+        };
+
+        let json = serde_json::to_string_pretty(&wrapper)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+
+        // Atomic write: write to temp file, then rename
+        let temp_path = path.with_extension("tmp");
+        let mut file = std::fs::File::create(&temp_path)?;
+        file.write_all(json.as_bytes())?;
+        file.sync_all()?;
+        std::fs::rename(&temp_path, path)?;
+
+        info!(
+            path = %path.display(),
+            processed_count = self.processed_count,
+            "Saved checkpoint to file"
+        );
+
+        Ok(())
+    }
+
+    /// Load checkpoint state from a local file.
+    ///
+    /// Used to restore state after a hot reload. If the file doesn't exist
+    /// or is invalid, returns None (allowing fresh start).
+    pub fn load_from_file(path: &std::path::Path) -> Option<Self> {
+        let contents = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                debug!(path = %path.display(), "No checkpoint file found");
+                return None;
+            }
+            Err(e) => {
+                warn!(
+                    path = %path.display(),
+                    error = %e,
+                    "Failed to read checkpoint file"
+                );
+                return None;
+            }
+        };
+
+        let wrapper: FileCheckpointWrapper = match serde_json::from_str(&contents) {
+            Ok(w) => w,
+            Err(e) => {
+                warn!(
+                    path = %path.display(),
+                    error = %e,
+                    "Failed to parse checkpoint file"
+                );
+                return None;
+            }
+        };
+
+        // Validate magic and version
+        if wrapper.magic != FILE_CHECKPOINT_MAGIC {
+            warn!(
+                path = %path.display(),
+                expected = FILE_CHECKPOINT_MAGIC,
+                found = wrapper.magic,
+                "Invalid checkpoint file magic"
+            );
+            return None;
+        }
+
+        if wrapper.version > FILE_CHECKPOINT_VERSION {
+            warn!(
+                path = %path.display(),
+                file_version = wrapper.version,
+                supported_version = FILE_CHECKPOINT_VERSION,
+                "Checkpoint file version too new"
+            );
+            return None;
+        }
+
+        info!(
+            path = %path.display(),
+            processed_count = wrapper.state.processed_count,
+            "Loaded checkpoint from file"
+        );
+
+        Some(wrapper.state)
+    }
+
+    /// Delete the checkpoint file if it exists.
+    ///
+    /// Called after successfully syncing state to the primary checkpoint store
+    /// (NATS KV) to avoid stale file state.
+    pub fn delete_file(path: &std::path::Path) -> std::io::Result<()> {
+        match std::fs::remove_file(path) {
+            Ok(()) => {
+                debug!(path = %path.display(), "Deleted checkpoint file");
+                Ok(())
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+/// Magic string for file-based checkpoint validation
+const FILE_CHECKPOINT_MAGIC: &str = "SINEX_CHECKPOINT_V1";
+/// Current file checkpoint format version
+const FILE_CHECKPOINT_VERSION: u32 = 1;
+
+/// Wrapper for file-based checkpoint storage with validation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct FileCheckpointWrapper {
+    magic: String,
+    version: u32,
+    state: CheckpointState,
+}
+
 fn sanitize_kv_key_component(raw: &str) -> String {
     if raw.is_empty() {
         return "_".to_string();

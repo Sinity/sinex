@@ -25,7 +25,7 @@
 //
 // ### 🌍 End-to-End (`end_to_end/`)
 // Complete workflow validation from event ingestion to query results.
-// Tests the entire pipeline: Satellite → Ingestd → Database → Automaton → Query.
+// Tests the entire pipeline: Node → Ingestd → Database → Automaton → Query.
 //
 // ### ⚡ Performance (`performance/`)
 // System performance validation:

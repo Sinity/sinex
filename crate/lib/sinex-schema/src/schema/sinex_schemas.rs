@@ -160,7 +160,7 @@ pub enum ProcessorManifests {
     Table,
     Id,
     ProcessorName,
-    ProcessorType,
+    NodeType,
     Version,
     Description,
     // Key field for reproducible replays
@@ -213,7 +213,7 @@ impl ProcessorManifests {
                     .not_null(),
             )
             .col(
-                ColumnDef::new(ProcessorManifests::ProcessorType)
+                ColumnDef::new(ProcessorManifests::NodeType)
                     .text()
                     .not_null()
                     .check(Expr::cust(

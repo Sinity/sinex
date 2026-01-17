@@ -2,7 +2,7 @@
 #![doc = include_str!("../docs/overview.md")]
 #![doc = include_str!("../../../../docs/current/architecture/SystemOperations_And_Integrity_Architecture.md")]
 
-//! Shared runtime for Sinex satellites and automatons.
+//! Shared runtime for Sinex nodes (ingestors and automata).
 
 // Macro re-exports removed; prefer explicit imports from `sinex-macros` if needed.
 pub mod acquisition_manager;
@@ -28,6 +28,8 @@ pub mod prelude;
 pub mod replay;
 pub mod runtime;
 pub mod schema_validator;
+pub mod shutdown;
+pub mod simple_processor;
 pub mod stage_as_you_go;
 pub mod stream_processor {
     pub use crate::runtime::stream::*;
@@ -59,8 +61,13 @@ pub use replay::{
     MetricsSnapshot, ProgressTracker, ReplayController, ReplayFilters, ReplayMetrics, ReplayMode,
     ReplayProgress, ReplayResult, ReplayService, ReplayStats,
 };
+pub use shutdown::{default_checkpoint_path, ShutdownConfig, ShutdownHandler, ShutdownSignal};
+pub use simple_processor::{
+    ErrorAction, PersistedState, SimpleProcessor, SimpleProcessorConfig, SimpleProcessorError,
+    SimpleProcessorNode,
+};
 pub use stream_processor::{
-    Checkpoint, EventSender, EventStream, Node, ProcessorCapabilities, ProcessorType, ScanArgs,
+    Checkpoint, EventSender, EventStream, Node, NodeCapabilities, NodeType, ScanArgs,
     ScanEstimate, ScanReport, StreamProcessorRunner, TimeHorizon,
 };
 pub use version::{NodeInstance, NodeVersion};
@@ -72,7 +79,7 @@ pub use annex::{AnnexConfig, AnnexKey, BlobManager, BlobMetadata, GitAnnex};
 #[cfg(feature = "preflight")]
 pub use preflight::{run_preflight_checks, verify_service_dependencies, VerificationStatus};
 
-/// Version information for satellite components
+/// Version information for node components
 #[derive(Debug, Clone)]
 pub struct VersionInfo {
     pub git_revision: String,
@@ -83,11 +90,11 @@ pub struct VersionInfo {
 impl VersionInfo {
     /// Create version info for the current component
     pub fn current(component_name: &str) -> Self {
-        let version = option_env!("SATELLITE_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"));
-        let git_revision = option_env!("SATELLITE_COMMIT_HASH")
+        let version = option_env!("NODE_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"));
+        let git_revision = option_env!("NODE_COMMIT_HASH")
             .or_else(|| option_env!("GIT_HASH"))
             .unwrap_or("unknown");
-        let mut binary_hash = option_env!("SATELLITE_BINARY_HASH")
+        let mut binary_hash = option_env!("NODE_BINARY_HASH")
             .or_else(|| option_env!("BINARY_HASH"))
             .or_else(|| option_env!("GIT_HASH"))
             .unwrap_or("unknown");
@@ -123,10 +130,10 @@ mod version_info_tests {
     }
 }
 
-/// Common CLI arguments for satellite services.
+/// Common CLI arguments for node services.
 ///
 /// This structure provides standardized command-line arguments that all
-/// satellite services can use. It includes common parameters for NATS
+/// node services can use. It includes common parameters for NATS
 /// communication, batching, and operational modes.
 ///
 /// # Examples
@@ -184,12 +191,12 @@ pub use sinex_core::types::error::SinexError;
 pub use sinex_core::types::ulid::Ulid;
 // Just use the actual Event type from sinex_core directly - no confusing aliases!
 
-/// Result type for satellite operations
+/// Result type for node operations
 pub type NodeResult<T> = std::result::Result<T, NodeError>;
 
-/// Common error types for satellite services.
+/// Common error types for node services.
 ///
-/// This enum provides a unified error handling system for all satellite services.
+/// This enum provides a unified error handling system for all node services.
 /// Error types are categorized by their source and expected handling:
 ///
 /// # Error Categories

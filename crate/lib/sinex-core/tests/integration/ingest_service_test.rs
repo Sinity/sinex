@@ -6,7 +6,7 @@
 //! - Performance characteristics and error handling
 //! - Schema validation and synchronization
 //!
-//! These tests validate the core ingestion patterns that satellites use
+//! These tests validate the core ingestion patterns that nodes use
 //! to submit events for processing and storage.
 
 use sinex_core::db::repositories::DbPoolExt;
@@ -58,8 +58,8 @@ async fn test_ingest_service_startup(ctx: TestContext) -> Result<()> {
 async fn test_event_ingestion_flow(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing event ingestion through service API");
 
-    // Create test event that would come from a satellite
-    let satellite_event = ctx
+    // Create test event that would come from a node
+    let node_event = ctx
         .publish_json_event(
             "fs-watcher",
             "file.created",
@@ -73,20 +73,20 @@ async fn test_event_ingestion_flow(ctx: TestContext) -> Result<()> {
         .await?;
 
     // Event is automatically stored via publish_json_event
-    assert_eq!(satellite_event.source.as_str(), "fs-watcher");
-    assert_eq!(satellite_event.event_type.as_str(), "file.created");
-    assert!(satellite_event.id.is_some());
-    assert_eq!(satellite_event.payload["path"], "/tmp/test_file.txt");
+    assert_eq!(node_event.source.as_str(), "fs-watcher");
+    assert_eq!(node_event.event_type.as_str(), "file.created");
+    assert!(node_event.id.is_some());
+    assert_eq!(node_event.payload["path"], "/tmp/test_file.txt");
 
     tracing::info!(
-        event_id = ?satellite_event.id,
-        source = %satellite_event.source,
-        event_type = %satellite_event.event_type,
+        event_id = ?node_event.id,
+        source = %node_event.source,
+        event_type = %node_event.event_type,
         "Event ingestion flow validated"
     );
 
     // Wait for persistence
-    let event_id = satellite_event.id.as_ref().unwrap().clone();
+    let event_id = node_event.id.as_ref().unwrap().clone();
     sinex_test_utils::timing_utils::WaitHelpers::wait_for_event_id(&ctx.pool, event_id.clone(), 10)
         .await?;
 
@@ -98,7 +98,7 @@ async fn test_event_ingestion_flow(ctx: TestContext) -> Result<()> {
     );
 
     let retrieved = retrieved_event.unwrap();
-    assert_eq!(retrieved.id, satellite_event.id);
+    assert_eq!(retrieved.id, node_event.id);
     assert_eq!(retrieved.payload["path"], "/tmp/test_file.txt");
 
     Ok(())

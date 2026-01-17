@@ -1,4 +1,4 @@
-use super::{EventEmitter, EventSender, ProcessorHandles, ServiceInfo};
+use super::{EventEmitter, EventSender, NodeHandles, ServiceInfo};
 use crate::{
     acquisition_manager::{AcquisitionManager, RotationPolicy},
     checkpoint::CheckpointManager,
@@ -19,17 +19,17 @@ use std::sync::Arc;
 
 /// Captures runtime dependencies supplied to processors during initialization.
 #[derive(Clone)]
-pub struct ProcessorRuntimeState {
+pub struct NodeRuntimeState {
     service_info: ServiceInfo,
-    handles: ProcessorHandles,
+    handles: NodeHandles,
     raw_config: HashMap<String, Value>,
     work_dir_utf8: Utf8PathBuf,
 }
 
-impl ProcessorRuntimeState {
+impl NodeRuntimeState {
     pub fn new(
         service_info: ServiceInfo,
-        handles: ProcessorHandles,
+        handles: NodeHandles,
         raw_config: HashMap<String, Value>,
         work_dir_utf8: Utf8PathBuf,
     ) -> Self {
@@ -45,7 +45,7 @@ impl ProcessorRuntimeState {
         &self.service_info
     }
 
-    pub fn handles(&self) -> &ProcessorHandles {
+    pub fn handles(&self) -> &NodeHandles {
         &self.handles
     }
 
@@ -139,7 +139,7 @@ impl ProcessorRuntimeState {
         self,
     ) -> (
         ServiceInfo,
-        ProcessorHandles,
+        NodeHandles,
         HashMap<String, Value>,
         Utf8PathBuf,
     ) {

@@ -189,10 +189,11 @@ async fn interactive_query(client: &GatewayClient, format: OutputFormat) -> Resu
         Err(_) => default_sources,
     };
 
-    let selected_sources = MultiSelect::new("Sources (Space to select, Enter to confirm):", sources)
-        .with_help_message("Leave empty to search all sources")
-        .prompt_skippable()?
-        .unwrap_or_default();
+    let selected_sources =
+        MultiSelect::new("Sources (Space to select, Enter to confirm):", sources)
+            .with_help_message("Leave empty to search all sources")
+            .prompt_skippable()?
+            .unwrap_or_default();
 
     // Event types
     let event_types = vec![
@@ -208,11 +209,13 @@ async fn interactive_query(client: &GatewayClient, format: OutputFormat) -> Resu
         "health_check".to_string(),
     ];
 
-    let selected_types =
-        MultiSelect::new("Event types (Space to select, Enter to confirm):", event_types)
-            .with_help_message("Leave empty to search all event types")
-            .prompt_skippable()?
-            .unwrap_or_default();
+    let selected_types = MultiSelect::new(
+        "Event types (Space to select, Enter to confirm):",
+        event_types,
+    )
+    .with_help_message("Leave empty to search all event types")
+    .prompt_skippable()?
+    .unwrap_or_default();
 
     // Full-text search
     let text = Text::new("Full-text search (optional):")
@@ -221,9 +224,7 @@ async fn interactive_query(client: &GatewayClient, format: OutputFormat) -> Resu
         .filter(|s| !s.is_empty());
 
     // Limit
-    let limit_str = Text::new("Maximum results:")
-        .with_default("100")
-        .prompt()?;
+    let limit_str = Text::new("Maximum results:").with_default("100").prompt()?;
     let limit: i32 = limit_str.parse().unwrap_or(100);
 
     // Build query

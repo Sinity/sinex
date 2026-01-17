@@ -1,4 +1,4 @@
-//! Configuration management for satellite services.
+//! Configuration management for node services.
 //!
 //! This module provides environment-based configuration with the following precedence:
 //! 1. Command-line arguments (highest priority)
@@ -7,7 +7,7 @@
 //!
 //! # Configuration Loading
 //!
-//! All satellite services use environment-based configuration only:
+//! All node services use environment-based configuration only:
 //!
 //! ```rust
 //! use sinex_node_sdk::NodeConfig;
@@ -24,7 +24,7 @@
 //! - `SINEX_DB_POOL_SIZE`: Database connection pool size
 //! - `SINEX_WORK_DIR`: Working directory for temporary files
 //! - `SINEX_DRY_RUN`: Enable dry-run mode (true/false)
-//! - `SINEX_<SERVICE>_LOG_LEVEL`: Per-satellite override (service name uppercased with `_`)
+//! - `SINEX_<SERVICE>_LOG_LEVEL`: Per-node override (service name uppercased with `_`)
 //!
 //! # Validation
 //!
@@ -61,10 +61,10 @@ pub enum ConfigError {
     MissingField(String),
 }
 
-/// Base configuration for all satellite services.
+/// Base configuration for all node services.
 ///
 /// This structure contains common configuration fields shared by all
-/// satellite services (both ingestors and automata). Service-specific
+/// node services (both ingestors and automata). Service-specific
 /// configuration should extend this via `EventSourceConfig` or `AutomatonConfig`.
 ///
 /// # Field Defaults
@@ -124,7 +124,7 @@ pub struct NodeConfig {
     pub replay: Option<ReplayConfig>,
 }
 
-/// Configuration for event source satellites
+/// Configuration for event source nodes
 #[derive(Debug, Clone, Serialize, Deserialize, Validate, bon::Builder)]
 #[builder(on(String, into))]
 pub struct EventSourceConfig {
@@ -149,7 +149,7 @@ pub struct EventSourceConfig {
     pub source_config: HashMap<String, serde_json::Value>,
 }
 
-/// Configuration for automaton satellites
+/// Configuration for automaton nodes
 #[derive(Debug, Clone, Serialize, Deserialize, Validate, bon::Builder)]
 #[builder(on(String, into))]
 pub struct AutomatonConfig {
@@ -225,8 +225,8 @@ impl NodeConfig {
 
     fn figment_base(service_name: &str) -> Figment {
         Figment::from(Serialized::defaults(Self::defaults(service_name)))
-            .merge(Toml::file("satellite.toml").nested())
-            .merge(Toml::file("/etc/sinex/satellite.toml").nested())
+            .merge(Toml::file("node.toml").nested())
+            .merge(Toml::file("/etc/sinex/node.toml").nested())
             .merge(Toml::file(format!("{}.toml", service_name)).nested())
             .merge(Toml::file(format!("/etc/sinex/{}.toml", service_name)).nested())
     }
@@ -353,12 +353,12 @@ impl EventSourceConfig {
             .merge(Toml::file("/etc/sinex/event-source.toml").nested())
     }
 
-    /// Load configuration for an event source satellite using Figment.
+    /// Load configuration for an event source ingestor using Figment.
     pub fn load(service_name: &str) -> Result<Self, figment::Error> {
         NodeConfig::apply_env(Self::figment_base(service_name), service_name).extract()
     }
 
-    /// Load configuration for an event source satellite from a specific file.
+    /// Load configuration for an event source ingestor from a specific file.
     pub fn load_from_path(
         service_name: &str,
         path: impl AsRef<str>,
@@ -402,12 +402,12 @@ impl AutomatonConfig {
             .merge(Toml::file("/etc/sinex/automaton.toml").nested())
     }
 
-    /// Load configuration for an automaton satellite using Figment.
+    /// Load configuration for an automaton using Figment.
     pub fn load(service_name: &str) -> Result<Self, figment::Error> {
         NodeConfig::apply_env(Self::figment_base(service_name), service_name).extract()
     }
 
-    /// Load configuration for an automaton satellite from a specific file.
+    /// Load configuration for an automaton from a specific file.
     pub fn load_from_path(
         service_name: &str,
         path: impl AsRef<str>,

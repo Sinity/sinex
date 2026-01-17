@@ -248,10 +248,7 @@ mod tests {
 
     #[test]
     fn test_counters_track_state() {
-        let (hooks, counters) = TestHooks::builder()
-            .fail_once()
-            .count_deliveries()
-            .build();
+        let (hooks, counters) = TestHooks::builder().fail_once().count_deliveries().build();
 
         // Initially fail_once is true (hasn't failed yet)
         assert!(!counters.has_failed_once());

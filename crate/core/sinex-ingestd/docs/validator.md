@@ -4,7 +4,7 @@
 
 - Resolves schema metadata through `sinex-schema` and caches lookups.
 - Applies per-event validation and accumulates `ValidationStats`.
-- Surfaces actionable failure messages for satellites while preserving security
+- Surfaces actionable failure messages for nodes while preserving security
   boundaries.
 
 Whenever schema contracts change, update this documentation alongside the

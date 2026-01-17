@@ -21,8 +21,8 @@ mod common {
     pub use sinex_node_sdk::{
         automaton_base::{AutomatonFields, ChannelConfirmedEventHandler},
         stream_processor::{
-            Checkpoint, EventSender, Node, ProcessorCapabilities, ProcessorInitContext,
-            ProcessorRuntimeState, ProcessorType, ScanArgs, ScanReport, TimeHorizon,
+            Checkpoint, EventSender, Node, NodeCapabilities, NodeInitContext,
+            NodeRuntimeState, NodeType, ScanArgs, ScanReport, TimeHorizon,
         },
         NodeError, NodeResult,
     };
@@ -106,7 +106,7 @@ impl AnalyticsAutomaton {
     }
 
     // Delegate to AutomatonFields for common infrastructure
-    fn runtime(&self) -> NodeResult<&ProcessorRuntimeState> {
+    fn runtime(&self) -> NodeResult<&NodeRuntimeState> {
         self.fields.runtime()
     }
 
@@ -139,11 +139,10 @@ impl AnalyticsAutomaton {
         };
 
         self.fields.ensure_event_channel();
-        let sender = self
-            .fields
-            .incoming_tx
-            .clone()
-            .ok_or_else(|| NodeError::Processing("Confirmed event channel unavailable".into()))?;
+        let sender =
+            self.fields.incoming_tx.clone().ok_or_else(|| {
+                NodeError::Processing("Confirmed event channel unavailable".into())
+            })?;
 
         let handler = Arc::new(ChannelConfirmedEventHandler::new(sender));
         let env = environment().clone();
@@ -296,7 +295,9 @@ impl AnalyticsAutomaton {
         end_time: DateTime<Utc>,
     ) -> CoreResult<Vec<Event<JsonValue>>> {
         let start_time = end_time
-            - ChronoDuration::seconds(self.fields.config.analysis_window_seconds.as_secs().max(60) as i64);
+            - ChronoDuration::seconds(
+                self.fields.config.analysis_window_seconds.as_secs().max(60) as i64
+            );
 
         let mut collected = Vec::new();
         if self.fields.config.target_event_types.is_empty() {
@@ -529,7 +530,7 @@ impl AnalyticsAutomaton {
 impl Node for AnalyticsAutomaton {
     type Config = AnalyticsAutomatonConfig;
 
-    async fn initialize(&mut self, init: ProcessorInitContext<Self::Config>) -> NodeResult<()> {
+    async fn initialize(&mut self, init: NodeInitContext<Self::Config>) -> NodeResult<()> {
         let (config, runtime) = init.into_runtime();
         self.fields.db_pool = Some(runtime.db_pool().clone());
         self.fields.event_sender = Some(runtime.event_sender());
@@ -597,17 +598,17 @@ impl Node for AnalyticsAutomaton {
         "analytics-automaton"
     }
 
-    fn processor_type(&self) -> ProcessorType {
-        ProcessorType::Automaton
+    fn processor_type(&self) -> NodeType {
+        NodeType::Automaton
     }
 
-    fn capabilities(&self) -> ProcessorCapabilities {
-        ProcessorCapabilities {
+    fn capabilities(&self) -> NodeCapabilities {
+        NodeCapabilities {
             supports_snapshot: true,
             supports_historical: true,
             supports_continuous: true,
             manages_own_continuous_loop: true,
-            ..ProcessorCapabilities::default()
+            ..NodeCapabilities::default()
         }
     }
 
@@ -657,7 +658,10 @@ impl ExplorationProvider for AnalyticsAutomaton {
                     "correlation_enabled".to_string(),
                     json!(self.fields.config.enable_correlation_analysis),
                 ),
-                ("inputs_seen".to_string(), json!(self.fields.stats.inputs_seen)),
+                (
+                    "inputs_seen".to_string(),
+                    json!(self.fields.stats.inputs_seen),
+                ),
                 (
                     "outputs_emitted".to_string(),
                     json!(self.fields.stats.outputs_emitted),
@@ -860,15 +864,11 @@ impl AnalyticsAutomaton {
             sample.iter().collect::<Vec<&Event<JsonValue>>>(),
             MAX_PROVENANCE_IDS,
         ));
-        EventBuilder::new(
-            "analytics-automaton".into(),
-            event_type.into(),
-            payload,
-        )
-        .with_provenance(provenance)
-        .at_time(Utc::now())
-        .build()
-        .expect("infallible: provenance set via with_provenance")
+        EventBuilder::new("analytics-automaton".into(), event_type.into(), payload)
+            .with_provenance(provenance)
+            .at_time(Utc::now())
+            .build()
+            .expect("infallible: provenance set via with_provenance")
     }
 }
 

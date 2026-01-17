@@ -224,21 +224,21 @@ impl BenchContext {
         self.load_fixture(&LOAD_TEST_FIXTURE, size).await
     }
 
-    /// Load satellite benchmark fixture
+    /// Load node benchmark fixture
     ///
-    /// Fixture with patterns specific to satellite processing,
+    /// Fixture with patterns specific to node processing,
     /// including realistic source distributions and event types.
     ///
     /// # Example
     /// ```rust
-    /// ctx.satellite_bench(DatasetSize::Medium).await?;
+    /// ctx.node_bench(DatasetSize::Medium).await?;
     /// ```
-    pub async fn satellite_bench(
+    pub async fn node_bench(
         &self,
         size: crate::static_fixtures::DatasetSize,
     ) -> TestResult<()> {
-        use crate::standard_fixtures::SATELLITE_BENCH_FIXTURE;
-        self.load_fixture(&SATELLITE_BENCH_FIXTURE, size).await
+        use crate::standard_fixtures::NODE_BENCH_FIXTURE;
+        self.load_fixture(&NODE_BENCH_FIXTURE, size).await
     }
 
     /// Load operations benchmark fixture

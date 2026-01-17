@@ -46,7 +46,7 @@ use crate::nats::{
 use crate::pipeline::{shared_nats_handle, shared_secure_nats_handle, PipelineHarness};
 use crate::pipeline_namespace::PipelineNamespace;
 use crate::pipeline_scope::PipelineScope;
-use crate::satellite_management_utils::{
+use crate::ingestd_test_utils::{
     start_test_ingestd_with_config, TestIngestdConfig, TestIngestdHandle,
 };
 use crate::snapshot_helper::{self, FailureContext};
@@ -1347,7 +1347,7 @@ impl TestContext {
     /// Publish a test event to the ingestion pipeline via NATS.
     ///
     /// This is the preferred method for "Pipeline-First" testing. It sends the event
-    /// to NATS (simulating a satellite), where it will be picked up by ingestd,
+    /// to NATS (simulating a node), where it will be picked up by ingestd,
     /// validated, and inserted into the database.
     ///
     /// The event ID is returned so tests can wait for it using `WaitHelpers`.
@@ -1766,7 +1766,12 @@ impl<'a> TestEventBuilder<'a> {
         match self.timestamp {
             Some(ts) => {
                 self.ctx
-                    .publish_json_event_with_timestamp(&self.source, &self.event_type, self.payload, ts)
+                    .publish_json_event_with_timestamp(
+                        &self.source,
+                        &self.event_type,
+                        self.payload,
+                        ts,
+                    )
                     .await
             }
             None => {

@@ -5,8 +5,8 @@
 
 use crate::{
     stream_processor::{
-        Checkpoint, Node, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
-        ProcessorType, ScanArgs, ScanEstimate, ScanReport, TimeHorizon,
+        Checkpoint, Node, NodeCapabilities, NodeInitContext, NodeRuntimeState,
+        NodeType, ScanArgs, ScanEstimate, ScanReport, TimeHorizon,
     },
     NodeResult,
 };
@@ -40,7 +40,7 @@ pub struct FilesystemProcessor {
     watch_paths: Vec<Utf8PathBuf>,
 
     /// Runtime handles captured during initialization
-    runtime: Option<ProcessorRuntimeState>,
+    runtime: Option<NodeRuntimeState>,
 
     /// Last known filesystem state
     last_state: Option<FilesystemState>,
@@ -231,7 +231,7 @@ impl FilesystemProcessor {
 impl Node for FilesystemProcessor {
     type Config = FilesystemProcessorConfig;
 
-    async fn initialize(&mut self, init: ProcessorInitContext<Self::Config>) -> NodeResult<()> {
+    async fn initialize(&mut self, init: NodeInitContext<Self::Config>) -> NodeResult<()> {
         let (_config, raw_config, service_info, handles, work_dir_utf8) = init.into_parts();
         info!(
             processor = self.processor_name(),
@@ -247,7 +247,7 @@ impl Node for FilesystemProcessor {
             }
         }
 
-        let runtime = ProcessorRuntimeState::new(service_info, handles, raw_config, work_dir_utf8);
+        let runtime = NodeRuntimeState::new(service_info, handles, raw_config, work_dir_utf8);
         self.runtime = Some(runtime);
         Ok(())
     }
@@ -383,12 +383,12 @@ impl Node for FilesystemProcessor {
         "filesystem-example"
     }
 
-    fn processor_type(&self) -> ProcessorType {
-        ProcessorType::Ingestor
+    fn processor_type(&self) -> NodeType {
+        NodeType::Ingestor
     }
 
-    fn capabilities(&self) -> ProcessorCapabilities {
-        ProcessorCapabilities {
+    fn capabilities(&self) -> NodeCapabilities {
+        NodeCapabilities {
             supports_continuous: true, // Would support with proper file watcher
             supports_historical: true, // Limited by file modification times
             supports_snapshot: true,   // Full directory scanning

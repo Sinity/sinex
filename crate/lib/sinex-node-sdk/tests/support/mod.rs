@@ -1,1 +1,1 @@
-pub use sinex_test_utils::satellite_runtime as runtime;
+pub use sinex_test_utils::node_runtime as runtime;

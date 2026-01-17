@@ -1,8 +1,8 @@
-//! Satellite version information and utilities
+//! Node version information and utilities
 //!
 //! This module provides access to compile-time version information generated
 //! by the build script, including semantic versioning, git metadata, and
-//! build information for satellite coordination and handoff.
+//! build information for node coordination and handoff.
 
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -11,7 +11,7 @@ use std::fmt;
 use std::str::FromStr;
 use std::time::SystemTime;
 
-/// Complete satellite version information
+/// Complete node version information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeVersion {
     /// Semantic version (major.minor.patch)
@@ -31,29 +31,29 @@ pub struct NodeVersion {
 }
 
 impl NodeVersion {
-    /// Get the current satellite version information
+    /// Get the current node version information
     ///
     /// # Errors
     /// Returns `NodeError::Configuration` if any version information is invalid
     pub fn current() -> crate::NodeResult<Self> {
         Ok(Self {
-            version: satellite_version()?,
-            full_version: satellite_full_version(),
-            commit_hash: satellite_commit_hash(),
-            commit_count: satellite_commit_count()?,
-            branch: satellite_branch(),
-            build_timestamp: satellite_build_timestamp(),
-            is_dirty: satellite_is_dirty()?,
+            version: node_version()?,
+            full_version: node_full_version(),
+            commit_hash: node_commit_hash(),
+            commit_count: node_commit_count()?,
+            branch: node_branch(),
+            build_timestamp: node_build_timestamp(),
+            is_dirty: node_is_dirty()?,
         })
     }
 
-    /// Get the current satellite version information with fallback to defaults on error
+    /// Get the current node version information with fallback to defaults on error
     ///
     /// This provides a non-panicking alternative for cases where you need version info
     /// but can tolerate fallback values if the build metadata is corrupted.
     pub fn current_or_default() -> Self {
         Self::current().unwrap_or_else(|e| {
-            tracing::warn!(error = %e, "Failed to get satellite version info, using defaults");
+            tracing::warn!(error = %e, "Failed to get node version info, using defaults");
             Self {
                 version: Version::new(0, 1, 0), // Fallback version
                 full_version: "0.1.0-unknown".to_string(),
@@ -162,7 +162,7 @@ pub struct NodeInstance {
 }
 
 impl NodeInstance {
-    /// Create a new satellite instance
+    /// Create a new node instance
     ///
     /// # Errors
     /// Returns `NodeError::Configuration` if version information is invalid
@@ -178,7 +178,7 @@ impl NodeInstance {
         })
     }
 
-    /// Create a new satellite instance with fallback version on error
+    /// Create a new node instance with fallback version on error
     ///
     /// This provides a non-panicking alternative that uses default version info
     /// if the build metadata is corrupted.
@@ -225,25 +225,25 @@ impl NodeInstance {
 
 // Version accessor functions using compile-time environment variables
 
-/// Get semantic version of the satellite
+/// Get semantic version of the node
 ///
 /// # Errors
-/// Returns `NodeError::Configuration` if the satellite version is invalid
-pub fn satellite_version() -> crate::NodeResult<Version> {
-    Version::from_str(option_env!("SATELLITE_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")))
-        .map_err(|e| crate::NodeError::Configuration(format!("Invalid satellite version: {}", e)))
+/// Returns `NodeError::Configuration` if the node version is invalid
+pub fn node_version() -> crate::NodeResult<Version> {
+    Version::from_str(option_env!("NODE_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")))
+        .map_err(|e| crate::NodeError::Configuration(format!("Invalid node version: {}", e)))
 }
 
 /// Get full version string with build metadata
-pub fn satellite_full_version() -> String {
-    option_env!("SATELLITE_FULL_VERSION")
+pub fn node_full_version() -> String {
+    option_env!("NODE_FULL_VERSION")
         .unwrap_or(env!("CARGO_PKG_VERSION"))
         .to_string()
 }
 
 /// Get git commit hash (8 characters)
-pub fn satellite_commit_hash() -> String {
-    option_env!("SATELLITE_COMMIT_HASH")
+pub fn node_commit_hash() -> String {
+    option_env!("NODE_COMMIT_HASH")
         .unwrap_or("unknown")
         .to_string()
 }
@@ -252,23 +252,23 @@ pub fn satellite_commit_hash() -> String {
 ///
 /// # Errors
 /// Returns `NodeError::Configuration` if the commit count is invalid
-pub fn satellite_commit_count() -> crate::NodeResult<u32> {
-    option_env!("SATELLITE_COMMIT_COUNT")
+pub fn node_commit_count() -> crate::NodeResult<u32> {
+    option_env!("NODE_COMMIT_COUNT")
         .unwrap_or("0")
         .parse()
         .map_err(|e| crate::NodeError::Configuration(format!("Invalid commit count: {}", e)))
 }
 
 /// Get git branch name
-pub fn satellite_branch() -> String {
-    option_env!("SATELLITE_BRANCH")
+pub fn node_branch() -> String {
+    option_env!("NODE_BRANCH")
         .unwrap_or("unknown")
         .to_string()
 }
 
 /// Get build timestamp
-pub fn satellite_build_timestamp() -> String {
-    option_env!("SATELLITE_BUILD_TIMESTAMP")
+pub fn node_build_timestamp() -> String {
+    option_env!("NODE_BUILD_TIMESTAMP")
         .unwrap_or("unknown")
         .to_string()
 }
@@ -277,8 +277,8 @@ pub fn satellite_build_timestamp() -> String {
 ///
 /// # Errors
 /// Returns `NodeError::Configuration` if the dirty flag is invalid
-pub fn satellite_is_dirty() -> crate::NodeResult<bool> {
-    option_env!("SATELLITE_IS_DIRTY")
+pub fn node_is_dirty() -> crate::NodeResult<bool> {
+    option_env!("NODE_IS_DIRTY")
         .unwrap_or("false")
         .parse()
         .map_err(|e| crate::NodeError::Configuration(format!("Invalid dirty flag: {}", e)))

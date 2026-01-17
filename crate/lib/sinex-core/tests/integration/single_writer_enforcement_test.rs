@@ -2,24 +2,24 @@
 //!
 //! These tests verify that the single-writer pattern is enforced:
 //! - Only ingestd can write canonical events to the database
-//! - Satellites must go through ingestd for all event writes
+//! - Nodes must go through ingestd for all event writes
 //! - Events only appear in DB after commit (post-commit publish property)
 
 use sinex_test_utils::prelude::*;
 use sqlx::Row;
 
-/// Test that satellites cannot directly write to core.events table
+/// Test that nodes cannot directly write to core.events table
 #[sinex_test]
-async fn test_satellites_cannot_write_directly_to_events(ctx: TestContext) -> Result<()> {
+async fn test_nodes_cannot_write_directly_to_events(ctx: TestContext) -> Result<()> {
     // This test would need to be run with different connection permissions
     // In a real CI environment, we'd have:
-    // 1. A satellite connection with restricted permissions
+    // 1. A node connection with restricted permissions
     // 2. An ingestd connection with write permissions
 
     // For now, we document the expected behavior
-    // In production, satellites should only have SELECT permission on core.events
+    // In production, nodes should only have SELECT permission on core.events
 
-    // Try to insert directly as a satellite (should fail in production)
+    // Try to insert directly as a node (should fail in production)
     //
     // In production with proper permissions, this would fail with:
     // "permission denied for table events"
@@ -50,7 +50,7 @@ async fn test_satellites_cannot_write_directly_to_events(ctx: TestContext) -> Re
 #[sinex_test]
 async fn test_only_ingestd_writes_events(ctx: TestContext) -> Result<()> {
     // In a proper setup, we would:
-    // 1. Start a satellite service
+    // 1. Start a node service
     // 2. Have it attempt to write directly
     // 3. Verify it fails
     // 4. Have it go through ingestd
@@ -67,7 +67,7 @@ async fn test_only_ingestd_writes_events(ctx: TestContext) -> Result<()> {
     .fetch_all(&ctx.pool)
     .await?;
 
-    // All non-test events should come from known satellites
+    // All non-test events should come from known nodes
     for row in result {
         let source: String = row.get("source");
         assert!(

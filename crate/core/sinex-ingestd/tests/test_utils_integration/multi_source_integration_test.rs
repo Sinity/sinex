@@ -10,13 +10,13 @@ trait EventSource: Send + Sync {
     async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> color_eyre::Result<()>;
 }
 
-/// Test satellite that generates filesystem-like events
-struct TestFilesystemSatellite {
+/// Test node that generates filesystem-like events
+struct TestFilesystemNode {
     events_to_generate: usize,
     events_sent: usize,
 }
 
-impl TestFilesystemSatellite {
+impl TestFilesystemNode {
     fn new(events_to_generate: usize) -> Self {
         Self {
             events_to_generate,
@@ -25,13 +25,13 @@ impl TestFilesystemSatellite {
     }
 }
 
-/// Test satellite that generates command-like events
-struct TestCommandSatellite {
+/// Test node that generates command-like events
+struct TestCommandNode {
     events_to_generate: usize,
     events_sent: usize,
 }
 
-impl TestCommandSatellite {
+impl TestCommandNode {
     fn new(events_to_generate: usize) -> Self {
         Self {
             events_to_generate,
@@ -40,13 +40,13 @@ impl TestCommandSatellite {
     }
 }
 
-/// Test satellite that performs finite scanning operations
-struct TestScannerSatellite {
+/// Test node that performs finite scanning operations
+struct TestScannerNode {
     items_to_scan: usize,
     items_scanned: usize,
 }
 
-impl TestScannerSatellite {
+impl TestScannerNode {
     fn new(items_to_scan: usize) -> Self {
         Self {
             items_to_scan,
@@ -56,7 +56,7 @@ impl TestScannerSatellite {
 }
 
 #[async_trait]
-impl EventSource for TestFilesystemSatellite {
+impl EventSource for TestFilesystemNode {
     async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> color_eyre::Result<()> {
         // This would be replaced with real filesystem watching
         while self.events_sent < self.events_to_generate {
@@ -83,7 +83,7 @@ impl EventSource for TestFilesystemSatellite {
 }
 
 #[async_trait]
-impl EventSource for TestCommandSatellite {
+impl EventSource for TestCommandNode {
     async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> color_eyre::Result<()> {
         // This would be replaced with real command monitoring
         while self.events_sent < self.events_to_generate {
@@ -111,7 +111,7 @@ impl EventSource for TestCommandSatellite {
 }
 
 #[async_trait]
-impl EventSource for TestScannerSatellite {
+impl EventSource for TestScannerNode {
     async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> color_eyre::Result<()> {
         // Scanner mode - finite operation that completes
         while self.items_scanned < self.items_to_scan {
@@ -138,14 +138,14 @@ impl EventSource for TestScannerSatellite {
 }
 
 #[sinex_test]
-async fn test_satellite_basic_initialization(ctx: TestContext) -> color_eyre::Result<()> {
-    // Create filesystem satellite
-    let mut satellite = TestFilesystemSatellite::new(5);
+async fn test_node_basic_initialization(ctx: TestContext) -> color_eyre::Result<()> {
+    // Create filesystem node
+    let mut node = TestFilesystemNode::new(5);
     // Create a channel for streaming events
     let (tx, mut rx) = mpsc::channel(100);
 
     // Stream some events
-    let handle = tokio::spawn(async move { satellite.stream_events(tx).await });
+    let handle = tokio::spawn(async move { node.stream_events(tx).await });
 
     // Verify we can receive events
     let mut event_count = 0;
@@ -164,16 +164,16 @@ async fn test_satellite_basic_initialization(ctx: TestContext) -> color_eyre::Re
     Ok(())
 }
 
-/// Test that satellite can stream events through full pipeline
+/// Test that node can stream events through full pipeline
 #[sinex_test]
-async fn test_satellite_event_pipeline_integration(ctx: TestContext) -> color_eyre::Result<()> {
-    // Create a test satellite that generates events
-    let mut satellite = TestFilesystemSatellite::new(5);
+async fn test_node_event_pipeline_integration(ctx: TestContext) -> color_eyre::Result<()> {
+    // Create a test node that generates events
+    let mut node = TestFilesystemNode::new(5);
 
     // Create a channel to collect events
     let (tx, mut rx) = mpsc::channel(100);
-    // Start the satellite in a background task
-    let satellite_handle = tokio::spawn(async move { satellite.stream_events(tx).await });
+    // Start the node in a background task
+    let node_handle = tokio::spawn(async move { node.stream_events(tx).await });
 
     // Collect events from the channel
     let mut events = Vec::new();
@@ -187,15 +187,15 @@ async fn test_satellite_event_pipeline_integration(ctx: TestContext) -> color_ey
             Ok(None) => break, // Channel closed
             Err(_) => {
                 timeout_count += 1;
-                if satellite_handle.is_finished() {
+                if node_handle.is_finished() {
                     break;
                 }
             }
         }
     }
 
-    // Stop the satellite
-    satellite_handle.abort();
+    // Stop the node
+    node_handle.abort();
 
     // Verify events were generated
     assert!(!events.is_empty(), "No events received");
@@ -210,22 +210,22 @@ async fn test_satellite_event_pipeline_integration(ctx: TestContext) -> color_ey
     Ok(())
 }
 
-/// Test satellite coordination and multi-satellite scenarios
+/// Test node coordination and multi-node scenarios
 #[sinex_test]
-async fn test_multi_satellite_coordination(ctx: TestContext) -> color_eyre::Result<()> {
-    // Create multiple satellites of different types
-    let mut fs_satellite = TestFilesystemSatellite::new(3);
-    let mut cmd_satellite = TestCommandSatellite::new(2);
+async fn test_multi_node_coordination(ctx: TestContext) -> color_eyre::Result<()> {
+    // Create multiple nodes of different types
+    let mut fs_node = TestFilesystemNode::new(3);
+    let mut cmd_node = TestCommandNode::new(2);
 
-    // Create channels for each satellite
+    // Create channels for each node
     let (fs_tx, mut fs_rx) = mpsc::channel(100);
     let (cmd_tx, mut cmd_rx) = mpsc::channel(100);
 
-    // Start both satellites concurrently
-    let fs_handle = tokio::spawn(async move { fs_satellite.stream_events(fs_tx).await });
-    let cmd_handle = tokio::spawn(async move { cmd_satellite.stream_events(cmd_tx).await });
+    // Start both nodes concurrently
+    let fs_handle = tokio::spawn(async move { fs_node.stream_events(fs_tx).await });
+    let cmd_handle = tokio::spawn(async move { cmd_node.stream_events(cmd_tx).await });
 
-    // Collect events from both satellites
+    // Collect events from both nodes
     let mut events = Vec::new();
     let mut timeout_count = 0;
 
@@ -252,11 +252,11 @@ async fn test_multi_satellite_coordination(ctx: TestContext) -> color_eyre::Resu
         }
     }
 
-    // Stop both satellites
+    // Stop both nodes
     fs_handle.abort();
     cmd_handle.abort();
 
-    // Verify events from both satellites were received
+    // Verify events from both nodes were received
     assert!(!events.is_empty(), "No events received");
     assert_eq!(
         events.len(),
@@ -279,16 +279,16 @@ async fn test_multi_satellite_coordination(ctx: TestContext) -> color_eyre::Resu
     Ok(())
 }
 
-/// Test satellite scanner mode (one-time scan) vs sensor mode (continuous)
+/// Test node scanner mode (one-time scan) vs sensor mode (continuous)
 #[sinex_test]
-async fn test_satellite_operational_modes(ctx: TestContext) -> color_eyre::Result<()> {
+async fn test_node_operational_modes(ctx: TestContext) -> color_eyre::Result<()> {
     // Test 1: Scanner mode - finite operation
     let (scanner_tx, mut scanner_rx) = mpsc::channel(100);
-    let mut scanner_satellite = TestScannerSatellite::new(3);
+    let mut scanner_node = TestScannerNode::new(3);
 
     // Run scanner mode (should complete naturally)
     let scanner_start = std::time::Instant::now();
-    let scanner_result = scanner_satellite.stream_events(scanner_tx).await;
+    let scanner_result = scanner_node.stream_events(scanner_tx).await;
     let scanner_duration = scanner_start.elapsed();
 
     // Should complete successfully
@@ -312,10 +312,10 @@ async fn test_satellite_operational_modes(ctx: TestContext) -> color_eyre::Resul
 
     // Test 2: Sensor mode - continuous operation
     let (sensor_tx, mut sensor_rx) = mpsc::channel(100);
-    let mut sensor_satellite = TestFilesystemSatellite::new(100); // Large number to ensure continuous operation
+    let mut sensor_node = TestFilesystemNode::new(100); // Large number to ensure continuous operation
 
     // Start sensor mode in background
-    let sensor_handle = tokio::spawn(async move { sensor_satellite.stream_events(sensor_tx).await });
+    let sensor_handle = tokio::spawn(async move { sensor_node.stream_events(sensor_tx).await });
 
     let mut sensor_events = Vec::new();
     let first_event = tokio::time::timeout(Duration::from_secs(2), sensor_rx.recv()).await??;
@@ -344,17 +344,17 @@ async fn test_satellite_operational_modes(ctx: TestContext) -> color_eyre::Resul
     Ok(())
 }
 
-/// Test satellite reconnection and fault tolerance
+/// Test node reconnection and fault tolerance
 #[sinex_test]
-async fn test_satellite_fault_tolerance(ctx: TestContext) -> color_eyre::Result<()> {
+async fn test_node_fault_tolerance(ctx: TestContext) -> color_eyre::Result<()> {
     // Create a channel that simulates failure scenarios
     let (tx, mut rx) = mpsc::channel(100);
 
-    // Create a satellite that will try to send events
-    let mut satellite = TestFilesystemSatellite::new(10);
+    // Create a node that will try to send events
+    let mut node = TestFilesystemNode::new(10);
 
-    // Start satellite in background
-    let satellite_handle = tokio::spawn(async move { satellite.stream_events(tx).await });
+    // Start node in background
+    let node_handle = tokio::spawn(async move { node.stream_events(tx).await });
 
     // Collect events with simulated processing failures
     let mut events = Vec::new();
@@ -376,15 +376,15 @@ async fn test_satellite_fault_tolerance(ctx: TestContext) -> color_eyre::Result<
             Ok(None) => break, // Channel closed
             Err(_) => {
                 // Timeout - continue
-                if satellite_handle.is_finished() {
+                if node_handle.is_finished() {
                     break;
                 }
             }
         }
     }
 
-    // Stop satellite
-    satellite_handle.abort();
+    // Stop node
+    node_handle.abort();
 
     // Verify that despite failures, some events were still processed
     assert!(!events.is_empty(), "No events received despite failures");
@@ -417,25 +417,25 @@ async fn test_satellite_fault_tolerance(ctx: TestContext) -> color_eyre::Result<
 /// Test event ordering across multiple sources
 #[sinex_test]
 async fn test_multi_source_event_ordering(ctx: TestContext) -> color_eyre::Result<()> {
-    // Create three different satellite types
-    let mut fs_satellite = TestFilesystemSatellite::new(2);
-    let mut cmd_satellite = TestCommandSatellite::new(2);
-    let mut scanner_satellite = TestScannerSatellite::new(2);
+    // Create three different node types
+    let mut fs_node = TestFilesystemNode::new(2);
+    let mut cmd_node = TestCommandNode::new(2);
+    let mut scanner_node = TestScannerNode::new(2);
 
     // Create a shared channel for all events
     let (tx, mut rx) = mpsc::channel(100);
 
-    // Clone sender for each satellite
+    // Clone sender for each node
     let fs_tx = tx.clone();
     let cmd_tx = tx.clone();
     let scanner_tx = tx.clone();
 
-    // Start all satellites concurrently
-    let fs_handle = tokio::spawn(async move { fs_satellite.stream_events(fs_tx).await });
-    let cmd_handle = tokio::spawn(async move { cmd_satellite.stream_events(cmd_tx).await });
-    let scanner_handle = tokio::spawn(async move { scanner_satellite.stream_events(scanner_tx).await });
+    // Start all nodes concurrently
+    let fs_handle = tokio::spawn(async move { fs_node.stream_events(fs_tx).await });
+    let cmd_handle = tokio::spawn(async move { cmd_node.stream_events(cmd_tx).await });
+    let scanner_handle = tokio::spawn(async move { scanner_node.stream_events(scanner_tx).await });
 
-    // Drop original sender to close channel when all satellites finish
+    // Drop original sender to close channel when all nodes finish
     drop(tx);
 
     // Collect all events in order they arrive
@@ -447,7 +447,7 @@ async fn test_multi_source_event_ordering(ctx: TestContext) -> color_eyre::Resul
         }
     }
 
-    // Wait for all satellites to complete
+    // Wait for all nodes to complete
     let _ = fs_handle.await;
     let _ = cmd_handle.await;
     let _ = scanner_handle.await;
@@ -493,27 +493,27 @@ async fn test_multi_source_event_ordering(ctx: TestContext) -> color_eyre::Resul
 /// Test handling of heterogeneous event payloads from multiple sources
 #[sinex_test]
 async fn test_multi_source_payload_diversity(ctx: TestContext) -> color_eyre::Result<()> {
-    // Create satellites with different payload structures
-    let mut fs_satellite = TestFilesystemSatellite::new(1);
-    let mut cmd_satellite = TestCommandSatellite::new(1);
-    let mut scanner_satellite = TestScannerSatellite::new(1);
+    // Create nodes with different payload structures
+    let mut fs_node = TestFilesystemNode::new(1);
+    let mut cmd_node = TestCommandNode::new(1);
+    let mut scanner_node = TestScannerNode::new(1);
 
-    // Create channels for each satellite
+    // Create channels for each node
     let (fs_tx, mut fs_rx) = mpsc::channel(10);
     let (cmd_tx, mut cmd_rx) = mpsc::channel(10);
     let (scanner_tx, mut scanner_rx) = mpsc::channel(10);
 
-    // Start all satellites
-    let fs_handle = tokio::spawn(async move { fs_satellite.stream_events(fs_tx).await });
-    let cmd_handle = tokio::spawn(async move { cmd_satellite.stream_events(cmd_tx).await });
-    let scanner_handle = tokio::spawn(async move { scanner_satellite.stream_events(scanner_tx).await });
+    // Start all nodes
+    let fs_handle = tokio::spawn(async move { fs_node.stream_events(fs_tx).await });
+    let cmd_handle = tokio::spawn(async move { cmd_node.stream_events(cmd_tx).await });
+    let scanner_handle = tokio::spawn(async move { scanner_node.stream_events(scanner_tx).await });
 
     // Collect one event from each source
     let fs_event = fs_rx.recv().await.expect("Should receive filesystem event");
     let cmd_event = cmd_rx.recv().await.expect("Should receive command event");
     let scanner_event = scanner_rx.recv().await.expect("Should receive scanner event");
 
-    // Wait for satellites to complete
+    // Wait for nodes to complete
     let _ = fs_handle.await;
     let _ = cmd_handle.await;
     let _ = scanner_handle.await;

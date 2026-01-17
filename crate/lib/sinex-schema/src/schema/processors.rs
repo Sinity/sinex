@@ -1,9 +1,9 @@
 //! The Canonical Database Schema for Processor State and Operations.
 //!
 //! This module defines the tables that manage the state and lifecycle of the
-//! system's distributed agents (satellites). It includes schemas for:
+//! system's distributed agents (nodes). It includes schemas for:
 //! - Auditing high-level system operations (`operations_log`).
-//! - Coordinating leadership and instance discovery (`satellite_instances`, etc.).
+//! - Coordinating leadership and instance discovery (`node_instances`, etc.).
 
 use crate::schema::TableDef;
 use sea_orm_migration::prelude::*;
@@ -77,6 +77,6 @@ impl OperationsLog {
 }
 
 // =============================================================================
-// II. SATELLITE COORDINATION
+// II. NODE COORDINATION
 // -- These tables provide the backend for distributed leadership election and handoff.
 // =============================================================================

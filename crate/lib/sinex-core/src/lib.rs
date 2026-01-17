@@ -174,7 +174,7 @@ pub mod prelude {
     pub use crate::{
         create_pool, create_pool_strict, create_test_pool, db_error, from_db, opt_from_db,
         opt_to_db, opt_vec_from_db, opt_vec_to_db, to_db, ulid_to_uuid, uuid_to_ulid,
-        with_transaction, BlobRepository, DbPool, DbPoolRef, DbPoolExt, DbUuidCollectionExt,
+        with_transaction, BlobRepository, DbPool, DbPoolExt, DbPoolRef, DbUuidCollectionExt,
         DbUuidExt, Entity, EntityRelation, Event, EventId, EventRepository, EventSearchFilters,
         JsonValue, KnowledgeGraphRepository, NewSchema, PoolConfig, Provenance, Repository,
         RetryConfig, SourceMaterial, SourceMaterialRepository, StateRepository, UlidArrayExt,

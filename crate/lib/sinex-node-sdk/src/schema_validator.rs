@@ -1,6 +1,6 @@
-//! Satellite-side schema validation
+//! Node-side schema validation
 //!
-//! Enables satellites to validate events before publishing to NATS,
+//! Enables nodes to validate events before publishing to NATS,
 //! reducing bandwidth and providing early feedback on schema errors.
 //!
 //! Uses schema broadcasts from ingestd and fetches full schemas from
@@ -40,7 +40,7 @@ struct CompiledSchema {
     validator: Arc<JSONSchema>,
 }
 
-/// Schema validator for satellites
+/// Schema validator for nodes
 ///
 /// This validator:
 /// 1. Receives schema metadata via NATS broadcasts from ingestd
@@ -60,7 +60,7 @@ struct CompiledSchema {
 /// - DB fallback: if schema not in cache, fetches from DB, caches it, then validates
 /// - Provides full schema validation even if broadcasts are missed
 #[derive(Clone)]
-pub struct SatelliteSchemaValidator {
+pub struct NodeSchemaValidator {
     /// Compiled schemas by schema_id
     schemas: Arc<RwLock<AHashMap<Ulid, CompiledSchema>>>,
     /// Lookup: (source, event_type) → schema_id
@@ -71,7 +71,7 @@ pub struct SatelliteSchemaValidator {
     kv_store: Option<Store>,
 }
 
-impl SatelliteSchemaValidator {
+impl NodeSchemaValidator {
     /// Create a new edge-mode validator (cache-only, no DB fallback)
     pub fn new() -> Self {
         Self {
@@ -193,7 +193,7 @@ impl SatelliteSchemaValidator {
         info!(
             compiled,
             total = self.schema_count(),
-            "Updated satellite schema cache"
+            "Updated node schema cache"
         );
 
         Ok(compiled)
@@ -430,7 +430,7 @@ impl SatelliteSchemaValidator {
     }
 }
 
-impl Default for SatelliteSchemaValidator {
+impl Default for NodeSchemaValidator {
     fn default() -> Self {
         Self::new()
     }
@@ -445,7 +445,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_edge_mode_validator_strict() {
-        let validator = SatelliteSchemaValidator::new();
+        let validator = NodeSchemaValidator::new();
 
         // Edge mode validator should be strict
         assert!(validator.is_edge_mode());
@@ -462,7 +462,7 @@ mod tests {
 
     #[test]
     fn test_schema_cache_operations() {
-        let validator = SatelliteSchemaValidator::new();
+        let validator = NodeSchemaValidator::new();
 
         assert_eq!(validator.schema_count(), 0);
         assert!(validator.is_empty());

@@ -535,6 +535,23 @@ pub async fn dispatch_rpc_method(
             handle_audit_get(pool, params).await
         }
 
+        // Shadow consumer methods (The Tether)
+        "shadow.create" => {
+            let nats = nats_client_required(services)?;
+            let env = services.environment();
+            handle_shadow_create(nats, env, params).await
+        }
+        "shadow.list" => {
+            let nats = nats_client_required(services)?;
+            let env = services.environment();
+            handle_shadow_list(nats, env, params).await
+        }
+        "shadow.delete" => {
+            let nats = nats_client_required(services)?;
+            let env = services.environment();
+            handle_shadow_delete(nats, env, params).await
+        }
+
         _ => Err(color_eyre::Report::new(UnknownMethodError {
             method: method.to_string(),
         })),
@@ -1167,7 +1184,10 @@ mod tests {
     async fn gateway_auth_blocks_missing_token() -> TestResult<()> {
         let auth = GatewayAuth::with_test_token("secret");
         let headers = HeaderMap::new();
-        assert!(matches!(auth.verify(&headers).await, Err(AuthError::Missing)));
+        assert!(matches!(
+            auth.verify(&headers).await,
+            Err(AuthError::Missing)
+        ));
         Ok(())
     }
 

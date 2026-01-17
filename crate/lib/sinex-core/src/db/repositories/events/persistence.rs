@@ -141,7 +141,7 @@ pub struct BatchViolation {
     pub row_num: Option<i64>,
 }
 
-/// Suspicious event record  
+/// Suspicious event record
 #[derive(Debug, FromRow)]
 pub struct SuspiciousEvent {
     pub event_id: Id<Event<JsonValue>>,
@@ -262,7 +262,7 @@ impl<'a> EventRepository<'a> {
     ) -> DbResult<Vec<(Ulid, Ulid)>> {
         sqlx::query!(
             r#"
-            SELECT 
+            SELECT
                 live_event_id as "live_event_id!: Ulid",
                 archived_event_id as "archived_event_id!: Ulid"
             FROM core.cascade_find_integrity_violations($1, $2)
@@ -370,7 +370,7 @@ impl<'a> EventRepository<'a> {
                 let payload = payload.clone();
                 let ingestor_version = ingestor_version.clone();
                 let offset_kind = offset_kind.clone();
-                
+
                 Box::pin(async move {
                     // Enforce REPEATABLE READ for consistent view during cycle check
                     set_repeatable_read(tx).await?;
@@ -415,7 +415,7 @@ impl<'a> EventRepository<'a> {
                             $11::uuid::ulid, $12, $13, $14,
                             $15, $16::uuid[]::ulid[]
                         )
-                        RETURNING 
+                        RETURNING
                             id::uuid as "id!: sinex_schema::ulid::Ulid",
                             source as "source!",
                             event_type as "event_type!",
@@ -535,7 +535,7 @@ impl<'a> EventRepository<'a> {
                 $11::uuid::ulid, $12, $13, $14,
                 $15, $16::uuid[]::ulid[]
             )
-            RETURNING 
+            RETURNING
                 id::uuid as "id!: sinex_schema::ulid::Ulid",
                 source as "source!",
                 event_type as "event_type!",
@@ -818,7 +818,7 @@ impl<'a> EventRepository<'a> {
             ) VALUES (
                 $1, $2, $3, $4, $5, $6
             )
-            RETURNING 
+            RETURNING
                 id as "id: Id<EventAnnotation>",
                 event_id as "event_id: Id<Event<JsonValue>>",
                 annotation_type as "annotation_type!",
@@ -852,7 +852,7 @@ impl<'a> EventRepository<'a> {
             UPDATE core.event_annotations
             SET content = $2, updated_at = CURRENT_TIMESTAMP
             WHERE id = $1
-            RETURNING 
+            RETURNING
                 id as "id: Id<EventAnnotation>",
                 event_id as "event_id: Id<Event<JsonValue>>",
                 annotation_type as "annotation_type!",
@@ -1207,7 +1207,7 @@ impl<'a, 't> EventRepositoryTx<'a, 't> {
     ) -> DbResult<Vec<(Ulid, Ulid)>> {
         sqlx::query!(
             r#"
-            SELECT 
+            SELECT
                 live_event_id as "live_event_id!: Ulid",
                 archived_event_id as "archived_event_id!: Ulid"
             FROM core.cascade_find_integrity_violations($1, $2)

@@ -47,7 +47,8 @@ pub fn validate_time_range(
     since: Option<DateTime<Utc>>,
     until: Option<DateTime<Utc>>,
 ) -> Result<()> {
-    query_validation::validate_time_range(since, until).map_err(|e| eyre!("Invalid time range: {}", e))
+    query_validation::validate_time_range(since, until)
+        .map_err(|e| eyre!("Invalid time range: {}", e))
 }
 
 /// Validate a subject/topic name (no wildcards in operations, simple validation)

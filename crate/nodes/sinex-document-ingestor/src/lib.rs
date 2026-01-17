@@ -24,8 +24,8 @@ use sinex_node_sdk::{
     event_processor::EventTransport,
     stage_as_you_go::StageAsYouGoContext,
     stream_processor::{
-        Checkpoint, Node, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
-        ProcessorType, ScanArgs, ScanEstimate, ScanReport, TimeHorizon,
+        Checkpoint, Node, NodeCapabilities, NodeInitContext, NodeRuntimeState,
+        NodeType, ScanArgs, ScanEstimate, ScanReport, TimeHorizon,
     },
     NodeError, NodeResult,
 };
@@ -101,7 +101,7 @@ impl DocumentIngestorConfig {
 
 /// Simplified document processor that ingests local files.
 pub struct DocumentProcessor {
-    runtime: Option<ProcessorRuntimeState>,
+    runtime: Option<NodeRuntimeState>,
     config: DocumentIngestorConfig,
     stage_context: Option<StageAsYouGoContext>,
     acquisition: Option<Arc<AcquisitionManager>>,
@@ -128,7 +128,7 @@ impl DocumentProcessor {
 
     async fn initialise_with_runtime_state(
         &mut self,
-        runtime: ProcessorRuntimeState,
+        runtime: NodeRuntimeState,
         config: DocumentIngestorConfig,
     ) -> NodeResult<()> {
         config.validate().map_err(NodeError::Configuration)?;
@@ -330,7 +330,7 @@ impl DocumentProcessor {
 impl Node for DocumentProcessor {
     type Config = DocumentIngestorConfig;
 
-    async fn initialize(&mut self, init: ProcessorInitContext<Self::Config>) -> NodeResult<()> {
+    async fn initialize(&mut self, init: NodeInitContext<Self::Config>) -> NodeResult<()> {
         let (config, runtime) = init.into_runtime();
         self.initialise_with_runtime_state(runtime, config).await
     }
@@ -394,16 +394,16 @@ impl Node for DocumentProcessor {
         "document-ingestor"
     }
 
-    fn processor_type(&self) -> ProcessorType {
-        ProcessorType::Ingestor
+    fn processor_type(&self) -> NodeType {
+        NodeType::Ingestor
     }
 
     async fn current_checkpoint(&self) -> NodeResult<Checkpoint> {
         Ok(Checkpoint::None)
     }
 
-    fn capabilities(&self) -> ProcessorCapabilities {
-        ProcessorCapabilities {
+    fn capabilities(&self) -> NodeCapabilities {
+        NodeCapabilities {
             supports_continuous: false,
             supports_historical: true,
             supports_snapshot: true,

@@ -1,7 +1,7 @@
 //! Unit tests for version system concepts
 //!
 //! Tests version-related functionality available at the workspace level.
-//! Note: Full satellite version system tests are located in sinex-satellite-sdk
+//! Note: Full node version system tests are located in sinex-node-sdk
 //! where they have access to the complete version infrastructure.
 //!
 //! This test suite validates:
@@ -19,7 +19,7 @@ use std::cmp::Ordering;
 
 #[sinex_test]
 async fn test_version_string_parsing_patterns() -> TestResult<()> {
-    // Test semantic version parsing patterns that the satellite SDK would use
+    // Test semantic version parsing patterns that the node SDK would use
     let version_patterns = vec![
         "1.0.100+abc123",
         "2.1.250+def456.dirty",
@@ -184,9 +184,9 @@ async fn test_instance_identification_patterns() -> TestResult<()> {
     // Test patterns for identifying service instances
     let instance_patterns = vec![
         ("fs-watcher", "instance-123"),
-        ("terminal-satellite", "term-456"),
-        ("desktop-satellite", "desktop-789"),
-        ("system-satellite", "sys-001"),
+        ("terminal-ingestor", "term-456"),
+        ("desktop-ingestor", "desktop-789"),
+        ("system-ingestor", "sys-001"),
     ];
 
     let mut seen_ids = std::collections::HashSet::new();
@@ -226,7 +226,7 @@ async fn test_instance_metadata_structure() -> TestResult<()> {
             start_time: std::time::SystemTime::now(),
         },
         InstanceMetadata {
-            service_name: "terminal-satellite".to_string(),
+            service_name: "terminal-ingestor".to_string(),
             instance_id: "term-002".to_string(),
             host_name: "desktop".to_string(),
             start_time: std::time::SystemTime::now(),
@@ -362,7 +362,7 @@ async fn test_tiebreaker_scenarios() -> TestResult<()> {
 #[sinex_test]
 async fn test_version_system_integration_concepts() -> TestResult<()> {
     // Test concepts for version system integration
-    // Note: Full integration tests are in sinex-satellite-sdk where the
+    // Note: Full integration tests are in sinex-node-sdk where the
     // actual version system components are available
 
     // Test that we can conceptually validate version integration patterns
@@ -373,7 +373,7 @@ async fn test_version_system_integration_concepts() -> TestResult<()> {
             has_build_metadata: true,
         },
         VersionIntegrationScenario {
-            component: "terminal-satellite".to_string(),
+            component: "terminal-ingestor".to_string(),
             expected_version_pattern: r"^\d+\.\d+\.\d+\+[a-f0-9]+(\.dirty)?$".to_string(),
             has_build_metadata: true,
         },

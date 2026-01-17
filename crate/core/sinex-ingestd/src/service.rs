@@ -507,7 +507,7 @@ impl IngestService {
             })
             .collect();
 
-        // Store full schemas in NATS KV for satellite-side validation
+        // Store full schemas in NATS KV for node-side validation
         if let Err(e) = Self::store_schemas_in_kv(&entries, pool, &js).await {
             warn!("Failed to store schemas in KV: {}", e);
         }
@@ -527,7 +527,7 @@ impl IngestService {
         Ok(())
     }
 
-    /// Store full schema JSON in NATS KV for satellite validation
+    /// Store full schema JSON in NATS KV for node validation
     async fn store_schemas_in_kv(
         entries: &[SchemaBroadcastEntry],
         pool: &PgPool,
@@ -584,7 +584,7 @@ impl IngestService {
 
         info!(
             count = entries.len(),
-            "Stored full schemas in NATS KV for satellite validation"
+            "Stored full schemas in NATS KV for node validation"
         );
 
         Ok(())

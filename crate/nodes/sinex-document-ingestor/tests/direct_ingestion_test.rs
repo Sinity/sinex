@@ -1,10 +1,8 @@
 use sinex_core::{DbPoolExt, Id};
 use sinex_document_ingestor::{DocumentIngestorConfig, DocumentProcessor};
-use sinex_node_sdk::stream_processor::{Checkpoint, ProcessorInitContext, ScanArgs, TimeHorizon};
+use sinex_node_sdk::stream_processor::{Checkpoint, NodeInitContext, ScanArgs, TimeHorizon};
 use sinex_node_sdk::Node;
-use sinex_test_utils::{
-    satellite_runtime::TestRuntimeBuilder, sinex_test, TestContext,
-};
+use sinex_test_utils::{node_runtime::TestRuntimeBuilder, sinex_test, TestContext};
 use tempfile::NamedTempFile;
 use tokio::time::{timeout, Duration};
 
@@ -29,7 +27,7 @@ async fn document_processor_emits_events_for_targets(ctx: TestContext) -> TestRe
         .expect("temp file should have a parent")
         .to_string_lossy()
         .into_owned()];
-    let init_ctx = ProcessorInitContext::new(config, raw_config, service_info, handles, work_dir);
+    let init_ctx = NodeInitContext::new(config, raw_config, service_info, handles, work_dir);
 
     let mut processor = DocumentProcessor::new();
     processor.initialize(init_ctx).await?;

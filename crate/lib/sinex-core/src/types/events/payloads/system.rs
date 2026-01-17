@@ -443,11 +443,11 @@ pub struct SystemHealthSummaryPayload {
     pub components: HashMap<String, ComponentHealth>,
 }
 
-// Satellite heartbeat events
+// Node heartbeat events
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "journald", event_type = "satellite.heartbeat")]
-pub struct SatelliteHeartbeatPayload {
+#[event_payload(source = "journald", event_type = "node.heartbeat")]
+pub struct NodeHeartbeatPayload {
     pub service_name: String,
     pub uptime_seconds: Option<i64>,
     pub memory_usage_mb: Option<i32>,

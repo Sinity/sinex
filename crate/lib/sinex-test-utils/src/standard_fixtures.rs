@@ -110,21 +110,21 @@ pub static INTEGRATION_FIXTURE: Lazy<FixtureSet> = Lazy::new(|| {
         })
 });
 
-/// Satellite benchmark fixture
+/// Node benchmark fixture
 ///
-/// For testing satellite-specific patterns:
+/// For testing node-specific patterns:
 /// - Burst patterns (scanner mode)
 /// - Continuous streams (sensor mode)
 /// - Error scenarios
 /// - Retry patterns
-pub static SATELLITE_BENCH_FIXTURE: Lazy<FixtureSet> = Lazy::new(|| {
+pub static NODE_BENCH_FIXTURE: Lazy<FixtureSet> = Lazy::new(|| {
     FixtureSet::new()
         .with_events(DatasetSize::Small, 5555)
         .with_events(DatasetSize::Medium, 6666)
-        .with_checkpoints(500) // Frequent checkpoints for satellite progress
+        .with_checkpoints(500) // Frequent checkpoints for node progress
         .with_operations(10)
         .with_config(FixtureConfig {
-            base_dir: Utf8PathBuf::from("target/bench-fixtures/satellite"),
+            base_dir: Utf8PathBuf::from("target/bench-fixtures/node"),
             ..Default::default()
         })
 });
@@ -163,7 +163,7 @@ mod tests {
             &*QUERY_BENCH_FIXTURE,
             &*SMOKE_TEST_FIXTURE,
             &*INTEGRATION_FIXTURE,
-            &*SATELLITE_BENCH_FIXTURE,
+            &*NODE_BENCH_FIXTURE,
         ];
 
         let mut seeds = std::collections::HashSet::new();

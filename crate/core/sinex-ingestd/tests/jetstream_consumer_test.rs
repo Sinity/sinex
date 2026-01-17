@@ -7,7 +7,9 @@ use sinex_core::{db::query_helpers::ulid_to_uuid, types::Ulid, DbPoolExt, SinexE
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
 use sinex_test_utils::timing_utils::{Timeouts, WaitHelpers};
-use sinex_test_utils::{sinex_test, EventOverrides, TestContext, TestResult, TestSatellitePublisher};
+use sinex_test_utils::{
+    sinex_test, EventOverrides, TestContext, TestResult, TestNodePublisher,
+};
 use sqlx::Row;
 use std::sync::Arc;
 use std::time::Duration;
@@ -96,7 +98,7 @@ async fn consume_event_from_jetstream() -> color_eyre::Result<()> {
     nats.wait_for_stream(&js, &events_stream, Duration::from_secs(Timeouts::QUICK))
         .await?;
 
-    let publisher = TestSatellitePublisher::with_namespace(
+    let publisher = TestNodePublisher::with_namespace(
         nats_client.clone(),
         "test",
         Some(namespace.clone()),
@@ -165,7 +167,7 @@ async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
     nats.wait_for_stream(&js, &confirmations_stream, stream_timeout)
         .await?;
 
-    let publisher = TestSatellitePublisher::with_namespace(
+    let publisher = TestNodePublisher::with_namespace(
         nats_client.clone(),
         "test",
         Some(namespace.clone()),
@@ -189,9 +191,12 @@ async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
         )
         .await?;
 
-    let confirmation = timeout(Duration::from_secs(Timeouts::SHORT), confirmation_sub.next())
-        .await?
-        .expect("confirmation message");
+    let confirmation = timeout(
+        Duration::from_secs(Timeouts::SHORT),
+        confirmation_sub.next(),
+    )
+    .await?
+    .expect("confirmation message");
     let confirm_payload: serde_json::Value = serde_json::from_slice(&confirmation.payload)?;
     assert_eq!(confirm_payload["event_id"], event_id.to_string());
 
@@ -241,7 +246,7 @@ async fn consumer_persists_offset_kind(ctx: TestContext) -> color_eyre::Result<(
         .await?;
 
     let material_id = material_record.id;
-    let publisher = TestSatellitePublisher::with_namespace(
+    let publisher = TestNodePublisher::with_namespace(
         nats_client.clone(),
         "offset-test",
         Some(namespace.clone()),
@@ -321,7 +326,7 @@ async fn invalid_timestamp_routes_to_dlq_and_allows_progress() -> color_eyre::Re
     nats.wait_for_stream(&js, &dlq_stream, stream_timeout)
         .await?;
 
-    let publisher = TestSatellitePublisher::with_namespace(
+    let publisher = TestNodePublisher::with_namespace(
         nats_client.clone(),
         "test",
         Some(namespace.clone()),
@@ -382,7 +387,7 @@ async fn duplicate_events_are_idempotent(ctx: TestContext) -> TestResult<()> {
 
     let setup = start_isolated_consumer(&ctx, "idempotency").await?;
     let nats_client = ctx.nats_client();
-    let publisher = TestSatellitePublisher::with_namespace(
+    let publisher = TestNodePublisher::with_namespace(
         nats_client,
         "idempotency",
         Some(setup.namespace.clone()),
@@ -438,7 +443,7 @@ async fn dlq_captures_multiple_validation_failures(ctx: TestContext) -> TestResu
     let mut dlq_stream_handle = setup.js.get_stream(&dlq_stream).await?;
     let initial_messages = dlq_stream_handle.info().await?.state.messages;
     let nats_client = ctx.nats_client();
-    let publisher = TestSatellitePublisher::with_namespace(
+    let publisher = TestNodePublisher::with_namespace(
         nats_client,
         "validation",
         Some(setup.namespace.clone()),

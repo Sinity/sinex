@@ -3,7 +3,7 @@
 #![doc = include_str!("../../../../docs/current/architecture/SystemOperations_And_Integrity_Architecture.md")]
 #![doc = include_str!("../../../../docs/current/architecture/security-architecture.md")]
 
-//! Thin facade that re-exports high-level services used by gateways and satellites.
+//! Thin facade that re-exports high-level services used by gateways and nodes.
 
 /// Analytics service for processing and aggregating event data
 pub mod analytics;
