@@ -4,9 +4,11 @@
 //! for developing SimpleProcessor nodes.
 
 mod dev;
+mod generate;
 mod tether;
 mod watcher;
 
+use camino::Utf8PathBuf;
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::Result;
 use tracing::info;
@@ -39,6 +41,25 @@ enum Commands {
         #[arg(long)]
         release: bool,
     },
+
+    /// Generate a SimpleProcessor from a natural language spec
+    Generate {
+        /// Natural language specification for the node
+        /// Example: "detect git commands from terminal events"
+        spec: String,
+
+        /// Explicit name for the generated node
+        #[arg(long)]
+        name: Option<String>,
+
+        /// Dry run - show what would be generated without creating files
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Workspace root (defaults to current directory)
+        #[arg(long, default_value = ".")]
+        workspace: String,
+    },
 }
 
 #[tokio::main]
@@ -65,6 +86,19 @@ async fn main() -> Result<()> {
             info!("Building processor at {} (release: {})", path, release);
             // TODO: Implement build command
             Ok(())
+        }
+        Commands::Generate {
+            spec,
+            name,
+            dry_run,
+            workspace,
+        } => {
+            let args = generate::GenerateArgs {
+                spec,
+                name,
+                dry_run,
+            };
+            generate::run_generate(args, Utf8PathBuf::from(workspace)).await
         }
     }
 }
