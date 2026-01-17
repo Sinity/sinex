@@ -14,8 +14,8 @@ use sinex_core::EventType;
 use sinex_core::{Event, JsonValue};
 use sinex_node_sdk::{
     stream_processor::{
-        Checkpoint, Node, ProcessingStats, ProcessorInitContext, ProcessorRuntimeState,
-        ProcessorType, ScanArgs, ScanReport, TimeHorizon,
+        Checkpoint, Node, ProcessingStats, NodeInitContext, NodeRuntimeState,
+        NodeType, ScanArgs, ScanReport, TimeHorizon,
     },
     NodeError, NodeResult,
 };
@@ -150,7 +150,7 @@ struct CommandData {
 
 /// Terminal Command Canonicalizer as a unified Node
 pub struct TerminalCommandCanonicalizer {
-    runtime: Option<ProcessorRuntimeState>,
+    runtime: Option<NodeRuntimeState>,
     deduplication_window_secs: i64,
 }
 
@@ -162,7 +162,7 @@ impl TerminalCommandCanonicalizer {
         }
     }
 
-    fn runtime(&self) -> NodeResult<&ProcessorRuntimeState> {
+    fn runtime(&self) -> NodeResult<&NodeRuntimeState> {
         self.runtime.as_ref().ok_or_else(|| {
             NodeError::General(eyre!("Terminal canonicalizer runtime not initialized"))
         })
@@ -170,7 +170,7 @@ impl TerminalCommandCanonicalizer {
 
     async fn initialise_with_runtime_state(
         &mut self,
-        runtime: ProcessorRuntimeState,
+        runtime: NodeRuntimeState,
     ) -> NodeResult<()> {
         info!(
             processor = "terminal-command-canonicalizer-automaton",
@@ -315,7 +315,7 @@ impl TerminalCommandCanonicalizer {
 impl Node for TerminalCommandCanonicalizer {
     type Config = ();
 
-    async fn initialize(&mut self, init: ProcessorInitContext<Self::Config>) -> NodeResult<()> {
+    async fn initialize(&mut self, init: NodeInitContext<Self::Config>) -> NodeResult<()> {
         let (_config, runtime) = init.into_runtime();
         self.initialise_with_runtime_state(runtime).await
     }
@@ -499,8 +499,8 @@ impl Node for TerminalCommandCanonicalizer {
         "terminal-command-canonicalizer-automaton"
     }
 
-    fn processor_type(&self) -> ProcessorType {
-        ProcessorType::Automaton
+    fn processor_type(&self) -> NodeType {
+        NodeType::Automaton
     }
 
     async fn current_checkpoint(&self) -> NodeResult<Checkpoint> {

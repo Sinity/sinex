@@ -46,7 +46,7 @@ async fn ephemeral_nats_helpers_can_create_streams_and_wait() -> sinex_test_util
 }
 
 #[sinex_test]
-async fn test_satellite_publisher_emits_events_and_confirmations() -> TestResult<()> {
+async fn test_node_publisher_emits_events_and_confirmations() -> TestResult<()> {
     let nats = EphemeralNats::start().await?;
     let env = sinex_core::environment();
     let events_stream = env.nats_stream_name("SINEX_RAW_EVENTS");

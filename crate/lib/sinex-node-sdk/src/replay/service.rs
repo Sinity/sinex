@@ -3,7 +3,7 @@ use super::{
 };
 use crate::event_processor::{spawn_event_processor, EventProcessorConfig, EventTransport};
 use crate::nats_publisher::NatsPublisher;
-use crate::stream_processor::{EventEmitter, ProcessorHandles, ProcessorRuntimeState};
+use crate::stream_processor::{EventEmitter, NodeHandles, NodeRuntimeState};
 use crate::{NodeError, NodeResult};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -74,7 +74,7 @@ pub struct ReplayFilters {
 
 /// Replay manager for processing historical events
 pub struct ReplayService {
-    handles: ProcessorHandles,
+    handles: NodeHandles,
     mode: ReplayMode,
     batch_size: usize,
     controller: Option<ReplayController>,
@@ -84,7 +84,7 @@ pub struct ReplayService {
 
 impl ReplayService {
     /// Create a new replay service from processor handles
-    pub fn new(handles: ProcessorHandles, mode: ReplayMode) -> Self {
+    pub fn new(handles: NodeHandles, mode: ReplayMode) -> Self {
         Self {
             handles,
             mode,
@@ -96,12 +96,12 @@ impl ReplayService {
     }
 
     /// Create a replay service from a processor runtime snapshot
-    pub fn from_runtime(runtime: &ProcessorRuntimeState, mode: ReplayMode) -> Self {
+    pub fn from_runtime(runtime: &NodeRuntimeState, mode: ReplayMode) -> Self {
         Self::new(runtime.handles().clone(), mode)
     }
 
     /// Clone handles from an existing processor handle set
-    pub fn from_handles(handles: &ProcessorHandles, mode: ReplayMode) -> Self {
+    pub fn from_handles(handles: &NodeHandles, mode: ReplayMode) -> Self {
         Self::new(handles.clone(), mode)
     }
 

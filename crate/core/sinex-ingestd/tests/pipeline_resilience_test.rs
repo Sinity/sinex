@@ -7,7 +7,9 @@ use sinex_core::types::Ulid;
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
 use sinex_test_utils::timing_utils::{Timeouts, WaitHelpers};
-use sinex_test_utils::{sinex_test, EventOverrides, TestContext, TestResult, TestSatellitePublisher};
+use sinex_test_utils::{
+    sinex_test, EventOverrides, TestContext, TestResult, TestSatellitePublisher,
+};
 use tokio::sync::RwLock;
 use tokio::time::Duration;
 
@@ -42,8 +44,12 @@ async fn spawn_consumer(
     );
     let consumer_handle = tokio::spawn(async move { consumer.run().await });
 
-    nats.wait_for_stream(&js, &topology.events_stream, Duration::from_secs(Timeouts::QUICK))
-        .await?;
+    nats.wait_for_stream(
+        &js,
+        &topology.events_stream,
+        Duration::from_secs(Timeouts::QUICK),
+    )
+    .await?;
 
     Ok((consumer_handle, namespace))
 }

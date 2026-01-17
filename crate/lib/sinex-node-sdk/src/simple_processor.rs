@@ -66,8 +66,8 @@ use tracing::{debug, error, info, warn};
 use crate::checkpoint::{CheckpointManager, CheckpointState};
 use crate::shutdown::ShutdownConfig;
 use crate::stream_processor::{
-    Checkpoint, EventSender, ProcessorCapabilities, ProcessorInitContext, ProcessorRuntimeState,
-    ProcessorType, ScanArgs, ScanEstimate, ScanReport, TimeHorizon,
+    Checkpoint, EventSender, NodeCapabilities, NodeInitContext, NodeRuntimeState,
+    NodeType, ScanArgs, ScanEstimate, ScanReport, TimeHorizon,
 };
 use crate::{NodeError, NodeResult};
 
@@ -250,7 +250,7 @@ where
     persisted_state: PersistedState<P::State>,
     config: SimpleProcessorConfig,
     shutdown_config: ShutdownConfig,
-    runtime: Option<ProcessorRuntimeState>,
+    runtime: Option<NodeRuntimeState>,
     checkpoint_manager: Option<Arc<CheckpointManager>>,
     event_sender: Option<EventSender>,
     shutdown_tx: Option<watch::Sender<bool>>,
@@ -684,7 +684,7 @@ where
 {
     type Config = SimpleProcessorConfig;
 
-    async fn initialize(&mut self, init: ProcessorInitContext<Self::Config>) -> NodeResult<()> {
+    async fn initialize(&mut self, init: NodeInitContext<Self::Config>) -> NodeResult<()> {
         let (config, runtime) = init.into_runtime();
         self.config = config;
 
@@ -735,12 +735,12 @@ where
         self.processor.name()
     }
 
-    fn processor_type(&self) -> ProcessorType {
-        ProcessorType::Automaton
+    fn processor_type(&self) -> NodeType {
+        NodeType::Automaton
     }
 
-    fn capabilities(&self) -> ProcessorCapabilities {
-        ProcessorCapabilities {
+    fn capabilities(&self) -> NodeCapabilities {
+        NodeCapabilities {
             supports_continuous: true,
             supports_historical: false,
             supports_snapshot: false,

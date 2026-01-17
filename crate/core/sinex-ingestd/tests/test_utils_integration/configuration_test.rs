@@ -43,7 +43,7 @@ impl Default for ValidationReport {
 #[derive(Debug, Clone, bon::Builder)]
 pub struct ConfigurationCoverage {
     pub core_configs: HashMap<String, ConfigSchemaInfo>,
-    pub satellite_configs: HashMap<String, ConfigSchemaInfo>,
+    pub node_configs: HashMap<String, ConfigSchemaInfo>,
     pub service_configs: HashMap<String, ConfigSchemaInfo>,
     pub environment_variables: HashMap<String, EnvVarInfo>,
 }
@@ -78,7 +78,7 @@ impl ConfigurationCoverage {
     pub fn build_coverage_analysis() -> Self {
         let mut coverage = Self {
             core_configs: HashMap::new(),
-            satellite_configs: HashMap::new(),
+            node_configs: HashMap::new(),
             service_configs: HashMap::new(),
             environment_variables: HashMap::new(),
         };

@@ -4,11 +4,11 @@ use sinex_test_utils::sinex_test;
 use sinex_test_utils::TestResult;
 
 #[sinex_test]
-fn satellite_config_loads_from_custom_file() -> TestResult<()> {
+fn node_config_loads_from_custom_file() -> TestResult<()> {
     use std::fs;
 
     let temp_dir = tempfile::tempdir()?;
-    let config_path = temp_dir.path().join("test-satellite.toml");
+    let config_path = temp_dir.path().join("test-node.toml");
     fs::write(
         &config_path,
         r#"
@@ -22,8 +22,8 @@ url = "nats://custom:4222"
         "#,
     )?;
 
-    let config = NodeConfig::load_from_path("test-satellite", config_path.to_string_lossy())?;
-    assert_eq!(config.service_name, "test-satellite");
+    let config = NodeConfig::load_from_path("test-node", config_path.to_string_lossy())?;
+    assert_eq!(config.service_name, "test-node");
     assert_eq!(config.log_level, "debug");
     assert_eq!(config.nats.url, "nats://custom:4222");
     assert_eq!(config.database_pool_size, 32);
@@ -92,7 +92,7 @@ fn service_config_overrides_global_config_files() -> TestResult<()> {
     let _guard = DirGuard { previous };
 
     fs::write(
-        temp_dir.path().join("satellite.toml"),
+        temp_dir.path().join("node.toml"),
         r#"
 [default]
 log_level = "info"

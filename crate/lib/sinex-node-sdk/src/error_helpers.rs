@@ -1,9 +1,9 @@
 //! Error Context Helpers and Configuration Parsing Utilities
 //!
 //! Common error handling and configuration parsing utilities to reduce code duplication
-//! across satellites. These helpers provide consistent error context and conversion patterns.
+//! across nodes. These helpers provide consistent error context and conversion patterns.
 
-use crate::{stream_processor::ProcessorRuntimeState, NodeError};
+use crate::{stream_processor::NodeRuntimeState, NodeError};
 use std::collections::HashMap;
 use std::io;
 
@@ -54,7 +54,7 @@ pub trait ConfigAccessor {
     fn config_map(&self) -> &HashMap<String, serde_json::Value>;
 }
 
-impl ConfigAccessor for ProcessorRuntimeState {
+impl ConfigAccessor for NodeRuntimeState {
     fn config_map(&self) -> &HashMap<String, serde_json::Value> {
         self.raw_config()
     }
@@ -105,7 +105,7 @@ pub mod path_utils {
     /// Sanitize a path component for safe storage
     ///
     /// This uses the core sanitization logic and is a convenience wrapper
-    /// for satellites that need to sanitize file paths.
+    /// for nodes that need to sanitize file paths.
     pub fn sanitize_path_component(path_str: &str) -> String {
         let path = std::path::Path::new(path_str);
         if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {

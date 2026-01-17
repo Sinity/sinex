@@ -308,11 +308,11 @@ async fn verify_systemd_services(messages: &mut Vec<String>) -> Result<Value> {
     let sinex_services = vec![
         "sinex-ingestd.service",
         "sinex-gateway.service",
-        "sinex-fs-watcher-1.service",
-        "sinex-terminal-satellite-1.service",
-        "sinex-desktop-satellite-1.service",
-        "sinex-system-satellite-1.service",
-        "sinex-health-aggregator.service",
+        "sinex-fs-ingestor-1.service",
+        "sinex-terminal-ingestor-1.service",
+        "sinex-desktop-ingestor-1.service",
+        "sinex-system-ingestor-1.service",
+        "sinex-health-automaton.service",
     ];
 
     // System services that Sinex depends on

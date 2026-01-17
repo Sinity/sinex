@@ -93,11 +93,11 @@ async fn test_nixos_service_definitions() -> TestResult<()> {
     let expected_services = vec![
         "sinex-ingestd",
         "sinex-gateway",
-        "sinex-fs-watcher-1",
-        "sinex-terminal-node-1",
-        "sinex-desktop-node-1",
-        "sinex-system-node-1",
-        "sinex-health-aggregator",
+        "sinex-fs-ingestor-1",
+        "sinex-terminal-ingestor-1",
+        "sinex-desktop-ingestor-1",
+        "sinex-system-ingestor-1",
+        "sinex-health-automaton",
     ];
 
     for service in expected_services {
@@ -234,10 +234,10 @@ async fn test_service_dependency_chain() -> TestResult<()> {
     );
 
     let watcher_services = [
-        "sinex-fs-watcher-1",
-        "sinex-terminal-node-1",
-        "sinex-desktop-node-1",
-        "sinex-system-node-1",
+        "sinex-fs-ingestor-1",
+        "sinex-terminal-ingestor-1",
+        "sinex-desktop-ingestor-1",
+        "sinex-system-ingestor-1",
     ];
 
     for watcher in watcher_services {
@@ -694,14 +694,14 @@ fn create_test_service_definitions() -> HashMap<String, serde_json::Value> {
     );
 
     services.insert(
-        "sinex-fs-watcher-1".to_string(),
+        "sinex-fs-ingestor-1".to_string(),
         json!({
             "description": "Sinex filesystem watcher (instance 1)",
             "wantedBy": ["multi-user.target"],
             "after": ["sinex-ingestd.service"],
             "requires": ["sinex-ingestd.service"],
             "serviceConfig": {
-                "ExecStart": "/nix/store/.../bin/sinex-fs-watcher --service-name sinex-fs-watcher",
+                "ExecStart": "/nix/store/.../bin/sinex-fs-ingestor --service-name sinex-fs-ingestor",
                 "Restart": "on-failure",
                 "User": "sinex",
                 "Group": "sinex"
@@ -709,36 +709,36 @@ fn create_test_service_definitions() -> HashMap<String, serde_json::Value> {
         }),
     );
 
-    services.insert("sinex-terminal-node-1".to_string(), json!({
+    services.insert("sinex-terminal-ingestor-1".to_string(), json!({
         "description": "Sinex terminal event source (instance 1)",
         "wantedBy": ["multi-user.target"],
         "after": ["sinex-ingestd.service"],
         "serviceConfig": {
-            "ExecStart": "/nix/store/.../bin/sinex-terminal-node --service-name sinex-terminal-node",
+            "ExecStart": "/nix/store/.../bin/sinex-terminal-ingestor --service-name sinex-terminal-ingestor",
             "Restart": "on-failure",
             "User": "sinex",
             "Group": "sinex"
         }
     }));
 
-    services.insert("sinex-desktop-node-1".to_string(), json!({
+    services.insert("sinex-desktop-ingestor-1".to_string(), json!({
         "description": "Sinex desktop event source (instance 1)",
         "wantedBy": ["multi-user.target"],
         "after": ["sinex-ingestd.service"],
         "serviceConfig": {
-            "ExecStart": "/nix/store/.../bin/sinex-desktop-node --service-name sinex-desktop-node",
+            "ExecStart": "/nix/store/.../bin/sinex-desktop-ingestor --service-name sinex-desktop-ingestor",
             "Restart": "on-failure",
             "User": "sinex",
             "Group": "sinex"
         }
     }));
 
-    services.insert("sinex-system-node-1".to_string(), json!({
+    services.insert("sinex-system-ingestor-1".to_string(), json!({
         "description": "Sinex system event source (instance 1)",
         "wantedBy": ["multi-user.target"],
         "after": ["sinex-ingestd.service"],
         "serviceConfig": {
-            "ExecStart": "/nix/store/.../bin/sinex-system-node --service-name sinex-system-node",
+            "ExecStart": "/nix/store/.../bin/sinex-system-ingestor --service-name sinex-system-ingestor",
             "Restart": "on-failure",
             "User": "sinex",
             "Group": "sinex"
@@ -746,13 +746,13 @@ fn create_test_service_definitions() -> HashMap<String, serde_json::Value> {
     }));
 
     services.insert(
-        "sinex-health-aggregator".to_string(),
+        "sinex-health-automaton".to_string(),
         json!({
             "description": "Sinex Health Aggregator",
             "wantedBy": ["multi-user.target"],
             "after": ["sinex-ingestd.service"],
             "serviceConfig": {
-                "ExecStart": "/nix/store/.../bin/sinex-health-aggregator",
+                "ExecStart": "/nix/store/.../bin/sinex-health-automaton",
                 "Restart": "on-failure",
                 "User": "sinex",
                 "Group": "sinex"
@@ -874,23 +874,23 @@ fn create_test_dependency_chain() -> HashMap<String, Vec<String>> {
         vec!["postgresql.service".to_string()],
     );
     deps.insert(
-        "sinex-fs-watcher-1".to_string(),
+        "sinex-fs-ingestor-1".to_string(),
         vec!["sinex-ingestd.service".to_string()],
     );
     deps.insert(
-        "sinex-terminal-node-1".to_string(),
+        "sinex-terminal-ingestor-1".to_string(),
         vec!["sinex-ingestd.service".to_string()],
     );
     deps.insert(
-        "sinex-desktop-node-1".to_string(),
+        "sinex-desktop-ingestor-1".to_string(),
         vec!["sinex-ingestd.service".to_string()],
     );
     deps.insert(
-        "sinex-system-node-1".to_string(),
+        "sinex-system-ingestor-1".to_string(),
         vec!["sinex-ingestd.service".to_string()],
     );
     deps.insert(
-        "sinex-health-aggregator".to_string(),
+        "sinex-health-automaton".to_string(),
         vec!["sinex-ingestd.service".to_string()],
     );
 
@@ -1033,7 +1033,7 @@ fn create_test_system_integration_config() -> serde_json::Value {
             "services": {
                 "sinex-ingestd": {"enable": true},
                 "sinex-gateway": {"enable": true},
-                "sinex-fs-watcher-1": {"enable": true}
+                "sinex-fs-ingestor-1": {"enable": true}
             }
         },
         "logging": {

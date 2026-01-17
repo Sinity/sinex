@@ -78,7 +78,14 @@ async fn dlq_list_counts_messages_correctly() -> TestResult<()> {
 
     // Publish 3 messages
     for i in 0..3 {
-        publish_dlq_message(&client, &env, &format!("event-{}", i), r#"{"test": true}"#, 1).await?;
+        publish_dlq_message(
+            &client,
+            &env,
+            &format!("event-{}", i),
+            r#"{"test": true}"#,
+            1,
+        )
+        .await?;
     }
 
     // Allow JetStream to process
@@ -102,7 +109,14 @@ async fn dlq_list_shows_sequence_info() -> TestResult<()> {
 
     // Publish messages
     for i in 0..3 {
-        publish_dlq_message(&client, &env, &format!("event-{}", i), r#"{"test": true}"#, 1).await?;
+        publish_dlq_message(
+            &client,
+            &env,
+            &format!("event-{}", i),
+            r#"{"test": true}"#,
+            1,
+        )
+        .await?;
     }
 
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -144,7 +158,14 @@ async fn dlq_purge_clears_all_messages() -> TestResult<()> {
 
     // Publish some messages
     for i in 0..5 {
-        publish_dlq_message(&client, &env, &format!("event-{}", i), r#"{"test": true}"#, 1).await?;
+        publish_dlq_message(
+            &client,
+            &env,
+            &format!("event-{}", i),
+            r#"{"test": true}"#,
+            1,
+        )
+        .await?;
     }
 
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -192,13 +213,13 @@ async fn dlq_purge_requires_missing_confirm_field() -> TestResult<()> {
     setup_dlq_stream(&client, &env).await?;
 
     // Try purge without confirm field at all - should fail validation
-    let err = handle_dlq_purge(&client, &env, json!({})).await.unwrap_err();
+    let err = handle_dlq_purge(&client, &env, json!({}))
+        .await
+        .unwrap_err();
 
-    assert!(err
-        .to_string()
-        .to_lowercase()
-        .contains("invalid")
-        || err.to_string().contains("missing"));
+    assert!(
+        err.to_string().to_lowercase().contains("invalid") || err.to_string().contains("missing")
+    );
 
     Ok(())
 }
@@ -213,7 +234,14 @@ async fn dlq_list_after_publish_and_purge_cycle() -> TestResult<()> {
 
     // First cycle
     for i in 0..3 {
-        publish_dlq_message(&client, &env, &format!("cycle1-{}", i), r#"{"cycle": 1}"#, 1).await?;
+        publish_dlq_message(
+            &client,
+            &env,
+            &format!("cycle1-{}", i),
+            r#"{"cycle": 1}"#,
+            1,
+        )
+        .await?;
     }
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
@@ -225,7 +253,14 @@ async fn dlq_list_after_publish_and_purge_cycle() -> TestResult<()> {
 
     // Second cycle
     for i in 0..2 {
-        publish_dlq_message(&client, &env, &format!("cycle2-{}", i), r#"{"cycle": 2}"#, 1).await?;
+        publish_dlq_message(
+            &client,
+            &env,
+            &format!("cycle2-{}", i),
+            r#"{"cycle": 2}"#,
+            1,
+        )
+        .await?;
     }
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 

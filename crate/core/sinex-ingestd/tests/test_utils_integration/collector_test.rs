@@ -1,7 +1,7 @@
 // Modern ingestd and event collection integration tests
 //
 // These tests validate the current Sinex architecture with sinex-ingestd as the central
-// coordinator, satellites for event collection, and NATS for message streaming.
+// coordinator, nodes for event collection, and NATS for message streaming.
 // This replaces the deprecated sinex_collector architecture.
 
 use sinex_test_utils::prelude::*;
@@ -228,15 +228,15 @@ async fn test_modern_database_output_config(ctx: TestContext) -> TestResult<()> 
 // Event Source Integration Tests
 // ============================================================================
 
-/// Test event source integration with modern satellite architecture
+/// Test event source integration with modern node architecture
 #[sinex_test]
-async fn test_satellite_integration_patterns(ctx: TestContext) -> TestResult<()> {
-    tracing::info!("Testing satellite integration patterns");
+async fn test_node_integration_patterns(ctx: TestContext) -> TestResult<()> {
+    tracing::info!("Testing node integration patterns");
 
     let events = ctx.events();
 
-    // Test different satellite event patterns
-    let satellite_events = vec![
+    // Test different node event patterns
+    let node_events = vec![
         ("fs.file_created", serde_json::json!({
             "path": "/tmp/created_file.txt",
             "size": 512,
@@ -262,22 +262,22 @@ async fn test_satellite_integration_patterns(ctx: TestContext) -> TestResult<()>
     ];
 
     let mut stored_events = Vec::new();
-    for (source, payload) in satellite_events {
+    for (source, payload) in node_events {
         let event = ctx.publish_json_event(source, payload).await?;
         let stored = events.store(&event).await?;
         stored_events.push(stored);
     }
 
-    // Verify all satellite event types were processed
-    assert_eq!(stored_events.len(), 4, "All satellite events should be processed");
+    // Verify all node event types were processed
+    assert_eq!(stored_events.len(), 4, "All node events should be processed");
 
-    // Group events by source to verify satellite integration
+    // Group events by source to verify node integration
     let mut events_by_source = std::collections::HashMap::new();
     for event in stored_events {
         events_by_source.entry(event.source.to_string()).or_insert(Vec::new()).push(event);
     }
 
-    assert_eq!(events_by_source.len(), 3, "Should have events from 3 different satellites");
+    assert_eq!(events_by_source.len(), 3, "Should have events from 3 different nodes");
     assert!(events_by_source.contains_key("fs.file_created"), "Should have filesystem events");
     assert!(events_by_source.contains_key("terminal.command_executed"), "Should have terminal events");
     assert!(events_by_source.contains_key("desktop.window_focus_changed"), "Should have desktop events");

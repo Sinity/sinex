@@ -59,7 +59,7 @@ async fn heartbeat_status_transitions_on_error_volume() -> color_eyre::Result<()
 
     let metrics = emitter.create_heartbeat_metrics(None);
 
-    assert_eq!(metrics.status, ProcessStatus::Failed, "Heartbeat status should transition to failed after repeated errors so operators can alert on degraded satellites");
+    assert_eq!(metrics.status, ProcessStatus::Failed, "Heartbeat status should transition to failed after repeated errors so operators can alert on degraded nodes");
 
     Ok(())
 }
@@ -80,7 +80,7 @@ async fn heartbeat_emits_degraded_alert_on_error_spike() -> color_eyre::Result<(
         2,
         "Heartbeat emission should log the heartbeat and a degraded alert"
     );
-    assert_eq!(entries[0]["fields"]["event_type"], "satellite.heartbeat");
+    assert_eq!(entries[0]["fields"]["event_type"], "node.heartbeat");
     assert_eq!(entries[1]["fields"]["event_type"], "process.degraded");
 
     Ok(())

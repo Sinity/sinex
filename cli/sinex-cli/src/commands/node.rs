@@ -150,10 +150,8 @@ impl NodeCommands {
                         ));
                     }
                     Err(e) => {
-                        spinner.abandon_with_message(&format!(
-                            "Failed to set horizon for {}",
-                            node
-                        ));
+                        spinner
+                            .abandon_with_message(&format!("Failed to set horizon for {}", node));
                         return Err(e);
                     }
                 }

@@ -14,17 +14,17 @@ members = [
   "crate/core/sinex-ingestd",
   "crate/core/sinex-gateway",
   
-  # Satellite crates
-  "crate/nodes/sinex-terminal-node",
-  "crate/nodes/sinex-desktop-node",
-  "crate/nodes/sinex-system-node",
-  "crate/nodes/sinex-fs-watcher",
-  "crate/nodes/sinex-terminal-command-canonicalizer",
-  "crate/nodes/sinex-health-aggregator",
+  # Ingestor crates (event sources)
+  "crate/nodes/sinex-terminal-ingestor",
+  "crate/nodes/sinex-desktop-ingestor",
+  "crate/nodes/sinex-system-ingestor",
+  "crate/nodes/sinex-fs-ingestor",
   "crate/nodes/sinex-document-ingestor",
   "tests/e2e",
 
-  # Automaton crates
+  # Automaton crates (derived processors)
+  "crate/nodes/sinex-terminal-command-canonicalizer",
+  "crate/nodes/sinex-health-automaton",
   "crate/nodes/sinex-analytics-automaton",
   "crate/nodes/sinex-search-automaton",
   "crate/nodes/sinex-content-automaton",
@@ -48,9 +48,9 @@ members = [
   # "test/*", # Removed - tests are integration tests, not separate workspace members
   
   # Disabled/folded crates
-  # "crate/sinex-annex", # Folded into sinex-satellite-sdk
-  # "crate/sinex-preflight", # Folded into sinex-satellite-sdk
-  # "crate/sinex-nats", # Folded into sinex-satellite-sdk
+  # "crate/sinex-annex", # Folded into sinex-node-sdk
+  # "crate/sinex-preflight", # Folded into sinex-node-sdk
+  # "crate/sinex-nats", # Folded into sinex-node-sdk
   # "crate/sinex-telemetry", # Folded into sinex-core
   # "crate/sinex-schema-manager", # Folded into sinex-core
 ]

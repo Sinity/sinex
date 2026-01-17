@@ -1,0 +1,61 @@
+[package]
+name = "sinex-system-ingestor"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+build = "build.rs"
+
+[[bin]]
+name = "sinex-system-ingestor"
+path = "src/main.rs"
+
+[dependencies]
+camino = { workspace = true }
+mimalloc = { workspace = true }
+# Core dependencies
+color-eyre = { workspace = true }
+thiserror.workspace = true
+async-trait.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tokio-util = "0.7"
+futures = "0.3"
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# Configuration
+clap = { workspace = true, features = ["derive"] }
+serde.workspace = true
+serde_json.workspace = true
+indexmap.workspace = true
+bon = { workspace = true }
+
+# Time handling
+chrono.workspace = true
+
+# Retry logic
+tokio-retry.workspace = true
+
+# System integration
+dirs.workspace = true
+
+# D-Bus - real-time signal subscription
+dbus = "0.9"
+dbus-tokio = "0.7"
+futures-util = "0.3"
+
+# Modern systemd/journald integration via nix crate
+nix = { version = "0.27", features = ["fs", "signal", "process", "user"] }
+libc = "0.2"
+
+# Filesystem monitoring for udev events
+notify = { workspace = true }
+
+# Journal (using nix for better integration)
+
+# Local dependencies
+sinex-node-sdk = { path = "../../lib/sinex-node-sdk", features = ["macros"] }
+sinex-processor-runtime = { path = "../../lib/sinex-processor-runtime" }
+sinex-core = { path = "../../lib/sinex-core", features = [] }
+
+[dev-dependencies]
+sinex-test-utils = { path = "../../lib/sinex-test-utils" }

@@ -6,7 +6,9 @@ use sinex_core::types::{error::SinexError, Ulid};
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
 use sinex_test_utils::timing_utils::{Timeouts, WaitHelpers};
-use sinex_test_utils::{sinex_test, EventOverrides, TestContext, TestResult, TestSatellitePublisher};
+use sinex_test_utils::{
+    sinex_test, EventOverrides, TestContext, TestResult, TestSatellitePublisher,
+};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;

@@ -4,7 +4,7 @@
 
 - strong types that encode Sinex invariants;
 - database repositories and helpers built on `sqlx`;
-- environment/namespace utilities shared by binaries and satellites.
+- environment/namespace utilities shared by binaries and nodes.
 
 The crate deliberately contains no runtime services—only reusable building blocks.
 

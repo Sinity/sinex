@@ -182,9 +182,15 @@ mod tests {
     fn test_parse_relative_duration_long_form() {
         assert_eq!(parse_relative_duration("1hour"), Some(Duration::hours(1)));
         assert_eq!(parse_relative_duration("2days"), Some(Duration::days(2)));
-        assert_eq!(parse_relative_duration("30minutes"), Some(Duration::minutes(30)));
+        assert_eq!(
+            parse_relative_duration("30minutes"),
+            Some(Duration::minutes(30))
+        );
         assert_eq!(parse_relative_duration("1week"), Some(Duration::weeks(1)));
-        assert_eq!(parse_relative_duration("15seconds"), Some(Duration::seconds(15)));
+        assert_eq!(
+            parse_relative_duration("15seconds"),
+            Some(Duration::seconds(15))
+        );
     }
 
     #[test]
@@ -198,7 +204,10 @@ mod tests {
     #[test]
     fn test_parse_relative_duration_whitespace() {
         assert_eq!(parse_relative_duration("  1h  "), Some(Duration::hours(1)));
-        assert_eq!(parse_relative_duration("\t30m\n"), Some(Duration::minutes(30)));
+        assert_eq!(
+            parse_relative_duration("\t30m\n"),
+            Some(Duration::minutes(30))
+        );
     }
 
     #[test]

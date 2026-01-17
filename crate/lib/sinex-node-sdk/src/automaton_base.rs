@@ -27,7 +27,7 @@
 
 use crate::confirmation_handler::ProvisionalEvent;
 use crate::jetstream_consumer::JetStreamEventConsumer;
-use crate::stream_processor::{EventSender, ProcessorRuntimeState, ScanReport};
+use crate::stream_processor::{EventSender, NodeRuntimeState, ScanReport};
 use crate::{NodeError, NodeResult};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -118,7 +118,7 @@ impl AutomatonStats {
 /// the common infrastructure for free.
 pub struct AutomatonFields<C: Default> {
     /// Runtime state from initialization
-    pub runtime: Option<ProcessorRuntimeState>,
+    pub runtime: Option<NodeRuntimeState>,
     /// Automaton-specific configuration
     pub config: C,
     /// Event sender for emitting events
@@ -178,7 +178,7 @@ impl<C: Default> AutomatonFields<C> {
     }
 
     /// Get runtime state, returning error if not initialized
-    pub fn runtime(&self) -> NodeResult<&ProcessorRuntimeState> {
+    pub fn runtime(&self) -> NodeResult<&NodeRuntimeState> {
         self.runtime
             .as_ref()
             .ok_or_else(|| NodeError::Lifecycle("Automaton runtime not initialized".into()))

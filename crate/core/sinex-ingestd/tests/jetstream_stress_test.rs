@@ -145,7 +145,7 @@ async fn jetstream_pipeline_dedupes_duplicate_event_ids() -> sinex_test_utils::T
             "ts_orig": Utc::now().to_rfc3339(),
             "host": "test-host",
             "payload": { "seq": idx },
-            "ingestor_version": "test-satellite"
+            "ingestor_version": "test-node"
         });
 
         let mut headers = HeaderMap::new();

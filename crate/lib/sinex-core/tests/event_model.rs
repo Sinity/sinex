@@ -1,9 +1,9 @@
 use serde_json::{json, Value as JsonValue};
 use sinex_core::db::models::event::{EventId, SourceMaterial};
-use sinex_core::{Event, EventBuilder};
 use sinex_core::types::domain::SanitizedPath;
 use sinex_core::types::events::payloads::{FileCreatedPayload, KittyCommandExecutedPayload};
 use sinex_core::Id;
+use sinex_core::{Event, EventBuilder};
 use sinex_test_utils::{sinex_test, TestResult};
 
 #[sinex_test]
@@ -43,13 +43,10 @@ fn synthesis_event_builder_tracks_parents() -> TestResult<()> {
 
 #[sinex_test]
 fn raw_event_alias_is_equivalent() -> TestResult<()> {
-    let event: sinex_core::Event<JsonValue> = EventBuilder::new(
-        "test".into(),
-        "test.event".into(),
-        json!({"data": "value"}),
-    )
-    .from_material(Id::<SourceMaterial>::new(), 0)
-    .build()?;
+    let event: sinex_core::Event<JsonValue> =
+        EventBuilder::new("test".into(), "test.event".into(), json!({"data": "value"}))
+            .from_material(Id::<SourceMaterial>::new(), 0)
+            .build()?;
 
     let _: sinex_core::Event<JsonValue> = event;
     Ok(())

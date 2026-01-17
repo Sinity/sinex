@@ -18,7 +18,7 @@ usage, see:
 | `crate/lib/sinex-core/tests/unit/`        | Fast, isolated component tests                           | Keep under ~1 s each; prefer direct API usage           |
 | `crate/lib/sinex-core/tests/integration/` | Core repository and schema workflows                     | Former workspace suites now colocated with the crate    |
 | `crate/lib/sinex-core/tests/{system,performance,adversarial}/` | Heavy end-to-end, load, and chaos coverage            | Uses real services; slower (~minutes)                   |
-| `crate/lib/sinex-satellite-sdk/tests/{integration,property,system}/` | Satellite lifecycle and annex validation        | Property regressions live beside the SDK helpers        |
+| `crate/lib/sinex-node-sdk/tests/{integration,property,system}/` | Satellite lifecycle and annex validation        | Property regressions live beside the SDK helpers        |
 | `crate/lib/sinex-test-utils/tests/`       | Harness demonstrations and helper examples               | Includes the migrated `macro_conversion` / `rstest` demos|
 | `tests/e2e/`                              | NixOS module assertions and VM harness support           | Hosts the Rust integration test plus shared Nix assets  |
 | `tests/e2e/nixos-vm/`                     | Full VM deployment and chaos scenarios                   | Optional in CI; document dataset sizes                  |
@@ -98,6 +98,6 @@ Invoke with `cargo xtask test --profile <name>`.
   cases.
 - Focus streamlining on sinex-test-utils helper modules that historically
   accumulated duplication: `test_context`, `coverage_assurance`, `timing_utils`,
-  `satellite_management_utils`, `property_testing`, and `lib.rs`.
+  `ingestd_test_utils`, `property_testing`, and `lib.rs`.
 - Treat streamlining as a performance lever: removing redundant tests reduces
   database pool pressure and avoids hangs under high parallelism.

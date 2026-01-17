@@ -3,7 +3,7 @@
 //! The original suite depended on an embedded NATS/JetStream harness that no
 //! longer exists. These properties focus on the shared behaviour between
 //! `sinex-core` (event insertion) and the queue-facing checkpoint utilities in
-//! `sinex-satellite-sdk`.
+//! `sinex-node-sdk`.
 
 use async_nats::jetstream::{
     consumer::{pull::Config as ConsumerConfig, AckPolicy, DeliverPolicy},

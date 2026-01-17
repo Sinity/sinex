@@ -5238,7 +5238,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sinex-desktop-node"
+name = "sinex-desktop-ingestor"
 version = "0.4.2"
 dependencies = [
  "arboard",
@@ -5319,7 +5319,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sinex-fs-watcher"
+name = "sinex-fs-ingestor"
 version = "0.4.2"
 dependencies = [
  "async-stream",
@@ -5392,7 +5392,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sinex-health-aggregator"
+name = "sinex-health-automaton"
 version = "0.4.2"
 dependencies = [
  "anyhow",
@@ -5645,7 +5645,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sinex-system-node"
+name = "sinex-system-ingestor"
 version = "0.4.2"
 dependencies = [
  "async-trait",
@@ -5703,7 +5703,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sinex-terminal-node"
+name = "sinex-terminal-ingestor"
 version = "0.4.2"
 dependencies = [
  "async-stream",

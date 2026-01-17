@@ -1347,7 +1347,7 @@ impl TestContext {
     /// Publish a test event to the ingestion pipeline via NATS.
     ///
     /// This is the preferred method for "Pipeline-First" testing. It sends the event
-    /// to NATS (simulating a satellite), where it will be picked up by ingestd,
+    /// to NATS (simulating a node), where it will be picked up by ingestd,
     /// validated, and inserted into the database.
     ///
     /// The event ID is returned so tests can wait for it using `WaitHelpers`.

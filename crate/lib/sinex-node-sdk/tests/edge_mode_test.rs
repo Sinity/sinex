@@ -1,6 +1,6 @@
 //! Optional Database Dependency Test
 //!
-//! Verifies that satellites can run without DATABASE_URL (ingestors) while
+//! Verifies that nodes can run without DATABASE_URL (ingestors) while
 //! automata that need it get clear error messages. Checkpoints always use NATS KV.
 
 use sinex_core::db::models::Event;
@@ -11,8 +11,8 @@ use sinex_node_sdk::{
     event_processor::EventTransport,
     nats_publisher::NatsPublisher,
     stream_processor::{
-        EventEmitter, Node, ProcessorCapabilities, ProcessorHandles, ProcessorInitContext,
-        ProcessorType, SchemaBroadcastEntry, StreamProcessorRunner,
+        EventEmitter, Node, NodeCapabilities, NodeHandles, NodeInitContext,
+        NodeType, SchemaBroadcastEntry, StreamProcessorRunner,
     },
     NodeResult,
 };
@@ -36,20 +36,20 @@ impl EdgeTestProcessor {
 impl Node for EdgeTestProcessor {
     type Config = serde_json::Value;
 
-    async fn initialize(&mut self, _ctx: ProcessorInitContext<Self::Config>) -> NodeResult<()> {
+    async fn initialize(&mut self, _ctx: NodeInitContext<Self::Config>) -> NodeResult<()> {
         Ok(())
     }
 
-    fn processor_type(&self) -> ProcessorType {
-        ProcessorType::Ingestor
+    fn processor_type(&self) -> NodeType {
+        NodeType::Ingestor
     }
 
     fn processor_name(&self) -> &str {
         &self.name
     }
 
-    fn capabilities(&self) -> ProcessorCapabilities {
-        ProcessorCapabilities {
+    fn capabilities(&self) -> NodeCapabilities {
+        NodeCapabilities {
             supports_continuous: true,
             supports_historical: false,
             supports_snapshot: false,
@@ -154,7 +154,7 @@ async fn test_automaton_requires_db_pool(ctx: TestContext) -> TestResult<()> {
         "test_consumer".to_string(),
     ));
 
-    let handles = ProcessorHandles::new_edge(checkpoint_manager, emitter, transport, None, None);
+    let handles = NodeHandles::new_edge(checkpoint_manager, emitter, transport, None, None);
 
     // Attempting to get DB pool for automaton should panic
     let result =

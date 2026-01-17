@@ -21,8 +21,14 @@ fn snapshot_bash_completions_structure() {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     // Verify key structural elements exist
-    assert!(stdout.contains("_sinexctl"), "Should define _sinexctl function");
-    assert!(stdout.contains("complete"), "Should have complete directive");
+    assert!(
+        stdout.contains("_sinexctl"),
+        "Should define _sinexctl function"
+    );
+    assert!(
+        stdout.contains("complete"),
+        "Should have complete directive"
+    );
     assert!(
         stdout.contains("query") || stdout.contains("COMPREPLY"),
         "Should reference commands"
@@ -55,7 +61,10 @@ fn snapshot_zsh_completions_structure() {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     // Verify key structural elements
-    assert!(stdout.contains("#compdef"), "Should have zsh compdef header");
+    assert!(
+        stdout.contains("#compdef"),
+        "Should have zsh compdef header"
+    );
     assert!(stdout.contains("sinexctl"), "Should reference sinexctl");
 }
 

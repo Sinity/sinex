@@ -1,7 +1,7 @@
 # sinex-services Overview
 
 The services crate packages higher-level workflows on top of the repositories
-exposed by `sinex-core`. Gateway handlers, satellites, and automation jobs rely
+exposed by `sinex-core`. Gateway handlers, nodes, and automation jobs rely
 on these modules to coordinate multi-step operations without duplicating SQL or
 business rules.
 

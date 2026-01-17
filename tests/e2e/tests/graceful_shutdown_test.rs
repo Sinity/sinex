@@ -397,7 +397,10 @@ async fn test_shutdown_data_consistency(ctx: TestContext) -> TestResult<()> {
             payload.get("checksum").is_some(),
             "Event should have checksum field"
         );
-        assert!(payload.get("data").is_some(), "Event should have data field");
+        assert!(
+            payload.get("data").is_some(),
+            "Event should have data field"
+        );
 
         // Verify checksum matches index
         if let (Some(idx), Some(checksum)) = (

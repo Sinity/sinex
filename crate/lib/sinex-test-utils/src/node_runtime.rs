@@ -11,7 +11,7 @@ use sinex_node_sdk::{
     event_processor::EventTransport,
     heartbeat::HeartbeatEmitter,
     nats_publisher::NatsPublisher,
-    stream_processor::{EventEmitter, ProcessorHandles, ProcessorRuntimeState, ServiceInfo},
+    stream_processor::{EventEmitter, NodeHandles, NodeRuntimeState, ServiceInfo},
 };
 use tokio::sync::mpsc;
 
@@ -19,7 +19,7 @@ use crate::{EphemeralNats, TestContext};
 
 /// Fully wired runtime scaffold for node integration tests.
 pub struct TestRuntime {
-    pub runtime: ProcessorRuntimeState,
+    pub runtime: NodeRuntimeState,
     pub event_rx: mpsc::Receiver<Event<JsonValue>>,
     pub nats: EphemeralNats,
 }
@@ -84,7 +84,7 @@ impl<'ctx> TestRuntimeBuilder<'ctx> {
             format!("{}-{}", service_name, Ulid::new()),
         ));
 
-        let handles = ProcessorHandles::new(
+        let handles = NodeHandles::new(
             ctx.pool.clone(),
             checkpoint_manager,
             emitter.clone(),
@@ -103,7 +103,7 @@ impl<'ctx> TestRuntimeBuilder<'ctx> {
             dry_run,
         );
 
-        let runtime = ProcessorRuntimeState::new(service_info, handles, raw_config, work_dir);
+        let runtime = NodeRuntimeState::new(service_info, handles, raw_config, work_dir);
 
         // Track the runtime’s background pieces for deterministic teardown.
         ctx.register_background_handle("node-runtime", nats.process_handle());

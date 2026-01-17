@@ -299,16 +299,20 @@ mod tests {
     #[test]
     fn event_builder_sets_offsets_for_material_provenance() {
         let material_id = Id::from_ulid(Ulid::new());
-        let event = EventBuilder::new("offset-test".into(), "offset.event".into(), json!({"key": "value"}))
-            .from_material(material_id, 4)
-            .with_offset_start(10)
-            .expect("offset start should apply to material provenance")
-            .with_offset_end(20)
-            .expect("offset end should apply to material provenance")
-            .with_offset_kind(OffsetKind::Line)
-            .expect("offset kind should apply to material provenance")
-            .build()
-            .expect("event should build with material provenance");
+        let event = EventBuilder::new(
+            "offset-test".into(),
+            "offset.event".into(),
+            json!({"key": "value"}),
+        )
+        .from_material(material_id, 4)
+        .with_offset_start(10)
+        .expect("offset start should apply to material provenance")
+        .with_offset_end(20)
+        .expect("offset end should apply to material provenance")
+        .with_offset_kind(OffsetKind::Line)
+        .expect("offset kind should apply to material provenance")
+        .build()
+        .expect("event should build with material provenance");
 
         match event.provenance {
             Provenance::Material {

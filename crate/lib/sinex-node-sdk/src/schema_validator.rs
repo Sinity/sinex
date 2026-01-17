@@ -1,6 +1,6 @@
 //! Satellite-side schema validation
 //!
-//! Enables satellites to validate events before publishing to NATS,
+//! Enables nodes to validate events before publishing to NATS,
 //! reducing bandwidth and providing early feedback on schema errors.
 //!
 //! Uses schema broadcasts from ingestd and fetches full schemas from
@@ -40,7 +40,7 @@ struct CompiledSchema {
     validator: Arc<JSONSchema>,
 }
 
-/// Schema validator for satellites
+/// Schema validator for nodes
 ///
 /// This validator:
 /// 1. Receives schema metadata via NATS broadcasts from ingestd
@@ -193,7 +193,7 @@ impl SatelliteSchemaValidator {
         info!(
             compiled,
             total = self.schema_count(),
-            "Updated satellite schema cache"
+            "Updated node schema cache"
         );
 
         Ok(compiled)

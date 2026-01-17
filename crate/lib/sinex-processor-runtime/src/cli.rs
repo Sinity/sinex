@@ -1,6 +1,6 @@
-//! Unified CLI structure for stream processor satellites
+//! Unified CLI structure for stream processor nodes
 //!
-//! This module provides the standardized CLI interface for all satellite binaries
+//! This module provides the standardized CLI interface for all node binaries
 //! implementing the service/scan/explore subcommand pattern.
 
 use chrono::{DateTime, Utc};
@@ -34,7 +34,7 @@ pub fn command_requires_heartbeat(command: &ProcessorCommand) -> bool {
     )
 }
 
-/// Standard CLI arguments for all stream processor satellites
+/// Standard CLI arguments for all stream processor nodes
 #[derive(Parser, Debug, Clone)]
 #[command(
     name = "sinex-processor",
@@ -455,7 +455,7 @@ pub enum ExportFormat {
     Raw,
 }
 
-/// Generic CLI runner for stream processor satellites
+/// Generic CLI runner for stream processor nodes
 ///
 /// This provides a standardized way to run any Node with
 /// the unified CLI interface supporting service/scan/explore subcommands.

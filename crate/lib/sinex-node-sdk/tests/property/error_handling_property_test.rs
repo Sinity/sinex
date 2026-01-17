@@ -42,9 +42,9 @@ sinex_proptest! {
         ctx in arbitrary_context()
     ) -> TestResult<()> {
         let io_error = std::io::Error::new(kind, msg.clone());
-        let satellite_error = io_error_with_context(io_error, &ctx);
+        let node_error = io_error_with_context(io_error, &ctx);
 
-        if let sinex_node_sdk::NodeError::Processing(rendered) = satellite_error {
+        if let sinex_node_sdk::NodeError::Processing(rendered) = node_error {
             prop_assert!(!rendered.is_empty());
             if !ctx.is_empty() {
                 prop_assert!(rendered.contains(&ctx));
@@ -63,8 +63,8 @@ sinex_proptest! {
         match String::from_utf8(bytes) {
             Ok(_) => prop_assume!(false),
             Err(err) => {
-                let satellite_error = utf8_error_with_context(err, &ctx);
-                if let sinex_node_sdk::NodeError::Processing(rendered) = satellite_error {
+                let node_error = utf8_error_with_context(err, &ctx);
+                if let sinex_node_sdk::NodeError::Processing(rendered) = node_error {
                     if !ctx.is_empty() {
                         prop_assert!(rendered.contains(&ctx));
                     }
@@ -81,8 +81,8 @@ sinex_proptest! {
     ) -> TestResult<()> {
         let malformed = "{\"key\":}";
         let err = serde_json::from_str::<serde_json::Value>(malformed).unwrap_err();
-        let satellite_error = json_error_with_context(err, &ctx);
-        if let sinex_node_sdk::NodeError::Processing(rendered) = satellite_error {
+        let node_error = json_error_with_context(err, &ctx);
+        if let sinex_node_sdk::NodeError::Processing(rendered) = node_error {
             if !ctx.is_empty() {
                 prop_assert!(rendered.contains(&ctx));
             }

@@ -314,7 +314,7 @@ fn sanitize_namespace_token(namespace: &str) -> String {
         .collect()
 }
 
-// Comprehensive satellite management tests
+// Comprehensive node management tests
 #[cfg(test)]
 mod tests {
     use super::*;

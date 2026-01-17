@@ -1,10 +1,10 @@
 # Sinex Macros
 
-Procedural macros for the Sinex codebase that reduce boilerplate and improve maintainability across satellite architectures.
+Procedural macros for the Sinex codebase that reduce boilerplate and improve maintainability across node architectures.
 
 ## Overview
 
-This crate provides code generation macros focused on common patterns in the Sinex satellite architecture:
+This crate provides code generation macros focused on common patterns in the Sinex node architecture:
 
 - **Event type registration and handling**
 - **Validation chain construction**
@@ -333,7 +333,7 @@ db_transaction! {
 
 The macros are designed to be flexible and composable rather than overly specific:
 
-- **Common Patterns**: Focus on patterns that appear across multiple satellite implementations
+- **Common Patterns**: Focus on patterns that appear across multiple node implementations
 - **Extensibility**: Generated code can be extended and overridden by specific implementations
 - **Type Safety**: All generated code maintains Rust's type safety guarantees
 - **Zero Runtime Overhead**: All code generation happens at compile time
@@ -364,8 +364,8 @@ The crate includes comprehensive tests for all macros:
 # Run all tests
 cargo nextest run --package sinex-macros
 
-# Run satellite macro tests specifically
-cargo nextest run --package sinex-macros --test satellite_macros_test
+# Run node macro tests specifically
+cargo nextest run --package sinex-macros --test node_macros_test
 
 # Run with verbose output
 cargo nextest run --package sinex-macros -- --nocapture
@@ -433,13 +433,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 - **Custom Validators**: Easy definition of custom validation functions
 - **Schema Generation**: Automatic generation of JSON schemas for validation
 - **Performance Optimizations**: Further optimizations for large-scale processing
-- **Integration Testing**: Enhanced integration testing with actual satellite services
+- **Integration Testing**: Enhanced integration testing with actual node services
 
 ### Contributing
 
 The macros are designed to be extensible. To add new functionality:
 
-1. Identify common patterns in satellite implementations
+1. Identify common patterns in node implementations
 2. Design flexible interfaces that don't overfit to specific use cases
 3. Add comprehensive tests for new functionality
 4. Update documentation and examples

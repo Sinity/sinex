@@ -31,7 +31,7 @@ impl fmt::Display for ProcessStatus {
 #[event_payload(source = "sinex", event_type = "process.started")]
 pub struct ProcessStartedPayload {
     pub process_name: String,
-    pub process_type: String, // satellite, automaton, service
+    pub process_type: String, // ingestor, automaton, service
     pub pid: u32,
     pub version: String,
     pub config: serde_json::Value,
@@ -104,7 +104,7 @@ pub struct AutomatonErrorPayload {
 #[event_payload(source = "sinex", event_type = "sensor.activated")]
 pub struct SensorActivatedPayload {
     pub sensor: String,
-    pub satellite: String,
+    pub node: String,
     pub activation_time: DateTime<Utc>,
 }
 
@@ -112,7 +112,7 @@ pub struct SensorActivatedPayload {
 #[event_payload(source = "sinex", event_type = "sensor.deactivated")]
 pub struct SensorDeactivatedPayload {
     pub sensor: String,
-    pub satellite: String,
+    pub node: String,
     pub uptime_seconds: u64,
     pub events_generated: u64,
     pub reason: String,

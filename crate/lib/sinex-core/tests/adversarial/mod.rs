@@ -23,7 +23,7 @@ pub mod concurrency_test;
 pub mod ulid_edge_cases_test;
 
 // Crash recovery adversarial tests for Stage-as-You-Go materials
-pub mod satellite_crash_recovery_test;
+pub mod node_crash_recovery_test;
 
 // Chaos Engineering Tests (split from chaos_engineering_test.rs)
 // Agent lifecycle chaos: concurrent registration, heartbeat failures

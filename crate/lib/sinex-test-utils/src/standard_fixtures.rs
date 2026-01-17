@@ -112,7 +112,7 @@ pub static INTEGRATION_FIXTURE: Lazy<FixtureSet> = Lazy::new(|| {
 
 /// Satellite benchmark fixture
 ///
-/// For testing satellite-specific patterns:
+/// For testing node-specific patterns:
 /// - Burst patterns (scanner mode)
 /// - Continuous streams (sensor mode)
 /// - Error scenarios
@@ -121,10 +121,10 @@ pub static SATELLITE_BENCH_FIXTURE: Lazy<FixtureSet> = Lazy::new(|| {
     FixtureSet::new()
         .with_events(DatasetSize::Small, 5555)
         .with_events(DatasetSize::Medium, 6666)
-        .with_checkpoints(500) // Frequent checkpoints for satellite progress
+        .with_checkpoints(500) // Frequent checkpoints for node progress
         .with_operations(10)
         .with_config(FixtureConfig {
-            base_dir: Utf8PathBuf::from("target/bench-fixtures/satellite"),
+            base_dir: Utf8PathBuf::from("target/bench-fixtures/node"),
             ..Default::default()
         })
 });

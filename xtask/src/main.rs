@@ -1720,10 +1720,19 @@ fuzz_target!(|data: &[u8]| {{
     let gitignore = "target/\ncorpus/\nartifacts/\n";
     fs::write(fuzz_dir.join(".gitignore"), gitignore)?;
 
-    println!("Initialized fuzzing infrastructure at {}", fuzz_dir.display());
+    println!(
+        "Initialized fuzzing infrastructure at {}",
+        fuzz_dir.display()
+    );
     println!("\nNext steps:");
-    println!("  1. Edit {}/fuzz_targets/fuzz_input_validation.rs", fuzz_dir.display());
-    println!("  2. Run: cargo xtask fuzz run {}::fuzz_input_validation", package);
+    println!(
+        "  1. Edit {}/fuzz_targets/fuzz_input_validation.rs",
+        fuzz_dir.display()
+    );
+    println!(
+        "  2. Run: cargo xtask fuzz run {}::fuzz_input_validation",
+        package
+    );
 
     Ok(())
 }
@@ -1779,7 +1788,9 @@ fn fuzz_run(target: &str, max_time: u64, jobs: Option<usize>) -> Result<()> {
     // Parse target format: crate::target_name
     let parts: Vec<&str> = target.split("::").collect();
     if parts.len() != 2 {
-        bail!("Target format must be 'crate::target_name' (e.g., sinex-core::fuzz_input_validation)");
+        bail!(
+            "Target format must be 'crate::target_name' (e.g., sinex-core::fuzz_input_validation)"
+        );
     }
 
     let crate_name = parts[0];
@@ -1802,8 +1813,7 @@ fn fuzz_run(target: &str, max_time: u64, jobs: Option<usize>) -> Result<()> {
         .arg(target_name);
 
     if max_time > 0 {
-        cmd.arg("--")
-            .arg(format!("-max_total_time={max_time}"));
+        cmd.arg("--").arg(format!("-max_total_time={max_time}"));
     }
 
     if let Some(j) = jobs {
@@ -1839,9 +1849,7 @@ fn fuzz_corpus(target: &str) -> Result<()> {
         return Ok(());
     }
 
-    let entries: Vec<_> = fs::read_dir(&corpus_dir)?
-        .filter_map(Result::ok)
-        .collect();
+    let entries: Vec<_> = fs::read_dir(&corpus_dir)?.filter_map(Result::ok).collect();
 
     println!("Corpus directory: {}", corpus_dir.display());
     println!("Entries: {}", entries.len());

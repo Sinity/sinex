@@ -446,7 +446,7 @@ pub struct SystemHealthSummaryPayload {
 // Satellite heartbeat events
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "journald", event_type = "satellite.heartbeat")]
+#[event_payload(source = "journald", event_type = "node.heartbeat")]
 pub struct SatelliteHeartbeatPayload {
     pub service_name: String,
     pub uptime_seconds: Option<i64>,

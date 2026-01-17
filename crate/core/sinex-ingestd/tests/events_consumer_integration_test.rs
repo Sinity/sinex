@@ -174,11 +174,14 @@ async fn jetstream_consumer_survives_transient_db_failure(ctx: TestContext) -> T
     .await;
 
     // Confirmations stream should contain the successful confirmation.
-    if timeout(Duration::from_secs(Timeouts::SHORT), confirmation_sub.next())
-        .await
-        .ok()
-        .flatten()
-        .is_none()
+    if timeout(
+        Duration::from_secs(Timeouts::SHORT),
+        confirmation_sub.next(),
+    )
+    .await
+    .ok()
+    .flatten()
+    .is_none()
     {
         setup.handle.abort();
         return Err(eyre!("no confirmation on {confirmation_subject}"));

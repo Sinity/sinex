@@ -43,7 +43,7 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
 
     let publisher = TestSatellitePublisher::with_namespace(
         nats_client.clone(),
-        "test-satellite",
+        "test-node",
         Some(namespace.clone()),
     );
     let event_id = publisher
@@ -78,7 +78,7 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
         .get_by_id(event_id.into())
         .await?
         .expect("event should be persisted");
-    assert_eq!(event_from_db.source.as_str(), "test-satellite");
+    assert_eq!(event_from_db.source.as_str(), "test-node");
     assert_eq!(event_from_db.event_type.as_str(), "test.event");
 
     info!("🎉 E2E JetStream test PASSED");

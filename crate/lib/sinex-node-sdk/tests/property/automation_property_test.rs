@@ -8,7 +8,7 @@ use proptest::prelude::*;
 use serde_json::json;
 use sinex_core::types::domain::{EventSource, EventType};
 use sinex_core::{Event, JsonValue};
-use sinex_node_sdk::{Checkpoint, ProcessorType, ScanArgs, TimeHorizon};
+use sinex_node_sdk::{Checkpoint, NodeType, ScanArgs, TimeHorizon};
 use sinex_test_utils::{TestResult, prelude::*, sinex_proptest};
 use std::collections::HashMap;
 
@@ -18,7 +18,7 @@ fn arb_event_data() -> impl Strategy<Value = (String, String, serde_json::Value)
         // Heartbeat events
         (
             Just("journald".to_string()),
-            Just("satellite.heartbeat".to_string()),
+            Just("node.heartbeat".to_string()),
             prop::collection::hash_map(
                 prop_oneof![
                     Just("service_name".to_string()),
@@ -150,15 +150,15 @@ sinex_proptest! {
 /// Test processor type consistency
 #[sinex_test]
 fn test_processor_type_properties() -> TestResult<()> {
-    let types = vec![ProcessorType::Ingestor, ProcessorType::Automaton];
+    let types = vec![NodeType::Ingestor, NodeType::Automaton];
 
     for processor_type in types {
         // Property: Processor type should serialize correctly
         let serialized = serde_json::to_string(&processor_type).unwrap();
-        let deserialized: ProcessorType = serde_json::from_str(&serialized).unwrap();
+        let deserialized: NodeType = serde_json::from_str(&serialized).unwrap();
         assert_eq!(processor_type, deserialized);
 
-        // Property: ProcessorType should have consistent debug representation
+        // Property: NodeType should have consistent debug representation
         let debug1 = format!("{processor_type:?}");
         let debug2 = format!("{processor_type:?}");
         assert_eq!(debug1, debug2);

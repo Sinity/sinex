@@ -139,7 +139,7 @@ pub struct PoolConfig {
 impl Default for PoolConfig {
     fn default() -> Self {
         Self {
-            max_connections: 100, // Increased for high-throughput satellite constellation
+            max_connections: 100, // Increased for high-throughput node cluster
             min_connections: 10,  // Increased minimum to handle baseline load
             acquire_timeout_secs: Seconds::from_secs(30),
             idle_timeout_secs: Seconds::from_secs(300), // 5 minutes

@@ -681,7 +681,7 @@ impl<'a> SourceMaterialRepository<'a> {
                 let material_type = material_type.clone();
                 let source_uri = source_uri.clone();
                 let metadata = metadata.clone();
-                
+
                 Box::pin(async move {
                     set_repeatable_read(tx).await?;
 
@@ -768,8 +768,8 @@ impl<'a> SourceMaterialRepository<'a> {
                         .as_ref()
                         .map(|id| ulid_to_uuid(*id.as_ulid()));
 
-                    // Use explicit query helper or manual bind because query_as! macros inside closures with variable SQL might be tricky? 
-                    // No, here we use query_as helper function which takes string. 
+                    // Use explicit query helper or manual bind because query_as! macros inside closures with variable SQL might be tricky?
+                    // No, here we use query_as helper function which takes string.
                     // Wait, original code used sqlx::query_as::<_, SourceMaterialRecord>(upsert_sql).
                     // We can keep that.
 

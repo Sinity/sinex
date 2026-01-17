@@ -7,7 +7,9 @@ use sinex_core::{db::query_helpers::ulid_to_uuid, types::Ulid, DbPoolExt, SinexE
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
 use sinex_test_utils::timing_utils::{Timeouts, WaitHelpers};
-use sinex_test_utils::{sinex_test, EventOverrides, TestContext, TestResult, TestSatellitePublisher};
+use sinex_test_utils::{
+    sinex_test, EventOverrides, TestContext, TestResult, TestSatellitePublisher,
+};
 use sqlx::Row;
 use std::sync::Arc;
 use std::time::Duration;
@@ -189,9 +191,12 @@ async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
         )
         .await?;
 
-    let confirmation = timeout(Duration::from_secs(Timeouts::SHORT), confirmation_sub.next())
-        .await?
-        .expect("confirmation message");
+    let confirmation = timeout(
+        Duration::from_secs(Timeouts::SHORT),
+        confirmation_sub.next(),
+    )
+    .await?
+    .expect("confirmation message");
     let confirm_payload: serde_json::Value = serde_json::from_slice(&confirmation.payload)?;
     assert_eq!(confirm_payload["event_id"], event_id.to_string());
 

@@ -1,4 +1,4 @@
-use super::runtime_state::ProcessorRuntimeState;
+use super::runtime_state::NodeRuntimeState;
 use crate::{
     checkpoint::CheckpointManager, confirmation_handler::ConfirmationBuffer,
     event_processor::EventTransport, NodeError,
@@ -121,7 +121,7 @@ impl EventEmitter {
 
 /// Handles made available to processors during initialization and runtime.
 #[derive(Clone)]
-pub struct ProcessorHandles {
+pub struct NodeHandles {
     db_pool: Option<PgPool>,
     checkpoint_manager: Arc<CheckpointManager>,
     emitter: EventEmitter,
@@ -130,7 +130,7 @@ pub struct ProcessorHandles {
     schema_cache: Option<Arc<crate::runtime::stream::SchemaBroadcastCache>>,
 }
 
-impl ProcessorHandles {
+impl NodeHandles {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         db_pool: PgPool,
@@ -150,7 +150,7 @@ impl ProcessorHandles {
         }
     }
 
-    /// Create ProcessorHandles for Edge Mode (no database)
+    /// Create NodeHandles for Edge Mode (no database)
     #[allow(clippy::too_many_arguments)]
     pub fn new_edge(
         checkpoint_manager: Arc<CheckpointManager>,
@@ -205,21 +205,21 @@ impl ProcessorHandles {
 }
 
 /// Initialization context passed to processors.
-pub struct ProcessorInitContext<C> {
+pub struct NodeInitContext<C> {
     config: C,
     raw_config: std::collections::HashMap<String, serde_json::Value>,
     service: ServiceInfo,
-    handles: ProcessorHandles,
+    handles: NodeHandles,
     work_dir_utf8: Utf8PathBuf,
 }
 
-impl<C> ProcessorInitContext<C> {
+impl<C> NodeInitContext<C> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: C,
         raw_config: std::collections::HashMap<String, serde_json::Value>,
         service: ServiceInfo,
-        handles: ProcessorHandles,
+        handles: NodeHandles,
         work_dir_utf8: Utf8PathBuf,
     ) -> Self {
         Self {
@@ -243,7 +243,7 @@ impl<C> ProcessorInitContext<C> {
         &self.service
     }
 
-    pub fn handles(&self) -> &ProcessorHandles {
+    pub fn handles(&self) -> &NodeHandles {
         &self.handles
     }
 
@@ -257,7 +257,7 @@ impl<C> ProcessorInitContext<C> {
         C,
         std::collections::HashMap<String, serde_json::Value>,
         ServiceInfo,
-        ProcessorHandles,
+        NodeHandles,
         Utf8PathBuf,
     ) {
         (
@@ -270,8 +270,8 @@ impl<C> ProcessorInitContext<C> {
     }
 
     /// Construct a runtime snapshot without consuming the context.
-    pub fn runtime_state(&self) -> ProcessorRuntimeState {
-        ProcessorRuntimeState::new(
+    pub fn runtime_state(&self) -> NodeRuntimeState {
+        NodeRuntimeState::new(
             self.service.clone(),
             self.handles.clone(),
             self.raw_config.clone(),
@@ -280,8 +280,8 @@ impl<C> ProcessorInitContext<C> {
     }
 
     /// Consume the context, yielding processor config and its runtime state.
-    pub fn into_runtime(self) -> (C, ProcessorRuntimeState) {
-        let runtime = ProcessorRuntimeState::new(
+    pub fn into_runtime(self) -> (C, NodeRuntimeState) {
+        let runtime = NodeRuntimeState::new(
             self.service,
             self.handles,
             self.raw_config,
