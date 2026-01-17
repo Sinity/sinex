@@ -4,30 +4,114 @@ These features represent the long-term vision for Sinex SDK improvements. They a
 
 ---
 
-## Holographic DX: The Unifying Vision
+## Prompt-to-Node Development
+
+**The SDK becomes so simple that a prompt template is all you need to define a new node.**
+
+```
+User: "I need a node that detects git activity from terminal commands"
+
+→ LLM generates SimpleProcessor (10 lines)
+→ Hot reload picks it up
+→ State persists across iterations
+→ Test with real production data via Tether
+→ Iterate until correct
+```
+
+**Bespoke event-sourced data flows become routine** because:
+1. SimpleProcessor is trivial enough for LLM to generate reliably
+2. Holographic DX means no manual compile/deploy friction
+3. The Tether provides real data for immediate validation
+
+### The Workflow
+
+**Step 1: Describe what you want**
+```markdown
+# Node Spec: Git Activity Detector
+
+## Input
+- terminal.command.executed events
+
+## Logic
+- Filter commands starting with "git"
+- Extract subcommand (commit, push, pull, etc.)
+- Track repo path from cwd
+
+## Output
+- git.activity.detected events with { subcommand, repo_path, timestamp }
+```
+
+**Step 2: LLM generates SimpleProcessor**
+```rust
+struct GitActivityDetector;
+
+#[async_trait]
+impl SimpleProcessor for GitActivityDetector {
+    type State = GitActivityState;
+    type Input = TerminalCommandEvent;
+    type Output = GitActivityEvent;
+
+    async fn process(&mut self, state: &mut Self::State, input: Self::Input) -> Result<Option<Self::Output>> {
+        if !input.command.starts_with("git ") {
+            return Ok(None);
+        }
+        let subcommand = input.command.split_whitespace().nth(1).unwrap_or("unknown");
+        Ok(Some(GitActivityEvent {
+            subcommand: subcommand.to_string(),
+            repo_path: input.cwd,
+            timestamp: input.timestamp,
+        }))
+    }
+}
+```
+
+**Step 3: Hot reload + real data**
+```bash
+$ sx dev git-activity-detector --tether prod
+
+[sx] Generated node from spec...
+[sx] Building...
+[sx] Running with production terminal events...
+[sx] Event: git.activity.detected { subcommand: "status", repo: "/home/user/sinex" }
+```
+
+**Step 4: Iterate until correct**
+- See real behavior with real data
+- Adjust spec or code
+- Hot reload (state preserved)
+- Repeat
+
+No manual compilation. No synthetic test data. No lost state.
+
+### Why This Works
+
+**SimpleProcessor is LLM-friendly:**
+- Single `process()` method
+- Clear input/output types
+- State is just a struct with Serialize/Deserialize
+- No async complexity (SDK handles it)
+- No NATS/checkpoint boilerplate
+
+**The Tether validates instantly:**
+- LLM-generated code might have edge cases
+- Real production patterns expose: unusual formats, unicode, concurrent events, timing
+
+---
+
+## Holographic DX: The Infrastructure
 
 **The system IS the development environment.**
 
-Current Sinex development follows the traditional model:
+Current model:
 ```
 DEVELOPER ──> Write Rust ──> cargo build ──> restart service ──> lose state ──> replay events
 ```
 
-The holographic model makes the compile/deploy cycle invisible:
+Holographic model:
 ```
 DEVELOPER ──> Edit Rust ──> [auto-rebuilds] ──> [state transfers] ──> continue from where you were
                               (invisible)       (automatic)
 ```
-
-### Inspirations
-
-| System | Insight |
-|--------|---------|
-| **Smalltalk** | The image IS development. Code changes are live. No external build step. |
-| **Erlang/OTP** | Hot code reload. Running system accepts new modules without restart. |
-| **Lisp machines** | Development environment and runtime are the same thing. |
-| **Jupyter** | Interactive exploration with persistent state across cell executions. |
-| **Unreal Engine** | Hot reload of C++ with state preservation during game development. |
 
 ### The Three Pillars
 
@@ -37,7 +121,15 @@ DEVELOPER ──> Edit Rust ──> [auto-rebuilds] ──> [state transfers] �
 
 3. **State Continuity**: State survives code changes, crashes, restarts, and version upgrades through automatic checkpoint management.
 
-All features below are unified by this vision. SimpleProcessor makes state management automatic. The Aggregation Runner handles hot reload gracefully. The sx tool orchestrates the holographic experience. Wasm plugins provide instant reload for extension logic.
+### Inspirations
+
+| System | Insight |
+|--------|---------|
+| **Smalltalk** | The image IS development. Code changes are live. |
+| **Erlang/OTP** | Hot code reload. Running system accepts new modules without restart. |
+| **Jupyter** | Interactive exploration with persistent state across cell executions. |
+
+All features below enable prompt-to-node development. SimpleProcessor is the LLM-friendly API. The sx tool orchestrates the holographic experience. The Tether provides real data validation. Wasm plugins offer instant reload for non-Rust logic.
 
 ---
 
