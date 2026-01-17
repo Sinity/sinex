@@ -7,7 +7,7 @@ use serde_json::json;
 use sinex_core::{db::query_helpers::ulid_to_uuid, types::ulid::Ulid, DbPoolExt};
 use sinex_ingestd::{validator::EventValidator, JetStreamConsumer, JetStreamTopology};
 use sinex_test_utils::timing_utils::{Timeouts, WaitHelpers};
-use sinex_test_utils::{prelude::*, TestSatellitePublisher};
+use sinex_test_utils::{prelude::*, TestNodePublisher};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
@@ -91,7 +91,7 @@ async fn jetstream_consumer_processes_batches_without_dlq(ctx: TestContext) -> T
     let hooks = TestHooks::none();
     let setup = start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(5), &hooks).await?;
 
-    let publisher = TestSatellitePublisher::with_namespace(
+    let publisher = TestNodePublisher::with_namespace(
         setup.nats_client.clone(),
         format!("integration.{suffix}"),
         Some(setup.namespace.clone()),
@@ -143,7 +143,7 @@ async fn jetstream_consumer_survives_transient_db_failure(ctx: TestContext) -> T
         .subscribe(confirmation_subject.clone())
         .await?;
 
-    let publisher = TestSatellitePublisher::with_namespace(
+    let publisher = TestNodePublisher::with_namespace(
         setup.nats_client.clone(),
         format!("retry.{suffix}"),
         Some(setup.namespace.clone()),
@@ -228,7 +228,7 @@ async fn confirmation_emitted_after_persistence(ctx: TestContext) -> TestResult<
     let hooks = TestHooks::none();
     let setup = start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(5), &hooks).await?;
 
-    let publisher = TestSatellitePublisher::with_namespace(
+    let publisher = TestNodePublisher::with_namespace(
         setup.nats_client.clone(),
         format!("confirm.{suffix}"),
         Some(setup.namespace.clone()),
@@ -288,7 +288,7 @@ async fn jetstream_consumer_redelivers_when_confirmation_publish_fails(
         .subscribe(confirmation_subject.clone())
         .await?;
 
-    let publisher = TestSatellitePublisher::with_namespace(
+    let publisher = TestNodePublisher::with_namespace(
         setup.nats_client.clone(),
         format!("confirm-retry.{suffix}"),
         Some(setup.namespace.clone()),
@@ -354,7 +354,7 @@ async fn jetstream_consumer_preserves_ts_orig_subnano(ctx: TestContext) -> TestR
     let ts_orig_str = ts_orig.to_rfc3339_opts(SecondsFormat::Nanos, true);
     let expected_subnano = (ts_orig.nanosecond() % 1_000) as i32;
 
-    let publisher = TestSatellitePublisher::with_namespace(
+    let publisher = TestNodePublisher::with_namespace(
         setup.nats_client.clone(),
         format!("subnano.{suffix}"),
         Some(setup.namespace.clone()),
@@ -395,7 +395,7 @@ async fn jetstream_consumer_redelivers_when_ack_wait_expires(ctx: TestContext) -
         start_consumer_with_hooks(&ctx, &suffix, Duration::from_millis(500), &hooks).await?;
 
     let event_id = Ulid::new();
-    let publisher = TestSatellitePublisher::with_namespace(
+    let publisher = TestNodePublisher::with_namespace(
         setup.nats_client.clone(),
         format!("ackwait.{suffix}"),
         Some(setup.namespace.clone()),
@@ -455,7 +455,7 @@ async fn jetstream_consumer_routes_validation_failures_to_dlq(ctx: TestContext) 
 
     // One invalid payload (bad timestamp), one valid.
     let valid_event_id = Ulid::new();
-    let publisher = TestSatellitePublisher::with_namespace(
+    let publisher = TestNodePublisher::with_namespace(
         setup.nats_client.clone(),
         "dlq-source",
         Some(setup.namespace.clone()),
@@ -508,7 +508,7 @@ async fn jetstream_consumer_routes_malformed_json_to_dlq(ctx: TestContext) -> Te
     let hooks = TestHooks::with_validation();
     let setup = start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(5), &hooks).await?;
 
-    let publisher = TestSatellitePublisher::with_namespace(
+    let publisher = TestNodePublisher::with_namespace(
         setup.nats_client.clone(),
         format!("malformed.{suffix}"),
         Some(setup.namespace.clone()),
@@ -557,7 +557,7 @@ async fn jetstream_consumer_routes_db_failures_to_dlq(ctx: TestContext) -> TestR
 
     // Publish an event that will trigger the simulated DB failure.
     let event_id = Ulid::new();
-    let publisher = TestSatellitePublisher::with_namespace(
+    let publisher = TestNodePublisher::with_namespace(
         setup.nats_client.clone(),
         "db-fail",
         Some(setup.namespace.clone()),
@@ -667,7 +667,7 @@ async fn jetstream_consumer_dlq_reason_classification(ctx: TestContext) -> TestR
         .build();
     let setup = start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(2), &hooks).await?;
 
-    let publisher = TestSatellitePublisher::with_namespace(
+    let publisher = TestNodePublisher::with_namespace(
         setup.nats_client.clone(),
         format!("dlq.{suffix}"),
         Some(setup.namespace.clone()),
@@ -743,7 +743,7 @@ async fn chaos_injector_produces_clean_snapshot(ctx: TestContext) -> TestResult<
     let setup = start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(5), &hooks).await?;
 
     let chaos = ChaosInjestor::new(Duration::from_millis(5), 0.0);
-    let publisher = TestSatellitePublisher::with_namespace(
+    let publisher = TestNodePublisher::with_namespace(
         setup.nats_client.clone(),
         format!("chaos.{suffix}"),
         Some(setup.namespace.clone()),

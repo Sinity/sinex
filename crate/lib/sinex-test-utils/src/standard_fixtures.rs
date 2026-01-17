@@ -110,7 +110,7 @@ pub static INTEGRATION_FIXTURE: Lazy<FixtureSet> = Lazy::new(|| {
         })
 });
 
-/// Satellite benchmark fixture
+/// Node benchmark fixture
 ///
 /// For testing node-specific patterns:
 /// - Burst patterns (scanner mode)

@@ -1,4 +1,4 @@
-//! Satellite configuration environment validation tests.
+//! Node configuration environment validation tests.
 
 use sinex_node_sdk::NodeConfig;
 use sinex_test_utils::{TestResult, sinex_test, TestContext};

@@ -1,4 +1,4 @@
-//! Satellite Lifecycle Integration Tests
+//! Node Lifecycle Integration Tests
 //!
 //! Tests the complete lifecycle of node services including:
 //! - Initialization and startup
@@ -40,12 +40,12 @@ async fn test_node_complete_lifecycle(ctx: TestContext) -> TestResult<()> {
     let mut coordination = NodeCoordination::new(instance.clone(), ctx.pool().clone());
 
     // Phase 1: Initialization
-    info!("Phase 1: Satellite initialization");
+    info!("Phase 1: Node initialization");
     coordination.initialize().await?;
 
     // Should start in standby mode
     assert_eq!(coordination.current_mode(), &InstanceMode::Standby);
-    debug!("✓ Satellite initialized in standby mode");
+    debug!("✓ Node initialized in standby mode");
 
     // Phase 2: Startup and leadership acquisition
     info!("Phase 2: Startup and leadership acquisition");
@@ -63,7 +63,7 @@ async fn test_node_complete_lifecycle(ctx: TestContext) -> TestResult<()> {
                 async move {
                     // First time becoming leader
                     if !flag.load(Ordering::SeqCst) {
-                        info!("Satellite became leader!");
+                        info!("Node became leader!");
                         flag.store(true, Ordering::SeqCst);
                     }
 
@@ -83,14 +83,14 @@ async fn test_node_complete_lifecycle(ctx: TestContext) -> TestResult<()> {
     // Verify node is operating
     assert!(
         became_leader.load(Ordering::SeqCst),
-        "Satellite should have become leader"
+        "Node should have become leader"
     );
     let initial_processing = processing_count.load(Ordering::SeqCst);
     assert!(
         initial_processing > 0,
-        "Satellite should have processed work"
+        "Node should have processed work"
     );
-    debug!("✓ Satellite processing {} work units", initial_processing);
+    debug!("✓ Node processing {} work units", initial_processing);
 
     // Phase 4: Graceful shutdown
     info!("Phase 4: Graceful shutdown");
@@ -101,7 +101,7 @@ async fn test_node_complete_lifecycle(ctx: TestContext) -> TestResult<()> {
         final_processing >= initial_processing,
         "Processing should not decrease"
     );
-    info!("✓ Satellite lifecycle completed successfully");
+    info!("✓ Node lifecycle completed successfully");
 
     Ok(())
 }
@@ -213,7 +213,7 @@ async fn test_node_health_monitoring(ctx: TestContext) -> TestResult<()> {
     assert_eq!(health_data["health_status"], "healthy");
     assert_eq!(health_data["uptime_seconds"], 5);
 
-    info!("✓ Satellite health monitoring working correctly");
+    info!("✓ Node health monitoring working correctly");
     Ok(())
 }
 
@@ -363,7 +363,7 @@ async fn test_node_state_transitions(ctx: TestContext) -> TestResult<()> {
         "Should have recorded state changes"
     );
 
-    info!("✓ Satellite state transitions working correctly");
+    info!("✓ Node state transitions working correctly");
     Ok(())
 }
 
@@ -576,7 +576,7 @@ async fn test_node_concurrent_lifecycle(ctx: TestContext) -> TestResult<()> {
     for (i, result) in results.iter().enumerate() {
         assert!(
             result.as_ref().unwrap(),
-            "Satellite {} should complete successfully",
+            "Node {} should complete successfully",
             i
         );
     }

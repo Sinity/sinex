@@ -8,7 +8,7 @@ use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
 use sinex_test_utils::timing_utils::{Timeouts, WaitHelpers};
 use sinex_test_utils::{
-    sinex_test, EventOverrides, TestContext, TestResult, TestSatellitePublisher,
+    sinex_test, EventOverrides, TestContext, TestResult, TestNodePublisher,
 };
 use tokio::sync::RwLock;
 use tokio::time::Duration;
@@ -59,7 +59,7 @@ async fn ingestion_handles_burst_under_latency_budget(ctx: TestContext) -> TestR
     let ctx = ctx.with_shared_nats().await?;
     let (consumer_handle, namespace) = spawn_consumer(&ctx, "latency").await?;
     let nats_client = ctx.nats_client();
-    let publisher = TestSatellitePublisher::with_namespace(
+    let publisher = TestNodePublisher::with_namespace(
         nats_client,
         "latency-suite",
         Some(namespace.clone()),
@@ -106,7 +106,7 @@ async fn replaying_events_after_restart_does_not_duplicate(ctx: TestContext) -> 
     let ctx = ctx.with_shared_nats().await?;
     let (consumer_handle, namespace) = spawn_consumer(&ctx, "restart").await?;
     let nats_client = ctx.nats_client();
-    let publisher = TestSatellitePublisher::with_namespace(
+    let publisher = TestNodePublisher::with_namespace(
         nats_client,
         "restart-suite",
         Some(namespace.clone()),
@@ -150,7 +150,7 @@ async fn replaying_events_after_restart_does_not_duplicate(ctx: TestContext) -> 
     // Restart the consumer and replay the same events to ensure no duplicates.
     let (consumer_handle, namespace) = spawn_consumer(&ctx, "restart-2").await?;
     let nats_client = ctx.nats_client();
-    let publisher = TestSatellitePublisher::with_namespace(
+    let publisher = TestNodePublisher::with_namespace(
         nats_client,
         "restart-suite",
         Some(namespace.clone()),

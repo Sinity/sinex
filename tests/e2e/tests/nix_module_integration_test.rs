@@ -37,7 +37,7 @@ async fn test_nixos_module_config_validation(ctx: TestContext) -> TestResult<()>
     );
     assert!(
         sinex_config.get("nodes").is_some(),
-        "Should have satellite config"
+        "Should have node config"
     );
     assert!(
         sinex_config.get("shell").is_some(),
@@ -423,8 +423,8 @@ async fn test_database_configuration_integration() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_satellite_source_configuration() -> TestResult<()> {
-    // Test individual satellite source configurations from the NixOS module
+async fn test_node_source_configuration() -> TestResult<()> {
+    // Test individual node source configurations from the NixOS module
     let sources_config = create_test_sources_config();
 
     // Test filesystem source
@@ -798,7 +798,7 @@ fn create_test_module_options_schema() -> serde_json::Value {
                 "enable": {
                     "type": "bool",
                     "default": true,
-                    "description": "Enable satellite constellation"
+                    "description": "Enable node constellation"
                 },
                 "eventSources": {
                     "type": "submodule",
@@ -1154,7 +1154,7 @@ fn create_test_migration_info(_versions: &HashMap<String, serde_json::Value>) ->
         "backward_compatible": true,
         "breaking_changes": [],
         "deprecated_options": [
-            {"version": "0.2.0", "option": "old_collector_config", "replacement": "satellite.eventSources"}
+            {"version": "0.2.0", "option": "old_collector_config", "replacement": "node.eventSources"}
         ],
         "migration_path": {
             "0.1.0_to_0.2.0": "automatic",

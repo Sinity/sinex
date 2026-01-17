@@ -1,4 +1,4 @@
-//! Satellite version information and utilities
+//! Node version information and utilities
 //!
 //! This module provides access to compile-time version information generated
 //! by the build script, including semantic versioning, git metadata, and

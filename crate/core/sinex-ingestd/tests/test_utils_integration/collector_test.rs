@@ -285,7 +285,7 @@ async fn test_node_integration_patterns(ctx: TestContext) -> TestResult<()> {
     tracing::info!(
         total_events = stored_events.len(),
         unique_sources = events_by_source.len(),
-        "Satellite integration patterns validated"
+        "Node integration patterns validated"
     );
 
     Ok(())

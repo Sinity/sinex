@@ -5,7 +5,7 @@ use chrono::Utc;
 use serde_json::json;
 use sinex_core::{DbPoolExt, EventSource, SinexError, Ulid};
 use sinex_test_utils::timing_utils::WaitHelpers;
-use sinex_test_utils::{sinex_test, TestContext, TestSatellitePublisher};
+use sinex_test_utils::{sinex_test, TestContext, TestNodePublisher};
 
 fn is_stream_not_found<E: std::fmt::Display>(err: &E) -> bool {
     let message = err.to_string();
@@ -38,7 +38,7 @@ async fn jetstream_pipeline_handles_burst_without_timeouts() -> sinex_test_utils
     let source = "stress.pipeline";
     let event_type = "burst.event";
     let namespace = ctx.pipeline_namespace().prefix().to_string();
-    let publisher = TestSatellitePublisher::with_namespace(
+    let publisher = TestNodePublisher::with_namespace(
         ctx.nats_client(),
         source.to_string(),
         Some(namespace),
@@ -73,7 +73,7 @@ async fn jetstream_pipeline_restart_keeps_dlq_flowing() -> sinex_test_utils::Tes
 
     let nats = ctx.nats_handle()?;
     let js = nats.jetstream_with_client(ctx.nats_client());
-    let publisher = TestSatellitePublisher::with_namespace(
+    let publisher = TestNodePublisher::with_namespace(
         ctx.nats_client(),
         "restart.dlq".to_string(),
         Some(namespace.clone()),
@@ -185,7 +185,7 @@ async fn jetstream_pipeline_routes_invalid_burst_to_dlq() -> sinex_test_utils::T
 
     let nats = ctx.nats_handle()?;
     let js = nats.jetstream_with_client(ctx.nats_client());
-    let publisher = TestSatellitePublisher::with_namespace(
+    let publisher = TestNodePublisher::with_namespace(
         ctx.nats_client(),
         "stress.dlq".to_string(),
         Some(namespace),
@@ -236,7 +236,7 @@ async fn jetstream_pipeline_handles_mixed_valid_and_invalid_bursts(
 
     let nats = ctx.nats_handle()?;
     let js = nats.jetstream_with_client(ctx.nats_client());
-    let publisher = TestSatellitePublisher::with_namespace(
+    let publisher = TestNodePublisher::with_namespace(
         ctx.nats_client(),
         source.to_string(),
         Some(namespace),

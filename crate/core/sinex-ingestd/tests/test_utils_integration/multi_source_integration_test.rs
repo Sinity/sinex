@@ -41,12 +41,12 @@ impl TestCommandNode {
 }
 
 /// Test node that performs finite scanning operations
-struct TestScannerSatellite {
+struct TestScannerNode {
     items_to_scan: usize,
     items_scanned: usize,
 }
 
-impl TestScannerSatellite {
+impl TestScannerNode {
     fn new(items_to_scan: usize) -> Self {
         Self {
             items_to_scan,
@@ -111,7 +111,7 @@ impl EventSource for TestCommandNode {
 }
 
 #[async_trait]
-impl EventSource for TestScannerSatellite {
+impl EventSource for TestScannerNode {
     async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> color_eyre::Result<()> {
         // Scanner mode - finite operation that completes
         while self.items_scanned < self.items_to_scan {
@@ -284,7 +284,7 @@ async fn test_multi_node_coordination(ctx: TestContext) -> color_eyre::Result<()
 async fn test_node_operational_modes(ctx: TestContext) -> color_eyre::Result<()> {
     // Test 1: Scanner mode - finite operation
     let (scanner_tx, mut scanner_rx) = mpsc::channel(100);
-    let mut scanner_node = TestScannerSatellite::new(3);
+    let mut scanner_node = TestScannerNode::new(3);
 
     // Run scanner mode (should complete naturally)
     let scanner_start = std::time::Instant::now();
@@ -420,7 +420,7 @@ async fn test_multi_source_event_ordering(ctx: TestContext) -> color_eyre::Resul
     // Create three different node types
     let mut fs_node = TestFilesystemNode::new(2);
     let mut cmd_node = TestCommandNode::new(2);
-    let mut scanner_node = TestScannerSatellite::new(2);
+    let mut scanner_node = TestScannerNode::new(2);
 
     // Create a shared channel for all events
     let (tx, mut rx) = mpsc::channel(100);
@@ -496,7 +496,7 @@ async fn test_multi_source_payload_diversity(ctx: TestContext) -> color_eyre::Re
     // Create nodes with different payload structures
     let mut fs_node = TestFilesystemNode::new(1);
     let mut cmd_node = TestCommandNode::new(1);
-    let mut scanner_node = TestScannerSatellite::new(1);
+    let mut scanner_node = TestScannerNode::new(1);
 
     // Create channels for each node
     let (fs_tx, mut fs_rx) = mpsc::channel(10);

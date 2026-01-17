@@ -69,7 +69,7 @@ async fn wait_for_material_row(
     }
 }
 
-/// Satellite crashes immediately after registering a material (begin published, no slices/end).
+/// Node crashes immediately after registering a material (begin published, no slices/end).
 #[sinex_test]
 async fn test_crash_during_early_material_acquisition(ctx: TestContext) -> Result<()> {
     let (ctx, mut ingest_handle, nats_client) = setup_ingestd(ctx).await?;
@@ -109,7 +109,7 @@ async fn test_crash_during_early_material_acquisition(ctx: TestContext) -> Resul
     Ok(())
 }
 
-/// Satellite crashes mid-acquisition after several slices (no end).
+/// Node crashes mid-acquisition after several slices (no end).
 #[sinex_test]
 async fn test_crash_during_mid_material_acquisition(ctx: TestContext) -> Result<()> {
     let (ctx, mut ingest_handle, nats_client) = setup_ingestd(ctx).await?;

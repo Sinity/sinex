@@ -38,7 +38,7 @@ pub fn command_requires_heartbeat(command: &ProcessorCommand) -> bool {
 #[derive(Parser, Debug, Clone)]
 #[command(
     name = "sinex-processor",
-    about = "Sinex Stream Processor Satellite",
+    about = "Sinex Stream Processor Node",
     version
 )]
 pub struct ProcessorCli {
@@ -609,7 +609,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static>
                                 let mut runner = runner.lock().await;
                                 runner.run_service().await.map_err(|e| {
                                     sinex_core::SinexError::service(format!(
-                                        "Satellite error: {}",
+                                        "Node error: {}",
                                         e
                                     ))
                                 })

@@ -56,7 +56,7 @@ impl ServiceInfo {
 pub struct EventEmitter {
     sender: Arc<EventSender>,
     dry_run: bool,
-    validator: Option<Arc<crate::schema_validator::SatelliteSchemaValidator>>,
+    validator: Option<Arc<crate::schema_validator::NodeSchemaValidator>>,
 }
 
 impl EventEmitter {
@@ -72,7 +72,7 @@ impl EventEmitter {
     pub fn with_validator(
         sender: EventSender,
         dry_run: bool,
-        validator: Arc<crate::schema_validator::SatelliteSchemaValidator>,
+        validator: Arc<crate::schema_validator::NodeSchemaValidator>,
     ) -> Self {
         Self {
             sender: Arc::new(sender),

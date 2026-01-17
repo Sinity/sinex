@@ -69,7 +69,7 @@ async fn test_ingestd_graceful_shutdown_completes_inflight(ctx: TestContext) -> 
         .await?;
 
     // Publish events before shutdown
-    let publisher = TestSatellitePublisher::new(ctx.nats_client(), "graceful-source");
+    let publisher = TestNodePublisher::new(ctx.nats_client(), "graceful-source");
     let mut event_ids = Vec::new();
     for idx in 0..5 {
         let event_id = publisher
@@ -158,7 +158,7 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
     let nats_client = ctx.nats_client();
 
     let publisher_handle = tokio::spawn(async move {
-        let publisher = TestSatellitePublisher::new(nats_client, "load-source");
+        let publisher = TestNodePublisher::new(nats_client, "load-source");
         let mut idx = 0;
         while !shutdown_flag_clone.load(Ordering::SeqCst) {
             let _ = publisher
@@ -355,7 +355,7 @@ async fn test_shutdown_data_consistency(ctx: TestContext) -> TestResult<()> {
         .await?;
 
     // Publish events with structured data
-    let publisher = TestSatellitePublisher::new(ctx.nats_client(), "consistency-source");
+    let publisher = TestNodePublisher::new(ctx.nats_client(), "consistency-source");
     for idx in 0..10 {
         publisher
             .publish_event(

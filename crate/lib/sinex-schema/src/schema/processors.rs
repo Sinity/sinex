@@ -77,6 +77,6 @@ impl OperationsLog {
 }
 
 // =============================================================================
-// II. SATELLITE COORDINATION
+// II. NODE COORDINATION
 // -- These tables provide the backend for distributed leadership election and handoff.
 // =============================================================================

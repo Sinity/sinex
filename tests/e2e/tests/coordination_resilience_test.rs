@@ -1,12 +1,12 @@
 //! Distributed Coordination Resilience Tests
 //!
 //! These tests verify the distributed coordination mechanisms used for
-//! work distribution, including advisory locking and satellite coordination.
+//! work distribution, including advisory locking and node coordination.
 //!
 //! ## Coverage Areas
 //! - Advisory lock acquisition and recovery
 //! - Concurrent coordination under stress
-//! - Satellite instance registration and heartbeat tracking
+//! - Node instance registration and heartbeat tracking
 
 use sinex_core::coordination::kv_client::{CoordinationKvClient, InstanceMetadata};
 use sinex_test_utils::nats::ensure_coordination_buckets;
@@ -147,19 +147,19 @@ async fn test_advisory_lock_timeout(ctx: TestContext) -> Result<()> {
 }
 
 // =============================================================================
-// Satellite Instance Coordination Tests
+// Node Instance Coordination Tests
 // =============================================================================
 
-/// Test that satellite instances can be registered and tracked using NATS KV.
+/// Test that node instances can be registered and tracked using NATS KV.
 #[sinex_test]
-async fn test_satellite_instance_registration(ctx: TestContext) -> Result<()> {
+async fn test_node_instance_registration(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().await?;
     let nats = ctx.nats_handle()?;
     let client = nats.connect().await?;
     let js = async_nats::jetstream::new(client);
     ensure_coordination_buckets(&js).await?;
 
-    let service_name = format!("test-satellite-{}", uuid::Uuid::new_v4());
+    let service_name = format!("test-node-{}", uuid::Uuid::new_v4());
     let instance_id = uuid::Uuid::new_v4().to_string();
 
     let kv_client = CoordinationKvClient::new(js.clone(), service_name.clone());
@@ -199,9 +199,9 @@ async fn test_satellite_instance_registration(ctx: TestContext) -> Result<()> {
     Ok(())
 }
 
-/// Test that multiple satellite instances can coexist in KV.
+/// Test that multiple node instances can coexist in KV.
 #[sinex_test]
-async fn test_multiple_satellite_instances(ctx: TestContext) -> Result<()> {
+async fn test_multiple_node_instances(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().await?;
     let nats = ctx.nats_handle()?;
     let client = nats.connect().await?;
@@ -397,7 +397,7 @@ async fn test_leadership_transfer(ctx: TestContext) -> Result<()> {
 async fn test_concurrent_coordination_stress(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().await?;
     let nats = ctx.nats_handle()?;
-    // Share client? Or new client per task? Real satellites have own clients.
+    // Share client? Or new client per task? Real nodes have own clients.
     // For test perf, we can share NATS connection but new KV clients.
 
     let client = nats.connect().await?;

@@ -41,7 +41,7 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
     );
     let automaton_handle = tokio::spawn(async move { automaton_consumer.run().await });
 
-    let publisher = TestSatellitePublisher::with_namespace(
+    let publisher = TestNodePublisher::with_namespace(
         nats_client.clone(),
         "test-node",
         Some(namespace.clone()),
@@ -55,7 +55,7 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
             }),
         )
         .await?;
-    info!(event_id = %event_id, "✅ Event published to JetStream via TestSatellitePublisher");
+    info!(event_id = %event_id, "✅ Event published to JetStream via TestNodePublisher");
 
     scope.wait_for_event_id(event_id.into()).await?;
 
@@ -82,7 +82,7 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
     assert_eq!(event_from_db.event_type.as_str(), "test.event");
 
     info!("🎉 E2E JetStream test PASSED");
-    info!("   ✓ Satellite → JetStream (events.raw)");
+    info!("   ✓ Node → JetStream (events.raw)");
     info!("   ✓ ingestd → Database persistence");
     info!("   ✓ ingestd → JetStream (events.confirmations)");
     info!("   ✓ Automaton → Confirmed event consumption");
@@ -103,7 +103,7 @@ async fn test_jetstream_idempotency(ctx: TestContext) -> Result<()> {
     let namespace = scope.namespace().prefix().to_string();
     let nats_client = ctx.nats_client();
 
-    let publisher = TestSatellitePublisher::with_namespace(
+    let publisher = TestNodePublisher::with_namespace(
         nats_client.clone(),
         "idempotency-test",
         Some(namespace.clone()),

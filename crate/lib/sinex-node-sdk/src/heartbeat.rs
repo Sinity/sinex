@@ -277,7 +277,7 @@ impl HeartbeatEmitter {
             uptime_seconds = metrics.uptime_seconds,
             memory_usage_mb = metrics.memory_usage_mb,
             errors_count = metrics.errors_count,
-            "Satellite heartbeat emitted"
+            "Node heartbeat emitted"
         );
 
         self.emit_status_alert_if_needed(&metrics);
@@ -343,7 +343,7 @@ impl HeartbeatEmitter {
             ProcessStatus::Healthy => {
                 info!(
                     service = %metrics.service_name,
-                    "Satellite recovered to healthy status"
+                    "Node recovered to healthy status"
                 );
             }
             ProcessStatus::Degraded => {
@@ -400,7 +400,7 @@ impl HeartbeatEmitter {
             service = %metrics.service_name,
             status = %metrics.status,
             errors = metrics.errors_count,
-            "Satellite transitioned to {} state",
+            "Node transitioned to {} state",
             event_type
         );
     }

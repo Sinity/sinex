@@ -3,7 +3,7 @@ use std::time::Duration;
 use async_nats::jetstream::{self, consumer::pull::Config as ConsumerConfig, consumer::AckPolicy};
 use color_eyre::eyre;
 use serde_json::json;
-use sinex_test_utils::{sinex_test, EphemeralNats, TestSatellitePublisher};
+use sinex_test_utils::{sinex_test, EphemeralNats, TestNodePublisher};
 use tokio::time::{sleep, timeout};
 use tokio_stream::StreamExt;
 
@@ -77,7 +77,7 @@ async fn test_node_publisher_emits_events_and_confirmations() -> TestResult<()> 
     )
     .await?;
 
-    let publisher = TestSatellitePublisher::new(nats.connect().await?, "test.source");
+    let publisher = TestNodePublisher::new(nats.connect().await?, "test.source");
     let event_id = publisher
         .publish_event("test.event", json!({"hello": "world"}))
         .await?;

@@ -12,8 +12,8 @@ EXAMPLES:
     # List all registered nodes
     sinexctl node list
 
-    # List only satellite nodes
-    sinexctl node list --role satellite
+    # List only ingestor nodes
+    sinexctl node list --role ingestor
 
     # Check status of a specific node
     sinexctl node status terminal-node

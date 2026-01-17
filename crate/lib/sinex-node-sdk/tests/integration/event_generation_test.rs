@@ -218,7 +218,7 @@ async fn test_event_generation_payload_varieties(ctx: TestContext) -> TestResult
 }
 
 // =============================================================================
-// Satellite Event Generation Tests
+// Node Event Generation Tests
 // =============================================================================
 
 /// Test filesystem node event generation

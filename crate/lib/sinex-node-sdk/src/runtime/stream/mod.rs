@@ -151,7 +151,7 @@ async fn maybe_start_schema_listener(
     transport: &EventTransport,
 ) -> NodeResult<(
     Option<Arc<SchemaBroadcastCache>>,
-    Option<Arc<crate::schema_validator::SatelliteSchemaValidator>>,
+    Option<Arc<crate::schema_validator::NodeSchemaValidator>>,
 )> {
     // Always enable schema cache and validation for node-side validation.
     // Schemas are broadcast from ingestd and stored in NATS KV.
@@ -169,7 +169,7 @@ async fn maybe_start_schema_listener(
     // Create schema cache and validator
     let cache = Arc::new(SchemaBroadcastCache::default());
     let cache_clone = cache.clone();
-    let validator = Arc::new(crate::schema_validator::SatelliteSchemaValidator::new());
+    let validator = Arc::new(crate::schema_validator::NodeSchemaValidator::new());
     let validator_clone = validator.clone();
 
     // Get KV bucket for fetching full schemas

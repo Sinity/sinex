@@ -183,7 +183,7 @@ EXAMPLES:
     sinexctl recent -n 50
 
     # Last 100 events from terminal
-    sinexctl recent -n 100 --source terminal-satellite
+    sinexctl recent -n 100 --source terminal-ingestor
 ")]
 pub struct RecentCommand {
     /// Number of events to show
@@ -333,8 +333,8 @@ EXAMPLES:
     # Watch all events
     sinexctl watch
 
-    # Watch events from terminal satellite
-    sinexctl watch --source terminal-satellite
+    # Watch events from terminal ingestor
+    sinexctl watch --source terminal-ingestor
 
     # Watch process execution events
     sinexctl watch --event-type process_exec

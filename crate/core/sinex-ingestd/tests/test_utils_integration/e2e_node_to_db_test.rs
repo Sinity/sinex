@@ -4,7 +4,7 @@ use sinex_ingestd::{
     validator::EventValidator, IngestdResult, JetStreamConsumer, JetStreamTopology,
 };
 use sinex_test_utils::timing_utils::{Timeouts, WaitHelpers};
-use sinex_test_utils::{prelude::*, TestSatellitePublisher};
+use sinex_test_utils::{prelude::*, TestNodePublisher};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -68,7 +68,7 @@ async fn end_to_end_single_node_full_flow(ctx: TestContext) -> TestResult<()> {
         .subscribe(topology.confirmations_subject.clone())
         .await?;
 
-    let publisher = TestSatellitePublisher::with_namespace(
+    let publisher = TestNodePublisher::with_namespace(
         nats_client.clone(),
         format!("node.{suffix}"),
         Some(namespace),
