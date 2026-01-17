@@ -6,11 +6,11 @@
 
 ## Context
 
-The gateway needs to support relaying large binary content (blobs) from external sources (e.g., CLI, web clients) to satellites for processing and storage.
+The gateway needs to support relaying large binary content (blobs) from external sources (e.g., CLI, web clients) to nodes for processing and storage.
 
 ## Design Decision
 
-**Pattern**: Gateway publishes blob chunks to NATS subjects, satellites consume and persist
+**Pattern**: Gateway publishes blob chunks to NATS subjects, nodes consume and persist
 
 ### Flow
 
@@ -32,7 +32,7 @@ Annex Storage + PostgreSQL
 2. **Scalability**: NATS provides natural buffering and backpressure
 3. **Consistency**: Uses same event-driven pattern as other data flows
 4. **Replay-able**: Blob ingestion becomes part of the event stream
-5. **Multi-consumer**: Multiple satellites could process blobs if needed
+5. **Multi-consumer**: Multiple nodes could process blobs if needed
 
 ### Alternative Considered (Rejected)
 
@@ -146,7 +146,7 @@ Responsibilities:
 
 1. **Unit Tests**: Chunking logic, base64 encoding/decoding
 2. **Integration Tests**: Gateway → NATS publish verification
-3. **E2E Tests**: Full flow with mock satellite consumer
+3. **E2E Tests**: Full flow with mock node consumer
 
 ## Monitoring
 
@@ -160,7 +160,7 @@ Metrics to track:
 
 1. **Size Limits**: Enforce `SINEX_GATEWAY_MAX_BLOB_BYTES` (default 5MB)
 2. **Rate Limiting**: Use existing gateway concurrency limits
-3. **Content Validation**: Satellites should validate MIME types
+3. **Content Validation**: Nodes should validate MIME types
 4. **Provenance**: Include `source` in metadata for audit trail
 
 ## Migration Path

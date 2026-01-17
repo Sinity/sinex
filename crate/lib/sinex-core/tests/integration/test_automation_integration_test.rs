@@ -18,7 +18,7 @@ use sinex_node_sdk::{Checkpoint, CheckpointManager};
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::timing_utils::{WaitHelpers, DEFAULT_WAIT_SECS};
 use sinex_test_utils::{
-    start_test_ingestd_with_config, TestIngestdConfig, TestIngestdHandle, TestSatellitePublisher,
+    start_test_ingestd_with_config, TestIngestdConfig, TestIngestdHandle, TestNodePublisher,
 };
 use std::collections::HashMap;
 use tokio::task::yield_now;
@@ -41,7 +41,7 @@ async fn publish_event_via_pipeline(
     event_type: &str,
     payload: serde_json::Value,
 ) -> TestResult<EventId> {
-    let publisher = TestSatellitePublisher::new(ctx.nats_client(), source.to_string());
+    let publisher = TestNodePublisher::new(ctx.nats_client(), source.to_string());
     let event_id = publisher.publish_event(event_type, payload).await?;
     WaitHelpers::wait_for_condition(
         || {
@@ -475,7 +475,7 @@ async fn test_automaton_performance_under_load(ctx: TestContext) -> TestResult<(
 
     // Create a substantial number of test events
     let event_count = 25u64;
-    let publisher = TestSatellitePublisher::new(ctx.nats_client(), "performance".to_string());
+    let publisher = TestNodePublisher::new(ctx.nats_client(), "performance".to_string());
     for i in 0..event_count {
         publisher
             .publish_event(

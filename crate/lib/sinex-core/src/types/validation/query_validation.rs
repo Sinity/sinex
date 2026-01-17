@@ -35,7 +35,10 @@ pub fn validate_id(id: &str) -> Result<()> {
             .with_context("length", id.len())
             .with_context("max_length", 128));
     }
-    if !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if !id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
         return Err(SinexError::validation("ID contains invalid characters")
             .with_context("allowed", "alphanumeric, hyphen, underscore"));
     }
@@ -85,8 +88,9 @@ pub fn validate_limit(limit: u32, max: u32) -> Result<()> {
 /// ```
 pub fn validate_offset(offset: i64) -> Result<()> {
     if offset < 0 {
-        return Err(SinexError::validation("Offset cannot be negative")
-            .with_context("offset", offset));
+        return Err(
+            SinexError::validation("Offset cannot be negative").with_context("offset", offset)
+        );
     }
     Ok(())
 }

@@ -1,7 +1,7 @@
 use crate::nats::{shared_ephemeral_nats, EphemeralNats, SharedNatsProfile};
-use crate::satellite_management_utils::{start_test_ingestd_with_config, TestIngestdConfig};
+use crate::ingestd_test_utils::{start_test_ingestd_with_config, TestIngestdConfig};
 use crate::timing_utils::WaitHelpers;
-use crate::{EventOverrides, TestContext, TestResult, TestSatellitePublisher};
+use crate::{EventOverrides, TestContext, TestNodePublisher, TestResult};
 use once_cell::sync::Lazy;
 use sinex_core::types::error::SinexError;
 use sinex_core::EventId;
@@ -31,7 +31,7 @@ pub async fn shared_secure_nats_handle() -> TestResult<Arc<EphemeralNats>> {
 /// Harness that spins up ingestd + JetStream and lets tests seed events through the real pipeline.
 pub struct PipelineHarness<'ctx> {
     ctx: &'ctx TestContext,
-    ingestd: Option<crate::satellite_management_utils::TestIngestdHandle>,
+    ingestd: Option<crate::ingestd_test_utils::TestIngestdHandle>,
     namespace: String,
     pipeline_permit: Option<OwnedSemaphorePermit>,
 }
@@ -80,7 +80,7 @@ impl<'ctx> PipelineHarness<'ctx> {
         overrides: EventOverrides,
     ) -> TestResult<EventId> {
         let op_start = Instant::now();
-        let publisher = TestSatellitePublisher::with_namespace(
+        let publisher = TestNodePublisher::with_namespace(
             self.ctx.nats_client(),
             source.to_string(),
             Some(self.namespace.clone()),

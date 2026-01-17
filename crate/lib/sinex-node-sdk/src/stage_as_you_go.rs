@@ -1,7 +1,7 @@
 #![doc = include_str!("../docs/stage_as_you_go.md")]
 
 use crate::acquisition_manager::{AcquisitionManager, SourceMaterialHandle};
-use crate::stream_processor::{EventEmitter, ProcessorHandles, ProcessorRuntimeState};
+use crate::stream_processor::{EventEmitter, NodeHandles, NodeRuntimeState};
 use crate::{NodeError, NodeResult};
 use chrono::{DateTime, Utc};
 use color_eyre::eyre::eyre;
@@ -162,7 +162,7 @@ pub struct StageReconciliationSummary {
 
 impl StageAsYouGoContext {
     /// Create a Stage-as-You-Go context from processor runtime handles
-    pub fn from_runtime(runtime: &ProcessorRuntimeState) -> Self {
+    pub fn from_runtime(runtime: &NodeRuntimeState) -> Self {
         Self::from_optional_emitter(runtime.event_emitter().clone())
     }
 
@@ -178,7 +178,7 @@ impl StageAsYouGoContext {
     }
 
     /// Create a Stage-as-You-Go context directly from processor handles
-    pub fn from_handles(handles: &ProcessorHandles) -> Self {
+    pub fn from_handles(handles: &NodeHandles) -> Self {
         Self::from_optional_emitter(handles.emitter().clone())
     }
 

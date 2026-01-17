@@ -56,11 +56,11 @@ WaitHelpers::wait_for(|| async {
 
 ### `SatelliteRuntime` (Edge Mode)
 
-Runs a satellite in-process for testing.
+Runs a node in-process for testing.
 
 ```rust
 let (guard, handle) = SatelliteRuntime::spawn_testing(
-    my_satellite_service, 
+    my_node_service, 
     &env
 ).await?;
 ```

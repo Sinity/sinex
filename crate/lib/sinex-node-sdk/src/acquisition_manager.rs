@@ -4,7 +4,7 @@
 //! Handles material lifecycle: begin → append slices → finalize,
 //! with rotation, hashing, and NATS publishing.
 
-use crate::stream_processor::ProcessorHandles;
+use crate::stream_processor::NodeHandles;
 use crate::NodeResult;
 use async_nats::{jetstream, Client as NatsClient};
 use chrono::{DateTime, Utc};
@@ -200,7 +200,7 @@ impl AcquisitionManager {
 
     /// Create an acquisition manager directly from processor handles
     pub fn from_handles(
-        handles: &ProcessorHandles,
+        handles: &NodeHandles,
         rotation_policy: RotationPolicy,
         source_type: impl Into<String>,
         source_path: impl Into<String>,

@@ -1,7 +1,7 @@
 use crate::pipeline::PipelineHarness;
 use crate::pipeline_namespace::PipelineNamespace;
 use crate::timing_utils::{WaitHelpers, DEFAULT_WAIT_SECS};
-use crate::{EventOverrides, TestContext, TestResult, TestSatellitePublisher};
+use crate::{EventOverrides, TestContext, TestNodePublisher, TestResult};
 use chrono::{DateTime, Utc};
 use sinex_core::{EventId, EventType};
 use std::collections::VecDeque;
@@ -50,8 +50,8 @@ impl<'ctx> PipelineScope<'ctx> {
     }
 
     /// Create a publisher that always uses the pipeline namespace.
-    pub fn publisher(&self, source: impl Into<String>) -> TestSatellitePublisher {
-        TestSatellitePublisher::with_namespace(
+    pub fn publisher(&self, source: impl Into<String>) -> TestNodePublisher {
+        TestNodePublisher::with_namespace(
             self.ctx.nats_client(),
             source,
             Some(self.namespace().prefix().to_string()),
@@ -201,9 +201,12 @@ impl<'ctx> PipelineScope<'ctx> {
         source: &str,
         event_type: &str,
     ) -> TestResult<Vec<EventId>> {
-        self.publish_batch(count, source, event_type, |i| {
-            serde_json::json!({ "index": i })
-        })
+        self.publish_batch(
+            count,
+            source,
+            event_type,
+            |i| serde_json::json!({ "index": i }),
+        )
         .await
     }
 

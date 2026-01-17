@@ -1229,11 +1229,10 @@ mod benches {
 
         // Setup: Insert some data
         for i in 0..10 {
-            let event = pool.events().insert_test_event(
-                "bench",
-                "test",
-                serde_json::json!({"index": i}),
-            ).await?;
+            let event = pool
+                .events()
+                .insert_test_event("bench", "test", serde_json::json!({"index": i}))
+                .await?;
 
             // Add annotation
             sqlx::query(
@@ -1270,11 +1269,9 @@ mod benches {
 
         // Insert some events
         for i in 0..50 {
-            pool.events().insert_test_event(
-                &format!("source_{}", i % 5),
-                "test",
-                serde_json::json!({}),
-            ).await?;
+            pool.events()
+                .insert_test_event(&format!("source_{}", i % 5), "test", serde_json::json!({}))
+                .await?;
         }
 
         // Perform the count

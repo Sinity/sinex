@@ -24,7 +24,7 @@ async fn pipeline_namespace_subjects_are_isolated(ctx: TestContext) -> TestResul
     )
     .await?;
 
-    let publisher = TestSatellitePublisher::with_namespace(
+    let publisher = TestNodePublisher::with_namespace(
         ctx.nats_client(),
         source,
         Some(ns_a.prefix().to_string()),

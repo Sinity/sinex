@@ -1,7 +1,7 @@
-//! Service lifecycle management for satellite services
+//! Service lifecycle management for node services
 
 use crate::heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter};
-use crate::stream_processor::ProcessorRuntimeState;
+use crate::stream_processor::NodeRuntimeState;
 use crate::{NodeError, NodeResult};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -35,7 +35,7 @@ impl std::fmt::Display for ServiceStatus {
     }
 }
 
-/// Lifecycle manager for satellite services
+/// Lifecycle manager for node services
 pub struct LifecycleManager {
     service_name: String,
     status: Arc<Mutex<ServiceStatus>>,
@@ -66,7 +66,7 @@ impl LifecycleManager {
     }
 
     /// Construct a lifecycle manager for a given runtime, hydrating heartbeat handles
-    pub fn from_runtime(runtime: &ProcessorRuntimeState) -> Self {
+    pub fn from_runtime(runtime: &NodeRuntimeState) -> Self {
         let mut manager = Self::new(runtime.service_info().service_name().to_string());
         manager.hydrate_heartbeat(runtime);
         manager
@@ -85,7 +85,7 @@ impl LifecycleManager {
     }
 
     /// Hydrate heartbeat configuration once runtime handles are available
-    pub fn hydrate_heartbeat(&mut self, runtime: &ProcessorRuntimeState) {
+    pub fn hydrate_heartbeat(&mut self, runtime: &NodeRuntimeState) {
         self.heartbeat_emitter = Some(runtime.heartbeat_emitter(self.heartbeat_interval_seconds));
     }
 
@@ -442,7 +442,7 @@ mod tests {
 
 /// Helper macro for creating a main function with lifecycle management
 #[macro_export]
-macro_rules! satellite_main {
+macro_rules! node_main {
     ($service_name:expr, $runner:expr) => {
         #[tokio::main]
         async fn main() -> Result<(), Box<dyn std::error::Error>> {

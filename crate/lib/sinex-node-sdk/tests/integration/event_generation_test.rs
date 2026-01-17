@@ -11,20 +11,20 @@ use tokio::time::{sleep, timeout};
 ///
 /// Tests event generation patterns, EventFactory usage, and event source architectures.
 /// These tests verify that events can be generated correctly through various mechanisms
-/// including satellites, factories, and direct creation.
+/// including nodes, factories, and direct creation.
 
 // =============================================================================
 // Event Generation Test Structures
 // =============================================================================
 
-/// Test satellite that generates filesystem-like events
-struct TestFilesystemSatellite {
+/// Test node that generates filesystem-like events
+struct TestFilesystemNode {
     events_to_generate: usize,
     events_sent: usize,
     source_name: String,
 }
 
-impl TestFilesystemSatellite {
+impl TestFilesystemNode {
     fn new(events_to_generate: usize, source_name: impl Into<String>) -> Self {
         Self {
             events_to_generate,
@@ -53,14 +53,14 @@ impl TestFilesystemSatellite {
     }
 }
 
-/// Test satellite that generates command execution events
-struct TestCommandSatellite {
+/// Test node that generates command execution events
+struct TestCommandNode {
     events_to_generate: usize,
     events_sent: usize,
     commands: Vec<String>,
 }
 
-impl TestCommandSatellite {
+impl TestCommandNode {
     fn new(events_to_generate: usize) -> Self {
         let commands = vec![
             "ls -la".to_string(),
@@ -218,18 +218,18 @@ async fn test_event_generation_payload_varieties(ctx: TestContext) -> TestResult
 }
 
 // =============================================================================
-// Satellite Event Generation Tests
+// Node Event Generation Tests
 // =============================================================================
 
-/// Test filesystem satellite event generation
+/// Test filesystem node event generation
 #[sinex_test]
-async fn test_filesystem_satellite_generation(ctx: TestContext) -> TestResult<()> {
-    let mut satellite = TestFilesystemSatellite::new(10, "fs-satellite");
+async fn test_filesystem_node_generation(ctx: TestContext) -> TestResult<()> {
+    let mut node = TestFilesystemNode::new(10, "fs-ingestor");
     
     let mut generated_events = Vec::new();
     
-    // Generate events from the satellite
-    while let Some(event) = satellite.generate_next_event().await {
+    // Generate events from the node
+    while let Some(event) = node.generate_next_event().await {
         generated_events.push(event);
         tokio::time::sleep(Duration::from_millis(1)).await; // Simulate timing
     }
@@ -238,7 +238,7 @@ async fn test_filesystem_satellite_generation(ctx: TestContext) -> TestResult<()
     assert_eq!(generated_events.len(), 10);
     
     for (i, event) in generated_events.iter().enumerate() {
-        assert_eq!(event.source, "fs-satellite");
+        assert_eq!(event.source, "fs-ingestor");
         assert_eq!(event.event_type, "file.created");
         assert_eq!(event.host, "test-host");
         
@@ -249,19 +249,19 @@ async fn test_filesystem_satellite_generation(ctx: TestContext) -> TestResult<()
         assert_eq!(payload["event_index"], i);
     }
 
-    println!("✓ Filesystem satellite generation verified");
+    println!("✓ Filesystem node generation verified");
     Ok(())
 }
 
-/// Test command satellite event generation  
+/// Test command node event generation  
 #[sinex_test]
-async fn test_command_satellite_generation(ctx: TestContext) -> TestResult<()> {
-    let mut satellite = TestCommandSatellite::new(8);
+async fn test_command_node_generation(ctx: TestContext) -> TestResult<()> {
+    let mut node = TestCommandNode::new(8);
     
     let mut generated_events = Vec::new();
     
-    // Generate events from the command satellite
-    while let Some(event) = satellite.generate_next_event().await {
+    // Generate events from the command ingestor
+    while let Some(event) = node.generate_next_event().await {
         generated_events.push(event);
         tokio::time::sleep(Duration::from_millis(2)).await;
     }
@@ -290,26 +290,26 @@ async fn test_command_satellite_generation(ctx: TestContext) -> TestResult<()> {
         assert_eq!(payload["working_directory"], "/tmp");
     }
 
-    println!("✓ Command satellite generation verified");
+    println!("✓ Command node generation verified");
     Ok(())
 }
 
-/// Test multiple satellites generating concurrently
+/// Test multiple nodes generating concurrently
 #[sinex_test]
-async fn test_concurrent_satellite_generation(ctx: TestContext) -> TestResult<()> {
+async fn test_concurrent_node_generation(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
 
-    // Create multiple satellites
-    let mut fs_satellite = TestFilesystemSatellite::new(5, "concurrent-fs");
-    let mut cmd_satellite = TestCommandSatellite::new(5);
+    // Create multiple nodes
+    let mut fs_node = TestFilesystemNode::new(5, "concurrent-fs");
+    let mut cmd_node = TestCommandNode::new(5);
     
     // Generate events concurrently
     let (fs_tx, mut fs_rx) = mpsc::channel(100);
     let (cmd_tx, mut cmd_rx) = mpsc::channel(100);
 
-    // Spawn filesystem satellite task
+    // Spawn filesystem node task
     let fs_handle = tokio::spawn(async move {
-        while let Some(event) = fs_satellite.generate_next_event().await {
+        while let Some(event) = fs_node.generate_next_event().await {
             if fs_tx.send(event).await.is_err() {
                 break;
             }
@@ -317,9 +317,9 @@ async fn test_concurrent_satellite_generation(ctx: TestContext) -> TestResult<()
         }
     });
 
-    // Spawn command satellite task
+    // Spawn command ingestor task
     let cmd_handle = tokio::spawn(async move {
-        while let Some(event) = cmd_satellite.generate_next_event().await {
+        while let Some(event) = cmd_node.generate_next_event().await {
             if cmd_tx.send(event).await.is_err() {
                 break;
             }
@@ -327,7 +327,7 @@ async fn test_concurrent_satellite_generation(ctx: TestContext) -> TestResult<()
         }
     });
 
-    // Collect events from both satellites
+    // Collect events from both nodes
     let mut all_events = Vec::new();
     let mut timeout_count = 0;
     const MAX_TIMEOUTS: usize = 20;
@@ -367,7 +367,7 @@ async fn test_concurrent_satellite_generation(ctx: TestContext) -> TestResult<()
     let _ = tokio::join!(fs_handle, cmd_handle);
 
     // Verify concurrent generation results
-    assert_eq!(all_events.len(), 10, "Expected 10 events from both satellites");
+    assert_eq!(all_events.len(), 10, "Expected 10 events from both nodes");
 
     // Count events by source
     let fs_events: Vec<_> = all_events.iter().filter(|e| e.source == "concurrent-fs").collect();
@@ -381,7 +381,7 @@ async fn test_concurrent_satellite_generation(ctx: TestContext) -> TestResult<()
         let _ = sinex_core::db::insert_event_with_validator(&pool, event, None).await?;
     }
 
-    println!("✓ Concurrent satellite generation verified");
+    println!("✓ Concurrent node generation verified");
     Ok(())
 }
 

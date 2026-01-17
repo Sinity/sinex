@@ -104,21 +104,18 @@ impl OpsCommands {
                     .map(|s| serde_json::from_str(s))
                     .transpose()?;
 
-                let spinner =
-                    Spinner::new(&format!("Starting {} operation...", operation_type));
-                let operation_id = match client
-                    .ops_start(operation_type, operator, scope_json)
-                    .await
-                {
-                    Ok(id) => {
-                        spinner.finish_and_clear();
-                        id
-                    }
-                    Err(e) => {
-                        spinner.abandon_with_message("Failed to start operation");
-                        return Err(e);
-                    }
-                };
+                let spinner = Spinner::new(&format!("Starting {} operation...", operation_type));
+                let operation_id =
+                    match client.ops_start(operation_type, operator, scope_json).await {
+                        Ok(id) => {
+                            spinner.finish_and_clear();
+                            id
+                        }
+                        Err(e) => {
+                            spinner.abandon_with_message("Failed to start operation");
+                            return Err(e);
+                        }
+                    };
 
                 match format {
                     OutputFormat::Table => {

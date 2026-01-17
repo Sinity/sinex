@@ -3088,6 +3088,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "notify-debouncer-mini"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d40b221972a1fc5ef4d858a2f671fb34c75983eb385463dff3780eeff6a9d43"
+dependencies = [
+ "crossbeam-channel",
+ "log",
+ "notify",
+]
+
+[[package]]
 name = "ntapi"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5227,7 +5238,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sinex-desktop-node"
+name = "sinex-desktop-ingestor"
 version = "0.4.2"
 dependencies = [
  "arboard",
@@ -5308,7 +5319,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sinex-fs-watcher"
+name = "sinex-fs-ingestor"
 version = "0.4.2"
 dependencies = [
  "async-stream",
@@ -5381,7 +5392,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sinex-health-aggregator"
+name = "sinex-health-automaton"
 version = "0.4.2"
 dependencies = [
  "anyhow",
@@ -5634,7 +5645,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sinex-system-node"
+name = "sinex-system-ingestor"
 version = "0.4.2"
 dependencies = [
  "async-trait",
@@ -5692,7 +5703,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sinex-terminal-node"
+name = "sinex-terminal-ingestor"
 version = "0.4.2"
 dependencies = [
  "async-stream",
@@ -6187,6 +6198,28 @@ name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
+
+[[package]]
+name = "sx"
+version = "0.1.0"
+dependencies = [
+ "camino",
+ "chrono",
+ "clap",
+ "color-eyre",
+ "nix 0.27.1",
+ "notify",
+ "notify-debouncer-mini",
+ "reqwest 0.12.24",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+]
 
 [[package]]
 name = "syn"

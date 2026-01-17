@@ -1,7 +1,7 @@
 //! Prelude module for convenient imports
 //!
 //! This module re-exports the most commonly used types and traits from the
-//! sinex-satellite-sdk crate, allowing for more ergonomic imports:
+//! sinex-node-sdk crate, allowing for more ergonomic imports:
 //!
 //! ```rust
 //! use sinex_node_sdk::prelude::*;
@@ -14,7 +14,7 @@
 // Core processor traits and types
 pub use crate::{Checkpoint, CheckpointManager, CheckpointState};
 pub use crate::{Node, TimeHorizon};
-pub use crate::{ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport};
+pub use crate::{NodeCapabilities, NodeType, ScanArgs, ScanEstimate, ScanReport};
 
 // Configuration and coordination
 pub use crate::{AutomatonConfig, EventSourceConfig, NodeConfig};

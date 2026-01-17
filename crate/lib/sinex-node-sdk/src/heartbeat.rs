@@ -1,11 +1,11 @@
-//! Structured heartbeat logging for satellite services
+//! Structured heartbeat logging for node services
 //!
 //! This module implements the Journald Heartbeat Idea from the design discussion:
-//! Satellites emit structured JSON logs to stdout, which systemd captures in journald,
+//! Nodes emit structured JSON logs to stdout, which systemd captures in journald,
 //! which gets picked up by the journald ingestor as regular events, and processed
 //! by the health aggregator automaton.
 
-use crate::stream_processor::ProcessorRuntimeState;
+use crate::stream_processor::NodeRuntimeState;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_core::types::events::payloads::process::{
@@ -21,7 +21,7 @@ use tracing::{info, warn};
 /// Heartbeat metrics and status
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HeartbeatMetrics {
-    /// Service name (e.g., "sinex-fs-watcher")
+    /// Service name (e.g., "sinex-fs-ingestor")
     pub service_name: String,
     /// Current status: healthy, degraded, failed
     pub status: ProcessStatus,
@@ -120,7 +120,7 @@ impl HeartbeatEmitter {
     }
 
     /// Construct a heartbeat emitter for a runtime with the provided interval
-    pub fn from_runtime(runtime: &ProcessorRuntimeState, interval_seconds: Seconds) -> Self {
+    pub fn from_runtime(runtime: &NodeRuntimeState, interval_seconds: Seconds) -> Self {
         Self::new(
             runtime.service_info().service_name().to_string(),
             interval_seconds,
@@ -251,7 +251,7 @@ impl HeartbeatEmitter {
             "file": "heartbeat.rs",
             "line": 1,
             "fields": {
-                "event_type": "satellite.heartbeat",
+                "event_type": "node.heartbeat",
                 "service_name": metrics.service_name,
                 "status": metrics.status,
                 "events_processed": metrics.events_processed,
@@ -277,7 +277,7 @@ impl HeartbeatEmitter {
             uptime_seconds = metrics.uptime_seconds,
             memory_usage_mb = metrics.memory_usage_mb,
             errors_count = metrics.errors_count,
-            "Satellite heartbeat emitted"
+            "Node heartbeat emitted"
         );
 
         self.emit_status_alert_if_needed(&metrics);
@@ -343,7 +343,7 @@ impl HeartbeatEmitter {
             ProcessStatus::Healthy => {
                 info!(
                     service = %metrics.service_name,
-                    "Satellite recovered to healthy status"
+                    "Node recovered to healthy status"
                 );
             }
             ProcessStatus::Degraded => {
@@ -400,7 +400,7 @@ impl HeartbeatEmitter {
             service = %metrics.service_name,
             status = %metrics.status,
             errors = metrics.errors_count,
-            "Satellite transitioned to {} state",
+            "Node transitioned to {} state",
             event_type
         );
     }
@@ -437,7 +437,7 @@ impl HeartbeatCounterHandle {
     }
 }
 
-/// Helper macro for creating heartbeat logs in satellite services
+/// Helper macro for creating heartbeat logs in node services
 #[macro_export]
 macro_rules! emit_heartbeat {
     ($service_name:expr) => {

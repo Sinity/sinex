@@ -5,7 +5,7 @@ use serde_json::json;
 use sinex_core::{db::query_helpers::ulid_to_uuid, DbPoolExt};
 use sinex_ingestd::{validator::EventValidator, JetStreamConsumer, JetStreamTopology};
 use sinex_test_utils::timing_utils::{WaitHelpers, DEFAULT_WAIT_SECS};
-use sinex_test_utils::{prelude::*, EventOverrides, TestSatellitePublisher};
+use sinex_test_utils::{prelude::*, EventOverrides, TestNodePublisher};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -86,7 +86,7 @@ async fn run_duplicate_event_rejection(event_count: usize) -> color_eyre::Result
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
     let namespace = ctx.pipeline_namespace().prefix().to_string();
-    let publisher = TestSatellitePublisher::with_namespace(
+    let publisher = TestNodePublisher::with_namespace(
         nats_client.clone(),
         "test",
         Some(namespace.clone()),
@@ -170,7 +170,7 @@ async fn test_concurrent_duplicate_submission() -> color_eyre::Result<()> {
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
     let namespace = ctx.pipeline_namespace().prefix().to_string();
-    let publisher = TestSatellitePublisher::with_namespace(
+    let publisher = TestNodePublisher::with_namespace(
         nats_client.clone(),
         "test",
         Some(namespace.clone()),

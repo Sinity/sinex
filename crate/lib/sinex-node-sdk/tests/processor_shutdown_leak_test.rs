@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use sinex_node_sdk::stream_processor::{
-    Checkpoint, Node, ProcessorCapabilities, ProcessorInitContext, ProcessorType, ScanArgs,
+    Checkpoint, Node, NodeCapabilities, NodeInitContext, NodeType, ScanArgs,
     ScanReport, TimeHorizon,
 };
 use sinex_node_sdk::NodeResult;
@@ -21,7 +21,7 @@ struct HangingProcessor {
 impl Node for HangingProcessor {
     type Config = ();
 
-    async fn initialize(&mut self, _init: ProcessorInitContext<Self::Config>) -> NodeResult<()> {
+    async fn initialize(&mut self, _init: NodeInitContext<Self::Config>) -> NodeResult<()> {
         Ok(())
     }
 
@@ -51,14 +51,14 @@ impl Node for HangingProcessor {
         "hanging-processor"
     }
 
-    fn processor_type(&self) -> ProcessorType {
-        ProcessorType::Ingestor
+    fn processor_type(&self) -> NodeType {
+        NodeType::Ingestor
     }
 
-    fn capabilities(&self) -> ProcessorCapabilities {
-        ProcessorCapabilities {
+    fn capabilities(&self) -> NodeCapabilities {
+        NodeCapabilities {
             supports_continuous: true,
-            ..ProcessorCapabilities::default()
+            ..NodeCapabilities::default()
         }
     }
 
@@ -79,7 +79,7 @@ async fn processors_should_stop_background_tasks_on_shutdown(ctx: TestContext) -
         .build()
         .await?;
     let (service_info, handles, raw_config, work_dir) = runtime.runtime.clone().into_parts();
-    let init_ctx = ProcessorInitContext::new((), raw_config, service_info, handles, work_dir);
+    let init_ctx = NodeInitContext::new((), raw_config, service_info, handles, work_dir);
 
     let mut processor = HangingProcessor::default();
     processor.initialize(init_ctx).await?;

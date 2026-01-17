@@ -481,7 +481,8 @@ async fn test_dlq_routing_after_max_retries(ctx: TestContext) -> TestResult<()> 
             assert!(
                 msg.is_none()
                     || msg.as_ref().is_some_and(|m| {
-                        m.as_ref().is_err_and(|e| is_no_messages_error(&e.to_string()))
+                        m.as_ref()
+                            .is_err_and(|e| is_no_messages_error(&e.to_string()))
                     }),
                 "Message should not be available after max_deliver exhausted"
             );
@@ -573,7 +574,8 @@ async fn test_parallel_consumer_redelivery(ctx: TestContext) -> TestResult<()> {
                     while let Some(item) = messages.next().await {
                         if let Ok(msg) = item {
                             // Alternate NAK/ACK based on total count for variety
-                            let total = acked.load(Ordering::Relaxed) + nacked.load(Ordering::Relaxed);
+                            let total =
+                                acked.load(Ordering::Relaxed) + nacked.load(Ordering::Relaxed);
                             if total % 2 == 0 {
                                 let _ = msg
                                     .ack_with(async_nats::jetstream::AckKind::Nak(None))

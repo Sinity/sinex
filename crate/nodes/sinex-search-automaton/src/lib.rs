@@ -19,8 +19,8 @@ mod common {
     pub use sinex_node_sdk::{
         automaton_base::{AutomatonFields, ChannelConfirmedEventHandler, IngestionHistoryEntry},
         stream_processor::{
-            Checkpoint, EventSender, Node, ProcessorCapabilities, ProcessorInitContext,
-            ProcessorRuntimeState, ProcessorType, ScanArgs, ScanReport, TimeHorizon,
+            Checkpoint, EventSender, Node, NodeCapabilities, NodeInitContext,
+            NodeRuntimeState, NodeType, ScanArgs, ScanReport, TimeHorizon,
         },
         NodeError, NodeResult,
     };
@@ -146,7 +146,7 @@ impl SearchAutomaton {
     }
 
     // Delegate to AutomatonFields for common infrastructure
-    fn runtime(&self) -> NodeResult<&ProcessorRuntimeState> {
+    fn runtime(&self) -> NodeResult<&NodeRuntimeState> {
         self.fields.runtime()
     }
 
@@ -179,11 +179,10 @@ impl SearchAutomaton {
         };
 
         self.fields.ensure_event_channel();
-        let sender = self
-            .fields
-            .incoming_tx
-            .clone()
-            .ok_or_else(|| NodeError::Processing("Confirmed event channel unavailable".into()))?;
+        let sender =
+            self.fields.incoming_tx.clone().ok_or_else(|| {
+                NodeError::Processing("Confirmed event channel unavailable".into())
+            })?;
 
         let handler = Arc::new(ChannelConfirmedEventHandler::new(sender));
         let env = environment().clone();
@@ -343,7 +342,9 @@ impl SearchAutomaton {
 
     fn prune_recent_events(&mut self) {
         let cutoff = Utc::now()
-            - ChronoDuration::seconds(self.fields.config.indexing_window_seconds.as_secs().max(60) as i64);
+            - ChronoDuration::seconds(
+                self.fields.config.indexing_window_seconds.as_secs().max(60) as i64
+            );
         while let Some(front) = self.recent_events.front() {
             let outdated = event_timestamp(front) < cutoff;
             if outdated || self.recent_events.len() > MAX_SEARCH_EVENTS {
@@ -395,7 +396,9 @@ impl SearchAutomaton {
         end_time: DateTime<Utc>,
     ) -> CoreResult<Vec<Event<JsonValue>>> {
         let start_time = end_time
-            - ChronoDuration::seconds(self.fields.config.indexing_window_seconds.as_secs().max(60) as i64);
+            - ChronoDuration::seconds(
+                self.fields.config.indexing_window_seconds.as_secs().max(60) as i64
+            );
 
         let mut collected = Vec::new();
         if self.fields.config.searchable_event_types.is_empty() {
@@ -745,7 +748,7 @@ impl SearchAutomaton {
 impl Node for SearchAutomaton {
     type Config = SearchAutomatonConfig;
 
-    async fn initialize(&mut self, init: ProcessorInitContext<Self::Config>) -> NodeResult<()> {
+    async fn initialize(&mut self, init: NodeInitContext<Self::Config>) -> NodeResult<()> {
         let (config, runtime) = init.into_runtime();
         self.fields.db_pool = Some(runtime.db_pool().clone());
         self.fields.event_sender = Some(runtime.event_sender());
@@ -811,17 +814,17 @@ impl Node for SearchAutomaton {
         "search-automaton"
     }
 
-    fn processor_type(&self) -> ProcessorType {
-        ProcessorType::Automaton
+    fn processor_type(&self) -> NodeType {
+        NodeType::Automaton
     }
 
-    fn capabilities(&self) -> ProcessorCapabilities {
-        ProcessorCapabilities {
+    fn capabilities(&self) -> NodeCapabilities {
+        NodeCapabilities {
             supports_continuous: true,
             supports_snapshot: true,
             supports_historical: true,
             manages_own_continuous_loop: true,
-            ..ProcessorCapabilities::default()
+            ..NodeCapabilities::default()
         }
     }
 
@@ -890,7 +893,10 @@ impl ExplorationProvider for SearchAutomaton {
                     "search_analytics".to_string(),
                     json!(self.fields.config.enable_search_analytics),
                 ),
-                ("inputs_seen".to_string(), json!(self.fields.stats.inputs_seen)),
+                (
+                    "inputs_seen".to_string(),
+                    json!(self.fields.stats.inputs_seen),
+                ),
                 (
                     "outputs_emitted".to_string(),
                     json!(self.fields.stats.outputs_emitted),

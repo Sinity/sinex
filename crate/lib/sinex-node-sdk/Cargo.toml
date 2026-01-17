@@ -86,3 +86,7 @@ proptest = { workspace = true }
 name = "sinex-preflight"
 path = "src/bin/sinex-preflight.rs"
 required-features = ["preflight"]
+
+[[example]]
+name = "git_activity_detector"
+path = "examples/git_activity_detector.rs"

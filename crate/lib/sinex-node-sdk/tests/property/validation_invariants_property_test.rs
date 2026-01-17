@@ -1,5 +1,5 @@
 //! Cross-crate validation invariants that ensure sanitized payloads remain
-//! usable inside satellite checkpoint state structures.
+//! usable inside node checkpoint state structures.
 
 use proptest::prelude::*;
 use sinex_core::db::sanitization::EventSanitizer;

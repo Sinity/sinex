@@ -10,7 +10,10 @@
 mod common {
     // Core types facade
     pub use sinex_core::{
-        db::{models::{Event, EventBuilder}, repositories::DbPoolExt},
+        db::{
+            models::{Event, EventBuilder},
+            repositories::DbPoolExt,
+        },
         types::{Id, JsonValue, Seconds},
         Ulid,
     };
@@ -24,12 +27,14 @@ mod common {
         event_processor::EventTransport,
         jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig},
         stream_processor::{
-            Checkpoint, EventSender, Node, ProcessorInitContext, ProcessorType, ScanArgs,
+            Checkpoint, EventSender, Node, NodeInitContext, NodeType, ScanArgs,
             ScanReport, TimeHorizon,
         },
         NodeError, NodeResult, ProcessingModel,
     };
-    pub use sinex_processor_runtime::{CoverageAnalysis, ExplorationProvider, ExportFormat, SourceState};
+    pub use sinex_processor_runtime::{
+        CoverageAnalysis, ExplorationProvider, ExportFormat, SourceState,
+    };
 
     // External dependencies
     pub use {
@@ -38,11 +43,7 @@ mod common {
         serde::{Deserialize, Serialize},
         serde_json,
         sqlx::PgPool,
-        std::{
-            collections::HashMap,
-            sync::Arc,
-            time::Duration,
-        },
+        std::{collections::HashMap, sync::Arc, time::Duration},
         tracing::{error, info, warn},
     };
 }
@@ -173,11 +174,10 @@ impl PKMAutomaton {
         };
 
         self.fields.ensure_event_channel();
-        let sender = self
-            .fields
-            .incoming_tx
-            .clone()
-            .ok_or_else(|| NodeError::Processing("Confirmed event channel unavailable".into()))?;
+        let sender =
+            self.fields.incoming_tx.clone().ok_or_else(|| {
+                NodeError::Processing("Confirmed event channel unavailable".into())
+            })?;
 
         let handler = Arc::new(ChannelConfirmedEventHandler::new(sender));
         let env = environment().clone();
@@ -341,7 +341,8 @@ impl PKMAutomaton {
             .into_iter()
             .filter(|event| event.ts_orig.map(|ts| ts > window_start).unwrap_or(true))
             .filter(|event| {
-                self.fields.config
+                self.fields
+                    .config
                     .knowledge_event_types
                     .iter()
                     .any(|t| event.event_type.as_str() == t)
@@ -927,7 +928,7 @@ struct LearningSession {
 impl Node for PKMAutomaton {
     type Config = PKMAutomatonConfig;
 
-    async fn initialize(&mut self, init: ProcessorInitContext<Self::Config>) -> NodeResult<()> {
+    async fn initialize(&mut self, init: NodeInitContext<Self::Config>) -> NodeResult<()> {
         let (config, runtime) = init.into_runtime();
         self.fields.db_pool = Some(runtime.db_pool().clone());
         self.fields.event_sender = Some(runtime.event_sender());
@@ -1012,8 +1013,8 @@ impl Node for PKMAutomaton {
         "pkm-automaton"
     }
 
-    fn processor_type(&self) -> ProcessorType {
-        ProcessorType::Automaton
+    fn processor_type(&self) -> NodeType {
+        NodeType::Automaton
     }
 
     async fn current_checkpoint(&self) -> NodeResult<Checkpoint> {

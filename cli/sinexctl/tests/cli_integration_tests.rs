@@ -247,10 +247,7 @@ mod error_handling_tests {
         // dlq requeue without --event-id or --all should fail
         // Note: This will try to connect to gateway, so we check for the validation error
         // or connection error
-        sinexctl()
-            .args(["dlq", "requeue"])
-            .assert()
-            .failure();
+        sinexctl().args(["dlq", "requeue"]).assert().failure();
     }
 }
 
@@ -286,11 +283,9 @@ mod environment_tests {
     #[test]
     fn test_rpc_url_env_recognized() {
         // Help should mention the environment variable
-        sinexctl()
-            .args(["--help"])
-            .assert()
-            .success()
-            .stdout(predicate::str::contains("SINEX_RPC_URL").or(predicate::str::contains("rpc-url")));
+        sinexctl().args(["--help"]).assert().success().stdout(
+            predicate::str::contains("SINEX_RPC_URL").or(predicate::str::contains("rpc-url")),
+        );
     }
 
     #[test]

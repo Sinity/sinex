@@ -1,22 +1,22 @@
 use semver::Version;
-use sinex_node_sdk::version::{satellite_version, NodeVersion};
+use sinex_node_sdk::version::{node_version, NodeVersion};
 use sinex_test_utils::sinex_test;
 use sinex_test_utils::TestResult;
 
 #[sinex_test]
-fn satellite_version_env_is_valid() -> TestResult<()> {
-    let version = satellite_version()?;
+fn node_version_env_is_valid() -> TestResult<()> {
+    let version = node_version()?;
     let minimum_supported = Version::new(0, 1, 0);
     assert!(
         version >= minimum_supported,
-        "satellite version must be at least {minimum_supported}, got {version}"
+        "node version must be at least {minimum_supported}, got {version}"
     );
     assert!(version.patch > 0);
     Ok(())
 }
 
 #[sinex_test]
-fn satellite_version_comparison_prefers_newer_semver() -> TestResult<()> {
+fn node_version_comparison_prefers_newer_semver() -> TestResult<()> {
     let v1 = NodeVersion {
         version: semver::Version::new(1, 0, 100),
         full_version: "1.0.100".to_string(),

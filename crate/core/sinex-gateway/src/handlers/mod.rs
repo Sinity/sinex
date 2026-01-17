@@ -8,6 +8,7 @@ pub mod dlq;
 pub mod legacy;
 pub mod nodes;
 pub mod ops;
+pub mod shadow;
 
 // Re-export legacy handlers for backward compatibility
 pub use legacy::*;
@@ -19,3 +20,4 @@ pub use nodes::{
     handle_nodes_drain, handle_nodes_list, handle_nodes_resume, handle_nodes_set_horizon,
 };
 pub use ops::{handle_ops_cancel, handle_ops_get, handle_ops_list, handle_ops_start};
+pub use shadow::{handle_shadow_create, handle_shadow_delete, handle_shadow_list};

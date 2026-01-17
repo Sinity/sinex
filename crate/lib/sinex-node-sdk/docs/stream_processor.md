@@ -78,12 +78,12 @@ tracker.finish_operation();
 result
 }
 
-fn processor_type(&self) -> ProcessorType {
-ProcessorType::Ingestor // or ProcessorType::Automaton
+fn processor_type(&self) -> NodeType {
+NodeType::Ingestor // or NodeType::Automaton
 }
 
-fn capabilities(&self) -> ProcessorCapabilities {
-ProcessorCapabilities {
+fn capabilities(&self) -> NodeCapabilities {
+NodeCapabilities {
 supports_snapshot: true,
 supports_historical: true,
 supports_continuous: true,

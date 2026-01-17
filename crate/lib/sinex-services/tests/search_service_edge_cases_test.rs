@@ -179,7 +179,10 @@ async fn search_handles_unicode_in_payload(ctx: TestContext) -> TestResult<()> {
     };
 
     let results = service.search_events(query).await?;
-    assert!(!results.is_empty(), "Should find events with unicode payloads");
+    assert!(
+        !results.is_empty(),
+        "Should find events with unicode payloads"
+    );
 
     scope.shutdown().await?;
     Ok(())

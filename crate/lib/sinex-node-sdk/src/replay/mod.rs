@@ -1,4 +1,4 @@
-//! Replay orchestration utilities for satellites.
+//! Replay orchestration utilities for nodes.
 
 mod control;
 mod metrics;

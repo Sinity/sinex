@@ -60,7 +60,7 @@ async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResul
         .map_err(|_| color_eyre::eyre::eyre!("ingestd runner shutdown timed out"))?;
     join_result??;
 
-    let publisher = TestSatellitePublisher::new(ctx.nats_client(), "backlog-source");
+    let publisher = TestNodePublisher::new(ctx.nats_client(), "backlog-source");
     let mut event_ids = Vec::new();
     for idx in 0..3 {
         let event_id = publisher

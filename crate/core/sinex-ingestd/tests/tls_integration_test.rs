@@ -9,7 +9,7 @@ use sinex_test_utils::{
     prelude::*,
     sinex_test, start_test_ingestd_with_config,
     timing_utils::WaitHelpers,
-    TestContext, TestIngestdConfig, TestSatellitePublisher,
+    TestContext, TestIngestdConfig, TestNodePublisher,
 };
 use tokio_stream::StreamExt;
 
@@ -35,7 +35,10 @@ async fn tls_enabled_event_pipeline(ctx: TestContext) -> TestResult<()> {
     let conn_config = nats.connection_config();
     assert!(conn_config.require_tls, "TLS should be required");
     assert!(conn_config.ca_cert.is_some(), "CA cert should be set");
-    assert!(conn_config.client_cert.is_some(), "Client cert should be set");
+    assert!(
+        conn_config.client_cert.is_some(),
+        "Client cert should be set"
+    );
     assert!(conn_config.client_key.is_some(), "Client key should be set");
 
     // Start ingestd with TLS configuration
@@ -50,7 +53,7 @@ async fn tls_enabled_event_pipeline(ctx: TestContext) -> TestResult<()> {
 
     // Connect directly using TLS config to publish events
     let nats_client = conn_config.connect().await?;
-    let publisher = TestSatellitePublisher::new(nats_client, "tls-test-source");
+    let publisher = TestNodePublisher::new(nats_client, "tls-test-source");
 
     // Publish a test event
     let event_id = publisher

@@ -9,7 +9,7 @@ use tracing::{info, warn};
 const LEADERSHIP_TTL_SECS: Seconds = Seconds::from_secs(15);
 
 /// Client for interacting with the Coordination KV Store.
-/// Handles satellite registration, heartbeats, and leader election.
+/// Handles node registration, heartbeats, and leader election.
 #[derive(Clone)]
 pub struct CoordinationKvClient {
     js: Context,
@@ -60,7 +60,7 @@ impl CoordinationKvClient {
         }
     }
 
-    /// Register a satellite instance in the KV store.
+    /// Register a node instance in the KV store.
     /// Key: `{service}.{instance}`
     pub async fn register_instance(&self, metadata: &InstanceMetadata) -> Result<(), SinexError> {
         let bucket = self.instances_bucket().await?;

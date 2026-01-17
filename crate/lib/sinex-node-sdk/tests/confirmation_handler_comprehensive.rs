@@ -22,14 +22,16 @@ fn make_event() -> ProvisionalEvent {
     }
 }
 
-
 #[sinex_test]
 async fn confirm_non_existent_event_returns_none() -> TestResult<()> {
     let buffer = ConfirmationBuffer::new(std::time::Duration::from_secs(60));
     let non_existent_id = Ulid::new();
 
     let result = buffer.confirm(non_existent_id).await;
-    assert!(result.is_none(), "Confirming non-existent event should return None");
+    assert!(
+        result.is_none(),
+        "Confirming non-existent event should return None"
+    );
 
     Ok(())
 }

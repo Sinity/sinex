@@ -279,7 +279,7 @@ async fn test_ingestd_restart_event_continuity(ctx: TestContext) -> Result<()> {
     let _schemas = wait_for_schema_broadcast(&mut schema_subscription).await?;
 
     // Publish events to first instance
-    let publisher = TestSatellitePublisher::new(nats_client.clone(), "restart-test");
+    let publisher = TestNodePublisher::new(nats_client.clone(), "restart-test");
     for i in 0..5 {
         publisher
             .publish_event("before.restart", json!({"sequence": i, "phase": "before"}))
@@ -382,7 +382,7 @@ async fn test_ingestd_restart_event_continuity(ctx: TestContext) -> Result<()> {
 /// Test concurrent event ingestion from multiple sources.
 ///
 /// This mirrors the VM multi-source test which verifies events from
-/// filesystem, terminal, desktop, and system satellites flow concurrently.
+/// filesystem, terminal, desktop, and system nodes flow concurrently.
 #[sinex_serial_test]
 async fn test_multi_source_concurrent_ingestion(ctx: TestContext) -> Result<()> {
     ctx.ensure_clean().await?;
@@ -410,7 +410,7 @@ async fn test_multi_source_concurrent_ingestion(ctx: TestContext) -> Result<()> 
 
     let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
 
-    // Define multiple source types (mirrors VM satellite matrix)
+    // Define multiple source types (mirrors VM node matrix)
     let sources = vec![
         ("sinex-filesystem", "file.created"),
         ("sinex-filesystem", "file.modified"),
@@ -427,7 +427,7 @@ async fn test_multi_source_concurrent_ingestion(ctx: TestContext) -> Result<()> 
 
     // Spawn concurrent publishers for each source type
     for (source, event_type) in sources.clone() {
-        let publisher = TestSatellitePublisher::new(nats_client.clone(), source.to_string());
+        let publisher = TestNodePublisher::new(nats_client.clone(), source.to_string());
         let event_type = event_type.to_string();
 
         let handle = tokio::spawn(async move {
@@ -802,7 +802,7 @@ async fn test_publisher_reconnection_resilience(ctx: TestContext) -> Result<()> 
     let ctx = ctx.with_shared_nats().await?;
     let nats_client = ctx.nats_client();
     ensure_raw_event_streams(&nats_client, ctx.env()).await?;
-    let publisher = Arc::new(TestSatellitePublisher::new(
+    let publisher = Arc::new(TestNodePublisher::new(
         nats_client.clone(),
         "reconnect-test",
     ));

@@ -12,8 +12,8 @@ EXAMPLES:
     # List all registered nodes
     sinexctl node list
 
-    # List only satellite nodes
-    sinexctl node list --role satellite
+    # List only ingestor nodes
+    sinexctl node list --role ingestor
 
     # Check status of a specific node
     sinexctl node status terminal-node
@@ -150,10 +150,8 @@ impl NodeCommands {
                         ));
                     }
                     Err(e) => {
-                        spinner.abandon_with_message(&format!(
-                            "Failed to set horizon for {}",
-                            node
-                        ));
+                        spinner
+                            .abandon_with_message(&format!("Failed to set horizon for {}", node));
                         return Err(e);
                     }
                 }

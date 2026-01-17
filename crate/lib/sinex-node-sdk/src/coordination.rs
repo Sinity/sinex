@@ -1,7 +1,7 @@
 #![doc = include_str!("../docs/coordination.md")]
 
 use crate::heartbeat::HeartbeatEmitter;
-use crate::stream_processor::ProcessorRuntimeState;
+use crate::stream_processor::NodeRuntimeState;
 use crate::version::{NodeInstance, NodeVersion};
 
 use chrono::Utc;
@@ -17,7 +17,7 @@ use tracing::{debug, error, info, instrument, warn};
 
 use futures::StreamExt;
 
-/// Instance mode determines satellite behavior
+/// Instance mode determines node behavior
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InstanceMode {
     /// Process all events (single leader)
@@ -35,7 +35,7 @@ mod tests {
     use crate::event_processor::EventTransport;
     use crate::nats_publisher::NatsPublisher;
     use crate::stream_processor::{
-        EventEmitter, ProcessorHandles, ProcessorRuntimeState, ServiceInfo,
+        EventEmitter, NodeHandles, NodeRuntimeState, ServiceInfo,
     };
     use camino::Utf8PathBuf;
     use sinex_core::db::models::Event;
@@ -48,7 +48,7 @@ mod tests {
     use tokio::sync::mpsc;
 
     struct TestRuntimeHarness {
-        runtime: ProcessorRuntimeState,
+        runtime: NodeRuntimeState,
         _event_rx: mpsc::Receiver<Event<JsonValue>>,
         _nats: EphemeralNats,
     }
@@ -80,7 +80,7 @@ mod tests {
             format!("{}-{}", service_name, Ulid::new()),
         ));
 
-        let handles = ProcessorHandles::new(
+        let handles = NodeHandles::new(
             ctx.pool.clone(),
             checkpoint_manager,
             emitter,
@@ -99,7 +99,7 @@ mod tests {
             false,
         );
 
-        let runtime = ProcessorRuntimeState::new(service_info, handles, HashMap::new(), work_dir);
+        let runtime = NodeRuntimeState::new(service_info, handles, HashMap::new(), work_dir);
 
         Ok(TestRuntimeHarness {
             runtime,
@@ -233,7 +233,7 @@ impl From<&NodeInstance> for InstanceMetadata {
     }
 }
 
-/// Leadership coordination for a satellite service
+/// Leadership coordination for a node service
 pub struct NodeCoordination {
     instance: NodeInstance,
     kv_client: CoordinationKvClient,
@@ -255,7 +255,7 @@ impl NodeCoordination {
         service_name: String,
         instance_id: String,
         nats_client: async_nats::Client,
-        _runtime_state: &ProcessorRuntimeState,
+        _runtime_state: &NodeRuntimeState,
     ) -> crate::NodeResult<Self> {
         let instance = NodeInstance::new(instance_id.clone(), service_name.clone())?;
 
@@ -280,7 +280,7 @@ impl NodeCoordination {
     }
 
     pub async fn from_runtime(
-        runtime: &ProcessorRuntimeState,
+        runtime: &NodeRuntimeState,
         instance_id: String,
     ) -> crate::NodeResult<Self> {
         let nats_client = runtime
@@ -648,7 +648,7 @@ impl NodeCoordination {
 
     /// Initiate handoff from older version (if any) during startup
     ///
-    /// This should be called during satellite startup to detect and request
+    /// This should be called during node startup to detect and request
     /// handoff from any older running versions. Returns true if handoff was
     /// initiated, false if no older version was found.
     ///

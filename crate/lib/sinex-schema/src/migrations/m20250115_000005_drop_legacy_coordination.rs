@@ -1,6 +1,6 @@
 //! Drop legacy coordination tables
 //!
-//! This migration drops the `core.satellite_instances` and `core.service_leadership` tables
+//! This migration drops the `core.node_instances` and `core.service_leadership` tables
 //! which have been replaced by NATS KV-based coordination (KV_sinex_instances and
 //! KV_sinex_leadership buckets).
 //!
@@ -16,13 +16,13 @@ pub struct Migration;
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         // Drop tables in reverse dependency order
-        // service_leadership may have referenced satellite_instances
+        // service_leadership may have referenced node_instances
         manager
             .get_connection()
             .execute_unprepared(
                 r#"
                 DROP TABLE IF EXISTS core.service_leadership CASCADE;
-                DROP TABLE IF EXISTS core.satellite_instances CASCADE;
+                DROP TABLE IF EXISTS core.node_instances CASCADE;
                 "#,
             )
             .await?;
@@ -37,7 +37,7 @@ impl MigrationTrait for Migration {
             .get_connection()
             .execute_unprepared(
                 r#"
-                CREATE TABLE IF NOT EXISTS core.satellite_instances (
+                CREATE TABLE IF NOT EXISTS core.node_instances (
                     instance_id TEXT PRIMARY KEY,
                     service_name TEXT NOT NULL,
                     hostname TEXT NOT NULL,
@@ -48,11 +48,11 @@ impl MigrationTrait for Migration {
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
 
-                CREATE INDEX IF NOT EXISTS idx_satellite_instances_service
-                    ON core.satellite_instances(service_name);
+                CREATE INDEX IF NOT EXISTS idx_node_instances_service
+                    ON core.node_instances(service_name);
 
-                CREATE INDEX IF NOT EXISTS idx_satellite_instances_heartbeat
-                    ON core.satellite_instances(last_heartbeat);
+                CREATE INDEX IF NOT EXISTS idx_node_instances_heartbeat
+                    ON core.node_instances(last_heartbeat);
 
                 CREATE TABLE IF NOT EXISTS core.service_leadership (
                     service_name TEXT PRIMARY KEY,

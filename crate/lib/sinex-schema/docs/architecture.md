@@ -37,7 +37,7 @@ impl Events {
 **Rationale**:
 - **Sequential inserts**: Improve B-tree index performance by avoiding random UUID fragmentation
 - **Timestamp extraction**: Can derive creation time from ID without additional columns
-- **Global uniqueness**: Safe for distributed generation across satellites
+- **Global uniqueness**: Safe for distributed generation across nodes
 - **Lexicographic ordering**: Natural sort order matches temporal order
 
 ```rust

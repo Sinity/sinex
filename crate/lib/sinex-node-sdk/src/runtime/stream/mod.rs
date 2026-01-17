@@ -8,9 +8,9 @@ mod time_horizon;
 
 pub use checkpoint::Checkpoint;
 pub use handles::{
-    EventEmitter, EventSender, EventStream, ProcessorHandles, ProcessorInitContext, ServiceInfo,
+    EventEmitter, EventSender, EventStream, NodeHandles, NodeInitContext, ServiceInfo,
 };
-pub use runtime_state::ProcessorRuntimeState;
+pub use runtime_state::NodeRuntimeState;
 pub use stats::ProcessingStats;
 pub use time_horizon::TimeHorizon;
 
@@ -151,9 +151,9 @@ async fn maybe_start_schema_listener(
     transport: &EventTransport,
 ) -> NodeResult<(
     Option<Arc<SchemaBroadcastCache>>,
-    Option<Arc<crate::schema_validator::SatelliteSchemaValidator>>,
+    Option<Arc<crate::schema_validator::NodeSchemaValidator>>,
 )> {
-    // Always enable schema cache and validation for satellite-side validation.
+    // Always enable schema cache and validation for node-side validation.
     // Schemas are broadcast from ingestd and stored in NATS KV.
 
     let client = match transport {
@@ -169,7 +169,7 @@ async fn maybe_start_schema_listener(
     // Create schema cache and validator
     let cache = Arc::new(SchemaBroadcastCache::default());
     let cache_clone = cache.clone();
-    let validator = Arc::new(crate::schema_validator::SatelliteSchemaValidator::new());
+    let validator = Arc::new(crate::schema_validator::NodeSchemaValidator::new());
     let validator_clone = validator.clone();
 
     // Get KV bucket for fetching full schemas
@@ -245,7 +245,7 @@ pub struct ScanReport {
 pub trait Node: Send + Sync {
     type Config: for<'de> Deserialize<'de> + Default + Send + Sync;
 
-    async fn initialize(&mut self, init: ProcessorInitContext<Self::Config>) -> NodeResult<()>;
+    async fn initialize(&mut self, init: NodeInitContext<Self::Config>) -> NodeResult<()>;
 
     async fn scan(
         &mut self,
@@ -255,10 +255,10 @@ pub trait Node: Send + Sync {
     ) -> NodeResult<ScanReport>;
 
     fn processor_name(&self) -> &str;
-    fn processor_type(&self) -> ProcessorType;
+    fn processor_type(&self) -> NodeType;
 
-    fn capabilities(&self) -> ProcessorCapabilities {
-        ProcessorCapabilities::default()
+    fn capabilities(&self) -> NodeCapabilities {
+        NodeCapabilities::default()
     }
 
     async fn current_checkpoint(&self) -> NodeResult<Checkpoint>;
@@ -297,14 +297,14 @@ pub trait Node: Send + Sync {
 
 /// Type of stream processor
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ProcessorType {
+pub enum NodeType {
     /// Ingestor: External World -> Event Stream
     Ingestor,
     /// Automaton: Event Stream -> DerivedEvent Stream
     Automaton,
 }
 
-impl std::fmt::Display for ProcessorType {
+impl std::fmt::Display for NodeType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Ingestor => write!(f, "ingestor"),
@@ -315,7 +315,7 @@ impl std::fmt::Display for ProcessorType {
 
 /// Processor capabilities
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProcessorCapabilities {
+pub struct NodeCapabilities {
     /// Supports continuous scanning (sensor mode)
     pub supports_continuous: bool,
 
@@ -338,7 +338,7 @@ pub struct ProcessorCapabilities {
     pub manages_own_continuous_loop: bool,
 }
 
-impl Default for ProcessorCapabilities {
+impl Default for NodeCapabilities {
     fn default() -> Self {
         Self {
             supports_continuous: true,
@@ -390,7 +390,7 @@ impl Default for ScanEstimate {
 /// Unified runner for stream processors
 pub struct StreamProcessorRunner<T: Node> {
     processor: T,
-    handles: Option<ProcessorHandles>,
+    handles: Option<NodeHandles>,
     service_info: Option<ServiceInfo>,
     raw_config: Option<HashMap<String, serde_json::Value>>,
     work_dir_utf8: Option<Utf8PathBuf>,
@@ -425,13 +425,13 @@ impl<T: Node + 'static> StreamProcessorRunner<T> {
     }
 
     /// Reconstruct the current runtime state if the runner has been initialized
-    pub fn runtime_state(&self) -> Option<ProcessorRuntimeState> {
+    pub fn runtime_state(&self) -> Option<NodeRuntimeState> {
         let handles = self.handles.clone()?;
         let service_info = self.service_info.clone()?;
         let raw_config = self.raw_config.clone()?;
         let work_dir_utf8 = self.work_dir_utf8.clone()?;
 
-        Some(ProcessorRuntimeState::new(
+        Some(NodeRuntimeState::new(
             service_info,
             handles,
             raw_config,
@@ -485,7 +485,7 @@ impl<T: Node + 'static> StreamProcessorRunner<T> {
 
         // Determine if automaton to enable LeaderStandby
         let confirmation_buffer_opt =
-            if matches!(self.processor.processor_type(), ProcessorType::Automaton) {
+            if matches!(self.processor.processor_type(), NodeType::Automaton) {
                 self.processing_model = ProcessingModel::LeaderStandby;
                 Some(Arc::new(crate::ConfirmationBuffer::new(
                     std::time::Duration::from_secs(60),
@@ -503,7 +503,7 @@ impl<T: Node + 'static> StreamProcessorRunner<T> {
 
         // No LeaseManager passed to handles
         let handles = if let Some(pool) = db_pool {
-            ProcessorHandles::new(
+            NodeHandles::new(
                 pool,
                 checkpoint_manager.clone(),
                 event_emitter.clone(),
@@ -512,7 +512,7 @@ impl<T: Node + 'static> StreamProcessorRunner<T> {
                 schema_cache.clone(),
             )
         } else {
-            ProcessorHandles::new_edge(
+            NodeHandles::new_edge(
                 checkpoint_manager.clone(),
                 event_emitter.clone(),
                 transport_for_context,
@@ -543,7 +543,7 @@ impl<T: Node + 'static> StreamProcessorRunner<T> {
             })?
         };
 
-        let init_context = ProcessorInitContext::new(
+        let init_context = NodeInitContext::new(
             typed_config,
             raw_config.clone(),
             service_info.clone(),
@@ -639,11 +639,11 @@ impl<T: Node + 'static> StreamProcessorRunner<T> {
         );
 
         match processor_type {
-            ProcessorType::Ingestor => {
+            NodeType::Ingestor => {
                 // Ingestor startup sequence: Snapshot -> Gap-fill -> Continuous
                 self.run_ingestor_startup_sequence().await
             }
-            ProcessorType::Automaton => {
+            NodeType::Automaton => {
                 // Automaton startup: consume events from NATS streams
                 self.run_automaton_continuous_mode().await
             }
@@ -1065,7 +1065,7 @@ impl<T: Node + 'static> StreamProcessorRunner<T> {
     }
 
     /// Get processor capabilities
-    pub fn get_capabilities(&self) -> ProcessorCapabilities {
+    pub fn get_capabilities(&self) -> NodeCapabilities {
         self.processor.capabilities()
     }
 
