@@ -51,6 +51,8 @@ tracing-subscriber = { workspace = true }
 thiserror = { workspace = true }
 once_cell = "1"
 subtle = "2"
+governor = { workspace = true }
+dashmap = { workspace = true }
 tokio-rustls = "0.25"
 rustls-pemfile = "1"
 notify = { workspace = true }

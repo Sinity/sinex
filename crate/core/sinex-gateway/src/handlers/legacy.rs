@@ -119,6 +119,23 @@ pub(crate) fn validate_entity_link_ids(from: &Id<Entity>, to: &Id<Entity>) -> Re
     Ok(())
 }
 
+/// Decode base64 blob content with size validation
+///
+/// # Issue 144 (LOW): Base64 Expansion and Body Limits
+///
+/// Base64 encoding expands data by ~1.33x (4 chars per 3 bytes). When handling
+/// blob uploads via RPC, ensure:
+///
+/// - SINEX_GATEWAY_MAX_BODY_BYTES >= SINEX_GATEWAY_MAX_BLOB_BYTES * 1.4
+///   (1.4 accounts for base64 overhead plus JSON envelope)
+///
+/// Default configuration:
+/// - Body limit: 2MB (SINEX_GATEWAY_MAX_BODY_BYTES)
+/// - Blob limit: 5MB (SINEX_GATEWAY_MAX_BLOB_BYTES)
+///
+/// This mismatch is intentional: the body limit applies to the raw HTTP request,
+/// while the blob limit applies to decoded content. For large blobs, clients should
+/// increase SINEX_GATEWAY_MAX_BODY_BYTES proportionally.
 pub(crate) fn decode_blob_content(content_b64: &str, limit: usize) -> Result<Vec<u8>> {
     let max_encoded = max_base64_length(limit);
     if content_b64.len() > max_encoded {
@@ -145,10 +162,54 @@ pub(crate) fn decode_blob_content(content_b64: &str, limit: usize) -> Result<Vec
 // System handlers
 
 pub async fn handle_system_health(services: &ServiceContainer, _params: Value) -> Result<Value> {
+    // Issue 146: Enhanced health endpoint with component status
     let replay_control = services.replay_control_status();
+
+    // Check database connectivity
+    let db_healthy = sqlx::query("SELECT 1")
+        .execute(services.pool())
+        .await
+        .is_ok();
+
+    // Check NATS connectivity
+    let nats_connected = services
+        .nats_client()
+        .map(|client| {
+            matches!(
+                client.connection_state(),
+                async_nats::connection::State::Connected
+            )
+        })
+        .unwrap_or(false);
+
+    let overall_status = if db_healthy && (nats_connected || replay_control.bypass_active) {
+        "healthy"
+    } else if db_healthy {
+        "degraded"
+    } else {
+        "unhealthy"
+    };
+
     Ok(json!({
-        "status": "ok",
-        "replay_control": replay_control,
+        "status": overall_status,
+        "components": {
+            "database": {
+                "status": if db_healthy { "healthy" } else { "unhealthy" },
+                "connected": db_healthy
+            },
+            "nats": {
+                "status": if nats_connected { "healthy" } else { "unhealthy" },
+                "connected": nats_connected
+            },
+            "replay_control": {
+                "status": if replay_control.connected { "healthy" } else if replay_control.bypass_active { "bypassed" } else { "unhealthy" },
+                "enabled": replay_control.enabled,
+                "bypass_allowed": replay_control.bypass_allowed,
+                "bypass_active": replay_control.bypass_active,
+                "connected": replay_control.connected,
+                "last_error": replay_control.last_error
+            }
+        }
     }))
 }
 

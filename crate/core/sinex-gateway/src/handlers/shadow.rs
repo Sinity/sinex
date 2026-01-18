@@ -253,7 +253,7 @@ pub async fn handle_shadow_delete(
 mod tests {
     use super::*;
     use sinex_core::environment;
-    use sinex_test_utils::{sinex_test, EphemeralNats, TestResult};
+    use sinex_test_utils::{sinex_test, EphemeralNats};
 
     #[sinex_test]
     async fn shadow_create_requires_dev_prefix() -> TestResult<()> {

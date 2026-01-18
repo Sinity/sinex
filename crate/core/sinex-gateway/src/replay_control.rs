@@ -115,15 +115,24 @@ impl ReplayControlClient {
 
     async fn send(&self, request: ReplayControlRequest) -> Result<ReplayControlResponse> {
         let payload = serde_json::to_vec(&request)?;
-        let message = self
-            .client
-            .request(self.subject.clone(), payload.into())
-            .await
-            .map_err(|err| {
-                self.record_error(err.to_string());
-                err
-            })
-            .wrap_err("Replay control request timed out")?;
+
+        // Issue 126: Add timeout to NATS replay requests
+        let timeout = Duration::from_secs(30);
+        let message = tokio::time::timeout(
+            timeout,
+            self.client.request(self.subject.clone(), payload.into()),
+        )
+        .await
+        .map_err(|_| {
+            let error_msg = format!("Replay control request timed out after {:?}", timeout);
+            self.record_error(error_msg.clone());
+            eyre!(error_msg)
+        })?
+        .map_err(|err| {
+            self.record_error(err.to_string());
+            err
+        })
+        .wrap_err("Replay control request failed")?;
 
         let response: ReplayControlResponse = serde_json::from_slice(&message.payload)
             .map_err(|err| {

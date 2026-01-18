@@ -2,7 +2,8 @@
 
 // Local crate imports
 use crate::{
-    handlers::*, replay_control::ReplayControlClient, service_container::ServiceContainer,
+    gateway_metrics::GatewayMetrics, handlers::*, rate_limit::TokenRateLimiter,
+    replay_control::ReplayControlClient, service_container::ServiceContainer,
 };
 
 // External crates
@@ -108,8 +109,9 @@ pub(crate) struct RpcServerLimits {
 
 impl RpcServerLimits {
     pub(crate) fn from_env() -> Self {
+        // Issue 132: Increase default concurrency limit from 32 to 100
         Self {
-            concurrency_limit: env_var_usize("SINEX_GATEWAY_MAX_CONCURRENCY", 32),
+            concurrency_limit: env_var_usize("SINEX_GATEWAY_MAX_CONCURRENCY", 100),
             request_timeout: Duration::from_secs(env_var_u64(
                 "SINEX_GATEWAY_REQUEST_TIMEOUT_SECS",
                 30,
@@ -322,15 +324,10 @@ pub(crate) fn extract_token(headers: &HeaderMap) -> Option<String> {
     None
 }
 
+// Issue 137: Use constant-time comparison from subtle crate
 pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
+    use subtle::ConstantTimeEq;
+    bool::from(a.ct_eq(b))
 }
 
 enum AuthError {
@@ -383,9 +380,26 @@ impl JsonRpcResponse {
 struct AppState {
     services: ServiceContainer,
     auth: GatewayAuth,
+    rate_limiter: Arc<TokenRateLimiter>,
+    metrics: Arc<GatewayMetrics>,
 }
 
 /// Shared dispatch function for RPC methods (used by both rpc_server and native_messaging)
+///
+/// # Method Dispatch Pattern
+///
+/// This function uses a static match table for method routing. While this approach
+/// requires manual updates when adding new RPC methods, it provides:
+///
+/// - Compile-time verification of all method paths
+/// - Zero overhead lookup for method dispatch
+/// - Clear visibility of all RPC surface area in one location
+///
+/// ## Issue 131 (LOW): Future Enhancement
+///
+/// For applications requiring dynamic method registration (plugins, extensions),
+/// consider adding a registry-based dispatch layer. Current static dispatch is
+/// sufficient for the gateway's stable RPC API surface.
 pub async fn dispatch_rpc_method(
     services: &ServiceContainer,
     method: &str,
@@ -627,16 +641,59 @@ async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 /// Main RPC handler using dispatch table
+///
+/// # Issue 148 (LOW): Request IDs in JSON-RPC Responses
+///
+/// The gateway includes request IDs in HTTP response headers via `x-request-id`
+/// (see middleware layers in `apply_rpc_layers`). This is sufficient for HTTP-level
+/// tracing and correlation with load balancer/proxy logs.
+///
+/// JSON-RPC 2.0 spec strictly defines the response format:
+/// - `jsonrpc`: "2.0"
+/// - `result` or `error`: method result or error object
+/// - `id`: echoes the request ID from the JSON-RPC request
+///
+/// Adding an HTTP request ID to the JSON-RPC response body would be non-standard.
+/// Clients should use the `x-request-id` HTTP header for request correlation.
+///
+/// For applications requiring request IDs in the response payload, consider:
+/// - Reading `x-request-id` from response headers
+/// - Using JSON-RPC request `id` field for correlation
+/// - Adding a custom middleware layer that wraps responses with metadata
 async fn handle_rpc(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(request): Json<JsonRpcRequest>,
 ) -> impl IntoResponse {
+    // Record request start for metrics
+    state.metrics.record_request_start();
+    let start = std::time::Instant::now();
+
     if let Err(err) = state.auth.verify(&headers).await {
+        state.metrics.record_request_rejected();
         return err.into_response();
     }
 
+    // Issue 143: Per-token rate limiting
+    // Check rate limit using the authenticated token
+    if let Some(ref token) = extract_token(&headers) {
+        if state.rate_limiter.check(token).is_err() {
+            let token_prefix = &token[..8.min(token.len())];
+            warn!(token_prefix, "Request rejected: rate limit exceeded");
+            state.metrics.record_rate_limited(token_prefix);
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(JsonRpcResponse::error(
+                    None,
+                    -32029,
+                    "Rate limit exceeded for this token".to_string(),
+                )),
+            );
+        }
+    }
+
     if let Err(err) = validate_jsonrpc_request(&request) {
+        state.metrics.record_request_rejected();
         let response = JsonRpcResponse::error(request.id, -32600, err.to_string());
         return (StatusCode::BAD_REQUEST, Json(response));
     }
@@ -646,20 +703,25 @@ async fn handle_rpc(
         request.method, request.params
     );
 
-    let _start = std::time::Instant::now();
     let method = request.method.clone();
 
     // Use shared dispatch function
     let result = dispatch_rpc_method(&state.services, &request.method, request.params).await;
 
-    // Telemetry disabled in this build; keep handler lightweight
+    // Record latency on success
+    let latency_us = start.elapsed().as_micros() as u64;
 
     let response = match result {
-        Ok(value) => JsonRpcResponse::success(request.id, value),
+        Ok(value) => {
+            state.metrics.record_request_success(latency_us);
+            JsonRpcResponse::success(request.id, value)
+        }
         Err(err) if err.downcast_ref::<UnknownMethodError>().is_some() => {
+            state.metrics.record_request_rejected();
             JsonRpcResponse::error(request.id, -32601, err.to_string())
         }
         Err(err) => {
+            state.metrics.record_request_rejected();
             error!("RPC method {} failed: {}", method, err);
             JsonRpcResponse::error(request.id, -32603, format!("Internal error: {}", err))
         }
@@ -811,6 +873,21 @@ fn client_tls_required_override() -> bool {
     )
 }
 
+/// Enforce mTLS requirements based on bind address and configuration
+///
+/// # Security Note (Issue 151 - LOW)
+///
+/// The gateway currently requires mTLS for all TCP bindings. For deployments
+/// behind a reverse proxy (nginx, HAProxy, Envoy), the proxy should handle
+/// TLS termination and client authentication. In this configuration:
+///
+/// - Bind gateway to 127.0.0.1 (loopback only)
+/// - Configure reverse proxy with TLS certificates
+/// - Set up client certificate verification in the proxy
+/// - Use SINEX_GATEWAY_REQUIRE_CLIENT_TLS=0 if proxy handles mTLS
+///
+/// For direct TLS support without a proxy, native rustls integration is already
+/// implemented in this file (see `load_rustls_config` and TLS acceptor logic).
 fn require_mtls_for_remote(
     bind_address: &BindAddress,
     client_ca: Option<&str>,
@@ -1213,7 +1290,36 @@ pub async fn run(
 
     let auth = GatewayAuth::from_env()?.start_file_watcher()?;
     let limits = RpcServerLimits::from_env().apply_pool_limit(services.pool_max_connections());
-    let state = AppState { services, auth };
+
+    // Issue 143: Per-token rate limiting
+    let rate_limiter = Arc::new(TokenRateLimiter::from_env());
+    let _cleanup_task = Arc::clone(&rate_limiter).spawn_cleanup_task();
+
+    // Self-observation metrics
+    let metrics = Arc::new(match services.nats_client() {
+        Some(nats) => GatewayMetrics::new(nats.clone()),
+        None => {
+            info!("NATS not available - gateway metrics emission disabled");
+            GatewayMetrics::disabled()
+        }
+    });
+
+    // Spawn metrics emission background task
+    // The cancel_tx and metrics_task are kept alive for the lifetime of the server
+    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+    let _metrics_task = if metrics.is_enabled() {
+        Some(Arc::clone(&metrics).spawn_emission_task(cancel_rx))
+    } else {
+        drop(cancel_rx);
+        None
+    };
+
+    let state = AppState {
+        services,
+        auth,
+        rate_limiter,
+        metrics,
+    };
 
     let base_router = Router::new()
         .route("/rpc", post(handle_rpc))
