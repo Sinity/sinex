@@ -3,7 +3,6 @@
 use proptest::prelude::*;
 use sinex_node_sdk::error_helpers::*;
 use sinex_test_utils::sinex_proptest;
-use sinex_test_utils::TestResult;
 use std::io::ErrorKind;
 
 fn arbitrary_error_message() -> impl Strategy<Value = String> {
@@ -35,6 +34,24 @@ fn arbitrary_error_kind() -> impl Strategy<Value = ErrorKind> {
     ]
 }
 
+/// Generate byte sequences that are guaranteed to be invalid UTF-8.
+fn invalid_utf8_bytes() -> impl Strategy<Value = Vec<u8>> {
+    prop_oneof![
+        // Lone continuation byte (0x80-0xBF)
+        (0x80u8..=0xBFu8).prop_map(|b| vec![b]),
+        // Incomplete 2-byte sequence (0xC2-0xDF without continuation)
+        (0xC2u8..=0xDFu8).prop_map(|b| vec![b]),
+        // Incomplete 3-byte sequence (0xE0-0xEF with only one continuation)
+        (0xE0u8..=0xEFu8, 0x80u8..=0xBFu8).prop_map(|(a, b)| vec![a, b]),
+        // Incomplete 4-byte sequence (0xF0-0xF4 with only two continuations)
+        (0xF0u8..=0xF4u8, 0x80u8..=0xBFu8, 0x80u8..=0xBFu8).prop_map(|(a, b, c)| vec![a, b, c]),
+        // Overlong encoding for NULL (0xC0 0x80)
+        Just(vec![0xC0u8, 0x80u8]),
+        // Invalid byte 0xFF
+        Just(vec![0xFFu8]),
+    ]
+}
+
 sinex_proptest! {
     fn io_error_with_context_preserves_message(
         kind in arbitrary_error_kind(),
@@ -45,11 +62,19 @@ sinex_proptest! {
         let node_error = io_error_with_context(io_error, &ctx);
 
         if let sinex_node_sdk::NodeError::Processing(rendered) = node_error {
+            // The rendered message should not be empty (at minimum ": " from formatting)
             prop_assert!(!rendered.is_empty());
+            // Context should be preserved when provided
             if !ctx.is_empty() {
                 prop_assert!(rendered.contains(&ctx));
             }
-            prop_assert!(rendered.contains("error") || rendered.len() > 3);
+            // When the message is non-empty, it should appear in rendered output
+            if !msg.is_empty() {
+                prop_assert!(
+                    rendered.contains(&msg),
+                    "Error message should contain original: {} not in {}", msg, rendered
+                );
+            }
         } else {
             prop_assert!(false, "expected processing error variant");
         }
@@ -57,21 +82,18 @@ sinex_proptest! {
     }
 
     fn utf8_error_context_is_preserved(
-        bytes in proptest::collection::vec(any::<u8>(), 1..32),
+        bytes in invalid_utf8_bytes(),
         ctx in arbitrary_context()
     ) -> TestResult<()> {
-        match String::from_utf8(bytes) {
-            Ok(_) => prop_assume!(false),
-            Err(err) => {
-                let node_error = utf8_error_with_context(err, &ctx);
-                if let sinex_node_sdk::NodeError::Processing(rendered) = node_error {
-                    if !ctx.is_empty() {
-                        prop_assert!(rendered.contains(&ctx));
-                    }
-                } else {
-                    prop_assert!(false, "expected processing error variant");
-                }
+        // bytes is guaranteed to be invalid UTF-8
+        let err = String::from_utf8(bytes).expect_err("strategy should generate invalid UTF-8");
+        let node_error = utf8_error_with_context(err, &ctx);
+        if let sinex_node_sdk::NodeError::Processing(rendered) = node_error {
+            if !ctx.is_empty() {
+                prop_assert!(rendered.contains(&ctx));
             }
+        } else {
+            prop_assert!(false, "expected processing error variant");
         }
         Ok(())
     }
@@ -86,7 +108,11 @@ sinex_proptest! {
             if !ctx.is_empty() {
                 prop_assert!(rendered.contains(&ctx));
             }
-            prop_assert!(rendered.to_lowercase().contains("json"));
+            // The error message should contain parsing error details (line/column info)
+            prop_assert!(
+                rendered.contains("line") || rendered.contains("column") || rendered.contains("expected"),
+                "JSON error should contain parsing details: {}", rendered
+            );
         } else {
             prop_assert!(false, "expected processing error variant");
         }

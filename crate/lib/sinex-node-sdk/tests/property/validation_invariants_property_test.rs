@@ -7,7 +7,6 @@ use sinex_core::types::domain::{EventSource, EventType};
 use sinex_core::Event;
 use sinex_node_sdk::CheckpointState;
 use sinex_test_utils::prelude::*;
-use sinex_test_utils::TestResult;
 
 fn arb_event_payload() -> impl Strategy<Value = serde_json::Value> {
     prop_oneof![

@@ -131,7 +131,8 @@ impl SimpleProcessor for GitActivityDetector {
         }
 
         // Extract subcommand
-        let subcommand = Self::extract_subcommand(&input.command).unwrap_or_else(|| "unknown".to_string());
+        let subcommand =
+            Self::extract_subcommand(&input.command).unwrap_or_else(|| "unknown".to_string());
 
         // Update state
         state.total_commands += 1;
@@ -272,9 +273,6 @@ mod tests {
             GitActivityDetector::extract_subcommand("sudo git pull"),
             Some("pull".to_string())
         );
-        assert_eq!(
-            GitActivityDetector::extract_subcommand("ls -la"),
-            None
-        );
+        assert_eq!(GitActivityDetector::extract_subcommand("ls -la"), None);
     }
 }

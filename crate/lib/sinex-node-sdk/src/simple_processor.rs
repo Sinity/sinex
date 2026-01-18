@@ -66,8 +66,8 @@ use tracing::{debug, error, info, warn};
 use crate::checkpoint::{CheckpointManager, CheckpointState};
 use crate::shutdown::ShutdownConfig;
 use crate::stream_processor::{
-    Checkpoint, EventSender, NodeCapabilities, NodeInitContext, NodeRuntimeState,
-    NodeType, ScanArgs, ScanEstimate, ScanReport, TimeHorizon,
+    Checkpoint, EventSender, NodeCapabilities, NodeInitContext, NodeRuntimeState, NodeType,
+    ScanArgs, ScanEstimate, ScanReport, TimeHorizon,
 };
 use crate::{NodeError, NodeResult};
 

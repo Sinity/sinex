@@ -5,8 +5,8 @@
 
 use crate::{
     stream_processor::{
-        Checkpoint, Node, NodeCapabilities, NodeInitContext, NodeRuntimeState,
-        NodeType, ScanArgs, ScanEstimate, ScanReport, TimeHorizon,
+        Checkpoint, Node, NodeCapabilities, NodeInitContext, NodeRuntimeState, NodeType, ScanArgs,
+        ScanEstimate, ScanReport, TimeHorizon,
     },
     NodeResult,
 };

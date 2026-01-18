@@ -11,8 +11,8 @@ use sinex_node_sdk::{
     event_processor::EventTransport,
     nats_publisher::NatsPublisher,
     stream_processor::{
-        EventEmitter, Node, NodeCapabilities, NodeHandles, NodeInitContext,
-        NodeType, SchemaBroadcastEntry, StreamProcessorRunner,
+        EventEmitter, Node, NodeCapabilities, NodeHandles, NodeInitContext, NodeType,
+        SchemaBroadcastEntry, StreamProcessorRunner,
     },
     NodeResult,
 };

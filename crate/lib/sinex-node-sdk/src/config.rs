@@ -305,7 +305,7 @@ impl NodeConfig {
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(defaults.database_pool_size),
             work_dir: std::env::var("SINEX_WORK_DIR")
-                .map(Utf8PathBuf::from)
+                .map(|s| sanitize_work_dir(&s))
                 .unwrap_or(defaults.work_dir),
             dry_run: std::env::var("SINEX_DRY_RUN")
                 .map(|s| s.parse().unwrap_or(false))
@@ -488,6 +488,52 @@ fn default_replay_batch_size() -> usize {
 }
 
 // Custom validator functions
+
+/// Sanitize a work directory path by making it absolute and removing traversal sequences.
+///
+/// This function:
+/// 1. Converts relative paths to absolute by joining with current_dir
+/// 2. Normalizes the path by removing `.` and `..` components
+/// 3. Ensures the result doesn't contain path traversal sequences
+fn sanitize_work_dir(path_str: &str) -> Utf8PathBuf {
+    use std::path::{Component, PathBuf};
+
+    let path = PathBuf::from(path_str);
+
+    // Make absolute if relative
+    let absolute = if path.is_absolute() {
+        path
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("/"))
+            .join(path)
+    };
+
+    // Clean the path by processing components
+    let mut components = Vec::new();
+    for component in absolute.components() {
+        match component {
+            Component::CurDir => continue, // Skip .
+            Component::ParentDir => {
+                // Pop if possible, but never go above root
+                if let Some(last) = components.last() {
+                    if !matches!(last, Component::RootDir | Component::Prefix(_)) {
+                        components.pop();
+                        continue;
+                    }
+                }
+                // If we can't pop, just skip the ..
+            }
+            _ => components.push(component),
+        }
+    }
+
+    let cleaned: PathBuf = components.iter().collect();
+    Utf8PathBuf::try_from(cleaned).unwrap_or_else(|e| {
+        // Fallback: lossy conversion if path contains non-UTF8
+        Utf8PathBuf::from(e.into_path_buf().to_string_lossy().to_string())
+    })
+}
 
 fn validate_log_level(level: &str) -> Result<(), validator::ValidationError> {
     match level {

@@ -55,6 +55,18 @@ impl NatsPublisher {
         &self,
         event: &Event,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // Issue 1 fix: Use semaphore for bounded publish queue to prevent unbounded memory growth
+        static PUBLISH_SEMAPHORE: std::sync::OnceLock<tokio::sync::Semaphore> =
+            std::sync::OnceLock::new();
+        let sem = PUBLISH_SEMAPHORE.get_or_init(|| tokio::sync::Semaphore::new(100));
+
+        let _permit = sem.acquire().await.map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to acquire publish semaphore: {}", e),
+            )
+        })?;
+
         let js = async_nats::jetstream::new(self.nats_client.clone());
 
         let (

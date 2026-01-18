@@ -3,6 +3,20 @@
 #![doc = include_str!("../../../../docs/current/architecture/SystemOperations_And_Integrity_Architecture.md")]
 
 //! Shared runtime for Sinex nodes (ingestors and automata).
+//!
+//! # Clock Skew Considerations (Issue 7)
+//!
+//! Event ordering relies on ULID timestamps. Clock skew between nodes can cause:
+//! - Out-of-order event processing
+//! - Checkpoint confusion (newer events appear older)
+//! - False timeout detections in confirmation handler
+//!
+//! ## Mitigations
+//! - Use NTP/chrony for time synchronization across all nodes
+//! - Prefer DB-generated ULIDs where possible (via `DEFAULT gen_ulid()`)
+//! - Monitor clock skew via confirmation handler warnings (see `confirmation_handler.rs`)
+//! - Set conservative confirmation timeouts (>5 seconds)
+//! - For critical ordering, use database sequences instead of client-side ULIDs
 
 // Macro re-exports removed; prefer explicit imports from `sinex-macros` if needed.
 pub mod acquisition_manager;
@@ -28,6 +42,7 @@ pub mod prelude;
 pub mod replay;
 pub mod runtime;
 pub mod schema_validator;
+pub mod self_observation;
 pub mod shutdown;
 pub mod simple_processor;
 pub mod stage_as_you_go;
@@ -61,14 +76,17 @@ pub use replay::{
     MetricsSnapshot, ProgressTracker, ReplayController, ReplayFilters, ReplayMetrics, ReplayMode,
     ReplayProgress, ReplayResult, ReplayService, ReplayStats,
 };
+pub use self_observation::{
+    SelfObservationError, SelfObservationTask, SelfObserver, SelfObserverConfig,
+};
 pub use shutdown::{default_checkpoint_path, ShutdownConfig, ShutdownHandler, ShutdownSignal};
 pub use simple_processor::{
     ErrorAction, PersistedState, SimpleProcessor, SimpleProcessorConfig, SimpleProcessorError,
     SimpleProcessorNode,
 };
 pub use stream_processor::{
-    Checkpoint, EventSender, EventStream, Node, NodeCapabilities, NodeType, ScanArgs,
-    ScanEstimate, ScanReport, StreamProcessorRunner, TimeHorizon,
+    Checkpoint, EventSender, EventStream, Node, NodeCapabilities, NodeType, ScanArgs, ScanEstimate,
+    ScanReport, StreamProcessorRunner, TimeHorizon,
 };
 pub use version::{NodeInstance, NodeVersion};
 

@@ -104,11 +104,28 @@ impl CheckpointState {
     ///
     /// This design allows the same checkpoint API to work for both ingestors
     /// (external positions) and automata (event IDs).
+    ///
+    /// # Issue 11 Fix
+    ///
+    /// WARNING: This auto-detection can misclassify stream IDs that happen to be valid ULIDs.
+    /// For production code, prefer explicit checkpoint type constructors:
+    /// - `Checkpoint::Internal { event_id, message_count }` for automata
+    /// - `Checkpoint::Stream { message_id, event_id }` for streams
+    /// - `Checkpoint::External { position }` for ingestors
+    ///
+    /// Consider deprecating this method in favor of explicit type parameters.
+    #[deprecated(
+        note = "Auto-detection can misclassify valid ULID stream IDs. Use explicit Checkpoint constructors instead."
+    )]
     pub fn set_last_processed_id(&mut self, id: Option<String>) {
         self.checkpoint = match id {
             Some(id_str) => {
                 // Try to parse as ULID first, then fall back to stream ID
                 if let Ok(ulid) = id_str.parse::<Ulid>() {
+                    warn!(
+                        id = %id_str,
+                        "Auto-detecting checkpoint type from ID format - consider using explicit type"
+                    );
                     Checkpoint::Internal {
                         event_id: ulid,
                         message_count: self.processed_count,
@@ -341,6 +358,21 @@ pub fn parse_checkpoint_key(key: &str) -> Option<(String, String, String)> {
 /// # Thread Safety
 /// `CheckpointManager` is `Clone` and can be safely shared across threads.
 /// KV updates are atomic per key; concurrent writers follow last-write-wins semantics.
+///
+/// # Issue 12: Checkpoint Cleanup
+///
+/// TODO: Implement 30-day TTL cleanup for stale checkpoints
+///
+/// Currently, checkpoints remain in NATS KV indefinitely. For nodes that frequently
+/// change instance IDs (e.g., ephemeral containers), this can lead to checkpoint
+/// accumulation. A background task should:
+/// 1. Scan checkpoints in the KV bucket periodically (daily)
+/// 2. Identify checkpoints with `last_activity` > 30 days old
+/// 3. Delete stale checkpoints to prevent unbounded growth
+/// 4. Emit metrics about cleanup operations (deleted count, errors)
+///
+/// Implementation should be opt-in via environment variable or feature flag to avoid
+/// breaking existing deployments that rely on long-term checkpoint retention.
 #[derive(Debug, Clone)]
 pub struct CheckpointManager {
     kv: async_nats::jetstream::kv::Store,
@@ -652,6 +684,207 @@ pub struct CheckpointStats {
     pub last_update: Option<chrono::DateTime<chrono::Utc>>,
     pub first_checkpoint: Option<chrono::DateTime<chrono::Utc>>,
 }
+
+/// Configuration for checkpoint cleanup (Issue 12)
+#[derive(Debug, Clone)]
+pub struct CheckpointCleanupConfig {
+    /// Maximum age for checkpoints before cleanup (default: 30 days)
+    pub max_age: std::time::Duration,
+    /// How often to run cleanup (default: 24 hours)
+    pub interval: std::time::Duration,
+    /// Whether cleanup is enabled (default: false, opt-in)
+    pub enabled: bool,
+}
+
+impl Default for CheckpointCleanupConfig {
+    fn default() -> Self {
+        Self {
+            max_age: std::time::Duration::from_secs(30 * 24 * 60 * 60), // 30 days
+            interval: std::time::Duration::from_secs(24 * 60 * 60),     // 24 hours
+            enabled: false,
+        }
+    }
+}
+
+impl CheckpointCleanupConfig {
+    /// Load cleanup configuration from environment variables.
+    ///
+    /// - `SINEX_CHECKPOINT_CLEANUP_ENABLED`: Enable cleanup (default: false)
+    /// - `SINEX_CHECKPOINT_CLEANUP_MAX_AGE_DAYS`: Max age in days (default: 30)
+    /// - `SINEX_CHECKPOINT_CLEANUP_INTERVAL_HOURS`: Run interval in hours (default: 24)
+    pub fn from_env() -> Self {
+        let enabled = std::env::var("SINEX_CHECKPOINT_CLEANUP_ENABLED")
+            .map(|v| v.to_lowercase() == "true" || v == "1")
+            .unwrap_or(false);
+
+        let max_age_days: u64 = std::env::var("SINEX_CHECKPOINT_CLEANUP_MAX_AGE_DAYS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(30);
+
+        let interval_hours: u64 = std::env::var("SINEX_CHECKPOINT_CLEANUP_INTERVAL_HOURS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(24);
+
+        Self {
+            max_age: std::time::Duration::from_secs(max_age_days * 24 * 60 * 60),
+            interval: std::time::Duration::from_secs(interval_hours * 60 * 60),
+            enabled,
+        }
+    }
+}
+
+/// Result of a checkpoint cleanup run
+#[derive(Debug, Clone)]
+pub struct CheckpointCleanupResult {
+    /// Number of checkpoints scanned
+    pub scanned: usize,
+    /// Number of stale checkpoints deleted
+    pub deleted: usize,
+    /// Number of errors encountered
+    pub errors: usize,
+}
+
+/// Cleanup stale checkpoints from the KV bucket (Issue 12)
+///
+/// Scans all checkpoints in the bucket and deletes those with `last_activity`
+/// older than the configured `max_age`.
+///
+/// # Arguments
+/// - `kv`: The NATS KV store containing checkpoints
+/// - `max_age`: Maximum age for checkpoints before deletion
+///
+/// # Returns
+/// - `Ok(CheckpointCleanupResult)`: Cleanup completed with stats
+/// - `Err(NodeError)`: Failed to scan or delete checkpoints
+pub async fn cleanup_stale_checkpoints(
+    kv: &async_nats::jetstream::kv::Store,
+    max_age: std::time::Duration,
+) -> NodeResult<CheckpointCleanupResult> {
+    let now = chrono::Utc::now();
+    let cutoff = now - chrono::Duration::from_std(max_age).unwrap_or(chrono::Duration::days(30));
+
+    let mut result = CheckpointCleanupResult {
+        scanned: 0,
+        deleted: 0,
+        errors: 0,
+    };
+
+    // List all keys in the bucket
+    let mut keys = kv.keys().await.map_err(|e| {
+        NodeError::Checkpoint(format!("Failed to list checkpoint keys for cleanup: {e}"))
+    })?;
+
+    while let Some(key) = keys
+        .try_next()
+        .await
+        .map_err(|e| NodeError::Checkpoint(format!("Failed to scan checkpoint keys: {e}")))?
+    {
+        result.scanned += 1;
+
+        // Get the checkpoint entry
+        let entry = match kv.get(&key).await {
+            Ok(Some(entry)) => entry,
+            Ok(None) => continue, // Key deleted between list and get
+            Err(e) => {
+                warn!(key = %key, error = %e, "Failed to read checkpoint during cleanup");
+                result.errors += 1;
+                continue;
+            }
+        };
+
+        // Parse the checkpoint state
+        let state: CheckpointState = match serde_json::from_slice(&entry) {
+            Ok(state) => state,
+            Err(e) => {
+                warn!(key = %key, error = %e, "Failed to parse checkpoint during cleanup");
+                result.errors += 1;
+                continue;
+            }
+        };
+
+        // Check if checkpoint is stale
+        if state.last_activity < cutoff {
+            match kv.purge(&key).await {
+                Ok(_) => {
+                    debug!(
+                        key = %key,
+                        last_activity = %state.last_activity,
+                        "Deleted stale checkpoint"
+                    );
+                    result.deleted += 1;
+                }
+                Err(e) => {
+                    warn!(key = %key, error = %e, "Failed to delete stale checkpoint");
+                    result.errors += 1;
+                }
+            }
+        }
+    }
+
+    info!(
+        scanned = result.scanned,
+        deleted = result.deleted,
+        errors = result.errors,
+        max_age_days = max_age.as_secs() / 86400,
+        "Checkpoint cleanup completed"
+    );
+
+    Ok(result)
+}
+
+/// Spawn a background task for periodic checkpoint cleanup (Issue 12)
+///
+/// This function starts a background task that runs checkpoint cleanup
+/// at the configured interval. The task runs until cancelled.
+///
+/// # Arguments
+/// - `kv`: The NATS KV store containing checkpoints
+/// - `config`: Cleanup configuration
+///
+/// # Returns
+/// A `JoinHandle` for the background task. The task can be cancelled
+/// by aborting the handle.
+pub fn spawn_checkpoint_cleanup_task(
+    kv: async_nats::jetstream::kv::Store,
+    config: CheckpointCleanupConfig,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        if !config.enabled {
+            debug!("Checkpoint cleanup disabled");
+            return;
+        }
+
+        info!(
+            interval_hours = config.interval.as_secs() / 3600,
+            max_age_days = config.max_age.as_secs() / 86400,
+            "Starting checkpoint cleanup background task"
+        );
+
+        let mut interval = tokio::time::interval(config.interval);
+
+        loop {
+            interval.tick().await;
+
+            match cleanup_stale_checkpoints(&kv, config.max_age).await {
+                Ok(result) => {
+                    if result.deleted > 0 {
+                        info!(
+                            deleted = result.deleted,
+                            scanned = result.scanned,
+                            "Checkpoint cleanup run completed"
+                        );
+                    }
+                }
+                Err(e) => {
+                    warn!(error = %e, "Checkpoint cleanup failed");
+                }
+            }
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

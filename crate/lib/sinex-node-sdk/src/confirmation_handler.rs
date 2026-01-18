@@ -105,8 +105,22 @@ impl ConfirmationBuffer {
 
         for (event_id, event) in pending.iter() {
             let age = now.signed_duration_since(event.received_at);
-            if age.to_std().unwrap_or_default() > self.timeout {
-                timed_out.push(*event_id);
+            // Issue 2 fix: Explicit handling of clock skew with logging
+            match age.to_std() {
+                Ok(age_std) if age_std > self.timeout => {
+                    timed_out.push(*event_id);
+                }
+                Err(_) => {
+                    // Negative duration indicates clock skew
+                    tracing::warn!(
+                        event_id = %event_id,
+                        received_at = %event.received_at,
+                        now = %now,
+                        "Clock skew detected: event received_at is in the future"
+                    );
+                    // Don't timeout events with clock skew - they might be valid
+                }
+                _ => {} // Within timeout window
             }
         }
 

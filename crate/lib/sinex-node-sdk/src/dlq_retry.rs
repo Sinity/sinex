@@ -168,7 +168,9 @@ impl DlqRetryHandler {
             .await
             .map_err(|e| NodeError::Processing(format!("Failed to get messages: {}", e)))?;
 
-        if let Some(Ok(msg)) = messages.next().await {
+        // Use timeout to avoid blocking forever when event doesn't exist
+        let next_msg = tokio::time::timeout(Duration::from_secs(5), messages.next()).await;
+        if let Ok(Some(Ok(msg))) = next_msg {
             let retry_count = msg
                 .headers
                 .as_ref()

@@ -7,7 +7,7 @@ use proptest::prelude::*;
 use serde_json::json;
 use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::types::domain::{EventSource, EventType};
-use sinex_core::{Event, JsonValue};
+use sinex_core::{Event, JsonValue, SinexError};
 use sinex_test_utils::{prelude::*, sinex_prop, sinex_proptest};
 use std::time::Duration;
 
@@ -84,14 +84,11 @@ use strategies::*;
 
 #[sinex_prop]
 async fn node_event_processing_preserves_order(
+    ctx: &TestContext,
     #[strategy(event_sequences())] events: Vec<Event<JsonValue>>,
     #[strategy(1usize..100usize)] batch_size: usize,
-) -> TestResult<()> {
-    if events.is_empty() {
-        return Ok(());
-    }
-
-    let ctx = TestContext::new().await?;
+) -> Result<(), SinexError> {
+    // Note: event_sequences() strategy guarantees 1..=100 events, never empty
 
     // Process events in batches
     let mut processed_events = Vec::new();
@@ -130,18 +127,15 @@ async fn node_event_processing_preserves_order(
 
 #[sinex_prop]
 async fn node_handles_intermittent_failures(
+    ctx: &TestContext,
     #[strategy(0.0..0.3f64)] failure_rate: f64, // Up to 30% failure rate
     #[strategy(proptest::collection::vec(
         (event_sources(), event_types(), event_payloads()),
         1..=50
     ))] events: Vec<(String, String, serde_json::Value)>,
     #[strategy(1u64..100u64)] recovery_delay: u64,
-) -> TestResult<()> {
-    if events.is_empty() {
-        return Ok(());
-    }
-
-    let ctx = TestContext::new().await?;
+) -> Result<(), SinexError> {
+    // Note: strategy guarantees 1..=50 events, never empty
 
     let mut successful_events = 0;
 
@@ -187,11 +181,11 @@ async fn node_handles_intermittent_failures(
 
 #[sinex_prop]
 async fn node_manages_resources_efficiently(
+    ctx: &TestContext,
     #[strategy(1usize..5usize)] concurrent_operations: usize,
     #[strategy(1usize..50usize)] events_per_operation: usize,
     #[strategy(1u64..50u64)] processing_delay: u64,
-) -> TestResult<()> {
-    let ctx = TestContext::new().await?;
+) -> Result<(), SinexError> {
 
     // Generate events for concurrent processing
     let mut total_events = 0;
@@ -277,18 +271,15 @@ sinex_proptest! {
 
 #[sinex_prop]
 async fn node_batch_processing_is_consistent(
+    ctx: &TestContext,
     #[strategy(1usize..100usize)] _initial_batch_size: usize,
     #[strategy(1usize..100usize)] _updated_batch_size: usize,
     #[strategy(proptest::collection::vec(
         (event_sources(), event_types(), event_payloads()),
         1..=50
     ))] events: Vec<(String, String, serde_json::Value)>,
-) -> TestResult<()> {
-    if events.is_empty() {
-        return Ok(());
-    }
-
-    let ctx = TestContext::new().await?;
+) -> Result<(), SinexError> {
+    // Note: strategy guarantees 1..=50 events, never empty
 
     // Process events in first batch configuration
     let half_point = events.len() / 2;
@@ -327,12 +318,12 @@ async fn node_batch_processing_is_consistent(
 
 #[sinex_prop]
 async fn node_survives_processing_interruptions(
+    ctx: &TestContext,
     #[strategy(1u64..100u64)] interruption_duration: u64,
     #[strategy(1usize..20usize)] events_before_interruption: usize,
     #[strategy(1usize..20usize)] events_during_interruption: usize,
     #[strategy(1usize..20usize)] events_after_interruption: usize,
-) -> TestResult<()> {
-    let ctx = TestContext::new().await?;
+) -> Result<(), SinexError> {
 
     // Phase 1: Normal operation
     for i in 0..events_before_interruption {
@@ -384,11 +375,11 @@ async fn node_survives_processing_interruptions(
 
 #[sinex_prop]
 async fn node_maintains_event_ordering_under_load(
+    ctx: &TestContext,
     #[strategy(1usize..5usize)] concurrent_sources: usize,
     #[strategy(1usize..20usize)] events_per_source: usize,
     #[strategy(1u64..20u64)] processing_jitter: u64,
-) -> TestResult<()> {
-    let ctx = TestContext::new().await?;
+) -> Result<(), SinexError> {
 
     let mut handles = Vec::new();
 

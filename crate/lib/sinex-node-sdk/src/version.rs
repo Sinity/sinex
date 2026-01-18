@@ -261,9 +261,7 @@ pub fn node_commit_count() -> crate::NodeResult<u32> {
 
 /// Get git branch name
 pub fn node_branch() -> String {
-    option_env!("NODE_BRANCH")
-        .unwrap_or("unknown")
-        .to_string()
+    option_env!("NODE_BRANCH").unwrap_or("unknown").to_string()
 }
 
 /// Get build timestamp

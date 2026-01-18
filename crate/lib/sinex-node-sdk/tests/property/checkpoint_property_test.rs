@@ -5,9 +5,10 @@
 
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
+use sinex_core::SinexError;
 use sinex_node_sdk::Checkpoint;
 use sinex_node_sdk::{CheckpointManager, CheckpointState};
-use sinex_test_utils::{prelude::*, sinex_prop};
+use sinex_test_utils::{prelude::*, sinex_prop, sinex_test, TestContext};
 use std::sync::Arc;
 
 // =============================================================================
@@ -43,14 +44,16 @@ fn checkpoint_data() -> impl Strategy<Value = serde_json::Value> {
 
 #[sinex_prop]
 async fn checkpoint_updates_are_idempotent(
+    ctx: &TestContext,
     #[strategy(processor_names())] processor_name: String,
     #[strategy(0u64..10000u64)] processed_count: u64,
     #[strategy(prop::option::of("[0-9A-HJKMNP-TV-Z]{26}"))] last_processed_id: Option<String>,
     #[strategy(checkpoint_data())] checkpoint_data: serde_json::Value,
-) -> TestResult<()> {
-    let ctx = TestContext::new().await?;
-    let ctx = ctx.with_nats().await?;
-    let kv = ctx.checkpoint_kv().await?;
+) -> Result<(), SinexError> {
+    let kv = ctx
+        .ensure_checkpoint_kv()
+        .await
+        .map_err(|e| SinexError::service(format!("{e:?}")))?;
     let checkpoint_manager = CheckpointManager::new(
         kv,
         processor_name.clone(),
@@ -89,13 +92,15 @@ async fn checkpoint_updates_are_idempotent(
 
 #[sinex_prop]
 async fn checkpoint_recovery_is_robust(
+    ctx: &TestContext,
     #[strategy(processor_names())] processor_name: String,
     #[strategy(proptest::collection::vec((0u64..1000u64, checkpoint_data()), 1..=10))]
     checkpoints: Vec<(u64, serde_json::Value)>,
-) -> TestResult<()> {
-    let ctx = TestContext::new().await?;
-    let ctx = ctx.with_nats().await?;
-    let kv = ctx.checkpoint_kv().await?;
+) -> Result<(), SinexError> {
+    let kv = ctx
+        .ensure_checkpoint_kv()
+        .await
+        .map_err(|e| SinexError::service(format!("failed to get checkpoint kv: {e:?}")))?;
     let checkpoint_manager = CheckpointManager::new(
         kv,
         processor_name.clone(),
@@ -130,12 +135,14 @@ async fn checkpoint_recovery_is_robust(
 
 #[sinex_prop]
 async fn concurrent_checkpoint_access_is_safe(
+    ctx: &TestContext,
     #[strategy(processor_names())] processor_name: String,
     #[strategy(proptest::collection::vec(0u64..1000u64, 1..=20))] concurrent_updates: Vec<u64>,
-) -> TestResult<()> {
-    let ctx = TestContext::new().await?;
-    let ctx = ctx.with_nats().await?;
-    let kv = ctx.checkpoint_kv().await?;
+) -> Result<(), SinexError> {
+    let kv = ctx
+        .ensure_checkpoint_kv()
+        .await
+        .map_err(|e| SinexError::service(format!("failed to get checkpoint kv: {e:?}")))?;
     let checkpoint_manager = Arc::new(CheckpointManager::new(
         kv,
         processor_name.clone(),
@@ -183,13 +190,15 @@ async fn concurrent_checkpoint_access_is_safe(
 
 #[sinex_prop]
 async fn checkpoint_state_transitions_are_valid(
+    ctx: &TestContext,
     #[strategy(processor_names())] processor_name: String,
     #[strategy(0u64..100u64)] initial_count: u64,
     #[strategy(proptest::collection::vec(1u64..100u64, 1..=10))] increments: Vec<u64>,
-) -> TestResult<()> {
-    let ctx = TestContext::new().await?;
-    let ctx = ctx.with_nats().await?;
-    let kv = ctx.checkpoint_kv().await?;
+) -> Result<(), SinexError> {
+    let kv = ctx
+        .ensure_checkpoint_kv()
+        .await
+        .map_err(|e| SinexError::service(format!("failed to get checkpoint kv: {e:?}")))?;
     let checkpoint_manager = CheckpointManager::new(
         kv,
         processor_name.clone(),
@@ -232,7 +241,8 @@ async fn checkpoint_state_transitions_are_valid(
 
 #[sinex_prop]
 async fn checkpoint_data_integrity_is_preserved(
-    #[strategy(processor_names())] processor_name: String,
+    ctx: &TestContext,
+    #[strategy(processor_names())] processor_base: String,
     #[strategy(checkpoint_data())] test_data: serde_json::Value,
     #[strategy(proptest::collection::vec(
         prop_oneof![
@@ -243,10 +253,15 @@ async fn checkpoint_data_integrity_is_preserved(
         1..=50
     ))]
     operations: Vec<String>,
-) -> TestResult<()> {
-    let ctx = TestContext::new().await?;
-    let ctx = ctx.with_nats().await?;
-    let kv = ctx.checkpoint_kv().await?;
+) -> Result<(), SinexError> {
+    // Use unique processor name per test run to avoid KV bucket conflicts
+    let unique_suffix = sinex_core::types::Ulid::new();
+    let processor_name = format!("{processor_base}-{unique_suffix}");
+
+    let kv = ctx
+        .ensure_checkpoint_kv()
+        .await
+        .map_err(|e| SinexError::service(format!("failed to get checkpoint kv: {e:?}")))?;
     let checkpoint_manager = CheckpointManager::new(
         kv,
         processor_name.clone(),
@@ -256,6 +271,7 @@ async fn checkpoint_data_integrity_is_preserved(
 
     let mut expected_data = test_data.clone();
     let mut processed_count = 0u64;
+    let mut has_saved = false; // Track if we've saved anything
 
     // Execute operations sequence
     for (i, operation) in operations.iter().enumerate() {
@@ -273,11 +289,15 @@ async fn checkpoint_data_integrity_is_preserved(
                 };
 
                 checkpoint_manager.save_checkpoint(&state).await?;
+                has_saved = true;
             }
             "load" => {
-                let stats = checkpoint_manager.get_checkpoint_stats().await?;
-                prop_assert_eq!(stats.max_processed, processed_count);
-                prop_assert!(stats.last_update.is_some());
+                // Only verify checkpoint if we've saved something
+                if has_saved {
+                    let stats = checkpoint_manager.get_checkpoint_stats().await?;
+                    prop_assert_eq!(stats.max_processed, processed_count);
+                    prop_assert!(stats.last_update.is_some());
+                }
             }
             "update" => {
                 processed_count += 1;
@@ -295,26 +315,31 @@ async fn checkpoint_data_integrity_is_preserved(
                 };
 
                 checkpoint_manager.save_checkpoint(&state).await?;
+                has_saved = true;
             }
             _ => unreachable!(),
         }
     }
 
-    // Final verification
-    let final_state = checkpoint_manager.get_checkpoint_stats().await?;
-    prop_assert_eq!(final_state.max_processed, processed_count);
-    prop_assert!(final_state.last_update.is_some());
+    // Final verification (only if we've saved something)
+    if has_saved {
+        let final_state = checkpoint_manager.get_checkpoint_stats().await?;
+        prop_assert_eq!(final_state.max_processed, processed_count);
+        prop_assert!(final_state.last_update.is_some());
+    }
     Ok(())
 }
 
 #[sinex_prop]
 async fn checkpoint_cleanup_maintains_consistency(
+    ctx: &TestContext,
     #[strategy(proptest::collection::vec(processor_names(), 1..=10))] processor_names: Vec<String>,
     #[strategy(1u64..100u64)] cleanup_threshold: u64,
-) -> TestResult<()> {
-    let ctx = TestContext::new().await?;
-    let ctx = ctx.with_nats().await?;
-    let kv = ctx.checkpoint_kv().await?; // Shared KV for this test run
+) -> Result<(), SinexError> {
+    let kv = ctx
+        .ensure_checkpoint_kv()
+        .await
+        .map_err(|e| SinexError::service(format!("failed to get checkpoint kv: {e:?}")))?; // Shared KV for this test run
 
     // Create multiple automata with checkpoints
     let mut managers = Vec::new();
