@@ -26,7 +26,7 @@ async fn test_graceful_degradation_database_failure(
     // Create test processor manifest for degradation testing
     let agent_name = format!("degradation_test_{}", Ulid::new());
     sqlx::query!(
-        "INSERT INTO core.processor_manifests (processor_name, processor_type, version, description, anchor_rule_version)
+        "INSERT INTO core.processor_manifests (processor_name, node_type, version, description, anchor_rule_version)
          VALUES ($1, 'automaton', '1.0.0', $2, 1)",
         agent_name,
         "Graceful degradation test"

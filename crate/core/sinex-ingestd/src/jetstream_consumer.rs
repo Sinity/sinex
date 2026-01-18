@@ -126,6 +126,8 @@ const CONFIRM_PUBLISH_MAX_ATTEMPTS: usize = 3;
 const CONFIRM_PUBLISH_BACKOFF_BASE: Duration = Duration::from_millis(200);
 const CONFIRM_PUBLISH_BACKOFF_MAX: Duration = Duration::from_secs(2);
 const CONFIRM_RETRY_DELAY: Duration = Duration::from_secs(1);
+const STREAM_CAPACITY_WARNING_THRESHOLD: f64 = 0.8; // Alert at 80% capacity
+const STREAM_CAPACITY_CHECK_INTERVAL: Duration = Duration::from_secs(300); // Check every 5 minutes
 
 #[derive(Debug)]
 struct PersistBatchResult {
@@ -415,11 +417,16 @@ impl JetStreamConsumer {
 
         // Stats logging interval
         let mut stats_interval = tokio::time::interval(Duration::from_secs(60));
+        // Stream capacity monitoring interval
+        let mut capacity_check_interval = tokio::time::interval(STREAM_CAPACITY_CHECK_INTERVAL);
 
         loop {
             tokio::select! {
                 _ = stats_interval.tick() => {
                     self.stats.log();
+                }
+                _ = capacity_check_interval.tick() => {
+                    self.check_stream_capacity(&stream_name).await;
                 }
                 batch_result = self.process_batch(&consumer) => {
                     if let Err(e) = batch_result {
@@ -1137,6 +1144,49 @@ impl JetStreamConsumer {
                 })?;
         }
         Ok(())
+    }
+
+    /// Check stream capacity and log warnings if approaching limits
+    async fn check_stream_capacity(&self, stream_name: &str) {
+        match self.js.get_stream(stream_name).await {
+            Ok(mut stream) => {
+                if let Ok(info) = stream.info().await {
+                    let state = info.state.clone();
+                    let config = info.config.clone();
+
+                    // Check message count capacity
+                    if config.max_messages > 0 {
+                        let usage_ratio = state.messages as f64 / config.max_messages as f64;
+                        if usage_ratio >= STREAM_CAPACITY_WARNING_THRESHOLD {
+                            warn!(
+                                stream = %stream_name,
+                                messages = state.messages,
+                                max_messages = config.max_messages,
+                                usage_percent = format!("{:.1}%", usage_ratio * 100.0),
+                                "Stream approaching message capacity limit"
+                            );
+                        }
+                    }
+
+                    // Check byte capacity if configured
+                    if config.max_bytes > 0 {
+                        let bytes_ratio = state.bytes as f64 / config.max_bytes as f64;
+                        if bytes_ratio >= STREAM_CAPACITY_WARNING_THRESHOLD {
+                            warn!(
+                                stream = %stream_name,
+                                bytes = state.bytes,
+                                max_bytes = config.max_bytes,
+                                usage_percent = format!("{:.1}%", bytes_ratio * 100.0),
+                                "Stream approaching byte capacity limit"
+                            );
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                debug!("Failed to check stream capacity for {}: {}", stream_name, e);
+            }
+        }
     }
 }
 

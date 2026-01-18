@@ -40,7 +40,7 @@ async fn recv_timeout_is_recorded() {
 
 #[tokio::test]
 async fn send_timeout_is_recorded() {
-    let mut harness = ChannelHarness::small_capacity();
+    let harness = ChannelHarness::small_capacity();
     harness.sender.send_or_log("first", "fill").await.unwrap();
 
     let result = harness
@@ -91,7 +91,7 @@ async fn backpressure_buffer_flushes() {
 
 #[tokio::test]
 async fn backpressure_drop_newest() {
-    let mut harness = ChannelHarness::small_capacity();
+    let harness = ChannelHarness::small_capacity();
     let mut manager = BackpressureManager::new(BackpressureStrategy::DropNewest);
 
     manager

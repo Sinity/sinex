@@ -1,6 +1,7 @@
 [build]
 # Build configuration for Sinex
 # Speed optimizations for development
+jobs = 12         # 12 × 2GB = 24GB. With zram (15GB compressed), safe for 32GB RAM.
 pipelining = true
 
 # Shared build cache across the workspace (experimental)

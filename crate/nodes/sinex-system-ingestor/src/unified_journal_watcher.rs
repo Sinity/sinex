@@ -46,6 +46,10 @@ pub struct UnifiedJournalWatcher {
     event_count: Arc<AtomicU64>,
     last_error: Arc<Mutex<Option<String>>>,
     child_process: Option<Child>,
+    // Cursor batching state
+    pending_cursor: Arc<Mutex<Option<String>>>,
+    cursor_save_count: Arc<AtomicU64>,
+    last_cursor_save: Arc<Mutex<Instant>>,
 }
 
 impl UnifiedJournalWatcher {
@@ -96,6 +100,9 @@ impl UnifiedJournalWatcher {
             event_count: Arc::new(AtomicU64::new(0)),
             last_error: Arc::new(Mutex::new(None)),
             child_process: None,
+            pending_cursor: Arc::new(Mutex::new(None)),
+            cursor_save_count: Arc::new(AtomicU64::new(0)),
+            last_cursor_save: Arc::new(Mutex::new(Instant::now())),
         })
     }
 
@@ -732,20 +739,75 @@ impl UnifiedJournalWatcher {
         }
     }
 
-    /// Save cursor to file for position tracking
+    /// Save cursor to file for position tracking (batched)
+    /// Saves based on configured event threshold and interval (defaults: 100 events or 10 seconds)
     async fn save_cursor(&self, cursor: &str) -> NodeResult<()> {
-        if let Some(ref cursor_file) = self.journal_config.cursor_file {
-            // Create parent directory if needed
-            if let Some(parent) = camino::Utf8Path::new(cursor_file).parent() {
-                tokio::fs::create_dir_all(parent).await.ok();
-            }
-
-            atomic_write(std::path::Path::new(cursor_file), cursor.as_bytes())
-                .await
-                .map_err(|e| {
-                    sinex_node_sdk::NodeError::Processing(format!("Failed to save cursor: {}", e))
-                })?;
+        // Update pending cursor
+        if let Ok(mut pending) = self.pending_cursor.lock() {
+            *pending = Some(cursor.to_string());
         }
+
+        // Increment cursor save counter
+        let count = self.cursor_save_count.fetch_add(1, Ordering::Relaxed) + 1;
+
+        // Check if we should flush
+        let should_flush = {
+            let elapsed = if let Ok(last_save) = self.last_cursor_save.lock() {
+                last_save.elapsed()
+            } else {
+                std::time::Duration::from_secs(0)
+            };
+
+            // Flush based on configured thresholds
+            let event_threshold = self.journal_config.cursor_flush_event_threshold;
+            let time_threshold = std::time::Duration::from_secs(
+                self.journal_config.cursor_flush_interval_secs.as_secs(),
+            );
+
+            count >= event_threshold || elapsed >= time_threshold
+        };
+
+        if should_flush {
+            self.flush_cursor().await?;
+        }
+
+        Ok(())
+    }
+
+    /// Flush pending cursor to disk
+    async fn flush_cursor(&self) -> NodeResult<()> {
+        let cursor_to_save = if let Ok(mut pending) = self.pending_cursor.lock() {
+            pending.take()
+        } else {
+            None
+        };
+
+        if let Some(cursor) = cursor_to_save {
+            if let Some(ref cursor_file) = self.journal_config.cursor_file {
+                // Create parent directory if needed
+                if let Some(parent) = camino::Utf8Path::new(cursor_file).parent() {
+                    tokio::fs::create_dir_all(parent).await.ok();
+                }
+
+                atomic_write(std::path::Path::new(cursor_file), cursor.as_bytes())
+                    .await
+                    .map_err(|e| {
+                        sinex_node_sdk::NodeError::Processing(format!(
+                            "Failed to save cursor: {}",
+                            e
+                        ))
+                    })?;
+
+                // Reset counters
+                self.cursor_save_count.store(0, Ordering::Relaxed);
+                if let Ok(mut last_save) = self.last_cursor_save.lock() {
+                    *last_save = Instant::now();
+                }
+
+                debug!("Cursor flushed to disk: {}", cursor);
+            }
+        }
+
         Ok(())
     }
 
@@ -806,10 +868,18 @@ impl WatcherLifecycle for UnifiedJournalWatcher {
         // Signal cancellation
         self.cancel_token.cancel();
 
+        // Flush any pending cursor before shutdown
+        if graceful {
+            if let Err(e) = self.flush_cursor().await {
+                warn!("Failed to flush cursor during shutdown: {}", e);
+            }
+        }
+
         // Kill the child process
         if let Some(ref mut child) = self.child_process {
             if graceful {
-                // Try graceful shutdown with timeout
+                // Try graceful shutdown with 30s timeout
+                // journalctl should respond quickly to SIGTERM, but we allow time for buffered writes
                 match tokio::time::timeout(tokio::time::Duration::from_secs(30), child.wait()).await
                 {
                     Ok(Ok(status)) => {

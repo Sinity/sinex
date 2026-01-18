@@ -4,7 +4,9 @@
 //! for developing SimpleProcessor nodes.
 
 mod dev;
+#[allow(dead_code)] // Schema generation utilities for future use
 mod generate;
+#[allow(dead_code)] // Tether functionality for production data streaming (WIP)
 mod tether;
 mod watcher;
 

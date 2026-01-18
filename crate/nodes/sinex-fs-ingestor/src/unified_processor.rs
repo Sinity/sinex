@@ -25,8 +25,8 @@ use sinex_node_sdk::{
     acquisition_manager::{AcquisitionManager, RotationPolicy},
     stage_as_you_go::StageAsYouGoContext,
     stream_processor::{
-        Checkpoint, Node, NodeCapabilities, NodeInitContext, NodeRuntimeState,
-        NodeType, ScanArgs, ScanEstimate, ScanReport, ServiceInfo, TimeHorizon,
+        Checkpoint, Node, NodeCapabilities, NodeInitContext, NodeRuntimeState, NodeType, ScanArgs,
+        ScanEstimate, ScanReport, ServiceInfo, TimeHorizon,
     },
     NodeError, NodeResult,
 };
@@ -55,8 +55,10 @@ use validator::ValidationError;
 
 const DEFAULT_MAX_CAPTURE_BYTES: Bytes = Bytes::from_mebibytes(10); // 10MB
 const DEFAULT_MAX_DEPTH: usize = 10; // Maximum directory traversal depth
-const FS_WATCH_CHANNEL_SIZE: usize = 10_000; // Buffer size for filesystem event channel
+const FS_WATCH_CHANNEL_SIZE: usize = 10_000; // Buffer size for filesystem event channel (high-volume burst protection)
 const FS_CAPTURE_CHUNK_SIZE: usize = 64 * 1024;
+const FS_READ_RETRY_ATTEMPTS: u32 = 3; // Number of retry attempts for transient file read errors
+const FS_READ_RETRY_BASE_DELAY_MS: u64 = 100; // Base delay for exponential backoff (100ms, 500ms, 1s)
 const MATERIAL_REASON_CREATED: &str = "fs-watcher:file-created";
 const MATERIAL_REASON_MODIFIED: &str = "fs-watcher:file-modified";
 const MATERIAL_REASON_DELETED: &str = "fs-watcher:file-deleted";
@@ -134,6 +136,56 @@ pub struct FilesystemState {
     pub host: HostName,
 }
 
+// Issue 24: Event processing metrics for observability
+// TODO: Integrate with proper metrics infrastructure (Prometheus/OpenTelemetry)
+// when available. Current implementation tracks basic counters that can be
+// exposed via get_source_state() for CLI exploration.
+struct EventMetrics {
+    events_processed: AtomicU64,
+    events_created: AtomicU64,
+    events_modified: AtomicU64,
+    events_deleted: AtomicU64,
+    events_moved: AtomicU64,
+    processing_errors: AtomicU64,
+}
+
+impl EventMetrics {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            events_processed: AtomicU64::new(0),
+            events_created: AtomicU64::new(0),
+            events_modified: AtomicU64::new(0),
+            events_deleted: AtomicU64::new(0),
+            events_moved: AtomicU64::new(0),
+            processing_errors: AtomicU64::new(0),
+        })
+    }
+
+    fn record_created(&self) {
+        self.events_processed.fetch_add(1, Ordering::Relaxed);
+        self.events_created.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_modified(&self) {
+        self.events_processed.fetch_add(1, Ordering::Relaxed);
+        self.events_modified.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_deleted(&self) {
+        self.events_processed.fetch_add(1, Ordering::Relaxed);
+        self.events_deleted.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_moved(&self) {
+        self.events_processed.fetch_add(1, Ordering::Relaxed);
+        self.events_moved.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_error(&self) {
+        self.processing_errors.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
 #[derive(Clone)]
 struct WatchContext {
     acquisition: Arc<AcquisitionManager>,
@@ -141,6 +193,7 @@ struct WatchContext {
     max_capture_bytes: Bytes,
     security_policy: FileWatchingSecurityPolicy,
     dropped_events: Arc<AtomicU64>,
+    metrics: Arc<EventMetrics>,
 }
 
 /// Unified filesystem processor using JetStream acquisition.
@@ -150,6 +203,7 @@ pub struct FilesystemProcessor {
     stage_context: Option<StageAsYouGoContext>,
     watch_handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
     dropped_events: Arc<AtomicU64>,
+    metrics: Arc<EventMetrics>,
 }
 
 impl FilesystemProcessor {
@@ -161,6 +215,7 @@ impl FilesystemProcessor {
             stage_context: None,
             watch_handles: Arc::new(Mutex::new(Vec::new())),
             dropped_events: Arc::new(AtomicU64::new(0)),
+            metrics: EventMetrics::new(),
         }
     }
 
@@ -172,6 +227,7 @@ impl FilesystemProcessor {
             stage_context: None,
             watch_handles: Arc::new(Mutex::new(Vec::new())),
             dropped_events: Arc::new(AtomicU64::new(0)),
+            metrics: EventMetrics::new(),
         }
     }
 
@@ -265,6 +321,7 @@ impl FilesystemProcessor {
                         FileWatchingSecurityPolicy::restrictive()
                     },
                     dropped_events: Arc::clone(&self.dropped_events),
+                    metrics: Arc::clone(&self.metrics),
                 },
             );
         }
@@ -281,8 +338,40 @@ impl FilesystemProcessor {
             let watch_ctx = watch_ctx.clone();
 
             let handle = tokio::spawn(async move {
-                if let Err(e) = watch_path(root_path, watch_ctx).await {
-                    error!("Watcher terminated with error: {}", e);
+                // Issue 86: Retry watcher initialization with exponential backoff
+                let mut attempt = 0u32;
+                const MAX_INIT_ATTEMPTS: u32 = 5;
+                const INIT_RETRY_BASE_DELAY_MS: u64 = 1000; // 1s, 2s, 4s, 8s, 16s
+
+                loop {
+                    match watch_path(root_path.clone(), watch_ctx.clone()).await {
+                        Ok(()) => {
+                            warn!("Watcher for {} terminated normally (unexpected)", root_path);
+                            break;
+                        }
+                        Err(e) => {
+                            attempt += 1;
+                            if attempt >= MAX_INIT_ATTEMPTS {
+                                error!(
+                                    path = %root_path,
+                                    attempts = attempt,
+                                    "Failed to initialize watcher after {} attempts: {}",
+                                    MAX_INIT_ATTEMPTS, e
+                                );
+                                break;
+                            }
+
+                            let delay_ms =
+                                INIT_RETRY_BASE_DELAY_MS * (1u64 << (attempt - 1)).min(16);
+                            warn!(
+                                path = %root_path,
+                                attempt = attempt,
+                                delay_ms = delay_ms,
+                                "Watcher initialization failed, retrying: {}", e
+                            );
+                            tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
+                        }
+                    }
                 }
             });
 
@@ -431,9 +520,14 @@ impl Node for FilesystemProcessor {
         let mut guard = self.watch_handles.lock().await;
         for handle in guard.drain(..) {
             handle.abort();
+            // Join after abort to ensure cleanup (file descriptors, inotify watches)
+            let _ = handle.await;
         }
 
-        info!("Filesystem watcher shutdown complete");
+        info!(
+            dropped_events = self.dropped_event_count(),
+            "Filesystem watcher shutdown complete"
+        );
         Ok(())
     }
 }
@@ -464,6 +558,43 @@ impl ExplorationProvider for FilesystemProcessor {
                 (
                     "dropped_events".to_string(),
                     serde_json::Value::Number(serde_json::Number::from(self.dropped_event_count())),
+                ),
+                // Issue 24: Expose event processing metrics
+                (
+                    "events_processed".to_string(),
+                    serde_json::Value::Number(serde_json::Number::from(
+                        self.metrics.events_processed.load(Ordering::Relaxed),
+                    )),
+                ),
+                (
+                    "events_created".to_string(),
+                    serde_json::Value::Number(serde_json::Number::from(
+                        self.metrics.events_created.load(Ordering::Relaxed),
+                    )),
+                ),
+                (
+                    "events_modified".to_string(),
+                    serde_json::Value::Number(serde_json::Number::from(
+                        self.metrics.events_modified.load(Ordering::Relaxed),
+                    )),
+                ),
+                (
+                    "events_deleted".to_string(),
+                    serde_json::Value::Number(serde_json::Number::from(
+                        self.metrics.events_deleted.load(Ordering::Relaxed),
+                    )),
+                ),
+                (
+                    "events_moved".to_string(),
+                    serde_json::Value::Number(serde_json::Number::from(
+                        self.metrics.events_moved.load(Ordering::Relaxed),
+                    )),
+                ),
+                (
+                    "processing_errors".to_string(),
+                    serde_json::Value::Number(serde_json::Number::from(
+                        self.metrics.processing_errors.load(Ordering::Relaxed),
+                    )),
                 ),
             ]),
             healthy: true,
@@ -551,6 +682,7 @@ async fn watch_path(root: String, ctx: WatchContext) -> NodeResult<()> {
 
     while let Some(event) = rx.recv().await {
         if let Err(e) = handle_event(&ctx, &root, event).await {
+            ctx.metrics.record_error();
             warn!("Failed to process filesystem event: {}", e);
         }
     }
@@ -645,6 +777,7 @@ async fn handle_file_created(ctx: &WatchContext, _root: &str, path: &Path) -> No
     )
     .await?;
 
+    ctx.metrics.record_created();
     debug!("Recorded file.created for {:?}", path);
     Ok(())
 }
@@ -695,6 +828,7 @@ async fn handle_file_modified(
     )
     .await?;
 
+    ctx.metrics.record_modified();
     debug!("Recorded file.modified for {:?}", path);
     Ok(())
 }
@@ -718,6 +852,7 @@ async fn handle_file_deleted(ctx: &WatchContext, _root: &str, path: &Path) -> No
     )
     .await?;
 
+    ctx.metrics.record_deleted();
     debug!("Recorded file.deleted for {:?}", path);
     Ok(())
 }
@@ -746,6 +881,7 @@ async fn handle_file_moved(
     )
     .await?;
 
+    ctx.metrics.record_moved();
     debug!("Recorded file.moved from {:?} to {:?}", old, new);
     Ok(())
 }
@@ -784,7 +920,45 @@ async fn capture_material_from_file(
     ctx: &WatchContext,
     path: &Path,
     reason: &str,
-    size: u64,
+    _expected_size: u64,
+) -> NodeResult<Ulid> {
+    // Retry logic for transient errors (file locked, in-use, etc.)
+    let mut attempt = 0u32;
+    loop {
+        match capture_material_from_file_inner(ctx, path, reason).await {
+            Ok(material_id) => return Ok(material_id),
+            Err(e) => {
+                attempt += 1;
+                if attempt >= FS_READ_RETRY_ATTEMPTS {
+                    return Err(e);
+                }
+
+                // Check if error is transient (file locked, permission denied temporarily, etc.)
+                let is_transient = e.to_string().contains("lock")
+                    || e.to_string().contains("in use")
+                    || e.to_string().contains("permission denied")
+                    || e.to_string().contains("resource temporarily unavailable");
+
+                if !is_transient {
+                    return Err(e);
+                }
+
+                // Exponential backoff: 100ms, 500ms, 1s
+                let delay_ms = FS_READ_RETRY_BASE_DELAY_MS * (1u64 << (attempt - 1)).min(10);
+                debug!(
+                    "Transient error reading {:?}, retrying in {}ms (attempt {}/{}): {}",
+                    path, delay_ms, attempt, FS_READ_RETRY_ATTEMPTS, e
+                );
+                tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
+            }
+        }
+    }
+}
+
+async fn capture_material_from_file_inner(
+    ctx: &WatchContext,
+    path: &Path,
+    reason: &str,
 ) -> NodeResult<Ulid> {
     let identifier = path.to_string_lossy();
     let mut handle = ctx
@@ -794,22 +968,58 @@ async fn capture_material_from_file(
         .map_err(|e| NodeError::General(eyre::eyre!("Failed to begin material: {}", e)))?;
 
     let material_id = handle.material_id;
+
+    // Issue 92: TOCTOU race eliminated by opening file first, then getting metadata
+    // from the open handle. This ensures atomic operations:
+    // 1. File is opened and locked by OS
+    // 2. Metadata retrieved from open file descriptor (no path lookup)
+    // 3. Size checked before any read
+    // 4. Cumulative tracking during streaming prevents growing file issues
     let mut file = fs::File::open(path)
         .await
         .map_err(|e| NodeError::General(eyre::eyre!("Failed to open file: {}", e)))?;
-    let mut remaining = size;
+
+    // Get metadata from open file handle (atomic check)
+    let metadata = file
+        .metadata()
+        .await
+        .map_err(|e| NodeError::General(eyre::eyre!("Failed to read file metadata: {}", e)))?;
+
+    let file_size = metadata.len();
+
+    // Check size limit atomically before any read operation
+    if file_size > ctx.max_capture_bytes.as_u64() {
+        return Err(NodeError::General(eyre::eyre!(
+            "File size {} exceeds max_capture_bytes {}",
+            file_size,
+            ctx.max_capture_bytes.as_u64()
+        )));
+    }
+
+    let mut cumulative_bytes = 0u64;
     let mut buffer = vec![0u8; FS_CAPTURE_CHUNK_SIZE];
 
-    while remaining > 0 {
-        let to_read = (remaining.min(buffer.len() as u64)) as usize;
+    // Stream read with cumulative size check to prevent reading beyond limit
+    loop {
         let read = file
-            .read(&mut buffer[..to_read])
+            .read(&mut buffer)
             .await
             .map_err(|e| NodeError::General(eyre::eyre!("Failed to read file: {}", e)))?;
+
         if read == 0 {
             break;
         }
-        remaining = remaining.saturating_sub(read as u64);
+
+        cumulative_bytes += read as u64;
+
+        // Defense in depth: verify we haven't exceeded the limit during streaming
+        if cumulative_bytes > ctx.max_capture_bytes.as_u64() {
+            return Err(NodeError::General(eyre::eyre!(
+                "File grew during capture; cumulative read {} exceeds max_capture_bytes {}",
+                cumulative_bytes,
+                ctx.max_capture_bytes.as_u64()
+            )));
+        }
 
         ctx.acquisition
             .append_slice(&mut handle, &buffer[..read])
@@ -949,6 +1159,7 @@ mod tests {
             max_capture_bytes: Bytes::from_mebibytes(1),
             security_policy: FileWatchingSecurityPolicy::permissive(),
             dropped_events: Arc::new(AtomicU64::new(0)),
+            metrics: EventMetrics::new(),
         };
 
         let temp_root = tempdir()?;

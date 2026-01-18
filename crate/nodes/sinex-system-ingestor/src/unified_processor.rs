@@ -979,6 +979,8 @@ impl SystemProcessor {
                     self.shutdown_watchers().await;
                     break;
                 }
+                // Safety backoff: 5s sleep prevents tight loops if watchers fail repeatedly
+                // This protects against CPU thrashing during cascading failures
                 _ = tokio::time::sleep(tokio::time::Duration::from_secs(5)) => {}
             }
         }

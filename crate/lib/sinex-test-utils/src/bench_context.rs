@@ -233,10 +233,7 @@ impl BenchContext {
     /// ```rust
     /// ctx.node_bench(DatasetSize::Medium).await?;
     /// ```
-    pub async fn node_bench(
-        &self,
-        size: crate::static_fixtures::DatasetSize,
-    ) -> TestResult<()> {
+    pub async fn node_bench(&self, size: crate::static_fixtures::DatasetSize) -> TestResult<()> {
         use crate::standard_fixtures::NODE_BENCH_FIXTURE;
         self.load_fixture(&NODE_BENCH_FIXTURE, size).await
     }
@@ -297,6 +294,7 @@ impl DualMeasurement {
 mod tests {
     use super::*;
     use crate::prelude::DatasetSize;
+    #[allow(unused_imports)]
     use crate::{sinex_test, TestResult};
 
     #[sinex_test]

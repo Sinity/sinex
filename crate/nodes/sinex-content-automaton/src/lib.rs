@@ -28,8 +28,8 @@ mod common {
         event_processor::EventTransport,
         jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig},
         stream_processor::{
-            Checkpoint, EventSender, Node, NodeInitContext, NodeType, ScanArgs,
-            ScanReport, TimeHorizon,
+            Checkpoint, EventSender, Node, NodeInitContext, NodeType, ScanArgs, ScanReport,
+            TimeHorizon,
         },
         NodeError, NodeResult, ProcessingModel,
     };

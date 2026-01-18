@@ -734,25 +734,25 @@ def processor_list(type: Optional[str], status: Optional[str]):
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             query_parts = [
-                "SELECT processor_name, processor_type, description, version, status, "
+                "SELECT processor_name, node_type, description, version, status, "
                 "produces_event_types, last_heartbeat_ts, registered_at "
                 "FROM core.processor_manifests"
             ]
             params = []
             where_conditions = []
-            
+
             if type:
-                where_conditions.append("processor_type = %s")
+                where_conditions.append("node_type = %s")
                 params.append(type)
-            
+
             if status:
                 where_conditions.append("status = %s")
                 params.append(status)
-            
+
             if where_conditions:
                 query_parts.append("WHERE " + " AND ".join(where_conditions))
-            
-            query_parts.append("ORDER BY processor_type, processor_name")
+
+            query_parts.append("ORDER BY node_type, processor_name")
             
             query_sql = " ".join(query_parts)
             cur.execute(query_sql, params)
@@ -786,11 +786,11 @@ def processor_list(type: Optional[str], status: Optional[str]):
             heartbeat_text = "Never"
         
         # Add type-specific emoji
-        type_emoji = "🔄" if processor['processor_type'] == 'automaton' else "📥"
-        
+        type_emoji = "🔄" if processor['node_type'] == 'automaton' else "📥"
+
         table.add_row(
             processor['processor_name'],
-            f"{type_emoji} {processor['processor_type']}",
+            f"{type_emoji} {processor['node_type']}",
             processor['version'],
             processor['status'],
             Text(heartbeat_text, style=heartbeat_style),
@@ -820,14 +820,14 @@ def processor_status(processor_name: str):
             
             # Checkpoints are stored in NATS KV, not Postgres.
             checkpoints = []
-            if processor['processor_type'] == 'automaton':
+            if processor['node_type'] == 'automaton':
                 console.print(
                     "[yellow]Checkpoint state is stored in NATS KV (KV_sinex_checkpoints); database queries are no longer available.[/yellow]"
                 )
-            
+
             # Display processor information
             console.print(f"\n[bold]Processor: {processor_name}[/bold]")
-            console.print(f"Type: {processor['processor_type']}")
+            console.print(f"Type: {processor['node_type']}")
             console.print(f"Version: {processor['version']}")
             console.print(f"Status: {processor['status']}")
             console.print(f"Description: {processor['description'] or 'N/A'}")
@@ -867,7 +867,7 @@ def automaton_list(status: Optional[str]):
                 "SELECT processor_name, description, version, status, "
                 "produces_event_types, last_heartbeat_ts, registered_at "
                 "FROM core.processor_manifests "
-                "WHERE processor_type = 'automaton'"
+                "WHERE node_type = 'automaton'"
             ]
             params = []
             
@@ -928,7 +928,7 @@ def automaton_status(automaton_name: str):
             # Get automaton manifest
             cur.execute("""
                 SELECT * FROM core.processor_manifests
-                WHERE processor_name = %s AND processor_type = 'automaton'
+                WHERE processor_name = %s AND node_type = 'automaton'
             """, (automaton_name,))
             automaton = cur.fetchone()
             

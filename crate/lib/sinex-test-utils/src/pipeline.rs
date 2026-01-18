@@ -1,5 +1,5 @@
-use crate::nats::{shared_ephemeral_nats, EphemeralNats, SharedNatsProfile};
 use crate::ingestd_test_utils::{start_test_ingestd_with_config, TestIngestdConfig};
+use crate::nats::{shared_ephemeral_nats, EphemeralNats, SharedNatsProfile};
 use crate::timing_utils::WaitHelpers;
 use crate::{EventOverrides, TestContext, TestNodePublisher, TestResult};
 use once_cell::sync::Lazy;

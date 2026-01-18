@@ -12,12 +12,38 @@ use tokio::sync::watch;
 use arboard::{Clipboard, GetExtLinux, LinuxClipboardKind};
 use copypasta::{ClipboardContext, ClipboardProvider};
 
+/// Maximum length of text preview included in clipboard events
+///
+/// Longer content will be truncated to this length with "..." appended.
+/// The full content is always stored in source material.
 const DEFAULT_MAX_PREVIEW_LENGTH: usize = 100;
+
+/// Maximum clipboard content size (warning threshold)
+///
+/// Content larger than this will generate a warning but will still be processed
+/// and stored. This is not a hard limit but a warning indicator for unusually
+/// large clipboard contents (e.g., accidental copying of large files).
 const DEFAULT_MAX_CONTENT_SIZE: usize = 10 * 1024 * 1024; // 10MB
+
+/// Maximum number of entries in clipboard deduplication history
+///
+/// The history tracks content hashes to detect duplicates and enable deduplication.
+/// When this limit is reached, the oldest entries are removed (FIFO).
 const DEFAULT_MAX_HISTORY_ENTRIES: usize = 1000;
-// Reserved for future use when external clipboard commands are implemented
-#[allow(dead_code)]
-const CLIPBOARD_COMMAND_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Timeout for window manager queries (hyprctl, xdotool)
+///
+/// When capturing clipboard events, we query the active window for context.
+/// This timeout prevents hanging if the window manager is unresponsive.
+const CLIPBOARD_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Polling interval for clipboard monitoring
+///
+/// This is the delay between clipboard checks using the native arboard API.
+/// 100ms provides responsive detection while being efficient. This value is
+/// hardcoded rather than using the poll_interval_secs parameter to ensure
+/// optimal performance with the native clipboard API.
+const CLIPBOARD_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Rich clipboard content information
 #[derive(Debug, Clone)]
@@ -67,9 +93,8 @@ impl ClipboardWatcher {
         stage_context: StageAsYouGoContext,
         shutdown_rx: watch::Receiver<bool>,
     ) -> NodeResult<Self> {
-        // Use 100ms for native clipboard API (fast and efficient)
         // The poll_interval_secs parameter is reserved for future configurability
-        let poll_interval = Duration::from_millis(100);
+        let poll_interval = CLIPBOARD_POLL_INTERVAL;
 
         let watcher = Self {
             poll_interval,
@@ -95,6 +120,38 @@ impl ClipboardWatcher {
     /// Calculate content hash using BLAKE3
     fn calculate_hash(&self, content: &str) -> String {
         blake3::hash(content.as_bytes()).to_hex().to_string()
+    }
+
+    /// Validate clipboard content for UTF-8 validity and detect binary data
+    fn validate_clipboard_content(&self, text: &str) -> Option<String> {
+        // Check for null bytes (indicator of binary data)
+        if text.contains('\0') {
+            debug!("Clipboard content contains null bytes, treating as binary");
+            return None;
+        }
+
+        // Check for excessive control characters (potential binary)
+        let control_char_count = text
+            .chars()
+            .filter(|c| c.is_control() && *c != '\n' && *c != '\r' && *c != '\t')
+            .count();
+        let total_chars = text.chars().count();
+
+        if total_chars > 0 && (control_char_count as f64 / total_chars as f64) > 0.1 {
+            debug!(
+                "Clipboard content has {}% control characters, treating as binary",
+                (control_char_count as f64 / total_chars as f64) * 100.0
+            );
+            return None;
+        }
+
+        // Check for valid UTF-8 sequences (already validated by String type, but double-check)
+        if !text.is_char_boundary(0) || !text.is_char_boundary(text.len()) {
+            debug!("Clipboard content has invalid UTF-8 boundaries");
+            return None;
+        }
+
+        Some(text.to_string())
     }
 
     /// Analyze clipboard content to determine type and extract metadata
@@ -140,30 +197,40 @@ impl ClipboardWatcher {
 
     /// Get active window application name
     async fn get_active_window_app(&self) -> Option<String> {
-        // Try Hyprland first
-        if let Ok(output) = Command::new("hyprctl")
-            .args(["activewindow", "-j"])
-            .output()
-            .await
+        // Try Hyprland first with timeout
+        if let Ok(output) = tokio::time::timeout(
+            CLIPBOARD_COMMAND_TIMEOUT,
+            Command::new("hyprctl")
+                .args(["activewindow", "-j"])
+                .output(),
+        )
+        .await
         {
-            if output.status.success() {
-                if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
-                    return json
-                        .get("class")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
+            if let Ok(output) = output {
+                if output.status.success() {
+                    if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+                        return json
+                            .get("class")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                    }
                 }
             }
         }
 
-        // Try xdotool for X11
-        if let Ok(output) = Command::new("xdotool")
-            .args(["getactivewindow", "getwindowclassname"])
-            .output()
-            .await
+        // Try xdotool for X11 with timeout
+        if let Ok(output) = tokio::time::timeout(
+            CLIPBOARD_COMMAND_TIMEOUT,
+            Command::new("xdotool")
+                .args(["getactivewindow", "getwindowclassname"])
+                .output(),
+        )
+        .await
         {
-            if output.status.success() {
-                return Some(String::from_utf8_lossy(&output.stdout).trim().to_string());
+            if let Ok(output) = output {
+                if output.status.success() {
+                    return Some(String::from_utf8_lossy(&output.stdout).trim().to_string());
+                }
             }
         }
 
@@ -172,30 +239,40 @@ impl ClipboardWatcher {
 
     /// Get active window title
     async fn get_active_window_title(&self) -> Option<String> {
-        // Try Hyprland first
-        if let Ok(output) = Command::new("hyprctl")
-            .args(["activewindow", "-j"])
-            .output()
-            .await
+        // Try Hyprland first with timeout
+        if let Ok(output) = tokio::time::timeout(
+            CLIPBOARD_COMMAND_TIMEOUT,
+            Command::new("hyprctl")
+                .args(["activewindow", "-j"])
+                .output(),
+        )
+        .await
         {
-            if output.status.success() {
-                if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
-                    return json
-                        .get("title")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
+            if let Ok(output) = output {
+                if output.status.success() {
+                    if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+                        return json
+                            .get("title")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                    }
                 }
             }
         }
 
-        // Try xdotool for X11
-        if let Ok(output) = Command::new("xdotool")
-            .args(["getactivewindow", "getwindowname"])
-            .output()
-            .await
+        // Try xdotool for X11 with timeout
+        if let Ok(output) = tokio::time::timeout(
+            CLIPBOARD_COMMAND_TIMEOUT,
+            Command::new("xdotool")
+                .args(["getactivewindow", "getwindowname"])
+                .output(),
+        )
+        .await
         {
-            if output.status.success() {
-                return Some(String::from_utf8_lossy(&output.stdout).trim().to_string());
+            if let Ok(output) = output {
+                if output.status.success() {
+                    return Some(String::from_utf8_lossy(&output.stdout).trim().to_string());
+                }
             }
         }
 
@@ -385,15 +462,18 @@ impl ClipboardWatcher {
                 return None;
             }
 
-            let hash = self.calculate_hash(&text);
-            let size_bytes = text.len();
-            let (content_type, text_preview, file_paths) = self.analyze_content(&text);
+            // Validate content for UTF-8 and binary detection
+            let validated_text = self.validate_clipboard_content(&text)?;
+
+            let hash = self.calculate_hash(&validated_text);
+            let size_bytes = validated_text.len();
+            let (content_type, text_preview, file_paths) = self.analyze_content(&validated_text);
             let source_app = self.get_active_window_app().await;
             let window_title = self.get_active_window_title().await;
             let timestamp = Utc::now();
 
             Some(ClipboardContent {
-                text,
+                text: validated_text,
                 hash,
                 size_bytes,
                 content_type,
@@ -468,16 +548,24 @@ impl ClipboardWatcher {
                             return None;
                         }
 
-                        let hash = self.calculate_hash(&text);
-                        let size_bytes = text.len();
-                        let text_preview = if text.len() > self.max_preview_length {
-                            Some(text.chars().take(self.max_preview_length).collect())
+                        // Validate content for UTF-8 and binary detection
+                        let validated_text = self.validate_clipboard_content(&text)?;
+
+                        let hash = self.calculate_hash(&validated_text);
+                        let size_bytes = validated_text.len();
+                        let text_preview = if validated_text.len() > self.max_preview_length {
+                            Some(
+                                validated_text
+                                    .chars()
+                                    .take(self.max_preview_length)
+                                    .collect(),
+                            )
                         } else {
                             None
                         };
 
                         Some(ClipboardContent {
-                            text,
+                            text: validated_text,
                             hash,
                             size_bytes,
                             content_type: "text/plain".to_string(),

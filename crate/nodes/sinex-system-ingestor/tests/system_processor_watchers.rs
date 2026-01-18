@@ -5,9 +5,7 @@ use sinex_node_sdk::{
     Node,
 };
 use sinex_system_ingestor::{SystemConfig, SystemProcessor};
-use sinex_test_utils::{
-    node_runtime::TestRuntimeBuilder, sinex_test, TestContext, TestResult,
-};
+use sinex_test_utils::{node_runtime::TestRuntimeBuilder, sinex_test, TestContext, TestResult};
 use std::time::Duration;
 use tokio::sync::mpsc::Receiver;
 

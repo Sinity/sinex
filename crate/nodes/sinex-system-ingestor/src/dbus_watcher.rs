@@ -26,7 +26,8 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 // Channel buffer size for D-Bus message processing
-const DBUS_MESSAGE_CHANNEL_SIZE: usize = 1000;
+// Increased from 1000 to 10,000 to handle busy systems without dropping messages
+const DBUS_MESSAGE_CHANNEL_SIZE: usize = 10_000;
 
 /// D-Bus bus type enumeration
 #[derive(Debug, Clone, PartialEq)]
@@ -181,6 +182,8 @@ impl DbusWatcher {
     ) -> NodeResult<()> {
         use tokio_retry::{strategy::ExponentialBackoff, Retry};
 
+        // Retry strategy: exponential backoff starting at 1s, capped at 30s, max 5 attempts
+        // This handles transient D-Bus connection failures (service restarts, socket issues)
         let retry_strategy = ExponentialBackoff::from_millis(1000)
             .max_delay(Duration::from_secs(30))
             .take(5);
@@ -253,6 +256,9 @@ impl DbusWatcher {
         let (msg_tx, msg_rx) = mpsc::channel::<DbusMessageData>(DBUS_MESSAGE_CHANNEL_SIZE);
         let msg_tx_clone = msg_tx.clone();
 
+        // Activity tracker for connection health monitoring
+        let activity_tracker = Arc::new(std::sync::Mutex::new(std::time::Instant::now()));
+
         // Spawn a single worker to process messages (Receiver is not clonable)
         {
             let tx = tx.clone();
@@ -287,11 +293,17 @@ impl DbusWatcher {
         }
 
         // Set up message processing
+        let activity_for_callback = activity_tracker.clone();
 
         // Start receiving messages
         conn.start_receive(
             MatchRule::new(),
             Box::new(move |msg, _| {
+                // Update activity tracker
+                if let Ok(mut last_activity) = activity_for_callback.lock() {
+                    *last_activity = std::time::Instant::now();
+                }
+
                 // Extract message data synchronously
                 let msg_data = DbusMessageData {
                     msg_type: msg.msg_type(),
@@ -309,7 +321,10 @@ impl DbusWatcher {
                     // Drop one to make room, then enqueue the newest
                     let _ = msg_tx_clone.try_send(msg_data.clone());
                     if let Err(e) = msg_tx.try_send(msg_data) {
-                        debug!("D-Bus message dropped after backpressure: {}", e);
+                        warn!(
+                            "D-Bus message channel at capacity, dropping message due to backpressure: {}",
+                            e
+                        );
                     }
                 }
 
@@ -317,9 +332,31 @@ impl DbusWatcher {
             }),
         );
 
-        // Keep connection alive
+        // Keep connection alive with periodic health checks
+        // If no messages received for configured timeout, attempt reconnection
+        let health_check_interval =
+            Duration::from_secs(config.health_check_interval_secs.as_secs());
+        let inactivity_timeout = Duration::from_secs(config.inactivity_timeout_secs.as_secs());
+
         loop {
-            tokio::time::sleep(Duration::from_secs(60)).await;
+            tokio::time::sleep(health_check_interval).await;
+
+            // Check if we've received activity recently
+            if let Ok(last) = activity_tracker.lock() {
+                if last.elapsed() > inactivity_timeout {
+                    warn!(
+                        "D-Bus {} bus: No messages received for {}s, connection may be stale",
+                        bus_type,
+                        config.inactivity_timeout_secs.as_secs()
+                    );
+                    // Return error to trigger reconnection via retry mechanism
+                    return Err(sinex_node_sdk::NodeError::Processing(format!(
+                        "D-Bus {} bus inactive for {}s",
+                        bus_type,
+                        config.inactivity_timeout_secs.as_secs()
+                    )));
+                }
+            }
         }
     }
 

@@ -22,13 +22,47 @@ use tokio_retry::strategy::jitter;
 use tokio_retry::strategy::ExponentialBackoff;
 
 /// Supported window manager types
+///
+/// TODO: Add support for additional window managers:
+/// - Sway/i3 (i3 IPC protocol via i3ipc-rs)
+/// - GNOME (D-Bus org.gnome.Shell interface)
+/// - KDE Plasma (KWin D-Bus interface)
+/// - X11 WMs (EWMH/X11 protocol via x11rb)
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum WindowManagerType {
     Hyprland,
 }
 
+/// Initial backoff delay for Hyprland reconnection attempts (milliseconds)
+///
+/// This is the starting point for the exponential backoff strategy. After a connection
+/// failure, the watcher will wait this long before the first retry attempt.
 const HYPRLAND_INITIAL_BACKOFF_MS: u64 = 500;
+
+/// Maximum backoff delay for Hyprland reconnection attempts
+///
+/// The exponential backoff will cap at this value to prevent excessive delays.
+/// With a 500ms initial backoff and factor of 2, this is reached after ~7 attempts.
 const HYPRLAND_MAX_BACKOFF: Duration = Duration::from_secs(60);
+
+/// Time-to-live for window state entries in memory
+///
+/// Windows that haven't been seen in this duration will be removed from the internal
+/// tracking map to prevent unbounded memory growth. This cleanup happens during the
+/// periodic state snapshot.
+const WINDOW_STATE_TTL: Duration = Duration::from_secs(48 * 60 * 60); // 48 hours
+
+/// Socket read timeout for Hyprland event stream
+///
+/// If no events are received within this duration, the connection is considered stale
+/// and will be re-established. This prevents hanging on a dead connection.
+const HYPRLAND_SOCKET_READ_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Interval between periodic state snapshots
+///
+/// A full snapshot of window and workspace state is captured at this interval to
+/// provide a consistent baseline and to trigger stale window cleanup.
+const STATE_SNAPSHOT_INTERVAL: Duration = Duration::from_secs(300); // 5 minutes
 
 type BackoffStrategy = Box<dyn Iterator<Item = Duration> + Send>;
 
@@ -41,6 +75,7 @@ impl fmt::Display for WindowManagerType {
 }
 
 impl WindowManagerType {
+    /// Returns the string representation of the window manager type
     pub fn as_str(&self) -> &str {
         match self {
             WindowManagerType::Hyprland => "hyprland",
@@ -417,6 +452,11 @@ impl WindowManagerWatcher {
             self.emit_material_event(material_id, payload_bytes, event)
                 .await?;
 
+            // Update last_seen timestamp for focused window
+            if let Some(window) = self.windows.get_mut(&window_address) {
+                window.last_seen = SystemTime::now();
+            }
+
             self.current_focused_window = Some(window_address);
         }
 
@@ -594,9 +634,10 @@ impl WindowManagerWatcher {
             self.emit_material_event(material_id, payload_bytes, event)
                 .await?;
 
-            // Update window workspace
+            // Update window workspace and last_seen timestamp
             if let Some(window) = self.windows.get_mut(address) {
                 window.workspace_id = workspace.to_string();
+                window.last_seen = SystemTime::now();
             }
         }
 
@@ -753,9 +794,9 @@ impl WindowManagerWatcher {
                                     return Ok(());
                                 }
                             }
-                            // Read Hyprland events with 30s timeout
+                            // Read Hyprland events with timeout
                             line_result = tokio::time::timeout(
-                                Duration::from_secs(30),
+                                HYPRLAND_SOCKET_READ_TIMEOUT,
                                 lines.next_line()
                             ) => {
                                 match line_result {
@@ -773,14 +814,14 @@ impl WindowManagerWatcher {
                                         break;
                                     }
                                     Err(_) => {
-                                        warn!("Hyprland socket read timeout (30s), reconnecting");
+                                        warn!("Hyprland socket read timeout ({:?}), reconnecting", HYPRLAND_SOCKET_READ_TIMEOUT);
                                         break;
                                     }
                                 }
                             }
 
                             // Periodic state capture
-                            _ = sleep(Duration::from_secs(300)) => {
+                            _ = sleep(STATE_SNAPSHOT_INTERVAL) => {
                                 if let Err(e) = self.capture_state_snapshot().await {
                                     error!("Error capturing state snapshot: {}", e);
                                 }
@@ -830,20 +871,58 @@ impl WindowManagerWatcher {
         Ok(())
     }
 
+    /// Clean up stale window entries older than TTL
+    fn cleanup_stale_windows(&mut self) {
+        let now = SystemTime::now();
+        let initial_count = self.windows.len();
+
+        self.windows.retain(|_addr, window| {
+            if let Ok(elapsed) = now.duration_since(window.last_seen) {
+                if elapsed > WINDOW_STATE_TTL {
+                    debug!(
+                        "Removing stale window entry: {} (class: {}, last seen: {:?} ago)",
+                        window.address, window.class, elapsed
+                    );
+                    return false;
+                }
+            }
+            true
+        });
+
+        let removed_count = initial_count - self.windows.len();
+        if removed_count > 0 {
+            info!(
+                "Cleaned up {} stale window entries (TTL: {:?})",
+                removed_count, WINDOW_STATE_TTL
+            );
+        }
+    }
+
     /// Capture periodic state snapshot
     async fn capture_state_snapshot(&mut self) -> NodeResult<()> {
         debug!("Capturing window manager state snapshot");
 
+        // Clean up stale windows before capturing state
+        self.cleanup_stale_windows();
+
         let windows = self
             .windows
             .values()
-            .map(|window| serde_json::to_value(window).unwrap_or_else(|_| serde_json::json!({})))
+            .map(|window| {
+                serde_json::to_value(window).unwrap_or_else(|e| {
+                    warn!("Failed to serialize window info: {}", e);
+                    serde_json::json!({})
+                })
+            })
             .collect::<Vec<_>>();
         let workspaces = self
             .workspaces
             .values()
             .map(|workspace| {
-                serde_json::to_value(workspace).unwrap_or_else(|_| serde_json::json!({}))
+                serde_json::to_value(workspace).unwrap_or_else(|e| {
+                    warn!("Failed to serialize workspace info: {}", e);
+                    serde_json::json!({})
+                })
             })
             .collect::<Vec<_>>();
         let metadata = serde_json::json!({

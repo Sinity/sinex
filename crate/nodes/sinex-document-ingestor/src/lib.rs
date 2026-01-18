@@ -24,8 +24,8 @@ use sinex_node_sdk::{
     event_processor::EventTransport,
     stage_as_you_go::StageAsYouGoContext,
     stream_processor::{
-        Checkpoint, Node, NodeCapabilities, NodeInitContext, NodeRuntimeState,
-        NodeType, ScanArgs, ScanEstimate, ScanReport, TimeHorizon,
+        Checkpoint, Node, NodeCapabilities, NodeInitContext, NodeRuntimeState, NodeType, ScanArgs,
+        ScanEstimate, ScanReport, TimeHorizon,
     },
     NodeError, NodeResult,
 };

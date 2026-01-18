@@ -21,8 +21,8 @@ mod common {
     pub use sinex_node_sdk::{
         automaton_base::{AutomatonFields, ChannelConfirmedEventHandler},
         stream_processor::{
-            Checkpoint, EventSender, Node, NodeCapabilities, NodeInitContext,
-            NodeRuntimeState, NodeType, ScanArgs, ScanReport, TimeHorizon,
+            Checkpoint, EventSender, Node, NodeCapabilities, NodeInitContext, NodeRuntimeState,
+            NodeType, ScanArgs, ScanReport, TimeHorizon,
         },
         NodeError, NodeResult,
     };

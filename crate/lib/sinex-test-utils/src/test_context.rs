@@ -40,15 +40,15 @@
 
 use crate::database_pool::{acquire_test_database, TestDatabase};
 use crate::db_common::{self, verify_clean_state};
+use crate::ingestd_test_utils::{
+    start_test_ingestd_with_config, TestIngestdConfig, TestIngestdHandle,
+};
 use crate::nats::{
     shared_ephemeral_nats_with_key, EphemeralNats, EphemeralNatsBuilder, SharedNatsProfile,
 };
 use crate::pipeline::{shared_nats_handle, shared_secure_nats_handle, PipelineHarness};
 use crate::pipeline_namespace::PipelineNamespace;
 use crate::pipeline_scope::PipelineScope;
-use crate::ingestd_test_utils::{
-    start_test_ingestd_with_config, TestIngestdConfig, TestIngestdHandle,
-};
 use crate::snapshot_helper::{self, FailureContext};
 use crate::timing_utils::{TimingUtils, WaitHelpers, DEFAULT_WAIT_SECS};
 use crate::TestResult;
@@ -77,6 +77,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tokio::runtime::{Handle, RuntimeFlavor};
 use tokio::sync::Mutex as AsyncMutex;
+use tokio::sync::OnceCell as AsyncOnceCell;
 use tokio::task::JoinHandle;
 use tracing::warn;
 use uuid::Uuid;
@@ -170,6 +171,8 @@ pub struct TestContext {
     pipeline_namespace: PipelineNamespace,
     pipeline_ingestd: Arc<AsyncMutex<Option<TestIngestdHandle>>>,
     _reaper: Arc<NamespaceReaper>,
+    /// Lazy-initialized shared NATS for property tests (doesn't consume self)
+    lazy_shared_nats: Arc<AsyncOnceCell<(Arc<EphemeralNats>, NatsClient)>>,
 }
 
 struct NamespaceReaper {
@@ -434,6 +437,7 @@ impl TestContext {
                 namespace: pipeline_namespace,
                 nats: Mutex::new(None),
             }),
+            lazy_shared_nats: Arc::new(AsyncOnceCell::new()),
         })
     }
 
@@ -611,6 +615,72 @@ impl TestContext {
         self.nats_client
             .clone()
             .expect("NATS not initialized - call with_nats() or with_shared_nats() first")
+    }
+
+    /// Lazily initialize shared NATS without consuming self.
+    ///
+    /// This is designed for property tests where `&TestContext` is passed and
+    /// ownership-consuming methods like `with_nats(self)` cannot be used.
+    ///
+    /// If NATS was already initialized via `with_nats()` or `with_shared_nats()`,
+    /// returns the existing client. Otherwise, lazily initializes shared NATS
+    /// on first call and returns that client for all subsequent calls.
+    ///
+    /// # Example
+    /// ```ignore
+    /// #[sinex_prop(cases = 50)]
+    /// async fn property_nats_delivery(
+    ///     ctx: &TestContext,
+    ///     #[strategy(message_sequence_strategy())] messages: Vec<TestMessage>,
+    /// ) -> TestResult<()> {
+    ///     let nats = ctx.ensure_nats().await?;
+    ///     // Use nats client...
+    ///     Ok(())
+    /// }
+    /// ```
+    pub async fn ensure_nats(&self) -> TestResult<NatsClient> {
+        // If already initialized via with_nats/with_shared_nats, use that
+        if let Some(client) = &self.nats_client {
+            return Ok(client.clone());
+        }
+
+        // Otherwise, lazily initialize shared NATS
+        let (_, client) = self
+            .lazy_shared_nats
+            .get_or_try_init(|| async {
+                let nats = shared_nats_handle().await?;
+                let client = nats.connect().await?;
+                Ok::<_, color_eyre::Report>((nats, client))
+            })
+            .await?;
+
+        Ok(client.clone())
+    }
+
+    /// Lazily get JetStream context without consuming self (for property tests).
+    pub async fn ensure_jetstream(&self) -> TestResult<jetstream::Context> {
+        let client = self.ensure_nats().await?;
+        Ok(jetstream::new(client))
+    }
+
+    /// Lazily get checkpoint KV bucket without consuming self (for property tests).
+    ///
+    /// Uses `ensure_jetstream()` internally, so NATS is lazily initialized if needed.
+    pub async fn ensure_checkpoint_kv(&self) -> TestResult<jetstream::kv::Store> {
+        let js = self.ensure_jetstream().await?;
+        let bucket = sinex_node_sdk::checkpoint::checkpoint_bucket_name(None);
+        let kv_store = match js
+            .create_key_value(jetstream::kv::Config {
+                bucket: bucket.clone(),
+                history: 64,
+                ..Default::default()
+            })
+            .await
+        {
+            Ok(store) => Ok(store),
+            Err(_) => js.get_key_value(bucket).await,
+        }?;
+        Ok(kv_store)
     }
 
     /// Access the underlying EphemeralNats handle (lifetime-managed by the context).
@@ -1536,7 +1606,23 @@ impl Drop for TestContext {
                 let _ = rx.recv_timeout(Duration::from_secs(20));
             }
             Err(_) => {
-                futures::executor::block_on(quiesce_fut);
+                // Issue 116: No runtime available, spawn blocking thread with its own runtime
+                let (tx, rx) = mpsc::channel();
+                thread::spawn(move || {
+                    if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                    {
+                        rt.block_on(quiesce_fut);
+                    } else {
+                        // Last resort: try futures executor, but this may fail
+                        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            futures::executor::block_on(quiesce_fut);
+                        }));
+                    }
+                    let _ = tx.send(());
+                });
+                let _ = rx.recv_timeout(Duration::from_secs(20));
             }
         }
 
@@ -1569,10 +1655,30 @@ impl Drop for TestContext {
                         }
                     });
                 }
-            } else if let Err(err) =
-                futures::executor::block_on(cleanup_created_records(pool.clone(), records))
-            {
-                warn!("TestContext cleanup failed without runtime: {}", err);
+            } else {
+                // Issue 116: No runtime available, spawn blocking thread with its own runtime
+                let (tx, rx) = mpsc::channel();
+                thread::spawn(move || {
+                    if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                    {
+                        if let Err(err) = rt.block_on(cleanup_created_records(pool, records)) {
+                            warn!("TestContext cleanup failed: {}", err);
+                        }
+                    } else {
+                        // Last resort: try futures executor, but catch any panic
+                        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            if let Err(err) =
+                                futures::executor::block_on(cleanup_created_records(pool, records))
+                            {
+                                warn!("TestContext cleanup failed without runtime: {}", err);
+                            }
+                        }));
+                    }
+                    let _ = tx.send(());
+                });
+                let _ = rx.recv_timeout(Duration::from_secs(20));
             }
         }
 

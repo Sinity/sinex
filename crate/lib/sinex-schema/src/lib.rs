@@ -38,6 +38,13 @@ impl MigratorTrait for Migrator {
             Box::new(migrations::m20250115_000003_add_events_payload_trgm_index::Migration),
             Box::new(migrations::m20250115_000004_add_events_payload_fts_index::Migration),
             Box::new(migrations::m20250115_000005_drop_legacy_coordination::Migration),
+            Box::new(migrations::m20250117_000006_add_ts_ingest_index::Migration),
+            Box::new(migrations::m20250117_000007_configure_chunk_interval::Migration),
+            Box::new(migrations::m20250117_000008_add_retention_policy::Migration),
+            Box::new(migrations::m20250117_000009_document_operation_id_security::Migration),
+            Box::new(migrations::m20250117_000010_rename_processor_type_to_node_type::Migration),
+            Box::new(migrations::m20250117_000011_add_self_observation_aggregates::Migration),
+            Box::new(migrations::m20250118_000012_add_cancelled_status::Migration),
         ]
     }
 }

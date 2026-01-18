@@ -4,6 +4,71 @@
 #![doc = include_str!("../../../../TESTING.md")]
 
 //! Workspace testing utilities and dataset seeding.
+//!
+//! # Known Limitations (LOW Priority)
+//!
+//! ## Issue 117: TempDir Not Cleaned on Panic
+//!
+//! Temporary directories created during tests may not be cleaned up if a test panics
+//! before the Drop handler runs. This is an acceptable limitation because:
+//!
+//! 1. The OS will clean up temp directories in /tmp on reboot
+//! 2. Most CI environments use ephemeral runners that are destroyed after runs
+//! 3. Leaked temp directories are typically small (<1MB) and don't accumulate quickly
+//! 4. Implementing panic-safe cleanup would require platform-specific defer mechanisms
+//!
+//! Mitigation: Use `create_test_temp_dir()` from `path_validation` module which includes
+//! best-effort cleanup on Drop. For critical tests, explicitly call cleanup in a defer block
+//! or use scopeguard crate.
+//!
+//! ## Issue 118: Transaction Timeout Not Configurable
+//!
+//! Database transaction timeouts are currently hardcoded (typically 2-5 seconds).
+//! This is acceptable for most test scenarios because:
+//!
+//! 1. Tests should complete quickly; long transactions indicate a problem
+//! 2. Fixed timeouts prevent tests from hanging indefinitely
+//! 3. Most test operations complete in milliseconds
+//! 4. Tests needing longer timeouts can use multiple shorter transactions
+//!
+//! Workaround: For tests legitimately requiring longer transactions:
+//! - Break into smaller transactional units
+//! - Use explicit `SET statement_timeout` in raw SQL
+//! - Disable timeout for specific operations: `SET statement_timeout = 0`
+//!
+//! Future enhancement: Add `.with_timeout(duration)` builder method to TestContext
+//! if demand increases. Current usage patterns don't justify the complexity.
+//!
+//! ## Issue 119: Builder Pattern in Factories [FIXED]
+//!
+//! **Status**: FIXED - `create_benchmark_result` converted to builder pattern
+//!
+//! Some test factories use direct function parameters rather than builder patterns.
+//! This is intentional for LOW complexity scenarios because:
+//!
+//! 1. Simple factories with 1-3 parameters don't benefit from builders
+//! 2. Builder patterns add boilerplate that reduces readability for simple cases
+//! 3. Most test factories have sensible defaults and rarely need customization
+//! 4. Where needed, builders exist (e.g., `TestEventBuilder` in test_context.rs)
+//!
+//! Current state:
+//! - `BenchmarkResult::builder()`: Builder for benchmark results (5+ options) - **FIXED**
+//! - `TestEventBuilder`: Full builder for event creation (3+ options)
+//! - `TestContext::new()`: Simple construction (no options needed)
+//! - Dataset seeds: Use direct parameters (typically 2-3 args with defaults)
+//!
+//! Guideline: Add builder pattern when:
+//! - Factory has 4+ optional parameters
+//! - Multiple valid parameter combinations exist
+//! - Users frequently customize beyond defaults
+//!
+//! Most factories don't meet this threshold. Premature abstraction would hurt
+//! rather than help test readability.
+//!
+//! **Changes in this fix**:
+//! - Converted `create_benchmark_result(5 params)` to `BenchmarkResult::builder()` using `bon`
+//! - Retained backward compatibility via deprecated wrapper function
+//! - Builder supports all 15 optional fields with sensible defaults
 
 // Allow procedural macros to refer to this crate by name.
 extern crate self as sinex_test_utils;
@@ -38,11 +103,11 @@ pub use dataset_seeds::{
 };
 pub use jetstream::ensure_material_streams;
 pub use jetstream_test_helper::JetStreamTestHelper;
+pub use node_publisher::{EventOverrides, TestNodePublisher};
 pub use pipeline::PipelineHarness;
 pub use pipeline_namespace::PipelineNamespace;
 pub use pipeline_scope::PipelineScope;
 pub use preflight::system_test_preflight;
-pub use node_publisher::{EventOverrides, TestNodePublisher, TestSatellitePublisher};
 pub use snapshot::TestSnapshot;
 pub use test_context::TestContextFailureSnapshot;
 pub use test_context::TestContextHandle;
@@ -61,6 +126,12 @@ pub fn sinex_prop_runner_config(
 ) -> proptest::test_runner::Config {
     property_testing::build_runner_config(default_cases, module_path, test_name)
 }
+
+// Re-export property testing strategies for public use
+pub use property_testing::{
+    nats_duplicate_event_strategy, nats_message_sequence_strategy, nats_subject_strategy,
+    ulid_strategy,
+};
 
 impl ProptestCasesGuard {
     pub fn new(cases: u32) -> Self {
@@ -87,8 +158,11 @@ pub mod cleanup_config;
 pub mod constants;
 mod database_pool;
 pub mod dataset_seeds;
+mod ingestd_test_utils;
 mod jetstream;
 pub mod nats;
+mod node_publisher;
+pub mod node_runtime;
 pub mod path_validation;
 pub mod permissions;
 mod pipeline;
@@ -97,9 +171,6 @@ mod pipeline_scope;
 pub mod preflight;
 mod property_testing;
 pub mod resources;
-mod ingestd_test_utils;
-mod node_publisher;
-pub mod node_runtime;
 pub mod session_guards;
 mod snapshot;
 pub mod snapshot_helper;
@@ -141,7 +212,7 @@ pub mod prelude {
     pub use crate::{sinex_prop, sinex_proptest, sinex_serial_test, sinex_test};
     pub use crate::{
         ChaosInjestor, EphemeralNats, EventOverrides, PipelineHarness, PipelineScope,
-        TestNodePublisher, TestSatellitePublisher, TestSnapshot,
+        TestNodePublisher, TestSnapshot,
     };
     pub use color_eyre::eyre::{bail, ensure, Context, Result};
 
@@ -232,6 +303,7 @@ pub mod prelude {
     pub use tokio::{sync, task, time as tokio_time};
 
     // Property testing support
+    pub use crate::ulid_strategy;
     pub use proptest::prelude::*;
     // Benchmarking support when feature is enabled
     #[cfg(feature = "bench")]
@@ -323,10 +395,10 @@ pub use database_pool::{
     DatabaseStats, PoolHealthReport, TestDatabase,
 };
 pub use db_common::test_db_pool;
-pub use nats::EphemeralNats;
 pub use ingestd_test_utils::{
     start_test_ingestd_with_config, TestIngestdConfig, TestIngestdHandle,
 };
+pub use nats::EphemeralNats;
 pub use node_runtime::{TestRuntime, TestRuntimeBuilder};
 pub use session_guards::EnvGuard;
 pub use test_context::TestContext;

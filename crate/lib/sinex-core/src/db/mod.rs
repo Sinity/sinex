@@ -133,6 +133,11 @@ pub struct PoolConfig {
     #[validate(custom(function = "validate_idle_timeout_secs"))]
     pub idle_timeout_secs: Seconds,
 
+    /// Statement timeout in seconds (0 = no timeout)
+    /// Controls how long individual SQL statements can run before being cancelled
+    #[validate(custom(function = "validate_statement_timeout_secs"))]
+    pub statement_timeout_secs: Seconds,
+
     pub validate_against_postgres_max: bool,
 }
 
@@ -143,8 +148,55 @@ impl Default for PoolConfig {
             min_connections: 10,  // Increased minimum to handle baseline load
             acquire_timeout_secs: Seconds::from_secs(30),
             idle_timeout_secs: Seconds::from_secs(300), // 5 minutes
+            statement_timeout_secs: Seconds::from_secs(60), // 60 seconds default
             validate_against_postgres_max: true,
         }
+    }
+}
+
+impl PoolConfig {
+    /// Create configuration from environment variables
+    ///
+    /// Supported environment variables:
+    /// - SINEX_DB_MAX_CONNECTIONS: Maximum pool connections (default: 100)
+    /// - SINEX_DB_MIN_CONNECTIONS: Minimum pool connections (default: 10)
+    /// - SINEX_DB_ACQUIRE_TIMEOUT_SECS: Connection acquire timeout (default: 30)
+    /// - SINEX_DB_IDLE_TIMEOUT_SECS: Idle connection timeout (default: 300)
+    /// - SINEX_DB_STATEMENT_TIMEOUT_SECS: Statement timeout (default: 60, 0 = no timeout)
+    pub fn from_env() -> Self {
+        let mut config = Self::default();
+
+        if let Ok(val) = env::var("SINEX_DB_MAX_CONNECTIONS") {
+            if let Ok(num) = val.parse() {
+                config.max_connections = num;
+            }
+        }
+
+        if let Ok(val) = env::var("SINEX_DB_MIN_CONNECTIONS") {
+            if let Ok(num) = val.parse() {
+                config.min_connections = num;
+            }
+        }
+
+        if let Ok(val) = env::var("SINEX_DB_ACQUIRE_TIMEOUT_SECS") {
+            if let Ok(num) = val.parse() {
+                config.acquire_timeout_secs = Seconds::from_secs(num);
+            }
+        }
+
+        if let Ok(val) = env::var("SINEX_DB_IDLE_TIMEOUT_SECS") {
+            if let Ok(num) = val.parse() {
+                config.idle_timeout_secs = Seconds::from_secs(num);
+            }
+        }
+
+        if let Ok(val) = env::var("SINEX_DB_STATEMENT_TIMEOUT_SECS") {
+            if let Ok(num) = val.parse() {
+                config.statement_timeout_secs = Seconds::from_secs(num);
+            }
+        }
+
+        config
     }
 }
 
@@ -159,6 +211,15 @@ fn validate_acquire_timeout_secs(value: &Seconds) -> Result<(), validator::Valid
 fn validate_idle_timeout_secs(value: &Seconds) -> Result<(), validator::ValidationError> {
     let secs = value.as_secs();
     if secs > 3600 {
+        return Err(validator::ValidationError::new("range"));
+    }
+    Ok(())
+}
+
+fn validate_statement_timeout_secs(value: &Seconds) -> Result<(), validator::ValidationError> {
+    let secs = value.as_secs();
+    // 0 = no timeout, or 1 second to 1 hour
+    if secs != 0 && secs > 3600 {
         return Err(validator::ValidationError::new("range"));
     }
     Ok(())
@@ -187,11 +248,27 @@ pub async fn create_pool_with_config(database_url: &str, config: &PoolConfig) ->
         }
     }
 
+    let statement_timeout_secs = config.statement_timeout_secs.as_secs();
     let pool = PgPoolOptions::new()
         .max_connections(config.max_connections)
         .min_connections(config.min_connections)
         .acquire_timeout(Duration::from_secs(config.acquire_timeout_secs.as_secs()))
         .idle_timeout(Duration::from_secs(config.idle_timeout_secs.as_secs()))
+        .after_connect(move |conn, _meta| {
+            Box::pin(async move {
+                // Set statement timeout for this connection
+                // 0 means no timeout, otherwise timeout in seconds
+                let timeout_value = if statement_timeout_secs == 0 {
+                    "0".to_string()
+                } else {
+                    format!("{}s", statement_timeout_secs)
+                };
+                sqlx::query(&format!("SET statement_timeout = '{}'", timeout_value))
+                    .execute(&mut *conn)
+                    .await?;
+                Ok(())
+            })
+        })
         .connect(database_url)
         .await?;
 
@@ -199,6 +276,7 @@ pub async fn create_pool_with_config(database_url: &str, config: &PoolConfig) ->
         max_connections = config.max_connections,
         min_connections = config.min_connections,
         acquire_timeout_secs = config.acquire_timeout_secs.as_secs(),
+        statement_timeout_secs = config.statement_timeout_secs.as_secs(),
         "Database pool created successfully"
     );
     Ok(pool)
@@ -296,11 +374,13 @@ pub async fn create_test_pool(database_url: &str) -> Result<DbPool> {
         min_connections: 10,
         acquire_timeout_secs: Seconds::from_secs(30),
         idle_timeout_secs: Seconds::from_secs(300),
+        statement_timeout_secs: Seconds::from_secs(60),
         validate_against_postgres_max: false, // Skip validation in tests
     };
 
     // Keep environment behavior unchanged during tests.
 
+    let statement_timeout_secs = test_config.statement_timeout_secs.as_secs();
     let pool = PgPoolOptions::new()
         .max_connections(test_config.max_connections)
         .min_connections(test_config.min_connections)
@@ -309,6 +389,20 @@ pub async fn create_test_pool(database_url: &str) -> Result<DbPool> {
         ))
         .idle_timeout(Duration::from_secs(test_config.idle_timeout_secs.as_secs()))
         .test_before_acquire(false) // Skip connection testing for speed
+        .after_connect(move |conn, _meta| {
+            Box::pin(async move {
+                // Set statement timeout for this connection
+                let timeout_value = if statement_timeout_secs == 0 {
+                    "0".to_string()
+                } else {
+                    format!("{}s", statement_timeout_secs)
+                };
+                sqlx::query(&format!("SET statement_timeout = '{}'", timeout_value))
+                    .execute(&mut *conn)
+                    .await?;
+                Ok(())
+            })
+        })
         .connect(database_url)
         .await?;
 

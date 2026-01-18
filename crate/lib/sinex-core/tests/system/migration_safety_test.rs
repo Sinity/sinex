@@ -167,7 +167,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult<()> {
 
         // Insert test processor data before migration
         sqlx::query!(
-            "INSERT INTO core.processor_manifests (processor_name, processor_type, version, description, anchor_rule_version)
+            "INSERT INTO core.processor_manifests (processor_name, node_type, version, description, anchor_rule_version)
                  VALUES ($1, 'automaton', '1.0.0', $2, 1)",
             "migration_test_agent",
             "Agent for testing data preservation"

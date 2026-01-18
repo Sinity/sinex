@@ -28,6 +28,30 @@ where
         return Ok(());
     }
 
+    // Warn about unbounded array growth
+    const WARN_THRESHOLD: usize = 100;
+    const HARD_LIMIT: usize = 1000;
+
+    if source_event_ids.len() > HARD_LIMIT {
+        return Err(SinexError::database(format!(
+            "source_event_ids array exceeds hard limit of {} parents (got {}). \
+             This indicates a pathological synthesis pattern that will cause performance issues.",
+            HARD_LIMIT,
+            source_event_ids.len()
+        )));
+    }
+
+    if source_event_ids.len() > WARN_THRESHOLD {
+        tracing::warn!(
+            event_id = %event_id,
+            parent_count = source_event_ids.len(),
+            threshold = WARN_THRESHOLD,
+            hard_limit = HARD_LIMIT,
+            "Event has unusually large number of parent events. \
+             This may indicate a synthesis anti-pattern and will impact query performance."
+        );
+    }
+
     if source_event_ids
         .iter()
         .any(|source_id| source_id == event_id.as_ulid())
@@ -218,6 +242,17 @@ impl<'a> EventRepository<'a> {
         Ok(())
     }
 
+    /// Expand cascade graph to find all descendants
+    ///
+    /// # Cycle Detection
+    /// IMPORTANT: The database function `core.expand_cascade` MUST implement cycle detection
+    /// to prevent infinite loops when circular event dependencies exist. The implementation should:
+    /// - Track visited nodes during traversal
+    /// - Stop expansion when a node is encountered twice
+    /// - Respect the max_depth limit as a safety bound
+    ///
+    /// Without proper cycle detection, circular references (A -> B -> C -> A) will cause
+    /// the function to loop indefinitely or exceed max_depth.
     pub async fn expand_cascade(&self, table_name: &str, max_depth: i32) -> DbResult<usize> {
         let depth = sqlx::query_scalar!(
             r#"SELECT core.expand_cascade($1, $2)"#,
@@ -383,7 +418,10 @@ impl<'a> EventRepository<'a> {
                     #[cfg(any(test, feature = "testing"))]
                     if let Some(material_ulid) = source_material_id {
                         let source_identifier = format!("test-material-{}", material_ulid);
-                        let _ = sqlx::query(
+                        // This is a test-only helper that tries to register source material if it doesn't exist.
+                        // Since it uses ON CONFLICT DO NOTHING, it's safe to ignore the result - the material
+                        // may already exist. However, we log errors for debugging test failures.
+                        if let Err(e) = sqlx::query(
                             r#"
                             INSERT INTO raw.source_material_registry (
                                 id, material_kind, source_identifier, status,
@@ -398,7 +436,13 @@ impl<'a> EventRepository<'a> {
                         .bind(material_ulid.as_uuid())
                         .bind(source_identifier)
                         .execute(&mut **tx)
-                        .await;
+                        .await {
+                            tracing::debug!(
+                                material_id = %material_ulid,
+                                error = %e,
+                                "Test hook: Failed to insert bootstrap source material (may already exist)"
+                            );
+                        }
                     }
 
                     let record = sqlx::query_as!(
@@ -615,6 +659,9 @@ impl<'a> EventRepository<'a> {
         let mut results = Vec::with_capacity(events.len());
 
         // Process chunks with controlled concurrency
+        let total_events = events.len();
+        let mut processed = 0;
+
         for chunk_batch in events.chunks(chunk_size * max_concurrent_chunks) {
             let mut chunk_futures = Vec::new();
 
@@ -630,7 +677,19 @@ impl<'a> EventRepository<'a> {
             for result in chunk_results {
                 match result {
                     Ok(mut chunk_results) => {
+                        processed += chunk_results.len();
                         results.append(&mut chunk_results);
+
+                        // Log progress every 1000 events for visibility on large batches
+                        if processed % 1000 == 0 || processed == total_events {
+                            tracing::debug!(
+                                processed = processed,
+                                total = total_events,
+                                progress_pct =
+                                    (processed as f64 / total_events as f64 * 100.0) as u32,
+                                "Batch insert progress"
+                            );
+                        }
                     }
                     Err(e) => return Err(e),
                 }
@@ -1163,6 +1222,12 @@ impl<'a, 't> EventRepositoryTx<'a, 't> {
         Ok(())
     }
 
+    /// Expand cascade graph to find all descendants (transaction version)
+    ///
+    /// # Cycle Detection
+    /// IMPORTANT: The database function `core.expand_cascade` MUST implement cycle detection
+    /// to prevent infinite loops when circular event dependencies exist. See the non-transaction
+    /// version for detailed requirements.
     pub async fn expand_cascade(&mut self, table_name: &str, max_depth: i32) -> DbResult<usize> {
         let depth = sqlx::query_scalar!(
             r#"SELECT core.expand_cascade($1, $2)"#,

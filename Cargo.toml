@@ -142,6 +142,7 @@ bon = "2.3"
 # Data structures
 indexmap = "2.0"
 dashmap = "5.5"
+governor = "0.6"
 
 # Retry logic
 tokio-retry = "0.3"

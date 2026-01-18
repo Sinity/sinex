@@ -608,10 +608,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static>
                                 // Only leader processes events
                                 let mut runner = runner.lock().await;
                                 runner.run_service().await.map_err(|e| {
-                                    sinex_core::SinexError::service(format!(
-                                        "Node error: {}",
-                                        e
-                                    ))
+                                    sinex_core::SinexError::service(format!("Node error: {}", e))
                                 })
                             }
                         })

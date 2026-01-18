@@ -19,8 +19,8 @@ use sinex_node_sdk::{
     acquisition_manager::{AcquisitionManager, RotationPolicy},
     stage_as_you_go::StageAsYouGoContext,
     stream_processor::{
-        Checkpoint, Node, NodeCapabilities, NodeInitContext, NodeRuntimeState,
-        NodeType, ScanArgs, ScanEstimate, ScanReport, ServiceInfo, TimeHorizon,
+        Checkpoint, Node, NodeCapabilities, NodeInitContext, NodeRuntimeState, NodeType, ScanArgs,
+        ScanEstimate, ScanReport, ServiceInfo, TimeHorizon,
     },
     NodeError, NodeResult,
 };
@@ -39,8 +39,17 @@ use validator::ValidationError;
 const MATERIAL_REASON_HISTORY: &str = "terminal-history";
 
 // Default configuration values
-const DEFAULT_POLLING_INTERVAL: Seconds = Seconds::from_secs(15);
+const DEFAULT_POLLING_INTERVAL: Seconds = Seconds::from_secs(5);
 const DEFAULT_MAX_CAPTURE_BYTES: Bytes = Bytes::from_bytes(32 * 1024); // 32 KiB
+const ENV_POLLING_INTERVAL: &str = "SINEX_TERMINAL_POLLING_INTERVAL_SECS";
+
+// TODO(metrics): Add terminal event metrics for command rates, shell types, and polling performance.
+// Useful metrics include:
+// - commands_processed_total (counter, labeled by shell_type)
+// - polling_duration_seconds (histogram, labeled by shell_type, source_path)
+// - history_file_size_bytes (gauge, labeled by source_path)
+// - command_size_bytes (histogram)
+// - processing_errors_total (counter, labeled by error_type)
 
 /// Configuration for a shell history source.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,9 +96,16 @@ impl Default for TerminalConfig {
             },
         ];
 
+        // Allow polling interval override via environment variable
+        let polling_interval_secs = std::env::var(ENV_POLLING_INTERVAL)
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .map(Seconds::from_secs)
+            .unwrap_or(DEFAULT_POLLING_INTERVAL);
+
         Self {
             history_sources: default_sources,
-            polling_interval_secs: DEFAULT_POLLING_INTERVAL,
+            polling_interval_secs,
             max_capture_bytes: DEFAULT_MAX_CAPTURE_BYTES,
         }
     }
@@ -134,6 +150,8 @@ pub struct TerminalState {
 struct HistoryState {
     offset_bytes: u64,
     line_number: u64,
+    /// For Fish SQLite history: last processed ROWID
+    fish_row_id: Option<i64>,
 }
 
 #[derive(Clone)]
@@ -147,10 +165,20 @@ struct HistoryWatcherContext {
     state_path: Option<PathBuf>,
     shutdown_rx: watch::Receiver<bool>,
     processed_commands: Option<Arc<Mutex<Vec<String>>>>,
+    /// True if this is a Fish SQLite history database
+    is_fish_sqlite: bool,
 }
 
 impl HistoryWatcherContext {
     async fn monitor(self) {
+        if self.is_fish_sqlite {
+            self.monitor_fish_sqlite().await;
+        } else {
+            self.monitor_text_history().await;
+        }
+    }
+
+    async fn monitor_text_history(self) {
         let mut offset_bytes: u64 = 0;
         let mut line_number: u64 = 0;
         let mut shutdown_rx = self.shutdown_rx.clone();
@@ -188,6 +216,39 @@ impl HistoryWatcherContext {
         }
     }
 
+    async fn monitor_fish_sqlite(self) {
+        let mut fish_row_id: i64 = 0;
+        let mut shutdown_rx = self.shutdown_rx.clone();
+
+        if let Some(state) = self.load_state().await {
+            fish_row_id = state.fish_row_id.unwrap_or(0);
+            debug!(
+                path = %self.path,
+                fish_row_id,
+                "Restored Fish history watcher state"
+            );
+        }
+
+        loop {
+            if *shutdown_rx.borrow() {
+                info!(path = %self.path, "Fish history watcher shutdown requested");
+                break;
+            }
+
+            let _ = self.poll_fish_history_once(&mut fish_row_id).await;
+
+            tokio::select! {
+                _ = tokio::time::sleep(self.polling_interval) => {},
+                shutdown_result = shutdown_rx.changed() => {
+                    if shutdown_result.is_err() || *shutdown_rx.borrow() {
+                        info!(path = %self.path, "Fish history watcher shutdown requested");
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     async fn load_state(&self) -> Option<HistoryState> {
         let path = self.state_path.as_ref()?;
         match fs::read(path).await {
@@ -207,6 +268,20 @@ impl HistoryWatcherContext {
     }
 
     async fn persist_state(&self, offset_bytes: u64, line_number: u64) {
+        self.persist_state_full(offset_bytes, line_number, None)
+            .await;
+    }
+
+    async fn persist_fish_state(&self, fish_row_id: i64) {
+        self.persist_state_full(0, 0, Some(fish_row_id)).await;
+    }
+
+    async fn persist_state_full(
+        &self,
+        offset_bytes: u64,
+        line_number: u64,
+        fish_row_id: Option<i64>,
+    ) {
         let path = match &self.state_path {
             Some(path) => path,
             None => return,
@@ -215,6 +290,7 @@ impl HistoryWatcherContext {
         let state = HistoryState {
             offset_bytes,
             line_number,
+            fish_row_id,
         };
 
         match serde_json::to_vec_pretty(&state) {
@@ -367,16 +443,64 @@ impl HistoryWatcherContext {
     }
 
     async fn scan_history_once(&self) -> usize {
-        let mut offset_bytes = 0u64;
-        let mut line_number = 0u64;
+        if self.is_fish_sqlite {
+            let mut fish_row_id = 0i64;
 
-        if let Some(state) = self.load_state().await {
-            offset_bytes = state.offset_bytes;
-            line_number = state.line_number;
+            if let Some(state) = self.load_state().await {
+                fish_row_id = state.fish_row_id.unwrap_or(0);
+            }
+
+            self.poll_fish_history_once(&mut fish_row_id).await
+        } else {
+            let mut offset_bytes = 0u64;
+            let mut line_number = 0u64;
+
+            if let Some(state) = self.load_state().await {
+                offset_bytes = state.offset_bytes;
+                line_number = state.line_number;
+            }
+
+            self.poll_history_once(&mut offset_bytes, &mut line_number)
+                .await
+        }
+    }
+
+    async fn poll_fish_history_once(&self, fish_row_id: &mut i64) -> usize {
+        use crate::fish_history;
+
+        let mut processed = 0usize;
+
+        match fish_history::read_fish_history(&self.path, *fish_row_id) {
+            Ok((entries, last_row_id)) => {
+                for entry in entries {
+                    if entry.command.trim().is_empty() {
+                        continue;
+                    }
+
+                    match process_command(self, &entry.command, last_row_id as u64).await {
+                        Ok(()) => {
+                            processed += 1;
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Failed to process Fish history entry from {}: {}",
+                                self.path, e
+                            );
+                        }
+                    }
+                }
+
+                if last_row_id > *fish_row_id {
+                    *fish_row_id = last_row_id;
+                    self.persist_fish_state(*fish_row_id).await;
+                }
+            }
+            Err(e) => {
+                warn!("Fish history watcher unable to read {}: {}", self.path, e);
+            }
         }
 
-        self.poll_history_once(&mut offset_bytes, &mut line_number)
-            .await
+        processed
     }
 }
 
@@ -385,6 +509,29 @@ async fn process_command(
     command: &str,
     line_number: u64,
 ) -> NodeResult<()> {
+    // Validate command is valid UTF-8 and reject binary data
+    if command.contains('\0') {
+        warn!(
+            path = %ctx.path,
+            line_number,
+            "Skipping command with null bytes (binary data)"
+        );
+        return Ok(());
+    }
+
+    // Check for non-printable control characters that indicate binary data
+    let has_binary = command
+        .chars()
+        .any(|c| c.is_control() && c != '\t' && c != '\n' && c != '\r');
+    if has_binary {
+        warn!(
+            path = %ctx.path,
+            line_number,
+            "Skipping command with binary/control characters"
+        );
+        return Ok(());
+    }
+
     let bytes = command.as_bytes();
 
     if bytes.len() as u64 > ctx.max_capture_bytes.as_u64() {
@@ -581,6 +728,17 @@ impl TerminalProcessor {
                 .clone()
                 .with_acquisition_manager(Arc::clone(&acquisition));
 
+            // Detect if this is a Fish SQLite history database
+            let is_fish_sqlite = source.shell.to_lowercase() == "fish"
+                && crate::fish_history::is_fish_sqlite_history(&source.path);
+
+            if source.shell.to_lowercase() == "fish" && !is_fish_sqlite {
+                debug!(
+                    path = %source.path,
+                    "Fish history file is not SQLite format; will attempt text parsing"
+                );
+            }
+
             contexts.push(HistoryWatcherContext {
                 acquisition,
                 stage_context,
@@ -591,6 +749,7 @@ impl TerminalProcessor {
                 state_path,
                 shutdown_rx: shutdown_rx.clone(),
                 processed_commands: None,
+                is_fish_sqlite,
             });
         }
 
@@ -799,7 +958,7 @@ impl ExplorationProvider for TerminalProcessor {
             sinex_total: 0,
             missing_samples: Vec::new(),
             recommendations: vec![
-                "Ensure history files are readable by the terminal ingestor".to_string(),
+                "Ensure history files are readable by the terminal ingestor".to_string()
             ],
         })
     }
@@ -904,6 +1063,7 @@ mod tests {
             shutdown_rx: tokio::sync::watch::channel(false).1,
             #[cfg(test)]
             processed_commands: None,
+            is_fish_sqlite: false,
         };
 
         let command = "echo 'hello world'";
@@ -1035,6 +1195,7 @@ mod tests {
             shutdown_rx: tokio::sync::watch::channel(false).1,
             #[cfg(test)]
             processed_commands: None,
+            is_fish_sqlite: false,
         };
 
         #[cfg(test)]

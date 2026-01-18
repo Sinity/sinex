@@ -995,6 +995,20 @@ pub async fn verify_clean_state(pool: &DbPool) -> TestResult<()> {
 /// # }
 /// ```
 pub async fn apply_test_optimizations(pool: &DbPool) -> TestResult<()> {
+    // Get statement timeout from environment or use default for benchmarks (5 minutes)
+    let statement_timeout_secs = std::env::var("SINEX_DB_STATEMENT_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(300); // Default to 5 minutes for benchmarks
+
+    let timeout_value = if statement_timeout_secs == 0 {
+        "0".to_string()
+    } else {
+        format!("{}s", statement_timeout_secs)
+    };
+
+    let statement_timeout_setting = format!("SET statement_timeout = '{}'", timeout_value);
+
     let optimizations = vec![
         "SET work_mem = '64MB'",
         "SET maintenance_work_mem = '256MB'",
@@ -1002,7 +1016,7 @@ pub async fn apply_test_optimizations(pool: &DbPool) -> TestResult<()> {
         "SET random_page_cost = 1.1",
         "SET effective_cache_size = '1GB'",
         "SET temp_buffers = '32MB'",
-        "SET statement_timeout = '300s'", // 5 minutes for benchmarks
+        statement_timeout_setting.as_str(),
     ];
 
     for setting in optimizations {
@@ -1204,6 +1218,7 @@ mod tests {
 mod benches {
     use super::*;
     use crate::database_pool::acquire_test_database;
+    #[allow(unused_imports)]
     use crate::{sinex_bench, TestResult};
     use sinex_core::db::repositories::DbPoolExt;
 

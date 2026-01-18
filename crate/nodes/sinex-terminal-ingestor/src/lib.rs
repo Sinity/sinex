@@ -7,6 +7,9 @@
 
 pub mod shell_detection;
 
+// Fish shell history SQLite parser
+pub mod fish_history;
+
 // New unified processor module
 pub mod unified_processor;
 

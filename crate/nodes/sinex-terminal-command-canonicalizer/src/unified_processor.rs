@@ -14,8 +14,8 @@ use sinex_core::EventType;
 use sinex_core::{Event, JsonValue};
 use sinex_node_sdk::{
     stream_processor::{
-        Checkpoint, Node, ProcessingStats, NodeInitContext, NodeRuntimeState,
-        NodeType, ScanArgs, ScanReport, TimeHorizon,
+        Checkpoint, Node, NodeInitContext, NodeRuntimeState, NodeType, ProcessingStats, ScanArgs,
+        ScanReport, TimeHorizon,
     },
     NodeError, NodeResult,
 };
@@ -168,10 +168,7 @@ impl TerminalCommandCanonicalizer {
         })
     }
 
-    async fn initialise_with_runtime_state(
-        &mut self,
-        runtime: NodeRuntimeState,
-    ) -> NodeResult<()> {
+    async fn initialise_with_runtime_state(&mut self, runtime: NodeRuntimeState) -> NodeResult<()> {
         info!(
             processor = "terminal-command-canonicalizer-automaton",
             service = %runtime.service_info().service_name(),

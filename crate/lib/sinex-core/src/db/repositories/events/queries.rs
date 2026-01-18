@@ -507,6 +507,13 @@ impl<'a> EventRepository<'a> {
     }
 
     /// Search annotations by content
+    ///
+    /// # Performance Note
+    /// This query uses `ILIKE '%term%'` which requires a full table scan and cannot use indexes.
+    /// For large annotation tables, this may be slow. Consider:
+    /// - Adding a GIN index with pg_trgm for LIKE queries: `CREATE INDEX ON event_annotations USING gin (content gin_trgm_ops);`
+    /// - Or using full-text search with tsvector if semantic search is needed
+    /// - Limiting usage to small datasets or adding additional filters (annotation_type, date range)
     pub async fn search_annotations(
         &self,
         query: &str,

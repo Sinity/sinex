@@ -572,14 +572,14 @@ impl<'a> StateRepository<'a> {
             ProcessorManifest,
             r#"
             INSERT INTO core.processor_manifests (
-                processor_name, version, processor_type, description
+                processor_name, version, node_type, description
             ) VALUES (
                 $1, $2, $3, $4
             )
-            RETURNING 
+            RETURNING
                 id,
                 processor_name,
-                processor_type,
+                node_type,
                 version,
                 description,
                 anchor_rule_version,
@@ -601,10 +601,10 @@ impl<'a> StateRepository<'a> {
         sqlx::query_as!(
             ProcessorManifest,
             r#"
-            SELECT 
+            SELECT
                 id,
                 processor_name,
-                processor_type,
+                node_type,
                 version,
                 description,
                 anchor_rule_version,
@@ -627,17 +627,17 @@ impl<'a> StateRepository<'a> {
         sqlx::query_as!(
             ProcessorManifest,
             r#"
-            SELECT 
+            SELECT
                 id,
                 processor_name,
-                processor_type,
+                node_type,
                 version,
                 description,
                 anchor_rule_version,
                 config_schema,
                 created_at
             FROM core.processor_manifests
-            WHERE processor_type = $1
+            WHERE node_type = $1
             ORDER BY processor_name, version
             "#,
             processor_type
@@ -921,7 +921,7 @@ impl<'a> StateRepositoryTx<'a> {
 pub struct ProcessorManifest {
     pub id: i32,
     pub processor_name: String,
-    pub processor_type: String,
+    pub node_type: String,
     pub version: String,
     pub description: Option<String>,
     pub anchor_rule_version: Option<i32>,

@@ -102,6 +102,7 @@ pub(super) struct AssemblerState {
     pub pending_write: Option<PendingWrite>,
     pub pending_end: Option<MaterialEndMessage>,
     pub finalizing: bool,
+    pub last_slice_received: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -401,6 +402,7 @@ mod tests {
             pending_write: None,
             pending_end: None,
             finalizing: false,
+            last_slice_received: Utc::now(),
         }
     }
 

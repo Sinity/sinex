@@ -326,7 +326,8 @@ impl JournalReader {
                 }
             }
 
-            // Poll interval
+            // Poll interval: 100ms provides responsive state change detection
+            // without excessive CPU usage (10 checks/sec is reasonable for systemd units)
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
     }

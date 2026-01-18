@@ -60,6 +60,17 @@ impl ShellType {
     }
 
     /// Get the history file path for this shell
+    ///
+    /// # Shell-Specific Notes
+    ///
+    /// ## Fish
+    /// Fish stores history in an SQLite database at `~/.local/share/fish/fish_history`.
+    /// The terminal ingestor includes a SQLite parser to read Fish history incrementally.
+    ///
+    /// ## Elvish
+    /// Elvish uses a custom binary format at `~/.config/elvish/db`. This format is not
+    /// currently supported by the terminal ingestor. Consider exporting Elvish history
+    /// to a text format if ingestion is required.
     pub fn default_history_path(&self) -> Option<Utf8PathBuf> {
         let home = get_home_dir()?;
 

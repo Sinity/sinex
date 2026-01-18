@@ -35,6 +35,45 @@ pub fn db_error(e: sqlx::Error, context: &str) -> SinexError {
     }
 }
 
+/// Set statement timeout for long-running queries
+///
+/// # Query Timeout Protection
+/// Long-running queries can block connection pool resources and cause cascading failures.
+/// To prevent this:
+///
+/// 1. **Connection-level timeout**: Set at pool configuration (recommended for all connections)
+///    ```rust
+///    // In pool setup:
+///    PgPoolOptions::new()
+///        .after_connect(|conn, _meta| Box::pin(async move {
+///            conn.execute("SET statement_timeout = '30s'").await?;
+///            Ok(())
+///        }))
+///    ```
+///
+/// 2. **Per-query timeout**: Use this function for specific slow queries
+///    ```rust
+///    set_statement_timeout(executor, 60_000).await?; // 60 seconds
+///    ```
+///
+/// 3. **Reset timeout**: Always reset after slow query completes
+///    ```rust
+///    set_statement_timeout(executor, 0).await?; // 0 = no timeout
+///    ```
+///
+/// Without timeouts, slow queries (full table scans, complex joins) can hold connections
+/// indefinitely and exhaust the pool.
+pub async fn set_statement_timeout<'e, E>(executor: E, timeout_ms: i32) -> DbResult<()>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    sqlx::query(&format!("SET LOCAL statement_timeout = {}", timeout_ms))
+        .execute(executor)
+        .await
+        .map_err(|e| db_error(e, "set statement timeout"))?;
+    Ok(())
+}
+
 /// Common result type for database operations
 pub type DbResult<T> = SinexResult<T>;
 
@@ -84,8 +123,19 @@ pub trait EnhancedRepository<'a>: Repository<'a> {
 
     /// Count all records in the table
     async fn count_all(&self) -> DbResult<i64> {
-        // SAFE: schema_name() and table_name() return &'static str constants from trait implementations
-        // These are compile-time constants and cannot contain user input, making this safe from SQL injection
+        // SAFETY: format! usage for query building
+        //
+        // This use of format! is safe because:
+        // 1. schema_name() and table_name() return &'static str constants from trait implementations
+        // 2. These are compile-time constants determined by the trait implementation, never user input
+        // 3. The TableDef trait contract guarantees these return valid SQL identifiers
+        //
+        // However, this pattern should NOT be used with runtime values or user input.
+        // For dynamic queries, always use QueryBuilder or properly parameterized queries.
+        //
+        // This is an intentional use of format! with compile-time constants. While format! with
+        // user input would be a SQL injection risk, this specific usage is safe because all values
+        // are &'static str from trait bounds. DO NOT copy this pattern for runtime string building.
         let query = format!(
             "SELECT COUNT(*) FROM {}.{}",
             Self::Table::schema_name(),
@@ -102,8 +152,12 @@ pub trait EnhancedRepository<'a>: Repository<'a> {
 
     /// Check if a record exists by primary key
     async fn exists_by_id(&self, id: &Ulid) -> DbResult<bool> {
-        // SAFE: schema_name(), table_name(), and primary_key() return &'static str constants
-        // from trait implementations. User input is properly parameterized via $1::uuid
+        // SAFETY: format! usage for query building
+        //
+        // schema_name(), table_name(), and primary_key() return &'static str constants
+        // from trait implementations. User input is properly parameterized via $1::uuid.
+        // This is safe for the same reasons as count_all above - all format arguments are
+        // compile-time constants, never user input.
         let sql = format!(
             "SELECT 1 FROM {}.{} WHERE {}::uuid = $1::uuid LIMIT 1",
             Self::Table::schema_name(),
