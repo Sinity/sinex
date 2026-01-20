@@ -3,10 +3,9 @@
 //! Provides hot reload, state continuity, and prompt-to-node workflow
 //! for developing SimpleProcessor nodes.
 
+mod build;
 mod dev;
-#[allow(dead_code)] // Schema generation utilities for future use
 mod generate;
-#[allow(dead_code)] // Tether functionality for production data streaming (WIP)
 mod tether;
 mod watcher;
 
@@ -84,11 +83,7 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Commands::Dev(args) => dev::run(args).await,
-        Commands::Build { path, release } => {
-            info!("Building processor at {} (release: {})", path, release);
-            // TODO: Implement build command
-            Ok(())
-        }
+        Commands::Build { path, release } => build::run(build::BuildArgs { path, release }).await,
         Commands::Generate {
             spec,
             name,

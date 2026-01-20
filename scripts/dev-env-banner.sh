@@ -61,5 +61,5 @@ printf 'Toolchain:   %s\n' "${toolchain}"
 printf 'Processes:   start via '\''%s'\''\n' "${process_hint}"
 printf '%sQuick commands:%s\n' "${COLOR_DIM}" "${COLOR_RESET}"
 printf '  cargo xtask check     # fmt check + cargo check\n'
-printf '  cargo xtask test --prime  # nextest (profile=reliable)\n'
+printf '  cargo xtask test --profile default --prime  # nextest (profile=default)\n'
 printf '  devenv up nats ingestd gateway\n\n'
