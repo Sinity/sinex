@@ -7,3 +7,4 @@ Crate-local design notes embedded into rustdoc:
 - `ulid_conversions.md` – ULID/UUID database conversion helpers.
 - `migrations.md` – module registration guidance.
 - `schema_design.md` – historical analysis of database architecture, indexing, and constraints.
+- `event-taxonomy.md` – canonical event families, naming rules, and minimal payload keys.

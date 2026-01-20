@@ -39,4 +39,4 @@ module that owns the implementation and highlights the invariants enforced by th
 
 - Always prefer the typed wrappers (`EventId`, `EventSource`, etc.) over raw strings—repositories and services assume validated input.
 - Repository methods return strongly-typed records (e.g. `EventRecord`) that mirror the database schema; map them to domain objects in the caller.
-- When introducing new event families or payloads, define the struct under `types::events::payloads`, add serde derives, and update the taxonomy in `docs/current/architecture/event-taxonomy.md`.
+- When introducing new event families or payloads, define the struct under `types::events::payloads`, add serde derives, and update the taxonomy in `crate/lib/sinex-schema/docs/event-taxonomy.md`.

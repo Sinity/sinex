@@ -42,7 +42,7 @@ The node constellation implements an elegant observability pattern where systemd
 ### 2.1. Journald Heartbeat Pattern
 
 *   **Structured Logging:** ✅ **OPERATIONAL** - nodes emit structured JSON logs to stdout/stderr, automatically captured by systemd
-*   **Journald Bridge:** ✅ **OPERATIONAL** - `sinex-system-node` monitors journald and ingests all Sinex-related logs as events
+*   **Journald Bridge:** ✅ **OPERATIONAL** - `sinex-system-ingestor` monitors journald and ingests all Sinex-related logs as events
 *   **Automatic Service Discovery:** ✅ **OPERATIONAL** - systemd service metadata automatically tracked through journal entries
 *   **Health Inference:** ✅ **OPERATIONAL** - Regular log output creates implicit heartbeat pattern without explicit heartbeat events
 *   **Meta-Observability:** ✅ **OPERATIONAL** - System health becomes queryable Sinex data, enabling self-analysis and alerting
