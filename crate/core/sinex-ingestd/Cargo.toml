@@ -11,7 +11,6 @@ path = "src/main.rs"
 [dependencies]
 # Performance
 mimalloc = { workspace = true }
-ahash = { workspace = true }
 
 # Core dependencies
 color-eyre.workspace = true
@@ -43,12 +42,10 @@ dirs.workspace = true
 figment = { workspace = true }
 
 # Validation
-jsonschema.workspace = true
 validator = { workspace = true }
 bon = { workspace = true }
 
 # Concurrency
-parking_lot = "0.12"
 futures = { workspace = true }
 dashmap = { workspace = true }
 
@@ -57,9 +54,8 @@ tokio-stream = { workspace = true, features = ["net"] }
 url = { workspace = true }
 
 # Cryptography
-sha2.workspace = true
-hex.workspace = true
 blake3.workspace = true
+base64.workspace = true
 
 # System
 sd-notify.workspace = true

@@ -14,7 +14,17 @@ use color_eyre::eyre::{eyre, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sinex_core::environment::SinexEnvironment;
-use tracing::info;
+use std::time::Duration;
+use tracing::{info, warn};
+
+fn env_var_duration_secs(name: &str, default: u64) -> Duration {
+    Duration::from_secs(
+        std::env::var(name)
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(default),
+    )
+}
 
 /// Response for shadow consumer creation
 #[derive(Debug, Serialize)]
@@ -36,11 +46,10 @@ pub struct ShadowConsumerInfo {
 pub struct ShadowCreateParams {
     /// Unique identifier for this shadow consumer (e.g., "dev-user-20250117")
     pub consumer_name: String,
-    /// Optional subject filter (defaults to all events)
+    /// Subject filter pattern (required - must be explicitly specified for security)
     #[serde(default)]
     pub subject_filter: Option<String>,
-    /// Start from the beginning of the stream
-    #[serde(default)]
+    /// Start from the beginning of the stream (required, must be explicitly specified)
     pub from_beginning: bool,
     /// Start from a specific sequence number
     #[serde(default)]
@@ -89,10 +98,24 @@ pub async fn handle_shadow_create(
         .await
         .map_err(|e| eyre!("Failed to get events stream: {}", e))?;
 
-    // Determine subject filter
-    let subject_filter = create_params
-        .subject_filter
-        .unwrap_or_else(|| env.nats_subject("events.>"));
+    // Require explicit subject filter - no default to prevent unintended access
+    let subject_filter = match create_params.subject_filter {
+        Some(filter) => filter,
+        None => {
+            return Err(eyre!(
+                "subject_filter is required for shadow consumers (use 'events.>' explicitly if needed)"
+            ));
+        }
+    };
+
+    // Warn on overly broad patterns
+    if subject_filter.ends_with(".>") || subject_filter == "*" {
+        warn!(
+            consumer_name = %create_params.consumer_name,
+            subject_filter = %subject_filter,
+            "Shadow consumer created with broad subject filter"
+        );
+    }
 
     // Determine deliver policy
     let deliver_policy = if let Some(seq) = create_params.from_sequence {
@@ -106,8 +129,11 @@ pub async fn handle_shadow_create(
     };
 
     // Create durable consumer with explicit ack for proper tracking
-    let mut consumer = stream
-        .create_consumer(jetstream::consumer::pull::Config {
+    // Issue 126: Add timeout to NATS consumer creation
+    let timeout = env_var_duration_secs("SINEX_NATS_CONSUMER_CREATE_TIMEOUT_SECS", 10);
+    let mut consumer = tokio::time::timeout(
+        timeout,
+        stream.create_consumer(jetstream::consumer::pull::Config {
             name: Some(create_params.consumer_name.clone()),
             durable_name: Some(create_params.consumer_name.clone()),
             filter_subject: subject_filter.clone(),
@@ -118,9 +144,11 @@ pub async fn handle_shadow_create(
             // Ack wait timeout
             ack_wait: std::time::Duration::from_secs(30),
             ..Default::default()
-        })
-        .await
-        .map_err(|e| eyre!("Failed to create shadow consumer: {}", e))?;
+        }),
+    )
+    .await
+    .map_err(|_| eyre!("Consumer creation timed out after {:?}", timeout))?
+    .map_err(|e| eyre!("Failed to create shadow consumer: {}", e))?;
 
     let info = consumer
         .info()
@@ -206,10 +234,16 @@ pub async fn handle_shadow_list(
 }
 
 /// Delete a shadow consumer
+///
+/// # Authorization
+///
+/// This is a dangerous operation that deletes a NATS consumer.
+/// The auth context is logged for audit purposes.
 pub async fn handle_shadow_delete(
     nats_client: &async_nats::Client,
     env: &SinexEnvironment,
     params: Value,
+    auth: &crate::rpc_server::RpcAuthContext,
 ) -> Result<Value> {
     let delete_params: ShadowDeleteParams =
         serde_json::from_value(params).wrap_err("Invalid shadow.delete parameters")?;
@@ -239,8 +273,9 @@ pub async fn handle_shadow_delete(
         })?;
 
     info!(
+        token_prefix = %auth.token_prefix,
         consumer_name = %delete_params.consumer_name,
-        "Deleted shadow consumer"
+        "Shadow consumer deleted"
     );
 
     Ok(json!({
@@ -301,6 +336,7 @@ mod tests {
             &env,
             json!({
                 "consumer_name": "dev-test-123",
+                "subject_filter": env.nats_subject("events.>"),
                 "from_beginning": true
             }),
         )
@@ -314,12 +350,17 @@ mod tests {
         assert_eq!(list_result["count"], 1);
 
         // Delete the consumer
+        let test_auth = crate::rpc_server::RpcAuthContext {
+            token_prefix: "test****".to_string(),
+            authenticated_at: chrono::Utc::now(),
+        };
         let delete_result = handle_shadow_delete(
             &client,
             &env,
             json!({
                 "consumer_name": "dev-test-123"
             }),
+            &test_auth,
         )
         .await?;
 
@@ -333,10 +374,50 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn shadow_create_requires_subject_filter() -> TestResult<()> {
+        let nats = EphemeralNats::start().await?;
+        let client = nats.connect().await?;
+        let env = environment();
+        let js = jetstream::new(client.clone());
+
+        // Create the events stream first
+        let stream_name = env.nats_stream_name("EVENTS");
+        js.get_or_create_stream(jetstream::stream::Config {
+            name: stream_name.clone(),
+            subjects: vec![env.nats_subject("events.>")],
+            retention: jetstream::stream::RetentionPolicy::Limits,
+            max_messages: 10000,
+            storage: jetstream::stream::StorageType::File,
+            ..Default::default()
+        })
+        .await?;
+
+        // Should fail without explicit subject_filter
+        let err = handle_shadow_create(
+            &client,
+            &env,
+            json!({
+                "consumer_name": "dev-test-456",
+                "from_beginning": true
+            }),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(err.to_string().contains("subject_filter is required"));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn shadow_delete_requires_dev_prefix() -> TestResult<()> {
         let nats = EphemeralNats::start().await?;
         let client = nats.connect().await?;
         let env = environment();
+
+        let test_auth = crate::rpc_server::RpcAuthContext {
+            token_prefix: "test****".to_string(),
+            authenticated_at: chrono::Utc::now(),
+        };
 
         // Should fail without dev- prefix
         let err = handle_shadow_delete(
@@ -345,6 +426,7 @@ mod tests {
             json!({
                 "consumer_name": "production-consumer"
             }),
+            &test_auth,
         )
         .await
         .unwrap_err();

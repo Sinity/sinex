@@ -17,6 +17,15 @@ const REPLAY_CONTROL_SUBSCRIBE_ATTEMPTS: usize = 5;
 const REPLAY_CONTROL_SUBSCRIBE_BACKOFF_BASE: Duration = Duration::from_millis(200);
 const REPLAY_CONTROL_SUBSCRIBE_BACKOFF_MAX: Duration = Duration::from_secs(2);
 
+fn env_var_duration_secs(name: &str, default: u64) -> Duration {
+    Duration::from_secs(
+        std::env::var(name)
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(default),
+    )
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayControlError {
     pub message: String,
@@ -116,8 +125,8 @@ impl ReplayControlClient {
     async fn send(&self, request: ReplayControlRequest) -> Result<ReplayControlResponse> {
         let payload = serde_json::to_vec(&request)?;
 
-        // Issue 126: Add timeout to NATS replay requests
-        let timeout = Duration::from_secs(30);
+        // Issue 126: Configurable timeout for NATS replay requests
+        let timeout = env_var_duration_secs("SINEX_REPLAY_CONTROL_TIMEOUT_SECS", 30);
         let message = tokio::time::timeout(
             timeout,
             self.client.request(self.subject.clone(), payload.into()),
@@ -792,7 +801,7 @@ mod tests {
     async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
         let nats = EphemeralNats::start().await?;
 
-        ctx.publish_json_event(
+        ctx.publish_event(
             "fs-test",
             "file.created",
             json!({ "path": "/tmp/replay.txt" }),

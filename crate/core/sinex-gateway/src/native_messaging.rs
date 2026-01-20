@@ -509,8 +509,12 @@ async fn dispatch_method(
     method: &str,
     params: Value,
 ) -> Result<Value> {
+    // Native messaging is a trusted local transport (stdin/stdout),
+    // so we use a system auth context
+    let auth = crate::rpc_server::RpcAuthContext::system();
+
     // Use shared dispatch table from rpc_server
-    crate::rpc_server::dispatch_rpc_method(services, method, params).await
+    crate::rpc_server::dispatch_rpc_method(services, method, params, &auth).await
 }
 
 /// Run the native messaging loop using stdin/stdout transport.

@@ -257,7 +257,18 @@ pub async fn handle_ops_get(pool: &PgPool, params: Value) -> Result<Value> {
 }
 
 /// Handle POST /ops/{id}/cancel - cancel a running operation
-pub async fn handle_ops_cancel(pool: &PgPool, params: Value) -> Result<Value> {
+///
+/// # Authorization
+///
+/// This is a dangerous operation that cancels a running system operation.
+/// The auth context is logged for audit purposes.
+pub async fn handle_ops_cancel(
+    pool: &PgPool,
+    params: Value,
+    auth: &crate::rpc_server::RpcAuthContext,
+) -> Result<Value> {
+    use tracing::info;
+
     let cancel_params: OpsCancelParams =
         serde_json::from_value(params).wrap_err("Invalid ops cancel parameters")?;
 
@@ -284,6 +295,12 @@ pub async fn handle_ops_cancel(pool: &PgPool, params: Value) -> Result<Value> {
             op.result_status
         ));
     }
+
+    info!(
+        token_prefix = %auth.token_prefix,
+        operation_id = %cancel_params.operation_id,
+        "Operation cancel initiated"
+    );
 
     // Mark operation as cancelled
     let reason = cancel_params
@@ -407,12 +424,14 @@ mod tests {
         let operation_id = start_result["operation"]["id"].as_str().unwrap();
 
         // Cancel it
+        let auth = crate::rpc_server::RpcAuthContext::system();
         let result = handle_ops_cancel(
             ctx.pool(),
             json!({
                 "operation_id": operation_id,
                 "reason": "test cancellation",
             }),
+            &auth,
         )
         .await?;
 
@@ -438,11 +457,13 @@ mod tests {
         let operation_id = start_result["operation"]["id"].as_str().unwrap();
 
         // Cancel once
+        let auth = crate::rpc_server::RpcAuthContext::system();
         handle_ops_cancel(
             ctx.pool(),
             json!({
                 "operation_id": operation_id,
             }),
+            &auth,
         )
         .await?;
 
@@ -452,6 +473,7 @@ mod tests {
             json!({
                 "operation_id": operation_id,
             }),
+            &auth,
         )
         .await
         .unwrap_err();

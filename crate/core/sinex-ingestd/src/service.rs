@@ -6,6 +6,7 @@
 use crate::{
     config::IngestdConfig, validator::EventValidator, IngestdResult, JetStreamTopology, SinexError,
 };
+use sinex_core::error::AnyhowContext;
 use sinex_core::JsonValue;
 
 // External crates
@@ -70,7 +71,13 @@ impl IngestService {
             let pool = config
                 .get_db_options()
                 .connect(&config.database_url)
-                .await?;
+                .await
+                .map_err(|e| {
+                    SinexError::database(format!(
+                        "Failed to connect to database at {}: {e}",
+                        config.database_url
+                    ))
+                })?;
             Some(pool)
         };
 
@@ -78,11 +85,16 @@ impl IngestService {
         let (nats_client, jetstream) = if config.dry_run {
             (None, None)
         } else {
-            let client = config.nats.connect().await.map_err(|e| {
-                SinexError::network(format!("Failed to connect to NATS: {e}"))
-                    .with_operation("service.connect_nats")
-                    .with_context("nats_url", config.nats.url.clone())
-            })?;
+            let client = config
+                .nats
+                .connect()
+                .await
+                .wrap_err_with(|| format!("Failed to connect to NATS at {}", config.nats.url))
+                .map_err(|e| {
+                    SinexError::network(format!("Failed to connect to NATS: {e}"))
+                        .with_operation("service.connect_nats")
+                        .with_context("nats_url", config.nats.url.clone())
+                })?;
             let js = jetstream::new(client.clone());
 
             (Some(client), Some(js))
@@ -97,6 +109,7 @@ impl IngestService {
             if !config.dry_run && !config.skip_schema_sync {
                 let sync_result = crate::schema_sync::synchronize_schemas(pool)
                     .await
+                    .wrap_err("Failed to synchronize event schemas from codebase to database")
                     .map_err(|e| {
                         SinexError::service(format!("Failed to synchronize schemas: {e}"))
                             .with_operation("service.schema_sync")
@@ -499,7 +512,10 @@ const MIGRATION_LOCK_KEY: &str = "ingestd:migrations";
 pub async fn try_acquire_migration_lock(
     pool: &PgPool,
 ) -> IngestdResult<ResourceGuard<AdvisoryLock>> {
-    match AdvisoryLock::try_acquire(pool, MIGRATION_LOCK_KEY).await {
+    match AdvisoryLock::try_acquire(pool, MIGRATION_LOCK_KEY)
+        .await
+        .wrap_err("Failed to acquire advisory lock for schema migrations")
+    {
         Ok(Some(guard)) => Ok(guard),
         Ok(None) => Err(SinexError::service(
             "Another ingestd instance is already applying migrations",
@@ -545,10 +561,12 @@ impl IngestService {
         }
 
         // Broadcast metadata for cache invalidation signal
-        js.publish(subject, serde_json::to_vec(&entries)?.into())
+        js.publish(subject.clone(), serde_json::to_vec(&entries)?.into())
             .await
+            .wrap_err_with(|| format!("Failed to publish schema broadcast to subject '{}'", subject))
             .map_err(|e| SinexError::network(format!("Failed to publish schema broadcast: {e}")))?
             .await
+            .wrap_err("Failed to confirm schema broadcast acknowledgement")
             .map_err(|e| SinexError::network(format!("Failed to confirm schema broadcast: {e}")))?;
 
         info!(
@@ -600,6 +618,12 @@ impl IngestService {
             .bind(schema_id)
             .fetch_optional(pool)
             .await
+            .wrap_err_with(|| {
+                format!(
+                    "Failed to fetch schema content for {} ({})",
+                    entry.name, entry.schema_id
+                )
+            })
             .map_err(|e| SinexError::database(format!("Failed to fetch schema: {e}")))?;
 
             if let Some(json) = schema_json {
@@ -610,6 +634,12 @@ impl IngestService {
 
                 kv.put(&key, payload.into())
                     .await
+                    .wrap_err_with(|| {
+                        format!(
+                            "Failed to store schema {} ({}) in NATS KV bucket",
+                            entry.name, entry.schema_id
+                        )
+                    })
                     .map_err(|e| SinexError::kv(format!("Failed to store schema in KV: {e}")))?;
             }
         }

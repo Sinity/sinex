@@ -15,7 +15,7 @@ uuid = { workspace = true }
 
 sinex-core = { path = "../../lib/sinex-core", features = [] }
 sinex-services = { path = "../../lib/sinex-services" }
-# sinex-annex folded into sinex-satellite-sdk
+# sinex-annex folded into sinex-node-sdk
 # sinex-telemetry folded into sinex-core
 sinex-node-sdk = { path = "../../lib/sinex-node-sdk" }
 async-trait = { workspace = true }
@@ -30,9 +30,7 @@ tokio = { workspace = true, features = ["full"] }
 axum = { workspace = true }
 tower = { version = "0.5", features = ["util", "timeout", "limit", "load-shed"] }
 tower-http = { version = "0.6", features = ["cors", "limit", "request-id", "trace"] }
-hyper = { version = "1.0", features = ["server", "client"] }
 hyper-util = { version = "0.1", features = ["tokio", "http1", "http2", "server", "service"] }
-tokio-stream = { workspace = true, features = ["net"] }
 
 # JSON-RPC
 serde = { workspace = true }

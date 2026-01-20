@@ -1,6 +1,7 @@
 //! JetStream event consumer with confirmations and DLQ support
 
 use async_nats::{jetstream, Client as NatsClient};
+use base64::Engine;
 use chrono::{DateTime, SecondsFormat, Timelike, Utc};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -876,7 +877,10 @@ impl JetStreamConsumer {
         let cache = self
             .recent_id_cache
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(|poisoned| {
+                warn!("Recent ID cache mutex was poisoned; recovering with potentially inconsistent data");
+                poisoned.into_inner()
+            });
         let mut seen = HashSet::new();
         batch
             .iter()
@@ -893,7 +897,10 @@ impl JetStreamConsumer {
         let mut cache = self
             .recent_id_cache
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(|poisoned| {
+                warn!("Recent ID cache mutex was poisoned; recovering with potentially inconsistent data");
+                poisoned.into_inner()
+            });
         for event in batch {
             cache.insert(event.parsed_id);
         }
@@ -1069,6 +1076,21 @@ impl JetStreamConsumer {
     /// Route failed message to DLQ. Returns true when publish + ack succeeds.
     #[tracing::instrument(skip(self, msg), fields(error = %error))]
     async fn route_to_dlq(&self, msg: &jetstream::Message, error: String) -> bool {
+        let original_payload = match serde_json::from_slice(&msg.payload) {
+            Ok(json) => json,
+            Err(parse_err) => {
+                warn!(
+                    error = %parse_err,
+                    payload_len = msg.payload.len(),
+                    "Failed to parse original payload for DLQ entry; preserving raw bytes as base64"
+                );
+                serde_json::json!({
+                    "_parse_error": parse_err.to_string(),
+                    "_raw_bytes_base64": base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &msg.payload)
+                })
+            }
+        };
+
         let dlq_entry = DlqEntry {
             event_id: msg
                 .headers
@@ -1077,7 +1099,7 @@ impl JetStreamConsumer {
                 .map(|v| v.as_str().to_string())
                 .unwrap_or_else(|| "unknown".to_string()),
             error,
-            original_payload: serde_json::from_slice(&msg.payload).unwrap_or(serde_json::json!({})),
+            original_payload,
             failed_at: Utc::now().to_rfc3339(),
         };
 
