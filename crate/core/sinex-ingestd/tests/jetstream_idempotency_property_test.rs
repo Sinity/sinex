@@ -82,7 +82,7 @@ async fn test_duplicate_event_rejection_smoke() -> color_eyre::Result<()> {
 }
 
 async fn run_duplicate_event_rejection(event_count: usize) -> color_eyre::Result<()> {
-    let ctx = TestContext::new().await?.with_shared_nats().await?;
+    let ctx = TestContext::new().await?.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
     let namespace = ctx.pipeline_namespace().prefix().to_string();
@@ -165,7 +165,7 @@ async fn run_duplicate_event_rejection(event_count: usize) -> color_eyre::Result
 
 #[sinex_test]
 async fn test_concurrent_duplicate_submission() -> color_eyre::Result<()> {
-    let ctx = TestContext::new().await?.with_shared_nats().await?;
+    let ctx = TestContext::new().await?.with_nats().shared().await?;
 
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();

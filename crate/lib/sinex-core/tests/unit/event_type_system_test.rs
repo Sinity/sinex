@@ -357,8 +357,8 @@ async fn test_source_event_type_mapping(ctx: TestContext) -> TestResult<()> {
         let mut created_events = Vec::new();
 
         // Create test events for each expected type
-        for event_type in expected_types.iter() {
-            let test_payload = match (source, *event_type) {
+        for &event_type in expected_types.iter() {
+            let test_payload = match (source, event_type) {
                 ("fs-watcher", "file.created") => {
                     json!({"path": "/test/file.txt", "size": 1024, "created_at": "2024-01-01T00:00:00Z", "permissions": 644})
                 }
@@ -393,7 +393,7 @@ async fn test_source_event_type_mapping(ctx: TestContext) -> TestResult<()> {
             };
 
             let event = ctx
-                .publish_json_event(source, event_type, test_payload)
+                .publish_event(source, event_type, test_payload)
                 .await?;
             created_events.push(event);
         }

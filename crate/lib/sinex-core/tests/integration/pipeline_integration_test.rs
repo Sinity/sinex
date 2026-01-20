@@ -31,7 +31,7 @@ use tokio::task::yield_now;
 /// Minimal pipeline smoke test (single event, real ingestion path).
 #[sinex_serial_test(timeout = 60)]
 async fn test_pipeline_smoke(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let event_id = scope
         .publish(
@@ -57,7 +57,7 @@ async fn test_pipeline_smoke(ctx: TestContext) -> Result<()> {
 #[sinex_serial_test(timeout = 60)]
 async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> {
     ctx.ensure_clean().await?;
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     tracing::info!("Testing complete event ingestion pipeline");
     let run_id = sinex_core::types::Ulid::new();
 
@@ -241,7 +241,7 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> 
 #[sinex_serial_test]
 async fn test_concurrent_pipeline_processing(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing concurrent pipeline processing");
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     ctx.ensure_clean().await?;
     let ctx = Arc::new(ctx);
 
@@ -380,7 +380,7 @@ async fn test_concurrent_pipeline_processing(ctx: TestContext) -> Result<()> {
 async fn test_pipeline_data_transformation(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing pipeline data transformation and enrichment");
     ctx.ensure_clean().await?;
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
 
     // Create raw events that should be processed and enriched
     let raw_events = vec![
@@ -566,7 +566,7 @@ async fn test_pipeline_data_transformation(ctx: TestContext) -> Result<()> {
 async fn test_pipeline_error_handling(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing pipeline error handling and recovery");
     ctx.ensure_clean().await?;
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
 
     let pipeline_start = Instant::now();
     let mut successful_events = Vec::new();
@@ -737,7 +737,7 @@ async fn test_pipeline_error_handling(ctx: TestContext) -> Result<()> {
 async fn test_confirmation_emitted_after_persistence_pipeline(
     ctx: TestContext,
 ) -> color_eyre::Result<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let source = format!("confirm-order-{}", Ulid::new());
     let publisher = scope.publisher(source.clone());
@@ -796,7 +796,7 @@ async fn test_confirmation_emitted_after_persistence_pipeline(
 
 #[sinex_serial_test(timeout = 60)]
 async fn test_mixed_validity_batch_semantics(ctx: TestContext) -> color_eyre::Result<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let source = format!("mixed-validity-{}", Ulid::new());
     let event_type = "batch.mixed";

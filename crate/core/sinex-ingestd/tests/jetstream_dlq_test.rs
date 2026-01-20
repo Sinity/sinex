@@ -38,7 +38,7 @@ async fn wait_for_consumer(js: &jetstream::Context, base_stream: &str) -> TestRe
 
 #[sinex_test]
 async fn test_dlq_cases_table() -> TestResult<()> {
-    let ctx = TestContext::new().await?.with_shared_nats().await?;
+    let ctx = TestContext::new().await?.with_nats().shared().await?;
     let nats = ctx.nats_handle()?;
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();

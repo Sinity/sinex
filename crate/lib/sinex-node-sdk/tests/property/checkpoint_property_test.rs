@@ -218,7 +218,10 @@ async fn checkpoint_state_transitions_are_valid(
     for (i, increment) in increments.iter().enumerate() {
         current_count += increment;
         state.processed_count = current_count;
-        state.set_last_processed_id(Some(format!("step-{i}")));
+        state.checkpoint = Checkpoint::Stream {
+            message_id: format!("step-{i}"),
+            event_id: None,
+        };
         state.version += 1;
         state.data = Some(serde_json::json!({ "sequence": i + 1 }));
 
@@ -476,16 +479,22 @@ mod unit_tests {
         assert_eq!(state.version, 2);
 
         // Test setting stream ID
-        state.set_last_processed_id(Some("stream-123".to_string()));
+        state.checkpoint = Checkpoint::Stream {
+            message_id: "stream-123".to_string(),
+            event_id: None,
+        };
         assert_eq!(state.last_processed_id(), Some("stream-123".to_string()));
 
         // Test setting ULID
         let ulid = sinex_core::types::Ulid::new();
-        state.set_last_processed_id(Some(ulid.to_string()));
+        state.checkpoint = Checkpoint::Internal {
+            event_id: ulid,
+            message_count: 0,
+        };
         assert_eq!(state.last_processed_id(), Some(ulid.to_string()));
 
         // Test clearing
-        state.set_last_processed_id(None);
+        state.checkpoint = Checkpoint::None;
         assert_eq!(state.last_processed_id(), None);
 
         Ok(())

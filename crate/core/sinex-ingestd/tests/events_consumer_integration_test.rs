@@ -86,7 +86,7 @@ async fn start_consumer_with_hooks(
 
 #[sinex_test]
 async fn jetstream_consumer_processes_batches_without_dlq(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let suffix = format!("batch-{}", Ulid::new());
     let hooks = TestHooks::none();
     let setup = start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(5), &hooks).await?;
@@ -126,7 +126,7 @@ async fn jetstream_consumer_processes_batches_without_dlq(ctx: TestContext) -> T
 
 #[sinex_test]
 async fn jetstream_consumer_survives_transient_db_failure(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let suffix = format!("retry-{}", Ulid::new());
     let (hooks, _counters) = TestHooks::builder().fail_once().build();
     let setup = start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(2), &hooks).await?;
@@ -223,7 +223,7 @@ async fn jetstream_consumer_survives_transient_db_failure(ctx: TestContext) -> T
 
 #[sinex_test]
 async fn confirmation_emitted_after_persistence(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let suffix = format!("confirm-{}", Ulid::new());
     let hooks = TestHooks::none();
     let setup = start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(5), &hooks).await?;
@@ -269,7 +269,7 @@ async fn confirmation_emitted_after_persistence(ctx: TestContext) -> TestResult<
 async fn jetstream_consumer_redelivers_when_confirmation_publish_fails(
     ctx: TestContext,
 ) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let suffix = format!("confirm-retry-{}", Ulid::new());
     let (hooks, counters) = TestHooks::builder()
         .count_deliveries()
@@ -344,7 +344,7 @@ async fn jetstream_consumer_redelivers_when_confirmation_publish_fails(
 
 #[sinex_test]
 async fn jetstream_consumer_preserves_ts_orig_subnano(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let suffix = format!("ts-subnano-{}", Ulid::new());
     let hooks = TestHooks::none();
     let setup = start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(5), &hooks).await?;
@@ -385,7 +385,7 @@ async fn jetstream_consumer_preserves_ts_orig_subnano(ctx: TestContext) -> TestR
 
 #[sinex_test]
 async fn jetstream_consumer_redelivers_when_ack_wait_expires(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let suffix = format!("ackwait-{}", Ulid::new());
     let (hooks, counters) = TestHooks::builder()
         .count_deliveries()
@@ -448,7 +448,7 @@ async fn jetstream_consumer_redelivers_when_ack_wait_expires(ctx: TestContext) -
 
 #[sinex_test]
 async fn jetstream_consumer_routes_validation_failures_to_dlq(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let suffix = format!("dlq-{}", Ulid::new());
     let hooks = TestHooks::with_validation();
     let setup = start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(5), &hooks).await?;
@@ -503,7 +503,7 @@ async fn jetstream_consumer_routes_validation_failures_to_dlq(ctx: TestContext) 
 
 #[sinex_test]
 async fn jetstream_consumer_routes_malformed_json_to_dlq(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let suffix = format!("malformed-{}", Ulid::new());
     let hooks = TestHooks::with_validation();
     let setup = start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(5), &hooks).await?;
@@ -547,7 +547,7 @@ async fn jetstream_consumer_routes_malformed_json_to_dlq(ctx: TestContext) -> Te
 
 #[sinex_test]
 async fn jetstream_consumer_routes_db_failures_to_dlq(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let suffix = format!("dbfail-{}", Ulid::new());
     let (hooks, counters) = TestHooks::builder()
         .fail_once()
@@ -658,7 +658,7 @@ async fn jetstream_consumer_routes_db_failures_to_dlq(ctx: TestContext) -> TestR
 
 #[sinex_test]
 async fn jetstream_consumer_dlq_reason_classification(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let suffix = format!("dlq-reasons-{}", Ulid::new());
     let (hooks, _counters) = TestHooks::builder()
         .validate()
@@ -737,7 +737,7 @@ async fn jetstream_consumer_dlq_reason_classification(ctx: TestContext) -> TestR
 
 #[sinex_test]
 async fn chaos_injector_produces_clean_snapshot(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let suffix = format!("chaos-{}", Ulid::new());
     let hooks = TestHooks::none();
     let setup = start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(5), &hooks).await?;

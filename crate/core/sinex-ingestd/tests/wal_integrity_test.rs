@@ -7,7 +7,7 @@ use std::sync::Arc;
 #[sinex_test]
 #[ignore]
 async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     let namespace = ctx.pipeline_namespace().prefix().to_string();
 

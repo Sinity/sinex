@@ -134,7 +134,7 @@ async fn seed_query_dataset(scope: &PipelineScope<'_>) -> TestResult<(SeedClock,
 
 #[sinex_test]
 async fn test_get_event_count_by_source_no_time_filter(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let (_clock, dataset) = seed_analytics_dataset(&scope).await?;
     let service = Arc::new(AnalyticsService::new(ctx.pool.clone()));
@@ -167,7 +167,7 @@ async fn test_get_event_count_by_source_no_time_filter(ctx: TestContext) -> Test
 
 #[sinex_serial_test]
 async fn test_get_event_count_by_source_with_time_filter(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let (clock, _dataset) = seed_analytics_dataset(&scope).await?;
     let service = Arc::new(AnalyticsService::new(ctx.pool.clone()));
@@ -241,7 +241,7 @@ async fn analytics_queries_block_each_other_with_single_connection(
 
 #[sinex_serial_test]
 async fn test_get_event_count_by_type_no_time_filter(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let (_clock, dataset) = seed_analytics_dataset(&scope).await?;
     let service = Arc::new(AnalyticsService::new(ctx.pool.clone()));
@@ -263,7 +263,7 @@ async fn test_get_event_count_by_type_no_time_filter(ctx: TestContext) -> TestRe
 
 #[sinex_test]
 async fn test_get_event_count_by_type_with_time_filter(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let (clock, _dataset) = seed_analytics_dataset(&scope).await?;
     let service = Arc::new(AnalyticsService::new(ctx.pool.clone()));
@@ -295,7 +295,7 @@ async fn test_get_event_count_by_type_with_time_filter(ctx: TestContext) -> Test
 
 #[sinex_serial_test]
 async fn test_get_events_over_time_hourly_intervals(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let (clock, dataset) = seed_analytics_dataset(&scope).await?;
     let service = Arc::new(AnalyticsService::new(ctx.pool.clone()));
@@ -327,7 +327,7 @@ async fn test_get_events_over_time_hourly_intervals(ctx: TestContext) -> TestRes
 
 #[sinex_serial_test]
 async fn test_get_events_over_time_different_intervals(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let (clock, _dataset) = seed_analytics_dataset(&scope).await?;
     let service = Arc::new(AnalyticsService::new(ctx.pool.clone()));
@@ -357,7 +357,7 @@ async fn test_get_events_over_time_different_intervals(ctx: TestContext) -> Test
 
 #[sinex_serial_test]
 async fn test_get_top_commands_no_time_filter(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let (_clock, dataset) = seed_analytics_dataset(&scope).await?;
     let service = Arc::new(AnalyticsService::new(ctx.pool.clone()));
@@ -387,7 +387,7 @@ async fn test_get_top_commands_no_time_filter(ctx: TestContext) -> TestResult<()
 
 #[sinex_serial_test]
 async fn test_get_top_commands_with_limit(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let (_clock, dataset) = seed_analytics_dataset(&scope).await?;
     let service = Arc::new(AnalyticsService::new(ctx.pool.clone()));
@@ -407,7 +407,7 @@ async fn test_get_top_commands_with_limit(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_serial_test]
 async fn test_get_top_commands_with_time_filter(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let (clock, _dataset) = seed_analytics_dataset(&scope).await?;
     let service = Arc::new(AnalyticsService::new(ctx.pool.clone()));
@@ -460,7 +460,7 @@ async fn test_analytics_with_empty_database(ctx: TestContext) -> TestResult<()> 
 
 #[sinex_test]
 async fn test_analytics_with_single_event(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let clock = SeedClock::fixed();
 
@@ -490,7 +490,7 @@ async fn test_analytics_with_single_event(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_serial_test]
 async fn test_analytics_time_range_edge_cases(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let clock = SeedClock::fixed();
 
@@ -525,7 +525,7 @@ async fn test_analytics_time_range_edge_cases(ctx: TestContext) -> TestResult<()
 
 #[sinex_serial_test]
 async fn test_get_top_commands_only_command_events(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let clock = SeedClock::fixed();
 
@@ -560,7 +560,7 @@ async fn test_get_top_commands_only_command_events(ctx: TestContext) -> TestResu
 
 #[sinex_serial_test]
 async fn test_analytics_aggregation_accuracy(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let clock = SeedClock::fixed();
     let service: Arc<AnalyticsService> = Arc::new(AnalyticsService::new(ctx.pool.clone()));
@@ -626,7 +626,7 @@ async fn test_analytics_aggregation_accuracy(ctx: TestContext) -> TestResult<()>
 
 #[sinex_serial_test]
 async fn test_activity_heatmap(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     seed_analytics_dataset(&scope).await?;
 
@@ -655,7 +655,7 @@ async fn test_activity_heatmap(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_test]
 async fn test_pipeline_services_smoke(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let (_clock, query_dataset) = seed_query_dataset(&scope).await?;
 
@@ -688,7 +688,7 @@ async fn test_pipeline_services_smoke(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_serial_test]
 async fn test_analytics_large_dataset_performance(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let clock = SeedClock::fixed();
 

@@ -26,7 +26,7 @@ fn is_no_messages_error(msg: &str) -> bool {
 /// Test that NAKed messages are redelivered to the consumer.
 #[sinex_test]
 async fn test_nak_triggers_redelivery(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     let js = jetstream::new(nats_client.clone());
 
@@ -127,7 +127,7 @@ async fn test_nak_triggers_redelivery(ctx: TestContext) -> TestResult<()> {
 /// Test that messages are redelivered after consumer disconnect.
 #[sinex_test]
 async fn test_redelivery_after_consumer_disconnect(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     let js = jetstream::new(nats_client.clone());
 
@@ -255,7 +255,7 @@ async fn test_redelivery_after_consumer_disconnect(ctx: TestContext) -> TestResu
 /// Test redelivery count is tracked in message metadata.
 #[sinex_test]
 async fn test_redelivery_count_tracking(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     let js = jetstream::new(nats_client.clone());
 
@@ -369,7 +369,7 @@ async fn test_redelivery_count_tracking(ctx: TestContext) -> TestResult<()> {
 /// Test that messages are routed to DLQ after max retries exhausted.
 #[sinex_test]
 async fn test_dlq_routing_after_max_retries(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     let js = jetstream::new(nats_client.clone());
 
@@ -508,7 +508,7 @@ async fn test_dlq_routing_after_max_retries(ctx: TestContext) -> TestResult<()> 
 /// Test parallel consumer redelivery under load.
 #[sinex_test]
 async fn test_parallel_consumer_redelivery(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     let js = jetstream::new(nats_client.clone());
 

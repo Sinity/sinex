@@ -63,7 +63,7 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult<
     let mut event_ids = Vec::new();
     for i in 0..10 {
         let event = ctx
-            .publish_json_event(
+            .publish_event(
                 "test.checkpoint",
                 "consistency_test",
                 json!({"sequence": i}),
@@ -147,7 +147,7 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult<()> {
     let mut batch1_events = Vec::new();
     for i in 0..5 {
         let event = ctx
-            .publish_json_event(
+            .publish_event(
                 "test.gap_detection",
                 "batch1",
                 json!({"batch": 1, "sequence": i}),
@@ -177,7 +177,7 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult<()> {
     let mut batch2_events = Vec::new();
     for i in 0..8 {
         let event = ctx
-            .publish_json_event(
+            .publish_event(
                 "test.gap_detection",
                 "batch2",
                 json!({"batch": 2, "sequence": i}),
@@ -202,7 +202,7 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult<()> {
     while observed < expected_total {
         let sequence = 30_000 + observed;
         let event = ctx
-            .publish_json_event(
+            .publish_event(
                 "test.gap_detection",
                 "batch2",
                 json!({"batch": 2, "sequence": sequence}),
@@ -250,7 +250,7 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult<()> {
             expected_gap
         );
         let event = ctx
-            .publish_json_event(
+            .publish_event(
                 "test.gap_detection",
                 "batch2",
                 json!({"batch": 2, "sequence": 20_000 + attempt as i32}),
@@ -378,7 +378,7 @@ async fn test_stale_checkpoint_detection(ctx: TestContext) -> TestResult<()> {
     .await?;
 
     let event = ctx
-        .publish_json_event(
+        .publish_event(
             "test.stale_checkpoint",
             "stale_test",
             json!({"data": "test"}),
@@ -453,7 +453,7 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
 
     // Insert events for cross-validation
     for i in 0..15 {
-        ctx.publish_json_event(
+        ctx.publish_event(
             "test.cross_validation",
             "shared_event",
             json!({"sequence": i}),
@@ -548,7 +548,7 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
             }
             // Backfill an extra event and retry if nothing was found; this guards against
             // rare timing where analysis runs before inserts are visible.
-            ctx.publish_json_event(
+            ctx.publish_event(
                 "test.cross_validation",
                 "shared_event",
                 json!({"sequence": 10_000 + attempts}),
@@ -805,7 +805,7 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult<()>
     let mut created_event_ids = Vec::with_capacity(20);
     for i in 0..20 {
         let event = ctx
-            .publish_json_event("test.data_loss", "sequence_event", json!({"sequence": i}))
+            .publish_event("test.data_loss", "sequence_event", json!({"sequence": i}))
             .await?;
         if let Some(id) = event.id {
             created_event_ids.push(*id.as_ulid());
@@ -852,7 +852,7 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult<()>
     // Now add more events after the checkpoint
     for i in 20..25 {
         let event = ctx
-            .publish_json_event(
+            .publish_event(
                 "test.data_loss",
                 "post_checkpoint_event",
                 json!({"sequence": i}),
@@ -874,7 +874,7 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult<()>
     .unwrap_or(0);
 
     if post_checkpoint_events == 0 {
-        ctx.publish_json_event(
+        ctx.publish_event(
             "test.data_loss",
             "post_checkpoint_event",
             json!({"sequence": 25, "forced": true}),

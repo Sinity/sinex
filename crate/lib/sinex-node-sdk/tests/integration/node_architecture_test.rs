@@ -182,7 +182,10 @@ async fn test_node_sdk_components(ctx: TestContext) -> TestResult<()> {
 
     // Update checkpoint
     checkpoint.processed_count = 42;
-    checkpoint.set_last_processed_id(Some("test-message-id".to_string()));
+    checkpoint.checkpoint = sinex_node_sdk::Checkpoint::Stream {
+        message_id: "test-message-id".to_string(),
+        event_id: None,
+    };
     checkpoint.data = Some(serde_json::json!({"test": "data"}));
 
     // Save checkpoint

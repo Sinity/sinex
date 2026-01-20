@@ -27,8 +27,8 @@ use sinex_test_utils::timing_utils::WaitHelpers;
 
 #[sinex_test]
 async fn test_basic_event_insertion_and_retrieval(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
-    let _pipeline = ctx.pipeline().await?;
+    let ctx = ctx.with_nats().shared().await?;
+    let _pipeline = ctx.pipeline_scope().await?;
 
     // Test the fundamental event lifecycle: create -> insert -> retrieve
     let mut event = Event::<JsonValue>::test_event(
@@ -75,8 +75,8 @@ async fn test_basic_event_insertion_and_retrieval(ctx: TestContext) -> TestResul
 #[sinex_serial_test]
 async fn test_batch_event_insertion(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
-    let ctx = ctx.with_shared_nats().await?;
-    let _pipeline = ctx.pipeline().await?;
+    let ctx = ctx.with_nats().shared().await?;
+    let _pipeline = ctx.pipeline_scope().await?;
 
     let source = format!("batch-test-{}", Ulid::new());
     // Test batch insertion performance and correctness
@@ -123,8 +123,8 @@ async fn test_batch_event_insertion(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_test]
 async fn test_different_event_sources(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
-    let _pipeline = ctx.pipeline().await?;
+    let ctx = ctx.with_nats().shared().await?;
+    let _pipeline = ctx.pipeline_scope().await?;
     let test_cases = vec![
         (
             "filesystem",
@@ -175,7 +175,7 @@ async fn test_different_event_sources(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_test]
 async fn test_ulid_ordering_and_consistency(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     // Test ULID time-ordering properties
     let mut event_ids = Vec::new();
 
@@ -218,7 +218,7 @@ async fn test_ulid_ordering_and_consistency(ctx: TestContext) -> TestResult<()> 
 #[sinex_serial_test]
 async fn test_generic_id_type_safety(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
 
     // Test that generic IDs provide type safety
     let event_id = Id::<Event<JsonValue>>::new();
@@ -267,7 +267,7 @@ async fn test_generic_id_type_safety(ctx: TestContext) -> TestResult<()> {
 #[sinex_serial_test]
 async fn test_repository_pattern_functionality(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     // Test the repository pattern with various query operations
 
     // Insert test data
@@ -325,7 +325,7 @@ async fn test_repository_pattern_functionality(ctx: TestContext) -> TestResult<(
 #[sinex_serial_test]
 async fn test_repository_pagination_and_limits(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     // Test pagination functionality
 
     // Insert 20 test events
@@ -376,11 +376,11 @@ async fn test_repository_pagination_and_limits(ctx: TestContext) -> TestResult<(
 async fn test_concurrent_event_insertion(ctx: TestContext) -> TestResult<()> {
     // Test concurrent insertions don't interfere with each other
     ctx.ensure_clean().await?;
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
 
     // Share a single test context across concurrent tasks
     let ctx = Arc::new(ctx);
-    let _pipeline = ctx.pipeline().await?;
+    let _pipeline = ctx.pipeline_scope().await?;
     let mut handles = Vec::new();
 
     for i in 0..10 {
@@ -443,7 +443,7 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 async fn test_database_transaction_isolation(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
 
     // Test that test contexts are properly isolated
     let test_id = uuid::Uuid::new_v4().to_string();
@@ -464,9 +464,9 @@ async fn test_database_transaction_isolation(ctx: TestContext) -> TestResult<()>
 
     // Create another context (should be isolated). If it happens to reuse the same
     // database, allocate a fresh one to avoid cross-contamination.
-    let mut other_ctx = TestContext::new().await?.with_shared_nats().await?;
+    let mut other_ctx = TestContext::new().await?.with_nats().shared().await?;
     if other_ctx.database_url() == ctx.database_url() {
-        other_ctx = TestContext::new().await?.with_shared_nats().await?;
+        other_ctx = TestContext::new().await?.with_nats().shared().await?;
     }
 
     // Other context should not see our event
@@ -503,7 +503,7 @@ async fn test_database_transaction_isolation(ctx: TestContext) -> TestResult<()>
 async fn test_json_schema_validation_integration(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
 
-    ctx.publish_json_event(
+    ctx.publish_event(
         "schema-test",
         "validated.event",
         json!({
@@ -539,7 +539,7 @@ async fn test_large_payload_handling(ctx: TestContext) -> TestResult<()> {
 
     let large_string = "a".repeat(1024 * 1024); // 1MB
 
-    ctx.publish_json_event(
+    ctx.publish_event(
         "load-test",
         "large.payload",
         json!({
@@ -570,7 +570,7 @@ async fn test_large_payload_handling(ctx: TestContext) -> TestResult<()> {
 #[sinex_serial_test]
 async fn test_high_throughput_insertion(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
 
     let source = format!("throughput-{}", Ulid::new());
     let mut events = Vec::new();
@@ -628,7 +628,7 @@ async fn test_error_propagation_and_recovery(ctx: TestContext) -> TestResult<()>
 
     // Test invalid source (empty string)
     let invalid_result = ctx
-        .publish_json_event(
+        .publish_event(
             "", // Empty source should fail
             "error.test",
             json!({}),
@@ -639,7 +639,7 @@ async fn test_error_propagation_and_recovery(ctx: TestContext) -> TestResult<()>
 
     // Test that pool is still usable after error
     let valid_event = ctx
-        .publish_json_event(
+        .publish_event(
             "error-recovery-test",
             "recovery.test",
             json!({"recovery": true}),
@@ -667,7 +667,7 @@ async fn test_unicode_and_special_characters(ctx: TestContext) -> TestResult<()>
 
     for s in special_strings {
         let inserted = ctx
-            .publish_json_event("unicode-test", "special.chars", json!({ "content": s }))
+            .publish_event("unicode-test", "special.chars", json!({ "content": s }))
             .await?;
 
         let retrieved = ctx
@@ -725,11 +725,11 @@ async fn test_assertion_helpers(ctx: TestContext) -> TestResult<()> {
 
     // Create test data
     let events = vec![
-        ctx.publish_json_event("assertion-test", "test.a", json!({}))
+        ctx.publish_event("assertion-test", "test.a", json!({}))
             .await?,
-        ctx.publish_json_event("assertion-test", "test.b", json!({}))
+        ctx.publish_event("assertion-test", "test.b", json!({}))
             .await?,
-        ctx.publish_json_event("assertion-test", "test.c", json!({}))
+        ctx.publish_event("assertion-test", "test.c", json!({}))
             .await?,
     ];
 
@@ -766,7 +766,7 @@ async fn test_rstest_integration_10(ctx: TestContext) -> TestResult<()> {
 
     // Create specified number of events
     for i in 0..event_count {
-        ctx.publish_json_event(
+        ctx.publish_event(
             "rstest-integration",
             "parameterized.test",
             json!({
@@ -793,7 +793,7 @@ async fn test_rstest_integration_10(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_test]
 async fn test_insta_snapshots(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     // Test snapshot testing with insta
     let mut e1 = Event::<JsonValue>::test_event(
         "snapshot-test",
@@ -870,7 +870,7 @@ async fn test_insta_snapshots(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_test]
 async fn test_complete_event_processing_workflow(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     // Test a complete end-to-end workflow
 
     // 1. Create initial event

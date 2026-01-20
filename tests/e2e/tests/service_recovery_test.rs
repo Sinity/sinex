@@ -87,11 +87,11 @@ async fn test_pool_recovery_after_connection_invalidation(ctx: TestContext) -> R
     let ctx = ctx.with_nats().await?;
     // Create initial event to verify baseline functionality
     let baseline_event = ctx
-        .publish_json_event("pool-recovery", "baseline", json!({"phase": "before"}))
+        .publish_event("pool-recovery", "baseline", json!({"phase": "before"}))
         .await?;
     assert!(baseline_event.id.is_some());
 
-    let baseline_count = ctx.current_event_count().await?;
+    let baseline_count = ctx.pool.events().count_all().await?;
 
     // Force the pool to close all connections by executing a query that
     // terminates our own backend connections (simulates database restart)
@@ -125,7 +125,7 @@ async fn test_pool_recovery_after_connection_invalidation(ctx: TestContext) -> R
             let ctx = &ctx;
             async move {
                 match ctx
-                    .publish_json_event(
+                    .publish_event(
                         "pool-recovery",
                         "after",
                         json!({"phase": "after", "attempt": attempt}),
@@ -148,7 +148,7 @@ async fn test_pool_recovery_after_connection_invalidation(ctx: TestContext) -> R
     .await?;
 
     // Verify events are persisted
-    let final_count = ctx.current_event_count().await?;
+    let final_count = ctx.pool.events().count_all().await?;
     assert!(
         final_count > baseline_count,
         "Should have more events after recovery"
@@ -259,7 +259,7 @@ async fn test_pool_concurrent_stress_recovery(ctx: TestContext) -> Result<()> {
 async fn test_ingestd_restart_event_continuity(ctx: TestContext) -> Result<()> {
     ctx.ensure_clean().await?;
 
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     let _js = jetstream::new(nats_client.clone());
     let mut schema_subscription = nats_client
@@ -398,7 +398,7 @@ async fn test_multi_source_concurrent_ingestion(ctx: TestContext) -> Result<()> 
         assert_eq!(after, 0, "Database should be empty after forced cleanup");
     }
 
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
 
     let ingest_config = TestIngestdConfig {
@@ -634,7 +634,7 @@ async fn test_concurrent_leadership_acquisition(ctx: TestContext) -> Result<()> 
 /// acknowledged position after a disconnect/reconnect cycle.
 #[sinex_test]
 async fn test_jetstream_consumer_durable_recovery(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     let js = jetstream::new(nats_client.clone());
 
@@ -799,7 +799,7 @@ async fn test_jetstream_consumer_durable_recovery(ctx: TestContext) -> Result<()
 /// Verifies that the publisher handles temporary connection issues gracefully.
 #[sinex_test]
 async fn test_publisher_reconnection_resilience(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     ensure_raw_event_streams(&nats_client, ctx.env()).await?;
     let publisher = Arc::new(TestNodePublisher::new(

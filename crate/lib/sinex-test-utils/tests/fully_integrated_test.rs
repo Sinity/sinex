@@ -27,7 +27,7 @@ async fn test_automatic_rstest_integration(
     // 4. Provides timeout and progress tracking
 
     let event = ctx
-        .publish_json_event(source, event_type, payload.clone())
+        .publish_event(source, event_type, payload.clone())
         .await?;
 
     assert_eq!(event.source.as_str(), source);
@@ -47,7 +47,7 @@ async fn test_automatic_tracing(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Starting test with automatic tracing");
 
     let event = ctx
-        .publish_json_event("traced-test", "test.event", json!({}))
+        .publish_event("traced-test", "test.event", json!({}))
         .await?;
 
     tracing::debug!("Created event: {:?}", event.id);
@@ -104,8 +104,9 @@ async fn test_snapshots_with_rstest(
     #[case] data: Value,
 ) -> TestResult<()> {
     let ctx = ctx.with_nats().await?;
+    let event_type = format!("file.{operation}");
     let _event = ctx
-        .publish_json_event("filesystem", &format!("file.{operation}"), data)
+        .publish_event("filesystem", event_type.as_str(), data)
         .await?;
 
     // Snapshot paths are automatically configured to include:
@@ -130,7 +131,7 @@ async fn test_all_features_combined(
 ) -> TestResult<()> {
     let ctx = ctx.with_nats().await?;
     ctx.force_cleanup().await?;
-    let baseline = ctx.current_event_count().await?;
+    let baseline = ctx.pool.events().count_all().await?;
     let source_ref = sinex_core::EventSource::from("bulk-test");
     let baseline_source = ctx.pool.events().count_by_source(&source_ref).await?;
 
@@ -144,7 +145,7 @@ async fn test_all_features_combined(
     let mut event_ids = Vec::new();
     for i in 0..count {
         let event = ctx
-            .publish_json_event(
+            .publish_event(
                 "bulk-test",
                 "item.created",
                 json!({
@@ -174,7 +175,7 @@ async fn test_all_features_combined(
         .await?;
 
     assert_eq!(events.len(), count);
-    let final_total = ctx.current_event_count().await?;
+    let final_total = ctx.pool.events().count_all().await?;
     let source_total = ctx.pool.events().count_by_source(&source_ref).await?;
     assert_eq!(
         final_total,
@@ -211,7 +212,7 @@ async fn test_property_testing_integration(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().await?;
     // Test context is available for actual database operations
     let _event = ctx
-        .publish_json_event(
+        .publish_event(
             "proptest",
             "validation.test",
             json!({"test": "property_testing"}),
@@ -242,11 +243,12 @@ async fn test_with_fixtures(
     sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
     sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
     // Fixtures are injected alongside rstest parameters
+    let event_type = format!("file.{operation}");
     for source in &test_sources {
         for path in &test_paths {
-            ctx.publish_json_event(
-                source,
-                &format!("file.{operation}"),
+            ctx.publish_event(
+                *source,
+                event_type.as_str(),
                 json!({"path": path.as_str()}),
             )
             .await?;
@@ -265,12 +267,12 @@ async fn test_with_fixtures(
         );
         let deficit = expected - count;
         for extra in 0..deficit {
-            ctx.publish_json_event(
+            ctx.publish_event(
                 test_sources
                     .get(extra as usize % test_sources.len())
                     .copied()
                     .unwrap_or("fixture"),
-                &format!("file.{operation}"),
+                event_type.as_str(),
                 json!({"path": format!("/fixture/topup/{extra}")}),
             )
             .await?;

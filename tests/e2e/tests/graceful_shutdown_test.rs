@@ -207,7 +207,7 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
 /// Test that multiple services can be shutdown concurrently.
 #[sinex_test]
 async fn test_concurrent_service_shutdown(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     let js = jetstream::new(nats_client.clone());
 
@@ -426,7 +426,7 @@ async fn test_shutdown_data_consistency(ctx: TestContext) -> TestResult<()> {
 /// Test shutdown timeout handling.
 #[sinex_test]
 async fn test_shutdown_timeout_handling(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     let js = jetstream::new(nats_client.clone());
 

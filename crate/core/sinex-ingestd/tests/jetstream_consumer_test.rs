@@ -69,7 +69,7 @@ async fn start_isolated_consumer(ctx: &TestContext, suffix: &str) -> TestResult<
 #[sinex_test]
 async fn consume_event_from_jetstream() -> color_eyre::Result<()> {
     let ctx = TestContext::new().await?;
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
 
     let nats = ctx.nats_handle()?;
     let nats_client = ctx.nats_client();
@@ -135,7 +135,7 @@ async fn consume_event_from_jetstream() -> color_eyre::Result<()> {
 #[sinex_test]
 async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
     let ctx = TestContext::new().await?;
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let nats = ctx.nats_handle()?;
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
@@ -206,7 +206,7 @@ async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
 
 #[sinex_test]
 async fn consumer_persists_offset_kind(ctx: TestContext) -> color_eyre::Result<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
 
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
@@ -293,7 +293,7 @@ async fn consumer_persists_offset_kind(ctx: TestContext) -> color_eyre::Result<(
 
 #[sinex_test]
 async fn invalid_timestamp_routes_to_dlq_and_allows_progress() -> color_eyre::Result<()> {
-    let ctx = TestContext::new().await?.with_shared_nats().await?;
+    let ctx = TestContext::new().await?.with_nats().shared().await?;
 
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
@@ -383,7 +383,7 @@ async fn invalid_timestamp_routes_to_dlq_and_allows_progress() -> color_eyre::Re
 
 #[sinex_test]
 async fn duplicate_events_are_idempotent(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
 
     let setup = start_isolated_consumer(&ctx, "idempotency").await?;
     let nats_client = ctx.nats_client();
@@ -435,7 +435,7 @@ async fn duplicate_events_are_idempotent(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_test]
 async fn dlq_captures_multiple_validation_failures(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
 
     let setup = start_isolated_consumer(&ctx, "validation").await?;
     let dlq_stream = setup.topology.dlq_stream.clone();

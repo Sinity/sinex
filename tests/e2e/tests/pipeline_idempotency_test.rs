@@ -28,7 +28,7 @@ async fn wait_for_single_row(ctx: &TestContext, event_ulid: Ulid) -> TestResult<
 
 #[sinex_test]
 async fn pipeline_rejects_duplicate_event_ids(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let event_ulid = Ulid::new();
     let confirmation_subject = scope.subject(&format!("events.confirmations.{event_ulid}"));
@@ -79,7 +79,7 @@ async fn pipeline_rejects_duplicate_event_ids(ctx: TestContext) -> TestResult<()
 
 #[sinex_test]
 async fn pipeline_rejects_concurrent_duplicates(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let publisher = scope.publisher("integration-dup-concurrent");
 

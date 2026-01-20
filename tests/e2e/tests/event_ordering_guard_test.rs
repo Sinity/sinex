@@ -4,7 +4,7 @@ use sinex_test_utils::prelude::*;
 
 #[sinex_test]
 async fn pipeline_preserves_ingest_order_over_ts_orig(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
 
     let source = "ordering-guard";

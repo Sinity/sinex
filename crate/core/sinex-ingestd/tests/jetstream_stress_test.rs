@@ -32,8 +32,8 @@ async fn dlq_message_count(
 #[sinex_test]
 async fn jetstream_pipeline_handles_burst_without_timeouts() -> sinex_test_utils::TestResult<()> {
     let ctx = TestContext::new().await?;
-    let ctx = ctx.with_shared_nats().await?;
-    let pipeline = ctx.pipeline().await?;
+    let ctx = ctx.with_nats().shared().await?;
+    let pipeline = ctx.pipeline_scope().await?;
 
     let source = "stress.pipeline";
     let event_type = "burst.event";
@@ -66,7 +66,7 @@ async fn jetstream_pipeline_handles_burst_without_timeouts() -> sinex_test_utils
 #[sinex_test]
 async fn jetstream_pipeline_restart_keeps_dlq_flowing() -> sinex_test_utils::TestResult<()> {
     let ctx = TestContext::new().await?;
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let namespace = ctx.pipeline_namespace().prefix().to_string();
     let base_stream = ctx.pipeline_namespace().stream("SINEX_RAW_EVENTS");
     let dlq_stream = format!("{base_stream}_DLQ");
@@ -79,7 +79,7 @@ async fn jetstream_pipeline_restart_keeps_dlq_flowing() -> sinex_test_utils::Tes
         Some(namespace.clone()),
     );
 
-    let pipeline = ctx.pipeline().await?;
+    let pipeline = ctx.pipeline_scope().await?;
     publisher
         .publish_raw_event_bytes("restart.bad", b"{not-json", None)
         .await?;
@@ -100,7 +100,7 @@ async fn jetstream_pipeline_restart_keeps_dlq_flowing() -> sinex_test_utils::Tes
     .await?;
     pipeline.shutdown().await?;
 
-    let pipeline = ctx.pipeline().await?;
+    let pipeline = ctx.pipeline_scope().await?;
     let start_count = ctx
         .pool
         .events()
@@ -119,8 +119,8 @@ async fn jetstream_pipeline_restart_keeps_dlq_flowing() -> sinex_test_utils::Tes
 #[sinex_test]
 async fn jetstream_pipeline_dedupes_duplicate_event_ids() -> sinex_test_utils::TestResult<()> {
     let ctx = TestContext::new().await?;
-    let ctx = ctx.with_shared_nats().await?;
-    let pipeline = ctx.pipeline().await?;
+    let ctx = ctx.with_nats().shared().await?;
+    let pipeline = ctx.pipeline_scope().await?;
 
     let namespace = ctx.pipeline_namespace().prefix().to_string();
     let source = "stress.dedupe";
@@ -178,7 +178,7 @@ async fn jetstream_pipeline_dedupes_duplicate_event_ids() -> sinex_test_utils::T
 #[sinex_test]
 async fn jetstream_pipeline_routes_invalid_burst_to_dlq() -> sinex_test_utils::TestResult<()> {
     let ctx = TestContext::new().await?;
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let namespace = ctx.pipeline_namespace().prefix().to_string();
     let base_stream = ctx.pipeline_namespace().stream("SINEX_RAW_EVENTS");
     let dlq_stream = format!("{base_stream}_DLQ");
@@ -191,7 +191,7 @@ async fn jetstream_pipeline_routes_invalid_burst_to_dlq() -> sinex_test_utils::T
         Some(namespace),
     );
 
-    let pipeline = ctx.pipeline().await?;
+    let pipeline = ctx.pipeline_scope().await?;
     let start_count = dlq_message_count(&js, &dlq_stream).await?.unwrap_or(0);
 
     let total = 25u64;
@@ -225,8 +225,8 @@ async fn jetstream_pipeline_routes_invalid_burst_to_dlq() -> sinex_test_utils::T
 async fn jetstream_pipeline_handles_mixed_valid_and_invalid_bursts(
 ) -> sinex_test_utils::TestResult<()> {
     let ctx = TestContext::new().await?;
-    let ctx = ctx.with_shared_nats().await?;
-    let pipeline = ctx.pipeline().await?;
+    let ctx = ctx.with_nats().shared().await?;
+    let pipeline = ctx.pipeline_scope().await?;
 
     let namespace = ctx.pipeline_namespace().prefix().to_string();
     let base_stream = ctx.pipeline_namespace().stream("SINEX_RAW_EVENTS");

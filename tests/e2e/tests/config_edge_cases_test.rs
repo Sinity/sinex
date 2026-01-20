@@ -270,7 +270,7 @@ mod async_validation {
     /// Full async validation should create the work_dir and exercise DB/NATS connectivity.
     #[sinex_test]
     async fn test_config_validate_creates_work_dir(ctx: TestContext) -> Result<()> {
-        let ctx = ctx.with_shared_nats().await?;
+        let ctx = ctx.with_nats().shared().await?;
 
         let temp_dir = TempDir::new()?;
         let work_dir = temp_dir.path().join("new_work_dir");

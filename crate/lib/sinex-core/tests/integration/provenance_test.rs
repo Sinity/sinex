@@ -16,7 +16,7 @@ use tracing::info;
 
 #[sinex_test]
 async fn test_basic_event_creation_and_persistence(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let pool = ctx.pool().clone();
 
     info!("Testing basic event creation and persistence");
@@ -74,7 +74,7 @@ async fn test_basic_event_creation_and_persistence(ctx: TestContext) -> TestResu
 #[sinex_test]
 async fn test_multiple_event_sources(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let suffix_a = format!("source-a-{}", Ulid::new());
     let suffix_b = format!("source-b-{}", Ulid::new());
     let suffix_c = format!("source-c-{}", Ulid::new());
@@ -151,7 +151,7 @@ async fn test_multiple_event_sources(ctx: TestContext) -> TestResult<()> {
 #[sinex_serial_test]
 async fn test_event_querying_by_type(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let pool = ctx.pool().clone();
 
     info!("Testing event querying by type");
@@ -212,7 +212,7 @@ async fn test_event_querying_by_type(ctx: TestContext) -> TestResult<()> {
 #[sinex_serial_test]
 async fn test_batch_event_creation(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let pool = ctx.pool().clone();
 
     info!("Testing batch event creation");
@@ -271,7 +271,7 @@ async fn test_batch_event_creation(ctx: TestContext) -> TestResult<()> {
 /// Test event payload structure preservation
 #[sinex_test]
 async fn test_event_payload_preservation(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let pool = ctx.pool().clone();
 
     info!("Testing event payload structure preservation");
@@ -378,11 +378,11 @@ async fn test_event_payload_preservation(ctx: TestContext) -> TestResult<()> {
 #[sinex_serial_test]
 async fn provenance_xor_constraint_enforced(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let pool = ctx.pool();
     let material = ctx.create_source_material(Some("xor-constraint")).await?;
     let parent = ctx
-        .publish_json_event("prov-parent", "prov.event", json!({ "p": true }))
+        .publish_event("prov-parent", "prov.event", json!({ "p": true }))
         .await?
         .id
         .expect("parent event id");

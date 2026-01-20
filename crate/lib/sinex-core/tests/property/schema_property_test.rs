@@ -401,7 +401,7 @@ async fn test_json_validation_database_integration(ctx: TestContext) -> TestResu
 
     // Should be able to create events and validate them
     let event = ctx
-        .publish_json_event("test_source", "test.event", json!({"key": "value"}))
+        .publish_event("test_source", "test.event", json!({"key": "value"}))
         .await?;
 
     // Basic validation should not fail

@@ -25,7 +25,7 @@ use uuid::Uuid;
 
 #[sinex_test]
 async fn test_ulid_sequence_ordering_validation(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     // Generate a sequence of events with known ordering
     let mut event_ulids = Vec::new();
     let test_source = format!("ulid-ordering-{}", Ulid::new());
@@ -37,10 +37,10 @@ async fn test_ulid_sequence_ordering_validation(ctx: TestContext) -> Result<()> 
         }
 
         let event = ctx
-            .publish_json_event(
-                &test_source,
+            .publish_event(
+                test_source.as_str(),
                 "sequence.test",
-                json!({"sequence": i, "group": &test_source}),
+                json!({"sequence": i, "group": test_source.as_str()}),
             )
             .await?;
 
@@ -71,7 +71,7 @@ async fn test_ulid_sequence_ordering_validation(ctx: TestContext) -> Result<()> 
 
 #[sinex_test]
 async fn test_timestamp_progression_verification(ctx: TestContext) -> Result<()> {
-    let _ctx = ctx.with_shared_nats().await?;
+    let _ctx = ctx.with_nats().shared().await?;
     // Create events with specific timestamp patterns
     let base_time = chrono::Utc::now() - chrono::TimeDelta::try_hours(1).unwrap();
     let mut test_ulids = Vec::new();
@@ -113,7 +113,7 @@ async fn test_timestamp_progression_verification(ctx: TestContext) -> Result<()>
 
 #[sinex_test]
 async fn test_concurrent_ulid_generation_ordering(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let num_tasks = 6usize;
     let events_per_task = 10usize;
     let mut handles = Vec::new();
@@ -171,7 +171,7 @@ async fn test_concurrent_ulid_generation_ordering(ctx: TestContext) -> Result<()
     );
 
     // Record a summary event so this test still exercises the database.
-    ctx.publish_json_event(
+    ctx.publish_event(
         "ulid-uniqueness",
         "uniqueness.summary",
         json!({ "total_ulids": all_ulids.len() }),
@@ -187,14 +187,14 @@ async fn test_concurrent_ulid_generation_ordering(ctx: TestContext) -> Result<()
 
 #[sinex_test]
 async fn test_database_ordering_consistency(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     // Insert events in batches with different timing patterns
     let mut all_event_ulids = Vec::new();
 
     // Batch 1: Rapid insertion
     for i in 0..15 {
         let event = ctx
-            .publish_json_event(
+            .publish_event(
                 "db-ordering",
                 "rapid.batch",
                 json!({"batch": 1, "sequence": i}),
@@ -209,7 +209,7 @@ async fn test_database_ordering_consistency(ctx: TestContext) -> Result<()> {
     // Batch 2: Delayed insertion
     for i in 0..10 {
         let event = ctx
-            .publish_json_event(
+            .publish_event(
                 "db-ordering",
                 "delayed.batch",
                 json!({"batch": 2, "sequence": i}),
@@ -306,12 +306,12 @@ async fn test_database_ordering_consistency(ctx: TestContext) -> Result<()> {
 
 #[sinex_test]
 async fn test_clock_skew_detection(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     // Generate test ULIDs with known ordering violations
     let violation_test_ulids = generate_ordering_violation_test_ulids();
 
     // Insert a baseline event so the harness exercises normal ingestion.
-    ctx.publish_json_event(
+    ctx.publish_event(
         "clock-skew",
         "clock.test",
         json!({"description": "baseline"}),
@@ -352,7 +352,7 @@ async fn test_clock_skew_detection(ctx: TestContext) -> Result<()> {
 
 #[sinex_serial_test]
 async fn test_ulid_ordering_performance_analysis(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     ctx.ensure_clean().await?;
     let source = format!("ulid-performance-{}", Ulid::new());
     // Generate a manageable number of events to test ordering performance without bumping into timeouts
@@ -376,8 +376,8 @@ async fn test_ulid_ordering_performance_analysis(ctx: TestContext) -> Result<()>
             let event = loop {
                 attempts += 1;
                 match ctx
-                    .publish_json_event(
-                        &source,
+                    .publish_event(
+                        source.as_str(),
                         "performance.test",
                         json!({"batch": batch, "item": i}),
                     )
@@ -421,8 +421,8 @@ async fn test_ulid_ordering_performance_analysis(ctx: TestContext) -> Result<()>
         .len();
     while stored_count < expected_total {
         let event = ctx
-            .publish_json_event(
-                &source,
+            .publish_event(
+                source.as_str(),
                 "performance.test.backfill",
                 json!({"batch": "backfill", "item": stored_count}),
             )
@@ -516,7 +516,7 @@ async fn test_ulid_ordering_performance_analysis(ctx: TestContext) -> Result<()>
 
 #[sinex_test]
 async fn test_ulid_uniqueness_under_load(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let num_tasks = 32usize;
     let events_per_task = 100usize;
     let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(num_tasks));
@@ -554,7 +554,7 @@ async fn test_ulid_uniqueness_under_load(ctx: TestContext) -> Result<()> {
         assert!(seen.insert(*ulid), "ULIDs should remain unique under load");
     }
 
-    ctx.publish_json_event(
+    ctx.publish_event(
         "ulid-uniqueness",
         "uniqueness.summary",
         json!({ "generated": all_ulids.len() }),

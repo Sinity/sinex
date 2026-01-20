@@ -56,7 +56,7 @@ async fn spawn_consumer(
 
 #[sinex_test]
 async fn ingestion_handles_burst_under_latency_budget(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let (consumer_handle, namespace) = spawn_consumer(&ctx, "latency").await?;
     let nats_client = ctx.nats_client();
     let publisher = TestNodePublisher::with_namespace(
@@ -68,8 +68,9 @@ async fn ingestion_handles_burst_under_latency_budget(ctx: TestContext) -> TestR
     let total_events = 120;
     let start = Instant::now();
     for idx in 0..total_events {
+        let event_type = format!("latency.event.{idx}");
         publisher
-            .publish_event(&format!("latency.event.{idx}"), json!({"sequence": idx}))
+            .publish_event(event_type.as_str(), json!({"sequence": idx}))
             .await?;
     }
 
@@ -103,7 +104,7 @@ async fn ingestion_handles_burst_under_latency_budget(ctx: TestContext) -> TestR
 
 #[sinex_test]
 async fn replaying_events_after_restart_does_not_duplicate(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let (consumer_handle, namespace) = spawn_consumer(&ctx, "restart").await?;
     let nats_client = ctx.nats_client();
     let publisher = TestNodePublisher::with_namespace(

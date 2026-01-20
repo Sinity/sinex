@@ -409,7 +409,7 @@ async fn test_concurrent_consumer_creation() -> Result<()> {
 /// Test stream with message limit enforces retention.
 #[sinex_test]
 async fn test_stream_message_limit_enforcement(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let js = ctx.jetstream().await?;
 
     let stream_name = format!("TEST_LIMIT_{}", uuid::Uuid::new_v4().simple());
@@ -451,7 +451,7 @@ async fn test_stream_message_limit_enforcement(ctx: TestContext) -> Result<()> {
 /// Test stream with storage limit enforces retention.
 #[sinex_test]
 async fn test_stream_storage_limit_enforcement(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let js = ctx.jetstream().await?;
 
     let stream_name = format!("TEST_STORAGE_{}", uuid::Uuid::new_v4().simple());
@@ -518,7 +518,7 @@ async fn test_stream_storage_limit_enforcement(ctx: TestContext) -> Result<()> {
 /// Test that unacked messages are redelivered.
 #[sinex_test]
 async fn test_consumer_redelivery_on_timeout(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let js = ctx.jetstream().await?;
 
     let stream_name = format!("TEST_REDEL_{}", uuid::Uuid::new_v4().simple());
