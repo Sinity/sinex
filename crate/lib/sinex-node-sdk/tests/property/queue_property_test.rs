@@ -10,13 +10,19 @@ use async_nats::jetstream::{
     stream::{Config as StreamConfig, RetentionPolicy},
 };
 use futures::StreamExt;
+use std::sync::LazyLock;
 use proptest::prelude::*;
 use serde_json::{json, Value};
 use sinex_core::types::ulid::Ulid;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
-use sinex_test_utils::{prelude::*, EphemeralNats};
+use proptest::test_runner::TestCaseError;
+use sinex_test_utils::{TestResult, prelude::*, EphemeralNats};
+
+/// Helper to convert color_eyre::Report errors to TestCaseError for property tests
+fn report_to_test_error<E: std::fmt::Display>(e: E) -> TestCaseError {
+    TestCaseError::Fail(e.to_string().into())
+}
 use std::future::Future;
-use std::sync::LazyLock;
 use std::sync::Mutex;
 
 static TEST_RUNTIME: LazyLock<Mutex<tokio::runtime::Runtime>> = LazyLock::new(|| {
@@ -115,16 +121,41 @@ sinex_proptest! {
     }
 }
 
-// TODO: This test requires NATS but #[sinex_prop] doesn't auto-configure it.
-// Need infrastructure changes to support NATS in property tests.
-// #[sinex_prop]
-// async fn queue_event_insertion_preserves_order(
-//     ctx: &TestContext,
-//     #[strategy(1usize..5)] batch_count: usize,
-//     #[strategy(1usize..20)] batch_size: usize,
-// ) -> Result<(), SinexError> {
-//     ...
-// }
+#[sinex_prop]
+async fn queue_event_insertion_preserves_order(
+    ctx: &TestContext,
+    #[strategy(1usize..5)] batch_count: usize,
+    #[strategy(1usize..20)] batch_size: usize,
+) -> Result<(), TestCaseError> {
+    let baseline = ctx
+        .pool
+        .events()
+        .count_by_source(&EventSource::from("queue.test"))
+        .await
+        .map_err(report_to_test_error)?;
+
+    for batch in 0..batch_count {
+        for index in 0..batch_size {
+            ctx.publish_event(
+                "queue.test",
+                "batch.event",
+                json!({ "batch": batch, "index": index }),
+            )
+            .await
+            .map_err(report_to_test_error)?;
+        }
+    }
+
+    let total_expected = (batch_count * batch_size) as i64;
+    let total = ctx
+        .pool
+        .events()
+        .count_by_source(&EventSource::from("queue.test"))
+        .await
+        .map_err(report_to_test_error)?;
+    prop_assert_eq!(total - baseline, total_expected);
+    Ok(())
+}
 
 #[sinex_test]
 fn jetstream_delivery_preserves_sequence() -> TestResult<()> {

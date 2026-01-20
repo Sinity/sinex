@@ -39,8 +39,6 @@ async fn test_gateway_tcp_tls_handshake(ctx: TestContext) -> color_eyre::Result<
         "SINEX_GATEWAY_TLS_KEY",
         key_file.path().to_string_lossy().to_string(),
     );
-    // Ensure no client CA is set (no mTLS) - clear any residual value
-    std::env::remove_var("SINEX_GATEWAY_TLS_CLIENT_CA");
     std::env::set_var("SINEX_RPC_TOKEN", "test-token");
 
     // Ensure ServiceContainer can connect to NATS

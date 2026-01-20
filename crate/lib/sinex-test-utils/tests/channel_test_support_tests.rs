@@ -1,11 +1,11 @@
 use sinex_test_utils::{
-    BackpressureManager, BackpressureOutcome, BackpressureStrategy, ChannelHarness,
-    ChannelReceiverExt, ChannelSenderExt,
+    sinex_test, BackpressureManager, BackpressureOutcome, BackpressureStrategy, ChannelHarness,
+    ChannelReceiverExt, ChannelSenderExt, TestResult,
 };
 use std::time::Duration;
 
-#[tokio::test]
-async fn monitor_tracks_send_receive() {
+#[sinex_test]
+async fn monitor_tracks_send_receive() -> TestResult<()> {
     let mut harness = ChannelHarness::new(2);
     harness
         .sender
@@ -24,10 +24,11 @@ async fn monitor_tracks_send_receive() {
     assert_eq!(stats.sent, 1);
     assert_eq!(stats.received, 1);
     assert_eq!(stats.errors, 0);
+    Ok(())
 }
 
-#[tokio::test]
-async fn recv_timeout_is_recorded() {
+#[sinex_test]
+async fn recv_timeout_is_recorded() -> TestResult<()> {
     let mut harness = ChannelHarness::<u64>::new(1);
     let result = harness
         .receiver
@@ -36,11 +37,12 @@ async fn recv_timeout_is_recorded() {
     assert!(result.is_err());
     let stats = harness.monitor.stats();
     assert_eq!(stats.timeouts, 1);
+    Ok(())
 }
 
-#[tokio::test]
-async fn send_timeout_is_recorded() {
-    let harness = ChannelHarness::small_capacity();
+#[sinex_test]
+async fn send_timeout_is_recorded() -> TestResult<()> {
+    let mut harness = ChannelHarness::small_capacity();
     harness.sender.send_or_log("first", "fill").await.unwrap();
 
     let result = harness
@@ -51,10 +53,11 @@ async fn send_timeout_is_recorded() {
 
     let stats = harness.monitor.stats();
     assert_eq!(stats.timeouts, 1);
+    Ok(())
 }
 
-#[tokio::test]
-async fn backpressure_buffer_flushes() {
+#[sinex_test]
+async fn backpressure_buffer_flushes() -> TestResult<()> {
     let mut harness = ChannelHarness::small_capacity();
     let mut manager = BackpressureManager::buffering(2);
 
@@ -87,11 +90,12 @@ async fn backpressure_buffer_flushes() {
         .await
         .unwrap();
     assert_eq!(received, Some("two"));
+    Ok(())
 }
 
-#[tokio::test]
-async fn backpressure_drop_newest() {
-    let harness = ChannelHarness::small_capacity();
+#[sinex_test]
+async fn backpressure_drop_newest() -> TestResult<()> {
+    let mut harness = ChannelHarness::small_capacity();
     let mut manager = BackpressureManager::new(BackpressureStrategy::DropNewest);
 
     manager
@@ -107,10 +111,11 @@ async fn backpressure_drop_newest() {
 
     let stats = harness.monitor.stats();
     assert_eq!(stats.dropped, 1);
+    Ok(())
 }
 
-#[tokio::test]
-async fn batch_receive_drains_items() {
+#[sinex_test]
+async fn batch_receive_drains_items() -> TestResult<()> {
     let mut harness = ChannelHarness::new(4);
     for value in ["a", "b", "c"] {
         harness.sender.send_or_log(value, "batch").await.unwrap();
@@ -121,4 +126,5 @@ async fn batch_receive_drains_items() {
         .recv_batch(3, Duration::from_millis(50))
         .await;
     assert_eq!(batch.len(), 3);
+    Ok(())
 }

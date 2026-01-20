@@ -174,7 +174,7 @@ async fn test_state_machine_corruption_under_load(ctx: TestContext) -> TestResul
                 match sqlx::query!(
                     r#"
                     INSERT INTO core.processor_manifests
-                    (processor_name, node_type, version, status, agent_type, registered_at, updated_at)
+                    (processor_name, processor_type, version, status, agent_type, registered_at, updated_at)
                     VALUES ($1, 'automaton', '1.0.0', $2, 'test', $3, $4)
                     ON CONFLICT (processor_name, version, git_commit_sha) DO UPDATE SET
                     status = $2, updated_at = $4
@@ -222,7 +222,7 @@ async fn test_state_machine_corruption_under_load(ctx: TestContext) -> TestResul
     // Check final state consistency
     let final_agents = sqlx::query!(
         r#"SELECT processor_name, status FROM core.processor_manifests
-           WHERE processor_name LIKE 'state-test-%' AND node_type = 'automaton'"#
+           WHERE processor_name LIKE 'state-test-%' AND processor_type = 'automaton'"#
     )
     .fetch_all(ctx.pool())
     .await?;

@@ -146,8 +146,6 @@ async fn gateway_tls_accepts_handshake(ctx: TestContext) -> Result<()> {
     let _token = EnvVarGuard::set("SINEX_RPC_TOKEN", "test-token");
     let _bypass = EnvVarGuard::set("SINEX_ALLOW_REPLAY_CONTROL_BYPASS", "1");
     let _annex = EnvVarGuard::set("SINEX_ANNEX_PATH", &annex_path);
-    // Ensure no client CA is set (no mTLS) - clear any residual value
-    std::env::remove_var("SINEX_GATEWAY_TLS_CLIENT_CA");
     let _cert = EnvVarGuard::set(
         "SINEX_GATEWAY_TLS_CERT",
         bundle
@@ -166,28 +164,12 @@ async fn gateway_tls_accepts_handshake(ctx: TestContext) -> Result<()> {
     let services = ServiceContainer::new(Some(ctx.database_url().to_string())).await?;
     let port = reserve_port()?;
     let tcp_listen = format!("127.0.0.1:{port}");
-
-    // Use a channel to detect if the server fails to start
-    let (started_tx, mut started_rx) = tokio::sync::mpsc::channel::<Result<(), String>>(1);
-
     let server_handle = tokio::spawn({
         let services = services.clone();
         async move {
-            // Signal that we're about to start (before the bind)
-            let _ = started_tx.send(Ok(())).await;
-
-            match rpc_server::run(Some(tcp_listen.as_str()), services).await {
-                Ok(()) => {}
-                Err(e) => {
-                    eprintln!("TLS server error: {e:?}");
-                }
-            }
+            let _ = rpc_server::run(Some(tcp_listen.as_str()), services).await;
         }
     });
-
-    // Wait a moment for the server to start
-    let _ = started_rx.recv().await;
-    sleep(Duration::from_millis(100)).await;
 
     let ca = ReqwestCert::from_pem(bundle.ca_pem.as_bytes())?;
     let client = Client::builder().add_root_certificate(ca).build()?;

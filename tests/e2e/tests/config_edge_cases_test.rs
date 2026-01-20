@@ -323,8 +323,8 @@ async fn test_config_assembler_state_dir_creation() -> Result<()> {
 // =============================================================================
 
 /// Test env_var_usize with non-numeric value falls back to default.
-#[test]
-fn test_env_var_usize_non_numeric() {
+#[sinex_test]
+fn test_env_var_usize_non_numeric() -> TestResult<()> {
     // This tests the behavior indirectly through RpcServerLimits
     // The env_var_usize function in rpc_server.rs silently ignores parse errors
 
@@ -339,11 +339,12 @@ fn test_env_var_usize_non_numeric() {
     assert_eq!(value, 42, "Should fall back to default on parse error");
 
     env::remove_var("TEST_USIZE_VAR");
+    Ok(())
 }
 
 /// Test env_var_u64 with overflow value falls back to default.
-#[test]
-fn test_env_var_u64_overflow() {
+#[sinex_test]
+fn test_env_var_u64_overflow() -> TestResult<()> {
     // Value larger than u64::MAX
     env::set_var("TEST_U64_VAR", "99999999999999999999999999999999");
 
@@ -355,11 +356,12 @@ fn test_env_var_u64_overflow() {
     assert_eq!(value, 100, "Should fall back to default on overflow");
 
     env::remove_var("TEST_U64_VAR");
+    Ok(())
 }
 
 /// Test env_var with negative number for unsigned type.
-#[test]
-fn test_env_var_negative_for_unsigned() {
+#[sinex_test]
+fn test_env_var_negative_for_unsigned() -> TestResult<()> {
     env::set_var("TEST_NEGATIVE_VAR", "-5");
 
     let value: usize = std::env::var("TEST_NEGATIVE_VAR")
@@ -370,11 +372,12 @@ fn test_env_var_negative_for_unsigned() {
     assert_eq!(value, 10, "Should fall back to default on negative value");
 
     env::remove_var("TEST_NEGATIVE_VAR");
+    Ok(())
 }
 
 /// Test env_var with whitespace.
-#[test]
-fn test_env_var_with_whitespace() {
+#[sinex_test]
+fn test_env_var_with_whitespace() -> TestResult<()> {
     env::set_var("TEST_WHITESPACE_VAR", "  42  ");
 
     // Direct parse won't work with whitespace
@@ -392,6 +395,7 @@ fn test_env_var_with_whitespace() {
     assert_eq!(trimmed_value, Some(42), "Trimmed value should parse");
 
     env::remove_var("TEST_WHITESPACE_VAR");
+    Ok(())
 }
 
 // =============================================================================

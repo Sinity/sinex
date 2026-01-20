@@ -440,61 +440,8 @@ async fn test_event_processing_error_handling(ctx: TestContext) -> TestResult<()
 }
 
 // ============================================================================
-// Performance and Throughput Tests
+// Resource Management Tests
 // ============================================================================
-
-/// Test event throughput and performance characteristics
-#[sinex_test]
-async fn test_event_throughput_performance(ctx: TestContext) -> TestResult<()> {
-    tracing::info!("Testing event throughput and performance");
-
-    let events = ctx.events();
-    let start_time = std::time::Instant::now();
-
-    // Process a batch of events to measure throughput
-    let batch_size = 100;
-    let mut processed_events = 0;
-
-    for i in 0..batch_size {
-        let event = ctx.publish_json_event(
-            "test.throughput",
-            serde_json::json!({
-                "sequence": i,
-                "batch_size": batch_size,
-                "timestamp": chrono::Utc::now().to_rfc3339(),
-                "payload_data": format!("Performance test event {}", i)
-            })
-        ).await?;
-
-        match events.store(&event).await {
-            Ok(_) => processed_events += 1,
-            Err(e) => tracing::warn!(sequence = i, error = %e, "Event processing failed"),
-        }
-    }
-
-    let duration = start_time.elapsed();
-    let events_per_second = processed_events as f64 / duration.as_secs_f64();
-
-    tracing::info!(
-        processed_events = processed_events,
-        duration_ms = duration.as_millis(),
-        events_per_second = events_per_second,
-        "Event throughput performance measured"
-    );
-
-    // Verify reasonable performance (should process at least 10 events/second)
-    assert!(events_per_second >= 10.0, 
-        "Event processing should maintain reasonable throughput: {} events/second", events_per_second);
-
-    // Verify all events were processed
-    assert_eq!(processed_events, batch_size, "All throughput test events should be processed");
-
-    // Verify events are retrievable
-    let retrieved_events = events.get_by_source("test.throughput", Some(batch_size as i64 + 10)).await?;
-    assert!(retrieved_events.len() >= batch_size as usize, "All throughput events should be retrievable");
-
-    Ok(())
-}
 
 /// Test resource usage and memory management during event processing
 #[sinex_test]

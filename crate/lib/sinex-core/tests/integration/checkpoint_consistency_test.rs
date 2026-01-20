@@ -44,7 +44,7 @@ async fn ensure_processor_manifest(pool: &DbPool, processor_name: &str) -> TestR
 #[sinex_serial_test]
 async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().await?;
     let pool = ctx.pool().clone();
     let kv = ctx.checkpoint_kv().await?;
 
@@ -128,7 +128,7 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult<
 #[sinex_serial_test]
 async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().await?;
     let pool = ctx.pool().clone();
     let kv = ctx.checkpoint_kv().await?;
 
@@ -292,7 +292,7 @@ async fn test_checkpoint_failover_propagates_state(ctx: TestContext) -> TestResu
     let service_name = format!("failover_service_{}", Ulid::new());
     let consumer_group = format!("failover_group_{}", Ulid::new());
 
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().await?;
     let kv = ctx.checkpoint_kv().await?;
     let leader = CheckpointManager::new(
         kv.clone(),
@@ -362,7 +362,7 @@ async fn test_checkpoint_failover_propagates_state(ctx: TestContext) -> TestResu
 
 #[sinex_test]
 async fn test_stale_checkpoint_detection(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().await?;
     let pool = ctx.pool().clone();
     let kv = ctx.checkpoint_kv().await?;
 
@@ -432,7 +432,7 @@ async fn test_stale_checkpoint_detection(ctx: TestContext) -> TestResult<()> {
 #[sinex_serial_test]
 async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().await?;
     let pool = ctx.pool().clone();
     let kv = ctx.checkpoint_kv().await?;
 
@@ -623,7 +623,7 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
 #[sinex_serial_test]
 async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().await?;
     let pool = ctx.pool().clone();
     let kv = ctx.checkpoint_kv().await?;
 
@@ -786,7 +786,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult<()> 
 
 #[sinex_test]
 async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().await?;
     let pool = ctx.pool().clone();
     let kv = ctx.checkpoint_kv().await?;
 

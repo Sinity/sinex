@@ -1,6 +1,6 @@
 //! Subscription service tests
 //!
-//! Tests for agent subscription patterns and event routing functionality
+//! Tests for agent subscription patterns and event routing functionality.
 
 use serde_json::json;
 use sinex_test_utils::prelude::*;
@@ -37,24 +37,24 @@ async fn test_agent_event_subscription_queries(ctx: TestContext) -> Result<()> {
     ];
 
     for (name, subscriptions) in agents {
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO core.processor_manifests
              (processor_name, node_type, version, consumes_event_types)
              VALUES ($1, 'automaton', $2, $3)",
+            name,
+            "1.0.0",
+            subscriptions
         )
-        .bind(name)
-        .bind("1.0.0")
-        .bind(&subscriptions)
         .execute(&ctx.pool)
         .await
         .unwrap();
     }
 
     // Query agents subscribing to any events (using GIN index)
-    let subscribers: Vec<String> = sqlx::query_scalar(
+    let subscribers = sqlx::query_scalar!(
         "SELECT processor_name FROM core.processor_manifests
          WHERE node_type = 'automaton' AND consumes_event_types IS NOT NULL
-         ORDER BY processor_name",
+         ORDER BY processor_name"
     )
     .fetch_all(&ctx.pool)
     .await
@@ -62,19 +62,19 @@ async fn test_agent_event_subscription_queries(ctx: TestContext) -> Result<()> {
 
     pretty_assertions::assert_eq!(subscribers.len(), 3);
 
-    // Query agents subscribing to specific event feed
-    let raw_feed_subscribers: Vec<String> = sqlx::query_scalar(
+    // Query agents subscribing to specific event feed (JSONB ? operator)
+    let raw_feed_subscribers = sqlx::query_scalar!(
         r#"SELECT processor_name FROM core.processor_manifests
          WHERE node_type = 'automaton' AND consumes_event_types ? 'core.events_feed_all'
-         ORDER BY processor_name"#,
+         ORDER BY processor_name"#
     )
     .fetch_all(&ctx.pool)
     .await
     .unwrap();
 
     pretty_assertions::assert_eq!(raw_feed_subscribers.len(), 2);
-    assert!(raw_feed_subscribers.contains(&"subscriber_1".to_string()));
-    assert!(raw_feed_subscribers.contains(&"subscriber_2".to_string()));
+    assert!(raw_feed_subscribers.iter().any(|s| s == "subscriber_1"));
+    assert!(raw_feed_subscribers.iter().any(|s| s == "subscriber_2"));
 
     Ok(())
 }
@@ -90,28 +90,29 @@ async fn test_subscription_pattern_matching(ctx: TestContext) -> Result<()> {
         ]
     });
 
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO core.processor_manifests
          (processor_name, node_type, version, consumes_event_types)
          VALUES ($1, 'automaton', $2, $3)",
+        "pattern_matcher",
+        "1.0.0",
+        complex_subscriptions
     )
-    .bind("pattern_matcher")
-    .bind("1.0.0")
-    .bind(&complex_subscriptions)
     .execute(&ctx.pool)
     .await
     .unwrap();
 
     // Verify the subscription was stored correctly
-    let stored_subscriptions: serde_json::Value = sqlx::query_scalar(
+    let stored = sqlx::query!(
         "SELECT consumes_event_types FROM core.processor_manifests
          WHERE processor_name = $1 AND node_type = 'automaton'",
+        "pattern_matcher"
     )
-    .bind("pattern_matcher")
     .fetch_one(&ctx.pool)
     .await
     .unwrap();
 
+    let stored_subscriptions = stored.consumes_event_types.unwrap();
     assert!(stored_subscriptions.get("core.events_feed_all").is_some());
     let patterns = stored_subscriptions["core.events_feed_all"]
         .as_array()
@@ -152,33 +153,39 @@ async fn test_subscription_routing_priorities(ctx: TestContext) -> Result<()> {
     ];
 
     for (name, subscriptions) in priority_agents {
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO core.processor_manifests
              (processor_name, node_type, version, consumes_event_types)
              VALUES ($1, 'automaton', $2, $3)",
+            name,
+            "1.0.0",
+            subscriptions
         )
-        .bind(name)
-        .bind("1.0.0")
-        .bind(&subscriptions)
         .execute(&ctx.pool)
         .await
         .unwrap();
     }
 
     // Query subscribers with priority ordering
-    let prioritized_subscribers: Vec<String> = sqlx::query_scalar(
+    let prioritized_subscribers = sqlx::query_scalar!(
         "SELECT processor_name FROM core.processor_manifests
          WHERE node_type = 'automaton' AND consumes_event_types IS NOT NULL
-         ORDER BY processor_name",
+         ORDER BY processor_name"
     )
     .fetch_all(&ctx.pool)
     .await
     .unwrap();
 
     assert_eq!(prioritized_subscribers.len(), 3);
-    assert!(prioritized_subscribers.contains(&"high_priority_subscriber".to_string()));
-    assert!(prioritized_subscribers.contains(&"medium_priority_subscriber".to_string()));
-    assert!(prioritized_subscribers.contains(&"low_priority_subscriber".to_string()));
+    assert!(prioritized_subscribers
+        .iter()
+        .any(|s| s == "high_priority_subscriber"));
+    assert!(prioritized_subscribers
+        .iter()
+        .any(|s| s == "medium_priority_subscriber"));
+    assert!(prioritized_subscribers
+        .iter()
+        .any(|s| s == "low_priority_subscriber"));
 
     Ok(())
 }
@@ -205,15 +212,16 @@ async fn test_subscription_filter_validation(ctx: TestContext) -> Result<()> {
         let subscription = json!({
             "core.events_feed_all": [filter]
         });
+        let proc_name = format!("filter_test_{}", name);
 
-        let result = sqlx::query(
+        let result = sqlx::query!(
             "INSERT INTO core.processor_manifests
              (processor_name, node_type, version, consumes_event_types)
              VALUES ($1, 'automaton', $2, $3)",
+            proc_name,
+            "1.0.0",
+            subscription
         )
-        .bind(format!("filter_test_{}", name))
-        .bind("1.0.0")
-        .bind(&subscription)
         .execute(&ctx.pool)
         .await;
 
@@ -221,15 +229,15 @@ async fn test_subscription_filter_validation(ctx: TestContext) -> Result<()> {
     }
 
     // Verify all filters were stored
-    let filter_count: i64 = sqlx::query_scalar(
+    let filter_count = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM core.processor_manifests
-         WHERE node_type = 'automaton' AND processor_name LIKE 'filter_test_%'",
+         WHERE node_type = 'automaton' AND processor_name LIKE 'filter_test_%'"
     )
     .fetch_one(&ctx.pool)
     .await
     .unwrap();
 
-    assert_eq!(filter_count, 3);
+    assert_eq!(filter_count, Some(3));
 
     Ok(())
 }
@@ -247,28 +255,29 @@ async fn test_subscription_schema_references(ctx: TestContext) -> Result<()> {
         ]
     });
 
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO core.processor_manifests
          (processor_name, node_type, version, consumes_event_types)
          VALUES ($1, 'automaton', $2, $3)",
+        "schema_subscriber",
+        "1.0.0",
+        schema_subscription
     )
-    .bind("schema_subscriber")
-    .bind("1.0.0")
-    .bind(&schema_subscription)
     .execute(&ctx.pool)
     .await
     .unwrap();
 
     // Verify schema references are stored
-    let stored_subscription: serde_json::Value = sqlx::query_scalar(
+    let stored = sqlx::query!(
         "SELECT consumes_event_types FROM core.processor_manifests
          WHERE processor_name = $1 AND node_type = 'automaton'",
+        "schema_subscriber"
     )
-    .bind("schema_subscriber")
     .fetch_one(&ctx.pool)
     .await
     .unwrap();
 
+    let stored_subscription = stored.consumes_event_types.unwrap();
     assert!(stored_subscription.get("sinex.pkm.note_updated").is_some());
     assert!(stored_subscription.get("sinex.system.heartbeat").is_some());
     assert!(stored_subscription.get("custom.structured_event").is_some());
@@ -293,14 +302,14 @@ async fn test_subscription_updates_and_changes(ctx: TestContext) -> Result<()> {
         ]
     });
 
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO core.processor_manifests
          (processor_name, node_type, version, consumes_event_types)
          VALUES ($1, 'automaton', $2, $3)",
+        "updatable_subscriber",
+        "1.0.0",
+        initial_subscriptions
     )
-    .bind("updatable_subscriber")
-    .bind("1.0.0")
-    .bind(&initial_subscriptions)
     .execute(&ctx.pool)
     .await
     .unwrap();
@@ -314,29 +323,30 @@ async fn test_subscription_updates_and_changes(ctx: TestContext) -> Result<()> {
         "sinex.system.status": []
     });
 
-    sqlx::query(
-        "UPDATE core.processor_manifests 
+    sqlx::query!(
+        "UPDATE core.processor_manifests
          SET consumes_event_types = $1, version = $2
          WHERE processor_name = $3 AND node_type = 'automaton'",
+        updated_subscriptions,
+        "1.1.0",
+        "updatable_subscriber"
     )
-    .bind(&updated_subscriptions)
-    .bind("1.1.0")
-    .bind("updatable_subscriber")
     .execute(&ctx.pool)
     .await
     .unwrap();
 
     // Verify the update
-    let (version, subscriptions): (String, serde_json::Value) = sqlx::query_as(
+    let row = sqlx::query!(
         "SELECT version, consumes_event_types FROM core.processor_manifests
          WHERE processor_name = $1 AND node_type = 'automaton'",
+        "updatable_subscriber"
     )
-    .bind("updatable_subscriber")
     .fetch_one(&ctx.pool)
     .await
     .unwrap();
 
-    assert_eq!(version, "1.1.0");
+    assert_eq!(row.version, "1.1.0");
+    let subscriptions = row.consumes_event_types.unwrap();
     assert!(subscriptions.get("core.events_feed_all").is_some());
     assert!(subscriptions.get("sinex.system.status").is_some());
 

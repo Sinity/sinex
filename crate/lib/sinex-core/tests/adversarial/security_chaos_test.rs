@@ -6,6 +6,7 @@ use sinex_core::db::validation::{EventValidator, ValidationError};
 use sinex_core::types::domain::{EventSource, EventType, HostName};
 use sinex_core::types::Id;
 use sinex_schema::ulid::Ulid;
+use sinex_test_utils::{sinex_test, TestResult};
 
 fn base_event() -> Event<serde_json::Value> {
     Event {
@@ -25,8 +26,8 @@ fn base_event() -> Event<serde_json::Value> {
     }
 }
 
-#[test]
-fn validator_rejects_future_ts_orig_beyond_drift() {
+#[sinex_test]
+fn validator_rejects_future_ts_orig_beyond_drift() -> TestResult<()> {
     let mut event = base_event();
     event.ts_orig = Utc::now() + ChronoDuration::hours(1);
     // Keep ts_ingest now so drift check triggers.
@@ -36,10 +37,11 @@ fn validator_rejects_future_ts_orig_beyond_drift() {
         matches!(err, ValidationError::InvalidValue { field, .. } if field == "ts_orig"),
         "expected ts_orig InvalidValue, got {err:?}"
     );
+    Ok(())
 }
 
-#[test]
-fn validator_rejects_null_byte_in_payload_string() {
+#[sinex_test]
+fn validator_rejects_null_byte_in_payload_string() -> TestResult<()> {
     let mut event = base_event();
     event.payload = serde_json::json!({"path": "bad\u{0000}path"});
     let validator = EventValidator::new(None, None, None, false);
@@ -48,4 +50,5 @@ fn validator_rejects_null_byte_in_payload_string() {
         matches!(err, ValidationError::SecurityValidation(msg) if msg.to_lowercase().contains("null byte")),
         "expected security validation error for null byte, got {err:?}"
     );
+    Ok(())
 }

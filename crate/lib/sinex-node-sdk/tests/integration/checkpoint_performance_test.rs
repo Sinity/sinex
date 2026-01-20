@@ -13,7 +13,7 @@ use futures::StreamExt;
 use serde_json::json;
 use sinex_core::types::ulid::Ulid;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
-use sinex_test_utils::{prelude::*, sinex_test, EphemeralNats, TestContext};
+use sinex_test_utils::{prelude::*, EphemeralNats};
 use std::time::{Duration as StdDuration, Instant};
 
 async fn provision_stream(js: &JetStream, stream: &str, subject: &str) -> Result<()> {
@@ -52,7 +52,7 @@ async fn spawn_consumer(
         .await
 }
 
-#[sinex_test]
+#[sinex_bench]
 async fn jetstream_checkpoint_roundtrip(ctx: TestContext) -> Result<()> {
     let nats = EphemeralNats::start().await?;
     let client = nats.connect().await?;
@@ -158,7 +158,7 @@ async fn jetstream_checkpoint_roundtrip(ctx: TestContext) -> Result<()> {
     Ok(())
 }
 
-#[sinex_test]
+#[sinex_bench]
 async fn jetstream_checkpoint_recovery_behaviour(ctx: TestContext) -> Result<()> {
     let nats = EphemeralNats::start().await?;
     let client = nats.connect().await?;

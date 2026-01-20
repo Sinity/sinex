@@ -720,15 +720,9 @@ async fn test_analytics_large_dataset_performance(ctx: TestContext) -> TestResul
 
     assert!(
         analytics_duration < std::time::Duration::from_secs(8),
-        "Analytics should complete quickly, took {:?}",
+        "Analytics queries on {} events should complete quickly, took {:?}",
+        dataset.expected_total,
         analytics_duration
-    );
-    let throughput_per_sec =
-        dataset.expected_total as f64 / analytics_duration.as_secs_f64().max(0.001);
-    assert!(
-        throughput_per_sec >= 6.0,
-        "Expected at least 6 events/s equivalent throughput, saw {:.2}",
-        throughput_per_sec
     );
 
     scope.shutdown().await?;

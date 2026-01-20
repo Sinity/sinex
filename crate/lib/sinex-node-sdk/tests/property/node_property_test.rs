@@ -4,12 +4,18 @@
 //! using modern Sinex infrastructure (NATS JetStream, TestContext, etc.)
 
 use proptest::prelude::*;
+use proptest::test_runner::TestCaseError;
 use serde_json::json;
 use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::types::domain::{EventSource, EventType};
-use sinex_core::{Event, JsonValue, SinexError};
+use sinex_core::{Event, JsonValue};
 use sinex_test_utils::{prelude::*, sinex_prop, sinex_proptest};
 use std::time::Duration;
+
+/// Helper to convert color_eyre::Report errors to TestCaseError for property tests
+fn report_to_test_error<E: std::fmt::Display>(e: E) -> TestCaseError {
+    TestCaseError::Fail(e.to_string().into())
+}
 
 /// Property test strategies for event data
 mod strategies {
@@ -87,14 +93,16 @@ async fn node_event_processing_preserves_order(
     ctx: &TestContext,
     #[strategy(event_sequences())] events: Vec<Event<JsonValue>>,
     #[strategy(1usize..100usize)] batch_size: usize,
-) -> Result<(), SinexError> {
-    // Note: event_sequences() strategy guarantees 1..=100 events, never empty
+) -> Result<(), TestCaseError> {
+    if events.is_empty() {
+        return Ok::<(), TestCaseError>(());
+    }
 
     // Process events in batches
     let mut processed_events = Vec::new();
     for chunk in events.chunks(batch_size) {
         for event in chunk {
-            let inserted_event = ctx.pool.events().insert(event.clone()).await?;
+            let inserted_event = ctx.pool.events().insert(event.clone()).await.map_err(report_to_test_error)?;
             processed_events.push(inserted_event);
         }
 
@@ -106,14 +114,15 @@ async fn node_event_processing_preserves_order(
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Check that we have the expected count
-    let actual_count = ctx.pool.events().count_all().await?;
+    let actual_count = ctx.pool.events().count_all().await.map_err(report_to_test_error)?;
     assert_eq!(actual_count, processed_events.len() as i64);
 
     let db_events = ctx
         .pool
         .events()
         .get_recent(processed_events.len() as i64)
-        .await?;
+        .await
+        .map_err(report_to_test_error)?;
     assert_eq!(db_events.len(), processed_events.len());
 
     // Verify ULID ordering is preserved (ULIDs are time-ordered)
@@ -122,7 +131,7 @@ async fn node_event_processing_preserves_order(
             assert!(prev_id.timestamp() <= curr_id.timestamp());
         }
     }
-    Ok(())
+    Ok::<(), TestCaseError>(())
 }
 
 #[sinex_prop]
@@ -134,8 +143,10 @@ async fn node_handles_intermittent_failures(
         1..=50
     ))] events: Vec<(String, String, serde_json::Value)>,
     #[strategy(1u64..100u64)] recovery_delay: u64,
-) -> Result<(), SinexError> {
-    // Note: strategy guarantees 1..=50 events, never empty
+) -> Result<(), TestCaseError> {
+    if events.is_empty() {
+        return Ok::<(), TestCaseError>(());
+    }
 
     let mut successful_events = 0;
 
@@ -160,7 +171,7 @@ async fn node_handles_intermittent_failures(
                 payload.clone(),
             );
 
-            ctx.pool.events().insert(event).await?;
+            ctx.pool.events().insert(event).await.map_err(report_to_test_error)?;
             successful_events += 1;
         }
 
@@ -171,12 +182,12 @@ async fn node_handles_intermittent_failures(
     // Wait for processing to complete
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    let final_count = ctx.pool.events().count_all().await?;
+    let final_count = ctx.pool.events().count_all().await.map_err(report_to_test_error)?;
     assert_eq!(final_count, successful_events as i64);
 
     // Verify system recovered from failures
     assert!(successful_events > 0, "At least some events should succeed");
-    Ok(())
+    Ok::<(), TestCaseError>(())
 }
 
 #[sinex_prop]
@@ -185,8 +196,7 @@ async fn node_manages_resources_efficiently(
     #[strategy(1usize..5usize)] concurrent_operations: usize,
     #[strategy(1usize..50usize)] events_per_operation: usize,
     #[strategy(1u64..50u64)] processing_delay: u64,
-) -> Result<(), SinexError> {
-
+) -> Result<(), TestCaseError> {
     // Generate events for concurrent processing
     let mut total_events = 0;
     let mut handles = Vec::new();
@@ -238,9 +248,9 @@ async fn node_manages_resources_efficiently(
     // Wait for final consistency
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    let final_count = ctx.pool.events().count_all().await?;
+    let final_count = ctx.pool.events().count_all().await.map_err(report_to_test_error)?;
     assert_eq!(final_count, total_events as i64);
-    Ok(())
+    Ok::<(), TestCaseError>(())
 }
 
 sinex_proptest! {
@@ -249,7 +259,7 @@ sinex_proptest! {
         service_name in "[a-zA-Z0-9_-]+",
         _batch_size in 1usize..10000usize,
         _timeout_secs in 1u64..3600u64,
-    ) {
+    ) -> TestResult<()> {
         use sinex_node_sdk::NodeConfig;
 
         // Test config creation with various valid parameters
@@ -266,6 +276,8 @@ sinex_proptest! {
         // Test environment-based loading doesn't panic
         let env_config = NodeConfig::load_from_env(&service_name);
         assert_eq!(env_config.service_name, service_name);
+
+        Ok::<(), color_eyre::Report>(())
     }
 }
 
@@ -278,8 +290,10 @@ async fn node_batch_processing_is_consistent(
         (event_sources(), event_types(), event_payloads()),
         1..=50
     ))] events: Vec<(String, String, serde_json::Value)>,
-) -> Result<(), SinexError> {
-    // Note: strategy guarantees 1..=50 events, never empty
+) -> Result<(), TestCaseError> {
+    if events.is_empty() {
+        return Ok::<(), TestCaseError>(());
+    }
 
     // Process events in first batch configuration
     let half_point = events.len() / 2;
@@ -290,7 +304,7 @@ async fn node_batch_processing_is_consistent(
             payload.clone(),
         );
 
-        ctx.pool.events().insert(event).await?;
+        ctx.pool.events().insert(event).await.map_err(report_to_test_error)?;
     }
 
     // Wait for initial processing
@@ -304,16 +318,16 @@ async fn node_batch_processing_is_consistent(
             payload.clone(),
         );
 
-        ctx.pool.events().insert(event).await?;
+        ctx.pool.events().insert(event).await.map_err(report_to_test_error)?;
     }
 
     // Wait for all events to be processed
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Verify no events were lost during configuration changes
-    let final_count = ctx.pool.events().count_all().await?;
+    let final_count = ctx.pool.events().count_all().await.map_err(report_to_test_error)?;
     assert_eq!(final_count, events.len() as i64);
-    Ok(())
+    Ok::<(), TestCaseError>(())
 }
 
 #[sinex_prop]
@@ -323,8 +337,7 @@ async fn node_survives_processing_interruptions(
     #[strategy(1usize..20usize)] events_before_interruption: usize,
     #[strategy(1usize..20usize)] events_during_interruption: usize,
     #[strategy(1usize..20usize)] events_after_interruption: usize,
-) -> Result<(), SinexError> {
-
+) -> Result<(), TestCaseError> {
     // Phase 1: Normal operation
     for i in 0..events_before_interruption {
         let event = Event::test_event(
@@ -333,7 +346,7 @@ async fn node_survives_processing_interruptions(
             json!({ "phase": "before", "index": i }),
         );
 
-        ctx.pool.events().insert(event).await?;
+        ctx.pool.events().insert(event).await.map_err(report_to_test_error)?;
     }
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -361,16 +374,16 @@ async fn node_survives_processing_interruptions(
             json!({ "phase": "after", "index": i }),
         );
 
-        ctx.pool.events().insert(event).await?;
+        ctx.pool.events().insert(event).await.map_err(report_to_test_error)?;
     }
 
     // Wait for recovery and verify minimum events
     let expected_minimum = events_before_interruption + events_after_interruption;
     tokio::time::sleep(Duration::from_millis(150)).await;
 
-    let final_count = ctx.pool.events().count_all().await?;
+    let final_count = ctx.pool.events().count_all().await.map_err(report_to_test_error)?;
     assert!(final_count >= expected_minimum as i64);
-    Ok(())
+    Ok::<(), TestCaseError>(())
 }
 
 #[sinex_prop]
@@ -379,8 +392,7 @@ async fn node_maintains_event_ordering_under_load(
     #[strategy(1usize..5usize)] concurrent_sources: usize,
     #[strategy(1usize..20usize)] events_per_source: usize,
     #[strategy(1u64..20u64)] processing_jitter: u64,
-) -> Result<(), SinexError> {
-
+) -> Result<(), TestCaseError> {
     let mut handles = Vec::new();
 
     // Create concurrent event producers
@@ -431,7 +443,8 @@ async fn node_maintains_event_ordering_under_load(
         .pool
         .events()
         .get_recent((total_events * 2) as i64)
-        .await?;
+        .await
+        .map_err(report_to_test_error)?;
     assert_eq!(all_events.len(), total_events);
 
     // Group events by source and verify ordering within each source
@@ -468,5 +481,5 @@ async fn node_maintains_event_ordering_under_load(
             }
         }
     }
-    Ok(())
+    Ok::<(), TestCaseError>(())
 }
