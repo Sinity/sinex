@@ -119,7 +119,7 @@ impl BenchmarkRun {
     ///
     /// Results are sourced from manual recordings via BenchContext.
     pub fn collect() -> TestResult<Self> {
-        let mut run = Self::new()?;
+        let run = Self::new()?;
 
         Ok(run)
     }

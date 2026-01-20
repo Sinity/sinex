@@ -1,4 +1,4 @@
-#![doc = include_str!("../docs/database_pool.md")]
+#![doc = include_str!("../docs/database_testing.md")]
 
 use crate::Result;
 use chrono::Utc;

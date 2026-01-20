@@ -7,7 +7,8 @@ async fn main() -> TestResult<()> {
 
     let ctx = TestContext::with_name("pipeline_smoke")
         .await?
-        .with_shared_nats()
+        .with_nats()
+        .shared()
         .await?;
     let scope = ctx.pipeline_scope().await?;
 

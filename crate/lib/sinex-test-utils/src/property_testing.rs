@@ -420,9 +420,7 @@ mod tests {
         #[strategy(filesystem_event_strategy())] event: (String, String, Value),
     ) -> TestResult<()> {
         let (source, event_type, payload) = event;
-        let event = ctx
-            .publish_json_event(&source, &event_type, payload)
-            .await?;
+        let event = ctx.publish_event(source.as_str(), event_type.as_str(), payload).await?;
 
         assert_eq!(
             event.source.as_str(),
@@ -442,7 +440,7 @@ mod tests {
         ctx.force_cleanup().await?;
         ctx.ensure_clean().await?;
         let inserted = ctx
-            .publish_json_event("json-test", "test.json", payload.clone())
+            .publish_event("json-test", "test.json", payload.clone())
             .await?;
         let mut expected = payload.clone();
         TestContext::sanitize_payload(&mut expected);
@@ -520,7 +518,7 @@ mod tests {
     ) -> TestResult<()> {
         // System should safely store and retrieve malicious SQL payloads without executing them
         let event = ctx
-            .publish_json_event("security-test", "sql.injection", payload.clone())
+            .publish_event("security-test", "sql.injection", payload.clone())
             .await?;
 
         // Verify payload is stored as data, not executed
@@ -537,7 +535,7 @@ mod tests {
     ) -> TestResult<()> {
         // System should store path traversal attempts without accessing the paths
         let event = ctx
-            .publish_json_event("security-test", "path.traversal", payload.clone())
+            .publish_event("security-test", "path.traversal", payload.clone())
             .await?;
 
         // Verify event was created and payload stored (but not interpreted as filesystem access)
@@ -553,7 +551,7 @@ mod tests {
     ) -> TestResult<()> {
         // System should store command injection attempts without executing them
         let event = ctx
-            .publish_json_event("security-test", "command.injection", payload.clone())
+            .publish_event("security-test", "command.injection", payload.clone())
             .await?;
 
         // Verify the event was created (commands not executed)
@@ -570,7 +568,7 @@ mod tests {
         // System should handle very large payloads without crashing
         // Note: Some may be rejected by validation, which is acceptable
         let result = ctx
-            .publish_json_event("security-test", "overflow.test", payload.clone())
+            .publish_event("security-test", "overflow.test", payload.clone())
             .await;
 
         // Either success or a controlled validation error (not a panic/crash)
@@ -600,7 +598,7 @@ mod tests {
     ) -> TestResult<()> {
         // Property: Events stored in database can be retrieved with identical data
         let original_event = ctx
-            .publish_json_event("db-test", "roundtrip", payload.clone())
+            .publish_event("db-test", "roundtrip", payload.clone())
             .await?;
 
         // Retrieve the event by ID using the repository
@@ -638,12 +636,12 @@ mod tests {
     ) -> TestResult<()> {
         // Property: Database operations are transactional and consistent
         // Event count should increment by exactly 1 after each insert
-        let before_count = ctx.current_event_count().await?;
+        let before_count = ctx.pool.events().count_all().await?;
 
-        ctx.publish_json_event(&source, "transaction.test", json!({"test": "consistency"}))
+        ctx.publish_event(source.as_str(), "transaction.test", json!({"test": "consistency"}))
             .await?;
 
-        let after_count = ctx.current_event_count().await?;
+        let after_count = ctx.pool.events().count_all().await?;
         assert_eq!(
             after_count,
             before_count + 1,
@@ -665,7 +663,7 @@ mod tests {
         }
 
         let event = ctx
-            .publish_json_event("db-test", "query.test", test_payload)
+            .publish_event("db-test", "query.test", test_payload)
             .await?;
 
         // Query recent events
@@ -688,15 +686,15 @@ mod tests {
         #[strategy(1u32..10u32)] _iteration: u32, // Dummy strategy to satisfy macro
     ) -> TestResult<()> {
         // Property: Event count is monotonically increasing during a test
-        let count1 = ctx.current_event_count().await?;
+        let count1 = ctx.pool.events().count_all().await?;
 
-        ctx.publish_json_event("db-test", "count.test1", json!({"seq": 1}))
+        ctx.publish_event("db-test", "count.test1", json!({"seq": 1}))
             .await?;
-        let count2 = ctx.current_event_count().await?;
+        let count2 = ctx.pool.events().count_all().await?;
 
-        ctx.publish_json_event("db-test", "count.test2", json!({"seq": 2}))
+        ctx.publish_event("db-test", "count.test2", json!({"seq": 2}))
             .await?;
-        let count3 = ctx.current_event_count().await?;
+        let count3 = ctx.pool.events().count_all().await?;
 
         assert!(count2 > count1, "Count should increase after first insert");
         assert!(count3 > count2, "Count should increase after second insert");

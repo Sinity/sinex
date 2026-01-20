@@ -40,13 +40,14 @@
 
 use crate::database_pool::{acquire_test_database, TestDatabase};
 use crate::db_common::{self, verify_clean_state};
+use crate::event_assertion::EventAssertion;
+use crate::event_publisher::EventPublisher;
 use crate::ingestd_test_utils::{
     start_test_ingestd_with_config, TestIngestdConfig, TestIngestdHandle,
 };
-use crate::nats::{
-    shared_ephemeral_nats_with_key, EphemeralNats, EphemeralNatsBuilder, SharedNatsProfile,
-};
-use crate::pipeline::{shared_nats_handle, shared_secure_nats_handle, PipelineHarness};
+use crate::nats::{EphemeralNats, EphemeralNatsBuilder};
+use crate::nats_setup::NatsSetup;
+use crate::pipeline::shared_nats_handle;
 use crate::pipeline_namespace::PipelineNamespace;
 use crate::pipeline_scope::PipelineScope;
 use crate::snapshot_helper::{self, FailureContext};
@@ -66,10 +67,9 @@ use sinex_core::environment::SinexEnvironment;
 use sinex_core::types::{DbPool, Id, Timestamp, Ulid};
 use std::result::Result as StdResult;
 
-use sinex_core::DbPoolExt;
+use sinex_core::{DbPoolExt, EventSource, EventType};
 use std::collections::HashSet;
 use std::mem;
-use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -201,10 +201,14 @@ impl Drop for NamespaceReaper {
     }
 }
 
+/// NATS initialization mode for test context.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum NatsMode {
+pub enum NatsMode {
+    /// No NATS configured
     None,
+    /// Dedicated ephemeral NATS instance
     Dedicated,
+    /// Shared process-wide NATS instance
     Shared,
 }
 
@@ -228,7 +232,12 @@ impl TestContextFailureSnapshot {
         &self.test_name
     }
 
+    #[deprecated(since = "0.5.0", note = "Use baseline_event_count() instead")]
     pub fn baseline_events(&self) -> i64 {
+        self.baseline_events
+    }
+
+    pub fn baseline_event_count(&self) -> i64 {
         self.baseline_events
     }
 
@@ -441,180 +450,113 @@ impl TestContext {
         })
     }
 
-    /// Enable NATS/JetStream infrastructure for this test context
+    /// Configure NATS for this test context using a fluent builder.
     ///
-    /// This starts an ephemeral NATS server with JetStream enabled
-    /// and connects a client to it. Required for JetStream integration tests.
-    /// Enable NATS/JetStream with custom configuration
-    pub async fn with_nats_builder(mut self, builder: EphemeralNatsBuilder) -> TestResult<Self> {
-        let nats = builder.start().await?;
-        let client = nats.connect().await?;
-        let shutdown_proc = nats.process_handle();
-        self.register_background_handle("nats-server", shutdown_proc.clone());
-        self.register_shutdown_hook("nats-shutdown", async move {
-            if let Some(mut child) = shutdown_proc.lock().await.take() {
-                let _ = child.start_kill();
-                let _ = tokio::time::timeout(std::time::Duration::from_secs(2), child.wait()).await;
-            }
-        })
-        .await;
-        self.nats_client = Some(client.clone());
-        self.nats = Some(Arc::new(nats));
-        self.nats_mode = NatsMode::Dedicated;
-
-        // Register client with reaper for cleaning
-        self._reaper.nats.lock().replace(client);
-
-        self.install_current();
-        Ok(self)
-    }
-
-    /// Enable NATS/JetStream infrastructure for this test context
+    /// Returns a [`NatsSetup`] builder that can be configured and awaited.
     ///
-    /// This starts an ephemeral NATS server with JetStream enabled
-    /// and connects a client to it. Required for JetStream integration tests.
-    pub async fn with_nats(self) -> TestResult<Self> {
-        self.with_nats_builder(EphemeralNats::builder()).await
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// // Shared NATS (default, recommended for most tests)
+    /// let ctx = ctx.with_nats().shared().await?;
+    ///
+    /// // Dedicated NATS instance (for isolation)
+    /// let ctx = ctx.with_nats().dedicated().await?;
+    ///
+    /// // Shared with TLS
+    /// let ctx = ctx.with_nats().shared().secure().await?;
+    ///
+    /// // Custom configuration
+    /// let builder = EphemeralNats::builder().with_auth_token("secret");
+    /// let ctx = ctx.with_nats().config(builder).await?;
+    /// ```
+    pub fn with_nats(self) -> NatsSetup {
+        NatsSetup::new(self)
     }
 
-    /// Attach to the shared process-wide NATS instance, required for pipeline scopes.
-    fn secure_shared_nats_requested() -> bool {
-        matches!(
-            std::env::var("SINEX_TEST_USE_TLS")
-                .unwrap_or_default()
-                .to_lowercase()
-                .as_str(),
-            "1" | "true" | "yes" | "on"
-        )
+    /// Internal: Set NATS state (used by NatsSetup builder).
+    pub(crate) fn set_nats(
+        &mut self,
+        nats: Option<Arc<EphemeralNats>>,
+        client: Option<NatsClient>,
+        mode: NatsMode,
+    ) {
+        self.nats = nats;
+        self.nats_client = client;
+        self.nats_mode = mode;
     }
 
-    fn shared_nats_token() -> Option<String> {
-        std::env::var("SINEX_TEST_NATS_TOKEN")
-            .ok()
-            .map(|token| token.trim().to_string())
-            .filter(|token| !token.is_empty())
-    }
-
-    fn shared_nats_key_override() -> Option<String> {
-        std::env::var("SINEX_TEST_NATS_SHARED_KEY")
-            .ok()
-            .map(|key| key.trim().to_string())
-            .filter(|key| !key.is_empty())
-    }
-
-    fn shared_nats_config_file() -> Option<PathBuf> {
-        std::env::var("SINEX_TEST_NATS_CONFIG_FILE")
-            .ok()
-            .map(|path| PathBuf::from(path.trim()))
-            .filter(|path| !path.as_os_str().is_empty())
-    }
-
-    fn shared_nats_token_key(token: &str, secure_tls: bool) -> String {
-        let hash = blake3::hash(token.as_bytes());
-        if secure_tls {
-            format!("auth-token-tls-{}", hash.to_hex())
-        } else {
-            format!("auth-token-{}", hash.to_hex())
-        }
-    }
-
-    fn shared_nats_config_key(config_file: &PathBuf, secure_tls: bool) -> String {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(config_file.to_string_lossy().as_bytes());
-        hasher.update(if secure_tls { b":tls" } else { b":plain" });
-        format!("config-{}", hasher.finalize().to_hex())
-    }
-
-    pub async fn with_shared_nats(mut self) -> TestResult<Self> {
-        let token = Self::shared_nats_token();
-        let secure_tls = Self::secure_shared_nats_requested();
-        let config_file = Self::shared_nats_config_file();
-        let key_override = Self::shared_nats_key_override();
-        let mut builder = if secure_tls {
-            SharedNatsProfile::SecureTls.builder()
-        } else {
-            EphemeralNats::builder()
-        };
-        if let Some(config_path) = &config_file {
-            builder = builder.with_config_file(config_path.clone());
-        }
-        if let Some(token) = &token {
-            builder = builder.with_auth_token(token.clone());
-        }
-        let nats = if key_override.is_some() || token.is_some() || config_file.is_some() {
-            let key = if let Some(key) = key_override {
-                if let Some(token) = &token {
-                    let hash = blake3::hash(token.as_bytes());
-                    format!("{key}-token-{}", hash.to_hex())
-                } else {
-                    key
-                }
-            } else if let Some(token) = &token {
-                Self::shared_nats_token_key(token, secure_tls)
-            } else if let Some(config_path) = &config_file {
-                Self::shared_nats_config_key(config_path, secure_tls)
-            } else {
-                unreachable!("shared NATS key selection exhausted")
-            };
-            shared_ephemeral_nats_with_key(&key, builder).await?
-        } else if secure_tls {
-            shared_secure_nats_handle().await?
-        } else {
-            shared_nats_handle().await?
-        };
-        let client = nats.connect().await?;
-        self.nats_client = Some(client.clone());
-        self.nats = Some(nats);
-        self.nats_mode = NatsMode::Shared;
-
-        // Register client with reaper for cleaning
+    /// Internal: Register client with reaper for cleanup (used by NatsSetup builder).
+    pub(crate) fn register_reaper_client(&self, client: NatsClient) {
         self._reaper.nats.lock().replace(client);
-
-        self.install_current();
-        Ok(self)
     }
 
-    /// Attach to a shared NATS instance identified by the provided key.
+    // Legacy NATS methods - deprecated, use with_nats() builder instead
+
+    /// Enable NATS/JetStream with custom configuration.
+    ///
+    /// # Deprecated
+    /// Use `with_nats().config(builder).dedicated().await?` instead.
+    #[deprecated(
+        since = "0.5.0",
+        note = "Use with_nats().config(builder).dedicated() instead"
+    )]
+    pub async fn with_nats_builder(self, builder: EphemeralNatsBuilder) -> TestResult<Self> {
+        self.with_nats().config(builder).dedicated().await
+    }
+
+    /// Attach to the shared process-wide NATS instance.
+    ///
+    /// # Deprecated
+    /// Use `with_nats().shared().await?` instead.
+    #[deprecated(since = "0.5.0", note = "Use with_nats().shared() instead")]
+    pub async fn with_shared_nats(self) -> TestResult<Self> {
+        self.with_nats().shared().await
+    }
+
+    /// Attach to a shared NATS instance with a custom key.
+    ///
+    /// # Deprecated
+    /// Use `with_nats().key(key).config(builder).shared().await?` instead.
+    #[deprecated(
+        since = "0.5.0",
+        note = "Use with_nats().key(key).config(builder).shared() instead"
+    )]
     pub async fn with_shared_nats_builder(
-        mut self,
+        self,
         key: &str,
         builder: EphemeralNatsBuilder,
     ) -> TestResult<Self> {
-        let nats = crate::nats::shared_ephemeral_nats_with_key(key, builder).await?;
-        let client = nats.connect().await?;
-        self.nats_client = Some(client.clone());
-        self.nats = Some(nats);
-        self.nats_mode = NatsMode::Shared;
-
-        // Register client with reaper for cleaning
-        self._reaper.nats.lock().replace(client);
-
-        self.install_current();
-        Ok(self)
+        self.with_nats().key(key).config(builder).shared().await
     }
 
     /// Explicitly opt into the TLS-enabled shared NATS profile.
-    pub async fn with_secure_shared_nats(mut self) -> TestResult<Self> {
-        let nats = shared_secure_nats_handle().await?;
-        let client = nats.connect().await?;
-        self.nats_client = Some(client.clone());
-        self.nats = Some(nats);
-        self.nats_mode = NatsMode::Shared;
-
-        // Register client with reaper for cleaning
-        self._reaper.nats.lock().replace(client);
-
-        self.install_current();
-        Ok(self)
+    ///
+    /// # Deprecated
+    /// Use `with_nats().shared().secure().await?` instead.
+    #[deprecated(since = "0.5.0", note = "Use with_nats().shared().secure() instead")]
+    pub async fn with_secure_shared_nats(self) -> TestResult<Self> {
+        self.with_nats().shared().secure().await
     }
 
     /// Get the NATS client for this test context
     ///
-    /// Panics if NATS was not enabled via `with_nats()` or `with_shared_nats()`.
+    /// Returns the NATS client from either `with_nats()` initialization or
+    /// lazy initialization via `ensure_nats()`.
+    ///
+    /// Panics if NATS was not enabled.
     pub fn nats_client(&self) -> NatsClient {
-        self.nats_client
-            .clone()
-            .expect("NATS not initialized - call with_nats() or with_shared_nats() first")
+        // First check the primary nats_client field
+        if let Some(client) = &self.nats_client {
+            return client.clone();
+        }
+        // Fall back to lazy_shared_nats if initialized
+        if let Some((_, client)) = self.lazy_shared_nats.get() {
+            return client.clone();
+        }
+        panic!(
+            "NATS not initialized - call with_nats(), with_shared_nats(), or ensure_nats() first"
+        )
     }
 
     /// Lazily initialize shared NATS without consuming self.
@@ -684,18 +626,29 @@ impl TestContext {
     }
 
     /// Access the underlying EphemeralNats handle (lifetime-managed by the context).
+    ///
+    /// Returns the NATS handle from either `with_nats()` initialization or
+    /// lazy initialization via `ensure_nats()`.
     pub fn nats_handle(&self) -> TestResult<Arc<EphemeralNats>> {
-        self.nats
-            .as_ref()
-            .cloned()
-            .ok_or_else(|| eyre!("NATS not initialized - call with_nats() or with_shared_nats()"))
+        // First check the primary nats field
+        if let Some(nats) = &self.nats {
+            return Ok(nats.clone());
+        }
+        // Fall back to lazy_shared_nats if initialized
+        if let Some((nats, _)) = self.lazy_shared_nats.get() {
+            return Ok(nats.clone());
+        }
+        Err(eyre!(
+            "NATS not initialized - call with_nats() or with_shared_nats()"
+        ))
     }
 
     /// Get a JetStream context bound to this test's NATS instance.
+    ///
+    /// Works with both `with_nats()` initialization and lazy initialization
+    /// via `ensure_nats()`.
     pub async fn jetstream(&self) -> TestResult<jetstream::Context> {
-        let nats = self.nats.as_ref().ok_or_else(|| {
-            eyre!("NATS not initialized - call with_nats() or with_shared_nats()")
-        })?;
+        let nats = self.nats_handle()?;
         nats.jetstream().await
     }
 
@@ -771,9 +724,16 @@ impl TestContext {
             NatsMode::Dedicated => Err(eyre!(
                 "PipelineScope requires shared NATS; call with_shared_nats() instead of with_nats()"
             )),
-            NatsMode::None => Err(eyre!(
-                "PipelineScope requires shared NATS; call with_shared_nats() first"
-            )),
+            NatsMode::None => {
+                // Check if lazy_shared_nats was initialized (for property tests)
+                if self.lazy_shared_nats.initialized() {
+                    Ok(())
+                } else {
+                    Err(eyre!(
+                        "PipelineScope requires shared NATS; call with_shared_nats() first"
+                    ))
+                }
+            }
         }
     }
 
@@ -790,14 +750,12 @@ impl TestContext {
         self.nats.as_ref().map(|n| n.client_url().to_string())
     }
 
-    /// Launch ingestd attached to this context and return a pipeline harness.
-    pub async fn pipeline(&self) -> TestResult<PipelineHarness<'_>> {
-        if self.nats.is_none() {
-            return Err(eyre!(
-                "Pipeline harness requires NATS - call with_nats() or with_shared_nats() first"
-            ));
-        }
-        PipelineHarness::new(self).await
+    /// Launch ingestd attached to this context and return a pipeline scope.
+    ///
+    /// Deprecated: Use `pipeline_scope()` instead for the same functionality.
+    #[deprecated(since = "0.5.0", note = "Use pipeline_scope() instead")]
+    pub async fn pipeline(&self) -> TestResult<PipelineScope<'_>> {
+        self.pipeline_scope().await
     }
 
     /// Initialize tracing for tests (static method for use without context)
@@ -871,13 +829,21 @@ impl TestContext {
     }
 
     /// Current total number of events
+    #[deprecated(
+        since = "0.5.0",
+        note = "Use ctx.pool.events().count_all().await? directly"
+    )]
     pub async fn current_event_count(&self) -> TestResult<i64> {
         Ok(self.pool.events().count_all().await?)
     }
 
     /// Difference between current and baseline event count
+    #[deprecated(
+        since = "0.5.0",
+        note = "Use (ctx.pool.events().count_all().await? - ctx.baseline_event_count()) instead"
+    )]
     pub async fn event_delta(&self) -> TestResult<i64> {
-        Ok(self.current_event_count().await? - self.baseline_events)
+        Ok(self.pool.events().count_all().await? - self.baseline_events)
     }
 
     fn record_created_event(&self, event_id: Ulid, material_id: Option<Ulid>) {
@@ -1010,78 +976,91 @@ impl TestContext {
         }
     }
 
-    /// Publish and persist a test event through the ingestion pipeline.
+    // ========== Event Publishing API ==========
+
+    /// Publish a test event through the ingestion pipeline.
     ///
-    /// This replaces the legacy direct-insert helpers with a pipeline-first path that:
-    /// 1. Builds a sanitized `Event<JsonValue>`
-    /// 2. Ensures a backing source material record exists
-    /// 3. Publishes the payload through NATS/ingestd
-    /// 4. Waits for persistence and returns the stored event
-    pub async fn publish_json_event<S, T>(
+    /// This is the recommended method for publishing events in tests. It accepts
+    /// typed `EventSource` and `EventType` parameters (strings also work via `Into`).
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// // Using typed constants (recommended)
+    /// ctx.publish_event(EVENT_SOURCE_FS_WATCHER, EVENT_TYPE_FILE_CREATED, json!({...})).await?;
+    ///
+    /// // Using strings (backward compatible)
+    /// ctx.publish_event("fs-watcher", "file.created", json!({...})).await?;
+    /// ```
+    pub async fn publish_event(
         &self,
-        source: S,
-        event_type: T,
+        source: impl Into<EventSource>,
+        event_type: impl Into<EventType>,
         payload: JsonValue,
-    ) -> TestResult<Event<JsonValue>>
-    where
-        S: AsRef<str>,
-        T: AsRef<str>,
-    {
-        self.publish_json_event_with_overrides(source, event_type, payload, None)
+    ) -> TestResult<Event<JsonValue>> {
+        self.publish_event_internal(source.into(), event_type.into(), payload, None)
             .await
     }
 
-    /// Publish and persist a test event with an explicit timestamp override.
-    pub async fn publish_json_event_with_timestamp<S, T>(
-        &self,
-        source: S,
-        event_type: T,
-        payload: JsonValue,
-        timestamp: Timestamp,
-    ) -> TestResult<Event<JsonValue>>
-    where
-        S: AsRef<str>,
-        T: AsRef<str>,
-    {
-        self.publish_json_event_with_overrides(source, event_type, payload, Some(timestamp))
-            .await
+    /// Create a fluent event publisher for advanced options.
+    ///
+    /// Use this when you need to set a custom timestamp or configure
+    /// other event properties.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// ctx.publish()
+    ///     .source(EVENT_SOURCE_FS_WATCHER)
+    ///     .event_type(EVENT_TYPE_FILE_CREATED)
+    ///     .payload(json!({"path": "/test.txt"}))
+    ///     .at(timestamp)  // optional
+    ///     .send().await?;
+    /// ```
+    pub fn publish(&self) -> EventPublisher<'_> {
+        EventPublisher::new(self)
     }
 
-    async fn publish_json_event_with_overrides<S, T>(
+    /// Internal implementation for event publishing (used by EventPublisher).
+    ///
+    /// This method uses `ensure_nats()` to lazily initialize NATS if not already
+    /// configured, enabling property tests (which receive `&TestContext`) to
+    /// publish events without requiring ownership-consuming `with_nats(self)`.
+    pub(crate) async fn publish_event_internal(
         &self,
-        source: S,
-        event_type: T,
+        source: EventSource,
+        event_type: EventType,
         payload: JsonValue,
         timestamp_override: Option<Timestamp>,
-    ) -> TestResult<Event<JsonValue>>
-    where
-        S: AsRef<str>,
-        T: AsRef<str>,
-    {
-        if self.nats.is_none() {
-            return Err(eyre!(
-                "publish_json_event requires NATS - call with_nats() or with_shared_nats() first"
-            ));
-        }
+    ) -> TestResult<Event<JsonValue>> {
+        use chrono::Utc;
+        use sinex_core::types::domain::HostName;
+
+        // Ensure NATS is available (lazy initialization for property tests)
+        let _client = self.ensure_nats().await?;
 
         let mut sanitized_payload = payload;
         TestContext::sanitize_payload(&mut sanitized_payload);
 
-        let mut event =
-            Event::<JsonValue>::test_event(source.as_ref(), event_type.as_ref(), sanitized_payload);
-        if let Some(ts) = timestamp_override {
-            event.ts_orig = Some(ts);
-        }
-        if event.ingestor_version.is_none() {
-            event.ingestor_version = Some("test-ingestor".to_string());
-        }
-        let _event_id = event.id.get_or_insert_with(Id::new).clone();
-
+        // Create real source material first
         let material_id = Id::<SourceMaterial>::new();
-        self.ensure_source_material(material_id, Some(source.as_ref()))
+        self.ensure_source_material(material_id, Some(source.as_str()))
             .await?;
         let material_ulid = material_id.as_ulid().clone();
-        event.provenance = Provenance::from_material(material_id, 0, None, None);
+
+        // Build event with real provenance from the start
+        let event = Event::<JsonValue> {
+            id: Some(Id::new()),
+            source,
+            event_type,
+            payload: sanitized_payload,
+            ts_orig: Some(timestamp_override.unwrap_or_else(Utc::now)),
+            host: HostName::new(gethostname::gethostname().to_string_lossy().to_string()),
+            ingestor_version: Some("test-ingestor".to_string()),
+            payload_schema_id: None,
+            provenance: Provenance::from_material(material_id, 0, None, None),
+            associated_blob_ids: None,
+        };
 
         let persisted_id = self.publish_test_event(&event).await?;
         let published_event_id = Id::<Event<JsonValue>>::from_ulid(persisted_id);
@@ -1109,29 +1088,71 @@ impl TestContext {
         Ok(stored)
     }
 
+    // Legacy publish methods - deprecated, use publish_event() or publish() instead
+
+    /// Publish and persist a test event through the ingestion pipeline.
+    ///
+    /// # Deprecated
+    /// Use `publish_event(source, event_type, payload)` instead.
+    #[deprecated(
+        since = "0.5.0",
+        note = "Use publish_event(source, event_type, payload) instead"
+    )]
+    pub async fn publish_json_event<S, T>(
+        &self,
+        source: S,
+        event_type: T,
+        payload: JsonValue,
+    ) -> TestResult<Event<JsonValue>>
+    where
+        S: AsRef<str>,
+        T: AsRef<str>,
+    {
+        self.publish_event_internal(
+            EventSource::new(source.as_ref()),
+            EventType::new(event_type.as_ref()),
+            payload,
+            None,
+        )
+        .await
+    }
+
+    /// Publish and persist a test event with an explicit timestamp override.
+    ///
+    /// # Deprecated
+    /// Use `publish().source(s).event_type(t).payload(p).at(ts).send()` instead.
+    #[deprecated(
+        since = "0.5.0",
+        note = "Use publish().source().event_type().payload().at().send() instead"
+    )]
+    pub async fn publish_json_event_with_timestamp<S, T>(
+        &self,
+        source: S,
+        event_type: T,
+        payload: JsonValue,
+        timestamp: Timestamp,
+    ) -> TestResult<Event<JsonValue>>
+    where
+        S: AsRef<str>,
+        T: AsRef<str>,
+    {
+        self.publish_event_internal(
+            EventSource::new(source.as_ref()),
+            EventType::new(event_type.as_ref()),
+            payload,
+            Some(timestamp),
+        )
+        .await
+    }
+
     /// Create a fluent event builder for publishing test events.
     ///
-    /// This provides an ergonomic alternative to `publish_json_event()` with a builder pattern.
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// // Basic event with default empty payload
-    /// ctx.event("fs-watcher", "file.created").publish().await?;
-    ///
-    /// // Event with custom payload
-    /// ctx.event("terminal", "command.executed")
-    ///     .payload(json!({"command": "ls", "exit_code": 0}))
-    ///     .publish()
-    ///     .await?;
-    ///
-    /// // Event with timestamp
-    /// ctx.event("system", "health.check")
-    ///     .at(Utc::now())
-    ///     .payload(json!({"status": "healthy"}))
-    ///     .publish()
-    ///     .await?;
-    /// ```
+    /// # Deprecated
+    /// Use `publish().source(s).event_type(t).payload(p).send()` instead.
+    #[deprecated(
+        since = "0.5.0",
+        note = "Use publish().source(s).event_type(t).payload(p).send() instead"
+    )]
     pub fn event<'a, S, T>(&'a self, source: S, event_type: T) -> TestEventBuilder<'a>
     where
         S: Into<String>,
@@ -1289,7 +1310,42 @@ impl TestContext {
         Ok(())
     }
 
+    // ========== Event Assertion API ==========
+
+    /// Create a fluent event assertion builder for composable filters.
+    ///
+    /// This is the recommended method for asserting event counts. It accepts
+    /// typed `EventSource` and `EventType` filters (strings also work via `Into`).
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// // Exact count assertion
+    /// ctx.assert_events().count(5).await?;
+    ///
+    /// // At least N events
+    /// ctx.assert_events().at_least(3).await?;
+    ///
+    /// // Filtered by source (using typed constant)
+    /// ctx.assert_events().source(EVENT_SOURCE_FS_WATCHER).count(5).await?;
+    ///
+    /// // Filtered by event type
+    /// ctx.assert_events().event_type(EVENT_TYPE_FILE_CREATED).at_least(3).await?;
+    ///
+    /// // Strings work too via Into trait
+    /// ctx.assert_events().source("fs-watcher").count(5).await?;
+    /// ```
+    pub fn assert_events(&self) -> EventAssertion<'_> {
+        EventAssertion::new(self)
+    }
+
+    // Legacy assertion methods - deprecated, use assert_events() instead
+
     /// Assert the total event count matches expectation.
+    ///
+    /// # Deprecated
+    /// Use `assert_events().count(expected)` instead.
+    #[deprecated(since = "0.5.0", note = "Use assert_events().count(expected) instead")]
     pub async fn assert_event_count(&self, expected: usize) -> TestResult<usize> {
         let count = self.pool.events().count_all().await? as usize;
         if count != expected {
@@ -1299,6 +1355,13 @@ impl TestContext {
     }
 
     /// Assert the total event count is at least the expectation.
+    ///
+    /// # Deprecated
+    /// Use `assert_events().at_least(expected)` instead.
+    #[deprecated(
+        since = "0.5.0",
+        note = "Use assert_events().at_least(expected) instead"
+    )]
     pub async fn assert_event_count_at_least(&self, expected: usize) -> TestResult<usize> {
         let count = self.pool.events().count_all().await? as usize;
         if count < expected {
@@ -1308,6 +1371,13 @@ impl TestContext {
     }
 
     /// Assert the event count for a source matches expectation.
+    ///
+    /// # Deprecated
+    /// Use `assert_events().source(source).count(expected)` instead.
+    #[deprecated(
+        since = "0.5.0",
+        note = "Use assert_events().source(source).count(expected) instead"
+    )]
     pub async fn assert_event_count_by_source(
         &self,
         source: &str,
@@ -1322,6 +1392,13 @@ impl TestContext {
     }
 
     /// Assert the event count for a source is at least the expectation.
+    ///
+    /// # Deprecated
+    /// Use `assert_events().source(source).at_least(expected)` instead.
+    #[deprecated(
+        since = "0.5.0",
+        note = "Use assert_events().source(source).at_least(expected) instead"
+    )]
     pub async fn assert_event_count_by_source_at_least(
         &self,
         source: &str,
@@ -1420,11 +1497,24 @@ impl TestContext {
     /// to NATS (simulating a node), where it will be picked up by ingestd,
     /// validated, and inserted into the database.
     ///
+    /// If the event doesn't have an ID, one will be assigned automatically.
     /// The event ID is returned so tests can wait for it using `WaitHelpers`.
     pub async fn publish_test_event(&self, event: &Event<JsonValue>) -> TestResult<Ulid> {
         self.ensure_pipeline_ingestd().await?;
         let client = self.nats_client();
         let mut envelope = event.clone();
+
+        // Assign an ID if the event doesn't have one
+        let event_id = match &envelope.id {
+            Some(id) => id.as_ulid().clone(),
+            None => {
+                let new_id = Id::new();
+                let ulid = new_id.as_ulid().clone();
+                envelope.id = Some(new_id);
+                ulid
+            }
+        };
+
         if envelope.ingestor_version.is_none() {
             envelope.ingestor_version = Some("test-ingestd".to_string());
         }
@@ -1435,13 +1525,7 @@ impl TestContext {
 
         client.publish(subject, payload.into()).await?;
 
-        // Return the ID so the caller can wait for it
-        Ok(event
-            .id
-            .clone()
-            .expect("Test event must have an ID")
-            .as_ulid()
-            .clone())
+        Ok(event_id)
     }
 }
 
@@ -1869,22 +1953,13 @@ impl<'a> TestEventBuilder<'a> {
     ///
     /// Returns the persisted event from the database.
     pub async fn publish(self) -> TestResult<Event<JsonValue>> {
-        match self.timestamp {
-            Some(ts) => {
-                self.ctx
-                    .publish_json_event_with_timestamp(
-                        &self.source,
-                        &self.event_type,
-                        self.payload,
-                        ts,
-                    )
-                    .await
-            }
-            None => {
-                self.ctx
-                    .publish_json_event(&self.source, &self.event_type, self.payload)
-                    .await
-            }
-        }
+        self.ctx
+            .publish_event_internal(
+                EventSource::new(self.source),
+                EventType::new(self.event_type),
+                self.payload,
+                self.timestamp,
+            )
+            .await
     }
 }

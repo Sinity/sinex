@@ -1,7 +1,10 @@
 #![doc = include_str!("../docs/README.md")]
-#![doc = include_str!("../docs/overview.md")]
-#![doc = include_str!("../docs/testing_quality_overview.md")]
-#![doc = include_str!("../../../../TESTING.md")]
+#![doc = include_str!("../docs/test_context.md")]
+#![doc = include_str!("../docs/database_testing.md")]
+#![doc = include_str!("../docs/pipeline_testing.md")]
+#![doc = include_str!("../docs/timing_patterns.md")]
+#![doc = include_str!("../docs/property_testing.md")]
+#![doc = include_str!("../docs/troubleshooting.md")]
 
 //! Workspace testing utilities and dataset seeding.
 //!
@@ -93,22 +96,34 @@ pub use channel_test_support::{
 };
 pub use chaos::ChaosInjestor;
 pub use dataset_seeds::{
-    seed_analytics_dataset_perf_via_pipeline, seed_analytics_dataset_perf_via_scope,
-    seed_analytics_dataset_semantic_min_via_pipeline,
-    seed_analytics_dataset_semantic_min_via_scope, seed_events_via_pipeline, seed_events_via_scope,
-    seed_fixture_events_via_pipeline, seed_fixture_events_via_scope,
-    seed_query_dataset_perf_via_pipeline, seed_query_dataset_perf_via_scope,
-    seed_query_dataset_semantic_min_via_pipeline, seed_query_dataset_semantic_min_via_scope,
-    AnalyticsDataset, DatasetVariant, EventSpec, QueryDataset, SeedClock, TimestampSpec,
+    // Primary API: use _via_scope functions (they use PipelineScope)
+    seed_analytics_dataset_perf_via_scope,
+    seed_analytics_dataset_semantic_min_via_scope,
+    seed_events_via_scope,
+    seed_fixture_events_via_scope,
+    seed_query_dataset_perf_via_scope,
+    seed_query_dataset_semantic_min_via_scope,
+    // Types
+    AnalyticsDataset,
+    DatasetVariant,
+    EventSpec,
+    QueryDataset,
+    SeedClock,
+    TimestampSpec,
 };
+pub use event_assertion::EventAssertion;
+pub use event_publisher::EventPublisher;
 pub use jetstream::ensure_material_streams;
 pub use jetstream_test_helper::JetStreamTestHelper;
+pub use nats_setup::NatsSetup;
 pub use node_publisher::{EventOverrides, TestNodePublisher};
-pub use pipeline::PipelineHarness;
+// Pipeline helpers (shared NATS handles)
+pub use pipeline::{shared_nats_handle, shared_secure_nats_handle};
 pub use pipeline_namespace::PipelineNamespace;
 pub use pipeline_scope::PipelineScope;
 pub use preflight::system_test_preflight;
 pub use snapshot::TestSnapshot;
+pub use test_context::NatsMode;
 pub use test_context::TestContextFailureSnapshot;
 pub use test_context::TestContextHandle;
 pub use test_context::TestEventBuilder;
@@ -158,9 +173,12 @@ pub mod cleanup_config;
 pub mod constants;
 mod database_pool;
 pub mod dataset_seeds;
+mod event_assertion;
+mod event_publisher;
 mod ingestd_test_utils;
 mod jetstream;
 pub mod nats;
+mod nats_setup;
 mod node_publisher;
 pub mod node_runtime;
 pub mod path_validation;
@@ -211,7 +229,7 @@ pub mod prelude {
     pub use crate::TestResult;
     pub use crate::{sinex_prop, sinex_proptest, sinex_serial_test, sinex_test};
     pub use crate::{
-        ChaosInjestor, EphemeralNats, EventOverrides, PipelineHarness, PipelineScope,
+        ChaosInjestor, EphemeralNats, EventOverrides, EventPublisher, NatsSetup, PipelineScope,
         TestNodePublisher, TestSnapshot,
     };
     pub use color_eyre::eyre::{bail, ensure, Context, Result};
@@ -440,12 +458,12 @@ mod tests {
 
     #[sinex_test]
     async fn test_complete_workflow(ctx: TestContext) -> TestResult<()> {
-        let ctx = ctx.with_nats().await?;
+        let ctx = ctx.with_nats().shared().await?;
         // Demonstrates a complete workflow using production APIs
 
         // 1. Create events using production event creation
         let fs_event = ctx
-            .publish_json_event(
+            .publish_event(
                 "fs-watcher",
                 "file.created",
                 json!({
@@ -456,7 +474,7 @@ mod tests {
             .await?;
 
         let term_event = ctx
-            .publish_json_event(
+            .publish_event(
                 "terminal",
                 "command.executed",
                 json!({
@@ -509,9 +527,9 @@ mod tests {
         #[case] event_type: &str,
     ) -> TestResult<()> {
         // Create event with parameterized values
-        let ctx = ctx.with_nats().await?;
+        let ctx = ctx.with_nats().shared().await?;
         let event = ctx
-            .publish_json_event(source, event_type, json!({"param_test": true}))
+            .publish_event(source, event_type, json!({"param_test": true}))
             .await?;
 
         // Verify event was created correctly
@@ -551,11 +569,11 @@ mod tests {
         #[case] name: &str,
         #[case] length: usize,
     ) -> TestResult<()> {
-        let ctx = TestContext::new().await?.with_nats().await?;
+        let ctx = TestContext::new().await?.with_nats().shared().await?;
 
         let source = "a".repeat(length);
         let event = ctx
-            .publish_json_event(&source, "proptest.length", json!({"test_name": name}))
+            .publish_event(&source, "proptest.length", json!({"test_name": name}))
             .await?;
         assert_eq!(event.source.as_str(), source);
         Ok(())
@@ -578,7 +596,7 @@ mod tests {
 
         for (source, event_type, payload) in test_cases {
             let event = ctx
-                .publish_json_event(source, event_type, payload.clone())
+                .publish_event(source, event_type, payload.clone())
                 .await?;
             assert_eq!(event.source.as_str(), source);
             assert_eq!(event.event_type.as_str(), event_type);
@@ -600,7 +618,7 @@ mod tests {
             // Large payload test
             let large = "x".repeat(size_kb * 1024);
             let event = ctx
-                .publish_json_event(
+                .publish_event(
                     "edge",
                     "large",
                     json!({
@@ -613,7 +631,7 @@ mod tests {
 
             // Special characters test
             let event = ctx
-                .publish_json_event("edge", "special", json!({"text": special_chars}))
+                .publish_event("edge", "special", json!({"text": special_chars}))
                 .await?;
             let mut expected_payload = json!({"text": special_chars});
             TestContext::sanitize_payload(&mut expected_payload);
@@ -624,7 +642,7 @@ mod tests {
             for _ in 0..nested_depth {
                 nested = json!({"nested": nested});
             }
-            ctx.publish_json_event("edge", "nested", nested).await?;
+            ctx.publish_event("edge", "nested", nested).await?;
         }
 
         Ok(())
@@ -642,7 +660,7 @@ mod tests {
 
         // Test validation error
         let result = ctx
-            .publish_json_event(
+            .publish_event(
                 "", // Empty source should fail
                 "test",
                 json!({}),
@@ -676,7 +694,7 @@ mod tests {
 
         // Do some work
         for i in 0..10 {
-            ctx.publish_json_event("timeout_test", "test", json!({"index": i}))
+            ctx.publish_event("timeout_test", "test", json!({"index": i}))
                 .await?;
         }
 
@@ -713,13 +731,9 @@ mod tests {
     #[sinex_test]
     async fn test_builder_method_chaining_order(ctx: TestContext) -> TestResult<()> {
         // Test that events can be created with different parameter orders
-        let event1 = ctx
-            .publish_json_event("order1", "test", json!({"a": 1}))
-            .await?;
+        let event1 = ctx.publish_event("order1", "test", json!({"a": 1})).await?;
 
-        let event2 = ctx
-            .publish_json_event("order2", "test", json!({"a": 1}))
-            .await?;
+        let event2 = ctx.publish_event("order2", "test", json!({"a": 1})).await?;
 
         // Both should succeed despite different order
         assert_eq!(event1.event_type.as_str(), "test");
@@ -767,14 +781,14 @@ mod tests {
     async fn test_context_event_count_tracking_accuracy(ctx: TestContext) -> TestResult<()> {
         // Test that event counting is accurate across operations
         ctx.force_cleanup().await?;
-        let baseline = ctx.current_event_count().await?;
+        let baseline = ctx.pool.events().count_all().await?;
 
         // Insert events one by one and verify count
         for i in 1..=5 {
-            ctx.publish_json_event("count-test", "increment", json!({"index": i}))
+            ctx.publish_event("count-test", "increment", json!({"index": i}))
                 .await?;
 
-            let current_count = ctx.current_event_count().await?;
+            let current_count = ctx.pool.events().count_all().await?;
             assert_eq!(
                 current_count,
                 baseline + i,
@@ -784,11 +798,11 @@ mod tests {
 
         // Batch insert and verify
         for i in 0..10 {
-            ctx.publish_json_event("count-test", "batch", json!({"batch_index": i}))
+            ctx.publish_event("count-test", "batch", json!({"batch_index": i}))
                 .await?;
         }
 
-        let final_count = ctx.current_event_count().await?;
+        let final_count = ctx.pool.events().count_all().await?;
         assert_eq!(
             final_count,
             baseline + 15,
@@ -861,7 +875,7 @@ mod tests {
                 match TestContext::with_name(&format!("concurrent_alloc_{i}")).await {
                     Ok(ctx) => {
                         // Do some work to hold the context
-                        ctx.publish_json_event("pool-test", "allocation", json!({"task_id": i}))
+                        ctx.publish_event("pool-test", "allocation", json!({"task_id": i}))
                             .await?;
 
                         success_count.fetch_add(1, Ordering::SeqCst);
@@ -901,7 +915,7 @@ mod tests {
 
             // Insert identifiable data
             temp_ctx
-                .publish_json_event("cleanup-test", "marker", json!({"test_id": test_id}))
+                .publish_event("cleanup-test", "marker", json!({"test_id": test_id}))
                 .await?;
 
             // Verify it exists using direct repository access
@@ -944,12 +958,12 @@ mod tests {
     async fn test_fixture_lazy_initialization(ctx: TestContext) -> TestResult<()> {
         // Test that context initialization is lazy and doesn't create unnecessary events
         ctx.force_cleanup().await?;
-        let baseline = ctx.current_event_count().await?;
+        let baseline = ctx.pool.events().count_all().await?;
 
-        ctx.publish_json_event("fixture-test", "initialization", json!({"lazy": true}))
+        ctx.publish_event("fixture-test", "initialization", json!({"lazy": true}))
             .await?;
 
-        let after_event = ctx.current_event_count().await?;
+        let after_event = ctx.pool.events().count_all().await?;
         assert_eq!(
             after_event,
             baseline + 1,
@@ -1007,7 +1021,7 @@ mod tests {
         // Test that we can create and query events with dependencies
 
         // Create a checkpoint event
-        ctx.publish_json_event(
+        ctx.publish_event(
             "sinex",
             "checkpoint.saved",
             json!({
@@ -1018,7 +1032,7 @@ mod tests {
         .await?;
 
         // Create an automaton event that references the checkpoint
-        ctx.publish_json_event(
+        ctx.publish_event(
             "automaton",
             "checkpoint.processed",
             json!({

@@ -1075,13 +1075,13 @@ mod tests {
     #[sinex_serial_test]
     async fn force_cleanup_clears_event_and_material_pairs() -> TestResult<()> {
         let ctx = TestContext::with_name("force_cleanup_fk").await?;
-        let ctx = ctx.with_nats().await?;
+        let ctx = ctx.with_nats().shared().await?;
         ctx.ensure_clean().await?;
 
         // Seed a couple of events to ensure both event and source material rows exist.
-        ctx.publish_json_event("force-clean", "cleanup.test", json!({"n": 1}))
+        ctx.publish_event("force-clean", "cleanup.test", json!({"n": 1}))
             .await?;
-        ctx.publish_json_event("force-clean", "cleanup.test", json!({"n": 2}))
+        ctx.publish_event("force-clean", "cleanup.test", json!({"n": 2}))
             .await?;
 
         // Validate force cleanup succeeds and leaves database clean.

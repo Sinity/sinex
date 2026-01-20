@@ -11,7 +11,7 @@
 //!
 //! #[sinex_test]
 //! async fn test_consumer(ctx: TestContext) -> TestResult<()> {
-//!     let ctx = ctx.with_nats().await?;
+//!     let ctx = ctx.with_nats().shared().await?;
 //!     let helper = JetStreamTestHelper::new(&ctx, "my-test").await?;
 //!
 //!     // Use helper.topology() and helper.jetstream() for setup
@@ -253,7 +253,7 @@ mod tests {
 
     #[sinex_test]
     async fn jetstream_test_helper_creates_topology(ctx: TestContext) -> TestResult<()> {
-        let ctx = ctx.with_nats().await?;
+        let ctx = ctx.with_nats().shared().await?;
         let helper = JetStreamTestHelper::new(&ctx, "helper-test").await?;
 
         // Verify topology was created
