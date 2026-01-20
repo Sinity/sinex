@@ -316,7 +316,7 @@ where
         // First, try to load from file (hot reload scenario)
         if self.shutdown_config.restore_state_on_startup {
             let checkpoint_path = self.shutdown_config.checkpoint_path(self.processor.name());
-            if let Some(file_state) = CheckpointState::load_from_file(&checkpoint_path) {
+            if let Some(file_state) = CheckpointState::load_from_file(&checkpoint_path).await {
                 // Try to restore our state from the file's data field
                 if let Some(data) = file_state.data {
                     match serde_json::from_value::<PersistedState<P::State>>(data) {
@@ -385,7 +385,7 @@ where
     /// Save state to file for hot reload.
     ///
     /// Called when SIGTERM is received to preserve state before exit.
-    pub fn save_state_to_file(&self) -> std::io::Result<()> {
+    pub async fn save_state_to_file(&self) -> std::io::Result<()> {
         if !self.shutdown_config.save_state_on_shutdown {
             return Ok(());
         }
@@ -406,7 +406,7 @@ where
             version: 2,
         };
 
-        checkpoint_state.save_to_file(&checkpoint_path)
+        checkpoint_state.save_to_file(&checkpoint_path).await
     }
 
     /// Save state to checkpoint
@@ -464,8 +464,8 @@ where
             ))
         })?;
 
-        // Get source event ID for provenance
-        let source_event_id = event.id.unwrap_or_else(EventId::new);
+        // Get source event ID for provenance (clone to avoid partial move)
+        let source_event_id = event.id.clone().unwrap_or_else(EventId::new);
 
         // Process
         match self
@@ -520,12 +520,28 @@ where
                         Ok(None)
                     }
                     ErrorAction::SendToDLQ => {
-                        // TODO: Actually send to DLQ
-                        error!(
-                            processor = %self.processor.name(),
-                            error = %e,
-                            "Sending event to DLQ due to processing error"
-                        );
+                        // Send to DLQ via transport if available
+                        if let Some(ref runtime) = self.runtime {
+                            let transport = runtime.handles().transport();
+                            if let Err(dlq_err) = transport
+                                .send_to_dlq(&event, &e.to_string(), self.processor.name())
+                                .await
+                            {
+                                error!(
+                                    processor = %self.processor.name(),
+                                    error = %e,
+                                    dlq_error = %dlq_err,
+                                    "Failed to send event to DLQ"
+                                );
+                            }
+                        } else {
+                            // No runtime available (e.g., during testing) - just log
+                            warn!(
+                                processor = %self.processor.name(),
+                                error = %e,
+                                "Event would be sent to DLQ but no transport available"
+                            );
+                        }
                         self.persisted_state.events_processed += 1;
                         self.events_since_checkpoint += 1;
                         Ok(None)
@@ -779,7 +795,7 @@ where
         }
 
         // Save state to file for hot reload (fast, no network required)
-        if let Err(e) = self.save_state_to_file() {
+        if let Err(e) = self.save_state_to_file().await {
             warn!(
                 processor = %self.processor.name(),
                 error = %e,

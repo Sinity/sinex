@@ -42,6 +42,7 @@ use thiserror::Error;
 /// ```
 #[derive(Error, Display, Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "details")]
+#[non_exhaustive]
 pub enum SinexError {
     /// Database error: {0}
     Database(ErrorDetails),

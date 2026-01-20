@@ -231,7 +231,7 @@ impl<T: Serialize> Event<T> {
     /// Convert to Event<JsonValue> (type erasure)
     pub fn to_json_event(self) -> Result<Event<JsonValue>, serde_json::Error> {
         Ok(Event {
-            id: None, // New ID for different type
+            id: self.id.map(|id| Id::from_ulid(*id.as_ulid())),
             source: self.source,
             event_type: self.event_type,
             payload: serde_json::to_value(self.payload)?,
@@ -253,7 +253,7 @@ impl Event<JsonValue> {
         T: for<'de> Deserialize<'de>,
     {
         Ok(Event {
-            id: None, // New ID for different type
+            id: self.id.as_ref().map(|id| Id::from_ulid(*id.as_ulid())),
             source: self.source.clone(),
             event_type: self.event_type.clone(),
             payload: serde_json::from_value(self.payload.clone())?,

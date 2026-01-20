@@ -201,6 +201,7 @@ impl<T> EventBuilder<T, HasProvenance> {
 /// Provenance information tracking the origin of an event
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Provenance {
     /// Event derived from source material (first-order event)
     Material {
@@ -221,6 +222,7 @@ pub enum Provenance {
 
 /// Type of offset measurement
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum OffsetKind {
     Byte,
     Line,

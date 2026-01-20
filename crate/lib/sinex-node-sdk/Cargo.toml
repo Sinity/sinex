@@ -7,7 +7,6 @@ authors.workspace = true
 [dependencies]
 camino = { workspace = true }
 # Core dependencies
-anyhow.workspace = true
 thiserror.workspace = true
 color-eyre.workspace = true
 bon.workspace = true
@@ -39,10 +38,8 @@ semver = { version = "1.0", features = ["serde"] }
 clap = { workspace = true, features = ["derive"] }
 dirs.workspace = true
 toml = "0.8"
-tower = "0.4"
 validator = { workspace = true }
 figment = { workspace = true }
-humantime-serde = { workspace = true }
 uncased = { workspace = true }
 
 # System

@@ -335,7 +335,22 @@ impl JetStreamEventConsumer {
             match messages.next().await {
                 Some(Ok(msg)) => match Self::parse_provisional_event(&msg) {
                     Ok(event) => {
-                        buffer.add_provisional(event.clone()).await;
+                        // Memory protection: if buffer is full, NAK to apply backpressure
+                        if !buffer.add_provisional(event.clone()).await {
+                            warn!(
+                                event_id = %event.event_id,
+                                "Buffer at capacity, NAKing message to apply backpressure"
+                            );
+                            // NAK with delay to prevent tight redelivery loop
+                            let nak_delay = Some(std::time::Duration::from_millis(500));
+                            if let Err(e) = msg
+                                .ack_with(async_nats::jetstream::AckKind::Nak(nak_delay))
+                                .await
+                            {
+                                error!("Failed to NAK message during backpressure: {}", e);
+                            }
+                            continue;
+                        }
 
                         if enable_provisional {
                             if let Some(ref handler) = provisional_handler {

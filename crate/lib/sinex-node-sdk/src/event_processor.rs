@@ -29,6 +29,26 @@ impl std::fmt::Debug for EventTransport {
     }
 }
 
+impl EventTransport {
+    /// Send an event to the Dead Letter Queue
+    ///
+    /// This method is used when processing fails and the event should be
+    /// preserved for later retry or manual inspection.
+    pub async fn send_to_dlq(
+        &self,
+        event: &Event<JsonValue>,
+        error: &str,
+        processor_name: &str,
+    ) -> NodeResult<()> {
+        match self {
+            EventTransport::Nats(publisher) => publisher
+                .publish_to_dlq(event, error, processor_name)
+                .await
+                .map_err(|e| crate::NodeError::Processing(format!("Failed to send to DLQ: {}", e))),
+        }
+    }
+}
+
 /// Configuration for event processing
 #[derive(Debug, Clone)]
 pub struct EventProcessorConfig {

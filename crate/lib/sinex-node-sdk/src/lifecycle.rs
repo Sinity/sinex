@@ -300,10 +300,10 @@ impl LifecycleManager {
                         break;
                     }
 
-                    emitter_clone.emit_heartbeat(Some(serde_json::json!({
+                    let _ = emitter_clone.emit_heartbeat(Some(serde_json::json!({
                         "service_type": "node",
                         "heartbeat_source": "lifecycle_manager"
-                    })));
+                    }))).await;
                 }
 
                 info!(service = %service_name_clone, "Heartbeat emission stopped");
@@ -337,10 +337,10 @@ impl LifecycleManager {
 
                 // Issue 88 fix: Emit final heartbeat before shutdown to ensure observability
                 if let Some(emitter) = &self.heartbeat_emitter {
-                    emitter.emit_heartbeat(Some(serde_json::json!({
+                    let _ = emitter.emit_heartbeat(Some(serde_json::json!({
                         "shutdown_reason": "ctrl_c",
                         "final_heartbeat": true
-                    })));
+                    }))).await;
                 }
 
                 self.shutdown_flag.store(true, Ordering::Relaxed);

@@ -162,8 +162,8 @@ impl CheckpointState {
     /// when the process restarts.
     ///
     /// The file format is JSON with a magic header for validation.
-    pub fn save_to_file(&self, path: &std::path::Path) -> std::io::Result<()> {
-        use std::io::Write;
+    pub async fn save_to_file(&self, path: &std::path::Path) -> std::io::Result<()> {
+        use tokio::io::AsyncWriteExt;
 
         let wrapper = FileCheckpointWrapper {
             magic: FILE_CHECKPOINT_MAGIC.to_string(),
@@ -176,10 +176,10 @@ impl CheckpointState {
 
         // Atomic write: write to temp file, then rename
         let temp_path = path.with_extension("tmp");
-        let mut file = std::fs::File::create(&temp_path)?;
-        file.write_all(json.as_bytes())?;
-        file.sync_all()?;
-        std::fs::rename(&temp_path, path)?;
+        let mut file = tokio::fs::File::create(&temp_path).await?;
+        file.write_all(json.as_bytes()).await?;
+        file.sync_all().await?;
+        tokio::fs::rename(&temp_path, path).await?;
 
         info!(
             path = %path.display(),
@@ -194,8 +194,8 @@ impl CheckpointState {
     ///
     /// Used to restore state after a hot reload. If the file doesn't exist
     /// or is invalid, returns None (allowing fresh start).
-    pub fn load_from_file(path: &std::path::Path) -> Option<Self> {
-        let contents = match std::fs::read_to_string(path) {
+    pub async fn load_from_file(path: &std::path::Path) -> Option<Self> {
+        let contents = match tokio::fs::read_to_string(path).await {
             Ok(c) => c,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 debug!(path = %path.display(), "No checkpoint file found");
@@ -359,20 +359,24 @@ pub fn parse_checkpoint_key(key: &str) -> Option<(String, String, String)> {
 /// `CheckpointManager` is `Clone` and can be safely shared across threads.
 /// KV updates are atomic per key; concurrent writers follow last-write-wins semantics.
 ///
-/// # Issue 12: Checkpoint Cleanup
+/// # Checkpoint Cleanup
 ///
-/// TODO: Implement 30-day TTL cleanup for stale checkpoints
+/// Stale checkpoint cleanup is implemented via [`spawn_checkpoint_cleanup_task`] and
+/// [`cleanup_stale_checkpoints`]. The cleanup is opt-in via environment variables:
 ///
-/// Currently, checkpoints remain in NATS KV indefinitely. For nodes that frequently
-/// change instance IDs (e.g., ephemeral containers), this can lead to checkpoint
-/// accumulation. A background task should:
-/// 1. Scan checkpoints in the KV bucket periodically (daily)
-/// 2. Identify checkpoints with `last_activity` > 30 days old
-/// 3. Delete stale checkpoints to prevent unbounded growth
-/// 4. Emit metrics about cleanup operations (deleted count, errors)
+/// - `SINEX_CHECKPOINT_CLEANUP_ENABLED=true` - Enable automatic cleanup
+/// - `SINEX_CHECKPOINT_CLEANUP_MAX_AGE_DAYS=30` - Max age before deletion (default: 30)
+/// - `SINEX_CHECKPOINT_CLEANUP_INTERVAL_HOURS=24` - Run interval (default: 24)
 ///
-/// Implementation should be opt-in via environment variable or feature flag to avoid
-/// breaking existing deployments that rely on long-term checkpoint retention.
+/// To enable in your node, call [`spawn_checkpoint_cleanup_task`] during startup:
+///
+/// ```rust,ignore
+/// let config = CheckpointCleanupConfig::from_env();
+/// if config.enabled {
+///     let kv = /* your checkpoint KV store */;
+///     let _cleanup_handle = spawn_checkpoint_cleanup_task(kv, config);
+/// }
+/// ```
 #[derive(Debug, Clone)]
 pub struct CheckpointManager {
     kv: async_nats::jetstream::kv::Store,
@@ -894,7 +898,7 @@ mod tests {
     async fn save_checkpoint_rejects_processed_count_overflow(
         ctx: TestContext,
     ) -> sinex_test_utils::TestResult<()> {
-        let ctx = ctx.with_nats().await?;
+        let ctx = ctx.with_nats().shared().await?;
         let kv = ctx.checkpoint_kv().await?;
         let manager = CheckpointManager::new(
             kv,
@@ -914,7 +918,7 @@ mod tests {
     async fn checkpoint_keys_accept_invalid_chars(
         ctx: TestContext,
     ) -> sinex_test_utils::TestResult<()> {
-        let ctx = ctx.with_nats().await?;
+        let ctx = ctx.with_nats().shared().await?;
         let kv = ctx.checkpoint_kv().await?;
         let manager = CheckpointManager::new(
             kv,

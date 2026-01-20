@@ -153,31 +153,39 @@ async fn maybe_start_schema_listener(
     Option<Arc<SchemaBroadcastCache>>,
     Option<Arc<crate::schema_validator::NodeSchemaValidator>>,
 )> {
-    // Always enable schema cache and validation for node-side validation.
+    // Enable schema cache and validation when infrastructure is available.
     // Schemas are broadcast from ingestd and stored in NATS KV.
+    // In edge mode (without full infrastructure), gracefully skip schema validation.
 
     let client = match transport {
         EventTransport::Nats(publisher) => publisher.nats_client().clone(),
     };
     let env = sinex_core::environment();
     let subject = env.nats_subject("system.schemas.active");
-    let mut sub = client
-        .subscribe(subject.clone())
-        .await
-        .map_err(|e| NodeError::General(eyre!("Failed to subscribe to schema broadcasts: {e}")))?;
+    let sub = match client.subscribe(subject.clone()).await {
+        Ok(sub) => sub,
+        Err(e) => {
+            debug!("Schema broadcast subscription unavailable (edge mode): {e}");
+            return Ok((None, None));
+        }
+    };
+    let mut sub = sub;
+
+    // Get KV bucket for fetching full schemas - if unavailable, skip schema validation
+    let js = async_nats::jetstream::new(client);
+    let kv = match js.get_key_value("KV_sinex_schemas").await {
+        Ok(kv) => kv,
+        Err(e) => {
+            debug!("Schema KV bucket unavailable (edge mode): {e}");
+            return Ok((None, None));
+        }
+    };
 
     // Create schema cache and validator
     let cache = Arc::new(SchemaBroadcastCache::default());
     let cache_clone = cache.clone();
     let validator = Arc::new(crate::schema_validator::NodeSchemaValidator::new());
     let validator_clone = validator.clone();
-
-    // Get KV bucket for fetching full schemas
-    let js = async_nats::jetstream::new(client);
-    let kv = js
-        .get_key_value("KV_sinex_schemas")
-        .await
-        .map_err(|e| NodeError::General(eyre!("Failed to get schema KV bucket: {e}")))?;
 
     // Background task to update cache and validator
     tokio::spawn(async move {
@@ -471,6 +479,15 @@ impl<T: Node + 'static> StreamProcessorRunner<T> {
 
         let kv_store = create_checkpoint_kv(&transport).await?;
         let (schema_cache, schema_validator) = maybe_start_schema_listener(&transport).await?;
+
+        // Start checkpoint cleanup background task if enabled
+        let cleanup_config = crate::checkpoint::CheckpointCleanupConfig::from_env();
+        if cleanup_config.enabled {
+            let kv_for_cleanup = kv_store.clone();
+            let _cleanup_handle =
+                crate::checkpoint::spawn_checkpoint_cleanup_task(kv_for_cleanup, cleanup_config);
+            tracing::info!("Checkpoint cleanup task started");
+        }
 
         // Initialize checkpoint manager with KV
         let checkpoint_manager = Arc::new(CheckpointManager::new(

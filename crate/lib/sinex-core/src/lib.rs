@@ -1,6 +1,5 @@
 #![doc = include_str!("../docs/overview.md")]
 #![doc = include_str!("../../../../docs/current/architecture/Core_Architecture.md")]
-#![doc = include_str!("../../../../docs/current/architecture/event-taxonomy.md")]
 #![doc = include_str!("../../sinex-schema/docs/ulid.md")]
 
 //! Core Sinex abstractions for types, persistence, and environment wiring.

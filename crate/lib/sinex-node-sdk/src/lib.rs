@@ -59,11 +59,14 @@ pub use automaton_base::{
     IngestionHistoryEntry, DEFAULT_CHANNEL_CAPACITY, DEFAULT_MAX_HISTORY_ENTRIES,
 };
 pub use automaton_event_handler::AutomatonEventHandler;
-pub use checkpoint::{CheckpointManager, CheckpointState};
+pub use checkpoint::{
+    cleanup_stale_checkpoints, spawn_checkpoint_cleanup_task, CheckpointCleanupConfig,
+    CheckpointCleanupResult, CheckpointManager, CheckpointState,
+};
 pub use config::{AutomatonConfig, EventSourceConfig, NodeConfig};
 pub use confirmation_handler::{
     ConfirmationBuffer, ConfirmedEventHandler, EventConfirmation, ProcessingModel,
-    ProvisionalEvent, ProvisionalEventHandler,
+    ProvisionalEvent, ProvisionalEventHandler, DEFAULT_MAX_PENDING_EVENTS,
 };
 pub use coordination::{HandoffRequest, InstanceMode, NodeCoordination};
 pub use dlq_retry::{DlqRetryConfig, DlqRetryHandler, DlqStats};

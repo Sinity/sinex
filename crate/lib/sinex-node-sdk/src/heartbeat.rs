@@ -205,9 +205,9 @@ impl HeartbeatEmitter {
     /// Get approximate memory usage in MB
     ///
     /// Issue 10 fix: Now logs parse failures and returns 0 as documented fallback
-    fn get_memory_usage_mb(&self) -> u32 {
+    async fn get_memory_usage_mb(&self) -> u32 {
         // Basic implementation using /proc/self/status
-        match std::fs::read_to_string("/proc/self/status") {
+        match tokio::fs::read_to_string("/proc/self/status").await {
             Ok(status) => {
                 for line in status.lines() {
                     if line.starts_with("VmRSS:") {
@@ -282,7 +282,7 @@ impl HeartbeatEmitter {
     /// updates could be lost. For heartbeat metrics this is acceptable as it only affects
     /// the accuracy of per-interval counts, not cumulative totals. To fix this properly,
     /// CoordinationPrimitive would need a fetch_and_reset() method.
-    pub fn create_heartbeat_metrics(
+    pub async fn create_heartbeat_metrics(
         &self,
         metadata: Option<serde_json::Value>,
     ) -> HeartbeatMetrics {
@@ -303,7 +303,7 @@ impl HeartbeatEmitter {
             status,
             events_processed: events_processed as u64,
             uptime_seconds: uptime,
-            memory_usage_mb: self.get_memory_usage_mb(),
+            memory_usage_mb: self.get_memory_usage_mb().await,
             cpu_usage_percent: self.get_cpu_usage_percent(),
             errors_count: recent_errors as u32,
             last_error_message: last_error,
@@ -315,8 +315,8 @@ impl HeartbeatEmitter {
     }
 
     /// Emit a single heartbeat to stdout
-    pub fn emit_heartbeat(&self, metadata: Option<serde_json::Value>) {
-        let metrics = self.create_heartbeat_metrics(metadata);
+    pub async fn emit_heartbeat(&self, metadata: Option<serde_json::Value>) {
+        let metrics = self.create_heartbeat_metrics(metadata).await;
 
         // Create structured log message that journald will capture
         let log_entry = json!({
@@ -377,7 +377,7 @@ impl HeartbeatEmitter {
 
             let metadata = metadata_provider.as_mut().and_then(|provider| provider());
 
-            self.emit_heartbeat(metadata);
+            self.emit_heartbeat(metadata).await;
         }
     }
 

@@ -64,7 +64,7 @@ use sinex_core::types::{Result, Seconds, SinexError};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{error, info, instrument, warn};
 
 use futures::StreamExt;
 
@@ -206,6 +206,8 @@ pub struct WorkTracker {
     shutdown_requested: Arc<CoordinationPrimitive>,
     /// Heartbeat emitter for monitoring
     heartbeat_emitter: Option<Arc<HeartbeatEmitter>>,
+    /// Notification for work completion (separate from CoordinationPrimitive)
+    work_complete_notify: Arc<tokio::sync::Notify>,
 }
 
 /// RAII guard for work tracking
@@ -214,13 +216,18 @@ pub struct WorkTracker {
 #[derive(Debug)]
 pub struct WorkGuard {
     tracker: Arc<CoordinationPrimitive>,
+    notify: Arc<tokio::sync::Notify>,
 }
 
 impl Drop for WorkGuard {
     fn drop(&mut self) {
         let current = self.tracker.get();
         if current > 0 {
-            self.tracker.subtract(1);
+            let new_count = self.tracker.subtract(1);
+            // Notify waiters if work is now complete
+            if new_count == 0 {
+                self.notify.notify_waiters();
+            }
         }
     }
 }
@@ -234,6 +241,7 @@ impl WorkTracker {
             )),
             shutdown_requested: Arc::new(CoordinationPrimitive::synchronizer("shutdown_signal")),
             heartbeat_emitter: None,
+            work_complete_notify: Arc::new(tokio::sync::Notify::new()),
         }
     }
 
@@ -252,6 +260,7 @@ impl WorkTracker {
         }
         WorkGuard {
             tracker: self.in_flight_operations.clone(),
+            notify: self.work_complete_notify.clone(),
         }
     }
 
@@ -284,6 +293,59 @@ impl WorkTracker {
     /// Check if all work is complete
     pub fn is_work_complete(&self) -> bool {
         self.in_flight_operations.get() == 0
+    }
+
+    /// Wait for all in-flight work to complete (event-driven)
+    ///
+    /// Returns when the in-flight counter reaches zero or timeout is exceeded.
+    /// This is truly event-driven using tokio::sync::Notify - no polling loops.
+    ///
+    /// When WorkGuard is dropped (either normally or via unwinding), it decrements
+    /// the counter and calls notify_waiters() if the count reaches zero. This wakes
+    /// up any tasks waiting here immediately, with no CPU waste.
+    pub async fn wait_for_work_complete(&self, timeout: Duration) -> Result<()> {
+        let start = std::time::Instant::now();
+
+        loop {
+            // Check if work is complete
+            if self.is_work_complete() {
+                return Ok(());
+            }
+
+            // Check timeout
+            if start.elapsed() >= timeout {
+                return Err(SinexError::timeout(format!(
+                    "Timeout waiting for {} in-flight operations to complete",
+                    self.in_flight_count()
+                )));
+            }
+
+            // Calculate remaining time for this wait
+            let remaining = timeout.saturating_sub(start.elapsed());
+
+            // Wait for notification (event-driven, no polling)
+            // We'll be woken up when the last in-flight operation completes
+            tokio::select! {
+                _ = self.work_complete_notify.notified() => {
+                    // Work may be complete, loop will check
+                    continue;
+                }
+                _ = tokio::time::sleep(remaining) => {
+                    // Timeout reached
+                    break;
+                }
+            }
+        }
+
+        // Final check before returning timeout error
+        if self.is_work_complete() {
+            Ok(())
+        } else {
+            Err(SinexError::timeout(format!(
+                "Timeout waiting for {} in-flight operations to complete",
+                self.in_flight_count()
+            )))
+        }
     }
 }
 
@@ -475,7 +537,13 @@ impl NodeCoordination {
                     // We just continue the outer loop which Ticks.
                 }
                 InstanceMode::Transitioning => {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    // This state should be transient - if we reach here, transition immediately
+                    // to avoid unnecessary delays. The transition logic above should have already
+                    // set current_mode to the target state.
+                    warn!(
+                        "Unexpected Transitioning state persisted - forcing to Standby"
+                    );
+                    self.current_mode = InstanceMode::Standby;
                 }
             }
         }
@@ -862,17 +930,13 @@ impl NodeCoordination {
     /// 1. All locks are read locks (RwLock allows multiple concurrent readers)
     /// 2. Each lock is released before the next is acquired (no lock held across await)
     /// 3. The locks guard different critical sections:
-    ///    - Initial lock (line 866): Request shutdown signal
-    ///    - Loop locks (via check_work_complete): Poll for completion
-    ///    - Timeout lock (line 894): Read final state for logging
-    ///
-    /// Lock acquisition order:
-    /// - Line 866: read().await, released at 872
-    /// - Line 876: check_work_complete() acquires/releases in loop (multiple times)
-    /// - Line 894: read().await in timeout handler (only executed if timeout occurs)
+    ///    - Initial lock: Request shutdown signal
+    ///    - Wait lock: Event-driven wait for completion (no polling)
+    ///    - Timeout lock: Read final state for logging (only if timeout occurs)
     ///
     /// This pattern is intentional to minimize lock hold time and avoid blocking
-    /// shutdown signals from other threads.
+    /// shutdown signals from other threads. The wait is event-driven using
+    /// CoordinationPrimitive notifications, not polling.
     async fn finish_critical_work(&self) -> Result<()> {
         info!("Finishing critical work before handoff");
 
@@ -892,29 +956,23 @@ impl NodeCoordination {
         } // Lock released here
 
         // Wait for in-flight operations to complete with timeout
-        // Lock scope 2: Polling loop (check_work_complete acquires/releases repeatedly)
-        let drain_result = tokio::time::timeout(graceful_timeout, async {
-            while !self.check_work_complete().await? {
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-            Ok::<(), SinexError>(())
-        })
-        .await;
+        // Lock scope 2: Event-driven wait (no polling)
+        let tracker = self.work_tracker.read().await;
+        let drain_result = tracker.wait_for_work_complete(graceful_timeout).await;
+        drop(tracker); // Release lock before handling result
 
         match drain_result {
-            Ok(Ok(())) => {
+            Ok(()) => {
                 info!(
                     elapsed_ms = start.elapsed().as_millis(),
                     "All critical work completed gracefully"
                 );
             }
-            Ok(Err(e)) => {
-                warn!(error = %e, "Error while draining work");
-            }
-            Err(_) => {
+            Err(e) => {
                 // Lock scope 3: Timeout diagnostic logging
                 let tracker = self.work_tracker.read().await;
                 warn!(
+                    error = %e,
                     timeout_secs = graceful_timeout.as_secs(),
                     remaining_ops = tracker.in_flight_count(),
                     "Graceful shutdown timeout - forcing shutdown with remaining work"
@@ -927,23 +985,6 @@ impl NodeCoordination {
         Ok(())
     }
 
-    /// Check if all critical work is complete
-    ///
-    /// Acquires a read lock on work_tracker to check completion status.
-    /// Called repeatedly in a polling loop from finish_critical_work().
-    async fn check_work_complete(&self) -> Result<bool> {
-        let tracker = self.work_tracker.read().await;
-        let is_complete = tracker.is_work_complete();
-
-        if !is_complete {
-            debug!(
-                "Work still in progress: {} operations",
-                tracker.in_flight_count()
-            );
-        }
-
-        Ok(is_complete)
-    }
 
     // Getters
     pub fn instance(&self) -> &NodeInstance {

@@ -159,15 +159,15 @@ impl ShutdownHandler {
     /// Save checkpoint state to file.
     ///
     /// Called during graceful shutdown to persist state.
-    pub fn save_state(&self, state: &CheckpointState) -> std::io::Result<()> {
-        state.save_to_file(&self.checkpoint_path)
+    pub async fn save_state(&self, state: &CheckpointState) -> std::io::Result<()> {
+        state.save_to_file(&self.checkpoint_path).await
     }
 
     /// Load checkpoint state from file if it exists.
     ///
     /// Called during startup when --restore-state is specified.
-    pub fn load_state(&self) -> Option<CheckpointState> {
-        CheckpointState::load_from_file(&self.checkpoint_path)
+    pub async fn load_state(&self) -> Option<CheckpointState> {
+        CheckpointState::load_from_file(&self.checkpoint_path).await
     }
 
     /// Delete the checkpoint file after successful sync to primary store.
@@ -236,21 +236,21 @@ mod tests {
         assert!(signal.is_shutdown_requested());
     }
 
-    #[test]
-    fn test_state_save_load() {
+    #[tokio::test]
+    async fn test_state_save_load() {
         let temp_dir = TempDir::new().unwrap();
         let checkpoint_path = temp_dir.path().join("test.checkpoint.json");
 
         let handler = ShutdownHandler::new(&checkpoint_path);
 
         let state = CheckpointState::default();
-        handler.save_state(&state).unwrap();
+        handler.save_state(&state).await.unwrap();
 
-        let loaded = handler.load_state();
+        let loaded = handler.load_state().await;
         assert!(loaded.is_some());
 
         handler.clear_state().unwrap();
-        assert!(handler.load_state().is_none());
+        assert!(handler.load_state().await.is_none());
     }
 
     #[test]

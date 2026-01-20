@@ -69,26 +69,73 @@ pub trait ConfirmedEventHandler: Send + Sync {
     async fn handle_confirmed(&self, event: &ProvisionalEvent) -> NodeResult<()>;
 }
 
+/// Default maximum capacity for the confirmation buffer
+pub const DEFAULT_MAX_PENDING_EVENTS: usize = 10_000;
+
 /// Buffer for provisional events awaiting confirmation
 pub struct ConfirmationBuffer {
     /// Provisional events indexed by event_id
     pending: Arc<RwLock<HashMap<Ulid, ProvisionalEvent>>>,
     /// Maximum time to wait for confirmation before treating as failure
     timeout: std::time::Duration,
+    /// Maximum number of pending events (prevents unbounded memory growth)
+    max_capacity: usize,
+    /// Counter for rejected events due to capacity limits
+    rejected_count: std::sync::atomic::AtomicU64,
 }
 
 impl ConfirmationBuffer {
     pub fn new(timeout: std::time::Duration) -> Self {
+        Self::with_capacity(timeout, DEFAULT_MAX_PENDING_EVENTS)
+    }
+
+    pub fn with_capacity(timeout: std::time::Duration, max_capacity: usize) -> Self {
         Self {
-            pending: Arc::new(RwLock::new(HashMap::new())),
+            pending: Arc::new(RwLock::new(HashMap::with_capacity(
+                max_capacity.min(1000), // Pre-allocate reasonably
+            ))),
             timeout,
+            max_capacity,
+            rejected_count: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
     /// Add a provisional event to the buffer
-    pub async fn add_provisional(&self, event: ProvisionalEvent) {
+    ///
+    /// Returns `false` if the buffer is at capacity and the event was rejected.
+    /// Callers should handle this by applying backpressure or logging.
+    pub async fn add_provisional(&self, event: ProvisionalEvent) -> bool {
         let mut pending = self.pending.write().await;
+
+        if pending.len() >= self.max_capacity {
+            let rejected = self
+                .rejected_count
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+            // Log periodically to avoid log spam
+            if rejected % 100 == 0 {
+                tracing::error!(
+                    max_capacity = self.max_capacity,
+                    rejected_total = rejected + 1,
+                    event_id = %event.event_id,
+                    "ConfirmationBuffer at capacity - event rejected (memory protection)"
+                );
+            }
+            return false;
+        }
+
+        // Warn when approaching capacity
+        let current_len = pending.len();
+        if current_len > 0 && current_len % 1000 == 0 && current_len > self.max_capacity * 8 / 10 {
+            tracing::warn!(
+                current = current_len,
+                max = self.max_capacity,
+                "ConfirmationBuffer approaching capacity limit"
+            );
+        }
+
         pending.insert(event.event_id, event);
+        true
     }
 
     /// Retrieve and remove an event upon confirmation
@@ -145,6 +192,16 @@ impl ConfirmationBuffer {
     pub async fn is_empty(&self) -> bool {
         self.pending.read().await.is_empty()
     }
+
+    /// Get the number of events rejected due to capacity limits
+    pub fn rejected_count(&self) -> u64 {
+        self.rejected_count.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Get the maximum capacity
+    pub fn max_capacity(&self) -> usize {
+        self.max_capacity
+    }
 }
 
 #[cfg(test)]
@@ -166,7 +223,7 @@ mod tests {
             received_at: chrono::Utc::now(),
         };
 
-        buffer.add_provisional(event.clone()).await;
+        assert!(buffer.add_provisional(event.clone()).await);
         assert_eq!(buffer.len().await, 1);
 
         let confirmed = buffer.confirm(event_id).await;
@@ -190,7 +247,7 @@ mod tests {
         };
 
         event.received_at -= chrono::Duration::seconds(1);
-        buffer.add_provisional(event).await;
+        assert!(buffer.add_provisional(event).await);
 
         let timed_out = buffer.check_timeouts().await;
         assert_eq!(timed_out.len(), 1);
@@ -199,6 +256,45 @@ mod tests {
         let removed = buffer.remove_timed_out(&timed_out).await;
         assert_eq!(removed.len(), 1);
         assert_eq!(buffer.len().await, 0);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_confirmation_buffer_capacity_limit() -> TestResult<()> {
+        let max_capacity = 5;
+        let buffer = ConfirmationBuffer::with_capacity(
+            std::time::Duration::from_secs(60),
+            max_capacity,
+        );
+
+        // Fill to capacity
+        for i in 0..max_capacity {
+            let event = ProvisionalEvent {
+                event_id: Ulid::new(),
+                source: format!("test-{}", i),
+                event_type: "test.event".to_string(),
+                payload: serde_json::json!({"index": i}),
+                ts_orig: chrono::Utc::now(),
+                received_at: chrono::Utc::now(),
+            };
+            assert!(buffer.add_provisional(event).await, "Should accept event {}", i);
+        }
+
+        assert_eq!(buffer.len().await, max_capacity);
+
+        // Next event should be rejected
+        let overflow_event = ProvisionalEvent {
+            event_id: Ulid::new(),
+            source: "overflow".to_string(),
+            event_type: "test.event".to_string(),
+            payload: serde_json::json!({"overflow": true}),
+            ts_orig: chrono::Utc::now(),
+            received_at: chrono::Utc::now(),
+        };
+        assert!(!buffer.add_provisional(overflow_event).await, "Should reject overflow");
+        assert_eq!(buffer.rejected_count(), 1);
+        assert_eq!(buffer.len().await, max_capacity); // Still at capacity
+
         Ok(())
     }
 }

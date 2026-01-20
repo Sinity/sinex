@@ -222,7 +222,7 @@ impl<'a> EventRepository<'a> {
         )
         .fetch_one(self.pool)
         .await
-        .map_err(|e| db_error(e, "prepare cascade session"))
+        .map_err(|e| db_error(e, &format!("Failed to prepare cascade session '{}'", session_id)))
     }
 
     pub async fn populate_cascade_roots(
@@ -238,7 +238,16 @@ impl<'a> EventRepository<'a> {
         .bind(&ids)
         .fetch_one(self.pool)
         .await
-        .map_err(|e| db_error(e, "populate cascade roots"))?;
+        .map_err(|e| {
+            db_error(
+                e,
+                &format!(
+                    "Failed to populate cascade roots: {} event IDs into table '{}'",
+                    event_ids.len(),
+                    table_name
+                ),
+            )
+        })?;
         Ok(())
     }
 
@@ -261,7 +270,15 @@ impl<'a> EventRepository<'a> {
         )
         .fetch_one(self.pool)
         .await
-        .map_err(|e| db_error(e, "expand cascade graph"))?
+        .map_err(|e| {
+            db_error(
+                e,
+                &format!(
+                    "Failed to expand cascade graph for table '{}' (max_depth={})",
+                    table_name, max_depth
+                ),
+            )
+        })?
         .unwrap_or(0);
         Ok(depth as usize)
     }
@@ -806,7 +823,12 @@ impl<'a> EventRepository<'a> {
             .pool
             .begin()
             .await
-            .map_err(|e| db_error(e, "begin transaction for batch insert"))?;
+            .map_err(|e| {
+                db_error(
+                    e,
+                    &format!("Failed to begin transaction for batch insert of {} events", events.len()),
+                )
+            })?;
 
         crate::db::query_helpers::set_repeatable_read(&mut tx).await?;
 
@@ -847,11 +869,21 @@ impl<'a> EventRepository<'a> {
             .build()
             .execute(&mut *tx)
             .await
-            .map_err(|e| db_error(e, "insert batch using values"))?;
+            .map_err(|e| {
+                db_error(
+                    e,
+                    &format!("Failed to insert batch of {} events", ids.len()),
+                )
+            })?;
 
         tx.commit()
             .await
-            .map_err(|e| db_error(e, "commit batch insert"))?;
+            .map_err(|e| {
+                db_error(
+                    e,
+                    &format!("Failed to commit batch insert of {} events", events.len()),
+                )
+            })?;
 
         Ok(events)
     }
@@ -1076,7 +1108,7 @@ impl<'a> EventRepository<'a> {
             .pool
             .begin()
             .await
-            .map_err(|e| db_error(e, "begin cleanup transaction"))?;
+            .map_err(|e| db_error(e, "Failed to begin transaction for test event cleanup"))?;
         crate::db::query_helpers::set_repeatable_read(&mut tx).await?;
 
         // Set session variables for audit trail
@@ -1144,7 +1176,15 @@ impl<'a> EventRepository<'a> {
         // Commit the transaction
         tx.commit()
             .await
-            .map_err(|e| db_error(e, "commit cleanup transaction"))?;
+            .map_err(|e| {
+                db_error(
+                    e,
+                    &format!(
+                        "Failed to commit test event cleanup transaction (deleted {} events)",
+                        deleted_count
+                    ),
+                )
+            })?;
 
         tracing::info!(
             operation_id = %operation_id,
