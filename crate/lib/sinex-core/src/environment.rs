@@ -320,6 +320,46 @@ impl SinexEnvironment {
         }
     }
 
+    /// Get environment-namespaced NATS KV bucket name
+    ///
+    /// Prefixes KV bucket names with environment:
+    /// - sinex_checkpoints -> dev_sinex_checkpoints
+    pub fn nats_kv_bucket_name(&self, base_name: &str) -> String {
+        let env_prefix = self.name.to_lowercase();
+        if base_name.starts_with(&format!("{env_prefix}_")) {
+            debug!(
+                "NATS KV bucket name already namespaced for environment {}",
+                self.name
+            );
+            base_name.to_string()
+        } else {
+            format!("{env_prefix}_{base_name}")
+        }
+    }
+
+    /// Get an environment-namespaced KV bucket name with an additional namespace suffix.
+    pub fn nats_kv_bucket_with_namespace(
+        &self,
+        namespace: Option<&str>,
+        base_name: &str,
+    ) -> String {
+        if let Some(ns) = namespace {
+            let suffix = ns
+                .chars()
+                .map(|c| {
+                    if c.is_ascii_alphanumeric() {
+                        c.to_ascii_lowercase()
+                    } else {
+                        '_'
+                    }
+                })
+                .collect::<String>();
+            self.nats_kv_bucket_name(&format!("{base_name}_{suffix}"))
+        } else {
+            self.nats_kv_bucket_name(base_name)
+        }
+    }
+
     /// Get environment-namespaced socket path
     ///
     /// Modifies socket paths to include environment:

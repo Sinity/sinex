@@ -129,16 +129,17 @@ async fn create_checkpoint_kv(transport: &EventTransport) -> NodeResult<kv::Stor
     };
 
     let js = async_nats::jetstream::new(client);
-    let bucket = "KV_sinex_checkpoints";
+    let env = sinex_core::environment();
+    let bucket = format!("KV_{}", env.nats_kv_bucket_name("sinex_checkpoints"));
     let kv_store = match js
         .create_key_value(kv::Config {
-            bucket: bucket.to_string(),
+            bucket: bucket.clone(),
             ..Default::default()
         })
         .await
     {
         Ok(store) => store,
-        Err(create_err) => js.get_key_value(bucket).await.map_err(|e| {
+        Err(create_err) => js.get_key_value(&bucket).await.map_err(|e| {
             NodeError::General(eyre!(
                 "Failed to create/open checkpoint KV bucket (create: {create_err}, open: {e})"
             ))

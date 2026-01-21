@@ -83,9 +83,9 @@ pub enum InstanceMode {
 mod tests {
     use super::*;
     use crate::checkpoint::CheckpointManager;
-    use crate::EventTransport;
     use crate::nats_publisher::NatsPublisher;
     use crate::stream_processor::{EventEmitter, NodeHandles, NodeRuntimeState, ServiceInfo};
+    use crate::EventTransport;
     use camino::Utf8PathBuf;
     use sinex_core::db::models::Event;
     use sinex_core::types::buffers::DEFAULT_EVENT_CHANNEL_SIZE;
@@ -116,7 +116,7 @@ mod tests {
         let js = async_nats::jetstream::new(nats_client);
         let kv = js
             .create_key_value(async_nats::jetstream::kv::Config {
-                bucket: "sinex_checkpoints".to_string(),
+                bucket: env.nats_kv_bucket_name("sinex_checkpoints"),
                 history: 1,
                 ..Default::default()
             })

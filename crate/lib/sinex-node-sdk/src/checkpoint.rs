@@ -256,11 +256,17 @@ fn sanitize_kv_key_component(raw: &str) -> String {
 
 /// Resolve the NATS KV bucket name for checkpoints.
 pub fn checkpoint_bucket_name(prefix: Option<&str>) -> String {
-    let base = "KV_sinex_checkpoints";
-    match prefix {
-        Some(prefix) if !prefix.trim().is_empty() => format!("{prefix}_{base}"),
-        _ => base.to_string(),
-    }
+    let env = sinex_core::environment();
+    let base_bucket = "sinex_checkpoints";
+
+    let namespaced_base = match prefix {
+        Some(prefix) if !prefix.trim().is_empty() => {
+            env.nats_kv_bucket_with_namespace(Some(prefix), base_bucket)
+        }
+        _ => env.nats_kv_bucket_name(base_bucket),
+    };
+
+    format!("KV_{}", namespaced_base)
 }
 
 /// Parse a checkpoint KV key into (processor, group, consumer) components.
