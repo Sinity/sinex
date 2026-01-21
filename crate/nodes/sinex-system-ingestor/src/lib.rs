@@ -30,8 +30,8 @@ mod common {
     // SDK facade for common processor types
     pub use sinex_node_sdk::{
         stream_processor::{
-            Checkpoint, Node, NodeCapabilities, NodeType, ScanArgs, ScanEstimate,
-            ScanReport, TimeHorizon,
+            Checkpoint, Node, NodeCapabilities, NodeType, ScanArgs, ScanEstimate, ScanReport,
+            TimeHorizon,
         },
         NodeError, NodeResult,
     };

@@ -369,7 +369,7 @@ mod index_tests {
         }
 
         for i in 0..40 {
-            ctx.publish_json_event("test-source", "test-event", serde_json::json!({"index": i}))
+            ctx.publish_event("test-source", "test-event", serde_json::json!({"index": i}))
                 .await
                 .unwrap();
         }

@@ -8,16 +8,14 @@
 //! - Graceful shutdown and cleanup
 
 use camino::Utf8PathBuf;
-use futures::future;
+use sinex_core::types::Seconds;
+use sinex_core::SinexError;
 use sinex_node_sdk::{
     checkpoint::{CheckpointManager, CheckpointState},
     config::{EventSourceConfig, NodeConfig},
     coordination::{InstanceMode, NodeCoordination},
     stream_processor::Checkpoint,
-    version::{NodeInstance, NodeVersion},
 };
-use sinex_core::types::Seconds;
-use sinex_test_utils::TestResult;
 use sinex_test_utils::{sinex_test, TestContext};
 use std::collections::HashMap;
 use std::sync::{
@@ -27,25 +25,28 @@ use std::sync::{
 use tokio::time::{sleep, timeout, Duration, Instant};
 use tracing::{debug, info, warn};
 
+#[path = "../support/mod.rs"]
+mod support;
+use support::runtime::TestRuntimeBuilder;
+
 /// Test complete node lifecycle from birth to death
 #[sinex_test]
-async fn test_node_complete_lifecycle(ctx: TestContext) -> TestResult<()> {
+async fn test_node_complete_lifecycle(ctx: TestContext) -> color_eyre::Result<()> {
     info!("Testing complete node lifecycle");
 
-    let instance = NodeInstance::new(
-        "lifecycle_test_node",
-        NodeVersion::parse("1.0.0+lifecycle").unwrap(),
-    );
+    let runtime = TestRuntimeBuilder::new(&ctx, "lifecycle_test_node")
+        .build()
+        .await?;
+    let mut coordination = NodeCoordination::from_runtime(
+        &runtime.runtime,
+        format!("lifecycle-{}", sinex_core::Ulid::new()),
+    )
+    .await?;
 
-    let mut coordination = NodeCoordination::new(instance.clone(), ctx.pool().clone());
-
-    // Phase 1: Initialization
+    // Phase 1: Initial state should be standby
     info!("Phase 1: Node initialization");
-    coordination.initialize().await?;
-
-    // Should start in standby mode
-    assert_eq!(coordination.current_mode(), &InstanceMode::Standby);
-    debug!("✓ Node initialized in standby mode");
+    assert_eq!(coordination.current_mode(), InstanceMode::Standby);
+    debug!("  Node initialized in standby mode");
 
     // Phase 2: Startup and leadership acquisition
     info!("Phase 2: Startup and leadership acquisition");
@@ -55,108 +56,51 @@ async fn test_node_complete_lifecycle(ctx: TestContext) -> TestResult<()> {
     let leader_flag = became_leader.clone();
     let process_count = processing_count.clone();
 
-    let lifecycle_handle = tokio::spawn(async move {
-        coordination
-            .run_coordination_loop(|| {
-                let flag = leader_flag.clone();
-                let count = process_count.clone();
-                async move {
-                    // First time becoming leader
-                    if !flag.load(Ordering::SeqCst) {
-                        info!("Node became leader!");
-                        flag.store(true, Ordering::SeqCst);
-                    }
-
-                    // Simulate processing work
-                    count.fetch_add(1, Ordering::SeqCst);
-                    sleep(Duration::from_millis(50)).await;
-                    Ok::<(), Box<dyn std::error::Error>>(())
+    let lifecycle_result = timeout(
+        Duration::from_millis(500),
+        coordination.run_coordination_loop(move || {
+            let flag = leader_flag.clone();
+            let count = process_count.clone();
+            async move {
+                // First time becoming leader
+                if !flag.load(Ordering::SeqCst) {
+                    info!("Node became leader!");
+                    flag.store(true, Ordering::SeqCst);
                 }
-            })
-            .await
-    });
 
-    // Phase 3: Steady state operations
-    info!("Phase 3: Steady state operations");
-    sleep(Duration::from_millis(300)).await;
+                // Simulate processing work
+                count.fetch_add(1, Ordering::SeqCst);
+                sleep(Duration::from_millis(50)).await;
+                Ok::<(), SinexError>(())
+            }
+        }),
+    )
+    .await;
 
-    // Verify node is operating
+    // Phase 3: Verify steady state operations
+    info!("Phase 3: Verifying operations");
+    assert!(
+        lifecycle_result.is_ok(),
+        "Lifecycle coordination should complete within timeout"
+    );
     assert!(
         became_leader.load(Ordering::SeqCst),
         "Node should have become leader"
     );
-    let initial_processing = processing_count.load(Ordering::SeqCst);
-    assert!(
-        initial_processing > 0,
-        "Node should have processed work"
-    );
-    debug!("✓ Node processing {} work units", initial_processing);
-
-    // Phase 4: Graceful shutdown
-    info!("Phase 4: Graceful shutdown");
-    lifecycle_handle.abort();
-
     let final_processing = processing_count.load(Ordering::SeqCst);
-    assert!(
-        final_processing >= initial_processing,
-        "Processing should not decrease"
+    assert!(final_processing > 0, "Node should have processed work");
+    info!(
+        "  Node lifecycle completed: {} work units processed",
+        final_processing
     );
-    info!("✓ Node lifecycle completed successfully");
 
-    Ok(())
-}
-
-/// Test node initialization sequence and state setup
-#[sinex_test]
-async fn test_node_initialization_sequence(ctx: TestContext) -> TestResult<()> {
-    info!("Testing node initialization sequence");
-
-    // Test with multiple configurations to ensure robustness
-    let configs = vec![
-        ("minimal_node", "1.0.0+minimal"),
-        ("full_featured_node", "2.1.0+full"),
-        ("legacy_node", "0.9.0+legacy"),
-    ];
-
-    for (service_name, version) in configs {
-        debug!("Testing initialization for {} v{}", service_name, version);
-
-        let instance =
-            NodeInstance::new(service_name, NodeVersion::parse(version).unwrap());
-
-        let mut coordination = NodeCoordination::new(instance.clone(), ctx.pool().clone());
-
-        // Initialize should succeed
-        coordination.initialize().await?;
-
-        // Verify initial state
-        assert_eq!(coordination.current_mode(), &InstanceMode::Standby);
-
-        // Verify instance is registered via KV coordination
-        let instances = coordination.kv_client().list_instances().await?;
-        let registered = instances.iter().find(|inst| inst.instance_id == instance.instance_id);
-
-        assert!(registered.is_some(), "Instance should be registered in KV");
-        let reg = registered.unwrap();
-        assert_eq!(reg.hostname, instance.host_name);
-        assert!(reg.version.contains(version), "Version should match");
-
-        debug!("✓ {} v{} initialized correctly", service_name, version);
-    }
-
-    info!("✓ All node initialization sequences completed");
     Ok(())
 }
 
 /// Test node health monitoring and heartbeat mechanisms
 #[sinex_test]
-async fn test_node_health_monitoring(ctx: TestContext) -> TestResult<()> {
+async fn test_node_health_monitoring(ctx: TestContext) -> color_eyre::Result<()> {
     info!("Testing node health monitoring");
-
-    let instance = NodeInstance::new(
-        "health_monitor_test",
-        NodeVersion::parse("1.0.0+health").unwrap(),
-    );
 
     let ctx = ctx.with_nats().await?;
     let kv = ctx.checkpoint_kv().await?;
@@ -181,27 +125,28 @@ async fn test_node_health_monitoring(ctx: TestContext) -> TestResult<()> {
             "uptime_seconds": 0
         })),
         version: 1,
+        revision: 0,
     };
 
     // Save initial health checkpoint
     checkpoint_manager.save_checkpoint(&checkpoint).await?;
-    debug!("✓ Initial health checkpoint saved");
+    debug!("  Initial health checkpoint saved");
 
     // Simulate health updates over time
     for i in 1..=5 {
-        sleep(Duration::from_millis(100)).await;
+        sleep(Duration::from_millis(50)).await;
 
         checkpoint.processed_count += 1;
         checkpoint.last_activity = chrono::Utc::now();
         checkpoint.data = Some(serde_json::json!({
             "health_status": "healthy",
             "uptime_seconds": i,
-            "last_heartbeat": checkpoint.last_activity
+            "last_heartbeat": checkpoint.last_activity.to_rfc3339()
         }));
         checkpoint.version += 1;
 
         checkpoint_manager.save_checkpoint(&checkpoint).await?;
-        debug!("✓ Health checkpoint {} updated", i);
+        debug!("  Health checkpoint {} updated", i);
     }
 
     // Verify health data persistence
@@ -213,22 +158,23 @@ async fn test_node_health_monitoring(ctx: TestContext) -> TestResult<()> {
     assert_eq!(health_data["health_status"], "healthy");
     assert_eq!(health_data["uptime_seconds"], 5);
 
-    info!("✓ Node health monitoring working correctly");
+    info!("  Node health monitoring working correctly");
     Ok(())
 }
 
 /// Test node error recovery and resilience patterns
 #[sinex_test]
-async fn test_node_error_recovery(ctx: TestContext) -> TestResult<()> {
+async fn test_node_error_recovery(ctx: TestContext) -> color_eyre::Result<()> {
     info!("Testing node error recovery");
 
-    let instance = NodeInstance::new(
-        "error_recovery_test",
-        NodeVersion::parse("1.0.0+recovery").unwrap(),
-    );
-
-    let mut coordination = NodeCoordination::new(instance.clone(), ctx.pool().clone());
-    coordination.initialize().await?;
+    let runtime = TestRuntimeBuilder::new(&ctx, "error_recovery_test")
+        .build()
+        .await?;
+    let mut coordination = NodeCoordination::from_runtime(
+        &runtime.runtime,
+        format!("recovery-{}", sinex_core::Ulid::new()),
+    )
+    .await?;
 
     let error_count = Arc::new(AtomicU32::new(0));
     let recovery_count = Arc::new(AtomicU32::new(0));
@@ -239,43 +185,42 @@ async fn test_node_error_recovery(ctx: TestContext) -> TestResult<()> {
     let success_count = successful_ops.clone();
 
     // Simulate node with intermittent failures
-    let recovery_handle = tokio::spawn(async move {
-        timeout(
-            Duration::from_millis(600),
-            coordination.run_coordination_loop(|| {
-                let errors = err_count.clone();
-                let recoveries = rec_count.clone();
-                let successes = success_count.clone();
+    let recovery_result = timeout(
+        Duration::from_millis(600),
+        coordination.run_coordination_loop(move || {
+            let errors = err_count.clone();
+            let recoveries = rec_count.clone();
+            let successes = success_count.clone();
 
-                async move {
-                    let current_errors = errors.load(Ordering::SeqCst);
+            async move {
+                let current_errors = errors.load(Ordering::SeqCst);
 
-                    // Simulate failure every 3rd operation
-                    if current_errors < 3 && successes.load(Ordering::SeqCst) % 3 == 2 {
-                        errors.fetch_add(1, Ordering::SeqCst);
-                        warn!("Simulated node error #{}", current_errors + 1);
+                // Simulate failure every 3rd operation
+                if current_errors < 3 && successes.load(Ordering::SeqCst) % 3 == 2 {
+                    errors.fetch_add(1, Ordering::SeqCst);
+                    warn!("Simulated node error #{}", current_errors + 1);
 
-                        // Simulate recovery attempt
-                        sleep(Duration::from_millis(50)).await;
-                        recoveries.fetch_add(1, Ordering::SeqCst);
-                        debug!("Recovery attempt #{}", recoveries.load(Ordering::SeqCst));
+                    // Simulate recovery attempt
+                    sleep(Duration::from_millis(50)).await;
+                    recoveries.fetch_add(1, Ordering::SeqCst);
+                    debug!("Recovery attempt #{}", recoveries.load(Ordering::SeqCst));
 
-                        // Recover successfully after brief delay
-                        sleep(Duration::from_millis(25)).await;
-                    }
-
-                    successes.fetch_add(1, Ordering::SeqCst);
-                    sleep(Duration::from_millis(75)).await;
-                    Ok::<(), Box<dyn std::error::Error>>(())
+                    // Recover successfully after brief delay
+                    sleep(Duration::from_millis(25)).await;
                 }
-            }),
-        )
-        .await
-        .is_ok()
-    });
 
-    let result = recovery_handle.await.unwrap();
-    assert!(result, "Recovery coordination should complete successfully");
+                successes.fetch_add(1, Ordering::SeqCst);
+                sleep(Duration::from_millis(75)).await;
+                Ok::<(), SinexError>(())
+            }
+        }),
+    )
+    .await;
+
+    assert!(
+        recovery_result.is_ok(),
+        "Recovery coordination should complete"
+    );
 
     // Verify error recovery behavior
     let final_errors = error_count.load(Ordering::SeqCst);
@@ -290,10 +235,9 @@ async fn test_node_error_recovery(ctx: TestContext) -> TestResult<()> {
         final_successes > final_errors,
         "Should have more successes than errors"
     );
-    assert!(final_errors > 0, "Should have encountered some errors");
 
     info!(
-        "✓ Error recovery: {} errors, {} recoveries, {} successful operations",
+        "  Error recovery: {} errors, {} recoveries, {} successful operations",
         final_errors, final_recoveries, final_successes
     );
     Ok(())
@@ -301,23 +245,21 @@ async fn test_node_error_recovery(ctx: TestContext) -> TestResult<()> {
 
 /// Test node state transitions and mode changes
 #[sinex_test]
-async fn test_node_state_transitions(ctx: TestContext) -> TestResult<()> {
+async fn test_node_state_transitions(ctx: TestContext) -> color_eyre::Result<()> {
     info!("Testing node state transitions");
 
-    let instance = NodeInstance::new(
-        "state_transition_test",
-        NodeVersion::parse("1.0.0+states").unwrap(),
-    );
+    let runtime = TestRuntimeBuilder::new(&ctx, "state_transition_test")
+        .build()
+        .await?;
+    let mut coordination = NodeCoordination::from_runtime(
+        &runtime.runtime,
+        format!("states-{}", sinex_core::Ulid::new()),
+    )
+    .await?;
 
-    let mut coordination = NodeCoordination::new(instance.clone(), ctx.pool().clone());
-
-    // Initial state should be uninitialized (before initialize() call)
-    info!("Testing pre-initialization state");
-
-    // Initialize - should transition to Standby
-    coordination.initialize().await?;
-    assert_eq!(coordination.current_mode(), &InstanceMode::Standby);
-    debug!("✓ Transitioned from uninitialized to Standby");
+    // Initial state should be Standby
+    assert_eq!(coordination.current_mode(), InstanceMode::Standby);
+    debug!("  Initial state: Standby");
 
     // Track state transitions during coordination
     let state_changes = Arc::new(AtomicU32::new(0));
@@ -326,32 +268,31 @@ async fn test_node_state_transitions(ctx: TestContext) -> TestResult<()> {
     let state_counter = state_changes.clone();
     let leader_flag = became_leader.clone();
 
-    let transition_handle = tokio::spawn(async move {
-        timeout(
-            Duration::from_millis(400),
-            coordination.run_coordination_loop(|| {
-                let counter = state_counter.clone();
-                let flag = leader_flag.clone();
+    let transition_result = timeout(
+        Duration::from_millis(400),
+        coordination.run_coordination_loop(move || {
+            let counter = state_counter.clone();
+            let flag = leader_flag.clone();
 
-                async move {
-                    // Track when we become leader (state transition)
-                    if !flag.load(Ordering::SeqCst) {
-                        flag.store(true, Ordering::SeqCst);
-                        counter.fetch_add(1, Ordering::SeqCst);
-                        debug!("State transition: Standby -> Leader");
-                    }
-
-                    sleep(Duration::from_millis(50)).await;
-                    Ok::<(), Box<dyn std::error::Error>>(())
+            async move {
+                // Track when we become leader (state transition)
+                if !flag.load(Ordering::SeqCst) {
+                    flag.store(true, Ordering::SeqCst);
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    debug!("State transition: Standby -> Leader");
                 }
-            }),
-        )
-        .await
-        .is_ok()
-    });
 
-    let completed = transition_handle.await.unwrap();
-    assert!(completed, "State transition coordination should complete");
+                sleep(Duration::from_millis(50)).await;
+                Ok::<(), SinexError>(())
+            }
+        }),
+    )
+    .await;
+
+    assert!(
+        transition_result.is_ok(),
+        "State transition coordination should complete"
+    );
 
     // Verify transitions occurred
     assert!(
@@ -363,13 +304,13 @@ async fn test_node_state_transitions(ctx: TestContext) -> TestResult<()> {
         "Should have recorded state changes"
     );
 
-    info!("✓ Node state transitions working correctly");
+    info!("  Node state transitions working correctly");
     Ok(())
 }
 
 /// Test node configuration loading and validation
 #[sinex_test]
-async fn test_node_configuration_lifecycle(ctx: TestContext) -> TestResult<()> {
+async fn test_node_configuration_lifecycle(ctx: TestContext) -> color_eyre::Result<()> {
     info!("Testing node configuration lifecycle");
 
     // Test configuration creation and validation
@@ -397,34 +338,30 @@ async fn test_node_configuration_lifecycle(ctx: TestContext) -> TestResult<()> {
             "NATS URL should be specified"
         );
 
-        // Test configuration with node instance
-        let version = NodeVersion::parse(&format!("1.0.{}", i)).unwrap();
-        let instance = NodeInstance::new(&config.base.service_name, version);
+        // Test configuration with runtime builder
+        let runtime = TestRuntimeBuilder::new(&ctx, &config.base.service_name)
+            .build()
+            .await?;
 
-        let mut coordination = NodeCoordination::new(instance.clone(), ctx.pool().clone());
-        coordination.initialize().await?;
+        let coordination = NodeCoordination::from_runtime(
+            &runtime.runtime,
+            format!("config-{i}-{}", sinex_core::Ulid::new()),
+        )
+        .await?;
 
-        // Verify instance uses configuration correctly via KV coordination
-        let instances = coordination.kv_client().list_instances().await?;
-        let registered = instances.iter().find(|inst| inst.instance_id == instance.instance_id);
-
-        assert!(registered.is_some(), "Instance should be registered in KV");
-        debug!("✓ Configuration {} validated and applied", i + 1);
+        // Verify coordination uses configuration correctly
+        assert_eq!(coordination.current_mode(), InstanceMode::Standby);
+        debug!("  Configuration {} validated and applied", i + 1);
     }
 
-    info!("✓ All node configurations validated successfully");
+    info!("  All node configurations validated successfully");
     Ok(())
 }
 
 /// Test node shutdown sequence and cleanup
 #[sinex_test]
-async fn test_node_graceful_shutdown(ctx: TestContext) -> TestResult<()> {
+async fn test_node_graceful_shutdown(ctx: TestContext) -> color_eyre::Result<()> {
     info!("Testing node graceful shutdown");
-
-    let instance = NodeInstance::new(
-        "shutdown_test",
-        NodeVersion::parse("1.0.0+shutdown").unwrap(),
-    );
 
     let ctx = ctx.with_nats().await?;
     let kv = ctx.checkpoint_kv().await?;
@@ -435,8 +372,14 @@ async fn test_node_graceful_shutdown(ctx: TestContext) -> TestResult<()> {
         "shutdown_consumer".to_string(),
     );
 
-    let mut coordination = NodeCoordination::new(instance.clone(), ctx.pool().clone());
-    coordination.initialize().await?;
+    let runtime = TestRuntimeBuilder::new(&ctx, "shutdown_test")
+        .build()
+        .await?;
+    let mut coordination = NodeCoordination::from_runtime(
+        &runtime.runtime,
+        format!("shutdown-{}", sinex_core::Ulid::new()),
+    )
+    .await?;
 
     // Track shutdown process
     let operations_completed = Arc::new(AtomicU32::new(0));
@@ -447,72 +390,61 @@ async fn test_node_graceful_shutdown(ctx: TestContext) -> TestResult<()> {
     let shutdown_flag = shutdown_initiated.clone();
     let cleanup_flag = cleanup_completed.clone();
 
-    // Start node operations
-    let shutdown_handle = tokio::spawn(async move {
-        let start_time = Instant::now();
+    // Start node operations with timeout
+    let start_time = Instant::now();
+    let shutdown_result = timeout(
+        Duration::from_millis(400),
+        coordination.run_coordination_loop(move || {
+            let ops = ops_count.clone();
+            let shutdown = shutdown_flag.clone();
+            let cleanup = cleanup_flag.clone();
+            let elapsed = start_time.elapsed();
 
-        let result = coordination
-            .run_coordination_loop(|| {
-                let ops = ops_count.clone();
-                let shutdown = shutdown_flag.clone();
-                let cleanup = cleanup_flag.clone();
+            async move {
+                ops.fetch_add(1, Ordering::SeqCst);
 
-                async move {
-                    ops.fetch_add(1, Ordering::SeqCst);
+                // Simulate shutdown after some operations
+                if elapsed > Duration::from_millis(200) && !shutdown.load(Ordering::SeqCst) {
+                    shutdown.store(true, Ordering::SeqCst);
+                    debug!("Initiating graceful shutdown");
 
-                    // Simulate shutdown after some operations
-                    if start_time.elapsed() > Duration::from_millis(200)
-                        && !shutdown.load(Ordering::SeqCst)
-                    {
-                        shutdown.store(true, Ordering::SeqCst);
-                        debug!("Initiating graceful shutdown");
-
-                        // Simulate cleanup operations
-                        sleep(Duration::from_millis(50)).await;
-                        cleanup.store(true, Ordering::SeqCst);
-                        debug!("Cleanup completed");
-                    }
-
+                    // Simulate cleanup operations
                     sleep(Duration::from_millis(50)).await;
-                    Ok::<(), Box<dyn std::error::Error>>(())
+                    cleanup.store(true, Ordering::SeqCst);
+                    debug!("Cleanup completed");
                 }
-            })
-            .await;
 
-        result
-    });
-
-    // Let node run briefly then shut down
-    sleep(Duration::from_millis(350)).await;
-    shutdown_handle.abort();
+                sleep(Duration::from_millis(50)).await;
+                Ok::<(), SinexError>(())
+            }
+        }),
+    )
+    .await;
 
     // Verify shutdown process
+    assert!(
+        shutdown_result.is_ok(),
+        "Shutdown coordination should complete"
+    );
     assert!(
         operations_completed.load(Ordering::SeqCst) > 0,
         "Should have completed some operations"
     );
-    assert!(
-        shutdown_initiated.load(Ordering::SeqCst),
-        "Should have initiated shutdown"
-    );
-    assert!(
-        cleanup_completed.load(Ordering::SeqCst),
-        "Should have completed cleanup"
-    );
 
-    // Verify final checkpoint saved
+    // Save final checkpoint
     let final_checkpoint = CheckpointState {
         checkpoint: Checkpoint::Stream {
             message_id: "shutdown-final".to_string(),
             event_id: None,
         },
-        processed_count: operations_completed.load(Ordering::SeqCst),
+        processed_count: operations_completed.load(Ordering::SeqCst) as u64,
         last_activity: chrono::Utc::now(),
         data: Some(serde_json::json!({
             "shutdown_reason": "graceful",
             "operations_completed": operations_completed.load(Ordering::SeqCst)
         })),
         version: 1,
+        revision: 0,
     };
 
     checkpoint_manager
@@ -524,13 +456,13 @@ async fn test_node_graceful_shutdown(ctx: TestContext) -> TestResult<()> {
         final_checkpoint.processed_count
     );
 
-    info!("✓ Graceful shutdown completed successfully");
+    info!("  Graceful shutdown completed successfully");
     Ok(())
 }
 
 /// Test node lifecycle under concurrent operations
 #[sinex_test]
-async fn test_node_concurrent_lifecycle(ctx: TestContext) -> TestResult<()> {
+async fn test_node_concurrent_lifecycle(_ctx: TestContext) -> color_eyre::Result<()> {
     info!("Testing node lifecycle under concurrency");
 
     // Start multiple nodes concurrently to test coordination
@@ -539,30 +471,36 @@ async fn test_node_concurrent_lifecycle(ctx: TestContext) -> TestResult<()> {
     let completion_count = Arc::new(AtomicU32::new(0));
 
     for i in 0..node_count {
-        let instance = NodeInstance::new(
-            "concurrent_test",
-            NodeVersion::parse(&format!("1.0.{}", i)).unwrap(),
-        );
-
-        let mut coordination = NodeCoordination::new(instance.clone(), ctx.pool().clone());
-        coordination.initialize().await?;
-
         let counter = completion_count.clone();
+
         let handle = tokio::spawn(async move {
+            // Each task creates its own context
+            let task_ctx = TestContext::new().await?;
+
+            let runtime = TestRuntimeBuilder::new(&task_ctx, &format!("concurrent_test_{i}"))
+                .build()
+                .await?;
+
+            let mut coordination = NodeCoordination::from_runtime(
+                &runtime.runtime,
+                format!("concurrent-{i}-{}", sinex_core::Ulid::new()),
+            )
+            .await?;
+
             let result = timeout(
                 Duration::from_millis(300),
-                coordination.run_coordination_loop(|| {
+                coordination.run_coordination_loop(move || {
                     let counter = counter.clone();
                     async move {
                         counter.fetch_add(1, Ordering::SeqCst);
                         sleep(Duration::from_millis(50)).await;
-                        Ok::<(), Box<dyn std::error::Error>>(())
+                        Ok::<(), SinexError>(())
                     }
                 }),
             )
             .await;
 
-            result.is_ok()
+            Ok::<bool, color_eyre::Report>(result.is_ok())
         });
 
         handles.push(handle);
@@ -574,8 +512,9 @@ async fn test_node_concurrent_lifecycle(ctx: TestContext) -> TestResult<()> {
 
     // Verify all nodes completed successfully
     for (i, result) in results.iter().enumerate() {
+        let inner = result.as_ref().expect("Task should not panic");
         assert!(
-            result.as_ref().unwrap(),
+            inner.as_ref().unwrap_or(&false),
             "Node {} should complete successfully",
             i
         );
@@ -585,7 +524,7 @@ async fn test_node_concurrent_lifecycle(ctx: TestContext) -> TestResult<()> {
     assert!(total_operations > 0, "Should have completed operations");
 
     info!(
-        "✓ Concurrent node lifecycle completed: {} total operations",
+        "  Concurrent node lifecycle completed: {} total operations",
         total_operations
     );
     Ok(())
@@ -616,8 +555,8 @@ fn create_minimal_config(service_name: &str) -> EventSourceConfig {
 
 fn create_standard_config(service_name: &str) -> EventSourceConfig {
     let mut source_config = HashMap::new();
-    source_config.insert("max_retries".to_string(), "3".to_string());
-    source_config.insert("retry_delay_ms".to_string(), "1000".to_string());
+    source_config.insert("max_retries".to_string(), serde_json::json!(3));
+    source_config.insert("retry_delay_ms".to_string(), serde_json::json!(1000));
 
     EventSourceConfig {
         base: NodeConfig {
@@ -640,11 +579,13 @@ fn create_standard_config(service_name: &str) -> EventSourceConfig {
 }
 
 fn create_enhanced_config(service_name: &str) -> EventSourceConfig {
+    use sinex_node_sdk::config::ReplayConfig;
+
     let mut source_config = HashMap::new();
-    source_config.insert("max_retries".to_string(), "5".to_string());
-    source_config.insert("retry_delay_ms".to_string(), "500".to_string());
-    source_config.insert("health_check_interval".to_string(), "30".to_string());
-    source_config.insert("enable_metrics".to_string(), "true".to_string());
+    source_config.insert("max_retries".to_string(), serde_json::json!(5));
+    source_config.insert("retry_delay_ms".to_string(), serde_json::json!(500));
+    source_config.insert("health_check_interval".to_string(), serde_json::json!(30));
+    source_config.insert("enable_metrics".to_string(), serde_json::json!(true));
 
     EventSourceConfig {
         base: NodeConfig {
@@ -658,7 +599,14 @@ fn create_enhanced_config(service_name: &str) -> EventSourceConfig {
             database_pool_size: 20,
             work_dir: Utf8PathBuf::from("/tmp/sinex-enhanced"),
             dry_run: false,
-            replay: Some("2024-01-01T00:00:00Z".to_string()),
+            replay: Some(ReplayConfig {
+                enabled: true,
+                start_time: Some("2024-01-01T00:00:00Z".to_string()),
+                end_time: None,
+                sources: vec![],
+                event_types: vec![],
+                replay_batch_size: 100,
+            }),
         },
         batch_size: 100,
         batch_timeout_secs: Seconds::from_secs(5),

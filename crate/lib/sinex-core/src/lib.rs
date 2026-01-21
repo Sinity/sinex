@@ -1,6 +1,5 @@
 #![doc = include_str!("../docs/overview.md")]
 #![doc = include_str!("../../../../docs/current/architecture/Core_Architecture.md")]
-#![doc = include_str!("../../../../docs/current/architecture/event-taxonomy.md")]
 #![doc = include_str!("../../sinex-schema/docs/ulid.md")]
 
 //! Core Sinex abstractions for types, persistence, and environment wiring.
@@ -14,7 +13,6 @@ pub mod types {
 }
 
 // Database module - database access and models
-#[cfg(feature = "sqlx")]
 pub mod db {
     // Re-export the entire db module structure
     pub use crate::db_impl::*;
@@ -38,7 +36,6 @@ pub mod coordination;
 #[path = "types/mod.rs"]
 mod types_impl;
 
-#[cfg(feature = "sqlx")]
 #[path = "db/mod.rs"]
 mod db_impl;
 
@@ -83,19 +80,20 @@ pub type DbTransaction<'a> = sqlx::Transaction<'a, sqlx::Postgres>;
 pub use db::{
     acquire_with_timeout, create_database_if_not_exists, create_pool, create_pool_strict,
     create_pool_with_config, create_pool_with_config_strict, create_test_pool, get_database_url,
-    models, pool, query_helpers, repositories, run_migrations, sanitization, security, DbPool,
-    DbPoolRef, PoolConfig,
+    models, pool, query_helpers, repositories, sanitization, security, DbPool, DbPoolRef,
+    PoolConfig,
 };
 
+#[cfg(feature = "migrations")]
+pub use db::run_migrations;
+
 // Re-export the most commonly used database models at crate root
-#[cfg(feature = "sqlx")]
 pub use db::models::{
     Blob, Entity, EntityRelation, Event, EventBuilder, EventId, HasProvenance, JsonValue,
     NoProvenance, Provenance, SourceMaterial,
 };
 
 // Re-export the unified Event type helpers
-#[cfg(feature = "sqlx")]
 pub use db::models::event::OffsetKind;
 
 // Re-export records from sinex-schema
@@ -119,7 +117,7 @@ pub use types::domain::{
 };
 
 // Re-export migration functionality
-#[cfg(feature = "sqlx")]
+#[cfg(feature = "migrations")]
 pub use db::migration;
 
 // Telemetry system has been removed - keeping this comment for historical context
@@ -151,19 +149,24 @@ pub mod prelude {
     };
 
     // All commonly used nested types flattened for convenience
+    #[cfg(feature = "sqlx")]
     pub use crate::validation::{validate_json, validate_path};
     pub use crate::{
         // Domain types
         ConsumerGroup,
         ConsumerName,
         // Event types
+        Event,
+        EventId,
         EventPayload,
-        // Utils
-        SanitizedPath,
+        HasProvenance,
+        JsonValue,
+        Provenance,
         SchemaName,
         SchemaVersion,
         // Error types
         SinexError,
+        SourceMaterial,
     };
 
     // Common external crates that are used throughout the codebase
@@ -175,10 +178,9 @@ pub mod prelude {
         create_pool, create_pool_strict, create_test_pool, db_error, from_db, opt_from_db,
         opt_to_db, opt_vec_from_db, opt_vec_to_db, to_db, ulid_to_uuid, uuid_to_ulid,
         with_transaction, BlobRepository, DbPool, DbPoolExt, DbPoolRef, DbUuidCollectionExt,
-        DbUuidExt, Entity, EntityRelation, Event, EventId, EventRepository, EventSearchFilters,
-        JsonValue, KnowledgeGraphRepository, NewSchema, PoolConfig, Provenance, Repository,
-        RetryConfig, SourceMaterial, SourceMaterialRepository, StateRepository, UlidArrayExt,
-        UlidExt,
+        DbUuidExt, EventRepository, EventSearchFilters, KnowledgeGraphRepository, NewSchema,
+        PoolConfig, Repository, RetryConfig, SanitizedPath, SourceMaterialRepository,
+        StateRepository, UlidArrayExt, UlidExt,
     };
 
     #[cfg(feature = "sqlx")]

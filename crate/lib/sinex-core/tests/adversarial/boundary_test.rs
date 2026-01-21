@@ -10,6 +10,7 @@
 // - **Resource Boundaries**: Memory limits, disk space, file handle limits
 
 use sinex_test_utils::prelude::*;
+use sinex_test_utils::timing_utils::Timeouts;
 
 // Additional specific imports
 use chrono::Datelike;
@@ -93,7 +94,7 @@ async fn test_connection_pool_exhaustion(ctx: TestContext) -> TestResult<()> {
     println!("  Pool size: {}", pool.size());
 
     let num_workers = 200; // Much more than typical pool size
-    let hold_duration = Duration::from_secs(2);
+    let hold_duration = Duration::from_secs(Timeouts::SHORT);
 
     let mut handles = vec![];
     let start = Instant::now();
@@ -111,7 +112,7 @@ async fn test_connection_pool_exhaustion(ctx: TestContext) -> TestResult<()> {
             let acquire_start = Instant::now();
 
             // Try to acquire connection with timeout
-            match timeout(Duration::from_secs(5), pool_clone.acquire()).await {
+            match timeout(Duration::from_secs(Timeouts::QUICK), pool_clone.acquire()).await {
                 Ok(Ok(mut conn)) => {
                     let acquire_time = acquire_start.elapsed();
                     success_count.fetch_add(1, Ordering::SeqCst);
@@ -237,7 +238,7 @@ async fn test_database_query_complexity_limits(ctx: TestContext) -> TestResult<(
         println!("Testing query complexity: {}", description);
 
         let start = Instant::now();
-        match timeout(Duration::from_secs(10), sqlx::query(query).fetch_all(&pool)).await {
+        match timeout(Duration::from_secs(Timeouts::SHORT), sqlx::query(query).fetch_all(&pool)).await {
             Ok(Ok(rows)) => {
                 let elapsed = start.elapsed();
                 println!("  SUCCESS: {} rows in {:?}", rows.len(), elapsed);
@@ -278,7 +279,7 @@ async fn test_database_dns_timeout(ctx: TestContext) -> TestResult<()> {
         let start = std::time::Instant::now();
 
         // Test connection with timeout
-        let result = timeout(Duration::from_secs(5), DbPool::connect(&fake_url)).await;
+        let result = timeout(Duration::from_secs(Timeouts::QUICK), DbPool::connect(&fake_url)).await;
 
         let elapsed = start.elapsed();
 
@@ -295,7 +296,7 @@ async fn test_database_dns_timeout(ctx: TestContext) -> TestResult<()> {
                     hostname
                 );
 
-                if elapsed > Duration::from_secs(5) {
+                if elapsed > Duration::from_secs(Timeouts::QUICK) {
                     println!("  WARNING: Timeout handling is broken - took {:?}", elapsed);
                 }
             }
@@ -428,7 +429,7 @@ async fn test_connection_limit_exhaustion(ctx: TestContext) -> TestResult<()> {
         let fail_count = failed_connections.clone();
 
         let handle = tokio::spawn(async move {
-            match timeout(Duration::from_secs(2), pool_clone.acquire()).await {
+            match timeout(Duration::from_secs(Timeouts::SHORT), pool_clone.acquire()).await {
                 Ok(Ok(_conn)) => {
                     success_count.fetch_add(1, Ordering::SeqCst);
                     // Hold connection briefly
@@ -783,7 +784,7 @@ async fn test_concurrent_resource_exhaustion(ctx: TestContext) -> TestResult<()>
                 let factory = EventFactory::new("resource_test");
                 let event = factory.create_event("exhaustion.test", large_payload);
 
-                match timeout(Duration::from_secs(5), insert_event(&pool_clone, &event)).await {
+                match timeout(Duration::from_secs(Timeouts::QUICK), insert_event(&pool_clone, &event)).await {
                     Ok(Ok(_)) => {
                         success_count.fetch_add(1, Ordering::SeqCst);
                     }

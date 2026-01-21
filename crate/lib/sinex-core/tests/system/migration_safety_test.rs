@@ -15,6 +15,7 @@
 use sinex_core::db::models::EventFactory;
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::{acquire_test_database, wait_for_filtered_event_count};
+use sinex_test_utils::timing_utils::Timeouts;
 
 use sinex_core::types::ulid::Ulid;
 
@@ -41,7 +42,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult<()> {
     // Test 1: Fresh migration safety
     let migration_start = Instant::now();
 
-    let fresh_migration_test = timeout(Duration::from_secs(5), async {
+    let fresh_migration_test = timeout(Duration::from_secs(Timeouts::MEDIUM), async {
         let test_db = acquire_test_database().await?;
         let pool = test_db.pool();
 
@@ -113,7 +114,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult<()> {
     // Test 2: Migration idempotency (running migrations multiple times)
     println!("\nTesting migration idempotency...");
 
-    let idempotency_test = timeout(Duration::from_secs(4), async {
+    let idempotency_test = timeout(Duration::from_secs(Timeouts::SHORT + 4), async {
         let test_db = acquire_test_database().await?;
         let pool = test_db.pool();
 
@@ -161,13 +162,13 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult<()> {
     // Test 3: Data preservation during migrations
     println!("\nTesting data preservation during migrations...");
 
-    let data_preservation_test = timeout(Duration::from_secs(5), async {
+    let data_preservation_test = timeout(Duration::from_secs(Timeouts::MEDIUM), async {
         let test_db = acquire_test_database().await?;
         let pool = test_db.pool();
 
         // Insert test processor data before migration
         sqlx::query!(
-            "INSERT INTO core.processor_manifests (processor_name, processor_type, version, description, anchor_rule_version)
+            "INSERT INTO core.processor_manifests (processor_name, node_type, version, description, anchor_rule_version)
                  VALUES ($1, 'automaton', '1.0.0', $2, 1)",
             "migration_test_agent",
             "Agent for testing data preservation"
@@ -329,7 +330,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult<()> {
     // Test 4: Migration rollback simulation (error handling)
     println!("\nTesting migration error handling...");
 
-    let error_handling_test = timeout(Duration::from_secs(5), async {
+    let error_handling_test = timeout(Duration::from_secs(Timeouts::MEDIUM), async {
         let test_db = match acquire_test_database().await {
             Ok(test_db) => test_db,
             Err(_) => return false,

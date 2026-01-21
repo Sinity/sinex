@@ -1,10 +1,23 @@
 # Sinex Gateway Documentation
 
-This directory collects crate-local design notes that are embedded into rustdoc via
-`include_str!`:
+## Core Documentation
 
-- `overview.md` – high-level architecture and usage guidance.
-- `cascade_analyzer.md` – cascade planning algorithms, security, and performance traits.
-- `replay_state_machine.md` – state machine lifecycle, transitions, and metadata shape.
-- `native_messaging.md` – browser extension protocol and security considerations.
-- `rpc_server.md` – supported JSON-RPC methods, request/response schema, and safety notes.
+- `architecture.md` – Service role, separation rationale, security posture
+- `overview.md` – High-level architecture and usage guidance
+- `rpc_server.md` – JSON-RPC methods, request/response schema, safety notes
+
+## Configuration
+
+- `environment.md` – Gateway-specific environment variables
+- `transport_security.md` – TLS and authentication requirements
+
+## Implementation Details
+
+- `cascade_analyzer.md` – Cascade planning algorithms and performance
+- `replay_state_machine.md` – State machine lifecycle and transitions
+- `native_messaging.md` – Browser extension protocol and security
+
+## See Also
+
+- Global security: `docs/current/architecture/security-architecture.md`
+- Global config: `docs/current/configuration/environment-variables.md`

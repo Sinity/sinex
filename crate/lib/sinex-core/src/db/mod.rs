@@ -2,28 +2,38 @@
 //!
 //! This module contains all database-related functionality that was previously in sinex-db.
 
+#[cfg(feature = "sqlx")]
 pub mod advisory_lock;
+#[cfg(feature = "sqlx")]
 pub mod integrity;
 pub mod models;
+#[cfg(feature = "sqlx")]
 pub mod pool;
+#[cfg(feature = "sqlx")]
 pub mod query_helpers;
 pub mod sanitization;
 pub mod security;
+#[cfg(feature = "sqlx")]
 pub mod validation;
 
 // Core modules
 // Repository pattern - the new way to access data
+#[cfg(feature = "sqlx")]
 pub mod replay;
+#[cfg(feature = "sqlx")]
 pub mod repositories;
 
 // Database schema definitions using SeaQuery
 pub use sinex_schema::schema;
 
 // Migration support
+#[cfg(feature = "migrations")]
 pub mod migration;
+#[cfg(feature = "migrations")]
 pub use migration::run_migrations_for_url;
 
 // Re-export query helpers for easier access
+#[cfg(feature = "sqlx")]
 pub use query_helpers::{
     count, db_error, exists, is_retryable_db_error, with_retry_transaction_idempotent,
     with_transaction, IdempotentTransaction, RetryConfig,
@@ -36,6 +46,7 @@ pub use sinex_schema::ulid_conversions::{
 };
 
 // Re-export repository pattern
+#[cfg(feature = "sqlx")]
 pub use repositories::{
     DbPoolExt, DbResult as RepoResult, EventPayloadSchema, EventSearchFilters, NewSchema,
 };
@@ -45,8 +56,11 @@ use crate::SinexError;
 use color_eyre::eyre::{eyre, Result};
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "sqlx")]
 use sqlx::pool::PoolConnection;
+#[cfg(feature = "sqlx")]
 use sqlx::postgres::PgPoolOptions;
+#[cfg(feature = "sqlx")]
 use sqlx::{migrate::MigrateDatabase, PgPool, Postgres};
 use std::env;
 use std::time::{Duration, Instant};
@@ -54,10 +68,13 @@ use tracing::{info, warn};
 use validator::Validate;
 
 // Common type aliases for database operations
+#[cfg(feature = "sqlx")]
 pub type DbPool = PgPool;
+#[cfg(feature = "sqlx")]
 pub type DbPoolRef<'a> = &'a PgPool;
 
 // Re-export PgPool for external crates (avoiding naming conflict)
+#[cfg(feature = "sqlx")]
 pub use sqlx::PgPool as SqlxPgPool;
 
 // Import type aliases from types module
@@ -65,6 +82,7 @@ pub use crate::{JsonValue, Timestamp};
 pub type OptionalTimestamp = Option<Timestamp>;
 
 /// Acquire a database connection with a hard timeout.
+#[cfg(feature = "sqlx")]
 pub async fn acquire_with_timeout(
     pool: &DbPool,
     timeout: Duration,
@@ -119,6 +137,7 @@ pub fn pool_acquire_timeout() -> Duration {
 }
 
 /// Configuration for database connection pool
+#[cfg(feature = "sqlx")]
 #[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct PoolConfig {
     #[validate(range(min = 1, max = 1000))]
@@ -133,9 +152,15 @@ pub struct PoolConfig {
     #[validate(custom(function = "validate_idle_timeout_secs"))]
     pub idle_timeout_secs: Seconds,
 
+    /// Statement timeout in seconds (0 = no timeout)
+    /// Controls how long individual SQL statements can run before being cancelled
+    #[validate(custom(function = "validate_statement_timeout_secs"))]
+    pub statement_timeout_secs: Seconds,
+
     pub validate_against_postgres_max: bool,
 }
 
+#[cfg(feature = "sqlx")]
 impl Default for PoolConfig {
     fn default() -> Self {
         Self {
@@ -143,11 +168,60 @@ impl Default for PoolConfig {
             min_connections: 10,  // Increased minimum to handle baseline load
             acquire_timeout_secs: Seconds::from_secs(30),
             idle_timeout_secs: Seconds::from_secs(300), // 5 minutes
+            statement_timeout_secs: Seconds::from_secs(60), // 60 seconds default
             validate_against_postgres_max: true,
         }
     }
 }
 
+#[cfg(feature = "sqlx")]
+impl PoolConfig {
+    /// Create configuration from environment variables
+    ///
+    /// Supported environment variables:
+    /// - SINEX_DB_MAX_CONNECTIONS: Maximum pool connections (default: 100)
+    /// - SINEX_DB_MIN_CONNECTIONS: Minimum pool connections (default: 10)
+    /// - SINEX_DB_ACQUIRE_TIMEOUT_SECS: Connection acquire timeout (default: 30)
+    /// - SINEX_DB_IDLE_TIMEOUT_SECS: Idle connection timeout (default: 300)
+    /// - SINEX_DB_STATEMENT_TIMEOUT_SECS: Statement timeout (default: 60, 0 = no timeout)
+    pub fn from_env() -> Self {
+        let mut config = Self::default();
+
+        if let Ok(val) = env::var("SINEX_DB_MAX_CONNECTIONS") {
+            if let Ok(num) = val.parse() {
+                config.max_connections = num;
+            }
+        }
+
+        if let Ok(val) = env::var("SINEX_DB_MIN_CONNECTIONS") {
+            if let Ok(num) = val.parse() {
+                config.min_connections = num;
+            }
+        }
+
+        if let Ok(val) = env::var("SINEX_DB_ACQUIRE_TIMEOUT_SECS") {
+            if let Ok(num) = val.parse() {
+                config.acquire_timeout_secs = Seconds::from_secs(num);
+            }
+        }
+
+        if let Ok(val) = env::var("SINEX_DB_IDLE_TIMEOUT_SECS") {
+            if let Ok(num) = val.parse() {
+                config.idle_timeout_secs = Seconds::from_secs(num);
+            }
+        }
+
+        if let Ok(val) = env::var("SINEX_DB_STATEMENT_TIMEOUT_SECS") {
+            if let Ok(num) = val.parse() {
+                config.statement_timeout_secs = Seconds::from_secs(num);
+            }
+        }
+
+        config
+    }
+}
+
+#[cfg(feature = "sqlx")]
 fn validate_acquire_timeout_secs(value: &Seconds) -> Result<(), validator::ValidationError> {
     let secs = value.as_secs();
     if !(1..=300).contains(&secs) {
@@ -156,6 +230,7 @@ fn validate_acquire_timeout_secs(value: &Seconds) -> Result<(), validator::Valid
     Ok(())
 }
 
+#[cfg(feature = "sqlx")]
 fn validate_idle_timeout_secs(value: &Seconds) -> Result<(), validator::ValidationError> {
     let secs = value.as_secs();
     if secs > 3600 {
@@ -164,13 +239,25 @@ fn validate_idle_timeout_secs(value: &Seconds) -> Result<(), validator::Validati
     Ok(())
 }
 
+#[cfg(feature = "sqlx")]
+fn validate_statement_timeout_secs(value: &Seconds) -> Result<(), validator::ValidationError> {
+    let secs = value.as_secs();
+    // 0 = no timeout, or 1 second to 1 hour
+    if secs != 0 && secs > 3600 {
+        return Err(validator::ValidationError::new("range"));
+    }
+    Ok(())
+}
+
 /// Create a database connection pool with default settings
+#[cfg(feature = "sqlx")]
 pub async fn create_pool(database_url: &str) -> Result<DbPool> {
     let config = PoolConfig::default();
     create_pool_with_config(database_url, &config).await
 }
 
 /// Create a database connection pool with custom configuration
+#[cfg(feature = "sqlx")]
 pub async fn create_pool_with_config(database_url: &str, config: &PoolConfig) -> Result<DbPool> {
     // Validate configuration using validator crate
     config
@@ -187,11 +274,27 @@ pub async fn create_pool_with_config(database_url: &str, config: &PoolConfig) ->
         }
     }
 
+    let statement_timeout_secs = config.statement_timeout_secs.as_secs();
     let pool = PgPoolOptions::new()
         .max_connections(config.max_connections)
         .min_connections(config.min_connections)
         .acquire_timeout(Duration::from_secs(config.acquire_timeout_secs.as_secs()))
         .idle_timeout(Duration::from_secs(config.idle_timeout_secs.as_secs()))
+        .after_connect(move |conn, _meta| {
+            Box::pin(async move {
+                // Set statement timeout for this connection
+                // 0 means no timeout, otherwise timeout in seconds
+                let timeout_value = if statement_timeout_secs == 0 {
+                    "0".to_string()
+                } else {
+                    format!("{}s", statement_timeout_secs)
+                };
+                sqlx::query(&format!("SET statement_timeout = '{}'", timeout_value))
+                    .execute(&mut *conn)
+                    .await?;
+                Ok(())
+            })
+        })
         .connect(database_url)
         .await?;
 
@@ -199,6 +302,7 @@ pub async fn create_pool_with_config(database_url: &str, config: &PoolConfig) ->
         max_connections = config.max_connections,
         min_connections = config.min_connections,
         acquire_timeout_secs = config.acquire_timeout_secs.as_secs(),
+        statement_timeout_secs = config.statement_timeout_secs.as_secs(),
         "Database pool created successfully"
     );
     Ok(pool)
@@ -208,6 +312,7 @@ pub async fn create_pool_with_config(database_url: &str, config: &PoolConfig) ->
 ///
 /// This function gets the DATABASE_URL and applies environment-specific namespacing
 /// to ensure proper isolation between dev/staging/prod environments.
+#[cfg(feature = "sqlx")]
 pub fn get_database_url() -> Result<String> {
     use crate::environment::environment;
 
@@ -224,18 +329,21 @@ pub fn get_database_url() -> Result<String> {
 }
 
 /// Create a database connection pool
+#[cfg(feature = "sqlx")]
 pub async fn create_pool_strict() -> Result<DbPool> {
     let database_url = get_database_url()?;
     create_pool(&database_url).await
 }
 
 /// Create a database connection pool with custom configuration
+#[cfg(feature = "sqlx")]
 pub async fn create_pool_with_config_strict(config: &PoolConfig) -> Result<DbPool> {
     let database_url = get_database_url()?;
     create_pool_with_config(&database_url, config).await
 }
 
 /// Validate pool configuration against PostgreSQL server limits
+#[cfg(feature = "sqlx")]
 async fn validate_pool_config_against_postgres(
     database_url: &str,
     config: &PoolConfig,
@@ -290,17 +398,20 @@ async fn validate_pool_config_against_postgres(
 }
 
 /// Create a database connection pool optimized for testing with high concurrency
+#[cfg(feature = "sqlx")]
 pub async fn create_test_pool(database_url: &str) -> Result<DbPool> {
     let test_config = PoolConfig {
         max_connections: 100, // High concurrency for tests
         min_connections: 10,
         acquire_timeout_secs: Seconds::from_secs(30),
         idle_timeout_secs: Seconds::from_secs(300),
+        statement_timeout_secs: Seconds::from_secs(60),
         validate_against_postgres_max: false, // Skip validation in tests
     };
 
     // Keep environment behavior unchanged during tests.
 
+    let statement_timeout_secs = test_config.statement_timeout_secs.as_secs();
     let pool = PgPoolOptions::new()
         .max_connections(test_config.max_connections)
         .min_connections(test_config.min_connections)
@@ -309,6 +420,20 @@ pub async fn create_test_pool(database_url: &str) -> Result<DbPool> {
         ))
         .idle_timeout(Duration::from_secs(test_config.idle_timeout_secs.as_secs()))
         .test_before_acquire(false) // Skip connection testing for speed
+        .after_connect(move |conn, _meta| {
+            Box::pin(async move {
+                // Set statement timeout for this connection
+                let timeout_value = if statement_timeout_secs == 0 {
+                    "0".to_string()
+                } else {
+                    format!("{}s", statement_timeout_secs)
+                };
+                sqlx::query(&format!("SET statement_timeout = '{}'", timeout_value))
+                    .execute(&mut *conn)
+                    .await?;
+                Ok(())
+            })
+        })
         .connect(database_url)
         .await?;
 
@@ -317,6 +442,7 @@ pub async fn create_test_pool(database_url: &str) -> Result<DbPool> {
 }
 
 /// Create database if it doesn't exist
+#[cfg(feature = "sqlx")]
 pub async fn create_database_if_not_exists(database_url: &str) -> Result<()> {
     if !Postgres::database_exists(database_url).await? {
         info!("Creating database...");
@@ -326,6 +452,7 @@ pub async fn create_database_if_not_exists(database_url: &str) -> Result<()> {
 }
 
 /// Run database migrations using the SeaORM migration system.
+#[cfg(feature = "migrations")]
 pub async fn run_migrations(pool: DbPoolRef<'_>) -> Result<()> {
     // Use the new migration system
     migration::run_migrations(pool).await?;

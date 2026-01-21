@@ -20,7 +20,7 @@ async fn test_maximum_payload_sizes(ctx: TestContext) -> Result<()> {
     for size in payload_sizes {
         let large_data = "x".repeat(size);
         let result = ctx
-            .publish_json_event(
+            .publish_event(
                 "boundary_test",
                 &format!("large_payload_{}", size),
                 serde_json::json!({
@@ -49,11 +49,11 @@ async fn test_maximum_payload_sizes(ctx: TestContext) -> Result<()> {
 #[sinex_test]
 async fn test_minimal_boundary_values(ctx: TestContext) -> Result<()> {
     // Test empty payload
-    ctx.publish_json_event("boundary_test", "empty_payload", serde_json::json!({}))
+    ctx.publish_event("boundary_test", "empty_payload", serde_json::json!({}))
         .await?;
 
     // Test minimal string
-    ctx.publish_json_event(
+    ctx.publish_event(
         "boundary_test",
         "minimal_payload",
         serde_json::json!({"data": ""}),
@@ -61,7 +61,7 @@ async fn test_minimal_boundary_values(ctx: TestContext) -> Result<()> {
     .await?;
 
     // Test single character
-    ctx.publish_json_event(
+    ctx.publish_event(
         "boundary_test",
         "single_char",
         serde_json::json!({"data": "a"}),
@@ -69,7 +69,7 @@ async fn test_minimal_boundary_values(ctx: TestContext) -> Result<()> {
     .await?;
 
     // Test zero values
-    ctx.publish_json_event(
+    ctx.publish_event(
         "boundary_test",
         "zero_values",
         serde_json::json!({
@@ -106,7 +106,7 @@ async fn test_unicode_boundary_cases(ctx: TestContext) -> Result<()> {
     ];
 
     for (name, text) in unicode_cases {
-        ctx.publish_json_event(
+        ctx.publish_event(
             "unicode_test",
             name,
             serde_json::json!({
@@ -161,7 +161,7 @@ async fn test_timestamp_boundaries(ctx: TestContext) -> Result<()> {
 #[sinex_test]
 async fn test_collection_boundaries(ctx: TestContext) -> Result<()> {
     // Empty arrays
-    ctx.publish_json_event(
+    ctx.publish_event(
         "collection_test",
         "empty_array",
         serde_json::json!({
@@ -174,7 +174,7 @@ async fn test_collection_boundaries(ctx: TestContext) -> Result<()> {
     // Large array
     let large_array: Vec<i32> = (0..10000).collect();
     let result = ctx
-        .publish_json_event(
+        .publish_event(
             "collection_test",
             "large_array",
             serde_json::json!({
@@ -196,7 +196,7 @@ async fn test_collection_boundaries(ctx: TestContext) -> Result<()> {
     }
 
     let nested_result = ctx
-        .publish_json_event(
+        .publish_event(
             "collection_test",
             "deeply_nested",
             serde_json::json!({
@@ -232,7 +232,7 @@ async fn test_numeric_boundaries(ctx: TestContext) -> Result<()> {
 
     for (name, value) in numeric_cases {
         let result = ctx
-            .publish_json_event(
+            .publish_event(
                 "numeric_test",
                 name,
                 serde_json::json!({
@@ -270,7 +270,7 @@ async fn test_concurrent_access_boundaries(ctx: TestContext) -> Result<()> {
             let pool = ctx_task.pool.clone();
             for i in 0..events_per_task {
                 let event = ctx_task
-                    .publish_json_event(
+                    .publish_event(
                         "concurrent_test",
                         &format!("task_{}_event_{}", task_id, i),
                         serde_json::json!({
@@ -321,7 +321,7 @@ async fn test_string_length_boundaries(ctx: TestContext) -> Result<()> {
     for length in string_lengths {
         let text = "a".repeat(length);
         let result = ctx
-            .publish_json_event(
+            .publish_event(
                 "string_test",
                 &format!("length_{}", length),
                 serde_json::json!({
@@ -357,7 +357,7 @@ async fn test_property_based_boundaries(
     }
 
     let _ = ctx
-        .publish_json_event(
+        .publish_event(
             "property_test",
             "boundary",
             serde_json::json!({

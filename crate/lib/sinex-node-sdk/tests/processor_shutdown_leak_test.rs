@@ -5,11 +5,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use sinex_node_sdk::stream_processor::{
-    Checkpoint, Node, NodeCapabilities, NodeInitContext, NodeType, ScanArgs,
-    ScanReport, TimeHorizon,
+    Checkpoint, Node, NodeCapabilities, NodeInitContext, NodeType, ScanArgs, ScanReport,
+    TimeHorizon,
 };
 use sinex_node_sdk::NodeResult;
-use sinex_test_utils::{sinex_test, TestContext, TestResult};
+use sinex_test_utils::{sinex_test, TestContext};
 use support::runtime::TestRuntimeBuilder;
 
 #[derive(Default)]
@@ -47,11 +47,11 @@ impl Node for HangingProcessor {
         })
     }
 
-    fn processor_name(&self) -> &str {
+    fn node_name(&self) -> &str {
         "hanging-processor"
     }
 
-    fn processor_type(&self) -> NodeType {
+    fn node_type(&self) -> NodeType {
         NodeType::Ingestor
     }
 

@@ -28,6 +28,7 @@ serde.workspace = true
 serde_json.workspace = true
 indexmap.workspace = true
 bon = { workspace = true }
+sha2 = "0.10"
 
 # Time handling
 chrono.workspace = true

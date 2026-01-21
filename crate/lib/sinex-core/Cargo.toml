@@ -18,6 +18,7 @@ sinex-schema = { path = "../sinex-schema" }
 # Always required - types, validation, error handling
 camino = { workspace = true }
 tokio = { workspace = true }
+anyhow = { workspace = true }
 color-eyre = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
@@ -30,7 +31,6 @@ gethostname = { workspace = true }
 urlencoding = "2.1"
 percent-encoding = "2.3"
 blake3 = "1.5"
-strum = { version = "0.26", features = ["derive"] }
 validator = { workspace = true }
 bon = { workspace = true }
 async-trait = "0.1"
@@ -53,14 +53,12 @@ ulid = { workspace = true }
 rand = { workspace = true }
 proptest = { workspace = true, optional = true }
 schemars = { workspace = true }
-paste = "1.0"
 regex = { workspace = true }
 url = { workspace = true }
 lazy_static = "1.5"
 displaydoc = "0.2"
 indexmap = { version = "2.0", features = ["serde"] }
 serde_path_to_error = { workspace = true }
-anyhow = { workspace = true }
 inventory = { workspace = true }
 rusqlite = { workspace = true }
 tokio-retry = { workspace = true }
@@ -105,6 +103,3 @@ sinex-test-utils = { path = "../sinex-test-utils" }
 sinex-node-sdk = { path = "../../lib/sinex-node-sdk", features = ["preflight"] }
 proptest = { workspace = true }
 nkeys = "0.3"
-
-async-std = { version = "1.12", features = ["attributes"] }
-pretty_assertions = "1.4"

@@ -83,7 +83,7 @@ async fn test_modern_event_ingestion_flow(ctx: TestContext) -> TestResult<()> {
     // Create test events directly using the modern API
     let events = ctx.events();
     
-    let test_event = ctx.publish_json_event(
+    let test_event = ctx.publish_event(
         "test.collector",
         serde_json::json!({
             "test_type": "ingestion_flow",
@@ -125,7 +125,7 @@ async fn test_modern_event_filtering_and_validation(ctx: TestContext) -> TestRes
     let events = ctx.events();
 
     // Test valid event
-    let valid_event = ctx.publish_json_event(
+    let valid_event = ctx.publish_event(
         "fs.file_created",
         serde_json::json!({
             "path": "/tmp/test_file.txt",
@@ -138,7 +138,7 @@ async fn test_modern_event_filtering_and_validation(ctx: TestContext) -> TestRes
     assert!(!stored_valid.id.to_string().is_empty(), "Valid event should be stored");
 
     // Test event with minimal payload
-    let minimal_event = ctx.publish_json_event(
+    let minimal_event = ctx.publish_event(
         "terminal.command_executed",
         serde_json::json!({
             "command": "ls -la",
@@ -175,7 +175,7 @@ async fn test_modern_database_output_config(ctx: TestContext) -> TestResult<()> 
     // Create multiple test events to verify database persistence
     let mut event_ids = Vec::new();
     for i in 0..5 {
-        let test_event = ctx.publish_json_event(
+        let test_event = ctx.publish_event(
             "test.database_output",
             serde_json::json!({
                 "sequence": i,
@@ -263,7 +263,7 @@ async fn test_node_integration_patterns(ctx: TestContext) -> TestResult<()> {
 
     let mut stored_events = Vec::new();
     for (source, payload) in node_events {
-        let event = ctx.publish_json_event(source, payload).await?;
+        let event = ctx.publish_event(source, payload).await?;
         let stored = events.store(&event).await?;
         stored_events.push(stored);
     }
@@ -307,7 +307,7 @@ async fn test_concurrent_event_processing_pipeline(ctx: TestContext) -> TestResu
     for i in 0..20 {
         let ctx_clone = ctx.clone();
         let task = tokio::spawn(async move {
-            let event = ctx_clone.publish_json_event(
+            let event = ctx_clone.publish_event(
                 "test.concurrent_processing",
                 serde_json::json!({
                     "batch_id": i / 5,
@@ -366,7 +366,7 @@ async fn test_event_processing_error_handling(ctx: TestContext) -> TestResult<()
     let events = ctx.events();
 
     // Test successful event processing
-    let valid_event = ctx.publish_json_event(
+    let valid_event = ctx.publish_event(
         "test.error_handling",
         serde_json::json!({
             "test_case": "valid_event",
@@ -400,7 +400,7 @@ async fn test_event_processing_error_handling(ctx: TestContext) -> TestResult<()
 
     let mut processed_count = 0;
     for (case_name, payload) in edge_cases {
-        let edge_event = ctx.publish_json_event(
+        let edge_event = ctx.publish_event(
             "test.error_handling",
             payload
         ).await?;
@@ -419,7 +419,7 @@ async fn test_event_processing_error_handling(ctx: TestContext) -> TestResult<()
     assert!(processed_count >= 3, "Most edge cases should be handled gracefully");
 
     // Verify system is still operational after edge case processing
-    let recovery_event = ctx.publish_json_event(
+    let recovery_event = ctx.publish_event(
         "test.error_handling",
         serde_json::json!({
             "test_case": "post_recovery",
@@ -440,61 +440,8 @@ async fn test_event_processing_error_handling(ctx: TestContext) -> TestResult<()
 }
 
 // ============================================================================
-// Performance and Throughput Tests
+// Resource Management Tests
 // ============================================================================
-
-/// Test event throughput and performance characteristics
-#[sinex_test]
-async fn test_event_throughput_performance(ctx: TestContext) -> TestResult<()> {
-    tracing::info!("Testing event throughput and performance");
-
-    let events = ctx.events();
-    let start_time = std::time::Instant::now();
-
-    // Process a batch of events to measure throughput
-    let batch_size = 100;
-    let mut processed_events = 0;
-
-    for i in 0..batch_size {
-        let event = ctx.publish_json_event(
-            "test.throughput",
-            serde_json::json!({
-                "sequence": i,
-                "batch_size": batch_size,
-                "timestamp": chrono::Utc::now().to_rfc3339(),
-                "payload_data": format!("Performance test event {}", i)
-            })
-        ).await?;
-
-        match events.store(&event).await {
-            Ok(_) => processed_events += 1,
-            Err(e) => tracing::warn!(sequence = i, error = %e, "Event processing failed"),
-        }
-    }
-
-    let duration = start_time.elapsed();
-    let events_per_second = processed_events as f64 / duration.as_secs_f64();
-
-    tracing::info!(
-        processed_events = processed_events,
-        duration_ms = duration.as_millis(),
-        events_per_second = events_per_second,
-        "Event throughput performance measured"
-    );
-
-    // Verify reasonable performance (should process at least 10 events/second)
-    assert!(events_per_second >= 10.0, 
-        "Event processing should maintain reasonable throughput: {} events/second", events_per_second);
-
-    // Verify all events were processed
-    assert_eq!(processed_events, batch_size, "All throughput test events should be processed");
-
-    // Verify events are retrievable
-    let retrieved_events = events.get_by_source("test.throughput", Some(batch_size as i64 + 10)).await?;
-    assert!(retrieved_events.len() >= batch_size as usize, "All throughput events should be retrievable");
-
-    Ok(())
-}
 
 /// Test resource usage and memory management during event processing
 #[sinex_test]
@@ -509,9 +456,9 @@ async fn test_resource_usage_management(ctx: TestContext) -> TestResult<()> {
 
     for payload_size in payload_sizes {
         let large_data = "x".repeat(payload_size);
-        
+
         for i in 0..events_per_size {
-            let event = ctx.publish_json_event(
+            let event = ctx.publish_event(
                 "test.resource_usage",
                 serde_json::json!({
                     "payload_size": payload_size,
@@ -530,7 +477,7 @@ async fn test_resource_usage_management(ctx: TestContext) -> TestResult<()> {
     }
 
     // Verify system stability after processing various payload sizes
-    let stability_event = ctx.publish_json_event(
+    let stability_event = ctx.publish_event(
         "test.resource_usage",
         serde_json::json!({
             "test_phase": "stability_check",

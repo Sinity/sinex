@@ -76,7 +76,7 @@ async fn test_basic_stream_processing(ctx: TestContext) -> TestResult<()> {
     let mut received_events = Vec::new();
 
     // Collect messages with timeout
-    let collect_timeout = Duration::from_secs(5);
+    let collect_timeout = Duration::from_secs(Timeouts::STANDARD);
     let collection_result = timeout(collect_timeout, async {
         while received_events.len() < test_events.len() {
             if let Some(message) = messages.next().await {
@@ -206,7 +206,7 @@ async fn test_multi_subject_stream_processing(ctx: TestContext) -> TestResult<()
     let mut messages = consumer.messages().await?;
     let mut received_by_subject: HashMap<String, Vec<serde_json::Value>> = HashMap::new();
 
-    let collect_timeout = Duration::from_secs(10);
+    let collect_timeout = Duration::from_secs(Timeouts::LONG);
     timeout(collect_timeout, async {
         let mut total_received = 0;
         while total_received < test_cases.len() {
@@ -318,9 +318,9 @@ async fn test_consumer_group_processing(ctx: TestContext) -> TestResult<()> {
         let handle = tokio::spawn(async move {
             let mut messages = consumer.messages().await?;
             let mut received_messages = Vec::new();
-            
+
             // Each consumer tries to get messages for a limited time
-            let consume_timeout = Duration::from_secs(8);
+            let consume_timeout = Duration::from_secs(Timeouts::LONG);
             let _result = timeout(consume_timeout, async {
                 while let Some(message) = messages.next().await {
                     let message = message?;
@@ -454,7 +454,7 @@ async fn test_ordered_stream_processing(ctx: TestContext) -> TestResult<()> {
     let mut messages = consumer.messages().await?;
     let mut received_sequence = Vec::new();
 
-    let collect_timeout = Duration::from_secs(10);
+    let collect_timeout = Duration::from_secs(Timeouts::LONG);
     timeout(collect_timeout, async {
         while received_sequence.len() < sequence_length {
             if let Some(message) = messages.next().await {
@@ -537,7 +537,7 @@ async fn test_stream_error_handling(ctx: TestContext) -> TestResult<()> {
     let mut successfully_processed = 0;
     let mut processing_errors = 0;
 
-    let collect_timeout = Duration::from_secs(8);
+    let collect_timeout = Duration::from_secs(Timeouts::LONG);
     timeout(collect_timeout, async {
         let mut messages_received = 0;
         

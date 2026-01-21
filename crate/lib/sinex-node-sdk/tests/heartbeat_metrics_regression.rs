@@ -38,7 +38,7 @@ async fn heartbeat_metrics_capture_real_cpu_usage() -> color_eyre::Result<()> {
     }
     black_box(accumulator);
 
-    let metrics = emitter.create_heartbeat_metrics(None);
+    let metrics = emitter.create_heartbeat_metrics(None).await;
 
     assert!(
         metrics.cpu_usage_percent > 0.0,
@@ -57,7 +57,7 @@ async fn heartbeat_status_transitions_on_error_volume() -> color_eyre::Result<()
         emitter.record_error("simulated failure");
     }
 
-    let metrics = emitter.create_heartbeat_metrics(None);
+    let metrics = emitter.create_heartbeat_metrics(None).await;
 
     assert_eq!(metrics.status, ProcessStatus::Failed, "Heartbeat status should transition to failed after repeated errors so operators can alert on degraded nodes");
 
@@ -72,7 +72,7 @@ async fn heartbeat_emits_degraded_alert_on_error_spike() -> color_eyre::Result<(
         emitter.record_error("temporary failure");
     }
 
-    emitter.emit_heartbeat(None);
+    emitter.emit_heartbeat(None).await;
 
     let entries = sink.entries.lock();
     assert_eq!(
@@ -94,8 +94,8 @@ async fn heartbeat_emits_failed_alert_only_on_transition() -> color_eyre::Result
         emitter.record_error("catastrophic failure");
     }
 
-    emitter.emit_heartbeat(None);
-    emitter.emit_heartbeat(None);
+    emitter.emit_heartbeat(None).await;
+    emitter.emit_heartbeat(None).await;
 
     let entries = sink.entries.lock();
     let failed_alerts = entries

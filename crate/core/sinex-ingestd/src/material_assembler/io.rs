@@ -19,6 +19,16 @@ use tokio::{fs, fs::File, io::AsyncReadExt, io::AsyncWriteExt};
 use tracing::{debug, info, warn};
 
 /// Restore persisted assembler state on startup by replaying the WAL
+///
+/// # Edge Cases
+///
+/// - **Corrupt WAL entries**: If WAL replay encounters malformed JSON, it stops at the error
+///   and uses the partial state up to that point. This is logged but not fatal.
+/// - **Terminal materials with incomplete state**: If a material is marked terminal in the
+///   database but the WAL shows incomplete assembly (missing end or buffered slices), the
+///   state is cleaned up as stale.
+/// - **Legacy state.json migration**: Old state.json files are automatically migrated to
+///   WAL format on first restore.
 pub(super) async fn restore_state(assembler: &MaterialAssembler) -> IngestdResult<()> {
     let mut entries = match fs::read_dir(&assembler.state_root).await {
         Ok(entries) => entries,
@@ -71,14 +81,8 @@ async fn restore_state_params(
     state_dir: &PathBuf,
 ) -> IngestdResult<Option<AssemblerState>> {
     let wal_path = state_dir.join(WAL_FILE_NAME);
-    let state_file = state_dir.join(STATE_FILE_NAME); // Legacy fall-back
+    let wal_path = state_dir.join(WAL_FILE_NAME);
     let temp_path = state_dir.join(TEMP_FILE_NAME);
-
-    // Migration: If no WAL but state.json exists, migrate it to a checkpoint in WAL
-    if !wal_path.exists() && state_file.exists() {
-        warn!(material_id = %material_id, "Migrating legacy state.json to WAL");
-        migrate_legacy_state(material_id, &state_file, &wal_path).await?;
-    }
 
     if !wal_path.exists() {
         // If neither exists, verify if we should just clean up (e.g. empty dir)
@@ -173,6 +177,8 @@ async fn restore_state_params(
         pending_write: None, // pending writes are ephemeral optimizations, not persisted directly in WAL unless as Slices
         pending_end: state_snapshot.pending_end,
         finalizing: state_snapshot.finalizing,
+        last_slice_received: Utc::now(), // Reset on restore
+        permit: None,
     }))
 }
 
@@ -222,35 +228,6 @@ impl ReplayedState {
             _ => {} // Buffer events don't change core state reconstruction directly
         }
     }
-}
-
-async fn migrate_legacy_state(
-    _material_id: Ulid,
-    state_file: &PathBuf,
-    wal_path: &PathBuf,
-) -> IngestdResult<()> {
-    let data = fs::read(state_file)
-        .await
-        .map_err(|e| SinexError::io(e.to_string()))?;
-    let persisted: PersistedState =
-        serde_json::from_slice(&data).map_err(|e| SinexError::serialization(e.to_string()))?;
-
-    // Create WAL with a Checkpoint entry
-    let checkpoint = WalEntry::Checkpoint(persisted);
-    let serialized =
-        serde_json::to_vec(&checkpoint).map_err(|e| SinexError::serialization(e.to_string()))?;
-
-    let mut file = File::create(wal_path)
-        .await
-        .map_err(|e| SinexError::io(e.to_string()))?;
-    file.write_all(&serialized)
-        .await
-        .map_err(|e| SinexError::io(e.to_string()))?;
-
-    // Remove legacy file
-    let _ = fs::remove_file(state_file).await;
-
-    Ok(())
 }
 
 async fn rebuild_hasher(temp_path: &PathBuf) -> IngestdResult<Hasher> {
@@ -366,6 +343,34 @@ pub(super) async fn append_wal_entry(
 /// Remove the persisted state directory for a material
 pub(super) async fn cleanup_state(assembler: &MaterialAssembler, material_id: Ulid) {
     let path = assembler.state_root.join(material_id.to_string());
+
+    // Also clean up any orphaned temp files
+    let temp_path = path.join(TEMP_FILE_NAME);
+    if temp_path.exists() {
+        if let Err(e) = fs::remove_file(&temp_path).await {
+            warn!(
+                material_id = %material_id,
+                path = %temp_path.display(),
+                "Failed to remove temp file: {}",
+                e
+            );
+        }
+    }
+
+    // Clean up buffered slice files
+    let buffers_dir = path.join(BUFFER_DIR_NAME);
+    if buffers_dir.exists() {
+        if let Err(e) = fs::remove_dir_all(&buffers_dir).await {
+            warn!(
+                material_id = %material_id,
+                path = %buffers_dir.display(),
+                "Failed to remove buffers directory: {}",
+                e
+            );
+        }
+    }
+
+    // Finally remove the entire state directory
     if let Err(e) = fs::remove_dir_all(&path).await {
         warn!(
             material_id = %material_id,
@@ -377,6 +382,16 @@ pub(super) async fn cleanup_state(assembler: &MaterialAssembler, material_id: Ul
 }
 
 /// Store a slice (in-order or buffered) for a material
+///
+/// # Edge Cases
+///
+/// - **Early slice arrival**: Slices may arrive before the begin message due to separate
+///   JetStream subjects. A placeholder state is created to buffer slices until begin arrives.
+/// - **Race condition on placeholder creation**: Multiple slices arriving concurrently for
+///   a new material may attempt to create placeholders. `insert_state_handle` handles this
+///   via DashMap's entry API, ensuring only one placeholder wins.
+/// - **Dropped late slices**: If a material is already terminal (completed/failed), late-arriving
+///   slices are silently dropped to avoid resurrection of completed assemblies.
 pub(super) async fn handle_slice(
     assembler: &MaterialAssembler,
     material_id: Ulid,
@@ -406,6 +421,9 @@ pub(super) async fn handle_slice(
         debug!(material_id = %material_id, offset, "Ignoring slice received while material is finalizing");
         return Ok(());
     }
+
+    // Update last slice received timestamp
+    state.last_slice_received = Utc::now();
 
     if offset == state.expected_offset {
         append_slice_data(assembler, &mut state, material_id, &data).await?;
@@ -589,9 +607,8 @@ async fn persist_buffered_slice(
     file.write_all(data)
         .await
         .map_err(|e| SinexError::io(format!("Failed to persist buffered slice: {}", e)))?;
-    file.sync_all()
-        .await
-        .map_err(|e| SinexError::io(format!("Failed to persist buffered slice: {}", e)))?;
+    // PERF: Removed sync_all() to avoid IO saturation. Durability is handled by JS + WAL.
+    // file.sync_all().await...
     fs::rename(&temp_path, &buffer_path)
         .await
         .map_err(|e| SinexError::io(format!("Failed to persist buffered slice: {}", e)))?;

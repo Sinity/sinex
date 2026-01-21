@@ -1,8 +1,9 @@
+use sinex_test_utils::sinex_test;
 use std::sync::Arc;
 use std::time::Duration;
 
-#[tokio::test]
-async fn cancelled_select_branch_releases_lock() {
+#[sinex_test]
+async fn cancelled_select_branch_releases_lock() -> TestResult<()> {
     let lock = Arc::new(tokio::sync::Mutex::new(()));
     let lock_inner = lock.clone();
 
@@ -25,4 +26,5 @@ async fn cancelled_select_branch_releases_lock() {
     let _guard = tokio::time::timeout(Duration::from_millis(100), lock.lock())
         .await
         .expect("mutex should not be held after cancellation");
+    Ok(())
 }

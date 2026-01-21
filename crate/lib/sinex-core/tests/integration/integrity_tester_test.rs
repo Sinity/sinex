@@ -15,7 +15,7 @@ async fn windowing_limits_event_counts(ctx: TestContext) -> color_eyre::Result<(
     // Seed manifest for the synthetic processor
     sqlx::query!(
         r#"
-        INSERT INTO core.processor_manifests (processor_name, processor_type, version, description, anchor_rule_version)
+        INSERT INTO core.processor_manifests (processor_name, node_type, version, description, anchor_rule_version)
         VALUES ($1, 'automaton', '1.0.0', NULL, 1)
         "#,
         "integrity.proc"

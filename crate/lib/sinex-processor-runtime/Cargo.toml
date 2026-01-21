@@ -18,10 +18,8 @@ chrono.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 tokio = { workspace = true, features = ["full"] }
-futures = { workspace = true }
 
-# Message bus
-async-nats.workspace = true
+# ID generation
 uuid.workspace = true
 
 [dev-dependencies]

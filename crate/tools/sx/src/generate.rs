@@ -55,6 +55,7 @@ impl GeneratorConfig {
 
 /// Event type information for the prompt
 #[derive(Debug, Clone, Serialize)]
+#[allow(dead_code)]
 pub struct EventTypeInfo {
     pub name: String,
     pub description: String,
@@ -62,6 +63,7 @@ pub struct EventTypeInfo {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[allow(dead_code)]
 pub struct FieldInfo {
     pub name: String,
     pub field_type: String,
@@ -264,15 +266,16 @@ impl SimpleProcessor for {Name} {
 Generate the complete implementation now:
 "#;
 
-/// Generated node output
+/// Result of the generation process
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct GeneratedNode {
-    /// Node name (for crate naming)
+    /// Name of the node
     pub name: String,
-    /// Generated Rust code
+    /// Path to the generated crate
+    pub path: Utf8PathBuf,
+    /// Generated code content
     pub code: String,
-    /// Crate path where code was written
-    pub crate_path: Utf8PathBuf,
 }
 
 /// The node generator
@@ -324,7 +327,7 @@ impl NodeGenerator {
         Ok(GeneratedNode {
             name: spec.name.clone(),
             code,
-            crate_path,
+            path: crate_path,
         })
     }
 
@@ -577,11 +580,11 @@ pub async fn run_generate(args: GenerateArgs, workspace_root: Utf8PathBuf) -> Re
     let result = generator.generate(&spec).await?;
 
     println!("Generated node: {}", result.name);
-    println!("Created at: {}", result.crate_path);
+    println!("Created at: {}", result.path);
     println!("\nNext steps:");
     println!("  1. Add to Cargo.toml workspace members");
     println!("  2. Run: cargo build -p sinex-{}", result.name);
-    println!("  3. Start with: sx dev {}", result.crate_path);
+    println!("  3. Start with: sx dev {}", result.path);
 
     Ok(())
 }

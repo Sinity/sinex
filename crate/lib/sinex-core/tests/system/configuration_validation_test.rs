@@ -11,6 +11,7 @@
 // - **Resource usage**: Minimal (file system only)
 
 use sinex_test_utils::prelude::*;
+use sinex_test_utils::timing_utils::Timeouts;
 use std::fs;
 
 /// Test configuration validation and hot reload scenarios
@@ -53,7 +54,7 @@ enabled = false
 
     let config_validation_start = Instant::now();
 
-    let valid_config_test = timeout(Duration::from_secs(3), async {
+    let valid_config_test = timeout(Duration::from_secs(Timeouts::SHORT), async {
         let config_content = fs::read_to_string(&valid_config_file)?;
         let parsed_config = toml::from_str::<toml::Value>(&config_content)?;
 
@@ -175,7 +176,7 @@ channel_buffer_size = 10000
         let invalid_config_file = config_dir.join(format!("invalid_{}.toml", i));
         fs::write(&invalid_config_file, invalid_config)?;
 
-        let validation_result = timeout(Duration::from_secs(1), async {
+        let validation_result = timeout(Duration::from_secs(Timeouts::QUICK), async {
             let config_content = fs::read_to_string(&invalid_config_file)?;
             let parsed_result = toml::from_str::<toml::Value>(&config_content);
 
@@ -226,7 +227,7 @@ channel_buffer_size = 10000
     let hot_reload_config_file = config_dir.join("hot_reload.toml");
     fs::write(&hot_reload_config_file, valid_config)?;
 
-    let hot_reload_test = timeout(Duration::from_secs(5), async {
+    let hot_reload_test = timeout(Duration::from_secs(Timeouts::MEDIUM), async {
         // Initial config load
         let initial_config = fs::read_to_string(&hot_reload_config_file)?;
         let initial_parsed = toml::from_str::<toml::Value>(&initial_config)?;

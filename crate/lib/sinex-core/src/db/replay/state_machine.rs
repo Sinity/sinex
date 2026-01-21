@@ -1,12 +1,12 @@
 use crate::db::repositories::DbPoolExt;
+use crate::types::error::{Result, SinexError};
 use crate::types::ulid::Ulid;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
-use color_eyre::eyre::{eyre, Result};
 use serde::{Deserialize, Serialize};
+use sinex_schema::ulid_conversions::{ulid_to_uuid, uuid_to_ulid, UlidArrayExt};
 use sqlx::{Executor, PgPool, Postgres, QueryBuilder, Row, Transaction};
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
-use uuid::Uuid;
 
 /// Helper function to extract lock ID from ULID for advisory locks
 fn ulid_to_lock_id(ulid: Ulid) -> i64 {
@@ -197,10 +197,7 @@ impl ReplayStateMachine {
         builder.push_bind(window.1);
 
         if let Some(materials) = scope.material_filter.as_ref() {
-            let ids: Vec<Uuid> = materials
-                .iter()
-                .map(|id| Uuid::from_bytes(id.to_bytes()))
-                .collect();
+            let ids = materials.to_uuid_vec();
             if !ids.is_empty() {
                 builder.push(" AND source_material_id = ANY(");
                 builder.push_bind(ids);
@@ -243,7 +240,11 @@ impl ReplayStateMachine {
                 scope.time_window.clone(),
             )
             .await
-            .map_err(|e| eyre!("start_replay_operation failed: {}", e))?;
+            .map_err(|e| {
+                SinexError::database("Failed to start replay operation")
+                    .with_source(e.to_string())
+                    .with_operation("start_replay_operation")
+            })?;
         let operation_id = *op_id.as_ulid();
 
         let mut operation = ReplayOperation {
@@ -283,7 +284,12 @@ impl ReplayStateMachine {
         state_repo
             .update_operation_meta(&op_id, "running", Some("planning"), meta_json)
             .await
-            .map_err(|e| eyre!("update_operation_meta failed: {}", e))?;
+            .map_err(|e| {
+                SinexError::database("Failed to update operation metadata")
+                    .with_source(e.to_string())
+                    .with_operation("update_operation_meta")
+                    .with_id("operation_id", op_id.to_string())
+            })?;
 
         info!(
             "Created replay operation {} in Planning state",
@@ -301,7 +307,7 @@ impl ReplayStateMachine {
             FROM core.operations_log
             WHERE id::uuid = $1::uuid
             "#,
-            Uuid::from_bytes(operation_id.to_bytes())
+            ulid_to_uuid(operation_id)
         )
         .fetch_one(&self.pool)
         .await?;
@@ -339,7 +345,7 @@ impl ReplayStateMachine {
             WHERE id::uuid = $1::uuid
             FOR UPDATE
             "#,
-            Uuid::from_bytes(operation_id.to_bytes())
+            ulid_to_uuid(operation_id)
         )
         .fetch_one(&mut **tx)
         .await?;
@@ -347,11 +353,12 @@ impl ReplayStateMachine {
         let mut meta = Self::decode_meta_json(preview)?;
 
         if !meta.state.can_transition_to(new_state) {
-            return Err(eyre!(
-                "Invalid state transition: {:?} -> {:?}",
-                meta.state,
-                new_state
-            ));
+            return Err(
+                SinexError::invalid_state("Invalid state transition for replay operation")
+                    .with_context("from_state", format!("{:?}", meta.state))
+                    .with_context("to_state", format!("{:?}", new_state))
+                    .with_operation("transition_state"),
+            );
         }
 
         let now = Utc::now();
@@ -380,7 +387,7 @@ impl ReplayStateMachine {
                 preview_summary = $4
             WHERE id::uuid = $1::uuid
             "#,
-            Uuid::from_bytes(operation_id.to_bytes()),
+            ulid_to_uuid(operation_id),
             status,
             msg,
             meta_json
@@ -405,7 +412,7 @@ impl ReplayStateMachine {
             FROM core.operations_log
             WHERE id::uuid = $1::uuid
             "#,
-            Uuid::from_bytes(operation_id.to_bytes())
+            ulid_to_uuid(operation_id)
         )
         .fetch_one(&self.pool)
         .await?;
@@ -424,7 +431,7 @@ impl ReplayStateMachine {
                 result_message = $4
             WHERE id::uuid = $1::uuid
             "#,
-            Uuid::from_bytes(operation_id.to_bytes()),
+            ulid_to_uuid(operation_id),
             meta_json,
             status,
             msg
@@ -512,13 +519,18 @@ impl ReplayStateMachine {
             FROM core.operations_log
             WHERE id::uuid = $1::uuid
             "#,
-            Uuid::from_bytes(operation_id.to_bytes())
+            ulid_to_uuid(operation_id)
         )
         .fetch_one(&self.pool)
         .await?;
         let mut meta = Self::decode_meta_json(row.preview_summary)?;
         if meta.state != ReplayState::Previewed {
-            return Err(eyre!("Operation must be in Previewed state to approve"));
+            return Err(SinexError::invalid_state(
+                "Operation must be in Previewed state to approve",
+            )
+            .with_context("current_state", format!("{:?}", meta.state))
+            .with_id("operation_id", operation_id.to_string())
+            .with_operation("approve_operation"));
         }
         meta.state = ReplayState::Approved;
         meta.approved_by = Some(approver.clone());
@@ -533,7 +545,7 @@ impl ReplayStateMachine {
                 preview_summary = $4
             WHERE id::uuid = $1::uuid
             "#,
-            Uuid::from_bytes(operation_id.to_bytes()),
+            ulid_to_uuid(operation_id),
             status,
             msg,
             meta_json
@@ -560,7 +572,7 @@ impl ReplayStateMachine {
             WHERE id::uuid = $1::uuid
             FOR UPDATE
             "#,
-            Uuid::from_bytes(operation_id.to_bytes())
+            ulid_to_uuid(operation_id)
         )
         .fetch_one(&mut *tx)
         .await?;
@@ -573,7 +585,7 @@ impl ReplayStateMachine {
             SET preview_summary = $2
             WHERE id::uuid = $1::uuid
             "#,
-            Uuid::from_bytes(operation_id.to_bytes()),
+            ulid_to_uuid(operation_id),
             meta_json
         )
         .execute(&mut *tx)
@@ -592,7 +604,7 @@ impl ReplayStateMachine {
         let row = sqlx::query(
             "SELECT preview_summary FROM core.operations_log WHERE id::uuid = $1::uuid",
         )
-        .bind(sqlx::types::Uuid::from_bytes(operation_id.to_bytes()))
+        .bind(ulid_to_uuid(operation_id))
         .fetch_one(&self.pool)
         .await?;
         let mut meta = Self::decode_meta_json(row.try_get("preview_summary").unwrap_or(None))?;
@@ -605,7 +617,7 @@ impl ReplayStateMachine {
         sqlx::query(
             "UPDATE core.operations_log SET result_status = $2, result_message = $3, preview_summary = $4 WHERE id::uuid = $1::uuid",
         )
-        .bind(sqlx::types::Uuid::from_bytes(operation_id.to_bytes()))
+        .bind(ulid_to_uuid(operation_id))
         .bind(status)
         .bind(msg)
         .bind(meta_json)
@@ -621,7 +633,7 @@ impl ReplayStateMachine {
         let row = sqlx::query(
             "SELECT preview_summary FROM core.operations_log WHERE id::uuid = $1::uuid",
         )
-        .bind(sqlx::types::Uuid::from_bytes(operation_id.to_bytes()))
+        .bind(ulid_to_uuid(operation_id))
         .fetch_one(&self.pool)
         .await?;
         let mut meta = Self::decode_meta_json(row.try_get("preview_summary").unwrap_or(None))?;
@@ -637,7 +649,7 @@ impl ReplayStateMachine {
         sqlx::query(
             "UPDATE core.operations_log SET result_status = $2, result_message = $3, preview_summary = $4 WHERE id::uuid = $1::uuid",
         )
-        .bind(sqlx::types::Uuid::from_bytes(operation_id.to_bytes()))
+        .bind(ulid_to_uuid(operation_id))
         .bind(status)
         .bind(msg)
         .bind(meta_json)
@@ -673,7 +685,7 @@ impl ReplayStateMachine {
             let row = sqlx::query(
                 "SELECT preview_summary FROM core.operations_log WHERE id::uuid = $1::uuid",
             )
-            .bind(sqlx::types::Uuid::from_bytes(operation_id.to_bytes()))
+            .bind(ulid_to_uuid(operation_id))
             .fetch_one(&self.pool)
             .await?;
             let mut meta = Self::decode_meta_json(row.try_get("preview_summary").unwrap_or(None))?;
@@ -682,7 +694,7 @@ impl ReplayStateMachine {
             sqlx::query(
                 "UPDATE core.operations_log SET preview_summary = $2 WHERE id::uuid = $1::uuid",
             )
-            .bind(sqlx::types::Uuid::from_bytes(operation_id.to_bytes()))
+            .bind(ulid_to_uuid(operation_id))
             .bind(meta_json)
             .execute(&self.pool)
             .await?;
@@ -740,7 +752,7 @@ impl ReplayStateMachine {
         let mut operations = Vec::new();
         for row in rows {
             let uuid: sqlx::types::Uuid = row.try_get("id")?;
-            let id_ulid = Ulid::from_bytes(*uuid.as_bytes())?;
+            let id_ulid = uuid_to_ulid(uuid);
             let operator: String = row.try_get("operator")?;
             let scope_val: serde_json::Value = row.try_get("scope")?;
             let preview: Option<serde_json::Value> = row.try_get("preview_summary").unwrap_or(None);

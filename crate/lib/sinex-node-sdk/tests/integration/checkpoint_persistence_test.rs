@@ -8,13 +8,10 @@ use serde_json::json;
 use sinex_core::types::domain::EventSource;
 use sinex_node_sdk::CheckpointManager;
 use sinex_test_utils::prelude::*;
-use sinex_test_utils::TestResult;
 use tracing::info;
 
 #[sinex_test]
-async fn test_checkpoint_recovery_from_empty_state(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn test_checkpoint_recovery_from_empty_state(ctx: TestContext) -> TestResult<()> {
     // Test that checkpoint recovery works when starting from empty state
     let ctx = ctx.with_nats().await?;
     let service_name = "empty-state-test".to_string();
@@ -47,9 +44,7 @@ async fn test_checkpoint_recovery_from_empty_state(
 }
 
 #[sinex_test]
-async fn test_checkpoint_manager_basic_functionality(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn test_checkpoint_manager_basic_functionality(ctx: TestContext) -> TestResult<()> {
     // Test basic checkpoint manager functionality
     let ctx = ctx.with_nats().await?;
     let service_name = "basic-functionality-test".to_string();
@@ -67,11 +62,11 @@ async fn test_checkpoint_manager_basic_functionality(
 
     // Create test events to simulate processed events
     let test_events = vec![
-        ctx.publish_json_event("checkpoint-test", "test.event", json!({"test": "event1"}))
+        ctx.publish_event("checkpoint-test", "test.event", json!({"test": "event1"}))
             .await?,
-        ctx.publish_json_event("checkpoint-test", "test.event", json!({"test": "event2"}))
+        ctx.publish_event("checkpoint-test", "test.event", json!({"test": "event2"}))
             .await?,
-        ctx.publish_json_event("checkpoint-test", "test.event", json!({"test": "event3"}))
+        ctx.publish_event("checkpoint-test", "test.event", json!({"test": "event3"}))
             .await?,
     ];
 
@@ -213,7 +208,7 @@ async fn test_checkpoint_with_events_context(ctx: TestContext) -> TestResult<()>
 
     // Create events that could be referenced by checkpoints
     let test_events = vec![
-        ctx.publish_json_event(
+        ctx.publish_event(
             "checkpoint-context",
             "file.created",
             json!({
@@ -222,7 +217,7 @@ async fn test_checkpoint_with_events_context(ctx: TestContext) -> TestResult<()>
             }),
         )
         .await?,
-        ctx.publish_json_event(
+        ctx.publish_event(
             "checkpoint-context",
             "file.modified",
             json!({

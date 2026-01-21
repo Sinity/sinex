@@ -6,6 +6,7 @@
 use futures::future::join_all;
 use serde_json::json;
 use sinex_test_utils::prelude::*;
+use sinex_test_utils::timing_utils::Timeouts;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -43,7 +44,7 @@ async fn test_database_failure_resilience(ctx: TestContext) -> TestResult<()> {
                         tokio::time::sleep(Duration::from_millis(100 * (1 << retry))).await;
 
                         match ctx_clone
-                            .publish_json_event(
+                            .publish_event(
                                 &format!("chaos-worker-{}", worker_id),
                                 &format!("database.retry.{}.{}", operation_id, retry),
                                 json!({"worker": worker_id, "operation": operation_id, "retry": retry}),
@@ -69,7 +70,7 @@ async fn test_database_failure_resilience(ctx: TestContext) -> TestResult<()> {
                 } else {
                     // Normal database operation
                     match ctx_clone
-                        .publish_json_event(
+                        .publish_event(
                             &format!("chaos-worker-{}", worker_id),
                             &format!("database.operation.{}", operation_id),
                             json!({"worker": worker_id, "operation": operation_id}),
@@ -132,7 +133,7 @@ async fn test_database_failure_resilience(ctx: TestContext) -> TestResult<()> {
 /// Test NATS/JetStream failure resilience with stream operations
 #[sinex_test]
 async fn test_stream_failure_resilience(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
 
     let stream_operations = Arc::new(AtomicU64::new(0));
     let stream_failures = Arc::new(AtomicU64::new(0));
@@ -171,7 +172,7 @@ async fn test_stream_failure_resilience(ctx: TestContext) -> TestResult<()> {
                         tokio::time::sleep(Duration::from_millis(200 * (1 << retry))).await;
 
                         match ctx_clone
-                            .publish_json_event(
+                            .publish_event(
                                 &format!("stream-chaos-{}", worker_id),
                                 &format!("stream.retry.{}", stream_id),
                                 event_data.clone(),
@@ -197,7 +198,7 @@ async fn test_stream_failure_resilience(ctx: TestContext) -> TestResult<()> {
                 } else {
                     // Normal stream operation
                     match ctx_clone
-                        .publish_json_event(
+                        .publish_event(
                             &format!("stream-chaos-{}", worker_id),
                             &format!("stream.operation.{}", stream_id),
                             event_data,

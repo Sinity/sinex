@@ -1,6 +1,5 @@
 //! Integration scenarios focused on the public `sinex-node-sdk` surface.
 
-pub mod blob_manager_test;
 pub mod checkpoint_persistence_test;
 pub mod config_environment_validation_test;
 pub mod critical_failure_modes_test;

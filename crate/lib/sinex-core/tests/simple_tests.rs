@@ -31,7 +31,7 @@ async fn test_basic_database_connection(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 async fn test_event_creation(ctx: TestContext) -> TestResult<()> {
     let event = ctx
-        .publish_json_event("test", "test.event", json!({"value": 42}))
+        .publish_event("test", "test.event", json!({"value": 42}))
         .await?;
 
     assert_eq!(event.source.as_str(), "test");

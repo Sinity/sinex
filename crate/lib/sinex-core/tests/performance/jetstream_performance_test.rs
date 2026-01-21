@@ -18,7 +18,7 @@ use color_eyre::eyre::eyre;
 use futures::StreamExt;
 use serde_json::json;
 use sinex_core::types::ulid::Ulid;
-use sinex_test_utils::{prelude::*, EphemeralNats};
+use sinex_test_utils::{prelude::*, timing_utils::Timeouts, EphemeralNats};
 use std::collections::HashMap;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -59,7 +59,7 @@ async fn create_stream(js: &JetStream, stream_name: &str, subject: &str) -> Test
         name: stream_name.to_string(),
         subjects: vec![subject.to_string()],
         retention: RetentionPolicy::Limits,
-        max_age: StdDuration::from_secs(60),
+        max_age: StdDuration::from_secs(Timeouts::LONG),
         ..Default::default()
     };
 
@@ -137,7 +137,7 @@ async fn jetstream_concurrent_consumer_distribution() -> TestResult<()> {
         name: stream_name.clone(),
         subjects: vec![subject.clone()],
         retention: RetentionPolicy::WorkQueue,
-        max_age: StdDuration::from_secs(120),
+        max_age: StdDuration::from_secs(Timeouts::EXTENDED),
         ..Default::default()
     };
     js.get_or_create_stream(config).await?;
@@ -158,7 +158,7 @@ async fn jetstream_concurrent_consumer_distribution() -> TestResult<()> {
             &stream_name,
             &subject,
             &durable,
-            StdDuration::from_secs(30),
+            StdDuration::from_secs(Timeouts::STANDARD),
             512,
         )
         .await?,
@@ -354,7 +354,7 @@ async fn jetstream_sustained_publish_throughput() -> TestResult<()> {
         &stream_name,
         &subject,
         &durable,
-        StdDuration::from_secs(60),
+        StdDuration::from_secs(Timeouts::LONG),
         1024,
     )
     .await?;
@@ -420,7 +420,7 @@ async fn jetstream_consumer_latency() -> TestResult<()> {
         &stream_name,
         &subject,
         &durable,
-        StdDuration::from_secs(30),
+        StdDuration::from_secs(Timeouts::STANDARD),
         512,
     )
     .await?;

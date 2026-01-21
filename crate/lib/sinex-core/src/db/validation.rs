@@ -4,6 +4,7 @@
 //! integration and adversarial tests, ensuring that schema enforcement,
 //! provenance validation, and payload guards stay in lock-step.
 use crate::db::models::event::{Event, Provenance, SourceMaterial};
+#[cfg(feature = "sqlx")]
 use crate::db::DbPool;
 use crate::types::domain::{EventSource, EventType, HostName};
 use crate::types::Id;
@@ -15,6 +16,7 @@ use jsonschema::JSONSchema;
 use parking_lot::RwLock;
 use serde_json;
 use sinex_schema::ulid::Ulid;
+#[cfg(feature = "sqlx")]
 use sqlx::FromRow;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -159,9 +161,11 @@ impl EventValidator {
         self
     }
     /// Load schemas from the database and build compiled cache.
+    #[cfg(feature = "sqlx")]
     pub async fn load_from_db(pool: &DbPool) -> Result<Self> {
         Self::load_from_db_with_options(pool, true).await
     }
+    #[cfg(feature = "sqlx")]
     pub async fn load_from_db_with_options(
         pool: &DbPool,
         validation_enabled: bool,
@@ -171,6 +175,7 @@ impl EventValidator {
         Ok(validator)
     }
     /// Reload latest active schemas from the database, replacing the cache.
+    #[cfg(feature = "sqlx")]
     pub async fn reload_schemas(&mut self, pool: &DbPool) -> Result<usize> {
         let schemas = fetch_latest_active_schemas(pool).await?;
         let (cache, lookup, compiled, failed) = compile_schemas(schemas);
@@ -180,6 +185,7 @@ impl EventValidator {
         Ok(compiled)
     }
     /// Load all schema versions (not just latest) into the cache.
+    #[cfg(feature = "sqlx")]
     pub async fn load_all_schema_versions(&mut self, pool: &DbPool) -> Result<()> {
         let schemas = fetch_all_active_schemas(pool).await?;
         let (cache, lookup, compiled, failed) = compile_schemas(schemas);
@@ -465,7 +471,8 @@ impl EventValidator {
         Ok(())
     }
 }
-#[derive(Debug, FromRow)]
+#[cfg_attr(feature = "sqlx", derive(FromRow))]
+#[derive(Debug)]
 struct SchemaRecord {
     id: Ulid,
     source: String,
@@ -473,6 +480,7 @@ struct SchemaRecord {
     schema_version: String,
     schema_content: JsonValue,
 }
+#[cfg(feature = "sqlx")]
 async fn fetch_latest_active_schemas(pool: &DbPool) -> Result<Vec<SchemaRecord>> {
     sqlx::query_as!(
         SchemaRecord,
@@ -492,6 +500,7 @@ async fn fetch_latest_active_schemas(pool: &DbPool) -> Result<Vec<SchemaRecord>>
     .await
     .wrap_err("failed to load active schemas for EventValidator")
 }
+#[cfg(feature = "sqlx")]
 async fn fetch_all_active_schemas(pool: &DbPool) -> Result<Vec<SchemaRecord>> {
     sqlx::query_as!(
         SchemaRecord,

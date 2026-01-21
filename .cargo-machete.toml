@@ -10,14 +10,14 @@ sinex-node-sdk = ["tonic-build"]
 # These show up as unused but are in [dev-dependencies]
 sinex-services = ["sinex-test-utils"]
 sinex-terminal-command-canonicalizer = ["sinex-test-utils"]
-sinex-health-aggregator = ["sinex-test-utils"] 
+sinex-health-automaton = ["sinex-test-utils"]
 
 # Used in binaries that need logging setup
-sinex-desktop-node = ["tracing-subscriber"]
-sinex-fs-watcher = ["tracing-subscriber"]
-sinex-system-node = ["tracing-subscriber"]
-sinex-terminal-node = ["tracing-subscriber"]
+sinex-desktop-ingestor = ["tracing-subscriber"]
+sinex-fs-ingestor = ["tracing-subscriber"]
+sinex-system-ingestor = ["tracing-subscriber"]
+sinex-terminal-ingestor = ["tracing-subscriber"]
 
 # Platform-specific or conditional dependencies
-sinex-terminal-node = ["xterm-query"]
-sinex-system-node = ["battery", "procfs", "systemstat"]
+sinex-terminal-ingestor = ["xterm-query"]
+sinex-system-ingestor = ["battery", "procfs", "systemstat"]

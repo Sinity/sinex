@@ -3,8 +3,8 @@ use sinex_test_utils::prelude::*;
 
 #[sinex_test(timeout = 60)]
 async fn pipeline_scope_streams_are_isolated(ctx: TestContext) -> TestResult<()> {
-    let ctx1 = ctx.with_shared_nats().await?;
-    let ctx2 = TestContext::new().await?.with_shared_nats().await?;
+    let ctx1 = ctx.with_nats().shared().await?;
+    let ctx2 = TestContext::new().await?.with_nats().shared().await?;
 
     let scope1 = ctx1.pipeline_scope().await?;
     let scope2 = ctx2.pipeline_scope().await?;

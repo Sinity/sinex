@@ -101,9 +101,10 @@ fn generate_to_json_event_impl(
                     quote! {
                         #enum_name::#variant_name => {
                             // Generate a placeholder event for unit variants
-                            sinex_core::EventBuilder::new(
-                                "unknown".into(),
-                                stringify!(#variant_name).into(),
+                            // NOTE: This generates an event without provenance - likely broken
+                            sinex_core::EventBuilder::dynamic(
+                                "unknown",
+                                stringify!(#variant_name),
                                 serde_json::Value::Null,
                             )
                             .build()
@@ -115,9 +116,10 @@ fn generate_to_json_event_impl(
                     quote! {
                         #enum_name::#variant_name(..) => {
                             // Default conversion for complex variants
-                            sinex_core::EventBuilder::new(
-                                "unknown".into(),
-                                stringify!(#variant_name).into(),
+                            // NOTE: This generates an event without provenance - likely broken
+                            sinex_core::EventBuilder::dynamic(
+                                "unknown",
+                                stringify!(#variant_name),
                                 serde_json::Value::Null,
                             )
                             .build()

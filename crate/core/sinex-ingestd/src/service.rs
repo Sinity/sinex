@@ -6,6 +6,7 @@
 use crate::{
     config::IngestdConfig, validator::EventValidator, IngestdResult, JetStreamTopology, SinexError,
 };
+use sinex_core::error::AnyhowContext;
 use sinex_core::JsonValue;
 
 // External crates
@@ -15,6 +16,7 @@ use sinex_core::db::advisory_lock::AdvisoryLock;
 use sinex_core::environment as sinex_environment;
 use sinex_core::types::utils::ResourceGuard;
 use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
+use sinex_node_sdk::{SelfObserver, SelfObserverConfig};
 use sqlx::PgPool;
 
 // Standard library and common crates
@@ -52,6 +54,7 @@ pub struct IngestService {
     jetstream: Option<jetstream::Context>,
     validator: Arc<RwLock<EventValidator>>,
     stats: Arc<IngestStats>,
+    observer: Arc<SelfObserver>,
     shutdown_flag: Arc<AtomicBool>,
     task_handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
 }
@@ -68,7 +71,13 @@ impl IngestService {
             let pool = config
                 .get_db_options()
                 .connect(&config.database_url)
-                .await?;
+                .await
+                .map_err(|e| {
+                    SinexError::database(format!(
+                        "Failed to connect to database at {}: {e}",
+                        config.database_url
+                    ))
+                })?;
             Some(pool)
         };
 
@@ -76,11 +85,16 @@ impl IngestService {
         let (nats_client, jetstream) = if config.dry_run {
             (None, None)
         } else {
-            let client = config.nats.connect().await.map_err(|e| {
-                SinexError::network(format!("Failed to connect to NATS: {e}"))
-                    .with_operation("service.connect_nats")
-                    .with_context("nats_url", config.nats.url.clone())
-            })?;
+            let client = config
+                .nats
+                .connect()
+                .await
+                .wrap_err_with(|| format!("Failed to connect to NATS at {}", config.nats.url))
+                .map_err(|e| {
+                    SinexError::network(format!("Failed to connect to NATS: {e}"))
+                        .with_operation("service.connect_nats")
+                        .with_context("nats_url", config.nats.url.clone())
+                })?;
             let js = jetstream::new(client.clone());
 
             (Some(client), Some(js))
@@ -95,6 +109,7 @@ impl IngestService {
             if !config.dry_run && !config.skip_schema_sync {
                 let sync_result = crate::schema_sync::synchronize_schemas(pool)
                     .await
+                    .wrap_err("Failed to synchronize event schemas from codebase to database")
                     .map_err(|e| {
                         SinexError::service(format!("Failed to synchronize schemas: {e}"))
                             .with_operation("service.schema_sync")
@@ -123,7 +138,14 @@ impl IngestService {
             }
         }
 
-        // Initialize telemetry (we'll set up the channel after service is created)
+        // Initialize self-observation
+        let observer = match &nats_client {
+            Some(nats) => {
+                let config = SelfObserverConfig::from_env("sinex-ingestd");
+                SelfObserver::new(nats.clone(), config)
+            }
+            None => SelfObserver::disabled(),
+        };
 
         let service = Self {
             config: config.clone(),
@@ -132,6 +154,7 @@ impl IngestService {
             jetstream,
             validator: Arc::new(RwLock::new(validator)),
             stats: Arc::new(IngestStats::new()),
+            observer: Arc::new(observer),
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             task_handles: Arc::new(Mutex::new(Vec::new())),
         };
@@ -168,7 +191,8 @@ impl IngestService {
             }
         }
 
-        // Stats logging task with panic recovery
+        // Stats logging task with self-observation emission
+        let observer = self.observer.clone();
         let stats_handle = tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(60));
 
@@ -176,6 +200,26 @@ impl IngestService {
                 tokio::select! {
                     _ = interval.tick() => {
                         stats.log_stats();
+
+                        // Emit metrics via self-observation
+                        if observer.is_enabled() {
+                            let events_processed = stats.events_processed.load(Ordering::Relaxed);
+                            let events_received = stats.events_received.load(Ordering::Relaxed);
+                            let validation_errors = stats.validation_errors.load(Ordering::Relaxed);
+                            let db_errors = stats.db_errors.load(Ordering::Relaxed);
+
+                            // Emit as node processing stats
+                            if let Err(e) = observer.emit_node_processing_stats(
+                                "ingestd",
+                                events_processed,
+                                events_received.saturating_sub(events_processed), // dropped = received - processed
+                                None, // avg latency - would need instrumentation
+                                0, // queue depth - not tracked currently
+                                validation_errors + db_errors,
+                            ).await {
+                                warn!("Failed to emit self-observation metrics: {}", e);
+                            }
+                        }
                     }
                     _ = shutdown_signal(&shutdown_flag) => {
                         break;
@@ -402,6 +446,7 @@ impl Clone for IngestService {
             jetstream: self.jetstream.clone(),
             validator: self.validator.clone(),
             stats: self.stats.clone(),
+            observer: self.observer.clone(),
             shutdown_flag: self.shutdown_flag.clone(),
             task_handles: self.task_handles.clone(),
         }
@@ -467,7 +512,10 @@ const MIGRATION_LOCK_KEY: &str = "ingestd:migrations";
 pub async fn try_acquire_migration_lock(
     pool: &PgPool,
 ) -> IngestdResult<ResourceGuard<AdvisoryLock>> {
-    match AdvisoryLock::try_acquire(pool, MIGRATION_LOCK_KEY).await {
+    match AdvisoryLock::try_acquire(pool, MIGRATION_LOCK_KEY)
+        .await
+        .wrap_err("Failed to acquire advisory lock for schema migrations")
+    {
         Ok(Some(guard)) => Ok(guard),
         Ok(None) => Err(SinexError::service(
             "Another ingestd instance is already applying migrations",
@@ -513,10 +561,17 @@ impl IngestService {
         }
 
         // Broadcast metadata for cache invalidation signal
-        js.publish(subject, serde_json::to_vec(&entries)?.into())
+        js.publish(subject.clone(), serde_json::to_vec(&entries)?.into())
             .await
+            .wrap_err_with(|| {
+                format!(
+                    "Failed to publish schema broadcast to subject '{}'",
+                    subject
+                )
+            })
             .map_err(|e| SinexError::network(format!("Failed to publish schema broadcast: {e}")))?
             .await
+            .wrap_err("Failed to confirm schema broadcast acknowledgement")
             .map_err(|e| SinexError::network(format!("Failed to confirm schema broadcast: {e}")))?;
 
         info!(
@@ -568,6 +623,12 @@ impl IngestService {
             .bind(schema_id)
             .fetch_optional(pool)
             .await
+            .wrap_err_with(|| {
+                format!(
+                    "Failed to fetch schema content for {} ({})",
+                    entry.name, entry.schema_id
+                )
+            })
             .map_err(|e| SinexError::database(format!("Failed to fetch schema: {e}")))?;
 
             if let Some(json) = schema_json {
@@ -578,6 +639,12 @@ impl IngestService {
 
                 kv.put(&key, payload.into())
                     .await
+                    .wrap_err_with(|| {
+                        format!(
+                            "Failed to store schema {} ({}) in NATS KV bucket",
+                            entry.name, entry.schema_id
+                        )
+                    })
                     .map_err(|e| SinexError::kv(format!("Failed to store schema in KV: {e}")))?;
             }
         }
@@ -603,6 +670,7 @@ mod tests {
             jetstream: None,
             validator: Arc::new(RwLock::new(EventValidator::new(false))),
             stats: Arc::new(IngestStats::new()),
+            observer: Arc::new(SelfObserver::disabled()),
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             task_handles: Arc::new(Mutex::new(Vec::new())),
         }

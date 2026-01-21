@@ -56,7 +56,7 @@ async fn test_unicode_homograph_attacks(ctx: TestContext) -> TestResult<()> {
         println!("\nTesting: {} vs {} - {}", legitimate, attack, description);
 
         // Create event with homograph attack
-        let event = EventBuilder::new()
+        let event = EventBuilder::dynamic()
             .source("unicode_security_test")
             .event_type("homograph.test")
             .payload(json!({
@@ -150,7 +150,7 @@ async fn test_unicode_normalization_attacks(ctx: TestContext) -> TestResult<()> 
         // Create events with different normalizations
         for (form_name, form_value) in [("NFC", nfc), ("NFD", nfd), ("NFKC", nfkc), ("NFKD", nfkd)]
         {
-            let event = EventBuilder::new()
+            let event = EventBuilder::dynamic()
                 .source("unicode_normalization_test")
                 .event_type("normalization.test")
                 .payload(json!({
@@ -243,7 +243,7 @@ async fn test_zero_width_character_attacks(ctx: TestContext) -> TestResult<()> {
         );
 
         // Create event with zero-width characters
-        let event = EventBuilder::new()
+        let event = EventBuilder::dynamic()
             .source("zero_width_test")
             .event_type("zw.injection")
             .payload(json!({
@@ -319,7 +319,7 @@ async fn test_direction_override_attacks(ctx: TestContext) -> TestResult<()> {
         // Visual representation (approximate)
         println!("  Visual: {}", attack);
 
-        let event = EventBuilder::new()
+        let event = EventBuilder::dynamic()
             .source("direction_override_test")
             .event_type("bidi.attack")
             .payload(json!({
@@ -375,7 +375,7 @@ async fn test_encoding_based_attacks(ctx: TestContext) -> TestResult<()> {
                 println!("  ⚠️  Invalid UTF-8 was accepted: {:?}", s);
 
                 // Try to insert into database
-                let event = EventBuilder::new()
+                let event = EventBuilder::dynamic()
                     .source("encoding_attack_test")
                     .event_type("encoding.invalid")
                     .payload(json!({
@@ -435,7 +435,7 @@ async fn test_combined_unicode_attacks(ctx: TestContext) -> TestResult<()> {
         let attack_vectors = analyze_unicode_attacks(&attack);
         println!("  Detected vectors: {:?}", attack_vectors);
 
-        let event = EventBuilder::new()
+        let event = EventBuilder::dynamic()
             .source("combined_unicode_test")
             .event_type("unicode.combined")
             .payload(json!({

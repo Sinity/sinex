@@ -17,6 +17,15 @@ const REPLAY_CONTROL_SUBSCRIBE_ATTEMPTS: usize = 5;
 const REPLAY_CONTROL_SUBSCRIBE_BACKOFF_BASE: Duration = Duration::from_millis(200);
 const REPLAY_CONTROL_SUBSCRIBE_BACKOFF_MAX: Duration = Duration::from_secs(2);
 
+fn env_var_duration_secs(name: &str, default: u64) -> Duration {
+    Duration::from_secs(
+        std::env::var(name)
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(default),
+    )
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayControlError {
     pub message: String,
@@ -115,15 +124,24 @@ impl ReplayControlClient {
 
     async fn send(&self, request: ReplayControlRequest) -> Result<ReplayControlResponse> {
         let payload = serde_json::to_vec(&request)?;
-        let message = self
-            .client
-            .request(self.subject.clone(), payload.into())
-            .await
-            .map_err(|err| {
-                self.record_error(err.to_string());
-                err
-            })
-            .wrap_err("Replay control request timed out")?;
+
+        // Issue 126: Configurable timeout for NATS replay requests
+        let timeout = env_var_duration_secs("SINEX_REPLAY_CONTROL_TIMEOUT_SECS", 30);
+        let message = tokio::time::timeout(
+            timeout,
+            self.client.request(self.subject.clone(), payload.into()),
+        )
+        .await
+        .map_err(|_| {
+            let error_msg = format!("Replay control request timed out after {:?}", timeout);
+            self.record_error(error_msg.clone());
+            eyre!(error_msg)
+        })?
+        .map_err(|err| {
+            self.record_error(err.to_string());
+            err
+        })
+        .wrap_err("Replay control request failed")?;
 
         let response: ReplayControlResponse = serde_json::from_slice(&message.payload)
             .map_err(|err| {
@@ -520,7 +538,10 @@ impl ReplayExecutionEngine {
             .transition(operation_id, ReplayState::Completed)
             .await?;
 
-        self.replay.load_operation(operation_id).await
+        self.replay
+            .load_operation(operation_id)
+            .await
+            .map_err(|e| eyre!("{}", e))
     }
 }
 
@@ -610,6 +631,7 @@ impl ReplayTelemetry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_core::db::ulid_to_uuid;
     use chrono::Duration as ChronoDuration;
     use serde_json::json;
     use sinex_core::{types::ulid::Ulid, DbPool};
@@ -626,7 +648,7 @@ mod tests {
     }
 
     async fn wait_for_operation(pool: &DbPool, operation_id: Ulid) -> Result<()> {
-        let uuid = sqlx::types::Uuid::from_bytes(operation_id.to_bytes());
+        let uuid = ulid_to_uuid(operation_id);
         for attempt in 0..20 {
             let exists = sqlx::query_scalar!(
                 "SELECT 1 FROM core.operations_log WHERE id::uuid = $1::uuid",
@@ -783,7 +805,7 @@ mod tests {
     async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
         let nats = EphemeralNats::start().await?;
 
-        ctx.publish_json_event(
+        ctx.publish_event(
             "fs-test",
             "file.created",
             json!({ "path": "/tmp/replay.txt" }),

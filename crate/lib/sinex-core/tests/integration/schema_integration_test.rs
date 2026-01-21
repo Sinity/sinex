@@ -290,7 +290,7 @@ async fn test_comprehensive_integrity_validation(ctx: TestContext) -> TestResult
     let validator = EventValidator::load_from_db(&pool).await?;
 
     let persisted = ctx
-        .publish_json_event(
+        .publish_event(
             "schema.comprehensive",
             "valid_event",
             json!({"data": "valid"}),

@@ -3,7 +3,7 @@ use serde_json::json;
 use sinex_core::nats::NatsConnectionConfig;
 use sinex_ingestd::{config::IngestdConfig, service::IngestService, JetStreamTopology};
 use sinex_test_utils::prelude::*;
-use sinex_test_utils::timing_utils::WaitHelpers;
+use sinex_test_utils::timing_utils::{Timeouts, WaitHelpers};
 use tempfile::TempDir;
 use tokio::time::{timeout, Duration};
 
@@ -51,11 +51,15 @@ async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResul
     let mut runner = service.clone();
     let handle = tokio::spawn(async move { runner.run().await });
 
-    nats.wait_for_stream(&js, &topology.events_stream, Duration::from_secs(10))
-        .await?;
+    nats.wait_for_stream(
+        &js,
+        &topology.events_stream,
+        Duration::from_secs(Timeouts::SHORT),
+    )
+    .await?;
 
     service.shutdown().await?;
-    let join_result = timeout(Duration::from_secs(5), handle)
+    let join_result = timeout(Duration::from_secs(Timeouts::QUICK), handle)
         .await
         .map_err(|_| color_eyre::eyre::eyre!("ingestd runner shutdown timed out"))?;
     join_result??;
@@ -73,14 +77,14 @@ async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResul
     let mut restart_runner = restart_service.clone();
     let restart_handle = tokio::spawn(async move { restart_runner.run().await });
 
-    let wait_secs = 60;
+    let wait_secs = Timeouts::LONG;
     WaitHelpers::wait_for_event_count(&ctx.pool, event_ids.len(), wait_secs).await?;
     for event_id in event_ids {
         WaitHelpers::wait_for_event_id(&ctx.pool, event_id.into(), wait_secs).await?;
     }
 
     restart_service.shutdown().await?;
-    let restart_join = timeout(Duration::from_secs(5), restart_handle)
+    let restart_join = timeout(Duration::from_secs(Timeouts::QUICK), restart_handle)
         .await
         .map_err(|_| color_eyre::eyre::eyre!("ingestd runner shutdown timed out"))?;
     restart_join??;

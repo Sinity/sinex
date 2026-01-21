@@ -58,7 +58,7 @@ async fn start_ingestd(
 
 #[sinex_test]
 async fn end_to_end_single_node_full_flow(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     let namespace = ctx.pipeline_namespace().prefix().to_string();
     let suffix = format!("e2e-{}", uuid::Uuid::new_v4());

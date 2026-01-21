@@ -13,7 +13,7 @@ use tracing::info;
 
 #[sinex_test(timeout = 60)]
 async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     info!("🚀 Starting E2E JetStream test");
 
@@ -65,7 +65,7 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
             let event_id = event_id;
             async move {
                 let processed_ids = handler.processed_event_ids().await;
-                Ok(processed_ids.contains(&event_id))
+                Ok(processed_ids.contains(&event_id.into()))
             }
         },
         DEFAULT_WAIT_SECS,
@@ -95,7 +95,7 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
 
 #[sinex_test]
 async fn test_jetstream_idempotency(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     info!("🚀 Starting JetStream idempotency test");
 

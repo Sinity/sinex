@@ -8,7 +8,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sinex_node_sdk::simple_processor::{SimpleProcessor, SimpleProcessorError};
+use sinex_node_sdk::simple_node::{SimpleNode, SimpleNodeError};
 use std::collections::HashMap;
 
 // ============================================================================
@@ -103,7 +103,7 @@ impl Default for GitActivityDetector {
 }
 
 #[async_trait]
-impl SimpleProcessor for GitActivityDetector {
+impl SimpleNode for GitActivityDetector {
     type State = GitActivityState;
     type Input = TerminalCommandEvent;
     type Output = GitActivityEvent;
@@ -124,14 +124,15 @@ impl SimpleProcessor for GitActivityDetector {
         &mut self,
         state: &mut Self::State,
         input: Self::Input,
-    ) -> Result<Option<Self::Output>, SimpleProcessorError> {
+    ) -> Result<Option<Self::Output>, SimpleNodeError> {
         // Filter: only process git commands
         if !input.command.trim_start().starts_with("git ") {
             return Ok(None);
         }
 
         // Extract subcommand
-        let subcommand = Self::extract_subcommand(&input.command).unwrap_or_else(|| "unknown".to_string());
+        let subcommand =
+            Self::extract_subcommand(&input.command).unwrap_or_else(|| "unknown".to_string());
 
         // Update state
         state.total_commands += 1;
@@ -272,9 +273,6 @@ mod tests {
             GitActivityDetector::extract_subcommand("sudo git pull"),
             Some("pull".to_string())
         );
-        assert_eq!(
-            GitActivityDetector::extract_subcommand("ls -la"),
-            None
-        );
+        assert_eq!(GitActivityDetector::extract_subcommand("ls -la"), None);
     }
 }

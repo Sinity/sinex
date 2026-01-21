@@ -11,16 +11,16 @@ use chrono::{DateTime, Utc};
 use color_eyre::eyre;
 use serde::{Deserialize, Serialize};
 use serde_json;
-use sinex_core::{
-    types::{domain::SanitizedPath, validate_path, Bytes, Seconds},
-    EventBuilder, Id, Provenance, Ulid,
+use sinex_core::types::{
+    domain::SanitizedPath, events::EventPayload, validate_path, Bytes, Seconds,
 };
+use sinex_core::Ulid;
 use sinex_node_sdk::{
     acquisition_manager::{AcquisitionManager, RotationPolicy},
+    simple_ingestor::SimpleIngestor,
     stage_as_you_go::StageAsYouGoContext,
     stream_processor::{
-        Checkpoint, Node, NodeCapabilities, NodeInitContext, NodeRuntimeState,
-        NodeType, ScanArgs, ScanEstimate, ScanReport, ServiceInfo, TimeHorizon,
+        Checkpoint, NodeRuntimeState, ScanArgs, ScanReport, ServiceInfo, TimeHorizon,
     },
     NodeError, NodeResult,
 };
@@ -39,8 +39,17 @@ use validator::ValidationError;
 const MATERIAL_REASON_HISTORY: &str = "terminal-history";
 
 // Default configuration values
-const DEFAULT_POLLING_INTERVAL: Seconds = Seconds::from_secs(15);
+const DEFAULT_POLLING_INTERVAL: Seconds = Seconds::from_secs(5);
 const DEFAULT_MAX_CAPTURE_BYTES: Bytes = Bytes::from_bytes(32 * 1024); // 32 KiB
+const ENV_POLLING_INTERVAL: &str = "SINEX_TERMINAL_POLLING_INTERVAL_SECS";
+
+// TODO(metrics): Add terminal event metrics for command rates, shell types, and polling performance.
+// Useful metrics include:
+// - commands_processed_total (counter, labeled by shell_type)
+// - polling_duration_seconds (histogram, labeled by shell_type, source_path)
+// - history_file_size_bytes (gauge, labeled by source_path)
+// - command_size_bytes (histogram)
+// - processing_errors_total (counter, labeled by error_type)
 
 /// Configuration for a shell history source.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,6 +59,8 @@ pub struct HistorySourceConfig {
     /// Shell type (bash, zsh, fish, etc.)
     pub shell: String,
 }
+
+use crate::secret_redaction::SecretRedactor;
 
 fn validate_history_path(path: &Utf8PathBuf) -> Result<(), ValidationError> {
     validate_path(path.as_str())
@@ -87,9 +98,16 @@ impl Default for TerminalConfig {
             },
         ];
 
+        // Allow polling interval override via environment variable
+        let polling_interval_secs = std::env::var(ENV_POLLING_INTERVAL)
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .map(Seconds::from_secs)
+            .unwrap_or(DEFAULT_POLLING_INTERVAL);
+
         Self {
             history_sources: default_sources,
-            polling_interval_secs: DEFAULT_POLLING_INTERVAL,
+            polling_interval_secs,
             max_capture_bytes: DEFAULT_MAX_CAPTURE_BYTES,
         }
     }
@@ -134,6 +152,8 @@ pub struct TerminalState {
 struct HistoryState {
     offset_bytes: u64,
     line_number: u64,
+    /// For Fish SQLite history: last processed ROWID
+    fish_row_id: Option<i64>,
 }
 
 #[derive(Clone)]
@@ -147,10 +167,20 @@ struct HistoryWatcherContext {
     state_path: Option<PathBuf>,
     shutdown_rx: watch::Receiver<bool>,
     processed_commands: Option<Arc<Mutex<Vec<String>>>>,
+    /// True if this is a Fish SQLite history database
+    is_fish_sqlite: bool,
 }
 
 impl HistoryWatcherContext {
     async fn monitor(self) {
+        if self.is_fish_sqlite {
+            self.monitor_fish_sqlite().await;
+        } else {
+            self.monitor_text_history().await;
+        }
+    }
+
+    async fn monitor_text_history(self) {
         let mut offset_bytes: u64 = 0;
         let mut line_number: u64 = 0;
         let mut shutdown_rx = self.shutdown_rx.clone();
@@ -188,6 +218,39 @@ impl HistoryWatcherContext {
         }
     }
 
+    async fn monitor_fish_sqlite(self) {
+        let mut fish_row_id: i64 = 0;
+        let mut shutdown_rx = self.shutdown_rx.clone();
+
+        if let Some(state) = self.load_state().await {
+            fish_row_id = state.fish_row_id.unwrap_or(0);
+            debug!(
+                path = %self.path,
+                fish_row_id,
+                "Restored Fish history watcher state"
+            );
+        }
+
+        loop {
+            if *shutdown_rx.borrow() {
+                info!(path = %self.path, "Fish history watcher shutdown requested");
+                break;
+            }
+
+            let _ = self.poll_fish_history_once(&mut fish_row_id).await;
+
+            tokio::select! {
+                _ = tokio::time::sleep(self.polling_interval) => {},
+                shutdown_result = shutdown_rx.changed() => {
+                    if shutdown_result.is_err() || *shutdown_rx.borrow() {
+                        info!(path = %self.path, "Fish history watcher shutdown requested");
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     async fn load_state(&self) -> Option<HistoryState> {
         let path = self.state_path.as_ref()?;
         match fs::read(path).await {
@@ -207,6 +270,20 @@ impl HistoryWatcherContext {
     }
 
     async fn persist_state(&self, offset_bytes: u64, line_number: u64) {
+        self.persist_state_full(offset_bytes, line_number, None)
+            .await;
+    }
+
+    async fn persist_fish_state(&self, fish_row_id: i64) {
+        self.persist_state_full(0, 0, Some(fish_row_id)).await;
+    }
+
+    async fn persist_state_full(
+        &self,
+        offset_bytes: u64,
+        line_number: u64,
+        fish_row_id: Option<i64>,
+    ) {
         let path = match &self.state_path {
             Some(path) => path,
             None => return,
@@ -215,6 +292,7 @@ impl HistoryWatcherContext {
         let state = HistoryState {
             offset_bytes,
             line_number,
+            fish_row_id,
         };
 
         match serde_json::to_vec_pretty(&state) {
@@ -367,16 +445,64 @@ impl HistoryWatcherContext {
     }
 
     async fn scan_history_once(&self) -> usize {
-        let mut offset_bytes = 0u64;
-        let mut line_number = 0u64;
+        if self.is_fish_sqlite {
+            let mut fish_row_id = 0i64;
 
-        if let Some(state) = self.load_state().await {
-            offset_bytes = state.offset_bytes;
-            line_number = state.line_number;
+            if let Some(state) = self.load_state().await {
+                fish_row_id = state.fish_row_id.unwrap_or(0);
+            }
+
+            self.poll_fish_history_once(&mut fish_row_id).await
+        } else {
+            let mut offset_bytes = 0u64;
+            let mut line_number = 0u64;
+
+            if let Some(state) = self.load_state().await {
+                offset_bytes = state.offset_bytes;
+                line_number = state.line_number;
+            }
+
+            self.poll_history_once(&mut offset_bytes, &mut line_number)
+                .await
+        }
+    }
+
+    async fn poll_fish_history_once(&self, fish_row_id: &mut i64) -> usize {
+        use crate::fish_history;
+
+        let mut processed = 0usize;
+
+        match fish_history::read_fish_history(&self.path, *fish_row_id) {
+            Ok((entries, last_row_id)) => {
+                for entry in entries {
+                    if entry.command.trim().is_empty() {
+                        continue;
+                    }
+
+                    match process_command(self, &entry.command, last_row_id as u64).await {
+                        Ok(()) => {
+                            processed += 1;
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Failed to process Fish history entry from {}: {}",
+                                self.path, e
+                            );
+                        }
+                    }
+                }
+
+                if last_row_id > *fish_row_id {
+                    *fish_row_id = last_row_id;
+                    self.persist_fish_state(*fish_row_id).await;
+                }
+            }
+            Err(e) => {
+                warn!("Fish history watcher unable to read {}: {}", self.path, e);
+            }
         }
 
-        self.poll_history_once(&mut offset_bytes, &mut line_number)
-            .await
+        processed
     }
 }
 
@@ -385,7 +511,35 @@ async fn process_command(
     command: &str,
     line_number: u64,
 ) -> NodeResult<()> {
+    // Validate command is valid UTF-8 and reject binary data
+    if command.contains('\0') {
+        warn!(
+            path = %ctx.path,
+            line_number,
+            "Skipping command with null bytes (binary data)"
+        );
+        return Ok(());
+    }
+
+    // Check for non-printable control characters that indicate binary data
+    let has_binary = command
+        .chars()
+        .any(|c| c.is_control() && c != '\t' && c != '\n' && c != '\r');
+    if has_binary {
+        warn!(
+            path = %ctx.path,
+            line_number,
+            "Skipping command with binary/control characters"
+        );
+        return Ok(());
+    }
+
     let bytes = command.as_bytes();
+
+    // Redact sensitive information
+    let redacted_command = SecretRedactor::redact(command);
+    let final_command = redacted_command.as_ref();
+    let bytes = final_command.as_bytes();
 
     if bytes.len() as u64 > ctx.max_capture_bytes.as_u64() {
         warn!(
@@ -397,7 +551,7 @@ async fn process_command(
     }
 
     if let Some(commands) = &ctx.processed_commands {
-        commands.lock().await.push(command.to_string());
+        commands.lock().await.push(final_command.to_string());
     }
 
     let mut handle = ctx
@@ -418,31 +572,23 @@ async fn process_command(
         .map_err(|e| NodeError::General(eyre::eyre!("Failed to finalize material: {}", e)))?;
 
     let payload = sinex_core::types::events::payloads::shell::HistoryCommandImportedPayload {
-        command: command.to_string(),
+        command: final_command.to_string(),
         timestamp: Some(Utc::now()),
         shell_type: ctx.shell.clone(),
         source_file: ctx.path.to_string(),
         line_number: Some(line_number as u32),
     };
 
-    let provenance = Provenance::Material {
-        id: Id::from_ulid(material_id),
-        anchor_byte: 0,
-        offset_start: Some(0),
-        offset_end: Some(bytes.len() as i64),
-        offset_kind: sinex_core::OffsetKind::Byte,
-    };
-
-    let mut event = EventBuilder::new(
-        sinex_core::types::domain::EventSource::from_static("shell.history"),
-        sinex_core::types::domain::EventType::from_static("command.imported"),
-        serde_json::to_value(payload)
-            .map_err(|e| NodeError::General(eyre::eyre!("Failed to encode payload: {}", e)))?,
-    )
-    .with_provenance(provenance)
-    .build()
-    .map_err(|e| NodeError::General(eyre::eyre!("Failed to build event: {}", e)))?;
-    event.id = Some(Id::from_ulid(Ulid::new()));
+    let event = payload
+        .from_material(material_id)
+        .with_offset_start(0)
+        .map_err(|e| NodeError::General(eyre::eyre!("Failed to set offset start: {}", e)))?
+        .with_offset_end(bytes.len() as i64)
+        .map_err(|e| NodeError::General(eyre::eyre!("Failed to set offset end: {}", e)))?
+        .build()
+        .map_err(|e| NodeError::General(eyre::eyre!("Failed to build event: {}", e)))?
+        .to_json_event()
+        .map_err(|e| NodeError::General(eyre::eyre!("Failed to convert event to JSON: {}", e)))?;
 
     ctx.stage_context
         .emit_event_with_provenance(event, material_id, Some(0), Some(bytes.len() as i64))
@@ -458,10 +604,12 @@ pub struct TerminalProcessor {
     config: TerminalConfig,
     stage_context: Option<StageAsYouGoContext>,
     watch_handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
-    runtime: Option<NodeRuntimeState>,
     state_dir: Option<PathBuf>,
-    shutdown_tx: Option<watch::Sender<bool>>,
+    runtime: Option<NodeRuntimeState>,
 }
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TerminalCheckpoint {}
 
 impl TerminalProcessor {
     pub fn new() -> Self {
@@ -469,9 +617,8 @@ impl TerminalProcessor {
             config: TerminalConfig::default(),
             stage_context: None,
             watch_handles: Arc::new(Mutex::new(Vec::new())),
-            runtime: None,
             state_dir: None,
-            shutdown_tx: None,
+            runtime: None,
         }
     }
 
@@ -480,9 +627,8 @@ impl TerminalProcessor {
             config,
             stage_context: None,
             watch_handles: Arc::new(Mutex::new(Vec::new())),
-            runtime: None,
             state_dir: None,
-            shutdown_tx: None,
+            runtime: None,
         }
     }
 
@@ -509,7 +655,7 @@ impl TerminalProcessor {
     ) -> NodeResult<()> {
         let service_info = runtime.service_info();
         info!(
-            processor = self.processor_name(),
+            processor = self.name(),
             service = %service_info.service_name(),
             "Initialising terminal processor"
         );
@@ -522,7 +668,7 @@ impl TerminalProcessor {
         })?;
 
         let publisher = match runtime.transport() {
-            sinex_node_sdk::event_processor::EventTransport::Nats(publisher) => publisher.clone(),
+            sinex_node_sdk::EventTransport::Nats(publisher) => publisher.clone(),
         };
 
         AcquisitionManager::bootstrap_streams(publisher.nats_client())
@@ -545,7 +691,7 @@ impl TerminalProcessor {
         self.runtime = Some(runtime);
         self.config = config;
         self.watch_handles = Arc::new(Mutex::new(Vec::new()));
-        self.shutdown_tx = None;
+        // shutdown_tx removed
 
         Ok(())
     }
@@ -581,6 +727,17 @@ impl TerminalProcessor {
                 .clone()
                 .with_acquisition_manager(Arc::clone(&acquisition));
 
+            // Detect if this is a Fish SQLite history database
+            let is_fish_sqlite = source.shell.to_lowercase() == "fish"
+                && crate::fish_history::is_fish_sqlite_history(&source.path);
+
+            if source.shell.to_lowercase() == "fish" && !is_fish_sqlite {
+                debug!(
+                    path = %source.path,
+                    "Fish history file is not SQLite format; will attempt text parsing"
+                );
+            }
+
             contexts.push(HistoryWatcherContext {
                 acquisition,
                 stage_context,
@@ -591,6 +748,7 @@ impl TerminalProcessor {
                 state_path,
                 shutdown_rx: shutdown_rx.clone(),
                 processed_commands: None,
+                is_fish_sqlite,
             });
         }
 
@@ -605,149 +763,138 @@ impl Default for TerminalProcessor {
 }
 
 #[async_trait]
-impl Node for TerminalProcessor {
+impl SimpleIngestor for TerminalProcessor {
     type Config = TerminalConfig;
+    type State = TerminalCheckpoint;
 
-    #[instrument(skip(self, init), fields(processor = "terminal", service = %init.service_info().service_name()))]
-    async fn initialize(&mut self, init: NodeInitContext<Self::Config>) -> NodeResult<()> {
-        let (config, runtime) = init.into_runtime();
-        self.initialise_from_runtime(config, runtime).await
-    }
-
-    async fn scan(
-        &mut self,
-        from: Checkpoint,
-        until: TimeHorizon,
-        _args: ScanArgs,
-    ) -> NodeResult<ScanReport> {
-        match until {
-            TimeHorizon::Snapshot => {
-                let service_info = self.service_info()?;
-                let state = TerminalState {
-                    captured_at: Utc::now(),
-                    monitored_sources: self
-                        .config()
-                        .history_sources
-                        .iter()
-                        .map(|src| src.path.clone())
-                        .collect(),
-                    host: service_info.host().to_string(),
-                };
-
-                debug!(
-                    monitored = state.monitored_sources.len(),
-                    "Terminal snapshot captured"
-                );
-
-                Ok(ScanReport {
-                    events_processed: 0,
-                    duration: std::time::Duration::from_millis(0),
-                    final_checkpoint: from,
-                    time_range: None,
-                    processor_stats: HashMap::new(),
-                    successful_targets: vec!["snapshot".to_string()],
-                    failed_targets: Vec::new(),
-                    warnings: Vec::new(),
-                })
-            }
-            TimeHorizon::Historical { .. } => {
-                let (_, shutdown_rx) = watch::channel(false);
-                let contexts = self.build_history_contexts(shutdown_rx)?;
-                let mut events_processed = 0u64;
-
-                for ctx in contexts {
-                    events_processed =
-                        events_processed.saturating_add(ctx.scan_history_once().await as u64);
-                }
-
-                Ok(ScanReport {
-                    events_processed,
-                    duration: std::time::Duration::from_millis(0),
-                    final_checkpoint: from,
-                    time_range: None,
-                    processor_stats: HashMap::new(),
-                    successful_targets: vec!["historical".to_string()],
-                    failed_targets: Vec::new(),
-                    warnings: Vec::new(),
-                })
-            }
-            TimeHorizon::Continuous => {
-                let (shutdown_tx, _) = watch::channel(false);
-                self.shutdown_tx = Some(shutdown_tx.clone());
-                let contexts = self.build_history_contexts(shutdown_tx.subscribe())?;
-
-                let mut guard = self.watch_handles.lock().await;
-                for watch_ctx in contexts {
-                    let handle = tokio::spawn(watch_ctx.clone().monitor());
-                    guard.push(handle);
-                }
-
-                info!(
-                    watches = guard.len(),
-                    "Terminal watcher monitoring history sources"
-                );
-
-                let mut shutdown_rx = shutdown_tx.subscribe();
-                let _ = shutdown_rx.changed().await;
-
-                Ok(ScanReport {
-                    events_processed: 0,
-                    duration: std::time::Duration::from_millis(0),
-                    final_checkpoint: Checkpoint::None,
-                    time_range: None,
-                    processor_stats: HashMap::new(),
-                    successful_targets: vec!["continuous".to_string()],
-                    failed_targets: Vec::new(),
-                    warnings: Vec::new(),
-                })
-            }
-        }
-    }
-
-    fn processor_name(&self) -> &str {
+    fn name(&self) -> &str {
         "terminal-watcher"
     }
 
-    fn processor_type(&self) -> NodeType {
-        NodeType::Ingestor
-    }
+    async fn initialize(
+        &mut self,
+        config: Self::Config,
+        runtime: &NodeRuntimeState,
+        _state: &mut Self::State,
+    ) -> NodeResult<()> {
+        let service_info = runtime.service_info();
+        config.validate_config().map_err(|e| {
+            NodeError::General(eyre::eyre!(
+                "Terminal configuration validation failed: {}",
+                e
+            ))
+        })?;
 
-    fn capabilities(&self) -> NodeCapabilities {
-        NodeCapabilities {
-            supports_snapshot: true,
-            supports_historical: true,
-            supports_continuous: true,
-            ..NodeCapabilities::default()
+        let publisher = match runtime.transport() {
+            sinex_node_sdk::EventTransport::Nats(publisher) => publisher.clone(),
+        };
+
+        AcquisitionManager::bootstrap_streams(publisher.nats_client()).await?;
+
+        let mut state_dir = service_info.work_dir().clone();
+        state_dir.push("terminal-history");
+
+        if let Err(e) = fs::create_dir_all(&state_dir).await {
+            return Err(NodeError::General(eyre::eyre!(
+                "Failed to create terminal state directory {}: {}",
+                state_dir.display(),
+                e
+            )));
         }
+
+        self.state_dir = Some(state_dir);
+        self.stage_context = Some(StageAsYouGoContext::from_runtime(runtime));
+        self.config = config;
+        self.runtime = Some(runtime.clone());
+
+        Ok(())
     }
 
-    async fn current_checkpoint(&self) -> NodeResult<Checkpoint> {
-        Ok(Checkpoint::None)
-    }
+    async fn scan_snapshot(&self, _state: &Self::State, _args: ScanArgs) -> NodeResult<ScanReport> {
+        let monitored: Vec<Utf8PathBuf> = self
+            .config
+            .history_sources
+            .iter()
+            .map(|src| src.path.clone())
+            .collect();
 
-    async fn estimate_scan_scope(
-        &self,
-        _from: &Checkpoint,
-        _until: &TimeHorizon,
-        _args: &ScanArgs,
-    ) -> NodeResult<ScanEstimate> {
-        Ok(ScanEstimate {
-            estimated_events: (self.config.history_sources.len() as u64) * 100,
-            estimated_duration: std::time::Duration::from_secs(
-                self.config.polling_interval_secs.as_secs(),
-            ),
-            estimated_data_size: self.config.max_capture_bytes.as_u64()
-                * (self.config.history_sources.len() as u64),
-            estimated_targets: self.config.history_sources.len() as u64,
-            warnings: vec!["Terminal history estimation uses polling heuristics".to_string()],
-            confidence: 0.25,
+        debug!(monitored = monitored.len(), "Terminal snapshot captured");
+
+        Ok(ScanReport {
+            events_processed: 0,
+            duration: std::time::Duration::from_millis(0),
+            final_checkpoint: Checkpoint::None,
+            time_range: None,
+            processor_stats: HashMap::new(),
+            successful_targets: vec!["snapshot".to_string()],
+            failed_targets: Vec::new(),
+            warnings: Vec::new(),
         })
     }
 
-    async fn shutdown(&mut self) -> NodeResult<()> {
-        if let Some(shutdown_tx) = self.shutdown_tx.take() {
-            let _ = shutdown_tx.send(true);
+    async fn scan_historical(
+        &mut self,
+        _state: &mut Self::State,
+        from: Checkpoint,
+        _until: TimeHorizon,
+        _args: ScanArgs,
+    ) -> NodeResult<ScanReport> {
+        let (_, shutdown_rx) = watch::channel(false);
+        let contexts = self.build_history_contexts(shutdown_rx)?;
+        let mut events_processed = 0u64;
+
+        for ctx in contexts {
+            events_processed =
+                events_processed.saturating_add(ctx.scan_history_once().await as u64);
         }
+
+        Ok(ScanReport {
+            events_processed,
+            duration: std::time::Duration::from_millis(0),
+            final_checkpoint: from,
+            time_range: None,
+            processor_stats: HashMap::new(),
+            successful_targets: vec!["historical".to_string()],
+            failed_targets: Vec::new(),
+            warnings: Vec::new(),
+        })
+    }
+
+    async fn run_continuous(
+        &mut self,
+        _state: &mut Self::State,
+        _from: Checkpoint,
+        shutdown_rx: watch::Receiver<bool>,
+    ) -> NodeResult<ScanReport> {
+        let contexts = self.build_history_contexts(shutdown_rx.clone())?;
+
+        let mut guard = self.watch_handles.lock().await;
+        for watch_ctx in contexts {
+            let handle = tokio::spawn(watch_ctx.clone().monitor());
+            guard.push(handle);
+        }
+
+        info!(
+            watches = guard.len(),
+            "Terminal watcher monitoring history sources"
+        );
+
+        let mut shutdown_rx = shutdown_rx;
+        let _ = shutdown_rx.changed().await;
+
+        Ok(ScanReport {
+            events_processed: 0,
+            duration: std::time::Duration::from_millis(0),
+            final_checkpoint: Checkpoint::None,
+            time_range: None,
+            processor_stats: HashMap::new(),
+            successful_targets: vec!["continuous".to_string()],
+            failed_targets: Vec::new(),
+            warnings: Vec::new(),
+        })
+    }
+
+    async fn shutdown(&mut self, _state: &Self::State) -> NodeResult<()> {
         let mut guard = self.watch_handles.lock().await;
         for handle in guard.drain(..) {
             handle.abort();
@@ -760,17 +907,17 @@ impl Node for TerminalProcessor {
 impl ExplorationProvider for TerminalProcessor {
     fn get_source_state(&self) -> color_eyre::eyre::Result<SourceState> {
         Ok(SourceState {
-            description: "Tails shell history files and emits command events".to_string(),
-            last_updated: Utc::now(),
-            total_items: Some(self.config.history_sources.len() as u64),
-            metadata: HashMap::from([(
-                "polling_interval_secs".to_string(),
-                serde_json::Value::Number(serde_json::Number::from(
-                    self.config.polling_interval_secs.as_secs(),
-                )),
-            )]),
+            is_connected: true,
             healthy: true,
-            recent_activity: Vec::new(),
+            description: format!(
+                "Monitoring {} history sources",
+                self.config.history_sources.len()
+            ),
+            last_updated: Utc::now(),
+            lag_seconds: None,
+            recent_activity: vec![],
+            total_items: Some(self.config.history_sources.len() as u64),
+            metadata: std::collections::HashMap::new(),
         })
     }
 
@@ -799,7 +946,7 @@ impl ExplorationProvider for TerminalProcessor {
             sinex_total: 0,
             missing_samples: Vec::new(),
             recommendations: vec![
-                "Ensure history files are readable by the terminal ingestor".to_string(),
+                "Ensure history files are readable by the terminal ingestor".to_string()
             ],
         })
     }
@@ -820,11 +967,11 @@ mod tests {
     use sinex_core::db::query_helpers::ulid_to_uuid;
     use sinex_core::Id;
     use sinex_node_sdk::{acquisition_manager::RotationPolicy, AcquisitionManager};
+    use sinex_test_utils::sinex_test;
     use sinex_test_utils::{
         prelude::*, start_test_ingestd_with_config, TestIngestdConfig, TestRuntime,
         TestRuntimeBuilder,
     };
-    use sinex_test_utils::{sinex_test, TestResult};
     use std::sync::Arc;
     use tokio::{
         io::AsyncWriteExt,
@@ -880,7 +1027,7 @@ mod tests {
         let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
 
         let publisher = match runtime.transport() {
-            sinex_node_sdk::event_processor::EventTransport::Nats(publisher) => publisher.clone(),
+            sinex_node_sdk::EventTransport::Nats(publisher) => publisher.clone(),
         };
         AcquisitionManager::bootstrap_streams(publisher.nats_client()).await?;
 
@@ -904,6 +1051,7 @@ mod tests {
             shutdown_rx: tokio::sync::watch::channel(false).1,
             #[cfg(test)]
             processed_commands: None,
+            is_fish_sqlite: false,
         };
 
         let command = "echo 'hello world'";
@@ -1004,7 +1152,7 @@ mod tests {
         let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
 
         let publisher = match runtime.transport() {
-            sinex_node_sdk::event_processor::EventTransport::Nats(publisher) => publisher.clone(),
+            sinex_node_sdk::EventTransport::Nats(publisher) => publisher.clone(),
         };
         AcquisitionManager::bootstrap_streams(publisher.nats_client()).await?;
 
@@ -1035,6 +1183,7 @@ mod tests {
             shutdown_rx: tokio::sync::watch::channel(false).1,
             #[cfg(test)]
             processed_commands: None,
+            is_fish_sqlite: false,
         };
 
         #[cfg(test)]

@@ -12,6 +12,7 @@ use async_nats::jetstream;
 use async_nats::jetstream::consumer::PullConsumer;
 use futures::StreamExt;
 use sinex_core::environment::SinexEnvironment;
+use sinex_core::types::domain::{EventSource, EventType};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -335,7 +336,22 @@ impl JetStreamEventConsumer {
             match messages.next().await {
                 Some(Ok(msg)) => match Self::parse_provisional_event(&msg) {
                     Ok(event) => {
-                        buffer.add_provisional(event.clone()).await;
+                        // Memory protection: if buffer is full, NAK to apply backpressure
+                        if !buffer.add_provisional(event.clone()).await {
+                            warn!(
+                                event_id = %event.event_id,
+                                "Buffer at capacity, NAKing message to apply backpressure"
+                            );
+                            // NAK with delay to prevent tight redelivery loop
+                            let nak_delay = Some(std::time::Duration::from_millis(500));
+                            if let Err(e) = msg
+                                .ack_with(async_nats::jetstream::AckKind::Nak(nak_delay))
+                                .await
+                            {
+                                error!("Failed to NAK message during backpressure: {}", e);
+                            }
+                            continue;
+                        }
 
                         if enable_provisional {
                             if let Some(ref handler) = provisional_handler {
@@ -459,13 +475,13 @@ impl JetStreamEventConsumer {
 
         let source = payload["source"]
             .as_str()
-            .ok_or_else(|| NodeError::Processing("Missing source".to_string()))?
-            .to_string();
+            .ok_or_else(|| NodeError::Processing("Missing source".to_string()))?;
+        let source = EventSource::new(source);
 
         let event_type = payload["event_type"]
             .as_str()
-            .ok_or_else(|| NodeError::Processing("Missing event_type".to_string()))?
-            .to_string();
+            .ok_or_else(|| NodeError::Processing("Missing event_type".to_string()))?;
+        let event_type = EventType::new(event_type);
 
         let ts_orig = payload["ts_orig"]
             .as_str()
@@ -513,7 +529,6 @@ impl JetStreamEventConsumer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Ulid;
     use async_trait::async_trait;
     use sinex_test_utils::{sinex_test, EphemeralNats};
 
@@ -525,7 +540,7 @@ mod tests {
             Ok(())
         }
 
-        async fn rollback_provisional(&self, _event_id: Ulid) -> NodeResult<()> {
+        async fn rollback_provisional(&self, _event_id: sinex_core::EventId) -> NodeResult<()> {
             Ok(())
         }
     }

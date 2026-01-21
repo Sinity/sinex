@@ -10,23 +10,27 @@
 //!   the captured material for provenance.
 
 use async_trait::async_trait;
+use chrono::Utc;
 use color_eyre::eyre;
 use notify::{event::RenameMode, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use sinex_core::{
     types::{
         domain::SanitizedPath,
+        events::EventPayload,
         validation::{validate_watch_path, FileWatchingSecurityPolicy},
-        Bytes, Id, Ulid,
+        Bytes, Ulid,
     },
-    EventBuilder, HostName, JsonValue, Provenance,
+    HostName,
 };
+use sinex_node_sdk::error_helpers::NodeErrorExt;
 use sinex_node_sdk::{
     acquisition_manager::{AcquisitionManager, RotationPolicy},
+    simple_ingestor::SimpleIngestor,
     stage_as_you_go::StageAsYouGoContext,
     stream_processor::{
-        Checkpoint, Node, NodeCapabilities, NodeInitContext, NodeRuntimeState,
-        NodeType, ScanArgs, ScanEstimate, ScanReport, ServiceInfo, TimeHorizon,
+        Checkpoint, NodeCapabilities, NodeRuntimeState, ScanArgs, ScanReport, ServiceInfo,
+        TimeHorizon,
     },
     NodeError, NodeResult,
 };
@@ -55,8 +59,10 @@ use validator::ValidationError;
 
 const DEFAULT_MAX_CAPTURE_BYTES: Bytes = Bytes::from_mebibytes(10); // 10MB
 const DEFAULT_MAX_DEPTH: usize = 10; // Maximum directory traversal depth
-const FS_WATCH_CHANNEL_SIZE: usize = 10_000; // Buffer size for filesystem event channel
+const FS_WATCH_CHANNEL_SIZE: usize = 10_000; // Buffer size for filesystem event channel (high-volume burst protection)
 const FS_CAPTURE_CHUNK_SIZE: usize = 64 * 1024;
+const FS_READ_RETRY_ATTEMPTS: u32 = 3; // Number of retry attempts for transient file read errors
+const FS_READ_RETRY_BASE_DELAY_MS: u64 = 100; // Base delay for exponential backoff (100ms, 500ms, 1s)
 const MATERIAL_REASON_CREATED: &str = "fs-watcher:file-created";
 const MATERIAL_REASON_MODIFIED: &str = "fs-watcher:file-modified";
 const MATERIAL_REASON_DELETED: &str = "fs-watcher:file-deleted";
@@ -134,6 +140,56 @@ pub struct FilesystemState {
     pub host: HostName,
 }
 
+struct EventMetrics {
+    events_processed: AtomicU64,
+    events_created: AtomicU64,
+    events_modified: AtomicU64,
+    events_deleted: AtomicU64,
+    events_moved: AtomicU64,
+    processing_errors: AtomicU64,
+}
+
+impl EventMetrics {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            events_processed: AtomicU64::new(0),
+            events_created: AtomicU64::new(0),
+            events_modified: AtomicU64::new(0),
+            events_deleted: AtomicU64::new(0),
+            events_moved: AtomicU64::new(0),
+            processing_errors: AtomicU64::new(0),
+        })
+    }
+
+    fn record_created(&self) {
+        self.events_processed.fetch_add(1, Ordering::Relaxed);
+        self.events_created.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_modified(&self) {
+        self.events_processed.fetch_add(1, Ordering::Relaxed);
+        self.events_modified.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_deleted(&self) {
+        self.events_processed.fetch_add(1, Ordering::Relaxed);
+        self.events_deleted.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_moved(&self) {
+        self.events_processed.fetch_add(1, Ordering::Relaxed);
+        self.events_moved.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_error(&self) {
+        self.processing_errors.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn recent_activity(&self) -> Vec<sinex_node_sdk::ActivityEntry> {
+        vec![]
+    }
+}
+
 #[derive(Clone)]
 struct WatchContext {
     acquisition: Arc<AcquisitionManager>,
@@ -141,7 +197,11 @@ struct WatchContext {
     max_capture_bytes: Bytes,
     security_policy: FileWatchingSecurityPolicy,
     dropped_events: Arc<AtomicU64>,
+    metrics: Arc<EventMetrics>,
 }
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FilesystemCheckpoint {}
 
 /// Unified filesystem processor using JetStream acquisition.
 pub struct FilesystemProcessor {
@@ -150,6 +210,7 @@ pub struct FilesystemProcessor {
     stage_context: Option<StageAsYouGoContext>,
     watch_handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
     dropped_events: Arc<AtomicU64>,
+    metrics: Arc<EventMetrics>,
 }
 
 impl FilesystemProcessor {
@@ -161,6 +222,7 @@ impl FilesystemProcessor {
             stage_context: None,
             watch_handles: Arc::new(Mutex::new(Vec::new())),
             dropped_events: Arc::new(AtomicU64::new(0)),
+            metrics: EventMetrics::new(),
         }
     }
 
@@ -172,6 +234,7 @@ impl FilesystemProcessor {
             stage_context: None,
             watch_handles: Arc::new(Mutex::new(Vec::new())),
             dropped_events: Arc::new(AtomicU64::new(0)),
+            metrics: EventMetrics::new(),
         }
     }
 
@@ -182,46 +245,6 @@ impl FilesystemProcessor {
 
     fn dropped_event_count(&self) -> u64 {
         self.dropped_events.load(Ordering::Relaxed)
-    }
-
-    async fn initialise_with_runtime_state(
-        &mut self,
-        runtime: NodeRuntimeState,
-        config: FilesystemConfig,
-    ) -> NodeResult<()> {
-        let service_name = runtime.service_info().service_name().to_string();
-
-        info!(
-            processor = self.processor_name(),
-            service = %service_name,
-            "Initializing filesystem processor"
-        );
-
-        config.validate_config().map_err(|e| {
-            NodeError::General(eyre::eyre!(
-                "Filesystem configuration validation failed: {}",
-                e
-            ))
-        })?;
-
-        let publisher = match runtime.transport() {
-            sinex_node_sdk::event_processor::EventTransport::Nats(publisher) => {
-                Arc::clone(publisher)
-            }
-        };
-
-        AcquisitionManager::bootstrap_streams(publisher.nats_client())
-            .await
-            .map_err(NodeError::from)?;
-
-        let stage_context = StageAsYouGoContext::from_runtime(&runtime);
-
-        self.config = config;
-        self.stage_context = Some(stage_context);
-        self.watch_handles = Arc::new(Mutex::new(Vec::new()));
-        self.runtime = Some(runtime);
-
-        Ok(())
     }
 
     fn runtime(&self) -> NodeResult<&NodeRuntimeState> {
@@ -265,6 +288,7 @@ impl FilesystemProcessor {
                         FileWatchingSecurityPolicy::restrictive()
                     },
                     dropped_events: Arc::clone(&self.dropped_events),
+                    metrics: Arc::clone(&self.metrics),
                 },
             );
         }
@@ -281,8 +305,39 @@ impl FilesystemProcessor {
             let watch_ctx = watch_ctx.clone();
 
             let handle = tokio::spawn(async move {
-                if let Err(e) = watch_path(root_path, watch_ctx).await {
-                    error!("Watcher terminated with error: {}", e);
+                let mut attempt = 0u32;
+                const MAX_INIT_ATTEMPTS: u32 = 5;
+                const INIT_RETRY_BASE_DELAY_MS: u64 = 1000;
+
+                loop {
+                    match watch_path(root_path.clone(), watch_ctx.clone()).await {
+                        Ok(()) => {
+                            warn!("Watcher for {} terminated normally (unexpected)", root_path);
+                            break;
+                        }
+                        Err(e) => {
+                            attempt += 1;
+                            if attempt >= MAX_INIT_ATTEMPTS {
+                                error!(
+                                    path = %root_path,
+                                    attempts = attempt,
+                                    "Failed to initialize watcher after {} attempts: {}",
+                                    MAX_INIT_ATTEMPTS, e
+                                );
+                                break;
+                            }
+
+                            let delay_ms =
+                                INIT_RETRY_BASE_DELAY_MS * (1u64 << (attempt - 1)).min(16);
+                            warn!(
+                                path = %root_path,
+                                attempt = attempt,
+                                delay_ms = delay_ms,
+                                "Watcher initialization failed, retrying: {}", e
+                            );
+                            tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
+                        }
+                    }
                 }
             });
 
@@ -292,14 +347,6 @@ impl FilesystemProcessor {
         Ok(handles)
     }
 
-    async fn run_continuous_monitoring(&self) -> NodeResult<()> {
-        info!("Filesystem watcher running (continuous mode)");
-        // Wait forever while watchers stream events.
-        futures::future::pending::<()>().await;
-        Ok(())
-    }
-
-    /// Produce a snapshot of the current processor state.
     fn snapshot_state(&self) -> FilesystemState {
         let host = self
             .service_info()
@@ -321,80 +368,12 @@ impl Default for FilesystemProcessor {
 }
 
 #[async_trait]
-impl Node for FilesystemProcessor {
+impl SimpleIngestor for FilesystemProcessor {
     type Config = FilesystemConfig;
+    type State = FilesystemCheckpoint;
 
-    #[instrument(skip(self, init), fields(processor = "filesystem", service = %init.service_info().service_name()))]
-    async fn initialize(&mut self, init: NodeInitContext<Self::Config>) -> NodeResult<()> {
-        let (config, runtime) = init.into_runtime();
-        self.initialise_with_runtime_state(runtime, config).await
-    }
-
-    async fn scan(
-        &mut self,
-        from: Checkpoint,
-        until: TimeHorizon,
-        _args: ScanArgs,
-    ) -> NodeResult<ScanReport> {
-        match until {
-            TimeHorizon::Snapshot => {
-                let state = self.snapshot_state();
-                let report = ScanReport {
-                    events_processed: 0,
-                    duration: std::time::Duration::from_millis(0),
-                    final_checkpoint: from,
-                    time_range: None,
-                    processor_stats: HashMap::new(),
-                    successful_targets: vec!["snapshot".to_string()],
-                    failed_targets: Vec::new(),
-                    warnings: Vec::new(),
-                };
-
-                info!("Filesystem snapshot captured at {}", state.captured_at);
-                Ok(report)
-            }
-            TimeHorizon::Historical { .. } => {
-                warn!("Filesystem watcher does not support historical replay");
-                Ok(ScanReport {
-                    events_processed: 0,
-                    duration: std::time::Duration::from_millis(0),
-                    final_checkpoint: from,
-                    time_range: None,
-                    processor_stats: HashMap::new(),
-                    successful_targets: Vec::new(),
-                    failed_targets: Vec::new(),
-                    warnings: vec!["Historical mode is not supported".to_string()],
-                })
-            }
-            TimeHorizon::Continuous => {
-                let handles = self.spawn_watchers().await?;
-                {
-                    let mut guard = self.watch_handles.lock().await;
-                    guard.extend(handles);
-                }
-
-                self.run_continuous_monitoring().await?;
-
-                Ok(ScanReport {
-                    events_processed: 0,
-                    duration: std::time::Duration::from_millis(0),
-                    final_checkpoint: Checkpoint::None,
-                    time_range: None,
-                    processor_stats: HashMap::new(),
-                    successful_targets: vec!["continuous".to_string()],
-                    failed_targets: Vec::new(),
-                    warnings: Vec::new(),
-                })
-            }
-        }
-    }
-
-    fn processor_name(&self) -> &str {
+    fn name(&self) -> &str {
         "filesystem-watcher"
-    }
-
-    fn processor_type(&self) -> NodeType {
-        NodeType::Ingestor
     }
 
     fn capabilities(&self) -> NodeCapabilities {
@@ -406,34 +385,122 @@ impl Node for FilesystemProcessor {
         }
     }
 
-    async fn current_checkpoint(&self) -> NodeResult<Checkpoint> {
-        Ok(Checkpoint::None)
+    async fn initialize(
+        &mut self,
+        config: Self::Config,
+        runtime: &NodeRuntimeState,
+        _state: &mut Self::State,
+    ) -> NodeResult<()> {
+        let service_name = runtime.service_info().service_name().to_string();
+
+        info!(
+            processor = self.name(),
+            service = %service_name,
+            "Initializing filesystem processor"
+        );
+
+        config.validate_config().map_err(|e| {
+            NodeError::General(eyre::eyre!(
+                "Filesystem configuration validation failed: {}",
+                e
+            ))
+        })?;
+
+        let publisher: Arc<sinex_node_sdk::nats_publisher::NatsPublisher> =
+            match runtime.transport() {
+                sinex_node_sdk::EventTransport::Nats(publisher) => Arc::clone(publisher),
+            };
+
+        AcquisitionManager::bootstrap_streams(publisher.nats_client())
+            .await
+            .map_err(NodeError::from)?;
+
+        let stage_context = StageAsYouGoContext::from_runtime(runtime);
+
+        self.config = config;
+        self.stage_context = Some(stage_context);
+        self.watch_handles = Arc::new(Mutex::new(Vec::new()));
+        self.runtime = Some(runtime.clone());
+
+        Ok(())
     }
 
-    async fn estimate_scan_scope(
-        &self,
-        _from: &Checkpoint,
-        _until: &TimeHorizon,
-        _args: &ScanArgs,
-    ) -> NodeResult<ScanEstimate> {
-        Ok(ScanEstimate {
-            estimated_events: (self.config.watch_paths.len() as u64) * 100,
-            estimated_duration: std::time::Duration::from_secs(5),
-            estimated_data_size: self.config.max_capture_bytes.as_u64()
-                * (self.config.watch_paths.len() as u64),
-            estimated_targets: self.config.watch_paths.len() as u64,
-            warnings: vec!["Filesystem activity estimation derived from watcher count".to_string()],
-            confidence: 0.3,
+    async fn scan_snapshot(&self, _state: &Self::State, _args: ScanArgs) -> NodeResult<ScanReport> {
+        let state = self.snapshot_state();
+        let report = ScanReport {
+            events_processed: 0,
+            duration: std::time::Duration::from_millis(0),
+            final_checkpoint: Checkpoint::None,
+            time_range: None,
+            processor_stats: HashMap::new(),
+            successful_targets: vec!["snapshot".to_string()],
+            failed_targets: Vec::new(),
+            warnings: Vec::new(),
+        };
+
+        info!("Filesystem snapshot captured at {}", state.captured_at);
+        Ok(report)
+    }
+
+    async fn scan_historical(
+        &mut self,
+        _state: &mut Self::State,
+        from: Checkpoint,
+        _until: TimeHorizon,
+        _args: ScanArgs,
+    ) -> NodeResult<ScanReport> {
+        warn!("Filesystem watcher does not support historical replay");
+        Ok(ScanReport {
+            events_processed: 0,
+            duration: std::time::Duration::from_millis(0),
+            final_checkpoint: from,
+            time_range: None,
+            processor_stats: HashMap::new(),
+            successful_targets: Vec::new(),
+            failed_targets: Vec::new(),
+            warnings: vec!["Historical mode is not supported".to_string()],
         })
     }
 
-    async fn shutdown(&mut self) -> NodeResult<()> {
+    async fn run_continuous(
+        &mut self,
+        _state: &mut Self::State,
+        _from: Checkpoint,
+        shutdown_rx: tokio::sync::watch::Receiver<bool>,
+    ) -> NodeResult<ScanReport> {
+        let handles = self.spawn_watchers().await?;
+        {
+            let mut guard = self.watch_handles.lock().await;
+            guard.extend(handles);
+        }
+
+        // Wait for shutdown signal instead of awaiting pending
+        let mut shutdown_rx = shutdown_rx;
+        let _ = shutdown_rx.changed().await;
+
+        Ok(ScanReport {
+            events_processed: 0,
+            duration: std::time::Duration::from_millis(0),
+            final_checkpoint: Checkpoint::None,
+            time_range: None,
+            processor_stats: HashMap::new(),
+            successful_targets: vec!["continuous".to_string()],
+            failed_targets: Vec::new(),
+            warnings: Vec::new(),
+        })
+    }
+
+    async fn shutdown(&mut self, _state: &Self::State) -> NodeResult<()> {
         let mut guard = self.watch_handles.lock().await;
         for handle in guard.drain(..) {
             handle.abort();
+            let _ = handle.await;
         }
 
-        info!("Filesystem watcher shutdown complete");
+        info!(
+            dropped_events = self.dropped_event_count(),
+            "Filesystem watcher shutdown complete"
+        );
         Ok(())
     }
 }
@@ -441,33 +508,14 @@ impl Node for FilesystemProcessor {
 impl ExplorationProvider for FilesystemProcessor {
     fn get_source_state(&self) -> color_eyre::eyre::Result<SourceState> {
         Ok(SourceState {
-            description: "Monitors filesystem changes and publishes events".to_string(),
-            last_updated: chrono::Utc::now(),
-            total_items: Some(self.config.watch_paths.len() as u64),
-            metadata: HashMap::from([
-                (
-                    "max_capture_bytes".to_string(),
-                    serde_json::Value::Number(serde_json::Number::from(
-                        self.config.max_capture_bytes.as_u64(),
-                    )),
-                ),
-                (
-                    "watch_paths".to_string(),
-                    serde_json::Value::Array(
-                        self.config
-                            .watch_paths
-                            .iter()
-                            .map(|p| serde_json::Value::String(p.clone()))
-                            .collect(),
-                    ),
-                ),
-                (
-                    "dropped_events".to_string(),
-                    serde_json::Value::Number(serde_json::Number::from(self.dropped_event_count())),
-                ),
-            ]),
+            is_connected: true,
             healthy: true,
-            recent_activity: Vec::new(),
+            description: format!("Monitoring {} paths", self.config.watch_paths.len()),
+            last_updated: Utc::now(),
+            lag_seconds: None,
+            recent_activity: self.metrics.recent_activity(),
+            total_items: None,
+            metadata: std::collections::HashMap::new(),
         })
     }
 
@@ -551,6 +599,7 @@ async fn watch_path(root: String, ctx: WatchContext) -> NodeResult<()> {
 
     while let Some(event) = rx.recv().await {
         if let Err(e) = handle_event(&ctx, &root, event).await {
+            ctx.metrics.record_error();
             warn!("Failed to process filesystem event: {}", e);
         }
     }
@@ -635,16 +684,22 @@ async fn handle_file_created(ctx: &WatchContext, _root: &str, path: &Path) -> No
         permissions: file_permissions(&metadata),
     };
 
-    emit_filesystem_event(
-        ctx,
-        material_id,
-        serde_json::to_value(payload)
-            .map_err(|e| NodeError::General(eyre::eyre!("Failed to encode payload: {}", e)))?,
-        "file.created",
-        size as i64,
-    )
-    .await?;
+    let event = payload
+        .from_material(material_id)
+        .build()
+        .node_err("Failed to build event")?;
 
+    let json_event = event
+        .to_json_event()
+        .map_err(|e| NodeError::General(eyre::eyre!("Failed to convert to JSON event: {}", e)))?;
+
+    ctx.stage_context
+        .emit_event_with_provenance(json_event, material_id, Some(0), Some(size as i64))
+        .await
+        .map(|_| ())
+        .map_err(|e| NodeError::General(eyre::eyre!("Failed to emit event: {}", e)))?;
+
+    ctx.metrics.record_created();
     debug!("Recorded file.created for {:?}", path);
     Ok(())
 }
@@ -685,16 +740,22 @@ async fn handle_file_modified(
         modification_type: modification_type.to_string(),
     };
 
-    emit_filesystem_event(
-        ctx,
-        material_id,
-        serde_json::to_value(payload)
-            .map_err(|e| NodeError::General(eyre::eyre!("Failed to encode payload: {}", e)))?,
-        "file.modified",
-        size as i64,
-    )
-    .await?;
+    let event = payload
+        .from_material(material_id)
+        .build()
+        .map_err(|e| NodeError::General(eyre::eyre!("Failed to build event: {}", e)))?;
 
+    let json_event = event
+        .to_json_event()
+        .map_err(|e| NodeError::General(eyre::eyre!("Failed to convert to JSON event: {}", e)))?;
+
+    ctx.stage_context
+        .emit_event_with_provenance(json_event, material_id, Some(0), Some(size as i64))
+        .await
+        .map(|_| ())
+        .map_err(|e| NodeError::General(eyre::eyre!("Failed to emit event: {}", e)))?;
+
+    ctx.metrics.record_modified();
     debug!("Recorded file.modified for {:?}", path);
     Ok(())
 }
@@ -708,16 +769,22 @@ async fn handle_file_deleted(ctx: &WatchContext, _root: &str, path: &Path) -> No
         deleted_at: chrono::Utc::now(),
     };
 
-    emit_filesystem_event(
-        ctx,
-        material_id,
-        serde_json::to_value(payload)
-            .map_err(|e| NodeError::General(eyre::eyre!("Failed to encode payload: {}", e)))?,
-        "file.deleted",
-        0,
-    )
-    .await?;
+    let event = payload
+        .from_material(material_id)
+        .build()
+        .map_err(|e| NodeError::General(eyre::eyre!("Failed to build event: {}", e)))?;
 
+    let json_event = event
+        .to_json_event()
+        .map_err(|e| NodeError::General(eyre::eyre!("Failed to convert to JSON event: {}", e)))?;
+
+    ctx.stage_context
+        .emit_event_with_provenance(json_event, material_id, Some(0), Some(0))
+        .await
+        .map(|_| ())
+        .map_err(|e| NodeError::General(eyre::eyre!("Failed to emit event: {}", e)))?;
+
+    ctx.metrics.record_deleted();
     debug!("Recorded file.deleted for {:?}", path);
     Ok(())
 }
@@ -736,16 +803,22 @@ async fn handle_file_moved(
         moved_at: chrono::Utc::now(),
     };
 
-    emit_filesystem_event(
-        ctx,
-        material_id,
-        serde_json::to_value(payload)
-            .map_err(|e| NodeError::General(eyre::eyre!("Failed to encode payload: {}", e)))?,
-        "file.moved",
-        0,
-    )
-    .await?;
+    let event = payload
+        .from_material(material_id)
+        .build()
+        .map_err(|e| NodeError::General(eyre::eyre!("Failed to build event: {}", e)))?;
 
+    let json_event = event
+        .to_json_event()
+        .map_err(|e| NodeError::General(eyre::eyre!("Failed to convert to JSON event: {}", e)))?;
+
+    ctx.stage_context
+        .emit_event_with_provenance(json_event, material_id, Some(0), Some(0))
+        .await
+        .map(|_| ())
+        .map_err(|e| NodeError::General(eyre::eyre!("Failed to emit event: {}", e)))?;
+
+    ctx.metrics.record_moved();
     debug!("Recorded file.moved from {:?} to {:?}", old, new);
     Ok(())
 }
@@ -784,7 +857,45 @@ async fn capture_material_from_file(
     ctx: &WatchContext,
     path: &Path,
     reason: &str,
-    size: u64,
+    _expected_size: u64,
+) -> NodeResult<Ulid> {
+    // Retry logic for transient errors (file locked, in-use, etc.)
+    let mut attempt = 0u32;
+    loop {
+        match capture_material_from_file_inner(ctx, path, reason).await {
+            Ok(material_id) => return Ok(material_id),
+            Err(e) => {
+                attempt += 1;
+                if attempt >= FS_READ_RETRY_ATTEMPTS {
+                    return Err(e);
+                }
+
+                // Check if error is transient (file locked, permission denied temporarily, etc.)
+                let is_transient = e.to_string().contains("lock")
+                    || e.to_string().contains("in use")
+                    || e.to_string().contains("permission denied")
+                    || e.to_string().contains("resource temporarily unavailable");
+
+                if !is_transient {
+                    return Err(e);
+                }
+
+                // Exponential backoff: 100ms, 500ms, 1s
+                let delay_ms = FS_READ_RETRY_BASE_DELAY_MS * (1u64 << (attempt - 1)).min(10);
+                debug!(
+                    "Transient error reading {:?}, retrying in {}ms (attempt {}/{}): {}",
+                    path, delay_ms, attempt, FS_READ_RETRY_ATTEMPTS, e
+                );
+                tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
+            }
+        }
+    }
+}
+
+async fn capture_material_from_file_inner(
+    ctx: &WatchContext,
+    path: &Path,
+    reason: &str,
 ) -> NodeResult<Ulid> {
     let identifier = path.to_string_lossy();
     let mut handle = ctx
@@ -794,22 +905,54 @@ async fn capture_material_from_file(
         .map_err(|e| NodeError::General(eyre::eyre!("Failed to begin material: {}", e)))?;
 
     let material_id = handle.material_id;
+
+    // Issue 92: TOCTOU race eliminated by opening file first, then getting metadata
+    // from the open handle. This ensures atomic operations:
+    // 1. File is opened and locked by OS
+    // 2. Metadata retrieved from open file descriptor (no path lookup)
+    // 3. Size checked before any read
+    // 4. Cumulative tracking during streaming prevents growing file issues
     let mut file = fs::File::open(path)
         .await
         .map_err(|e| NodeError::General(eyre::eyre!("Failed to open file: {}", e)))?;
-    let mut remaining = size;
+
+    let metadata = file
+        .metadata()
+        .await
+        .map_err(|e| NodeError::General(eyre::eyre!("Failed to read file metadata: {}", e)))?;
+
+    let file_size = metadata.len();
+
+    if file_size > ctx.max_capture_bytes.as_u64() {
+        return Err(NodeError::General(eyre::eyre!(
+            "File size {} exceeds max_capture_bytes {}",
+            file_size,
+            ctx.max_capture_bytes.as_u64()
+        )));
+    }
+
+    let mut cumulative_bytes = 0u64;
     let mut buffer = vec![0u8; FS_CAPTURE_CHUNK_SIZE];
 
-    while remaining > 0 {
-        let to_read = (remaining.min(buffer.len() as u64)) as usize;
+    loop {
         let read = file
-            .read(&mut buffer[..to_read])
+            .read(&mut buffer)
             .await
             .map_err(|e| NodeError::General(eyre::eyre!("Failed to read file: {}", e)))?;
+
         if read == 0 {
             break;
         }
-        remaining = remaining.saturating_sub(read as u64);
+
+        cumulative_bytes += read as u64;
+
+        if cumulative_bytes > ctx.max_capture_bytes.as_u64() {
+            return Err(NodeError::General(eyre::eyre!(
+                "File grew during capture; cumulative read {} exceeds max_capture_bytes {}",
+                cumulative_bytes,
+                ctx.max_capture_bytes.as_u64()
+            )));
+        }
 
         ctx.acquisition
             .append_slice(&mut handle, &buffer[..read])
@@ -823,38 +966,6 @@ async fn capture_material_from_file(
         .map_err(|e| NodeError::General(eyre::eyre!("Failed to finalize material: {}", e)))?;
 
     Ok(material_id)
-}
-
-async fn emit_filesystem_event(
-    ctx: &WatchContext,
-    material_id: Ulid,
-    payload: JsonValue,
-    event_type: &str,
-    total_bytes: i64,
-) -> NodeResult<()> {
-    let provenance = Provenance::Material {
-        id: Id::from_ulid(material_id),
-        anchor_byte: 0,
-        offset_start: Some(0),
-        offset_end: Some(total_bytes),
-        offset_kind: sinex_core::OffsetKind::Byte,
-    };
-
-    let mut event = EventBuilder::new(
-        sinex_core::types::domain::EventSource::from_static("fs-watcher"),
-        sinex_core::types::domain::EventType::from(event_type),
-        payload,
-    )
-    .with_provenance(provenance)
-    .build()
-    .map_err(|e| NodeError::General(eyre::eyre!("Failed to build event: {}", e)))?;
-    event.id = Some(Id::from_ulid(Ulid::new()));
-
-    ctx.stage_context
-        .emit_event_with_provenance(event, material_id, Some(0), Some(total_bytes))
-        .await
-        .map(|_| ())
-        .map_err(|e| NodeError::General(eyre::eyre!("Failed to emit event: {}", e)))
 }
 
 fn sanitize_path(path: &Path) -> NodeResult<SanitizedPath> {
@@ -893,9 +1004,9 @@ fn file_modified_at(metadata: &StdMetadata) -> chrono::DateTime<chrono::Utc> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_core::db::models::{Event, Provenance};
+    use sinex_core::db::models::{Event as SinexEvent, Provenance};
     use sinex_core::db::query_helpers::ulid_to_uuid;
-    use sinex_core::{Id, JsonValue};
+    use sinex_core::Id;
     use sinex_node_sdk::{acquisition_manager::RotationPolicy, AcquisitionManager};
     use sinex_test_utils::prelude::*;
     use sinex_test_utils::{sinex_test, EphemeralNats};
@@ -937,9 +1048,8 @@ mod tests {
             "/tmp".to_string(),
         ));
 
-        let (event_tx, mut event_rx) = mpsc::channel::<Event<JsonValue>>(
-            sinex_core::types::buffers::DEFAULT_EVENT_CHANNEL_SIZE,
-        );
+        let (event_tx, mut event_rx) =
+            mpsc::channel::<SinexEvent>(sinex_core::types::buffers::DEFAULT_EVENT_CHANNEL_SIZE);
         let stage_context =
             StageAsYouGoContext::from_sender(Arc::clone(&acquisition), event_tx, false);
 
@@ -949,6 +1059,7 @@ mod tests {
             max_capture_bytes: Bytes::from_mebibytes(1),
             security_policy: FileWatchingSecurityPolicy::permissive(),
             dropped_events: Arc::new(AtomicU64::new(0)),
+            metrics: EventMetrics::new(),
         };
 
         let temp_root = tempdir()?;
@@ -976,8 +1087,6 @@ mod tests {
             }
         };
 
-        // Acquisition is JetStream-first; ingestd is the sole writer for DB material state.
-        // This unit test runs without ingestd, so nothing should be persisted.
         let record = ctx
             .pool
             .source_materials()

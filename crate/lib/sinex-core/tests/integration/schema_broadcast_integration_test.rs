@@ -10,7 +10,7 @@ async fn ingestd_broadcasts_schema_snapshot(ctx: TestContext) -> TestResult<()> 
     let subject = ctx.nats_subject("system.schemas.active");
     let mut subscription = ctx.nats_client().subscribe(subject).await?;
 
-    let _pipeline = ctx.pipeline().await?;
+    let _pipeline = ctx.pipeline_scope().await?;
 
     let message = timeout(Duration::from_secs(10), subscription.next())
         .await

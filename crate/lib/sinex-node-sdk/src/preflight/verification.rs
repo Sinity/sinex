@@ -320,7 +320,7 @@ async fn test_concurrent_operations(pool: &PgPool, messages: &mut Vec<String>) -
                 .insert_test_event(
                     &EventSource::new("sinex-preflight-concurrent-test"),
                     &EventType::new("verification.concurrent_test"),
-                    json!({"test": "concurrent", "operation_id": i, "host": "localhost"}),
+                    json!({"test": "concurrent", "operation_id": i, "host": "localhost", "revision": 0}),
                 )
                 .await
         });
@@ -566,6 +566,7 @@ async fn verify_service_integration(_messages: &mut [String]) -> Result<Value> {
         last_activity: Utc::now(),
         data: Some(json!({ "preflight": true })),
         version: 2,
+        revision: 0,
     };
 
     manager

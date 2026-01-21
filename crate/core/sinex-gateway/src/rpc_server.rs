@@ -2,7 +2,8 @@
 
 // Local crate imports
 use crate::{
-    handlers::*, replay_control::ReplayControlClient, service_container::ServiceContainer,
+    gateway_metrics::GatewayMetrics, handlers::*, rate_limit::TokenRateLimiter,
+    replay_control::ReplayControlClient, service_container::ServiceContainer,
 };
 
 // External crates
@@ -14,6 +15,7 @@ use axum::{
     routing::{get, post},
     BoxError, Json, Router,
 };
+use chrono::Utc;
 use color_eyre::eyre::{eyre, WrapErr};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder as HyperBuilder;
@@ -22,7 +24,7 @@ use rustls_pemfile::{certs, pkcs8_private_keys, rsa_private_keys};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sinex_core::coordination::CoordinationKvClient;
-use sinex_core::types::Bytes;
+use sinex_core::types::{Bytes, Ulid};
 use std::convert::TryFrom;
 use std::fs::File;
 use std::io::BufReader;
@@ -108,8 +110,9 @@ pub(crate) struct RpcServerLimits {
 
 impl RpcServerLimits {
     pub(crate) fn from_env() -> Self {
+        // Issue 132: Increase default concurrency limit from 32 to 100
         Self {
-            concurrency_limit: env_var_usize("SINEX_GATEWAY_MAX_CONCURRENCY", 32),
+            concurrency_limit: env_var_usize("SINEX_GATEWAY_MAX_CONCURRENCY", 100),
             request_timeout: Duration::from_secs(env_var_u64(
                 "SINEX_GATEWAY_REQUEST_TIMEOUT_SECS",
                 30,
@@ -193,44 +196,61 @@ impl GatewayAuth {
             std::thread::spawn(move || {
                 use notify::{Event, EventKind, RecursiveMode, Watcher};
 
-                let mut watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
-                    match res {
-                        Ok(event) => {
-                            match event.kind {
-                                EventKind::Modify(_) | EventKind::Create(_) => {
-                                    // File was modified or created - reload token
-                                    match std::fs::read_to_string(&path_for_closure) {
-                                        Ok(new_token) => {
-                                            let trimmed = new_token.trim().to_string();
-                                            if !trimmed.is_empty() {
-                                                let mut token_lock = token_clone.blocking_write();
-                                                *token_lock = Some(trimmed);
-                                                info!("RPC token reloaded from {:?}", path_for_closure);
-                                            } else {
-                                                warn!("Token file {:?} is empty after reload", path_for_closure);
+                let watcher = notify::recommended_watcher(
+                    move |res: Result<Event, notify::Error>| {
+                        match res {
+                            Ok(event) => {
+                                match event.kind {
+                                    EventKind::Modify(_) | EventKind::Create(_) => {
+                                        // File was modified or created - reload token
+                                        match std::fs::read_to_string(&path_for_closure) {
+                                            Ok(new_token) => {
+                                                let trimmed = new_token.trim().to_string();
+                                                if !trimmed.is_empty() {
+                                                    let mut token_lock =
+                                                        token_clone.blocking_write();
+                                                    *token_lock = Some(trimmed);
+                                                    info!(
+                                                        "RPC token reloaded from {:?}",
+                                                        path_for_closure
+                                                    );
+                                                } else {
+                                                    warn!(
+                                                        "Token file {:?} is empty after reload",
+                                                        path_for_closure
+                                                    );
+                                                }
+                                            }
+                                            Err(e) => {
+                                                error!("Failed to read token file {:?} after modification: {}", path_for_closure, e);
                                             }
                                         }
-                                        Err(e) => {
-                                            error!("Failed to read token file {:?} after modification: {}", path_for_closure, e);
-                                        }
+                                    }
+                                    EventKind::Remove(_) => {
+                                        // File was deleted - disable auth (with warning)
+                                        let mut token_lock = token_clone.blocking_write();
+                                        *token_lock = None;
+                                        warn!("RPC token file {:?} deleted - authentication disabled!", path_for_closure);
+                                    }
+                                    _ => {
+                                        // Ignore other events (access, metadata changes, etc.)
                                     }
                                 }
-                                EventKind::Remove(_) => {
-                                    // File was deleted - disable auth (with warning)
-                                    let mut token_lock = token_clone.blocking_write();
-                                    *token_lock = None;
-                                    warn!("RPC token file {:?} deleted - authentication disabled!", path_for_closure);
-                                }
-                                _ => {
-                                    // Ignore other events (access, metadata changes, etc.)
-                                }
+                            }
+                            Err(e) => {
+                                error!("Token file watch error: {}", e);
                             }
                         }
-                        Err(e) => {
-                            error!("Token file watch error: {}", e);
-                        }
+                    },
+                );
+
+                let mut watcher = match watcher {
+                    Ok(w) => w,
+                    Err(e) => {
+                        error!("Failed to create file watcher: {}", e);
+                        return;
                     }
-                }).expect("Failed to create file watcher");
+                };
 
                 if let Err(e) = watcher.watch(&path_clone, RecursiveMode::NonRecursive) {
                     error!("Failed to watch token file {:?}: {}", path_clone, e);
@@ -322,15 +342,10 @@ pub(crate) fn extract_token(headers: &HeaderMap) -> Option<String> {
     None
 }
 
+// Issue 137: Use constant-time comparison from subtle crate
 pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
+    use subtle::ConstantTimeEq;
+    bool::from(a.ct_eq(b))
 }
 
 enum AuthError {
@@ -378,18 +393,75 @@ impl JsonRpcResponse {
     }
 }
 
+/// Authorization context passed to RPC handlers
+///
+/// Contains actor information derived from the authenticated token,
+/// allowing handlers to perform authorization checks and audit logging.
+#[derive(Debug, Clone)]
+pub struct RpcAuthContext {
+    /// First 8 characters of the token for audit logging
+    pub token_prefix: String,
+    /// Timestamp when authentication occurred
+    pub authenticated_at: chrono::DateTime<Utc>,
+}
+
+impl RpcAuthContext {
+    /// Create an auth context from a validated token
+    fn from_token(token: &str) -> Self {
+        Self {
+            token_prefix: token.chars().take(8).collect::<String>().to_string(),
+            authenticated_at: Utc::now(),
+        }
+    }
+
+    /// Create a system auth context for native messaging or internal calls
+    ///
+    /// Native messaging uses stdin/stdout and doesn't go through HTTP auth,
+    /// so we use a special "system" context to indicate trusted local calls.
+    pub fn system() -> Self {
+        Self {
+            token_prefix: "system".to_string(),
+            authenticated_at: Utc::now(),
+        }
+    }
+}
+
 /// State shared between handlers
 #[derive(Clone)]
 struct AppState {
     services: ServiceContainer,
     auth: GatewayAuth,
+    rate_limiter: Arc<TokenRateLimiter>,
+    metrics: Arc<GatewayMetrics>,
 }
 
 /// Shared dispatch function for RPC methods (used by both rpc_server and native_messaging)
+///
+/// # Method Dispatch Pattern
+///
+/// This function uses a static match table for method routing. While this approach
+/// requires manual updates when adding new RPC methods, it provides:
+///
+/// - Compile-time verification of all method paths
+/// - Zero overhead lookup for method dispatch
+/// - Clear visibility of all RPC surface area in one location
+///
+/// ## Issue 131 (LOW): Future Enhancement
+///
+/// For applications requiring dynamic method registration (plugins, extensions),
+/// consider adding a registry-based dispatch layer. Current static dispatch is
+/// sufficient for the gateway's stable RPC API surface.
+///
+/// # Authorization Context
+///
+/// The `auth` parameter contains authenticated actor information for audit logging
+/// and authorization checks. Dangerous operations (dlq.requeue, ops.cancel, shadow.delete)
+/// should log the token_prefix for accountability.
 pub async fn dispatch_rpc_method(
     services: &ServiceContainer,
     method: &str,
     params: serde_json::Value,
+    auth: &RpcAuthContext,
 ) -> color_eyre::eyre::Result<serde_json::Value> {
     match method {
         "system.health" => handle_system_health(services, params).await,
@@ -481,7 +553,7 @@ pub async fn dispatch_rpc_method(
         "dlq.requeue" => {
             let nats = nats_client_required(services)?;
             let env = services.environment();
-            handle_dlq_requeue(nats, env, params).await
+            handle_dlq_requeue(nats, env, params, auth).await
         }
         "dlq.purge" => {
             let nats = nats_client_required(services)?;
@@ -526,7 +598,7 @@ pub async fn dispatch_rpc_method(
         }
         "ops.cancel" => {
             let pool = services.pool();
-            handle_ops_cancel(pool, params).await
+            handle_ops_cancel(pool, params, auth).await
         }
 
         // Audit trail methods
@@ -549,7 +621,7 @@ pub async fn dispatch_rpc_method(
         "shadow.delete" => {
             let nats = nats_client_required(services)?;
             let env = services.environment();
-            handle_shadow_delete(nats, env, params).await
+            handle_shadow_delete(nats, env, params, auth).await
         }
 
         _ => Err(color_eyre::Report::new(UnknownMethodError {
@@ -594,6 +666,7 @@ async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
     let db_ok = sqlx::query("SELECT 1")
         .execute(state.services.pool())
         .await
+        .wrap_err("Health check: database ping failed")
         .is_ok();
 
     // Check NATS connectivity
@@ -627,16 +700,76 @@ async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 /// Main RPC handler using dispatch table
+///
+/// # Issue 148 (LOW): Request IDs in JSON-RPC Responses
+///
+/// The gateway includes request IDs in HTTP response headers via `x-request-id`
+/// (see middleware layers in `apply_rpc_layers`). This is sufficient for HTTP-level
+/// tracing and correlation with load balancer/proxy logs.
+///
+/// JSON-RPC 2.0 spec strictly defines the response format:
+/// - `jsonrpc`: "2.0"
+/// - `result` or `error`: method result or error object
+/// - `id`: echoes the request ID from the JSON-RPC request
+///
+/// Adding an HTTP request ID to the JSON-RPC response body would be non-standard.
+/// Clients should use the `x-request-id` HTTP header for request correlation.
+///
+/// For applications requiring request IDs in the response payload, consider:
+/// - Reading `x-request-id` from response headers
+/// - Using JSON-RPC request `id` field for correlation
+/// - Adding a custom middleware layer that wraps responses with metadata
 async fn handle_rpc(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(request): Json<JsonRpcRequest>,
 ) -> impl IntoResponse {
+    // Record request start for metrics
+    state.metrics.record_request_start();
+    let start = std::time::Instant::now();
+
     if let Err(err) = state.auth.verify(&headers).await {
+        state.metrics.record_request_rejected();
         return err.into_response();
     }
 
+    // Extract token for auth context and rate limiting
+    let token = match extract_token(&headers) {
+        Some(t) => t,
+        None => {
+            // This should not happen after auth.verify() passes, but handle gracefully
+            state.metrics.record_request_rejected();
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(JsonRpcResponse::error(
+                    request.id,
+                    -32002,
+                    "Token missing after authentication".to_string(),
+                )),
+            );
+        }
+    };
+
+    // Create auth context for handlers
+    let auth_context = RpcAuthContext::from_token(&token);
+
+    // Issue 143: Per-token rate limiting
+    if state.rate_limiter.check(&token).is_err() {
+        let token_prefix = &token[..8.min(token.len())];
+        warn!(token_prefix, "Request rejected: rate limit exceeded");
+        state.metrics.record_rate_limited(token_prefix);
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(JsonRpcResponse::error(
+                None,
+                -32029,
+                "Rate limit exceeded for this token".to_string(),
+            )),
+        );
+    }
+
     if let Err(err) = validate_jsonrpc_request(&request) {
+        state.metrics.record_request_rejected();
         let response = JsonRpcResponse::error(request.id, -32600, err.to_string());
         return (StatusCode::BAD_REQUEST, Json(response));
     }
@@ -646,22 +779,43 @@ async fn handle_rpc(
         request.method, request.params
     );
 
-    let _start = std::time::Instant::now();
     let method = request.method.clone();
 
-    // Use shared dispatch function
-    let result = dispatch_rpc_method(&state.services, &request.method, request.params).await;
+    // Use shared dispatch function with auth context
+    let result = dispatch_rpc_method(
+        &state.services,
+        &request.method,
+        request.params,
+        &auth_context,
+    )
+    .await;
 
-    // Telemetry disabled in this build; keep handler lightweight
+    // Record latency on success
+    let latency_us = start.elapsed().as_micros() as u64;
 
     let response = match result {
-        Ok(value) => JsonRpcResponse::success(request.id, value),
+        Ok(value) => {
+            state.metrics.record_request_success(latency_us);
+            JsonRpcResponse::success(request.id, value)
+        }
         Err(err) if err.downcast_ref::<UnknownMethodError>().is_some() => {
+            state.metrics.record_request_rejected();
             JsonRpcResponse::error(request.id, -32601, err.to_string())
         }
         Err(err) => {
-            error!("RPC method {} failed: {}", method, err);
-            JsonRpcResponse::error(request.id, -32603, format!("Internal error: {}", err))
+            let error_id = Ulid::new();
+            state.metrics.record_request_rejected();
+            error!(
+                error_id = %error_id,
+                method = %method,
+                error = %err,
+                "RPC method failed"
+            );
+            JsonRpcResponse::error(
+                request.id,
+                -32603,
+                format!("Internal error (ref: {})", error_id),
+            )
         }
     };
 
@@ -811,6 +965,21 @@ fn client_tls_required_override() -> bool {
     )
 }
 
+/// Enforce mTLS requirements based on bind address and configuration
+///
+/// # Security Note (Issue 151 - LOW)
+///
+/// The gateway currently requires mTLS for all TCP bindings. For deployments
+/// behind a reverse proxy (nginx, HAProxy, Envoy), the proxy should handle
+/// TLS termination and client authentication. In this configuration:
+///
+/// - Bind gateway to 127.0.0.1 (loopback only)
+/// - Configure reverse proxy with TLS certificates
+/// - Set up client certificate verification in the proxy
+/// - Use SINEX_GATEWAY_REQUIRE_CLIENT_TLS=0 if proxy handles mTLS
+///
+/// For direct TLS support without a proxy, native rustls integration is already
+/// implemented in this file (see `load_rustls_config` and TLS acceptor logic).
 fn require_mtls_for_remote(
     bind_address: &BindAddress,
     client_ca: Option<&str>,
@@ -1213,7 +1382,36 @@ pub async fn run(
 
     let auth = GatewayAuth::from_env()?.start_file_watcher()?;
     let limits = RpcServerLimits::from_env().apply_pool_limit(services.pool_max_connections());
-    let state = AppState { services, auth };
+
+    // Issue 143: Per-token rate limiting
+    let rate_limiter = Arc::new(TokenRateLimiter::from_env());
+    let _cleanup_task = Arc::clone(&rate_limiter).spawn_cleanup_task();
+
+    // Self-observation metrics
+    let metrics = Arc::new(match services.nats_client() {
+        Some(nats) => GatewayMetrics::new(nats.clone()),
+        None => {
+            info!("NATS not available - gateway metrics emission disabled");
+            GatewayMetrics::disabled()
+        }
+    });
+
+    // Spawn metrics emission background task
+    // The cancel_tx and metrics_task are kept alive for the lifetime of the server
+    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+    let _metrics_task = if metrics.is_enabled() {
+        Some(Arc::clone(&metrics).spawn_emission_task(cancel_rx))
+    } else {
+        drop(cancel_rx);
+        None
+    };
+
+    let state = AppState {
+        services,
+        auth,
+        rate_limiter,
+        metrics,
+    };
 
     let base_router = Router::new()
         .route("/rpc", post(handle_rpc))
@@ -1228,13 +1426,18 @@ pub async fn run(
 
     let BindAddress::Tcp { host, port } = bind_address;
     let addr = format!("{}:{}", host, port);
-    let listener = tokio::net::TcpListener::bind(&addr).await?;
+    let listener = tokio::net::TcpListener::bind(&addr)
+        .await
+        .wrap_err_with(|| format!("Failed to bind TCP listener to {}", addr))?;
     let tls_config = load_rustls_config(&cert_path, &key_path, client_ca.as_deref())?;
     let acceptor = TlsAcceptor::from(Arc::new(tls_config));
     info!("RPC server listening on TLS {}", addr);
 
     loop {
-        let (stream, peer) = listener.accept().await?;
+        let (stream, peer) = listener
+            .accept()
+            .await
+            .wrap_err("Failed to accept incoming TCP connection")?;
         let app_clone = app.clone();
         let acceptor = acceptor.clone();
 

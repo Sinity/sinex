@@ -8,7 +8,7 @@ use serde_json::json;
 use sinex_core::db::queries::{CheckpointQueries, EventQueries};
 use sinex_core::db::query_builder::{QueryBuilder, QueryParam};
 use sinex_core::types::events::{event_types, sources, EventFactory};
-use sinex_test_utils::prelude::*;
+use sinex_test_utils::{prelude::*, timing_utils::Timeouts};
 use std::sync::Arc;
 use std::time::{Duration as StdDuration, Instant};
 use tokio::sync::Mutex;
@@ -491,7 +491,7 @@ async fn test_memory_stress_conditions(ctx: TestContext) -> TestResult<()> {
     // Phase 2: Sustained load
     println!("\n⏳ Phase 2: Sustained memory load");
 
-    let sustained_load_duration = StdDuration::from_secs(10);
+    let sustained_load_duration = StdDuration::from_secs(Timeouts::MEDIUM);
     let start_time = Instant::now();
     let mut operation_count = 0;
 
@@ -532,7 +532,7 @@ async fn test_memory_stress_conditions(ctx: TestContext) -> TestResult<()> {
     println!("\n🔄 Phase 3: Memory recovery");
 
     // Allow time for garbage collection and cleanup
-    tokio::time::sleep(StdDuration::from_secs(2)).await;
+    tokio::time::sleep(StdDuration::from_secs(Timeouts::SHORT)).await;
     metrics.record_measurement("After recovery delay");
 
     metrics.print_summary();

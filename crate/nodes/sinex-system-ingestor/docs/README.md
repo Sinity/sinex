@@ -1,4 +1,4 @@
-# sinex-system-node
+# sinex-system-ingestor
 
 The system node unifies multiple system-level event sources (D-Bus,
 journal, udev, systemd unit transitions) into a single `StatefulStreamProcessor`.

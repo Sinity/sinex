@@ -1,9 +1,4 @@
-//! Terminal Command Canonicalizer - Unified Main
-//!
-//! This automaton creates canonical command events as synthesis events based on terminal
-//! command events from multiple sources (kitty, atuin, shell history).
-//!
-//! Uses the processor_main! macro and unified Node architecture.
+//! Modernized Main for Terminal Command Canonicalizer
 
 #[cfg(not(target_env = "msvc"))]
 use mimalloc::MiMalloc;
@@ -13,6 +8,7 @@ use mimalloc::MiMalloc;
 static GLOBAL: MiMalloc = MiMalloc;
 
 use sinex_processor_runtime::processor_main;
-use sinex_terminal_command_canonicalizer::unified_processor::TerminalCommandCanonicalizer;
+use sinex_terminal_command_canonicalizer::unified_processor::TerminalCommandCanonicalizerNode;
 
-processor_main!(TerminalCommandCanonicalizer);
+// Use the wrapped SimpleNode
+processor_main!(TerminalCommandCanonicalizerNode);

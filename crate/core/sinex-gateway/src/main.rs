@@ -15,15 +15,9 @@ use mimalloc::MiMalloc;
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
-mod handlers;
-mod native_messaging;
-mod replay_control;
-mod replay_state_machine;
-mod rpc_server;
-mod service_container;
-
-use crate::rpc_server::DEFAULT_TCP_LISTEN;
-use service_container::ServiceContainer;
+use sinex_gateway::rpc_server::DEFAULT_TCP_LISTEN;
+use sinex_gateway::service_container::ServiceContainer;
+use sinex_gateway::{native_messaging, rpc_server};
 
 #[derive(Parser)]
 #[command(name = "sinex-gateway")]
@@ -72,6 +66,35 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
+    // Issue 128: Set up graceful shutdown signal handling
+    let shutdown_signal = async {
+        let ctrl_c = async {
+            tokio::signal::ctrl_c()
+                .await
+                .expect("failed to install Ctrl+C handler");
+        };
+
+        #[cfg(unix)]
+        let terminate = async {
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("failed to install SIGTERM handler")
+                .recv()
+                .await;
+        };
+
+        #[cfg(not(unix))]
+        let terminate = std::future::pending::<()>();
+
+        tokio::select! {
+            _ = ctrl_c => {
+                info!("Received SIGINT (Ctrl+C), initiating graceful shutdown");
+            },
+            _ = terminate => {
+                info!("Received SIGTERM, initiating graceful shutdown");
+            },
+        }
+    };
+
     match cli.command {
         Commands::RpcServer {
             tcp_listen,
@@ -84,10 +107,15 @@ async fn main() -> Result<()> {
                 color_eyre::eyre::eyre!("Failed to initialize services").wrap_err(e)
             })?;
 
-            // Start RPC server
-            rpc_server::run(Some(tcp_listen.as_str()), services)
-                .await
-                .map_err(|e| color_eyre::eyre::eyre!("RPC server failed").wrap_err(e))?;
+            // Start RPC server with shutdown signal
+            tokio::select! {
+                result = rpc_server::run(Some(tcp_listen.as_str()), services) => {
+                    result.map_err(|e| color_eyre::eyre::eyre!("RPC server failed").wrap_err(e))?;
+                }
+                _ = shutdown_signal => {
+                    info!("Shutdown signal received, exiting gracefully");
+                }
+            }
         }
 
         Commands::NativeMessaging { database_url } => {
@@ -98,10 +126,15 @@ async fn main() -> Result<()> {
                 color_eyre::eyre::eyre!("Failed to initialize services").wrap_err(e)
             })?;
 
-            // Start native messaging loop
-            native_messaging::run(services)
-                .await
-                .map_err(|e| color_eyre::eyre::eyre!("Native messaging failed").wrap_err(e))?;
+            // Start native messaging loop with shutdown signal
+            tokio::select! {
+                result = native_messaging::run(services) => {
+                    result.map_err(|e| color_eyre::eyre::eyre!("Native messaging failed").wrap_err(e))?;
+                }
+                _ = shutdown_signal => {
+                    info!("Shutdown signal received, exiting gracefully");
+                }
+            }
         }
     }
 

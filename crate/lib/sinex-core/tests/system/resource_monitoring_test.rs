@@ -13,6 +13,7 @@
 
 use sinex_core::db::models::EventFactory;
 use sinex_test_utils::prelude::*;
+use sinex_test_utils::timing_utils::Timeouts;
 
 use sinex_core::types::ulid::Ulid;
 
@@ -110,7 +111,7 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult<()> {
     };
 
     // Wait for completion or timeout
-    let load_test_result = timeout(Duration::from_secs(5), async {
+    let load_test_result = timeout(Duration::from_secs(Timeouts::MEDIUM), async {
         tokio::try_join!(generation_task, processing_task)
     })
     .await;
@@ -178,7 +179,7 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult<()> {
             let start_time = Instant::now();
 
             // Try to acquire connection and perform operation
-            let result = timeout(Duration::from_secs(3), async {
+            let result = timeout(Duration::from_secs(Timeouts::SHORT), async {
                 let mut conn = pool.acquire().await?;
 
                 // Perform a quick operation
@@ -198,7 +199,7 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult<()> {
 
     // Wait for all connection tests
     let connection_results = timeout(
-        Duration::from_secs(5),
+        Duration::from_secs(Timeouts::MEDIUM),
         futures::future::join_all(connection_tasks),
     )
     .await;
@@ -255,7 +256,7 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult<()> {
                 concurrent_connections
             );
             assert!(
-                avg_duration < Duration::from_secs(3),
+                avg_duration < Duration::from_secs(Timeouts::SHORT),
                 "Average connection time too slow: {:?}",
                 avg_duration
             );
@@ -284,7 +285,7 @@ async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> TestResult<()> 
     // Test 1: Large transaction handling
     let large_transaction_start = Instant::now();
 
-    let large_transaction_result = timeout(Duration::from_secs(5), async {
+    let large_transaction_result = timeout(Duration::from_secs(Timeouts::MEDIUM), async {
         let mut tx = pool.begin().await?;
 
         // Try to insert many events in a single transaction
@@ -341,7 +342,7 @@ async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> TestResult<()> 
         let task = tokio::spawn(async move {
             let start_time = Instant::now();
 
-            let result = timeout(Duration::from_secs(3), async {
+            let result = timeout(Duration::from_secs(Timeouts::SHORT), async {
                 let mut tx = pool.begin().await?;
 
                 // Each transaction inserts a small batch
@@ -373,7 +374,7 @@ async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> TestResult<()> 
     }
 
     let transaction_results = timeout(
-        Duration::from_secs(5),
+        Duration::from_secs(Timeouts::MEDIUM),
         futures::future::join_all(transaction_tasks),
     )
     .await;

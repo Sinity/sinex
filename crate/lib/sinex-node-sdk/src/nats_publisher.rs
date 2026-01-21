@@ -51,10 +51,93 @@ impl NatsPublisher {
         &self.nats_client
     }
 
+    /// Publish an event to the Dead Letter Queue
+    ///
+    /// DLQ events preserve the original event data with additional error context.
+    /// They can be retried later using `DlqRetryHandler`.
+    pub async fn publish_to_dlq(
+        &self,
+        event: &Event,
+        error: &str,
+        processor_name: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let js = async_nats::jetstream::new(self.nats_client.clone());
+
+        let event_id = event
+            .id
+            .as_ref()
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| sinex_core::Ulid::new().to_string());
+
+        // Build DLQ entry with error context
+        let dlq_entry = serde_json::json!({
+            "event_id": event_id,
+            "source": event.source.as_str(),
+            "event_type": event.event_type.as_str(),
+            "error": error,
+            "processor": processor_name,
+            "original_payload": event.payload,
+            "failed_at": chrono::Utc::now().to_rfc3339(),
+        });
+
+        let payload = serde_json::to_vec(&dlq_entry)?;
+
+        // DLQ subject format: events.dlq.{processor_name}
+        let subject = self.env.nats_subject_with_namespace(
+            self.namespace.as_deref(),
+            &format!("events.dlq.{}", processor_name.replace('.', "_")),
+        );
+
+        // Add headers for retry tracking
+        let mut headers = async_nats::HeaderMap::new();
+        headers.insert("Nats-Msg-Id", format!("dlq-{}", event_id).as_str());
+        headers.insert(
+            "Original-Subject",
+            self.env
+                .nats_subject_with_namespace(
+                    self.namespace.as_deref(),
+                    &format!(
+                        "events.raw.{}.{}",
+                        event.source.as_str().replace('.', "_"),
+                        event.event_type.as_str().replace('.', "_")
+                    ),
+                )
+                .as_str(),
+        );
+        headers.insert("Retry-Count", "0");
+
+        let ack_future = js
+            .publish_with_headers(subject, headers, payload.into())
+            .await?;
+        let ack = wait_for_publish_ack(ack_future, DEFAULT_PUBLISH_ACK_TIMEOUT).await?;
+
+        tracing::warn!(
+            event_id = %event_id,
+            processor = %processor_name,
+            error = %error,
+            sequence = ack.sequence,
+            "Event sent to DLQ"
+        );
+
+        Ok(())
+    }
+
     pub async fn publish(
         &self,
         event: &Event,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // Issue 1 fix: Use semaphore for bounded publish queue to prevent unbounded memory growth
+        static PUBLISH_SEMAPHORE: std::sync::OnceLock<tokio::sync::Semaphore> =
+            std::sync::OnceLock::new();
+        let sem = PUBLISH_SEMAPHORE.get_or_init(|| tokio::sync::Semaphore::new(100));
+
+        let _permit = sem.acquire().await.map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to acquire publish semaphore: {}", e),
+            )
+        })?;
+
         let js = async_nats::jetstream::new(self.nats_client.clone());
 
         let (
@@ -94,6 +177,8 @@ impl NatsPublisher {
                         .collect::<Vec<_>>(),
                 ),
             ),
+            // Provenance is #[non_exhaustive] for forward compatibility
+            _ => (None, None, None, None, None, None),
         };
 
         let (event_id_str, payload) = build_publish_payload(
@@ -212,9 +297,9 @@ mod tests {
 
     #[sinex_test]
     async fn publish_payload_serializes_json_once() -> TestResult<()> {
-        let mut event = EventBuilder::new(
-            "publisher.test".into(),
-            "payload.check".into(),
+        let mut event = EventBuilder::dynamic(
+            "publisher.test",
+            "payload.check",
             serde_json::json!({"nested": {"a": 1}}),
         )
         .with_provenance(Provenance::from_synthesis_safe(
@@ -242,5 +327,7 @@ fn offset_kind_label(kind: OffsetKind) -> &'static str {
         OffsetKind::Line => "line",
         OffsetKind::Record => "rowid",
         OffsetKind::Character => "logical",
+        // OffsetKind is #[non_exhaustive] for forward compatibility
+        _ => "unknown",
     }
 }

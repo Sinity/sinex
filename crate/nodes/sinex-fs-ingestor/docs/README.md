@@ -1,4 +1,4 @@
-# sinex-fs-watcher
+# sinex-fs-ingestor
 
 The filesystem watcher node monitors filesystem changes and emits events
 into the Sinex pipeline. It utilises the unified processor architecture to

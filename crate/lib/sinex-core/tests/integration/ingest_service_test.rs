@@ -60,7 +60,7 @@ async fn test_event_ingestion_flow(ctx: TestContext) -> Result<()> {
 
     // Create test event that would come from a node
     let node_event = ctx
-        .publish_json_event(
+        .publish_event(
             "fs-watcher",
             "file.created",
             serde_json::json!({
@@ -108,12 +108,12 @@ async fn test_event_ingestion_flow(ctx: TestContext) -> Result<()> {
 #[sinex_serial_test]
 async fn test_batch_ingestion(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing batch event ingestion");
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     ctx.ensure_clean().await?;
 
     // Create multiple events as would be sent in a batch
     let batch_events = vec![
-        ctx.publish_json_event(
+        ctx.publish_event(
             "fs-watcher",
             "file.created",
             serde_json::json!({
@@ -122,7 +122,7 @@ async fn test_batch_ingestion(ctx: TestContext) -> Result<()> {
             }),
         )
         .await?,
-        ctx.publish_json_event(
+        ctx.publish_event(
             "terminal",
             "command.executed",
             serde_json::json!({
@@ -132,7 +132,7 @@ async fn test_batch_ingestion(ctx: TestContext) -> Result<()> {
             }),
         )
         .await?,
-        ctx.publish_json_event(
+        ctx.publish_event(
             "desktop",
             "window.focused",
             serde_json::json!({
@@ -187,11 +187,11 @@ async fn test_batch_ingestion(ctx: TestContext) -> Result<()> {
 #[sinex_test]
 async fn test_ingestion_validation(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing event validation during ingestion");
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
 
     // Test valid event with complete payload
     let valid_event = ctx
-        .publish_json_event(
+        .publish_event(
             "fs-watcher",
             "file.created",
             serde_json::json!({
@@ -208,7 +208,7 @@ async fn test_ingestion_validation(ctx: TestContext) -> Result<()> {
 
     // Test edge case validation - minimal payload
     let minimal_event = ctx
-        .publish_json_event(
+        .publish_event(
             "system",
             "service.started",
             serde_json::json!({
@@ -225,7 +225,7 @@ async fn test_ingestion_validation(ctx: TestContext) -> Result<()> {
     // Test large payload handling
     let large_payload = "x".repeat(10000); // 10KB payload
     let large_event_result = ctx
-        .publish_json_event(
+        .publish_event(
             "application",
             "log.entry",
             serde_json::json!({
@@ -249,7 +249,7 @@ async fn test_ingestion_validation(ctx: TestContext) -> Result<()> {
 #[sinex_serial_test]
 async fn test_source_and_type_patterns(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing source and event type patterns");
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     ctx.ensure_clean().await?;
 
     // Test events with different sources and types for pattern validation
@@ -290,7 +290,7 @@ async fn test_source_and_type_patterns(ctx: TestContext) -> Result<()> {
 
     let mut stored_events = Vec::new();
     for (source, event_type, payload) in test_patterns {
-        let event = ctx.publish_json_event(source, event_type, payload).await?;
+        let event = ctx.publish_event(source, event_type, payload).await?;
         stored_events.push((source, event_type, event));
     }
 
@@ -350,7 +350,7 @@ async fn test_source_and_type_patterns(ctx: TestContext) -> Result<()> {
 #[sinex_serial_test]
 async fn test_ingestion_performance(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing ingestion service performance");
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     ctx.ensure_clean().await?;
 
     let start_time = std::time::Instant::now();
@@ -368,8 +368,8 @@ async fn test_ingestion_performance(ctx: TestContext) -> Result<()> {
         attempt += 1;
 
         match ctx
-            .publish_json_event(
-                &source,
+            .publish_event(
+                source.as_str(),
                 "throughput.test",
                 serde_json::json!({
                     "sequence": sequence,
@@ -459,7 +459,7 @@ async fn test_ingestion_performance(ctx: TestContext) -> Result<()> {
 #[sinex_serial_test]
 async fn test_sequential_ingestion(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing sequential event ingestion");
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     ctx.ensure_clean().await?;
 
     let source = format!("sequential-ingest-{}", Ulid::new());
@@ -474,8 +474,8 @@ async fn test_sequential_ingestion(ctx: TestContext) -> Result<()> {
         while attempts < 4 {
             attempts += 1;
             let event_result = ctx
-                .publish_json_event(
-                    &source,
+                .publish_event(
+                    source.as_str(),
                     "sequential.test",
                     serde_json::json!({
                         "worker_id": i,
@@ -553,7 +553,7 @@ async fn test_ingestion_error_handling(ctx: TestContext) -> Result<()> {
 
     // Test successful ingestion
     let valid_event = ctx
-        .publish_json_event(
+        .publish_event(
             "error-test",
             "error.handling",
             serde_json::json!({
@@ -608,9 +608,7 @@ async fn test_ingestion_error_handling(ctx: TestContext) -> Result<()> {
 
     let mut processed_count = 0;
     for (case_name, payload) in edge_cases {
-        let edge_event_result = ctx
-            .publish_json_event("error-test", "edge.case", payload)
-            .await;
+        let edge_event_result = ctx.publish_event("error-test", "edge.case", payload).await;
 
         match edge_event_result {
             Ok(_) => {
@@ -630,7 +628,7 @@ async fn test_ingestion_error_handling(ctx: TestContext) -> Result<()> {
 
     // Verify service recovery after edge case processing
     let recovery_event = ctx
-        .publish_json_event(
+        .publish_event(
             "error-test",
             "error.recovery",
             serde_json::json!({
@@ -696,7 +694,7 @@ async fn test_schema_validation_patterns(ctx: TestContext) -> Result<()> {
     ];
 
     for (source, event_type, payload) in schema_test_events {
-        let event = ctx.publish_json_event(source, event_type, payload).await?;
+        let event = ctx.publish_event(source, event_type, payload).await?;
 
         assert!(
             event.id.is_some(),
@@ -756,7 +754,7 @@ async fn test_payload_validation_patterns(ctx: TestContext) -> Result<()> {
 
     for (pattern_name, payload) in validation_patterns {
         let event = ctx
-            .publish_json_event("validation-test", "payload.test", payload)
+            .publish_event("validation-test", "payload.test", payload)
             .await?;
 
         assert!(
@@ -786,8 +784,8 @@ async fn test_service_health_monitoring(ctx: TestContext) -> Result<()> {
 
     // Test basic health indicators through event processing
     let health_check_event = ctx
-        .publish_json_event(
-            &source,
+        .publish_event(
+            source.as_str(),
             "health.check",
             serde_json::json!({
                 "timestamp": chrono::Utc::now().to_rfc3339(),
@@ -819,8 +817,8 @@ async fn test_service_health_monitoring(ctx: TestContext) -> Result<()> {
     // Simulate service processing over time
     for i in 0..3 {
         let status_event = ctx
-            .publish_json_event(
-                &source,
+            .publish_event(
+                source.as_str(),
                 "status.update",
                 serde_json::json!({
                     "sequence": i,
@@ -867,7 +865,7 @@ async fn test_service_health_monitoring(ctx: TestContext) -> Result<()> {
 #[sinex_serial_test]
 async fn test_resource_management(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing resource management during ingestion");
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     ctx.ensure_clean().await?;
     ctx.ensure_clean().await?;
 
@@ -887,8 +885,8 @@ async fn test_resource_management(ctx: TestContext) -> Result<()> {
 
         for i in 0..events_per_pattern {
             let event = ctx
-                .publish_json_event(
-                    &source,
+                .publish_event(
+                    source.as_str(),
                     "resource.test",
                     serde_json::json!({
                         "pattern": pattern_name,
@@ -909,8 +907,8 @@ async fn test_resource_management(ctx: TestContext) -> Result<()> {
 
     // Test service stability after resource variation
     let stability_event = ctx
-        .publish_json_event(
-            &source,
+        .publish_event(
+            source.as_str(),
             "stability.check",
             serde_json::json!({
                 "message": "Service should remain stable after resource variation"
@@ -964,14 +962,14 @@ async fn test_resource_management(ctx: TestContext) -> Result<()> {
 #[sinex_test]
 async fn test_timeout_and_deadline_handling(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing timeout and deadline handling");
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     ctx.ensure_clean().await?;
 
     // Test normal operation within reasonable timeouts
     let timeout_duration = Duration::from_secs(5);
 
     let normal_operation = timeout(timeout_duration, async {
-        ctx.publish_json_event(
+        ctx.publish_event(
             "timeout-test",
             "timeout.test",
             serde_json::json!({
@@ -1000,7 +998,7 @@ async fn test_timeout_and_deadline_handling(ctx: TestContext) -> Result<()> {
 
         for i in 0..10 {
             let event = ctx
-                .publish_json_event(
+                .publish_event(
                     "timeout-test",
                     "batch.timeout.test",
                     serde_json::json!({

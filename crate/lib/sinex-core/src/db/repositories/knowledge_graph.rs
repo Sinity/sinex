@@ -12,6 +12,7 @@ use crate::models::{Entity, EntityRelation, Event, JsonValue};
 /// Entity types supported by the knowledge graph
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum EntityType {
     Person,
     Project,

@@ -938,9 +938,7 @@ impl ExplorationProvider for DesktopProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_node_sdk::stream_processor::{
-        Checkpoint, NodeInitContext, ScanArgs, TimeHorizon,
-    };
+    use sinex_node_sdk::stream_processor::{Checkpoint, NodeInitContext, ScanArgs, TimeHorizon};
     use sinex_test_utils::{node_runtime::TestRuntimeBuilder, sinex_test, TestContext};
 
     #[sinex_test]

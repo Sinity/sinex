@@ -3,6 +3,7 @@
 //! Provides hot reload, state continuity, and prompt-to-node workflow
 //! for developing SimpleProcessor nodes.
 
+mod build;
 mod dev;
 mod generate;
 mod tether;
@@ -11,7 +12,6 @@ mod watcher;
 use camino::Utf8PathBuf;
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::Result;
-use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 /// Sinex development orchestrator
@@ -62,7 +62,7 @@ enum Commands {
     },
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     color_eyre::install()?;
 
@@ -82,11 +82,7 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Commands::Dev(args) => dev::run(args).await,
-        Commands::Build { path, release } => {
-            info!("Building processor at {} (release: {})", path, release);
-            // TODO: Implement build command
-            Ok(())
-        }
+        Commands::Build { path, release } => build::run(build::BuildArgs { path, release }).await,
         Commands::Generate {
             spec,
             name,

@@ -37,6 +37,7 @@ build/
 *.swp
 *.swo
 *~
+.mcp.json
 
 # OS
 .DS_Store
@@ -91,3 +92,14 @@ devenv.lock
 .claude/
 .agent-plot-venv/
 test-results/
+
+# Temporary session notes/summaries
+**/FIXES_SUMMARY.md
+**/TACTICAL_FIXES*.md
+**/LOW_PRIORITY_FIXES*.md
+**/FIXES_APPLIED.md
+**/FIXES_CHECKLIST.md
+**/CHANGES.md
+ISSUE_*.md
+tactical-fixes-summary.md
+**/TACTICAL_ISSUES_TODO.md

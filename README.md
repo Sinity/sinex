@@ -219,8 +219,8 @@ devenv up fs-watcher terminal desktop system
 devenv up health document canonicalizer    # Optional processors
 
 # Run satellites in scanner mode
-cargo run --bin sinex-fs-watcher -- scan /path/to/scan
-cargo run --bin sinex-terminal-node -- scan --source kitty
+cargo run --bin sinex-fs-ingestor -- scan /path/to/scan
+cargo run --bin sinex-terminal-ingestor -- scan --source kitty
 
 # Query recent events
 python3 cli/exo.py query --rpc-token "$SINEX_RPC_TOKEN"
@@ -228,7 +228,7 @@ LIMIT=50 python3 cli/exo.py query --rpc-token "$SINEX_RPC_TOKEN" # Increase resu
 
 # Monitor satellites via systemd
 systemctl status sinex-ingestd
-systemctl status sinex-fs-watcher
+systemctl status sinex-fs-ingestor
 ```
 
 ### Configuration
@@ -247,7 +247,7 @@ The Sinex test suite is optimized for parallel execution, achieving 50%+ faster 
 
 - **Parallel Execution**: Automatically uses all available CPU cores
 - **Database Isolation**: pool size is 2× Nextest test threads (min 64), capped by PostgreSQL `max_connections`, with advisory locks
-- **Common Testing**: `cargo xtask test --profile reliable --prime` for the dev loop (Nextest-only; `cargo test` is unsupported). CI uses profile `ci` (reliable + CI-only skips).
+- **Common Testing**: `cargo xtask test --profile default --prime` for the dev loop (Nextest-only; `cargo test` is unsupported). CI uses profile `default` (perf/stress/external excluded).
 - **Comprehensive Coverage**: Unit, integration, property, and adversarial tests
 
 See [`TESTING.md`](TESTING.md) for the detailed testing guide and config/precedence notes.
@@ -255,8 +255,8 @@ See [`TESTING.md`](TESTING.md) for the detailed testing guide and config/precede
 Quick commands:
 ```bash
 cargo xtask check                         # cargo check --workspace
-cargo xtask test --profile reliable --prime  # Nextest with pool priming
-cargo xtask test --profile ci --prime        # CI selection (reliable + CI-only skips)
+cargo xtask test --profile default --prime   # Nextest with pool priming
+cargo xtask test --profile default --prime   # CI selection (default profile)
 NIX_CONFIG=$'experimental-features = nix-command flakes\naccept-flake-config = true' \
   ./tests/e2e/nixos-vm/run-vm-tests.sh -c smoke     # VM smoke tests
 ```
@@ -269,7 +269,7 @@ GitHub Actions exercises the exact same scripts you run locally. Before pushing,
 | --- | --- | --- |
 | Any Rust code | `cargo xtask check` | Fast local guard; CI runs `cargo xtask ci workspace`. |
 | Event payloads or schema helpers | `cargo xtask schema generate` | `ci.yml` and `schema-management.yml` refuse to run if `schemas/` drifts. |
-| CI-equivalent test selection | `cargo xtask test --profile ci --prime` | Matches CI Nextest selection (reliable + CI-only skips). |
+| CI-equivalent test selection | `cargo xtask test --profile default --prime` | Matches CI Nextest selection (default profile filter). |
 
 Additional notes:
 
@@ -285,9 +285,9 @@ Additional notes:
 
 ### Key Components
 - **Core Architecture**: [`docs/current/architecture/Core_Architecture.md`](docs/current/architecture/Core_Architecture.md)
-- **Schema & Taxonomy**: [`crate/lib/sinex-schema/docs/overview.md`](crate/lib/sinex-schema/docs/overview.md), [`docs/current/architecture/event-taxonomy.md`](docs/current/architecture/event-taxonomy.md)
+- **Schema & Taxonomy**: [`crate/lib/sinex-schema/docs/overview.md`](crate/lib/sinex-schema/docs/overview.md), [`crate/lib/sinex-schema/docs/event-taxonomy.md`](crate/lib/sinex-schema/docs/event-taxonomy.md)
   - When any `EventPayload` changes, run `cargo xtask schema generate` and commit the regenerated `schemas/` bundle (CI enforces this just like `cargo fmt`).
-- **Satellites SDK & Patterns**: [`crate/lib/sinex-satellite-sdk/docs/overview.md`](crate/lib/sinex-satellite-sdk/docs/overview.md)
+- **Node SDK & Patterns**: [`crate/lib/sinex-node-sdk/docs/overview.md`](crate/lib/sinex-node-sdk/docs/overview.md)
 
 ### For Contributors
 - **Testing Guide**: [`TESTING.md`](TESTING.md)
@@ -303,20 +303,21 @@ sinex/
 │   │   ├── sinex-gateway/         # API gateway service
 │   ├── lib/                       # Shared libraries
 │   │   ├── sinex-core/            # Core types + database repositories
-│   │   ├── sinex-schema/          # Database schema + migrations (SeaORM)
+│   │   ├── sinex-schema/          # Database schema + migrations
+│   │   ├── sinex-node-sdk/        # Node development SDK
 │   │   ├── sinex-processor-runtime/
-│   │   ├── sinex-satellite-sdk/
 │   │   ├── sinex-macros/
 │   │   ├── sinex-services/
-│   │   └── sinex-test-utils/
-│   └── satellites/                # Event satellites & automata
-│       ├── sinex-terminal-node/
-│       ├── sinex-desktop-node/
-│       ├── sinex-system-node/
-│       ├── sinex-fs-watcher/
-│       ├── sinex-terminal-command-canonicalizer/
-│       ├── sinex-health-aggregator/
-│       └── sinex-document-ingestor/
+│   │   ├── sinex-db/              # Database patterns
+│   │   └── sinex-test-utils/      # Testing infrastructure
+│   └── nodes/                     # Event nodes & automata
+│       ├── sinex-fs-ingestor/
+│       ├── sinex-terminal-ingestor/
+│       ├── sinex-desktop-ingestor/
+│       ├── sinex-system-ingestor/
+│       ├── sinex-journald-ingestor/
+│       ├── sinex-health-automaton/
+│       └── ...
 ├── schemas/                       # Generated JSON schemas for GitOps
 ├── tests/e2e/                     # Workspace-level integration suites
 ├── cli/                           # Python query interface (exo.py)

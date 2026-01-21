@@ -161,7 +161,7 @@ macro_rules! define_validated_string_type {
     };
 }
 
-// Macro to add SQLx support for string types
+// Macro to add SQLx support for string types (unvalidated)
 #[cfg(feature = "sqlx")]
 macro_rules! impl_sqlx_for_string_type {
     ($name:ident) => {
@@ -197,6 +197,50 @@ macro_rules! impl_sqlx_for_string_type {
             ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
                 let s = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
                 Ok(Self::new(s))
+            }
+        }
+    };
+}
+
+// Macro to add SQLx support for validated string types (uses FromStr)
+#[cfg(feature = "sqlx")]
+macro_rules! impl_sqlx_for_validated_string_type {
+    ($name:ident) => {
+        impl sqlx::Type<sqlx::Postgres> for $name {
+            fn type_info() -> sqlx::postgres::PgTypeInfo {
+                <String as sqlx::Type<sqlx::Postgres>>::type_info()
+            }
+
+            fn compatible(ty: &sqlx::postgres::PgTypeInfo) -> bool {
+                <String as sqlx::Type<sqlx::Postgres>>::compatible(ty)
+            }
+        }
+
+        impl sqlx::postgres::PgHasArrayType for $name {
+            fn array_type_info() -> sqlx::postgres::PgTypeInfo {
+                <String as sqlx::postgres::PgHasArrayType>::array_type_info()
+            }
+        }
+
+        impl sqlx::Encode<'_, sqlx::Postgres> for $name {
+            fn encode_by_ref(
+                &self,
+                buf: &mut sqlx::postgres::PgArgumentBuffer,
+            ) -> Result<sqlx::encode::IsNull, Box<dyn std::error::Error + Send + Sync + 'static>>
+            {
+                <&str as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&self.0.as_ref(), buf)
+            }
+        }
+
+        impl sqlx::Decode<'_, sqlx::Postgres> for $name {
+            fn decode(
+                value: sqlx::postgres::PgValueRef<'_>,
+            ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+                let s = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
+                Self::from_str(&s).map_err(|e| {
+                    Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+                        as Box<dyn std::error::Error + Send + Sync>
+                })
             }
         }
     };
@@ -754,7 +798,7 @@ impl FromStr for NatsSubject {
 mod sqlx_impl {
     use super::*;
 
-    // Event-related types
+    // Event-related types (unvalidated)
     impl_sqlx_for_string_type!(EventSource);
     impl_sqlx_for_string_type!(EventType);
     impl_sqlx_for_string_type!(HostName);
@@ -763,41 +807,43 @@ mod sqlx_impl {
     impl_sqlx_for_string_type!(SchemaVersion);
     impl_sqlx_for_string_type!(SchemaName);
 
-    // Command and shell types
+    // Command and shell types (unvalidated)
     impl_sqlx_for_string_type!(CommandText);
     impl_sqlx_for_string_type!(ShellName);
 
-    // Network types
+    // Network types (unvalidated)
     impl_sqlx_for_string_type!(Hostname);
     impl_sqlx_for_string_type!(IpAddress);
 
-    // Git types
+    // Git types (unvalidated)
     impl_sqlx_for_string_type!(CommitHash);
     impl_sqlx_for_string_type!(BranchName);
     impl_sqlx_for_string_type!(RemoteName);
 
-    // Pattern types
+    // Pattern types (unvalidated)
     impl_sqlx_for_string_type!(GlobPattern);
     impl_sqlx_for_string_type!(RegexPattern);
 
-    // Consumer group types
+    // Consumer group types (unvalidated)
     impl_sqlx_for_string_type!(ConsumerGroup);
     impl_sqlx_for_string_type!(ConsumerName);
 
-    // Path and URI types
-    impl_sqlx_for_string_type!(SanitizedPath);
-    impl_sqlx_for_string_type!(RelativePath);
-    impl_sqlx_for_string_type!(AbsoluteUri);
+    // Path and URI types (validated)
+    impl_sqlx_for_validated_string_type!(SanitizedPath);
+    impl_sqlx_for_validated_string_type!(RelativePath);
+    impl_sqlx_for_validated_string_type!(AbsoluteUri);
 
-    // Hash types
-    impl_sqlx_for_string_type!(Blake3Hash);
-    impl_sqlx_for_string_type!(Sha256Hash);
+    // Hash types (validated)
+    impl_sqlx_for_validated_string_type!(Blake3Hash);
+    impl_sqlx_for_validated_string_type!(Sha256Hash);
 
     // Semantic identifiers
     impl_sqlx_for_string_type!(ServiceName);
     impl_sqlx_for_string_type!(JobId);
-    impl_sqlx_for_string_type!(AnnexKey);
-    impl_sqlx_for_string_type!(NatsSubject);
+
+    // Validated semantic identifiers
+    impl_sqlx_for_validated_string_type!(AnnexKey);
+    impl_sqlx_for_validated_string_type!(NatsSubject);
 }
 
 /// Helper function to normalize a path lexically (without filesystem access)

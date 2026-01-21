@@ -1,0 +1,119 @@
+name: Fuzz Testing
+
+permissions:
+  contents: read
+
+on:
+  schedule:
+    # Run nightly at 3 AM UTC
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: 'Fuzzing duration per target (seconds)'
+        required: false
+        default: '60'
+      target:
+        description: 'Specific fuzz target (or "all")'
+        required: false
+        default: 'all'
+
+env:
+  CARGO_TERM_COLOR: always
+  FUZZ_DURATION: ${{ github.event.inputs.duration || '60' }}
+
+jobs:
+  fuzz:
+    name: Fuzz ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - fuzz_path_sanitization
+          - fuzz_json_payload
+          - fuzz_event_validation
+          - fuzz_sql_escaping
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: llvm-tools-preview
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+
+      - name: Cache corpus
+        uses: actions/cache@v4
+        with:
+          path: crate/lib/sinex-core/fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.sha }}
+          restore-keys: |
+            fuzz-corpus-${{ matrix.target }}-
+
+      - name: Create corpus directory
+        run: mkdir -p crate/lib/sinex-core/fuzz/corpus/${{ matrix.target }}
+
+      - name: Run fuzzer (${{ matrix.target }})
+        if: github.event.inputs.target == 'all' || github.event.inputs.target == matrix.target || github.event_name == 'schedule'
+        working-directory: crate/lib/sinex-core/fuzz
+        run: |
+          cargo +nightly fuzz run ${{ matrix.target }} -- \
+            -max_total_time=${{ env.FUZZ_DURATION }} \
+            -print_final_stats=1
+        continue-on-error: true
+
+      - name: Check for crashes
+        id: check-crashes
+        working-directory: crate/lib/sinex-core/fuzz
+        run: |
+          if [ -d "artifacts/${{ matrix.target }}" ] && [ "$(ls -A artifacts/${{ matrix.target }} 2>/dev/null)" ]; then
+            echo "crashes_found=true" >> $GITHUB_OUTPUT
+            echo "::warning::Crashes found in ${{ matrix.target }}"
+          else
+            echo "crashes_found=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload crash artifacts
+        if: steps.check-crashes.outputs.crashes_found == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes-${{ matrix.target }}
+          path: crate/lib/sinex-core/fuzz/artifacts/${{ matrix.target }}
+          retention-days: 30
+
+      - name: Upload corpus
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-corpus-${{ matrix.target }}
+          path: crate/lib/sinex-core/fuzz/corpus/${{ matrix.target }}
+          retention-days: 7
+          if-no-files-found: ignore
+
+  summary:
+    name: Fuzzing Summary
+    runs-on: ubuntu-latest
+    needs: fuzz
+    if: always()
+
+    steps:
+      - name: Download all crash artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: fuzz-crashes-*
+          path: crashes
+          merge-multiple: true
+        continue-on-error: true
+
+      - name: Report crashes
+        run: |
+          if [ -d "crashes" ] && [ "$(ls -A crashes 2>/dev/null)" ]; then
+            echo "::error::Fuzzing found crashes! Check artifacts for details."
+            ls -la crashes/
+            exit 1
+          else
+            echo "No crashes found in this fuzzing run."
+          fi

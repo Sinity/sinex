@@ -240,18 +240,20 @@ impl DevOrchestrator {
         Ok(())
     }
 
-    /// Restart the processor (build + start)
+    /// Restart the processor (build first, then stop + start)
     async fn restart(&mut self) -> Result<()> {
-        self.stop().await?;
-
-        match self.build().await {
-            Ok(binary_path) => {
-                self.start(&binary_path).await?;
-            }
+        // Build first - don't stop if build fails
+        let binary_path = match self.build().await {
+            Ok(path) => path,
             Err(e) => {
-                error!("Build failed: {}. Waiting for file changes...", e);
+                error!("Build failed: {}. Keeping current process running...", e);
+                return Ok(()); // Don't crash, just wait for next file change
             }
-        }
+        };
+
+        // Build succeeded, now safe to restart
+        self.stop().await?;
+        self.start(&binary_path).await?;
 
         Ok(())
     }

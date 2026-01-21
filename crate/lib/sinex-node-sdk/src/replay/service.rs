@@ -1,8 +1,7 @@
 use super::{
     MetricsSnapshot, ProgressTracker, ReplayController, ReplayMetrics, ReplayPhase, ReplayProgress,
 };
-use crate::event_processor::{spawn_event_processor, EventProcessorConfig, EventTransport};
-use crate::nats_publisher::NatsPublisher;
+use crate::event_node::{spawn_event_processor, EventBatcherConfig};
 use crate::stream_processor::{EventEmitter, NodeHandles, NodeRuntimeState};
 use crate::{NodeError, NodeResult};
 use chrono::{DateTime, Utc};
@@ -540,12 +539,11 @@ impl ReplayService {
         };
 
         let transport = match self.handles.transport() {
-            EventTransport::Nats(publisher) => {
+            crate::event_node::EventTransport::Nats(publisher) => {
                 let client = publisher.nats_client().clone();
-                EventTransport::Nats(Arc::new(NatsPublisher::with_namespace(
-                    client,
-                    Some(namespace.clone()),
-                )))
+                crate::event_node::EventTransport::Nats(Arc::new(
+                    crate::NatsPublisher::with_namespace(client, Some(namespace.clone())),
+                ))
             }
         };
 
@@ -554,7 +552,7 @@ impl ReplayService {
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let join = spawn_event_processor(
             transport,
-            EventProcessorConfig::default(),
+            EventBatcherConfig::default(),
             receiver,
             shutdown_rx,
         );

@@ -37,6 +37,20 @@ struct MaterialDlqPayload {
 
 impl MaterialAssembler {
     /// Insert or fetch blob metadata for the assembled material
+    ///
+    /// # BLAKE3 Hash Collision Handling
+    ///
+    /// This function uses BLAKE3 hashes for content addressing. BLAKE3 collision resistance
+    /// makes collisions cryptographically infeasible (2^128 security for 256-bit hashes).
+    ///
+    /// Collision handling strategy:
+    /// - Primary deduplication: git-annex natural key (backend, hash, size)
+    /// - BLAKE3 checksum stored for verification but not uniqueness enforcement
+    /// - If a collision occurred (astronomically unlikely), the existing blob would be reused
+    ///   since git-annex guarantees content identity via its own hash
+    /// - This is acceptable: a true collision means identical content by cryptographic assumption
+    ///
+    /// The theoretical collision risk is negligible compared to hardware/cosmic ray bit flips.
     pub(super) async fn upsert_blob(
         &self,
         state: &FinalizationState,
@@ -412,6 +426,10 @@ impl MaterialAssembler {
         }
 
         // Verify the staged file size matches expectations before annex import.
+        // Edge case: File size mismatch can occur if:
+        // - Disk writes were incomplete due to process crash during slice write
+        // - Filesystem corruption or out-of-space errors during assembly
+        // - Race between finalization and ongoing slice writes (prevented by finalizing flag)
         let file_size = tokio::fs::metadata(&final_state.temp_path)
             .await
             .map(|m| m.len() as i64)
@@ -438,6 +456,12 @@ impl MaterialAssembler {
             return Ok(());
         }
 
+        // Verify BLAKE3 hash matches the end message's claimed hash.
+        // Edge case: Hash mismatch indicates:
+        // - Network corruption during slice transmission (caught by NATS CRC but not impossible)
+        // - Bug in publisher's hash calculation
+        // - Slice ordering error (duplicate/missing slice despite offset tracking)
+        // This is a critical integrity check - failures require investigation.
         if computed_hash != end.content_hash {
             warn!(
                 material_id = %material_id,

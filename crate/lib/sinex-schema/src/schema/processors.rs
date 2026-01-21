@@ -66,7 +66,7 @@ impl OperationsLog {
                     .text()
                     .not_null()
                     .check(Expr::cust(
-                        "result_status IN ('success', 'failure', 'partial', 'running')",
+                        "result_status IN ('success', 'failure', 'partial', 'running', 'cancelled')",
                     )),
             )
             .col(ColumnDef::new(OperationsLog::ResultMessage).text())

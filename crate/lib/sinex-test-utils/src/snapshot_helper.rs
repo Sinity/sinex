@@ -80,7 +80,7 @@ pub fn persist_failure(test_name: &str, error: impl Into<String>, ctx: FailureCo
         FailureContext::Snapshot(snapshot) => (
             Some(ContextSnapshot {
                 name: snapshot.test_name().to_string(),
-                baseline_events: snapshot.baseline_events(),
+                baseline_events: snapshot.baseline_event_count(),
                 elapsed_ms: snapshot.elapsed_ms(),
                 background_pending: snapshot.background_snapshot().pending,
                 background_labels: snapshot.background_snapshot().labels,

@@ -6,21 +6,14 @@
 // - Schema contract enforcement
 
 use sinex_core::db::repositories::DbPoolExt;
-use sinex_node_sdk::{
-    config::EventSourceConfig,
-    stream_processor::{
-        Checkpoint, NodeType, ScanArgs, ScanReport, Node, TimeHorizon,
-    },
-};
+use sinex_node_sdk::stream_processor::{Checkpoint, TimeHorizon};
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::sinex_test;
 use sinex_test_utils::TestResult;
 use tracing::info;
 
 #[sinex_test]
-async fn test_phase1_unified_stream_processor_trait(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn test_phase1_unified_stream_processor_trait(ctx: TestContext) -> TestResult<()> {
     info!("Testing Phase 1: Unified Node trait");
 
     // Phase 1.1: Test that both ingestors and automata implement same trait
@@ -82,7 +75,7 @@ async fn test_phase1_single_writer_pattern(ctx: TestContext) -> TestResult<()> {
 
     // Test that events created via TestContext (simulating ingestd) have proper structure
     let test_event = ctx
-        .publish_json_event(
+        .publish_event(
             "single-writer-test",
             "pattern.validation",
             serde_json::json!({
@@ -124,7 +117,7 @@ async fn test_phase1_schema_contracts(ctx: TestContext) -> TestResult<()> {
 
     // Test event with valid schema
     let valid_event = ctx
-        .publish_json_event(
+        .publish_event(
             "schema-test",
             "contract.valid",
             serde_json::json!({
@@ -162,8 +155,7 @@ async fn test_node_sdk_components(ctx: TestContext) -> TestResult<()> {
     info!("Testing node SDK components");
 
     // Test checkpoint manager
-    use sinex_node_sdk::Checkpoint;
-    use sinex_node_sdk::{CheckpointManager, CheckpointState};
+    use sinex_node_sdk::CheckpointManager;
 
     let ctx = ctx.with_nats().await?;
     let kv = ctx.checkpoint_kv().await?;
@@ -182,7 +174,10 @@ async fn test_node_sdk_components(ctx: TestContext) -> TestResult<()> {
 
     // Update checkpoint
     checkpoint.processed_count = 42;
-    checkpoint.set_last_processed_id(Some("test-message-id".to_string()));
+    checkpoint.checkpoint = sinex_node_sdk::Checkpoint::Stream {
+        message_id: "test-message-id".to_string(),
+        event_id: None,
+    };
     checkpoint.data = Some(serde_json::json!({"test": "data"}));
 
     // Save checkpoint
@@ -216,7 +211,7 @@ async fn test_node_event_flow_simulation(ctx: TestContext) -> TestResult<()> {
 
     // Step 1: Create a raw event using modern TestContext API
     let raw_event = ctx
-        .publish_json_event(
+        .publish_event(
             "terminal",
             "command.executed",
             serde_json::json!({
@@ -232,7 +227,7 @@ async fn test_node_event_flow_simulation(ctx: TestContext) -> TestResult<()> {
 
     // Step 2: Create canonical event (simulating what an automaton would do)
     let canonical_event = ctx
-        .publish_json_event(
+        .publish_event(
             "canonical.terminal",
             "command.canonical",
             serde_json::json!({
@@ -273,7 +268,7 @@ async fn test_phase2_acquisition_integration(ctx: TestContext) -> TestResult<()>
 
     // Simulate event with material provenance
     let event_with_material = ctx
-        .publish_json_event(
+        .publish_event(
             "acquisition-test",
             "material.captured",
             serde_json::json!({
@@ -320,7 +315,7 @@ async fn test_phase2_acquisition_integration(ctx: TestContext) -> TestResult<()>
     ];
 
     for (source, event_type, payload) in temporal_events {
-        let event = ctx.publish_json_event(source, event_type, payload).await?;
+        let event = ctx.publish_event(source, event_type, payload).await?;
         assert!(event.id.is_some());
     }
 
@@ -328,7 +323,7 @@ async fn test_phase2_acquisition_integration(ctx: TestContext) -> TestResult<()>
 
     // Phase 2.3: Test capture job submission pattern
     let job_event = ctx
-        .publish_json_event(
+        .publish_event(
             "acquisition",
             "capture.requested",
             serde_json::json!({
@@ -350,36 +345,7 @@ async fn test_phase2_acquisition_integration(ctx: TestContext) -> TestResult<()>
     Ok(())
 }
 
-/// Helper function to create test event source configuration
-fn create_test_event_source_config() -> EventSourceConfig {
-    use sinex_core::types::Seconds;
-    use sinex_node_sdk::NodeConfig;
-    use std::collections::HashMap;
-    use std::path::PathBuf;
-
-    let base_config = NodeConfig {
-        service_name: "test-event-source".to_string(),
-        log_level: "debug".to_string(),
-        nats: sinex_core::nats::NatsConnectionConfig {
-            url: "nats://localhost:4222".to_string(),
-            ..Default::default()
-        },
-        database_url: None,
-        database_pool_size: 10,
-        work_dir: "/tmp/sinex-test".parse().unwrap(),
-        dry_run: true,
-        replay: None,
-    };
-
-    EventSourceConfig {
-        base: base_config,
-        batch_size: 100,
-        batch_timeout_secs: Seconds::from_secs(5),
-        source_config: HashMap::new(),
-    }
-}
-
-// Helper function removed - using TestContext::publish_json_event directly
+// Helper function removed - using TestContext::publish_event directly
 
 /// Helper function to test checkpoint functionality
 async fn test_checkpoint_functionality(ctx: &TestContext) -> TestResult<()> {
@@ -404,6 +370,7 @@ async fn test_checkpoint_functionality(ctx: &TestContext) -> TestResult<()> {
         last_activity: chrono::Utc::now(),
         data: Some(serde_json::json!({"test": "checkpoint"})),
         version: 2,
+        revision: 0,
     };
 
     manager.save_checkpoint(&checkpoint).await?;

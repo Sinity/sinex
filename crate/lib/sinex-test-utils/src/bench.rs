@@ -39,8 +39,6 @@
 //! }
 //! ```
 
-use crate::TestResult;
-
 #[cfg(feature = "bench")]
 pub use crate::bench_context::{BenchContext, DualMeasurement, BENCH_CONTEXT};
 pub use crate::static_fixtures::DatasetSize;
@@ -102,8 +100,91 @@ macro_rules! bench_with_db {
     };
 }
 
-/// Helper for creating benchmark results from Divan output
+/// Builder for creating benchmark results from Divan output.
+///
+/// This builder uses the `bon` crate to provide a clean, type-safe API
+/// for constructing benchmark results with sensible defaults.
+///
+/// # Example
+///
+/// ```rust
+/// use sinex_test_utils::bench::new_benchmark_result;
+///
+/// let result = new_benchmark_result()
+///     .name("bench_insert_event")
+///     .suite("sinex_core::db::events")
+///     .dataset("standard")
+///     .mean_ns(1_500_000)
+///     .samples(100)
+///     .build();
+/// ```
 #[cfg(feature = "bench")]
+#[bon::bon]
+impl BenchmarkResult {
+    #[builder]
+    pub fn new(
+        name: impl Into<String>,
+        suite: impl Into<String>,
+        dataset: impl Into<String>,
+        #[builder(default = chrono::Utc::now())] timestamp: chrono::DateTime<chrono::Utc>,
+        mean_ns: Option<u64>,
+        median_ns: Option<u64>,
+        std_dev_ns: Option<u64>,
+        samples: Option<usize>,
+        cold_cache_ns: Option<u64>,
+        warm_cache_ns: Option<u64>,
+        instructions: Option<u64>,
+        l1_accesses: Option<u64>,
+        l2_accesses: Option<u64>,
+        ram_accesses: Option<u64>,
+        estimated_cycles: Option<u64>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            suite: suite.into(),
+            dataset: dataset.into(),
+            timestamp,
+            mean_ns,
+            median_ns,
+            std_dev_ns,
+            samples,
+            cold_cache_ns,
+            warm_cache_ns,
+            instructions,
+            l1_accesses,
+            l2_accesses,
+            ram_accesses,
+            estimated_cycles,
+        }
+    }
+}
+
+/// Backward compatibility wrapper for creating benchmark results.
+///
+/// **Deprecated**: Use `BenchmarkResult::builder()` instead for better ergonomics.
+///
+/// # Example Migration
+///
+/// Before:
+/// ```rust
+/// let result = create_benchmark_result("bench_name", "suite", "dataset", 1500, 100);
+/// ```
+///
+/// After:
+/// ```rust
+/// let result = BenchmarkResult::builder()
+///     .name("bench_name")
+///     .suite("suite")
+///     .dataset("dataset")
+///     .mean_ns(1500)
+///     .samples(100)
+///     .build();
+/// ```
+#[cfg(feature = "bench")]
+#[deprecated(
+    since = "0.1.0",
+    note = "Use BenchmarkResult::builder() for better ergonomics and type safety"
+)]
 pub fn create_benchmark_result(
     name: &str,
     suite: &str,
@@ -111,23 +192,13 @@ pub fn create_benchmark_result(
     mean_ns: u64,
     samples: usize,
 ) -> BenchmarkResult {
-    BenchmarkResult {
-        name: name.to_string(),
-        suite: suite.to_string(),
-        dataset: dataset.to_string(),
-        timestamp: chrono::Utc::now(),
-        mean_ns: Some(mean_ns),
-        median_ns: None,  // Would need to calculate from samples
-        std_dev_ns: None, // Would need to calculate from samples
-        samples: Some(samples),
-        cold_cache_ns: None,
-        warm_cache_ns: None,
-        instructions: None,
-        l1_accesses: None,
-        l2_accesses: None,
-        ram_accesses: None,
-        estimated_cycles: None,
-    }
+    BenchmarkResult::builder()
+        .name(name)
+        .suite(suite)
+        .dataset(dataset)
+        .mean_ns(mean_ns)
+        .samples(samples)
+        .build()
 }
 
 /// Extract suite name from fully qualified function name

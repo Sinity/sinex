@@ -1,7 +1,8 @@
+use sinex_test_utils::sinex_test;
 use tokio::sync::mpsc;
 
-#[tokio::test]
-async fn bounded_channel_reports_full_without_dropping_silently() {
+#[sinex_test]
+async fn bounded_channel_reports_full_without_dropping_silently() -> TestResult<()> {
     let (tx, mut rx) = mpsc::channel::<u64>(2);
 
     tx.try_send(1).expect("first send should succeed");
@@ -22,4 +23,5 @@ async fn bounded_channel_reports_full_without_dropping_silently() {
     // Close the channel so `recv()` can return `None`.
     drop(tx);
     assert!(rx.recv().await.is_none());
+    Ok(())
 }

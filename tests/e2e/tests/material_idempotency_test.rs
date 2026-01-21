@@ -6,7 +6,7 @@ use sinex_test_utils::timing_utils::{WaitHelpers, DEFAULT_WAIT_SECS};
 
 #[sinex_test]
 async fn material_stream_idempotency(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let publisher = scope.publisher("material-idempotency");
 

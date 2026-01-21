@@ -71,7 +71,7 @@ fn namespaced_consumer(namespace: &str, base: &str) -> String {
 async fn assembler_handles_concurrent_materials_and_records_ledger(
     ctx: TestContext,
 ) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let _nats_client = ctx.nats_client();
     let namespace = ctx.pipeline_namespace().prefix().to_string();
     let (handle, js, _annex_guard, _state_guard) = start_assembler(&ctx, &namespace).await?;

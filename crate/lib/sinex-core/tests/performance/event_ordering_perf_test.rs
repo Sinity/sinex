@@ -18,10 +18,10 @@ async fn perf_ulid_sequence_ordering_validation(ctx: TestContext) -> Result<()> 
         }
 
         let event = ctx
-            .publish_json_event(
-                &test_source,
+            .publish_event(
+                test_source.as_str(),
                 "sequence.test",
-                json!({"sequence": i, "group": &test_source}),
+                json!({"sequence": i, "group": test_source.as_str()}),
             )
             .await?;
         event_ulids.push(event.id.expect("Event should have ID"));
@@ -80,7 +80,7 @@ async fn perf_database_ordering_consistency(ctx: TestContext) -> Result<()> {
 
     for i in 0..50 {
         let event = ctx
-            .publish_json_event(
+            .publish_event(
                 "db-ordering-perf",
                 "rapid.batch",
                 json!({"batch": 1, "sequence": i}),
@@ -93,7 +93,7 @@ async fn perf_database_ordering_consistency(ctx: TestContext) -> Result<()> {
 
     for i in 0..30 {
         let event = ctx
-            .publish_json_event(
+            .publish_event(
                 "db-ordering-perf",
                 "delayed.batch",
                 json!({"batch": 2, "sequence": i}),

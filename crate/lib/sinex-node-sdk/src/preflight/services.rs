@@ -686,8 +686,8 @@ async fn verify_service_configuration(messages: &mut Vec<String>) -> Result<Valu
     let mut found_unit_files = Vec::new();
 
     for unit_path in unit_paths {
-        if let Ok(entries) = std::fs::read_dir(unit_path) {
-            for entry in entries.flatten() {
+        if let Ok(mut entries) = tokio::fs::read_dir(unit_path).await {
+            while let Ok(Some(entry)) = entries.next_entry().await {
                 let file_name = entry.file_name();
                 let file_name_str = file_name.to_string_lossy();
 
