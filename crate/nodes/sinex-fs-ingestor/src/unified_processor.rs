@@ -23,6 +23,7 @@ use sinex_core::{
     },
     HostName,
 };
+use sinex_node_sdk::error_helpers::NodeErrorExt;
 use sinex_node_sdk::{
     acquisition_manager::{AcquisitionManager, RotationPolicy},
     simple_ingestor::SimpleIngestor,
