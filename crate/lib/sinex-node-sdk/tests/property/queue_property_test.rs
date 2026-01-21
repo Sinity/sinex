@@ -10,13 +10,13 @@ use async_nats::jetstream::{
     stream::{Config as StreamConfig, RetentionPolicy},
 };
 use futures::StreamExt;
-use std::sync::LazyLock;
 use proptest::prelude::*;
+use proptest::test_runner::TestCaseError;
 use serde_json::{json, Value};
 use sinex_core::types::ulid::Ulid;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
-use proptest::test_runner::TestCaseError;
-use sinex_test_utils::{TestResult, prelude::*, EphemeralNats};
+use sinex_test_utils::{prelude::*, EphemeralNats, TestResult};
+use std::sync::LazyLock;
 
 /// Helper to convert color_eyre::Report errors to TestCaseError for property tests
 fn report_to_test_error<E: std::fmt::Display>(e: E) -> TestCaseError {

@@ -13,6 +13,7 @@
 use sinex_core::db::models::EventFactory;
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::{acquire_test_database, wait_for_filtered_event_count};
+use sinex_test_utils::timing_utils::Timeouts;
 
 use sinex_core::types::ulid::Ulid;
 
@@ -41,7 +42,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult<()> {
     let _test_db_url = base_url.replace("/sinex_dev", &format!("/{}", test_db_name));
 
     // Test fresh startup with empty database
-    let fresh_startup_result = timeout(Duration::from_secs(5), async {
+    let fresh_startup_result = timeout(Duration::from_secs(Timeouts::QUICK), async {
         let test_db = acquire_test_database().await?;
         let pool = test_db.pool();
         run_migrations(pool).await?;
@@ -89,7 +90,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult<()> {
     // Test 2: Startup with existing data
     println!("\nTesting startup with existing data...");
 
-    let existing_data_startup = timeout(Duration::from_secs(3), async {
+    let existing_data_startup = timeout(Duration::from_secs(Timeouts::SHORT), async {
         let test_db = acquire_test_database().await?;
         let pool = test_db.pool();
 
@@ -162,7 +163,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult<()> {
 
     // Create a corrupted migration state (simulate partial migration failure)
     let error_recovery_test = timeout(
-        Duration::from_secs(5),
+        Duration::from_secs(Timeouts::QUICK),
         async {
             let test_db = acquire_test_database().await?;
         let pool = test_db.pool();
@@ -285,7 +286,7 @@ async fn test_shutdown_sequence_graceful_termination(
     // Step 1: Complete active transactions
     let transaction_completion_start = Instant::now();
     for (i, tx) in transactions.into_iter().enumerate() {
-        match timeout(Duration::from_secs(3), tx.commit()).await {
+        match timeout(Duration::from_secs(Timeouts::SHORT), tx.commit()).await {
             Ok(Ok(())) => {
                 println!("    ✓ Transaction {} committed gracefully", i);
             }
@@ -305,7 +306,7 @@ async fn test_shutdown_sequence_graceful_termination(
     let connection_release_duration = connection_release_start.elapsed();
 
     // Step 3: Verify database state after shutdown
-    let post_shutdown_verification = timeout(Duration::from_secs(3), async {
+    let post_shutdown_verification = timeout(Duration::from_secs(Timeouts::SHORT), async {
         // New connection should work
         let verification_pool = ctx.pool();
 
@@ -355,7 +356,7 @@ async fn test_shutdown_sequence_graceful_termination(
                 "Database should remain functional after shutdown"
             );
             assert!(
-                total_shutdown_duration < Duration::from_secs(5),
+                total_shutdown_duration < Duration::from_secs(Timeouts::QUICK),
                 "Shutdown should be reasonably fast"
             );
 
@@ -372,7 +373,7 @@ async fn test_shutdown_sequence_graceful_termination(
     // Test 2: Handling of interrupted shutdown
     println!("\nTesting interrupted shutdown scenarios...");
 
-    let interrupted_shutdown_test = timeout(Duration::from_secs(5), async {
+    let interrupted_shutdown_test = timeout(Duration::from_secs(Timeouts::QUICK), async {
         // Get pool outside of spawn to avoid Send issues
         let pool = ctx.pool().clone();
 
@@ -405,7 +406,7 @@ async fn test_shutdown_sequence_graceful_termination(
         long_operation.abort();
 
         // Verify system remains stable after interrupt
-        let stability_check = timeout(Duration::from_secs(2), async {
+        let stability_check = timeout(Duration::from_secs(Timeouts::SHORT), async {
             let pool = ctx.pool().clone();
 
             // Database should still be responsive

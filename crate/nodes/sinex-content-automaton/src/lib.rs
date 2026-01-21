@@ -262,7 +262,7 @@ impl ContentAutomaton {
     async fn process_confirmed_event(&mut self, provisional: ProvisionalEvent) -> NodeResult<u64> {
         let db_pool = self.fields.db_pool()?;
         let event_sender = self.fields.event_sender()?;
-        let event_id = Id::from_ulid(provisional.event_id);
+        let event_id = provisional.event_id;
 
         let persisted = match db_pool.events().get_by_id(event_id).await {
             Ok(Some(event)) => event,
@@ -330,26 +330,38 @@ impl ContentAutomaton {
         db_pool: &PgPool,
         _from: &Checkpoint,
     ) -> NodeResult<Vec<Event<JsonValue>>> {
+        use sinex_core::types::domain::EventType;
+        use sinex_core::types::Pagination;
+
         let window_start = Utc::now()
             - chrono::Duration::seconds(
                 self.fields.config.processing_window_seconds.as_secs() as i64
             );
+        let window_end = Utc::now();
+        let pagination = Pagination::new(Some(1000), Some(0));
 
-        let events = db_pool
-            .events()
-            .get_recent(1000)
-            .await
-            .map_err(|e| color_eyre::eyre::eyre!("Failed to query events: {}", e))?
-            .into_iter()
-            .filter(|event| event.ts_orig.map(|ts| ts > window_start).unwrap_or(true))
-            .filter(|event| {
-                self.fields
-                    .config
-                    .target_event_types
-                    .iter()
-                    .any(|t| event.event_type.as_str() == t)
-            })
-            .collect();
+        // Use efficient pre-filtering: query by type if configured, otherwise by time range
+        let events = if self.fields.config.target_event_types.is_empty() {
+            // No type filter - get all events in time range
+            db_pool
+                .events()
+                .get_by_time_range(window_start, window_end, pagination)
+                .await
+                .map_err(|e| color_eyre::eyre::eyre!("Failed to query events: {}", e))?
+        } else {
+            // Query each event type separately to leverage indexes
+            let mut all_events = Vec::new();
+            for event_type_str in &self.fields.config.target_event_types {
+                let event_type = EventType::new(event_type_str);
+                let type_events = db_pool
+                    .events()
+                    .get_events_by_type_and_time_range(&event_type, window_start, window_end, pagination)
+                    .await
+                    .map_err(|e| color_eyre::eyre::eyre!("Failed to query events by type: {}", e))?;
+                all_events.extend(type_events);
+            }
+            all_events
+        };
 
         Ok(events)
     }
@@ -429,14 +441,11 @@ impl ContentAutomaton {
         let parents = source_event.id.clone().into_iter().collect::<Vec<_>>();
 
         // Create synthesized event with proper provenance
-        let event = EventBuilder::new(
-            "content-automaton".into(),
-            "content.analyzed".into(),
-            analysis_payload,
-        )
-        .from_parents(parents)?
-        .at_time(Utc::now())
-        .build()?;
+        let event =
+            EventBuilder::dynamic("content-automaton", "content.analyzed", analysis_payload)
+                .from_parents(parents)?
+                .at_time(Utc::now())
+                .build()?;
 
         Ok(event.into())
     }
@@ -496,9 +505,9 @@ impl ContentAutomaton {
         let parents = source_event.id.clone().into_iter().collect::<Vec<_>>();
 
         // Create synthesized event with proper provenance
-        let event = EventBuilder::new(
-            "content-automaton".into(),
-            "content.classified".into(),
+        let event = EventBuilder::dynamic(
+            "content-automaton",
+            "content.classified",
             classification_payload,
         )
         .from_parents(parents)?
@@ -540,9 +549,9 @@ impl ContentAutomaton {
                     "generated_at": Utc::now(),
                 });
 
-                let similarity_event = EventBuilder::new(
-                    "content-automaton".into(),
-                    "content.similarity_detected".into(),
+                let similarity_event = EventBuilder::dynamic(
+                    "content-automaton",
+                    "content.similarity_detected",
                     similarity_payload,
                 )
                 .from_parents(event_ids)?

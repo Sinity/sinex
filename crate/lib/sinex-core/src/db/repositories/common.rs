@@ -4,34 +4,58 @@ use crate::types::{Pagination, TimeRange};
 use crate::{DbTransaction, Ulid};
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
+use sinex_schema::ulid_conversions::{
+    ulid_to_uuid as ulid_to_uuid_util, uuid_to_ulid as uuid_to_ulid_util,
+};
 use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
-/// Convert ULID to UUID for database storage
+/// Convert ULID to UUID for database storage (adapter for reference-based usage)
 pub fn ulid_to_uuid(ulid: &Ulid) -> Uuid {
-    let bytes = ulid.to_bytes();
-    Uuid::from_bytes(bytes)
+    ulid_to_uuid_util(*ulid)
 }
 
-/// Convert UUID back to ULID
+/// Convert UUID back to ULID (adapter for reference-based usage)
 pub fn uuid_to_ulid(uuid: &Uuid) -> Ulid {
-    Ulid::from_bytes(*uuid.as_bytes()).expect("Valid ULID bytes from UUID")
+    uuid_to_ulid_util(*uuid)
 }
 
 /// Helper to convert database errors to SinexError
-pub fn db_error(e: sqlx::Error, context: &str) -> SinexError {
+///
+/// Converts sqlx errors to appropriate SinexError variants with context.
+/// Preserves constraint violation details for debugging and analysis.
+pub fn db_error(e: sqlx::Error, operation: &str) -> SinexError {
     match e {
-        sqlx::Error::RowNotFound => SinexError::not_found(context.to_string()),
-        sqlx::Error::Database(db_err) => {
-            if db_err.is_unique_violation() {
-                SinexError::database(format!("{context}: unique constraint violation"))
-            } else if db_err.is_foreign_key_violation() {
-                SinexError::database(format!("{context}: foreign key violation"))
-            } else {
-                SinexError::database(format!("{context}: {db_err}"))
-            }
+        sqlx::Error::RowNotFound => {
+            SinexError::not_found("Record not found").with_operation(operation)
         }
-        _ => SinexError::database(format!("{context}: {e}")),
+        sqlx::Error::Database(db_err) => {
+            let mut error = if db_err.is_unique_violation() {
+                SinexError::database("Unique constraint violation")
+                    .with_context("constraint_type", "unique")
+            } else if db_err.is_foreign_key_violation() {
+                SinexError::database("Foreign key constraint violation")
+                    .with_context("constraint_type", "foreign_key")
+            } else {
+                SinexError::database("Database error")
+                    .with_context(
+                        "error_code",
+                        db_err
+                            .code()
+                            .map(|c| c.to_string())
+                            .unwrap_or_else(|| "unknown".to_string()),
+                    )
+                    .with_source(db_err.to_string())
+            };
+            error = error.with_operation(operation);
+            error
+        }
+        sqlx::Error::PoolTimedOut => SinexError::timeout("Database connection pool timeout")
+            .with_operation(operation)
+            .with_context("timeout_reason", "pool_exhausted"),
+        _ => SinexError::database("Database error")
+            .with_source(e.to_string())
+            .with_operation(operation),
     }
 }
 

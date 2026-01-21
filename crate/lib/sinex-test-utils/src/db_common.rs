@@ -1124,7 +1124,7 @@ mod tests {
             .await?;
         let material_id = Id::<SourceMaterial>::from_ulid(material_record.id);
 
-        let new_event = sinex_core::db::models::event_builder::EventBuilder::new(
+        let new_event = sinex_core::db::models::event_builder::EventBuilder::dynamic(
             EventSource::new("test"),
             EventType::new("test"),
             serde_json::json!({}),

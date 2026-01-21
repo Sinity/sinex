@@ -148,7 +148,10 @@ async fn test_event_generation_payload_varieties(ctx: TestContext) -> TestResult
         .await?;
 
     // Verify events were created
-    assert_eq!(string_event.payload, serde_json::json!("simple string payload"));
+    assert_eq!(
+        string_event.payload,
+        serde_json::json!("simple string payload")
+    );
     assert_eq!(numeric_event.payload, serde_json::json!(42));
     assert_eq!(
         array_event.payload,
@@ -295,7 +298,8 @@ async fn test_concurrent_event_generation(ctx: TestContext) -> TestResult<()> {
     // Create events from main context in parallel
     for i in 0..5 {
         let data = TestEventData::filesystem_event(i + 100, "main-source");
-        ctx.publish_event(data.source, data.event_type, data.payload).await?;
+        ctx.publish_event(data.source, data.event_type, data.payload)
+            .await?;
     }
 
     // Collect events from spawned tasks

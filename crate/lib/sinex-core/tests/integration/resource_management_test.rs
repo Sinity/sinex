@@ -9,6 +9,7 @@
 
 use sinex_core::types::utils::ResourceGuard;
 use sinex_test_utils::prelude::*;
+use sinex_test_utils::timing_utils::Timeouts;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use tokio::time::Duration;
@@ -305,7 +306,7 @@ async fn test_concurrent_resource_access(ctx: TestContext) -> Result<()> {
     }
 
     // Wait for cleanup to complete
-    tokio::time::timeout(Duration::from_secs(1), async {
+    tokio::time::timeout(Duration::from_secs(Timeouts::QUICK), async {
         loop {
             if cleanup_count.load(Ordering::SeqCst) >= 5 {
                 break;

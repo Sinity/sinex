@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use sinex_core::types::utils::coordination::{CoordinationPrimitive, ResetBehavior};
 use sinex_test_utils::sinex_test;
+use sinex_test_utils::timing_utils::Timeouts;
 use tokio::time::sleep;
 
 #[sinex_test]
@@ -51,7 +52,7 @@ async fn coordination_barrier_increments_generation() -> TestResult<()> {
             let barrier = barrier.clone();
             tokio::spawn(async move {
                 sleep(Duration::from_millis(i * 10)).await;
-                barrier.wait(Duration::from_secs(1)).await
+                barrier.wait(Duration::from_secs(Timeouts::QUICK)).await
             })
         })
         .collect::<Vec<_>>();

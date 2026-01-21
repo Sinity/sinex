@@ -9,7 +9,7 @@
 
 mod common {
     pub use sinex_core::{
-        db::models::{Event, EventBuilder, EventId, Provenance},
+        db::models::{Event, EventBuilder, EventId},
         db::repositories::DbPoolExt,
         types::{domain::EventType, Seconds},
         JsonValue,
@@ -19,7 +19,10 @@ mod common {
     };
 
     pub use sinex_node_sdk::{
-        automaton_base::{AutomatonFields, ChannelConfirmedEventHandler},
+        automaton_base::{
+            bootstrap_provenance, event_ids_from_events, provenance_from_ids, AutomatonFields,
+            ChannelConfirmedEventHandler, MAX_PROVENANCE_IDS,
+        },
         stream_processor::{
             Checkpoint, EventSender, Node, NodeCapabilities, NodeInitContext, NodeRuntimeState,
             NodeType, ScanArgs, ScanReport, TimeHorizon,
@@ -51,9 +54,8 @@ use std::sync::Arc;
 
 const MAX_ANALYTICS_EVENTS: usize = 768;
 const DEFAULT_BATCH_SIZE: usize = 128;
-const MAX_PROVENANCE_IDS: usize = 8;
 
-// Use common constants from AutomatonFields for channel/history sizes
+// Provenance utilities imported from sinex_node_sdk::automaton_base
 
 /// Configuration for Analytics Automaton
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -220,7 +222,7 @@ impl AnalyticsAutomaton {
     async fn process_confirmed_event(&mut self, provisional: ProvisionalEvent) -> NodeResult<u64> {
         let db_pool = self.db_pool()?;
         let event_sender = self.event_sender()?;
-        let event_id = EventId::from_ulid(provisional.event_id);
+        let event_id = provisional.event_id;
 
         let persisted = match db_pool.events().get_by_id(event_id).await {
             Ok(Some(event)) => event,
@@ -430,15 +432,12 @@ impl AnalyticsAutomaton {
             });
 
             let provenance = provenance_from_ids(&stats.sample_ids);
-            let event = EventBuilder::new(
-                "analytics-automaton".into(),
-                "analytics.pattern.detected".into(),
-                payload,
-            )
-            .with_provenance(provenance)
-            .at_time(Utc::now())
-            .build()
-            .expect("infallible: provenance set via with_provenance");
+            let event =
+                EventBuilder::dynamic("analytics-automaton", "analytics.pattern.detected", payload)
+                    .with_provenance(provenance)
+                    .at_time(Utc::now())
+                    .build()
+                    .expect("infallible: provenance set via with_provenance");
             patterns.push(event);
         }
 
@@ -513,15 +512,11 @@ impl AnalyticsAutomaton {
 
         let provenance = provenance_from_ids(&top_pairs[0].1.sample_ids);
         Some(
-            EventBuilder::new(
-                "analytics-automaton".into(),
-                "analytics.correlation".into(),
-                payload,
-            )
-            .with_provenance(provenance)
-            .at_time(Utc::now())
-            .build()
-            .expect("infallible: provenance set via with_provenance"),
+            EventBuilder::dynamic("analytics-automaton", "analytics.correlation", payload)
+                .with_provenance(provenance)
+                .at_time(Utc::now())
+                .build()
+                .expect("infallible: provenance set via with_provenance"),
         )
     }
 }
@@ -563,17 +558,17 @@ impl Node for AnalyticsAutomaton {
             final_checkpoint: Checkpoint::None,
             time_range: Some((start_time, Utc::now())),
             processor_stats: HashMap::from([
-                ("window_events".into(), snapshot_size as u64),
+                ("window_events".to_string(), snapshot_size as u64),
                 (
-                    "frequency_enabled".into(),
+                    "frequency_enabled".to_string(),
                     self.fields.config.enable_frequency_analysis as u64,
                 ),
                 (
-                    "pattern_enabled".into(),
+                    "pattern_enabled".to_string(),
                     self.fields.config.enable_pattern_detection as u64,
                 ),
                 (
-                    "correlation_enabled".into(),
+                    "correlation_enabled".to_string(),
                     self.fields.config.enable_correlation_analysis as u64,
                 ),
             ]),
@@ -821,37 +816,8 @@ fn dedup_events(events: &mut Vec<Event<JsonValue>>) {
     });
 }
 
-fn event_ids_from_events(events: Vec<&Event<JsonValue>>, max: usize) -> Vec<EventId> {
-    let mut ids = Vec::new();
-    for event in events {
-        if let Some(id) = event.id.as_ref().cloned() {
-            ids.push(id);
-            if ids.len() >= max {
-                break;
-            }
-        }
-    }
-    ids
-}
-
-fn provenance_from_ids(ids: &[EventId]) -> Provenance {
-    if let Some(first) = ids.first().cloned() {
-        Provenance::from_synthesis_safe(first, ids.iter().skip(1).cloned().collect())
-    } else {
-        default_provenance()
-    }
-}
-
-fn default_provenance() -> Provenance {
-    let bootstrap = EventId::from_ulid(
-        Ulid::from_bytes([
-            0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00,
-        ])
-        .expect("valid ULID bytes"),
-    );
-    Provenance::from_synthesis_safe(bootstrap, vec![])
-}
+// Provenance utilities (event_ids_from_events, provenance_from_ids, bootstrap_provenance)
+// imported from sinex_node_sdk::automaton_base
 
 impl AnalyticsAutomaton {
     fn build_synthesized_event(
@@ -864,7 +830,7 @@ impl AnalyticsAutomaton {
             sample.iter().collect::<Vec<&Event<JsonValue>>>(),
             MAX_PROVENANCE_IDS,
         ));
-        EventBuilder::new("analytics-automaton".into(), event_type.into(), payload)
+        EventBuilder::dynamic("analytics-automaton", event_type, payload)
             .with_provenance(provenance)
             .at_time(Utc::now())
             .build()
@@ -882,9 +848,9 @@ mod tests {
     use sinex_test_utils::{sinex_test, TestResult};
 
     fn test_event(event_type: &str, minutes_ago: i64) -> Event<JsonValue> {
-        let provenance = default_provenance();
+        let provenance = bootstrap_provenance();
         let payload = json!({ "value": 1 });
-        let mut event = EventBuilder::new("test".into(), event_type.into(), payload)
+        let mut event = EventBuilder::dynamic("test", event_type, payload)
             .with_provenance(provenance)
             .at_time(Utc::now() - ChronoDuration::minutes(minutes_ago))
             .build()

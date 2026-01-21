@@ -12,6 +12,7 @@ use chrono::{DateTime, Utc};
 use proptest::prelude::*;
 use proptest::strategy::{BoxedStrategy, Strategy};
 use sinex_schema::ulid::{Ulid, UlidError};
+use sinex_schema::ulid_conversions::ulid_to_uuid;
 use sinex_test_utils::{sinex_test, TestResult};
 use std::collections::HashSet;
 use std::sync::{Arc, Barrier};
@@ -508,9 +509,10 @@ mod database_integration_tests {
     #[sinex_test]
     fn test_sqlx_uuid_compatibility() -> TestResult<()> {
         let ulid = Ulid::new();
-        let sqlx_uuid = sqlx::types::Uuid::from_bytes(*ulid.to_uuid().as_bytes());
+        // Use the utility function for ULID → UUID conversion
+        let sqlx_uuid = ulid_to_uuid(ulid);
 
-        // Verify the conversion chain works
+        // Verify the conversion chain works by converting back to UUID then ULID
         let restored_uuid = uuid::Uuid::from_bytes(*sqlx_uuid.as_bytes());
         let restored_ulid = Ulid::from_uuid(restored_uuid);
 

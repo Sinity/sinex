@@ -8,9 +8,7 @@
 use sinex_core::db::repositories::DbPoolExt;
 use sinex_node_sdk::{
     config::EventSourceConfig,
-    stream_processor::{
-        Checkpoint, NodeType, ScanArgs, ScanReport, Node, TimeHorizon,
-    },
+    stream_processor::{Checkpoint, Node, NodeType, ScanArgs, ScanReport, TimeHorizon},
 };
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::sinex_test;
@@ -18,9 +16,7 @@ use sinex_test_utils::TestResult;
 use tracing::info;
 
 #[sinex_test]
-async fn test_phase1_unified_stream_processor_trait(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn test_phase1_unified_stream_processor_trait(ctx: TestContext) -> TestResult<()> {
     info!("Testing Phase 1: Unified Node trait");
 
     // Phase 1.1: Test that both ingestors and automata implement same trait

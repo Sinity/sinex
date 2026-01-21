@@ -11,7 +11,7 @@ use async_nats::jetstream::{
 use futures::StreamExt;
 use serde_json::json;
 use sinex_core::types::ulid::Ulid;
-use sinex_test_utils::{prelude::*, EphemeralNats};
+use sinex_test_utils::{prelude::*, timing_utils::Timeouts, EphemeralNats};
 use std::time::Duration as StdDuration;
 
 async fn provision(js: &JetStream, stream: &str, subject: &str) -> TestResult<()> {
@@ -20,7 +20,7 @@ async fn provision(js: &JetStream, stream: &str, subject: &str) -> TestResult<()
         subjects: vec![subject.to_string()],
         retention: RetentionPolicy::Limits,
         max_msgs: 32,
-        max_age: StdDuration::from_secs(300),
+        max_age: StdDuration::from_secs(Timeouts::CI),
         ..Default::default()
     };
     js.get_or_create_stream(config).await?;
@@ -61,7 +61,7 @@ async fn jetstream_large_payload_roundtrip() -> TestResult<()> {
                 deliver_policy: DeliverPolicy::All,
                 ack_policy: AckPolicy::Explicit,
                 filter_subject: subject.clone(),
-                ack_wait: StdDuration::from_secs(30),
+                ack_wait: StdDuration::from_secs(Timeouts::STANDARD),
                 max_ack_pending: 8,
                 ..Default::default()
             },
@@ -128,7 +128,7 @@ async fn jetstream_large_batch_drain() -> TestResult<()> {
                 deliver_policy: DeliverPolicy::All,
                 ack_policy: AckPolicy::Explicit,
                 filter_subject: subject.clone(),
-                ack_wait: StdDuration::from_secs(60),
+                ack_wait: StdDuration::from_secs(Timeouts::LONG),
                 max_ack_pending: 64,
                 ..Default::default()
             },

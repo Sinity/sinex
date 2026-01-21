@@ -874,13 +874,12 @@ impl JetStreamConsumer {
     }
 
     fn filter_cached_batch<'a>(&self, batch: &'a [PreparedEvent]) -> Vec<&'a PreparedEvent> {
-        let cache = self
-            .recent_id_cache
-            .lock()
-            .unwrap_or_else(|poisoned| {
-                warn!("Recent ID cache mutex was poisoned; recovering with potentially inconsistent data");
-                poisoned.into_inner()
-            });
+        let cache = self.recent_id_cache.lock().unwrap_or_else(|poisoned| {
+            warn!(
+                "Recent ID cache mutex was poisoned; recovering with potentially inconsistent data"
+            );
+            poisoned.into_inner()
+        });
         let mut seen = HashSet::new();
         batch
             .iter()
@@ -894,13 +893,12 @@ impl JetStreamConsumer {
     }
 
     fn remember_batch(&self, batch: &[PreparedEvent]) {
-        let mut cache = self
-            .recent_id_cache
-            .lock()
-            .unwrap_or_else(|poisoned| {
-                warn!("Recent ID cache mutex was poisoned; recovering with potentially inconsistent data");
-                poisoned.into_inner()
-            });
+        let mut cache = self.recent_id_cache.lock().unwrap_or_else(|poisoned| {
+            warn!(
+                "Recent ID cache mutex was poisoned; recovering with potentially inconsistent data"
+            );
+            poisoned.into_inner()
+        });
         for event in batch {
             cache.insert(event.parsed_id);
         }

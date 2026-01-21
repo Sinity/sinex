@@ -388,9 +388,9 @@ mod tests {
         read_only.set_readonly(true);
         fs::set_permissions(temp_dir.path(), read_only)?;
 
-        let event = EventBuilder::new(
-            "dlq.test".into(),
-            "dead_letter.failure".into(),
+        let event = EventBuilder::dynamic(
+            "dlq.test",
+            "dead_letter.failure",
             serde_json::json!({"ok": true}),
         )
         .with_provenance(Provenance::from_synthesis_safe(

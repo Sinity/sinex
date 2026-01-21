@@ -244,7 +244,7 @@ impl PKMAutomaton {
     async fn process_confirmed_event(&mut self, provisional: ProvisionalEvent) -> NodeResult<u64> {
         let db_pool = self.fields.db_pool()?;
         let event_sender = self.fields.event_sender()?;
-        let event_id = Id::from_ulid(provisional.event_id);
+        let event_id = provisional.event_id;
 
         let persisted = match db_pool.events().get_by_id(event_id).await {
             Ok(Some(event)) => event,
@@ -330,24 +330,36 @@ impl PKMAutomaton {
         db_pool: &PgPool,
         _from: &Checkpoint,
     ) -> NodeResult<Vec<Event<JsonValue>>> {
+        use sinex_core::types::domain::EventType;
+        use sinex_core::types::Pagination;
+
         let window_start = Utc::now()
             - chrono::Duration::seconds(self.fields.config.analysis_window_seconds.as_secs() as i64);
+        let window_end = Utc::now();
+        let pagination = Pagination::new(Some(1000), Some(0));
 
-        let events = db_pool
-            .events()
-            .get_recent(1000)
-            .await
-            .map_err(|e| color_eyre::eyre::eyre!("Failed to query events: {}", e))?
-            .into_iter()
-            .filter(|event| event.ts_orig.map(|ts| ts > window_start).unwrap_or(true))
-            .filter(|event| {
-                self.fields
-                    .config
-                    .knowledge_event_types
-                    .iter()
-                    .any(|t| event.event_type.as_str() == t)
-            })
-            .collect();
+        // Use efficient pre-filtering: query by type if configured, otherwise by time range
+        let events = if self.fields.config.knowledge_event_types.is_empty() {
+            // No type filter - get all events in time range
+            db_pool
+                .events()
+                .get_by_time_range(window_start, window_end, pagination)
+                .await
+                .map_err(|e| color_eyre::eyre::eyre!("Failed to query events: {}", e))?
+        } else {
+            // Query each event type separately to leverage indexes
+            let mut all_events = Vec::new();
+            for event_type_str in &self.fields.config.knowledge_event_types {
+                let event_type = EventType::new(event_type_str);
+                let type_events = db_pool
+                    .events()
+                    .get_events_by_type_and_time_range(&event_type, window_start, window_end, pagination)
+                    .await
+                    .map_err(|e| color_eyre::eyre::eyre!("Failed to query events by type: {}", e))?;
+                all_events.extend(type_events);
+            }
+            all_events
+        };
 
         Ok(events)
     }
@@ -641,9 +653,9 @@ impl PKMAutomaton {
             "generated_at": Utc::now(),
         });
 
-        let event = EventBuilder::new(
-            "pkm-automaton".into(),
-            "pkm.knowledge_extraction".into(),
+        let event = EventBuilder::dynamic(
+            "pkm-automaton",
+            "pkm.knowledge_extraction",
             insights_payload,
         )
         .from_parents(source_event_ids.into_iter())?
@@ -747,14 +759,10 @@ impl PKMAutomaton {
         });
 
         let parents = session.events.clone();
-        let event = EventBuilder::new(
-            "pkm-automaton".into(),
-            "pkm.learning_session".into(),
-            session_payload,
-        )
-        .from_parents(parents)?
-        .at_time(Utc::now())
-        .build()?;
+        let event = EventBuilder::dynamic("pkm-automaton", "pkm.learning_session", session_payload)
+            .from_parents(parents)?
+            .at_time(Utc::now())
+            .build()?;
 
         Ok(event.into())
     }
@@ -816,14 +824,11 @@ impl PKMAutomaton {
                 "generated_at": Utc::now(),
             });
 
-            let graph_event = EventBuilder::new(
-                "pkm-automaton".into(),
-                "pkm.knowledge_graph".into(),
-                graph_payload,
-            )
-            .from_parents(all_event_ids)?
-            .at_time(Utc::now())
-            .build()?;
+            let graph_event =
+                EventBuilder::dynamic("pkm-automaton", "pkm.knowledge_graph", graph_payload)
+                    .from_parents(all_event_ids)?
+                    .at_time(Utc::now())
+                    .build()?;
 
             graph_events.push(graph_event.into());
         }
@@ -882,9 +887,9 @@ impl PKMAutomaton {
                     "generated_at": Utc::now(),
                 });
 
-                let pattern_event = EventBuilder::new(
-                    "pkm-automaton".into(),
-                    "pkm.workflow_pattern".into(),
+                let pattern_event = EventBuilder::dynamic(
+                    "pkm-automaton",
+                    "pkm.workflow_pattern",
                     workflow_payload,
                 )
                 .from_parents(pattern_event_ids)?

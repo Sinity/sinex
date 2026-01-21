@@ -7,24 +7,65 @@
 
 use serde::{Deserialize, Serialize};
 use sinex_schema::ulid::Ulid;
+use std::cmp::Ordering;
 use std::fmt;
+use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 
 /// A strongly-typed ID that prevents mixing different ID types
 ///
 /// Use this with any domain type T to create type-safe identifiers:
 /// - `Id<Event>` for events
-/// - `Id<User>` for users  
+/// - `Id<User>` for users
 /// - `Id<YourType>` for any custom domain type
 ///
 /// This wraps the primitive Ulid type from sinex-schema to provide
 /// domain-level type safety while keeping schema records primitive.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+///
+/// Note: Clone, Copy, Hash, Eq, Ord are manually implemented to avoid
+/// requiring T to implement these traits (since PhantomData<T> doesn't
+/// participate in these operations - only the ulid field does).
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Id<T> {
     ulid: Ulid,
     #[serde(skip)]
     _phantom: PhantomData<T>,
+}
+
+// Manual implementations that don't require T to implement the traits
+impl<T> Clone for Id<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for Id<T> {}
+
+impl<T> PartialEq for Id<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.ulid == other.ulid
+    }
+}
+
+impl<T> Eq for Id<T> {}
+
+impl<T> PartialOrd for Id<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<T> Ord for Id<T> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.ulid.cmp(&other.ulid)
+    }
+}
+
+impl<T> Hash for Id<T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.ulid.hash(state);
+    }
 }
 
 impl<T> Id<T> {

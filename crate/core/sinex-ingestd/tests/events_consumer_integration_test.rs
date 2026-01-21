@@ -89,7 +89,13 @@ async fn jetstream_consumer_processes_batches_without_dlq(ctx: TestContext) -> T
     let ctx = ctx.with_nats().shared().await?;
     let suffix = format!("batch-{}", Ulid::new());
     let hooks = TestHooks::none();
-    let setup = start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(5), &hooks).await?;
+    let setup = start_consumer_with_hooks(
+        &ctx,
+        &suffix,
+        Duration::from_secs(Timeouts::STANDARD),
+        &hooks,
+    )
+    .await?;
 
     let publisher = TestNodePublisher::with_namespace(
         setup.nats_client.clone(),
@@ -107,8 +113,13 @@ async fn jetstream_consumer_processes_batches_without_dlq(ctx: TestContext) -> T
     }
 
     // All events should land in the database with the expected source.
-    WaitHelpers::wait_for_source_events(&ctx.pool, &format!("integration.{suffix}"), 100, 25)
-        .await?;
+    WaitHelpers::wait_for_source_events(
+        &ctx.pool,
+        &format!("integration.{suffix}"),
+        100,
+        Timeouts::EXTENDED,
+    )
+    .await?;
 
     // Confirm DLQ stayed empty.
     let dlq_state = setup
@@ -129,7 +140,9 @@ async fn jetstream_consumer_survives_transient_db_failure(ctx: TestContext) -> T
     let ctx = ctx.with_nats().shared().await?;
     let suffix = format!("retry-{}", Ulid::new());
     let (hooks, _counters) = TestHooks::builder().fail_once().build();
-    let setup = start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(2), &hooks).await?;
+    let setup =
+        start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)
+            .await?;
 
     let event_id = Ulid::new();
     let confirmation_subject = format!(
@@ -226,7 +239,13 @@ async fn confirmation_emitted_after_persistence(ctx: TestContext) -> TestResult<
     let ctx = ctx.with_nats().shared().await?;
     let suffix = format!("confirm-{}", Ulid::new());
     let hooks = TestHooks::none();
-    let setup = start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(5), &hooks).await?;
+    let setup = start_consumer_with_hooks(
+        &ctx,
+        &suffix,
+        Duration::from_secs(Timeouts::STANDARD),
+        &hooks,
+    )
+    .await?;
 
     let publisher = TestNodePublisher::with_namespace(
         setup.nats_client.clone(),
@@ -275,7 +294,9 @@ async fn jetstream_consumer_redelivers_when_confirmation_publish_fails(
         .count_deliveries()
         .fail_confirmations(3)
         .build();
-    let setup = start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(2), &hooks).await?;
+    let setup =
+        start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)
+            .await?;
 
     let event_id = Ulid::new();
     let confirmation_subject = format!(
@@ -304,7 +325,7 @@ async fn jetstream_consumer_redelivers_when_confirmation_publish_fails(
         )
         .await?;
 
-    WaitHelpers::wait_for_event_id(&ctx.pool, event_id.into(), 20).await?;
+    WaitHelpers::wait_for_event_id(&ctx.pool, event_id.into(), Timeouts::MEDIUM).await?;
     WaitHelpers::wait_for_condition(
         || {
             let deliveries = counters.deliveries.clone();
@@ -347,7 +368,13 @@ async fn jetstream_consumer_preserves_ts_orig_subnano(ctx: TestContext) -> TestR
     let ctx = ctx.with_nats().shared().await?;
     let suffix = format!("ts-subnano-{}", Ulid::new());
     let hooks = TestHooks::none();
-    let setup = start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(5), &hooks).await?;
+    let setup = start_consumer_with_hooks(
+        &ctx,
+        &suffix,
+        Duration::from_secs(Timeouts::STANDARD),
+        &hooks,
+    )
+    .await?;
 
     let ts_orig = chrono::DateTime::<Utc>::from_timestamp(1_700_000_000, 123_456_789)
         .ok_or_else(|| eyre!("failed to build test timestamp"))?;
@@ -451,7 +478,13 @@ async fn jetstream_consumer_routes_validation_failures_to_dlq(ctx: TestContext) 
     let ctx = ctx.with_nats().shared().await?;
     let suffix = format!("dlq-{}", Ulid::new());
     let hooks = TestHooks::with_validation();
-    let setup = start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(5), &hooks).await?;
+    let setup = start_consumer_with_hooks(
+        &ctx,
+        &suffix,
+        Duration::from_secs(Timeouts::STANDARD),
+        &hooks,
+    )
+    .await?;
 
     // One invalid payload (bad timestamp), one valid.
     let valid_event_id = Ulid::new();
@@ -506,7 +539,13 @@ async fn jetstream_consumer_routes_malformed_json_to_dlq(ctx: TestContext) -> Te
     let ctx = ctx.with_nats().shared().await?;
     let suffix = format!("malformed-{}", Ulid::new());
     let hooks = TestHooks::with_validation();
-    let setup = start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(5), &hooks).await?;
+    let setup = start_consumer_with_hooks(
+        &ctx,
+        &suffix,
+        Duration::from_secs(Timeouts::STANDARD),
+        &hooks,
+    )
+    .await?;
 
     let publisher = TestNodePublisher::with_namespace(
         setup.nats_client.clone(),
@@ -553,7 +592,9 @@ async fn jetstream_consumer_routes_db_failures_to_dlq(ctx: TestContext) -> TestR
         .fail_once()
         .route_db_errors_to_dlq()
         .build();
-    let setup = start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(2), &hooks).await?;
+    let setup =
+        start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)
+            .await?;
 
     // Publish an event that will trigger the simulated DB failure.
     let event_id = Ulid::new();
@@ -665,7 +706,9 @@ async fn jetstream_consumer_dlq_reason_classification(ctx: TestContext) -> TestR
         .fail_once()
         .route_db_errors_to_dlq()
         .build();
-    let setup = start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(2), &hooks).await?;
+    let setup =
+        start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)
+            .await?;
 
     let publisher = TestNodePublisher::with_namespace(
         setup.nats_client.clone(),
@@ -740,7 +783,13 @@ async fn chaos_injector_produces_clean_snapshot(ctx: TestContext) -> TestResult<
     let ctx = ctx.with_nats().shared().await?;
     let suffix = format!("chaos-{}", Ulid::new());
     let hooks = TestHooks::none();
-    let setup = start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(5), &hooks).await?;
+    let setup = start_consumer_with_hooks(
+        &ctx,
+        &suffix,
+        Duration::from_secs(Timeouts::STANDARD),
+        &hooks,
+    )
+    .await?;
 
     let chaos = ChaosInjestor::new(Duration::from_millis(5), 0.0);
     let publisher = TestNodePublisher::with_namespace(

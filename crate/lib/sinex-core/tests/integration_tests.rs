@@ -19,7 +19,7 @@ use std::sync::Arc;
 use sinex_core::{Blob, DbPoolExt, Event, EventSource, EventType, Id, JsonValue, Ulid};
 use sinex_test_utils::constants::SOURCE_FIXTURE_REPO_PRIMARY;
 use sinex_test_utils::prelude::*;
-use sinex_test_utils::timing_utils::WaitHelpers;
+use sinex_test_utils::timing_utils::{Timeouts, WaitHelpers};
 
 // =============================================================================
 // BASIC DATABASE OPERATIONS - Core functionality tests
@@ -604,8 +604,8 @@ async fn test_high_throughput_insertion(ctx: TestContext) -> TestResult<()> {
 
     // Should be able to process 1000 events quickly
     // Pipeline might be slower than raw DB insert, so we relax the constraint slightly if needed,
-    // but 5s is plenty for 1000 events.
-    assert!(duration < std::time::Duration::from_secs(5));
+    // but QUICK (5s) is plenty for 1000 events.
+    assert!(duration < std::time::Duration::from_secs(Timeouts::QUICK));
 
     // Verify count
     let count = ctx

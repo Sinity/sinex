@@ -860,4 +860,3 @@ async fn test_mixed_validity_batch_semantics(ctx: TestContext) -> color_eyre::Re
 
     Ok(())
 }
-

@@ -1,7 +1,7 @@
 //! Node configuration environment validation tests.
 
 use sinex_node_sdk::NodeConfig;
-use sinex_test_utils::{TestResult, sinex_test, TestContext};
+use sinex_test_utils::{sinex_test, TestContext, TestResult};
 
 #[sinex_test]
 async fn test_node_environment_path_validation() -> TestResult<()> {

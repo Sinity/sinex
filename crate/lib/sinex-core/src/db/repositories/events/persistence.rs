@@ -1,6 +1,6 @@
 use super::conversions::{extract_provenance, EventRecordExt};
 use crate::db::schema::Events;
-use crate::models::{Event, EventBuilder, JsonValue, Provenance};
+use crate::models::{Event, EventBuilder, JsonValue};
 use crate::repositories::common::{db_error, DbResult, EnhancedRepository, Repository};
 use crate::types::domain::{EventSource, EventType, SchemaVersion};
 use crate::types::error::SinexError;
@@ -222,7 +222,12 @@ impl<'a> EventRepository<'a> {
         )
         .fetch_one(self.pool)
         .await
-        .map_err(|e| db_error(e, &format!("Failed to prepare cascade session '{}'", session_id)))
+        .map_err(|e| {
+            db_error(
+                e,
+                &format!("Failed to prepare cascade session '{}'", session_id),
+            )
+        })
     }
 
     pub async fn populate_cascade_roots(
@@ -819,16 +824,15 @@ impl<'a> EventRepository<'a> {
         }
 
         // Begin transaction for atomicity
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| {
-                db_error(
-                    e,
-                    &format!("Failed to begin transaction for batch insert of {} events", events.len()),
-                )
-            })?;
+        let mut tx = self.pool.begin().await.map_err(|e| {
+            db_error(
+                e,
+                &format!(
+                    "Failed to begin transaction for batch insert of {} events",
+                    events.len()
+                ),
+            )
+        })?;
 
         crate::db::query_helpers::set_repeatable_read(&mut tx).await?;
 
@@ -865,25 +869,19 @@ impl<'a> EventRepository<'a> {
                 .push_unseparated("::uuid[]::ulid[]");
         });
 
-        builder
-            .build()
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| {
-                db_error(
-                    e,
-                    &format!("Failed to insert batch of {} events", ids.len()),
-                )
-            })?;
+        builder.build().execute(&mut *tx).await.map_err(|e| {
+            db_error(
+                e,
+                &format!("Failed to insert batch of {} events", ids.len()),
+            )
+        })?;
 
-        tx.commit()
-            .await
-            .map_err(|e| {
-                db_error(
-                    e,
-                    &format!("Failed to commit batch insert of {} events", events.len()),
-                )
-            })?;
+        tx.commit().await.map_err(|e| {
+            db_error(
+                e,
+                &format!("Failed to commit batch insert of {} events", events.len()),
+            )
+        })?;
 
         Ok(events)
     }
@@ -1014,13 +1012,9 @@ impl<'a> EventRepository<'a> {
             )
             .await
             .map_err(|e| e.with_context("operation", "register test source material"))?;
-        let event = EventBuilder::new(
-            EventSource::new(source.to_string()),
-            EventType::new(event_type.to_string()),
-            payload,
-        )
-        .with_provenance(Provenance::from_material(test_material_id, 0, None, None))
-        .build()?;
+        let event = EventBuilder::dynamic(source, event_type, payload)
+            .from_material(test_material_id, 0)
+            .build()?;
 
         self.insert(event).await
     }
@@ -1174,17 +1168,15 @@ impl<'a> EventRepository<'a> {
         let deleted_count = result.rows_affected();
 
         // Commit the transaction
-        tx.commit()
-            .await
-            .map_err(|e| {
-                db_error(
-                    e,
-                    &format!(
-                        "Failed to commit test event cleanup transaction (deleted {} events)",
-                        deleted_count
-                    ),
-                )
-            })?;
+        tx.commit().await.map_err(|e| {
+            db_error(
+                e,
+                &format!(
+                    "Failed to commit test event cleanup transaction (deleted {} events)",
+                    deleted_count
+                ),
+            )
+        })?;
 
         tracing::info!(
             operation_id = %operation_id,

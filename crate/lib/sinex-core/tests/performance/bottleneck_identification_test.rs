@@ -12,7 +12,7 @@ use color_eyre::eyre::{eyre, Result};
 use futures::StreamExt;
 use serde_json::json;
 use sinex_core::types::ulid::Ulid;
-use sinex_test_utils::{prelude::*, EphemeralNats};
+use sinex_test_utils::{prelude::*, timing_utils::Timeouts, EphemeralNats};
 use std::time::{Duration as StdDuration, Instant};
 
 async fn create_stream(js: &JetStream, name: &str, subject: &str) -> Result<()> {
@@ -20,7 +20,7 @@ async fn create_stream(js: &JetStream, name: &str, subject: &str) -> Result<()> 
         name: name.to_string(),
         subjects: vec![subject.to_string()],
         retention: RetentionPolicy::WorkQueue,
-        max_age: StdDuration::from_secs(180),
+        max_age: StdDuration::from_secs(Timeouts::CI),
         ..Default::default()
     };
     js.get_or_create_stream(config).await?;

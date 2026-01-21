@@ -12,7 +12,7 @@ use rcgen::{
 use reqwest::{Certificate as ReqwestCert, Client};
 use serde_json::json;
 use sinex_gateway::{rpc_server, ServiceContainer};
-use sinex_test_utils::{sinex_test, TestContext};
+use sinex_test_utils::{sinex_test, timing_utils::Timeouts, TestContext};
 use tempfile::TempDir;
 use tokio::time::{sleep, Duration, Instant};
 
@@ -99,7 +99,7 @@ fn write_tls_bundle(dir: &Path) -> Result<CertBundle> {
 }
 
 async fn wait_for_tls_response(client: &Client, url: &str, token: &str) -> Result<()> {
-    let deadline = Instant::now() + Duration::from_secs(2);
+    let deadline = Instant::now() + Duration::from_secs(Timeouts::SHORT);
     let payload = json!({
         "jsonrpc": "2.0",
         "id": 1,

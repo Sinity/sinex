@@ -20,7 +20,7 @@ use sinex_core::coordination::kv_client::{CoordinationKvClient, InstanceMetadata
 use sinex_node_sdk::stream_processor::SchemaBroadcastEntry;
 use sinex_test_utils::nats::ensure_coordination_buckets;
 use sinex_test_utils::prelude::*;
-use sinex_test_utils::timing_utils::WaitHelpers;
+use sinex_test_utils::timing_utils::{Timeouts, WaitHelpers};
 use sinex_test_utils::{start_test_ingestd_with_config, TestIngestdConfig};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -63,7 +63,7 @@ async fn ensure_raw_event_streams(
 async fn wait_for_schema_broadcast(
     subscription: &mut async_nats::Subscriber,
 ) -> Result<Vec<SchemaBroadcastEntry>> {
-    let message = timeout(Duration::from_secs(10), subscription.next())
+    let message = timeout(Duration::from_secs(Timeouts::SHORT), subscription.next())
         .await
         .map_err(|_| eyre!("Timed out waiting for schema broadcast"))?
         .ok_or_else(|| eyre!("Schema broadcast subscription closed"))?;
@@ -677,11 +677,11 @@ async fn test_jetstream_consumer_durable_recovery(ctx: TestContext) -> Result<()
     // "No Messages" status even when messages exist, so tolerate a short warm-up.
     let mut acked_count: usize = 0;
     let start = std::time::Instant::now();
-    while acked_count < 3 && start.elapsed() < std::time::Duration::from_secs(5) {
+    while acked_count < 3 && start.elapsed() < std::time::Duration::from_secs(Timeouts::QUICK) {
         let fetch_result = consumer
             .fetch()
             .max_messages(3 - acked_count)
-            .expires(std::time::Duration::from_secs(1))
+            .expires(std::time::Duration::from_millis(1000))
             .messages()
             .await;
 
@@ -744,11 +744,11 @@ async fn test_jetstream_consumer_durable_recovery(ctx: TestContext) -> Result<()
     // in-flight, so we tolerate a few empty polls and retry briefly.
     let mut remaining_count: usize = 0;
     let start = std::time::Instant::now();
-    while remaining_count < 7 && start.elapsed() < std::time::Duration::from_secs(5) {
+    while remaining_count < 7 && start.elapsed() < std::time::Duration::from_secs(Timeouts::QUICK) {
         let fetch_result = consumer
             .fetch()
             .max_messages(10)
-            .expires(std::time::Duration::from_secs(1))
+            .expires(std::time::Duration::from_millis(1000))
             .messages()
             .await;
         match fetch_result {

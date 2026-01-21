@@ -377,7 +377,7 @@ async fn insert_event_with_ulid(
 ) -> Result<Ulid, TestCaseError> {
     let material_id = Id::<SourceMaterial>::new();
     let provenance = Provenance::from_material(material_id, 0, None, None);
-    let mut event = EventBuilder::new(source.into(), event_type.into(), payload)
+    let mut event = EventBuilder::dynamic(source, event_type, payload)
         .with_provenance(provenance)
         .build()
         .expect("infallible: provenance set via with_provenance")

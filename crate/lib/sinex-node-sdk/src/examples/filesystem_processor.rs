@@ -14,8 +14,7 @@ use async_trait::async_trait;
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sinex_core::db::models::EventBuilder;
-use sinex_core::types::events::{DirDiscoveredPayload, FileDiscoveredPayload};
+use sinex_core::types::events::{DirDiscoveredPayload, EventPayload, FileDiscoveredPayload};
 use sinex_core::SanitizedPath;
 use std::collections::HashMap;
 use tokio::fs;
@@ -129,18 +128,13 @@ impl FilesystemProcessor {
                         permissions: Some(metadata.permissions().mode()),
                     };
 
-                    EventBuilder::new(
-                        "filesystem-processor".into(),
-                        "file.discovered".into(),
-                        serde_json::to_value(payload).unwrap(),
-                    )
-                    .with_provenance(sinex_core::Provenance::Synthesis {
-                        source_event_ids: sinex_core::types::non_empty::NonEmptyVec::single(
-                            sinex_core::EventId::from_ulid(sinex_core::types::ulid::Ulid::new()),
-                        ),
-                        operation_id: None,
-                    })
-                    .build()?
+                    // Example uses synthesis provenance with a placeholder parent ID
+                    let placeholder_parent =
+                        sinex_core::EventId::from_ulid(sinex_core::types::ulid::Ulid::new());
+                    payload
+                        .from_parents([placeholder_parent])?
+                        .build()?
+                        .to_json_event()?
                 } else if metadata.is_dir() {
                     let modified_time = metadata
                         .modified()
@@ -156,18 +150,13 @@ impl FilesystemProcessor {
                         modified_at: modified_time,
                     };
 
-                    EventBuilder::new(
-                        "filesystem-processor".into(),
-                        "dir.discovered".into(),
-                        serde_json::to_value(payload).unwrap(),
-                    )
-                    .with_provenance(sinex_core::Provenance::Synthesis {
-                        source_event_ids: sinex_core::types::non_empty::NonEmptyVec::single(
-                            sinex_core::EventId::from_ulid(sinex_core::types::ulid::Ulid::new()),
-                        ),
-                        operation_id: None,
-                    })
-                    .build()?
+                    // Example uses synthesis provenance with a placeholder parent ID
+                    let placeholder_parent =
+                        sinex_core::EventId::from_ulid(sinex_core::types::ulid::Ulid::new());
+                    payload
+                        .from_parents([placeholder_parent])?
+                        .build()?
+                        .to_json_event()?
                 } else {
                     continue;
                 };

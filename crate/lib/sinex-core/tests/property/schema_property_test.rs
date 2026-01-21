@@ -324,9 +324,9 @@ fn test_validation_chain_numeric_properties(
 async fn schema_registry_should_drive_json_validation(ctx: TestContext) -> TestResult {
     let repo = ctx.pool.schemas();
     let schema = NewEventSchema {
-        source: "property-schema".into(),
-        event_type: "schema.enforced".into(),
-        schema_version: "1.0.0".into(),
+        source: "property-schema".to_string(),
+        event_type: "schema.enforced".to_string(),
+        schema_version: "1.0.0".to_string(),
         schema_content: json!({
             "type": "object",
             "properties": {

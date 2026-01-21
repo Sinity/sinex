@@ -1,7 +1,7 @@
 [build]
 # Build configuration for Sinex
-# Speed optimizations for development
-jobs = 12         # 12 × 2GB = 24GB. With zram (15GB compressed), safe for 32GB RAM.
+# Job count controlled by CARGO_BUILD_JOBS env var (set in NixOS performance.nix)
+# Default: 8 parallel crates × ~2GB = ~16GB peak memory
 pipelining = true
 
 # Shared build cache across the workspace (experimental)

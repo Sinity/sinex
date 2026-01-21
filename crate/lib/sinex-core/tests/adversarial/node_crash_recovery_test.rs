@@ -13,6 +13,7 @@ use sinex_node_sdk::{
 use sinex_schema::ulid::Ulid;
 use sinex_test_utils::{
     prelude::*, start_test_ingestd_with_config, TestIngestdConfig, TestIngestdHandle,
+    timing_utils::Timeouts,
 };
 use sqlx::Row;
 use std::sync::{
@@ -46,7 +47,7 @@ async fn wait_for_material_row(
     ctx: &TestContext,
     material_id: Ulid,
 ) -> Result<sqlx::postgres::PgRow> {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(Timeouts::QUICK);
     loop {
         let row = sqlx::query(
             r#"
@@ -315,7 +316,7 @@ async fn test_concurrent_material_acquisition_with_random_crashes(ctx: TestConte
     assert_eq!(successful + crashed, 20);
 
     // Poll until ingestd persists all statuses.
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(Timeouts::SHORT);
     let (completed_count, sensing_count) = loop {
         let completed: Option<i64> = sqlx::query_scalar!(
             r#"

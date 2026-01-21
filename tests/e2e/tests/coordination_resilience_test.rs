@@ -17,7 +17,7 @@ use tokio::time::sleep;
 
 use sinex_core::db::advisory_lock::AdvisoryLock;
 use sinex_test_utils::prelude::*;
-use sinex_test_utils::timing_utils::WaitHelpers;
+use sinex_test_utils::timing_utils::{Timeouts, WaitHelpers};
 
 // =============================================================================
 // Advisory Lock Tests
@@ -291,7 +291,7 @@ async fn test_heartbeat_revision_update(ctx: TestContext) -> Result<()> {
 
     sleep(Duration::from_millis(100)).await;
 
-    // Heartbeat fresh only
+    // Heartbeat fresh only (note: 100ms is intentional timing for test, not from Timeouts)
     kv_client.heartbeat(&fresh_id, &meta_fresh).await?;
 
     // Verify fresh has new revision, stale is same

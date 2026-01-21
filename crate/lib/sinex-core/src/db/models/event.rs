@@ -158,7 +158,7 @@ where
 
     /// Start building a typed event with builder pattern
     pub fn builder(payload: T) -> EventBuilder<T, NoProvenance> {
-        EventBuilder::new(T::SOURCE, T::EVENT_TYPE, payload)
+        EventBuilder::new_internal(T::SOURCE, T::EVENT_TYPE, payload)
     }
 }
 
@@ -299,20 +299,16 @@ mod tests {
     #[test]
     fn event_builder_sets_offsets_for_material_provenance() {
         let material_id = Id::from_ulid(Ulid::new());
-        let event = EventBuilder::new(
-            "offset-test".into(),
-            "offset.event".into(),
-            json!({"key": "value"}),
-        )
-        .from_material(material_id, 4)
-        .with_offset_start(10)
-        .expect("offset start should apply to material provenance")
-        .with_offset_end(20)
-        .expect("offset end should apply to material provenance")
-        .with_offset_kind(OffsetKind::Line)
-        .expect("offset kind should apply to material provenance")
-        .build()
-        .expect("event should build with material provenance");
+        let event = EventBuilder::dynamic("offset-test", "offset.event", json!({"key": "value"}))
+            .from_material(material_id, 4)
+            .with_offset_start(10)
+            .expect("offset start should apply to material provenance")
+            .with_offset_end(20)
+            .expect("offset end should apply to material provenance")
+            .with_offset_kind(OffsetKind::Line)
+            .expect("offset kind should apply to material provenance")
+            .build()
+            .expect("event should build with material provenance");
 
         match event.provenance {
             Provenance::Material {
@@ -333,7 +329,7 @@ mod tests {
     fn events_contain_build_version() {
         // Create a test event with material provenance
         let material_id = Id::from_ulid(Ulid::new());
-        let event = EventBuilder::new("test".into(), "test.event".into(), json!({"key": "value"}))
+        let event = EventBuilder::dynamic("test", "test.event", json!({"key": "value"}))
             .from_material(material_id, 4)
             .build()
             .expect("Event should build");

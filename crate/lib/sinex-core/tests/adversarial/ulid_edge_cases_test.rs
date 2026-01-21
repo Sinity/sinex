@@ -50,7 +50,7 @@ async fn test_ulid_max_timestamp_representation(ctx: TestContext) -> TestResult<
 
     // Test database storage
     let pool = ctx.pool();
-    let event = EventBuilder::new()
+    let event = EventBuilder::dynamic()
         .id(max_ulid)
         .source("ulid_boundary_test")
         .event_type("max.timestamp")

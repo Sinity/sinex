@@ -17,7 +17,10 @@ mod common {
 
     // Runtime/SDK facades
     pub use sinex_node_sdk::{
-        automaton_base::{AutomatonFields, ChannelConfirmedEventHandler, IngestionHistoryEntry},
+        automaton_base::{
+            bootstrap_provenance, provenance_from_ids, AutomatonFields,
+            ChannelConfirmedEventHandler, IngestionHistoryEntry, MAX_PROVENANCE_IDS,
+        },
         stream_processor::{
             Checkpoint, EventSender, Node, NodeCapabilities, NodeInitContext, NodeRuntimeState,
             NodeType, ScanArgs, ScanReport, TimeHorizon,
@@ -53,10 +56,9 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
 const MAX_SEARCH_EVENTS: usize = 1024;
-const MAX_PROVENANCE_IDS: usize = 8;
 const DEFAULT_BATCH_SIZE: usize = 128;
 
-// Use common constants from AutomatonFields for channel/history sizes
+// Provenance utilities imported from sinex_node_sdk::automaton_base
 
 /// Configuration for Search Automaton
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -256,7 +258,7 @@ impl SearchAutomaton {
 
     async fn process_confirmed_event(&mut self, provisional: ProvisionalEvent) -> NodeResult<u64> {
         let db_pool = self.db_pool()?;
-        let event_id = EventId::from_ulid(provisional.event_id);
+        let event_id = provisional.event_id;
 
         let persisted = match db_pool.events().get_by_id(event_id).await {
             Ok(Some(event)) => event,
@@ -610,15 +612,12 @@ impl SearchAutomaton {
         });
 
         let provenance = self.provenance_from_index();
-        let analytics_event = EventBuilder::new(
-            "search-automaton".into(),
-            "search.analytics".into(),
-            payload,
-        )
-        .with_provenance(provenance)
-        .at_time(Utc::now())
-        .build()
-        .expect("infallible: provenance set via with_provenance");
+        let analytics_event =
+            EventBuilder::dynamic("search-automaton", "search.analytics", payload)
+                .with_provenance(provenance)
+                .at_time(Utc::now())
+                .build()
+                .expect("infallible: provenance set via with_provenance");
 
         Ok(vec![analytics_event])
     }
@@ -658,15 +657,11 @@ impl SearchAutomaton {
             ],
         });
 
-        let event = EventBuilder::new(
-            "search-automaton".into(),
-            "search.discoverability".into(),
-            payload,
-        )
-        .with_provenance(self.provenance_from_index())
-        .at_time(Utc::now())
-        .build()
-        .expect("infallible: provenance set via with_provenance");
+        let event = EventBuilder::dynamic("search-automaton", "search.discoverability", payload)
+            .with_provenance(self.provenance_from_index())
+            .at_time(Utc::now())
+            .build()
+            .expect("infallible: provenance set via with_provenance");
 
         Ok(vec![event])
     }
@@ -674,7 +669,7 @@ impl SearchAutomaton {
     fn generate_search_index_event(&self) -> NodeResult<Event<JsonValue>> {
         if self.search_index.is_empty() {
             return Err(NodeError::Processing(
-                "Search index empty; nothing to emit".into(),
+                "Search index empty; nothing to emit".to_string(),
             ));
         }
 
@@ -732,15 +727,13 @@ impl SearchAutomaton {
             "generated_at": Utc::now(),
         });
 
-        Ok(EventBuilder::new(
-            "search-automaton".into(),
-            "search.index_built".into(),
-            payload,
+        Ok(
+            EventBuilder::dynamic("search-automaton", "search.index_built", payload)
+                .with_provenance(self.provenance_from_index())
+                .at_time(Utc::now())
+                .build()
+                .expect("infallible: provenance set via with_provenance"),
         )
-        .with_provenance(self.provenance_from_index())
-        .at_time(Utc::now())
-        .build()
-        .expect("infallible: provenance set via with_provenance"))
     }
 }
 
@@ -983,26 +976,7 @@ fn dedup_events(events: &mut Vec<Event<JsonValue>>) {
     });
 }
 
-fn provenance_from_ids(ids: &[EventId]) -> Provenance {
-    if let Some(first) = ids.first().cloned() {
-        Provenance::from_synthesis_safe(first, ids.iter().skip(1).cloned().collect())
-    } else {
-        default_provenance()
-    }
-}
-
-fn default_provenance() -> Provenance {
-    let bootstrap = EventId::from_ulid(
-        Ulid::from_bytes([
-            0x01, 0x90, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00,
-        ])
-        .expect("valid ULID bytes"),
-    );
-    Provenance::from_synthesis_safe(bootstrap, vec![])
-}
-
-// ChannelConfirmedEventHandler is now imported from sinex_node_sdk::automaton_base
+// Provenance utilities (provenance_from_ids, bootstrap_provenance) imported from sinex_node_sdk::automaton_base
 
 #[cfg(test)]
 mod tests {
@@ -1013,12 +987,12 @@ mod tests {
     use tokio::runtime::Runtime;
 
     fn make_event(event_type: &str, minutes_ago: i64, content: &str) -> Event<JsonValue> {
-        let mut event = EventBuilder::new(
-            "test".into(),
-            event_type.into(),
+        let mut event = EventBuilder::dynamic(
+            "test",
+            event_type,
             json!({ "content": content, "title": "Test" }),
         )
-        .with_provenance(default_provenance())
+        .with_provenance(bootstrap_provenance())
         .at_time(Utc::now() - ChronoDuration::minutes(minutes_ago))
         .build()
         .expect("infallible: test provenance set");

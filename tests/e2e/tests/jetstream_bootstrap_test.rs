@@ -17,7 +17,7 @@ use std::time::Duration;
 use async_nats::jetstream::{self, consumer, stream};
 use color_eyre::eyre::eyre;
 use sinex_test_utils::prelude::*;
-use sinex_test_utils::timing_utils::WaitHelpers;
+use sinex_test_utils::timing_utils::{Timeouts, WaitHelpers};
 use tokio::sync::OnceCell;
 
 fn is_jetstream_no_messages_error(msg: &str) -> bool {
@@ -557,7 +557,7 @@ async fn test_consumer_redelivery_on_timeout(ctx: TestContext) -> Result<()> {
     // Message should be redelivered after the ack wait.
     let mut redelivered = None;
     let start = std::time::Instant::now();
-    while redelivered.is_none() && start.elapsed() < Duration::from_secs(5) {
+    while redelivered.is_none() && start.elapsed() < Duration::from_secs(Timeouts::QUICK) {
         let fetch_result = consumer
             .fetch()
             .max_messages(1)

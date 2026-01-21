@@ -540,9 +540,7 @@ impl NodeCoordination {
                     // This state should be transient - if we reach here, transition immediately
                     // to avoid unnecessary delays. The transition logic above should have already
                     // set current_mode to the target state.
-                    warn!(
-                        "Unexpected Transitioning state persisted - forcing to Standby"
-                    );
+                    warn!("Unexpected Transitioning state persisted - forcing to Standby");
                     self.current_mode = InstanceMode::Standby;
                 }
             }
@@ -984,7 +982,6 @@ impl NodeCoordination {
 
         Ok(())
     }
-
 
     // Getters
     pub fn instance(&self) -> &NodeInstance {

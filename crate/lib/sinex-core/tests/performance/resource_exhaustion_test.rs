@@ -11,7 +11,7 @@ use async_nats::jetstream::{
 use futures::StreamExt;
 use serde_json::json;
 use sinex_core::types::ulid::Ulid;
-use sinex_test_utils::{prelude::*, EphemeralNats};
+use sinex_test_utils::{prelude::*, timing_utils::Timeouts, EphemeralNats};
 use std::time::{Duration, Instant};
 
 async fn setup_stream(js: &JetStream, name: &str, subject: &str, max_msgs: i64) -> TestResult<()> {
@@ -20,7 +20,7 @@ async fn setup_stream(js: &JetStream, name: &str, subject: &str, max_msgs: i64) 
         subjects: vec![subject.to_string()],
         retention: RetentionPolicy::Limits,
         max_msgs,
-        max_age: Duration::from_secs(30),
+        max_age: Duration::from_secs(Timeouts::STANDARD),
         ..Default::default()
     };
     js.get_or_create_stream(config).await?;
@@ -124,7 +124,7 @@ async fn jetstream_consumer_recovery() -> TestResult<()> {
     let mut batch = consumer
         .fetch()
         .max_messages(128)
-        .expires(Duration::from_secs(2))
+        .expires(Duration::from_secs(Timeouts::SHORT))
         .messages()
         .await?;
 
@@ -143,7 +143,7 @@ async fn jetstream_consumer_recovery() -> TestResult<()> {
     let mut drain = consumer
         .fetch()
         .max_messages(128)
-        .expires(Duration::from_secs(2))
+        .expires(Duration::from_secs(Timeouts::SHORT))
         .messages()
         .await?;
 
@@ -220,14 +220,14 @@ async fn jetstream_high_concurrency_publish() -> TestResult<()> {
 
     let durable = format!("perf_concurrency_consumer_{}", Ulid::new());
     let consumer =
-        create_consumer(&js, &stream, &subject, &durable, Duration::from_secs(30)).await?;
+        create_consumer(&js, &stream, &subject, &durable, Duration::from_secs(Timeouts::STANDARD)).await?;
 
     let mut processed = 0usize;
     loop {
         let mut batch = consumer
             .fetch()
             .max_messages(256)
-            .expires(Duration::from_secs(1))
+            .expires(Duration::from_secs(Timeouts::QUICK))
             .messages()
             .await?;
 

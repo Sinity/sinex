@@ -123,10 +123,10 @@ async fn test_database_high_load_resilience(ctx: TestContext) -> TestResult<()> 
 /// Test database connection exhaustion recovery
 #[sinex_test]
 async fn test_database_connection_exhaustion_recovery(ctx: TestContext) -> TestResult<()> {
+    use sinex_core::types::domain::{EventSource, EventType};
+    use sinex_core::{Event, JsonValue};
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
-    use sinex_core::{Event, JsonValue};
-    use sinex_core::types::domain::{EventSource, EventType};
 
     let _ctx = ctx.with_nats().shared().await?;
     let success_count = Arc::new(AtomicU32::new(0));
@@ -182,10 +182,7 @@ async fn test_database_connection_exhaustion_recovery(ctx: TestContext) -> TestR
             Ok(_) => {} // Success or handled error
             Err(e) => {
                 // Task panic is not acceptable
-                panic!(
-                    "Task should not panic during connection exhaustion: {}",
-                    e
-                );
+                panic!("Task should not panic during connection exhaustion: {}", e);
             }
         }
     }
@@ -224,7 +221,9 @@ async fn test_event_creation_extreme_payloads(ctx: TestContext) -> TestResult<()
     ];
 
     for (name, payload) in test_cases {
-        let result = ctx.publish_event("extreme-test", name, payload.clone()).await;
+        let result = ctx
+            .publish_event("extreme-test", name, payload.clone())
+            .await;
 
         match result {
             Ok(event) => {
@@ -255,10 +254,10 @@ async fn test_event_creation_extreme_payloads(ctx: TestContext) -> TestResult<()
 /// Test concurrent event creation under stress
 #[sinex_test]
 async fn test_concurrent_event_creation_stress(ctx: TestContext) -> TestResult<()> {
+    use sinex_core::types::domain::{EventSource, EventType};
+    use sinex_core::{Event, JsonValue};
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
-    use sinex_core::{Event, JsonValue};
-    use sinex_core::types::domain::{EventSource, EventType};
 
     let _ctx = ctx.with_nats().shared().await?;
     let success_count = Arc::new(AtomicU32::new(0));

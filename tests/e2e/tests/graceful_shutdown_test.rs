@@ -15,6 +15,7 @@ use serde_json::json;
 use sinex_core::nats::NatsConnectionConfig;
 use sinex_ingestd::{config::IngestdConfig, service::IngestService, JetStreamTopology};
 use sinex_test_utils::prelude::*;
+use sinex_test_utils::timing_utils::Timeouts;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -65,8 +66,12 @@ async fn test_ingestd_graceful_shutdown_completes_inflight(ctx: TestContext) -> 
     let mut runner = service.clone();
     let handle = tokio::spawn(async move { runner.run().await });
 
-    nats.wait_for_stream(&js, &topology.events_stream, Duration::from_secs(10))
-        .await?;
+    nats.wait_for_stream(
+        &js,
+        &topology.events_stream,
+        Duration::from_secs(Timeouts::SHORT),
+    )
+    .await?;
 
     // Publish events before shutdown
     let publisher = TestNodePublisher::new(ctx.nats_client(), "graceful-source");
@@ -84,7 +89,7 @@ async fn test_ingestd_graceful_shutdown_completes_inflight(ctx: TestContext) -> 
     // Initiate shutdown
     service.shutdown().await?;
 
-    let join_result = timeout(Duration::from_secs(10), handle)
+    let join_result = timeout(Duration::from_secs(Timeouts::SHORT), handle)
         .await
         .map_err(|_| color_eyre::eyre::eyre!("ingestd runner shutdown timed out"))?;
     join_result??;
@@ -147,8 +152,12 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
     let mut runner = service.clone();
     let handle = tokio::spawn(async move { runner.run().await });
 
-    nats.wait_for_stream(&js, &topology.events_stream, Duration::from_secs(10))
-        .await?;
+    nats.wait_for_stream(
+        &js,
+        &topology.events_stream,
+        Duration::from_secs(Timeouts::SHORT),
+    )
+    .await?;
 
     // Start continuous publisher
     let shutdown_flag = Arc::new(AtomicBool::new(false));
@@ -171,17 +180,17 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
     });
 
     // Let it run for a bit
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    tokio::time::sleep(Duration::from_secs(Timeouts::MEDIUM)).await;
 
     // Signal shutdown
     shutdown_flag.store(true, Ordering::SeqCst);
     service.shutdown().await?;
 
     // Wait for publisher to stop
-    let _ = timeout(Duration::from_secs(2), publisher_handle).await;
+    let _ = timeout(Duration::from_secs(Timeouts::MEDIUM), publisher_handle).await;
 
     // Wait for service to stop
-    let join_result = timeout(Duration::from_secs(10), handle)
+    let join_result = timeout(Duration::from_secs(Timeouts::SHORT), handle)
         .await
         .map_err(|_| color_eyre::eyre::eyre!("ingestd runner shutdown timed out under load"))?;
     join_result??;
@@ -279,7 +288,7 @@ async fn test_concurrent_service_shutdown(ctx: TestContext) -> TestResult<()> {
     }
 
     // Let consumers run
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    tokio::time::sleep(Duration::from_secs(Timeouts::QUICK)).await;
 
     // Signal shutdown to all consumers
     shutdown_flag.store(true, Ordering::SeqCst);
@@ -287,7 +296,7 @@ async fn test_concurrent_service_shutdown(ctx: TestContext) -> TestResult<()> {
     // Wait for all to complete
     let shutdown_start = std::time::Instant::now();
     for handle in handles {
-        let _ = timeout(Duration::from_secs(5), handle).await;
+        let _ = timeout(Duration::from_secs(Timeouts::QUICK), handle).await;
     }
     let shutdown_duration = shutdown_start.elapsed();
 
@@ -351,8 +360,12 @@ async fn test_shutdown_data_consistency(ctx: TestContext) -> TestResult<()> {
     let mut runner = service.clone();
     let handle = tokio::spawn(async move { runner.run().await });
 
-    nats.wait_for_stream(&js, &topology.events_stream, Duration::from_secs(10))
-        .await?;
+    nats.wait_for_stream(
+        &js,
+        &topology.events_stream,
+        Duration::from_secs(Timeouts::SHORT),
+    )
+    .await?;
 
     // Publish events with structured data
     let publisher = TestNodePublisher::new(ctx.nats_client(), "consistency-source");
@@ -374,7 +387,7 @@ async fn test_shutdown_data_consistency(ctx: TestContext) -> TestResult<()> {
 
     // Shutdown
     service.shutdown().await?;
-    let _ = timeout(Duration::from_secs(10), handle).await;
+    let _ = timeout(Duration::from_secs(Timeouts::SHORT), handle).await;
 
     // Verify data consistency: no partial records
     let events = ctx
@@ -497,14 +510,14 @@ async fn test_shutdown_timeout_handling(ctx: TestContext) -> TestResult<()> {
     });
 
     // Let consumer start
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    tokio::time::sleep(Duration::from_secs(Timeouts::QUICK)).await;
 
     // Request shutdown
     shutdown_requested.store(true, Ordering::SeqCst);
     let shutdown_start = std::time::Instant::now();
 
     // Wait with timeout
-    let result = timeout(Duration::from_secs(5), consumer_handle).await;
+    let result = timeout(Duration::from_secs(Timeouts::QUICK), consumer_handle).await;
 
     let elapsed = shutdown_start.elapsed();
     let processed_count = processed_after_shutdown.load(Ordering::SeqCst);

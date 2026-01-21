@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use sinex_node_sdk::stream_processor::{
-    Checkpoint, Node, NodeCapabilities, NodeInitContext, NodeType, ScanArgs,
-    ScanReport, TimeHorizon,
+    Checkpoint, Node, NodeCapabilities, NodeInitContext, NodeType, ScanArgs, ScanReport,
+    TimeHorizon,
 };
 use sinex_node_sdk::NodeResult;
 use sinex_test_utils::{sinex_test, TestContext, TestResult};

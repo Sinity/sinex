@@ -300,10 +300,12 @@ impl LifecycleManager {
                         break;
                     }
 
-                    let _ = emitter_clone.emit_heartbeat(Some(serde_json::json!({
-                        "service_type": "node",
-                        "heartbeat_source": "lifecycle_manager"
-                    }))).await;
+                    let _ = emitter_clone
+                        .emit_heartbeat(Some(serde_json::json!({
+                            "service_type": "node",
+                            "heartbeat_source": "lifecycle_manager"
+                        })))
+                        .await;
                 }
 
                 info!(service = %service_name_clone, "Heartbeat emission stopped");

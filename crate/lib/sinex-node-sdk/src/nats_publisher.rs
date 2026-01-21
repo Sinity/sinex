@@ -297,9 +297,9 @@ mod tests {
 
     #[sinex_test]
     async fn publish_payload_serializes_json_once() -> TestResult<()> {
-        let mut event = EventBuilder::new(
-            "publisher.test".into(),
-            "payload.check".into(),
+        let mut event = EventBuilder::dynamic(
+            "publisher.test",
+            "payload.check",
             serde_json::json!({"nested": {"a": 1}}),
         )
         .with_provenance(Provenance::from_synthesis_safe(

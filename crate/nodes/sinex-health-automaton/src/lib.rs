@@ -239,7 +239,7 @@ impl HealthAggregator {
             .ok_or_else(|| NodeError::Processing("Event sender not initialized".to_string()))?
             .clone();
 
-        let event_id = EventId::from_ulid(provisional.event_id);
+        let event_id = provisional.event_id;
 
         let persisted_event = match db_pool.events().get_by_id(event_id.clone()).await {
             Ok(Some(event)) => event,
@@ -551,9 +551,9 @@ impl HealthAggregator {
                 Provenance::from_synthesis_safe(system_bootstrap_id, vec![])
             });
 
-        let event = EventBuilder::new(
-            "health-aggregator".into(),
-            "health.component_report".into(),
+        let event = EventBuilder::dynamic(
+            "health-aggregator",
+            "health.component_report",
             report_payload,
         )
         .with_provenance(provenance)
@@ -623,9 +623,9 @@ impl HealthAggregator {
             Provenance::from_synthesis_safe(system_bootstrap_id, vec![])
         });
 
-        let event = EventBuilder::new(
-            "health-aggregator".into(),
-            "health.system_status".into(),
+        let event = EventBuilder::dynamic(
+            "health-aggregator",
+            "health.system_status",
             system_health_payload,
         )
         .with_provenance(provenance)
@@ -676,14 +676,11 @@ impl HealthAggregator {
                         Provenance::from_synthesis_safe(system_bootstrap_id, vec![])
                     });
 
-                let alert_event = EventBuilder::new(
-                    "health-aggregator".into(),
-                    "health.alert".into(),
-                    alert_payload,
-                )
-                .with_provenance(provenance)
-                .build()
-                .expect("infallible: provenance set via with_provenance");
+                let alert_event =
+                    EventBuilder::dynamic("health-aggregator", "health.alert", alert_payload)
+                        .with_provenance(provenance)
+                        .build()
+                        .expect("infallible: provenance set via with_provenance");
 
                 alerts.push(alert_event);
             }

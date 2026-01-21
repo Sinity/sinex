@@ -244,7 +244,7 @@ opt-level = 0
 debug = true
 split-debuginfo = "unpacked" # Faster debug info handling
 incremental = true
-codegen-units = 256          # Maximum parallelism for fast compilation
+codegen-units = 16           # Balance: enough parallelism for incremental, bounded memory
 
 [profile.dev-fast]
 # Ultra-fast check-only profile (no debug info, minimal checks)

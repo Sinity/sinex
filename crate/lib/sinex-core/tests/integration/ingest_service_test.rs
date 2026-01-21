@@ -608,9 +608,7 @@ async fn test_ingestion_error_handling(ctx: TestContext) -> Result<()> {
 
     let mut processed_count = 0;
     for (case_name, payload) in edge_cases {
-        let edge_event_result = ctx
-            .publish_event("error-test", "edge.case", payload)
-            .await;
+        let edge_event_result = ctx.publish_event("error-test", "edge.case", payload).await;
 
         match edge_event_result {
             Ok(_) => {

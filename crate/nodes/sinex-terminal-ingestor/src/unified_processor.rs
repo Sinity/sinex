@@ -12,7 +12,7 @@ use color_eyre::eyre;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use sinex_core::{
-    types::{domain::SanitizedPath, validate_path, Bytes, Seconds},
+    types::{domain::SanitizedPath, events::EventPayload, validate_path, Bytes, Seconds},
     EventBuilder, Id, Provenance, Ulid,
 };
 use sinex_node_sdk::{
@@ -572,24 +572,16 @@ async fn process_command(
         line_number: Some(line_number as u32),
     };
 
-    let provenance = Provenance::Material {
-        id: Id::from_ulid(material_id),
-        anchor_byte: 0,
-        offset_start: Some(0),
-        offset_end: Some(bytes.len() as i64),
-        offset_kind: sinex_core::OffsetKind::Byte,
-    };
-
-    let mut event = EventBuilder::new(
-        sinex_core::types::domain::EventSource::from_static("shell.history"),
-        sinex_core::types::domain::EventType::from_static("command.imported"),
-        serde_json::to_value(payload)
-            .map_err(|e| NodeError::General(eyre::eyre!("Failed to encode payload: {}", e)))?,
-    )
-    .with_provenance(provenance)
-    .build()
-    .map_err(|e| NodeError::General(eyre::eyre!("Failed to build event: {}", e)))?;
-    event.id = Some(Id::from_ulid(Ulid::new()));
+    let event = payload
+        .from_material(material_id)
+        .with_offset_start(0)
+        .map_err(|e| NodeError::General(eyre::eyre!("Failed to set offset start: {}", e)))?
+        .with_offset_end(bytes.len() as i64)
+        .map_err(|e| NodeError::General(eyre::eyre!("Failed to set offset end: {}", e)))?
+        .build()
+        .map_err(|e| NodeError::General(eyre::eyre!("Failed to build event: {}", e)))?
+        .to_json_event()
+        .map_err(|e| NodeError::General(eyre::eyre!("Failed to convert event to JSON: {}", e)))?;
 
     ctx.stage_context
         .emit_event_with_provenance(event, material_id, Some(0), Some(bytes.len() as i64))

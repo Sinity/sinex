@@ -10,7 +10,8 @@ use sinex_core::payloads::{
     HyprlandWorkspaceSwitchedPayload, WindowGeometry,
 };
 use sinex_core::types::domain::{EventSource, EventType};
-use sinex_core::{Event as CoreEvent, EventBuilder, Id, OffsetKind, Provenance, Ulid};
+use sinex_core::types::events::EventPayload;
+use sinex_core::{EventBuilder, Id, OffsetKind, Provenance, Ulid};
 use sinex_node_sdk::stage_as_you_go::StageAsYouGoContext;
 use std::{fmt, str::FromStr, time::SystemTime};
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -369,7 +370,7 @@ impl WindowManagerWatcher {
                         offset_end: Some(payload_bytes.len() as i64),
                         offset_kind: OffsetKind::Byte,
                     };
-                    let event = EventBuilder::new(
+                    let event = EventBuilder::dynamic(
                         EventSource::from_static("wm.hyprland"),
                         EventType::from_static("wm.unhandled"),
                         payload,
@@ -435,14 +436,22 @@ impl WindowManagerWatcher {
                 workspace_id,
                 previous_window_id: self.current_focused_window.clone(),
             };
-            let provenance = Provenance::Material {
-                id: Id::from_ulid(material_id),
-                anchor_byte: 0,
-                offset_start: Some(0),
-                offset_end: Some(payload_bytes.len() as i64),
-                offset_kind: OffsetKind::Byte,
-            };
-            let event = CoreEvent::new(payload, provenance)
+            let event = payload
+                .from_material(material_id)
+                .with_offset_start(0)
+                .map_err(|e| {
+                    sinex_node_sdk::NodeError::Processing(format!(
+                        "Failed to set offset_start: {e}"
+                    ))
+                })?
+                .with_offset_end(payload_bytes.len() as i64)
+                .map_err(|e| {
+                    sinex_node_sdk::NodeError::Processing(format!("Failed to set offset_end: {e}"))
+                })?
+                .build()
+                .map_err(|e| {
+                    sinex_node_sdk::NodeError::Processing(format!("Failed to build event: {e}"))
+                })?
                 .to_json_event()
                 .map_err(|e| {
                     sinex_node_sdk::NodeError::Processing(format!(
@@ -503,14 +512,22 @@ impl WindowManagerWatcher {
                 },
                 floating: false,
             };
-            let provenance = Provenance::Material {
-                id: Id::from_ulid(material_id),
-                anchor_byte: 0,
-                offset_start: Some(0),
-                offset_end: Some(payload_bytes.len() as i64),
-                offset_kind: OffsetKind::Byte,
-            };
-            let event = CoreEvent::new(payload, provenance)
+            let event = payload
+                .from_material(material_id)
+                .with_offset_start(0)
+                .map_err(|e| {
+                    sinex_node_sdk::NodeError::Processing(format!(
+                        "Failed to set offset_start: {e}"
+                    ))
+                })?
+                .with_offset_end(payload_bytes.len() as i64)
+                .map_err(|e| {
+                    sinex_node_sdk::NodeError::Processing(format!("Failed to set offset_end: {e}"))
+                })?
+                .build()
+                .map_err(|e| {
+                    sinex_node_sdk::NodeError::Processing(format!("Failed to build event: {e}"))
+                })?
                 .to_json_event()
                 .map_err(|e| {
                     sinex_node_sdk::NodeError::Processing(format!(
@@ -572,14 +589,20 @@ impl WindowManagerWatcher {
                 .unwrap_or(0),
             close_reason: None,
         };
-        let provenance = Provenance::Material {
-            id: Id::from_ulid(material_id),
-            anchor_byte: 0,
-            offset_start: Some(0),
-            offset_end: Some(payload_bytes.len() as i64),
-            offset_kind: OffsetKind::Byte,
-        };
-        let event = CoreEvent::new(payload, provenance)
+        let event = payload
+            .from_material(material_id)
+            .with_offset_start(0)
+            .map_err(|e| {
+                sinex_node_sdk::NodeError::Processing(format!("Failed to set offset_start: {e}"))
+            })?
+            .with_offset_end(payload_bytes.len() as i64)
+            .map_err(|e| {
+                sinex_node_sdk::NodeError::Processing(format!("Failed to set offset_end: {e}"))
+            })?
+            .build()
+            .map_err(|e| {
+                sinex_node_sdk::NodeError::Processing(format!("Failed to build event: {e}"))
+            })?
             .to_json_event()
             .map_err(|e| {
                 sinex_node_sdk::NodeError::Processing(format!(
@@ -617,14 +640,22 @@ impl WindowManagerWatcher {
                 new_workspace_id: self.parse_id(workspace, "workspace_id"),
                 moved_at: Utc::now().to_rfc3339(),
             };
-            let provenance = Provenance::Material {
-                id: Id::from_ulid(material_id),
-                anchor_byte: 0,
-                offset_start: Some(0),
-                offset_end: Some(payload_bytes.len() as i64),
-                offset_kind: OffsetKind::Byte,
-            };
-            let event = CoreEvent::new(payload, provenance)
+            let event = payload
+                .from_material(material_id)
+                .with_offset_start(0)
+                .map_err(|e| {
+                    sinex_node_sdk::NodeError::Processing(format!(
+                        "Failed to set offset_start: {e}"
+                    ))
+                })?
+                .with_offset_end(payload_bytes.len() as i64)
+                .map_err(|e| {
+                    sinex_node_sdk::NodeError::Processing(format!("Failed to set offset_end: {e}"))
+                })?
+                .build()
+                .map_err(|e| {
+                    sinex_node_sdk::NodeError::Processing(format!("Failed to build event: {e}"))
+                })?
                 .to_json_event()
                 .map_err(|e| {
                     sinex_node_sdk::NodeError::Processing(format!(
@@ -677,14 +708,20 @@ impl WindowManagerWatcher {
                 .unwrap_or(0),
             active_window_id: self.current_focused_window.clone(),
         };
-        let provenance = Provenance::Material {
-            id: Id::from_ulid(material_id),
-            anchor_byte: 0,
-            offset_start: Some(0),
-            offset_end: Some(payload_bytes.len() as i64),
-            offset_kind: OffsetKind::Byte,
-        };
-        let event = CoreEvent::new(payload, provenance)
+        let event = payload
+            .from_material(material_id)
+            .with_offset_start(0)
+            .map_err(|e| {
+                sinex_node_sdk::NodeError::Processing(format!("Failed to set offset_start: {e}"))
+            })?
+            .with_offset_end(payload_bytes.len() as i64)
+            .map_err(|e| {
+                sinex_node_sdk::NodeError::Processing(format!("Failed to set offset_end: {e}"))
+            })?
+            .build()
+            .map_err(|e| {
+                sinex_node_sdk::NodeError::Processing(format!("Failed to build event: {e}"))
+            })?
             .to_json_event()
             .map_err(|e| {
                 sinex_node_sdk::NodeError::Processing(format!(
@@ -726,14 +763,22 @@ impl WindowManagerWatcher {
                     .map(|m| self.parse_id(m, "monitor_id")),
                 focused_at: Utc::now().to_rfc3339(),
             };
-            let provenance = Provenance::Material {
-                id: Id::from_ulid(material_id),
-                anchor_byte: 0,
-                offset_start: Some(0),
-                offset_end: Some(payload_bytes.len() as i64),
-                offset_kind: OffsetKind::Byte,
-            };
-            let event = CoreEvent::new(payload, provenance)
+            let event = payload
+                .from_material(material_id)
+                .with_offset_start(0)
+                .map_err(|e| {
+                    sinex_node_sdk::NodeError::Processing(format!(
+                        "Failed to set offset_start: {e}"
+                    ))
+                })?
+                .with_offset_end(payload_bytes.len() as i64)
+                .map_err(|e| {
+                    sinex_node_sdk::NodeError::Processing(format!("Failed to set offset_end: {e}"))
+                })?
+                .build()
+                .map_err(|e| {
+                    sinex_node_sdk::NodeError::Processing(format!("Failed to build event: {e}"))
+                })?
                 .to_json_event()
                 .map_err(|e| {
                     sinex_node_sdk::NodeError::Processing(format!(
@@ -957,14 +1002,20 @@ impl WindowManagerWatcher {
             ))
         })?;
         let material_id = self.register_material("state_snapshot", metadata).await?;
-        let provenance = Provenance::Material {
-            id: Id::from_ulid(material_id),
-            anchor_byte: 0,
-            offset_start: Some(0),
-            offset_end: Some(payload_bytes.len() as i64),
-            offset_kind: OffsetKind::Byte,
-        };
-        let event = CoreEvent::new(snapshot_payload, provenance)
+        let event = snapshot_payload
+            .from_material(material_id)
+            .with_offset_start(0)
+            .map_err(|e| {
+                sinex_node_sdk::NodeError::Processing(format!("Failed to set offset_start: {e}"))
+            })?
+            .with_offset_end(payload_bytes.len() as i64)
+            .map_err(|e| {
+                sinex_node_sdk::NodeError::Processing(format!("Failed to set offset_end: {e}"))
+            })?
+            .build()
+            .map_err(|e| {
+                sinex_node_sdk::NodeError::Processing(format!("Failed to build event: {e}"))
+            })?
             .to_json_event()
             .map_err(|e| {
                 sinex_node_sdk::NodeError::Processing(format!(

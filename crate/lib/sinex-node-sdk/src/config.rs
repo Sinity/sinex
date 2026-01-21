@@ -429,11 +429,18 @@ impl AutomatonConfig {
         Ok(())
     }
 
-    /// Generate default consumer name from hostname and process ID
+    /// Generate default consumer name from hostname, process ID, and random suffix.
+    ///
+    /// The random suffix ensures uniqueness even if a process restarts with the same PID
+    /// within the same second (which would otherwise cause NATS consumer name collisions).
     pub fn default_consumer_name() -> String {
+        use uuid::Uuid;
         let hostname = gethostname::gethostname().to_string_lossy().to_string();
         let pid = std::process::id();
-        format!("{}-{}", hostname, pid)
+        // Use last 8 chars of UUID for brevity while maintaining uniqueness
+        let uuid_suffix = Uuid::new_v4().to_string();
+        let suffix = &uuid_suffix[uuid_suffix.len().saturating_sub(8)..];
+        format!("{}-{}-{}", hostname, pid, suffix)
     }
 }
 

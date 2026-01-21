@@ -16,10 +16,11 @@ use serde::{Deserialize, Serialize};
 use sinex_core::{
     types::{
         domain::SanitizedPath,
+        events::EventPayload,
         validation::{validate_watch_path, FileWatchingSecurityPolicy},
-        Bytes, Id, Ulid,
+        Bytes, Ulid,
     },
-    EventBuilder, HostName, JsonValue, Provenance,
+    HostName,
 };
 use sinex_node_sdk::{
     acquisition_manager::{AcquisitionManager, RotationPolicy},
@@ -767,15 +768,20 @@ async fn handle_file_created(ctx: &WatchContext, _root: &str, path: &Path) -> No
         permissions: file_permissions(&metadata),
     };
 
-    emit_filesystem_event(
-        ctx,
-        material_id,
-        serde_json::to_value(payload)
-            .map_err(|e| NodeError::General(eyre::eyre!("Failed to encode payload: {}", e)))?,
-        "file.created",
-        size as i64,
-    )
-    .await?;
+    let event = payload
+        .from_material(material_id)
+        .build()
+        .map_err(|e| NodeError::General(eyre::eyre!("Failed to build event: {}", e)))?;
+
+    let json_event = event
+        .to_json_event()
+        .map_err(|e| NodeError::General(eyre::eyre!("Failed to convert to JSON event: {}", e)))?;
+
+    ctx.stage_context
+        .emit_event_with_provenance(json_event, material_id, Some(0), Some(size as i64))
+        .await
+        .map(|_| ())
+        .map_err(|e| NodeError::General(eyre::eyre!("Failed to emit event: {}", e)))?;
 
     ctx.metrics.record_created();
     debug!("Recorded file.created for {:?}", path);
@@ -818,15 +824,20 @@ async fn handle_file_modified(
         modification_type: modification_type.to_string(),
     };
 
-    emit_filesystem_event(
-        ctx,
-        material_id,
-        serde_json::to_value(payload)
-            .map_err(|e| NodeError::General(eyre::eyre!("Failed to encode payload: {}", e)))?,
-        "file.modified",
-        size as i64,
-    )
-    .await?;
+    let event = payload
+        .from_material(material_id)
+        .build()
+        .map_err(|e| NodeError::General(eyre::eyre!("Failed to build event: {}", e)))?;
+
+    let json_event = event
+        .to_json_event()
+        .map_err(|e| NodeError::General(eyre::eyre!("Failed to convert to JSON event: {}", e)))?;
+
+    ctx.stage_context
+        .emit_event_with_provenance(json_event, material_id, Some(0), Some(size as i64))
+        .await
+        .map(|_| ())
+        .map_err(|e| NodeError::General(eyre::eyre!("Failed to emit event: {}", e)))?;
 
     ctx.metrics.record_modified();
     debug!("Recorded file.modified for {:?}", path);
@@ -842,15 +853,20 @@ async fn handle_file_deleted(ctx: &WatchContext, _root: &str, path: &Path) -> No
         deleted_at: chrono::Utc::now(),
     };
 
-    emit_filesystem_event(
-        ctx,
-        material_id,
-        serde_json::to_value(payload)
-            .map_err(|e| NodeError::General(eyre::eyre!("Failed to encode payload: {}", e)))?,
-        "file.deleted",
-        0,
-    )
-    .await?;
+    let event = payload
+        .from_material(material_id)
+        .build()
+        .map_err(|e| NodeError::General(eyre::eyre!("Failed to build event: {}", e)))?;
+
+    let json_event = event
+        .to_json_event()
+        .map_err(|e| NodeError::General(eyre::eyre!("Failed to convert to JSON event: {}", e)))?;
+
+    ctx.stage_context
+        .emit_event_with_provenance(json_event, material_id, Some(0), Some(0))
+        .await
+        .map(|_| ())
+        .map_err(|e| NodeError::General(eyre::eyre!("Failed to emit event: {}", e)))?;
 
     ctx.metrics.record_deleted();
     debug!("Recorded file.deleted for {:?}", path);
@@ -871,15 +887,20 @@ async fn handle_file_moved(
         moved_at: chrono::Utc::now(),
     };
 
-    emit_filesystem_event(
-        ctx,
-        material_id,
-        serde_json::to_value(payload)
-            .map_err(|e| NodeError::General(eyre::eyre!("Failed to encode payload: {}", e)))?,
-        "file.moved",
-        0,
-    )
-    .await?;
+    let event = payload
+        .from_material(material_id)
+        .build()
+        .map_err(|e| NodeError::General(eyre::eyre!("Failed to build event: {}", e)))?;
+
+    let json_event = event
+        .to_json_event()
+        .map_err(|e| NodeError::General(eyre::eyre!("Failed to convert to JSON event: {}", e)))?;
+
+    ctx.stage_context
+        .emit_event_with_provenance(json_event, material_id, Some(0), Some(0))
+        .await
+        .map(|_| ())
+        .map_err(|e| NodeError::General(eyre::eyre!("Failed to emit event: {}", e)))?;
 
     ctx.metrics.record_moved();
     debug!("Recorded file.moved from {:?} to {:?}", old, new);
@@ -1035,38 +1056,6 @@ async fn capture_material_from_file_inner(
     Ok(material_id)
 }
 
-async fn emit_filesystem_event(
-    ctx: &WatchContext,
-    material_id: Ulid,
-    payload: JsonValue,
-    event_type: &str,
-    total_bytes: i64,
-) -> NodeResult<()> {
-    let provenance = Provenance::Material {
-        id: Id::from_ulid(material_id),
-        anchor_byte: 0,
-        offset_start: Some(0),
-        offset_end: Some(total_bytes),
-        offset_kind: sinex_core::OffsetKind::Byte,
-    };
-
-    let mut event = EventBuilder::new(
-        sinex_core::types::domain::EventSource::from_static("fs-watcher"),
-        sinex_core::types::domain::EventType::from(event_type),
-        payload,
-    )
-    .with_provenance(provenance)
-    .build()
-    .map_err(|e| NodeError::General(eyre::eyre!("Failed to build event: {}", e)))?;
-    event.id = Some(Id::from_ulid(Ulid::new()));
-
-    ctx.stage_context
-        .emit_event_with_provenance(event, material_id, Some(0), Some(total_bytes))
-        .await
-        .map(|_| ())
-        .map_err(|e| NodeError::General(eyre::eyre!("Failed to emit event: {}", e)))
-}
-
 fn sanitize_path(path: &Path) -> NodeResult<SanitizedPath> {
     SanitizedPath::from_str_validated(&path.to_string_lossy())
         .map_err(|e| NodeError::General(eyre::eyre!("Path validation failed: {}", e)))
@@ -1105,7 +1094,8 @@ mod tests {
     use super::*;
     use sinex_core::db::models::{Event, Provenance};
     use sinex_core::db::query_helpers::ulid_to_uuid;
-    use sinex_core::{Id, JsonValue};
+    use sinex_core::types::events::payloads::filesystem::FileCreatedPayload;
+    use sinex_core::Id;
     use sinex_node_sdk::{acquisition_manager::RotationPolicy, AcquisitionManager};
     use sinex_test_utils::prelude::*;
     use sinex_test_utils::{sinex_test, EphemeralNats};
@@ -1147,7 +1137,7 @@ mod tests {
             "/tmp".to_string(),
         ));
 
-        let (event_tx, mut event_rx) = mpsc::channel::<Event<JsonValue>>(
+        let (event_tx, mut event_rx) = mpsc::channel::<Event<FileCreatedPayload>>(
             sinex_core::types::buffers::DEFAULT_EVENT_CHANNEL_SIZE,
         );
         let stage_context =

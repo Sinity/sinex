@@ -10,6 +10,7 @@
 // - **Memory Concurrency**: Shared state, atomic operations, cache coherency
 
 use sinex_test_utils::prelude::*;
+use sinex_test_utils::timing_utils::Timeouts;
 
 use chrono::Utc;
 use sinex_test_utils::events;

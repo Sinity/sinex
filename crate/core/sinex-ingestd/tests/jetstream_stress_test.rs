@@ -38,11 +38,8 @@ async fn jetstream_pipeline_handles_burst_without_timeouts() -> sinex_test_utils
     let source = "stress.pipeline";
     let event_type = "burst.event";
     let namespace = ctx.pipeline_namespace().prefix().to_string();
-    let publisher = TestNodePublisher::with_namespace(
-        ctx.nats_client(),
-        source.to_string(),
-        Some(namespace),
-    );
+    let publisher =
+        TestNodePublisher::with_namespace(ctx.nats_client(), source.to_string(), Some(namespace));
 
     let start_count = ctx
         .pool
@@ -236,11 +233,8 @@ async fn jetstream_pipeline_handles_mixed_valid_and_invalid_bursts(
 
     let nats = ctx.nats_handle()?;
     let js = nats.jetstream_with_client(ctx.nats_client());
-    let publisher = TestNodePublisher::with_namespace(
-        ctx.nats_client(),
-        source.to_string(),
-        Some(namespace),
-    );
+    let publisher =
+        TestNodePublisher::with_namespace(ctx.nats_client(), source.to_string(), Some(namespace));
 
     let start_count = ctx
         .pool

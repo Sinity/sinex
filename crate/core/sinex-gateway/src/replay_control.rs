@@ -6,6 +6,7 @@ use chrono::{DateTime, Utc};
 use color_eyre::eyre::{eyre, Context, Result};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
+use sinex_core::db::ulid_to_uuid;
 use sinex_core::environment::{environment, SinexEnvironment};
 use sinex_core::types::ulid::Ulid;
 use std::collections::HashMap;
@@ -538,7 +539,10 @@ impl ReplayExecutionEngine {
             .transition(operation_id, ReplayState::Completed)
             .await?;
 
-        self.replay.load_operation(operation_id).await
+        self.replay
+            .load_operation(operation_id)
+            .await
+            .map_err(|e| eyre!("{}", e))
     }
 }
 
@@ -644,7 +648,7 @@ mod tests {
     }
 
     async fn wait_for_operation(pool: &DbPool, operation_id: Ulid) -> Result<()> {
-        let uuid = sqlx::types::Uuid::from_bytes(operation_id.to_bytes());
+        let uuid = ulid_to_uuid(operation_id);
         for attempt in 0..20 {
             let exists = sqlx::query_scalar!(
                 "SELECT 1 FROM core.operations_log WHERE id::uuid = $1::uuid",

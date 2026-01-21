@@ -7,7 +7,7 @@ use sinex_test_utils::{sinex_test, TestResult};
 
 #[sinex_test]
 async fn path_traversal_sanitization() -> TestResult<()> {
-    let mut event = EventBuilder::new(
+    let mut event = EventBuilder::dynamic(
         EventSource::new("../../../etc/passwd"),
         EventType::new("security.test"),
         json!({"path": "../../sensitive/file.txt"}),
@@ -27,7 +27,7 @@ async fn path_traversal_sanitization() -> TestResult<()> {
 
 #[sinex_test]
 async fn null_byte_sanitization() -> TestResult<()> {
-    let mut event = EventBuilder::new(
+    let mut event = EventBuilder::dynamic(
         EventSource::new("test\0source"),
         EventType::new("security.test"),
         json!({"data": "test\0value"}),
@@ -43,7 +43,7 @@ async fn null_byte_sanitization() -> TestResult<()> {
 
 #[sinex_test]
 async fn sql_injection_payload_preserved() -> TestResult<()> {
-    let mut event = EventBuilder::new(
+    let mut event = EventBuilder::dynamic(
         EventSource::new("security.test"),
         EventType::new("sql.injection"),
         json!({"query": "'; DROP TABLE events; --"}),

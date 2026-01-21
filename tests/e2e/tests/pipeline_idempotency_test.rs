@@ -1,7 +1,7 @@
 use serde_json::json;
 use sinex_core::{db::query_helpers::ulid_to_uuid, EventId, Ulid};
 use sinex_test_utils::prelude::*;
-use sinex_test_utils::timing_utils::{WaitHelpers, DEFAULT_WAIT_SECS};
+use sinex_test_utils::timing_utils::{Timeouts, WaitHelpers, DEFAULT_WAIT_SECS};
 use tokio::time::{timeout, Duration};
 use tokio_stream::StreamExt;
 
@@ -59,7 +59,7 @@ async fn pipeline_rejects_duplicate_event_ids(ctx: TestContext) -> TestResult<()
     scope.wait_for_event_id(EventId::from(event_ulid)).await?;
     wait_for_single_row(scope.ctx(), event_ulid).await?;
 
-    let first = timeout(Duration::from_secs(5), confirmations.next())
+    let first = timeout(Duration::from_secs(Timeouts::QUICK), confirmations.next())
         .await
         .map_err(|_| color_eyre::eyre::eyre!("confirmation wait timed out"))?
         .ok_or_else(|| color_eyre::eyre::eyre!("confirmation subscription closed"))?;

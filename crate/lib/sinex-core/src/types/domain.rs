@@ -237,7 +237,10 @@ macro_rules! impl_sqlx_for_validated_string_type {
                 value: sqlx::postgres::PgValueRef<'_>,
             ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
                 let s = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
-                Self::from_str(&s).map_err(|e| Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e)) as Box<dyn std::error::Error + Send + Sync>)
+                Self::from_str(&s).map_err(|e| {
+                    Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+                        as Box<dyn std::error::Error + Send + Sync>
+                })
             }
         }
     };

@@ -3,8 +3,9 @@
 // Use local facade for common types
 use crate::common::*;
 use sinex_core::payloads::{ClipboardCopiedPayload, ClipboardSelectedPayload};
+use sinex_core::types::events::EventPayload;
 use sinex_core::types::Seconds;
-use sinex_core::{Event as CoreEvent, Id, OffsetKind, Provenance, Ulid};
+use sinex_core::{Id, Ulid};
 use sinex_node_sdk::stage_as_you_go::StageAsYouGoContext;
 use tokio::sync::watch;
 
@@ -350,8 +351,8 @@ impl ClipboardWatcher {
             .register_in_flight(&self.source_identifier, Some(selection_type), metadata)
             .await?;
 
-        let payload = if selection_type == "primary" {
-            serde_json::to_value(ClipboardSelectedPayload {
+        let mut event = if selection_type == "primary" {
+            ClipboardSelectedPayload {
                 selection_type: selection_type.to_string(),
                 content_type: content.content_type.clone(),
                 content_size: data_bytes.len(),
@@ -363,9 +364,20 @@ impl ClipboardWatcher {
                     .map(|h| h.to_string()),
                 annex_key: None,
                 blob_id: None,
-            })
+            }
+            .from_material(material_id)
+            .with_offset_start(0)
+            .map_err(|e| NodeError::Processing(format!("Failed to set offset_start: {e}")))?
+            .with_offset_end(data_bytes.len() as i64)
+            .map_err(|e| NodeError::Processing(format!("Failed to set offset_end: {e}")))?
+            .build()
+            .map_err(|e| NodeError::Processing(format!("Failed to build event: {e}")))?
+            .to_json_event()
+            .map_err(|e| {
+                NodeError::Processing(format!("Failed to serialize clipboard event: {e}"))
+            })?
         } else {
-            serde_json::to_value(ClipboardCopiedPayload {
+            ClipboardCopiedPayload {
                 operation: "copy".to_string(),
                 content_type: content.content_type.clone(),
                 content_size: data_bytes.len(),
@@ -380,25 +392,19 @@ impl ClipboardWatcher {
                     .map(|h| h.to_string()),
                 annex_key: None,
                 blob_id: None,
-            })
-        }
-        .map_err(|e| {
-            NodeError::Processing(format!("Failed to serialize clipboard payload: {e}"))
-        })?;
-
-        let provenance = Provenance::Material {
-            id: Id::from_ulid(material_id),
-            anchor_byte: 0,
-            offset_start: Some(0),
-            offset_end: Some(data_bytes.len() as i64),
-            offset_kind: OffsetKind::Byte,
-        };
-
-        let mut event = CoreEvent::new(payload, provenance)
+            }
+            .from_material(material_id)
+            .with_offset_start(0)
+            .map_err(|e| NodeError::Processing(format!("Failed to set offset_start: {e}")))?
+            .with_offset_end(data_bytes.len() as i64)
+            .map_err(|e| NodeError::Processing(format!("Failed to set offset_end: {e}")))?
+            .build()
+            .map_err(|e| NodeError::Processing(format!("Failed to build event: {e}")))?
             .to_json_event()
             .map_err(|e| {
                 NodeError::Processing(format!("Failed to serialize clipboard event: {e}"))
-            })?;
+            })?
+        };
         event.id = Some(Id::from_ulid(Ulid::new()));
 
         stage_context

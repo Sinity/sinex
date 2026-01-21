@@ -7878,12 +7878,16 @@ name = "xtask"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "atty",
  "chrono",
  "clap",
  "clap_complete",
  "console",
+ "dirs",
+ "gethostname 0.4.3",
  "hex",
  "indicatif",
+ "libc",
  "num_cpus",
  "once_cell",
  "rusqlite",
@@ -7891,6 +7895,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+ "toml",
  "walkdir",
 ]
 

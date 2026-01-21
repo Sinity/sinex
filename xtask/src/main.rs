@@ -6,14 +6,55 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     process::Command,
+    time::Instant,
 };
 use tempfile::NamedTempFile;
 
+mod affected;
 mod bench;
+mod config;
+mod history;
+mod jobs;
+mod output;
+
+use config::config;
+use history::{HistoryDb, InvocationStatus};
+use output::{CommandResult, OutputFormat, OutputWriter, StructuredError};
+
+/// Global options shared across all commands.
+#[derive(Parser, Clone)]
+struct GlobalOpts {
+    /// Output format (human, json, compact, silent)
+    #[arg(long, global = true, default_value = "human")]
+    format: OutputFormat,
+
+    /// Shorthand for --format json
+    #[arg(long, global = true)]
+    json: bool,
+}
+
+impl GlobalOpts {
+    /// Get the effective output format.
+    pub fn output_format(&self) -> OutputFormat {
+        if self.json {
+            OutputFormat::Json
+        } else {
+            self.format
+        }
+    }
+
+    /// Create an output writer with the configured format.
+    pub fn writer(&self) -> OutputWriter {
+        OutputWriter::new(self.output_format())
+    }
+}
 
 #[derive(Parser)]
 #[command(author, version, about = "Developer tasks for the Sinex workspace")]
 struct Cli {
+    #[command(flatten)]
+    global: GlobalOpts,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -31,14 +72,26 @@ enum Commands {
     },
     /// Clippy lint with -D warnings
     Lint,
-    /// Run nextest (reliable profile by default)
+    /// Run nextest (default profile by default)
     Test {
-        /// Nextest profile (default: reliable)
-        #[arg(long, default_value = "reliable")]
+        /// Nextest profile (default, fast, debug, perf, external)
+        #[arg(long, default_value = "default")]
         profile: String,
         /// Prime the database pool before running tests
         #[arg(long)]
         prime: bool,
+        /// List tests without running them
+        #[arg(long)]
+        list: bool,
+        /// Show what would run without executing
+        #[arg(long)]
+        dry_run: bool,
+        /// Check environment readiness before running
+        #[arg(long)]
+        preflight: bool,
+        /// Run only tests affected by current changes
+        #[arg(long)]
+        affected: bool,
         /// Additional nextest args (use `--` before them)
         #[arg(last = true)]
         args: Vec<String>,
@@ -89,6 +142,41 @@ enum Commands {
     Fuzz {
         #[command(subcommand)]
         cmd: FuzzCommand,
+    },
+    /// Build/test history queries
+    History {
+        #[command(subcommand)]
+        cmd: HistoryCommand,
+    },
+    /// Background job management
+    Jobs {
+        #[command(subcommand)]
+        cmd: JobsCommand,
+    },
+    /// Start devenv processes
+    Up {
+        /// Start all processes
+        #[arg(long)]
+        all: bool,
+        /// Specific processes to start (default: nats ingestd gateway)
+        processes: Vec<String>,
+    },
+    /// Show environment status
+    Status {
+        /// Watch mode (refresh every 2s)
+        #[arg(long, short)]
+        watch: bool,
+    },
+    /// View devenv process logs
+    Logs {
+        /// Process name to show logs for
+        process: String,
+        /// Number of lines to show
+        #[arg(long, short, default_value_t = 50)]
+        lines: usize,
+        /// Follow log output
+        #[arg(long, short)]
+        follow: bool,
     },
 }
 
@@ -230,6 +318,89 @@ enum FuzzCommand {
 }
 
 #[derive(Subcommand)]
+enum HistoryCommand {
+    /// Show recent invocations
+    List {
+        /// Maximum number of entries to show
+        #[arg(long, short, default_value_t = 10)]
+        limit: usize,
+        /// Filter by command name
+        #[arg(long, short)]
+        command: Option<String>,
+    },
+    /// Show last invocation for a command
+    Last {
+        /// Command to query
+        command: String,
+    },
+    /// Show statistics for a command
+    Stats {
+        /// Command to query
+        command: String,
+        /// Number of days to analyze
+        #[arg(long, default_value_t = 7)]
+        days: u32,
+    },
+    /// Remove old history entries
+    Prune {
+        /// Remove entries older than this many days
+        #[arg(long, default_value_t = 30)]
+        older_than: u32,
+    },
+    /// Export history to JSON
+    Export {
+        /// Maximum number of entries
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+    },
+}
+
+#[derive(Subcommand)]
+enum JobsCommand {
+    /// List all jobs
+    List {
+        /// Maximum number of entries to show
+        #[arg(long, short, default_value_t = 10)]
+        limit: usize,
+    },
+    /// Show status of a specific job
+    Status {
+        /// Job ID
+        id: u64,
+        /// Follow output (like tail -f)
+        #[arg(long, short)]
+        follow: bool,
+    },
+    /// Show full output of a job
+    Output {
+        /// Job ID
+        id: u64,
+        /// Show stderr instead of stdout
+        #[arg(long)]
+        stderr: bool,
+    },
+    /// Wait for a job to complete
+    Wait {
+        /// Job ID
+        id: u64,
+        /// Timeout in seconds
+        #[arg(long, default_value_t = 0)]
+        timeout: u64,
+    },
+    /// Cancel a running job
+    Cancel {
+        /// Job ID
+        id: u64,
+    },
+    /// Remove completed jobs older than N days
+    Prune {
+        /// Remove jobs older than this many days
+        #[arg(long, default_value_t = 7)]
+        older_than: u32,
+    },
+}
+
+#[derive(Subcommand)]
 enum SchemaCommand {
     /// Generate schemas from EventPayload types
     Generate {
@@ -286,28 +457,580 @@ enum DbCommand {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    match cli.command {
+    let ctx = CommandContext::new(cli.global.clone());
+
+    let (command_name, subcommand, profile) = match &cli.command {
+        Commands::Check { .. } => ("check", None, None),
+        Commands::Lint => ("lint", None, None),
+        Commands::Test { profile, .. } => ("test", None, Some(profile.as_str())),
+        Commands::Db { cmd } => (
+            "db",
+            Some(match cmd {
+                DbCommand::Status => "status",
+                DbCommand::Migrate => "migrate",
+                DbCommand::Setup => "setup",
+                DbCommand::Reset { .. } => "reset",
+            }),
+            None,
+        ),
+        Commands::Schema { .. } => ("schema", None, None),
+        Commands::LintForbidden => ("lint-forbidden", None, None),
+        Commands::CiPreflight => ("ci-preflight", None, None),
+        Commands::Doctor { .. } => ("doctor", None, None),
+        Commands::Completions { .. } => ("completions", None, None),
+        Commands::Ci { .. } => ("ci", None, None),
+        Commands::Bench(_) => ("bench", None, None),
+        Commands::Dev { .. } => ("dev", None, None),
+        Commands::Coverage { .. } => ("coverage", None, None),
+        Commands::Fuzz { .. } => ("fuzz", None, None),
+        Commands::History { .. } => ("history", None, None),
+        Commands::Jobs { .. } => ("jobs", None, None),
+        Commands::Up { .. } => ("up", None, None),
+        Commands::Status { .. } => ("status", None, None),
+        Commands::Logs { .. } => ("logs", None, None),
+    };
+
+    // Track invocation in history (skip for history commands themselves)
+    let history_db = open_history_db();
+    let invocation_id = if command_name != "history" && command_name != "completions" {
+        history_db.as_ref().ok().and_then(|db| {
+            db.start_invocation(command_name, subcommand, profile, None)
+                .ok()
+        })
+    } else {
+        None
+    };
+
+    let result = match cli.command {
         Commands::Check {
             skip_fmt,
             skip_check,
-        } => check(skip_fmt, skip_check),
-        Commands::Lint => lint(),
+        } => check(skip_fmt, skip_check, &ctx),
+        Commands::Lint => lint(&ctx),
         Commands::Test {
             profile,
             prime,
+            list,
+            dry_run,
+            preflight,
+            affected,
             args,
-        } => test(&profile, prime, &args),
-        Commands::Db { cmd } => db(cmd),
+        } => test(&profile, prime, list, dry_run, preflight, affected, &args, &ctx),
+        Commands::Db { cmd } => db(cmd, &ctx),
         Commands::Schema { cmd } => schema(cmd),
-        Commands::LintForbidden => lint_forbidden(),
-        Commands::CiPreflight => ci_preflight(),
-        Commands::Doctor { pipelines } => doctor(pipelines),
+        Commands::LintForbidden => lint_forbidden(&ctx),
+        Commands::CiPreflight => ci_preflight(&ctx),
+        Commands::Doctor { pipelines } => doctor(pipelines, &ctx),
         Commands::Completions { shell } => completions(shell),
-        Commands::Ci { cmd } => ci(cmd),
+        Commands::Ci { cmd } => ci(cmd, &ctx),
         Commands::Bench(config) => bench::run(config),
         Commands::Dev { cmd } => dev(cmd),
-        Commands::Coverage { cmd } => coverage(cmd),
+        Commands::Coverage { cmd } => coverage(cmd, &ctx),
         Commands::Fuzz { cmd } => fuzz(cmd),
+        Commands::History { cmd } => history_cmd(cmd, &ctx),
+        Commands::Jobs { cmd } => jobs_cmd(cmd, &ctx),
+        Commands::Up { all, processes } => devenv_up(all, &processes, &ctx),
+        Commands::Status { watch } => devenv_status(watch, &ctx),
+        Commands::Logs { process, lines, follow } => devenv_logs(&process, lines, follow, &ctx),
+    };
+
+    // Record invocation result in history
+    if let (Some(id), Ok(db)) = (invocation_id, &history_db) {
+        let status = if result.is_ok() {
+            InvocationStatus::Success
+        } else {
+            InvocationStatus::Failed
+        };
+        let exit_code = if result.is_ok() { Some(0) } else { Some(1) };
+        let _ = db.finish_invocation(id, status, exit_code, ctx.elapsed_secs());
+    }
+
+    // Emit structured output for JSON format
+    if matches!(ctx.global.output_format(), OutputFormat::Json) {
+        let cmd_result = match &result {
+            Ok(()) => CommandResult::success(command_name, ctx.elapsed_secs()),
+            Err(e) => CommandResult::failed(command_name, ctx.elapsed_secs())
+                .with_error(StructuredError::new("CMD_FAILED", e.to_string())),
+        };
+        let _ = ctx.writer().write_result(&cmd_result);
+    }
+
+    result
+}
+
+/// Open the history database.
+fn open_history_db() -> Result<HistoryDb> {
+    let cfg = config();
+    HistoryDb::open(&cfg.history_db_path())
+}
+
+/// Handle history subcommands.
+fn history_cmd(cmd: HistoryCommand, ctx: &CommandContext) -> Result<()> {
+    let db = open_history_db()?;
+
+    match cmd {
+        HistoryCommand::List { limit, command } => {
+            let invocations = db.get_recent(limit, command.as_deref())?;
+
+            if ctx.is_human() {
+                if invocations.is_empty() {
+                    println!("No history entries found.");
+                } else {
+                    println!(
+                        "{:<6} {:<12} {:<10} {:<10} {:>8}  {}",
+                        "ID", "COMMAND", "PROFILE", "STATUS", "DURATION", "STARTED"
+                    );
+                    for inv in &invocations {
+                        let profile = inv.profile.as_deref().unwrap_or("-");
+                        let duration = inv
+                            .duration_secs
+                            .map(|d| format!("{:.1}s", d))
+                            .unwrap_or_else(|| "-".into());
+                        let status = format!("{:?}", inv.status).to_lowercase();
+                        println!(
+                            "{:<6} {:<12} {:<10} {:<10} {:>8}  {}",
+                            inv.id,
+                            inv.command,
+                            profile,
+                            status,
+                            duration,
+                            inv.started_at.format("%Y-%m-%d %H:%M")
+                        );
+                    }
+                }
+            } else {
+                let json = serde_json::to_string_pretty(&invocations)?;
+                println!("{json}");
+            }
+        }
+
+        HistoryCommand::Last { command } => {
+            let inv = db.get_last(&command)?;
+
+            if ctx.is_human() {
+                match inv {
+                    Some(inv) => {
+                        println!("Last {} invocation:", command);
+                        println!("  ID:       {}", inv.id);
+                        println!("  Status:   {:?}", inv.status);
+                        println!("  Started:  {}", inv.started_at);
+                        if let Some(d) = inv.duration_secs {
+                            println!("  Duration: {:.2}s", d);
+                        }
+                        if let Some(c) = &inv.git_commit {
+                            println!(
+                                "  Commit:   {}{}",
+                                c,
+                                if inv.git_dirty { " (dirty)" } else { "" }
+                            );
+                        }
+                    }
+                    None => println!("No history for command: {}", command),
+                }
+            } else {
+                let json = serde_json::to_string_pretty(&inv)?;
+                println!("{json}");
+            }
+        }
+
+        HistoryCommand::Stats { command, days } => {
+            let stats = db.get_stats(&command, days)?;
+
+            if ctx.is_human() {
+                println!("Statistics for '{}' (last {} days):", command, days);
+                println!("  Total:     {}", stats.total);
+                println!("  Successes: {}", stats.successes);
+                println!("  Failures:  {}", stats.failures);
+                if let Some(avg) = stats.avg_duration_secs {
+                    println!("  Avg time:  {:.2}s", avg);
+                }
+                if stats.total > 0 {
+                    let rate = (stats.successes as f64 / stats.total as f64) * 100.0;
+                    println!("  Success:   {:.1}%", rate);
+                }
+            } else {
+                let json = serde_json::to_string_pretty(&stats)?;
+                println!("{json}");
+            }
+        }
+
+        HistoryCommand::Prune { older_than } => {
+            let count = db.prune(older_than)?;
+
+            if ctx.is_human() {
+                println!("Pruned {} entries older than {} days", count, older_than);
+            } else {
+                println!(
+                    r#"{{"pruned": {}, "older_than_days": {}}}"#,
+                    count, older_than
+                );
+            }
+        }
+
+        HistoryCommand::Export { limit } => {
+            let invocations = db.get_recent(limit, None)?;
+            let json = serde_json::to_string_pretty(&invocations)?;
+            println!("{json}");
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle jobs subcommands.
+fn jobs_cmd(cmd: JobsCommand, ctx: &CommandContext) -> Result<()> {
+    use jobs::{JobManager, JobStatus};
+    use std::time::Duration;
+
+    let cfg = config();
+    let manager = JobManager::new(cfg.jobs_dir())?;
+
+    match cmd {
+        JobsCommand::List { limit } => {
+            let jobs = manager.list_recent(limit)?;
+
+            if ctx.is_human() {
+                if jobs.is_empty() {
+                    println!("No jobs found.");
+                } else {
+                    println!(
+                        "{:<16} {:<12} {:<10} {:>8}  {}",
+                        "ID", "COMMAND", "STATUS", "DURATION", "STARTED"
+                    );
+                    for job in &jobs {
+                        let status_str = match &job.meta.status {
+                            JobStatus::Running { .. } => "running",
+                            JobStatus::Completed { .. } => "completed",
+                            JobStatus::Failed { .. } => "failed",
+                            JobStatus::Cancelled => "cancelled",
+                        };
+                        let duration = match &job.meta.status {
+                            JobStatus::Completed { duration_secs, .. } => {
+                                format!("{:.1}s", duration_secs)
+                            }
+                            _ => "-".into(),
+                        };
+                        println!(
+                            "{:<16} {:<12} {:<10} {:>8}  {}",
+                            job.meta.id,
+                            job.meta.command,
+                            status_str,
+                            duration,
+                            job.meta.started_at.format("%Y-%m-%d %H:%M")
+                        );
+                    }
+                }
+            } else {
+                let json = serde_json::to_string_pretty(
+                    &jobs.iter().map(|j| &j.meta).collect::<Vec<_>>(),
+                )?;
+                println!("{json}");
+            }
+        }
+
+        JobsCommand::Status { id, follow } => {
+            let job = manager
+                .get(id)?
+                .ok_or_else(|| anyhow::anyhow!("job {} not found", id))?;
+
+            if follow {
+                // Follow mode: tail output until job completes
+                let mut last_pos = 0u64;
+                loop {
+                    // Print new output
+                    if let Ok(stdout) = job.read_stdout() {
+                        if stdout.len() as u64 > last_pos {
+                            print!("{}", &stdout[last_pos as usize..]);
+                            last_pos = stdout.len() as u64;
+                        }
+                    }
+
+                    // Reload and check status
+                    let job = manager.get(id)?.unwrap();
+                    if job.meta.status.is_terminal() {
+                        break;
+                    }
+
+                    std::thread::sleep(Duration::from_millis(500));
+                }
+            } else {
+                if ctx.is_human() {
+                    println!("Job {}", id);
+                    println!("  Command:  {} {}", job.meta.command, job.meta.args.join(" "));
+                    println!("  Status:   {:?}", job.meta.status);
+                    println!("  Started:  {}", job.meta.started_at);
+                    if let Some(finished) = job.meta.finished_at {
+                        println!("  Finished: {}", finished);
+                    }
+                    // Show last few lines of output
+                    if let Ok(tail) = job.tail_stdout(5) {
+                        if !tail.is_empty() {
+                            println!("\n  Last output:\n{}", tail);
+                        }
+                    }
+                } else {
+                    let json = serde_json::to_string_pretty(&job.meta)?;
+                    println!("{json}");
+                }
+            }
+        }
+
+        JobsCommand::Output { id, stderr } => {
+            let job = manager
+                .get(id)?
+                .ok_or_else(|| anyhow::anyhow!("job {} not found", id))?;
+
+            let output = if stderr {
+                job.read_stderr()?
+            } else {
+                job.read_stdout()?
+            };
+
+            println!("{output}");
+        }
+
+        JobsCommand::Wait { id, timeout } => {
+            let timeout = if timeout > 0 {
+                Some(Duration::from_secs(timeout))
+            } else {
+                None
+            };
+
+            let job = manager.wait(id, timeout)?;
+
+            if ctx.is_human() {
+                println!("Job {} completed: {:?}", id, job.meta.status);
+            } else {
+                let json = serde_json::to_string_pretty(&job.meta)?;
+                println!("{json}");
+            }
+        }
+
+        JobsCommand::Cancel { id } => {
+            if manager.cancel(id)? {
+                println!("Job {} cancelled", id);
+            } else {
+                println!("Job {} not found or not running", id);
+            }
+        }
+
+        JobsCommand::Prune { older_than } => {
+            let count = manager.prune(older_than)?;
+            println!("Pruned {} jobs older than {} days", count, older_than);
+        }
+    }
+
+    Ok(())
+}
+
+/// Start devenv processes.
+fn devenv_up(all: bool, processes: &[String], ctx: &CommandContext) -> Result<()> {
+    let default_processes = vec!["nats", "ingestd", "gateway"];
+
+    let procs: Vec<&str> = if all {
+        vec![
+            "nats",
+            "ingestd",
+            "gateway",
+            "fs-ingestor",
+            "terminal-ingestor",
+            "desktop-ingestor",
+            "system-ingestor",
+            "analytics-automaton",
+            "pkm-automaton",
+        ]
+    } else if processes.is_empty() {
+        default_processes
+    } else {
+        processes.iter().map(|s| s.as_str()).collect()
+    };
+
+    ctx.heading("devenv up");
+
+    let mut cmd = Command::new("devenv");
+    cmd.arg("up");
+    cmd.args(&procs);
+
+    if ctx.is_human() {
+        println!("Starting: {}", procs.join(", "));
+    }
+
+    run_cmd_ctx("devenv up", cmd, ctx)
+}
+
+/// Show environment status.
+fn devenv_status(watch: bool, ctx: &CommandContext) -> Result<()> {
+    loop {
+        if watch {
+            // Clear screen for watch mode
+            print!("\x1B[2J\x1B[H");
+        }
+
+        ctx.heading("environment status");
+
+        // Database status
+        let db_ok = Command::new("psql")
+            .args(["-c", "SELECT 1"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+
+        let db_sym = if db_ok { "✓" } else { "✗" };
+        println!("  Database: {} {}", db_sym, if db_ok { "connected" } else { "unavailable" });
+
+        // NATS status
+        let nats_url = std::env::var("SINEX_NATS_URL").unwrap_or_else(|_| "localhost:4222".into());
+        let nats_ok = std::net::TcpStream::connect_timeout(
+            &nats_url
+                .trim_start_matches("nats://")
+                .parse()
+                .unwrap_or_else(|_| "127.0.0.1:4222".parse().unwrap()),
+            std::time::Duration::from_secs(1),
+        )
+        .is_ok();
+
+        let nats_sym = if nats_ok { "✓" } else { "✗" };
+        println!("  NATS:     {} {}", nats_sym, if nats_ok { &nats_url } else { "unavailable" });
+
+        // Git status
+        if let Ok(output) = Command::new("git")
+            .args(["branch", "--show-current"])
+            .output()
+        {
+            if output.status.success() {
+                let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                let dirty = Command::new("git")
+                    .args(["status", "--porcelain"])
+                    .output()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).lines().count())
+                    .unwrap_or(0);
+
+                print!("  Git:      {}", branch);
+                if dirty > 0 {
+                    print!(" ({} dirty)", dirty);
+                }
+                println!();
+            }
+        }
+
+        // History info
+        if let Ok(db) = open_history_db() {
+            if let Ok(Some(last_check)) = db.get_last("check") {
+                let status_sym = match last_check.status {
+                    InvocationStatus::Success => "✓",
+                    InvocationStatus::Failed => "✗",
+                    _ => "?",
+                };
+                println!(
+                    "  Build:    {} {:?} ({})",
+                    status_sym,
+                    last_check.status,
+                    last_check.started_at.format("%H:%M")
+                );
+            }
+            if let Ok(Some(last_test)) = db.get_last("test") {
+                let status_sym = match last_test.status {
+                    InvocationStatus::Success => "✓",
+                    InvocationStatus::Failed => "✗",
+                    _ => "?",
+                };
+                println!(
+                    "  Test:     {} {:?} ({})",
+                    status_sym,
+                    last_test.status,
+                    last_test.started_at.format("%H:%M")
+                );
+            }
+        }
+
+        if !watch {
+            break;
+        }
+
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
+
+    Ok(())
+}
+
+/// View devenv process logs.
+fn devenv_logs(process: &str, lines: usize, follow: bool, ctx: &CommandContext) -> Result<()> {
+    // devenv logs are typically in .devenv/state/*/logs
+    let devenv_state = Path::new(".devenv").join("state");
+
+    // Find the process log file
+    let log_path = devenv_state.join(process).join("process.log");
+
+    if !log_path.exists() {
+        // Try alternative locations
+        let alt_path = devenv_state.join(format!("{}.log", process));
+        if alt_path.exists() {
+            return view_log(&alt_path, lines, follow, ctx);
+        }
+
+        // Try journalctl as fallback
+        ctx.heading(&format!("logs: {}", process));
+
+        let mut cmd = Command::new("journalctl");
+        cmd.args(["--user", "-u", &format!("devenv-up-{}", process)]);
+        cmd.arg("-n").arg(lines.to_string());
+
+        if follow {
+            cmd.arg("-f");
+        }
+
+        return run_cmd_ctx("journalctl", cmd, ctx);
+    }
+
+    view_log(&log_path, lines, follow, ctx)
+}
+
+fn view_log(path: &Path, lines: usize, follow: bool, ctx: &CommandContext) -> Result<()> {
+    ctx.heading(&format!("logs: {}", path.display()));
+
+    if follow {
+        let mut cmd = Command::new("tail");
+        cmd.arg("-f").arg("-n").arg(lines.to_string()).arg(path);
+        run_cmd_ctx("tail -f", cmd, ctx)
+    } else {
+        let mut cmd = Command::new("tail");
+        cmd.arg("-n").arg(lines.to_string()).arg(path);
+        run_cmd_ctx("tail", cmd, ctx)
+    }
+}
+
+/// Context passed to commands for output formatting and timing.
+struct CommandContext {
+    global: GlobalOpts,
+    start_time: Instant,
+}
+
+impl CommandContext {
+    fn new(global: GlobalOpts) -> Self {
+        Self {
+            global,
+            start_time: Instant::now(),
+        }
+    }
+
+    fn writer(&self) -> OutputWriter {
+        self.global.writer()
+    }
+
+    fn elapsed_secs(&self) -> f64 {
+        self.start_time.elapsed().as_secs_f64()
+    }
+
+    fn is_human(&self) -> bool {
+        matches!(self.global.output_format(), OutputFormat::Human)
+    }
+
+    fn heading(&self, title: &str) {
+        if self.is_human() {
+            println!("========== {title} ==========");
+        }
     }
 }
 
@@ -317,6 +1040,18 @@ fn heading(title: &str) {
 
 fn run_cmd(name: &str, mut cmd: Command) -> Result<()> {
     heading(name);
+    let status = cmd
+        .status()
+        .with_context(|| format!("{name} failed to spawn"))?;
+    if !status.success() {
+        return Err(anyhow!("{name} failed with status {status}"));
+    }
+    Ok(())
+}
+
+/// Run a command with context-aware output.
+fn run_cmd_ctx(name: &str, mut cmd: Command, ctx: &CommandContext) -> Result<()> {
+    ctx.heading(name);
     let status = cmd
         .status()
         .with_context(|| format!("{name} failed to spawn"))?;
@@ -361,23 +1096,23 @@ fn pg_command(binary: &str) -> Command {
     }
 }
 
-fn check(skip_fmt: bool, skip_check: bool) -> Result<()> {
+fn check(skip_fmt: bool, skip_check: bool, ctx: &CommandContext) -> Result<()> {
     if !skip_fmt {
         let mut fmt = Command::new("cargo");
         fmt.arg("fmt").arg("--all").arg("--").arg("--check");
-        run_cmd("cargo fmt --check", fmt)?;
+        run_cmd_ctx("cargo fmt --check", fmt, ctx)?;
     }
 
     if !skip_check {
         let mut chk = Command::new("cargo");
         chk.arg("check").arg("--workspace").arg("--all-features");
-        run_cmd("cargo check", chk)?;
+        run_cmd_ctx("cargo check", chk, ctx)?;
     }
 
     Ok(())
 }
 
-fn lint() -> Result<()> {
+fn lint(ctx: &CommandContext) -> Result<()> {
     let mut cmd = Command::new("cargo");
     cmd.arg("clippy")
         .arg("--workspace")
@@ -386,16 +1121,69 @@ fn lint() -> Result<()> {
         .arg("--")
         .arg("-D")
         .arg("warnings");
-    run_cmd("cargo clippy -D warnings", cmd)
+    run_cmd_ctx("cargo clippy -D warnings", cmd, ctx)
 }
 
-fn test(profile: &str, prime: bool, args: &[String]) -> Result<()> {
+fn test(
+    profile: &str,
+    prime: bool,
+    list: bool,
+    dry_run: bool,
+    preflight: bool,
+    affected: bool,
+    args: &[String],
+    ctx: &CommandContext,
+) -> Result<()> {
+    // Preflight: check environment readiness
+    if preflight {
+        test_preflight(ctx)?;
+    }
+
+    // Compute affected packages if requested
+    let affected_filter = if affected {
+        let packages = affected::affected_packages()?;
+        if packages.is_empty() {
+            if ctx.is_human() {
+                println!("No packages affected by current changes.");
+            }
+            return Ok(());
+        }
+
+        let filter = affected::build_nextest_filter(&packages);
+        if ctx.is_human() {
+            println!("{}", affected::affected_summary(&packages));
+        }
+        Some(filter)
+    } else {
+        None
+    };
+
+    // List: show tests without running
+    if list {
+        return test_list(profile, args, ctx);
+    }
+
+    // Dry-run: show what would run
+    if dry_run {
+        if let Some(ref filter) = affected_filter {
+            if ctx.is_human() {
+                println!("Would run with filter: {}", filter);
+            }
+        }
+        return test_dry_run(profile, args, ctx);
+    }
+
+    // Prime database pool
     if prime {
-        run_cmd("prime test pool", {
-            let mut c = Command::new("cargo");
-            c.args(["run", "-p", "sinex-test-utils", "--bin", "db_prime"]);
-            c
-        })?;
+        run_cmd_ctx(
+            "prime test pool",
+            {
+                let mut c = Command::new("cargo");
+                c.args(["run", "-p", "sinex-test-utils", "--bin", "db_prime"]);
+                c
+            },
+            ctx,
+        )?;
     }
 
     let mut cmd = Command::new("cargo");
@@ -406,40 +1194,226 @@ fn test(profile: &str, prime: bool, args: &[String]) -> Result<()> {
         .arg("--workspace")
         .arg("--profile")
         .arg(profile);
+
+    // Add affected filter if computed
+    if let Some(ref filter) = affected_filter {
+        cmd.arg("-E").arg(filter);
+    }
+
     if args.iter().any(|arg| arg == "--") {
         bail!("xtask test does not support passing test-binary args (remove '--').");
     }
     cmd.args(args);
-    run_cmd("nextest", cmd)
+    run_cmd_ctx("nextest", cmd, ctx)
 }
 
-fn ci_preflight() -> Result<()> {
+/// Preflight checks before running tests.
+fn test_preflight(ctx: &CommandContext) -> Result<()> {
+    ctx.heading("test preflight");
+
+    // Check database
+    let db_ok = Command::new("psql")
+        .args(["-c", "SELECT 1"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    // Check NATS
+    let nats_url = std::env::var("SINEX_NATS_URL").unwrap_or_else(|_| "localhost:4222".into());
+    let nats_ok = std::net::TcpStream::connect_timeout(
+        &nats_url
+            .trim_start_matches("nats://")
+            .parse()
+            .unwrap_or_else(|_| "127.0.0.1:4222".parse().unwrap()),
+        std::time::Duration::from_secs(2),
+    )
+    .is_ok();
+
+    // Check disk space (warn if < 5GB free)
+    let disk_ok = check_disk_space_gb(5);
+
+    if ctx.is_human() {
+        println!(
+            "  Database:   {}",
+            if db_ok { "✓ connected" } else { "✗ unavailable" }
+        );
+        println!(
+            "  NATS:       {}",
+            if nats_ok {
+                format!("✓ {}", nats_url)
+            } else {
+                "✗ unavailable".into()
+            }
+        );
+        println!(
+            "  Disk space: {}",
+            if disk_ok {
+                "✓ sufficient"
+            } else {
+                "⚠ low (< 5GB)"
+            }
+        );
+
+        if !db_ok || !nats_ok {
+            println!("\n  ⚠ Some services unavailable. Tests may fail.");
+        } else {
+            println!("\n  Ready to run tests.");
+        }
+    } else {
+        let json = serde_json::json!({
+            "database": db_ok,
+            "nats": nats_ok,
+            "disk_space": disk_ok,
+            "ready": db_ok && nats_ok,
+        });
+        println!("{}", serde_json::to_string_pretty(&json)?);
+    }
+
+    Ok(())
+}
+
+/// List tests without running.
+fn test_list(profile: &str, args: &[String], ctx: &CommandContext) -> Result<()> {
+    let mut cmd = Command::new("cargo");
+    cmd.arg("nextest")
+        .arg("list")
+        .arg("--config-file")
+        .arg(".config/nextest.toml")
+        .arg("--workspace")
+        .arg("--profile")
+        .arg(profile);
+
+    if !ctx.is_human() {
+        cmd.arg("--message-format").arg("json");
+    }
+
+    cmd.args(args);
+    run_cmd_ctx("nextest list", cmd, ctx)
+}
+
+/// Dry-run: show what would run without executing.
+fn test_dry_run(profile: &str, args: &[String], ctx: &CommandContext) -> Result<()> {
+    ctx.heading("test dry-run");
+
+    // Get test list in JSON format
+    let output = Command::new("cargo")
+        .arg("nextest")
+        .arg("list")
+        .arg("--config-file")
+        .arg(".config/nextest.toml")
+        .arg("--workspace")
+        .arg("--profile")
+        .arg(profile)
+        .arg("--message-format")
+        .arg("json")
+        .args(args)
+        .output()
+        .context("failed to run nextest list")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("nextest list failed: {}", stderr);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Parse the JSON to extract test count and packages
+    let mut test_count = 0;
+    let mut packages: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for line in stdout.lines() {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
+            if let Some(count) = json.get("test-count").and_then(|v| v.as_u64()) {
+                test_count = count as usize;
+            }
+            if let Some(suites) = json.get("rust-suites").and_then(|v| v.as_object()) {
+                for (_key, suite) in suites {
+                    if let Some(pkg) = suite.get("package-name").and_then(|v| v.as_str()) {
+                        packages.insert(pkg.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    if ctx.is_human() {
+        println!("Would run {} tests in {} packages:", test_count, packages.len());
+        println!("  Profile: {}", profile);
+        println!("  Packages: {}", packages.into_iter().collect::<Vec<_>>().join(", "));
+        if !args.is_empty() {
+            println!("  Filters: {}", args.join(" "));
+        }
+    } else {
+        let json = serde_json::json!({
+            "test_count": test_count,
+            "package_count": packages.len(),
+            "packages": packages,
+            "profile": profile,
+            "filters": args,
+        });
+        println!("{}", serde_json::to_string_pretty(&json)?);
+    }
+
+    Ok(())
+}
+
+/// Check if at least `min_gb` gigabytes of disk space are free.
+fn check_disk_space_gb(min_gb: u64) -> bool {
+    // Parse output of `df` command to check disk space
+    if let Ok(output) = Command::new("df")
+        .args(["--output=avail", "-B1", "."])
+        .output()
+    {
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            // Skip header line, parse available bytes
+            if let Some(avail_str) = stdout.lines().nth(1) {
+                if let Ok(avail_bytes) = avail_str.trim().parse::<u64>() {
+                    return avail_bytes >= min_gb * 1024 * 1024 * 1024;
+                }
+            }
+        }
+    }
+    true // Assume OK if we can't check
+}
+
+fn ci_preflight(ctx: &CommandContext) -> Result<()> {
     // Run fmt + cargo check first so contributors catch drift before heavier steps.
-    check(false, false)?;
-    lint()?;
-    lint_forbidden()?;
+    check(false, false, ctx)?;
+    lint(ctx)?;
+    lint_forbidden(ctx)?;
     // Regenerate schemas to ensure artifacts stay in sync with code.
     schema_generate("schemas/v1", false)?;
     ensure_schemas_clean()?;
-    test("reliable", false, &[])
+    test("default", false, false, false, false, false, &[], ctx)
 }
 
-fn doctor(pipelines: bool) -> Result<()> {
-    heading("toolchain");
-    run_cmd("rustc --version", {
-        let mut c = Command::new("rustc");
-        c.arg("--version");
-        c
-    })
+fn doctor(pipelines: bool, ctx: &CommandContext) -> Result<()> {
+    ctx.heading("toolchain");
+    run_cmd_ctx(
+        "rustc --version",
+        {
+            let mut c = Command::new("rustc");
+            c.arg("--version");
+            c
+        },
+        ctx,
+    )
     .ok();
-    run_cmd("cargo --version", {
-        let mut c = Command::new("cargo");
-        c.arg("--version");
-        c
-    })
+    run_cmd_ctx(
+        "cargo --version",
+        {
+            let mut c = Command::new("cargo");
+            c.arg("--version");
+            c
+        },
+        ctx,
+    )
     .ok();
 
-    heading("nats-server");
+    ctx.heading("nats-server");
     let nats_bin = env::var("NATS_SERVER_BIN")
         .ok()
         .filter(|value| !value.trim().is_empty());
@@ -454,7 +1428,7 @@ fn doctor(pipelines: bool) -> Result<()> {
         println!("NATS_SERVER_BIN set: {path}");
     }
 
-    heading("postgres reachability");
+    ctx.heading("postgres reachability");
     let pg_ok = pg_command("psql")
         .args(["-c", "select 1"])
         .status()
@@ -464,7 +1438,7 @@ fn doctor(pipelines: bool) -> Result<()> {
     println!("Postgres reachable: {}", if pg_ok { "yes" } else { "no" });
 
     if pg_ok {
-        heading("postgres extensions");
+        ctx.heading("postgres extensions");
         let mut cmd = pg_command("psql");
         cmd.args(["-Atqc", "SELECT extname FROM pg_extension"]);
         if let Ok(db_url) = env::var("DATABASE_URL") {
@@ -506,12 +1480,16 @@ fn doctor(pipelines: bool) -> Result<()> {
     }
 
     if pipelines {
-        heading("pipelines");
-        run_cmd("pipeline smoke", {
-            let mut c = Command::new("cargo");
-            c.args(["run", "-p", "sinex-test-utils", "--bin", "pipeline_smoke"]);
-            c
-        })?;
+        ctx.heading("pipelines");
+        run_cmd_ctx(
+            "pipeline smoke",
+            {
+                let mut c = Command::new("cargo");
+                c.args(["run", "-p", "sinex-test-utils", "--bin", "pipeline_smoke"]);
+                c
+            },
+            ctx,
+        )?;
     }
 
     Ok(())
@@ -529,7 +1507,7 @@ fn completions(shell: Shell) -> Result<()> {
     Ok(())
 }
 
-fn ci(cmd: CiCommand) -> Result<()> {
+fn ci(cmd: CiCommand, ctx: &CommandContext) -> Result<()> {
     match cmd {
         CiCommand::Postgres {
             port,
@@ -552,7 +1530,7 @@ fn ci(cmd: CiCommand) -> Result<()> {
             operation_id,
             command,
         ),
-        CiCommand::Workspace { target_dir } => ci_workspace(&target_dir),
+        CiCommand::Workspace { target_dir } => ci_workspace(&target_dir, ctx),
         CiCommand::SchemaOnly {
             target_dir,
             skip_clean,
@@ -1004,41 +1982,49 @@ fn ensure_schemas_clean() -> Result<()> {
     bail!("git diff -- schemas failed with status {status}");
 }
 
-fn ci_workspace(target_dir: &str) -> Result<()> {
+fn ci_workspace(target_dir: &str, ctx: &CommandContext) -> Result<()> {
     ci_schema_only(target_dir, false)?;
 
     // Ensure formatting, compilation, and clippy all pass before we spend time on e2e suites.
-    check(false, false)?;
-    lint()?;
-    lint_forbidden()?;
+    check(false, false, ctx)?;
+    lint(ctx)?;
+    lint_forbidden(ctx)?;
 
-    run_cmd("xtask test e2e fast", {
-        let mut c = Command::new("cargo");
-        c.args([
-            "xtask",
-            "test",
-            "--profile",
-            "fast",
-            "--",
-            "-p",
-            "sinex-e2e-tests",
-        ]);
-        c
-    })?;
+    run_cmd_ctx(
+        "xtask test e2e fast",
+        {
+            let mut c = Command::new("cargo");
+            c.args([
+                "xtask",
+                "test",
+                "--profile",
+                "fast",
+                "--",
+                "-p",
+                "sinex-e2e-tests",
+            ]);
+            c
+        },
+        ctx,
+    )?;
 
-    run_cmd("xtask test ci", {
-        let mut c = Command::new("cargo");
-        c.args(["xtask", "test", "--profile", "ci", "--prime"]);
-        c
-    })?;
+    run_cmd_ctx(
+        "xtask test ci",
+        {
+            let mut c = Command::new("cargo");
+            c.args(["xtask", "test", "--profile", "ci", "--prime"]);
+            c
+        },
+        ctx,
+    )?;
 
     Ok(())
 }
 
-fn db(cmd: DbCommand) -> Result<()> {
+fn db(cmd: DbCommand, ctx: &CommandContext) -> Result<()> {
     match cmd {
         DbCommand::Status => {
-            heading("psql status");
+            ctx.heading("psql status");
             let status = Command::new("psql")
                 .args(["-c", "select current_database(), current_user"])
                 .status();
@@ -1048,7 +2034,7 @@ fn db(cmd: DbCommand) -> Result<()> {
                 Err(e) => anyhow::bail!("psql not available: {e}"),
             }
         }
-        DbCommand::Migrate => run_db_migrate()?,
+        DbCommand::Migrate => run_db_migrate(ctx)?,
         DbCommand::Setup => {
             // Create DB if missing, then migrate.
             let db = std::env::var("PGDATABASE").unwrap_or_else(|_| "sinex_dev".to_string());
@@ -1057,7 +2043,7 @@ fn db(cmd: DbCommand) -> Result<()> {
             if let Err(e) = create.status() {
                 eprintln!("createdb failed or missing: {e}");
             }
-            run_db_migrate()?;
+            run_db_migrate(ctx)?;
         }
         DbCommand::Reset { yes } => {
             if !yes {
@@ -1066,22 +2052,22 @@ fn db(cmd: DbCommand) -> Result<()> {
             let db = std::env::var("PGDATABASE").unwrap_or_else(|_| "sinex_dev".to_string());
             let mut drop = Command::new("psql");
             drop.args(["-c", &format!("DROP DATABASE IF EXISTS {db}")]);
-            run_cmd("dropdb", drop)?;
+            run_cmd_ctx("dropdb", drop, ctx)?;
             let mut create = Command::new("createdb");
             create.arg(&db);
             if let Err(e) = create.status() {
                 eprintln!("createdb failed or missing: {e}");
             }
-            run_db_migrate()?;
+            run_db_migrate(ctx)?;
         }
     }
     Ok(())
 }
 
-fn run_db_migrate() -> Result<()> {
+fn run_db_migrate(ctx: &CommandContext) -> Result<()> {
     let mut cmd = Command::new("cargo");
     cmd.args(["run", "--package", "sinex-schema", "--", "up"]);
-    run_cmd("cargo run -p sinex-schema -- up", cmd)
+    run_cmd_ctx("cargo run -p sinex-schema -- up", cmd, ctx)
 }
 
 fn schema(cmd: SchemaCommand) -> Result<()> {
@@ -1350,8 +2336,8 @@ fn sinex_schema_cmd() -> Command {
     cmd
 }
 
-fn lint_forbidden() -> Result<()> {
-    heading("forbidden pattern scan");
+fn lint_forbidden(ctx: &CommandContext) -> Result<()> {
+    ctx.heading("forbidden pattern scan");
     let tokio_test_allow = [
         "crate/lib/sinex-test-utils/macros/src/lib.rs",
         "crate/lib/sinex-test-utils/tests/rstest_integration_example.rs",
@@ -1484,21 +2470,30 @@ fn is_tests_path(path: &str) -> bool {
 // Coverage Functions
 // =============================================================================
 
-fn coverage(cmd: CoverageCommand) -> Result<()> {
+fn coverage(cmd: CoverageCommand, ctx: &CommandContext) -> Result<()> {
     match cmd {
         CoverageCommand::Html {
             output,
             open,
             package,
-        } => coverage_html(&output, open, package.as_deref()),
-        CoverageCommand::Lcov { output, package } => coverage_lcov(&output, package.as_deref()),
-        CoverageCommand::Summary { package, files } => coverage_summary(package.as_deref(), files),
-        CoverageCommand::Clean => coverage_clean(),
+        } => coverage_html(&output, open, package.as_deref(), ctx),
+        CoverageCommand::Lcov { output, package } => {
+            coverage_lcov(&output, package.as_deref(), ctx)
+        }
+        CoverageCommand::Summary { package, files } => {
+            coverage_summary(package.as_deref(), files, ctx)
+        }
+        CoverageCommand::Clean => coverage_clean(ctx),
     }
 }
 
-fn coverage_html(output: &str, open: bool, package: Option<&str>) -> Result<()> {
-    heading("coverage html report");
+fn coverage_html(
+    output: &str,
+    open: bool,
+    package: Option<&str>,
+    ctx: &CommandContext,
+) -> Result<()> {
+    ctx.heading("coverage html report");
 
     // Check for cargo-llvm-cov
     check_llvm_cov_installed()?;
@@ -1521,7 +2516,7 @@ fn coverage_html(output: &str, open: bool, package: Option<&str>) -> Result<()> 
     cmd.arg("--exclude").arg("sinex-test-utils");
     cmd.arg("--exclude").arg("xtask");
 
-    run_cmd("cargo llvm-cov --html", cmd)?;
+    run_cmd_ctx("cargo llvm-cov --html", cmd, ctx)?;
 
     println!("Coverage report generated at: {output}/html/index.html");
 
@@ -1538,8 +2533,8 @@ fn coverage_html(output: &str, open: bool, package: Option<&str>) -> Result<()> 
     Ok(())
 }
 
-fn coverage_lcov(output: &str, package: Option<&str>) -> Result<()> {
-    heading("coverage lcov report");
+fn coverage_lcov(output: &str, package: Option<&str>, ctx: &CommandContext) -> Result<()> {
+    ctx.heading("coverage lcov report");
 
     check_llvm_cov_installed()?;
 
@@ -1565,14 +2560,14 @@ fn coverage_lcov(output: &str, package: Option<&str>) -> Result<()> {
     cmd.arg("--exclude").arg("sinex-test-utils");
     cmd.arg("--exclude").arg("xtask");
 
-    run_cmd("cargo llvm-cov --lcov", cmd)?;
+    run_cmd_ctx("cargo llvm-cov --lcov", cmd, ctx)?;
 
     println!("LCOV report generated at: {output}");
     Ok(())
 }
 
-fn coverage_summary(package: Option<&str>, files: bool) -> Result<()> {
-    heading("coverage summary");
+fn coverage_summary(package: Option<&str>, files: bool, ctx: &CommandContext) -> Result<()> {
+    ctx.heading("coverage summary");
 
     check_llvm_cov_installed()?;
 
@@ -1594,15 +2589,15 @@ fn coverage_summary(package: Option<&str>, files: bool) -> Result<()> {
     cmd.arg("--exclude").arg("sinex-test-utils");
     cmd.arg("--exclude").arg("xtask");
 
-    run_cmd("cargo llvm-cov", cmd)
+    run_cmd_ctx("cargo llvm-cov", cmd, ctx)
 }
 
-fn coverage_clean() -> Result<()> {
-    heading("clean coverage artifacts");
+fn coverage_clean(ctx: &CommandContext) -> Result<()> {
+    ctx.heading("clean coverage artifacts");
 
     let mut cmd = Command::new("cargo");
     cmd.arg("llvm-cov").arg("clean").arg("--workspace");
-    run_cmd("cargo llvm-cov clean", cmd)?;
+    run_cmd_ctx("cargo llvm-cov clean", cmd, ctx)?;
 
     // Also remove the output directory
     let coverage_dir = Path::new("target/coverage");

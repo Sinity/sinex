@@ -12,9 +12,7 @@ use sinex_test_utils::TestResult;
 use tracing::info;
 
 #[sinex_test]
-async fn test_checkpoint_recovery_from_empty_state(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn test_checkpoint_recovery_from_empty_state(ctx: TestContext) -> TestResult<()> {
     // Test that checkpoint recovery works when starting from empty state
     let ctx = ctx.with_nats().await?;
     let service_name = "empty-state-test".to_string();
@@ -47,9 +45,7 @@ async fn test_checkpoint_recovery_from_empty_state(
 }
 
 #[sinex_test]
-async fn test_checkpoint_manager_basic_functionality(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn test_checkpoint_manager_basic_functionality(ctx: TestContext) -> TestResult<()> {
     // Test basic checkpoint manager functionality
     let ctx = ctx.with_nats().await?;
     let service_name = "basic-functionality-test".to_string();

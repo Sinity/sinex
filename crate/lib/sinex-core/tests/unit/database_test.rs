@@ -359,7 +359,7 @@ async fn test_bulk_insert_performance(ctx: TestContext) -> TestResult<()> {
     // Create batch of events
     let mut events = Vec::new();
     for i in 0..batch_size {
-        let event = EventBuilder::new(
+        let event = EventBuilder::dynamic(
             EventSource::from("performance-test"),
             EventType::from("bulk.insert"),
             json!({

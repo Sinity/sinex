@@ -19,6 +19,7 @@ macro_rules! define_event_payload {
     };
 }
 
+pub mod automaton;
 pub mod blob;
 pub mod clipboard;
 pub mod desktop;
@@ -32,6 +33,7 @@ pub mod system;
 pub mod window;
 
 // Re-export all payloads for convenience
+pub use automaton::*;
 pub use blob::*;
 pub use clipboard::*;
 pub use desktop::*;

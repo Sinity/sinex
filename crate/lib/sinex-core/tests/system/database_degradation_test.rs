@@ -13,6 +13,7 @@
 
 use sinex_core::db::models::EventFactory;
 use sinex_test_utils::prelude::*;
+use sinex_test_utils::timing_utils::Timeouts;
 
 use sinex_core::types::ulid::Ulid;
 
@@ -97,7 +98,7 @@ async fn test_graceful_degradation_database_failure(
     let mut unexpected_errors = 0;
 
     // Test event operation
-    let operation = timeout(Duration::from_secs(2), event_test(pool1));
+    let operation = timeout(Duration::from_secs(Timeouts::SHORT - 3), event_test(pool1));
     match operation.await {
         Ok(Ok(_)) => {
             println!("  Operation 0 succeeded unexpectedly");
@@ -113,7 +114,7 @@ async fn test_graceful_degradation_database_failure(
     }
 
     // Test health operation
-    let operation = timeout(Duration::from_secs(2), health_test(pool2));
+    let operation = timeout(Duration::from_secs(Timeouts::SHORT - 3), health_test(pool2));
     match operation.await {
         Ok(Ok(_)) => {
             println!("  Operation 1 succeeded unexpectedly");
@@ -129,7 +130,7 @@ async fn test_graceful_degradation_database_failure(
     }
 
     // Test checkpoint operation
-    let operation = timeout(Duration::from_secs(2), checkpoint_test(pool3));
+    let operation = timeout(Duration::from_secs(Timeouts::SHORT - 3), checkpoint_test(pool3));
     match operation.await {
         Ok(Ok(_)) => {
             println!("  Operation 2 succeeded unexpectedly");
@@ -155,7 +156,7 @@ async fn test_graceful_degradation_database_failure(
     event.ingestor_version = Some("1.0.0".to_string());
 
     let recovery_test = timeout(
-        Duration::from_secs(5),
+        Duration::from_secs(Timeouts::MEDIUM),
         sinex_core::db::insert_event_with_validator(&pool, &event, None),
     )
     .await;
@@ -188,7 +189,7 @@ async fn test_graceful_degradation_database_failure(
         "System should timeout gracefully under load"
     );
     assert!(
-        recovery_duration < Duration::from_secs(5),
+        recovery_duration < Duration::from_secs(Timeouts::MEDIUM),
         "Recovery should be fast"
     );
 

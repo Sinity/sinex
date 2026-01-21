@@ -13,6 +13,7 @@ use serde_json::json;
 use sinex_core::types::Ulid;
 use sinex_core::DbPool;
 use sinex_test_utils::prelude::*;
+use sinex_test_utils::timing_utils::Timeouts;
 use sqlx::Row;
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
@@ -492,12 +493,12 @@ async fn test_ulid_ordering_performance_analysis(ctx: TestContext) -> Result<()>
 
     // Performance assertions
     assert!(
-        insertion_time < Duration::from_secs(30),
+        insertion_time < Duration::from_secs(Timeouts::STANDARD),
         "Insertion should complete within a reasonable window (took {:?})",
         insertion_time
     );
     assert!(
-        query_time < Duration::from_secs(15),
+        query_time < Duration::from_secs(Timeouts::MEDIUM),
         "Ordering query should stay under the expected time budget (took {:?})",
         query_time
     );

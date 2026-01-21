@@ -63,14 +63,19 @@ impl BlobManager {
         payload: T,
         material_id: Id<SourceMaterial>,
     ) -> Result<Event<JsonValue>> {
-        EventBuilder::new(
-            "blob-manager".into(),
-            event_type.into(),
-            serde_json::to_value(payload)?,
-        )
-        .from_material(material_id, 0)
-        .build()
-        .map_err(|err| eyre!("{err}"))
+        let payload_value = serde_json::to_value(payload)
+            .map_err(|e| eyre!("Failed to serialize blob event payload: {}", e))?;
+        EventBuilder::dynamic("blob-manager", event_type, payload_value)
+            .from_material(material_id, 0)
+            .build()
+            .map_err(|err| {
+                eyre!(
+                    "Failed to build blob event: {}\n  event_type: {}\n  material_id: {}",
+                    err,
+                    event_type,
+                    material_id
+                )
+            })
     }
 
     async fn ensure_material_for_blob(&self, blob: &Blob) -> Result<Id<SourceMaterial>> {

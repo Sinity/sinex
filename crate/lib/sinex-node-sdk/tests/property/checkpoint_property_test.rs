@@ -55,7 +55,10 @@ async fn checkpoint_updates_are_idempotent(
     #[strategy(prop::option::of("[0-9A-HJKMNP-TV-Z]{26}"))] last_processed_id: Option<String>,
     #[strategy(checkpoint_data())] checkpoint_data: serde_json::Value,
 ) -> Result<(), TestCaseError> {
-    let kv = ctx.ensure_checkpoint_kv().await.map_err(report_to_test_error)?;
+    let kv = ctx
+        .ensure_checkpoint_kv()
+        .await
+        .map_err(report_to_test_error)?;
     let checkpoint_manager = CheckpointManager::new(
         kv,
         processor_name.clone(),
@@ -82,11 +85,20 @@ async fn checkpoint_updates_are_idempotent(
     };
 
     // Save checkpoint twice
-    checkpoint_manager.save_checkpoint(&initial_state).await.map_err(report_to_test_error)?;
-    checkpoint_manager.save_checkpoint(&initial_state).await.map_err(report_to_test_error)?;
+    checkpoint_manager
+        .save_checkpoint(&initial_state)
+        .await
+        .map_err(report_to_test_error)?;
+    checkpoint_manager
+        .save_checkpoint(&initial_state)
+        .await
+        .map_err(report_to_test_error)?;
 
     // Verify state is consistent
-    let state = checkpoint_manager.get_checkpoint_stats().await.map_err(report_to_test_error)?;
+    let state = checkpoint_manager
+        .get_checkpoint_stats()
+        .await
+        .map_err(report_to_test_error)?;
     prop_assert_eq!(state.max_processed, initial_state.processed_count);
     prop_assert!(state.last_update.is_some());
     Ok(())
@@ -99,7 +111,10 @@ async fn checkpoint_recovery_is_robust(
     #[strategy(proptest::collection::vec((0u64..1000u64, checkpoint_data()), 1..=10))]
     checkpoints: Vec<(u64, serde_json::Value)>,
 ) -> Result<(), TestCaseError> {
-    let kv = ctx.ensure_checkpoint_kv().await.map_err(report_to_test_error)?;
+    let kv = ctx
+        .ensure_checkpoint_kv()
+        .await
+        .map_err(report_to_test_error)?;
     let checkpoint_manager = CheckpointManager::new(
         kv,
         processor_name.clone(),
@@ -123,11 +138,17 @@ async fn checkpoint_recovery_is_robust(
             version: 2,
         };
 
-        checkpoint_manager.save_checkpoint(&state).await.map_err(report_to_test_error)?;
+        checkpoint_manager
+            .save_checkpoint(&state)
+            .await
+            .map_err(report_to_test_error)?;
     }
 
     // Verify final state
-    let state = checkpoint_manager.get_checkpoint_stats().await.map_err(report_to_test_error)?;
+    let state = checkpoint_manager
+        .get_checkpoint_stats()
+        .await
+        .map_err(report_to_test_error)?;
     prop_assert_eq!(state.max_processed, expected_final_count);
     Ok(())
 }
@@ -138,7 +159,10 @@ async fn concurrent_checkpoint_access_is_safe(
     #[strategy(processor_names())] processor_name: String,
     #[strategy(proptest::collection::vec(0u64..1000u64, 1..=20))] concurrent_updates: Vec<u64>,
 ) -> Result<(), TestCaseError> {
-    let kv = ctx.ensure_checkpoint_kv().await.map_err(report_to_test_error)?;
+    let kv = ctx
+        .ensure_checkpoint_kv()
+        .await
+        .map_err(report_to_test_error)?;
     let checkpoint_manager = Arc::new(CheckpointManager::new(
         kv,
         processor_name.clone(),
@@ -179,7 +203,10 @@ async fn concurrent_checkpoint_access_is_safe(
     prop_assert!(successful_updates > 0, "At least one update should succeed");
 
     // Verify final state is consistent
-    let final_state = checkpoint_manager.get_checkpoint_stats().await.map_err(report_to_test_error)?;
+    let final_state = checkpoint_manager
+        .get_checkpoint_stats()
+        .await
+        .map_err(report_to_test_error)?;
     prop_assert!(final_state.last_update.is_some());
     Ok(())
 }
@@ -191,7 +218,10 @@ async fn checkpoint_state_transitions_are_valid(
     #[strategy(0u64..100u64)] initial_count: u64,
     #[strategy(proptest::collection::vec(1u64..100u64, 1..=10))] increments: Vec<u64>,
 ) -> Result<(), TestCaseError> {
-    let kv = ctx.ensure_checkpoint_kv().await.map_err(report_to_test_error)?;
+    let kv = ctx
+        .ensure_checkpoint_kv()
+        .await
+        .map_err(report_to_test_error)?;
     let checkpoint_manager = CheckpointManager::new(
         kv,
         processor_name.clone(),
@@ -212,7 +242,10 @@ async fn checkpoint_state_transitions_are_valid(
         version: 2,
     };
 
-    checkpoint_manager.save_checkpoint(&state).await.map_err(report_to_test_error)?;
+    checkpoint_manager
+        .save_checkpoint(&state)
+        .await
+        .map_err(report_to_test_error)?;
 
     // Apply increments sequentially
     for (i, increment) in increments.iter().enumerate() {
@@ -225,10 +258,16 @@ async fn checkpoint_state_transitions_are_valid(
         state.version += 1;
         state.data = Some(serde_json::json!({ "sequence": i + 1 }));
 
-        checkpoint_manager.save_checkpoint(&state).await.map_err(report_to_test_error)?;
+        checkpoint_manager
+            .save_checkpoint(&state)
+            .await
+            .map_err(report_to_test_error)?;
 
         // Verify the state was updated correctly
-        let retrieved_state = checkpoint_manager.get_checkpoint_stats().await.map_err(report_to_test_error)?;
+        let retrieved_state = checkpoint_manager
+            .get_checkpoint_stats()
+            .await
+            .map_err(report_to_test_error)?;
         prop_assert_eq!(retrieved_state.max_processed, current_count);
         prop_assert!(retrieved_state.last_update.is_some());
     }
@@ -250,7 +289,10 @@ async fn checkpoint_data_integrity_is_preserved(
     ))]
     operations: Vec<String>,
 ) -> Result<(), TestCaseError> {
-    let kv = ctx.ensure_checkpoint_kv().await.map_err(report_to_test_error)?;
+    let kv = ctx
+        .ensure_checkpoint_kv()
+        .await
+        .map_err(report_to_test_error)?;
     let checkpoint_manager = CheckpointManager::new(
         kv,
         processor_name.clone(),
@@ -276,10 +318,16 @@ async fn checkpoint_data_integrity_is_preserved(
                     version: 2,
                 };
 
-                checkpoint_manager.save_checkpoint(&state).await.map_err(report_to_test_error)?;
+                checkpoint_manager
+                    .save_checkpoint(&state)
+                    .await
+                    .map_err(report_to_test_error)?;
             }
             "load" => {
-                let stats = checkpoint_manager.get_checkpoint_stats().await.map_err(report_to_test_error)?;
+                let stats = checkpoint_manager
+                    .get_checkpoint_stats()
+                    .await
+                    .map_err(report_to_test_error)?;
                 prop_assert_eq!(stats.max_processed, processed_count);
                 prop_assert!(stats.last_update.is_some());
             }
@@ -298,14 +346,20 @@ async fn checkpoint_data_integrity_is_preserved(
                     version: 2,
                 };
 
-                checkpoint_manager.save_checkpoint(&state).await.map_err(report_to_test_error)?;
+                checkpoint_manager
+                    .save_checkpoint(&state)
+                    .await
+                    .map_err(report_to_test_error)?;
             }
             _ => unreachable!(),
         }
     }
 
     // Final verification
-    let final_state = checkpoint_manager.get_checkpoint_stats().await.map_err(report_to_test_error)?;
+    let final_state = checkpoint_manager
+        .get_checkpoint_stats()
+        .await
+        .map_err(report_to_test_error)?;
     prop_assert_eq!(final_state.max_processed, processed_count);
     prop_assert!(final_state.last_update.is_some());
     Ok(())
@@ -317,7 +371,10 @@ async fn checkpoint_cleanup_maintains_consistency(
     #[strategy(proptest::collection::vec(processor_names(), 1..=10))] processor_names: Vec<String>,
     #[strategy(1u64..100u64)] cleanup_threshold: u64,
 ) -> Result<(), TestCaseError> {
-    let kv = ctx.ensure_checkpoint_kv().await.map_err(report_to_test_error)?; // Shared KV for this test run
+    let kv = ctx
+        .ensure_checkpoint_kv()
+        .await
+        .map_err(report_to_test_error)?; // Shared KV for this test run
 
     // Create multiple automata with checkpoints
     let mut managers = Vec::new();
@@ -341,13 +398,19 @@ async fn checkpoint_cleanup_maintains_consistency(
             version: 2,
         };
 
-        manager.save_checkpoint(&state).await.map_err(report_to_test_error)?;
+        manager
+            .save_checkpoint(&state)
+            .await
+            .map_err(report_to_test_error)?;
         managers.push(manager);
     }
 
     // Verify all checkpoints exist
     for manager in &managers {
-        let stats = manager.get_checkpoint_stats().await.map_err(report_to_test_error)?;
+        let stats = manager
+            .get_checkpoint_stats()
+            .await
+            .map_err(report_to_test_error)?;
         prop_assert_eq!(stats.max_processed, cleanup_threshold);
         prop_assert!(stats.last_update.is_some());
     }
@@ -362,7 +425,10 @@ async fn checkpoint_cleanup_maintains_consistency(
     );
 
     // Verify cleanup maintains isolation
-    let remaining_checkpoint = cleaned_manager.get_checkpoint_stats().await.map_err(report_to_test_error)?;
+    let remaining_checkpoint = cleaned_manager
+        .get_checkpoint_stats()
+        .await
+        .map_err(report_to_test_error)?;
     prop_assert!(remaining_checkpoint.last_update.is_some());
     Ok(())
 }

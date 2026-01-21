@@ -12,6 +12,7 @@ use async_nats::jetstream;
 use async_nats::jetstream::consumer::PullConsumer;
 use futures::StreamExt;
 use sinex_core::environment::SinexEnvironment;
+use sinex_core::types::domain::{EventSource, EventType};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -474,13 +475,13 @@ impl JetStreamEventConsumer {
 
         let source = payload["source"]
             .as_str()
-            .ok_or_else(|| NodeError::Processing("Missing source".to_string()))?
-            .to_string();
+            .ok_or_else(|| NodeError::Processing("Missing source".to_string()))?;
+        let source = EventSource::new(source);
 
         let event_type = payload["event_type"]
             .as_str()
-            .ok_or_else(|| NodeError::Processing("Missing event_type".to_string()))?
-            .to_string();
+            .ok_or_else(|| NodeError::Processing("Missing event_type".to_string()))?;
+        let event_type = EventType::new(event_type);
 
         let ts_orig = payload["ts_orig"]
             .as_str()

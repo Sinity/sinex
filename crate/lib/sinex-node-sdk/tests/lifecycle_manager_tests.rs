@@ -9,6 +9,8 @@ type TestResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
+use sinex_test_utils::timing_utils::Timeouts;
+
 #[sinex_test]
 async fn lifecycle_manager_starts_in_starting_status() -> TestResult<()> {
     let manager = LifecycleManager::new("test-service".to_string());
@@ -53,7 +55,7 @@ async fn shutdown_flag_initially_false() -> TestResult<()> {
 #[sinex_test]
 async fn health_check_interval_can_be_configured() -> TestResult<()> {
     let manager = LifecycleManager::new("test-service".to_string())
-        .with_health_check_interval(std::time::Duration::from_secs(5));
+        .with_health_check_interval(std::time::Duration::from_secs(Timeouts::QUICK));
 
     // Manager should be created successfully with custom interval
     assert_eq!(manager.status(), ServiceStatus::Starting);

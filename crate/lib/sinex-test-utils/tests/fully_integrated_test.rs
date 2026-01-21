@@ -246,12 +246,8 @@ async fn test_with_fixtures(
     let event_type = format!("file.{operation}");
     for source in &test_sources {
         for path in &test_paths {
-            ctx.publish_event(
-                *source,
-                event_type.as_str(),
-                json!({"path": path.as_str()}),
-            )
-            .await?;
+            ctx.publish_event(*source, event_type.as_str(), json!({"path": path.as_str()}))
+                .await?;
         }
     }
 

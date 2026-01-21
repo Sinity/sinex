@@ -74,9 +74,9 @@ mod tests {
         let emitter = EventEmitter::new(tx, false);
         let context = StageAsYouGoContext::from_optional_emitter(emitter);
 
-        let event = EventBuilder::new(
-            "stage.test".into(),
-            "line.captured".into(),
+        let event = EventBuilder::dynamic(
+            "stage.test",
+            "line.captured",
             serde_json::json!({"line": "hello"}),
         )
         .with_provenance(Provenance::from_synthesis_safe(

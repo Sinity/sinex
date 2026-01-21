@@ -102,7 +102,12 @@ async fn node_event_processing_preserves_order(
     let mut processed_events = Vec::new();
     for chunk in events.chunks(batch_size) {
         for event in chunk {
-            let inserted_event = ctx.pool.events().insert(event.clone()).await.map_err(report_to_test_error)?;
+            let inserted_event = ctx
+                .pool
+                .events()
+                .insert(event.clone())
+                .await
+                .map_err(report_to_test_error)?;
             processed_events.push(inserted_event);
         }
 
@@ -114,7 +119,12 @@ async fn node_event_processing_preserves_order(
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Check that we have the expected count
-    let actual_count = ctx.pool.events().count_all().await.map_err(report_to_test_error)?;
+    let actual_count = ctx
+        .pool
+        .events()
+        .count_all()
+        .await
+        .map_err(report_to_test_error)?;
     assert_eq!(actual_count, processed_events.len() as i64);
 
     let db_events = ctx
@@ -141,7 +151,8 @@ async fn node_handles_intermittent_failures(
     #[strategy(proptest::collection::vec(
         (event_sources(), event_types(), event_payloads()),
         1..=50
-    ))] events: Vec<(String, String, serde_json::Value)>,
+    ))]
+    events: Vec<(String, String, serde_json::Value)>,
     #[strategy(1u64..100u64)] recovery_delay: u64,
 ) -> Result<(), TestCaseError> {
     if events.is_empty() {
@@ -171,7 +182,11 @@ async fn node_handles_intermittent_failures(
                 payload.clone(),
             );
 
-            ctx.pool.events().insert(event).await.map_err(report_to_test_error)?;
+            ctx.pool
+                .events()
+                .insert(event)
+                .await
+                .map_err(report_to_test_error)?;
             successful_events += 1;
         }
 
@@ -182,7 +197,12 @@ async fn node_handles_intermittent_failures(
     // Wait for processing to complete
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    let final_count = ctx.pool.events().count_all().await.map_err(report_to_test_error)?;
+    let final_count = ctx
+        .pool
+        .events()
+        .count_all()
+        .await
+        .map_err(report_to_test_error)?;
     assert_eq!(final_count, successful_events as i64);
 
     // Verify system recovered from failures
@@ -248,7 +268,12 @@ async fn node_manages_resources_efficiently(
     // Wait for final consistency
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    let final_count = ctx.pool.events().count_all().await.map_err(report_to_test_error)?;
+    let final_count = ctx
+        .pool
+        .events()
+        .count_all()
+        .await
+        .map_err(report_to_test_error)?;
     assert_eq!(final_count, total_events as i64);
     Ok::<(), TestCaseError>(())
 }
@@ -289,7 +314,8 @@ async fn node_batch_processing_is_consistent(
     #[strategy(proptest::collection::vec(
         (event_sources(), event_types(), event_payloads()),
         1..=50
-    ))] events: Vec<(String, String, serde_json::Value)>,
+    ))]
+    events: Vec<(String, String, serde_json::Value)>,
 ) -> Result<(), TestCaseError> {
     if events.is_empty() {
         return Ok::<(), TestCaseError>(());
@@ -304,7 +330,11 @@ async fn node_batch_processing_is_consistent(
             payload.clone(),
         );
 
-        ctx.pool.events().insert(event).await.map_err(report_to_test_error)?;
+        ctx.pool
+            .events()
+            .insert(event)
+            .await
+            .map_err(report_to_test_error)?;
     }
 
     // Wait for initial processing
@@ -318,14 +348,23 @@ async fn node_batch_processing_is_consistent(
             payload.clone(),
         );
 
-        ctx.pool.events().insert(event).await.map_err(report_to_test_error)?;
+        ctx.pool
+            .events()
+            .insert(event)
+            .await
+            .map_err(report_to_test_error)?;
     }
 
     // Wait for all events to be processed
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Verify no events were lost during configuration changes
-    let final_count = ctx.pool.events().count_all().await.map_err(report_to_test_error)?;
+    let final_count = ctx
+        .pool
+        .events()
+        .count_all()
+        .await
+        .map_err(report_to_test_error)?;
     assert_eq!(final_count, events.len() as i64);
     Ok::<(), TestCaseError>(())
 }
@@ -346,7 +385,11 @@ async fn node_survives_processing_interruptions(
             json!({ "phase": "before", "index": i }),
         );
 
-        ctx.pool.events().insert(event).await.map_err(report_to_test_error)?;
+        ctx.pool
+            .events()
+            .insert(event)
+            .await
+            .map_err(report_to_test_error)?;
     }
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -360,7 +403,8 @@ async fn node_survives_processing_interruptions(
         );
 
         // Try to insert with timeout to simulate network issues
-        let _ = tokio::time::timeout(Duration::from_millis(50), ctx.pool.events().insert(event)).await;
+        let _ =
+            tokio::time::timeout(Duration::from_millis(50), ctx.pool.events().insert(event)).await;
     }
 
     // Wait for interruption duration
@@ -374,14 +418,23 @@ async fn node_survives_processing_interruptions(
             json!({ "phase": "after", "index": i }),
         );
 
-        ctx.pool.events().insert(event).await.map_err(report_to_test_error)?;
+        ctx.pool
+            .events()
+            .insert(event)
+            .await
+            .map_err(report_to_test_error)?;
     }
 
     // Wait for recovery and verify minimum events
     let expected_minimum = events_before_interruption + events_after_interruption;
     tokio::time::sleep(Duration::from_millis(150)).await;
 
-    let final_count = ctx.pool.events().count_all().await.map_err(report_to_test_error)?;
+    let final_count = ctx
+        .pool
+        .events()
+        .count_all()
+        .await
+        .map_err(report_to_test_error)?;
     assert!(final_count >= expected_minimum as i64);
     Ok::<(), TestCaseError>(())
 }

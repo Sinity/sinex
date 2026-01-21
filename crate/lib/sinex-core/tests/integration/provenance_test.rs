@@ -463,30 +463,24 @@ async fn synthesis_provenance_rejects_direct_cycles(ctx: TestContext) -> TestRes
     let parent_id = Id::<Event<JsonValue>>::new();
     let child_id = Id::<Event<JsonValue>>::new();
 
-    let mut parent_event = EventBuilder::new(
-        "cycle-test".into(),
-        "cycle.parent".into(),
-        json!({"role": "parent"}),
-    )
-    .with_provenance(
-        Provenance::from_synthesis(vec![EventId::from_ulid(*child_id.as_ulid())])
-            .expect("non-empty"),
-    )
-    .build()?;
+    let mut parent_event =
+        EventBuilder::dynamic("cycle-test", "cycle.parent", json!({"role": "parent"}))
+            .with_provenance(
+                Provenance::from_synthesis(vec![EventId::from_ulid(*child_id.as_ulid())])
+                    .expect("non-empty"),
+            )
+            .build()?;
     parent_event.id = Some(parent_id.clone());
 
     repo.insert(parent_event).await?;
 
-    let mut child_event = EventBuilder::new(
-        "cycle-test".into(),
-        "cycle.child".into(),
-        json!({"role": "child"}),
-    )
-    .with_provenance(
-        Provenance::from_synthesis(vec![EventId::from_ulid(*parent_id.as_ulid())])
-            .expect("non-empty"),
-    )
-    .build()?;
+    let mut child_event =
+        EventBuilder::dynamic("cycle-test", "cycle.child", json!({"role": "child"}))
+            .with_provenance(
+                Provenance::from_synthesis(vec![EventId::from_ulid(*parent_id.as_ulid())])
+                    .expect("non-empty"),
+            )
+            .build()?;
     child_event.id = Some(child_id.clone());
 
     let err = repo
@@ -511,42 +505,33 @@ async fn synthesis_provenance_rejects_indirect_cycles(ctx: TestContext) -> TestR
     let parent_id = Id::<Event<JsonValue>>::new();
     let child_id = Id::<Event<JsonValue>>::new();
 
-    let mut ancestor_event = EventBuilder::new(
-        "cycle-test".into(),
-        "cycle.ancestor".into(),
-        json!({"role": "ancestor"}),
-    )
-    .with_provenance(
-        Provenance::from_synthesis(vec![EventId::from_ulid(*child_id.as_ulid())])
-            .expect("non-empty"),
-    )
-    .build()?;
+    let mut ancestor_event =
+        EventBuilder::dynamic("cycle-test", "cycle.ancestor", json!({"role": "ancestor"}))
+            .with_provenance(
+                Provenance::from_synthesis(vec![EventId::from_ulid(*child_id.as_ulid())])
+                    .expect("non-empty"),
+            )
+            .build()?;
     ancestor_event.id = Some(ancestor_id.clone());
     repo.insert(ancestor_event).await?;
 
-    let mut parent_event = EventBuilder::new(
-        "cycle-test".into(),
-        "cycle.parent".into(),
-        json!({"role": "parent"}),
-    )
-    .with_provenance(
-        Provenance::from_synthesis(vec![EventId::from_ulid(*ancestor_id.as_ulid())])
-            .expect("non-empty"),
-    )
-    .build()?;
+    let mut parent_event =
+        EventBuilder::dynamic("cycle-test", "cycle.parent", json!({"role": "parent"}))
+            .with_provenance(
+                Provenance::from_synthesis(vec![EventId::from_ulid(*ancestor_id.as_ulid())])
+                    .expect("non-empty"),
+            )
+            .build()?;
     parent_event.id = Some(parent_id.clone());
     repo.insert(parent_event).await?;
 
-    let mut child_event = EventBuilder::new(
-        "cycle-test".into(),
-        "cycle.child".into(),
-        json!({"role": "child"}),
-    )
-    .with_provenance(
-        Provenance::from_synthesis(vec![EventId::from_ulid(*parent_id.as_ulid())])
-            .expect("non-empty"),
-    )
-    .build()?;
+    let mut child_event =
+        EventBuilder::dynamic("cycle-test", "cycle.child", json!({"role": "child"}))
+            .with_provenance(
+                Provenance::from_synthesis(vec![EventId::from_ulid(*parent_id.as_ulid())])
+                    .expect("non-empty"),
+            )
+            .build()?;
     child_event.id = Some(child_id.clone());
 
     let err = repo
@@ -566,13 +551,10 @@ async fn duplicate_parent_ids_rejected_by_validator() -> TestResult<()> {
     let validator = EventValidator::new();
     let parent = EventId::new();
 
-    let mut event = EventBuilder::new(
-        "prov-security".into(),
-        "duplicate.parents".into(),
-        json!({"case": "dup"}),
-    )
-    .from_parents(vec![parent.clone(), parent])?
-    .build()?;
+    let mut event =
+        EventBuilder::dynamic("prov-security", "duplicate.parents", json!({"case": "dup"}))
+            .from_parents(vec![parent.clone(), parent])?
+            .build()?;
 
     event.id = Some(EventId::new());
 

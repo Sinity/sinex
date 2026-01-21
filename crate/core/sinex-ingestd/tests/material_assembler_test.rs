@@ -126,7 +126,7 @@ async fn assembler_rejects_corrupted_slice_and_records_dlq(ctx: TestContext) -> 
 
     // Expect DLQ entry on the ingestd DLQ subject or detect assembler failure due to existing stream config drift.
     use tokio::time::Instant;
-    let deadline = Instant::now() + Duration::from_secs(15);
+    let deadline = Instant::now() + Duration::from_secs(Timeouts::LONG);
     loop {
         if let Ok(Some(_)) = timeout(Duration::from_millis(500), dlq_sub.next()).await {
             break;
@@ -326,7 +326,7 @@ async fn assembler_routes_empty_material_to_dlq(ctx: TestContext) -> TestResult<
     .await?;
 
     // Verify DLQ entry
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(Timeouts::LONG);
     loop {
         if let Ok(Some(msg)) = timeout(Duration::from_millis(500), dlq_sub.next()).await {
             let payload: serde_json::Value = serde_json::from_slice(&msg.payload)?;
@@ -405,7 +405,7 @@ async fn assembler_cleans_up_state_on_corruption(ctx: TestContext) -> TestResult
     .await?;
 
     // Wait for DLQ entry for the corrupted material.
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(Timeouts::LONG);
     loop {
         if let Ok(Some(msg)) = timeout(Duration::from_millis(500), dlq_sub.next()).await {
             let payload: serde_json::Value = serde_json::from_slice(&msg.payload)?;

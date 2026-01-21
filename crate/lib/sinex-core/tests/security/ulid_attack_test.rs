@@ -31,9 +31,9 @@ async fn event_validator_blocks_ulid_time_skew_attack(
     let validator = EventValidator::new();
     let future_ulid = Ulid::from_datetime(Utc::now() + Duration::hours(1));
 
-    let mut event = EventBuilder::new(
-        "ulid-security".into(),
-        "time.attack".into(),
+    let mut event = EventBuilder::dynamic(
+        "ulid-security",
+        "time.attack",
         json!({"scenario": "future-id"}),
     )
     .from_material(Id::<SourceMaterial>::new(), 0)

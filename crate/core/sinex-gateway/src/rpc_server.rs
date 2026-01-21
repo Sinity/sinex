@@ -409,11 +409,7 @@ impl RpcAuthContext {
     /// Create an auth context from a validated token
     fn from_token(token: &str) -> Self {
         Self {
-            token_prefix: token
-                .chars()
-                .take(8)
-                .collect::<String>()
-                .to_string(),
+            token_prefix: token.chars().take(8).collect::<String>().to_string(),
             authenticated_at: Utc::now(),
         }
     }
@@ -786,7 +782,13 @@ async fn handle_rpc(
     let method = request.method.clone();
 
     // Use shared dispatch function with auth context
-    let result = dispatch_rpc_method(&state.services, &request.method, request.params, &auth_context).await;
+    let result = dispatch_rpc_method(
+        &state.services,
+        &request.method,
+        request.params,
+        &auth_context,
+    )
+    .await;
 
     // Record latency on success
     let latency_us = start.elapsed().as_micros() as u64;
@@ -812,7 +814,7 @@ async fn handle_rpc(
             JsonRpcResponse::error(
                 request.id,
                 -32603,
-                format!("Internal error (ref: {})", error_id)
+                format!("Internal error (ref: {})", error_id),
             )
         }
     };

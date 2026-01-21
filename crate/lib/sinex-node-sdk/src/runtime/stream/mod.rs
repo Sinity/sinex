@@ -902,7 +902,7 @@ impl<T: Node + 'static> StreamProcessorRunner<T> {
         let mut processed_events = 0u64;
 
         while let Some(provisional) = receiver.recv().await {
-            let event_id = EventId::from_ulid(provisional.event_id);
+            let event_id = provisional.event_id;
             let event = match &db_pool {
                 Some(pool) => match Self::fetch_persisted_event(pool, &event_id).await? {
                     Some(event) => Some(event),
@@ -1068,7 +1068,7 @@ impl<T: Node + 'static> StreamProcessorRunner<T> {
         };
 
         Ok(Event {
-            id: Some(EventId::from_ulid(provisional.event_id)),
+            id: Some(provisional.event_id),
             source: EventSource::from(published.source),
             event_type: EventType::from(published.event_type),
             payload: published.event_payload,

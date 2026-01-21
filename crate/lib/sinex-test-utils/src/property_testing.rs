@@ -420,7 +420,9 @@ mod tests {
         #[strategy(filesystem_event_strategy())] event: (String, String, Value),
     ) -> TestResult<()> {
         let (source, event_type, payload) = event;
-        let event = ctx.publish_event(source.as_str(), event_type.as_str(), payload).await?;
+        let event = ctx
+            .publish_event(source.as_str(), event_type.as_str(), payload)
+            .await?;
 
         assert_eq!(
             event.source.as_str(),
@@ -638,8 +640,12 @@ mod tests {
         // Event count should increment by exactly 1 after each insert
         let before_count = ctx.pool.events().count_all().await?;
 
-        ctx.publish_event(source.as_str(), "transaction.test", json!({"test": "consistency"}))
-            .await?;
+        ctx.publish_event(
+            source.as_str(),
+            "transaction.test",
+            json!({"test": "consistency"}),
+        )
+        .await?;
 
         let after_count = ctx.pool.events().count_all().await?;
         assert_eq!(

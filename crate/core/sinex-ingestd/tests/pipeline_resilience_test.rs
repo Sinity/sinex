@@ -7,9 +7,7 @@ use sinex_core::types::Ulid;
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
 use sinex_test_utils::timing_utils::{Timeouts, WaitHelpers};
-use sinex_test_utils::{
-    sinex_test, EventOverrides, TestContext, TestResult, TestNodePublisher,
-};
+use sinex_test_utils::{sinex_test, EventOverrides, TestContext, TestNodePublisher, TestResult};
 use tokio::sync::RwLock;
 use tokio::time::Duration;
 
@@ -59,11 +57,8 @@ async fn ingestion_handles_burst_under_latency_budget(ctx: TestContext) -> TestR
     let ctx = ctx.with_nats().shared().await?;
     let (consumer_handle, namespace) = spawn_consumer(&ctx, "latency").await?;
     let nats_client = ctx.nats_client();
-    let publisher = TestNodePublisher::with_namespace(
-        nats_client,
-        "latency-suite",
-        Some(namespace.clone()),
-    );
+    let publisher =
+        TestNodePublisher::with_namespace(nats_client, "latency-suite", Some(namespace.clone()));
 
     let total_events = 120;
     let start = Instant::now();
@@ -107,11 +102,8 @@ async fn replaying_events_after_restart_does_not_duplicate(ctx: TestContext) -> 
     let ctx = ctx.with_nats().shared().await?;
     let (consumer_handle, namespace) = spawn_consumer(&ctx, "restart").await?;
     let nats_client = ctx.nats_client();
-    let publisher = TestNodePublisher::with_namespace(
-        nats_client,
-        "restart-suite",
-        Some(namespace.clone()),
-    );
+    let publisher =
+        TestNodePublisher::with_namespace(nats_client, "restart-suite", Some(namespace.clone()));
 
     let ids: Vec<Ulid> = (0..10).map(|_| Ulid::new()).collect();
     for (idx, id) in ids.iter().enumerate() {
@@ -151,11 +143,8 @@ async fn replaying_events_after_restart_does_not_duplicate(ctx: TestContext) -> 
     // Restart the consumer and replay the same events to ensure no duplicates.
     let (consumer_handle, namespace) = spawn_consumer(&ctx, "restart-2").await?;
     let nats_client = ctx.nats_client();
-    let publisher = TestNodePublisher::with_namespace(
-        nats_client,
-        "restart-suite",
-        Some(namespace.clone()),
-    );
+    let publisher =
+        TestNodePublisher::with_namespace(nats_client, "restart-suite", Some(namespace.clone()));
     for (idx, id) in ids.iter().enumerate() {
         publisher
             .publish_event_with_overrides(

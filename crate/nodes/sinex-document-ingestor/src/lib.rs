@@ -11,14 +11,12 @@ use chrono::{DateTime, Utc};
 use mime_guess::MimeGuess;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_core::validation::validate_path_within_root;
-use sinex_core::{
-    types::{
-        domain::{EventSource, EventType, SanitizedPath},
-        ulid::Ulid,
-    },
-    EventBuilder, Id, OffsetKind, Provenance,
+use sinex_core::types::{
+    domain::SanitizedPath,
+    events::{payloads::document::DocumentIngestedPayload, EventPayload},
+    ulid::Ulid,
 };
+use sinex_core::validation::validate_path_within_root;
 use sinex_node_sdk::{
     acquisition_manager::{AcquisitionManager, RotationPolicy},
     event_processor::EventTransport,
@@ -218,7 +216,7 @@ impl DocumentProcessor {
                 Some("binary".to_string())
             });
 
-        let mut metadata_json = json!({
+        let metadata_json = json!({
             "path": utf8_path.as_str(),
             "sanitized_path": sanitized_path.as_str(),
             "mime_type": mime,
@@ -254,42 +252,27 @@ impl DocumentProcessor {
             .await
             .map_err(NodeError::from)?;
 
-        if let Some(obj) = metadata_json.as_object_mut() {
-            obj.insert(
-                "source_material_id".to_string(),
-                serde_json::json!(material_id.to_string()),
-            );
-        }
-
-        let payload = serde_json::json!({
-            "file_path": sanitized_path.as_str(),
-            "source_material_id": material_id.to_string(),
-            "size_bytes": file_size,
-            "mime_type": mime.clone(),
-            "encoding": encoding,
-            "metadata": metadata_json,
-        });
-
-        let provenance = Provenance::Material {
-            id: Id::from_ulid(material_id),
-            anchor_byte: 0,
-            offset_start: Some(0),
-            offset_end: Some(total_bytes),
-            offset_kind: OffsetKind::Byte,
+        let payload = DocumentIngestedPayload {
+            file_path: sanitized_path.as_str().to_string(),
+            source_material_id: material_id.to_string(),
+            size_bytes: file_size,
+            mime_type: Some(mime.clone()),
+            encoding,
         };
 
-        let mut event = EventBuilder::new(
-            EventSource::from_static("document_ingestor"),
-            EventType::from("document.ingested"),
-            payload,
-        )
-        .with_provenance(provenance)
-        .build()
-        .map_err(|e| NodeError::Processing(format!("Failed to build event: {e}")))?;
-        event.id = Some(Id::from_ulid(Ulid::new()));
+        let event = payload
+            .from_material(material_id)
+            .with_offset_start(0)?
+            .with_offset_end(total_bytes)?
+            .build()
+            .map_err(|e| NodeError::Processing(format!("Failed to build event: {e}")))?;
+
+        let json_event = event
+            .to_json_event()
+            .map_err(|e| NodeError::Processing(format!("Failed to serialize event: {e}")))?;
 
         stage_context
-            .emit_event_with_provenance(event, material_id, Some(0), Some(total_bytes))
+            .emit_event_with_provenance(json_event, material_id, Some(0), Some(total_bytes))
             .await?;
 
         Ok(Some(material_id))

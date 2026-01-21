@@ -573,7 +573,11 @@ mod tests {
 
         let source = "a".repeat(length);
         let event = ctx
-            .publish_event(source.as_str(), "proptest.length", json!({"test_name": name}))
+            .publish_event(
+                source.as_str(),
+                "proptest.length",
+                json!({"test_name": name}),
+            )
             .await?;
         assert_eq!(event.source.as_str(), source);
         Ok(())

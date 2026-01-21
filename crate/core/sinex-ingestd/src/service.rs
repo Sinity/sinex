@@ -563,7 +563,12 @@ impl IngestService {
         // Broadcast metadata for cache invalidation signal
         js.publish(subject.clone(), serde_json::to_vec(&entries)?.into())
             .await
-            .wrap_err_with(|| format!("Failed to publish schema broadcast to subject '{}'", subject))
+            .wrap_err_with(|| {
+                format!(
+                    "Failed to publish schema broadcast to subject '{}'",
+                    subject
+                )
+            })
             .map_err(|e| SinexError::network(format!("Failed to publish schema broadcast: {e}")))?
             .await
             .wrap_err("Failed to confirm schema broadcast acknowledgement")

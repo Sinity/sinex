@@ -8,14 +8,14 @@
 //! - Graceful shutdown and cleanup
 
 use camino::Utf8PathBuf;
+use sinex_core::types::Seconds;
+use sinex_core::SinexError;
 use sinex_node_sdk::{
     checkpoint::{CheckpointManager, CheckpointState},
     config::{EventSourceConfig, NodeConfig},
     coordination::{InstanceMode, NodeCoordination},
     stream_processor::Checkpoint,
 };
-use sinex_core::types::Seconds;
-use sinex_core::SinexError;
 use sinex_test_utils::{sinex_test, TestContext};
 use std::collections::HashMap;
 use std::sync::{
@@ -34,7 +34,9 @@ use support::runtime::TestRuntimeBuilder;
 async fn test_node_complete_lifecycle(ctx: TestContext) -> color_eyre::Result<()> {
     info!("Testing complete node lifecycle");
 
-    let runtime = TestRuntimeBuilder::new(&ctx, "lifecycle_test_node").build().await?;
+    let runtime = TestRuntimeBuilder::new(&ctx, "lifecycle_test_node")
+        .build()
+        .await?;
     let mut coordination = NodeCoordination::from_runtime(
         &runtime.runtime,
         format!("lifecycle-{}", sinex_core::Ulid::new()),
@@ -87,7 +89,10 @@ async fn test_node_complete_lifecycle(ctx: TestContext) -> color_eyre::Result<()
     );
     let final_processing = processing_count.load(Ordering::SeqCst);
     assert!(final_processing > 0, "Node should have processed work");
-    info!("  Node lifecycle completed: {} work units processed", final_processing);
+    info!(
+        "  Node lifecycle completed: {} work units processed",
+        final_processing
+    );
 
     Ok(())
 }
@@ -161,7 +166,9 @@ async fn test_node_health_monitoring(ctx: TestContext) -> color_eyre::Result<()>
 async fn test_node_error_recovery(ctx: TestContext) -> color_eyre::Result<()> {
     info!("Testing node error recovery");
 
-    let runtime = TestRuntimeBuilder::new(&ctx, "error_recovery_test").build().await?;
+    let runtime = TestRuntimeBuilder::new(&ctx, "error_recovery_test")
+        .build()
+        .await?;
     let mut coordination = NodeCoordination::from_runtime(
         &runtime.runtime,
         format!("recovery-{}", sinex_core::Ulid::new()),
@@ -209,7 +216,10 @@ async fn test_node_error_recovery(ctx: TestContext) -> color_eyre::Result<()> {
     )
     .await;
 
-    assert!(recovery_result.is_ok(), "Recovery coordination should complete");
+    assert!(
+        recovery_result.is_ok(),
+        "Recovery coordination should complete"
+    );
 
     // Verify error recovery behavior
     let final_errors = error_count.load(Ordering::SeqCst);
@@ -237,7 +247,9 @@ async fn test_node_error_recovery(ctx: TestContext) -> color_eyre::Result<()> {
 async fn test_node_state_transitions(ctx: TestContext) -> color_eyre::Result<()> {
     info!("Testing node state transitions");
 
-    let runtime = TestRuntimeBuilder::new(&ctx, "state_transition_test").build().await?;
+    let runtime = TestRuntimeBuilder::new(&ctx, "state_transition_test")
+        .build()
+        .await?;
     let mut coordination = NodeCoordination::from_runtime(
         &runtime.runtime,
         format!("states-{}", sinex_core::Ulid::new()),
@@ -276,7 +288,10 @@ async fn test_node_state_transitions(ctx: TestContext) -> color_eyre::Result<()>
     )
     .await;
 
-    assert!(transition_result.is_ok(), "State transition coordination should complete");
+    assert!(
+        transition_result.is_ok(),
+        "State transition coordination should complete"
+    );
 
     // Verify transitions occurred
     assert!(
@@ -356,7 +371,9 @@ async fn test_node_graceful_shutdown(ctx: TestContext) -> color_eyre::Result<()>
         "shutdown_consumer".to_string(),
     );
 
-    let runtime = TestRuntimeBuilder::new(&ctx, "shutdown_test").build().await?;
+    let runtime = TestRuntimeBuilder::new(&ctx, "shutdown_test")
+        .build()
+        .await?;
     let mut coordination = NodeCoordination::from_runtime(
         &runtime.runtime,
         format!("shutdown-{}", sinex_core::Ulid::new()),
@@ -404,7 +421,10 @@ async fn test_node_graceful_shutdown(ctx: TestContext) -> color_eyre::Result<()>
     .await;
 
     // Verify shutdown process
-    assert!(shutdown_result.is_ok(), "Shutdown coordination should complete");
+    assert!(
+        shutdown_result.is_ok(),
+        "Shutdown coordination should complete"
+    );
     assert!(
         operations_completed.load(Ordering::SeqCst) > 0,
         "Should have completed some operations"
@@ -425,7 +445,9 @@ async fn test_node_graceful_shutdown(ctx: TestContext) -> color_eyre::Result<()>
         version: 1,
     };
 
-    checkpoint_manager.save_checkpoint(&final_checkpoint).await?;
+    checkpoint_manager
+        .save_checkpoint(&final_checkpoint)
+        .await?;
     let saved_checkpoint = checkpoint_manager.load_checkpoint().await?;
     assert_eq!(
         saved_checkpoint.processed_count,
