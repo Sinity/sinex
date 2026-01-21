@@ -686,7 +686,7 @@ async fn handle_file_created(ctx: &WatchContext, _root: &str, path: &Path) -> No
     let event = payload
         .from_material(material_id)
         .build()
-        .map_err(|e| NodeError::General(eyre::eyre!("Failed to build event: {}", e)))?;
+        .node_err("Failed to build event")?;
 
     let json_event = event
         .to_json_event()

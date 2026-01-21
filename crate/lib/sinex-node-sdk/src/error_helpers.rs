@@ -148,3 +148,67 @@ pub mod path_utils {
         }
     }
 }
+
+/// Convert any error to NodeError::General with context
+///
+/// This is a convenience function for the common pattern of wrapping errors
+/// in NodeError::General with eyre for rich error context.
+///
+/// # Examples
+///
+/// ```rust
+/// use sinex_node_sdk::error_helpers::general_error;
+///
+/// let result: Result<(), std::io::Error> = Err(std::io::Error::new(
+///     std::io::ErrorKind::NotFound,
+///     "file not found"
+/// ));
+///
+/// let node_result = result.map_err(|e| general_error(e, "Failed to read config"));
+/// ```
+pub fn general_error<E: std::fmt::Display>(error: E, context: &str) -> crate::NodeError {
+    crate::NodeError::General(color_eyre::eyre::eyre!("{}: {}", context, error))
+}
+
+/// Extension trait for Result types to simplify NodeError conversion
+///
+/// This trait provides convenient methods to convert any Result into a
+/// NodeResult with proper error context, eliminating the verbose
+/// `.map_err(|e| NodeError::General(eyre::eyre!("context: {}", e)))?` pattern.
+///
+/// # Examples
+///
+/// **Before:**
+/// ```rust
+/// acquisition
+///     .begin_material(&identifier)
+///     .await
+///     .map_err(|e| NodeError::General(eyre::eyre!("Failed to begin material: {}", e)))?;
+/// ```
+///
+/// **After:**
+/// ```rust
+/// use sinex_node_sdk::error_helpers::NodeErrorExt;
+///
+/// acquisition
+///     .begin_material(&identifier)
+///     .await
+///     .node_err("Failed to begin material")?;
+/// ```
+pub trait NodeErrorExt<T> {
+    /// Convert error to NodeError::General with context
+    fn node_err(self, context: &str) -> Result<T, crate::NodeError>;
+
+    /// Convert error to NodeError::Processing with context
+    fn processing_err(self, context: &str) -> Result<T, crate::NodeError>;
+}
+
+impl<T, E: std::fmt::Display> NodeErrorExt<T> for Result<T, E> {
+    fn node_err(self, context: &str) -> Result<T, crate::NodeError> {
+        self.map_err(|e| general_error(e, context))
+    }
+
+    fn processing_err(self, context: &str) -> Result<T, crate::NodeError> {
+        self.map_err(|e| crate::NodeError::Processing(format!("{}: {}", context, e)))
+    }
+}
