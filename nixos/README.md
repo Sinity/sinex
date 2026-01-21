@@ -37,14 +37,14 @@ Key architectural decisions and implementation details are documented at their i
 - **Ingestion & JetStream Overview**: [`docs/current/architecture/Core_Architecture.md`](../docs/current/architecture/Core_Architecture.md)
   - Provenance and Stage-as-you-go responsibilities: [`docs/current/architecture/provenance.md`](../docs/current/architecture/provenance.md)
   - Stream bootstrap defaults + environment namespacing: [`modules/nats.nix`](modules/nats.nix)
-- **Satellite SDK Patterns**: [`crate/lib/sinex-satellite-sdk/docs/overview.md`](../crate/lib/sinex-satellite-sdk/docs/overview.md)
+- **Node SDK Patterns**: [`crate/lib/sinex-node-sdk/docs/overview.md`](../crate/lib/sinex-node-sdk/docs/overview.md)
   - Unified processor interface and checkpoint semantics
   - Replay patterns and lifecycle hooks
-- **StatefulStreamProcessor Trait**: [`sinex-satellite-sdk/src/runtime/stream/mod.rs`](../crate/lib/sinex-satellite-sdk/src/runtime/stream/mod.rs#L300)
+- **StatefulStreamProcessor Trait**: [`sinex-node-sdk/src/runtime/stream/mod.rs`](../crate/lib/sinex-node-sdk/src/runtime/stream/mod.rs#L300)
   - Snapshot, historical, and continuous modes
 
-### Satellite Implementations  
-- **Filesystem Monitoring**: [`sinex-fs-watcher/src/unified_processor.rs:1-62`](../crate/satellites/sinex-fs-watcher/src/unified_processor.rs#L1-L62)
+### Node Implementations
+- **Filesystem Monitoring**: [`sinex-fs-ingestor/src/unified_processor.rs:1-62`](../crate/nodes/sinex-fs-ingestor/src/unified_processor.rs#L1-L62)
   - inotify (Linux) implementation details
   - FSEvents (macOS) configuration
   - System limits and overflow handling
@@ -443,7 +443,7 @@ ORDER BY created_at DESC;
 ```bash
 # Release current leadership to trigger election
 sudo -u sinex psql sinex_prod -c "
-DELETE FROM core.service_leadership WHERE service_name = 'sinex-fs-watcher';
+DELETE FROM core.service_leadership WHERE service_name = 'sinex-fs-ingestor';
 "
 # Healthy standby instances will immediately compete for leadership
 ```

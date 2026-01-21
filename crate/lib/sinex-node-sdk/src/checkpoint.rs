@@ -41,7 +41,6 @@ use crate::{stream_processor::Checkpoint, NodeError, NodeResult};
 use async_nats::jetstream::kv::Operation;
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
-use sinex_core::types::ulid::Ulid;
 use std::convert::TryInto;
 use tracing::{debug, info, warn};
 
@@ -75,6 +74,10 @@ pub struct CheckpointState {
 
     /// Checkpoint version (for schema evolution)
     pub version: u32,
+
+    /// NATS KV Revision (optimistic concurrency control)
+    #[serde(skip)]
+    pub revision: u64,
 }
 
 impl CheckpointState {
@@ -87,42 +90,6 @@ impl CheckpointState {
             Checkpoint::Timestamp { .. } => None, // Timestamp checkpoints don't have event IDs
         }
     }
-
-    /// Update the checkpoint with a new processed ID.
-    ///
-    /// # Complex Invariants
-    ///
-    /// This function implements complex logic to determine checkpoint type based on ID format:
-    /// - **ULID strings**: Parsed and stored as `Checkpoint::Internal` for automata
-    /// - **Other strings**: Stored as `Checkpoint::Stream` for message stream IDs
-    /// - **None**: Resets to `Checkpoint::None` (initial state)
-    ///
-    /// The function maintains important invariants:
-    /// - `processed_count` is preserved when converting checkpoint types
-    /// - Stream checkpoints set `event_id: None` (they don't map to events)
-    /// - Invalid ULIDs gracefully fall back to stream ID interpretation
-    ///
-    /// This design allows the same checkpoint API to work for both ingestors
-    /// (external positions) and automata (event IDs).
-    pub fn set_last_processed_id(&mut self, id: Option<String>) {
-        self.checkpoint = match id {
-            Some(id_str) => {
-                // Try to parse as ULID first, then fall back to stream ID
-                if let Ok(ulid) = id_str.parse::<Ulid>() {
-                    Checkpoint::Internal {
-                        event_id: ulid,
-                        message_count: self.processed_count,
-                    }
-                } else {
-                    Checkpoint::Stream {
-                        message_id: id_str,
-                        event_id: None,
-                    }
-                }
-            }
-            None => Checkpoint::None,
-        };
-    }
 }
 
 impl Default for CheckpointState {
@@ -133,6 +100,7 @@ impl Default for CheckpointState {
             last_activity: chrono::Utc::now(),
             data: None,
             version: 2, // Version 2 for unified checkpoint format
+            revision: 0,
         }
     }
 }
@@ -145,8 +113,8 @@ impl CheckpointState {
     /// when the process restarts.
     ///
     /// The file format is JSON with a magic header for validation.
-    pub fn save_to_file(&self, path: &std::path::Path) -> std::io::Result<()> {
-        use std::io::Write;
+    pub async fn save_to_file(&self, path: &std::path::Path) -> std::io::Result<()> {
+        use tokio::io::AsyncWriteExt;
 
         let wrapper = FileCheckpointWrapper {
             magic: FILE_CHECKPOINT_MAGIC.to_string(),
@@ -159,10 +127,10 @@ impl CheckpointState {
 
         // Atomic write: write to temp file, then rename
         let temp_path = path.with_extension("tmp");
-        let mut file = std::fs::File::create(&temp_path)?;
-        file.write_all(json.as_bytes())?;
-        file.sync_all()?;
-        std::fs::rename(&temp_path, path)?;
+        let mut file = tokio::fs::File::create(&temp_path).await?;
+        file.write_all(json.as_bytes()).await?;
+        file.sync_all().await?;
+        tokio::fs::rename(&temp_path, path).await?;
 
         info!(
             path = %path.display(),
@@ -177,8 +145,8 @@ impl CheckpointState {
     ///
     /// Used to restore state after a hot reload. If the file doesn't exist
     /// or is invalid, returns None (allowing fresh start).
-    pub fn load_from_file(path: &std::path::Path) -> Option<Self> {
-        let contents = match std::fs::read_to_string(path) {
+    pub async fn load_from_file(path: &std::path::Path) -> Option<Self> {
+        let contents = match tokio::fs::read_to_string(path).await {
             Ok(c) => c,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 debug!(path = %path.display(), "No checkpoint file found");
@@ -288,11 +256,17 @@ fn sanitize_kv_key_component(raw: &str) -> String {
 
 /// Resolve the NATS KV bucket name for checkpoints.
 pub fn checkpoint_bucket_name(prefix: Option<&str>) -> String {
-    let base = "KV_sinex_checkpoints";
-    match prefix {
-        Some(prefix) if !prefix.trim().is_empty() => format!("{prefix}_{base}"),
-        _ => base.to_string(),
-    }
+    let env = sinex_core::environment();
+    let base_bucket = "sinex_checkpoints";
+
+    let namespaced_base = match prefix {
+        Some(prefix) if !prefix.trim().is_empty() => {
+            env.nats_kv_bucket_with_namespace(Some(prefix), base_bucket)
+        }
+        _ => env.nats_kv_bucket_name(base_bucket),
+    };
+
+    format!("KV_{}", namespaced_base)
 }
 
 /// Parse a checkpoint KV key into (processor, group, consumer) components.
@@ -341,6 +315,25 @@ pub fn parse_checkpoint_key(key: &str) -> Option<(String, String, String)> {
 /// # Thread Safety
 /// `CheckpointManager` is `Clone` and can be safely shared across threads.
 /// KV updates are atomic per key; concurrent writers follow last-write-wins semantics.
+///
+/// # Checkpoint Cleanup
+///
+/// Stale checkpoint cleanup is implemented via [`spawn_checkpoint_cleanup_task`] and
+/// [`cleanup_stale_checkpoints`]. The cleanup is opt-in via environment variables:
+///
+/// - `SINEX_CHECKPOINT_CLEANUP_ENABLED=true` - Enable automatic cleanup
+/// - `SINEX_CHECKPOINT_CLEANUP_MAX_AGE_DAYS=30` - Max age before deletion (default: 30)
+/// - `SINEX_CHECKPOINT_CLEANUP_INTERVAL_HOURS=24` - Run interval (default: 24)
+///
+/// To enable in your node, call [`spawn_checkpoint_cleanup_task`] during startup:
+///
+/// ```rust,ignore
+/// let config = CheckpointCleanupConfig::from_env();
+/// if config.enabled {
+///     let kv = /* your checkpoint KV store */;
+///     let _cleanup_handle = spawn_checkpoint_cleanup_task(kv, config);
+/// }
+/// ```
 #[derive(Debug, Clone)]
 pub struct CheckpointManager {
     kv: async_nats::jetstream::kv::Store,
@@ -413,22 +406,25 @@ impl CheckpointManager {
     }
 
     async fn load_checkpoint_for_key(&self, key: &str) -> NodeResult<Option<CheckpointState>> {
-        let data = self
+        let entry = self
             .kv
-            .get(key)
+            .entry(key)
             .await
             .map_err(|e| NodeError::Checkpoint(format!("Failed to read checkpoint KV: {e}")))?;
 
-        let Some(data) = data else {
+        let Some(entry) = entry else {
             return Ok(None);
         };
 
-        if data.is_empty() {
+        if entry.value.is_empty() {
             return Ok(None);
         }
 
-        match serde_json::from_slice::<CheckpointState>(&data) {
-            Ok(state) => Ok(Some(state)),
+        match serde_json::from_slice::<CheckpointState>(&entry.value) {
+            Ok(mut state) => {
+                state.revision = entry.revision;
+                Ok(Some(state))
+            }
             Err(err) => {
                 warn!(
                     processor = %self.processor_name,
@@ -470,7 +466,7 @@ impl CheckpointManager {
                 continue;
             }
 
-            let state = match serde_json::from_slice::<CheckpointState>(&entry.value) {
+            let mut state = match serde_json::from_slice::<CheckpointState>(&entry.value) {
                 Ok(state) => state,
                 Err(err) => {
                     warn!(
@@ -484,6 +480,15 @@ impl CheckpointManager {
                     continue;
                 }
             };
+
+            // Note: We don't set revision here because we are loading from a DIFFERENT key (fallback).
+            // When we save, we will be saving to OUR key, which is a new entry (create), or updating OUR key.
+            // If we blindly copy the revision from another key, the update to OUR key will fail (wrong revision for that key).
+            // So for fallback, we treat it as "new data" essentially, relying on save_checkpoint dealing with OUR key.
+            // However, save_checkpoint uses state.revision. If we want "create", revision should be 0.
+            // CheckpointState::default().revision is 0.
+            // So we explicitly set revision to 0 here to ensure we don't try to CAS against a non-existent key using another key's revision.
+            state.revision = 0;
 
             let created_nanos = entry.created.unix_timestamp_nanos();
             match &latest {
@@ -503,22 +508,44 @@ impl CheckpointManager {
     /// - `state`: The checkpoint state to save
     ///
     /// # Returns
-    /// - `Ok(())`: Checkpoint successfully saved
-    /// - `Err(NodeError::Checkpoint)`: KV write error
+    /// - `Ok(u64)`: The new revision number of the saved checkpoint
+    /// - `Err(NodeError::Checkpoint)`: KV write error (including CAS failure)
     /// - `Err(NodeError::Serialization)`: Checkpoint serialization error
-    pub async fn save_checkpoint(&self, state: &CheckpointState) -> NodeResult<()> {
+    pub async fn save_checkpoint(&self, state: &CheckpointState) -> NodeResult<u64> {
         let processed_count: i64 = state.processed_count.try_into().map_err(|_| {
             NodeError::Checkpoint("processed_count exceeds supported range for storage".to_string())
         })?;
 
         // Save to NATS KV only
         let encoded = serde_json::to_vec(state).map_err(NodeError::Serialization)?;
-        self.kv
-            .put(&self.kv_key(), encoded.into())
-            .await
-            .map_err(|e| {
-                NodeError::Checkpoint(format!("Failed to persist checkpoint to KV: {e}"))
-            })?;
+
+        let revision = if state.revision > 0 {
+            self.kv
+                .update(&self.kv_key(), encoded.into(), state.revision)
+                .await
+                .map_err(|e| {
+                    NodeError::Checkpoint(format!(
+                        "Failed to update checkpoint in KV (CAS failure?): {e}"
+                    ))
+                })?
+        } else {
+            // Revision 0 means potentially new. Try create first to ensure no overwrite?
+            // Or use put if we want upsert behavior for "first write".
+            // Since we want strict correctness:
+            // If we think it's new (rev 0), we should probably use `create` to ensure we don't overwrite existing.
+            // BUT, if we just want "last write wins" for the *first* write (maybe previously deleted), `put` is safer?
+            // "Split-Brain" implies we want to prevent overwriting *concurrent* modifications.
+            // So `create` is safer for rev 0.
+            self.kv
+                .update(&self.kv_key(), encoded.into(), 0)
+                .await
+                .map_err(|e| {
+                    // unexpected error or key exists
+                    NodeError::Checkpoint(format!(
+                        "Failed to create checkpoint in KV (Key exists?): {e}"
+                    ))
+                })?
+        };
 
         debug!(
             processor = %self.processor_name,
@@ -526,10 +553,11 @@ impl CheckpointManager {
             consumer_name = %self.consumer_name,
             processed_count = processed_count,
             checkpoint = %state.checkpoint.description(),
+            revision = revision,
             "Saved checkpoint to KV"
         );
 
-        Ok(())
+        Ok(revision)
     }
 
     fn kv_group_prefix(&self) -> String {
@@ -652,6 +680,207 @@ pub struct CheckpointStats {
     pub last_update: Option<chrono::DateTime<chrono::Utc>>,
     pub first_checkpoint: Option<chrono::DateTime<chrono::Utc>>,
 }
+
+/// Configuration for checkpoint cleanup (Issue 12)
+#[derive(Debug, Clone)]
+pub struct CheckpointCleanupConfig {
+    /// Maximum age for checkpoints before cleanup (default: 30 days)
+    pub max_age: std::time::Duration,
+    /// How often to run cleanup (default: 24 hours)
+    pub interval: std::time::Duration,
+    /// Whether cleanup is enabled (default: false, opt-in)
+    pub enabled: bool,
+}
+
+impl Default for CheckpointCleanupConfig {
+    fn default() -> Self {
+        Self {
+            max_age: std::time::Duration::from_secs(30 * 24 * 60 * 60), // 30 days
+            interval: std::time::Duration::from_secs(24 * 60 * 60),     // 24 hours
+            enabled: false,
+        }
+    }
+}
+
+impl CheckpointCleanupConfig {
+    /// Load cleanup configuration from environment variables.
+    ///
+    /// - `SINEX_CHECKPOINT_CLEANUP_ENABLED`: Enable cleanup (default: false)
+    /// - `SINEX_CHECKPOINT_CLEANUP_MAX_AGE_DAYS`: Max age in days (default: 30)
+    /// - `SINEX_CHECKPOINT_CLEANUP_INTERVAL_HOURS`: Run interval in hours (default: 24)
+    pub fn from_env() -> Self {
+        let enabled = std::env::var("SINEX_CHECKPOINT_CLEANUP_ENABLED")
+            .map(|v| v.to_lowercase() == "true" || v == "1")
+            .unwrap_or(false);
+
+        let max_age_days: u64 = std::env::var("SINEX_CHECKPOINT_CLEANUP_MAX_AGE_DAYS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(30);
+
+        let interval_hours: u64 = std::env::var("SINEX_CHECKPOINT_CLEANUP_INTERVAL_HOURS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(24);
+
+        Self {
+            max_age: std::time::Duration::from_secs(max_age_days * 24 * 60 * 60),
+            interval: std::time::Duration::from_secs(interval_hours * 60 * 60),
+            enabled,
+        }
+    }
+}
+
+/// Result of a checkpoint cleanup run
+#[derive(Debug, Clone)]
+pub struct CheckpointCleanupResult {
+    /// Number of checkpoints scanned
+    pub scanned: usize,
+    /// Number of stale checkpoints deleted
+    pub deleted: usize,
+    /// Number of errors encountered
+    pub errors: usize,
+}
+
+/// Cleanup stale checkpoints from the KV bucket (Issue 12)
+///
+/// Scans all checkpoints in the bucket and deletes those with `last_activity`
+/// older than the configured `max_age`.
+///
+/// # Arguments
+/// - `kv`: The NATS KV store containing checkpoints
+/// - `max_age`: Maximum age for checkpoints before deletion
+///
+/// # Returns
+/// - `Ok(CheckpointCleanupResult)`: Cleanup completed with stats
+/// - `Err(NodeError)`: Failed to scan or delete checkpoints
+pub async fn cleanup_stale_checkpoints(
+    kv: &async_nats::jetstream::kv::Store,
+    max_age: std::time::Duration,
+) -> NodeResult<CheckpointCleanupResult> {
+    let now = chrono::Utc::now();
+    let cutoff = now - chrono::Duration::from_std(max_age).unwrap_or(chrono::Duration::days(30));
+
+    let mut result = CheckpointCleanupResult {
+        scanned: 0,
+        deleted: 0,
+        errors: 0,
+    };
+
+    // List all keys in the bucket
+    let mut keys = kv.keys().await.map_err(|e| {
+        NodeError::Checkpoint(format!("Failed to list checkpoint keys for cleanup: {e}"))
+    })?;
+
+    while let Some(key) = keys
+        .try_next()
+        .await
+        .map_err(|e| NodeError::Checkpoint(format!("Failed to scan checkpoint keys: {e}")))?
+    {
+        result.scanned += 1;
+
+        // Get the checkpoint entry
+        let entry = match kv.get(&key).await {
+            Ok(Some(entry)) => entry,
+            Ok(None) => continue, // Key deleted between list and get
+            Err(e) => {
+                warn!(key = %key, error = %e, "Failed to read checkpoint during cleanup");
+                result.errors += 1;
+                continue;
+            }
+        };
+
+        // Parse the checkpoint state
+        let state: CheckpointState = match serde_json::from_slice(&entry) {
+            Ok(state) => state,
+            Err(e) => {
+                warn!(key = %key, error = %e, "Failed to parse checkpoint during cleanup");
+                result.errors += 1;
+                continue;
+            }
+        };
+
+        // Check if checkpoint is stale
+        if state.last_activity < cutoff {
+            match kv.purge(&key).await {
+                Ok(_) => {
+                    debug!(
+                        key = %key,
+                        last_activity = %state.last_activity,
+                        "Deleted stale checkpoint"
+                    );
+                    result.deleted += 1;
+                }
+                Err(e) => {
+                    warn!(key = %key, error = %e, "Failed to delete stale checkpoint");
+                    result.errors += 1;
+                }
+            }
+        }
+    }
+
+    info!(
+        scanned = result.scanned,
+        deleted = result.deleted,
+        errors = result.errors,
+        max_age_days = max_age.as_secs() / 86400,
+        "Checkpoint cleanup completed"
+    );
+
+    Ok(result)
+}
+
+/// Spawn a background task for periodic checkpoint cleanup (Issue 12)
+///
+/// This function starts a background task that runs checkpoint cleanup
+/// at the configured interval. The task runs until cancelled.
+///
+/// # Arguments
+/// - `kv`: The NATS KV store containing checkpoints
+/// - `config`: Cleanup configuration
+///
+/// # Returns
+/// A `JoinHandle` for the background task. The task can be cancelled
+/// by aborting the handle.
+pub fn spawn_checkpoint_cleanup_task(
+    kv: async_nats::jetstream::kv::Store,
+    config: CheckpointCleanupConfig,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        if !config.enabled {
+            debug!("Checkpoint cleanup disabled");
+            return;
+        }
+
+        info!(
+            interval_hours = config.interval.as_secs() / 3600,
+            max_age_days = config.max_age.as_secs() / 86400,
+            "Starting checkpoint cleanup background task"
+        );
+
+        let mut interval = tokio::time::interval(config.interval);
+
+        loop {
+            interval.tick().await;
+
+            match cleanup_stale_checkpoints(&kv, config.max_age).await {
+                Ok(result) => {
+                    if result.deleted > 0 {
+                        info!(
+                            deleted = result.deleted,
+                            scanned = result.scanned,
+                            "Checkpoint cleanup run completed"
+                        );
+                    }
+                }
+                Err(e) => {
+                    warn!(error = %e, "Checkpoint cleanup failed");
+                }
+            }
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -661,7 +890,7 @@ mod tests {
     async fn save_checkpoint_rejects_processed_count_overflow(
         ctx: TestContext,
     ) -> sinex_test_utils::TestResult<()> {
-        let ctx = ctx.with_nats().await?;
+        let ctx = ctx.with_nats().shared().await?;
         let kv = ctx.checkpoint_kv().await?;
         let manager = CheckpointManager::new(
             kv,
@@ -681,7 +910,7 @@ mod tests {
     async fn checkpoint_keys_accept_invalid_chars(
         ctx: TestContext,
     ) -> sinex_test_utils::TestResult<()> {
-        let ctx = ctx.with_nats().await?;
+        let ctx = ctx.with_nats().shared().await?;
         let kv = ctx.checkpoint_kv().await?;
         let manager = CheckpointManager::new(
             kv,

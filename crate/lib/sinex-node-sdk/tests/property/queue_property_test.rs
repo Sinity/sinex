@@ -10,16 +10,22 @@ use async_nats::jetstream::{
     stream::{Config as StreamConfig, RetentionPolicy},
 };
 use futures::StreamExt;
-use once_cell::sync::Lazy;
 use proptest::prelude::*;
+use proptest::test_runner::TestCaseError;
 use serde_json::{json, Value};
 use sinex_core::types::ulid::Ulid;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
-use sinex_test_utils::{TestResult, prelude::*, EphemeralNats};
+use sinex_test_utils::{prelude::*, EphemeralNats, TestResult};
+use std::sync::LazyLock;
+
+/// Helper to convert color_eyre::Report errors to TestCaseError for property tests
+fn report_to_test_error<E: std::fmt::Display>(e: E) -> TestCaseError {
+    TestCaseError::Fail(e.to_string().into())
+}
 use std::future::Future;
 use std::sync::Mutex;
 
-static TEST_RUNTIME: Lazy<Mutex<tokio::runtime::Runtime>> = Lazy::new(|| {
+static TEST_RUNTIME: LazyLock<Mutex<tokio::runtime::Runtime>> = LazyLock::new(|| {
     Mutex::new(
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -120,21 +126,23 @@ async fn queue_event_insertion_preserves_order(
     ctx: &TestContext,
     #[strategy(1usize..5)] batch_count: usize,
     #[strategy(1usize..20)] batch_size: usize,
-) -> TestResult<()> {
+) -> Result<(), TestCaseError> {
     let baseline = ctx
         .pool
         .events()
         .count_by_source(&EventSource::from("queue.test"))
-        .await?;
+        .await
+        .map_err(report_to_test_error)?;
 
     for batch in 0..batch_count {
         for index in 0..batch_size {
-            ctx.publish_json_event(
+            ctx.publish_event(
                 "queue.test",
                 "batch.event",
                 json!({ "batch": batch, "index": index }),
             )
-            .await?;
+            .await
+            .map_err(report_to_test_error)?;
         }
     }
 
@@ -143,7 +151,8 @@ async fn queue_event_insertion_preserves_order(
         .pool
         .events()
         .count_by_source(&EventSource::from("queue.test"))
-        .await?;
+        .await
+        .map_err(report_to_test_error)?;
     prop_assert_eq!(total - baseline, total_expected);
     Ok(())
 }

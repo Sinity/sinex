@@ -38,6 +38,7 @@
 use chrono::{Duration as ChronoDuration, Utc};
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::events;
+use sinex_test_utils::timing_utils::Timeouts;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::{Barrier, RwLock, Semaphore};

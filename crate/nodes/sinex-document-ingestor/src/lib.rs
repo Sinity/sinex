@@ -11,23 +11,20 @@ use chrono::{DateTime, Utc};
 use mime_guess::MimeGuess;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_core::validation::validate_path_within_root;
-use sinex_core::{
-    types::{
-        domain::{EventSource, EventType, SanitizedPath},
-        ulid::Ulid,
-    },
-    EventBuilder, Id, OffsetKind, Provenance,
+use sinex_core::types::{
+    domain::SanitizedPath,
+    events::{payloads::document::DocumentIngestedPayload, EventPayload},
+    ulid::Ulid,
 };
+use sinex_core::validation::validate_path_within_root;
 use sinex_node_sdk::{
     acquisition_manager::{AcquisitionManager, RotationPolicy},
-    event_processor::EventTransport,
+    simple_ingestor::SimpleIngestor,
     stage_as_you_go::StageAsYouGoContext,
     stream_processor::{
-        Checkpoint, Node, NodeCapabilities, NodeInitContext, NodeRuntimeState,
-        NodeType, ScanArgs, ScanEstimate, ScanReport, TimeHorizon,
+        Checkpoint, NodeCapabilities, NodeRuntimeState, ScanArgs, ScanReport, TimeHorizon,
     },
-    NodeError, NodeResult,
+    EventTransport, NodeError, NodeResult,
 };
 use sinex_processor_runtime::{
     CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
@@ -99,6 +96,9 @@ impl DocumentIngestorConfig {
     }
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DocumentCheckpoint {}
+
 /// Simplified document processor that ingests local files.
 pub struct DocumentProcessor {
     runtime: Option<NodeRuntimeState>,
@@ -126,35 +126,40 @@ impl DocumentProcessor {
         Ok(false)
     }
 
-    async fn initialise_with_runtime_state(
-        &mut self,
-        runtime: NodeRuntimeState,
-        config: DocumentIngestorConfig,
-    ) -> NodeResult<()> {
-        config.validate().map_err(NodeError::Configuration)?;
+    async fn ingest_targets(&self, targets: &[String]) -> NodeResult<ScanReport> {
+        let start = Instant::now();
+        let mut events_processed = 0u64;
+        let mut successful_targets = Vec::new();
+        let mut failed_targets = Vec::new();
+        let mut warnings = Vec::new();
 
-        let publisher = match runtime.transport() {
-            EventTransport::Nats(publisher) => Arc::clone(publisher),
-        };
+        for target in targets {
+            match self.ingest_target(target).await {
+                Ok(Some(_doc)) => {
+                    events_processed += 1;
+                    successful_targets.push(target.clone());
+                }
+                Ok(None) => {
+                    warnings.push(format!("Skipped target {target} (no events emitted)"));
+                    successful_targets.push(target.clone());
+                }
+                Err(err) => {
+                    error!(path = %target, error = %err, "Failed to ingest document");
+                    failed_targets.push((target.clone(), err.to_string()));
+                }
+            }
+        }
 
-        AcquisitionManager::bootstrap_streams(publisher.nats_client())
-            .await
-            .map_err(NodeError::from)?;
-
-        let acquisition = Arc::new(runtime.acquisition_manager(
-            RotationPolicy::default(),
-            "document",
-            "document-ingestor",
-        )?);
-        let stage_context = StageAsYouGoContext::from_runtime(&runtime)
-            .with_acquisition_manager(Arc::clone(&acquisition));
-
-        self.runtime = Some(runtime);
-        self.config = config;
-        self.stage_context = Some(stage_context);
-        self.acquisition = Some(acquisition);
-
-        Ok(())
+        Ok(ScanReport {
+            events_processed,
+            duration: start.elapsed(),
+            final_checkpoint: Checkpoint::timestamp(Utc::now(), None),
+            time_range: None,
+            processor_stats: HashMap::new(),
+            successful_targets,
+            failed_targets,
+            warnings,
+        })
     }
 
     async fn ingest_target(&self, target: &str) -> NodeResult<Option<Ulid>> {
@@ -218,7 +223,7 @@ impl DocumentProcessor {
                 Some("binary".to_string())
             });
 
-        let mut metadata_json = json!({
+        let metadata_json = json!({
             "path": utf8_path.as_str(),
             "sanitized_path": sanitized_path.as_str(),
             "mime_type": mime,
@@ -254,42 +259,27 @@ impl DocumentProcessor {
             .await
             .map_err(NodeError::from)?;
 
-        if let Some(obj) = metadata_json.as_object_mut() {
-            obj.insert(
-                "source_material_id".to_string(),
-                serde_json::json!(material_id.to_string()),
-            );
-        }
-
-        let payload = serde_json::json!({
-            "file_path": sanitized_path.as_str(),
-            "source_material_id": material_id.to_string(),
-            "size_bytes": file_size,
-            "mime_type": mime.clone(),
-            "encoding": encoding,
-            "metadata": metadata_json,
-        });
-
-        let provenance = Provenance::Material {
-            id: Id::from_ulid(material_id),
-            anchor_byte: 0,
-            offset_start: Some(0),
-            offset_end: Some(total_bytes),
-            offset_kind: OffsetKind::Byte,
+        let payload = DocumentIngestedPayload {
+            file_path: sanitized_path.as_str().to_string(),
+            source_material_id: material_id.to_string(),
+            size_bytes: file_size,
+            mime_type: Some(mime.clone()),
+            encoding,
         };
 
-        let mut event = EventBuilder::new(
-            EventSource::from_static("document_ingestor"),
-            EventType::from("document.ingested"),
-            payload,
-        )
-        .with_provenance(provenance)
-        .build()
-        .map_err(|e| NodeError::Processing(format!("Failed to build event: {e}")))?;
-        event.id = Some(Id::from_ulid(Ulid::new()));
+        let event = payload
+            .from_material(material_id)
+            .with_offset_start(0)?
+            .with_offset_end(total_bytes)?
+            .build()
+            .map_err(|e| NodeError::Processing(format!("Failed to build event: {e}")))?;
+
+        let json_event = event
+            .to_json_event()
+            .map_err(|e| NodeError::Processing(format!("Failed to serialize event: {e}")))?;
 
         stage_context
-            .emit_event_with_provenance(event, material_id, Some(0), Some(total_bytes))
+            .emit_event_with_provenance(json_event, material_id, Some(0), Some(total_bytes))
             .await?;
 
         Ok(Some(material_id))
@@ -327,79 +317,12 @@ impl DocumentProcessor {
 }
 
 #[async_trait]
-impl Node for DocumentProcessor {
+impl SimpleIngestor for DocumentProcessor {
     type Config = DocumentIngestorConfig;
+    type State = DocumentCheckpoint;
 
-    async fn initialize(&mut self, init: NodeInitContext<Self::Config>) -> NodeResult<()> {
-        let (config, runtime) = init.into_runtime();
-        self.initialise_with_runtime_state(runtime, config).await
-    }
-
-    async fn scan(
-        &mut self,
-        _from: Checkpoint,
-        until: TimeHorizon,
-        args: ScanArgs,
-    ) -> NodeResult<ScanReport> {
-        let start = Instant::now();
-        let mut events_processed = 0u64;
-        let mut successful_targets = Vec::new();
-        let mut failed_targets = Vec::new();
-        let mut warnings = Vec::new();
-
-        match until {
-            TimeHorizon::Snapshot | TimeHorizon::Historical { .. } => {
-                if args.dry_run {
-                    info!(targets = args.targets.len(), "Dry-run document ingestion");
-                } else {
-                    for target in &args.targets {
-                        match self.ingest_target(target).await {
-                            Ok(Some(_doc)) => {
-                                events_processed += 1;
-                                successful_targets.push(target.clone());
-                            }
-                            Ok(None) => {
-                                warnings
-                                    .push(format!("Skipped target {target} (no events emitted)"));
-                                successful_targets.push(target.clone());
-                            }
-                            Err(err) => {
-                                error!(path = %target, error = %err, "Failed to ingest document");
-                                failed_targets.push((target.clone(), err.to_string()));
-                            }
-                        }
-                    }
-                }
-            }
-            TimeHorizon::Continuous => {
-                return Err(NodeError::Processing(
-                    "Continuous document ingestion is no longer supported".into(),
-                ));
-            }
-        }
-
-        Ok(ScanReport {
-            events_processed,
-            duration: start.elapsed(),
-            final_checkpoint: Checkpoint::timestamp(Utc::now(), None),
-            time_range: None,
-            processor_stats: HashMap::new(),
-            successful_targets,
-            failed_targets,
-            warnings,
-        })
-    }
-
-    fn processor_name(&self) -> &str {
+    fn name(&self) -> &str {
         "document-ingestor"
-    }
-
-    fn processor_type(&self) -> NodeType {
-        NodeType::Ingestor
-    }
-
-    async fn current_checkpoint(&self) -> NodeResult<Checkpoint> {
-        Ok(Checkpoint::None)
     }
 
     fn capabilities(&self) -> NodeCapabilities {
@@ -414,39 +337,94 @@ impl Node for DocumentProcessor {
         }
     }
 
-    async fn estimate_scan_scope(
-        &self,
-        _from: &Checkpoint,
-        until: &TimeHorizon,
-        args: &ScanArgs,
-    ) -> NodeResult<ScanEstimate> {
-        let estimated_events = args.targets.len() as u64;
-        let (duration_factor, confidence) = match until {
-            TimeHorizon::Snapshot => (1.0, 0.8),
-            TimeHorizon::Historical { .. } => (1.0, 0.6),
-            TimeHorizon::Continuous => (0.0, 0.0),
+    async fn initialize(
+        &mut self,
+        config: Self::Config,
+        runtime: &NodeRuntimeState,
+        _state: &mut Self::State,
+    ) -> NodeResult<()> {
+        config.validate().map_err(NodeError::Configuration)?;
+
+        let publisher = match runtime.transport() {
+            EventTransport::Nats(publisher) => Arc::clone(publisher),
         };
 
-        Ok(ScanEstimate {
-            estimated_events: (estimated_events as f64 * duration_factor) as u64,
-            estimated_duration: std::time::Duration::from_millis(estimated_events * 250),
-            estimated_data_size: estimated_events * 64 * 1024,
-            estimated_targets: args.targets.len() as u64,
-            warnings: Vec::new(),
-            confidence,
-        })
+        AcquisitionManager::bootstrap_streams(publisher.nats_client())
+            .await
+            .map_err(NodeError::from)?;
+
+        let acquisition = Arc::new(runtime.acquisition_manager(
+            RotationPolicy::default(),
+            "document",
+            "document-ingestor",
+        )?);
+        let stage_context = StageAsYouGoContext::from_runtime(runtime)
+            .with_acquisition_manager(Arc::clone(&acquisition));
+
+        self.runtime = Some(runtime.clone());
+        self.config = config;
+        self.stage_context = Some(stage_context);
+        self.acquisition = Some(acquisition);
+
+        Ok(())
+    }
+
+    async fn scan_snapshot(&self, _state: &Self::State, args: ScanArgs) -> NodeResult<ScanReport> {
+        if args.dry_run {
+            info!(targets = args.targets.len(), "Dry-run document ingestion");
+            Ok(ScanReport {
+                events_processed: 0,
+                duration: std::time::Duration::from_millis(0),
+                final_checkpoint: Checkpoint::None,
+                time_range: None,
+                processor_stats: HashMap::new(),
+                successful_targets: Vec::new(),
+                failed_targets: Vec::new(),
+                warnings: vec!["Dry-run mode enabled".to_string()],
+            })
+        } else {
+            self.ingest_targets(&args.targets).await
+        }
+    }
+
+    async fn scan_historical(
+        &mut self,
+        _state: &mut Self::State,
+        _from: Checkpoint,
+        _until: TimeHorizon,
+        args: ScanArgs,
+    ) -> NodeResult<ScanReport> {
+        // Historical scan for files is effectively the same as snapshot for specific targets
+        self.ingest_targets(&args.targets).await
+    }
+
+    async fn run_continuous(
+        &mut self,
+        _state: &mut Self::State,
+        _from: Checkpoint,
+        _shutdown_rx: tokio::sync::watch::Receiver<bool>,
+    ) -> NodeResult<ScanReport> {
+        Err(NodeError::Processing(
+            "Continuous document ingestion is no longer supported".into(),
+        ))
+    }
+
+    async fn shutdown(&mut self, _state: &Self::State) -> NodeResult<()> {
+        Ok(())
     }
 }
 
 impl ExplorationProvider for DocumentProcessor {
     fn get_source_state(&self) -> color_eyre::eyre::Result<SourceState> {
         Ok(SourceState {
-            description: "Direct document ingestion".to_string(),
-            last_updated: Utc::now(),
-            total_items: None,
-            metadata: HashMap::new(),
+            is_connected: true,
             healthy: true,
+            description: "Document ingestion active".to_string(),
+            last_updated: Utc::now(),
+            lag_seconds: None,
             recent_activity: Vec::new(),
+            total_items: None,
+            metadata: std::collections::HashMap::new(),
         })
     }
 

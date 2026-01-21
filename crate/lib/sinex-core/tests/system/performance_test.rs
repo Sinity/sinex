@@ -22,6 +22,7 @@
 
 use sinex_core::types::events::{event_types, services, EventFactory};
 use sinex_test_utils::prelude::*;
+use sinex_test_utils::timing_utils::Timeouts;
 
 use sqlx::Row;
 use std::time::{Duration, Instant};
@@ -77,7 +78,7 @@ async fn test_database_insertion_performance(ctx: TestContext) -> TestResult<()>
         "source = $1",
         &["load_test"],
         target_events as i64,
-        10,
+        Timeouts::LONG as i64,
     )
     .await
     .unwrap_or(0) as u64;
@@ -167,7 +168,7 @@ async fn test_concurrent_insertion_performance(ctx: TestContext) -> TestResult<(
         "source = $1",
         &["concurrent_load_test"],
         (num_workers * events_per_worker) as i64,
-        10,
+        Timeouts::LONG as i64,
     )
     .await
     .unwrap_or(0) as u64;
@@ -238,13 +239,13 @@ async fn test_high_volume_ingestion(ctx: TestContext) -> AnyhowResult<(), color_
 
     // Verify count using timing utility
     let count =
-        wait_for_filtered_event_count(ctx.pool(), "source LIKE $1", &["perf_test_%"], 1000, 10)
+        wait_for_filtered_event_count(ctx.pool(), "source LIKE $1", &["perf_test_%"], 1000, Timeouts::LONG as i64)
             .await
             .map_err(|e| eyre!("Failed to verify event count: {}", e))?;
 
     pretty_assertions::assert_eq!(count, 1000);
     assert!(
-        elapsed < Duration::from_secs(5),
+        elapsed < Duration::from_secs(Timeouts::MEDIUM),
         "Ingestion took too long: {:?}",
         elapsed
     );
@@ -340,7 +341,7 @@ async fn test_concurrent_processing_performance(ctx: TestContext) -> TestResult<
 
     pretty_assertions::assert_eq!(total_processed, 100);
     assert!(
-        elapsed < Duration::from_secs(3),
+        elapsed < Duration::from_secs(Timeouts::SHORT),
         "Processing took too long: {:?}",
         elapsed
     );
@@ -381,7 +382,7 @@ async fn test_query_latency(ctx: TestContext) -> TestResult<()> {
 
         println!("{}: {:?}", name, elapsed);
         assert!(
-            elapsed < Duration::from_millis(100),
+            elapsed < Duration::from_millis(100), // Millisecond precision, not covered by Timeouts
             "{} query too slow: {:?}",
             name,
             elapsed

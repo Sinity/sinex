@@ -37,7 +37,7 @@ async fn shared_nats_env_token_enforces_auth(ctx: TestContext) -> TestResult<()>
     let mut guard = EnvGuard::new();
     guard.set("SINEX_TEST_NATS_TOKEN", "env-secret");
 
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let nats = ctx.nats_handle()?;
     let plain_res = async_nats::connect(normalize_nats_url(nats.client_url())).await;
     ensure!(

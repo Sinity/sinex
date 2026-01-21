@@ -100,6 +100,48 @@ struct MaterialEndMessage {
 }
 
 impl AcquisitionManager {
+    /// Create an acquisition manager with default rotation policy.
+    ///
+    /// This is a convenience constructor for the common case where you don't need
+    /// custom rotation settings. Defaults to 100MB max size and 1 hour max age.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use sinex_node_sdk::acquisition_manager::AcquisitionManager;
+    /// # async fn example() {
+    /// let nats_client = async_nats::connect("nats://localhost").await.unwrap();
+    /// let manager = AcquisitionManager::with_defaults(
+    ///     nats_client,
+    ///     "terminal",
+    ///     "/dev/pts/0"
+    /// );
+    /// # }
+    /// ```
+    pub fn with_defaults(
+        nats_client: NatsClient,
+        source_type: impl Into<String>,
+        source_path: impl Into<String>,
+    ) -> Self {
+        Self::new(
+            nats_client,
+            RotationPolicy::default(),
+            source_type.into(),
+            source_path.into(),
+        )
+    }
+
+    /// Create an acquisition manager from NodeHandles with default rotation.
+    ///
+    /// Convenience wrapper around `from_handles` that uses default rotation policy.
+    pub fn from_handles_with_defaults(
+        handles: &NodeHandles,
+        source_type: impl Into<String>,
+        source_path: impl Into<String>,
+    ) -> NodeResult<Self> {
+        Self::from_handles(handles, RotationPolicy::default(), source_type, source_path)
+    }
+
     /// Ensure JetStream streams required for material capture exist.
     pub async fn bootstrap_streams(nats_client: &NatsClient) -> Result<()> {
         Self::bootstrap_streams_with_namespace(nats_client, None).await
@@ -206,9 +248,7 @@ impl AcquisitionManager {
         source_path: impl Into<String>,
     ) -> NodeResult<Self> {
         let nats_client = match handles.transport() {
-            crate::event_processor::EventTransport::Nats(publisher) => {
-                publisher.nats_client().clone()
-            }
+            crate::event_node::EventTransport::Nats(publisher) => publisher.nats_client().clone(),
         };
 
         Ok(Self::new(

@@ -35,7 +35,10 @@ sinex_proptest! {
         let ulid_str = ulid.to_string();
         let mut state = build_state(processed);
 
-        state.set_last_processed_id(Some(ulid_str.clone()));
+        state.checkpoint = Checkpoint::Internal {
+            event_id: ulid,
+            message_count: processed,
+        };
 
         match &state.checkpoint {
             Checkpoint::Internal { event_id, message_count } => {
@@ -56,7 +59,10 @@ sinex_proptest! {
     ) -> TestResult<()> {
         let mut state = build_state(processed);
 
-        state.set_last_processed_id(Some(message_id.clone()));
+        state.checkpoint = Checkpoint::Stream {
+            message_id: message_id.clone(),
+            event_id: None,
+        };
 
         match &state.checkpoint {
             Checkpoint::Stream { message_id: stored, event_id } => {
@@ -73,7 +79,7 @@ sinex_proptest! {
 
     fn property_none_resets_checkpoint(processed: u64 in 0u64..10_000) -> TestResult<()> {
         let mut state = build_state(processed);
-        state.set_last_processed_id(None);
+        state.checkpoint = Checkpoint::None;
 
         prop_assert!(matches!(state.checkpoint, Checkpoint::None));
         prop_assert_eq!(state.last_processed_id(), None);

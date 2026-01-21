@@ -4,35 +4,98 @@ use crate::types::{Pagination, TimeRange};
 use crate::{DbTransaction, Ulid};
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
+use sinex_schema::ulid_conversions::{
+    ulid_to_uuid as ulid_to_uuid_util, uuid_to_ulid as uuid_to_ulid_util,
+};
 use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
-/// Convert ULID to UUID for database storage
+/// Convert ULID to UUID for database storage (adapter for reference-based usage)
 pub fn ulid_to_uuid(ulid: &Ulid) -> Uuid {
-    let bytes = ulid.to_bytes();
-    Uuid::from_bytes(bytes)
+    ulid_to_uuid_util(*ulid)
 }
 
-/// Convert UUID back to ULID
+/// Convert UUID back to ULID (adapter for reference-based usage)
 pub fn uuid_to_ulid(uuid: &Uuid) -> Ulid {
-    Ulid::from_bytes(*uuid.as_bytes()).expect("Valid ULID bytes from UUID")
+    uuid_to_ulid_util(*uuid)
 }
 
 /// Helper to convert database errors to SinexError
-pub fn db_error(e: sqlx::Error, context: &str) -> SinexError {
+///
+/// Converts sqlx errors to appropriate SinexError variants with context.
+/// Preserves constraint violation details for debugging and analysis.
+pub fn db_error(e: sqlx::Error, operation: &str) -> SinexError {
     match e {
-        sqlx::Error::RowNotFound => SinexError::not_found(context.to_string()),
-        sqlx::Error::Database(db_err) => {
-            if db_err.is_unique_violation() {
-                SinexError::database(format!("{context}: unique constraint violation"))
-            } else if db_err.is_foreign_key_violation() {
-                SinexError::database(format!("{context}: foreign key violation"))
-            } else {
-                SinexError::database(format!("{context}: {db_err}"))
-            }
+        sqlx::Error::RowNotFound => {
+            SinexError::not_found("Record not found").with_operation(operation)
         }
-        _ => SinexError::database(format!("{context}: {e}")),
+        sqlx::Error::Database(db_err) => {
+            let mut error = if db_err.is_unique_violation() {
+                SinexError::database("Unique constraint violation")
+                    .with_context("constraint_type", "unique")
+            } else if db_err.is_foreign_key_violation() {
+                SinexError::database("Foreign key constraint violation")
+                    .with_context("constraint_type", "foreign_key")
+            } else {
+                SinexError::database("Database error")
+                    .with_context(
+                        "error_code",
+                        db_err
+                            .code()
+                            .map(|c| c.to_string())
+                            .unwrap_or_else(|| "unknown".to_string()),
+                    )
+                    .with_source(db_err.to_string())
+            };
+            error = error.with_operation(operation);
+            error
+        }
+        sqlx::Error::PoolTimedOut => SinexError::timeout("Database connection pool timeout")
+            .with_operation(operation)
+            .with_context("timeout_reason", "pool_exhausted"),
+        _ => SinexError::database("Database error")
+            .with_source(e.to_string())
+            .with_operation(operation),
     }
+}
+
+/// Set statement timeout for long-running queries
+///
+/// # Query Timeout Protection
+/// Long-running queries can block connection pool resources and cause cascading failures.
+/// To prevent this:
+///
+/// 1. **Connection-level timeout**: Set at pool configuration (recommended for all connections)
+///    ```rust
+///    // In pool setup:
+///    PgPoolOptions::new()
+///        .after_connect(|conn, _meta| Box::pin(async move {
+///            conn.execute("SET statement_timeout = '30s'").await?;
+///            Ok(())
+///        }))
+///    ```
+///
+/// 2. **Per-query timeout**: Use this function for specific slow queries
+///    ```rust
+///    set_statement_timeout(executor, 60_000).await?; // 60 seconds
+///    ```
+///
+/// 3. **Reset timeout**: Always reset after slow query completes
+///    ```rust
+///    set_statement_timeout(executor, 0).await?; // 0 = no timeout
+///    ```
+///
+/// Without timeouts, slow queries (full table scans, complex joins) can hold connections
+/// indefinitely and exhaust the pool.
+pub async fn set_statement_timeout<'e, E>(executor: E, timeout_ms: i32) -> DbResult<()>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    sqlx::query(&format!("SET LOCAL statement_timeout = {}", timeout_ms))
+        .execute(executor)
+        .await
+        .map_err(|e| db_error(e, "set statement timeout"))?;
+    Ok(())
 }
 
 /// Common result type for database operations
@@ -84,8 +147,19 @@ pub trait EnhancedRepository<'a>: Repository<'a> {
 
     /// Count all records in the table
     async fn count_all(&self) -> DbResult<i64> {
-        // SAFE: schema_name() and table_name() return &'static str constants from trait implementations
-        // These are compile-time constants and cannot contain user input, making this safe from SQL injection
+        // SAFETY: format! usage for query building
+        //
+        // This use of format! is safe because:
+        // 1. schema_name() and table_name() return &'static str constants from trait implementations
+        // 2. These are compile-time constants determined by the trait implementation, never user input
+        // 3. The TableDef trait contract guarantees these return valid SQL identifiers
+        //
+        // However, this pattern should NOT be used with runtime values or user input.
+        // For dynamic queries, always use QueryBuilder or properly parameterized queries.
+        //
+        // This is an intentional use of format! with compile-time constants. While format! with
+        // user input would be a SQL injection risk, this specific usage is safe because all values
+        // are &'static str from trait bounds. DO NOT copy this pattern for runtime string building.
         let query = format!(
             "SELECT COUNT(*) FROM {}.{}",
             Self::Table::schema_name(),
@@ -102,8 +176,12 @@ pub trait EnhancedRepository<'a>: Repository<'a> {
 
     /// Check if a record exists by primary key
     async fn exists_by_id(&self, id: &Ulid) -> DbResult<bool> {
-        // SAFE: schema_name(), table_name(), and primary_key() return &'static str constants
-        // from trait implementations. User input is properly parameterized via $1::uuid
+        // SAFETY: format! usage for query building
+        //
+        // schema_name(), table_name(), and primary_key() return &'static str constants
+        // from trait implementations. User input is properly parameterized via $1::uuid.
+        // This is safe for the same reasons as count_all above - all format arguments are
+        // compile-time constants, never user input.
         let sql = format!(
             "SELECT 1 FROM {}.{} WHERE {}::uuid = $1::uuid LIMIT 1",
             Self::Table::schema_name(),

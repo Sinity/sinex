@@ -88,7 +88,7 @@ disabled (e.g. staging migrations).
 - Automata use named profiles defined under `nodes.automata.profiles`; set
   `profile = "light"|"standard"|"heavy"` to select batch and MemoryMax/CPUQuota.
 - The module emits deterministic unit names (`sinex-filesystem-1`,
-  `sinex-health-aggregator`, etc.) and publishes them via
+  `sinex-health-automaton`, etc.) and publishes them via
   `services.sinex.nodes.generatedUnits` for other subsystems (pre-flight,
   tests).
 

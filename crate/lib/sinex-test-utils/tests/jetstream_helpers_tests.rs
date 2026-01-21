@@ -3,7 +3,7 @@ use std::time::Duration;
 use async_nats::jetstream::{self, consumer::pull::Config as ConsumerConfig, consumer::AckPolicy};
 use color_eyre::eyre;
 use serde_json::json;
-use sinex_test_utils::{sinex_test, EphemeralNats, TestNodePublisher};
+use sinex_test_utils::{sinex_test, timing_utils::Timeouts, EphemeralNats, TestNodePublisher};
 use tokio::time::{sleep, timeout};
 use tokio_stream::StreamExt;
 
@@ -30,8 +30,12 @@ async fn ephemeral_nats_helpers_can_create_streams_and_wait() -> sinex_test_util
     let target_subject = format!("{subject_prefix}.foo");
     tokio::try_join!(
         async {
-            nats.wait_for_subject_messages(&target_subject, 1, Duration::from_secs(2))
-                .await?;
+            nats.wait_for_subject_messages(
+                &target_subject,
+                1,
+                Duration::from_secs(Timeouts::SHORT),
+            )
+            .await?;
             Ok::<(), color_eyre::Report>(())
         },
         async {
@@ -109,7 +113,7 @@ async fn test_node_publisher_emits_events_and_confirmations() -> TestResult<()> 
     });
 
     publisher
-        .wait_confirmation(&event_id, Duration::from_secs(2))
+        .wait_confirmation(&event_id, Duration::from_secs(Timeouts::SHORT))
         .await?;
 
     // Publish a material stream and ensure begin/end messages exist.
@@ -194,10 +198,10 @@ async fn jetstream_redelivery_increments_delivery_count() -> TestResult<()> {
     let mut messages = consumer
         .fetch()
         .max_messages(1)
-        .expires(Duration::from_secs(2))
+        .expires(Duration::from_secs(Timeouts::SHORT))
         .messages()
         .await?;
-    let first = timeout(Duration::from_secs(2), messages.next())
+    let first = timeout(Duration::from_secs(Timeouts::SHORT), messages.next())
         .await
         .map_err(|_| eyre::eyre!("timed out waiting for first delivery"))?
         .ok_or_else(|| eyre::eyre!("no message delivered"))?;
@@ -211,10 +215,10 @@ async fn jetstream_redelivery_increments_delivery_count() -> TestResult<()> {
     let mut messages = consumer
         .fetch()
         .max_messages(1)
-        .expires(Duration::from_secs(2))
+        .expires(Duration::from_secs(Timeouts::SHORT))
         .messages()
         .await?;
-    let second = timeout(Duration::from_secs(2), messages.next())
+    let second = timeout(Duration::from_secs(Timeouts::SHORT), messages.next())
         .await
         .map_err(|_| eyre::eyre!("timed out waiting for redelivery"))?
         .ok_or_else(|| eyre::eyre!("no redelivered message"))?;

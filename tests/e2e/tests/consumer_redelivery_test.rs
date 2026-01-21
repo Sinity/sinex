@@ -13,6 +13,7 @@ use async_nats::jetstream;
 use color_eyre::eyre::eyre;
 use futures::StreamExt;
 use sinex_test_utils::prelude::*;
+use sinex_test_utils::timing_utils::Timeouts;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use tokio::time::{timeout, Duration};
@@ -26,7 +27,7 @@ fn is_no_messages_error(msg: &str) -> bool {
 /// Test that NAKed messages are redelivered to the consumer.
 #[sinex_test]
 async fn test_nak_triggers_redelivery(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     let js = jetstream::new(nats_client.clone());
 
@@ -68,11 +69,13 @@ async fn test_nak_triggers_redelivery(ctx: TestContext) -> TestResult<()> {
     let delivery_count = Arc::new(AtomicU32::new(0));
     let start = std::time::Instant::now();
 
-    while delivery_count.load(Ordering::SeqCst) < 2 && start.elapsed() < Duration::from_secs(10) {
+    while delivery_count.load(Ordering::SeqCst) < 2
+        && start.elapsed() < Duration::from_secs(Timeouts::SHORT)
+    {
         let fetch_result = consumer
             .fetch()
             .max_messages(1)
-            .expires(Duration::from_secs(2))
+            .expires(Duration::from_secs(Timeouts::MEDIUM))
             .messages()
             .await;
 
@@ -127,7 +130,7 @@ async fn test_nak_triggers_redelivery(ctx: TestContext) -> TestResult<()> {
 /// Test that messages are redelivered after consumer disconnect.
 #[sinex_test]
 async fn test_redelivery_after_consumer_disconnect(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     let js = jetstream::new(nats_client.clone());
 
@@ -161,7 +164,7 @@ async fn test_redelivery_after_consumer_disconnect(ctx: TestContext) -> TestResu
             name: Some(consumer_name.to_string()),
             durable_name: Some(consumer_name.to_string()),
             ack_policy: jetstream::consumer::AckPolicy::Explicit,
-            ack_wait: Duration::from_secs(2), // Short ack wait for test
+            ack_wait: Duration::from_secs(Timeouts::MEDIUM), // Short ack wait for test
             ..Default::default()
         })
         .await
@@ -170,11 +173,11 @@ async fn test_redelivery_after_consumer_disconnect(ctx: TestContext) -> TestResu
     // Fetch but don't ack (simulates crash before processing)
     let mut fetched_count = 0;
     let start = std::time::Instant::now();
-    while fetched_count < 3 && start.elapsed() < Duration::from_secs(5) {
+    while fetched_count < 3 && start.elapsed() < Duration::from_secs(Timeouts::QUICK) {
         let fetch_result = consumer
             .fetch()
             .max_messages(3)
-            .expires(Duration::from_secs(1))
+            .expires(Duration::from_millis(1000))
             .messages()
             .await;
 
@@ -193,7 +196,7 @@ async fn test_redelivery_after_consumer_disconnect(ctx: TestContext) -> TestResu
     drop(consumer);
 
     // Wait for ack timeout
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    tokio::time::sleep(Duration::from_secs(Timeouts::MEDIUM)).await;
 
     // Reconnect and verify messages are redelivered
     let stream = js.get_stream(&stream_name).await.map_err(|e| eyre!(e))?;
@@ -204,11 +207,11 @@ async fn test_redelivery_after_consumer_disconnect(ctx: TestContext) -> TestResu
 
     let mut redelivered_count = 0;
     let start = std::time::Instant::now();
-    while redelivered_count < 3 && start.elapsed() < Duration::from_secs(10) {
+    while redelivered_count < 3 && start.elapsed() < Duration::from_secs(Timeouts::SHORT) {
         let fetch_result = consumer
             .fetch()
             .max_messages(5)
-            .expires(Duration::from_secs(2))
+            .expires(Duration::from_secs(Timeouts::MEDIUM))
             .messages()
             .await;
 
@@ -255,7 +258,7 @@ async fn test_redelivery_after_consumer_disconnect(ctx: TestContext) -> TestResu
 /// Test redelivery count is tracked in message metadata.
 #[sinex_test]
 async fn test_redelivery_count_tracking(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     let js = jetstream::new(nats_client.clone());
 
@@ -297,11 +300,11 @@ async fn test_redelivery_count_tracking(ctx: TestContext) -> TestResult<()> {
     let mut observed_counts = Vec::new();
     let start = std::time::Instant::now();
 
-    while observed_counts.len() < 3 && start.elapsed() < Duration::from_secs(15) {
+    while observed_counts.len() < 3 && start.elapsed() < Duration::from_secs(Timeouts::MEDIUM) {
         let fetch_result = consumer
             .fetch()
             .max_messages(1)
-            .expires(Duration::from_secs(2))
+            .expires(Duration::from_secs(Timeouts::MEDIUM))
             .messages()
             .await;
 
@@ -369,7 +372,7 @@ async fn test_redelivery_count_tracking(ctx: TestContext) -> TestResult<()> {
 /// Test that messages are routed to DLQ after max retries exhausted.
 #[sinex_test]
 async fn test_dlq_routing_after_max_retries(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     let js = jetstream::new(nats_client.clone());
 
@@ -411,11 +414,11 @@ async fn test_dlq_routing_after_max_retries(ctx: TestContext) -> TestResult<()> 
     let mut delivery_attempts = 0;
     let start = std::time::Instant::now();
 
-    while delivery_attempts < 5 && start.elapsed() < Duration::from_secs(15) {
+    while delivery_attempts < 5 && start.elapsed() < Duration::from_secs(Timeouts::MEDIUM) {
         let fetch_result = consumer
             .fetch()
             .max_messages(1)
-            .expires(Duration::from_secs(2))
+            .expires(Duration::from_secs(Timeouts::MEDIUM))
             .messages()
             .await;
 
@@ -466,11 +469,11 @@ async fn test_dlq_routing_after_max_retries(ctx: TestContext) -> TestResult<()> 
 
     // Message should no longer be available (exhausted max_deliver)
     let fetch_result = timeout(
-        Duration::from_secs(3),
+        Duration::from_secs(Timeouts::MEDIUM),
         consumer
             .fetch()
             .max_messages(1)
-            .expires(Duration::from_secs(2))
+            .expires(Duration::from_secs(Timeouts::MEDIUM))
             .messages(),
     )
     .await;
@@ -508,7 +511,7 @@ async fn test_dlq_routing_after_max_retries(ctx: TestContext) -> TestResult<()> 
 /// Test parallel consumer redelivery under load.
 #[sinex_test]
 async fn test_parallel_consumer_redelivery(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     let js = jetstream::new(nats_client.clone());
 
@@ -562,11 +565,11 @@ async fn test_parallel_consumer_redelivery(ctx: TestContext) -> TestResult<()> {
 
         let handle = tokio::spawn(async move {
             let start = std::time::Instant::now();
-            while start.elapsed() < Duration::from_secs(5) {
+            while start.elapsed() < Duration::from_secs(Timeouts::QUICK) {
                 let fetch_result = consumer
                     .fetch()
                     .max_messages(5)
-                    .expires(Duration::from_secs(1))
+                    .expires(Duration::from_millis(1000))
                     .messages()
                     .await;
 

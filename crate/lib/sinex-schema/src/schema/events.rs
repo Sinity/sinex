@@ -21,6 +21,69 @@ use sqlx::FromRow;
 /// This is the single source of truth for all system knowledge. An immutable, append-only
 /// log of both raw observations and synthesized conclusions, implemented as a
 /// TimescaleDB hypertable for extreme performance and scalability.
+///
+/// ## Design Decision: No Operation ID Column
+///
+/// Events do NOT include an `operation_id` column linking to `core.operations_log`,
+/// despite operations (like replays) affecting events. This is an intentional design choice:
+///
+/// ### Rationale:
+/// 1. **Provenance Model**: Event provenance is expressed through `source_material_id`
+///    (external provenance) or `source_event_ids` (internal provenance), not through
+///    the operation that created them. Operations are *how* events are produced, but
+///    provenance tracks *what* they were derived from.
+///
+/// 2. **Performance**: Adding an operation_id column and FK would:
+///    - Add 16 bytes per event (ULID storage)
+///    - Require additional index maintenance
+///    - Impact insert performance for the highest-volume table
+///    - Create FK validation overhead on every event insert
+///
+/// 3. **Cardinality Mismatch**: Most events are created by ingestion (not operations),
+///    so the column would be NULL for 99%+ of rows, wasting storage and index space.
+///
+/// 4. **Audit Trail Separation**: Operations that *delete* events are tracked via
+///    `audit.archived_events`, which captures the operation context at archive time.
+///    Operations that *create* events (like replays generating new events) can be
+///    inferred from provenance chains (source_event_ids pointing to deleted events).
+///
+/// ### When Operations Affect Events:
+/// - **Event Deletion (Replays)**: The operation_id is passed via session variable
+///   (`sinex.operation_id`) to the archive trigger, which records it in the audit log
+///   context. The mapping is implicit: archived_events.archived_at corresponds to
+///   operations_log.id timestamp range.
+///
+/// - **Event Creation (Replays)**: New events created by replays have `source_event_ids`
+///   pointing to the original (now archived) events, establishing provenance without
+///   needing explicit operation tracking.
+///
+/// ### Alternative Query Patterns:
+/// To find events affected by an operation:
+/// ```sql
+/// -- Find events deleted by operation OP123:
+/// SELECT * FROM audit.archived_events
+/// WHERE archived_at BETWEEN (
+///   SELECT id::timestamp FROM core.operations_log WHERE id = 'OP123'
+/// ) AND (
+///   SELECT id::timestamp + (duration_ms || ' milliseconds')::interval
+///   FROM core.operations_log WHERE id = 'OP123'
+/// );
+///
+/// -- Find events created by a replay (via provenance):
+/// SELECT e.* FROM core.events e
+/// WHERE EXISTS (
+///   SELECT 1 FROM unnest(e.source_event_ids) AS source_id
+///   INNER JOIN audit.archived_events a ON a.id = source_id
+///   WHERE a.archived_at BETWEEN [operation timestamp range]
+/// );
+/// ```
+///
+/// ### Future Consideration:
+/// If operation tracking becomes critical, consider:
+/// - Adding operation context to the `payload` JSONB for events that need it
+/// - Creating a separate `core.event_operations` junction table for many-to-many
+///   relationships without impacting the main events table schema
+/// - Using PostgreSQL triggers to populate a materialized view linking events to operations
 #[derive(Iden, Copy, Clone)]
 pub enum Events {
     Table,
@@ -149,11 +212,30 @@ impl Events {
     }
 
     /// Generates the SQL statement to convert `core.events` into a TimescaleDB hypertable.
+    ///
+    /// ## TimescaleDB Configuration
+    ///
+    /// - **Chunk Interval**: 7 days (configured in migration m20250117_000007)
+    /// - **Retention Policy**: 90 days (configured in migration m20250117_000008)
+    ///
+    /// These settings balance query performance, storage efficiency, and operational
+    /// requirements. Operators can adjust them post-deployment based on actual workload.
     pub fn create_hypertable_sql() -> &'static str {
         "SELECT create_hypertable('core.events', by_range('id', partition_func => 'public.ulid_to_timestamptz'::regproc), if_not_exists => TRUE);"
     }
 
     /// Generates all necessary indexes and unique constraints for `core.events`.
+    ///
+    /// ## Index Strategy
+    ///
+    /// - **Idempotency**: `ux_events_material_anchor_id` ensures byte-level deduplication
+    /// - **Time-based queries**: `ix_events_ts_orig` and `ix_events_ts_ingest` support
+    ///   filtering and sorting by original and ingestion timestamps
+    /// - **Source filtering**: `ix_events_source_type_ts` accelerates source-specific queries
+    /// - **Payload search**: GIN indexes (see `create_gin_indexes_sql()`) enable fast
+    ///   JSON path queries, text search, and full-text search
+    ///
+    /// Additional index `ix_events_ts_ingest` added in migration m20250117_000006.
     pub fn create_indexes() -> Vec<IndexCreateStatement> {
         vec![
             // The Idempotency Invariant: a specific byte in a source material can only produce one event.
@@ -183,6 +265,7 @@ impl Events {
                 .col((Events::TsOrig, IndexOrder::Desc))
                 .to_owned(),
             // Note: GIN indexes require raw SQL - see create_gin_indexes_sql()
+            // Note: ix_events_ts_ingest is created in migration m20250117_000006
         ]
     }
 
@@ -295,6 +378,20 @@ impl ArchivedEvents {
     }
 
     /// Generates the trigger function that enforces the Archive-on-Delete invariant.
+    ///
+    /// ## Security Model
+    ///
+    /// The `sinex.operation_id` check is a **safety gate**, not a security boundary:
+    /// - Prevents accidental deletions from ad-hoc queries
+    /// - Requires explicit opt-in for replay operations
+    /// - Does NOT prevent malicious or compromised code from deleting events
+    ///
+    /// Any database session can set `sinex.operation_id` via `SET LOCAL`, so this
+    /// protection relies on application discipline rather than cryptographic or
+    /// role-based enforcement.
+    ///
+    /// Enhanced documentation added in migration m20250117_000009.
+    /// See that migration for TODO regarding stronger security measures (RLS, signatures, etc.).
     pub fn create_archive_trigger_sql() -> &'static str {
         r#"
         CREATE OR REPLACE FUNCTION core.fn_archive_before_delete()

@@ -19,7 +19,8 @@ use sinex_core::types::events::payloads::{
     AtuinCommandExecutedPayload, ClipboardCopiedPayload, FileCreatedPayload, FileDeletedPayload,
     FileModifiedPayload, KittyCommandExecutedPayload,
 };
-use sinex_core::{Event, EventBuilder, Id, JsonValue, Provenance, Ulid};
+use sinex_core::types::events::EventPayload;
+use sinex_core::{Event, Id, JsonValue, Provenance, Ulid};
 
 async fn ensure_material(ctx: &TestContext, label: &str) -> TestResult<Id<SourceMaterial>> {
     let material_id = Id::<SourceMaterial>::from_ulid(Ulid::new());
@@ -185,14 +186,7 @@ async fn test_filesystem_payload_system(ctx: TestContext) -> TestResult<()> {
     // Build a typed event and convert to JSON for storage
     let material_id = ensure_material(&ctx, "shell-kitty").await?;
     let prov = Provenance::from_material(material_id, 0, None, None);
-    let file_event = EventBuilder::new(
-        FileCreatedPayload::SOURCE,
-        FileCreatedPayload::EVENT_TYPE,
-        file_payload,
-    )
-    .with_provenance(prov)
-    .build()
-    .expect("infallible: provenance set via with_provenance");
+    let file_event = file_payload.into_event(prov);
     ctx.pool
         .events()
         .insert(file_event.clone().to_json_event().unwrap())
@@ -211,14 +205,7 @@ async fn test_filesystem_payload_system(ctx: TestContext) -> TestResult<()> {
 
     let material_id = ensure_material(&ctx, "shell-atuin").await?;
     let prov = Provenance::from_material(material_id, 0, None, None);
-    let modified_event = EventBuilder::new(
-        FileModifiedPayload::SOURCE,
-        FileModifiedPayload::EVENT_TYPE,
-        modified_payload,
-    )
-    .with_provenance(prov)
-    .build()
-    .expect("infallible: provenance set via with_provenance");
+    let modified_event = modified_payload.into_event(prov);
     ctx.pool
         .events()
         .insert(modified_event.clone().to_json_event().unwrap())
@@ -255,14 +242,7 @@ async fn test_shell_payload_system(ctx: TestContext) -> TestResult<()> {
 
     let material_id = ensure_material(&ctx, "clipboard").await?;
     let prov = Provenance::from_material(material_id, 0, None, None);
-    let kitty_event = EventBuilder::new(
-        KittyCommandExecutedPayload::SOURCE,
-        KittyCommandExecutedPayload::EVENT_TYPE,
-        kitty_payload,
-    )
-    .with_provenance(prov)
-    .build()
-    .expect("infallible: provenance set via with_provenance");
+    let kitty_event = kitty_payload.into_event(prov);
     ctx.pool
         .events()
         .insert(kitty_event.clone().to_json_event().unwrap())
@@ -280,14 +260,7 @@ async fn test_shell_payload_system(ctx: TestContext) -> TestResult<()> {
 
     let material_id = ensure_material(&ctx, "shell-atuin").await?;
     let prov = Provenance::from_material(material_id, 0, None, None);
-    let atuin_event = EventBuilder::new(
-        AtuinCommandExecutedPayload::SOURCE,
-        AtuinCommandExecutedPayload::EVENT_TYPE,
-        atuin_payload,
-    )
-    .with_provenance(prov)
-    .build()
-    .expect("infallible: provenance set via with_provenance");
+    let atuin_event = atuin_payload.into_event(prov);
     ctx.pool
         .events()
         .insert(atuin_event.clone().to_json_event().unwrap())
@@ -311,14 +284,7 @@ async fn test_clipboard_payload_system(ctx: TestContext) -> TestResult<()> {
 
     let material_id = ensure_material(&ctx, "clipboard").await?;
     let prov = Provenance::from_material(material_id, 0, None, None);
-    let clipboard_event = EventBuilder::new(
-        ClipboardCopiedPayload::SOURCE,
-        ClipboardCopiedPayload::EVENT_TYPE,
-        clipboard_payload,
-    )
-    .with_provenance(prov)
-    .build()
-    .expect("infallible: provenance set via with_provenance");
+    let clipboard_event = clipboard_payload.into_event(prov);
     ctx.pool
         .events()
         .insert(clipboard_event.clone().to_json_event().unwrap())
@@ -357,8 +323,8 @@ async fn test_source_event_type_mapping(ctx: TestContext) -> TestResult<()> {
         let mut created_events = Vec::new();
 
         // Create test events for each expected type
-        for event_type in expected_types.iter() {
-            let test_payload = match (source, *event_type) {
+        for &event_type in expected_types.iter() {
+            let test_payload = match (source, event_type) {
                 ("fs-watcher", "file.created") => {
                     json!({"path": "/test/file.txt", "size": 1024, "created_at": "2024-01-01T00:00:00Z", "permissions": 644})
                 }
@@ -392,9 +358,7 @@ async fn test_source_event_type_mapping(ctx: TestContext) -> TestResult<()> {
                 _ => json!({"test": true}),
             };
 
-            let event = ctx
-                .publish_json_event(source, event_type, test_payload)
-                .await?;
+            let event = ctx.publish_event(source, event_type, test_payload).await?;
             created_events.push(event);
         }
 
@@ -458,18 +422,7 @@ async fn test_concurrent_event_creation(ctx: TestContext) -> TestResult<()> {
                 .ensure_source_material(fs_material, Some(&format!("fs-{i}")))
                 .await?;
             let prov = Provenance::from_material(fs_material, 0, None, None);
-            events.push(
-                EventBuilder::new(
-                    FileCreatedPayload::SOURCE,
-                    FileCreatedPayload::EVENT_TYPE,
-                    fs_payload,
-                )
-                .with_provenance(prov)
-                .build()
-                .expect("infallible: provenance set via with_provenance")
-                .to_json_event()
-                .unwrap(),
-            );
+            events.push(fs_payload.into_event(prov).to_json_event().unwrap());
 
             // Create shell event
             let shell_payload = KittyCommandExecutedPayload::test_default(format!("cmd{i}"))
@@ -479,18 +432,7 @@ async fn test_concurrent_event_creation(ctx: TestContext) -> TestResult<()> {
                 .ensure_source_material(shell_material, Some(&format!("shell-{i}")))
                 .await?;
             let prov = Provenance::from_material(shell_material, 0, None, None);
-            events.push(
-                EventBuilder::new(
-                    KittyCommandExecutedPayload::SOURCE,
-                    KittyCommandExecutedPayload::EVENT_TYPE,
-                    shell_payload,
-                )
-                .with_provenance(prov)
-                .build()
-                .expect("infallible: provenance set via with_provenance")
-                .to_json_event()
-                .unwrap(),
-            );
+            events.push(shell_payload.into_event(prov).to_json_event().unwrap());
 
             // Insert all events
             for event in &events {
@@ -560,14 +502,7 @@ async fn test_event_id_uniqueness_concurrent(ctx: TestContext) -> TestResult<()>
                     .ensure_source_material(material_id, Some(&format!("fs-{i}-{j}")))
                     .await?;
                 let prov = Provenance::from_material(material_id, 0, None, None);
-                let event = EventBuilder::new(
-                    FileCreatedPayload::SOURCE,
-                    FileCreatedPayload::EVENT_TYPE,
-                    payload,
-                )
-                .with_provenance(prov)
-                .build()
-                .expect("infallible: provenance set via with_provenance");
+                let event = payload.into_event(prov);
                 let event_json = event.to_json_event().unwrap();
                 let inserted = ctx_clone.pool.events().insert(event_json).await?;
                 let id = inserted
@@ -621,14 +556,7 @@ async fn test_payload_validation_system(ctx: TestContext) -> TestResult<()> {
 
     let material_id = ensure_material(&ctx, "payload-valid").await?;
     let prov = Provenance::from_material(material_id, 0, None, None);
-    let valid_event = EventBuilder::new(
-        FileCreatedPayload::SOURCE,
-        FileCreatedPayload::EVENT_TYPE,
-        valid_payload,
-    )
-    .with_provenance(prov)
-    .build()
-    .expect("infallible: provenance set via with_provenance");
+    let valid_event = valid_payload.into_event(prov);
     ctx.pool
         .events()
         .insert(valid_event.clone().to_json_event().unwrap())
@@ -659,30 +587,10 @@ async fn test_event_type_constants_consistency(ctx: TestContext) -> TestResult<(
     // Create events and check their types
     let fs_material = ensure_material(&ctx, "event-constants-fs").await?;
     let prov = Provenance::from_material(fs_material, 0, None, None);
-    let created_event = EventBuilder::new(
-        FileCreatedPayload::SOURCE,
-        FileCreatedPayload::EVENT_TYPE,
-        file_created,
-    )
-    .with_provenance(prov.clone())
-    .build()
-    .expect("infallible: provenance set via with_provenance");
-    let modified_event = EventBuilder::new(
-        FileModifiedPayload::SOURCE,
-        FileModifiedPayload::EVENT_TYPE,
-        file_modified,
-    )
-    .with_provenance(prov.clone())
-    .build()
-    .expect("infallible: provenance set via with_provenance");
-    let deleted_event = EventBuilder::new(
-        FileDeletedPayload::SOURCE,
-        FileDeletedPayload::EVENT_TYPE,
-        file_deleted,
-    )
-    .with_provenance(prov.clone())
-    .build()
-    .expect("infallible: provenance set via with_provenance");
+    // Use fluent API for typed payloads
+    let created_event = file_created.into_event(prov.clone());
+    let modified_event = file_modified.into_event(prov.clone());
+    let deleted_event = file_deleted.into_event(prov.clone());
 
     // All should have same source
     assert_eq!(created_event.source.as_str(), "fs-watcher");
@@ -700,22 +608,9 @@ async fn test_event_type_constants_consistency(ctx: TestContext) -> TestResult<(
 
     let shell_material = ensure_material(&ctx, "event-constants-shell").await?;
     let shell_prov = Provenance::from_material(shell_material, 0, None, None);
-    let kitty_event = EventBuilder::new(
-        KittyCommandExecutedPayload::SOURCE,
-        KittyCommandExecutedPayload::EVENT_TYPE,
-        kitty_executed,
-    )
-    .with_provenance(shell_prov.clone())
-    .build()
-    .expect("infallible: provenance set via with_provenance");
-    let atuin_event = EventBuilder::new(
-        AtuinCommandExecutedPayload::SOURCE,
-        AtuinCommandExecutedPayload::EVENT_TYPE,
-        atuin_executed,
-    )
-    .with_provenance(shell_prov.clone())
-    .build()
-    .expect("infallible: provenance set via with_provenance");
+    // Use fluent API for typed payloads
+    let kitty_event = kitty_executed.into_event(shell_prov.clone());
+    let atuin_event = atuin_executed.into_event(shell_prov.clone());
 
     // Different sources but same event type
     assert_eq!(kitty_event.source.as_str(), "shell.kitty");

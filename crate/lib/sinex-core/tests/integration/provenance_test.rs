@@ -16,7 +16,7 @@ use tracing::info;
 
 #[sinex_test]
 async fn test_basic_event_creation_and_persistence(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let pool = ctx.pool().clone();
 
     info!("Testing basic event creation and persistence");
@@ -74,7 +74,7 @@ async fn test_basic_event_creation_and_persistence(ctx: TestContext) -> TestResu
 #[sinex_test]
 async fn test_multiple_event_sources(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let suffix_a = format!("source-a-{}", Ulid::new());
     let suffix_b = format!("source-b-{}", Ulid::new());
     let suffix_c = format!("source-c-{}", Ulid::new());
@@ -151,7 +151,7 @@ async fn test_multiple_event_sources(ctx: TestContext) -> TestResult<()> {
 #[sinex_serial_test]
 async fn test_event_querying_by_type(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let pool = ctx.pool().clone();
 
     info!("Testing event querying by type");
@@ -212,7 +212,7 @@ async fn test_event_querying_by_type(ctx: TestContext) -> TestResult<()> {
 #[sinex_serial_test]
 async fn test_batch_event_creation(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let pool = ctx.pool().clone();
 
     info!("Testing batch event creation");
@@ -271,7 +271,7 @@ async fn test_batch_event_creation(ctx: TestContext) -> TestResult<()> {
 /// Test event payload structure preservation
 #[sinex_test]
 async fn test_event_payload_preservation(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let pool = ctx.pool().clone();
 
     info!("Testing event payload structure preservation");
@@ -378,11 +378,11 @@ async fn test_event_payload_preservation(ctx: TestContext) -> TestResult<()> {
 #[sinex_serial_test]
 async fn provenance_xor_constraint_enforced(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let pool = ctx.pool();
     let material = ctx.create_source_material(Some("xor-constraint")).await?;
     let parent = ctx
-        .publish_json_event("prov-parent", "prov.event", json!({ "p": true }))
+        .publish_event("prov-parent", "prov.event", json!({ "p": true }))
         .await?
         .id
         .expect("parent event id");
@@ -463,30 +463,24 @@ async fn synthesis_provenance_rejects_direct_cycles(ctx: TestContext) -> TestRes
     let parent_id = Id::<Event<JsonValue>>::new();
     let child_id = Id::<Event<JsonValue>>::new();
 
-    let mut parent_event = EventBuilder::new(
-        "cycle-test".into(),
-        "cycle.parent".into(),
-        json!({"role": "parent"}),
-    )
-    .with_provenance(
-        Provenance::from_synthesis(vec![EventId::from_ulid(*child_id.as_ulid())])
-            .expect("non-empty"),
-    )
-    .build()?;
+    let mut parent_event =
+        EventBuilder::dynamic("cycle-test", "cycle.parent", json!({"role": "parent"}))
+            .with_provenance(
+                Provenance::from_synthesis(vec![EventId::from_ulid(*child_id.as_ulid())])
+                    .expect("non-empty"),
+            )
+            .build()?;
     parent_event.id = Some(parent_id.clone());
 
     repo.insert(parent_event).await?;
 
-    let mut child_event = EventBuilder::new(
-        "cycle-test".into(),
-        "cycle.child".into(),
-        json!({"role": "child"}),
-    )
-    .with_provenance(
-        Provenance::from_synthesis(vec![EventId::from_ulid(*parent_id.as_ulid())])
-            .expect("non-empty"),
-    )
-    .build()?;
+    let mut child_event =
+        EventBuilder::dynamic("cycle-test", "cycle.child", json!({"role": "child"}))
+            .with_provenance(
+                Provenance::from_synthesis(vec![EventId::from_ulid(*parent_id.as_ulid())])
+                    .expect("non-empty"),
+            )
+            .build()?;
     child_event.id = Some(child_id.clone());
 
     let err = repo
@@ -511,42 +505,33 @@ async fn synthesis_provenance_rejects_indirect_cycles(ctx: TestContext) -> TestR
     let parent_id = Id::<Event<JsonValue>>::new();
     let child_id = Id::<Event<JsonValue>>::new();
 
-    let mut ancestor_event = EventBuilder::new(
-        "cycle-test".into(),
-        "cycle.ancestor".into(),
-        json!({"role": "ancestor"}),
-    )
-    .with_provenance(
-        Provenance::from_synthesis(vec![EventId::from_ulid(*child_id.as_ulid())])
-            .expect("non-empty"),
-    )
-    .build()?;
+    let mut ancestor_event =
+        EventBuilder::dynamic("cycle-test", "cycle.ancestor", json!({"role": "ancestor"}))
+            .with_provenance(
+                Provenance::from_synthesis(vec![EventId::from_ulid(*child_id.as_ulid())])
+                    .expect("non-empty"),
+            )
+            .build()?;
     ancestor_event.id = Some(ancestor_id.clone());
     repo.insert(ancestor_event).await?;
 
-    let mut parent_event = EventBuilder::new(
-        "cycle-test".into(),
-        "cycle.parent".into(),
-        json!({"role": "parent"}),
-    )
-    .with_provenance(
-        Provenance::from_synthesis(vec![EventId::from_ulid(*ancestor_id.as_ulid())])
-            .expect("non-empty"),
-    )
-    .build()?;
+    let mut parent_event =
+        EventBuilder::dynamic("cycle-test", "cycle.parent", json!({"role": "parent"}))
+            .with_provenance(
+                Provenance::from_synthesis(vec![EventId::from_ulid(*ancestor_id.as_ulid())])
+                    .expect("non-empty"),
+            )
+            .build()?;
     parent_event.id = Some(parent_id.clone());
     repo.insert(parent_event).await?;
 
-    let mut child_event = EventBuilder::new(
-        "cycle-test".into(),
-        "cycle.child".into(),
-        json!({"role": "child"}),
-    )
-    .with_provenance(
-        Provenance::from_synthesis(vec![EventId::from_ulid(*parent_id.as_ulid())])
-            .expect("non-empty"),
-    )
-    .build()?;
+    let mut child_event =
+        EventBuilder::dynamic("cycle-test", "cycle.child", json!({"role": "child"}))
+            .with_provenance(
+                Provenance::from_synthesis(vec![EventId::from_ulid(*parent_id.as_ulid())])
+                    .expect("non-empty"),
+            )
+            .build()?;
     child_event.id = Some(child_id.clone());
 
     let err = repo
@@ -566,13 +551,10 @@ async fn duplicate_parent_ids_rejected_by_validator() -> TestResult<()> {
     let validator = EventValidator::new();
     let parent = EventId::new();
 
-    let mut event = EventBuilder::new(
-        "prov-security".into(),
-        "duplicate.parents".into(),
-        json!({"case": "dup"}),
-    )
-    .from_parents(vec![parent.clone(), parent])?
-    .build()?;
+    let mut event =
+        EventBuilder::dynamic("prov-security", "duplicate.parents", json!({"case": "dup"}))
+            .from_parents(vec![parent.clone(), parent])?
+            .build()?;
 
     event.id = Some(EventId::new());
 

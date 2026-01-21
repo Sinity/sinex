@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# Cargo wrapper that runs memory-intensive commands under build.slice cgroup
+# This enforces MemoryHigh=14G/MemoryMax=16G limits from NixOS performance.nix
+#
+# The wrapper is in sinex/scripts/ which is prepended to PATH by devenv.nix,
+# so it takes precedence over the fenix cargo in the devshell.
+
+set -euo pipefail
+
+# Find the real cargo (skip this script in PATH)
+find_real_cargo() {
+    local this_script
+    this_script="$(realpath "${BASH_SOURCE[0]}")"
+
+    # Search PATH for cargo, skipping our wrapper
+    IFS=':' read -ra path_dirs <<< "$PATH"
+    for dir in "${path_dirs[@]}"; do
+        local candidate="$dir/cargo"
+        if [[ -x "$candidate" ]] && [[ "$(realpath "$candidate")" != "$this_script" ]]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+
+    echo "Error: Could not find real cargo in PATH" >&2
+    return 1
+}
+
+REAL_CARGO="$(find_real_cargo)"
+
+# Commands that benefit from memory limits
+memory_intensive_commands=(
+    "build"
+    "test"
+    "run"
+    "clippy"
+    "check"
+    "nextest"
+    "llvm-cov"
+)
+
+# Check if first arg is a memory-intensive command
+should_use_slice() {
+    local cmd="${1:-}"
+    for intensive in "${memory_intensive_commands[@]}"; do
+        if [[ "$cmd" == "$intensive" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Check if systemd-run is available and we're in a user session
+can_use_systemd() {
+    command -v systemd-run &>/dev/null && [[ -n "${XDG_RUNTIME_DIR:-}" ]]
+}
+
+# Skip slice if explicitly requested
+if [[ "${CARGO_NO_SLICE:-}" == "1" ]]; then
+    exec "$REAL_CARGO" "$@"
+fi
+
+# For memory-intensive commands, run under build.slice if possible
+if should_use_slice "${1:-}" && can_use_systemd; then
+    # --scope: run in foreground (not as service)
+    # --user: user session (not system)
+    # --slice=build.slice: use our configured memory-limited slice
+    # --same-dir: preserve working directory
+    exec systemd-run --user --scope --slice=build.slice --same-dir -- "$REAL_CARGO" "$@"
+else
+    exec "$REAL_CARGO" "$@"
+fi

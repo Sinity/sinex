@@ -31,6 +31,7 @@ use crate::stream_processor::{EventSender, NodeRuntimeState, ScanReport};
 use crate::{NodeError, NodeResult};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "db")]
 use sqlx::PgPool;
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -124,6 +125,7 @@ pub struct AutomatonFields<C: Default> {
     /// Event sender for emitting events
     pub event_sender: Option<EventSender>,
     /// Database connection pool
+    #[cfg(feature = "db")]
     pub db_pool: Option<PgPool>,
     /// Sender for incoming confirmed events
     pub incoming_tx: Option<mpsc::Sender<ProvisionalEvent>>,
@@ -156,6 +158,7 @@ impl<C: Default> AutomatonFields<C> {
             runtime: None,
             config: C::default(),
             event_sender: None,
+            #[cfg(feature = "db")]
             db_pool: None,
             incoming_tx: None,
             incoming_rx: None,
@@ -185,6 +188,7 @@ impl<C: Default> AutomatonFields<C> {
     }
 
     /// Get database pool, preferring runtime's pool
+    #[cfg(feature = "db")]
     pub fn db_pool(&self) -> NodeResult<&PgPool> {
         if let Some(runtime) = self.runtime.as_ref() {
             Ok(runtime.db_pool())
@@ -304,6 +308,83 @@ impl crate::confirmation_handler::ConfirmedEventHandler for ChannelConfirmedEven
             )),
         }
     }
+}
+
+// ============================================================================
+// Provenance utilities for derived events
+// ============================================================================
+
+use serde_json::Value as JsonValue;
+use sinex_core::db::models::{Event, EventId, Provenance};
+use sinex_core::Ulid;
+
+/// Maximum number of parent IDs to include in provenance.
+/// Keeps provenance data bounded while maintaining meaningful lineage.
+pub const MAX_PROVENANCE_IDS: usize = 10;
+
+/// Create synthesis provenance from a slice of event IDs.
+///
+/// Returns a Provenance with the first ID as primary parent and remaining IDs
+/// as additional parents. If the slice is empty, returns a bootstrap provenance.
+///
+/// # Example
+/// ```rust,ignore
+/// use sinex_node_sdk::automaton_base::provenance_from_ids;
+///
+/// let ids = vec![event1.id.clone(), event2.id.clone()];
+/// let provenance = provenance_from_ids(&ids);
+/// ```
+pub fn provenance_from_ids(ids: &[EventId]) -> Provenance {
+    if let Some(first) = ids.first().cloned() {
+        Provenance::from_synthesis_safe(first, ids.iter().skip(1).cloned().collect())
+    } else {
+        bootstrap_provenance()
+    }
+}
+
+/// Create a bootstrap provenance for derived events with no specific parent.
+///
+/// This is used when an automaton needs to emit an event but has no specific
+/// parent events to link to (e.g., periodic aggregation with no recent events).
+/// The bootstrap ID is a well-known sentinel that indicates "derived without
+/// specific lineage".
+pub fn bootstrap_provenance() -> Provenance {
+    let bootstrap = EventId::from_ulid(
+        Ulid::from_bytes([
+            0x01, 0x90, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00,
+        ])
+        .expect("valid ULID bytes"),
+    );
+    Provenance::from_synthesis_safe(bootstrap.clone(), vec![])
+}
+
+/// Extract event IDs from event references, limiting to max count.
+///
+/// Filters out events without IDs (new events not yet persisted).
+///
+/// # Example
+/// ```rust,ignore
+/// let refs: Vec<&Event<JsonValue>> = events.iter().collect();
+/// let ids = event_ids_from_events(refs, MAX_PROVENANCE_IDS);
+/// ```
+pub fn event_ids_from_events(events: Vec<&Event<JsonValue>>, max: usize) -> Vec<EventId> {
+    events
+        .into_iter()
+        .filter_map(|e| e.id.clone())
+        .take(max)
+        .collect()
+}
+
+/// Extract event IDs from owned events, limiting to max count.
+///
+/// Filters out events without IDs (new events not yet persisted).
+pub fn event_ids_from_owned_events(events: &[Event<JsonValue>], max: usize) -> Vec<EventId> {
+    events
+        .iter()
+        .filter_map(|e| e.id.clone())
+        .take(max)
+        .collect()
 }
 
 #[cfg(test)]

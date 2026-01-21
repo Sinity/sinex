@@ -318,7 +318,7 @@ async fn test_node_operational_modes(ctx: TestContext) -> color_eyre::Result<()>
     let sensor_handle = tokio::spawn(async move { sensor_node.stream_events(sensor_tx).await });
 
     let mut sensor_events = Vec::new();
-    let first_event = tokio::time::timeout(Duration::from_secs(2), sensor_rx.recv()).await??;
+    let first_event = tokio::time::timeout(Duration::from_secs(Timeouts::SHORT), sensor_rx.recv()).await??;
     if let Some(event) = first_event {
         sensor_events.push(event);
     }

@@ -1,6 +1,7 @@
 [build]
 # Build configuration for Sinex
-# Speed optimizations for development
+# Job count controlled by CARGO_BUILD_JOBS env var (set in NixOS performance.nix)
+# Default: 8 parallel crates × ~2GB = ~16GB peak memory
 pipelining = true
 
 # Shared build cache across the workspace (experimental)

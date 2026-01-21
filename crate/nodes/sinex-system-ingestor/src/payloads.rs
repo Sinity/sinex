@@ -239,6 +239,10 @@ pub struct DbusConfig {
     pub extract_bluetooth: bool,
     pub extract_network: bool,
     pub extract_mounts: bool,
+    /// Connection health check interval in seconds (default: 5s)
+    pub health_check_interval_secs: Seconds,
+    /// Inactivity timeout before reconnection in seconds (default: 30s)
+    pub inactivity_timeout_secs: Seconds,
 }
 
 impl Default for DbusConfig {
@@ -261,6 +265,8 @@ impl Default for DbusConfig {
             extract_bluetooth: true,
             extract_network: true,
             extract_mounts: true,
+            health_check_interval_secs: Seconds::from_secs(5),
+            inactivity_timeout_secs: Seconds::from_secs(30),
         }
     }
 }
@@ -288,6 +294,12 @@ pub struct JournalConfig {
     pub cursor_file: Option<String>,
     /// Batch size for imports
     pub batch_size: usize,
+    /// Cursor flush event threshold (default: 100 events)
+    /// Cursor is flushed to disk after this many events
+    pub cursor_flush_event_threshold: u64,
+    /// Cursor flush interval in seconds (default: 10s)
+    /// Cursor is flushed to disk after this interval even if threshold not reached
+    pub cursor_flush_interval_secs: Seconds,
 }
 
 impl Default for JournalConfig {
@@ -308,6 +320,8 @@ impl Default for JournalConfig {
             ],
             cursor_file: Some("/var/lib/sinex/journal.cursor".to_string()),
             batch_size: DEFAULT_JOURNAL_BATCH_SIZE,
+            cursor_flush_event_threshold: 100,
+            cursor_flush_interval_secs: Seconds::from_secs(10),
         }
     }
 }

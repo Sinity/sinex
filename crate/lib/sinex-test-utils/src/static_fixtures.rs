@@ -133,14 +133,70 @@ pub struct FixtureConfig {
     pub max_age_days: Option<i64>,
 }
 
+impl FixtureConfig {
+    /// Validate the fixture configuration
+    fn validate(&self) -> crate::Result<()> {
+        use sinex_core::types::error::SinexError;
+
+        // Base directory must not be empty
+        if self.base_dir.as_str().is_empty() {
+            return Err(SinexError::validation(
+                "Fixture base directory cannot be empty".to_string(),
+            ));
+        }
+
+        // Schema version must not be empty
+        if self.schema_version.is_empty() {
+            return Err(SinexError::validation(
+                "Schema version cannot be empty".to_string(),
+            ));
+        }
+
+        // Schema version should follow semver-like pattern (basic check)
+        if !self
+            .schema_version
+            .chars()
+            .any(|c| c.is_ascii_digit() || c == '.')
+        {
+            return Err(SinexError::validation(format!(
+                "Schema version '{}' should contain version numbers (e.g., '1.0' or '1.0.0')",
+                self.schema_version
+            )));
+        }
+
+        // Max age must be positive if set
+        if let Some(max_age) = self.max_age_days {
+            if max_age <= 0 {
+                return Err(SinexError::validation(format!(
+                    "Maximum age must be positive: {} days",
+                    max_age
+                )));
+            }
+            if max_age > 3650 {
+                // ~10 years
+                return Err(SinexError::validation(format!(
+                    "Maximum age {} days exceeds reasonable limit of 3650 days (10 years)",
+                    max_age
+                )));
+            }
+        }
+
+        Ok(())
+    }
+}
+
 impl Default for FixtureConfig {
     fn default() -> Self {
-        Self {
+        let config = Self {
             base_dir: Utf8PathBuf::from("target/fixtures"),
             schema_version: "1.0.0".to_string(),
             verify_checksums: true,
             max_age_days: Some(30),
-        }
+        };
+        config
+            .validate()
+            .expect("Default FixtureConfig should always be valid");
+        config
     }
 }
 
@@ -161,25 +217,57 @@ impl FixtureSet {
     }
 
     /// Add an event dataset with specific size and seed
+    ///
+    /// # Panics
+    ///
+    /// Panics if the seed is 0 (invalid for deterministic generation)
     pub fn with_events(mut self, size: DatasetSize, seed: u64) -> Self {
+        if seed == 0 {
+            panic!("Fixture seed cannot be 0 - use a non-zero seed for deterministic generation");
+        }
         self.events.insert(size, seed);
         self
     }
 
     /// Set number of checkpoints
+    ///
+    /// # Panics
+    ///
+    /// Panics if the checkpoint count is unreasonably large (>1 billion)
     pub fn with_checkpoints(mut self, count: usize) -> Self {
+        if count > 1_000_000_000 {
+            panic!(
+                "Checkpoint count {} exceeds reasonable limit of 1 billion",
+                count
+            );
+        }
         self.checkpoints = count;
         self
     }
 
     /// Set number of operations
+    ///
+    /// # Panics
+    ///
+    /// Panics if the operation count is unreasonably large (>1 billion)
     pub fn with_operations(mut self, count: usize) -> Self {
+        if count > 1_000_000_000 {
+            panic!(
+                "Operation count {} exceeds reasonable limit of 1 billion",
+                count
+            );
+        }
         self.operations = count;
         self
     }
 
     /// Use custom configuration
+    ///
+    /// # Panics
+    ///
+    /// Panics if the configuration is invalid
     pub fn with_config(mut self, config: FixtureConfig) -> Self {
+        config.validate().expect("FixtureConfig must be valid");
         self.config = config;
         self
     }
@@ -440,11 +528,157 @@ mod tests {
         assert_eq!(DatasetSize::Custom(555).event_count(), 555);
         Ok(())
     }
+
+    #[test]
+    #[should_panic(expected = "Fixture seed cannot be 0")]
+    fn test_fixture_set_with_events_zero_seed_panics() {
+        let _fixtures = FixtureSet::new().with_events(DatasetSize::Small, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "Checkpoint count")]
+    fn test_fixture_set_with_checkpoints_excessive_panics() {
+        let _fixtures = FixtureSet::new().with_checkpoints(2_000_000_000);
+    }
+
+    #[test]
+    #[should_panic(expected = "Operation count")]
+    fn test_fixture_set_with_operations_excessive_panics() {
+        let _fixtures = FixtureSet::new().with_operations(2_000_000_000);
+    }
+
+    #[sinex_test]
+    fn test_fixture_set_valid_configuration() -> TestResult<()> {
+        let fixtures = FixtureSet::new()
+            .with_events(DatasetSize::Small, 42)
+            .with_checkpoints(100)
+            .with_operations(50);
+
+        assert_eq!(fixtures.events.len(), 1);
+        assert_eq!(fixtures.checkpoints, 100);
+        assert_eq!(fixtures.operations, 50);
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_fixture_config_default_is_valid() -> TestResult<()> {
+        let config = FixtureConfig::default();
+        assert_eq!(config.base_dir, "target/fixtures");
+        assert_eq!(config.schema_version, "1.0.0");
+        assert!(config.verify_checksums);
+        assert_eq!(config.max_age_days, Some(30));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_fixture_config_validation_empty_base_dir() -> TestResult<()> {
+        use camino::Utf8PathBuf;
+        let config = FixtureConfig {
+            base_dir: Utf8PathBuf::from(""),
+            schema_version: "1.0".to_string(),
+            verify_checksums: true,
+            max_age_days: Some(30),
+        };
+
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("base directory cannot be empty"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_fixture_config_validation_empty_schema_version() -> TestResult<()> {
+        use camino::Utf8PathBuf;
+        let config = FixtureConfig {
+            base_dir: Utf8PathBuf::from("target/fixtures"),
+            schema_version: "".to_string(),
+            verify_checksums: true,
+            max_age_days: Some(30),
+        };
+
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Schema version cannot be empty"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_fixture_config_validation_invalid_schema_version() -> TestResult<()> {
+        use camino::Utf8PathBuf;
+        let config = FixtureConfig {
+            base_dir: Utf8PathBuf::from("target/fixtures"),
+            schema_version: "invalid".to_string(),
+            verify_checksums: true,
+            max_age_days: Some(30),
+        };
+
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("should contain version numbers"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_fixture_config_validation_negative_max_age() -> TestResult<()> {
+        use camino::Utf8PathBuf;
+        let config = FixtureConfig {
+            base_dir: Utf8PathBuf::from("target/fixtures"),
+            schema_version: "1.0".to_string(),
+            verify_checksums: true,
+            max_age_days: Some(-1),
+        };
+
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("must be positive"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_fixture_config_validation_excessive_max_age() -> TestResult<()> {
+        use camino::Utf8PathBuf;
+        let config = FixtureConfig {
+            base_dir: Utf8PathBuf::from("target/fixtures"),
+            schema_version: "1.0".to_string(),
+            verify_checksums: true,
+            max_age_days: Some(5000),
+        };
+
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("3650 days"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_fixture_config_validation_none_max_age_is_valid() -> TestResult<()> {
+        use camino::Utf8PathBuf;
+        let config = FixtureConfig {
+            base_dir: Utf8PathBuf::from("target/fixtures"),
+            schema_version: "1.0.0".to_string(),
+            verify_checksums: true,
+            max_age_days: None,
+        };
+
+        let result = config.validate();
+        assert!(result.is_ok());
+        Ok(())
+    }
 }
 
 #[cfg(all(test, feature = "bench"))]
 mod benches {
     use super::*;
+    #[allow(unused_imports)]
     use crate::{sinex_bench, TestResult};
 
     #[sinex_bench]

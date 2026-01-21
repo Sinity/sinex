@@ -1,6 +1,6 @@
 use super::conversions::{extract_provenance, EventRecordExt};
 use crate::db::schema::Events;
-use crate::models::{Event, EventBuilder, JsonValue, Provenance};
+use crate::models::{Event, EventBuilder, JsonValue};
 use crate::repositories::common::{db_error, DbResult, EnhancedRepository, Repository};
 use crate::types::domain::{EventSource, EventType, SchemaVersion};
 use crate::types::error::SinexError;
@@ -26,6 +26,30 @@ where
 {
     if source_event_ids.is_empty() {
         return Ok(());
+    }
+
+    // Warn about unbounded array growth
+    const WARN_THRESHOLD: usize = 100;
+    const HARD_LIMIT: usize = 1000;
+
+    if source_event_ids.len() > HARD_LIMIT {
+        return Err(SinexError::database(format!(
+            "source_event_ids array exceeds hard limit of {} parents (got {}). \
+             This indicates a pathological synthesis pattern that will cause performance issues.",
+            HARD_LIMIT,
+            source_event_ids.len()
+        )));
+    }
+
+    if source_event_ids.len() > WARN_THRESHOLD {
+        tracing::warn!(
+            event_id = %event_id,
+            parent_count = source_event_ids.len(),
+            threshold = WARN_THRESHOLD,
+            hard_limit = HARD_LIMIT,
+            "Event has unusually large number of parent events. \
+             This may indicate a synthesis anti-pattern and will impact query performance."
+        );
     }
 
     if source_event_ids
@@ -198,7 +222,12 @@ impl<'a> EventRepository<'a> {
         )
         .fetch_one(self.pool)
         .await
-        .map_err(|e| db_error(e, "prepare cascade session"))
+        .map_err(|e| {
+            db_error(
+                e,
+                &format!("Failed to prepare cascade session '{}'", session_id),
+            )
+        })
     }
 
     pub async fn populate_cascade_roots(
@@ -214,10 +243,30 @@ impl<'a> EventRepository<'a> {
         .bind(&ids)
         .fetch_one(self.pool)
         .await
-        .map_err(|e| db_error(e, "populate cascade roots"))?;
+        .map_err(|e| {
+            db_error(
+                e,
+                &format!(
+                    "Failed to populate cascade roots: {} event IDs into table '{}'",
+                    event_ids.len(),
+                    table_name
+                ),
+            )
+        })?;
         Ok(())
     }
 
+    /// Expand cascade graph to find all descendants
+    ///
+    /// # Cycle Detection
+    /// IMPORTANT: The database function `core.expand_cascade` MUST implement cycle detection
+    /// to prevent infinite loops when circular event dependencies exist. The implementation should:
+    /// - Track visited nodes during traversal
+    /// - Stop expansion when a node is encountered twice
+    /// - Respect the max_depth limit as a safety bound
+    ///
+    /// Without proper cycle detection, circular references (A -> B -> C -> A) will cause
+    /// the function to loop indefinitely or exceed max_depth.
     pub async fn expand_cascade(&self, table_name: &str, max_depth: i32) -> DbResult<usize> {
         let depth = sqlx::query_scalar!(
             r#"SELECT core.expand_cascade($1, $2)"#,
@@ -226,7 +275,15 @@ impl<'a> EventRepository<'a> {
         )
         .fetch_one(self.pool)
         .await
-        .map_err(|e| db_error(e, "expand cascade graph"))?
+        .map_err(|e| {
+            db_error(
+                e,
+                &format!(
+                    "Failed to expand cascade graph for table '{}' (max_depth={})",
+                    table_name, max_depth
+                ),
+            )
+        })?
         .unwrap_or(0);
         Ok(depth as usize)
     }
@@ -383,7 +440,10 @@ impl<'a> EventRepository<'a> {
                     #[cfg(any(test, feature = "testing"))]
                     if let Some(material_ulid) = source_material_id {
                         let source_identifier = format!("test-material-{}", material_ulid);
-                        let _ = sqlx::query(
+                        // This is a test-only helper that tries to register source material if it doesn't exist.
+                        // Since it uses ON CONFLICT DO NOTHING, it's safe to ignore the result - the material
+                        // may already exist. However, we log errors for debugging test failures.
+                        if let Err(e) = sqlx::query(
                             r#"
                             INSERT INTO raw.source_material_registry (
                                 id, material_kind, source_identifier, status,
@@ -398,7 +458,13 @@ impl<'a> EventRepository<'a> {
                         .bind(material_ulid.as_uuid())
                         .bind(source_identifier)
                         .execute(&mut **tx)
-                        .await;
+                        .await {
+                            tracing::debug!(
+                                material_id = %material_ulid,
+                                error = %e,
+                                "Test hook: Failed to insert bootstrap source material (may already exist)"
+                            );
+                        }
                     }
 
                     let record = sqlx::query_as!(
@@ -615,6 +681,9 @@ impl<'a> EventRepository<'a> {
         let mut results = Vec::with_capacity(events.len());
 
         // Process chunks with controlled concurrency
+        let total_events = events.len();
+        let mut processed = 0;
+
         for chunk_batch in events.chunks(chunk_size * max_concurrent_chunks) {
             let mut chunk_futures = Vec::new();
 
@@ -630,7 +699,19 @@ impl<'a> EventRepository<'a> {
             for result in chunk_results {
                 match result {
                     Ok(mut chunk_results) => {
+                        processed += chunk_results.len();
                         results.append(&mut chunk_results);
+
+                        // Log progress every 1000 events for visibility on large batches
+                        if processed % 1000 == 0 || processed == total_events {
+                            tracing::debug!(
+                                processed = processed,
+                                total = total_events,
+                                progress_pct =
+                                    (processed as f64 / total_events as f64 * 100.0) as u32,
+                                "Batch insert progress"
+                            );
+                        }
                     }
                     Err(e) => return Err(e),
                 }
@@ -743,11 +824,15 @@ impl<'a> EventRepository<'a> {
         }
 
         // Begin transaction for atomicity
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| db_error(e, "begin transaction for batch insert"))?;
+        let mut tx = self.pool.begin().await.map_err(|e| {
+            db_error(
+                e,
+                &format!(
+                    "Failed to begin transaction for batch insert of {} events",
+                    events.len()
+                ),
+            )
+        })?;
 
         crate::db::query_helpers::set_repeatable_read(&mut tx).await?;
 
@@ -784,15 +869,19 @@ impl<'a> EventRepository<'a> {
                 .push_unseparated("::uuid[]::ulid[]");
         });
 
-        builder
-            .build()
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| db_error(e, "insert batch using values"))?;
+        builder.build().execute(&mut *tx).await.map_err(|e| {
+            db_error(
+                e,
+                &format!("Failed to insert batch of {} events", ids.len()),
+            )
+        })?;
 
-        tx.commit()
-            .await
-            .map_err(|e| db_error(e, "commit batch insert"))?;
+        tx.commit().await.map_err(|e| {
+            db_error(
+                e,
+                &format!("Failed to commit batch insert of {} events", events.len()),
+            )
+        })?;
 
         Ok(events)
     }
@@ -923,13 +1012,9 @@ impl<'a> EventRepository<'a> {
             )
             .await
             .map_err(|e| e.with_context("operation", "register test source material"))?;
-        let event = EventBuilder::new(
-            EventSource::new(source.to_string()),
-            EventType::new(event_type.to_string()),
-            payload,
-        )
-        .with_provenance(Provenance::from_material(test_material_id, 0, None, None))
-        .build()?;
+        let event = EventBuilder::dynamic(source, event_type, payload)
+            .from_material(test_material_id, 0)
+            .build()?;
 
         self.insert(event).await
     }
@@ -1017,7 +1102,7 @@ impl<'a> EventRepository<'a> {
             .pool
             .begin()
             .await
-            .map_err(|e| db_error(e, "begin cleanup transaction"))?;
+            .map_err(|e| db_error(e, "Failed to begin transaction for test event cleanup"))?;
         crate::db::query_helpers::set_repeatable_read(&mut tx).await?;
 
         // Set session variables for audit trail
@@ -1083,9 +1168,15 @@ impl<'a> EventRepository<'a> {
         let deleted_count = result.rows_affected();
 
         // Commit the transaction
-        tx.commit()
-            .await
-            .map_err(|e| db_error(e, "commit cleanup transaction"))?;
+        tx.commit().await.map_err(|e| {
+            db_error(
+                e,
+                &format!(
+                    "Failed to commit test event cleanup transaction (deleted {} events)",
+                    deleted_count
+                ),
+            )
+        })?;
 
         tracing::info!(
             operation_id = %operation_id,
@@ -1163,6 +1254,12 @@ impl<'a, 't> EventRepositoryTx<'a, 't> {
         Ok(())
     }
 
+    /// Expand cascade graph to find all descendants (transaction version)
+    ///
+    /// # Cycle Detection
+    /// IMPORTANT: The database function `core.expand_cascade` MUST implement cycle detection
+    /// to prevent infinite loops when circular event dependencies exist. See the non-transaction
+    /// version for detailed requirements.
     pub async fn expand_cascade(&mut self, table_name: &str, max_depth: i32) -> DbResult<usize> {
         let depth = sqlx::query_scalar!(
             r#"SELECT core.expand_cascade($1, $2)"#,

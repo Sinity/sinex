@@ -131,7 +131,10 @@ async fn test_automaton_progress_old(ctx: TestContext) -> TestResult<()> {
 
     // Process some events
     checkpoint.processed_count = 50;
-    checkpoint.set_last_processed_id(Some("event_50".to_string()));
+    checkpoint.checkpoint = sinex_node_sdk::runtime::stream::Checkpoint::Stream {
+        message_id: "event_50".to_string(),
+        event_id: None,
+    };
     checkpoint_manager.save_checkpoint(&checkpoint).await?;
 
     // Verify

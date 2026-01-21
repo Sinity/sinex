@@ -43,9 +43,88 @@ pub struct DatasetConfig {
 }
 
 impl DatasetConfig {
+    /// Validate configuration parameters
+    fn validate(&self) -> Result<()> {
+        // Name must not be empty
+        if self.name.is_empty() {
+            return Err(SinexError::validation(
+                "Dataset name cannot be empty".to_string(),
+            ));
+        }
+
+        // Name must be valid for filesystem
+        if self.name.contains(['/', '\\', '\0']) {
+            return Err(SinexError::validation(format!(
+                "Dataset name '{}' contains invalid characters (/, \\, or null)",
+                self.name
+            )));
+        }
+
+        // Event count must be reasonable
+        if self.event_count > 1_000_000_000 {
+            return Err(SinexError::validation(format!(
+                "Event count {} exceeds maximum of 1 billion",
+                self.event_count
+            )));
+        }
+
+        // Source count must be positive if events exist
+        if self.event_count > 0 && self.source_count == 0 {
+            return Err(SinexError::validation(
+                "Source count must be positive when event count > 0".to_string(),
+            ));
+        }
+
+        // Event type count must be positive if events exist
+        if self.event_count > 0 && self.event_type_count == 0 {
+            return Err(SinexError::validation(
+                "Event type count must be positive when event count > 0".to_string(),
+            ));
+        }
+
+        // Payload sizes must be in ascending order
+        for i in 1..self.payload_sizes.len() {
+            if self.payload_sizes[i] < self.payload_sizes[i - 1] {
+                return Err(SinexError::validation(format!(
+                    "Payload sizes must be in ascending order, but sizes[{}] ({}) < sizes[{}] ({})",
+                    i,
+                    self.payload_sizes[i],
+                    i - 1,
+                    self.payload_sizes[i - 1]
+                )));
+            }
+        }
+
+        // Payload sizes must be reasonable
+        if self.payload_sizes[4] > 100_000_000 {
+            return Err(SinexError::validation(format!(
+                "Maximum payload size {} exceeds 100MB limit",
+                self.payload_sizes[4]
+            )));
+        }
+
+        // Time range must be non-negative
+        if self.time_range_days < 0 {
+            return Err(SinexError::validation(format!(
+                "Time range days cannot be negative: {}",
+                self.time_range_days
+            )));
+        }
+
+        // Checkpoint interval must not exceed event count
+        if self.checkpoint_interval > 0 && self.checkpoint_interval > self.event_count {
+            return Err(SinexError::validation(format!(
+                "Checkpoint interval {} cannot exceed event count {}",
+                self.checkpoint_interval, self.event_count
+            )));
+        }
+
+        Ok(())
+    }
+
     /// Standard small dataset for quick tests
     pub fn small() -> Self {
-        Self {
+        let config = Self {
             name: "small".to_string(),
             event_count: 1_000,
             source_count: 4,
@@ -55,12 +134,16 @@ impl DatasetConfig {
             seed: 42,
             checkpoint_interval: 100,
             operation_count: 10,
-        }
+        };
+        config
+            .validate()
+            .expect("small() config should always be valid");
+        config
     }
 
     /// Medium dataset for integration tests
     pub fn medium() -> Self {
-        Self {
+        let config = Self {
             name: "medium".to_string(),
             event_count: 100_000,
             source_count: 8,
@@ -70,12 +153,16 @@ impl DatasetConfig {
             seed: 1337,
             checkpoint_interval: 1000,
             operation_count: 100,
-        }
+        };
+        config
+            .validate()
+            .expect("medium() config should always be valid");
+        config
     }
 
     /// Large dataset for performance benchmarks
     pub fn large() -> Self {
-        Self {
+        let config = Self {
             name: "large".to_string(),
             event_count: 10_000_000,
             source_count: 16,
@@ -85,7 +172,33 @@ impl DatasetConfig {
             seed: 9999,
             checkpoint_interval: 10000,
             operation_count: 1000,
-        }
+        };
+        config
+            .validate()
+            .expect("large() config should always be valid");
+        config
+    }
+
+    /// Create a custom dataset configuration with validation
+    pub fn custom(
+        name: impl Into<String>,
+        event_count: usize,
+        source_count: usize,
+        event_type_count: usize,
+    ) -> Result<Self> {
+        let config = Self {
+            name: name.into(),
+            event_count,
+            source_count,
+            event_type_count,
+            payload_sizes: [100, 500, 1000, 5000, 10000],
+            time_range_days: 7,
+            seed: 42,
+            checkpoint_interval: 0,
+            operation_count: 0,
+        };
+        config.validate()?;
+        Ok(config)
     }
 }
 
@@ -110,9 +223,24 @@ pub struct FixtureGenerator {
 
 impl FixtureGenerator {
     /// Create a new fixture generator with the given configuration
+    ///
+    /// # Panics
+    ///
+    /// Panics if the configuration is invalid. Use `DatasetConfig::custom()`
+    /// for fallible configuration creation.
     pub fn new(config: DatasetConfig) -> Self {
+        config
+            .validate()
+            .expect("FixtureGenerator requires valid DatasetConfig");
         let rng = fastrand::Rng::with_seed(config.seed);
         Self { config, rng }
+    }
+
+    /// Create a new fixture generator with validation
+    pub fn try_new(config: DatasetConfig) -> Result<Self> {
+        config.validate()?;
+        let rng = fastrand::Rng::with_seed(config.seed);
+        Ok(Self { config, rng })
     }
 
     /// Generate events for the dataset
@@ -474,11 +602,231 @@ mod tests {
         }
         Ok(())
     }
+
+    #[sinex_test]
+    fn test_dataset_config_validation_empty_name() -> TestResult<()> {
+        let config = DatasetConfig {
+            name: "".to_string(),
+            event_count: 100,
+            source_count: 1,
+            event_type_count: 1,
+            payload_sizes: [10, 20, 30, 40, 50],
+            time_range_days: 1,
+            seed: 42,
+            checkpoint_interval: 0,
+            operation_count: 0,
+        };
+
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("name cannot be empty"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_dataset_config_validation_invalid_name_chars() -> TestResult<()> {
+        let config = DatasetConfig {
+            name: "bad/name".to_string(),
+            event_count: 100,
+            source_count: 1,
+            event_type_count: 1,
+            payload_sizes: [10, 20, 30, 40, 50],
+            time_range_days: 1,
+            seed: 42,
+            checkpoint_interval: 0,
+            operation_count: 0,
+        };
+
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("invalid characters"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_dataset_config_validation_excessive_event_count() -> TestResult<()> {
+        let config = DatasetConfig {
+            name: "large".to_string(),
+            event_count: 2_000_000_000,
+            source_count: 1,
+            event_type_count: 1,
+            payload_sizes: [10, 20, 30, 40, 50],
+            time_range_days: 1,
+            seed: 42,
+            checkpoint_interval: 0,
+            operation_count: 0,
+        };
+
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("exceeds maximum"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_dataset_config_validation_zero_source_count() -> TestResult<()> {
+        let config = DatasetConfig {
+            name: "test".to_string(),
+            event_count: 100,
+            source_count: 0,
+            event_type_count: 1,
+            payload_sizes: [10, 20, 30, 40, 50],
+            time_range_days: 1,
+            seed: 42,
+            checkpoint_interval: 0,
+            operation_count: 0,
+        };
+
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Source count must be positive"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_dataset_config_validation_payload_sizes_not_ascending() -> TestResult<()> {
+        let config = DatasetConfig {
+            name: "test".to_string(),
+            event_count: 100,
+            source_count: 1,
+            event_type_count: 1,
+            payload_sizes: [50, 40, 30, 20, 10], // Descending
+            time_range_days: 1,
+            seed: 42,
+            checkpoint_interval: 0,
+            operation_count: 0,
+        };
+
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("ascending order"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_dataset_config_validation_excessive_payload_size() -> TestResult<()> {
+        let config = DatasetConfig {
+            name: "test".to_string(),
+            event_count: 100,
+            source_count: 1,
+            event_type_count: 1,
+            payload_sizes: [10, 20, 30, 40, 200_000_000],
+            time_range_days: 1,
+            seed: 42,
+            checkpoint_interval: 0,
+            operation_count: 0,
+        };
+
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("100MB limit"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_dataset_config_validation_negative_time_range() -> TestResult<()> {
+        let config = DatasetConfig {
+            name: "test".to_string(),
+            event_count: 100,
+            source_count: 1,
+            event_type_count: 1,
+            payload_sizes: [10, 20, 30, 40, 50],
+            time_range_days: -1,
+            seed: 42,
+            checkpoint_interval: 0,
+            operation_count: 0,
+        };
+
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("cannot be negative"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_dataset_config_validation_checkpoint_interval_exceeds_count() -> TestResult<()> {
+        let config = DatasetConfig {
+            name: "test".to_string(),
+            event_count: 100,
+            source_count: 1,
+            event_type_count: 1,
+            payload_sizes: [10, 20, 30, 40, 50],
+            time_range_days: 1,
+            seed: 42,
+            checkpoint_interval: 200, // Greater than event_count
+            operation_count: 0,
+        };
+
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("cannot exceed event count"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_dataset_config_custom_valid() -> TestResult<()> {
+        let config = DatasetConfig::custom("my_dataset", 1000, 5, 3)?;
+        assert_eq!(config.name, "my_dataset");
+        assert_eq!(config.event_count, 1000);
+        assert_eq!(config.source_count, 5);
+        assert_eq!(config.event_type_count, 3);
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_dataset_config_custom_invalid() -> TestResult<()> {
+        let result = DatasetConfig::custom("bad/name", 100, 1, 1);
+        assert!(result.is_err());
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_fixture_generator_try_new_valid() -> TestResult<()> {
+        let config = DatasetConfig::small();
+        let gen = FixtureGenerator::try_new(config)?;
+        assert_eq!(gen.config.name, "small");
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_fixture_generator_try_new_invalid() -> TestResult<()> {
+        let config = DatasetConfig {
+            name: "".to_string(), // Invalid
+            event_count: 100,
+            source_count: 1,
+            event_type_count: 1,
+            payload_sizes: [10, 20, 30, 40, 50],
+            time_range_days: 1,
+            seed: 42,
+            checkpoint_interval: 0,
+            operation_count: 0,
+        };
+
+        let result = FixtureGenerator::try_new(config);
+        assert!(result.is_err());
+        Ok(())
+    }
 }
 
 #[cfg(all(test, feature = "bench"))]
 mod benches {
     use super::*;
+    #[allow(unused_imports)]
     use crate::{sinex_bench, TestResult};
 
     #[sinex_bench]

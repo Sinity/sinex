@@ -4,8 +4,8 @@ pub mod cli;
 
 pub use cli::{
     parse_checkpoint, parse_time_horizon, ActivityEntry, CoverageAnalysis, ExplorationProvider,
-    ExportFormat, IngestionHistoryEntry, MissingItem, ProcessorCli, ProcessorCliRunner,
-    ProcessorCommand, SourceState,
+    ExportFormat, IngestionHistoryEntry, MissingItem, NodeCli, NodeCliRunner, NodeCommand,
+    SourceState,
 };
 
 pub mod replay {

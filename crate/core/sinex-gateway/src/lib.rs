@@ -8,11 +8,13 @@
 // Expose modules for testing and external use
 pub mod cascade_analyzer;
 pub mod client;
+pub mod gateway_metrics;
 pub mod handlers;
 #[cfg(any(feature = "test-support", test))]
 pub mod handlers_test_support;
 pub mod native_messaging;
 pub mod prelude;
+pub mod rate_limit;
 pub mod replay_control;
 pub mod replay_state_machine;
 pub mod rpc_server;

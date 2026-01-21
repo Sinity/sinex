@@ -1,3 +1,18 @@
+/// Standard event query column list macro
+///
+/// # Schema Change Warning
+/// This macro expands to a compile-time string constant. Schema changes to the
+/// `core.events` table require manually updating this macro definition. The macro
+/// does NOT automatically sync with schema migrations.
+///
+/// When adding, removing, or renaming columns in `core.events`:
+/// 1. Update the migration in `sinex-schema`
+/// 2. Update this macro definition to match
+/// 3. Update `EventRecord` struct in `conversions.rs`
+/// 4. Verify all queries using this macro still compile
+///
+/// Common mistake: Adding a column to the schema but forgetting to update this macro
+/// will cause runtime query errors despite successful compilation.
 macro_rules! event_select_columns {
     () => {
         "id::uuid as id, \

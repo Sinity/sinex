@@ -163,7 +163,7 @@ async fn test_automaton_lifecycle_basic(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing basic automaton lifecycle");
 
     ctx.ensure_clean().await?;
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let mut ingest_handle = start_ingestd(&ctx).await?;
     let kv = ctx.checkpoint_kv().await?;
 
@@ -216,7 +216,7 @@ async fn test_automaton_lifecycle_basic(ctx: TestContext) -> TestResult<()> {
 async fn test_multiple_automata_coordination(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing multiple automata coordination");
     ctx.ensure_clean().await?;
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let mut ingest_handle = start_ingestd(&ctx).await?;
     let kv = ctx.checkpoint_kv().await?;
 
@@ -290,7 +290,7 @@ async fn test_multiple_automata_coordination(ctx: TestContext) -> TestResult<()>
 async fn test_automaton_checkpoint_recovery(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing automaton checkpoint recovery");
     ctx.ensure_clean().await?;
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let mut ingest_handle = start_ingestd(&ctx).await?;
     let kv = ctx.checkpoint_kv().await?;
 
@@ -375,7 +375,7 @@ async fn test_automaton_checkpoint_recovery(ctx: TestContext) -> TestResult<()> 
 #[sinex_test]
 async fn test_automaton_event_filtering(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing automaton event filtering and processing logic");
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let mut ingest_handle = start_ingestd(&ctx).await?;
     let kv = ctx.checkpoint_kv().await?;
 
@@ -469,7 +469,7 @@ async fn test_automaton_performance_under_load(ctx: TestContext) -> TestResult<(
     tracing::info!("Testing automaton performance under load");
 
     let automaton_name = "performance-test-automaton";
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let mut ingest_handle = start_ingestd(&ctx).await?;
     let kv = ctx.checkpoint_kv().await?;
 
@@ -580,7 +580,7 @@ async fn test_automaton_performance_under_load(ctx: TestContext) -> TestResult<(
 async fn test_automaton_error_handling(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing automaton error handling and resilience");
 
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let mut ingest_handle = start_ingestd(&ctx).await?;
     let kv = ctx.checkpoint_kv().await?;
     setup_automation_test_data(&ctx).await?;

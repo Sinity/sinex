@@ -1,7 +1,7 @@
 use sinex_core::{DbPoolExt, Id};
 use sinex_document_ingestor::{DocumentIngestorConfig, DocumentProcessor};
 use sinex_node_sdk::stream_processor::{Checkpoint, NodeInitContext, ScanArgs, TimeHorizon};
-use sinex_node_sdk::Node;
+use sinex_node_sdk::{Node, SimpleIngestorWrapper};
 use sinex_test_utils::{node_runtime::TestRuntimeBuilder, sinex_test, TestContext};
 use tempfile::NamedTempFile;
 use tokio::time::{timeout, Duration};
@@ -29,7 +29,8 @@ async fn document_processor_emits_events_for_targets(ctx: TestContext) -> TestRe
         .into_owned()];
     let init_ctx = NodeInitContext::new(config, raw_config, service_info, handles, work_dir);
 
-    let mut processor = DocumentProcessor::new();
+    // Use the wrapper to bridge SimpleIngestor to Node
+    let mut processor = SimpleIngestorWrapper::<DocumentProcessor>::default();
     processor.initialize(init_ctx).await?;
 
     let mut scan_args = ScanArgs::default();
@@ -50,13 +51,8 @@ async fn document_processor_emits_events_for_targets(ctx: TestContext) -> TestRe
         event.payload["_source_material_id"].as_str().is_some(),
         true
     );
-    assert_eq!(event.payload["metadata"]["path"].as_str().is_some(), true);
-    assert_eq!(
-        event.payload["metadata"]["source_material_id"]
-            .as_str()
-            .is_some(),
-        true
-    );
+    assert_eq!(event.payload["file_path"].as_str().is_some(), true);
+    assert_eq!(event.payload["source_material_id"].as_str().is_some(), true);
 
     // NOTE: the AcquisitionManager is JetStream-first; ingestd is the sole database writer for
     // `raw.source_material_registry`. This test runs the processor directly (no ingestd), so the

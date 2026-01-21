@@ -21,10 +21,6 @@ pub struct TestNodePublisher {
     namespace: Option<String>,
 }
 
-/// Backward compatibility alias for TestNodePublisher.
-#[deprecated(since = "0.5.0", note = "Use TestNodePublisher instead")]
-pub type TestSatellitePublisher = TestNodePublisher;
-
 #[derive(Clone, Debug, Default)]
 pub struct EventOverrides {
     pub id: Option<Ulid>,

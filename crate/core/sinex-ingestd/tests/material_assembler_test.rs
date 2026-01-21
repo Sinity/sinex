@@ -61,7 +61,7 @@ async fn start_assembler(
 
 #[sinex_test]
 async fn assembler_rejects_corrupted_slice_and_records_dlq(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     let namespace = ctx.pipeline_namespace().prefix().to_string();
     let (handle, js, _annex_guard, _state_guard, _) = start_assembler(&ctx, None).await?;
@@ -126,7 +126,7 @@ async fn assembler_rejects_corrupted_slice_and_records_dlq(ctx: TestContext) -> 
 
     // Expect DLQ entry on the ingestd DLQ subject or detect assembler failure due to existing stream config drift.
     use tokio::time::Instant;
-    let deadline = Instant::now() + Duration::from_secs(15);
+    let deadline = Instant::now() + Duration::from_secs(Timeouts::LONG);
     loop {
         if let Ok(Some(_)) = timeout(Duration::from_millis(500), dlq_sub.next()).await {
             break;
@@ -160,7 +160,7 @@ async fn assembler_rejects_corrupted_slice_and_records_dlq(ctx: TestContext) -> 
 
 #[sinex_test]
 async fn assembler_handles_early_slices_before_begin(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     let namespace = ctx.pipeline_namespace().prefix().to_string();
     let (handle, js, _annex_guard, state_guard, state_path) = start_assembler(&ctx, None).await?;
@@ -277,7 +277,7 @@ async fn assembler_handles_early_slices_before_begin(ctx: TestContext) -> TestRe
 
 #[sinex_test]
 async fn assembler_routes_empty_material_to_dlq(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     let namespace = ctx.pipeline_namespace().prefix().to_string();
     let (handle, js, _annex_guard, _state_guard, _) = start_assembler(&ctx, None).await?;
@@ -326,7 +326,7 @@ async fn assembler_routes_empty_material_to_dlq(ctx: TestContext) -> TestResult<
     .await?;
 
     // Verify DLQ entry
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(Timeouts::LONG);
     loop {
         if let Ok(Some(msg)) = timeout(Duration::from_millis(500), dlq_sub.next()).await {
             let payload: serde_json::Value = serde_json::from_slice(&msg.payload)?;
@@ -348,7 +348,7 @@ async fn assembler_routes_empty_material_to_dlq(ctx: TestContext) -> TestResult<
 
 #[sinex_test]
 async fn assembler_cleans_up_state_on_corruption(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     let namespace = ctx.pipeline_namespace().prefix().to_string();
     let (handle, js, _annex_guard, state_guard, state_path) = start_assembler(&ctx, None).await?;
@@ -405,7 +405,7 @@ async fn assembler_cleans_up_state_on_corruption(ctx: TestContext) -> TestResult
     .await?;
 
     // Wait for DLQ entry for the corrupted material.
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(Timeouts::LONG);
     loop {
         if let Ok(Some(msg)) = timeout(Duration::from_millis(500), dlq_sub.next()).await {
             let payload: serde_json::Value = serde_json::from_slice(&msg.payload)?;
@@ -443,7 +443,7 @@ async fn assembler_cleans_up_state_on_corruption(ctx: TestContext) -> TestResult
 
 #[sinex_test]
 async fn assembler_handles_end_before_begin(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     let namespace = ctx.pipeline_namespace().prefix().to_string();
     let (handle, js, _annex_guard, _state_guard, state_path) = start_assembler(&ctx, None).await?;
@@ -520,7 +520,7 @@ async fn assembler_handles_end_before_begin(ctx: TestContext) -> TestResult<()> 
 #[sinex_test]
 
 async fn assembler_is_idempotent_for_duplicate_slices(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     let namespace = ctx.pipeline_namespace().prefix().to_string();
     let (handle, js, _annex_guard, _state_guard, _) = start_assembler(&ctx, None).await?;

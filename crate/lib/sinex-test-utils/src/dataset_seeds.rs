@@ -1,13 +1,14 @@
-use crate::timing_utils::WaitHelpers;
-use crate::{EventOverrides, PipelineHarness, PipelineScope, TestContext, TestResult};
+//! Dataset seeding utilities for test fixtures.
+//!
+//! Provides functions to seed test datasets through PipelineScope.
+
+use crate::{EventOverrides, PipelineScope, TestContext, TestResult};
 use chrono::{DateTime, Duration as ChronoDuration, TimeZone, Utc};
 use color_eyre::eyre::{eyre, WrapErr};
 use futures::future::try_join_all;
 use serde_json::{json, Value};
 use sinex_core::{types::Ulid, Event};
 use std::collections::HashMap;
-
-const DEFAULT_SEED_TIMEOUT_SECS: u64 = 12;
 
 #[derive(Clone, Debug)]
 pub struct SeedClock {
@@ -48,7 +49,7 @@ pub enum TimestampSpec {
 impl TimestampSpec {
     fn resolve(&self, clock: &SeedClock) -> DateTime<Utc> {
         match self {
-            TimestampSpec::At(ts) => ts.clone(),
+            TimestampSpec::At(ts) => *ts,
             TimestampSpec::Before(offset) => clock.base - *offset,
             TimestampSpec::After(offset) => clock.base + *offset,
         }
@@ -143,31 +144,9 @@ pub struct ServiceIntegrationDataset {
     pub expected_event_types: HashMap<String, usize>,
 }
 
-pub async fn seed_events_via_pipeline(
-    pipeline: &PipelineHarness<'_>,
-    clock: &SeedClock,
-    specs: &[EventSpec],
-) -> TestResult<Vec<Ulid>> {
-    ensure_fixed_seed(clock)?;
-    let clock = clock.clone();
-    let futures = specs.iter().cloned().map(|spec| {
-        let clock = clock.clone();
-        async move {
-            let overrides = spec.overrides_with_timestamp(&clock);
-            let event_id = pipeline
-                .publish_event_with_overrides(
-                    &spec.source,
-                    &spec.event_type,
-                    spec.payload,
-                    overrides,
-                )
-                .await?;
-            Ok::<Ulid, color_eyre::eyre::Report>(*event_id.as_ulid())
-        }
-    });
-
-    try_join_all(futures).await.map_err(Into::into)
-}
+// ============================================================================
+// Public seeding functions (via PipelineScope)
+// ============================================================================
 
 pub async fn seed_events_via_scope(
     scope: &PipelineScope<'_>,
@@ -213,47 +192,6 @@ pub async fn seed_fixture_events_via_scope(
     seed_events_via_scope(scope, clock, &specs).await
 }
 
-/// Publish pre-generated fixture events (from fixture_generator) through a PipelineHarness.
-pub async fn seed_fixture_events_via_pipeline(
-    pipeline: &PipelineHarness<'_>,
-    clock: &SeedClock,
-    events: &[Event<Value>],
-) -> TestResult<Vec<Ulid>> {
-    let specs: Vec<EventSpec> = events
-        .iter()
-        .map(|event| {
-            let mut spec = EventSpec::new(
-                event.source.as_str(),
-                event.event_type.as_str(),
-                event.payload.clone(),
-            );
-            if let Some(ts) = event.ts_orig {
-                spec = spec.at(ts);
-            }
-            spec
-        })
-        .collect();
-    seed_events_via_pipeline(pipeline, clock, &specs).await
-}
-
-fn ensure_fixed_seed(clock: &SeedClock) -> TestResult<()> {
-    let expected = SeedClock::fixed().base();
-    if clock.base() != expected {
-        return Err(eyre!(
-            "SeedClock must use the fixed baseline (SeedClock::fixed) for pipeline seeding; use explicit event overrides for custom timestamps."
-        ));
-    }
-    Ok(())
-}
-
-pub async fn seed_query_dataset_semantic_min_via_pipeline(
-    ctx: &TestContext,
-    pipeline: &PipelineHarness<'_>,
-    clock: &SeedClock,
-) -> TestResult<QueryDataset> {
-    seed_query_dataset_via_pipeline(ctx, pipeline, clock, DatasetVariant::SemanticMin).await
-}
-
 pub async fn seed_query_dataset_semantic_min_via_scope(
     scope: &PipelineScope<'_>,
     clock: &SeedClock,
@@ -266,22 +204,6 @@ pub async fn seed_query_dataset_perf_via_scope(
     clock: &SeedClock,
 ) -> TestResult<QueryDataset> {
     seed_query_dataset_via_scope(scope, clock, DatasetVariant::Perf).await
-}
-
-pub async fn seed_query_dataset_perf_via_pipeline(
-    ctx: &TestContext,
-    pipeline: &PipelineHarness<'_>,
-    clock: &SeedClock,
-) -> TestResult<QueryDataset> {
-    seed_query_dataset_via_pipeline(ctx, pipeline, clock, DatasetVariant::Perf).await
-}
-
-pub async fn seed_analytics_dataset_semantic_min_via_pipeline(
-    ctx: &TestContext,
-    pipeline: &PipelineHarness<'_>,
-    clock: &SeedClock,
-) -> TestResult<AnalyticsDataset> {
-    seed_analytics_dataset_via_pipeline(ctx, pipeline, clock, analytics_dataset_specs()).await
 }
 
 pub async fn seed_analytics_dataset_semantic_min_via_scope(
@@ -298,14 +220,6 @@ pub async fn seed_service_integration_dataset_semantic_min_via_scope(
     seed_service_integration_dataset_via_scope(scope, clock).await
 }
 
-pub async fn seed_service_integration_dataset_semantic_min_via_pipeline(
-    ctx: &TestContext,
-    pipeline: &PipelineHarness<'_>,
-    clock: &SeedClock,
-) -> TestResult<ServiceIntegrationDataset> {
-    seed_service_integration_dataset_via_pipeline(ctx, pipeline, clock).await
-}
-
 pub async fn seed_analytics_dataset_perf_via_scope(
     scope: &PipelineScope<'_>,
     clock: &SeedClock,
@@ -314,35 +228,18 @@ pub async fn seed_analytics_dataset_perf_via_scope(
     seed_analytics_dataset_via_scope(scope, clock, analytics_perf_specs(event_count)).await
 }
 
-pub async fn seed_analytics_dataset_perf_via_pipeline(
-    ctx: &TestContext,
-    pipeline: &PipelineHarness<'_>,
-    clock: &SeedClock,
-    event_count: usize,
-) -> TestResult<AnalyticsDataset> {
-    seed_analytics_dataset_via_pipeline(ctx, pipeline, clock, analytics_perf_specs(event_count))
-        .await
-}
+// ============================================================================
+// Internal implementation
+// ============================================================================
 
-async fn seed_query_dataset_via_pipeline(
-    ctx: &TestContext,
-    pipeline: &PipelineHarness<'_>,
-    clock: &SeedClock,
-    variant: DatasetVariant,
-) -> TestResult<QueryDataset> {
-    ensure_empty_slot(ctx, "query").await?;
-    let specs = query_dataset_specs(variant);
-    let event_ids = seed_events_via_pipeline(pipeline, clock, &specs).await?;
-    let expected_total = specs.len();
-    WaitHelpers::wait_for_event_count(&ctx.pool, expected_total, DEFAULT_SEED_TIMEOUT_SECS).await?;
-    let (expected_sources, expected_event_types) = collect_counts(&specs);
-    Ok(QueryDataset {
-        event_ids,
-        reference_time: clock.base(),
-        expected_total,
-        expected_sources,
-        expected_event_types,
-    })
+fn ensure_fixed_seed(clock: &SeedClock) -> TestResult<()> {
+    let expected = SeedClock::fixed().base();
+    if clock.base() != expected {
+        return Err(eyre!(
+            "SeedClock must use the fixed baseline (SeedClock::fixed) for pipeline seeding; use explicit event overrides for custom timestamps."
+        ));
+    }
+    Ok(())
 }
 
 async fn seed_query_dataset_via_scope(
@@ -365,37 +262,6 @@ async fn seed_query_dataset_via_scope(
     })
 }
 
-async fn seed_analytics_dataset_via_pipeline(
-    ctx: &TestContext,
-    pipeline: &PipelineHarness<'_>,
-    clock: &SeedClock,
-    specs: Vec<EventSpec>,
-) -> TestResult<AnalyticsDataset> {
-    ensure_empty_slot(ctx, "analytics").await?;
-    let event_ids = seed_events_via_pipeline(pipeline, clock, &specs).await?;
-    let expected_total = specs.len() as i64;
-    WaitHelpers::wait_for_event_count(
-        &ctx.pool,
-        expected_total as usize,
-        DEFAULT_SEED_TIMEOUT_SECS,
-    )
-    .await?;
-    let (source_counts, event_type_counts) = collect_counts(&specs);
-    let expected_source_counts = to_i64_map(&source_counts);
-    let expected_event_type_counts = to_i64_map(&event_type_counts);
-    let expected_command_counts = collect_command_counts(&specs);
-    let expected_command_total: i64 = expected_command_counts.values().sum();
-    Ok(AnalyticsDataset {
-        event_ids,
-        reference_time: clock.base(),
-        expected_total,
-        expected_source_counts,
-        expected_event_type_counts,
-        expected_command_counts,
-        expected_command_total,
-    })
-}
-
 async fn seed_service_integration_dataset_via_scope(
     scope: &PipelineScope<'_>,
     clock: &SeedClock,
@@ -405,26 +271,6 @@ async fn seed_service_integration_dataset_via_scope(
     let event_ids = seed_events_via_scope(scope, clock, &specs).await?;
     let expected_total = specs.len();
     scope.wait_for_event_count(expected_total).await?;
-    let (expected_sources, expected_event_types) = collect_counts(&specs);
-    Ok(ServiceIntegrationDataset {
-        event_ids,
-        reference_time: clock.base(),
-        expected_total,
-        expected_sources,
-        expected_event_types,
-    })
-}
-
-async fn seed_service_integration_dataset_via_pipeline(
-    ctx: &TestContext,
-    pipeline: &PipelineHarness<'_>,
-    clock: &SeedClock,
-) -> TestResult<ServiceIntegrationDataset> {
-    ensure_empty_slot(ctx, "service integration").await?;
-    let specs = service_integration_dataset_specs();
-    let event_ids = seed_events_via_pipeline(pipeline, clock, &specs).await?;
-    let expected_total = specs.len();
-    WaitHelpers::wait_for_event_count(&ctx.pool, expected_total, DEFAULT_SEED_TIMEOUT_SECS).await?;
     let (expected_sources, expected_event_types) = collect_counts(&specs);
     Ok(ServiceIntegrationDataset {
         event_ids,
@@ -459,6 +305,7 @@ async fn seed_analytics_dataset_via_scope(
         expected_command_total,
     })
 }
+
 async fn ensure_empty_slot(ctx: &TestContext, dataset: &str) -> TestResult<()> {
     ctx.ensure_clean().await.wrap_err_with(|| {
         format!(
@@ -498,6 +345,10 @@ fn collect_command_counts(specs: &[EventSpec]) -> HashMap<String, i64> {
     }
     counts
 }
+
+// ============================================================================
+// Dataset specifications
+// ============================================================================
 
 fn query_dataset_specs(variant: DatasetVariant) -> Vec<EventSpec> {
     let mut specs = vec![

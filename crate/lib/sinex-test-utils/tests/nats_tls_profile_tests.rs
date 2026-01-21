@@ -65,7 +65,7 @@ async fn shared_nats_tls_env_selects_secure_profile(ctx: TestContext) -> TestRes
     let mut guard = EnvGuard::new();
     guard.set("SINEX_TEST_USE_TLS", "1");
 
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let nats = ctx.nats_handle()?;
     ensure!(
         nats.client_url().starts_with("tls://"),

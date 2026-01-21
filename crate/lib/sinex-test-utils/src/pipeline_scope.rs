@@ -1,26 +1,61 @@
-use crate::pipeline::PipelineHarness;
+//! PipelineScope - unified test harness for pipeline integration tests.
+//!
+//! This module combines the previous PipelineHarness functionality directly,
+//! providing a single type for pipeline tests.
+
+use crate::ingestd_test_utils::{start_test_ingestd_with_config, TestIngestdConfig};
+use crate::pipeline::{acquire_pipeline_permit, wait_for_event_persisted};
 use crate::pipeline_namespace::PipelineNamespace;
 use crate::timing_utils::{WaitHelpers, DEFAULT_WAIT_SECS};
 use crate::{EventOverrides, TestContext, TestNodePublisher, TestResult};
 use chrono::{DateTime, Utc};
 use sinex_core::{EventId, EventType};
 use std::collections::VecDeque;
+use std::time::Instant;
+use tokio::runtime::Handle;
+use tokio::sync::OwnedSemaphorePermit;
+use tracing::info;
 
-/// PipelineScope wraps PipelineHarness with automatic DB cleanup and ergonomics.
+/// PipelineScope provides a complete pipeline test harness with ingestd, JetStream,
+/// and automatic cleanup.
+///
+/// This is the primary type for tests that need to exercise the full ingestion pipeline.
 pub struct PipelineScope<'ctx> {
     ctx: &'ctx TestContext,
-    harness: Option<PipelineHarness<'ctx>>,
+    ingestd: Option<crate::ingestd_test_utils::TestIngestdHandle>,
+    namespace: String,
+    pipeline_permit: Option<OwnedSemaphorePermit>,
 }
 
 impl<'ctx> PipelineScope<'ctx> {
-    /// Create a pipeline scope that enforces shared NATS and resets the DB slot.
+    /// Create a pipeline scope that enforces shared NATS, resets the DB slot,
+    /// and starts ingestd.
     pub async fn new(ctx: &'ctx TestContext) -> TestResult<Self> {
         ctx.ensure_shared_nats()?;
         ctx.reset_database_slot().await?;
-        let harness = PipelineHarness::new(ctx).await?;
+
+        let nats = ctx.nats_handle()?;
+        let namespace = ctx.pipeline_namespace().prefix().to_string();
+        let pipeline_permit = Some(acquire_pipeline_permit(&namespace).await?);
+
+        let mut config = TestIngestdConfig {
+            nats: nats.connection_config(),
+            database_url: ctx.database_url().to_string(),
+            work_dir: None,
+            namespace: Some(namespace.clone()),
+            ..Default::default()
+        };
+        config.batch_size = 32;
+        config.consumer_fetch_max_messages = 32;
+        config.consumer_fetch_timeout_ms = 200;
+
+        let ingestd = start_test_ingestd_with_config(config, Some(ctx)).await?;
+
         Ok(Self {
             ctx,
-            harness: Some(harness),
+            ingestd: Some(ingestd),
+            namespace,
+            pipeline_permit,
         })
     }
 
@@ -54,7 +89,7 @@ impl<'ctx> PipelineScope<'ctx> {
         TestNodePublisher::with_namespace(
             self.ctx.nats_client(),
             source,
-            Some(self.namespace().prefix().to_string()),
+            Some(self.namespace.clone()),
         )
     }
 
@@ -65,10 +100,7 @@ impl<'ctx> PipelineScope<'ctx> {
         event_type: &str,
         payload: serde_json::Value,
     ) -> TestResult<EventId> {
-        self.harness
-            .as_ref()
-            .expect("harness not dropped")
-            .publish_event(source, event_type, payload)
+        self.publish_with_overrides(source, event_type, payload, EventOverrides::default())
             .await
     }
 
@@ -80,11 +112,31 @@ impl<'ctx> PipelineScope<'ctx> {
         payload: serde_json::Value,
         overrides: EventOverrides,
     ) -> TestResult<EventId> {
-        self.harness
-            .as_ref()
-            .expect("harness not dropped")
-            .publish_event_with_overrides(source, event_type, payload, overrides)
-            .await
+        let op_start = Instant::now();
+        let publisher = TestNodePublisher::with_namespace(
+            self.ctx.nats_client(),
+            source.to_string(),
+            Some(self.namespace.clone()),
+        );
+        let publish_start = Instant::now();
+        let event_id = publisher
+            .publish_event_with_overrides(event_type, payload, overrides)
+            .await?;
+        let publish_ms = publish_start.elapsed().as_millis();
+        let wait_start = Instant::now();
+        wait_for_event_persisted(self.ctx, event_id).await?;
+        let wait_ms = wait_start.elapsed().as_millis();
+        let total_ms = op_start.elapsed().as_millis();
+        info!(
+            target: "pipeline_scope",
+            source,
+            event_type,
+            publish_ms,
+            wait_ms,
+            total_ms,
+            "pipeline publish complete"
+        );
+        Ok(event_id.into())
     }
 
     /// Publish an event with a concrete timestamp and wait until persisted.
@@ -148,22 +200,6 @@ impl<'ctx> PipelineScope<'ctx> {
     // ========================================================================
 
     /// Publish multiple events and wait for all to be persisted.
-    ///
-    /// This is a convenience method for tests that need to publish many events.
-    /// Each event is published through the pipeline and the method waits for
-    /// all events to be persisted before returning.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// let ids = scope.publish_batch(
-    ///     10,
-    ///     "test-source",
-    ///     "test.event",
-    ///     |i| json!({ "index": i, "data": format!("item-{}", i) })
-    /// ).await?;
-    /// assert_eq!(ids.len(), 10);
-    /// ```
     pub async fn publish_batch<F>(
         &self,
         count: usize,
@@ -180,21 +216,11 @@ impl<'ctx> PipelineScope<'ctx> {
             let id = self.publish(source, event_type, payload).await?;
             ids.push(id);
         }
-        // All events should already be persisted since publish() waits,
-        // but we do a sanity check
         self.wait_for_source_events(source, count).await?;
         Ok(ids)
     }
 
     /// Publish multiple events with a simple incrementing payload.
-    ///
-    /// Each event gets a payload of `{ "index": N }` where N is 0..count.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// let ids = scope.publish_batch_simple(100, "test-source", "test.event").await?;
-    /// ```
     pub async fn publish_batch_simple(
         &self,
         count: usize,
@@ -211,24 +237,6 @@ impl<'ctx> PipelineScope<'ctx> {
     }
 
     /// Publish multiple events with timestamps spread over a time range.
-    ///
-    /// Events are published with timestamps evenly distributed between
-    /// `start` and `end`. Useful for testing time-range queries.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// use chrono::{Duration, Utc};
-    /// let now = Utc::now();
-    /// let ids = scope.publish_batch_with_timestamps(
-    ///     10,
-    ///     "test-source",
-    ///     "test.event",
-    ///     now - Duration::hours(1),
-    ///     now,
-    ///     |i| json!({ "index": i })
-    /// ).await?;
-    /// ```
     pub async fn publish_batch_with_timestamps<F>(
         &self,
         count: usize,
@@ -268,9 +276,10 @@ impl<'ctx> PipelineScope<'ctx> {
 
     /// Stop the ingestd instance backing this scope.
     pub async fn shutdown(mut self) -> TestResult<()> {
-        if let Some(harness) = self.harness.take() {
-            harness.shutdown().await?;
+        if let Some(mut ingestd) = self.ingestd.take() {
+            ingestd.stop().await?;
         }
+        self.pipeline_permit.take();
         Ok(())
     }
 
@@ -319,6 +328,19 @@ impl Drop for PipelineScope<'_> {
     fn drop(&mut self) {
         if std::thread::panicking() {
             self.dump_failure_logs();
+        }
+
+        // Release permit before cleanup
+        self.pipeline_permit.take();
+
+        if let Some(mut ingestd) = self.ingestd.take() {
+            if let Ok(handle) = Handle::try_current() {
+                handle.spawn(async move {
+                    let _ = ingestd.stop().await;
+                });
+            } else {
+                let _ = futures::executor::block_on(ingestd.stop());
+            }
         }
     }
 }

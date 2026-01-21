@@ -17,7 +17,7 @@ pub use time_horizon::TimeHorizon;
 use crate::{
     checkpoint::CheckpointManager,
     confirmation_handler::{ConfirmedEventHandler, ProcessingModel, ProvisionalEvent},
-    event_processor::{spawn_event_processor, EventProcessorConfig, EventTransport},
+    event_node::{spawn_event_processor, EventBatcherConfig, EventTransport},
     jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig},
     NodeError, NodeResult,
 };
@@ -29,6 +29,7 @@ use color_eyre::eyre::eyre;
 use serde::{Deserialize, Serialize};
 use sinex_core::db::models::{Event, EventId, Provenance, SourceMaterial};
 use sinex_core::db::repositories::DbPoolExt;
+#[cfg(feature = "db")]
 use sinex_core::db::SqlxPgPool as PgPool;
 use sinex_core::types::buffers::DEFAULT_EVENT_CHANNEL_SIZE;
 use sinex_core::types::non_empty::NonEmptyVec;
@@ -128,16 +129,17 @@ async fn create_checkpoint_kv(transport: &EventTransport) -> NodeResult<kv::Stor
     };
 
     let js = async_nats::jetstream::new(client);
-    let bucket = "KV_sinex_checkpoints";
+    let env = sinex_core::environment();
+    let bucket = format!("KV_{}", env.nats_kv_bucket_name("sinex_checkpoints"));
     let kv_store = match js
         .create_key_value(kv::Config {
-            bucket: bucket.to_string(),
+            bucket: bucket.clone(),
             ..Default::default()
         })
         .await
     {
         Ok(store) => store,
-        Err(create_err) => js.get_key_value(bucket).await.map_err(|e| {
+        Err(create_err) => js.get_key_value(&bucket).await.map_err(|e| {
             NodeError::General(eyre!(
                 "Failed to create/open checkpoint KV bucket (create: {create_err}, open: {e})"
             ))
@@ -153,31 +155,39 @@ async fn maybe_start_schema_listener(
     Option<Arc<SchemaBroadcastCache>>,
     Option<Arc<crate::schema_validator::NodeSchemaValidator>>,
 )> {
-    // Always enable schema cache and validation for node-side validation.
+    // Enable schema cache and validation when infrastructure is available.
     // Schemas are broadcast from ingestd and stored in NATS KV.
+    // In edge mode (without full infrastructure), gracefully skip schema validation.
 
     let client = match transport {
         EventTransport::Nats(publisher) => publisher.nats_client().clone(),
     };
     let env = sinex_core::environment();
     let subject = env.nats_subject("system.schemas.active");
-    let mut sub = client
-        .subscribe(subject.clone())
-        .await
-        .map_err(|e| NodeError::General(eyre!("Failed to subscribe to schema broadcasts: {e}")))?;
+    let sub = match client.subscribe(subject.clone()).await {
+        Ok(sub) => sub,
+        Err(e) => {
+            debug!("Schema broadcast subscription unavailable (edge mode): {e}");
+            return Ok((None, None));
+        }
+    };
+    let mut sub = sub;
+
+    // Get KV bucket for fetching full schemas - if unavailable, skip schema validation
+    let js = async_nats::jetstream::new(client);
+    let kv = match js.get_key_value("KV_sinex_schemas").await {
+        Ok(kv) => kv,
+        Err(e) => {
+            debug!("Schema KV bucket unavailable (edge mode): {e}");
+            return Ok((None, None));
+        }
+    };
 
     // Create schema cache and validator
     let cache = Arc::new(SchemaBroadcastCache::default());
     let cache_clone = cache.clone();
     let validator = Arc::new(crate::schema_validator::NodeSchemaValidator::new());
     let validator_clone = validator.clone();
-
-    // Get KV bucket for fetching full schemas
-    let js = async_nats::jetstream::new(client);
-    let kv = js
-        .get_key_value("KV_sinex_schemas")
-        .await
-        .map_err(|e| NodeError::General(eyre!("Failed to get schema KV bucket: {e}")))?;
 
     // Background task to update cache and validator
     tokio::spawn(async move {
@@ -254,8 +264,8 @@ pub trait Node: Send + Sync {
         args: ScanArgs,
     ) -> NodeResult<ScanReport>;
 
-    fn processor_name(&self) -> &str;
-    fn processor_type(&self) -> NodeType;
+    fn node_name(&self) -> &str;
+    fn node_type(&self) -> NodeType;
 
     fn capabilities(&self) -> NodeCapabilities {
         NodeCapabilities::default()
@@ -277,7 +287,7 @@ pub trait Node: Send + Sync {
     }
 
     async fn shutdown(&mut self) -> NodeResult<()> {
-        info!(processor = %self.processor_name(), "Stream processor shutting down");
+        info!(node = %self.node_name(), "Node shutting down");
         Ok(())
     }
 
@@ -387,9 +397,9 @@ impl Default for ScanEstimate {
     }
 }
 
-/// Unified runner for stream processors
-pub struct StreamProcessorRunner<T: Node> {
-    processor: T,
+/// Unified runner for nodes
+pub struct NodeRunner<T: Node> {
+    node: T,
     handles: Option<NodeHandles>,
     service_info: Option<ServiceInfo>,
     raw_config: Option<HashMap<String, serde_json::Value>>,
@@ -407,11 +417,11 @@ struct LeaderState {
     heartbeat_handle: tokio::task::JoinHandle<()>,
 }
 
-impl<T: Node + 'static> StreamProcessorRunner<T> {
-    /// Create a new stream processor runner
-    pub fn new(processor: T) -> Self {
+impl<T: Node + 'static> NodeRunner<T> {
+    /// Create a new node runner
+    pub fn new(node: T) -> Self {
         Self {
-            processor,
+            node,
             handles: None,
             service_info: None,
             raw_config: None,
@@ -444,7 +454,7 @@ impl<T: Node + 'static> StreamProcessorRunner<T> {
         &mut self,
         service_name: String,
         raw_config: HashMap<String, serde_json::Value>,
-        db_pool: Option<PgPool>,
+        #[cfg(feature = "db")] db_pool: Option<PgPool>,
         transport: EventTransport,
         work_dir: std::path::PathBuf,
         dry_run: bool,
@@ -470,7 +480,41 @@ impl<T: Node + 'static> StreamProcessorRunner<T> {
         let transport_clone_for_runner = transport.clone();
 
         let kv_store = create_checkpoint_kv(&transport).await?;
+        let kv_store = create_checkpoint_kv(&transport).await?;
+
+        #[cfg(feature = "messaging")]
         let (schema_cache, schema_validator) = maybe_start_schema_listener(&transport).await?;
+        #[cfg(not(feature = "messaging"))]
+        let (schema_cache, schema_validator) = (
+            Option::<Arc<crate::runtime::stream::SchemaBroadcastCache>>::None,
+            Option::<()>::None,
+        );
+
+        // Start checkpoint cleanup background task if enabled
+        // Start checkpoint cleanup background task if enabled
+        let cleanup_enabled = {
+            #[cfg(feature = "messaging")]
+            {
+                crate::checkpoint::CheckpointCleanupConfig::from_env().enabled
+            }
+            #[cfg(not(feature = "messaging"))]
+            {
+                false
+            }
+        };
+
+        if cleanup_enabled {
+            #[cfg(feature = "messaging")]
+            {
+                let cleanup_config = crate::checkpoint::CheckpointCleanupConfig::from_env();
+                let kv_for_cleanup = kv_store.clone();
+                let _cleanup_handle = crate::checkpoint::spawn_checkpoint_cleanup_task(
+                    kv_for_cleanup,
+                    cleanup_config,
+                );
+                tracing::info!("Checkpoint cleanup task started");
+            }
+        }
 
         // Initialize checkpoint manager with KV
         let checkpoint_manager = Arc::new(CheckpointManager::new(
@@ -484,34 +528,52 @@ impl<T: Node + 'static> StreamProcessorRunner<T> {
         let transport_type = "NATS";
 
         // Determine if automaton to enable LeaderStandby
-        let confirmation_buffer_opt =
-            if matches!(self.processor.processor_type(), NodeType::Automaton) {
-                self.processing_model = ProcessingModel::LeaderStandby;
-                Some(Arc::new(crate::ConfirmationBuffer::new(
-                    std::time::Duration::from_secs(60),
-                )))
-            } else {
-                self.processing_model = ProcessingModel::StatelessWorker;
-                None
-            };
-
-        let event_emitter = if let Some(validator) = schema_validator {
-            EventEmitter::with_validator(event_sender_raw.clone(), dry_run, validator)
+        let confirmation_buffer_opt = if matches!(self.node.node_type(), NodeType::Automaton) {
+            self.processing_model = ProcessingModel::LeaderStandby;
+            Some(Arc::new(crate::ConfirmationBuffer::new(
+                std::time::Duration::from_secs(60),
+            )))
         } else {
+            self.processing_model = ProcessingModel::StatelessWorker;
+            None
+        };
+
+        let event_emitter = {
+            #[cfg(feature = "messaging")]
+            if let Some(validator) = schema_validator {
+                EventEmitter::with_validator(event_sender_raw.clone(), dry_run, validator)
+            } else {
+                EventEmitter::new(event_sender_raw, dry_run)
+            }
+
+            #[cfg(not(feature = "messaging"))]
             EventEmitter::new(event_sender_raw, dry_run)
         };
 
         // No LeaseManager passed to handles
-        let handles = if let Some(pool) = db_pool {
-            NodeHandles::new(
-                pool,
-                checkpoint_manager.clone(),
-                event_emitter.clone(),
-                transport_for_context,
-                confirmation_buffer_opt,
-                schema_cache.clone(),
-            )
-        } else {
+        // No LeaseManager passed to handles
+        let handles = {
+            #[cfg(feature = "db")]
+            if let Some(pool) = db_pool {
+                NodeHandles::new(
+                    pool,
+                    checkpoint_manager.clone(),
+                    event_emitter.clone(),
+                    transport_for_context,
+                    confirmation_buffer_opt,
+                    schema_cache.clone(),
+                )
+            } else {
+                NodeHandles::new_edge(
+                    checkpoint_manager.clone(),
+                    event_emitter.clone(),
+                    transport_for_context,
+                    confirmation_buffer_opt,
+                    schema_cache.clone(),
+                )
+            }
+
+            #[cfg(not(feature = "db"))]
             NodeHandles::new_edge(
                 checkpoint_manager.clone(),
                 event_emitter.clone(),
@@ -551,14 +613,14 @@ impl<T: Node + 'static> StreamProcessorRunner<T> {
             work_dir_utf8.clone(),
         );
 
-        self.processor.initialize(init_context).await?;
+        self.node.initialize(init_context).await?;
 
         self.handles = Some(handles);
         self.service_info = Some(service_info);
         self.raw_config = Some(raw_config.clone());
         self.work_dir_utf8 = Some(work_dir_utf8);
 
-        let processor_config = EventProcessorConfig::default();
+        let processor_config = EventBatcherConfig::default();
         self.event_processor_handle = Some(spawn_event_processor(
             transport_clone_for_runner,
             processor_config,
@@ -568,10 +630,10 @@ impl<T: Node + 'static> StreamProcessorRunner<T> {
 
         info!(
             service = %service_name,
-            processor = %self.processor.processor_name(),
-            processor_type = ?self.processor.processor_type(),
+            node = %self.node.node_name(),
+            node_type = ?self.node.node_type(),
             transport = transport_type,
-            "Stream processor initialized"
+            "Node initialized"
         );
 
         Ok(())
@@ -585,13 +647,11 @@ impl<T: Node + 'static> StreamProcessorRunner<T> {
         args: ScanArgs,
     ) -> NodeResult<ScanReport> {
         if self.handles.is_none() {
-            return Err(NodeError::Lifecycle(
-                "Stream processor not initialized".to_string(),
-            ));
+            return Err(NodeError::Lifecycle("Node not initialized".to_string()));
         }
 
         info!(
-            processor = %self.processor.processor_name(),
+            node = %self.node.node_name(),
             from = %from.description(),
             until = ?until,
             dry_run = args.dry_run,
@@ -599,12 +659,12 @@ impl<T: Node + 'static> StreamProcessorRunner<T> {
         );
 
         let start_time = std::time::Instant::now();
-        let result = self.processor.scan(from, until, args).await;
+        let result = self.node.scan(from, until, args).await;
 
         match &result {
             Ok(report) => {
                 info!(
-                    processor = %self.processor.processor_name(),
+                    node = %self.node.node_name(),
                     events_processed = report.events_processed,
                     duration_ms = start_time.elapsed().as_millis(),
                     "Scan operation completed successfully"
@@ -612,7 +672,7 @@ impl<T: Node + 'static> StreamProcessorRunner<T> {
             }
             Err(e) => {
                 warn!(
-                    processor = %self.processor.processor_name(),
+                    node = %self.node.node_name(),
                     error = %e,
                     duration_ms = start_time.elapsed().as_millis(),
                     "Scan operation failed"
@@ -626,26 +686,33 @@ impl<T: Node + 'static> StreamProcessorRunner<T> {
     /// Run in service mode with startup sequence
     pub async fn run_service(&mut self) -> NodeResult<()> {
         if self.handles.is_none() {
-            return Err(NodeError::Lifecycle(
-                "Stream processor not initialized".to_string(),
-            ));
+            return Err(NodeError::Lifecycle("Node not initialized".to_string()));
         }
 
-        let processor_type = self.processor.processor_type();
+        let node_type = self.node.node_type();
         info!(
-            processor = %self.processor.processor_name(),
-            processor_type = ?processor_type,
+            node = %self.node.node_name(),
+            node_type = ?node_type,
             "Starting service with startup sequence"
         );
 
-        match processor_type {
+        match node_type {
             NodeType::Ingestor => {
                 // Ingestor startup sequence: Snapshot -> Gap-fill -> Continuous
                 self.run_ingestor_startup_sequence().await
             }
             NodeType::Automaton => {
-                // Automaton startup: consume events from NATS streams
-                self.run_automaton_continuous_mode().await
+                #[cfg(feature = "messaging")]
+                {
+                    // Automaton startup: consume events from NATS streams
+                    self.run_automaton_continuous_mode().await
+                }
+                #[cfg(not(feature = "messaging"))]
+                {
+                    Err(NodeError::Configuration(
+                        "Messaging feature required for Automaton mode".to_string(),
+                    ))
+                }
             }
         }
     }
@@ -653,10 +720,10 @@ impl<T: Node + 'static> StreamProcessorRunner<T> {
     /// Run ingestor startup sequence (Snapshot -> Gap-fill -> Continuous)
     async fn run_ingestor_startup_sequence(&mut self) -> NodeResult<()> {
         // Phase 1: Snapshot (if supported)
-        if self.processor.capabilities().supports_snapshot {
+        if self.node.capabilities().supports_snapshot {
             info!("Phase 1: Taking initial snapshot");
             let snapshot_report = self
-                .processor
+                .node
                 .scan(Checkpoint::None, TimeHorizon::Snapshot, ScanArgs::default())
                 .await?;
 
@@ -667,14 +734,14 @@ impl<T: Node + 'static> StreamProcessorRunner<T> {
         }
 
         // Phase 2: Gap-filling (if supported and needed)
-        if self.processor.capabilities().supports_historical {
-            let current_checkpoint = self.processor.current_checkpoint().await?;
+        if self.node.capabilities().supports_historical {
+            let current_checkpoint = self.node.current_checkpoint().await?;
 
             // Only gap-fill if we have a previous checkpoint
             if !matches!(current_checkpoint, Checkpoint::None) {
                 info!("Phase 2: Gap-filling from last checkpoint");
                 let gap_fill_report = self
-                    .processor
+                    .node
                     .scan(
                         current_checkpoint,
                         TimeHorizon::Historical {
@@ -692,13 +759,13 @@ impl<T: Node + 'static> StreamProcessorRunner<T> {
         }
 
         // Phase 3: Continuous processing (traditional scan method)
-        if self.processor.capabilities().supports_continuous {
+        if self.node.capabilities().supports_continuous {
             info!("Phase 3: Starting continuous processing");
-            let current_checkpoint = self.processor.current_checkpoint().await?;
+            let current_checkpoint = self.node.current_checkpoint().await?;
 
             // This should run indefinitely until shutdown
             let _continuous_report = self
-                .processor
+                .node
                 .scan(
                     current_checkpoint,
                     TimeHorizon::Continuous,
@@ -706,19 +773,20 @@ impl<T: Node + 'static> StreamProcessorRunner<T> {
                 )
                 .await?;
         } else {
-            warn!("Processor does not support continuous mode - service will exit");
+            warn!("Node does not support continuous mode - service will exit");
         }
 
         Ok(())
     }
 
     /// Run automaton in continuous mode
+    #[cfg(feature = "messaging")]
     async fn run_automaton_continuous_mode(&mut self) -> NodeResult<()> {
         info!("Starting automaton continuous mode");
 
         // Get current checkpoint to resume from previous state if available
-        let current_checkpoint = self.processor.current_checkpoint().await?;
-        let capabilities = self.processor.capabilities();
+        let current_checkpoint = self.node.current_checkpoint().await?;
+        let capabilities = self.node.capabilities();
 
         if capabilities.supports_continuous {
             info!("Starting continuous event processing for automaton");
@@ -729,59 +797,66 @@ impl<T: Node + 'static> StreamProcessorRunner<T> {
                 let rs = self
                     .runtime_state()
                     .ok_or_else(|| NodeError::General(eyre!("Runtime state missing")))?;
-                let nc = rs
-                    .nats_client()
-                    .ok_or_else(|| NodeError::General(eyre!("NATS client missing")))?;
-                let service = rs.service_info().service_name().to_string();
-                let host = rs.service_info().host().to_string();
-                let pid = std::process::id();
-                let instance_id = format!("{}-{}", host, pid);
 
-                let js = async_nats::jetstream::new(nc);
-                let kv_client = sinex_core::coordination::kv_client::CoordinationKvClient::new(
-                    js,
-                    service.clone(),
-                );
+                #[cfg(feature = "messaging")]
+                {
+                    let nc = rs
+                        .nats_client()
+                        .ok_or_else(|| NodeError::General(eyre!("NATS client missing")))?;
+                    let service = rs.service_info().service_name().to_string();
+                    let host = rs.service_info().host().to_string();
+                    let pid = std::process::id();
+                    let instance_id = format!("{}-{}", host, pid);
 
-                // Single-shot leadership acquisition/check
-                let is_leader = kv_client
-                    .acquire_leadership(&instance_id)
-                    .await
-                    .map_err(|e| {
-                        NodeError::General(eyre!("Failed to acquire leadership: {}", e))
-                    })?;
+                    let js = async_nats::jetstream::new(nc);
+                    let kv_client = sinex_core::coordination::kv_client::CoordinationKvClient::new(
+                        js,
+                        service.clone(),
+                    );
 
-                if !is_leader {
-                    info!("Not leader, skipping processing");
-                    return Ok(());
-                }
+                    // Single-shot leadership acquisition/check
+                    let is_leader =
+                        kv_client
+                            .acquire_leadership(&instance_id)
+                            .await
+                            .map_err(|e| {
+                                NodeError::General(eyre!("Failed to acquire leadership: {}", e))
+                            })?;
 
-                info!("Confirmed as leader, proceeding with processing");
-
-                // Spawn a simplified heartbeater
-                let kv_clone = kv_client.clone();
-                let instance_id_clone = instance_id.clone();
-                let heartbeat_handle = tokio::spawn(async move {
-                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
-                    loop {
-                        interval.tick().await;
-                        // Basic heartbeat logic - just keep refreshing leadership
-                        if let Err(e) = kv_clone.acquire_leadership(&instance_id_clone).await {
-                            warn!("Heartbeat failed: {}", e);
-                        }
+                    if !is_leader {
+                        info!("Not leader, skipping processing");
+                        return Ok(());
                     }
-                });
 
-                self.leader_state = Some(LeaderState {
-                    kv_client,
-                    instance_id,
-                    heartbeat_handle,
-                });
+                    info!("Confirmed as leader, proceeding with processing");
+
+                    // Spawn a simplified heartbeater
+                    let kv_clone = kv_client.clone();
+                    let instance_id_clone = instance_id.clone();
+                    let heartbeat_handle = tokio::spawn(async move {
+                        let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+                        loop {
+                            interval.tick().await;
+                            // Basic heartbeat logic - just keep refreshing leadership
+                            if let Err(e) = kv_clone.acquire_leadership(&instance_id_clone).await {
+                                warn!("Heartbeat failed: {}", e);
+                            }
+                        }
+                    });
+
+                    self.leader_state = Some(LeaderState {
+                        kv_client,
+                        instance_id,
+                        heartbeat_handle,
+                    });
+                }
+                #[cfg(not(feature = "messaging"))]
+                warn!("LeaderStandby mode requires messaging feature. Skipping leadership check.");
             }
 
             if capabilities.manages_own_continuous_loop {
                 let _continuous_report = self
-                    .processor
+                    .node
                     .scan(
                         current_checkpoint,
                         TimeHorizon::Continuous,
@@ -800,7 +875,7 @@ impl<T: Node + 'static> StreamProcessorRunner<T> {
 
                 // Process all historical events up to now
                 let _historical_report = self
-                    .processor
+                    .node
                     .scan(
                         current_checkpoint,
                         TimeHorizon::Historical {
@@ -819,20 +894,23 @@ impl<T: Node + 'static> StreamProcessorRunner<T> {
         Ok(())
     }
 
+    #[cfg(feature = "messaging")]
     async fn run_automaton_event_bridge(&mut self, from: Checkpoint) -> NodeResult<()> {
         let handles = self
             .handles
             .as_ref()
             .ok_or_else(|| NodeError::Lifecycle("Runner handles not initialized".to_string()))?;
 
+        #[cfg(feature = "db")]
         let db_pool = handles.db_pool().cloned();
+        // No db_pool variable if db feature is off
         let transport = handles.transport().clone();
 
         let service_name = self
             .service_info
             .as_ref()
             .map(|info| info.service_name().to_string())
-            .unwrap_or_else(|| self.processor.processor_name().to_string());
+            .unwrap_or_else(|| self.node.node_name().to_string());
 
         let (sender, mut receiver) =
             mpsc::channel::<ProvisionalEvent>(CONFIRMED_EVENT_CHANNEL_CAPACITY);
@@ -868,10 +946,10 @@ impl<T: Node + 'static> StreamProcessorRunner<T> {
             }
         });
 
-        if !matches!(from, Checkpoint::None) && self.processor.capabilities().supports_historical {
+        if !matches!(from, Checkpoint::None) && self.node.capabilities().supports_historical {
             info!("Processing historical backlog before entering continuous mode");
             let _ = self
-                .processor
+                .node
                 .scan(
                     from,
                     TimeHorizon::Historical {
@@ -885,29 +963,40 @@ impl<T: Node + 'static> StreamProcessorRunner<T> {
         let mut processed_events = 0u64;
 
         while let Some(provisional) = receiver.recv().await {
-            let event_id = EventId::from_ulid(provisional.event_id);
-            let event = match &db_pool {
-                Some(pool) => match Self::fetch_persisted_event(pool, &event_id).await? {
-                    Some(event) => Some(event),
-                    None => {
-                        warn!(
-                            "Confirmed event {:?} missing from database; skipping",
-                            event_id
-                        );
-                        None
-                    }
-                },
-                None => match Self::build_event_from_provisional(&provisional) {
+            let event_id = provisional.event_id;
+            let event = {
+                #[cfg(feature = "db")]
+                match &db_pool {
+                    Some(pool) => match Self::fetch_persisted_event(pool, &event_id).await? {
+                        Some(event) => Some(event),
+                        None => {
+                            warn!(
+                                "Confirmed event {:?} missing from database; skipping",
+                                event_id
+                            );
+                            None
+                        }
+                    },
+                    None => match Self::build_event_from_provisional(&provisional) {
+                        Ok(event) => Some(event),
+                        Err(err) => {
+                            warn!(error = %err, "Failed to build event from provisional payload");
+                            None
+                        }
+                    },
+                }
+                #[cfg(not(feature = "db"))]
+                match Self::build_event_from_provisional(&provisional) {
                     Ok(event) => Some(event),
                     Err(err) => {
                         warn!(error = %err, "Failed to build event from provisional payload");
                         None
                     }
-                },
+                }
             };
 
             if let Some(event) = event {
-                match self.processor.process_event_batch(vec![event]).await {
+                match self.node.process_event_batch(vec![event]).await {
                     Ok(stats) => {
                         processed_events += stats.processed as u64;
                     }
@@ -932,6 +1021,7 @@ impl<T: Node + 'static> StreamProcessorRunner<T> {
         Ok(())
     }
 
+    #[cfg(feature = "db")]
     async fn fetch_persisted_event(
         pool: &PgPool,
         event_id: &EventId,
@@ -1051,7 +1141,7 @@ impl<T: Node + 'static> StreamProcessorRunner<T> {
         };
 
         Ok(Event {
-            id: Some(EventId::from_ulid(provisional.event_id)),
+            id: Some(provisional.event_id),
             source: EventSource::from(published.source),
             event_type: EventType::from(published.event_type),
             payload: published.event_payload,
@@ -1066,7 +1156,7 @@ impl<T: Node + 'static> StreamProcessorRunner<T> {
 
     /// Get processor capabilities
     pub fn get_capabilities(&self) -> NodeCapabilities {
-        self.processor.capabilities()
+        self.node.capabilities()
     }
 
     /// Get scan estimate
@@ -1076,7 +1166,7 @@ impl<T: Node + 'static> StreamProcessorRunner<T> {
         until: &TimeHorizon,
         args: &ScanArgs,
     ) -> NodeResult<ScanEstimate> {
-        self.processor.estimate_scan_scope(from, until, args).await
+        self.node.estimate_scan_scope(from, until, args).await
     }
 
     /// Graceful shutdown
@@ -1088,6 +1178,6 @@ impl<T: Node + 'static> StreamProcessorRunner<T> {
                 warn!(error = %err, "Failed to release leadership on shutdown");
             }
         }
-        self.processor.shutdown().await
+        self.node.shutdown().await
     }
 }

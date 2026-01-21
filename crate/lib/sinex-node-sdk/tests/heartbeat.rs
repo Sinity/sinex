@@ -25,12 +25,12 @@ async fn counter_handle_updates_metrics() -> TestResult<()> {
 }
 
 #[sinex_test]
-fn heartbeat_metrics_include_latest_state() -> TestResult<()> {
+async fn heartbeat_metrics_include_latest_state() -> TestResult<()> {
     let emitter = HeartbeatEmitter::new("test-service".to_string(), Seconds::from_secs(30));
     emitter.increment_events_processed(10);
     emitter.record_error("test error");
 
-    let metrics = emitter.create_heartbeat_metrics(None);
+    let metrics = emitter.create_heartbeat_metrics(None).await;
     assert_eq!(metrics.service_name, "test-service");
     assert_eq!(metrics.errors_count, 1);
     assert!(metrics.last_error_message.is_some());

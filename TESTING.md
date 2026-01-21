@@ -1,8 +1,7 @@
 # Sinex Testing Handbook
 
-This handbook is the single entry point for everything related to testing in the
-Sinex workspace. It links out to crate-level deep dives, explains how the test
-suites are organised, and captures the conventions that the CI gate enforces.
+This handbook covers workspace-wide testing conventions, test organization, and CI configuration.
+For detailed API documentation, see the `sinex-test-utils` crate documentation.
 
 ## Quick Start
 
@@ -10,201 +9,130 @@ suites are organised, and captures the conventions that the CI gate enforces.
 # Fast feedback (no retries)
 cargo xtask test --profile fast
 
-# Full workspace matrix (all crates, Nextest)
-cargo xtask test --profile reliable --prime
+# Full workspace matrix (recommended before PR)
+cargo xtask test --profile default --prime
 
-# CI selection (reliable + CI-only skips)
-cargo xtask test --profile ci --prime
+# CI selection (default profile)
+cargo xtask test --profile default --prime
 
 # Targeted runs
-cargo xtask test --profile <profile-name>
-cargo xtask test --profile reliable -- --test <binary>
-cargo xtask test --profile reliable -- -p <package>
+cargo xtask test --profile default -- -p <package>
+cargo xtask test --profile default -- --test <binary>
 
-# Before opening a PR
-cargo xtask test --profile reliable --prime
+# Update snapshots
+INSTA_UPDATE=always cargo xtask test --profile default --prime
 ```
 
-## Config Sources & Precedence
+## Prerequisites
 
-**Sources (build + test):**
-- **Cargo/tooling:** `Cargo.toml`, `.cargo/config.toml`, `rustfmt.toml`, `clippy.toml`, `deny.toml`, `.cargo-machete.toml`.
-- **Dev shell/env:** `.envrc`, `devenv.nix`, `flake.nix`, `.env.example` (manual `.env` overrides only when explicitly sourced).
-- **Test runner:** `.config/nextest.toml`, `xtask/src/main.rs`, `tests/e2e/nixos-vm/run-vm-tests.sh`.
-- **CI orchestration:** `.github/workflows/*.yml`, `.github/actions/nix-bootstrap/action.yml`.
+Run `nix develop` (or source your local toolchain) so TimescaleDB/PostgreSQL, the `nats-server`
+binary, and the Cargo toolchain are available.
 
-**Precedence (highest wins):**
-1. CLI flags (`cargo`, `xtask`, `nextest`).
-2. Environment variables in the running shell (direnv/devenv exports, CI job env, manual exports).
-3. Tool config files (Cargo profiles, Nextest profiles, clippy/rustfmt/deny settings).
-4. CI workflow steps define the command graph + env for CI runs.
-
-Notes:
-- `cargo xtask ci postgres -- <cmd>` injects `PG*` + `DATABASE_URL*` for the wrapped command.
-- `flake.nix` builds use an ephemeral Postgres and set `DATABASE_URL`/`PG*` for SQLx checks.
-
-**Prerequisites:** run `nix develop` (or source your local toolchain) so that
-TimescaleDB/PostgreSQL, the `nats-server` binary, and the Cargo toolchain are
-available. `TestContext` connects to the local Postgres socket at
-`/run/postgresql` and spins up an ephemeral JetStream instance by shelling out
-to `nats-server`, so both services must be reachable before running the Nextest
-suite.
-
-If you are inside the Nix dev shell (`nix develop`), `nats-server` is already
-on `PATH` (see `flake.nix` exporting `NATS_SERVER_BIN`). For other toolchains,
-install NATS manually:
+If outside Nix, install NATS manually:
 
 ```bash
-# macOS (Homebrew)
+# macOS
 brew install nats-server
 
 # Linux (Debian/Ubuntu)
 sudo apt-get install -y nats-server
 
-# Or download a release binary
+# Or download release binary
 curl -L https://github.com/nats-io/nats-server/releases/latest/download/nats-server-amd64.zip -o /tmp/nats.zip
-unzip /tmp/nats.zip -d /tmp/nats
-sudo mv /tmp/nats/nats-server /usr/local/bin/
+unzip /tmp/nats.zip -d /tmp/nats && sudo mv /tmp/nats/nats-server /usr/local/bin/
 ```
 
-You can override the binary path with `NATS_SERVER_BIN=/custom/path/nats-server`
-if you prefer to keep it outside `$PATH`.
+Override with `NATS_SERVER_BIN=/custom/path/nats-server` if needed.
 
-## Diagnostics & Flake Handling
+## Diagnostics
 
-- `cargo xtask doctor` – reports toolchain versions, NATS binary availability, Postgres reachability, and required extensions for the current DB. Use when service readiness is in doubt.
-- `snapshot_helper::retry_with_snapshot` – wrap flaky integration tests to capture failure snapshots (pool stats, context logs) on first failure, attempt cleanup, then retry once. This is now used in dataset seeding, satellite, and timing utilities; mirror the pattern if you add a test that can be sensitive to timing or FK races.
+- `cargo xtask doctor` — reports toolchain versions, NATS availability, Postgres reachability
+- Failure artifacts written to `target/test-artifacts/` (override with `SINEX_TEST_FAIL_DIR`)
 
-## Satellite Error Handling Conventions
+## Test Layout
 
-- **Configuration:** use `SatelliteError::Config`/`Configuration` for invalid or missing settings and fail fast during initialization.
-- **Lifecycle:** use `SatelliteError::Lifecycle` for missing runtime state, shutdown wiring, or other init/teardown invariants.
-- **Processing:** use `SatelliteError::Processing` for per-event data issues (invalid payloads, dropped inputs) that can be skipped or DLQ’d.
-- **General:** use `SatelliteError::General` with `eyre::WrapErr`/`eyre!` when bubbling unexpected failures that need context.
-- **Logging:** `warn!` for recoverable drops or expected retries; `error!` when operator action is required. Avoid logging the same error twice unless you add new context.
+| Location | What lives here |
+|----------|-----------------|
+| `crate/*/<crate>/tests/` | Crate-owned unit, integration, and property tests |
+| `crate/lib/sinex-core/tests/` | Core data-path suites (unit, integration, performance, adversarial) |
+| `crate/lib/sinex-node-sdk/tests/` | Node SDK lifecycle, checkpoint, and annex coverage |
+| `crate/lib/sinex-test-utils/tests/` | Harness demonstrations and helper examples |
+| `tests/e2e/` | NixOS module assertions and VM harness support |
+| `tests/e2e/nixos-vm/` | Full NixOS VM suites (deployment, chaos, performance) |
 
-## Benchmarking
+**Rule**: Put new tests in the crate that owns the behavior. Workspace-level tests are reserved
+for scenarios that truly span multiple crates.
 
-- `scripts/bench-builds.sh` – build + SQLx + nix build baselines
-- `scripts/bench-nextest.sh` – wrapper for `cargo xtask bench`; see `scripts/bench-nextest.sh --help`
+## Nextest Profiles
 
-## Test Layout at a Glance
-
-| Location | What lives here | Notes |
-| --- | --- | --- |
-| `crate/*/<crate>/tests/` | Crate-owned unit, integration, and property tests | Prefer putting new coverage beside the code it exercises |
-| `crate/lib/sinex-core/tests/{unit,integration,performance,system,adversarial}` | Core data-path suites and heavy scenarios | Formerly in `tests/`; moved to keep focus with `sinex-core` |
-| `crate/lib/sinex-satellite-sdk/tests/{integration,property,system}` | Satellite SDK lifecycle, checkpoint, and annex coverage | Includes property regressions that only touch the SDK |
-| `crate/lib/sinex-test-utils/tests/` | Harness demonstrations and helper examples | Includes the migrated `macro_conversion` / `rstest` demos |
-| `tests/e2e/` | NixOS module assertions and VM harness support | Hosts the Rust integration test plus shared Nix fixtures |
-| `tests/e2e/nixos-vm/` | Full NixOS VM suites (deployment, chaos, performance) | See `tests/e2e/nixos-vm/README.md` for runner details |
-| `crate/lib/sinex-core/tests/security/`, `crate/satellites/*/tests/security/` | Hardening suites for core invariants and satellite sandboxes | Security coverage now lives beside the component it protects |
-
-When in doubt, default to the crate’s own `tests/` directory—workspace-level
-tests are reserved for scenarios that truly span multiple crates or binaries.
-
-## Writing Tests
-
-- **Always use `#[sinex_test]`** (or helpers built on top of it). The macro
-  provisions a `TestContext`, injects an isolated database, wires tracing, and
-  enforces timeouts.
-- **TestContext first:** reach through `ctx` for repositories, dataset seeds, timing
-  utilities, and assertions. Avoid raw `sqlx::query` unless the query under test
-  is exactly what you are asserting.
-- **Async hygiene:** use bounded concurrency (`buffer_unordered`, semaphores),
-  propagate errors rather than ignoring `JoinHandle`s, and avoid `std::thread::sleep`.
-- **Dataset seeds:** prefer the helpers under `sinex_test_utils::dataset_seeds`
-  rather than re-creating bespoke data builders. When you need a satellite
-  runtime for integration coverage, reach for the shared builder exported by
-  `sinex_test_utils::TestRuntimeBuilder`. It provisions telemetry emitters,
-  checkpoint managers, and NATS wiring automatically so tests exercise the
-  production pipeline end-to-end:
-
-  ```rust
-  use sinex_test_utils::TestRuntimeBuilder;
-
-  let test_runtime = TestRuntimeBuilder::new(&ctx, "my-service")
-      .with_dry_run(true)
-      .build()
-      .await?;
-  ```
-- **Property tests:** place proptest suites alongside the crate they fuzz (see
-  below). Use `#[sinex_prop]` (or the block-style `sinex_proptest!`) so the
-  harness provides tracing, timeouts, context wiring, and seed persistence.
-  Add `cases = 256` (or any number) to lock the runner config. Capture any
-  failing seeds in that crate’s `tests/property/*.proptest-regressions` files.
-
-## Property Testing Guidelines
-
-- **sinex-core:** property tests that focus on event modelling, schema
-  validation, ULID behaviour, sanitisation, or repository invariants live under
-  `crate/lib/sinex-core/tests/property/`.
-- **sinex-satellite-sdk:** cross-satellite properties require updated NATS
-  fixtures and are slated for their own crate-level suite—see the follow-up
-  note in `crate/lib/sinex-test-utils/test-analysis.md` before adding new
-  coverage.
-- **Cross-crate properties:** keep a workspace-level test only when the scenario
-  genuinely spans multiple crates (for example, database validation +
-  satellite checkpoints + CLI automation in the same property). Document the
-  cross-crate dependency at the top of the file so future migrations remain clear.
-
-Run property suites with Nextest like any other test:
-
-```bash
-cargo xtask test --profile reliable -- --test property_tests
-```
-
-## Tooling & Profiles
-
-Nextest profiles are defined in `.config/nextest.toml`:
+Defined in `.config/nextest.toml`:
 
 | Profile | Use case |
-| --- | --- |
-| `default` | Baseline selection (perf/stress/external excluded), retry once |
-| `fast` | Same selection as default, no retries |
-| `reliable` | Same selection, more retries + longer timeout |
-| `ci` | Reliable profile with CI-only skips baked in |
-| `parallel` | Max throughput on large machines |
+|---------|----------|
+| `default` | Standard runs with retries (CI + pre-commit), perf/stress/external excluded |
+| `fast` | Quick local iteration, no retries |
 | `debug` | Single-threaded with full stdout/stderr |
-| `ci-parallel` | High-parallel CI runners |
+| `perf` | Performance/stress/soak tests |
+| `external` | External integration tests (git-annex, security binaries) |
 
-Invoke with `cargo xtask test --profile <name>` (for example,
-`cargo xtask test --profile fast`).
+## Property Testing Conventions
 
-Benchmarks live behind the `bench` feature in `sinex-test-utils`; use
-`cargo bench --features bench` for comparisons.
+- **sinex-core**: Property tests for event modeling, schema validation, ULID behavior,
+  sanitization, and repository invariants live under `crate/lib/sinex-core/tests/property/`.
+
+- **sinex-node-sdk**: Cross-node properties use NATS fixtures and live under
+  `crate/lib/sinex-node-sdk/tests/property/`.
+
+- **Cross-crate properties**: Keep workspace-level tests only when the scenario genuinely
+  spans multiple crates. Document cross-crate dependencies at the top of the file.
+
+Use `#[sinex_prop]` or `sinex_proptest!` macros. Add `cases = 256` to lock runner config.
+Failing seeds persist to `tests/property/*.proptest-regressions`.
+
+```bash
+cargo xtask test --profile default -- --test property_tests
+```
+
+## Quality Controls
+
+- **Linting**: `Cargo.toml` (`workspace.lints.*`). Clippy runs with `warn` levels for
+  `pedantic`/`nursery` groups. `clippy.toml` bans `std::thread::sleep` in async code.
+
+- **CI**: `.github/workflows/ci.yml` mirrors local workflow: formatting, clippy,
+  `cargo xtask test --profile default --prime` against TimescaleDB.
+
+- **Coverage**: `cargo tarpaulin` for coverage reports during larger refactors.
+
+## Coverage Backlog
+
+- Add explicit confirmation payload format + Nats-Msg-Id dedup tests
+- Add sinex-node-sdk confirmation consumer integration tests
+- Add full automaton integration test in sinex-node-sdk
+- Add DLQ consumer/replay tests and retention policy coverage
+- Add ingestd property tests for idempotency, batch ordering, monotonic offsets
+- Add restart resilience coverage for outbox/confirmation stream durability
+- Add explicit sinex-schema migration tests
+- Add JetStream-focused chaos test in sinex-core adversarial coverage
 
 ## Authoritative References
 
-- `crate/lib/sinex-test-utils/docs/overview.md` – API reference for
-  `TestContext`, dataset seeding, assertions, timing utilities, and the database pool.
-- `crate/lib/sinex-test-utils/docs/testing_quality_overview.md` – QA strategy,
-  Nextest configuration, and CI expectations.
-- `tests/e2e/nixos-vm/README.md` – VM harness, parallel snapshot runner, and helper
-  commands.
-- `docs/documentation-guidelines.md` – documentation checklist (ensure
-  `cargo xtask check` and `cargo xtask test --profile reliable --prime` pass after
-  moving or adding tests; use `cargo xtask test --profile ci --prime` to match CI selection).
+**Test Utilities Documentation** (`crate/lib/sinex-test-utils/docs/`):
+- `README.md` — Entry point, quick start, environment variables
+- `test_context.md` — TestContext API, lifecycle, assertions
+- `database_testing.md` — Pool architecture, isolation, cleanup
+- `pipeline_testing.md` — NATS, JetStream, PipelineScope
+- `timing_patterns.md` — Synchronization, barriers, wait helpers
+- `property_testing.md` — Proptest integration, strategies
+- `troubleshooting.md` — Common issues, best practices
 
-## Coverage Backlog (carry-forward)
-
-- Add explicit confirmation payload format + Nats-Msg-Id dedup tests (current
-  coverage validates confirmation receipt but not message headers or dedup).
-- Add sinex-satellite-sdk confirmation consumer integration tests.
-- Add a full automaton integration test in sinex-satellite-sdk.
-- Add DLQ consumer/replay tests and retention policy coverage (current tests
-  only verify routing of invalid payloads into the DLQ).
-- Add ingestd property tests for idempotency, batch ordering, and monotonic
-  offsets (ingestd tests do not currently use proptest).
-- Add restart resilience coverage for outbox/confirmation stream durability
-  across ingestd restarts.
-- Add explicit sinex-schema migration tests.
-- Add a JetStream-focused chaos test in sinex-core adversarial coverage.
+**Other References**:
+- `tests/e2e/nixos-vm/README.md` — VM harness, parallel snapshot runner
+- `docs/documentation-guidelines.md` — Documentation checklist
 
 ## If You Only Read One Section
 
-1. Put new tests in the crate that owns the behaviour.
-2. Reach for `TestContext` utilities before writing bespoke scaffolding.
-3. Keep the quick-start commands in muscle memory (`cargo xtask test --profile fast` or `cargo xtask test --profile reliable --prime`).
-4. Link back to this handbook (or the crate-level docs above) when opening PRs
-   so reviewers know which conventions you followed.
+1. Put new tests in the crate that owns the behavior.
+2. Use `#[sinex_test]` and `TestContext` utilities — avoid bespoke scaffolding.
+3. Keep quick-start commands in muscle memory: `cargo xtask test --profile fast` or
+   `cargo xtask test --profile default --prime`.
+4. Link back to this handbook when opening PRs.

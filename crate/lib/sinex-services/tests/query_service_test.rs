@@ -22,7 +22,7 @@ async fn seed_query_dataset(scope: &PipelineScope<'_>) -> TestResult<(SeedClock,
 
 #[sinex_serial_test]
 async fn test_query_by_source_filter(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let (_clock, dataset) = seed_query_dataset(&scope).await?;
     let service = Arc::new(SearchService::new(ctx.pool.clone()));
@@ -53,7 +53,7 @@ async fn test_query_by_source_filter(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_serial_test]
 async fn test_query_by_event_type_filter(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     seed_query_dataset(&scope).await?;
     let service = Arc::new(SearchService::new(ctx.pool.clone()));
@@ -78,7 +78,7 @@ async fn test_query_by_event_type_filter(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_serial_test]
 async fn test_query_by_time_range(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let (clock, _dataset) = seed_query_dataset(&scope).await?;
     let service = Arc::new(SearchService::new(ctx.pool.clone()));
@@ -112,7 +112,7 @@ async fn test_query_by_time_range(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_serial_test]
 async fn test_query_content_search(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     seed_query_dataset(&scope).await?;
     let service = Arc::new(SearchService::new(ctx.pool.clone()));
@@ -142,7 +142,7 @@ async fn test_query_content_search(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_serial_test]
 async fn test_query_combined_filters(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let (clock, _dataset) = seed_query_dataset(&scope).await?;
     let service = Arc::new(SearchService::new(ctx.pool.clone()));
@@ -170,7 +170,7 @@ async fn test_query_combined_filters(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_serial_test]
 async fn test_query_ordering_by_timestamp(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     seed_query_dataset(&scope).await?;
     let service = Arc::new(SearchService::new(ctx.pool.clone()));
@@ -200,7 +200,7 @@ async fn test_query_ordering_by_timestamp(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_serial_test]
 async fn test_query_pagination(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let (clock, _dataset) = seed_query_dataset(&scope).await?;
     let service = Arc::new(SearchService::new(ctx.pool.clone()));
@@ -247,7 +247,7 @@ async fn test_query_pagination(ctx: TestContext) -> TestResult<()> {
 async fn test_query_pagination_stable_during_concurrent_ingestion(
     ctx: TestContext,
 ) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let clock = SeedClock::fixed();
     let service = Arc::new(SearchService::new(ctx.pool.clone()));
@@ -384,7 +384,7 @@ async fn test_query_pagination_stable_during_concurrent_ingestion(
 
 #[sinex_serial_test]
 async fn test_query_empty_results(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     seed_query_dataset(&scope).await?;
     let service = SearchService::new(ctx.pool.clone());
@@ -419,7 +419,7 @@ async fn test_query_empty_results(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_serial_test]
 async fn test_query_limit_bounds(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     seed_query_dataset(&scope).await?;
     let service = Arc::new(SearchService::new(ctx.pool.clone()));
@@ -461,7 +461,7 @@ async fn test_query_limit_bounds(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_serial_test]
 async fn test_query_multiple_sources(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     seed_query_dataset(&scope).await?;
     let service = Arc::new(SearchService::new(ctx.pool.clone()));
@@ -488,7 +488,7 @@ async fn test_query_multiple_sources(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_serial_test]
 async fn test_query_case_insensitive_search(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let (clock, _dataset) = seed_query_dataset(&scope).await?;
 

@@ -10,6 +10,7 @@
 // - **ULID Attacks**: Extreme dates, collision attempts, timestamp manipulation
 
 use sinex_test_utils::prelude::*;
+use sinex_test_utils::timing_utils::Timeouts;
 use sinex_core::db::validation::EventValidator;
 use chrono::{Duration, TimeZone, Utc};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -210,7 +211,7 @@ async fn test_circular_json_references(ctx: TestContext) -> TestResult<()> {
         "Circular JSON should not cause panic"
     );
     assert!(
-        elapsed < StdDuration::from_secs(1),
+        elapsed < StdDuration::from_secs(Timeouts::QUICK),
         "Serialization should complete quickly"
     );
 
@@ -271,7 +272,7 @@ async fn test_json_billion_laughs_attack(ctx: TestContext) -> TestResult<()> {
                 max_serialization_time = max_serialization_time.max(elapsed);
 
                 // Assert reasonable performance limits
-                if elapsed > StdDuration::from_secs(2) {
+                if elapsed > StdDuration::from_secs(Timeouts::SHORT) {
                     break; // Stop before hitting resource limits
                 }
 
@@ -297,7 +298,7 @@ async fn test_json_billion_laughs_attack(ctx: TestContext) -> TestResult<()> {
     // System should handle some expansion but not infinite
     assert!(successful_levels >= 2, "Should handle basic expansion");
     assert!(
-        max_serialization_time < StdDuration::from_secs(5),
+        max_serialization_time < StdDuration::from_secs(Timeouts::QUICK),
         "Should not take too long to serialize"
     );
 
@@ -335,7 +336,7 @@ async fn test_json_depth_bomb_attack(ctx: TestContext) -> TestResult<()> {
 
             // Should not take too long
             assert!(
-                elapsed < StdDuration::from_secs(5),
+                elapsed < StdDuration::from_secs(Timeouts::QUICK),
                 "Deep JSON serialization too slow"
             );
         }

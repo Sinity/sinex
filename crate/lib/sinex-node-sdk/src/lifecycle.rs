@@ -36,6 +36,8 @@ impl std::fmt::Display for ServiceStatus {
 }
 
 /// Lifecycle manager for node services
+///
+/// Issue 10 fix: Uses parking_lot::Mutex which doesn't poison (no deadlock on panic)
 pub struct LifecycleManager {
     service_name: String,
     status: Arc<Mutex<ServiceStatus>>,
@@ -102,6 +104,21 @@ impl LifecycleManager {
     }
 
     /// Set status
+    ///
+    /// Issue 97: Status Change Ordering Documentation
+    ///
+    /// This method performs status updates in the following order:
+    /// 1. Update internal status (guarded by parking_lot::Mutex)
+    /// 2. Log status change via tracing::info
+    /// 3. Notify systemd via sd_notify (best-effort, may fail)
+    ///
+    /// IMPORTANT: The systemd notification is best-effort and non-blocking.
+    /// Failures to notify systemd do not affect internal state transitions.
+    /// This design ensures that systemd communication issues cannot prevent
+    /// the service from transitioning states or block critical operations.
+    ///
+    /// The status mutex uses parking_lot which doesn't poison on panic,
+    /// ensuring status updates remain available even after thread panics.
     pub fn set_status(&self, status: ServiceStatus) {
         *self.status.lock() = status;
         info!(
@@ -110,7 +127,7 @@ impl LifecycleManager {
             "Service status changed"
         );
 
-        // Notify systemd of status change
+        // Notify systemd of status change (best-effort, may fail)
         let sd_status = match status {
             ServiceStatus::Starting => "Starting up",
             ServiceStatus::Running => "Running",
@@ -123,7 +140,7 @@ impl LifecycleManager {
             warn!(
                 service = %self.service_name,
                 error = %e,
-                "Failed to notify systemd of status change"
+                "Failed to notify systemd of status change (best-effort notification, continuing)"
             );
         }
     }
@@ -136,6 +153,11 @@ impl LifecycleManager {
     /// Initialize signal handlers and lifecycle management
     pub async fn initialize(&mut self) -> NodeResult<()> {
         info!(service = %self.service_name, "Initializing lifecycle management");
+
+        // Issue 9 fix: Drop old sender before creating new one to prevent accumulation
+        if let Some(old_sender) = self.shutdown_sender.take() {
+            drop(old_sender);
+        }
 
         // Create shutdown channel
         let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
@@ -278,10 +300,12 @@ impl LifecycleManager {
                         break;
                     }
 
-                    emitter_clone.emit_heartbeat(Some(serde_json::json!({
-                        "service_type": "node",
-                        "heartbeat_source": "lifecycle_manager"
-                    })));
+                    let _ = emitter_clone
+                        .emit_heartbeat(Some(serde_json::json!({
+                            "service_type": "node",
+                            "heartbeat_source": "lifecycle_manager"
+                        })))
+                        .await;
                 }
 
                 info!(service = %service_name_clone, "Heartbeat emission stopped");
@@ -312,6 +336,15 @@ impl LifecycleManager {
             }
             _ = tokio::signal::ctrl_c() => {
                 info!(service = %self.service_name, "Received Ctrl+C");
+
+                // Issue 88 fix: Emit final heartbeat before shutdown to ensure observability
+                if let Some(emitter) = &self.heartbeat_emitter {
+                    let _ = emitter.emit_heartbeat(Some(serde_json::json!({
+                        "shutdown_reason": "ctrl_c",
+                        "final_heartbeat": true
+                    }))).await;
+                }
+
                 self.shutdown_flag.store(true, Ordering::Relaxed);
                 let _ = self.shutdown_watch_tx.send(true);
                 Ok(())

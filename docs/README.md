@@ -2,34 +2,86 @@
 
 **Purpose:** Map of canonical docs; update when ownership or authoritative references change.
 
+## Ecosystem Orientation
+
+Sinex is the **event-sourced kernel** within a three-layer personal infrastructure stack:
+
+```
+SINNIX (static)     →  NixOS/home-manager configuration, declarative deployment
+     ↓
+LYNCHPIN (pull)     →  Read-layer views, dashboards until Sinex captures the data
+     ↓
+SINEX (push/events) →  Nodes emit events → NATS → ingestd → Postgres → automata
+```
+
+For full ecosystem context, see `exploration/ecosystem-context.md`.
+
+## Documentation Structure
+
 - `current/` — single source of truth for what exists and works today (architecture, security, testing).
-- `planning/` — active playbooks (`active/`), roadmap/priorities (`roadmap/`), proposals under consideration (`proposals/`), and backlog (`backlog/TODO.md`).
-- `vision/` — long-term direction and explorations.
-- `archived/` — superseded or historical docs kept for reference.
+- `planning/` — development roadmap, priorities, feature proposals, and near-term SDK plans.
+- `vision/` — long-term direction, strategic designs, and aspirational architecture.
+- `exploration/` — investigation notes, analysis artifacts, and in-progress research.
 - `documentation-guidelines.md` — authoring conventions.
 - Crate-local docs under `crate/**/docs/` remain authoritative for implementation details.
 
 ## Current (what is live now)
 
-- `current/architecture/` — Core architecture, provenance, security architecture, operations, user interaction, event taxonomy.
+- `current/architecture/` — Core architecture, security architecture, operations, user interaction, event taxonomy.
+- `current/configuration/` — Shared environment variables (per-service config in crate docs).
 - `current/security.md` — Current security posture and guardrails.
-- `current/testing/` — Testing patterns and guides in use today.
+- `current/testing/` — Testing overview and pipeline guides (detailed patterns in `sinex-test-utils/docs/`).
 
-## Planning (what’s next)
+## Planning (what's next)
 
-- `planning/active/` — Active execution playbooks (see files within).
-- `planning/roadmap/` — Roadmap, development/test priorities, feature directions.
-- `planning/backlog/TODO.md` — Backlog of tracked tasks.
-- `planning/proposals/` — Proposals under review (e.g., DB repository migration).
-- `TODO.md` — Backlog of tracked tasks (cross-referenced from planning).
+Development priorities, roadmap, and feature proposals:
+
+- `planning/ROADMAP.md` — Long-term roadmap with vision document links.
+- `planning/development-priorities.md` — Current development focus areas.
+- `planning/features/` — Individual feature proposals (browser extension, embeddings, multi-device sync, etc.).
+- `planning/testing-priorities-and-roadmap.md` — Test infrastructure evolution.
+- `planning/type-safety-enhancements-roadmap.md` — Type system evolution.
+
+SDK development vision is in `sinex-node-sdk/docs/vision.md`.
 
 ## Vision (long-term)
 
-- `vision/manifesto.md` and `vision/*.md` — Strategic direction and exploratory designs. Check file headers for currency notes.
+Strategic direction and aspirational architecture:
 
-## Archived (historical)
+- `vision/manifesto.md` — Philosophical north star and design principles.
+- `vision/architectural-evolution.md` — Strategic system evolution roadmap.
+- `vision/multi-device-sync-architecture.md` — Cross-device synchronization.
+- `vision/semantic-desktop-stream.md` — AI-powered context understanding.
+- `vision/project-target-state.md` — High-level project goals.
+- `vision/emergent-insights-and-extensions.md` — Speculative ideas and thought experiments.
 
-- `archived/README.md` — how and when to move docs into the archive.
+Pipeline design is in `sinex-ingestd/docs/pipeline-design.md`.
+
+## Exploration (research & analysis)
+
+Investigation notes and analysis artifacts (not canonical, may be rough):
+
+- `exploration/ecosystem-context.md` — Sinnix ↔ Lynchpin ↔ Sinex relationship.
+- `exploration/competitive-landscape.md` — Market positioning and commercial alternatives.
+- `exploration/productivity-research.md` — Developer velocity research.
+- `exploration/db-repository-migration.md` — SQL migration tracking.
+- `exploration/opportunities_tooling.md` — Tooling improvement ideas.
+
+## Crate-Level Documentation
+
+Implementation details are documented close to the code:
+
+| Crate | Key Documentation |
+|-------|-------------------|
+| `sinex-core` | Type system, newtypes, repositories, error handling |
+| `sinex-node-sdk` | Node patterns, provenance, stage-as-you-go, SDK vision |
+| `sinex-test-utils` | Test patterns, pipeline testing, database pool |
+| `sinex-gateway` | RPC server, transport security, environment |
+| `sinex-ingestd` | Event validation, pipeline design, NATS security |
+| `sinex-schema` | Database schema, migrations, ULID handling |
+| `sinex-desktop-ingestor` | Hyprland plugin development, environment |
+
+Each crate's `docs/README.md` serves as the entry point.
 
 ## Host / Deployment Notes
 

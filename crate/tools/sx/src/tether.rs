@@ -15,10 +15,11 @@ use color_eyre::eyre::{eyre, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 /// Configuration for The Tether connection
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct TetherConfig {
     /// Target environment (e.g., "prod", "staging")
     pub target: String,
@@ -60,6 +61,7 @@ impl TetherConfig {
     }
 
     /// Generate a unique consumer name for this session
+    #[allow(dead_code)]
     pub fn consumer_name(&self) -> String {
         let timestamp = chrono::Utc::now().format("%Y%m%dT%H%M%S");
         format!("{}-{}", self.consumer_prefix, timestamp)
@@ -68,6 +70,7 @@ impl TetherConfig {
 
 /// JSON-RPC request structure
 #[derive(Debug, Serialize)]
+#[allow(dead_code)]
 struct JsonRpcRequest {
     jsonrpc: &'static str,
     method: String,
@@ -77,16 +80,16 @@ struct JsonRpcRequest {
 
 /// JSON-RPC response structure
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct JsonRpcResponse {
-    #[allow(dead_code)]
     jsonrpc: String,
     result: Option<serde_json::Value>,
     error: Option<JsonRpcError>,
-    #[allow(dead_code)]
     id: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct JsonRpcError {
     code: i64,
     message: String,
@@ -94,6 +97,7 @@ struct JsonRpcError {
 
 /// Shadow consumer creation response
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct ShadowConsumerInfo {
     pub consumer_name: String,
     pub stream_name: String,
@@ -103,12 +107,14 @@ pub struct ShadowConsumerInfo {
 }
 
 /// The Tether client for connecting to production
+#[allow(dead_code)]
 pub struct TetherClient {
     config: TetherConfig,
     http_client: reqwest::Client,
     request_id: std::sync::atomic::AtomicU64,
 }
 
+#[allow(dead_code)]
 impl TetherClient {
     /// Create a new tether client
     pub fn new(config: TetherConfig) -> Result<Self> {
@@ -236,6 +242,7 @@ impl TetherClient {
 
 /// Event received via The Tether
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct TetheredEvent {
     /// The event subject
     pub subject: String,
@@ -246,11 +253,13 @@ pub struct TetheredEvent {
 }
 
 /// Tether session that manages the shadow consumer lifecycle
+#[allow(dead_code)]
 pub struct TetherSession {
     client: TetherClient,
     consumer_info: Option<ShadowConsumerInfo>,
 }
 
+#[allow(dead_code)]
 impl TetherSession {
     /// Start a new tether session
     pub async fn start(config: TetherConfig) -> Result<Self> {
@@ -308,6 +317,7 @@ impl Drop for TetherSession {
 ///
 /// This is the main entry point for `sx dev --tether <target>`.
 /// It creates a shadow consumer and starts receiving events.
+#[allow(dead_code)]
 pub async fn connect_tether(
     target: &str,
     event_tx: mpsc::Sender<TetheredEvent>,

@@ -1,5 +1,5 @@
-use crate::models::{Event, JsonValue};
-use crate::security::{SecurityError, SecurityValidator};
+use crate::db::models::{Event, JsonValue};
+use crate::db::security::{SecurityError, SecurityValidator};
 use crate::types::domain::EventSource;
 use color_eyre::eyre::Result;
 use percent_encoding::percent_decode_str;

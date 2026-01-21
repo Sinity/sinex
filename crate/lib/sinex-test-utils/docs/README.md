@@ -1,7 +1,235 @@
-# Sinex Test Utilities Documentation
+# Sinex Test Utilities
 
-Crate-local design documents embedded into rustdoc:
+A comprehensive testing framework for the Sinex event-driven data capture system, providing
+database isolation, pipeline testing, and robust testing patterns.
 
-- `overview.md` – quick start guide, core features, and testing patterns.
-- `database_pool.md` – database pool architecture, performance traits, and monitoring notes.
-- `testing_quality_overview.md` – workspace-wide QA strategy, profiles, and test categories.
+> **Workspace-wide handbook**: See [`TESTING.md`](../../../../TESTING.md) for quick-start commands,
+> test layout, and workspace conventions. This documentation focuses on the test utilities API.
+
+## Quick Start
+
+```rust
+use sinex_test_utils::prelude::*;
+
+#[sinex_test]
+async fn test_event_creation(ctx: TestContext) -> TestResult<()> {
+    // Enable NATS (required for pipeline testing)
+    let ctx = ctx.with_shared_nats().await?;
+
+    // Create test event using the real pipeline
+    let event = ctx
+        .publish_json_event(
+            "fs-watcher",
+            "file.created",
+            json!({"path": "/test.txt", "size": 1024})
+        )
+        .await?;
+
+    // Query using direct repository access
+    let events = ctx.pool.events().get_recent(10).await?;
+
+    // Rich assertions with context
+    ctx.assert("event creation")
+        .eq(&events.len(), &1)?
+        .that(events[0].payload["size"] == json!(1024), "size should match")?;
+
+    Ok(())
+}
+```
+
+## Key Features
+
+| Feature | Description | Documentation |
+|---------|-------------|---------------|
+| **Database Isolation** | Each test gets an isolated database from a pool | [database_testing.md](database_testing.md) |
+| **Pipeline Testing** | Tests exercise real NATS → ingestd → DB flow | [pipeline_testing.md](pipeline_testing.md) |
+| **TestContext** | Central coordination with assertions and timing | [test_context.md](test_context.md) |
+| **Property Testing** | Proptest integration with `#[sinex_prop]` | [property_testing.md](property_testing.md) |
+| **Timing Utilities** | Synchronization, barriers, adaptive polling | [timing_patterns.md](timing_patterns.md) |
+| **Troubleshooting** | Common issues and best practices | [troubleshooting.md](troubleshooting.md) |
+
+## The Pipeline-First Rule
+
+Before seeding any events, call `ctx.with_shared_nats().await?` and use
+`ctx.publish_json_event(...)` so every test exercises the actual ingestion path.
+
+```rust
+// PREFERRED: Pipeline-first approach (exercises NATS → ingestd → DB)
+let ctx = ctx.with_shared_nats().await?;
+let event = ctx.publish_json_event(
+    "fs-watcher",
+    "file.created",
+    json!({"path": "/test/file.txt", "size": 1024})
+).await?;
+
+// ALTERNATIVE: Direct repository access (only for unit tests)
+let event = Event::<JsonValue>::test_event(
+    "fs-watcher",
+    "file.created",
+    json!({"path": "/test/file.txt", "size": 1024})
+);
+ctx.pool.events().insert(event).await?;
+```
+
+Direct database fabrication bypasses ingestd and should be used sparingly.
+
+## Test Macros
+
+### `#[sinex_test]`
+
+The primary test macro providing automatic TestContext lifecycle:
+
+```rust
+// Basic usage
+#[sinex_test]
+async fn test_basic(ctx: TestContext) -> Result<()> {
+    Ok(())
+}
+
+// With custom timeout (default: 30s async, 10s sync)
+#[sinex_test(timeout = 60)]
+async fn test_long_running(ctx: TestContext) -> Result<()> {
+    Ok(())
+}
+
+// With tracing enabled
+#[sinex_test(trace = true)]
+async fn test_with_logs(ctx: TestContext) -> Result<()> {
+    Ok(())
+}
+
+// With rstest parameterization
+#[sinex_test]
+#[case("source1", "type1")]
+#[case("source2", "type2")]
+async fn test_parameterized(
+    ctx: TestContext,
+    #[case] source: &str,
+    #[case] event_type: &str,
+) -> Result<()> {
+    Ok(())
+}
+```
+
+### `#[sinex_prop]` and `sinex_proptest!`
+
+Property testing macros with TestContext integration:
+
+```rust
+#[sinex_prop(cases = 64, timeout = "45s")]
+async fn property_test(
+    ctx: &TestContext,
+    #[strategy(any::<u64>())] value: u64,
+) -> TestResult<()> {
+    // property assertions
+    Ok(())
+}
+
+sinex_proptest! {
+    fn ulid_roundtrip(value in any::<String>()) -> TestResult<()> {
+        // pure property test without TestContext
+        Ok(())
+    }
+}
+```
+
+## Environment Variables
+
+### Test Infrastructure
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `DATABASE_URL` | (from devenv) | Primary test database connection |
+| `SINEX_TEST_FAIL_DIR` | `target/test-artifacts/` | Failure snapshot directory |
+| `SINEX_TEST_USE_TLS` | `false` | Enable TLS in integration tests |
+| `SINEX_TEST_NATS_TOKEN` | — | NATS authentication token |
+| `SINEX_TEST_NATS_CONFIG_FILE` | — | Custom NATS config path |
+| `SINEX_TEST_OPTIMIZATIONS` | `false` | Enable test optimizations |
+| `SINEX_ALLOW_REPLAY_CONTROL_BYPASS` | `false` | Bypass replay control (testing only) |
+
+### Property Testing
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `SINEX_PROPTEST_CASES` | `256` | Number of property test iterations |
+| `SINEX_PROPTEST_SEED` | random | Reproducible seed for debugging |
+| `SINEX_PROPTEST_DIR` | `target/proptest-regressions/` | Regression file storage |
+| `PROPTEST_CASES` | — | Standard proptest fallback |
+
+### Database Testing
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `DATABASE_URL_SUPERUSER` | — | Superuser connection for setup/teardown |
+| `DATABASE_URL_APP` | — | App-specific connection for permission tests |
+| `BENCH_DATABASE_URL` | — | Separate database for benchmarks |
+
+### Edge Mode
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `SINEX_EDGE_MODE` | `false` | Suppress DATABASE_URL requirement, enable schema cache |
+
+## Feature Flags
+
+Enable in `Cargo.toml` for additional functionality:
+
+```toml
+[dev-dependencies]
+sinex-test-utils = { path = "../sinex-test-utils", features = ["bench", "proptest"] }
+```
+
+| Feature | Purpose |
+|---------|---------|
+| `bench` | Enable benchmarking support (`#[sinex_bench]`) |
+| `proptest` | Property-based testing integration |
+| `tracing` | Enhanced tracing and log capture |
+
+## Logging and Diagnostics
+
+The harness prints compact progress (`🔄` running, `✅/❌` result with elapsed time) for every test.
+
+```rust
+// Access captured logs inside a test
+let logs = ctx.captured_logs();
+assert!(logs.iter().any(|l| l.contains("expected message")));
+
+// Assert specific log was emitted
+ctx.assert_logged("checkpoint saved")?;
+```
+
+When a test fails, the harness records a JSON artifact under `target/test-artifacts/` containing:
+- Error message and backtrace
+- Pool statistics at failure time
+- Captured tracing logs (when TestContext is present)
+
+Override the artifact directory with `SINEX_TEST_FAIL_DIR`.
+
+## Running Tests
+
+```bash
+# Fast feedback (no retries)
+cargo xtask test --profile fast
+
+# Full workspace (recommended before PR)
+cargo xtask test --profile default --prime
+
+# CI selection
+cargo xtask test --profile default --prime
+
+# Single crate
+cargo xtask test --profile default -- -p sinex-test-utils
+
+# Update snapshots
+INSTA_UPDATE=always cargo xtask test --profile default --prime
+```
+
+## Documentation Index
+
+- **[patterns.md](patterns.md)** — Fixture registry, property testing, database pool architecture
+- **[test_context.md](test_context.md)** — TestContext API, lifecycle, assertions
+- **[database_testing.md](database_testing.md)** — Pool architecture, isolation, cleanup
+- **[pipeline_testing.md](pipeline_testing.md)** — NATS, JetStream, PipelineScope
+- **[timing_patterns.md](timing_patterns.md)** — Synchronization, barriers, wait helpers
+- **[property_testing.md](property_testing.md)** — Proptest integration, strategies
+- **[troubleshooting.md](troubleshooting.md)** — Common issues, best practices, templates

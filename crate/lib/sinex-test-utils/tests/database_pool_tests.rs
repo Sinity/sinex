@@ -8,6 +8,7 @@ use sinex_core::types::error::SinexError;
 use sinex_core::DbPoolExt;
 use sinex_core::{Event, EventSource, EventType, HostName, JsonValue, Provenance, SourceMaterial};
 use sinex_test_utils::db_common::verify_clean_state;
+use sinex_test_utils::timing_utils::Timeouts;
 use sinex_test_utils::{
     acquire_admin_connection, acquire_test_database, check_pool_health, get_pool_stats,
     pool_slot_count, reset_pool, sinex_serial_test, sinex_test,
@@ -30,7 +31,7 @@ async fn test_pool_handles_concurrent_acquisition() -> sinex_test_utils::Result<
     drop(warm_db);
 
     let barrier = Arc::new(Barrier::new(target_slots));
-    let barrier_timeout = Duration::from_secs(30);
+    let barrier_timeout = Duration::from_secs(Timeouts::STANDARD);
 
     let handles: Vec<_> = (0..target_slots)
         .map(|_| {

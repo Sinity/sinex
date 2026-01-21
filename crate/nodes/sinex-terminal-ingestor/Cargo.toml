@@ -70,6 +70,7 @@ ulid = { workspace = true }
 sinex-node-sdk = { path = "../../lib/sinex-node-sdk", features = ["macros"] }
 sinex-processor-runtime = { path = "../../lib/sinex-processor-runtime" }
 sinex-core = { path = "../../lib/sinex-core", features = ["macros"] }
+lazy_static.workspace = true
 
 [dev-dependencies]
 sinex-test-utils = { path = "../../lib/sinex-test-utils" }

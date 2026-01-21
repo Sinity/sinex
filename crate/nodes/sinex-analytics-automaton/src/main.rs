@@ -1,12 +1,13 @@
-//! Main entry point for Analytics Automaton using unified Node
+//! Modernized Main for Analytics Automaton
 
 #[cfg(not(target_env = "msvc"))]
 use mimalloc::MiMalloc;
-use sinex_analytics_automaton::AnalyticsAutomaton;
 
 #[cfg(not(target_env = "msvc"))]
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
-// Use the processor_main! macro for standardized CLI and lifecycle
-sinex_processor_runtime::processor_main!(AnalyticsAutomaton);
+use sinex_processor_runtime::processor_main;
+use sinex_analytics_automaton::AnalyticsAutomatonNode;
+
+processor_main!(AnalyticsAutomatonNode);

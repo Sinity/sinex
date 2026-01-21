@@ -198,6 +198,7 @@ mod benches {
     use super::*;
     use crate::database_pool::acquire_test_database;
     use crate::static_fixtures::ensure_fixture;
+    #[allow(unused_imports)]
     use crate::{sinex_bench, TestResult};
 
     // Benchmark the standard fixtures themselves

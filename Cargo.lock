@@ -434,7 +434,7 @@ dependencies = [
  "serde_urlencoded",
  "sync_wrapper 1.0.2",
  "tokio",
- "tower 0.5.2",
+ "tower",
  "tower-layer",
  "tower-service",
  "tracing",
@@ -1985,6 +1985,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "governor"
+version = "0.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "68a7f542ee6b35af73b06abc0dad1c1bae89964e4e253bc4b587b91c9637867b"
+dependencies = [
+ "cfg-if",
+ "dashmap",
+ "futures",
+ "futures-timer",
+ "no-std-compat",
+ "nonzero_ext",
+ "parking_lot",
+ "portable-atomic",
+ "quanta",
+ "rand 0.8.5",
+ "smallvec",
+ "spinning_top",
+]
+
+[[package]]
 name = "h2"
 version = "0.3.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2215,22 +2235,6 @@ name = "httpdate"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
-
-[[package]]
-name = "humantime"
-version = "2.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "135b12329e5e3ce057a9f972339ea52bc954fe1e9358ef27f95e89716fbc5424"
-
-[[package]]
-name = "humantime-serde"
-version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57a3db5ea5923d99402c94e9feb261dc5ee9b4efa158b0315f788cf549cc200c"
-dependencies = [
- "humantime",
- "serde",
-]
 
 [[package]]
 name = "hyper"
@@ -3054,6 +3058,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "no-std-compat"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b93853da6d84c2e3c7d730d6473e8817692dd89be387eb01b94d7f108ecb5b8c"
+
+[[package]]
 name = "nom"
 version = "8.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3061,6 +3071,12 @@ checksum = "df9761775871bdef83bee530e60050f7e54b1105350d6884eb0fb4f46c2f9405"
 dependencies = [
  "memchr",
 ]
+
+[[package]]
+name = "nonzero_ext"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38bf9645c8b145698bb0b18a4637dcacbc421ea49bef2317e4fd8065a387cf21"
 
 [[package]]
 name = "normalize-line-endings"
@@ -3952,6 +3968,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "quanta"
+version = "0.12.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f3ab5a9d756f0d97bdc89019bd2e4ea098cf9cde50ee7564dde6b81ccc8f06c7"
+dependencies = [
+ "crossbeam-utils",
+ "libc",
+ "once_cell",
+ "raw-cpuid",
+ "wasi",
+ "web-sys",
+ "winapi",
+]
+
+[[package]]
 name = "quick-error"
 version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4141,6 +4172,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "raw-cpuid"
+version = "11.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "498cd0dc59d73224351ee52a95fee0f1a617a2eae0e7d9d720cc622c73a54186"
+dependencies = [
+ "bitflags 2.10.0",
+]
+
+[[package]]
 name = "rayon"
 version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4304,8 +4344,8 @@ dependencies = [
  "tokio",
  "tokio-native-tls",
  "tokio-rustls 0.26.4",
- "tower 0.5.2",
- "tower-http 0.6.6",
+ "tower",
+ "tower-http",
  "tower-service",
  "url",
  "wasm-bindgen",
@@ -4687,7 +4727,7 @@ dependencies = [
  "log",
  "ouroboros",
  "sea-orm-macros",
- "sea-query 0.32.7",
+ "sea-query",
  "sea-query-binder",
  "serde",
  "sqlx",
@@ -4748,19 +4788,6 @@ dependencies = [
 
 [[package]]
 name = "sea-query"
-version = "0.31.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4fd043b8117af233e221f73e3ea8dfbc8e8c3c928017c474296db45c649105c"
-dependencies = [
- "chrono",
- "inherent",
- "sea-query-derive",
- "serde_json",
- "uuid",
-]
-
-[[package]]
-name = "sea-query"
 version = "0.32.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a5d1c518eaf5eda38e5773f902b26ab6d5e9e9e2bb2349ca6c64cf96f80448c"
@@ -4776,7 +4803,7 @@ version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b0019f47430f7995af63deda77e238c17323359af241233ec768aba1faea7608"
 dependencies = [
- "sea-query 0.32.7",
+ "sea-query",
  "sqlx",
 ]
 
@@ -4801,7 +4828,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2239ff574c04858ca77485f112afea1a15e53135d3097d0c86509cef1def1338"
 dependencies = [
  "futures",
- "sea-query 0.32.7",
+ "sea-query",
  "sea-query-binder",
  "sea-schema-derive",
  "sqlx",
@@ -5091,8 +5118,6 @@ name = "sinex-analytics-automaton"
 version = "0.4.2"
 dependencies = [
  "async-trait",
- "axum",
- "camino",
  "chrono",
  "clap",
  "color-eyre",
@@ -5106,8 +5131,6 @@ dependencies = [
  "sinex-test-utils",
  "sqlx",
  "tokio",
- "tower 0.5.2",
- "tower-http 0.5.2",
  "tracing",
  "tracing-subscriber",
 ]
@@ -5156,9 +5179,7 @@ dependencies = [
 name = "sinex-content-automaton"
 version = "0.4.2"
 dependencies = [
- "anyhow",
  "async-trait",
- "camino",
  "chrono",
  "clap",
  "color-eyre",
@@ -5183,7 +5204,6 @@ dependencies = [
  "ahash",
  "anyhow",
  "async-nats",
- "async-std",
  "async-trait",
  "blake3",
  "bon",
@@ -5203,9 +5223,7 @@ dependencies = [
  "num-traits",
  "once_cell",
  "parking_lot",
- "paste",
  "percent-encoding",
- "pretty_assertions",
  "proptest",
  "rand 0.8.5",
  "regex",
@@ -5222,7 +5240,6 @@ dependencies = [
  "sinex-schema",
  "sinex-test-utils",
  "sqlx",
- "strum",
  "tempfile",
  "thiserror 2.0.17",
  "tokio",
@@ -5360,8 +5377,9 @@ dependencies = [
  "chrono",
  "clap",
  "color-eyre",
+ "dashmap",
  "futures",
- "hyper 1.7.0",
+ "governor",
  "hyper-util",
  "mimalloc",
  "notify",
@@ -5382,9 +5400,8 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "tokio-rustls 0.25.0",
- "tokio-stream",
- "tower 0.5.2",
- "tower-http 0.6.6",
+ "tower",
+ "tower-http",
  "tracing",
  "tracing-subscriber",
  "uuid",
@@ -5420,8 +5437,8 @@ dependencies = [
 name = "sinex-ingestd"
 version = "0.4.2"
 dependencies = [
- "ahash",
  "async-nats",
+ "base64 0.22.1",
  "blake3",
  "bon",
  "camino",
@@ -5432,15 +5449,11 @@ dependencies = [
  "dirs",
  "figment",
  "futures",
- "hex",
- "jsonschema",
  "libc",
  "mimalloc",
- "parking_lot",
  "sd-notify",
  "serde",
  "serde_json",
- "sha2",
  "sinex-core",
  "sinex-node-sdk",
  "sinex-test-utils",
@@ -5474,7 +5487,6 @@ name = "sinex-node-sdk"
 version = "0.4.2"
 dependencies = [
  "ahash",
- "anyhow",
  "async-nats",
  "async-trait",
  "blake3",
@@ -5487,7 +5499,6 @@ dependencies = [
  "figment",
  "futures",
  "gethostname 0.4.3",
- "humantime-serde",
  "jsonschema",
  "libc",
  "nix 0.28.0",
@@ -5509,7 +5520,6 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "toml",
- "tower 0.4.13",
  "tracing",
  "tracing-subscriber",
  "uncased",
@@ -5548,12 +5558,10 @@ dependencies = [
 name = "sinex-processor-runtime"
 version = "0.4.2"
 dependencies = [
- "async-nats",
  "async-trait",
  "chrono",
  "clap",
  "color-eyre",
- "futures",
  "serde",
  "serde_json",
  "sinex-core",
@@ -5579,10 +5587,8 @@ dependencies = [
  "rstest",
  "schemars",
  "sea-orm-migration",
- "sea-query 0.31.1",
  "serde",
  "serde_json",
- "sinex-macros",
  "sinex-test-utils",
  "sqlx",
  "tempfile",
@@ -5621,15 +5627,11 @@ dependencies = [
 name = "sinex-services"
 version = "0.4.2"
 dependencies = [
- "anyhow",
- "async-trait",
  "blake3",
- "bon",
  "chrono",
  "color-eyre",
  "futures",
  "once_cell",
- "parking_lot",
  "serde",
  "serde_json",
  "sha2",
@@ -5638,10 +5640,8 @@ dependencies = [
  "sinex-schema",
  "sinex-test-utils",
  "sqlx",
- "thiserror 2.0.17",
  "tokio",
  "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -5666,6 +5666,7 @@ dependencies = [
  "notify",
  "serde",
  "serde_json",
+ "sha2",
  "sinex-core",
  "sinex-node-sdk",
  "sinex-processor-runtime",
@@ -5718,6 +5719,7 @@ dependencies = [
  "futures",
  "gethostname 0.4.3",
  "glob",
+ "lazy_static",
  "libc",
  "mimalloc",
  "nix 0.27.1",
@@ -5749,8 +5751,6 @@ dependencies = [
 name = "sinex-test-utils"
 version = "0.1.0"
 dependencies = [
- "ahash",
- "anyhow",
  "async-nats",
  "async-std",
  "async-trait",
@@ -5765,12 +5765,10 @@ dependencies = [
  "gethostname 0.4.3",
  "hostname",
  "insta",
- "jsonschema",
  "lazy_static",
  "num_cpus",
  "once_cell",
  "parking_lot",
- "pretty_assertions",
  "proptest",
  "rand 0.8.5",
  "rstest",
@@ -5926,6 +5924,15 @@ name = "spin"
 version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
+dependencies = [
+ "lock_api",
+]
+
+[[package]]
+name = "spinning_top"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d96d2d1d716fb500937168cc09353ffdc7a012be8475ac7308e1bdf0e3923300"
 dependencies = [
  "lock_api",
 ]
@@ -6669,17 +6676,6 @@ checksum = "5d99f8c9a7727884afe522e9bd5edbfc91a3312b36a77b5fb8926e4c31a41801"
 
 [[package]]
 name = "tower"
-version = "0.4.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8fa9be0de6cf49e536ce1851f987bd21a43b771b09473c3549a6c853db37c1c"
-dependencies = [
- "tower-layer",
- "tower-service",
- "tracing",
-]
-
-[[package]]
-name = "tower"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d039ad9159c98b70ecfd540b2573b97f7f52c3e8d9f8ad57a24b916a536975f9"
@@ -6697,22 +6693,6 @@ dependencies = [
 
 [[package]]
 name = "tower-http"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e9cd434a998747dd2c4276bc96ee2e0c7a2eadf3cae88e52be55a05fa9053f5"
-dependencies = [
- "bitflags 2.10.0",
- "bytes",
- "http 1.3.1",
- "http-body 1.0.1",
- "http-body-util",
- "pin-project-lite",
- "tower-layer",
- "tower-service",
-]
-
-[[package]]
-name = "tower-http"
 version = "0.6.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "adc82fd73de2a9722ac5da747f12383d2bfdb93591ee6c58486e0097890f05f2"
@@ -6725,7 +6705,7 @@ dependencies = [
  "http-body-util",
  "iri-string",
  "pin-project-lite",
- "tower 0.5.2",
+ "tower",
  "tower-layer",
  "tower-service",
  "tracing",
@@ -7899,12 +7879,16 @@ name = "xtask"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "atty",
  "chrono",
  "clap",
  "clap_complete",
  "console",
+ "dirs",
+ "gethostname 0.4.3",
  "hex",
  "indicatif",
+ "libc",
  "num_cpus",
  "once_cell",
  "rusqlite",
@@ -7912,6 +7896,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+ "toml",
  "walkdir",
 ]
 

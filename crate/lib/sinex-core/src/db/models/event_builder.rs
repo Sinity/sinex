@@ -36,8 +36,9 @@ pub struct NoProvenance;
 pub struct HasProvenance;
 
 impl<T> EventBuilder<T, NoProvenance> {
-    // Logic copied/adapted from event.rs
-    pub fn new(source: EventSource, event_type: EventType, payload: T) -> Self {
+    /// Internal constructor - use `Event::builder(payload)` for typed payloads
+    /// or `EventBuilder::dynamic()` for JsonValue.
+    pub(crate) fn new_internal(source: EventSource, event_type: EventType, payload: T) -> Self {
         Self {
             id: None,
             source,
@@ -54,7 +55,41 @@ impl<T> EventBuilder<T, NoProvenance> {
             _phantom: std::marker::PhantomData,
         }
     }
+}
 
+/// Dynamic event builder for `JsonValue` payloads.
+///
+/// Use this when you need to construct events with runtime-determined source/type,
+/// such as in test utilities or heterogeneous event processing.
+///
+/// For typed payloads, use the fluent API instead:
+/// ```ignore
+/// let event = MyPayload { ... }
+///     .from_material(material_id)
+///     .build();
+/// ```
+impl EventBuilder<serde_json::Value, NoProvenance> {
+    /// Create a dynamic event builder with explicit source and event type.
+    ///
+    /// This is the escape hatch for when typed payloads aren't available.
+    /// Prefer typed payloads with `.from_material()` or `.from_parents()` when possible.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let event = EventBuilder::dynamic("test-source", "test.event", json!({"key": "value"}))
+    ///     .from_material(material_id, 0)
+    ///     .build()?;
+    /// ```
+    pub fn dynamic(
+        source: impl Into<EventSource>,
+        event_type: impl Into<EventType>,
+        payload: serde_json::Value,
+    ) -> Self {
+        Self::new_internal(source.into(), event_type.into(), payload)
+    }
+}
+
+impl<T> EventBuilder<T, NoProvenance> {
     /// Set hostname
     pub fn hostname(mut self, hostname: impl Into<crate::types::domain::HostName>) -> Self {
         self.hostname = Some(hostname.into());
@@ -201,6 +236,7 @@ impl<T> EventBuilder<T, HasProvenance> {
 /// Provenance information tracking the origin of an event
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Provenance {
     /// Event derived from source material (first-order event)
     Material {
@@ -221,6 +257,7 @@ pub enum Provenance {
 
 /// Type of offset measurement
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum OffsetKind {
     Byte,
     Line,

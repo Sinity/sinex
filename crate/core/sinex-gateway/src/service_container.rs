@@ -66,7 +66,58 @@ impl ServiceContainer {
             db_url
         };
 
-        let base_config = PoolConfig::default();
+        // Issue 129: Expose pool configuration via environment variables
+        // Issue 150 (LOW): Connection pool health checks
+        //
+        // SQLx PgPool does not expose a test_before_acquire option. Connection health is
+        // managed through:
+        //
+        // - idle_timeout: Closes connections idle for too long (default: 10 minutes)
+        // - max_lifetime: Not exposed by sinex PoolConfig but could be added if needed
+        // - Connection errors trigger automatic retry via SQLx internals
+        //
+        // For the gateway's workload:
+        // - Read queries dominate (analytics, search)
+        // - Connection lifetime is managed by pgbouncer in production
+        // - idle_timeout is sufficient for preventing stale connections
+        //
+        // To enable additional health monitoring, consider wrapping queries with
+        // `acquire_with_timeout` which includes latency warnings.
+        let mut base_config = PoolConfig::default();
+
+        if let Ok(max_conn_str) = std::env::var("SINEX_GATEWAY_POOL_MAX_CONNECTIONS") {
+            if let Ok(max_conn) = max_conn_str.parse::<u32>() {
+                base_config.max_connections = max_conn;
+            } else {
+                warn!(
+                    "Invalid SINEX_GATEWAY_POOL_MAX_CONNECTIONS value: {}, using default",
+                    max_conn_str
+                );
+            }
+        }
+
+        if let Ok(min_conn_str) = std::env::var("SINEX_GATEWAY_POOL_MIN_CONNECTIONS") {
+            if let Ok(min_conn) = min_conn_str.parse::<u32>() {
+                base_config.min_connections = min_conn;
+            } else {
+                warn!(
+                    "Invalid SINEX_GATEWAY_POOL_MIN_CONNECTIONS value: {}, using default",
+                    min_conn_str
+                );
+            }
+        }
+
+        if let Ok(timeout_str) = std::env::var("SINEX_GATEWAY_POOL_ACQUIRE_TIMEOUT_SECS") {
+            if let Ok(timeout_secs) = timeout_str.parse::<u64>() {
+                base_config.acquire_timeout_secs = timeout_secs.into();
+            } else {
+                warn!(
+                    "Invalid SINEX_GATEWAY_POOL_ACQUIRE_TIMEOUT_SECS value: {}, using default",
+                    timeout_str
+                );
+            }
+        }
+
         let service_config = per_service_pool_config(&base_config, 4);
 
         let analytics_pool = create_pool_with_config(&db_url, &service_config)
@@ -99,12 +150,19 @@ impl ServiceContainer {
             })?;
 
         // Create blob manager for content service
+        // Issue 130: Use persistent default path instead of /tmp
         let annex_path_str = match std::env::var("SINEX_ANNEX_PATH") {
             Ok(value) => value,
             Err(_) => {
-                let default_path =
-                    sinex_environment::environment().work_directory("/tmp/sinex/annex");
-                default_path.to_string_lossy().into_owned()
+                // Use ~/.local/share/sinex/annex as persistent default
+                let default_path = if let Ok(home) = std::env::var("HOME") {
+                    format!("{}/.local/share/sinex/annex", home)
+                } else {
+                    // Fallback to work_directory if HOME is not set
+                    let work_dir = sinex_environment::environment().work_directory("annex");
+                    work_dir.to_string_lossy().into_owned()
+                };
+                default_path
             }
         };
         let annex_path = SanitizedPath::from_str_validated(&annex_path_str)

@@ -1,4 +1,4 @@
-# sinex-health-aggregator
+# sinex-health-automaton
 
 The health aggregator collects signals from nodes and services to produce
 health summaries. It exposes derived events that power operational dashboards.

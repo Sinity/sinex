@@ -7,9 +7,7 @@ use sinex_core::{db::query_helpers::ulid_to_uuid, types::Ulid, DbPoolExt, SinexE
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
 use sinex_test_utils::timing_utils::{Timeouts, WaitHelpers};
-use sinex_test_utils::{
-    sinex_test, EventOverrides, TestContext, TestResult, TestNodePublisher,
-};
+use sinex_test_utils::{sinex_test, EventOverrides, TestContext, TestNodePublisher, TestResult};
 use sqlx::Row;
 use std::sync::Arc;
 use std::time::Duration;
@@ -69,7 +67,7 @@ async fn start_isolated_consumer(ctx: &TestContext, suffix: &str) -> TestResult<
 #[sinex_test]
 async fn consume_event_from_jetstream() -> color_eyre::Result<()> {
     let ctx = TestContext::new().await?;
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
 
     let nats = ctx.nats_handle()?;
     let nats_client = ctx.nats_client();
@@ -98,11 +96,8 @@ async fn consume_event_from_jetstream() -> color_eyre::Result<()> {
     nats.wait_for_stream(&js, &events_stream, Duration::from_secs(Timeouts::QUICK))
         .await?;
 
-    let publisher = TestNodePublisher::with_namespace(
-        nats_client.clone(),
-        "test",
-        Some(namespace.clone()),
-    );
+    let publisher =
+        TestNodePublisher::with_namespace(nats_client.clone(), "test", Some(namespace.clone()));
     let event_id = Ulid::new();
     publisher
         .publish_event_with_overrides(
@@ -135,7 +130,7 @@ async fn consume_event_from_jetstream() -> color_eyre::Result<()> {
 #[sinex_test]
 async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
     let ctx = TestContext::new().await?;
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let nats = ctx.nats_handle()?;
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
@@ -167,11 +162,8 @@ async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
     nats.wait_for_stream(&js, &confirmations_stream, stream_timeout)
         .await?;
 
-    let publisher = TestNodePublisher::with_namespace(
-        nats_client.clone(),
-        "test",
-        Some(namespace.clone()),
-    );
+    let publisher =
+        TestNodePublisher::with_namespace(nats_client.clone(), "test", Some(namespace.clone()));
     let event_id = Ulid::new();
     let confirmation_subject = format!(
         "{}.{}",
@@ -206,7 +198,7 @@ async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
 
 #[sinex_test]
 async fn consumer_persists_offset_kind(ctx: TestContext) -> color_eyre::Result<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
 
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
@@ -293,7 +285,7 @@ async fn consumer_persists_offset_kind(ctx: TestContext) -> color_eyre::Result<(
 
 #[sinex_test]
 async fn invalid_timestamp_routes_to_dlq_and_allows_progress() -> color_eyre::Result<()> {
-    let ctx = TestContext::new().await?.with_shared_nats().await?;
+    let ctx = TestContext::new().await?.with_nats().shared().await?;
 
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
@@ -326,11 +318,8 @@ async fn invalid_timestamp_routes_to_dlq_and_allows_progress() -> color_eyre::Re
     nats.wait_for_stream(&js, &dlq_stream, stream_timeout)
         .await?;
 
-    let publisher = TestNodePublisher::with_namespace(
-        nats_client.clone(),
-        "test",
-        Some(namespace.clone()),
-    );
+    let publisher =
+        TestNodePublisher::with_namespace(nats_client.clone(), "test", Some(namespace.clone()));
     let bad_event_id = publisher
         .publish_event_with_overrides(
             "test.bad_timestamp",
@@ -383,7 +372,7 @@ async fn invalid_timestamp_routes_to_dlq_and_allows_progress() -> color_eyre::Re
 
 #[sinex_test]
 async fn duplicate_events_are_idempotent(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
 
     let setup = start_isolated_consumer(&ctx, "idempotency").await?;
     let nats_client = ctx.nats_client();
@@ -425,7 +414,7 @@ async fn duplicate_events_are_idempotent(ctx: TestContext) -> TestResult<()> {
                 Ok::<bool, sinex_test_utils::SinexError>(duplicate_count.unwrap_or(0) == 1)
             }
         },
-        20,
+        Timeouts::MEDIUM,
     )
     .await?;
 
@@ -435,7 +424,7 @@ async fn duplicate_events_are_idempotent(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_test]
 async fn dlq_captures_multiple_validation_failures(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
 
     let setup = start_isolated_consumer(&ctx, "validation").await?;
     let dlq_stream = setup.topology.dlq_stream.clone();
@@ -443,11 +432,8 @@ async fn dlq_captures_multiple_validation_failures(ctx: TestContext) -> TestResu
     let mut dlq_stream_handle = setup.js.get_stream(&dlq_stream).await?;
     let initial_messages = dlq_stream_handle.info().await?.state.messages;
     let nats_client = ctx.nats_client();
-    let publisher = TestNodePublisher::with_namespace(
-        nats_client,
-        "validation",
-        Some(setup.namespace.clone()),
-    );
+    let publisher =
+        TestNodePublisher::with_namespace(nats_client, "validation", Some(setup.namespace.clone()));
 
     // Publish a handful of invalid events (missing payload field) to exercise DLQ throughput.
     let invalid_total = 5;

@@ -9,7 +9,7 @@
 use crate::confirmation_handler::{ConfirmedEventHandler, ProvisionalEvent};
 use crate::NodeResult;
 use async_trait::async_trait;
-use sinex_core::types::Ulid;
+use sinex_core::EventId;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
@@ -24,7 +24,7 @@ use tracing::{debug, info};
 /// streaming consumption.
 pub struct AutomatonEventHandler {
     /// List of processed event IDs (for verification)
-    processed_event_ids: Arc<RwLock<Vec<Ulid>>>,
+    processed_event_ids: Arc<RwLock<Vec<EventId>>>,
     /// Counter for processed events
     processed_count: Arc<RwLock<usize>>,
 }
@@ -44,7 +44,7 @@ impl AutomatonEventHandler {
     }
 
     /// Get all processed event IDs
-    pub async fn processed_event_ids(&self) -> Vec<Ulid> {
+    pub async fn processed_event_ids(&self) -> Vec<EventId> {
         self.processed_event_ids.read().await.clone()
     }
 }
@@ -86,17 +86,18 @@ impl ConfirmedEventHandler for AutomatonEventHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_core::types::domain::{EventSource, EventType};
     use sinex_test_utils::sinex_test;
 
     #[sinex_test]
     async fn test_automaton_event_handler_basic() -> TestResult<()> {
         let handler = AutomatonEventHandler::new();
 
-        let event_id = Ulid::new();
+        let event_id = EventId::new();
         let provisional = ProvisionalEvent {
             event_id,
-            source: "test".to_string(),
-            event_type: "test.event".to_string(),
+            source: EventSource::new("test"),
+            event_type: EventType::new("test.event"),
             payload: serde_json::json!({"data": "test"}),
             ts_orig: chrono::Utc::now(),
             received_at: chrono::Utc::now(),
@@ -120,13 +121,13 @@ mod tests {
 
         let mut event_ids = Vec::new();
         for i in 0..10 {
-            let event_id = Ulid::new();
+            let event_id = EventId::new();
             event_ids.push(event_id);
 
             let provisional = ProvisionalEvent {
                 event_id,
-                source: format!("test{}", i),
-                event_type: "test.event".to_string(),
+                source: EventSource::new(format!("test{}", i)),
+                event_type: EventType::new("test.event"),
                 payload: serde_json::json!({"index": i}),
                 ts_orig: chrono::Utc::now(),
                 received_at: chrono::Utc::now(),

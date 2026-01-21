@@ -80,7 +80,7 @@ async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> Tes
         r#"
         SELECT COUNT(*) as "count!"
         FROM core.processor_manifests
-        WHERE processor_name = $1 AND processor_type = 'automaton'
+        WHERE processor_name = $1 AND node_type = 'automaton'
         "#,
         processor_name
     )
@@ -139,7 +139,7 @@ async fn test_agent_heartbeat_chaos_with_network_failures(ctx: TestContext) -> T
             match sqlx::query!(
                 "UPDATE core.processor_manifests
                  SET last_heartbeat_ts = $1, updated_at = $2
-                 WHERE processor_name = $3 AND processor_type = 'automaton'",
+                 WHERE processor_name = $3 AND node_type = 'automaton'",
                 Utc::now(),
                 Utc::now(),
                 processor_name
@@ -230,7 +230,7 @@ async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> 
                 match sqlx::query!(
                     "UPDATE core.processor_manifests
                      SET last_heartbeat_ts = $1, updated_at = $2
-                     WHERE processor_name = $3 AND processor_type = 'automaton'",
+                     WHERE processor_name = $3 AND node_type = 'automaton'",
                     Utc::now(),
                     Utc::now(),
                     processor_name
@@ -251,7 +251,7 @@ async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> 
 
             // Deregister agent
             match sqlx::query!(
-                "DELETE FROM core.processor_manifests WHERE processor_name = $1 AND processor_type = 'automaton'",
+                "DELETE FROM core.processor_manifests WHERE processor_name = $1 AND node_type = 'automaton'",
                 processor_name
             )
             .execute(&pool_clone)
@@ -283,7 +283,7 @@ async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> 
 
     // Verify final database state
     let remaining_agents = sqlx::query!(
-        r#"SELECT COUNT(*) as "count!" FROM core.processor_manifests WHERE processor_name LIKE $1 AND processor_type = 'automaton'"#,
+        r#"SELECT COUNT(*) as "count!" FROM core.processor_manifests WHERE processor_name LIKE $1 AND node_type = 'automaton'"#,
         format!("{}%", base_processor_name)
     )
     .fetch_one(ctx.pool())

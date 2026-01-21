@@ -11,6 +11,16 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sinex_core::environment::SinexEnvironment;
 use sinex_node_sdk::dlq_retry::{DlqRetryConfig, DlqRetryHandler};
+use std::time::Duration;
+
+fn env_var_duration_secs(name: &str, default: u64) -> Duration {
+    Duration::from_secs(
+        std::env::var(name)
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(default),
+    )
+}
 
 /// DLQ statistics response
 #[derive(Debug, Serialize)]
@@ -46,9 +56,9 @@ fn default_peek_limit() -> usize {
 #[derive(Debug, Deserialize)]
 struct DlqRequeueParams {
     /// Optional event ID to requeue specific message
-    event_id: Option<String>,
-    /// Requeue all messages if true
     #[serde(default)]
+    event_id: Option<String>,
+    /// Requeue all DLQ messages (required, must be explicitly true or false)
     all: bool,
 }
 
@@ -104,17 +114,22 @@ pub async fn handle_dlq_peek(
         .map_err(|e| eyre!("Failed to get DLQ stream: {}", e))?;
 
     // Create ephemeral consumer for peeking
-    let consumer = stream
-        .create_consumer(jetstream::consumer::pull::Config {
+    // Issue 126: Add timeout to NATS consumer creation
+    let timeout = env_var_duration_secs("SINEX_NATS_CONSUMER_CREATE_TIMEOUT_SECS", 10);
+    let consumer = tokio::time::timeout(
+        timeout,
+        stream.create_consumer(jetstream::consumer::pull::Config {
             name: None, // ephemeral
             durable_name: None,
             filter_subject: env.nats_subject("events.dlq.>"),
             ack_policy: jetstream::consumer::AckPolicy::None, // Don't ack, just peek
             deliver_policy: jetstream::consumer::DeliverPolicy::All,
             ..Default::default()
-        })
-        .await
-        .map_err(|e| eyre!("Failed to create peek consumer: {}", e))?;
+        }),
+    )
+    .await
+    .map_err(|_| eyre!("Consumer creation timed out after {:?}", timeout))?
+    .map_err(|e| eyre!("Failed to create peek consumer: {}", e))?;
 
     let mut messages = consumer
         .messages()
@@ -174,26 +189,43 @@ pub async fn handle_dlq_peek(
 }
 
 /// Handle DLQ requeue request - move messages back to main stream
+///
+/// # Authorization
+///
+/// This is a dangerous operation that requeues failed messages back to the main stream.
+/// The auth context is logged for audit purposes.
 pub async fn handle_dlq_requeue(
     nats_client: &async_nats::Client,
     env: &SinexEnvironment,
     params: Value,
+    auth: &crate::rpc_server::RpcAuthContext,
 ) -> Result<Value> {
+    use tracing::info;
+
     let requeue_params: DlqRequeueParams =
         serde_json::from_value(params).wrap_err("Invalid DLQ requeue parameters")?;
 
     let config = DlqRetryConfig::default();
     let handler = DlqRetryHandler::new(nats_client.clone(), env.clone(), config);
 
-    let requeued_count = if let Some(event_id) = requeue_params.event_id {
+    let requeued_count = if let Some(ref event_id) = requeue_params.event_id {
         // Requeue specific event
+        info!(
+            token_prefix = %auth.token_prefix,
+            event_id = %event_id,
+            "DLQ requeue operation initiated"
+        );
         handler
-            .retry_by_id(&event_id)
+            .retry_by_id(event_id)
             .await
             .map_err(|e| eyre!("Failed to requeue event {}: {}", event_id, e))?;
         1
     } else if requeue_params.all {
         // Requeue all events
+        info!(
+            token_prefix = %auth.token_prefix,
+            "DLQ requeue all operation initiated"
+        );
         handler
             .retry_all()
             .await
@@ -289,8 +321,13 @@ mod tests {
         let client = nats.connect().await?;
         let env = environment();
 
+        let test_auth = crate::rpc_server::RpcAuthContext {
+            token_prefix: "test****".to_string(),
+            authenticated_at: chrono::Utc::now(),
+        };
+
         // Should fail without event_id or all flag
-        let err = handle_dlq_requeue(&client, &env, json!({}))
+        let err = handle_dlq_requeue(&client, &env, json!({}), &test_auth)
             .await
             .unwrap_err();
         assert!(err.to_string().contains("Must specify either"));

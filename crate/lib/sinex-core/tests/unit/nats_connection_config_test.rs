@@ -3,13 +3,14 @@ use sinex_core::nats::NatsConnectionConfig;
 use sinex_test_utils::{sinex_test, TestContext, TestResult};
 use std::io::Write;
 
-#[test]
-fn nats_config_requires_tls_scheme_when_enabled() {
+#[sinex_test]
+fn nats_config_requires_tls_scheme_when_enabled() -> TestResult<()> {
     let mut config = NatsConnectionConfig::default();
     config.url = "nats://127.0.0.1:4222".to_string();
     config.require_tls = true;
 
     assert!(config.validate().is_err());
+    Ok(())
 }
 
 #[sinex_test]

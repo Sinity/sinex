@@ -6,9 +6,7 @@ use sinex_core::types::{error::SinexError, Ulid};
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
 use sinex_test_utils::timing_utils::{Timeouts, WaitHelpers};
-use sinex_test_utils::{
-    sinex_test, EventOverrides, TestContext, TestResult, TestNodePublisher,
-};
+use sinex_test_utils::{sinex_test, EventOverrides, TestContext, TestNodePublisher, TestResult};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -38,7 +36,7 @@ async fn wait_for_consumer(js: &jetstream::Context, base_stream: &str) -> TestRe
 
 #[sinex_test]
 async fn test_dlq_cases_table() -> TestResult<()> {
-    let ctx = TestContext::new().await?.with_shared_nats().await?;
+    let ctx = TestContext::new().await?.with_nats().shared().await?;
     let nats = ctx.nats_handle()?;
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
@@ -88,11 +86,8 @@ async fn test_dlq_cases_table() -> TestResult<()> {
 
     wait_for_consumer(&js, &base_stream).await?;
 
-    let publisher = TestNodePublisher::with_namespace(
-        nats_client.clone(),
-        "test",
-        Some(namespace.clone()),
-    );
+    let publisher =
+        TestNodePublisher::with_namespace(nats_client.clone(), "test", Some(namespace.clone()));
 
     let mut expected_messages = 0u64;
     let wait_for_dlq = |expected_messages: u64| {

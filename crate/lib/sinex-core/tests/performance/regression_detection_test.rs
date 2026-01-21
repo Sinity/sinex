@@ -8,7 +8,7 @@ use serde_json::json;
 use sinex_core::types::events::{event_types, sources, EventFactory};
 use async_nats::jetstream::Context as JetStream;
 use sinex_test_utils::nats::EphemeralNats;
-use sinex_test_utils::prelude::*;
+use sinex_test_utils::{prelude::*, timing_utils::Timeouts};
 use std::collections::HashMap;
 use std::time::{Duration as StdDuration, Instant};
 
@@ -826,7 +826,7 @@ async fn test_jetstream_publish_regression_detection(
             name: stream_name.clone(),
             subjects: vec![subject.clone()],
             retention: async_nats::jetstream::stream::RetentionPolicy::Limits,
-            max_age: std::time::Duration::from_secs(120),
+            max_age: std::time::Duration::from_secs(Timeouts::EXTENDED),
             ..Default::default()
         },
     )

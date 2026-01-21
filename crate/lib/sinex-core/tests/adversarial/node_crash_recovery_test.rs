@@ -12,7 +12,8 @@ use sinex_node_sdk::{
 };
 use sinex_schema::ulid::Ulid;
 use sinex_test_utils::{
-    prelude::*, start_test_ingestd_with_config, TestIngestdConfig, TestIngestdHandle,
+    prelude::*, start_test_ingestd_with_config, timing_utils::Timeouts, TestIngestdConfig,
+    TestIngestdHandle,
 };
 use sqlx::Row;
 use std::sync::{
@@ -46,7 +47,7 @@ async fn wait_for_material_row(
     ctx: &TestContext,
     material_id: Ulid,
 ) -> Result<sqlx::postgres::PgRow> {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(Timeouts::QUICK);
     loop {
         let row = sqlx::query(
             r#"
@@ -315,7 +316,7 @@ async fn test_concurrent_material_acquisition_with_random_crashes(ctx: TestConte
     assert_eq!(successful + crashed, 20);
 
     // Poll until ingestd persists all statuses.
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(Timeouts::SHORT);
     let (completed_count, sensing_count) = loop {
         let completed: Option<i64> = sqlx::query_scalar!(
             r#"
@@ -435,13 +436,13 @@ async fn test_marking_crashed_materials_as_recovered_partial(ctx: TestContext) -
         r#"
         UPDATE raw.source_material_registry
         SET status = $1,
-            metadata = metadata || jsonb_build_object(
+            metadata = core.jsonb_merge_deep(metadata, jsonb_build_object(
                 'recovery_info', jsonb_build_object(
                     'recovered_at', NOW(),
                     'recovery_reason', 'node_crash',
                     'original_status', 'sensing'
                 )
-            )
+            ))
         WHERE id = $2::uuid::ulid
         "#,
         status::RECOVERED_PARTIAL,

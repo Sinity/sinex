@@ -38,6 +38,9 @@ pub mod state_machine_chaos_test;
 // Database resilience: connection failures, stream failures
 pub mod database_resilience_chaos_test;
 
+// Security validation tests: input sanitization, timestamp drift
+pub mod security_chaos_test;
+
 /// Common utilities for adversarial testing
 pub mod utils {
     use serde_json::json;

@@ -126,6 +126,8 @@ const CONFIRM_PUBLISH_MAX_ATTEMPTS: usize = 3;
 const CONFIRM_PUBLISH_BACKOFF_BASE: Duration = Duration::from_millis(200);
 const CONFIRM_PUBLISH_BACKOFF_MAX: Duration = Duration::from_secs(2);
 const CONFIRM_RETRY_DELAY: Duration = Duration::from_secs(1);
+const STREAM_CAPACITY_WARNING_THRESHOLD: f64 = 0.8; // Alert at 80% capacity
+const STREAM_CAPACITY_CHECK_INTERVAL: Duration = Duration::from_secs(300); // Check every 5 minutes
 
 #[derive(Debug)]
 struct PersistBatchResult {
@@ -415,11 +417,16 @@ impl JetStreamConsumer {
 
         // Stats logging interval
         let mut stats_interval = tokio::time::interval(Duration::from_secs(60));
+        // Stream capacity monitoring interval
+        let mut capacity_check_interval = tokio::time::interval(STREAM_CAPACITY_CHECK_INTERVAL);
 
         loop {
             tokio::select! {
                 _ = stats_interval.tick() => {
                     self.stats.log();
+                }
+                _ = capacity_check_interval.tick() => {
+                    self.check_stream_capacity(&stream_name).await;
                 }
                 batch_result = self.process_batch(&consumer) => {
                     if let Err(e) = batch_result {
@@ -866,10 +873,12 @@ impl JetStreamConsumer {
     }
 
     fn filter_cached_batch<'a>(&self, batch: &'a [PreparedEvent]) -> Vec<&'a PreparedEvent> {
-        let cache = self
-            .recent_id_cache
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let cache = self.recent_id_cache.lock().unwrap_or_else(|poisoned| {
+            warn!(
+                "Recent ID cache mutex was poisoned; recovering with potentially inconsistent data"
+            );
+            poisoned.into_inner()
+        });
         let mut seen = HashSet::new();
         batch
             .iter()
@@ -883,10 +892,12 @@ impl JetStreamConsumer {
     }
 
     fn remember_batch(&self, batch: &[PreparedEvent]) {
-        let mut cache = self
-            .recent_id_cache
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut cache = self.recent_id_cache.lock().unwrap_or_else(|poisoned| {
+            warn!(
+                "Recent ID cache mutex was poisoned; recovering with potentially inconsistent data"
+            );
+            poisoned.into_inner()
+        });
         for event in batch {
             cache.insert(event.parsed_id);
         }
@@ -1062,6 +1073,21 @@ impl JetStreamConsumer {
     /// Route failed message to DLQ. Returns true when publish + ack succeeds.
     #[tracing::instrument(skip(self, msg), fields(error = %error))]
     async fn route_to_dlq(&self, msg: &jetstream::Message, error: String) -> bool {
+        let original_payload = match serde_json::from_slice(&msg.payload) {
+            Ok(json) => json,
+            Err(parse_err) => {
+                warn!(
+                    error = %parse_err,
+                    payload_len = msg.payload.len(),
+                    "Failed to parse original payload for DLQ entry; preserving raw bytes as base64"
+                );
+                serde_json::json!({
+                    "_parse_error": parse_err.to_string(),
+                    "_raw_bytes_base64": base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &msg.payload)
+                })
+            }
+        };
+
         let dlq_entry = DlqEntry {
             event_id: msg
                 .headers
@@ -1070,7 +1096,7 @@ impl JetStreamConsumer {
                 .map(|v| v.as_str().to_string())
                 .unwrap_or_else(|| "unknown".to_string()),
             error,
-            original_payload: serde_json::from_slice(&msg.payload).unwrap_or(serde_json::json!({})),
+            original_payload,
             failed_at: Utc::now().to_rfc3339(),
         };
 
@@ -1137,6 +1163,49 @@ impl JetStreamConsumer {
                 })?;
         }
         Ok(())
+    }
+
+    /// Check stream capacity and log warnings if approaching limits
+    async fn check_stream_capacity(&self, stream_name: &str) {
+        match self.js.get_stream(stream_name).await {
+            Ok(mut stream) => {
+                if let Ok(info) = stream.info().await {
+                    let state = info.state.clone();
+                    let config = info.config.clone();
+
+                    // Check message count capacity
+                    if config.max_messages > 0 {
+                        let usage_ratio = state.messages as f64 / config.max_messages as f64;
+                        if usage_ratio >= STREAM_CAPACITY_WARNING_THRESHOLD {
+                            warn!(
+                                stream = %stream_name,
+                                messages = state.messages,
+                                max_messages = config.max_messages,
+                                usage_percent = format!("{:.1}%", usage_ratio * 100.0),
+                                "Stream approaching message capacity limit"
+                            );
+                        }
+                    }
+
+                    // Check byte capacity if configured
+                    if config.max_bytes > 0 {
+                        let bytes_ratio = state.bytes as f64 / config.max_bytes as f64;
+                        if bytes_ratio >= STREAM_CAPACITY_WARNING_THRESHOLD {
+                            warn!(
+                                stream = %stream_name,
+                                bytes = state.bytes,
+                                max_bytes = config.max_bytes,
+                                usage_percent = format!("{:.1}%", bytes_ratio * 100.0),
+                                "Stream approaching byte capacity limit"
+                            );
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                debug!("Failed to check stream capacity for {}: {}", stream_name, e);
+            }
+        }
     }
 }
 

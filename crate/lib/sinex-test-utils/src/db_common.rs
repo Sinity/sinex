@@ -995,6 +995,20 @@ pub async fn verify_clean_state(pool: &DbPool) -> TestResult<()> {
 /// # }
 /// ```
 pub async fn apply_test_optimizations(pool: &DbPool) -> TestResult<()> {
+    // Get statement timeout from environment or use default for benchmarks (5 minutes)
+    let statement_timeout_secs = std::env::var("SINEX_DB_STATEMENT_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(300); // Default to 5 minutes for benchmarks
+
+    let timeout_value = if statement_timeout_secs == 0 {
+        "0".to_string()
+    } else {
+        format!("{}s", statement_timeout_secs)
+    };
+
+    let statement_timeout_setting = format!("SET statement_timeout = '{}'", timeout_value);
+
     let optimizations = vec![
         "SET work_mem = '64MB'",
         "SET maintenance_work_mem = '256MB'",
@@ -1002,7 +1016,7 @@ pub async fn apply_test_optimizations(pool: &DbPool) -> TestResult<()> {
         "SET random_page_cost = 1.1",
         "SET effective_cache_size = '1GB'",
         "SET temp_buffers = '32MB'",
-        "SET statement_timeout = '300s'", // 5 minutes for benchmarks
+        statement_timeout_setting.as_str(),
     ];
 
     for setting in optimizations {
@@ -1061,13 +1075,13 @@ mod tests {
     #[sinex_serial_test]
     async fn force_cleanup_clears_event_and_material_pairs() -> TestResult<()> {
         let ctx = TestContext::with_name("force_cleanup_fk").await?;
-        let ctx = ctx.with_nats().await?;
+        let ctx = ctx.with_nats().shared().await?;
         ctx.ensure_clean().await?;
 
         // Seed a couple of events to ensure both event and source material rows exist.
-        ctx.publish_json_event("force-clean", "cleanup.test", json!({"n": 1}))
+        ctx.publish_event("force-clean", "cleanup.test", json!({"n": 1}))
             .await?;
-        ctx.publish_json_event("force-clean", "cleanup.test", json!({"n": 2}))
+        ctx.publish_event("force-clean", "cleanup.test", json!({"n": 2}))
             .await?;
 
         // Validate force cleanup succeeds and leaves database clean.
@@ -1110,7 +1124,7 @@ mod tests {
             .await?;
         let material_id = Id::<SourceMaterial>::from_ulid(material_record.id);
 
-        let new_event = sinex_core::db::models::event_builder::EventBuilder::new(
+        let new_event = sinex_core::db::models::event_builder::EventBuilder::dynamic(
             EventSource::new("test"),
             EventType::new("test"),
             serde_json::json!({}),
@@ -1204,6 +1218,7 @@ mod tests {
 mod benches {
     use super::*;
     use crate::database_pool::acquire_test_database;
+    #[allow(unused_imports)]
     use crate::{sinex_bench, TestResult};
     use sinex_core::db::repositories::DbPoolExt;
 

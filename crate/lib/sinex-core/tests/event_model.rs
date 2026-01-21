@@ -4,7 +4,7 @@ use sinex_core::types::domain::SanitizedPath;
 use sinex_core::types::events::payloads::{FileCreatedPayload, KittyCommandExecutedPayload};
 use sinex_core::Id;
 use sinex_core::{Event, EventBuilder};
-use sinex_test_utils::{sinex_test, TestResult};
+use sinex_test_utils::sinex_test;
 
 #[sinex_test]
 fn material_event_builder_sets_fields() -> TestResult<()> {
@@ -44,7 +44,7 @@ fn synthesis_event_builder_tracks_parents() -> TestResult<()> {
 #[sinex_test]
 fn raw_event_alias_is_equivalent() -> TestResult<()> {
     let event: sinex_core::Event<JsonValue> =
-        EventBuilder::new("test".into(), "test.event".into(), json!({"data": "value"}))
+        EventBuilder::dynamic("test", "test.event", json!({"data": "value"}))
             .from_material(Id::<SourceMaterial>::new(), 0)
             .build()?;
 
@@ -54,13 +54,9 @@ fn raw_event_alias_is_equivalent() -> TestResult<()> {
 
 #[sinex_test]
 fn json_conversion_round_trips_payload() -> TestResult<()> {
-    let original = EventBuilder::new(
-        "test".into(),
-        "test.event".into(),
-        json!({"message": "hello"}),
-    )
-    .from_material(Id::<SourceMaterial>::new(), 10)
-    .build()?;
+    let original = EventBuilder::dynamic("test", "test.event", json!({"message": "hello"}))
+        .from_material(Id::<SourceMaterial>::new(), 10)
+        .build()?;
 
     let raw = original.to_json_event()?;
     let recovered: Event<JsonValue> = raw.to_typed()?;

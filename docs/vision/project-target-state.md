@@ -93,7 +93,7 @@ Events (core.events):
 
 Processor control plane:
 
-- `core.processor_manifests` is the manifest/catalog for every ingestor, node, and automaton. Each row tracks `{ processor_name, version, processor_type, anchor_rule_version, description, config_schema }`. We migrated manifests here during the JetStream refactor (2024‑Q4) and deleted the retired `raw.processor_registry`.
+- `core.processor_manifests` is the manifest/catalog for every ingestor, node, and automaton. Each row tracks `{ processor_name, version, node_type, anchor_rule_version, description, config_schema }`. We migrated manifests here during the JetStream refactor (2024‑Q4) and deleted the retired `raw.processor_registry`.
 - Checkpoints live in the NATS KV bucket `sinex_checkpoints`, keyed by processor + consumer identifiers. Recent checkpoint work:
   - 2025‑01: Unified checkpoint payloads across ingestors and automata (now stored in KV) and retired offsets.
   - 2025‑02: Added checkpoint versioning + activity timestamps so consumers can detect rewinds and track liveness.

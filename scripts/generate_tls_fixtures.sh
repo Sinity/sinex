@@ -33,9 +33,11 @@ fi
 if [ ! -f client.pem ]; then
     echo "Generating Client Cert..."
     openssl genrsa -out client-key.pem 2048
-    openssl req -new -key client-key.pem -out client.csr -subj "/CN=sinex-client"
+    openssl req -new -key client-key.pem -out client.csr -subj "/CN=sinex-client" \
+        -addext "subjectAltName = DNS:localhost,IP:127.0.0.1"
     openssl x509 -req -days 365 -in client.csr -CA ca.pem -CAkey ca.key -CAcreateserial \
-        -out client.pem
+        -out client.pem -extensions v3_req -extfile <(echo "[v3_req]
+subjectAltName = DNS:localhost,IP:127.0.0.1")
 fi
 
 echo "Done."

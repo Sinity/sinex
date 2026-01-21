@@ -19,11 +19,13 @@ macro_rules! define_event_payload {
     };
 }
 
+pub mod automaton;
 pub mod blob;
 pub mod clipboard;
 pub mod desktop;
 pub mod document;
 pub mod filesystem;
+pub mod metrics;
 pub mod process;
 pub mod rpc;
 pub mod shell;
@@ -31,11 +33,13 @@ pub mod system;
 pub mod window;
 
 // Re-export all payloads for convenience
+pub use automaton::*;
 pub use blob::*;
 pub use clipboard::*;
 pub use desktop::*;
 pub use document::*;
 pub use filesystem::*;
+pub use metrics::*;
 pub use process::*;
 pub use rpc::*;
 pub use shell::*;

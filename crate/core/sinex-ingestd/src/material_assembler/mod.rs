@@ -12,6 +12,9 @@ mod pipeline;
 mod state;
 
 const MAX_BUFFERED_SLICES: usize = 100;
+const SLICE_ARRIVAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300); // 5 minutes
+const STALE_ASSEMBLY_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60); // 1 minute
+const ORPHANED_FILE_AGE_THRESHOLD: std::time::Duration = std::time::Duration::from_secs(3600); // 1 hour
 
 use async_nats::{jetstream, Client as NatsClient};
 use blake3::Hasher;
@@ -25,9 +28,9 @@ use sinex_core::{
     Id, JsonValue,
 };
 use sinex_node_sdk::annex::GitAnnex;
-use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
+use std::{collections::BTreeMap, path::PathBuf, str::FromStr, sync::Arc};
 use tokio::{fs, fs::File, sync::Mutex};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::{IngestdResult, SinexError};
 use state::{
@@ -47,6 +50,7 @@ pub struct MaterialAssembler {
     state_root: PathBuf,
     dlq_subject: String,
     slices_max_ack_pending: i64,
+    active_assemblies: Arc<tokio::sync::Semaphore>,
 }
 
 impl MaterialAssembler {
@@ -75,6 +79,10 @@ impl MaterialAssembler {
             &format!("events.dlq.{DLQ_CONSUMER}"),
         );
 
+        // Cap concurrent assemblies to prevent memory exhaustion
+        // TODO: Make this configurable
+        let active_assemblies = Arc::new(tokio::sync::Semaphore::new(50));
+
         Ok(Self {
             js,
             nats_client,
@@ -86,6 +94,7 @@ impl MaterialAssembler {
             state_root,
             dlq_subject,
             slices_max_ack_pending,
+            active_assemblies,
         })
     }
 
@@ -147,6 +156,13 @@ impl MaterialAssembler {
             .await
             .map_err(|e| SinexError::io(format!("Failed to open temp file: {}", e)))?;
 
+        // Limit concurrent assemblies
+        let permit = self
+            .active_assemblies
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| SinexError::service("Too many active assemblies (semaphore exhausted)"))?;
+
         Ok(AssemblerState {
             material_id,
             temp_path,
@@ -165,6 +181,8 @@ impl MaterialAssembler {
             pending_write: None,
             pending_end: None,
             finalizing: false,
+            last_slice_received: Utc::now(),
+            permit: Some(permit),
         })
     }
 
@@ -236,10 +254,21 @@ impl MaterialAssembler {
             state_root: self.state_root.clone(),
             dlq_subject: self.dlq_subject.clone(),
             slices_max_ack_pending: self.slices_max_ack_pending,
+            active_assemblies: self.active_assemblies.clone(),
         }
     }
 
     /// Run the assembler service
+    ///
+    /// # Observability
+    ///
+    /// TODO: Add comprehensive assembly metrics for production observability:
+    /// - Assembly duration histogram (time from begin to end)
+    /// - Active assembly count gauge
+    /// - Slice count per material histogram
+    /// - Assembly failure counter by reason (hash_mismatch, corruption, timeout, etc.)
+    /// - Buffer utilization histogram (peak buffered slices per material)
+    /// - WAL replay duration on startup
     pub async fn run(self) -> IngestdResult<()> {
         self.run_with_shutdown(Arc::new(std::sync::atomic::AtomicBool::new(false)))
             .await
@@ -261,6 +290,13 @@ impl MaterialAssembler {
             end: pipeline::spawn_end_consumer(&self, shutdown_flag.clone()),
         };
 
+        // Spawn stale assembly cleanup task
+        let cleanup_task = {
+            let assembler = self.clone_for_task();
+            let shutdown = shutdown_flag.clone();
+            tokio::spawn(async move { assembler.run_stale_assembly_cleanup(shutdown).await })
+        };
+
         tokio::select! {
             result = &mut consumers.begin => {
                 return Self::handle_task_exit("material begin consumer", result, &shutdown_flag);
@@ -270,6 +306,13 @@ impl MaterialAssembler {
             }
             result = &mut consumers.end => {
                 return Self::handle_task_exit("material end consumer", result, &shutdown_flag);
+            }
+            result = cleanup_task => {
+                match result {
+                    Ok(Ok(())) => return Ok(()),
+                    Ok(Err(e)) => return Err(e),
+                    Err(e) => return Err(SinexError::service(format!("Cleanup task panicked: {}", e))),
+                }
             }
         }
     }
@@ -292,5 +335,151 @@ impl MaterialAssembler {
                 "{task_name} panicked: {join_err}"
             ))),
         }
+    }
+
+    /// Periodically check for stale assemblies and clean them up
+    async fn run_stale_assembly_cleanup(
+        &self,
+        shutdown_flag: Arc<std::sync::atomic::AtomicBool>,
+    ) -> IngestdResult<()> {
+        let mut interval = tokio::time::interval(STALE_ASSEMBLY_CHECK_INTERVAL);
+
+        loop {
+            if shutdown_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                break;
+            }
+
+            interval.tick().await;
+
+            let now = Utc::now();
+            let mut stale_materials = Vec::new();
+
+            // Collect stale materials
+            for entry in self.assembler_state.iter() {
+                let material_id = *entry.key();
+                let state = entry.value().lock().await;
+
+                // Skip if finalizing
+                if state.finalizing {
+                    continue;
+                }
+
+                // Check if last slice arrival was too long ago
+                let elapsed = now.signed_duration_since(state.last_slice_received);
+                if elapsed.num_seconds() > SLICE_ARRIVAL_TIMEOUT.as_secs() as i64 {
+                    // Also check if we have pending end or buffered slices (incomplete assembly)
+                    if state.pending_end.is_none() || !state.buffered_slices.is_empty() {
+                        stale_materials.push((material_id, elapsed.num_seconds()));
+                    }
+                }
+            }
+
+            // Clean up stale materials
+            for (material_id, elapsed_secs) in stale_materials {
+                info!(
+                    material_id = %material_id,
+                    elapsed_secs,
+                    "Cleaning up stale assembly due to slice arrival timeout"
+                );
+
+                self.route_material_error(
+                    material_id,
+                    "slice_arrival_timeout",
+                    serde_json::json!({
+                        "timeout_seconds": SLICE_ARRIVAL_TIMEOUT.as_secs(),
+                        "elapsed_seconds": elapsed_secs,
+                    }),
+                )
+                .await;
+
+                self.finalize_failed_material(material_id, "slice_arrival_timeout")
+                    .await;
+            }
+
+            // Periodically scan for orphaned temp files and clean them up
+            if let Err(e) = self.cleanup_orphaned_temp_files().await {
+                warn!("Failed to cleanup orphaned temp files: {}", e);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Scan state root for orphaned temp files from crashed/terminated assemblies
+    async fn cleanup_orphaned_temp_files(&self) -> IngestdResult<()> {
+        let mut entries = match fs::read_dir(&self.state_root).await {
+            Ok(entries) => entries,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(err) => {
+                return Err(SinexError::io(format!(
+                    "Failed to read state root for cleanup: {}",
+                    err
+                )))
+            }
+        };
+
+        let now = std::time::SystemTime::now();
+
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .map_err(|e| SinexError::io(format!("Failed to iterate state directory: {}", e)))?
+        {
+            let path = entry.path();
+            if !entry
+                .file_type()
+                .await
+                .map_err(|e| SinexError::io(format!("Failed to check file type: {}", e)))?
+                .is_dir()
+            {
+                continue;
+            }
+
+            let folder_name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default();
+            let material_id = match Ulid::from_str(folder_name) {
+                Ok(id) => id,
+                Err(_) => continue, // Skip non-ULID folders
+            };
+
+            // Check if this material is still active in memory
+            if self.assembler_state.contains_key(&material_id) {
+                continue; // Active, don't touch it
+            }
+
+            // Check if material is terminal in database
+            if self.material_is_terminal(material_id).await? {
+                // Terminal but not cleaned up - clean it now
+                info!(
+                    material_id = %material_id,
+                    "Cleaning up orphaned state for terminal material"
+                );
+                self.cleanup_state(material_id).await;
+                continue;
+            }
+
+            // Check file age - only clean up if old enough
+            let temp_path = path.join(state::TEMP_FILE_NAME);
+            if temp_path.exists() {
+                if let Ok(metadata) = fs::metadata(&temp_path).await {
+                    if let Ok(modified) = metadata.modified() {
+                        if let Ok(age) = now.duration_since(modified) {
+                            if age > ORPHANED_FILE_AGE_THRESHOLD {
+                                warn!(
+                                    material_id = %material_id,
+                                    age_hours = age.as_secs() / 3600,
+                                    "Cleaning up very old orphaned temp file"
+                                );
+                                self.cleanup_state(material_id).await;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 }

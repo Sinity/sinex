@@ -397,7 +397,7 @@ async fn test_sinex_error_propagation(ctx: TestContext) -> TestResult<()> {
     // Test that SinexError works properly with Result
 
     // This should work fine
-    ctx.publish_json_event("error-test", "valid.test", json!({"test": true}))
+    ctx.publish_event("error-test", "valid.test", json!({"test": true}))
         .await?;
 
     // Test error handling with invalid data - empty source should work but be empty
@@ -670,7 +670,7 @@ async fn test_event_ordering_preserved(ctx: TestContext) -> TestResult<()> {
 
     for i in 0..5 {
         let event = ctx
-            .publish_json_event(&source, "sequential.event", json!({"sequence": i}))
+            .publish_event(source.as_str(), "sequential.event", json!({"sequence": i}))
             .await?;
         events.push(event);
 
@@ -711,13 +711,9 @@ async fn test_event_ordering_preserved(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 async fn test_builder_method_chaining_order(ctx: TestContext) -> TestResult<()> {
     // Test event creation with different sources
-    let event1 = ctx
-        .publish_json_event("order1", "test", json!({"a": 1}))
-        .await?;
+    let event1 = ctx.publish_event("order1", "test", json!({"a": 1})).await?;
 
-    let event2 = ctx
-        .publish_json_event("order2", "test", json!({"a": 1}))
-        .await?;
+    let event2 = ctx.publish_event("order2", "test", json!({"a": 1})).await?;
 
     // Both should succeed despite different order
     assert_eq!(event1.event_type.as_str(), "test");

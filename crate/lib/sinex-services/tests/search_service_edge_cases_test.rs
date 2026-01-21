@@ -36,7 +36,7 @@ async fn search_with_empty_results_returns_empty_vec(ctx: TestContext) -> TestRe
 
 #[sinex_test]
 async fn search_with_source_filter(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let clock = SeedClock::fixed();
     let service = SearchService::new(ctx.pool().clone());
@@ -67,7 +67,7 @@ async fn search_with_source_filter(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_test]
 async fn search_with_event_type_filter(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let clock = SeedClock::fixed();
     let service = SearchService::new(ctx.pool().clone());
@@ -98,7 +98,7 @@ async fn search_with_event_type_filter(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_test]
 async fn search_with_multiple_filters_combined(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let clock = SeedClock::fixed();
     let service = SearchService::new(ctx.pool().clone());
@@ -132,7 +132,7 @@ async fn search_with_multiple_filters_combined(ctx: TestContext) -> TestResult<(
 
 #[sinex_test]
 async fn search_respects_limit_parameter(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let clock = SeedClock::fixed();
     let service = SearchService::new(ctx.pool().clone());
@@ -159,7 +159,7 @@ async fn search_respects_limit_parameter(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_test]
 async fn search_handles_unicode_in_payload(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let clock = SeedClock::fixed();
     let service = SearchService::new(ctx.pool().clone());
@@ -192,7 +192,7 @@ async fn search_handles_unicode_in_payload(ctx: TestContext) -> TestResult<()> {
 async fn search_with_time_range_filter(ctx: TestContext) -> TestResult<()> {
     use chrono::{Duration, Utc};
 
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let clock = SeedClock::fixed();
     let service = SearchService::new(ctx.pool().clone());
@@ -227,7 +227,7 @@ async fn search_with_time_range_filter(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_test]
 async fn search_results_have_required_fields(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let clock = SeedClock::fixed();
     let service = SearchService::new(ctx.pool().clone());
@@ -267,7 +267,7 @@ async fn search_results_have_required_fields(ctx: TestContext) -> TestResult<()>
 
 #[sinex_test]
 async fn search_with_multiple_event_types(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let clock = SeedClock::fixed();
     let service = SearchService::new(ctx.pool().clone());

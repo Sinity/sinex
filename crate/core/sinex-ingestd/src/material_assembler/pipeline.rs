@@ -19,6 +19,8 @@ use tracing::{error, info, warn};
 
 use crate::{IngestdResult, SinexError};
 
+const BATCH_PROCESSING_SEMAPHORE_PERMITS: usize = 4; // Allow up to 4 concurrent batches
+
 /// Handles for the three material consumer tasks
 pub(crate) struct MaterialConsumerHandles {
     pub(crate) begin: JoinHandle<IngestdResult<()>>,
@@ -198,6 +200,11 @@ pub(super) fn spawn_slices_consumer(
     let assembler = assembler.clone_for_task();
     let shutdown_flag = shutdown_flag.clone();
 
+    // Semaphore to limit concurrent batch processing and prevent memory exhaustion
+    let batch_semaphore = Arc::new(tokio::sync::Semaphore::new(
+        BATCH_PROCESSING_SEMAPHORE_PERMITS,
+    ));
+
     tokio::spawn(async move {
         let stream_name = namespaced_stream(&assembler, "SOURCE_MATERIAL_SLICES");
         let stream = js
@@ -225,6 +232,12 @@ pub(super) fn spawn_slices_consumer(
             if shutdown_flag.load(Ordering::Relaxed) {
                 break;
             }
+
+            // Acquire semaphore permit before fetching next batch (backpressure)
+            let _permit = batch_semaphore.acquire().await.map_err(|e| {
+                SinexError::service(format!("Failed to acquire batch semaphore: {}", e))
+            })?;
+
             let mut messages = consumer
                 .batch()
                 .max_messages(200)
@@ -324,6 +337,7 @@ pub(super) fn spawn_slices_consumer(
                     warn!("Failed to ack slice message: {}", e);
                 }
             }
+            // Permit automatically dropped here, releasing semaphore
         }
 
         Ok::<(), SinexError>(())

@@ -74,7 +74,7 @@ When touching a crate, run through this list:
        exercising private-only helpers.
 6. [ ] Inline tests are justified (proc-macro parsing, minimal helper coverage).
 7. [ ] Workspace docs are linked when they provide extended rationale.
-8. [ ] `cargo xtask check` and `cargo xtask test --profile reliable` succeed
+8. [ ] `cargo xtask check` and `cargo xtask test --profile default` succeed
        locally after documentation or test moves (Nextest-only; `cargo test`
        is unsupported).
 

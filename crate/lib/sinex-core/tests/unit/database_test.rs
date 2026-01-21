@@ -144,7 +144,7 @@ async fn test_edge_case_payloads(ctx: TestContext) -> TestResult<()> {
 
     for (test_name, payload) in test_cases {
         let event = ctx
-            .publish_json_event("edge-test", test_name, payload.clone())
+            .publish_event("edge-test", test_name, payload.clone())
             .await?;
 
         assert_eq!(event.payload, payload);
@@ -182,9 +182,10 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> TestResult<()> {
 
             // Insert events concurrently
             for event_num in 0..events_per_task {
+                let source = format!("task-{task_id}-{run_suffix}");
                 let inserted = ctx_clone
-                    .publish_json_event(
-                        &format!("task-{task_id}-{run_suffix}"),
+                    .publish_event(
+                        source.as_str(),
                         "concurrent.test",
                         json!({
                             "task_id": task_id,
@@ -265,7 +266,7 @@ async fn test_transaction_rollback(ctx: TestContext) -> TestResult<()> {
 
     // Test successful transaction
     let _success_event = ctx
-        .publish_json_event("transaction-test", "success", json!({"test": "commit"}))
+        .publish_event("transaction-test", "success", json!({"test": "commit"}))
         .await?;
 
     let after_success = ctx.pool.events().count_all().await?;
@@ -274,7 +275,7 @@ async fn test_transaction_rollback(ctx: TestContext) -> TestResult<()> {
     // Note: Complex transaction rollback testing requires low-level database access
     // For now, we test that invalid events are properly rejected
     let invalid_result = ctx
-        .publish_json_event(
+        .publish_event(
             "", // Empty source should be rejected
             "rollback",
             json!({"test": "rollback"}),
@@ -308,7 +309,7 @@ async fn test_transaction_rollback(ctx: TestContext) -> TestResult<()> {
 async fn test_schema_validation(ctx: TestContext) -> TestResult<()> {
     // Test creating events with valid payloads
     let valid_event = ctx
-        .publish_json_event(
+        .publish_event(
             "schema-test",
             "valid.event",
             json!({
@@ -325,7 +326,7 @@ async fn test_schema_validation(ctx: TestContext) -> TestResult<()> {
     // We're testing the repository layer behavior
 
     let edge_case_event = ctx
-        .publish_json_event(
+        .publish_event(
             "schema-test",
             "edge.case",
             json!({
@@ -358,7 +359,7 @@ async fn test_bulk_insert_performance(ctx: TestContext) -> TestResult<()> {
     // Create batch of events
     let mut events = Vec::new();
     for i in 0..batch_size {
-        let event = EventBuilder::new(
+        let event = EventBuilder::dynamic(
             EventSource::from("performance-test"),
             EventType::from("bulk.insert"),
             json!({
@@ -407,6 +408,7 @@ async fn pool_acquire_timeout_is_reported(ctx: TestContext) -> TestResult<()> {
         min_connections: 1,
         acquire_timeout_secs: Seconds::from_secs(30),
         idle_timeout_secs: Seconds::from_secs(300),
+        statement_timeout_secs: Seconds::from_secs(60),
         validate_against_postgres_max: false,
     };
     let pool = create_pool_with_config(ctx.database_url(), &config).await?;
@@ -581,7 +583,7 @@ async fn test_constraint_violations(ctx: TestContext) -> TestResult<()> {
 
     // Empty source should be rejected
     let empty_source_result = ctx
-        .publish_json_event(
+        .publish_event(
             "", // Empty source
             "test.event",
             json!({"data": "test"}),
@@ -591,7 +593,7 @@ async fn test_constraint_violations(ctx: TestContext) -> TestResult<()> {
 
     // Empty event type should be rejected
     let empty_type_result = ctx
-        .publish_json_event(
+        .publish_event(
             "test-source",
             "", // Empty event type
             json!({"data": "test"}),
@@ -627,7 +629,7 @@ async fn test_database_recovery_scenarios(ctx: TestContext) -> TestResult<()> {
     });
 
     let large_event = ctx
-        .publish_json_event("recovery-test", "large.payload", large_payload)
+        .publish_event("recovery-test", "large.payload", large_payload)
         .await?;
 
     assert!(large_event.id.is_some());

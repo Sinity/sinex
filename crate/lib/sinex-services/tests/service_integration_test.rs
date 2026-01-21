@@ -17,7 +17,7 @@ use std::time::Instant;
 #[sinex_test]
 async fn test_cross_service_data_flow(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing cross-service data flow integration");
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let clock = SeedClock::fixed();
     let dataset = seed_service_integration_dataset_semantic_min_via_scope(&scope, &clock).await?;
@@ -59,7 +59,7 @@ async fn test_cross_service_data_flow(ctx: TestContext) -> TestResult<()> {
 /// Test service initialization and basic functionality
 #[sinex_test]
 async fn test_service_initialization(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     tracing::info!("Testing service initialization");
 
@@ -93,7 +93,7 @@ async fn test_service_initialization(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 async fn test_service_error_handling(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing service error handling patterns");
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
 
     seed_events_via_scope(
@@ -138,7 +138,7 @@ async fn test_service_error_handling(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 async fn test_service_performance_integration(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing service performance under load");
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let start_time = Instant::now();
     let clock = SeedClock::fixed();
@@ -220,7 +220,7 @@ async fn test_service_performance_integration(ctx: TestContext) -> TestResult<()
 #[sinex_test]
 async fn test_service_lifecycle(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing service lifecycle management");
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let clock = SeedClock::fixed();
 
@@ -273,7 +273,7 @@ async fn test_service_lifecycle(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 async fn test_time_based_service_integration(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing time-based service integration");
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
     let clock = SeedClock::fixed();
     let now = clock.base();
@@ -325,7 +325,7 @@ async fn test_time_based_service_integration(ctx: TestContext) -> TestResult<()>
 #[sinex_test]
 async fn test_service_configuration(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing service configuration patterns");
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
 
     let analytics = AnalyticsService::new(ctx.pool.clone());
@@ -365,7 +365,7 @@ async fn test_service_configuration(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 async fn test_cross_service_error_handling(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing cross-service error handling");
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
 
     seed_events_via_scope(

@@ -7,6 +7,7 @@ use chrono::Utc;
 use futures::future::join_all;
 use serde_json::json;
 use sinex_test_utils::prelude::*;
+use sinex_test_utils::timing_utils::Timeouts;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 

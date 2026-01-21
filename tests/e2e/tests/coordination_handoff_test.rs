@@ -5,7 +5,7 @@ use sinex_test_utils::prelude::*;
 
 #[sinex_test]
 async fn kv_leadership_handoff(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let js = ctx.jetstream().await?;
     ensure_coordination_buckets(&js).await?;
 

@@ -27,7 +27,7 @@ use std::time::Duration as StdDuration;
 /// Test batch insertion of multiple events using modern patterns
 #[sinex_serial_test]
 async fn test_batch_event_insertion(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     ctx.ensure_clean().await?;
     let source = format!("fs-watcher-{}", Ulid::new());
     // Create test events using modern test utilities
@@ -36,8 +36,8 @@ async fn test_batch_event_insertion(ctx: TestContext) -> TestResult<()> {
 
     for i in 0..10 {
         let event = ctx
-            .publish_json_event(
-                &source,
+            .publish_event(
+                source.as_str(),
                 event_type.as_str(),
                 json!({
                     "path": format!("/test/file_{}.txt", i),
@@ -86,31 +86,31 @@ async fn test_batch_event_insertion(ctx: TestContext) -> TestResult<()> {
 /// Test querying events by source using modern patterns
 #[sinex_serial_test]
 async fn test_query_events_by_source(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     ctx.ensure_clean().await?;
     let fs_source = format!("fs-watcher-{}", Ulid::new());
     let terminal_source = format!("shell-{}", Ulid::new());
 
     // Create filesystem events
     let _fs_event1 = ctx
-        .publish_json_event(
-            &fs_source,
+        .publish_event(
+            fs_source.as_str(),
             FileCreatedPayload::EVENT_TYPE.as_str(),
             json!({"path": "/test/file1.txt", "size": 1024}),
         )
         .await?;
 
     let _fs_event2 = ctx
-        .publish_json_event(
-            &fs_source,
+        .publish_event(
+            fs_source.as_str(),
             FileModifiedPayload::EVENT_TYPE.as_str(),
             json!({"path": "/test/file2.txt", "size": 2048}),
         )
         .await?;
 
     let _term_event = ctx
-        .publish_json_event(
-            &terminal_source,
+        .publish_event(
+            terminal_source.as_str(),
             "command.executed",
             json!({"command": "ls -la", "exit_status": 0, "kitty_window_id": "test", "kitty_tab_id": "test"}),
         )
@@ -148,12 +148,12 @@ async fn test_query_events_by_source(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 #[traced_test]
 async fn test_ulid_time_ordering(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     tracing::info!("Testing ULID time ordering");
 
     // Insert events with a small delay to ensure different timestamps
     let event1 = ctx
-        .publish_json_event(
+        .publish_event(
             FileCreatedPayload::SOURCE.as_str(),
             FileCreatedPayload::EVENT_TYPE.as_str(),
             json!({"path": "/test/first.txt", "size": 100}),
@@ -165,7 +165,7 @@ async fn test_ulid_time_ordering(ctx: TestContext) -> TestResult<()> {
     tokio::time::sleep(StdDuration::from_millis(1)).await;
 
     let event2 = ctx
-        .publish_json_event(
+        .publish_event(
             FileCreatedPayload::SOURCE.as_str(),
             FileCreatedPayload::EVENT_TYPE.as_str(),
             json!({"path": "/test/second.txt", "size": 200}),
@@ -188,7 +188,7 @@ async fn test_ulid_time_ordering(ctx: TestContext) -> TestResult<()> {
 #[sinex_serial_test]
 #[traced_test]
 async fn test_ulid_ordering_in_database(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     tracing::info!("Testing ULID ordering in database queries");
     ctx.ensure_clean().await?;
 
@@ -197,7 +197,7 @@ async fn test_ulid_ordering_in_database(ctx: TestContext) -> TestResult<()> {
 
     for i in 0..5 {
         let event = ctx
-            .publish_json_event(
+            .publish_event(
                 FileCreatedPayload::SOURCE.as_str(),
                 FileCreatedPayload::EVENT_TYPE.as_str(),
                 json!({"path": format!("/test/file_{}.txt", i), "size": (i + 1) * 1024}),
@@ -265,13 +265,13 @@ async fn test_ulid_uuid_conversion_consistency() -> TestResult<()> {
 #[sinex_serial_test]
 #[traced_test]
 async fn test_basic_event_creation_patterns(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     tracing::info!("Testing various event creation patterns");
     ctx.ensure_clean().await?;
 
     // Test simple event creation
     let simple_event = ctx
-        .publish_json_event(
+        .publish_event(
             "test-service",
             "simple.event",
             json!({"message": "Basic test event"}),
@@ -284,7 +284,7 @@ async fn test_basic_event_creation_patterns(ctx: TestContext) -> TestResult<()> 
 
     // Test event with complex payload
     let complex_event = ctx
-        .publish_json_event(
+        .publish_event(
             "test-service",
             "complex.event",
             json!({
@@ -317,11 +317,11 @@ async fn test_basic_event_creation_patterns(ctx: TestContext) -> TestResult<()> 
 /// Test event creation with various payload types
 #[sinex_serial_test]
 async fn test_event_payload_validation(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     ctx.ensure_clean().await?;
     // Test with different payload structures
     let simple_event = ctx
-        .publish_json_event(
+        .publish_event(
             "test-service",
             "simple.event",
             json!({"message": "hello world"}),
@@ -329,7 +329,7 @@ async fn test_event_payload_validation(ctx: TestContext) -> TestResult<()> {
         .await?;
 
     let complex_event = ctx
-        .publish_json_event(
+        .publish_event(
             "test-service",
             "complex.event",
             json!({

@@ -8,10 +8,10 @@ use sinex_core::{
 };
 use sinex_node_sdk::{
     checkpoint::CheckpointManager,
-    event_processor::EventTransport,
     heartbeat::HeartbeatEmitter,
     nats_publisher::NatsPublisher,
     stream_processor::{EventEmitter, NodeHandles, NodeRuntimeState, ServiceInfo},
+    EventTransport,
 };
 use tokio::sync::mpsc;
 
@@ -71,7 +71,7 @@ impl<'ctx> TestRuntimeBuilder<'ctx> {
         let js = async_nats::jetstream::new(nats_client);
         let kv = js
             .create_key_value(async_nats::jetstream::kv::Config {
-                bucket: "sinex_checkpoints".to_string(),
+                bucket: sinex_core::environment().nats_kv_bucket_name("sinex_checkpoints"),
                 history: 1,
                 ..Default::default()
             })

@@ -1,7 +1,6 @@
 use sinex_core::types::Seconds;
 use sinex_node_sdk::{AutomatonConfig, EventSourceConfig, NodeConfig};
 use sinex_test_utils::sinex_test;
-use sinex_test_utils::TestResult;
 
 #[sinex_test]
 fn node_config_loads_from_custom_file() -> TestResult<()> {

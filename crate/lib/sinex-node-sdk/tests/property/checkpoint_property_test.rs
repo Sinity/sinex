@@ -5,10 +5,16 @@
 
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
+use proptest::test_runner::TestCaseError;
 use sinex_node_sdk::Checkpoint;
 use sinex_node_sdk::{CheckpointManager, CheckpointState};
 use sinex_test_utils::{prelude::*, sinex_prop};
 use std::sync::Arc;
+
+/// Helper to convert color_eyre::Report errors to TestCaseError for property tests
+fn report_to_test_error<E: std::fmt::Display>(e: E) -> TestCaseError {
+    TestCaseError::Fail(e.to_string().into())
+}
 
 // =============================================================================
 // Property Test Strategies
@@ -43,14 +49,16 @@ fn checkpoint_data() -> impl Strategy<Value = serde_json::Value> {
 
 #[sinex_prop]
 async fn checkpoint_updates_are_idempotent(
+    ctx: &TestContext,
     #[strategy(processor_names())] processor_name: String,
     #[strategy(0u64..10000u64)] processed_count: u64,
     #[strategy(prop::option::of("[0-9A-HJKMNP-TV-Z]{26}"))] last_processed_id: Option<String>,
     #[strategy(checkpoint_data())] checkpoint_data: serde_json::Value,
-) -> TestResult<()> {
-    let ctx = TestContext::new().await?;
-    let ctx = ctx.with_nats().await?;
-    let kv = ctx.checkpoint_kv().await?;
+) -> Result<(), TestCaseError> {
+    let kv = ctx
+        .ensure_checkpoint_kv()
+        .await
+        .map_err(report_to_test_error)?;
     let checkpoint_manager = CheckpointManager::new(
         kv,
         processor_name.clone(),
@@ -77,11 +85,20 @@ async fn checkpoint_updates_are_idempotent(
     };
 
     // Save checkpoint twice
-    checkpoint_manager.save_checkpoint(&initial_state).await?;
-    checkpoint_manager.save_checkpoint(&initial_state).await?;
+    checkpoint_manager
+        .save_checkpoint(&initial_state)
+        .await
+        .map_err(report_to_test_error)?;
+    checkpoint_manager
+        .save_checkpoint(&initial_state)
+        .await
+        .map_err(report_to_test_error)?;
 
     // Verify state is consistent
-    let state = checkpoint_manager.get_checkpoint_stats().await?;
+    let state = checkpoint_manager
+        .get_checkpoint_stats()
+        .await
+        .map_err(report_to_test_error)?;
     prop_assert_eq!(state.max_processed, initial_state.processed_count);
     prop_assert!(state.last_update.is_some());
     Ok(())
@@ -89,13 +106,15 @@ async fn checkpoint_updates_are_idempotent(
 
 #[sinex_prop]
 async fn checkpoint_recovery_is_robust(
+    ctx: &TestContext,
     #[strategy(processor_names())] processor_name: String,
     #[strategy(proptest::collection::vec((0u64..1000u64, checkpoint_data()), 1..=10))]
     checkpoints: Vec<(u64, serde_json::Value)>,
-) -> TestResult<()> {
-    let ctx = TestContext::new().await?;
-    let ctx = ctx.with_nats().await?;
-    let kv = ctx.checkpoint_kv().await?;
+) -> Result<(), TestCaseError> {
+    let kv = ctx
+        .ensure_checkpoint_kv()
+        .await
+        .map_err(report_to_test_error)?;
     let checkpoint_manager = CheckpointManager::new(
         kv,
         processor_name.clone(),
@@ -119,23 +138,31 @@ async fn checkpoint_recovery_is_robust(
             version: 2,
         };
 
-        checkpoint_manager.save_checkpoint(&state).await?;
+        checkpoint_manager
+            .save_checkpoint(&state)
+            .await
+            .map_err(report_to_test_error)?;
     }
 
     // Verify final state
-    let state = checkpoint_manager.get_checkpoint_stats().await?;
+    let state = checkpoint_manager
+        .get_checkpoint_stats()
+        .await
+        .map_err(report_to_test_error)?;
     prop_assert_eq!(state.max_processed, expected_final_count);
     Ok(())
 }
 
 #[sinex_prop]
 async fn concurrent_checkpoint_access_is_safe(
+    ctx: &TestContext,
     #[strategy(processor_names())] processor_name: String,
     #[strategy(proptest::collection::vec(0u64..1000u64, 1..=20))] concurrent_updates: Vec<u64>,
-) -> TestResult<()> {
-    let ctx = TestContext::new().await?;
-    let ctx = ctx.with_nats().await?;
-    let kv = ctx.checkpoint_kv().await?;
+) -> Result<(), TestCaseError> {
+    let kv = ctx
+        .ensure_checkpoint_kv()
+        .await
+        .map_err(report_to_test_error)?;
     let checkpoint_manager = Arc::new(CheckpointManager::new(
         kv,
         processor_name.clone(),
@@ -176,20 +203,25 @@ async fn concurrent_checkpoint_access_is_safe(
     prop_assert!(successful_updates > 0, "At least one update should succeed");
 
     // Verify final state is consistent
-    let final_state = checkpoint_manager.get_checkpoint_stats().await?;
+    let final_state = checkpoint_manager
+        .get_checkpoint_stats()
+        .await
+        .map_err(report_to_test_error)?;
     prop_assert!(final_state.last_update.is_some());
     Ok(())
 }
 
 #[sinex_prop]
 async fn checkpoint_state_transitions_are_valid(
+    ctx: &TestContext,
     #[strategy(processor_names())] processor_name: String,
     #[strategy(0u64..100u64)] initial_count: u64,
     #[strategy(proptest::collection::vec(1u64..100u64, 1..=10))] increments: Vec<u64>,
-) -> TestResult<()> {
-    let ctx = TestContext::new().await?;
-    let ctx = ctx.with_nats().await?;
-    let kv = ctx.checkpoint_kv().await?;
+) -> Result<(), TestCaseError> {
+    let kv = ctx
+        .ensure_checkpoint_kv()
+        .await
+        .map_err(report_to_test_error)?;
     let checkpoint_manager = CheckpointManager::new(
         kv,
         processor_name.clone(),
@@ -210,20 +242,32 @@ async fn checkpoint_state_transitions_are_valid(
         version: 2,
     };
 
-    checkpoint_manager.save_checkpoint(&state).await?;
+    checkpoint_manager
+        .save_checkpoint(&state)
+        .await
+        .map_err(report_to_test_error)?;
 
     // Apply increments sequentially
     for (i, increment) in increments.iter().enumerate() {
         current_count += increment;
         state.processed_count = current_count;
-        state.set_last_processed_id(Some(format!("step-{i}")));
+        state.checkpoint = Checkpoint::Stream {
+            message_id: format!("step-{i}"),
+            event_id: None,
+        };
         state.version += 1;
         state.data = Some(serde_json::json!({ "sequence": i + 1 }));
 
-        checkpoint_manager.save_checkpoint(&state).await?;
+        checkpoint_manager
+            .save_checkpoint(&state)
+            .await
+            .map_err(report_to_test_error)?;
 
         // Verify the state was updated correctly
-        let retrieved_state = checkpoint_manager.get_checkpoint_stats().await?;
+        let retrieved_state = checkpoint_manager
+            .get_checkpoint_stats()
+            .await
+            .map_err(report_to_test_error)?;
         prop_assert_eq!(retrieved_state.max_processed, current_count);
         prop_assert!(retrieved_state.last_update.is_some());
     }
@@ -232,6 +276,7 @@ async fn checkpoint_state_transitions_are_valid(
 
 #[sinex_prop]
 async fn checkpoint_data_integrity_is_preserved(
+    ctx: &TestContext,
     #[strategy(processor_names())] processor_name: String,
     #[strategy(checkpoint_data())] test_data: serde_json::Value,
     #[strategy(proptest::collection::vec(
@@ -243,10 +288,11 @@ async fn checkpoint_data_integrity_is_preserved(
         1..=50
     ))]
     operations: Vec<String>,
-) -> TestResult<()> {
-    let ctx = TestContext::new().await?;
-    let ctx = ctx.with_nats().await?;
-    let kv = ctx.checkpoint_kv().await?;
+) -> Result<(), TestCaseError> {
+    let kv = ctx
+        .ensure_checkpoint_kv()
+        .await
+        .map_err(report_to_test_error)?;
     let checkpoint_manager = CheckpointManager::new(
         kv,
         processor_name.clone(),
@@ -272,10 +318,16 @@ async fn checkpoint_data_integrity_is_preserved(
                     version: 2,
                 };
 
-                checkpoint_manager.save_checkpoint(&state).await?;
+                checkpoint_manager
+                    .save_checkpoint(&state)
+                    .await
+                    .map_err(report_to_test_error)?;
             }
             "load" => {
-                let stats = checkpoint_manager.get_checkpoint_stats().await?;
+                let stats = checkpoint_manager
+                    .get_checkpoint_stats()
+                    .await
+                    .map_err(report_to_test_error)?;
                 prop_assert_eq!(stats.max_processed, processed_count);
                 prop_assert!(stats.last_update.is_some());
             }
@@ -294,14 +346,20 @@ async fn checkpoint_data_integrity_is_preserved(
                     version: 2,
                 };
 
-                checkpoint_manager.save_checkpoint(&state).await?;
+                checkpoint_manager
+                    .save_checkpoint(&state)
+                    .await
+                    .map_err(report_to_test_error)?;
             }
             _ => unreachable!(),
         }
     }
 
     // Final verification
-    let final_state = checkpoint_manager.get_checkpoint_stats().await?;
+    let final_state = checkpoint_manager
+        .get_checkpoint_stats()
+        .await
+        .map_err(report_to_test_error)?;
     prop_assert_eq!(final_state.max_processed, processed_count);
     prop_assert!(final_state.last_update.is_some());
     Ok(())
@@ -309,12 +367,14 @@ async fn checkpoint_data_integrity_is_preserved(
 
 #[sinex_prop]
 async fn checkpoint_cleanup_maintains_consistency(
+    ctx: &TestContext,
     #[strategy(proptest::collection::vec(processor_names(), 1..=10))] processor_names: Vec<String>,
     #[strategy(1u64..100u64)] cleanup_threshold: u64,
-) -> TestResult<()> {
-    let ctx = TestContext::new().await?;
-    let ctx = ctx.with_nats().await?;
-    let kv = ctx.checkpoint_kv().await?; // Shared KV for this test run
+) -> Result<(), TestCaseError> {
+    let kv = ctx
+        .ensure_checkpoint_kv()
+        .await
+        .map_err(report_to_test_error)?; // Shared KV for this test run
 
     // Create multiple automata with checkpoints
     let mut managers = Vec::new();
@@ -338,13 +398,19 @@ async fn checkpoint_cleanup_maintains_consistency(
             version: 2,
         };
 
-        manager.save_checkpoint(&state).await?;
+        manager
+            .save_checkpoint(&state)
+            .await
+            .map_err(report_to_test_error)?;
         managers.push(manager);
     }
 
     // Verify all checkpoints exist
     for manager in &managers {
-        let stats = manager.get_checkpoint_stats().await?;
+        let stats = manager
+            .get_checkpoint_stats()
+            .await
+            .map_err(report_to_test_error)?;
         prop_assert_eq!(stats.max_processed, cleanup_threshold);
         prop_assert!(stats.last_update.is_some());
     }
@@ -359,7 +425,10 @@ async fn checkpoint_cleanup_maintains_consistency(
     );
 
     // Verify cleanup maintains isolation
-    let remaining_checkpoint = cleaned_manager.get_checkpoint_stats().await?;
+    let remaining_checkpoint = cleaned_manager
+        .get_checkpoint_stats()
+        .await
+        .map_err(report_to_test_error)?;
     prop_assert!(remaining_checkpoint.last_update.is_some());
     Ok(())
 }
@@ -379,8 +448,7 @@ mod stress_tests {
         const UPDATES_PER_THREAD: usize = 100;
         const EXPECTED_TOTAL: usize = NUM_THREADS * UPDATES_PER_THREAD;
 
-        let ctx = ctx.with_nats().await?; // Ensure NATS is available
-        let kv = ctx.checkpoint_kv().await?;
+        let kv = ctx.ensure_checkpoint_kv().await?;
         let counter = Arc::new(AtomicUsize::new(0));
         let mut handles = Vec::new();
 
@@ -477,16 +545,22 @@ mod unit_tests {
         assert_eq!(state.version, 2);
 
         // Test setting stream ID
-        state.set_last_processed_id(Some("stream-123".to_string()));
+        state.checkpoint = Checkpoint::Stream {
+            message_id: "stream-123".to_string(),
+            event_id: None,
+        };
         assert_eq!(state.last_processed_id(), Some("stream-123".to_string()));
 
         // Test setting ULID
         let ulid = sinex_core::types::Ulid::new();
-        state.set_last_processed_id(Some(ulid.to_string()));
+        state.checkpoint = Checkpoint::Internal {
+            event_id: ulid,
+            message_count: 0,
+        };
         assert_eq!(state.last_processed_id(), Some(ulid.to_string()));
 
         // Test clearing
-        state.set_last_processed_id(None);
+        state.checkpoint = Checkpoint::None;
         assert_eq!(state.last_processed_id(), None);
 
         Ok(())

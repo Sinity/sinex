@@ -187,7 +187,7 @@ impl TableDef for ProcessorManifests {
 pub struct ProcessorManifestRecord {
     pub id: i32,
     pub processor_name: String,
-    pub processor_type: String,
+    pub node_type: String,
     pub version: String,
     pub description: Option<String>,
     pub anchor_rule_version: i32,
@@ -217,7 +217,7 @@ impl ProcessorManifests {
                     .text()
                     .not_null()
                     .check(Expr::cust(
-                        "processor_type IN ('ingestor', 'automaton', 'agent', 'system')",
+                        "node_type IN ('ingestor', 'automaton', 'agent', 'system')",
                     )),
             )
             .col(

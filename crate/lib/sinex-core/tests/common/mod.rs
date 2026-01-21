@@ -127,7 +127,7 @@ pub mod builders {
             
             payload["timestamp"] = json!(Utc::now().to_rfc3339());
             
-            ctx.publish_json_event("fs-watcher", &self.event_type, payload).await
+            ctx.publish_event("fs-watcher", self.event_type.as_str(), payload).await
         }
     }
 }
@@ -173,7 +173,7 @@ pub mod performance {
         let mut events = Vec::new();
         
         for i in 0..count {
-            let event = ctx.publish_json_event(
+            let event = ctx.publish_event(
                 source,
                 event_type,
                 json!({"index": i, "batch_id": uuid::Uuid::new_v4()}),

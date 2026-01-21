@@ -17,7 +17,7 @@ use std::time::Duration;
 use async_nats::jetstream::{self, consumer, stream};
 use color_eyre::eyre::eyre;
 use sinex_test_utils::prelude::*;
-use sinex_test_utils::timing_utils::WaitHelpers;
+use sinex_test_utils::timing_utils::{Timeouts, WaitHelpers};
 use tokio::sync::OnceCell;
 
 fn is_jetstream_no_messages_error(msg: &str) -> bool {
@@ -409,7 +409,7 @@ async fn test_concurrent_consumer_creation() -> Result<()> {
 /// Test stream with message limit enforces retention.
 #[sinex_test]
 async fn test_stream_message_limit_enforcement(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let js = ctx.jetstream().await?;
 
     let stream_name = format!("TEST_LIMIT_{}", uuid::Uuid::new_v4().simple());
@@ -451,7 +451,7 @@ async fn test_stream_message_limit_enforcement(ctx: TestContext) -> Result<()> {
 /// Test stream with storage limit enforces retention.
 #[sinex_test]
 async fn test_stream_storage_limit_enforcement(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let js = ctx.jetstream().await?;
 
     let stream_name = format!("TEST_STORAGE_{}", uuid::Uuid::new_v4().simple());
@@ -518,7 +518,7 @@ async fn test_stream_storage_limit_enforcement(ctx: TestContext) -> Result<()> {
 /// Test that unacked messages are redelivered.
 #[sinex_test]
 async fn test_consumer_redelivery_on_timeout(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let js = ctx.jetstream().await?;
 
     let stream_name = format!("TEST_REDEL_{}", uuid::Uuid::new_v4().simple());
@@ -557,7 +557,7 @@ async fn test_consumer_redelivery_on_timeout(ctx: TestContext) -> Result<()> {
     // Message should be redelivered after the ack wait.
     let mut redelivered = None;
     let start = std::time::Instant::now();
-    while redelivered.is_none() && start.elapsed() < Duration::from_secs(5) {
+    while redelivered.is_none() && start.elapsed() < Duration::from_secs(Timeouts::QUICK) {
         let fetch_result = consumer
             .fetch()
             .max_messages(1)
