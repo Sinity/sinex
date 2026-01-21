@@ -41,7 +41,6 @@ use crate::{stream_processor::Checkpoint, NodeError, NodeResult};
 use async_nats::jetstream::kv::Operation;
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
-use sinex_core::types::ulid::Ulid;
 use std::convert::TryInto;
 use tracing::{debug, info, warn};
 
@@ -75,6 +74,10 @@ pub struct CheckpointState {
 
     /// Checkpoint version (for schema evolution)
     pub version: u32,
+
+    /// NATS KV Revision (optimistic concurrency control)
+    #[serde(skip)]
+    pub revision: u64,
 }
 
 impl CheckpointState {
@@ -87,59 +90,6 @@ impl CheckpointState {
             Checkpoint::Timestamp { .. } => None, // Timestamp checkpoints don't have event IDs
         }
     }
-
-    /// Update the checkpoint with a new processed ID.
-    ///
-    /// # Complex Invariants
-    ///
-    /// This function implements complex logic to determine checkpoint type based on ID format:
-    /// - **ULID strings**: Parsed and stored as `Checkpoint::Internal` for automata
-    /// - **Other strings**: Stored as `Checkpoint::Stream` for message stream IDs
-    /// - **None**: Resets to `Checkpoint::None` (initial state)
-    ///
-    /// The function maintains important invariants:
-    /// - `processed_count` is preserved when converting checkpoint types
-    /// - Stream checkpoints set `event_id: None` (they don't map to events)
-    /// - Invalid ULIDs gracefully fall back to stream ID interpretation
-    ///
-    /// This design allows the same checkpoint API to work for both ingestors
-    /// (external positions) and automata (event IDs).
-    ///
-    /// # Issue 11 Fix
-    ///
-    /// WARNING: This auto-detection can misclassify stream IDs that happen to be valid ULIDs.
-    /// For production code, prefer explicit checkpoint type constructors:
-    /// - `Checkpoint::Internal { event_id, message_count }` for automata
-    /// - `Checkpoint::Stream { message_id, event_id }` for streams
-    /// - `Checkpoint::External { position }` for ingestors
-    ///
-    /// Consider deprecating this method in favor of explicit type parameters.
-    #[deprecated(
-        note = "Auto-detection can misclassify valid ULID stream IDs. Use explicit Checkpoint constructors instead."
-    )]
-    pub fn set_last_processed_id(&mut self, id: Option<String>) {
-        self.checkpoint = match id {
-            Some(id_str) => {
-                // Try to parse as ULID first, then fall back to stream ID
-                if let Ok(ulid) = id_str.parse::<Ulid>() {
-                    warn!(
-                        id = %id_str,
-                        "Auto-detecting checkpoint type from ID format - consider using explicit type"
-                    );
-                    Checkpoint::Internal {
-                        event_id: ulid,
-                        message_count: self.processed_count,
-                    }
-                } else {
-                    Checkpoint::Stream {
-                        message_id: id_str,
-                        event_id: None,
-                    }
-                }
-            }
-            None => Checkpoint::None,
-        };
-    }
 }
 
 impl Default for CheckpointState {
@@ -150,6 +100,7 @@ impl Default for CheckpointState {
             last_activity: chrono::Utc::now(),
             data: None,
             version: 2, // Version 2 for unified checkpoint format
+            revision: 0,
         }
     }
 }
@@ -449,22 +400,25 @@ impl CheckpointManager {
     }
 
     async fn load_checkpoint_for_key(&self, key: &str) -> NodeResult<Option<CheckpointState>> {
-        let data = self
+        let entry = self
             .kv
-            .get(key)
+            .entry(key)
             .await
             .map_err(|e| NodeError::Checkpoint(format!("Failed to read checkpoint KV: {e}")))?;
 
-        let Some(data) = data else {
+        let Some(entry) = entry else {
             return Ok(None);
         };
 
-        if data.is_empty() {
+        if entry.value.is_empty() {
             return Ok(None);
         }
 
-        match serde_json::from_slice::<CheckpointState>(&data) {
-            Ok(state) => Ok(Some(state)),
+        match serde_json::from_slice::<CheckpointState>(&entry.value) {
+            Ok(mut state) => {
+                state.revision = entry.revision;
+                Ok(Some(state))
+            }
             Err(err) => {
                 warn!(
                     processor = %self.processor_name,
@@ -506,7 +460,7 @@ impl CheckpointManager {
                 continue;
             }
 
-            let state = match serde_json::from_slice::<CheckpointState>(&entry.value) {
+            let mut state = match serde_json::from_slice::<CheckpointState>(&entry.value) {
                 Ok(state) => state,
                 Err(err) => {
                     warn!(
@@ -520,6 +474,15 @@ impl CheckpointManager {
                     continue;
                 }
             };
+
+            // Note: We don't set revision here because we are loading from a DIFFERENT key (fallback).
+            // When we save, we will be saving to OUR key, which is a new entry (create), or updating OUR key.
+            // If we blindly copy the revision from another key, the update to OUR key will fail (wrong revision for that key).
+            // So for fallback, we treat it as "new data" essentially, relying on save_checkpoint dealing with OUR key.
+            // However, save_checkpoint uses state.revision. If we want "create", revision should be 0.
+            // CheckpointState::default().revision is 0.
+            // So we explicitly set revision to 0 here to ensure we don't try to CAS against a non-existent key using another key's revision.
+            state.revision = 0;
 
             let created_nanos = entry.created.unix_timestamp_nanos();
             match &latest {
@@ -539,22 +502,44 @@ impl CheckpointManager {
     /// - `state`: The checkpoint state to save
     ///
     /// # Returns
-    /// - `Ok(())`: Checkpoint successfully saved
-    /// - `Err(NodeError::Checkpoint)`: KV write error
+    /// - `Ok(u64)`: The new revision number of the saved checkpoint
+    /// - `Err(NodeError::Checkpoint)`: KV write error (including CAS failure)
     /// - `Err(NodeError::Serialization)`: Checkpoint serialization error
-    pub async fn save_checkpoint(&self, state: &CheckpointState) -> NodeResult<()> {
+    pub async fn save_checkpoint(&self, state: &CheckpointState) -> NodeResult<u64> {
         let processed_count: i64 = state.processed_count.try_into().map_err(|_| {
             NodeError::Checkpoint("processed_count exceeds supported range for storage".to_string())
         })?;
 
         // Save to NATS KV only
         let encoded = serde_json::to_vec(state).map_err(NodeError::Serialization)?;
-        self.kv
-            .put(&self.kv_key(), encoded.into())
-            .await
-            .map_err(|e| {
-                NodeError::Checkpoint(format!("Failed to persist checkpoint to KV: {e}"))
-            })?;
+
+        let revision = if state.revision > 0 {
+            self.kv
+                .update(&self.kv_key(), encoded.into(), state.revision)
+                .await
+                .map_err(|e| {
+                    NodeError::Checkpoint(format!(
+                        "Failed to update checkpoint in KV (CAS failure?): {e}"
+                    ))
+                })?
+        } else {
+            // Revision 0 means potentially new. Try create first to ensure no overwrite?
+            // Or use put if we want upsert behavior for "first write".
+            // Since we want strict correctness:
+            // If we think it's new (rev 0), we should probably use `create` to ensure we don't overwrite existing.
+            // BUT, if we just want "last write wins" for the *first* write (maybe previously deleted), `put` is safer?
+            // "Split-Brain" implies we want to prevent overwriting *concurrent* modifications.
+            // So `create` is safer for rev 0.
+            self.kv
+                .update(&self.kv_key(), encoded.into(), 0)
+                .await
+                .map_err(|e| {
+                    // unexpected error or key exists
+                    NodeError::Checkpoint(format!(
+                        "Failed to create checkpoint in KV (Key exists?): {e}"
+                    ))
+                })?
+        };
 
         debug!(
             processor = %self.processor_name,
@@ -562,10 +547,11 @@ impl CheckpointManager {
             consumer_name = %self.consumer_name,
             processed_count = processed_count,
             checkpoint = %state.checkpoint.description(),
+            revision = revision,
             "Saved checkpoint to KV"
         );
 
-        Ok(())
+        Ok(revision)
     }
 
     fn kv_group_prefix(&self) -> String {

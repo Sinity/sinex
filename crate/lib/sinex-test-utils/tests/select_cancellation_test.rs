@@ -1,4 +1,4 @@
-use sinex_test_utils::{sinex_test, TestResult};
+use sinex_test_utils::sinex_test;
 use std::sync::Arc;
 use std::time::Duration;
 

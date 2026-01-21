@@ -45,6 +45,9 @@ impl MigratorTrait for Migrator {
             Box::new(migrations::m20250117_000010_rename_processor_type_to_node_type::Migration),
             Box::new(migrations::m20250117_000011_add_self_observation_aggregates::Migration),
             Box::new(migrations::m20250118_000012_add_cancelled_status::Migration),
+            Box::new(migrations::m20250121_000013_fix_partitioning::Migration),
+            Box::new(migrations::m20260121_000014_add_jsonb_merge_function::Migration),
+            Box::new(migrations::m20260121_000015_drop_payload_expensive_indexes::Migration),
         ]
     }
 }

@@ -13,10 +13,9 @@ use proptest::prelude::*;
 use proptest::strategy::{BoxedStrategy, Strategy};
 use sinex_schema::ulid::{Ulid, UlidError};
 use sinex_schema::ulid_conversions::ulid_to_uuid;
-use sinex_test_utils::{sinex_test, TestResult};
+use sinex_test_utils::sinex_test;
 use std::collections::HashSet;
 use std::sync::{Arc, Barrier};
-use std::thread;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 

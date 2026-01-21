@@ -60,7 +60,7 @@ async fn test_agent_event_subscription_queries(ctx: TestContext) -> Result<()> {
     .await
     .unwrap();
 
-    pretty_assertions::assert_eq!(subscribers.len(), 3);
+    assert_eq!(subscribers.len(), 3);
 
     // Query agents subscribing to specific event feed (JSONB ? operator)
     let raw_feed_subscribers = sqlx::query_scalar!(
@@ -72,7 +72,7 @@ async fn test_agent_event_subscription_queries(ctx: TestContext) -> Result<()> {
     .await
     .unwrap();
 
-    pretty_assertions::assert_eq!(raw_feed_subscribers.len(), 2);
+    assert_eq!(raw_feed_subscribers.len(), 2);
     assert!(raw_feed_subscribers.iter().any(|s| s == "subscriber_1"));
     assert!(raw_feed_subscribers.iter().any(|s| s == "subscriber_2"));
 

@@ -1,6 +1,5 @@
 use sinex_gateway::{rpc_server, ServiceContainer};
 use sinex_test_utils::prelude::*;
-use sinex_test_utils::timing_utils::Timeouts;
 use std::time::Duration;
 use tokio::time::sleep;
 

@@ -1,5 +1,5 @@
 use sinex_ingestd::schema_sync::compute_content_hash_for_testing;
-use sinex_test_utils::{sinex_test, TestResult};
+use sinex_test_utils::sinex_test;
 
 #[sinex_test]
 fn content_hash_is_sha256() -> TestResult<()> {

@@ -206,9 +206,7 @@ impl AcquisitionManager {
         source_path: impl Into<String>,
     ) -> NodeResult<Self> {
         let nats_client = match handles.transport() {
-            crate::event_processor::EventTransport::Nats(publisher) => {
-                publisher.nats_client().clone()
-            }
+            crate::event_node::EventTransport::Nats(publisher) => publisher.nats_client().clone(),
         };
 
         Ok(Self::new(

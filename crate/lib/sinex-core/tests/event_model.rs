@@ -4,7 +4,7 @@ use sinex_core::types::domain::SanitizedPath;
 use sinex_core::types::events::payloads::{FileCreatedPayload, KittyCommandExecutedPayload};
 use sinex_core::Id;
 use sinex_core::{Event, EventBuilder};
-use sinex_test_utils::{sinex_test, TestResult};
+use sinex_test_utils::sinex_test;
 
 #[sinex_test]
 fn material_event_builder_sets_fields() -> TestResult<()> {

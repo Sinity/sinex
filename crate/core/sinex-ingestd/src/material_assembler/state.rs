@@ -103,6 +103,8 @@ pub(super) struct AssemblerState {
     pub pending_end: Option<MaterialEndMessage>,
     pub finalizing: bool,
     pub last_slice_received: DateTime<Utc>,
+    /// Semaphore permit held for the duration of the assembly
+    pub permit: Option<tokio::sync::OwnedSemaphorePermit>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -403,6 +405,7 @@ mod tests {
             pending_end: None,
             finalizing: false,
             last_slice_received: Utc::now(),
+            permit: None,
         }
     }
 

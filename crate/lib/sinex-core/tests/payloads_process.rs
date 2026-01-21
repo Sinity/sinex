@@ -1,6 +1,6 @@
 use sinex_core::types::events::payloads::process::ProcessHeartbeatPayload;
 use sinex_core::EventPayload;
-use sinex_test_utils::{sinex_test, TestResult};
+use sinex_test_utils::sinex_test;
 
 #[sinex_test]
 fn process_payload_exposes_event_metadata() -> TestResult<()> {

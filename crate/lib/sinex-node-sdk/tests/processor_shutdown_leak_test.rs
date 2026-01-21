@@ -9,7 +9,7 @@ use sinex_node_sdk::stream_processor::{
     TimeHorizon,
 };
 use sinex_node_sdk::NodeResult;
-use sinex_test_utils::{sinex_test, TestContext, TestResult};
+use sinex_test_utils::{sinex_test, TestContext};
 use support::runtime::TestRuntimeBuilder;
 
 #[derive(Default)]
@@ -47,11 +47,11 @@ impl Node for HangingProcessor {
         })
     }
 
-    fn processor_name(&self) -> &str {
+    fn node_name(&self) -> &str {
         "hanging-processor"
     }
 
-    fn processor_type(&self) -> NodeType {
+    fn node_type(&self) -> NodeType {
         NodeType::Ingestor
     }
 

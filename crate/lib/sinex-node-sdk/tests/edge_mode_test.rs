@@ -8,16 +8,15 @@ use sinex_core::types::buffers::DEFAULT_EVENT_CHANNEL_SIZE;
 use sinex_core::JsonValue;
 use sinex_node_sdk::{
     checkpoint::CheckpointManager,
-    event_processor::EventTransport,
     nats_publisher::NatsPublisher,
     stream_processor::{
         EventEmitter, Node, NodeCapabilities, NodeHandles, NodeInitContext, NodeType,
-        SchemaBroadcastEntry, StreamProcessorRunner,
+        SchemaBroadcastEntry, NodeRunner,
     },
-    NodeResult,
+    EventTransport, NodeResult,
 };
 use sinex_test_utils::timing_utils::{WaitHelpers, DEFAULT_WAIT_SECS};
-use sinex_test_utils::{sinex_serial_test, TestContext, TestResult};
+use sinex_test_utils::{sinex_serial_test, TestContext};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
@@ -40,11 +39,11 @@ impl Node for EdgeTestProcessor {
         Ok(())
     }
 
-    fn processor_type(&self) -> NodeType {
+    fn node_type(&self) -> NodeType {
         NodeType::Ingestor
     }
 
-    fn processor_name(&self) -> &str {
+    fn node_name(&self) -> &str {
         &self.name
     }
 
@@ -100,7 +99,7 @@ async fn test_ingestor_without_database(ctx: TestContext) -> TestResult<()> {
     std::env::remove_var("DATABASE_URL");
 
     let processor = EdgeTestProcessor::new("test_ingestor");
-    let mut runner = StreamProcessorRunner::new(processor);
+    let mut runner = NodeRunner::new(processor);
 
     // Create NATS transport
     let nats = ctx.nats_handle()?;
@@ -175,7 +174,7 @@ async fn test_schema_broadcast_cache_updates(ctx: TestContext) -> TestResult<()>
     std::env::remove_var("DATABASE_URL");
 
     let processor = EdgeTestProcessor::new("edge_schema_cache");
-    let mut runner = StreamProcessorRunner::new(processor);
+    let mut runner = NodeRunner::new(processor);
 
     let nats = ctx.nats_handle()?;
     let nats_client = nats.connect().await?;

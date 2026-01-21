@@ -1,4 +1,4 @@
-//! SimpleProcessor trait for LLM-friendly node development.
+//! SimpleNode trait for LLM-friendly node development.
 //!
 //! This module provides a high-level abstraction that reduces typical node
 //! implementations from 200+ lines to ~10 lines. The trait is designed to be
@@ -7,7 +7,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use sinex_node_sdk::simple_processor::{SimpleProcessor, SimpleProcessorConfig};
+//! use sinex_node_sdk::simple_node::{SimpleNode, SimpleNodeConfig};
 //! use serde::{Deserialize, Serialize};
 //! use async_trait::async_trait;
 //!
@@ -19,7 +19,7 @@
 //! struct GitActivityDetector;
 //!
 //! #[async_trait]
-//! impl SimpleProcessor for GitActivityDetector {
+//! impl SimpleNode for GitActivityDetector {
 //!     type State = GitActivityState;
 //!     type Input = TerminalCommandEvent;
 //!     type Output = GitActivityEvent;
@@ -40,7 +40,7 @@
 //!         &mut self,
 //!         state: &mut Self::State,
 //!         input: Self::Input,
-//!     ) -> Result<Option<Self::Output>, SimpleProcessorError> {
+//!     ) -> Result<Option<Self::Output>, SimpleNodeError> {
 //!         if !input.command.starts_with("git ") {
 //!             return Ok(None);
 //!         }
@@ -55,7 +55,7 @@ use chrono::{DateTime, Utc};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sinex_core::db::models::{Event, EventId, Provenance};
 use sinex_core::types::non_empty::NonEmptyVec;
-use sinex_core::{EventSource, EventType, HostName, JsonValue};
+use sinex_core::{EventSource, EventType, HostName, JsonValue, Ulid};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -71,9 +71,9 @@ use crate::stream_processor::{
 };
 use crate::{NodeError, NodeResult};
 
-/// Errors specific to SimpleProcessor
+/// Errors specific to SimpleNode
 #[derive(Debug, Error)]
-pub enum SimpleProcessorError {
+pub enum SimpleNodeError {
     #[error("Processing error: {0}")]
     Processing(String),
 
@@ -87,10 +87,19 @@ pub enum SimpleProcessorError {
     OutputSerialization(String),
 }
 
-impl From<SimpleProcessorError> for NodeError {
-    fn from(err: SimpleProcessorError) -> Self {
+impl From<SimpleNodeError> for NodeError {
+    fn from(err: SimpleNodeError) -> Self {
         NodeError::Processing(err.to_string())
     }
+}
+
+/// Context provided to SimpleNode::process
+#[derive(Debug, Clone)]
+pub struct SimpleNodeContext {
+    pub source: String,
+    pub event_type: String,
+    pub ts_orig: Option<DateTime<Utc>>,
+    pub event_id: Ulid,
 }
 
 /// Action to take when an error occurs during processing
@@ -104,9 +113,9 @@ pub enum ErrorAction {
     Skip,
 }
 
-/// Configuration for SimpleProcessor wrapper
+/// Configuration for SimpleNode wrapper
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SimpleProcessorConfig {
+pub struct SimpleNodeConfig {
     /// How often to persist state checkpoint (in events)
     #[serde(default = "default_checkpoint_interval")]
     pub checkpoint_interval: u64,
@@ -140,7 +149,7 @@ fn default_batch_size() -> usize {
     100
 }
 
-impl Default for SimpleProcessorConfig {
+impl Default for SimpleNodeConfig {
     fn default() -> Self {
         Self {
             checkpoint_interval: default_checkpoint_interval(),
@@ -184,7 +193,7 @@ impl<S: Default> Default for PersistedState<S> {
 /// - **State-aware**: Custom state with automatic persistence
 /// - **Hot-reload-ready**: State survives process restarts
 #[async_trait]
-pub trait SimpleProcessor: Send + Sync + 'static {
+pub trait SimpleNode: Send + Sync + 'static {
     /// Custom state that will be automatically persisted and restored.
     /// Must implement Serialize, Deserialize, Default, and Send + Sync.
     type State: Serialize + DeserializeOwned + Default + Send + Sync;
@@ -223,32 +232,33 @@ pub trait SimpleProcessor: Send + Sync + 'static {
         &mut self,
         state: &mut Self::State,
         input: Self::Input,
-    ) -> Result<Option<Self::Output>, SimpleProcessorError>;
+        context: &SimpleNodeContext,
+    ) -> Result<Option<Self::Output>, SimpleNodeError>;
 
     /// Handle processing errors (default: send to DLQ)
-    fn handle_error(&self, _error: &SimpleProcessorError) -> ErrorAction {
+    fn handle_error(&self, _error: &SimpleNodeError) -> ErrorAction {
         ErrorAction::SendToDLQ
     }
 
     /// Called when processor initializes (optional hook)
-    async fn on_initialize(&mut self, _state: &Self::State) -> Result<(), SimpleProcessorError> {
+    async fn on_initialize(&mut self, _state: &Self::State) -> Result<(), SimpleNodeError> {
         Ok(())
     }
 
     /// Called before shutdown (optional hook)
-    async fn on_shutdown(&mut self, _state: &Self::State) -> Result<(), SimpleProcessorError> {
+    async fn on_shutdown(&mut self, _state: &Self::State) -> Result<(), SimpleNodeError> {
         Ok(())
     }
 }
 
-/// Wrapper that implements the full Node trait for a SimpleProcessor
-pub struct SimpleProcessorNode<P>
+/// Wrapper that implements the full Node trait for a SimpleNode
+pub struct SimpleNodeWrapper<P>
 where
-    P: SimpleProcessor,
+    P: SimpleNode,
 {
     processor: P,
     persisted_state: PersistedState<P::State>,
-    config: SimpleProcessorConfig,
+    config: SimpleNodeConfig,
     shutdown_config: ShutdownConfig,
     runtime: Option<NodeRuntimeState>,
     checkpoint_manager: Option<Arc<CheckpointManager>>,
@@ -257,18 +267,19 @@ where
     host: String,
     events_since_checkpoint: u64,
     last_checkpoint_time: Instant,
+    last_revision: u64,
 }
 
-impl<P> SimpleProcessorNode<P>
+impl<P> SimpleNodeWrapper<P>
 where
-    P: SimpleProcessor,
+    P: SimpleNode,
 {
-    /// Create a new SimpleProcessorNode wrapping the given processor
+    /// Create a new SimpleNodeWrapper wrapping the given processor
     pub fn new(processor: P) -> Self {
         Self {
             processor,
             persisted_state: PersistedState::default(),
-            config: SimpleProcessorConfig::default(),
+            config: SimpleNodeConfig::default(),
             shutdown_config: ShutdownConfig::default(),
             runtime: None,
             checkpoint_manager: None,
@@ -277,11 +288,12 @@ where
             host: gethostname::gethostname().to_string_lossy().to_string(),
             events_since_checkpoint: 0,
             last_checkpoint_time: Instant::now(),
+            last_revision: 0,
         }
     }
 
     /// Create with custom config
-    pub fn with_config(processor: P, config: SimpleProcessorConfig) -> Self {
+    pub fn with_config(processor: P, config: SimpleNodeConfig) -> Self {
         let mut node = Self::new(processor);
         node.config = config;
         node
@@ -297,7 +309,7 @@ where
     /// Create with both configs
     pub fn with_configs(
         processor: P,
-        config: SimpleProcessorConfig,
+        config: SimpleNodeConfig,
         shutdown_config: ShutdownConfig,
     ) -> Self {
         let mut node = Self::new(processor);
@@ -361,6 +373,7 @@ where
                         "Restored state from NATS KV checkpoint"
                     );
                     self.persisted_state = persisted;
+                    self.last_revision = checkpoint_state.revision;
                 }
                 Err(e) => {
                     warn!(
@@ -404,6 +417,7 @@ where
             last_activity: chrono::Utc::now(),
             data: Some(state_json),
             version: 2,
+            revision: self.last_revision,
         };
 
         checkpoint_state.save_to_file(&checkpoint_path).await
@@ -428,9 +442,11 @@ where
             last_activity: Utc::now(),
             data: Some(state_json),
             version: 2,
+            revision: self.last_revision,
         };
 
-        checkpoint_mgr.save_checkpoint(&checkpoint_state).await?;
+        // Update revision on successful save
+        self.last_revision = checkpoint_mgr.save_checkpoint(&checkpoint_state).await?;
 
         self.events_since_checkpoint = 0;
         self.last_checkpoint_time = Instant::now();
@@ -438,6 +454,7 @@ where
         debug!(
             processor = %self.processor.name(),
             events_processed = self.persisted_state.events_processed,
+            revision = self.last_revision,
             "Saved checkpoint"
         );
 
@@ -467,10 +484,18 @@ where
         // Get source event ID for provenance (clone to avoid partial move)
         let source_event_id = event.id.clone().unwrap_or_else(EventId::new);
 
+        // Build context
+        let context = SimpleNodeContext {
+            source: event.source.to_string(),
+            event_type: event.event_type.to_string(),
+            ts_orig: event.ts_orig,
+            event_id: source_event_id.into(),
+        };
+
         // Process
         match self
             .processor
-            .process(&mut self.persisted_state.state, input)
+            .process(&mut self.persisted_state.state, input, &context)
             .await
         {
             Ok(Some(output)) => {
@@ -611,7 +636,7 @@ where
             processor = %self.processor.name(),
             input_type = %self.processor.input_event_type(),
             output_type = %self.processor.output_event_type(),
-            "SimpleProcessor initialized - awaiting events via process_batch()"
+            "SimpleNode initialized - awaiting events via process_batch()"
         );
 
         // Set up shutdown channel for external control
@@ -692,13 +717,13 @@ where
     }
 }
 
-/// Node trait implementation for SimpleProcessorNode
+/// Node trait implementation for SimpleNodeWrapper
 #[async_trait]
-impl<P> crate::stream_processor::Node for SimpleProcessorNode<P>
+impl<P> crate::stream_processor::Node for SimpleNodeWrapper<P>
 where
-    P: SimpleProcessor,
+    P: SimpleNode,
 {
-    type Config = SimpleProcessorConfig;
+    type Config = SimpleNodeConfig;
 
     async fn initialize(&mut self, init: NodeInitContext<Self::Config>) -> NodeResult<()> {
         let (config, runtime) = init.into_runtime();
@@ -724,7 +749,7 @@ where
         info!(
             processor = %self.processor.name(),
             events_processed = self.persisted_state.events_processed,
-            "SimpleProcessor initialized"
+            "SimpleNode initialized"
         );
 
         Ok(())
@@ -739,19 +764,19 @@ where
         match until {
             TimeHorizon::Continuous => self.run_continuous(from).await,
             TimeHorizon::Snapshot | TimeHorizon::Historical { .. } => {
-                // SimpleProcessor only supports continuous mode
+                // SimpleNode only supports continuous mode
                 Err(NodeError::General(color_eyre::eyre::eyre!(
-                    "SimpleProcessor only supports continuous mode"
+                    "SimpleNode only supports continuous mode"
                 )))
             }
         }
     }
 
-    fn processor_name(&self) -> &str {
+    fn node_name(&self) -> &str {
         self.processor.name()
     }
 
-    fn processor_type(&self) -> NodeType {
+    fn node_type(&self) -> NodeType {
         NodeType::Automaton
     }
 
@@ -776,7 +801,7 @@ where
     }
 
     async fn shutdown(&mut self) -> NodeResult<()> {
-        info!(processor = %self.processor.name(), "Shutting down SimpleProcessor");
+        info!(processor = %self.processor.name(), "Shutting down SimpleNode");
 
         // Signal shutdown
         self.signal_shutdown();
@@ -798,6 +823,7 @@ where
         if let Err(e) = self.save_state_to_file().await {
             warn!(
                 processor = %self.processor.name(),
+
                 error = %e,
                 "Failed to save state to file for hot reload"
             );
@@ -847,7 +873,7 @@ mod tests {
     struct TestProcessor;
 
     #[async_trait]
-    impl SimpleProcessor for TestProcessor {
+    impl SimpleNode for TestProcessor {
         type State = TestState;
         type Input = TestInput;
         type Output = TestOutput;
@@ -868,7 +894,8 @@ mod tests {
             &mut self,
             state: &mut Self::State,
             input: Self::Input,
-        ) -> Result<Option<Self::Output>, SimpleProcessorError> {
+            _context: &SimpleNodeContext,
+        ) -> Result<Option<Self::Output>, SimpleNodeError> {
             state.count += 1;
             Ok(Some(TestOutput {
                 processed_value: input.value.to_uppercase(),
@@ -879,14 +906,14 @@ mod tests {
     #[test]
     fn test_simple_processor_creation() {
         let processor = TestProcessor;
-        let node = SimpleProcessorNode::new(processor);
+        let node = SimpleNodeWrapper::new(processor);
         assert_eq!(node.processor.name(), "test-processor");
         assert_eq!(node.events_processed(), 0);
     }
 
     #[test]
     fn test_config_defaults() {
-        let config = SimpleProcessorConfig::default();
+        let config = SimpleNodeConfig::default();
         assert_eq!(config.checkpoint_interval, 1000);
         assert_eq!(config.checkpoint_timeout_secs, 10);
         assert_eq!(config.batch_size, 100);

@@ -75,6 +75,7 @@ impl Job {
     }
 
     /// Read the last N lines of stderr.
+    #[allow(dead_code)]
     pub fn tail_stderr(&self, lines: usize) -> Result<String> {
         tail_file(&self.stderr_path(), lines)
     }
@@ -97,6 +98,7 @@ impl Job {
     }
 
     /// Reload the job metadata from disk.
+    #[allow(dead_code)]
     pub fn reload(&mut self) -> Result<()> {
         let json = fs::read_to_string(self.meta_path())?;
         self.meta = serde_json::from_str(&json)?;
@@ -104,6 +106,7 @@ impl Job {
     }
 
     /// Check if the job process is still running.
+    #[allow(dead_code)]
     pub fn is_alive(&self) -> bool {
         if let JobStatus::Running { pid } = self.meta.status {
             // Check if process exists

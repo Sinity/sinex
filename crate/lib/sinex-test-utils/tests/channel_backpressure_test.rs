@@ -1,4 +1,4 @@
-use sinex_test_utils::{sinex_test, TestResult};
+use sinex_test_utils::sinex_test;
 use tokio::sync::mpsc;
 
 #[sinex_test]

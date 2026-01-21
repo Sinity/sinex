@@ -24,10 +24,11 @@ serde_json.workspace = true
 jsonschema.workspace = true
 
 # Database
-sqlx.workspace = true
+# Database
+sqlx = { workspace = true, optional = true }
 
 # NATS for message bus (replaces Redis)
-async-nats.workspace = true
+async-nats = { workspace = true, optional = true }
 
 # Time and IDs
 chrono.workspace = true
@@ -58,7 +59,8 @@ notify = { workspace = true }
 libc = "0.2"
 
 # Local dependencies
-sinex-core = { path = "../sinex-core" }
+# Local dependencies
+sinex-core = { path = "../sinex-core", default-features = false, features = ["types-only"] }
 sinex-macros = { path = "../sinex-macros", optional = true }
 # Removed sinex-preflight - now part of this crate
 # Removed sinex-nats - now part of this crate
@@ -67,7 +69,9 @@ sinex-macros = { path = "../sinex-macros", optional = true }
 chrono = { workspace = true }
 
 [features]
-default = []
+default = ["db", "messaging"]
+db = ["dep:sqlx", "sinex-core/sqlx"]
+messaging = ["dep:async-nats", "sinex-core/nats"]
 event-source = []
 automaton = []
 macros = ["dep:sinex-macros"]

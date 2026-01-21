@@ -20,7 +20,7 @@ use sinex_core::types::events::payloads::{
     FileModifiedPayload, KittyCommandExecutedPayload,
 };
 use sinex_core::types::events::EventPayload;
-use sinex_core::{Event, EventBuilder, Id, JsonValue, Provenance, Ulid};
+use sinex_core::{Event, Id, JsonValue, Provenance, Ulid};
 
 async fn ensure_material(ctx: &TestContext, label: &str) -> TestResult<Id<SourceMaterial>> {
     let material_id = Id::<SourceMaterial>::from_ulid(Ulid::new());

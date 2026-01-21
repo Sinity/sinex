@@ -1,10 +1,11 @@
 use super::runtime_state::NodeRuntimeState;
 use crate::{
-    checkpoint::CheckpointManager, confirmation_handler::ConfirmationBuffer,
-    event_processor::EventTransport, NodeError,
+    checkpoint::CheckpointManager, confirmation_handler::ConfirmationBuffer, EventTransport,
+    NodeError,
 };
 use camino::Utf8PathBuf;
 use sinex_core::db::models::Event;
+#[cfg(feature = "db")]
 use sinex_core::db::SqlxPgPool as PgPool;
 use sinex_core::JsonValue;
 use std::path::PathBuf;
@@ -56,6 +57,7 @@ impl ServiceInfo {
 pub struct EventEmitter {
     sender: Arc<EventSender>,
     dry_run: bool,
+    #[cfg(feature = "messaging")]
     validator: Option<Arc<crate::schema_validator::NodeSchemaValidator>>,
 }
 
@@ -64,11 +66,13 @@ impl EventEmitter {
         Self {
             sender: Arc::new(sender),
             dry_run,
+            #[cfg(feature = "messaging")]
             validator: None,
         }
     }
 
     /// Create EventEmitter with schema validation enabled
+    #[cfg(feature = "messaging")]
     pub fn with_validator(
         sender: EventSender,
         dry_run: bool,
@@ -122,6 +126,7 @@ impl EventEmitter {
 /// Handles made available to processors during initialization and runtime.
 #[derive(Clone)]
 pub struct NodeHandles {
+    #[cfg(feature = "db")]
     db_pool: Option<PgPool>,
     checkpoint_manager: Arc<CheckpointManager>,
     emitter: EventEmitter,
@@ -132,6 +137,7 @@ pub struct NodeHandles {
 
 impl NodeHandles {
     #[allow(clippy::too_many_arguments)]
+    #[cfg(feature = "db")]
     pub fn new(
         db_pool: PgPool,
         checkpoint_manager: Arc<CheckpointManager>,
@@ -160,6 +166,7 @@ impl NodeHandles {
         schema_cache: Option<Arc<crate::runtime::stream::SchemaBroadcastCache>>,
     ) -> Self {
         Self {
+            #[cfg(feature = "db")]
             db_pool: None,
             checkpoint_manager,
             emitter,
@@ -170,11 +177,13 @@ impl NodeHandles {
     }
 
     /// Get database pool if available (Edge Mode returns None)
+    #[cfg(feature = "db")]
     pub fn db_pool(&self) -> Option<&PgPool> {
         self.db_pool.as_ref()
     }
 
     /// Get database pool or panic with a helpful error message
+    #[cfg(feature = "db")]
     pub fn require_db_pool(&self) -> &PgPool {
         self.db_pool.as_ref().expect(
             "Database pool required but not available. \

@@ -11,16 +11,16 @@ use chrono::{DateTime, Utc};
 use color_eyre::eyre;
 use serde::{Deserialize, Serialize};
 use serde_json;
-use sinex_core::{
-    types::{domain::SanitizedPath, events::EventPayload, validate_path, Bytes, Seconds},
-    EventBuilder, Id, Provenance, Ulid,
+use sinex_core::types::{
+    domain::SanitizedPath, events::EventPayload, validate_path, Bytes, Seconds,
 };
+use sinex_core::Ulid;
 use sinex_node_sdk::{
     acquisition_manager::{AcquisitionManager, RotationPolicy},
+    simple_ingestor::SimpleIngestor,
     stage_as_you_go::StageAsYouGoContext,
     stream_processor::{
-        Checkpoint, Node, NodeCapabilities, NodeInitContext, NodeRuntimeState, NodeType, ScanArgs,
-        ScanEstimate, ScanReport, ServiceInfo, TimeHorizon,
+        Checkpoint, NodeRuntimeState, ScanArgs, ScanReport, ServiceInfo, TimeHorizon,
     },
     NodeError, NodeResult,
 };
@@ -59,6 +59,8 @@ pub struct HistorySourceConfig {
     /// Shell type (bash, zsh, fish, etc.)
     pub shell: String,
 }
+
+use crate::secret_redaction::SecretRedactor;
 
 fn validate_history_path(path: &Utf8PathBuf) -> Result<(), ValidationError> {
     validate_path(path.as_str())
@@ -534,6 +536,11 @@ async fn process_command(
 
     let bytes = command.as_bytes();
 
+    // Redact sensitive information
+    let redacted_command = SecretRedactor::redact(command);
+    let final_command = redacted_command.as_ref();
+    let bytes = final_command.as_bytes();
+
     if bytes.len() as u64 > ctx.max_capture_bytes.as_u64() {
         warn!(
             "Skipping command exceeding capture limit ({} bytes > {} limit)",
@@ -544,7 +551,7 @@ async fn process_command(
     }
 
     if let Some(commands) = &ctx.processed_commands {
-        commands.lock().await.push(command.to_string());
+        commands.lock().await.push(final_command.to_string());
     }
 
     let mut handle = ctx
@@ -565,7 +572,7 @@ async fn process_command(
         .map_err(|e| NodeError::General(eyre::eyre!("Failed to finalize material: {}", e)))?;
 
     let payload = sinex_core::types::events::payloads::shell::HistoryCommandImportedPayload {
-        command: command.to_string(),
+        command: final_command.to_string(),
         timestamp: Some(Utc::now()),
         shell_type: ctx.shell.clone(),
         source_file: ctx.path.to_string(),
@@ -597,10 +604,12 @@ pub struct TerminalProcessor {
     config: TerminalConfig,
     stage_context: Option<StageAsYouGoContext>,
     watch_handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
-    runtime: Option<NodeRuntimeState>,
     state_dir: Option<PathBuf>,
-    shutdown_tx: Option<watch::Sender<bool>>,
+    runtime: Option<NodeRuntimeState>,
 }
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TerminalCheckpoint {}
 
 impl TerminalProcessor {
     pub fn new() -> Self {
@@ -608,9 +617,8 @@ impl TerminalProcessor {
             config: TerminalConfig::default(),
             stage_context: None,
             watch_handles: Arc::new(Mutex::new(Vec::new())),
-            runtime: None,
             state_dir: None,
-            shutdown_tx: None,
+            runtime: None,
         }
     }
 
@@ -619,9 +627,8 @@ impl TerminalProcessor {
             config,
             stage_context: None,
             watch_handles: Arc::new(Mutex::new(Vec::new())),
-            runtime: None,
             state_dir: None,
-            shutdown_tx: None,
+            runtime: None,
         }
     }
 
@@ -648,7 +655,7 @@ impl TerminalProcessor {
     ) -> NodeResult<()> {
         let service_info = runtime.service_info();
         info!(
-            processor = self.processor_name(),
+            processor = self.name(),
             service = %service_info.service_name(),
             "Initialising terminal processor"
         );
@@ -661,7 +668,7 @@ impl TerminalProcessor {
         })?;
 
         let publisher = match runtime.transport() {
-            sinex_node_sdk::event_processor::EventTransport::Nats(publisher) => publisher.clone(),
+            sinex_node_sdk::EventTransport::Nats(publisher) => publisher.clone(),
         };
 
         AcquisitionManager::bootstrap_streams(publisher.nats_client())
@@ -684,7 +691,7 @@ impl TerminalProcessor {
         self.runtime = Some(runtime);
         self.config = config;
         self.watch_handles = Arc::new(Mutex::new(Vec::new()));
-        self.shutdown_tx = None;
+        // shutdown_tx removed
 
         Ok(())
     }
@@ -756,149 +763,138 @@ impl Default for TerminalProcessor {
 }
 
 #[async_trait]
-impl Node for TerminalProcessor {
+impl SimpleIngestor for TerminalProcessor {
     type Config = TerminalConfig;
+    type State = TerminalCheckpoint;
 
-    #[instrument(skip(self, init), fields(processor = "terminal", service = %init.service_info().service_name()))]
-    async fn initialize(&mut self, init: NodeInitContext<Self::Config>) -> NodeResult<()> {
-        let (config, runtime) = init.into_runtime();
-        self.initialise_from_runtime(config, runtime).await
-    }
-
-    async fn scan(
-        &mut self,
-        from: Checkpoint,
-        until: TimeHorizon,
-        _args: ScanArgs,
-    ) -> NodeResult<ScanReport> {
-        match until {
-            TimeHorizon::Snapshot => {
-                let service_info = self.service_info()?;
-                let state = TerminalState {
-                    captured_at: Utc::now(),
-                    monitored_sources: self
-                        .config()
-                        .history_sources
-                        .iter()
-                        .map(|src| src.path.clone())
-                        .collect(),
-                    host: service_info.host().to_string(),
-                };
-
-                debug!(
-                    monitored = state.monitored_sources.len(),
-                    "Terminal snapshot captured"
-                );
-
-                Ok(ScanReport {
-                    events_processed: 0,
-                    duration: std::time::Duration::from_millis(0),
-                    final_checkpoint: from,
-                    time_range: None,
-                    processor_stats: HashMap::new(),
-                    successful_targets: vec!["snapshot".to_string()],
-                    failed_targets: Vec::new(),
-                    warnings: Vec::new(),
-                })
-            }
-            TimeHorizon::Historical { .. } => {
-                let (_, shutdown_rx) = watch::channel(false);
-                let contexts = self.build_history_contexts(shutdown_rx)?;
-                let mut events_processed = 0u64;
-
-                for ctx in contexts {
-                    events_processed =
-                        events_processed.saturating_add(ctx.scan_history_once().await as u64);
-                }
-
-                Ok(ScanReport {
-                    events_processed,
-                    duration: std::time::Duration::from_millis(0),
-                    final_checkpoint: from,
-                    time_range: None,
-                    processor_stats: HashMap::new(),
-                    successful_targets: vec!["historical".to_string()],
-                    failed_targets: Vec::new(),
-                    warnings: Vec::new(),
-                })
-            }
-            TimeHorizon::Continuous => {
-                let (shutdown_tx, _) = watch::channel(false);
-                self.shutdown_tx = Some(shutdown_tx.clone());
-                let contexts = self.build_history_contexts(shutdown_tx.subscribe())?;
-
-                let mut guard = self.watch_handles.lock().await;
-                for watch_ctx in contexts {
-                    let handle = tokio::spawn(watch_ctx.clone().monitor());
-                    guard.push(handle);
-                }
-
-                info!(
-                    watches = guard.len(),
-                    "Terminal watcher monitoring history sources"
-                );
-
-                let mut shutdown_rx = shutdown_tx.subscribe();
-                let _ = shutdown_rx.changed().await;
-
-                Ok(ScanReport {
-                    events_processed: 0,
-                    duration: std::time::Duration::from_millis(0),
-                    final_checkpoint: Checkpoint::None,
-                    time_range: None,
-                    processor_stats: HashMap::new(),
-                    successful_targets: vec!["continuous".to_string()],
-                    failed_targets: Vec::new(),
-                    warnings: Vec::new(),
-                })
-            }
-        }
-    }
-
-    fn processor_name(&self) -> &str {
+    fn name(&self) -> &str {
         "terminal-watcher"
     }
 
-    fn processor_type(&self) -> NodeType {
-        NodeType::Ingestor
-    }
+    async fn initialize(
+        &mut self,
+        config: Self::Config,
+        runtime: &NodeRuntimeState,
+        _state: &mut Self::State,
+    ) -> NodeResult<()> {
+        let service_info = runtime.service_info();
+        config.validate_config().map_err(|e| {
+            NodeError::General(eyre::eyre!(
+                "Terminal configuration validation failed: {}",
+                e
+            ))
+        })?;
 
-    fn capabilities(&self) -> NodeCapabilities {
-        NodeCapabilities {
-            supports_snapshot: true,
-            supports_historical: true,
-            supports_continuous: true,
-            ..NodeCapabilities::default()
+        let publisher = match runtime.transport() {
+            sinex_node_sdk::EventTransport::Nats(publisher) => publisher.clone(),
+        };
+
+        AcquisitionManager::bootstrap_streams(publisher.nats_client()).await?;
+
+        let mut state_dir = service_info.work_dir().clone();
+        state_dir.push("terminal-history");
+
+        if let Err(e) = fs::create_dir_all(&state_dir).await {
+            return Err(NodeError::General(eyre::eyre!(
+                "Failed to create terminal state directory {}: {}",
+                state_dir.display(),
+                e
+            )));
         }
+
+        self.state_dir = Some(state_dir);
+        self.stage_context = Some(StageAsYouGoContext::from_runtime(runtime));
+        self.config = config;
+        self.runtime = Some(runtime.clone());
+
+        Ok(())
     }
 
-    async fn current_checkpoint(&self) -> NodeResult<Checkpoint> {
-        Ok(Checkpoint::None)
-    }
+    async fn scan_snapshot(&self, _state: &Self::State, _args: ScanArgs) -> NodeResult<ScanReport> {
+        let monitored: Vec<Utf8PathBuf> = self
+            .config
+            .history_sources
+            .iter()
+            .map(|src| src.path.clone())
+            .collect();
 
-    async fn estimate_scan_scope(
-        &self,
-        _from: &Checkpoint,
-        _until: &TimeHorizon,
-        _args: &ScanArgs,
-    ) -> NodeResult<ScanEstimate> {
-        Ok(ScanEstimate {
-            estimated_events: (self.config.history_sources.len() as u64) * 100,
-            estimated_duration: std::time::Duration::from_secs(
-                self.config.polling_interval_secs.as_secs(),
-            ),
-            estimated_data_size: self.config.max_capture_bytes.as_u64()
-                * (self.config.history_sources.len() as u64),
-            estimated_targets: self.config.history_sources.len() as u64,
-            warnings: vec!["Terminal history estimation uses polling heuristics".to_string()],
-            confidence: 0.25,
+        debug!(monitored = monitored.len(), "Terminal snapshot captured");
+
+        Ok(ScanReport {
+            events_processed: 0,
+            duration: std::time::Duration::from_millis(0),
+            final_checkpoint: Checkpoint::None,
+            time_range: None,
+            processor_stats: HashMap::new(),
+            successful_targets: vec!["snapshot".to_string()],
+            failed_targets: Vec::new(),
+            warnings: Vec::new(),
         })
     }
 
-    async fn shutdown(&mut self) -> NodeResult<()> {
-        if let Some(shutdown_tx) = self.shutdown_tx.take() {
-            let _ = shutdown_tx.send(true);
+    async fn scan_historical(
+        &mut self,
+        _state: &mut Self::State,
+        from: Checkpoint,
+        _until: TimeHorizon,
+        _args: ScanArgs,
+    ) -> NodeResult<ScanReport> {
+        let (_, shutdown_rx) = watch::channel(false);
+        let contexts = self.build_history_contexts(shutdown_rx)?;
+        let mut events_processed = 0u64;
+
+        for ctx in contexts {
+            events_processed =
+                events_processed.saturating_add(ctx.scan_history_once().await as u64);
         }
+
+        Ok(ScanReport {
+            events_processed,
+            duration: std::time::Duration::from_millis(0),
+            final_checkpoint: from,
+            time_range: None,
+            processor_stats: HashMap::new(),
+            successful_targets: vec!["historical".to_string()],
+            failed_targets: Vec::new(),
+            warnings: Vec::new(),
+        })
+    }
+
+    async fn run_continuous(
+        &mut self,
+        _state: &mut Self::State,
+        _from: Checkpoint,
+        shutdown_rx: watch::Receiver<bool>,
+    ) -> NodeResult<ScanReport> {
+        let contexts = self.build_history_contexts(shutdown_rx.clone())?;
+
+        let mut guard = self.watch_handles.lock().await;
+        for watch_ctx in contexts {
+            let handle = tokio::spawn(watch_ctx.clone().monitor());
+            guard.push(handle);
+        }
+
+        info!(
+            watches = guard.len(),
+            "Terminal watcher monitoring history sources"
+        );
+
+        let mut shutdown_rx = shutdown_rx;
+        let _ = shutdown_rx.changed().await;
+
+        Ok(ScanReport {
+            events_processed: 0,
+            duration: std::time::Duration::from_millis(0),
+            final_checkpoint: Checkpoint::None,
+            time_range: None,
+            processor_stats: HashMap::new(),
+            successful_targets: vec!["continuous".to_string()],
+            failed_targets: Vec::new(),
+            warnings: Vec::new(),
+        })
+    }
+
+    async fn shutdown(&mut self, _state: &Self::State) -> NodeResult<()> {
         let mut guard = self.watch_handles.lock().await;
         for handle in guard.drain(..) {
             handle.abort();
@@ -911,17 +907,17 @@ impl Node for TerminalProcessor {
 impl ExplorationProvider for TerminalProcessor {
     fn get_source_state(&self) -> color_eyre::eyre::Result<SourceState> {
         Ok(SourceState {
-            description: "Tails shell history files and emits command events".to_string(),
-            last_updated: Utc::now(),
-            total_items: Some(self.config.history_sources.len() as u64),
-            metadata: HashMap::from([(
-                "polling_interval_secs".to_string(),
-                serde_json::Value::Number(serde_json::Number::from(
-                    self.config.polling_interval_secs.as_secs(),
-                )),
-            )]),
+            is_connected: true,
             healthy: true,
-            recent_activity: Vec::new(),
+            description: format!(
+                "Monitoring {} history sources",
+                self.config.history_sources.len()
+            ),
+            last_updated: Utc::now(),
+            lag_seconds: None,
+            recent_activity: vec![],
+            total_items: Some(self.config.history_sources.len() as u64),
+            metadata: std::collections::HashMap::new(),
         })
     }
 
@@ -971,11 +967,11 @@ mod tests {
     use sinex_core::db::query_helpers::ulid_to_uuid;
     use sinex_core::Id;
     use sinex_node_sdk::{acquisition_manager::RotationPolicy, AcquisitionManager};
+    use sinex_test_utils::sinex_test;
     use sinex_test_utils::{
         prelude::*, start_test_ingestd_with_config, TestIngestdConfig, TestRuntime,
         TestRuntimeBuilder,
     };
-    use sinex_test_utils::{sinex_test, TestResult};
     use std::sync::Arc;
     use tokio::{
         io::AsyncWriteExt,
@@ -1031,7 +1027,7 @@ mod tests {
         let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
 
         let publisher = match runtime.transport() {
-            sinex_node_sdk::event_processor::EventTransport::Nats(publisher) => publisher.clone(),
+            sinex_node_sdk::EventTransport::Nats(publisher) => publisher.clone(),
         };
         AcquisitionManager::bootstrap_streams(publisher.nats_client()).await?;
 
@@ -1156,7 +1152,7 @@ mod tests {
         let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
 
         let publisher = match runtime.transport() {
-            sinex_node_sdk::event_processor::EventTransport::Nats(publisher) => publisher.clone(),
+            sinex_node_sdk::EventTransport::Nats(publisher) => publisher.clone(),
         };
         AcquisitionManager::bootstrap_streams(publisher.nats_client()).await?;
 

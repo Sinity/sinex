@@ -3,7 +3,7 @@ use sinex_core::db::sanitization::EventSanitizer;
 use sinex_core::payloads::filesystem::FileCreatedPayload;
 use sinex_core::types::domain::SanitizedPath;
 use sinex_core::{Event, EventBuilder, EventSource, EventType, Id, Provenance};
-use sinex_test_utils::{sinex_test, TestResult};
+use sinex_test_utils::sinex_test;
 
 #[sinex_test]
 async fn path_traversal_sanitization() -> TestResult<()> {

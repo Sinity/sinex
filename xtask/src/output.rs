@@ -40,6 +40,7 @@ pub enum Status {
 }
 
 impl Status {
+    #[allow(dead_code)]
     pub fn is_success(&self) -> bool {
         matches!(self, Status::Success)
     }
@@ -90,11 +91,13 @@ impl StructuredError {
         }
     }
 
+    #[allow(dead_code)]
     pub fn with_location(mut self, location: impl Into<String>) -> Self {
         self.location = Some(location.into());
         self
     }
 
+    #[allow(dead_code)]
     pub fn with_suggestion(mut self, suggestion: impl Into<String>) -> Self {
         self.suggestion = Some(suggestion.into());
         self
@@ -160,6 +163,7 @@ impl CommandResult {
         self
     }
 
+    #[allow(dead_code)]
     pub fn with_details(mut self, details: serde_json::Value) -> Self {
         self.details = Some(details);
         self
@@ -170,11 +174,13 @@ impl CommandResult {
         self
     }
 
+    #[allow(dead_code)]
     pub fn with_errors(mut self, errors: Vec<StructuredError>) -> Self {
         self.errors.extend(errors);
         self
     }
 
+    #[allow(dead_code)]
     pub fn with_suggestion(mut self, fix: impl Into<String>) -> Self {
         self.suggested_fixes.push(fix.into());
         self
@@ -306,6 +312,7 @@ impl OutputWriter {
     }
 
     /// Write a progress update (for streaming output).
+    #[allow(dead_code)]
     pub fn write_progress(
         &self,
         stage: &str,
@@ -354,6 +361,7 @@ impl OutputWriter {
     }
 
     /// Clear the progress line (for Human format with TTY).
+    #[allow(dead_code)]
     pub fn clear_progress(&self) -> io::Result<()> {
         if matches!(self.format, OutputFormat::Human) && self.is_tty {
             print!("\r{}\r", " ".repeat(80));
@@ -364,6 +372,7 @@ impl OutputWriter {
 }
 
 /// Check if we're running with a TTY (useful for deciding on colors).
+#[allow(dead_code)]
 pub fn is_tty() -> bool {
     atty::is(atty::Stream::Stdout)
 }

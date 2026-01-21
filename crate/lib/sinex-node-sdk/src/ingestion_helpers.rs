@@ -231,6 +231,7 @@ impl IdempotenceKey {
     }
 
     /// Check if this key would conflict with existing events
+    #[cfg(feature = "db")]
     pub async fn exists_in_db(&self, pool: &sqlx::PgPool) -> Result<bool> {
         let result = sqlx::query!(
             r#"

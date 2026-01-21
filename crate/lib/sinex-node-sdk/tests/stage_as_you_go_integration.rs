@@ -6,8 +6,8 @@ use serde_json::json;
 use sinex_core::types::buffers::DEFAULT_EVENT_CHANNEL_SIZE;
 use sinex_core::{db::models::Event, JsonValue};
 use sinex_node_sdk::acquisition_manager::{AcquisitionManager, RotationPolicy};
-use sinex_node_sdk::event_processor::{
-    spawn_event_processor, EventProcessorConfig, EventTransport,
+use sinex_node_sdk::{
+    spawn_event_processor, EventBatcherConfig, EventTransport,
 };
 use sinex_node_sdk::nats_publisher::NatsPublisher;
 use sinex_node_sdk::stage_as_you_go::{
@@ -51,10 +51,9 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
     let publisher = Arc::new(NatsPublisher::new(nats_client.clone()));
-    let processor_config = EventProcessorConfig {
+    let processor_config = EventBatcherConfig {
         batch_size: 1,
-        batch_timeout: Duration::from_millis(100),
-        ..EventProcessorConfig::default()
+        batch_timeout_ms: 100,
     };
     let processor_handle = spawn_event_processor(
         EventTransport::Nats(publisher),

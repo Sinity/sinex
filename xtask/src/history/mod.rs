@@ -5,5 +5,5 @@
 mod db;
 mod tests;
 
-pub use db::{CommandStats, HistoryDb, Invocation, InvocationStatus};
-pub use tests::{parse_nextest_output, TestResult, TestStatus};
+pub use db::{HistoryDb, InvocationStatus};
+pub use tests::Confidence;

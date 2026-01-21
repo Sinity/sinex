@@ -529,7 +529,6 @@ impl JetStreamEventConsumer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Ulid;
     use async_trait::async_trait;
     use sinex_test_utils::{sinex_test, EphemeralNats};
 
@@ -541,7 +540,7 @@ mod tests {
             Ok(())
         }
 
-        async fn rollback_provisional(&self, _event_id: Ulid) -> NodeResult<()> {
+        async fn rollback_provisional(&self, _event_id: sinex_core::EventId) -> NodeResult<()> {
             Ok(())
         }
     }

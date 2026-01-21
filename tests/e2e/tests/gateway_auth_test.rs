@@ -12,7 +12,7 @@
 
 use axum::http::{HeaderMap, HeaderValue};
 use sinex_gateway::rpc_server_test_support as rpc_test_support;
-use sinex_test_utils::{sinex_test, EnvGuard, TestResult};
+use sinex_test_utils::{sinex_test, EnvGuard};
 use std::fs;
 use tempfile::TempDir;
 

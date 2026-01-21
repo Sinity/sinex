@@ -31,6 +31,7 @@ use crate::stream_processor::{EventSender, NodeRuntimeState, ScanReport};
 use crate::{NodeError, NodeResult};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "db")]
 use sqlx::PgPool;
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -124,6 +125,7 @@ pub struct AutomatonFields<C: Default> {
     /// Event sender for emitting events
     pub event_sender: Option<EventSender>,
     /// Database connection pool
+    #[cfg(feature = "db")]
     pub db_pool: Option<PgPool>,
     /// Sender for incoming confirmed events
     pub incoming_tx: Option<mpsc::Sender<ProvisionalEvent>>,
@@ -156,6 +158,7 @@ impl<C: Default> AutomatonFields<C> {
             runtime: None,
             config: C::default(),
             event_sender: None,
+            #[cfg(feature = "db")]
             db_pool: None,
             incoming_tx: None,
             incoming_rx: None,
@@ -185,6 +188,7 @@ impl<C: Default> AutomatonFields<C> {
     }
 
     /// Get database pool, preferring runtime's pool
+    #[cfg(feature = "db")]
     pub fn db_pool(&self) -> NodeResult<&PgPool> {
         if let Some(runtime) = self.runtime.as_ref() {
             Ok(runtime.db_pool())

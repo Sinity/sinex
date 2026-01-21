@@ -16,7 +16,7 @@ use sinex_core::JsonValue;
 
 use crate::{DbusWatcher, UdevWatcher, UnifiedJournalWatcher, WatcherMaterialContext};
 use sinex_node_sdk::acquisition_manager::{AcquisitionManager, RotationPolicy};
-use sinex_node_sdk::event_processor::EventTransport;
+use sinex_node_sdk::EventTransport;
 use std::sync::Arc;
 use tokio::{sync::mpsc, task::JoinHandle};
 use tracing::warn;
@@ -244,7 +244,7 @@ impl SystemProcessor {
         let source_identifier = format!("system.{}", watcher);
         let metadata = json!({
             "watcher": watcher,
-            "processor": self.processor_name(),
+            "processor": self.node_name(),
         });
         WatcherMaterialContext::new(acquisition, &source_identifier, metadata).await
     }
@@ -708,7 +708,7 @@ impl Node for SystemProcessor {
         Self::apply_config_overrides(&mut config, &runtime);
         self.config = config;
 
-        let publisher = match runtime.transport() {
+        let publisher: Arc<sinex_node_sdk::NatsPublisher> = match runtime.transport() {
             EventTransport::Nats(publisher) => Arc::clone(publisher),
         };
         AcquisitionManager::bootstrap_streams(publisher.nats_client())
@@ -724,7 +724,7 @@ impl Node for SystemProcessor {
             "system.processor",
             json!({
                 "watcher": "processor",
-                "processor": self.processor_name(),
+                "processor": self.node_name(),
             }),
         )
         .await?;
@@ -759,7 +759,7 @@ impl Node for SystemProcessor {
         let mut warnings = Vec::new();
 
         info!(
-            processor = self.processor_name(),
+            processor = self.node_name(),
             from = %from.description(),
             until = ?until,
             targets = args.targets.len(),
@@ -809,11 +809,11 @@ impl Node for SystemProcessor {
         })
     }
 
-    fn processor_name(&self) -> &str {
+    fn node_name(&self) -> &str {
         "system-watcher"
     }
 
-    fn processor_type(&self) -> NodeType {
+    fn node_type(&self) -> NodeType {
         NodeType::Ingestor
     }
 
@@ -1140,47 +1140,14 @@ impl ExplorationProvider for SystemProcessor {
         .count() as u64;
 
         Ok(SourceState {
-            description: format!("System processor monitoring {} sources", active_sources),
-            last_updated: self
-                .last_state
-                .as_ref()
-                .map(|s| s.captured_at)
-                .unwrap_or_else(Utc::now),
-            total_items: Some(active_sources),
-            metadata: {
-                let mut metadata = HashMap::with_capacity(7);
-                metadata.insert(
-                    "dbus_enabled".to_string(),
-                    serde_json::to_value(self.config.dbus_enabled)?,
-                );
-                metadata.insert(
-                    "journal_enabled".to_string(),
-                    serde_json::to_value(self.config.journal_enabled)?,
-                );
-                metadata.insert(
-                    "udev_enabled".to_string(),
-                    serde_json::to_value(self.config.udev_enabled)?,
-                );
-                metadata.insert(
-                    "systemd_enabled".to_string(),
-                    serde_json::to_value(self.config.systemd_enabled)?,
-                );
-                metadata.insert(
-                    "dbus_buses".to_string(),
-                    serde_json::to_value(&self.config.dbus_buses)?,
-                );
-                metadata.insert(
-                    "journal_timeout_secs".to_string(),
-                    serde_json::to_value(self.config.journal_timeout_secs)?,
-                );
-                metadata.insert(
-                    "processor_type".to_string(),
-                    serde_json::Value::String("ingestor".to_string()),
-                );
-                metadata
-            },
+            is_connected: true,
             healthy: true,
+            description: "System stats monitoring active".to_string(),
+            last_updated: Utc::now(),
+            lag_seconds: None,
             recent_activity,
+            total_items: Some(active_sources),
+            metadata: std::collections::HashMap::new(),
         })
     }
 

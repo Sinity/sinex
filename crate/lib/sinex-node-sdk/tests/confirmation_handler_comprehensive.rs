@@ -8,14 +8,14 @@ use sinex_core::types::Ulid;
 use sinex_node_sdk::confirmation_handler::{ConfirmationBuffer, ProvisionalEvent};
 use sinex_test_utils::sinex_test;
 use sinex_test_utils::timing_utils::Timeouts;
+use sinex_test_utils::TestResult;
 
-type TestResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 use std::sync::Arc;
 use tokio::sync::Barrier;
 
 fn make_event() -> ProvisionalEvent {
     ProvisionalEvent {
-        event_id: Ulid::new(),
+        event_id: Ulid::new().into(),
         source: EventSource::new("test-source"),
         event_type: EventType::new("test.event.type"),
         payload: serde_json::json!({"key": "value"}),
@@ -27,7 +27,7 @@ fn make_event() -> ProvisionalEvent {
 #[sinex_test]
 async fn confirm_non_existent_event_returns_none() -> TestResult<()> {
     let buffer = ConfirmationBuffer::new(std::time::Duration::from_secs(Timeouts::STANDARD));
-    let non_existent_id = Ulid::new();
+    let non_existent_id = Ulid::new().into();
 
     let result = buffer.confirm(non_existent_id).await;
     assert!(
@@ -63,7 +63,7 @@ async fn add_duplicate_event_overwrites_existing() -> TestResult<()> {
     let event_id = Ulid::new();
 
     let event1 = ProvisionalEvent {
-        event_id,
+        event_id: event_id.into(),
         source: EventSource::new("source1"),
         event_type: EventType::new("type1"),
         payload: serde_json::json!({"version": 1}),
@@ -72,7 +72,7 @@ async fn add_duplicate_event_overwrites_existing() -> TestResult<()> {
     };
 
     let event2 = ProvisionalEvent {
-        event_id,
+        event_id: event_id.into(),
         source: EventSource::new("source2"),
         event_type: EventType::new("type2"),
         payload: serde_json::json!({"version": 2}),
@@ -87,9 +87,9 @@ async fn add_duplicate_event_overwrites_existing() -> TestResult<()> {
     assert_eq!(buffer.len().await, 1);
 
     // Confirm should return the second event (overwrite)
-    let confirmed = buffer.confirm(event_id).await.expect("Should confirm");
-    assert_eq!(confirmed.source, "source2");
-    assert_eq!(confirmed.event_type, "type2");
+    let confirmed = buffer.confirm(event_id.into()).await.expect("Should confirm");
+    assert_eq!(confirmed.source, "source2".into());
+    assert_eq!(confirmed.event_type, "type2".into());
 
     Ok(())
 }
@@ -243,7 +243,7 @@ async fn timeout_check_identifies_only_expired_events() -> TestResult<()> {
     // Add old event with backdated received_at
     let old_id = Ulid::new();
     let old_event = ProvisionalEvent {
-        event_id: old_id,
+        event_id: old_id.into(),
         source: EventSource::new("test"),
         event_type: EventType::new("test.old"),
         payload: serde_json::json!({}),
@@ -254,7 +254,7 @@ async fn timeout_check_identifies_only_expired_events() -> TestResult<()> {
 
     let timed_out = buffer.check_timeouts().await;
     assert_eq!(timed_out.len(), 1);
-    assert_eq!(timed_out[0], old_id);
+    assert_eq!(timed_out[0], old_id.into());
 
     // Fresh event should still be in buffer
     assert!(buffer.confirm(fresh_id).await.is_some());
@@ -283,7 +283,7 @@ async fn remove_timed_out_with_non_existent_ids_returns_empty() -> TestResult<()
     let event = make_event();
     buffer.add_provisional(event).await;
 
-    let non_existent_ids = vec![Ulid::new(), Ulid::new()];
+    let non_existent_ids = vec![Ulid::new().into(), Ulid::new().into()];
     let removed = buffer.remove_timed_out(&non_existent_ids).await;
 
     assert!(removed.is_empty());
@@ -306,7 +306,7 @@ async fn remove_timed_out_with_mixed_ids() -> TestResult<()> {
 
     // Remove one existing and one non-existent
     let non_existent = Ulid::new();
-    let removed = buffer.remove_timed_out(&[id1, non_existent]).await;
+    let removed = buffer.remove_timed_out(&[id1, non_existent.into()]).await;
 
     assert_eq!(removed.len(), 1);
     assert_eq!(removed[0].event_id, id1);
@@ -350,7 +350,7 @@ async fn event_payload_preserved_through_buffer() -> TestResult<()> {
     });
 
     let event = ProvisionalEvent {
-        event_id: Ulid::new(),
+        event_id: Ulid::new().into(),
         source: EventSource::new("complex-source"),
         event_type: EventType::new("complex.event"),
         payload: complex_payload.clone(),
@@ -363,8 +363,8 @@ async fn event_payload_preserved_through_buffer() -> TestResult<()> {
 
     let confirmed = buffer.confirm(id).await.expect("Should confirm");
     assert_eq!(confirmed.payload, complex_payload);
-    assert_eq!(confirmed.source, "complex-source");
-    assert_eq!(confirmed.event_type, "complex.event");
+    assert_eq!(confirmed.source, "complex-source".into());
+    assert_eq!(confirmed.event_type, "complex.event".into());
 
     Ok(())
 }

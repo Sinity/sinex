@@ -4,15 +4,16 @@ use crate::{
     checkpoint::CheckpointManager,
     confirmation_handler::ConfirmationBuffer,
     coordination::NodeCoordination,
-    event_processor::EventTransport,
     heartbeat::HeartbeatEmitter,
     lifecycle::LifecycleManager,
-    NodeResult,
+    EventTransport, NodeResult,
 };
 use camino::Utf8PathBuf;
 use serde_json::Value;
 use sinex_core::db::models::Event;
-use sinex_core::{db::SqlxPgPool as PgPool, types::Seconds, JsonValue};
+#[cfg(feature = "db")]
+use sinex_core::db::SqlxPgPool as PgPool;
+use sinex_core::{types::Seconds, JsonValue};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -49,6 +50,7 @@ impl NodeRuntimeState {
         &self.handles
     }
 
+    #[cfg(feature = "db")]
     pub fn db_pool(&self) -> &PgPool {
         self.handles.require_db_pool()
     }
@@ -69,6 +71,7 @@ impl NodeRuntimeState {
         self.handles.transport()
     }
 
+    #[cfg(feature = "messaging")]
     pub fn nats_client(&self) -> Option<async_nats::Client> {
         match self.handles.transport() {
             EventTransport::Nats(publisher) => Some(publisher.nats_client().clone()),

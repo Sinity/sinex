@@ -65,7 +65,7 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
             let event_id = event_id;
             async move {
                 let processed_ids = handler.processed_event_ids().await;
-                Ok(processed_ids.contains(&event_id))
+                Ok(processed_ids.contains(&event_id.into()))
             }
         },
         DEFAULT_WAIT_SECS,

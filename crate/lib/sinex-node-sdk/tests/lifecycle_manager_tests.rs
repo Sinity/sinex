@@ -5,7 +5,6 @@
 use sinex_node_sdk::lifecycle::{LifecycleManager, ServiceStatus};
 use sinex_test_utils::sinex_test;
 
-type TestResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 

@@ -19,46 +19,76 @@
 //! - For critical ordering, use database sequences instead of client-side ULIDs
 
 // Macro re-exports removed; prefer explicit imports from `sinex-macros` if needed.
+#[cfg(feature = "messaging")]
 pub mod acquisition_manager;
+#[cfg(feature = "db")]
 pub mod annex;
+#[cfg(feature = "messaging")]
 pub mod automaton_base;
+#[cfg(feature = "messaging")]
 pub mod automaton_event_handler;
+#[cfg(feature = "messaging")]
 pub mod checkpoint;
 pub mod config;
 pub mod confirmation_handler;
+#[cfg(feature = "messaging")]
 pub mod coordination;
+#[cfg(feature = "messaging")]
 pub mod dlq_retry;
+#[cfg(feature = "messaging")]
 pub mod error_helpers;
-pub mod event_processor;
+#[cfg(feature = "messaging")]
+pub mod event_node;
+#[cfg(feature = "messaging")]
 pub mod examples;
+#[cfg(feature = "messaging")]
+pub mod exploration;
+#[cfg(feature = "messaging")]
 pub mod heartbeat;
 pub mod ingestion_helpers;
+#[cfg(feature = "messaging")]
 pub mod jetstream_consumer;
+#[cfg(feature = "messaging")]
 pub mod lifecycle;
+#[cfg(feature = "messaging")]
 pub mod nats_publisher;
 #[cfg(feature = "preflight")]
 pub mod preflight;
 pub mod prelude;
+#[cfg(all(feature = "db", feature = "messaging"))]
 pub mod replay;
+#[cfg(feature = "messaging")]
 pub mod runtime;
+#[cfg(feature = "messaging")]
 pub mod schema_validator;
+#[cfg(feature = "messaging")]
 pub mod self_observation;
 pub mod shutdown;
-pub mod simple_processor;
+#[cfg(feature = "messaging")]
+pub mod simple_ingestor;
+#[cfg(feature = "messaging")]
+#[cfg(feature = "messaging")]
+pub mod simple_node;
+#[cfg(feature = "messaging")]
 pub mod stage_as_you_go;
+#[cfg(feature = "messaging")]
 pub mod stream_processor {
     pub use crate::runtime::stream::*;
 }
 pub mod version;
 
+#[cfg(feature = "messaging")]
 pub use acquisition_manager::{
     AcquisitionManager, AppendStreamAcquirer, RotationPolicy, SourceMaterialHandle,
 };
+#[cfg(feature = "messaging")]
 pub use automaton_base::{
     ActivityEntry, AutomatonFields, AutomatonStats, ChannelConfirmedEventHandler,
     IngestionHistoryEntry, DEFAULT_CHANNEL_CAPACITY, DEFAULT_MAX_HISTORY_ENTRIES,
 };
+#[cfg(feature = "messaging")]
 pub use automaton_event_handler::AutomatonEventHandler;
+#[cfg(feature = "messaging")]
 pub use checkpoint::{
     cleanup_stale_checkpoints, spawn_checkpoint_cleanup_task, CheckpointCleanupConfig,
     CheckpointCleanupResult, CheckpointManager, CheckpointState,
@@ -68,34 +98,53 @@ pub use confirmation_handler::{
     ConfirmationBuffer, ConfirmedEventHandler, EventConfirmation, ProcessingModel,
     ProvisionalEvent, ProvisionalEventHandler, DEFAULT_MAX_PENDING_EVENTS,
 };
+#[cfg(feature = "messaging")]
 pub use coordination::{HandoffRequest, InstanceMode, NodeCoordination};
+#[cfg(feature = "messaging")]
 pub use dlq_retry::{DlqRetryConfig, DlqRetryHandler, DlqStats};
+#[cfg(feature = "messaging")]
+pub use exploration::{
+    CoverageAnalysis, ExplorationProvider, ExportFormat, MissingItem, SourceState,
+};
+#[cfg(feature = "messaging")]
 pub use heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter, HeartbeatLogSink, HeartbeatMetrics};
+#[cfg(feature = "messaging")]
 pub use jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig};
 
+#[cfg(feature = "messaging")]
+pub use event_node::{spawn_event_processor, EventBatcher, EventBatcherConfig, EventTransport};
+#[cfg(feature = "messaging")]
 pub use lifecycle::{LifecycleManager, ServiceStatus};
+#[cfg(feature = "messaging")]
 pub use nats_publisher::NatsPublisher;
+#[cfg(all(feature = "db", feature = "messaging"))]
 pub use replay::{
     MetricsSnapshot, ProgressTracker, ReplayController, ReplayFilters, ReplayMetrics, ReplayMode,
     ReplayProgress, ReplayResult, ReplayService, ReplayStats,
 };
+#[cfg(feature = "messaging")]
 pub use self_observation::{
     SelfObservationError, SelfObservationTask, SelfObserver, SelfObserverConfig,
 };
 pub use shutdown::{default_checkpoint_path, ShutdownConfig, ShutdownHandler, ShutdownSignal};
-pub use simple_processor::{
-    ErrorAction, PersistedState, SimpleProcessor, SimpleProcessorConfig, SimpleProcessorError,
-    SimpleProcessorNode,
+#[cfg(feature = "messaging")]
+pub use simple_ingestor::{IngestorState, SimpleIngestor, SimpleIngestorWrapper};
+#[cfg(feature = "messaging")]
+#[cfg(feature = "messaging")]
+pub use simple_node::{
+    ErrorAction, PersistedState, SimpleNode, SimpleNodeConfig, SimpleNodeError, SimpleNodeWrapper,
 };
+#[cfg(feature = "messaging")]
 pub use stream_processor::{
-    Checkpoint, EventSender, EventStream, Node, NodeCapabilities, NodeType, ScanArgs, ScanEstimate,
-    ScanReport, StreamProcessorRunner, TimeHorizon,
+    Checkpoint, EventSender, EventStream, Node, NodeCapabilities, NodeRunner, NodeType, ScanArgs,
+    ScanEstimate, ScanReport, TimeHorizon,
 };
 pub use version::{NodeInstance, NodeVersion};
 
 // Re-export commonly used annex types
 
 // Re-export preflight utilities
+#[cfg(feature = "db")]
 pub use annex::{AnnexConfig, AnnexKey, BlobManager, BlobMetadata, GitAnnex};
 #[cfg(feature = "preflight")]
 pub use preflight::{run_preflight_checks, verify_service_dependencies, VerificationStatus};
@@ -174,6 +223,7 @@ mod version_info_tests {
 ///     // ... other fields
 /// };
 /// ```
+#[cfg(feature = "messaging")]
 #[derive(clap::Parser, Debug, Clone)]
 pub struct NodeArgs {
     /// NATS server URL for event ingestion
@@ -290,6 +340,7 @@ pub enum NodeError {
     #[error("Configuration parsing error: {0}")]
     Configuration(String),
 
+    #[cfg(feature = "db")]
     #[error("Database error: {0}")]
     Database(#[from] sqlx::Error),
 
@@ -327,6 +378,7 @@ impl From<NodeError> for sinex_core::error::SinexError {
         match e {
             NodeError::Config(_) => SinexError::configuration(e.to_string()),
             NodeError::Configuration(_) => SinexError::configuration(e.to_string()),
+            #[cfg(feature = "db")]
             NodeError::Database(_) => SinexError::database(e.to_string()),
             NodeError::Serialization(_) => SinexError::serialization(e.to_string()),
             NodeError::Io(_) => SinexError::io(e.to_string()),
@@ -346,6 +398,7 @@ impl From<sinex_core::error::SinexError> for NodeError {
         use sinex_core::error::SinexError;
         match e {
             SinexError::Configuration(_) => NodeError::Configuration(e.to_string()),
+            #[cfg(feature = "db")]
             SinexError::Database(_) => NodeError::Database(sqlx::Error::Protocol(e.to_string())),
             SinexError::Serialization(_) => NodeError::Processing(e.to_string()),
             SinexError::Io(_) => NodeError::Io(std::io::Error::other(e.to_string())),

@@ -117,22 +117,22 @@ impl GatewayMetrics {
 
     /// Record a rate-limited request
     #[inline]
-    pub fn record_rate_limited(&self, token_prefix: &str) {
+    pub fn record_rate_limited(&self, _token_prefix: &str) {
         self.rate_limited_requests.fetch_add(1, Ordering::Relaxed);
         self.rejected_requests.fetch_add(1, Ordering::Relaxed);
         self.active_connections.fetch_sub(1, Ordering::Relaxed);
 
-        // Emit individual rate limit event if observer is enabled
+        // Optimisation: Do NOT spawn task for every rate limit.
+        // We rely on the atomic counter `rate_limited_requests` which is aggregated
+        // and emitted by the background task every 10s.
+        // This prevents an event storm DoS during high load.
+        /*
         if self.observer.is_enabled() {
             let token = token_prefix.to_string();
             let observer = self.observer.clone();
-            // Spawn non-blocking emission
-            tokio::spawn(async move {
-                if let Err(e) = observer.emit_rate_limit_exceeded(&token, 0, 0, None).await {
-                    debug!("Failed to emit rate limit event: {}", e);
-                }
-            });
+            tokio::spawn(async move { ... });
         }
+        */
     }
 
     /// Record latency sample

@@ -535,7 +535,7 @@ impl<'a> SourceMaterialRepository<'a> {
         let result = sqlx::query!(
             r#"
             UPDATE raw.source_material_registry
-            SET metadata = metadata || jsonb_build_object('archived', true, 'archived_at', NOW())
+            SET metadata = core.jsonb_merge_deep(metadata, jsonb_build_object('archived', true, 'archived_at', NOW()))
             WHERE id::uuid = $1
             "#,
             ulid_to_uuid(*id.as_ulid())
@@ -595,7 +595,7 @@ impl<'a> SourceMaterialRepository<'a> {
             SourceMaterialRecord,
             r#"
             UPDATE raw.source_material_registry
-            SET metadata = metadata || $2
+            SET metadata = core.jsonb_merge_deep(metadata, $2)
             WHERE id::uuid = $1
             RETURNING
                 id::uuid as "id!: crate::Ulid",
@@ -739,7 +739,7 @@ impl<'a> SourceMaterialRepository<'a> {
                                 ELSE EXCLUDED.status
                             END,
                             timing_info_type = EXCLUDED.timing_info_type,
-                            metadata = raw.source_material_registry.metadata || EXCLUDED.metadata,
+                            metadata = core.jsonb_merge_deep(raw.source_material_registry.metadata, EXCLUDED.metadata),
                             start_time = COALESCE(raw.source_material_registry.start_time, EXCLUDED.start_time, NOW()),
                             end_time = CASE
                                 WHEN raw.source_material_registry.status IN ('completed', 'failed') THEN raw.source_material_registry.end_time
@@ -873,7 +873,7 @@ impl<'a> SourceMaterialRepository<'a> {
                                         ELSE $4
                                     END,
                                     timing_info_type = $5,
-                                    metadata = raw.source_material_registry.metadata || $6,
+                                    metadata = core.jsonb_merge_deep(raw.source_material_registry.metadata, $6),
                                     start_time = COALESCE(raw.source_material_registry.start_time, $7, NOW()),
                                     end_time = CASE
                                         WHEN raw.source_material_registry.status IN ('completed', 'failed') THEN raw.source_material_registry.end_time
@@ -970,7 +970,7 @@ impl<'a> SourceMaterialRepository<'a> {
         sqlx::query!(
             r#"
             UPDATE raw.source_material_registry
-            SET metadata = metadata || $2,
+            SET metadata = core.jsonb_merge_deep(metadata, $2),
                 status = $3,
                 end_time = COALESCE(end_time, NOW())
             WHERE id::uuid = $1
@@ -1016,7 +1016,7 @@ impl<'a> SourceMaterialRepository<'a> {
             r#"
             UPDATE raw.source_material_registry
             SET optional_blob_id = ($2::uuid)::ulid,
-                metadata = metadata || $3,
+                metadata = core.jsonb_merge_deep(metadata, $3),
                 status = $4,
                 end_time = COALESCE(end_time, NOW())
             WHERE id::uuid = $1

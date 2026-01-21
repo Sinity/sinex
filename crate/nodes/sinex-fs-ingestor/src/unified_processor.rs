@@ -10,6 +10,7 @@
 //!   the captured material for provenance.
 
 use async_trait::async_trait;
+use chrono::Utc;
 use color_eyre::eyre;
 use notify::{event::RenameMode, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
@@ -24,10 +25,11 @@ use sinex_core::{
 };
 use sinex_node_sdk::{
     acquisition_manager::{AcquisitionManager, RotationPolicy},
+    simple_ingestor::SimpleIngestor,
     stage_as_you_go::StageAsYouGoContext,
     stream_processor::{
-        Checkpoint, Node, NodeCapabilities, NodeInitContext, NodeRuntimeState, NodeType, ScanArgs,
-        ScanEstimate, ScanReport, ServiceInfo, TimeHorizon,
+        Checkpoint, NodeCapabilities, NodeRuntimeState, ScanArgs, ScanReport, ServiceInfo,
+        TimeHorizon,
     },
     NodeError, NodeResult,
 };
@@ -137,10 +139,6 @@ pub struct FilesystemState {
     pub host: HostName,
 }
 
-// Issue 24: Event processing metrics for observability
-// TODO: Integrate with proper metrics infrastructure (Prometheus/OpenTelemetry)
-// when available. Current implementation tracks basic counters that can be
-// exposed via get_source_state() for CLI exploration.
 struct EventMetrics {
     events_processed: AtomicU64,
     events_created: AtomicU64,
@@ -185,6 +183,10 @@ impl EventMetrics {
     fn record_error(&self) {
         self.processing_errors.fetch_add(1, Ordering::Relaxed);
     }
+
+    pub fn recent_activity(&self) -> Vec<sinex_node_sdk::ActivityEntry> {
+        vec![]
+    }
 }
 
 #[derive(Clone)]
@@ -196,6 +198,9 @@ struct WatchContext {
     dropped_events: Arc<AtomicU64>,
     metrics: Arc<EventMetrics>,
 }
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FilesystemCheckpoint {}
 
 /// Unified filesystem processor using JetStream acquisition.
 pub struct FilesystemProcessor {
@@ -239,46 +244,6 @@ impl FilesystemProcessor {
 
     fn dropped_event_count(&self) -> u64 {
         self.dropped_events.load(Ordering::Relaxed)
-    }
-
-    async fn initialise_with_runtime_state(
-        &mut self,
-        runtime: NodeRuntimeState,
-        config: FilesystemConfig,
-    ) -> NodeResult<()> {
-        let service_name = runtime.service_info().service_name().to_string();
-
-        info!(
-            processor = self.processor_name(),
-            service = %service_name,
-            "Initializing filesystem processor"
-        );
-
-        config.validate_config().map_err(|e| {
-            NodeError::General(eyre::eyre!(
-                "Filesystem configuration validation failed: {}",
-                e
-            ))
-        })?;
-
-        let publisher = match runtime.transport() {
-            sinex_node_sdk::event_processor::EventTransport::Nats(publisher) => {
-                Arc::clone(publisher)
-            }
-        };
-
-        AcquisitionManager::bootstrap_streams(publisher.nats_client())
-            .await
-            .map_err(NodeError::from)?;
-
-        let stage_context = StageAsYouGoContext::from_runtime(&runtime);
-
-        self.config = config;
-        self.stage_context = Some(stage_context);
-        self.watch_handles = Arc::new(Mutex::new(Vec::new()));
-        self.runtime = Some(runtime);
-
-        Ok(())
     }
 
     fn runtime(&self) -> NodeResult<&NodeRuntimeState> {
@@ -339,10 +304,9 @@ impl FilesystemProcessor {
             let watch_ctx = watch_ctx.clone();
 
             let handle = tokio::spawn(async move {
-                // Issue 86: Retry watcher initialization with exponential backoff
                 let mut attempt = 0u32;
                 const MAX_INIT_ATTEMPTS: u32 = 5;
-                const INIT_RETRY_BASE_DELAY_MS: u64 = 1000; // 1s, 2s, 4s, 8s, 16s
+                const INIT_RETRY_BASE_DELAY_MS: u64 = 1000;
 
                 loop {
                     match watch_path(root_path.clone(), watch_ctx.clone()).await {
@@ -382,14 +346,6 @@ impl FilesystemProcessor {
         Ok(handles)
     }
 
-    async fn run_continuous_monitoring(&self) -> NodeResult<()> {
-        info!("Filesystem watcher running (continuous mode)");
-        // Wait forever while watchers stream events.
-        futures::future::pending::<()>().await;
-        Ok(())
-    }
-
-    /// Produce a snapshot of the current processor state.
     fn snapshot_state(&self) -> FilesystemState {
         let host = self
             .service_info()
@@ -411,80 +367,12 @@ impl Default for FilesystemProcessor {
 }
 
 #[async_trait]
-impl Node for FilesystemProcessor {
+impl SimpleIngestor for FilesystemProcessor {
     type Config = FilesystemConfig;
+    type State = FilesystemCheckpoint;
 
-    #[instrument(skip(self, init), fields(processor = "filesystem", service = %init.service_info().service_name()))]
-    async fn initialize(&mut self, init: NodeInitContext<Self::Config>) -> NodeResult<()> {
-        let (config, runtime) = init.into_runtime();
-        self.initialise_with_runtime_state(runtime, config).await
-    }
-
-    async fn scan(
-        &mut self,
-        from: Checkpoint,
-        until: TimeHorizon,
-        _args: ScanArgs,
-    ) -> NodeResult<ScanReport> {
-        match until {
-            TimeHorizon::Snapshot => {
-                let state = self.snapshot_state();
-                let report = ScanReport {
-                    events_processed: 0,
-                    duration: std::time::Duration::from_millis(0),
-                    final_checkpoint: from,
-                    time_range: None,
-                    processor_stats: HashMap::new(),
-                    successful_targets: vec!["snapshot".to_string()],
-                    failed_targets: Vec::new(),
-                    warnings: Vec::new(),
-                };
-
-                info!("Filesystem snapshot captured at {}", state.captured_at);
-                Ok(report)
-            }
-            TimeHorizon::Historical { .. } => {
-                warn!("Filesystem watcher does not support historical replay");
-                Ok(ScanReport {
-                    events_processed: 0,
-                    duration: std::time::Duration::from_millis(0),
-                    final_checkpoint: from,
-                    time_range: None,
-                    processor_stats: HashMap::new(),
-                    successful_targets: Vec::new(),
-                    failed_targets: Vec::new(),
-                    warnings: vec!["Historical mode is not supported".to_string()],
-                })
-            }
-            TimeHorizon::Continuous => {
-                let handles = self.spawn_watchers().await?;
-                {
-                    let mut guard = self.watch_handles.lock().await;
-                    guard.extend(handles);
-                }
-
-                self.run_continuous_monitoring().await?;
-
-                Ok(ScanReport {
-                    events_processed: 0,
-                    duration: std::time::Duration::from_millis(0),
-                    final_checkpoint: Checkpoint::None,
-                    time_range: None,
-                    processor_stats: HashMap::new(),
-                    successful_targets: vec!["continuous".to_string()],
-                    failed_targets: Vec::new(),
-                    warnings: Vec::new(),
-                })
-            }
-        }
-    }
-
-    fn processor_name(&self) -> &str {
+    fn name(&self) -> &str {
         "filesystem-watcher"
-    }
-
-    fn processor_type(&self) -> NodeType {
-        NodeType::Ingestor
     }
 
     fn capabilities(&self) -> NodeCapabilities {
@@ -496,32 +384,115 @@ impl Node for FilesystemProcessor {
         }
     }
 
-    async fn current_checkpoint(&self) -> NodeResult<Checkpoint> {
-        Ok(Checkpoint::None)
+    async fn initialize(
+        &mut self,
+        config: Self::Config,
+        runtime: &NodeRuntimeState,
+        _state: &mut Self::State,
+    ) -> NodeResult<()> {
+        let service_name = runtime.service_info().service_name().to_string();
+
+        info!(
+            processor = self.name(),
+            service = %service_name,
+            "Initializing filesystem processor"
+        );
+
+        config.validate_config().map_err(|e| {
+            NodeError::General(eyre::eyre!(
+                "Filesystem configuration validation failed: {}",
+                e
+            ))
+        })?;
+
+        let publisher: Arc<sinex_node_sdk::nats_publisher::NatsPublisher> =
+            match runtime.transport() {
+                sinex_node_sdk::EventTransport::Nats(publisher) => Arc::clone(publisher),
+            };
+
+        AcquisitionManager::bootstrap_streams(publisher.nats_client())
+            .await
+            .map_err(NodeError::from)?;
+
+        let stage_context = StageAsYouGoContext::from_runtime(runtime);
+
+        self.config = config;
+        self.stage_context = Some(stage_context);
+        self.watch_handles = Arc::new(Mutex::new(Vec::new()));
+        self.runtime = Some(runtime.clone());
+
+        Ok(())
     }
 
-    async fn estimate_scan_scope(
-        &self,
-        _from: &Checkpoint,
-        _until: &TimeHorizon,
-        _args: &ScanArgs,
-    ) -> NodeResult<ScanEstimate> {
-        Ok(ScanEstimate {
-            estimated_events: (self.config.watch_paths.len() as u64) * 100,
-            estimated_duration: std::time::Duration::from_secs(5),
-            estimated_data_size: self.config.max_capture_bytes.as_u64()
-                * (self.config.watch_paths.len() as u64),
-            estimated_targets: self.config.watch_paths.len() as u64,
-            warnings: vec!["Filesystem activity estimation derived from watcher count".to_string()],
-            confidence: 0.3,
+    async fn scan_snapshot(&self, _state: &Self::State, _args: ScanArgs) -> NodeResult<ScanReport> {
+        let state = self.snapshot_state();
+        let report = ScanReport {
+            events_processed: 0,
+            duration: std::time::Duration::from_millis(0),
+            final_checkpoint: Checkpoint::None,
+            time_range: None,
+            processor_stats: HashMap::new(),
+            successful_targets: vec!["snapshot".to_string()],
+            failed_targets: Vec::new(),
+            warnings: Vec::new(),
+        };
+
+        info!("Filesystem snapshot captured at {}", state.captured_at);
+        Ok(report)
+    }
+
+    async fn scan_historical(
+        &mut self,
+        _state: &mut Self::State,
+        from: Checkpoint,
+        _until: TimeHorizon,
+        _args: ScanArgs,
+    ) -> NodeResult<ScanReport> {
+        warn!("Filesystem watcher does not support historical replay");
+        Ok(ScanReport {
+            events_processed: 0,
+            duration: std::time::Duration::from_millis(0),
+            final_checkpoint: from,
+            time_range: None,
+            processor_stats: HashMap::new(),
+            successful_targets: Vec::new(),
+            failed_targets: Vec::new(),
+            warnings: vec!["Historical mode is not supported".to_string()],
         })
     }
 
-    async fn shutdown(&mut self) -> NodeResult<()> {
+    async fn run_continuous(
+        &mut self,
+        _state: &mut Self::State,
+        _from: Checkpoint,
+        shutdown_rx: tokio::sync::watch::Receiver<bool>,
+    ) -> NodeResult<ScanReport> {
+        let handles = self.spawn_watchers().await?;
+        {
+            let mut guard = self.watch_handles.lock().await;
+            guard.extend(handles);
+        }
+
+        // Wait for shutdown signal instead of awaiting pending
+        let mut shutdown_rx = shutdown_rx;
+        let _ = shutdown_rx.changed().await;
+
+        Ok(ScanReport {
+            events_processed: 0,
+            duration: std::time::Duration::from_millis(0),
+            final_checkpoint: Checkpoint::None,
+            time_range: None,
+            processor_stats: HashMap::new(),
+            successful_targets: vec!["continuous".to_string()],
+            failed_targets: Vec::new(),
+            warnings: Vec::new(),
+        })
+    }
+
+    async fn shutdown(&mut self, _state: &Self::State) -> NodeResult<()> {
         let mut guard = self.watch_handles.lock().await;
         for handle in guard.drain(..) {
             handle.abort();
-            // Join after abort to ensure cleanup (file descriptors, inotify watches)
             let _ = handle.await;
         }
 
@@ -536,70 +507,14 @@ impl Node for FilesystemProcessor {
 impl ExplorationProvider for FilesystemProcessor {
     fn get_source_state(&self) -> color_eyre::eyre::Result<SourceState> {
         Ok(SourceState {
-            description: "Monitors filesystem changes and publishes events".to_string(),
-            last_updated: chrono::Utc::now(),
-            total_items: Some(self.config.watch_paths.len() as u64),
-            metadata: HashMap::from([
-                (
-                    "max_capture_bytes".to_string(),
-                    serde_json::Value::Number(serde_json::Number::from(
-                        self.config.max_capture_bytes.as_u64(),
-                    )),
-                ),
-                (
-                    "watch_paths".to_string(),
-                    serde_json::Value::Array(
-                        self.config
-                            .watch_paths
-                            .iter()
-                            .map(|p| serde_json::Value::String(p.clone()))
-                            .collect(),
-                    ),
-                ),
-                (
-                    "dropped_events".to_string(),
-                    serde_json::Value::Number(serde_json::Number::from(self.dropped_event_count())),
-                ),
-                // Issue 24: Expose event processing metrics
-                (
-                    "events_processed".to_string(),
-                    serde_json::Value::Number(serde_json::Number::from(
-                        self.metrics.events_processed.load(Ordering::Relaxed),
-                    )),
-                ),
-                (
-                    "events_created".to_string(),
-                    serde_json::Value::Number(serde_json::Number::from(
-                        self.metrics.events_created.load(Ordering::Relaxed),
-                    )),
-                ),
-                (
-                    "events_modified".to_string(),
-                    serde_json::Value::Number(serde_json::Number::from(
-                        self.metrics.events_modified.load(Ordering::Relaxed),
-                    )),
-                ),
-                (
-                    "events_deleted".to_string(),
-                    serde_json::Value::Number(serde_json::Number::from(
-                        self.metrics.events_deleted.load(Ordering::Relaxed),
-                    )),
-                ),
-                (
-                    "events_moved".to_string(),
-                    serde_json::Value::Number(serde_json::Number::from(
-                        self.metrics.events_moved.load(Ordering::Relaxed),
-                    )),
-                ),
-                (
-                    "processing_errors".to_string(),
-                    serde_json::Value::Number(serde_json::Number::from(
-                        self.metrics.processing_errors.load(Ordering::Relaxed),
-                    )),
-                ),
-            ]),
+            is_connected: true,
             healthy: true,
-            recent_activity: Vec::new(),
+            description: format!("Monitoring {} paths", self.config.watch_paths.len()),
+            last_updated: Utc::now(),
+            lag_seconds: None,
+            recent_activity: self.metrics.recent_activity(),
+            total_items: None,
+            metadata: std::collections::HashMap::new(),
         })
     }
 
@@ -1000,7 +915,6 @@ async fn capture_material_from_file_inner(
         .await
         .map_err(|e| NodeError::General(eyre::eyre!("Failed to open file: {}", e)))?;
 
-    // Get metadata from open file handle (atomic check)
     let metadata = file
         .metadata()
         .await
@@ -1008,7 +922,6 @@ async fn capture_material_from_file_inner(
 
     let file_size = metadata.len();
 
-    // Check size limit atomically before any read operation
     if file_size > ctx.max_capture_bytes.as_u64() {
         return Err(NodeError::General(eyre::eyre!(
             "File size {} exceeds max_capture_bytes {}",
@@ -1020,7 +933,6 @@ async fn capture_material_from_file_inner(
     let mut cumulative_bytes = 0u64;
     let mut buffer = vec![0u8; FS_CAPTURE_CHUNK_SIZE];
 
-    // Stream read with cumulative size check to prevent reading beyond limit
     loop {
         let read = file
             .read(&mut buffer)
@@ -1033,7 +945,6 @@ async fn capture_material_from_file_inner(
 
         cumulative_bytes += read as u64;
 
-        // Defense in depth: verify we haven't exceeded the limit during streaming
         if cumulative_bytes > ctx.max_capture_bytes.as_u64() {
             return Err(NodeError::General(eyre::eyre!(
                 "File grew during capture; cumulative read {} exceeds max_capture_bytes {}",
@@ -1092,9 +1003,8 @@ fn file_modified_at(metadata: &StdMetadata) -> chrono::DateTime<chrono::Utc> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_core::db::models::{Event, Provenance};
+    use sinex_core::db::models::{Event as SinexEvent, Provenance};
     use sinex_core::db::query_helpers::ulid_to_uuid;
-    use sinex_core::types::events::payloads::filesystem::FileCreatedPayload;
     use sinex_core::Id;
     use sinex_node_sdk::{acquisition_manager::RotationPolicy, AcquisitionManager};
     use sinex_test_utils::prelude::*;
@@ -1137,9 +1047,8 @@ mod tests {
             "/tmp".to_string(),
         ));
 
-        let (event_tx, mut event_rx) = mpsc::channel::<Event<FileCreatedPayload>>(
-            sinex_core::types::buffers::DEFAULT_EVENT_CHANNEL_SIZE,
-        );
+        let (event_tx, mut event_rx) =
+            mpsc::channel::<SinexEvent>(sinex_core::types::buffers::DEFAULT_EVENT_CHANNEL_SIZE);
         let stage_context =
             StageAsYouGoContext::from_sender(Arc::clone(&acquisition), event_tx, false);
 
@@ -1177,8 +1086,6 @@ mod tests {
             }
         };
 
-        // Acquisition is JetStream-first; ingestd is the sole writer for DB material state.
-        // This unit test runs without ingestd, so nothing should be persisted.
         let record = ctx
             .pool
             .source_materials()

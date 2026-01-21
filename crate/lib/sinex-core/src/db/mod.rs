@@ -2,28 +2,38 @@
 //!
 //! This module contains all database-related functionality that was previously in sinex-db.
 
+#[cfg(feature = "sqlx")]
 pub mod advisory_lock;
+#[cfg(feature = "sqlx")]
 pub mod integrity;
 pub mod models;
+#[cfg(feature = "sqlx")]
 pub mod pool;
+#[cfg(feature = "sqlx")]
 pub mod query_helpers;
 pub mod sanitization;
 pub mod security;
+#[cfg(feature = "sqlx")]
 pub mod validation;
 
 // Core modules
 // Repository pattern - the new way to access data
+#[cfg(feature = "sqlx")]
 pub mod replay;
+#[cfg(feature = "sqlx")]
 pub mod repositories;
 
 // Database schema definitions using SeaQuery
 pub use sinex_schema::schema;
 
 // Migration support
+#[cfg(feature = "migrations")]
 pub mod migration;
+#[cfg(feature = "migrations")]
 pub use migration::run_migrations_for_url;
 
 // Re-export query helpers for easier access
+#[cfg(feature = "sqlx")]
 pub use query_helpers::{
     count, db_error, exists, is_retryable_db_error, with_retry_transaction_idempotent,
     with_transaction, IdempotentTransaction, RetryConfig,
@@ -36,6 +46,7 @@ pub use sinex_schema::ulid_conversions::{
 };
 
 // Re-export repository pattern
+#[cfg(feature = "sqlx")]
 pub use repositories::{
     DbPoolExt, DbResult as RepoResult, EventPayloadSchema, EventSearchFilters, NewSchema,
 };
@@ -45,8 +56,11 @@ use crate::SinexError;
 use color_eyre::eyre::{eyre, Result};
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "sqlx")]
 use sqlx::pool::PoolConnection;
+#[cfg(feature = "sqlx")]
 use sqlx::postgres::PgPoolOptions;
+#[cfg(feature = "sqlx")]
 use sqlx::{migrate::MigrateDatabase, PgPool, Postgres};
 use std::env;
 use std::time::{Duration, Instant};
@@ -54,10 +68,13 @@ use tracing::{info, warn};
 use validator::Validate;
 
 // Common type aliases for database operations
+#[cfg(feature = "sqlx")]
 pub type DbPool = PgPool;
+#[cfg(feature = "sqlx")]
 pub type DbPoolRef<'a> = &'a PgPool;
 
 // Re-export PgPool for external crates (avoiding naming conflict)
+#[cfg(feature = "sqlx")]
 pub use sqlx::PgPool as SqlxPgPool;
 
 // Import type aliases from types module
@@ -65,6 +82,7 @@ pub use crate::{JsonValue, Timestamp};
 pub type OptionalTimestamp = Option<Timestamp>;
 
 /// Acquire a database connection with a hard timeout.
+#[cfg(feature = "sqlx")]
 pub async fn acquire_with_timeout(
     pool: &DbPool,
     timeout: Duration,
@@ -119,6 +137,7 @@ pub fn pool_acquire_timeout() -> Duration {
 }
 
 /// Configuration for database connection pool
+#[cfg(feature = "sqlx")]
 #[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct PoolConfig {
     #[validate(range(min = 1, max = 1000))]
@@ -141,6 +160,7 @@ pub struct PoolConfig {
     pub validate_against_postgres_max: bool,
 }
 
+#[cfg(feature = "sqlx")]
 impl Default for PoolConfig {
     fn default() -> Self {
         Self {
@@ -154,6 +174,7 @@ impl Default for PoolConfig {
     }
 }
 
+#[cfg(feature = "sqlx")]
 impl PoolConfig {
     /// Create configuration from environment variables
     ///
@@ -200,6 +221,7 @@ impl PoolConfig {
     }
 }
 
+#[cfg(feature = "sqlx")]
 fn validate_acquire_timeout_secs(value: &Seconds) -> Result<(), validator::ValidationError> {
     let secs = value.as_secs();
     if !(1..=300).contains(&secs) {
@@ -208,6 +230,7 @@ fn validate_acquire_timeout_secs(value: &Seconds) -> Result<(), validator::Valid
     Ok(())
 }
 
+#[cfg(feature = "sqlx")]
 fn validate_idle_timeout_secs(value: &Seconds) -> Result<(), validator::ValidationError> {
     let secs = value.as_secs();
     if secs > 3600 {
@@ -216,6 +239,7 @@ fn validate_idle_timeout_secs(value: &Seconds) -> Result<(), validator::Validati
     Ok(())
 }
 
+#[cfg(feature = "sqlx")]
 fn validate_statement_timeout_secs(value: &Seconds) -> Result<(), validator::ValidationError> {
     let secs = value.as_secs();
     // 0 = no timeout, or 1 second to 1 hour
@@ -226,12 +250,14 @@ fn validate_statement_timeout_secs(value: &Seconds) -> Result<(), validator::Val
 }
 
 /// Create a database connection pool with default settings
+#[cfg(feature = "sqlx")]
 pub async fn create_pool(database_url: &str) -> Result<DbPool> {
     let config = PoolConfig::default();
     create_pool_with_config(database_url, &config).await
 }
 
 /// Create a database connection pool with custom configuration
+#[cfg(feature = "sqlx")]
 pub async fn create_pool_with_config(database_url: &str, config: &PoolConfig) -> Result<DbPool> {
     // Validate configuration using validator crate
     config
@@ -286,6 +312,7 @@ pub async fn create_pool_with_config(database_url: &str, config: &PoolConfig) ->
 ///
 /// This function gets the DATABASE_URL and applies environment-specific namespacing
 /// to ensure proper isolation between dev/staging/prod environments.
+#[cfg(feature = "sqlx")]
 pub fn get_database_url() -> Result<String> {
     use crate::environment::environment;
 
@@ -302,18 +329,21 @@ pub fn get_database_url() -> Result<String> {
 }
 
 /// Create a database connection pool
+#[cfg(feature = "sqlx")]
 pub async fn create_pool_strict() -> Result<DbPool> {
     let database_url = get_database_url()?;
     create_pool(&database_url).await
 }
 
 /// Create a database connection pool with custom configuration
+#[cfg(feature = "sqlx")]
 pub async fn create_pool_with_config_strict(config: &PoolConfig) -> Result<DbPool> {
     let database_url = get_database_url()?;
     create_pool_with_config(&database_url, config).await
 }
 
 /// Validate pool configuration against PostgreSQL server limits
+#[cfg(feature = "sqlx")]
 async fn validate_pool_config_against_postgres(
     database_url: &str,
     config: &PoolConfig,
@@ -368,6 +398,7 @@ async fn validate_pool_config_against_postgres(
 }
 
 /// Create a database connection pool optimized for testing with high concurrency
+#[cfg(feature = "sqlx")]
 pub async fn create_test_pool(database_url: &str) -> Result<DbPool> {
     let test_config = PoolConfig {
         max_connections: 100, // High concurrency for tests
@@ -411,6 +442,7 @@ pub async fn create_test_pool(database_url: &str) -> Result<DbPool> {
 }
 
 /// Create database if it doesn't exist
+#[cfg(feature = "sqlx")]
 pub async fn create_database_if_not_exists(database_url: &str) -> Result<()> {
     if !Postgres::database_exists(database_url).await? {
         info!("Creating database...");
@@ -420,6 +452,7 @@ pub async fn create_database_if_not_exists(database_url: &str) -> Result<()> {
 }
 
 /// Run database migrations using the SeaORM migration system.
+#[cfg(feature = "migrations")]
 pub async fn run_migrations(pool: DbPoolRef<'_>) -> Result<()> {
     // Use the new migration system
     migration::run_migrations(pool).await?;

@@ -1,7 +1,6 @@
 //! JetStream event consumer with confirmations and DLQ support
 
 use async_nats::{jetstream, Client as NatsClient};
-use base64::Engine;
 use chrono::{DateTime, SecondsFormat, Timelike, Utc};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};

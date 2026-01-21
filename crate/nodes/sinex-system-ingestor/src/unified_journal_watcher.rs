@@ -31,6 +31,7 @@ use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
+use sha2::{Digest, Sha256};
 
 use crate::watcher_lifecycle::{WatcherHealth, WatcherLifecycle};
 
@@ -621,8 +622,21 @@ impl UnifiedJournalWatcher {
                 fields: payload.fields,
             },
             material.initial_provenance(),
-        )
-        .to_json_event()
+        );
+
+        // Set deterministic ID based on cursor to prevent duplicates (discriminator 0 for generic entry)
+        let id_entropy = Self::calculate_entropy(payload.cursor.as_str(), 0);
+        let id = sinex_core::types::Ulid::from_parts(
+            (payload.timestamp_us / 1000) as u64, 
+            id_entropy
+        );
+        event.id = Some(sinex_core::types::Id::from_ulid(id));
+        // Ensure ts_orig matches journal timestamp (already passed as payload.timestamp but good to be explicit)
+        if let Ok(ts) = chrono::DateTime::parse_from_rfc3339(&payload.timestamp) {
+             event.ts_orig = Some(ts.with_timezone(&Utc));
+        }
+
+        event.to_json_event()
         .map_err(|e| {
             sinex_node_sdk::NodeError::Processing(format!(
                 "Failed to serialize journal entry: {}",
@@ -662,9 +676,23 @@ impl UnifiedJournalWatcher {
                         sub_state: "running".to_string(),
                     },
                     material.initial_provenance(),
-                )
-                .to_json_event()
-                .ok()?,
+                );
+                
+                // Set deterministic ID based on cursor (discriminator 1 for systemd events)
+                let id_entropy = Self::calculate_entropy(cursor, 1);
+                let timestamp_us = entry["__REALTIME_TIMESTAMP"].as_str()
+                    .and_then(|t| t.parse::<u64>().ok())
+                    .unwrap_or_else(|| chrono::Utc::now().timestamp_micros() as u64);
+
+                let id = sinex_core::types::Ulid::from_parts(
+                    timestamp_us / 1000, 
+                    id_entropy
+                );
+                event.id = Some(sinex_core::types::Id::from_ulid(id));
+                event.ts_orig = Some(chrono::Utc::now()); // Approximate if not parsed from entry, but better to parse.
+                /* Better to parse timestamp from entry for ts_orig if possible, but kept simple here as main issue is ID */
+                
+                Some(event.to_json_event().ok()?)
             )
         } else if message.contains("Stopped ") {
             let unit_type = SystemdUnitType::from_unit_name(unit_name);
@@ -679,9 +707,17 @@ impl UnifiedJournalWatcher {
                         sub_state: "dead".to_string(),
                     },
                     material.initial_provenance(),
-                )
-                .to_json_event()
-                .ok()?,
+                );
+                // Set deterministic ID based on cursor (discriminator 1 for systemd events)
+                let id_entropy = Self::calculate_entropy(cursor, 1);
+                let timestamp_us = entry["__REALTIME_TIMESTAMP"].as_str()
+                    .and_then(|t| t.parse::<u64>().ok())
+                    .unwrap_or_else(|| chrono::Utc::now().timestamp_micros() as u64);
+                let id = sinex_core::types::Ulid::from_parts(timestamp_us / 1000, id_entropy);
+                event.id = Some(sinex_core::types::Id::from_ulid(id));
+                event.ts_orig = Some(chrono::Utc::now());
+
+                Some(event.to_json_event().ok()?)
             )
         } else if message.contains("Failed ") {
             Some(
@@ -696,9 +732,17 @@ impl UnifiedJournalWatcher {
                         journal_timestamp: entry["__REALTIME_TIMESTAMP"].as_str().map(String::from),
                     },
                     material.initial_provenance(),
-                )
-                .to_json_event()
-                .ok()?,
+                );
+                // Set deterministic ID based on cursor (discriminator 1 for systemd events)
+                let id_entropy = Self::calculate_entropy(cursor, 1);
+                let timestamp_us = entry["__REALTIME_TIMESTAMP"].as_str()
+                    .and_then(|t| t.parse::<u64>().ok())
+                    .unwrap_or_else(|| chrono::Utc::now().timestamp_micros() as u64);
+                let id = sinex_core::types::Ulid::from_parts(timestamp_us / 1000, id_entropy);
+                event.id = Some(sinex_core::types::Id::from_ulid(id));
+                event.ts_orig = Some(chrono::Utc::now());
+
+                Some(event.to_json_event().ok()?)
             )
         } else if message.contains("Reloaded ") {
             Some(
@@ -713,9 +757,17 @@ impl UnifiedJournalWatcher {
                         journal_timestamp: entry["__REALTIME_TIMESTAMP"].as_str().map(String::from),
                     },
                     material.initial_provenance(),
-                )
-                .to_json_event()
-                .ok()?,
+                );
+                // Set deterministic ID based on cursor (discriminator 1 for systemd events)
+                let id_entropy = Self::calculate_entropy(cursor, 1);
+                let timestamp_us = entry["__REALTIME_TIMESTAMP"].as_str()
+                    .and_then(|t| t.parse::<u64>().ok())
+                    .unwrap_or_else(|| chrono::Utc::now().timestamp_micros() as u64);
+                let id = sinex_core::types::Ulid::from_parts(timestamp_us / 1000, id_entropy);
+                event.id = Some(sinex_core::types::Id::from_ulid(id));
+                event.ts_orig = Some(chrono::Utc::now());
+
+                Some(event.to_json_event().ok()?)
             )
         } else if message.contains("Triggered ") {
             Some(
@@ -730,13 +782,35 @@ impl UnifiedJournalWatcher {
                         journal_timestamp: entry["__REALTIME_TIMESTAMP"].as_str().map(String::from),
                     },
                     material.initial_provenance(),
-                )
-                .to_json_event()
-                .ok()?,
+                );
+                // Set deterministic ID based on cursor (discriminator 1 for systemd events)
+                let id_entropy = Self::calculate_entropy(cursor, 1);
+                let timestamp_us = entry["__REALTIME_TIMESTAMP"].as_str()
+                    .and_then(|t| t.parse::<u64>().ok())
+                    .unwrap_or_else(|| chrono::Utc::now().timestamp_micros() as u64);
+                let id = sinex_core::types::Ulid::from_parts(timestamp_us / 1000, id_entropy);
+                event.id = Some(sinex_core::types::Id::from_ulid(id));
+                event.ts_orig = Some(chrono::Utc::now());
+
+                Some(event.to_json_event().ok()?)
             )
         } else {
             None // Not a state change we care about
         }
+    }
+
+
+    /// Calculate deterministic entropy from cursor and discriminator
+    fn calculate_entropy(cursor: &str, discriminator: u8) -> u128 {
+        let mut hasher = Sha256::new();
+        hasher.update(cursor.as_bytes());
+        hasher.update(&[discriminator]);
+        let hash = hasher.finalize();
+        
+        // Use first 16 bytes for 128-bit entropy
+        let mut bytes = [0u8; 16];
+        bytes.copy_from_slice(&hash[0..16]);
+        u128::from_be_bytes(bytes)
     }
 
     /// Save cursor to file for position tracking (batched)

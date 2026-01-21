@@ -6,7 +6,6 @@ use chrono::{DateTime, Utc};
 use color_eyre::eyre::{eyre, Context, Result};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
-use sinex_core::db::ulid_to_uuid;
 use sinex_core::environment::{environment, SinexEnvironment};
 use sinex_core::types::ulid::Ulid;
 use std::collections::HashMap;
@@ -632,6 +631,7 @@ impl ReplayTelemetry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_core::db::ulid_to_uuid;
     use chrono::Duration as ChronoDuration;
     use serde_json::json;
     use sinex_core::{types::ulid::Ulid, DbPool};

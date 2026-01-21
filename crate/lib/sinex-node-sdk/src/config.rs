@@ -85,6 +85,7 @@ pub struct NodeConfig {
 
     /// NATS connection configuration.
     #[builder(default)]
+    #[cfg(feature = "messaging")]
     pub nats: sinex_core::nats::NatsConnectionConfig,
 
     /// Database URL for direct database access (automata only).
@@ -214,6 +215,7 @@ impl NodeConfig {
         Self {
             service_name: service_name.to_string(),
             log_level: default_log_level(),
+            #[cfg(feature = "messaging")]
             nats: sinex_core::nats::NatsConnectionConfig::default(),
             database_url: None,
             database_pool_size: default_pool_size(),
@@ -296,6 +298,7 @@ impl NodeConfig {
         Self {
             service_name: defaults.service_name,
             log_level: env_var_or_default("SINEX_LOG_LEVEL", default_log_level),
+            #[cfg(feature = "messaging")]
             nats: sinex_core::nats::NatsConnectionConfig::from_env(),
             database_url: std::env::var("DATABASE_URL")
                 .ok()

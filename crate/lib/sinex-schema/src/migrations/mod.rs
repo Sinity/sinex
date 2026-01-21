@@ -15,6 +15,9 @@ pub mod m20250117_000009_document_operation_id_security;
 pub mod m20250117_000010_rename_processor_type_to_node_type;
 pub mod m20250117_000011_add_self_observation_aggregates;
 pub mod m20250118_000012_add_cancelled_status;
+pub mod m20250121_000013_fix_partitioning;
+pub mod m20260121_000014_add_jsonb_merge_function;
+pub mod m20260121_000015_drop_payload_expensive_indexes;
 
 // To add a new migration in the future, a developer would:
 // 1. Create a new file, e.g., `src/migrations/m<timestamp>_add_new_feature.rs`.

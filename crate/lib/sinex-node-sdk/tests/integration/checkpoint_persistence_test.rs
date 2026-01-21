@@ -8,7 +8,6 @@ use serde_json::json;
 use sinex_core::types::domain::EventSource;
 use sinex_node_sdk::CheckpointManager;
 use sinex_test_utils::prelude::*;
-use sinex_test_utils::TestResult;
 use tracing::info;
 
 #[sinex_test]

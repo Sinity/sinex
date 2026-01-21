@@ -12,25 +12,36 @@
 //! ```
 
 // Core processor traits and types
+#[cfg(feature = "messaging")]
 pub use crate::{Checkpoint, CheckpointManager, CheckpointState};
+#[cfg(feature = "messaging")]
 pub use crate::{Node, TimeHorizon};
+#[cfg(feature = "messaging")]
 pub use crate::{NodeCapabilities, NodeType, ScanArgs, ScanEstimate, ScanReport};
 
 // Configuration and coordination
 pub use crate::{AutomatonConfig, EventSourceConfig, NodeConfig};
+#[cfg(feature = "messaging")]
 pub use crate::{HandoffRequest, InstanceMode, NodeCoordination};
 pub use crate::{NodeInstance, NodeVersion};
 
 // Lifecycle management
+#[cfg(feature = "messaging")]
+pub use crate::{IngestorState, SimpleIngestor, SimpleIngestorWrapper};
+#[cfg(feature = "messaging")]
 pub use crate::{LifecycleManager, ServiceStatus};
 
 // Event handling and replay
+#[cfg(feature = "messaging")]
+pub use crate::{EventSender, EventStream};
+#[cfg(all(feature = "db", feature = "messaging"))]
 pub use crate::{
-    EventSender, EventStream, MetricsSnapshot, ProgressTracker, ReplayController, ReplayFilters,
-    ReplayMetrics, ReplayMode, ReplayProgress, ReplayResult, ReplayService, ReplayStats,
+    MetricsSnapshot, ProgressTracker, ReplayController, ReplayFilters, ReplayMetrics, ReplayMode,
+    ReplayProgress, ReplayResult, ReplayService, ReplayStats,
 };
 
 // CLI and utilities
+#[cfg(feature = "messaging")]
 pub use crate::NodeArgs;
 
 // Error types
@@ -40,9 +51,6 @@ pub use crate::{NodeError, NodeResult};
 pub use sinex_core::{
     // Event payloads - using the new facade
     payloads::*,
-    // Database operations
-    DbPool,
-    DbPoolExt,
     // Database models
     Event,
     EventSource,
@@ -53,6 +61,9 @@ pub use sinex_core::{
     SinexError,
     Ulid,
 };
+
+#[cfg(feature = "db")]
+pub use sinex_core::{DbPool, DbPoolExt};
 
 // Additional commonly used external types
 pub use async_trait::async_trait;

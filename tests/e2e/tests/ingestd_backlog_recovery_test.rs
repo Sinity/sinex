@@ -77,7 +77,7 @@ async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResul
     let mut restart_runner = restart_service.clone();
     let restart_handle = tokio::spawn(async move { restart_runner.run().await });
 
-    let wait_secs = Timeouts::LONG as usize;
+    let wait_secs = Timeouts::LONG;
     WaitHelpers::wait_for_event_count(&ctx.pool, event_ids.len(), wait_secs).await?;
     for event_id in event_ids {
         WaitHelpers::wait_for_event_id(&ctx.pool, event_id.into(), wait_secs).await?;

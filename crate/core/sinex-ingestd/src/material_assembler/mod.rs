@@ -50,6 +50,7 @@ pub struct MaterialAssembler {
     state_root: PathBuf,
     dlq_subject: String,
     slices_max_ack_pending: i64,
+    active_assemblies: Arc<tokio::sync::Semaphore>,
 }
 
 impl MaterialAssembler {
@@ -78,6 +79,10 @@ impl MaterialAssembler {
             &format!("events.dlq.{DLQ_CONSUMER}"),
         );
 
+        // Cap concurrent assemblies to prevent memory exhaustion
+        // TODO: Make this configurable
+        let active_assemblies = Arc::new(tokio::sync::Semaphore::new(50));
+
         Ok(Self {
             js,
             nats_client,
@@ -89,6 +94,7 @@ impl MaterialAssembler {
             state_root,
             dlq_subject,
             slices_max_ack_pending,
+            active_assemblies,
         })
     }
 
@@ -150,6 +156,13 @@ impl MaterialAssembler {
             .await
             .map_err(|e| SinexError::io(format!("Failed to open temp file: {}", e)))?;
 
+        // Limit concurrent assemblies
+        let permit = self
+            .active_assemblies
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| SinexError::service("Too many active assemblies (semaphore exhausted)"))?;
+
         Ok(AssemblerState {
             material_id,
             temp_path,
@@ -169,6 +182,7 @@ impl MaterialAssembler {
             pending_end: None,
             finalizing: false,
             last_slice_received: Utc::now(),
+            permit: Some(permit),
         })
     }
 
@@ -240,6 +254,7 @@ impl MaterialAssembler {
             state_root: self.state_root.clone(),
             dlq_subject: self.dlq_subject.clone(),
             slices_max_ack_pending: self.slices_max_ack_pending,
+            active_assemblies: self.active_assemblies.clone(),
         }
     }
 

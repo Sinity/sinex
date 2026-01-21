@@ -8,10 +8,10 @@ use sinex_core::{
 };
 use sinex_node_sdk::{
     checkpoint::CheckpointManager,
-    event_processor::EventTransport,
     heartbeat::HeartbeatEmitter,
     nats_publisher::NatsPublisher,
     stream_processor::{EventEmitter, NodeHandles, NodeRuntimeState, ServiceInfo},
+    EventTransport,
 };
 use tokio::sync::mpsc;
 

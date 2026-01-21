@@ -8,7 +8,7 @@ use serde_json::json;
 use sinex_core::types::ulid::Ulid;
 use sinex_gateway::handlers_test_support as handler_test_support;
 use sinex_gateway::rpc_server_test_support as rpc_test_support;
-use sinex_test_utils::{sinex_test, TestResult};
+use sinex_test_utils::sinex_test;
 
 // =============================================================================
 // Activity Heatmap Parameter Tests

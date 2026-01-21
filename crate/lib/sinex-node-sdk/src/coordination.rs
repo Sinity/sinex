@@ -83,7 +83,7 @@ pub enum InstanceMode {
 mod tests {
     use super::*;
     use crate::checkpoint::CheckpointManager;
-    use crate::event_processor::EventTransport;
+    use crate::EventTransport;
     use crate::nats_publisher::NatsPublisher;
     use crate::stream_processor::{EventEmitter, NodeHandles, NodeRuntimeState, ServiceInfo};
     use camino::Utf8PathBuf;

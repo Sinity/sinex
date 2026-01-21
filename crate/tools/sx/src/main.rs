@@ -12,7 +12,6 @@ mod watcher;
 use camino::Utf8PathBuf;
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::Result;
-use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 /// Sinex development orchestrator

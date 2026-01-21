@@ -6,10 +6,7 @@
 // - Schema contract enforcement
 
 use sinex_core::db::repositories::DbPoolExt;
-use sinex_node_sdk::{
-    config::EventSourceConfig,
-    stream_processor::{Checkpoint, Node, NodeType, ScanArgs, ScanReport, TimeHorizon},
-};
+use sinex_node_sdk::stream_processor::{Checkpoint, TimeHorizon};
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::sinex_test;
 use sinex_test_utils::TestResult;
@@ -158,8 +155,7 @@ async fn test_node_sdk_components(ctx: TestContext) -> TestResult<()> {
     info!("Testing node SDK components");
 
     // Test checkpoint manager
-    use sinex_node_sdk::Checkpoint;
-    use sinex_node_sdk::{CheckpointManager, CheckpointState};
+    use sinex_node_sdk::CheckpointManager;
 
     let ctx = ctx.with_nats().await?;
     let kv = ctx.checkpoint_kv().await?;
@@ -349,35 +345,6 @@ async fn test_phase2_acquisition_integration(ctx: TestContext) -> TestResult<()>
     Ok(())
 }
 
-/// Helper function to create test event source configuration
-fn create_test_event_source_config() -> EventSourceConfig {
-    use sinex_core::types::Seconds;
-    use sinex_node_sdk::NodeConfig;
-    use std::collections::HashMap;
-    use std::path::PathBuf;
-
-    let base_config = NodeConfig {
-        service_name: "test-event-source".to_string(),
-        log_level: "debug".to_string(),
-        nats: sinex_core::nats::NatsConnectionConfig {
-            url: "nats://localhost:4222".to_string(),
-            ..Default::default()
-        },
-        database_url: None,
-        database_pool_size: 10,
-        work_dir: "/tmp/sinex-test".parse().unwrap(),
-        dry_run: true,
-        replay: None,
-    };
-
-    EventSourceConfig {
-        base: base_config,
-        batch_size: 100,
-        batch_timeout_secs: Seconds::from_secs(5),
-        source_config: HashMap::new(),
-    }
-}
-
 // Helper function removed - using TestContext::publish_event directly
 
 /// Helper function to test checkpoint functionality
@@ -403,6 +370,7 @@ async fn test_checkpoint_functionality(ctx: &TestContext) -> TestResult<()> {
         last_activity: chrono::Utc::now(),
         data: Some(serde_json::json!({"test": "checkpoint"})),
         version: 2,
+        revision: 0,
     };
 
     manager.save_checkpoint(&checkpoint).await?;

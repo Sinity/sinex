@@ -6,42 +6,35 @@
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::{self, Context};
-use serde::{Deserialize, Serialize};
 use sinex_core::{db::SqlxPgPool, SanitizedPath};
-use sinex_node_sdk::event_processor::EventTransport;
-use sinex_node_sdk::{
-    config::ReplayConfig,
-    stream_processor::{Checkpoint, TimeHorizon},
+use sinex_node_sdk::config::ReplayConfig;
+use sinex_node_sdk::event_node::EventTransport;
+pub use sinex_node_sdk::exploration::{
+    CoverageAnalysis, ExplorationProvider, ExportFormat, MissingItem, SourceState,
 };
+use sinex_node_sdk::stream_processor::{Checkpoint, NodeRunner, TimeHorizon};
 
 // Re-export common types from sinex_node_sdk::automaton_base
 // These are the canonical definitions used by all automatons
-pub use sinex_node_sdk::automaton_base::{ActivityEntry, IngestionHistoryEntry};
+pub use sinex_node_sdk::{ActivityEntry, IngestionHistoryEntry};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::str::FromStr;
 use tracing::{info, warn};
 
 use crate::replay::{ReplayFilters, ReplayMode, ReplayProgress, ReplayResult, ReplayRuntimeExt};
-use sinex_node_sdk::stream_processor::StreamProcessorRunner;
 
-pub fn command_requires_heartbeat(command: &ProcessorCommand) -> bool {
+pub fn command_requires_heartbeat(command: &NodeCommand) -> bool {
     matches!(
         command,
-        ProcessorCommand::Service { .. }
-            | ProcessorCommand::Scan { .. }
-            | ProcessorCommand::Explore { .. }
+        NodeCommand::Service { .. } | NodeCommand::Scan { .. } | NodeCommand::Explore { .. }
     )
 }
 
 /// Standard CLI arguments for all stream processor nodes
 #[derive(Parser, Debug, Clone)]
-#[command(
-    name = "sinex-processor",
-    about = "Sinex Stream Processor Node",
-    version
-)]
-pub struct ProcessorCli {
+#[command(name = "sinex-node", about = "Sinex Stream Node", version)]
+pub struct NodeCli {
     /// NATS connection configuration
     #[command(flatten)]
     pub nats: NatsArgs,
@@ -64,10 +57,10 @@ pub struct ProcessorCli {
 
     /// Processor-specific configuration as JSON
     #[arg(long)]
-    pub processor_config: Option<String>,
+    pub node_config: Option<String>,
 
     #[command(subcommand)]
-    pub command: ProcessorCommand,
+    pub command: NodeCommand,
 }
 
 /// CLI arguments for configuring NATS connection options.
@@ -143,7 +136,7 @@ impl NatsArgs {
 
 /// Available subcommands for stream processors
 #[derive(Subcommand, Debug, Clone)]
-pub enum ProcessorCommand {
+pub enum NodeCommand {
     /// Run as a long-running service (with startup sequence)
     Service {
         /// Enable dry-run mode
@@ -255,7 +248,7 @@ mod tests {
 
     #[sinex_test]
     fn scan_mode_emits_heartbeats() -> TestResult<()> {
-        let command = ProcessorCommand::Scan {
+        let command = NodeCommand::Scan {
             from: "none".to_string(),
             until: "snapshot".to_string(),
             targets: Vec::new(),
@@ -273,7 +266,7 @@ mod tests {
 
     #[sinex_test]
     fn explore_mode_emits_heartbeats() -> TestResult<()> {
-        let command = ProcessorCommand::Explore {
+        let command = NodeCommand::Explore {
             source_state: true,
             ingestion_history: false,
             coverage_analysis: false,
@@ -353,131 +346,24 @@ pub fn parse_time_horizon(horizon_str: &str) -> eyre::Result<TimeHorizon> {
     }
 }
 
-/// Source state information for exploration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SourceState {
-    /// Human-readable description of current state
-    pub description: String,
-
-    /// Last update timestamp
-    pub last_updated: DateTime<Utc>,
-
-    /// Total items/records available
-    pub total_items: Option<u64>,
-
-    /// Source-specific metadata
-    pub metadata: HashMap<String, serde_json::Value>,
-
-    /// Health status
-    pub healthy: bool,
-
-    /// Recent activity summary
-    pub recent_activity: Vec<ActivityEntry>,
-}
-
-// ActivityEntry and IngestionHistoryEntry are re-exported from sinex_node_sdk::automaton_base
-// at the top of this file
-
-/// Coverage analysis comparing source vs Sinex
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CoverageAnalysis {
-    /// Time range analyzed
-    pub time_range: (DateTime<Utc>, DateTime<Utc>),
-
-    /// Total items in source
-    pub source_total: u64,
-
-    /// Total events in Sinex for this source
-    pub sinex_total: u64,
-
-    /// Coverage percentage
-    pub coverage_percentage: f64,
-
-    /// Missing items in Sinex
-    pub missing_count: u64,
-
-    /// Sample of missing items
-    pub missing_samples: Vec<MissingItem>,
-
-    /// Duplicate items in Sinex
-    pub duplicate_count: u64,
-
-    /// Recommendations for improving coverage
-    pub recommendations: Vec<String>,
-}
-
-/// Missing item information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MissingItem {
-    /// Item identifier in source system
-    pub source_id: String,
-
-    /// Item timestamp
-    pub timestamp: DateTime<Utc>,
-
-    /// Brief description
-    pub description: String,
-
-    /// Reason for being missing
-    pub missing_reason: Option<String>,
-}
-
-/// Trait for processor-specific exploration capabilities
-pub trait ExplorationProvider {
-    /// Get current source state
-    fn get_source_state(&self) -> color_eyre::eyre::Result<SourceState>;
-
-    /// Get ingestion history
-    fn get_ingestion_history(
-        &self,
-        limit: u64,
-    ) -> color_eyre::eyre::Result<Vec<IngestionHistoryEntry>>;
-
-    /// Perform coverage analysis
-    fn get_coverage_analysis(
-        &self,
-        time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
-    ) -> color_eyre::eyre::Result<CoverageAnalysis>;
-
-    /// Export data for debugging
-    fn export_data(
-        &self,
-        path: &SanitizedPath,
-        format: ExportFormat,
-    ) -> color_eyre::eyre::Result<()>;
-}
-
-/// Export format options
-#[derive(Debug, Clone, Copy)]
-pub enum ExportFormat {
-    Json,
-    Csv,
-    Raw,
-}
-
 /// Generic CLI runner for stream processor nodes
 ///
 /// This provides a standardized way to run any Node with
 /// the unified CLI interface supporting service/scan/explore subcommands.
-pub struct ProcessorCliRunner<
-    T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static,
-> {
-    processor: Option<T>,
+pub struct NodeCliRunner<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static>
+{
+    node: Option<T>,
 }
 
-impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static>
-    ProcessorCliRunner<T>
-{
-    /// Create new CLI runner with a processor instance
-    pub fn new(processor: T) -> Self {
-        Self {
-            processor: Some(processor),
-        }
+impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> NodeCliRunner<T> {
+    /// Create new CLI runner with a node instance
+    pub fn new(node: T) -> Self {
+        Self { node: Some(node) }
     }
 
     /// Run the CLI with parsed arguments
-    pub async fn run(&mut self, args: ProcessorCli) -> color_eyre::eyre::Result<()> {
-        use sinex_node_sdk::stream_processor::{ScanArgs, StreamProcessorRunner};
+    pub async fn run(&mut self, args: NodeCli) -> color_eyre::eyre::Result<()> {
+        use sinex_node_sdk::stream_processor::{NodeRunner, ScanArgs};
 
         // Initialize logging based on verbosity
         let log_level = match args.verbose {
@@ -495,36 +381,36 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static>
         }
 
         // Parse processor configuration
-        let mut processor_config: HashMap<String, serde_json::Value> =
-            if let Some(config_str) = args.processor_config.clone() {
-                serde_json::from_str(&config_str)
-                    .context("Failed to parse processor configuration JSON")?
-            } else {
-                HashMap::new()
-            };
+        let mut node_config: HashMap<String, serde_json::Value> = if let Some(config_str) =
+            args.node_config.clone()
+        {
+            serde_json::from_str(&config_str).context("Failed to parse node configuration JSON")?
+        } else {
+            HashMap::new()
+        };
 
-        if let ProcessorCommand::Service { consumer_group, .. } = &args.command {
+        if let NodeCommand::Service { consumer_group, .. } = &args.command {
             if let Some(group) = consumer_group {
-                processor_config
+                node_config
                     .entry("consumer_group".to_string())
                     .or_insert_with(|| serde_json::json!(group));
             }
         }
 
-        let replay_config = Self::extract_replay_config(&mut processor_config)?;
+        let replay_config = Self::extract_replay_config(&mut node_config)?;
 
-        // Take ownership of the processor
-        let processor = self
-            .processor
+        // Take ownership of the node
+        let node = self
+            .node
             .take()
-            .ok_or_else(|| eyre::eyre!("Processor already consumed"))?;
+            .ok_or_else(|| eyre::eyre!("Node already consumed"))?;
 
         match args.command {
-            ProcessorCommand::Service { dry_run, .. } => {
-                info!("Starting processor service mode");
+            NodeCommand::Service { dry_run, .. } => {
+                info!("Starting node service mode");
 
                 // Create stream processor runner
-                let mut runner = StreamProcessorRunner::new(processor);
+                let mut runner = NodeRunner::new(node);
 
                 // Set up dependencies
                 let service_name = Self::resolve_service_name(&args);
@@ -554,7 +440,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static>
                 runner
                     .initialize_with_transport(
                         service_name.clone(),
-                        processor_config.clone(),
+                        node_config.clone(),
                         db_pool.clone(),
                         transport,
                         std::path::PathBuf::from(work_dir.as_str()),
@@ -616,7 +502,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static>
                 }
             }
 
-            ProcessorCommand::Scan {
+            NodeCommand::Scan {
                 ref from,
                 ref until,
                 ref targets,
@@ -633,13 +519,13 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static>
                     parse_time_horizon(until).context("Failed to parse time horizon")?;
 
                 // Create stream processor runner
-                let mut runner = StreamProcessorRunner::new(processor);
+                let mut runner = NodeRunner::new(node);
 
                 // Set up minimal dependencies for scan mode
                 let service_name = args
                     .service_name
                     .as_deref()
-                    .unwrap_or("sinex-processor")
+                    .unwrap_or("sinex-node")
                     .to_string();
                 let work_dir = Self::resolve_work_dir(&args);
 
@@ -656,7 +542,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static>
                 runner
                     .initialize_with_transport(
                         service_name,
-                        processor_config,
+                        node_config,
                         db_pool,
                         transport,
                         std::path::PathBuf::from(work_dir.as_str()),
@@ -761,7 +647,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static>
                 }
             }
 
-            ProcessorCommand::Explore {
+            NodeCommand::Explore {
                 source_state,
                 ingestion_history,
                 coverage_analysis,
@@ -772,7 +658,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static>
 
                 // For exploration, we can work with the processor directly
                 if source_state {
-                    match processor.get_source_state() {
+                    match node.get_source_state() {
                         Ok(state) => {
                             println!("Source State:");
                             println!("  Description: {}", state.description);
@@ -811,7 +697,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static>
                 }
 
                 if ingestion_history {
-                    match processor.get_ingestion_history(limit) {
+                    match node.get_ingestion_history(limit) {
                         Ok(history) => {
                             println!("Ingestion History ({} entries):", history.len());
                             for entry in &history {
@@ -840,7 +726,12 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static>
                 }
 
                 if coverage_analysis {
-                    match processor.get_coverage_analysis(None) {
+                    match self
+                        .node
+                        .as_ref()
+                        .expect("Node required")
+                        .get_coverage_analysis(None)
+                    {
                         Ok(analysis) => {
                             println!("Coverage Analysis:");
                             println!(
@@ -888,7 +779,12 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static>
                         _ => ExportFormat::Raw,
                     };
 
-                    match processor.export_data(&export_path, format) {
+                    match self
+                        .node
+                        .as_ref()
+                        .expect("Node required")
+                        .export_data(&export_path, format)
+                    {
                         Ok(_) => {
                             println!("Data exported to: {}", export_path.as_str());
                         }
@@ -903,23 +799,23 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static>
         Ok(())
     }
 
-    fn resolve_service_name(args: &ProcessorCli) -> String {
+    fn resolve_service_name(args: &NodeCli) -> String {
         args.service_name
             .clone()
-            .unwrap_or_else(|| "sinex-processor".to_string())
+            .unwrap_or_else(|| "sinex-node".to_string())
     }
 
-    fn resolve_work_dir(args: &ProcessorCli) -> SanitizedPath {
+    fn resolve_work_dir(args: &NodeCli) -> SanitizedPath {
         args.work_dir.clone().unwrap_or_else(|| {
             let env = sinex_core::environment();
-            let namespaced = env.work_directory("/tmp/sinex/processor");
+            let namespaced = env.work_directory("/tmp/sinex/node");
             let namespaced = namespaced.to_string_lossy();
             SanitizedPath::from_str(namespaced.as_ref())
                 .unwrap_or_else(|_| SanitizedPath::new_unchecked(namespaced.as_ref()))
         })
     }
 
-    async fn connect_primary_db(args: &ProcessorCli) -> eyre::Result<SqlxPgPool> {
+    async fn connect_primary_db(args: &NodeCli) -> eyre::Result<SqlxPgPool> {
         let base_url = if let Some(db_url) = &args.database_url {
             db_url.clone()
         } else {
@@ -971,10 +867,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static>
         }
     }
 
-    async fn execute_replay(
-        runner: &mut StreamProcessorRunner<T>,
-        config: ReplayConfig,
-    ) -> eyre::Result<()> {
+    async fn execute_replay(runner: &mut NodeRunner<T>, config: ReplayConfig) -> eyre::Result<()> {
         let runtime = runner
             .runtime_state()
             .ok_or_else(|| eyre::eyre!("Runtime state not initialized before replay"))?;
@@ -1072,11 +965,11 @@ macro_rules! processor_main {
             color_eyre::install()?;
             use clap::Parser;
             use sinex_node_sdk::heartbeat::HeartbeatEmitter;
-            use $crate::cli::{ProcessorCli, ProcessorCliRunner, ProcessorCommand};
+            use $crate::cli::{NodeCli, NodeCliRunner, NodeCommand};
 
-            let args = ProcessorCli::parse();
+            let args = NodeCli::parse();
             let processor = <$processor_type>::new();
-            let mut runner = ProcessorCliRunner::new(processor);
+            let mut runner = NodeCliRunner::new(processor);
 
             // Auto-spawn HeartbeatEmitter and Coordination for service mode
             if $crate::cli::command_requires_heartbeat(&args.command) {
@@ -1108,11 +1001,11 @@ macro_rules! processor_main {
             color_eyre::install()?;
             use clap::Parser;
             use sinex_node_sdk::heartbeat::HeartbeatEmitter;
-            use $crate::cli::{ProcessorCli, ProcessorCliRunner, ProcessorCommand};
+            use $crate::cli::{NodeCli, NodeCliRunner, NodeCommand};
 
-            let args = ProcessorCli::parse();
+            let args = NodeCli::parse();
             let processor = $processor_expr;
-            let mut runner = ProcessorCliRunner::new(processor);
+            let mut runner = NodeCliRunner::new(processor);
 
             runner.run(args).await
         }

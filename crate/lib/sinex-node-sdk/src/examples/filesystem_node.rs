@@ -20,9 +20,9 @@ use std::collections::HashMap;
 use tokio::fs;
 use tracing::{debug, info, warn};
 
-/// Configuration for the filesystem processor
+/// Configuration for the filesystem node
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
-pub struct FilesystemProcessorConfig {
+pub struct FilesystemNodeConfig {
     /// Maximum number of files to process in one scan
     pub max_files: Option<usize>,
     /// File extensions to include (empty means all)
@@ -33,8 +33,8 @@ pub struct FilesystemProcessorConfig {
     pub follow_symlinks: bool,
 }
 
-/// Example filesystem processor implementing unified stream processor interface
-pub struct FilesystemProcessor {
+/// Example filesystem node implementing unified stream node interface
+pub struct FilesystemNode {
     /// Base directories to monitor
     watch_paths: Vec<Utf8PathBuf>,
 
@@ -61,7 +61,7 @@ pub struct FilesystemState {
     pub directories: Vec<Utf8PathBuf>,
 }
 
-impl FilesystemProcessor {
+impl FilesystemNode {
     /// Create new filesystem processor
     pub fn new(watch_paths: Vec<Utf8PathBuf>) -> Self {
         Self {
@@ -217,16 +217,16 @@ impl FilesystemProcessor {
 }
 
 #[async_trait]
-impl Node for FilesystemProcessor {
-    type Config = FilesystemProcessorConfig;
+impl Node for FilesystemNode {
+    type Config = FilesystemNodeConfig;
 
     async fn initialize(&mut self, init: NodeInitContext<Self::Config>) -> NodeResult<()> {
         let (_config, raw_config, service_info, handles, work_dir_utf8) = init.into_parts();
         info!(
-            processor = self.processor_name(),
+            node = self.node_name(),
             service = %service_info.service_name(),
             watch_paths = ?self.watch_paths,
-            "Initializing filesystem processor"
+            "Initializing filesystem node"
         );
 
         // Validate watch paths exist
@@ -368,11 +368,11 @@ impl Node for FilesystemProcessor {
         })
     }
 
-    fn processor_name(&self) -> &str {
+    fn node_name(&self) -> &str {
         "filesystem-example"
     }
 
-    fn processor_type(&self) -> NodeType {
+    fn node_type(&self) -> NodeType {
         NodeType::Ingestor
     }
 
@@ -429,5 +429,52 @@ impl Node for FilesystemProcessor {
             warnings,
             confidence,
         })
+    }
+}
+
+use crate::exploration::{
+    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
+};
+
+impl ExplorationProvider for FilesystemNode {
+    fn get_source_state(&self) -> color_eyre::eyre::Result<SourceState> {
+        Ok(SourceState {
+            is_connected: true,
+            healthy: true,
+            description: "Filesystem node running".to_string(),
+            last_updated: Utc::now(),
+            lag_seconds: None,
+            recent_activity: Vec::new(),
+            total_items: None,
+            metadata: HashMap::new(),
+        })
+    }
+    fn get_ingestion_history(
+        &self,
+        _limit: u64,
+    ) -> color_eyre::eyre::Result<Vec<IngestionHistoryEntry>> {
+        Ok(Vec::new())
+    }
+    fn get_coverage_analysis(
+        &self,
+        _time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
+    ) -> color_eyre::eyre::Result<CoverageAnalysis> {
+        Ok(CoverageAnalysis {
+            time_range: (Utc::now(), Utc::now()),
+            source_total: 0,
+            sinex_total: 0,
+            coverage_percentage: 100.0,
+            missing_count: 0,
+            duplicate_count: 0,
+            missing_samples: Vec::new(),
+            recommendations: Vec::new(),
+        })
+    }
+    fn export_data(
+        &self,
+        _path: &SanitizedPath,
+        _format: ExportFormat,
+    ) -> color_eyre::eyre::Result<()> {
+        Ok(())
     }
 }

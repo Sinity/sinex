@@ -5202,8 +5202,8 @@ name = "sinex-core"
 version = "0.4.2"
 dependencies = [
  "ahash",
+ "anyhow",
  "async-nats",
- "async-std",
  "async-trait",
  "blake3",
  "bon",
@@ -5224,7 +5224,6 @@ dependencies = [
  "once_cell",
  "parking_lot",
  "percent-encoding",
- "pretty_assertions",
  "proptest",
  "rand 0.8.5",
  "regex",
@@ -5667,6 +5666,7 @@ dependencies = [
  "notify",
  "serde",
  "serde_json",
+ "sha2",
  "sinex-core",
  "sinex-node-sdk",
  "sinex-processor-runtime",
@@ -5719,6 +5719,7 @@ dependencies = [
  "futures",
  "gethostname 0.4.3",
  "glob",
+ "lazy_static",
  "libc",
  "mimalloc",
  "nix 0.27.1",

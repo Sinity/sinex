@@ -32,6 +32,7 @@ use std::sync::Arc;
 use tokio::sync::watch;
 use tracing::{debug, info};
 
+#[cfg(feature = "messaging")]
 use crate::checkpoint::CheckpointState;
 
 /// Shutdown signal receiver for checking if shutdown was requested.
@@ -159,6 +160,7 @@ impl ShutdownHandler {
     /// Save checkpoint state to file.
     ///
     /// Called during graceful shutdown to persist state.
+    #[cfg(feature = "messaging")]
     pub async fn save_state(&self, state: &CheckpointState) -> std::io::Result<()> {
         state.save_to_file(&self.checkpoint_path).await
     }
@@ -166,11 +168,13 @@ impl ShutdownHandler {
     /// Load checkpoint state from file if it exists.
     ///
     /// Called during startup when --restore-state is specified.
+    #[cfg(feature = "messaging")]
     pub async fn load_state(&self) -> Option<CheckpointState> {
         CheckpointState::load_from_file(&self.checkpoint_path).await
     }
 
     /// Delete the checkpoint file after successful sync to primary store.
+    #[cfg(feature = "messaging")]
     pub fn clear_state(&self) -> std::io::Result<()> {
         CheckpointState::delete_file(&self.checkpoint_path)
     }

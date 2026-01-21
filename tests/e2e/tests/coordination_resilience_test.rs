@@ -17,7 +17,7 @@ use tokio::time::sleep;
 
 use sinex_core::db::advisory_lock::AdvisoryLock;
 use sinex_test_utils::prelude::*;
-use sinex_test_utils::timing_utils::{Timeouts, WaitHelpers};
+use sinex_test_utils::timing_utils::WaitHelpers;
 
 // =============================================================================
 // Advisory Lock Tests

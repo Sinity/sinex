@@ -16,6 +16,7 @@ mod config;
 mod history;
 mod jobs;
 mod output;
+mod resources;
 
 use config::config;
 use history::{HistoryDb, InvocationStatus};
@@ -353,6 +354,53 @@ enum HistoryCommand {
         #[arg(long, default_value_t = 100)]
         limit: usize,
     },
+    /// Query per-test analytics
+    Tests {
+        #[command(subcommand)]
+        cmd: HistoryTestsCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum HistoryTestsCommand {
+    /// Show slowest tests by average duration
+    Slowest {
+        /// Maximum number of tests to show
+        #[arg(long, short, default_value_t = 20)]
+        limit: usize,
+    },
+    /// Show flaky tests (failed then passed on retry)
+    Flaky {
+        /// Maximum number of tests to show
+        #[arg(long, short, default_value_t = 20)]
+        limit: usize,
+    },
+    /// Show tests that are getting slower over time
+    GettingSlower {
+        /// Minimum percentage increase to flag as slowing
+        #[arg(long, default_value_t = 20.0)]
+        threshold_pct: f64,
+        /// Number of recent runs to analyze
+        #[arg(long, default_value_t = 10)]
+        window: usize,
+        /// Maximum number of tests to show
+        #[arg(long, short, default_value_t = 20)]
+        limit: usize,
+    },
+    /// Show runtime trends for tests matching a pattern
+    Trends {
+        /// Test name pattern (substring match)
+        #[arg(long)]
+        pattern: Option<String>,
+        /// Package filter
+        #[arg(long, short)]
+        package: Option<String>,
+        /// Number of recent runs to show per test
+        #[arg(long, default_value_t = 10)]
+        runs: usize,
+    },
+    /// Estimate runtime for upcoming test run
+    Eta,
 }
 
 #[derive(Subcommand)]
@@ -671,6 +719,166 @@ fn history_cmd(cmd: HistoryCommand, ctx: &CommandContext) -> Result<()> {
             let invocations = db.get_recent(limit, None)?;
             let json = serde_json::to_string_pretty(&invocations)?;
             println!("{json}");
+        }
+
+        HistoryCommand::Tests { cmd: tests_cmd } => {
+            history_tests_cmd(tests_cmd, &db, ctx)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle history tests subcommands.
+fn history_tests_cmd(
+    cmd: HistoryTestsCommand,
+    db: &HistoryDb,
+    ctx: &CommandContext,
+) -> Result<()> {
+    match cmd {
+        HistoryTestsCommand::Slowest { limit } => {
+            let tests = db.get_slowest_tests(limit)?;
+
+            if ctx.is_human() {
+                if tests.is_empty() {
+                    println!("No test timing data found.");
+                } else {
+                    println!(
+                        "{:<50} {:<20} {:>10} {:>6}",
+                        "TEST", "PACKAGE", "AVG (s)", "RUNS"
+                    );
+                    for (name, package, avg, runs) in &tests {
+                        let display_name = if name.len() > 48 {
+                            format!("...{}", &name[name.len() - 45..])
+                        } else {
+                            name.clone()
+                        };
+                        println!(
+                            "{:<50} {:<20} {:>10.3} {:>6}",
+                            display_name, package, avg, runs
+                        );
+                    }
+                }
+            } else {
+                let json = serde_json::to_string_pretty(&tests)?;
+                println!("{json}");
+            }
+        }
+
+        HistoryTestsCommand::Flaky { limit } => {
+            let tests = db.get_flaky_tests(limit)?;
+
+            if ctx.is_human() {
+                if tests.is_empty() {
+                    println!("No flaky tests found.");
+                } else {
+                    println!("{:<50} {:<20} {:>10}", "TEST", "PACKAGE", "INVOCATION");
+                    for (name, package, inv_id) in &tests {
+                        let display_name = if name.len() > 48 {
+                            format!("...{}", &name[name.len() - 45..])
+                        } else {
+                            name.clone()
+                        };
+                        println!("{:<50} {:<20} {:>10}", display_name, package, inv_id);
+                    }
+                }
+            } else {
+                let json = serde_json::to_string_pretty(&tests)?;
+                println!("{json}");
+            }
+        }
+
+        HistoryTestsCommand::GettingSlower {
+            threshold_pct,
+            window,
+            limit,
+        } => {
+            let tests = db.get_tests_getting_slower(window, threshold_pct, limit)?;
+
+            if ctx.is_human() {
+                if tests.is_empty() {
+                    println!(
+                        "No tests found slowing >{}% over {} runs.",
+                        threshold_pct, window
+                    );
+                } else {
+                    println!(
+                        "{:<45} {:<15} {:>10} {:>10} {:>8}",
+                        "TEST", "PACKAGE", "OLD (s)", "NEW (s)", "CHANGE"
+                    );
+                    for test in &tests {
+                        let display_name = if test.test_name.len() > 43 {
+                            format!("...{}", &test.test_name[test.test_name.len() - 40..])
+                        } else {
+                            test.test_name.clone()
+                        };
+                        println!(
+                            "{:<45} {:<15} {:>10.3} {:>10.3} {:>+7.1}%",
+                            display_name,
+                            test.package,
+                            test.older_avg_secs,
+                            test.recent_avg_secs,
+                            test.pct_change
+                        );
+                    }
+                }
+            } else {
+                let json = serde_json::to_string_pretty(&tests)?;
+                println!("{json}");
+            }
+        }
+
+        HistoryTestsCommand::Trends {
+            pattern,
+            package,
+            runs,
+        } => {
+            let tests = db.get_test_trends(pattern.as_deref(), package.as_deref(), runs)?;
+
+            if ctx.is_human() {
+                if tests.is_empty() {
+                    println!("No matching tests found.");
+                } else {
+                    for test in &tests {
+                        println!(
+                            "{}::{} (avg: {:.3}s)",
+                            test.package, test.test_name, test.avg_duration_secs
+                        );
+                        for (i, duration) in test.durations.iter().enumerate() {
+                            let timestamp = test.timestamps.get(i).map(|s| s.as_str()).unwrap_or("-");
+                            println!("  {}: {:.3}s", timestamp, duration);
+                        }
+                        println!();
+                    }
+                }
+            } else {
+                let json = serde_json::to_string_pretty(&tests)?;
+                println!("{json}");
+            }
+        }
+
+        HistoryTestsCommand::Eta => {
+            let estimate = db.estimate_runtime()?;
+
+            if ctx.is_human() {
+                if estimate.test_count == 0 {
+                    println!("No test history available for estimation.");
+                } else {
+                    println!(
+                        "Estimated runtime: {:.0}s ({} tests, {} confidence)",
+                        estimate.estimated_secs, estimate.test_count, estimate.confidence
+                    );
+                    if !estimate.breakdown.is_empty() && estimate.breakdown.len() <= 10 {
+                        println!("\nBreakdown by package:");
+                        for (pkg, secs) in &estimate.breakdown {
+                            println!("  {:<30} {:>6.1}s", pkg, secs);
+                        }
+                    }
+                }
+            } else {
+                let json = serde_json::to_string_pretty(&estimate)?;
+                println!("{json}");
+            }
         }
     }
 
@@ -1097,6 +1305,15 @@ fn pg_command(binary: &str) -> Command {
 }
 
 fn check(skip_fmt: bool, skip_check: bool, ctx: &CommandContext) -> Result<()> {
+    // Resource warning before heavy operation
+    if ctx.is_human() {
+        if let Ok(status) = resources::ResourceStatus::capture() {
+            if let Some(warning) = status.warning(resources::thresholds::CARGO_CHECK_GB) {
+                eprintln!("  \u{26A0} {}", warning);
+            }
+        }
+    }
+
     if !skip_fmt {
         let mut fmt = Command::new("cargo");
         fmt.arg("fmt").arg("--all").arg("--").arg("--check");
@@ -1113,6 +1330,15 @@ fn check(skip_fmt: bool, skip_check: bool, ctx: &CommandContext) -> Result<()> {
 }
 
 fn lint(ctx: &CommandContext) -> Result<()> {
+    // Resource warning before heavy operation
+    if ctx.is_human() {
+        if let Ok(status) = resources::ResourceStatus::capture() {
+            if let Some(warning) = status.warning(resources::thresholds::CARGO_CHECK_GB) {
+                eprintln!("  \u{26A0} {}", warning);
+            }
+        }
+    }
+
     let mut cmd = Command::new("cargo");
     cmd.arg("clippy")
         .arg("--workspace")
@@ -1134,9 +1360,34 @@ fn test(
     args: &[String],
     ctx: &CommandContext,
 ) -> Result<()> {
+    // Resource warning before heavy operation
+    if ctx.is_human() {
+        if let Ok(status) = resources::ResourceStatus::capture() {
+            if let Some(warning) = status.warning(resources::thresholds::CARGO_TEST_GB) {
+                eprintln!("  \u{26A0} {}", warning);
+            }
+        }
+    }
+
     // Preflight: check environment readiness
     if preflight {
         test_preflight(ctx)?;
+    }
+
+    // Show ETA based on historical data (if not listing or dry-running)
+    if ctx.is_human() && !list && !dry_run {
+        if let Ok(db) = open_history_db() {
+            if let Ok(estimate) = db.estimate_runtime() {
+                if estimate.test_count > 0
+                    && estimate.confidence != history::Confidence::Low
+                {
+                    println!(
+                        "Estimated runtime: {:.0}s ({} tests)",
+                        estimate.estimated_secs, estimate.test_count
+                    );
+                }
+            }
+        }
     }
 
     // Compute affected packages if requested
@@ -1380,6 +1631,17 @@ fn check_disk_space_gb(min_gb: u64) -> bool {
 }
 
 fn ci_preflight(ctx: &CommandContext) -> Result<()> {
+    // Resource warning before heavy operation
+    if ctx.is_human() {
+        if let Ok(status) = resources::ResourceStatus::capture() {
+            if let Some(warning) = status.warning(resources::thresholds::FULL_CI_GB) {
+                eprintln!("  \u{26A0} {}", warning);
+            }
+            // Also show current resource status for ci-preflight (informational)
+            eprintln!("  {}", status.summary());
+        }
+    }
+
     // Run fmt + cargo check first so contributors catch drift before heavier steps.
     check(false, false, ctx)?;
     lint(ctx)?;

@@ -60,8 +60,9 @@ pub fn read_fish_history(
 
     // Fish history schema typically has columns: id, command, when (timestamp)
     // We query for all entries with id > from_row_id
-    let mut stmt = conn
-        .prepare("SELECT ROWID, command, when FROM history WHERE ROWID > ? ORDER BY ROWID ASC")?;
+    let mut stmt = conn.prepare(
+        "SELECT ROWID, command, \"when\" FROM history WHERE ROWID > ? ORDER BY ROWID ASC",
+    )?;
 
     let entries = stmt
         .query_map([from_row_id], |row| {
@@ -116,7 +117,7 @@ mod tests {
         conn.execute(
             "CREATE TABLE history (
                 command TEXT NOT NULL,
-                when INTEGER
+                \"when\" INTEGER
             )",
             [],
         )
@@ -124,17 +125,17 @@ mod tests {
 
         // Insert test data
         conn.execute(
-            "INSERT INTO history (command, when) VALUES (?, ?)",
+            "INSERT INTO history (command, \"when\") VALUES (?, ?)",
             ["echo hello", "1234567890"],
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO history (command, when) VALUES (?, ?)",
+            "INSERT INTO history (command, \"when\") VALUES (?, ?)",
             ["ls -la", "1234567891"],
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO history (command, when) VALUES (?, ?)",
+            "INSERT INTO history (command, \"when\") VALUES (?, ?)",
             ["cd /tmp", "1234567892"],
         )
         .unwrap();
@@ -190,7 +191,7 @@ mod tests {
         let db_path = history_path.as_std_path();
         let conn = Connection::open(db_path).unwrap();
         conn.execute(
-            "INSERT INTO history (command, when) VALUES (?, ?)",
+            "INSERT INTO history (command, \"when\") VALUES (?, ?)",
             ["echo new", "1234567893"],
         )
         .unwrap();

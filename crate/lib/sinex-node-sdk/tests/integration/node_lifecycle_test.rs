@@ -125,6 +125,7 @@ async fn test_node_health_monitoring(ctx: TestContext) -> color_eyre::Result<()>
             "uptime_seconds": 0
         })),
         version: 1,
+        revision: 0,
     };
 
     // Save initial health checkpoint
@@ -443,6 +444,7 @@ async fn test_node_graceful_shutdown(ctx: TestContext) -> color_eyre::Result<()>
             "operations_completed": operations_completed.load(Ordering::SeqCst)
         })),
         version: 1,
+        revision: 0,
     };
 
     checkpoint_manager

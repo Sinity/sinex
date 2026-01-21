@@ -12,8 +12,8 @@ use sinex_node_sdk::{
 };
 use sinex_schema::ulid::Ulid;
 use sinex_test_utils::{
-    prelude::*, start_test_ingestd_with_config, TestIngestdConfig, TestIngestdHandle,
-    timing_utils::Timeouts,
+    prelude::*, start_test_ingestd_with_config, timing_utils::Timeouts, TestIngestdConfig,
+    TestIngestdHandle,
 };
 use sqlx::Row;
 use std::sync::{
@@ -436,13 +436,13 @@ async fn test_marking_crashed_materials_as_recovered_partial(ctx: TestContext) -
         r#"
         UPDATE raw.source_material_registry
         SET status = $1,
-            metadata = metadata || jsonb_build_object(
+            metadata = core.jsonb_merge_deep(metadata, jsonb_build_object(
                 'recovery_info', jsonb_build_object(
                     'recovered_at', NOW(),
                     'recovery_reason', 'node_crash',
                     'original_status', 'sensing'
                 )
-            )
+            ))
         WHERE id = $2::uuid::ulid
         "#,
         status::RECOVERED_PARTIAL,
