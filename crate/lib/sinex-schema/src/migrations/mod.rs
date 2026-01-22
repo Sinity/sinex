@@ -19,6 +19,7 @@ pub mod m20250121_000013_fix_partitioning;
 pub mod m20260121_000014_add_jsonb_merge_function;
 pub mod m20260121_000015_drop_payload_expensive_indexes;
 pub mod m20260122_000016_add_embeddings;
+pub mod m20260122_000017_add_user_state_aggregates;
 
 // To add a new migration in the future, a developer would:
 // 1. Create a new file, e.g., `src/migrations/m<timestamp>_add_new_feature.rs`.

@@ -17,6 +17,7 @@ mod history;
 mod jobs;
 mod output;
 mod resources;
+mod tls;
 
 use config::config;
 use history::{HistoryDb, InvocationStatus};
@@ -178,6 +179,11 @@ enum Commands {
         /// Follow log output
         #[arg(long, short)]
         follow: bool,
+    },
+    /// TLS certificate management
+    Tls {
+        #[command(subcommand)]
+        cmd: tls::TlsCommand,
     },
 }
 
@@ -536,6 +542,7 @@ fn main() -> Result<()> {
         Commands::Up { .. } => ("up", None, None),
         Commands::Status { .. } => ("status", None, None),
         Commands::Logs { .. } => ("logs", None, None),
+        Commands::Tls { .. } => ("tls", None, None),
     };
 
     // Track invocation in history (skip for history commands themselves)
@@ -586,6 +593,7 @@ fn main() -> Result<()> {
             lines,
             follow,
         } => devenv_logs(&process, lines, follow, &ctx),
+        Commands::Tls { cmd } => tls::run(cmd, ctx.global.json),
     };
 
     // Record invocation result in history
@@ -2352,8 +2360,20 @@ fn db(cmd: DbCommand, ctx: &CommandContext) -> Result<()> {
 
 fn run_db_migrate(ctx: &CommandContext) -> Result<()> {
     let mut cmd = Command::new("cargo");
-    cmd.args(["run", "--package", "sinex-schema", "--", "up"]);
-    run_cmd_ctx("cargo run -p sinex-schema -- up", cmd, ctx)
+    cmd.args([
+        "run",
+        "--package",
+        "sinex-schema",
+        "--bin",
+        "sinex-schema",
+        "--",
+        "up",
+    ]);
+    run_cmd_ctx(
+        "cargo run -p sinex-schema --bin sinex-schema -- up",
+        cmd,
+        ctx,
+    )
 }
 
 fn schema(cmd: SchemaCommand) -> Result<()> {
