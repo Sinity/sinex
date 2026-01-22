@@ -1562,13 +1562,33 @@ pub async fn run(
     }
 
     // Signal all background tasks to shut down
+    info!("Shutting down background tasks...");
     let _ = shutdown_tx.send(true);
 
-    // Wait for background tasks to complete
+    // Wait for background tasks to complete with timeout
+    let shutdown_timeout = std::time::Duration::from_secs(30);
+
     if let Some(task) = metrics_task {
-        let _ = task.await;
+        info!("Awaiting metrics emission task shutdown...");
+        match tokio::time::timeout(shutdown_timeout, task).await {
+            Ok(Ok(())) => info!("Metrics emission task shut down successfully"),
+            Ok(Err(e)) => warn!(?e, "Metrics emission task exited with error"),
+            Err(_) => warn!(
+                "Metrics emission task did not shut down within {:?}",
+                shutdown_timeout
+            ),
+        }
     }
-    let _ = cleanup_task.await;
+
+    info!("Awaiting rate limiter cleanup task shutdown...");
+    match tokio::time::timeout(shutdown_timeout, cleanup_task).await {
+        Ok(Ok(())) => info!("Rate limiter cleanup task shut down successfully"),
+        Ok(Err(e)) => warn!(?e, "Rate limiter cleanup task exited with error"),
+        Err(_) => warn!(
+            "Rate limiter cleanup task did not shut down within {:?}",
+            shutdown_timeout
+        ),
+    }
 
     info!("RPC server shutdown complete");
     Ok(())
