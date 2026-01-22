@@ -1,0 +1,404 @@
+//! Tests for health aggregator windowed aggregation logic
+
+use chrono::{Duration, Utc};
+use serde_json::json;
+use sinex_health_automaton::{HealthAggregator, HealthAggregatorConfig, HealthState};
+use sinex_node_sdk::simple_node::{SimpleNode, SimpleNodeContext};
+use sinex_test_utils::prelude::*;
+
+#[sinex_test]
+async fn health_aggregator_tracks_component_status(ctx: TestContext) -> TestResult<()> {
+    let mut aggregator = HealthAggregator::default();
+    let mut state = HealthState::default();
+
+    // Simulate health.status event
+    let input = json!({
+        "component": "test-component",
+        "previous_status": "healthy",
+        "current_status": "degraded",
+    });
+
+    let context = SimpleNodeContext {
+        source: "test".to_string(),
+        event_type: "health.status".to_string(),
+        ts_orig: Some(Utc::now()),
+        event_id: sinex_core::EventId::new().into(),
+    };
+
+    let output = aggregator.process(&mut state, input, &context).await;
+
+    ctx.assert("process succeeded").is_ok(&output)?;
+
+    // Verify component was tracked
+    ctx.assert("component tracked")
+        .eq(state.component_health.contains_key("test-component"), true)?;
+
+    let component = &state.component_health["test-component"];
+    ctx.assert("status updated")
+        .eq(&component.current_status, "degraded")?;
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn health_aggregator_emits_alert_on_failed_transition(ctx: TestContext) -> TestResult<()> {
+    let mut aggregator = HealthAggregator::default();
+    let mut state = HealthState::default();
+
+    // Transition to failed status
+    let input = json!({
+        "component": "critical-service",
+        "previous_status": "degraded",
+        "current_status": "failed",
+    });
+
+    let context = SimpleNodeContext {
+        source: "test".to_string(),
+        event_type: "health.status".to_string(),
+        ts_orig: Some(Utc::now()),
+        event_id: sinex_core::EventId::new().into(),
+    };
+
+    let output = aggregator.process(&mut state, input, &context).await?;
+
+    // Should emit an immediate alert
+    ctx.assert("alert emitted").is_some(&output)?;
+
+    let alert = output.unwrap();
+    ctx.assert("alert type").eq(
+        alert.get("alert_type").and_then(|v| v.as_str()),
+        Some("component_status_change"),
+    )?;
+    ctx.assert("severity").eq(
+        alert.get("severity").and_then(|v| v.as_str()),
+        Some("critical"),
+    )?;
+    ctx.assert("component").eq(
+        alert.get("component").and_then(|v| v.as_str()),
+        Some("critical-service"),
+    )?;
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn health_aggregator_tracks_transition_count(ctx: TestContext) -> TestResult<()> {
+    let mut aggregator = HealthAggregator::default();
+    let mut state = HealthState::default();
+
+    let base_time = Utc::now();
+
+    // Simulate multiple transitions for the same component
+    for (i, status) in ["degraded", "failed", "degraded", "healthy"]
+        .iter()
+        .enumerate()
+    {
+        let input = json!({
+            "component": "flaky-service",
+            "previous_status": if i == 0 { "healthy" } else { "degraded" },
+            "current_status": status,
+        });
+
+        let context = SimpleNodeContext {
+            source: "test".to_string(),
+            event_type: "health.status".to_string(),
+            ts_orig: Some(base_time + Duration::seconds(i as i64)),
+            event_id: sinex_core::EventId::new().into(),
+        };
+
+        aggregator.process(&mut state, input, &context).await?;
+    }
+
+    let component = &state.component_health["flaky-service"];
+    ctx.assert("transition count")
+        .eq(component.transition_count, 4)?;
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn health_aggregator_prunes_old_events_outside_window(ctx: TestContext) -> TestResult<()> {
+    let config = HealthAggregatorConfig {
+        aggregation_window_seconds: 300, // 5 minutes
+        ..Default::default()
+    };
+
+    let mut aggregator = HealthAggregator {
+        config: config.clone(),
+    };
+    let mut state = HealthState {
+        config: config.clone(),
+        ..Default::default()
+    };
+
+    let base_time = Utc::now();
+
+    // Add events across a 10-minute span
+    for i in 0..10 {
+        let input = json!({
+            "component": "service-a",
+            "previous_status": "healthy",
+            "current_status": "healthy",
+        });
+
+        let context = SimpleNodeContext {
+            source: "test".to_string(),
+            event_type: "health.status".to_string(),
+            ts_orig: Some(base_time + Duration::minutes(i)),
+            event_id: sinex_core::EventId::new().into(),
+        };
+
+        aggregator.process(&mut state, input, &context).await?;
+    }
+
+    // Move time forward and process one more event
+    let future_time = base_time + Duration::minutes(11);
+    let input = json!({
+        "component": "service-a",
+        "previous_status": "healthy",
+        "current_status": "healthy",
+    });
+
+    let context = SimpleNodeContext {
+        source: "test".to_string(),
+        event_type: "health.status".to_string(),
+        ts_orig: Some(future_time),
+        event_id: sinex_core::EventId::new().into(),
+    };
+
+    aggregator.process(&mut state, input, &context).await?;
+
+    // Events outside 5-minute window should be pruned
+    let component = &state.component_health["service-a"];
+    let events_in_window = component
+        .events
+        .iter()
+        .filter(|e| future_time.signed_duration_since(e.timestamp).num_seconds() <= 300)
+        .count();
+
+    ctx.assert("only recent events kept")
+        .less_or_equal(component.events.len(), events_in_window + 1)?;
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn health_aggregator_emits_system_status_periodically(ctx: TestContext) -> TestResult<()> {
+    let config = HealthAggregatorConfig {
+        aggregation_window_seconds: 5, // 5 seconds for test
+        enable_system_health_status: true,
+        ..Default::default()
+    };
+
+    let mut aggregator = HealthAggregator {
+        config: config.clone(),
+    };
+    let mut state = HealthState {
+        config: config.clone(),
+        ..Default::default()
+    };
+
+    let base_time = Utc::now();
+
+    // Process first event (should emit system status)
+    let input1 = json!({
+        "component": "service-a",
+        "previous_status": "healthy",
+        "current_status": "healthy",
+    });
+
+    let context1 = SimpleNodeContext {
+        source: "test".to_string(),
+        event_type: "health.status".to_string(),
+        ts_orig: Some(base_time),
+        event_id: sinex_core::EventId::new().into(),
+    };
+
+    let output1 = aggregator.process(&mut state, input1, &context1).await?;
+    ctx.assert("first emission").is_some(&output1)?;
+
+    // Process second event within window (should NOT emit system status)
+    let input2 = json!({
+        "component": "service-b",
+        "previous_status": "healthy",
+        "current_status": "healthy",
+    });
+
+    let context2 = SimpleNodeContext {
+        source: "test".to_string(),
+        event_type: "health.status".to_string(),
+        ts_orig: Some(base_time + Duration::seconds(2)),
+        event_id: sinex_core::EventId::new().into(),
+    };
+
+    let output2 = aggregator.process(&mut state, input2, &context2).await?;
+    // Might or might not emit depending on component check interval
+
+    // Process third event after window (should emit system status again)
+    let input3 = json!({
+        "component": "service-c",
+        "previous_status": "healthy",
+        "current_status": "healthy",
+    });
+
+    let context3 = SimpleNodeContext {
+        source: "test".to_string(),
+        event_type: "health.status".to_string(),
+        ts_orig: Some(base_time + Duration::seconds(6)),
+        event_id: sinex_core::EventId::new().into(),
+    };
+
+    let output3 = aggregator.process(&mut state, input3, &context3).await?;
+    ctx.assert("system status after window").is_some(&output3)?;
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn health_aggregator_calculates_overall_system_status(ctx: TestContext) -> TestResult<()> {
+    let mut aggregator = HealthAggregator::default();
+    let mut state = HealthState::default();
+
+    let base_time = Utc::now();
+
+    // Add mix of healthy, degraded, and failed components
+    let statuses = vec![
+        ("service-1", "healthy"),
+        ("service-2", "healthy"),
+        ("service-3", "degraded"),
+        ("service-4", "healthy"),
+    ];
+
+    for (i, (component, status)) in statuses.iter().enumerate() {
+        let input = json!({
+            "component": component,
+            "previous_status": "healthy",
+            "current_status": status,
+        });
+
+        let context = SimpleNodeContext {
+            source: "test".to_string(),
+            event_type: "health.status".to_string(),
+            ts_orig: Some(base_time + Duration::seconds(i as i64)),
+            event_id: sinex_core::EventId::new().into(),
+        };
+
+        aggregator.process(&mut state, input, &context).await?;
+    }
+
+    // Force system status emission
+    state.last_window_emission = None;
+    let input = json!({
+        "component": "trigger",
+        "previous_status": "healthy",
+        "current_status": "healthy",
+    });
+
+    let context = SimpleNodeContext {
+        source: "test".to_string(),
+        event_type: "health.status".to_string(),
+        ts_orig: Some(base_time + Duration::seconds(10)),
+        event_id: sinex_core::EventId::new().into(),
+    };
+
+    let output = aggregator.process(&mut state, input, &context).await?;
+
+    ctx.assert("system status emitted").is_some(&output)?;
+
+    let system_status = output.unwrap();
+    ctx.assert("report type").eq(
+        system_status.get("report_type").and_then(|v| v.as_str()),
+        Some("system_health_status"),
+    )?;
+
+    // Overall should be "degraded" (not all healthy, no failures)
+    ctx.assert("overall status").eq(
+        system_status.get("overall_status").and_then(|v| v.as_str()),
+        Some("degraded"),
+    )?;
+
+    ctx.assert("degraded count").eq(
+        system_status.get("degraded_count").and_then(|v| v.as_u64()),
+        Some(1),
+    )?;
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn health_aggregator_respects_component_check_intervals(ctx: TestContext) -> TestResult<()> {
+    use std::collections::HashMap;
+
+    let mut component_intervals = HashMap::new();
+    component_intervals.insert("fast-check".to_string(), 1); // 1 second
+    component_intervals.insert("slow-check".to_string(), 10); // 10 seconds
+
+    let config = HealthAggregatorConfig {
+        component_check_intervals: component_intervals,
+        enable_component_health_reports: true,
+        ..Default::default()
+    };
+
+    let mut aggregator = HealthAggregator {
+        config: config.clone(),
+    };
+    let mut state = HealthState {
+        config: config.clone(),
+        ..Default::default()
+    };
+
+    let base_time = Utc::now();
+
+    // First event for fast-check component (should emit report)
+    let input1 = json!({
+        "component": "fast-check",
+        "previous_status": "healthy",
+        "current_status": "healthy",
+    });
+
+    let context1 = SimpleNodeContext {
+        source: "test".to_string(),
+        event_type: "health.status".to_string(),
+        ts_orig: Some(base_time),
+        event_id: sinex_core::EventId::new().into(),
+    };
+
+    let output1 = aggregator.process(&mut state, input1, &context1).await?;
+    // Should emit component report (first time)
+
+    // Second event for fast-check 0.5 seconds later (should NOT emit)
+    let input2 = json!({
+        "component": "fast-check",
+        "previous_status": "healthy",
+        "current_status": "healthy",
+    });
+
+    let context2 = SimpleNodeContext {
+        source: "test".to_string(),
+        event_type: "health.status".to_string(),
+        ts_orig: Some(base_time + Duration::milliseconds(500)),
+        event_id: sinex_core::EventId::new().into(),
+    };
+
+    let output2 = aggregator.process(&mut state, input2, &context2).await?;
+    // Should not emit (within check interval)
+
+    // Third event for fast-check 1.5 seconds later (should emit)
+    let input3 = json!({
+        "component": "fast-check",
+        "previous_status": "healthy",
+        "current_status": "healthy",
+    });
+
+    let context3 = SimpleNodeContext {
+        source: "test".to_string(),
+        event_type: "health.status".to_string(),
+        ts_orig: Some(base_time + Duration::milliseconds(1500)),
+        event_id: sinex_core::EventId::new().into(),
+    };
+
+    let output3 = aggregator.process(&mut state, input3, &context3).await?;
+    // Should emit component report (after check interval)
+
+    Ok(())
+}

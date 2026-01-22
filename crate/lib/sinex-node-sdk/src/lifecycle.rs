@@ -102,13 +102,47 @@ impl LifecycleManager {
         self.heartbeat_emitter = Some(runtime.heartbeat_emitter(self.heartbeat_interval_seconds));
     }
 
-    /// Hydrate health reporter once runtime is available
+    /// Hydrate the health reporter with runtime components
     ///
-    /// Note: Actual hydration will be done in processor runtime (Phase 3)
-    /// where we have access to NATS client for SelfObserver creation.
+    /// This method must be called after the lifecycle manager has access to runtime state.
+    /// It creates the HealthReporter with a fully configured SelfObserver.
+    #[cfg(feature = "messaging")]
+    pub fn hydrate_health_reporter(&mut self, runtime: &NodeRuntimeState) {
+        use crate::self_observation::{SelfObserver, SelfObserverConfig};
+        use std::time::Duration;
+
+        // Only create if thresholds were configured and NATS is available
+        if let (Some(thresholds), Some(nats_client)) =
+            (&self.health_thresholds, runtime.nats_client())
+        {
+            let config = SelfObserverConfig {
+                component: runtime.service_info().service_name().to_string(),
+                subject_prefix: "sinex.telemetry".to_string(),
+                enabled: true,
+                min_emission_interval: Duration::from_secs(1),
+            };
+
+            let observer = std::sync::Arc::new(SelfObserver::new(nats_client, config));
+
+            self.health_reporter = Some(std::sync::Arc::new(
+                crate::health_reporter::HealthReporter::new(
+                    runtime.service_info().service_name().to_string(),
+                    observer,
+                    thresholds.clone(),
+                ),
+            ));
+
+            tracing::info!(
+                component = %runtime.service_info().service_name(),
+                "Health monitoring enabled with HealthReporter"
+            );
+        }
+    }
+
+    /// Hydrate health reporter (no-op without messaging feature)
+    #[cfg(not(feature = "messaging"))]
     pub fn hydrate_health_reporter(&mut self, _runtime: &NodeRuntimeState) {
-        // TODO: Implement in Phase 3 when integrating with processor runtime
-        // Will create HealthReporter with proper SelfObserver from runtime handles
+        // No-op when messaging feature is disabled
     }
 
     /// Get heartbeat counter handle for tracking metrics
