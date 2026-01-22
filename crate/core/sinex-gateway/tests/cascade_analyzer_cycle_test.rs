@@ -38,6 +38,7 @@ async fn detects_cycles_beyond_default_depth(ctx: TestContext) -> color_eyre::Re
             max_depth: 128,
             include_weak_dependencies: false,
             memory_limit_bytes: Some(32 * 1024 * 1024),
+            timeout: std::time::Duration::from_secs(30),
         },
     );
 
@@ -181,5 +182,72 @@ async fn handles_mixed_uuid_arrays(ctx: TestContext) -> color_eyre::Result<()> {
         "unexpected integrity violations: {:?}",
         analysis.integrity_violations
     );
+    Ok(())
+}
+
+#[sinex_test]
+async fn timeout_prevents_indefinite_transaction_hold(ctx: TestContext) -> color_eyre::Result<()> {
+    ctx.ensure_clean().await?;
+    let pool = ctx.pool.clone();
+    color_eyre::eyre::ensure!(
+        cascade_prereqs_available(&pool).await?,
+        "core.prepare_cascade_session missing; run migrations before tests"
+    );
+
+    // Create a very short timeout to test the timeout mechanism
+    let analyzer = StreamingCascadeAnalyzer::with_config(
+        pool.clone(),
+        CascadeAnalyzerConfig {
+            batch_size: 1,
+            max_depth: 1000, // Large depth
+            include_weak_dependencies: false,
+            memory_limit_bytes: Some(1024 * 1024),
+            timeout: std::time::Duration::from_millis(1), // Very short timeout
+        },
+    );
+
+    // Create a simple event
+    let event_id = CoreUlid::new();
+    sqlx::query!(
+        r#"
+        INSERT INTO core.events (
+            id,
+            source,
+            event_type,
+            host,
+            payload,
+            ts_orig
+        ) VALUES (
+            $1::uuid::ulid,
+            $2,
+            $3,
+            $4,
+            $5,
+            $6
+        )
+        "#,
+        event_id.to_uuid(),
+        "timeout.source",
+        "timeout.test",
+        "localhost",
+        json!({"test": "timeout"}),
+        Utc::now()
+    )
+    .execute(&pool)
+    .await?;
+
+    // Analysis should timeout
+    let result = analyzer.analyze_cascades(&[event_id]).await;
+    assert!(
+        result.is_err(),
+        "Expected timeout error, but analysis succeeded"
+    );
+    let err_str = result.unwrap_err().to_string();
+    assert!(
+        err_str.contains("timeout") || err_str.contains("Timeout"),
+        "Expected timeout error message, got: {}",
+        err_str
+    );
+
     Ok(())
 }

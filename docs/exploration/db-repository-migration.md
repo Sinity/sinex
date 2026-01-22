@@ -3,29 +3,7 @@
 This document tracks the remaining ad-hoc SQL entry points we still need to push under the
 repository layer (or into Postgres-side helpers) plus the concrete shape of each change.
 
-## 1. JetStream consumer batch insert (`crate/core/sinex-ingestd/src/jetstream_consumer.rs:430-488`)
-
-**STATUS: DONE** (2026-01-22)
-
-### Implementation
-
-- Added `StreamBatchRow` DTO and `insert_stream_batch` method to `EventRepository`
-- JetStream consumer now calls `pool.events().insert_stream_batch(&rows)` instead of raw SQL
-- Repository owns UNNEST SQL and ON CONFLICT DO NOTHING handling
-- Reference: `crate/lib/sinex-core/src/db/repositories/events/persistence.rs`
-
-## 2. Material assembler ledger writes (`crate/core/sinex-ingestd/src/material_assembler.rs:620-650`)
-
-**STATUS: DONE** (2026-01-22)
-
-### Implementation
-
-- Added `TemporalLedgerEntry` struct to `SourceMaterialRepository` with convenience constructor
-- Added `append_temporal_ledger(entry)` method to `SourceMaterialRepository`
-- Material assembler's `record_ledger_entry` now builds DTO and calls repository
-- Reference: `crate/lib/sinex-core/src/db/repositories/source_materials.rs`
-
-## 3. Cascade analyzer orchestration (`crate/core/sinex-gateway/src/cascade_analyzer.rs`)
+## Cascade analyzer orchestration (`crate/core/sinex-gateway/src/cascade_analyzer.rs`)
 
 ### Pain points
 
@@ -59,17 +37,7 @@ repository layer (or into Postgres-side helpers) plus the concrete shape of each
 - Unit-test the PL/pgSQL functions with fixtures (see existing gateway tests) and add repository
   tests under `sinex-core` that exercise a full session using temp schemas.
 
-## 4. Replay helpers (`crate/core/sinex-gateway/src/replay_control.rs:518-529`)
-
-**STATUS: DONE** (2026-01-22)
-
-### Implementation
-
-- Added `operation_exists(id: &Id<Operation>) -> DbResult<bool>` to `StateRepository`
-- Updated `wait_for_operation` test helper to use `pool.state().operation_exists(&op_id)`
-- Reference: `crate/lib/sinex-core/src/db/repositories/state.rs`
-
-## Follow-up list (not tackled in this pass)
+## Follow-up list
 
 1. **Schema registry cache** – `ingestd` and `types::events::schema` each maintain their own SQL to
    read from `core.payload_schemas`. We should funnel both through a dedicated

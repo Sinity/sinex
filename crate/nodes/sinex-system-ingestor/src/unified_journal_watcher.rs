@@ -52,6 +52,8 @@ pub struct UnifiedJournalWatcher {
     pending_cursor: Arc<Mutex<Option<String>>>,
     cursor_save_count: Arc<AtomicU64>,
     last_cursor_save: Arc<Mutex<Instant>>,
+    // Backpressure metrics
+    channel_drops: Arc<AtomicU64>,
 }
 
 impl UnifiedJournalWatcher {
@@ -105,6 +107,7 @@ impl UnifiedJournalWatcher {
             pending_cursor: Arc::new(Mutex::new(None)),
             cursor_save_count: Arc::new(AtomicU64::new(0)),
             last_cursor_save: Arc::new(Mutex::new(Instant::now())),
+            channel_drops: Arc::new(AtomicU64::new(0)),
         })
     }
 
@@ -236,7 +239,7 @@ impl UnifiedJournalWatcher {
 
                         if batch.len() >= self.journal_config.batch_size {
                             for event in batch.drain(..) {
-                                Self::send_event(journal_tx, event, "journal_batch", material)
+                                self.send_event(journal_tx, event, "journal_batch", material)
                                     .await?;
                             }
                         }
@@ -246,7 +249,7 @@ impl UnifiedJournalWatcher {
                     if self.systemd_enabled {
                         if let Some(systemd_event) = self.parse_systemd_entry(&entry, material) {
                             if let Some(ref tx) = systemd_tx {
-                                Self::send_event(tx, systemd_event, "systemd_batch", material)
+                                self.send_event(tx, systemd_event, "systemd_batch", material)
                                     .await?;
                             }
                         }
@@ -260,7 +263,8 @@ impl UnifiedJournalWatcher {
 
         // Send remaining batch
         for event in batch {
-            Self::send_event(journal_tx, event, "journal_final_batch", material).await?;
+            self.send_event(journal_tx, event, "journal_final_batch", material)
+                .await?;
         }
 
         // Update cursor
@@ -295,7 +299,8 @@ impl UnifiedJournalWatcher {
             )
             .to_json_event()
             .expect("serializing journal sync event should not fail");
-            Self::send_event(journal_tx, sync_event, "journal_sync_event", material).await?;
+            self.send_event(journal_tx, sync_event, "journal_sync_event", material)
+                .await?;
         }
 
         info!(
@@ -411,7 +416,7 @@ impl UnifiedJournalWatcher {
                                     self.save_cursor(cursor).await?;
                                 }
 
-                                Self::send_event(
+                                self.send_event(
                                     journal_tx,
                                     event,
                                     "journal_follow_event",
@@ -426,7 +431,7 @@ impl UnifiedJournalWatcher {
                                     self.parse_systemd_entry(&entry, material)
                                 {
                                     if let Some(ref tx) = systemd_tx {
-                                        Self::send_event(
+                                        self.send_event(
                                             tx,
                                             systemd_event,
                                             "systemd_follow_event",
@@ -857,8 +862,9 @@ impl UnifiedJournalWatcher {
         Ok(())
     }
 
-    /// Send event with error logging
+    /// Send event with error logging and backpressure metrics
     async fn send_event(
+        &self,
         tx: &mpsc::Sender<Event<JsonValue>>,
         mut event: Event<JsonValue>,
         context: &str,
@@ -866,9 +872,12 @@ impl UnifiedJournalWatcher {
     ) -> NodeResult<()> {
         material.decorate_event(&mut event).await?;
         if let Err(err) = tx.send(event).await {
+            let drops = self.channel_drops.fetch_add(1, Ordering::Relaxed) + 1;
             warn!(
-                "Event channel unavailable while sending {}: {}",
-                context, err
+                channel_drops = drops,
+                context = context,
+                "Event channel backpressure: dropped event ({})",
+                err
             );
         }
         Ok(())

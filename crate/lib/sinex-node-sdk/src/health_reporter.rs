@@ -4,13 +4,7 @@
 //! and emits health.status events via SelfObserver when status changes.
 
 use crate::self_observation::SelfObserver;
-use sinex_core::{
-    types::{
-        error::SinexError,
-        events::payloads::process::ProcessStatus,
-        Result,
-    },
-};
+use sinex_core::types::{error::SinexError, events::payloads::process::ProcessStatus, Result};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc, RwLock,
@@ -66,8 +60,8 @@ impl Default for HealthThresholds {
     fn default() -> Self {
         Self {
             error_rate_degraded: 0.05, // 5%
-            error_rate_failed: 0.20,    // 20%
-            window_seconds: 300,        // 5 minutes
+            error_rate_failed: 0.20,   // 20%
+            window_seconds: 300,       // 5 minutes
         }
     }
 }
@@ -121,15 +115,18 @@ impl HealthReporter {
         }
     }
 
-
     /// Record a successful event processing
     pub fn record_success(&self) {
-        self.metrics.events_processed.fetch_add(1, Ordering::Relaxed);
+        self.metrics
+            .events_processed
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record an error with context
     pub fn record_error(&self, _error: &SinexError) {
-        self.metrics.events_processed.fetch_add(1, Ordering::Relaxed);
+        self.metrics
+            .events_processed
+            .fetch_add(1, Ordering::Relaxed);
         self.metrics.errors.fetch_add(1, Ordering::Relaxed);
 
         let now = std::time::SystemTime::now()

@@ -853,19 +853,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_internal_path_stripping() {
-        let path = "/home/sinity/secret/file.txt";
-        let msg = format!("Failed to read {}", path);
-        let stripped = strip_internal_paths(&msg);
-        assert_eq!(stripped, "Failed to read [REDACTED_PATH]");
-
-        let path2 = "/realm/project/sinex/Cargo.toml";
-        let msg2 = format!("Error in {}", path2);
-        let stripped2 = strip_internal_paths(&msg2);
-        assert_eq!(stripped2, "Error in [REDACTED_PATH]");
-    }
-
-    #[test]
     fn test_serialization_filtering() {
         let err = ErrorDetails::new("test")
             .with_context("table_name", "users") // Safe

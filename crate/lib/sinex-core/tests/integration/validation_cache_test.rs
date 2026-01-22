@@ -184,7 +184,7 @@ async fn insert_test_schema(
         schema_version: "1.0.0".to_string(),
         schema_content: schema_json.clone(),
     };
-    let content_hash = schema.calculate_content_hash();
+    let content_hash = schema.calculate_content_hash()?;
 
     let row = sqlx::query(
         r#"

@@ -25,19 +25,27 @@ use super::checkpoint_test_helpers::{
 
 const DEFAULT_GROUP: &str = "default";
 const DEFAULT_CONSUMER: &str = "default";
+
+/// Helper to register a test processor manifest using repository methods
 async fn ensure_processor_manifest(pool: &DbPool, processor_name: &str) -> TestResult<()> {
-    sqlx::query!(
-        r#"
-        INSERT INTO core.processor_manifests (processor_name, node_type, version, description)
-        SELECT $1, 'automaton', '1.0.0', 'checkpoint-test'
-        WHERE NOT EXISTS (
-            SELECT 1 FROM core.processor_manifests WHERE processor_name = $1
-        )
-        "#,
-        processor_name
-    )
-    .execute(pool)
-    .await?;
+    use sinex_core::db::repositories::DbPoolExt;
+    use sinex_core::types::domain::ProcessorName;
+
+    let proc_name = ProcessorName::new(processor_name.to_string());
+
+    // Check if already exists by trying to get active processors and looking for it
+    let existing = pool
+        .state()
+        .get_active_processors()
+        .await?
+        .into_iter()
+        .any(|p| p.processor_name == processor_name);
+
+    if !existing {
+        pool.state()
+            .register_processor(&proc_name, "automaton", "1.0.0", Some("checkpoint-test"))
+            .await?;
+    }
     Ok(())
 }
 
@@ -51,13 +59,7 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult<
     // Create test automaton
     let processor_name = format!("test_automaton_{}", Ulid::new());
 
-    sqlx::query!(
-        "INSERT INTO core.processor_manifests (processor_name, node_type, version, description)
-         VALUES ($1, 'automaton', '1.0.0', 'Test automaton for checkpoint validation')",
-        processor_name
-    )
-    .execute(&pool)
-    .await?;
+    ensure_processor_manifest(&pool, &processor_name).await?;
 
     // Insert some test events
     let mut event_ids = Vec::new();
@@ -135,13 +137,7 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult<()> {
     // Create test automaton
     let processor_name = format!("gap_test_automaton_{}", Ulid::new());
 
-    sqlx::query!(
-        "INSERT INTO core.processor_manifests (processor_name, node_type, version, description)
-         VALUES ($1, 'automaton', '1.0.0', 'Gap detection test automaton')",
-        processor_name
-    )
-    .execute(&pool)
-    .await?;
+    ensure_processor_manifest(&pool, &processor_name).await?;
 
     // Insert events in two batches with a gap
     let mut batch1_events = Vec::new();
@@ -311,6 +307,7 @@ async fn test_checkpoint_failover_propagates_state(ctx: TestContext) -> TestResu
             last_activity: chrono::Utc::now(),
             data: Some(serde_json::json!({ "worker": "primary" })),
             version: 2,
+            revision: 0,
         };
         leader.save_checkpoint(&state).await?;
     }
@@ -335,6 +332,7 @@ async fn test_checkpoint_failover_propagates_state(ctx: TestContext) -> TestResu
             last_activity: chrono::Utc::now(),
             data: Some(serde_json::json!({ "worker": "standby" })),
             version: 2,
+            revision: 0,
         };
         follower.save_checkpoint(&state).await?;
     }
@@ -369,13 +367,7 @@ async fn test_stale_checkpoint_detection(ctx: TestContext) -> TestResult<()> {
     // Create test automaton
     let processor_name = format!("stale_test_automaton_{}", Ulid::new());
 
-    sqlx::query!(
-        "INSERT INTO core.processor_manifests (processor_name, node_type, version, description)
-         VALUES ($1, 'automaton', '1.0.0', 'Stale checkpoint test automaton')",
-        processor_name
-    )
-    .execute(&pool)
-    .await?;
+    ensure_processor_manifest(&pool, &processor_name).await?;
 
     let event = ctx
         .publish_event(
@@ -442,13 +434,7 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
         .collect();
 
     for name in &processor_names {
-        sqlx::query!(
-            "INSERT INTO core.processor_manifests (processor_name, node_type, version, description)
-             VALUES ($1, 'automaton', '1.0.0', 'Cross-validation test automaton')",
-            name
-        )
-        .execute(&pool)
-        .await?;
+        ensure_processor_manifest(&pool, name).await?;
     }
 
     // Insert events for cross-validation
@@ -630,13 +616,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult<()> 
     // Create test automaton for recovery scenarios
     let processor_name = format!("recovery_test_automaton_{}", Ulid::new());
 
-    sqlx::query!(
-        "INSERT INTO core.processor_manifests (processor_name, node_type, version, description)
-         VALUES ($1, 'automaton', '1.0.0', 'Recovery scenario test automaton')",
-        processor_name
-    )
-    .execute(&pool)
-    .await?;
+    ensure_processor_manifest(&pool, &processor_name).await?;
 
     // Test Scenario 1: Checkpoint references non-existent event
     let non_existent_ulid = Ulid::new();
@@ -709,14 +689,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult<()> 
     // Test Scenario 3: Missing checkpoint (automaton exists but no checkpoint)
     let mut expected_automatons = checkpoint_verification::get_expected_automatons(&pool).await?;
     if !expected_automatons.contains(&processor_name) {
-        sqlx::query!(
-            "INSERT INTO core.processor_manifests (processor_name, node_type, version, description)
-             VALUES ($1, 'automaton', '1.0.0', 'Recovery scenario test automaton')
-             ON CONFLICT (processor_name) DO NOTHING",
-            processor_name
-        )
-        .execute(&pool)
-        .await?;
+        ensure_processor_manifest(&pool, &processor_name).await?;
         expected_automatons = checkpoint_verification::get_expected_automatons(&pool).await?;
     }
     assert!(
@@ -793,13 +766,7 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult<()>
     // Create test automaton
     let processor_name = format!("data_loss_test_automaton_{}", Ulid::new());
 
-    sqlx::query!(
-        "INSERT INTO core.processor_manifests (processor_name, node_type, version, description)
-         VALUES ($1, 'automaton', '1.0.0', 'Data loss detection test automaton')",
-        processor_name
-    )
-    .execute(&pool)
-    .await?;
+    ensure_processor_manifest(&pool, &processor_name).await?;
 
     // Create a sequence of events and capture their IDs for deterministic references.
     let mut created_event_ids = Vec::with_capacity(20);

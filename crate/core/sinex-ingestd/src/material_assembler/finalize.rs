@@ -361,10 +361,12 @@ impl MaterialAssembler {
             // Complete: transition into finalization. Prevent concurrent slice writes by taking
             // the file handle and marking finalizing.
             state.finalizing = true;
-            let end = state
-                .pending_end
-                .take()
-                .expect("pending_end must exist when finalizing");
+            let end = state.pending_end.take().ok_or_else(|| {
+                SinexError::service(format!(
+                    "State corruption: pending_end missing during finalization for material {}",
+                    material_id
+                ))
+            })?;
 
             if let Some(mut file) = state.temp_file.take() {
                 if let Err(e) = file.flush().await {
@@ -538,7 +540,7 @@ impl MaterialAssembler {
             ended_at,
             end.total_size_bytes,
             &end.content_hash,
-        );
+        )?;
 
         if let Err(e) = self
             .finalize_material_record(

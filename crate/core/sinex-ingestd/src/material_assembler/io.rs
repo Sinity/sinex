@@ -391,6 +391,7 @@ pub(super) async fn cleanup_state(assembler: &MaterialAssembler, material_id: Ul
 ///   via DashMap's entry API, ensuring only one placeholder wins.
 /// - **Dropped late slices**: If a material is already terminal (completed/failed), late-arriving
 ///   slices are silently dropped to avoid resurrection of completed assemblies.
+#[tracing::instrument(skip(assembler, data), fields(data_len = data.len(), lock_acquire_ms, lock_hold_ms))]
 pub(super) async fn handle_slice(
     assembler: &MaterialAssembler,
     material_id: Ulid,
@@ -414,7 +415,14 @@ pub(super) async fn handle_slice(
             .await
     };
 
+    let acquire_start = std::time::Instant::now();
     let mut state = state_handle.lock().await;
+    let acquire_ms = acquire_start.elapsed().as_millis() as u64;
+    tracing::Span::current().record("lock_acquire_ms", acquire_ms);
+    if acquire_ms > 50 {
+        warn!(material_id = %material_id, acquire_ms, "Slow lock acquisition in handle_slice");
+    }
+    let hold_start = std::time::Instant::now();
 
     if state.finalizing {
         debug!(material_id = %material_id, offset, "Ignoring slice received while material is finalizing");
@@ -487,6 +495,11 @@ pub(super) async fn handle_slice(
     // Slice application is logged inside append_slice_data via WAL
 
     let should_finalize = state.has_begin && state.pending_end.is_some();
+    let hold_ms = hold_start.elapsed().as_millis() as u64;
+    tracing::Span::current().record("lock_hold_ms", hold_ms);
+    if hold_ms > 100 {
+        warn!(material_id = %material_id, hold_ms, "Long lock hold in handle_slice");
+    }
     drop(state);
 
     if should_finalize {

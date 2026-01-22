@@ -171,6 +171,7 @@ pub async fn save_checkpoint_state(
         last_activity,
         data,
         version: 2,
+        revision: 0,
     };
     manager.save_checkpoint(&state).await?;
     Ok(())

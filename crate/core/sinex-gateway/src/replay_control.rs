@@ -633,9 +633,7 @@ mod tests {
     use super::*;
     use chrono::Duration as ChronoDuration;
     use serde_json::json;
-    use sinex_core::db::repositories::state::Operation;
     use sinex_core::db::repositories::DbPoolExt;
-    use sinex_core::db::ulid_to_uuid;
     use sinex_core::{types::ulid::Ulid, DbPool, Id};
     use sinex_test_utils::{sinex_test, EphemeralNats, TestContext};
     use tokio::time::sleep;
@@ -661,29 +659,21 @@ mod tests {
             %operation_id,
             "operation record missing; inserting fallback for test context"
         );
-        // Fallback: insert a minimal test operation if polling times out
-        let uuid = ulid_to_uuid(operation_id);
-        sqlx::query!(
-            r#"
-            INSERT INTO core.operations_log (
-                id,
-                operation_type,
-                operator,
-                scope,
-                result_status
-            ) VALUES (
-                $1::uuid::ulid,
-                'replay',
-                'test-suite',
-                '{}'::jsonb,
-                'running'
-            )
-            ON CONFLICT (id) DO NOTHING
-            "#,
-            uuid
-        )
-        .execute(pool)
-        .await?;
+        // Fallback: insert a minimal test operation if polling times out via repository
+        use sinex_core::db::repositories::state::Operation;
+        let fallback_operation = Operation {
+            id: Some(Id::from_ulid(operation_id)),
+            operation_type: "replay".to_string(),
+            operator: "test-suite".to_string(),
+            scope: Some(json!({})),
+            result_status: "running".to_string(),
+            result_message: None,
+            preview_summary: None,
+            duration_ms: None,
+        };
+
+        // Insert directly with the specific ID
+        pool.state().log_operation(fallback_operation).await?;
         Ok(())
     }
 

@@ -209,11 +209,13 @@ pub(super) fn build_finalize_metadata(
     ended_at: DateTime<Utc>,
     total_bytes: i64,
     content_hash: &str,
-) -> JsonValue {
+) -> Result<JsonValue, sinex_core::types::error::SinexError> {
     let mut merged = merge_metadata(&state.metadata, end_metadata);
-    let map = merged
-        .as_object_mut()
-        .expect("metadata normalized to object during merge");
+    let map = merged.as_object_mut().ok_or_else(|| {
+        sinex_core::types::error::SinexError::service(
+            "Metadata normalization failed: expected object after merge".to_string(),
+        )
+    })?;
     map.insert(
         "finalize_reason".to_string(),
         JsonValue::String("jetstream-material".to_string()),
@@ -238,10 +240,14 @@ pub(super) fn build_finalize_metadata(
         .or_insert_with(|| JsonValue::String(state.material_kind.clone()));
     map.entry("source_identifier".to_string())
         .or_insert_with(|| JsonValue::String(state.source_identifier.clone()));
-    merged
+    Ok(merged)
 }
 
 /// Handle a begin message by initializing or updating assembler state.
+#[tracing::instrument(
+    skip(assembler, msg),
+    fields(material_id, lock_acquire_ms, lock_hold_ms)
+)]
 pub(super) async fn handle_begin(
     assembler: &MaterialAssembler,
     msg: jetstream::Message,
@@ -265,6 +271,7 @@ pub(super) async fn handle_begin(
             return Ok(());
         }
     };
+    tracing::Span::current().record("material_id", tracing::field::display(&material_id));
 
     let started_at = DateTime::parse_from_rfc3339(&begin.started_at)
         .map(|dt| dt.with_timezone(&Utc))
@@ -308,7 +315,15 @@ pub(super) async fn handle_begin(
     };
 
     let merged_metadata = {
+        let acquire_start = std::time::Instant::now();
         let mut state = state_handle.lock().await;
+        let acquire_ms = acquire_start.elapsed().as_millis() as u64;
+        tracing::Span::current().record("lock_acquire_ms", acquire_ms);
+        if acquire_ms > 50 {
+            warn!(material_id = %material_id, acquire_ms, "Slow lock acquisition in handle_begin");
+        }
+        let hold_start = std::time::Instant::now();
+
         if state.finalizing {
             debug!(
                 material_id = %material_id,
@@ -346,6 +361,11 @@ pub(super) async fn handle_begin(
             }),
         )
         .await?;
+        let hold_ms = hold_start.elapsed().as_millis() as u64;
+        tracing::Span::current().record("lock_hold_ms", hold_ms);
+        if hold_ms > 100 {
+            warn!(material_id = %material_id, hold_ms, "Long lock hold in handle_begin");
+        }
         state.metadata.clone()
     };
 

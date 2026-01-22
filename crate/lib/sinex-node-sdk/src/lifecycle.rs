@@ -1,7 +1,7 @@
 //! Service lifecycle management for node services
 
-use crate::heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter};
 use crate::health_reporter::{HealthReporter, HealthThresholds};
+use crate::heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter};
 use crate::stream_processor::NodeRuntimeState;
 use crate::{NodeError, NodeResult};
 use parking_lot::Mutex;

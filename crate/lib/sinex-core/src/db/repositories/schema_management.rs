@@ -36,7 +36,7 @@ pub struct NewEventSchema {
 
 impl NewEventSchema {
     /// Calculate the content hash for the schema
-    pub fn calculate_content_hash(&self) -> String {
+    pub fn calculate_content_hash(&self) -> Result<String, crate::types::error::SinexError> {
         let mut hasher = blake3::Hasher::new();
         hasher.update(self.source.as_bytes());
         hasher.update(b":");
@@ -44,9 +44,14 @@ impl NewEventSchema {
         hasher.update(b":");
         hasher.update(self.schema_version.as_bytes());
         hasher.update(b":");
-        let serialized = serde_json::to_vec(&self.schema_content).unwrap();
+        let serialized = serde_json::to_vec(&self.schema_content).map_err(|e| {
+            crate::types::error::SinexError::validation(format!(
+                "Failed to serialize schema content for hashing: {}",
+                e
+            ))
+        })?;
         hasher.update(&serialized);
-        hasher.finalize().to_hex().to_string()
+        Ok(hasher.finalize().to_hex().to_string())
     }
 }
 
@@ -97,7 +102,7 @@ impl<'a> SchemaManagementRepository<'a> {
                 event_type,
                 version,
                 schema_content,
-            ));
+            )?);
         }
 
         let discovered_count = candidates.len();
@@ -152,7 +157,7 @@ impl<'a> SchemaManagementRepository<'a> {
             schema_version: schema_version.clone(),
             schema_content: schema_content.clone(),
         }
-        .calculate_content_hash();
+        .calculate_content_hash()?;
 
         // Check if this exact schema already exists
         if let Ok(existing) = self.find_schema_by_hash(&content_hash).await {
@@ -887,18 +892,18 @@ impl SchemaCandidate {
         event_type: String,
         schema_version: String,
         schema_content: JsonValue,
-    ) -> Self {
+    ) -> Result<Self, crate::types::error::SinexError> {
         let schema = NewEventSchema {
             source,
             event_type,
             schema_version,
             schema_content,
         };
-        let content_hash = schema.calculate_content_hash();
-        Self {
+        let content_hash = schema.calculate_content_hash()?;
+        Ok(Self {
             schema,
             content_hash,
-        }
+        })
     }
 
     fn key(&self) -> (String, String, String) {

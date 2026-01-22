@@ -214,11 +214,9 @@ impl<'a> StateRepository<'a> {
     /// Validate a ReplayScope JSON object
     pub fn validate_replay_scope(scope: &JsonValue) -> DbResult<()> {
         // Required fields for replay scope
-        if !scope.is_object() {
-            return Err(SinexError::validation("ReplayScope must be a JSON object"));
-        }
-
-        let obj = scope.as_object().unwrap();
+        let obj = scope
+            .as_object()
+            .ok_or_else(|| SinexError::validation("ReplayScope must be a JSON object"))?;
 
         // Check required fields
         if !obj.contains_key("target_type") {
