@@ -14,18 +14,17 @@ use sinex_node_sdk::simple_node::{
     SimpleNode, SimpleNodeContext, SimpleNodeError, SimpleNodeWrapper,
 };
 use std::collections::HashMap;
-use std::time::Duration;
 
 /// Configuration for the health aggregator
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthAggregatorConfig {
     /// Component-specific check intervals (in seconds)
     #[serde(default = "default_component_intervals")]
     pub component_check_intervals: HashMap<String, u64>,
 
     /// Aggregation window for health statistics (in seconds)
-    #[serde(default = "default_aggregation_window")]
-    pub aggregation_window_seconds: Duration,
+    #[serde(default = "default_aggregation_window_secs")]
+    pub aggregation_window_seconds: u64,
 
     /// Threshold for marking component as unhealthy (in minutes)
     #[serde(default = "default_unhealthy_threshold")]
@@ -46,8 +45,8 @@ fn default_component_intervals() -> HashMap<String, u64> {
     intervals
 }
 
-fn default_aggregation_window() -> Duration {
-    Duration::from_secs(300) // 5 minutes
+fn default_aggregation_window_secs() -> u64 {
+    300 // 5 minutes
 }
 
 fn default_unhealthy_threshold() -> u64 {
@@ -62,7 +61,7 @@ impl Default for HealthAggregatorConfig {
     fn default() -> Self {
         Self {
             component_check_intervals: default_component_intervals(),
-            aggregation_window_seconds: default_aggregation_window(),
+            aggregation_window_seconds: default_aggregation_window_secs(),
             unhealthy_threshold_minutes: default_unhealthy_threshold(),
             enable_system_health_status: default_true(),
             enable_component_health_reports: default_true(),
@@ -83,27 +82,48 @@ impl HealthAggregatorConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct HealthState {
     pub component_health: HashMap<String, ComponentHealth>,
+    pub last_window_emission: Option<DateTime<Utc>>,
+    pub config: HealthAggregatorConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComponentHealth {
     pub component_name: String,
+    pub current_status: String,
+    pub status_since: DateTime<Utc>,
     pub last_seen: DateTime<Utc>,
-    pub status: HealthStatus,
-    pub metrics: HashMap<String, f64>,
-    pub recent_events: Vec<String>,
+    pub last_check_emission: Option<DateTime<Utc>>,
+    pub transition_count: u64,
+    pub events: Vec<HealthEvent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HealthEvent {
+    pub timestamp: DateTime<Utc>,
+    pub previous_status: String,
+    pub current_status: String,
+    pub event_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum HealthStatus {
     Healthy,
-    Warning,
-    Critical,
+    Degraded,
+    Failed,
     Unknown,
 }
 
-#[derive(Default)]
-pub struct HealthAggregator;
+pub struct HealthAggregator {
+    config: HealthAggregatorConfig,
+}
+
+impl Default for HealthAggregator {
+    fn default() -> Self {
+        Self {
+            config: HealthAggregatorConfig::default(),
+        }
+    }
+}
 
 #[async_trait]
 impl SimpleNode for HealthAggregator {
@@ -127,35 +147,235 @@ impl SimpleNode for HealthAggregator {
         input: Self::Input,
         context: &SimpleNodeContext,
     ) -> Result<Option<Self::Output>, SimpleNodeError> {
-        let component_name = input
+        let now = context.ts_orig.unwrap_or_else(Utc::now);
+
+        // Ensure state has config
+        if state.config.aggregation_window_seconds == 0 {
+            state.config = self.config.clone();
+        }
+
+        // Parse health.status event
+        let component = input
             .get("component")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown")
             .to_string();
 
-        let health = state
-            .component_health
-            .entry(component_name.clone())
-            .or_insert_with(|| ComponentHealth {
-                component_name: component_name.clone(),
-                last_seen: context.ts_orig.unwrap_or_else(Utc::now),
-                status: HealthStatus::Unknown,
-                metrics: HashMap::new(),
-                recent_events: Vec::new(),
-            });
+        let previous_status = input
+            .get("previous_status")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
 
-        health.last_seen = context.ts_orig.unwrap_or_else(Utc::now);
-        health.recent_events.push(context.event_id.to_string());
-        if health.recent_events.len() > 10 {
-            health.recent_events.remove(0);
+        let current_status = input
+            .get("current_status")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        // Check for periodic reports (before mutably borrowing component_health)
+        let mut periodic_reports = Vec::new();
+
+        // 1. Window-based emission (every aggregation_window_seconds)
+        let should_emit_window = state
+            .last_window_emission
+            .map(|last| {
+                let elapsed = now.signed_duration_since(last);
+                elapsed >= chrono::Duration::seconds(state.config.aggregation_window_seconds as i64)
+            })
+            .unwrap_or(true);
+
+        if should_emit_window && state.config.enable_system_health_status {
+            periodic_reports.push(self.create_system_status(state, now));
+            state.last_window_emission = Some(now);
         }
 
-        // Logic to generate report every N events
-        if state.component_health.len() % 5 == 0 {
-            Ok(Some(serde_json::to_value(&state.component_health).unwrap()))
+        // Get or create component health tracking
+        let component_health = state
+            .component_health
+            .entry(component.clone())
+            .or_insert_with(|| ComponentHealth {
+                component_name: component.clone(),
+                current_status: current_status.clone(),
+                status_since: now,
+                last_seen: now,
+                last_check_emission: None,
+                transition_count: 0,
+                events: Vec::new(),
+            });
+
+        // Track status transition
+        let status_changed = component_health.current_status != current_status;
+        if status_changed {
+            component_health.current_status = current_status.clone();
+            component_health.status_since = now;
+            component_health.transition_count += 1;
+        }
+
+        component_health.last_seen = now;
+
+        // Add event to sliding window
+        component_health.events.push(HealthEvent {
+            timestamp: now,
+            previous_status: previous_status.clone(),
+            current_status: current_status.clone(),
+            event_id: context.event_id.to_string(),
+        });
+
+        // Prune events outside aggregation window
+        let window_start =
+            now - chrono::Duration::seconds(state.config.aggregation_window_seconds as i64);
+
+        component_health
+            .events
+            .retain(|e| e.timestamp >= window_start);
+
+        // Check for immediate alert: component transitioned to Failed
+        let mut immediate_alert = None;
+        if status_changed && current_status == "failed" {
+            immediate_alert = Some(self.create_alert(
+                &component,
+                &current_status,
+                now,
+                "Component entered failed state",
+            ));
+        }
+
+        // 2. Component-specific check interval
+        let check_interval = state
+            .config
+            .component_check_intervals
+            .get(&component)
+            .or_else(|| state.config.component_check_intervals.get("default"))
+            .copied()
+            .unwrap_or(60);
+
+        let should_emit_component = component_health
+            .last_check_emission
+            .map(|last| {
+                let elapsed = now.signed_duration_since(last);
+                elapsed >= chrono::Duration::seconds(check_interval as i64)
+            })
+            .unwrap_or(true);
+
+        if should_emit_component && state.config.enable_component_health_reports {
+            periodic_reports.push(self.create_component_report(component_health, now));
+            component_health.last_check_emission = Some(now);
+        }
+
+        // Combine all outputs
+        if let Some(alert) = immediate_alert {
+            Ok(Some(alert))
+        } else if !periodic_reports.is_empty() {
+            Ok(Some(periodic_reports[0].clone()))
         } else {
             Ok(None)
         }
+    }
+}
+
+impl HealthAggregator {
+    /// Create immediate alert event for component status change
+    fn create_alert(
+        &self,
+        component: &str,
+        status: &str,
+        timestamp: DateTime<Utc>,
+        reason: &str,
+    ) -> JsonValue {
+        serde_json::json!({
+            "alert_type": "component_status_change",
+            "component": component,
+            "status": status,
+            "timestamp": timestamp.to_rfc3339(),
+            "reason": reason,
+            "severity": if status == "failed" { "critical" } else { "warning" },
+        })
+    }
+
+    /// Create system-wide health status report
+    fn create_system_status(&self, state: &HealthState, timestamp: DateTime<Utc>) -> JsonValue {
+        let total_components = state.component_health.len();
+        let healthy = state
+            .component_health
+            .values()
+            .filter(|c| c.current_status == "healthy")
+            .count();
+        let degraded = state
+            .component_health
+            .values()
+            .filter(|c| c.current_status == "degraded")
+            .count();
+        let failed = state
+            .component_health
+            .values()
+            .filter(|c| c.current_status == "failed")
+            .count();
+
+        let overall_status = if failed > 0 {
+            "failed"
+        } else if degraded > 0 {
+            "degraded"
+        } else {
+            "healthy"
+        };
+
+        serde_json::json!({
+            "report_type": "system_health_status",
+            "timestamp": timestamp.to_rfc3339(),
+            "overall_status": overall_status,
+            "total_components": total_components,
+            "healthy_count": healthy,
+            "degraded_count": degraded,
+            "failed_count": failed,
+            "components": state
+                .component_health
+                .iter()
+                .map(|(name, health)| {
+                    serde_json::json!({
+                        "name": name,
+                        "status": health.current_status,
+                        "status_since": health.status_since.to_rfc3339(),
+                        "last_seen": health.last_seen.to_rfc3339(),
+                    })
+                })
+                .collect::<Vec<_>>(),
+        })
+    }
+
+    /// Create component-specific health report
+    fn create_component_report(
+        &self,
+        component_health: &ComponentHealth,
+        timestamp: DateTime<Utc>,
+    ) -> JsonValue {
+        let window_start =
+            timestamp - chrono::Duration::seconds(self.config.aggregation_window_seconds as i64);
+
+        let events_in_window = component_health
+            .events
+            .iter()
+            .filter(|e| e.timestamp >= window_start)
+            .count();
+
+        let transitions_in_window = component_health
+            .events
+            .iter()
+            .filter(|e| e.timestamp >= window_start && e.previous_status != e.current_status)
+            .count();
+
+        serde_json::json!({
+            "report_type": "component_health_report",
+            "timestamp": timestamp.to_rfc3339(),
+            "component": component_health.component_name,
+            "current_status": component_health.current_status,
+            "status_since": component_health.status_since.to_rfc3339(),
+            "last_seen": component_health.last_seen.to_rfc3339(),
+            "total_transitions": component_health.transition_count,
+            "events_in_window": events_in_window,
+            "transitions_in_window": transitions_in_window,
+            "window_seconds": self.config.aggregation_window_seconds,
+        })
     }
 }
 
