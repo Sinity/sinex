@@ -268,6 +268,8 @@ where
     events_since_checkpoint: u64,
     last_checkpoint_time: Instant,
     last_revision: u64,
+    #[cfg(feature = "messaging")]
+    health_reporter: Option<Arc<crate::health_reporter::HealthReporter>>,
 }
 
 impl<P> SimpleNodeWrapper<P>
@@ -289,6 +291,8 @@ where
             events_since_checkpoint: 0,
             last_checkpoint_time: Instant::now(),
             last_revision: 0,
+            #[cfg(feature = "messaging")]
+            health_reporter: None,
         }
     }
 
@@ -514,11 +518,36 @@ where
         };
 
         // Process
-        match self
+        let result = self
             .processor
             .process(&mut self.persisted_state.state, input, &context)
-            .await
-        {
+            .await;
+
+        // Track health (success/error)
+        #[cfg(feature = "messaging")]
+        if let Some(ref reporter) = self.health_reporter {
+            match &result {
+                Ok(_) => reporter.record_success(),
+                Err(e) => {
+                    // Convert SimpleNodeError to SinexError for health tracking
+                    let sinex_error = sinex_core::SinexError::processing(e.to_string());
+                    reporter.record_error(&sinex_error);
+                }
+            }
+
+            // Periodic health check (every 100 events)
+            if self.persisted_state.events_processed % 100 == 0 {
+                if let Err(e) = reporter.check_and_emit().await {
+                    warn!(
+                        processor = %self.processor.name(),
+                        error = %e,
+                        "Failed to emit health status"
+                    );
+                }
+            }
+        }
+
+        match result {
             Ok(Some(output)) => {
                 // Build output event
                 let output_payload = serde_json::to_value(&output).map_err(|e| {
@@ -756,6 +785,44 @@ where
 
         // Store host from runtime
         self.host = runtime.service_info().host().to_string();
+
+        // Auto-enable health monitoring if NATS is available
+        #[cfg(feature = "messaging")]
+        {
+            if let Some(nats_client) = runtime.nats_client() {
+                use crate::health_reporter::{HealthReporter, HealthThresholds};
+                use crate::self_observation::{SelfObserver, SelfObserverConfig};
+                use std::time::Duration;
+
+                // Check if health monitoring is enabled (default: yes)
+                let health_enabled = std::env::var("SINEX_HEALTH_MONITORING_ENABLED")
+                    .map(|v| v != "false" && v != "0")
+                    .unwrap_or(true);
+
+                if health_enabled {
+                    let config = SelfObserverConfig {
+                        component: self.processor.name().to_string(),
+                        subject_prefix: "sinex.telemetry".to_string(),
+                        enabled: true,
+                        min_emission_interval: Duration::from_secs(1),
+                    };
+
+                    let observer = Arc::new(SelfObserver::new(nats_client, config));
+                    let thresholds = HealthThresholds::from_env().unwrap_or_default();
+
+                    self.health_reporter = Some(Arc::new(HealthReporter::new(
+                        self.processor.name().to_string(),
+                        observer,
+                        thresholds,
+                    )));
+
+                    info!(
+                        processor = %self.processor.name(),
+                        "Health monitoring auto-enabled"
+                    );
+                }
+            }
+        }
 
         // Load state from checkpoint
         self.runtime = Some(runtime);

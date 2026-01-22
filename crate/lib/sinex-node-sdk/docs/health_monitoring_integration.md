@@ -2,21 +2,43 @@
 
 ## Overview
 
-The health monitoring system provides automatic health tracking for all nodes via `HealthReporter`. This guide shows how to integrate it.
+The health monitoring system provides **automatic health tracking for all nodes** via `HealthReporter`. Health monitoring is now enabled by default for all `SimpleNode` implementations.
 
-## Quick Start
+## Automatic Integration (Preferred)
 
-### 1. Enable in LifecycleManager
+### SimpleNode - Auto-Enabled
 
-```rust
-use sinex_node_sdk::{HealthThresholds, LifecycleManager};
+**All `SimpleNode` implementations automatically get health monitoring** with zero configuration required!
 
-let lifecycle = LifecycleManager::new(service_name.clone())
-    .with_heartbeat(Duration::from_secs(30))
-    .with_health_monitoring(HealthThresholds::from_env()?);
+When a `SimpleNodeWrapper` initializes in service mode with NATS available:
+1. ✅ HealthReporter is automatically created
+2. ✅ Success/error tracking happens on every event
+3. ✅ Status checks occur every 100 events
+4. ✅ health.status events emit automatically on status changes
+
+**No code changes needed** - health monitoring "just works" for:
+- All automata (e.g., `sinex-health-automaton`, `sinex-analytics-automaton`)
+- All processors using SimpleNode pattern
+
+### Configuration (Optional)
+
+Control via environment variables:
+
+```bash
+# Disable health monitoring (default: enabled)
+SINEX_HEALTH_MONITORING_ENABLED=false
+
+# Error rate thresholds
+SINEX_HEALTH_ERROR_RATE_DEGRADED=0.05  # 5% errors → degraded (default)
+SINEX_HEALTH_ERROR_RATE_FAILED=0.20    # 20% errors → failed (default)
+
+# Sliding window for error rate calculation
+SINEX_HEALTH_WINDOW_SECONDS=300        # 5 minutes (default)
 ```
 
-### 2. Create HealthReporter Manually (Current Pattern)
+## Manual Integration (Legacy)
+
+### For Non-SimpleNode or Custom Use Cases
 
 ```rust
 use sinex_node_sdk::{HealthReporter, HealthThresholds, self_observation::SelfObserver};
