@@ -110,13 +110,14 @@ cargo xtask test --profile default -- --test property_tests
 - Add full automaton integration test in sinex-node-sdk
 - Add DLQ consumer/replay tests and retention policy coverage
 - Add ingestd property tests for idempotency, batch ordering, monotonic offsets
-- Add restart resilience coverage for outbox/confirmation stream durability
+- Add restart resilience coverage for confirmation stream durability
 - Add explicit sinex-schema migration tests
 - Add JetStream-focused chaos test in sinex-core adversarial coverage
 
 ## Authoritative References
 
 **Test Utilities Documentation** (`crate/lib/sinex-test-utils/docs/`):
+
 - `README.md` — Entry point, quick start, environment variables
 - `test_context.md` — TestContext API, lifecycle, assertions
 - `database_testing.md` — Pool architecture, isolation, cleanup
@@ -126,6 +127,7 @@ cargo xtask test --profile default -- --test property_tests
 - `troubleshooting.md` — Common issues, best practices
 
 **Other References**:
+
 - `tests/e2e/nixos-vm/README.md` — VM harness, parallel snapshot runner
 - `docs/documentation-guidelines.md` — Documentation checklist
 

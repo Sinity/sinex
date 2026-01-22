@@ -1,0 +1,56 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "CorrelationPair": {
+      "description": "Correlation pair",
+      "properties": {
+        "avg_gap_ms": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "event_a": {
+          "type": "string"
+        },
+        "event_b": {
+          "type": "string"
+        },
+        "occurrences": {
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "avg_gap_ms",
+        "event_a",
+        "event_b",
+        "occurrences"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Correlation analysis between event types",
+  "properties": {
+    "analysis_type": {
+      "type": "string"
+    },
+    "pairs": {
+      "items": {
+        "$ref": "#/definitions/CorrelationPair"
+      },
+      "type": "array"
+    },
+    "window_seconds": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "analysis_type",
+    "pairs",
+    "window_seconds"
+  ],
+  "title": "AnalyticsCorrelationPayload",
+  "type": "object"
+}

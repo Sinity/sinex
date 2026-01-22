@@ -345,6 +345,20 @@ impl<'a> StateRepository<'a> {
         Ok(result)
     }
 
+    /// Check if an operation exists by ID (lightweight check without full record fetch)
+    pub async fn operation_exists(&self, id: &Id<Operation>) -> DbResult<bool> {
+        Self::validate_operation_id(id)?;
+        let exists = sqlx::query_scalar!(
+            r#"SELECT EXISTS(SELECT 1 FROM core.operations_log WHERE id::uuid = $1::uuid) as "exists!""#,
+            id.to_uuid()
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|e| db_error(e, "check operation exists"))?;
+
+        Ok(exists)
+    }
+
     /// Get operation by ID
     pub async fn get_operation(&self, id: &Id<Operation>) -> DbResult<Option<OperationRecord>> {
         Self::validate_operation_id(id)?;

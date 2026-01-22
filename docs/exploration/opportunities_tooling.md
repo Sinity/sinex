@@ -1,5 +1,20 @@
 # Opportunities & Tooling Directions
 
+## Recent Completions (2026-01-22)
+
+The following items from this exploration have been implemented:
+
+- **Pool acquire timeout metrics**: Added `#[tracing::instrument]` to `acquire_with_timeout()` with pool metrics (size, idle, acquire_ms). Warning threshold configurable via `SINEX_POOL_ACQUIRE_WARN_MS`. Reference: `sinex-core/src/db/mod.rs`
+
+- **Schema validation coverage metrics**: Added `ValidationStats` and `ValidationStatsSnapshot` to track Valid/Skipped/NoSchema/SchemaNotFound/Invalid outcomes. Accessible via `EventValidator::stats()`. Reference: `sinex-ingestd/src/validator.rs`
+
+- **NATS subject registry**: Created canonical documentation at `docs/current/architecture/nats-subjects.md` covering all subjects, streams, and naming conventions.
+
+- **Lint tooling**: Extended `cargo xtask lint-forbidden` with:
+  - unwrap/expect count reporting (informational)
+  - SQLx compile-time vs runtime query statistics
+  - sinex_test_utils layering check
+
 ## Data & Analytics
 
 - Embed columnar engines (DataFusion, Polars) alongside Postgres exports to keep analytics/service workloads off the shared pool. We can mirror `core.events` into Parquet snapshots or DuckDB databases, letting gateway/CLI queries run locally without bypassing auth.

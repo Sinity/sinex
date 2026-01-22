@@ -1,0 +1,64 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Knowledge extraction insights",
+  "properties": {
+    "analysis_type": {
+      "type": "string"
+    },
+    "generated_at": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "recent_items": {
+      "items": true,
+      "type": "array"
+    },
+    "time_window_hours": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "top_keywords": {
+      "items": {
+        "items": [
+          {
+            "type": "string"
+          },
+          {
+            "format": "uint",
+            "minimum": 0.0,
+            "type": "integer"
+          }
+        ],
+        "maxItems": 2,
+        "minItems": 2,
+        "type": "array"
+      },
+      "type": "array"
+    },
+    "total_knowledge_items": {
+      "format": "uint",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "type_distribution": {
+      "additionalProperties": {
+        "format": "uint",
+        "minimum": 0.0,
+        "type": "integer"
+      },
+      "type": "object"
+    }
+  },
+  "required": [
+    "analysis_type",
+    "generated_at",
+    "recent_items",
+    "time_window_hours",
+    "top_keywords",
+    "total_knowledge_items",
+    "type_distribution"
+  ],
+  "title": "PKMKnowledgeExtractionPayload",
+  "type": "object"
+}

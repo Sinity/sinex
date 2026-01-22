@@ -1,0 +1,41 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Knowledge graph relationships",
+  "properties": {
+    "analysis_type": {
+      "type": "string"
+    },
+    "generated_at": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "graph_density": {
+      "format": "double",
+      "type": "number"
+    },
+    "relationships": {
+      "items": true,
+      "type": "array"
+    },
+    "total_nodes": {
+      "format": "uint",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "total_relationships": {
+      "format": "uint",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "analysis_type",
+    "generated_at",
+    "graph_density",
+    "relationships",
+    "total_nodes",
+    "total_relationships"
+  ],
+  "title": "PKMKnowledgeGraphPayload",
+  "type": "object"
+}

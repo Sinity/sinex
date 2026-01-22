@@ -480,7 +480,6 @@ impl<T: Node + 'static> NodeRunner<T> {
         let transport_clone_for_runner = transport.clone();
 
         let kv_store = create_checkpoint_kv(&transport).await?;
-        let kv_store = create_checkpoint_kv(&transport).await?;
 
         #[cfg(feature = "messaging")]
         let (schema_cache, schema_validator) = maybe_start_schema_listener(&transport).await?;

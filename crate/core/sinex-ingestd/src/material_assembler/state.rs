@@ -18,6 +18,7 @@ use crate::{IngestdResult, SinexError};
 
 pub(super) const BUFFER_DIR_NAME: &str = "buffers";
 pub(super) const STATE_FILE_NAME: &str = "state.json";
+
 pub(super) const WAL_FILE_NAME: &str = "state.wal";
 pub(super) const TEMP_FILE_NAME: &str = "material.bin";
 pub(super) const DLQ_CONSUMER: &str = "ingestd";
@@ -104,7 +105,7 @@ pub(super) struct AssemblerState {
     pub finalizing: bool,
     pub last_slice_received: DateTime<Utc>,
     /// Semaphore permit held for the duration of the assembly
-    pub permit: Option<tokio::sync::OwnedSemaphorePermit>,
+    pub _permit: Option<tokio::sync::OwnedSemaphorePermit>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -405,7 +406,7 @@ mod tests {
             pending_end: None,
             finalizing: false,
             last_slice_received: Utc::now(),
-            permit: None,
+            _permit: None,
         }
     }
 

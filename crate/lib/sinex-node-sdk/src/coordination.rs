@@ -116,7 +116,7 @@ mod tests {
         let js = async_nats::jetstream::new(nats_client);
         let kv = js
             .create_key_value(async_nats::jetstream::kv::Config {
-                bucket: env.nats_kv_bucket_name("sinex_checkpoints"),
+                bucket: "sinex_checkpoints".to_string(),
                 history: 1,
                 ..Default::default()
             })

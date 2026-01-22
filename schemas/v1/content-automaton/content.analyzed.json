@@ -1,0 +1,70 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Text content analysis",
+  "properties": {
+    "analysis_type": {
+      "type": "string"
+    },
+    "character_count": {
+      "format": "uint",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "content_preview": {
+      "type": "string"
+    },
+    "detected_language": {
+      "type": "string"
+    },
+    "generated_at": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "line_count": {
+      "format": "uint",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "source_event_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "top_keywords": {
+      "items": {
+        "items": [
+          {
+            "type": "string"
+          },
+          {
+            "format": "uint",
+            "minimum": 0.0,
+            "type": "integer"
+          }
+        ],
+        "maxItems": 2,
+        "minItems": 2,
+        "type": "array"
+      },
+      "type": "array"
+    },
+    "word_count": {
+      "format": "uint",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "analysis_type",
+    "character_count",
+    "content_preview",
+    "detected_language",
+    "generated_at",
+    "line_count",
+    "top_keywords",
+    "word_count"
+  ],
+  "title": "ContentAnalyzedPayload",
+  "type": "object"
+}

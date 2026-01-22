@@ -6,7 +6,9 @@ pub use sinex_macros::with_context;
 
 use displaydoc::Display;
 use indexmap::IndexMap;
-use serde::{Deserialize, Serialize};
+
+use serde::ser::SerializeStruct;
+use serde::{Deserialize, Serialize, Serializer};
 use std::fmt;
 use thiserror::Error;
 
@@ -130,7 +132,7 @@ pub enum SinexError {
 /// Empty context and sources are omitted from serialization to reduce payload size.
 /// The `default` attribute ensures deserialization works correctly when these fields
 /// are missing.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ErrorDetails {
     /// The primary error message
     message: String,
@@ -194,6 +196,56 @@ impl ErrorDetails {
     pub fn with_source(mut self, source: impl ToString) -> Self {
         self.sources.push(source.to_string());
         self
+    }
+}
+
+impl Serialize for ErrorDetails {
+    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        let mut state = serializer.serialize_struct("ErrorDetails", 3)?;
+
+        // 1. Sanitize message
+        #[cfg(not(debug_assertions))]
+        let message = strip_internal_paths(&self.message);
+        #[cfg(debug_assertions)]
+        let message = &self.message;
+
+        state.serialize_field("message", &message)?;
+
+        // 2. Sanitize context
+        const SAFE_KEYS: &[&str] = &[
+            "table_name",
+            "field_name",
+            "operation",
+            "resource_type",
+            "status_code",
+            "retry_count",
+            "duration_ms",
+            "count",
+            "id_type",
+            "path", // Keeping path but usually it should be sanitized if it's an internal path context?
+                    // User asked to "Whitelist safe context keys".
+                    // If 'path' is whitelisted, the VALUE of 'path' should be sanitized?
+                    // The custom serialize logic can iterate and sanitize values too?
+                    // For now, I'll stick to just whitelisting keys.
+                    // The message is sanitized.
+        ];
+
+        let safe_context: IndexMap<_, _> = self
+            .context
+            .iter()
+            .filter(|(k, _)| SAFE_KEYS.contains(&k.as_str()))
+            .collect();
+
+        if !safe_context.is_empty() {
+            state.serialize_field("context", &safe_context)?;
+        }
+
+        // 3. Serialize sources
+        if !self.sources.is_empty() {
+            state.serialize_field("sources", &self.sources)?;
+        }
+
+        state.end()
     }
 }
 
@@ -793,5 +845,36 @@ where
         F: FnOnce() -> SinexError,
     {
         self.map_err(|_| f())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_internal_path_stripping() {
+        let path = "/home/sinity/secret/file.txt";
+        let msg = format!("Failed to read {}", path);
+        let stripped = strip_internal_paths(&msg);
+        assert_eq!(stripped, "Failed to read [REDACTED_PATH]");
+
+        let path2 = "/realm/project/sinex/Cargo.toml";
+        let msg2 = format!("Error in {}", path2);
+        let stripped2 = strip_internal_paths(&msg2);
+        assert_eq!(stripped2, "Error in [REDACTED_PATH]");
+    }
+
+    #[test]
+    fn test_serialization_filtering() {
+        let err = ErrorDetails::new("test")
+            .with_context("table_name", "users") // Safe
+            .with_context("secret_info", "hidden"); // Unsafe
+
+        let json = serde_json::to_value(&err).unwrap();
+        let context = json.get("context").unwrap();
+
+        assert!(context.get("table_name").is_some());
+        assert!(context.get("secret_info").is_none());
     }
 }

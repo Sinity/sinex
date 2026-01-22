@@ -182,7 +182,7 @@ impl MaterialAssembler {
             pending_end: None,
             finalizing: false,
             last_slice_received: Utc::now(),
-            permit: Some(permit),
+            _permit: Some(permit),
         })
     }
 

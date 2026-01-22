@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Component health status change\n\nEmitted when a component's health status changes (healthy -> degraded, etc.)",
+  "properties": {
+    "component": {
+      "description": "Component name",
+      "type": "string"
+    },
+    "context": {
+      "description": "Additional context"
+    },
+    "current_status": {
+      "description": "Current status",
+      "type": "string"
+    },
+    "previous_status": {
+      "description": "Previous status",
+      "type": "string"
+    },
+    "reason": {
+      "description": "Reason for status change",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "component",
+    "current_status",
+    "previous_status"
+  ],
+  "title": "HealthStatusPayload",
+  "type": "object"
+}

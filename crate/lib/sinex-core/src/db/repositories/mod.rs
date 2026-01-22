@@ -18,7 +18,8 @@ pub use common::{
 };
 pub use events::{
     CommandCount, EventAnnotation, EventPayloadSchema, EventRepository, EventRepositoryTx,
-    EventSearchRow, EventTypeCount, NewSchema, SourceActivity,
+    EventSearchRow, EventTypeCount, NewSchema, SourceActivity, StreamBatchInsertResult,
+    StreamBatchRow,
 };
 pub use knowledge_graph::{
     CreateEntity, CreateEntityRelation, EntityExt, EntityRecord, EntityRelationExt,
@@ -30,7 +31,7 @@ pub use schema_management::{
 };
 pub use source_materials::{
     material_kinds, material_types, status as material_status, timing_info_types, SourceMaterial,
-    SourceMaterialExt, SourceMaterialRepository,
+    SourceMaterialExt, SourceMaterialRepository, TemporalLedgerEntry,
 };
 pub use state::{
     Operation, OperationRecord, OperationStatistics, StateRepository, SystemHealthReport,

@@ -1,0 +1,40 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Content similarity detection",
+  "properties": {
+    "analysis_type": {
+      "type": "string"
+    },
+    "content_fingerprint": {
+      "type": "string"
+    },
+    "event_group_size": {
+      "format": "uint",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "generated_at": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "similar_event_ids": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "similarity_type": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "analysis_type",
+    "content_fingerprint",
+    "event_group_size",
+    "generated_at",
+    "similar_event_ids",
+    "similarity_type"
+  ],
+  "title": "ContentSimilarityDetectedPayload",
+  "type": "object"
+}

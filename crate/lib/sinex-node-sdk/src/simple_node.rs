@@ -275,7 +275,7 @@ where
     P: SimpleNode,
 {
     /// Create a new SimpleNodeWrapper wrapping the given processor
-    pub fn new(processor: P) -> Self {
+    pub fn with_processor(processor: P) -> Self {
         Self {
             processor,
             persisted_state: PersistedState::default(),
@@ -290,6 +290,11 @@ where
             last_checkpoint_time: Instant::now(),
             last_revision: 0,
         }
+    }
+
+    /// Alias for with_processor for backwards compatibility
+    pub fn new(processor: P) -> Self {
+        Self::with_processor(processor)
     }
 
     /// Create with custom config
@@ -317,7 +322,23 @@ where
         node.shutdown_config = shutdown_config;
         node
     }
+}
 
+/// Default implementation for SimpleNodeWrapper when processor implements Default.
+/// This enables the `processor_main!` macro to work with type aliases.
+impl<P> Default for SimpleNodeWrapper<P>
+where
+    P: SimpleNode + Default,
+{
+    fn default() -> Self {
+        Self::with_processor(P::default())
+    }
+}
+
+impl<P> SimpleNodeWrapper<P>
+where
+    P: SimpleNode,
+{
     /// Load state from checkpoint.
     ///
     /// Priority order:
@@ -848,6 +869,62 @@ where
         _args: &ScanArgs,
     ) -> NodeResult<ScanEstimate> {
         Ok(ScanEstimate::default())
+    }
+}
+
+/// ExplorationProvider implementation for SimpleNodeWrapper
+///
+/// Automatons don't have traditional "ingestion" semantics, so this provides
+/// stub implementations that report basic health status.
+impl<P> crate::exploration::ExplorationProvider for SimpleNodeWrapper<P>
+where
+    P: SimpleNode,
+{
+    fn get_source_state(&self) -> color_eyre::eyre::Result<crate::exploration::SourceState> {
+        Ok(crate::exploration::SourceState {
+            is_connected: true,
+            healthy: true,
+            description: format!("{} automaton", self.processor.name()),
+            last_updated: chrono::Utc::now(),
+            lag_seconds: None,
+            recent_activity: Vec::new(),
+            total_items: None,
+            metadata: std::collections::HashMap::new(),
+        })
+    }
+
+    fn get_ingestion_history(
+        &self,
+        _limit: u64,
+    ) -> color_eyre::eyre::Result<Vec<crate::exploration::IngestionHistoryEntry>> {
+        // Automatons process events rather than ingest from sources
+        Ok(Vec::new())
+    }
+
+    fn get_coverage_analysis(
+        &self,
+        _time_range: Option<(chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)>,
+    ) -> color_eyre::eyre::Result<crate::exploration::CoverageAnalysis> {
+        let now = chrono::Utc::now();
+        Ok(crate::exploration::CoverageAnalysis {
+            time_range: (now, now),
+            source_total: 0,
+            sinex_total: 0,
+            coverage_percentage: 100.0,
+            missing_count: 0,
+            duplicate_count: 0,
+            missing_samples: Vec::new(),
+            recommendations: Vec::new(),
+        })
+    }
+
+    fn export_data(
+        &self,
+        _path: &sinex_core::SanitizedPath,
+        _format: crate::exploration::ExportFormat,
+    ) -> color_eyre::eyre::Result<()> {
+        // Automatons don't have data to export in the traditional sense
+        Ok(())
     }
 }
 

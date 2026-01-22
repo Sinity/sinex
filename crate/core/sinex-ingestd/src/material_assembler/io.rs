@@ -81,7 +81,6 @@ async fn restore_state_params(
     state_dir: &PathBuf,
 ) -> IngestdResult<Option<AssemblerState>> {
     let wal_path = state_dir.join(WAL_FILE_NAME);
-    let wal_path = state_dir.join(WAL_FILE_NAME);
     let temp_path = state_dir.join(TEMP_FILE_NAME);
 
     if !wal_path.exists() {
@@ -178,7 +177,7 @@ async fn restore_state_params(
         pending_end: state_snapshot.pending_end,
         finalizing: state_snapshot.finalizing,
         last_slice_received: Utc::now(), // Reset on restore
-        permit: None,
+        _permit: None,
     }))
 }
 

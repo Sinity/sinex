@@ -253,6 +253,50 @@ impl SourceMaterial {
     }
 }
 
+/// Entry for the raw.temporal_ledger table.
+///
+/// Tracks timing metadata for source materials, including capture windows
+/// and clock synchronization information.
+#[derive(Debug, Clone)]
+pub struct TemporalLedgerEntry {
+    /// ID of the source material this entry refers to
+    pub source_material_id: crate::types::Ulid,
+    /// Start offset within the source material
+    pub offset_start: i64,
+    /// End offset within the source material
+    pub offset_end: i64,
+    /// Offset kind (e.g., "byte", "line", "record")
+    pub offset_kind: String,
+    /// Capture timestamp
+    pub ts_capture: DateTime<Utc>,
+    /// Precision of the capture timing (e.g., "bounded", "exact")
+    pub precision: String,
+    /// Clock type used (e.g., "wall", "monotonic")
+    pub clock: String,
+    /// Source type (e.g., "realtime_capture", "batch_import")
+    pub source_type: String,
+}
+
+impl TemporalLedgerEntry {
+    /// Create a new ledger entry for a realtime capture
+    pub fn realtime_capture(
+        source_material_id: crate::types::Ulid,
+        offset_end: i64,
+        ts_capture: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            source_material_id,
+            offset_start: 0,
+            offset_end,
+            offset_kind: "byte".to_string(),
+            ts_capture,
+            precision: "bounded".to_string(),
+            clock: "wall".to_string(),
+            source_type: "realtime_capture".to_string(),
+        }
+    }
+}
+
 /// Source material repository
 pub struct SourceMaterialRepository<'a> {
     pool: &'a PgPool,
@@ -1029,6 +1073,35 @@ impl<'a> SourceMaterialRepository<'a> {
         .execute(self.pool)
         .await
         .map_err(|e| db_error(e, "finalize in-flight material"))?;
+
+        Ok(())
+    }
+
+    // ========== Temporal Ledger ==========
+
+    /// Append an entry to the temporal ledger for a source material.
+    ///
+    /// The temporal ledger tracks timing metadata for captures, including
+    /// offset ranges, capture timestamps, and clock information.
+    pub async fn append_temporal_ledger(&self, entry: TemporalLedgerEntry) -> DbResult<()> {
+        sqlx::query!(
+            r#"
+            INSERT INTO raw.temporal_ledger
+                (source_material_id, offset_start, offset_end, offset_kind, ts_capture, precision, clock, source_type)
+            VALUES (($1::uuid)::ulid, $2, $3, $4, $5, $6, $7, $8)
+            "#,
+            ulid_to_uuid(entry.source_material_id),
+            entry.offset_start,
+            entry.offset_end,
+            entry.offset_kind,
+            entry.ts_capture,
+            entry.precision,
+            entry.clock,
+            entry.source_type
+        )
+        .execute(self.pool)
+        .await
+        .map_err(|e| db_error(e, "append temporal ledger entry"))?;
 
         Ok(())
     }

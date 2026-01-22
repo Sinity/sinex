@@ -1,0 +1,96 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "SearchIndexTopEntry": {
+      "description": "Top search index entry summary",
+      "properties": {
+        "event_type": {
+          "type": "string"
+        },
+        "keywords": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "search_score": {
+          "format": "double",
+          "type": "number"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_type",
+        "keywords",
+        "search_score",
+        "timestamp",
+        "title"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Search index built event",
+  "properties": {
+    "analysis_type": {
+      "type": "string"
+    },
+    "avg_score_by_type": {
+      "additionalProperties": {
+        "format": "double",
+        "type": "number"
+      },
+      "type": "object"
+    },
+    "content_type_distribution": {
+      "additionalProperties": {
+        "format": "uint",
+        "minimum": 0.0,
+        "type": "integer"
+      },
+      "type": "object"
+    },
+    "generated_at": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "index_size_limit": {
+      "format": "uint",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "indexing_window_hours": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "top_entries": {
+      "items": {
+        "$ref": "#/definitions/SearchIndexTopEntry"
+      },
+      "type": "array"
+    },
+    "total_entries": {
+      "format": "uint",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "analysis_type",
+    "avg_score_by_type",
+    "content_type_distribution",
+    "generated_at",
+    "index_size_limit",
+    "indexing_window_hours",
+    "top_entries",
+    "total_entries"
+  ],
+  "title": "SearchIndexBuiltPayload",
+  "type": "object"
+}

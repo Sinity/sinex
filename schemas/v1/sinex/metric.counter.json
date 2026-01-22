@@ -1,0 +1,43 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Counter metric - monotonically increasing value\n\nUse for: requests served, events processed, errors encountered",
+  "properties": {
+    "component": {
+      "description": "Component emitting this metric",
+      "type": "string"
+    },
+    "delta": {
+      "description": "Delta since last emission (if tracked)",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "labels": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Labels for dimensional filtering",
+      "type": "object"
+    },
+    "name": {
+      "description": "Metric name (e.g., \"gateway.requests\", \"ingestd.events_processed\")",
+      "type": "string"
+    },
+    "value": {
+      "description": "Current counter value",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "component",
+    "name",
+    "value"
+  ],
+  "title": "MetricCounterPayload",
+  "type": "object"
+}

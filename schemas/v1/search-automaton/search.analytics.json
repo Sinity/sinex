@@ -1,0 +1,51 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "ContentTypeCount": {
+      "description": "Content type count for search analytics",
+      "properties": {
+        "count": {
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "event_type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "count",
+        "event_type"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Search analytics event",
+  "properties": {
+    "analysis_type": {
+      "type": "string"
+    },
+    "index_size": {
+      "format": "uint",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "semantic_enabled": {
+      "type": "boolean"
+    },
+    "top_content_types": {
+      "items": {
+        "$ref": "#/definitions/ContentTypeCount"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "analysis_type",
+    "index_size",
+    "semantic_enabled",
+    "top_content_types"
+  ],
+  "title": "SearchAnalyticsPayload",
+  "type": "object"
+}

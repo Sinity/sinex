@@ -76,6 +76,8 @@ pub mod stream_processor {
     pub use crate::runtime::stream::*;
 }
 pub mod version;
+#[cfg(feature = "messaging")]
+pub mod watcher_handle;
 
 #[cfg(feature = "messaging")]
 pub use acquisition_manager::{
@@ -140,6 +142,8 @@ pub use stream_processor::{
     ScanEstimate, ScanReport, TimeHorizon,
 };
 pub use version::{NodeInstance, NodeVersion};
+#[cfg(feature = "messaging")]
+pub use watcher_handle::{WatcherHandle, WatcherHealth, WatcherState};
 
 // Re-export commonly used annex types
 
@@ -370,6 +374,9 @@ pub enum NodeError {
 
     #[error("Validation error: {0}")]
     Validation(String),
+
+    #[error("Operation not supported: {0}")]
+    NotSupported(String),
 }
 
 impl From<NodeError> for sinex_core::error::SinexError {
@@ -388,7 +395,9 @@ impl From<NodeError> for sinex_core::error::SinexError {
             NodeError::Checkpoint(_) => SinexError::checkpoint(e.to_string()),
             NodeError::Lifecycle(_) => SinexError::lifecycle(e.to_string()),
             NodeError::OperationCancelled(_) => SinexError::cancelled(e.to_string()),
+
             NodeError::Validation(_) => SinexError::validation(e.to_string()),
+            NodeError::NotSupported(_) => SinexError::configuration(e.to_string()),
         }
     }
 }

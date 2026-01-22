@@ -563,7 +563,9 @@ fn main() -> Result<()> {
             preflight,
             affected,
             args,
-        } => test(&profile, prime, list, dry_run, preflight, affected, &args, &ctx),
+        } => test(
+            &profile, prime, list, dry_run, preflight, affected, &args, &ctx,
+        ),
         Commands::Db { cmd } => db(cmd, &ctx),
         Commands::Schema { cmd } => schema(cmd),
         Commands::LintForbidden => lint_forbidden(&ctx),
@@ -579,7 +581,11 @@ fn main() -> Result<()> {
         Commands::Jobs { cmd } => jobs_cmd(cmd, &ctx),
         Commands::Up { all, processes } => devenv_up(all, &processes, &ctx),
         Commands::Status { watch } => devenv_status(watch, &ctx),
-        Commands::Logs { process, lines, follow } => devenv_logs(&process, lines, follow, &ctx),
+        Commands::Logs {
+            process,
+            lines,
+            follow,
+        } => devenv_logs(&process, lines, follow, &ctx),
     };
 
     // Record invocation result in history
@@ -730,11 +736,7 @@ fn history_cmd(cmd: HistoryCommand, ctx: &CommandContext) -> Result<()> {
 }
 
 /// Handle history tests subcommands.
-fn history_tests_cmd(
-    cmd: HistoryTestsCommand,
-    db: &HistoryDb,
-    ctx: &CommandContext,
-) -> Result<()> {
+fn history_tests_cmd(cmd: HistoryTestsCommand, db: &HistoryDb, ctx: &CommandContext) -> Result<()> {
     match cmd {
         HistoryTestsCommand::Slowest { limit } => {
             let tests = db.get_slowest_tests(limit)?;
@@ -845,7 +847,8 @@ fn history_tests_cmd(
                             test.package, test.test_name, test.avg_duration_secs
                         );
                         for (i, duration) in test.durations.iter().enumerate() {
-                            let timestamp = test.timestamps.get(i).map(|s| s.as_str()).unwrap_or("-");
+                            let timestamp =
+                                test.timestamps.get(i).map(|s| s.as_str()).unwrap_or("-");
                             println!("  {}: {:.3}s", timestamp, duration);
                         }
                         println!();
@@ -964,7 +967,11 @@ fn jobs_cmd(cmd: JobsCommand, ctx: &CommandContext) -> Result<()> {
             } else {
                 if ctx.is_human() {
                     println!("Job {}", id);
-                    println!("  Command:  {} {}", job.meta.command, job.meta.args.join(" "));
+                    println!(
+                        "  Command:  {} {}",
+                        job.meta.command,
+                        job.meta.args.join(" ")
+                    );
                     println!("  Status:   {:?}", job.meta.status);
                     println!("  Started:  {}", job.meta.started_at);
                     if let Some(finished) = job.meta.finished_at {
@@ -1086,7 +1093,11 @@ fn devenv_status(watch: bool, ctx: &CommandContext) -> Result<()> {
             .unwrap_or(false);
 
         let db_sym = if db_ok { "✓" } else { "✗" };
-        println!("  Database: {} {}", db_sym, if db_ok { "connected" } else { "unavailable" });
+        println!(
+            "  Database: {} {}",
+            db_sym,
+            if db_ok { "connected" } else { "unavailable" }
+        );
 
         // NATS status
         let nats_url = std::env::var("SINEX_NATS_URL").unwrap_or_else(|_| "localhost:4222".into());
@@ -1100,7 +1111,11 @@ fn devenv_status(watch: bool, ctx: &CommandContext) -> Result<()> {
         .is_ok();
 
         let nats_sym = if nats_ok { "✓" } else { "✗" };
-        println!("  NATS:     {} {}", nats_sym, if nats_ok { &nats_url } else { "unavailable" });
+        println!(
+            "  NATS:     {} {}",
+            nats_sym,
+            if nats_ok { &nats_url } else { "unavailable" }
+        );
 
         // Git status
         if let Ok(output) = Command::new("git")
@@ -1378,9 +1393,7 @@ fn test(
     if ctx.is_human() && !list && !dry_run {
         if let Ok(db) = open_history_db() {
             if let Ok(estimate) = db.estimate_runtime() {
-                if estimate.test_count > 0
-                    && estimate.confidence != history::Confidence::Low
-                {
+                if estimate.test_count > 0 && estimate.confidence != history::Confidence::Low {
                     println!(
                         "Estimated runtime: {:.0}s ({} tests)",
                         estimate.estimated_secs, estimate.test_count
@@ -1488,7 +1501,11 @@ fn test_preflight(ctx: &CommandContext) -> Result<()> {
     if ctx.is_human() {
         println!(
             "  Database:   {}",
-            if db_ok { "✓ connected" } else { "✗ unavailable" }
+            if db_ok {
+                "✓ connected"
+            } else {
+                "✗ unavailable"
+            }
         );
         println!(
             "  NATS:       {}",
@@ -1590,9 +1607,16 @@ fn test_dry_run(profile: &str, args: &[String], ctx: &CommandContext) -> Result<
     }
 
     if ctx.is_human() {
-        println!("Would run {} tests in {} packages:", test_count, packages.len());
+        println!(
+            "Would run {} tests in {} packages:",
+            test_count,
+            packages.len()
+        );
         println!("  Profile: {}", profile);
-        println!("  Packages: {}", packages.into_iter().collect::<Vec<_>>().join(", "));
+        println!(
+            "  Packages: {}",
+            packages.into_iter().collect::<Vec<_>>().join(", ")
+        );
         if !args.is_empty() {
             println!("  Filters: {}", args.join(" "));
         }
@@ -2664,6 +2688,16 @@ fn lint_forbidden(ctx: &CommandContext) -> Result<()> {
         &sqlx_query_as_allow,
     )?);
 
+    // Report unwrap/expect in production code (informational, not blocking)
+    // This tracks technical debt without breaking the build
+    report_unwrap_expect_count()?;
+
+    // Report runtime vs compile-time SQLx query usage
+    report_sqlx_query_stats()?;
+
+    // Check for test-utils usage in production code (layering violation)
+    check_test_utils_layering(&mut violations)?;
+
     if violations.is_empty() {
         println!("✅ No forbidden patterns found");
         return Ok(());
@@ -2674,6 +2708,129 @@ fn lint_forbidden(ctx: &CommandContext) -> Result<()> {
         eprintln!("  {v}");
     }
     bail!("forbidden pattern scan failed");
+}
+
+/// Report count of unwrap/expect calls in production code (informational only).
+/// This helps track technical debt without blocking the build.
+fn report_unwrap_expect_count() -> Result<()> {
+    let unwrap_count = count_pattern_outside_tests(r"\.unwrap\(\)")?;
+    let expect_count = count_pattern_outside_tests(r"\.expect\(")?;
+    let total = unwrap_count + expect_count;
+
+    if total > 0 {
+        println!(
+            "⚠️  unwrap/expect in production code: {} total ({} unwrap, {} expect)",
+            total, unwrap_count, expect_count
+        );
+        println!("   Run: rg '\\.unwrap\\(\\)|.expect\\(' --glob '*.rs' --glob '!**/tests/**' -c");
+    } else {
+        println!("✅ No unwrap/expect in production code");
+    }
+    Ok(())
+}
+
+/// Check for sinex_test_utils usage outside expected locations.
+/// Reports usage for awareness but doesn't block (inline #[cfg(test)] modules are OK).
+fn check_test_utils_layering(_violations: &mut Vec<String>) -> Result<()> {
+    // Allow test-utils imports in expected locations
+    let allow_prefixes = [
+        "xtask/src/",                  // Build tooling
+        "crate/lib/sinex-test-utils/", // Test utils itself
+    ];
+
+    let matches = run_rg(r"use sinex_test_utils")?;
+    let filtered: Vec<String> = matches
+        .into_iter()
+        .filter(|line| {
+            let file = line.split(':').next().unwrap_or_default();
+            // Skip if in allow list
+            if allow_prefixes.iter().any(|a| file.starts_with(a)) {
+                return false;
+            }
+            // Skip if in tests/ directory
+            if is_tests_path(file) {
+                return false;
+            }
+            true
+        })
+        .collect();
+
+    // Note: Many of these may be in inline #[cfg(test)] modules, which is fine.
+    // We report the count for awareness but don't block builds.
+    if !filtered.is_empty() {
+        println!(
+            "📋 sinex_test_utils usage: {} locations (inline #[cfg(test)] modules are expected)",
+            filtered.len()
+        );
+    }
+    Ok(())
+}
+
+/// Report SQLx query usage statistics (runtime vs compile-time checked).
+/// Runtime queries use sqlx::query()/query_as(), compile-time use sqlx::query!()/query_as!().
+fn report_sqlx_query_stats() -> Result<()> {
+    // Count runtime queries (sqlx::query(, sqlx::query_as()
+    let runtime_query = count_pattern_outside_tests(r"sqlx::query\(")?;
+    let runtime_query_as = count_pattern_outside_tests(r"sqlx::query_as\(")?;
+    let runtime_total = runtime_query + runtime_query_as;
+
+    // Count compile-time queries (sqlx::query!, sqlx::query_as!, sqlx::query_scalar!)
+    let compile_query = count_pattern_outside_tests(r"sqlx::query!\(")?;
+    let compile_query_as = count_pattern_outside_tests(r"sqlx::query_as!\(")?;
+    let compile_query_scalar = count_pattern_outside_tests(r"sqlx::query_scalar!\(")?;
+    let compile_total = compile_query + compile_query_as + compile_query_scalar;
+
+    let total = runtime_total + compile_total;
+    if total > 0 {
+        let compile_pct = if total > 0 {
+            (compile_total as f64 / total as f64 * 100.0) as u32
+        } else {
+            0
+        };
+        println!(
+            "📊 SQLx queries: {} compile-time ({}%), {} runtime ({} query, {} query_as)",
+            compile_total, compile_pct, runtime_total, runtime_query, runtime_query_as
+        );
+    }
+    Ok(())
+}
+
+/// Count occurrences of a pattern outside test directories
+fn count_pattern_outside_tests(pattern: &str) -> Result<usize> {
+    let output = Command::new("rg")
+        .args([
+            "--color=never",
+            "--no-heading",
+            "-c",
+            pattern,
+            "--glob",
+            "*.rs",
+            "--glob",
+            "!**/tests/**",
+            "--glob",
+            "!tests/**",
+            "--glob",
+            "!*_test.rs",
+            "--glob",
+            "!test_*.rs",
+        ])
+        .output()
+        .with_context(|| "failed to invoke ripgrep for unwrap/expect count")?;
+
+    let code = output.status.code().unwrap_or_default();
+    if code != 0 && code != 1 {
+        bail!("ripgrep failed with status {}", output.status);
+    }
+
+    // Each line is "filename:count", sum the counts
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let total: usize = stdout
+        .lines()
+        .filter_map(|line| line.rsplit(':').next())
+        .filter_map(|count| count.parse::<usize>().ok())
+        .sum();
+
+    Ok(total)
 }
 
 fn check_pattern_strict(label: &str, pattern: &str, allow: &[&str]) -> Result<Vec<String>> {
