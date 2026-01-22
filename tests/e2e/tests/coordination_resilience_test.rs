@@ -9,6 +9,7 @@
 //! - Node instance registration and heartbeat tracking
 
 use sinex_core::coordination::kv_client::{CoordinationKvClient, InstanceMetadata};
+use sinex_core::environment::environment;
 use sinex_test_utils::nats::ensure_coordination_buckets;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -176,7 +177,13 @@ async fn test_node_instance_registration(ctx: TestContext) -> Result<()> {
     kv_client.register_instance(&metadata).await?;
 
     // Verify registration by reading bucket directly
-    let bucket = js.get_key_value("KV_sinex_instances").await?;
+    let env = environment();
+    let bucket = js
+        .get_key_value(&format!(
+            "KV_{}",
+            env.nats_kv_bucket_name("sinex_instances")
+        ))
+        .await?;
     let key = format!("{}.{}", service_name, instance_id);
     let entry = bucket.entry(&key).await?;
 
@@ -229,7 +236,13 @@ async fn test_multiple_node_instances(ctx: TestContext) -> Result<()> {
     }
 
     // Verify all instances exist in KV
-    let bucket = js.get_key_value("KV_sinex_instances").await?;
+    let env = environment();
+    let bucket = js
+        .get_key_value(&format!(
+            "KV_{}",
+            env.nats_kv_bucket_name("sinex_instances")
+        ))
+        .await?;
 
     // KV bucket keys method usually requires listing or watching.
     // For test simplicity, we just check each key directly.
@@ -256,7 +269,13 @@ async fn test_heartbeat_revision_update(ctx: TestContext) -> Result<()> {
 
     let service_name = format!("stale-heartbeat-{}", uuid::Uuid::new_v4());
     let kv_client = CoordinationKvClient::new(js.clone(), service_name.clone());
-    let bucket = js.get_key_value("KV_sinex_instances").await?;
+    let env = environment();
+    let bucket = js
+        .get_key_value(&format!(
+            "KV_{}",
+            env.nats_kv_bucket_name("sinex_instances")
+        ))
+        .await?;
 
     let fresh_id = uuid::Uuid::new_v4().to_string();
     let stale_id = uuid::Uuid::new_v4().to_string();

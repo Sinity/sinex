@@ -17,6 +17,7 @@ use color_eyre::eyre::eyre;
 use futures::StreamExt;
 use serde_json::json;
 use sinex_core::coordination::kv_client::{CoordinationKvClient, InstanceMetadata};
+use sinex_core::environment::environment;
 use sinex_node_sdk::stream_processor::SchemaBroadcastEntry;
 use sinex_test_utils::nats::ensure_coordination_buckets;
 use sinex_test_utils::prelude::*;
@@ -537,7 +538,13 @@ async fn test_leadership_heartbeat_timeout_detection(ctx: TestContext) -> Result
     assert!(kv_client.acquire_leadership(&stale_instance).await?);
 
     // Verify heartbeat is considered stale
-    let bucket = js.get_key_value("KV_sinex_instances").await?;
+    let env = environment();
+    let bucket = js
+        .get_key_value(&format!(
+            "KV_{}",
+            env.nats_kv_bucket_name("sinex_instances")
+        ))
+        .await?;
     let key = format!("{}.{}", service_name, stale_instance);
     let entry = bucket.entry(&key).await?.expect("metadata present");
     let stored: InstanceMetadata = serde_json::from_slice(&entry.value)?;
