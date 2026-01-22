@@ -74,6 +74,16 @@ pub trait ConfirmedEventHandler: Send + Sync {
 pub const DEFAULT_MAX_PENDING_EVENTS: usize = 10_000;
 
 /// Buffer for provisional events awaiting confirmation
+///
+/// # Lock Contention Analysis
+///
+/// This buffer uses RwLock with minimal contention risk:
+/// - Lock-free critical sections: HashMap insert/remove (~300ns each)
+/// - No nested locks or I/O during lock hold
+/// - Read-heavy (check_timeouts uses shared lock)
+/// - Instrumentation: logs if lock acquisition exceeds 10ms
+///
+/// For detailed analysis, see `docs/current/analysis/lock-contention-analysis.md`
 pub struct ConfirmationBuffer {
     /// Provisional events indexed by event_id
     pending: Arc<RwLock<HashMap<EventId, ProvisionalEvent>>>,
@@ -105,8 +115,14 @@ impl ConfirmationBuffer {
     ///
     /// Returns `false` if the buffer is at capacity and the event was rejected.
     /// Callers should handle this by applying backpressure or logging.
+    #[tracing::instrument(skip(self, event), fields(event_id = %event.event_id, buffer_size))]
     pub async fn add_provisional(&self, event: ProvisionalEvent) -> bool {
+        let acquire_start = std::time::Instant::now();
         let mut pending = self.pending.write().await;
+        let acquire_ms = acquire_start.elapsed().as_millis() as u64;
+        if acquire_ms > 10 {
+            tracing::warn!(acquire_ms, "Slow lock acquisition in add_provisional");
+        }
 
         if pending.len() >= self.max_capacity {
             let rejected = self
@@ -136,20 +152,36 @@ impl ConfirmationBuffer {
         }
 
         pending.insert(event.event_id, event);
+        tracing::Span::current().record("buffer_size", pending.len());
         true
     }
 
     /// Retrieve and remove an event upon confirmation
+    #[tracing::instrument(skip(self), fields(buffer_size))]
     pub async fn confirm(&self, event_id: EventId) -> Option<ProvisionalEvent> {
+        let acquire_start = std::time::Instant::now();
         let mut pending = self.pending.write().await;
-        pending.remove(&event_id)
+        let acquire_ms = acquire_start.elapsed().as_millis() as u64;
+        if acquire_ms > 10 {
+            tracing::warn!(acquire_ms, "Slow lock acquisition in confirm");
+        }
+        let result = pending.remove(&event_id);
+        tracing::Span::current().record("buffer_size", pending.len());
+        result
     }
 
     /// Check if an event has timed out
+    #[tracing::instrument(skip(self), fields(checked_count, timed_out_count))]
     pub async fn check_timeouts(&self) -> Vec<EventId> {
         let mut timed_out = Vec::new();
         let now = chrono::Utc::now();
+        let acquire_start = std::time::Instant::now();
         let pending = self.pending.read().await;
+        let acquire_ms = acquire_start.elapsed().as_millis() as u64;
+        if acquire_ms > 10 {
+            tracing::warn!(acquire_ms, "Slow lock acquisition in check_timeouts");
+        }
+        tracing::Span::current().record("checked_count", pending.len());
 
         for (event_id, event) in pending.iter() {
             let age = now.signed_duration_since(event.received_at);
@@ -172,12 +204,19 @@ impl ConfirmationBuffer {
             }
         }
 
+        tracing::Span::current().record("timed_out_count", timed_out.len());
         timed_out
     }
 
     /// Remove timed-out events
+    #[tracing::instrument(skip(self, event_ids), fields(remove_count = event_ids.len()))]
     pub async fn remove_timed_out(&self, event_ids: &[EventId]) -> Vec<ProvisionalEvent> {
+        let acquire_start = std::time::Instant::now();
         let mut pending = self.pending.write().await;
+        let acquire_ms = acquire_start.elapsed().as_millis() as u64;
+        if acquire_ms > 10 {
+            tracing::warn!(acquire_ms, "Slow lock acquisition in remove_timed_out");
+        }
         event_ids
             .iter()
             .filter_map(|id| pending.remove(id))
