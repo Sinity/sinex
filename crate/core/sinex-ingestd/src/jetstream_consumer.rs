@@ -215,6 +215,7 @@ struct ConsumerStats {
     confirmation_failures: AtomicU64,
     dlq_publish_failures: AtomicU64,
     nack_failures: AtomicU64,
+    nats_errors: AtomicU64,
 }
 
 impl ConsumerStats {
@@ -223,6 +224,7 @@ impl ConsumerStats {
             events_processed = self.events_processed.load(Ordering::Relaxed),
             events_failed = self.events_failed.load(Ordering::Relaxed),
             validation_failures = self.validation_failures.load(Ordering::Relaxed),
+            nats_errors = self.nats_errors.load(Ordering::Relaxed),
             dlq_routed = self.dlq_routed.load(Ordering::Relaxed),
             confirmation_failures = self.confirmation_failures.load(Ordering::Relaxed),
             dlq_publish_failures = self.dlq_publish_failures.load(Ordering::Relaxed),
@@ -460,7 +462,11 @@ impl JetStreamConsumer {
             let msg = match msg {
                 Ok(m) => m,
                 Err(e) => {
-                    error!("Error receiving message: {}", e);
+                    self.stats.nats_errors.fetch_add(1, Ordering::Relaxed);
+                    error!(
+                        nats_errors = self.stats.nats_errors.load(Ordering::Relaxed),
+                        "Error receiving message: {}", e
+                    );
                     continue;
                 }
             };
@@ -795,10 +801,21 @@ impl JetStreamConsumer {
         let guard = self.validator.read().await;
         let validation =
             guard.validate_payload_for(&event.source, &event.event_type, &event.payload);
+        let strict_mode = guard.is_strict_mode();
 
         match validation {
-            ValidationResult::Valid | ValidationResult::Skipped | ValidationResult::NoSchema => {
-                Ok(())
+            ValidationResult::Valid | ValidationResult::Skipped => Ok(()),
+            ValidationResult::NoSchema => {
+                if strict_mode {
+                    Err(SinexError::validation(format!(
+                        "Strict validation enabled: event has no registered schema (source={}, event_type={})",
+                        event.source, event.event_type
+                    ))
+                    .with_operation("jetstream_consumer.validate_event")
+                    .with_context("strict_mode", "enabled"))
+                } else {
+                    Ok(())
+                }
             }
             ValidationResult::SchemaNotFound { schema_id } => {
                 warn!(

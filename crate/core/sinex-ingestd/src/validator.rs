@@ -83,6 +83,7 @@ impl ValidationStatsSnapshot {
 pub struct EventValidator {
     inner: CoreEventValidator,
     validation_enabled: bool,
+    strict_mode: bool,
     stats: Arc<ValidationStats>,
 }
 
@@ -92,6 +93,19 @@ impl EventValidator {
         Self {
             inner: CoreEventValidator::with_validation_enabled(validation_enabled),
             validation_enabled,
+            strict_mode: false,
+            stats: Arc::new(ValidationStats::default()),
+        }
+    }
+
+    /// Create a validator with strict mode enabled.
+    ///
+    /// In strict mode, events without registered schemas are rejected.
+    pub fn new_strict(validation_enabled: bool) -> Self {
+        Self {
+            inner: CoreEventValidator::with_validation_enabled(validation_enabled),
+            validation_enabled,
+            strict_mode: true,
             stats: Arc::new(ValidationStats::default()),
         }
     }
@@ -111,6 +125,27 @@ impl EventValidator {
         Ok(Self {
             inner,
             validation_enabled,
+            strict_mode: false,
+            stats: Arc::new(ValidationStats::default()),
+        })
+    }
+
+    /// Load schemas with strict mode enabled.
+    pub async fn load_schemas_from_db_strict(
+        pool: &PgPool,
+        validation_enabled: bool,
+    ) -> IngestdResult<Self> {
+        let inner = CoreEventValidator::load_from_db_with_options(pool, validation_enabled)
+            .await
+            .map_err(|e| {
+                SinexError::database(format!("Failed to load event schemas: {e}"))
+                    .with_operation("validator.load_schemas")
+            })?;
+
+        Ok(Self {
+            inner,
+            validation_enabled,
+            strict_mode: true,
             stats: Arc::new(ValidationStats::default()),
         })
     }
@@ -173,6 +208,11 @@ impl EventValidator {
     /// Get validation statistics snapshot.
     pub fn stats(&self) -> ValidationStatsSnapshot {
         self.stats.snapshot()
+    }
+
+    /// Check if strict validation mode is enabled.
+    pub fn is_strict_mode(&self) -> bool {
+        self.strict_mode
     }
 
     /// Get a reference to the stats Arc for sharing with metrics emitters.
