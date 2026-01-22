@@ -3,9 +3,26 @@
 The health aggregator collects signals from nodes and services to produce
 health summaries. It exposes derived events that power operational dashboards.
 
-- Pulls activity from analytics, ingestion, and system nodes.
-- Aggregates key metrics (latency, queue depth, failure counts).
-- Emits `HealthReport` payloads consumed by gateways and operators.
+## Input Events
+
+Consumes `health.status` events emitted by the self-observation infrastructure
+when component health status changes (healthy -> degraded -> failed).
+
+These events are produced by:
+- `sinex-node-sdk::self_observation::SelfObserver` when health transitions occur
+- Any component using `HealthStatusPayload` to report status changes
+
+## Processing
+
+- Tracks component health state over time
+- Aggregates key metrics (latency, queue depth, failure counts)
+- Maintains recent event history per component
+
+## Output Events
+
+Emits `health.aggregated_report` payloads containing aggregated health data
+across all monitored components, consumed by gateways and operators.
 
 See `docs/current/architecture/SystemOperations_And_Integrity_Architecture.md` for the
-health model.
+health model and `crate/lib/sinex-core/src/types/events/payloads/metrics.rs` for
+the `HealthStatusPayload` schema.
