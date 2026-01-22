@@ -492,9 +492,18 @@ async fn dispatch_method(
 }
 
 /// Run the native messaging loop using stdin/stdout transport.
-pub async fn run(services: ServiceContainer) -> Result<()> {
+pub async fn run(
+    services: ServiceContainer,
+    shutdown: tokio::sync::watch::Receiver<bool>,
+) -> Result<()> {
     let config = NativeMessagingConfig::from_env();
-    run_with_transport(services, config, StdioNativeMessagingTransport::default()).await
+    run_with_transport(
+        services,
+        config,
+        StdioNativeMessagingTransport::default(),
+        shutdown,
+    )
+    .await
 }
 
 /// Run the native messaging loop with a custom transport and configuration.
@@ -502,27 +511,39 @@ pub async fn run_with_transport<T: NativeMessagingTransport>(
     services: ServiceContainer,
     config: NativeMessagingConfig,
     mut transport: T,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
     info!("Starting native messaging mode");
 
     loop {
-        match transport.read_message().await? {
-            Some(message) => {
-                debug!("Received message: {:?}", message);
+        tokio::select! {
+            message_result = transport.read_message() => {
+                match message_result? {
+                    Some(message) => {
+                        debug!("Received message: {:?}", message);
 
-                let response = process_message(&services, &config, message).await;
+                        let response = process_message(&services, &config, message).await;
 
-                if let Err(e) = transport.write_message(&response).await {
-                    error!("Failed to write response: {}", e);
-                    break;
+                        if let Err(e) = transport.write_message(&response).await {
+                            error!("Failed to write response: {}", e);
+                            break;
+                        }
+                    }
+                    None => {
+                        info!("EOF reached, shutting down");
+                        break;
+                    }
                 }
             }
-            None => {
-                info!("EOF reached, shutting down");
-                break;
+            _ = shutdown.changed() => {
+                if *shutdown.borrow() {
+                    info!("Shutdown signal received, stopping native messaging");
+                    break;
+                }
             }
         }
     }
 
+    info!("Native messaging shutdown complete");
     Ok(())
 }

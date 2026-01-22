@@ -67,32 +67,39 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Issue 128: Set up graceful shutdown signal handling
-    let shutdown_signal = async {
-        let ctrl_c = async {
-            tokio::signal::ctrl_c()
-                .await
-                .expect("failed to install Ctrl+C handler");
-        };
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
-        #[cfg(unix)]
-        let terminate = async {
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                .expect("failed to install SIGTERM handler")
-                .recv()
-                .await;
-        };
+    let shutdown_task = {
+        let shutdown_tx = shutdown_tx.clone();
+        tokio::spawn(async move {
+            let ctrl_c = async {
+                tokio::signal::ctrl_c()
+                    .await
+                    .expect("failed to install Ctrl+C handler");
+            };
 
-        #[cfg(not(unix))]
-        let terminate = std::future::pending::<()>();
+            #[cfg(unix)]
+            let terminate = async {
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                    .expect("failed to install SIGTERM handler")
+                    .recv()
+                    .await;
+            };
 
-        tokio::select! {
-            _ = ctrl_c => {
-                info!("Received SIGINT (Ctrl+C), initiating graceful shutdown");
-            },
-            _ = terminate => {
-                info!("Received SIGTERM, initiating graceful shutdown");
-            },
-        }
+            #[cfg(not(unix))]
+            let terminate = std::future::pending::<()>();
+
+            tokio::select! {
+                _ = ctrl_c => {
+                    info!("Received SIGINT (Ctrl+C), initiating graceful shutdown");
+                },
+                _ = terminate => {
+                    info!("Received SIGTERM, initiating graceful shutdown");
+                },
+            }
+
+            let _ = shutdown_tx.send(true);
+        })
     };
 
     match cli.command {
@@ -108,14 +115,13 @@ async fn main() -> Result<()> {
             })?;
 
             // Start RPC server with shutdown signal
-            tokio::select! {
-                result = rpc_server::run(Some(tcp_listen.as_str()), services) => {
-                    result.map_err(|e| color_eyre::eyre::eyre!("RPC server failed").wrap_err(e))?;
-                }
-                _ = shutdown_signal => {
-                    info!("Shutdown signal received, exiting gracefully");
-                }
-            }
+            let result = rpc_server::run(Some(tcp_listen.as_str()), services, shutdown_rx)
+                .await
+                .map_err(|e| color_eyre::eyre::eyre!("RPC server failed").wrap_err(e));
+
+            // Clean up shutdown task
+            shutdown_task.abort();
+            result?;
         }
 
         Commands::NativeMessaging { database_url } => {
@@ -127,14 +133,13 @@ async fn main() -> Result<()> {
             })?;
 
             // Start native messaging loop with shutdown signal
-            tokio::select! {
-                result = native_messaging::run(services) => {
-                    result.map_err(|e| color_eyre::eyre::eyre!("Native messaging failed").wrap_err(e))?;
-                }
-                _ = shutdown_signal => {
-                    info!("Shutdown signal received, exiting gracefully");
-                }
-            }
+            let result = native_messaging::run(services, shutdown_rx)
+                .await
+                .map_err(|e| color_eyre::eyre::eyre!("Native messaging failed").wrap_err(e));
+
+            // Clean up shutdown task
+            shutdown_task.abort();
+            result?;
         }
     }
 
