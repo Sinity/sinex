@@ -4,12 +4,81 @@
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use figment::{
+    providers::{Env, Format, Toml},
+    Figment,
+};
 use serde::{Deserialize, Serialize};
 use sinex_core::JsonValue;
 use sinex_node_sdk::simple_node::{
     SimpleNode, SimpleNodeContext, SimpleNodeError, SimpleNodeWrapper,
 };
 use std::collections::HashMap;
+use std::time::Duration;
+
+/// Configuration for the health aggregator
+#[derive(Debug, Clone, Deserialize)]
+pub struct HealthAggregatorConfig {
+    /// Component-specific check intervals (in seconds)
+    #[serde(default = "default_component_intervals")]
+    pub component_check_intervals: HashMap<String, u64>,
+
+    /// Aggregation window for health statistics (in seconds)
+    #[serde(default = "default_aggregation_window")]
+    pub aggregation_window_seconds: Duration,
+
+    /// Threshold for marking component as unhealthy (in minutes)
+    #[serde(default = "default_unhealthy_threshold")]
+    pub unhealthy_threshold_minutes: u64,
+
+    /// Enable system-wide health status emission
+    #[serde(default = "default_true")]
+    pub enable_system_health_status: bool,
+
+    /// Enable per-component health reports
+    #[serde(default = "default_true")]
+    pub enable_component_health_reports: bool,
+}
+
+fn default_component_intervals() -> HashMap<String, u64> {
+    let mut intervals = HashMap::new();
+    intervals.insert("default".to_string(), 60); // 1 minute default
+    intervals
+}
+
+fn default_aggregation_window() -> Duration {
+    Duration::from_secs(300) // 5 minutes
+}
+
+fn default_unhealthy_threshold() -> u64 {
+    5 // 5 minutes
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for HealthAggregatorConfig {
+    fn default() -> Self {
+        Self {
+            component_check_intervals: default_component_intervals(),
+            aggregation_window_seconds: default_aggregation_window(),
+            unhealthy_threshold_minutes: default_unhealthy_threshold(),
+            enable_system_health_status: default_true(),
+            enable_component_health_reports: default_true(),
+        }
+    }
+}
+
+impl HealthAggregatorConfig {
+    /// Load configuration from environment variables and TOML files
+    pub fn from_env() -> Result<Self, figment::Error> {
+        Figment::new()
+            .merge(Toml::file("health_aggregator.toml").nested())
+            .merge(Env::prefixed("SINEX_HEALTH_AGGREGATOR_"))
+            .extract()
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct HealthState {
