@@ -45,6 +45,8 @@ pub mod examples;
 pub mod exploration;
 #[cfg(feature = "messaging")]
 pub mod heartbeat;
+#[cfg(feature = "messaging")]
+pub mod health_reporter;
 pub mod ingestion_helpers;
 #[cfg(feature = "messaging")]
 pub mod jetstream_consumer;
@@ -110,6 +112,8 @@ pub use exploration::{
 };
 #[cfg(feature = "messaging")]
 pub use heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter, HeartbeatLogSink, HeartbeatMetrics};
+#[cfg(feature = "messaging")]
+pub use health_reporter::{HealthMetrics, HealthReporter, HealthThresholds};
 #[cfg(feature = "messaging")]
 pub use jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig};
 

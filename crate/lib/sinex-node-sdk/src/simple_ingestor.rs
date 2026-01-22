@@ -207,7 +207,7 @@ impl<I: SimpleIngestor> SimpleIngestorWrapper<I> {
                 if let Some(data) = ckpt.data {
                     if let Ok(s) = serde_json::from_value(data) {
                         self.state = s;
-                        let _ = CheckpointState::delete_file(&path);
+                        let _ = CheckpointState::delete_file(&path).await;
                         return Ok(());
                     }
                 }

@@ -175,8 +175,8 @@ impl ShutdownHandler {
 
     /// Delete the checkpoint file after successful sync to primary store.
     #[cfg(feature = "messaging")]
-    pub fn clear_state(&self) -> std::io::Result<()> {
-        CheckpointState::delete_file(&self.checkpoint_path)
+    pub async fn clear_state(&self) -> std::io::Result<()> {
+        CheckpointState::delete_file(&self.checkpoint_path).await
     }
 }
 
@@ -253,7 +253,7 @@ mod tests {
         let loaded = handler.load_state().await;
         assert!(loaded.is_some());
 
-        handler.clear_state().unwrap();
+        handler.clear_state().await.unwrap();
         assert!(handler.load_state().await.is_none());
     }
 

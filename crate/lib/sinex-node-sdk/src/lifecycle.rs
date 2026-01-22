@@ -1,6 +1,7 @@
 //! Service lifecycle management for node services
 
 use crate::heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter};
+use crate::health_reporter::{HealthReporter, HealthThresholds};
 use crate::stream_processor::NodeRuntimeState;
 use crate::{NodeError, NodeResult};
 use parking_lot::Mutex;
@@ -48,6 +49,8 @@ pub struct LifecycleManager {
     health_check_interval: tokio::time::Duration,
     heartbeat_emitter: Option<HeartbeatEmitter>,
     heartbeat_interval_seconds: Seconds,
+    health_reporter: Option<Arc<HealthReporter>>,
+    health_thresholds: Option<HealthThresholds>,
 }
 
 impl LifecycleManager {
@@ -64,6 +67,8 @@ impl LifecycleManager {
             health_check_interval: tokio::time::Duration::from_secs(30),
             heartbeat_emitter: None,
             heartbeat_interval_seconds: Seconds::from_secs(30), // Default 30 second heartbeats
+            health_reporter: None,
+            health_thresholds: None,
         }
     }
 
@@ -86,9 +91,24 @@ impl LifecycleManager {
         self
     }
 
+    /// Enable health monitoring with custom thresholds
+    pub fn with_health_monitoring(mut self, thresholds: HealthThresholds) -> Self {
+        self.health_thresholds = Some(thresholds);
+        self
+    }
+
     /// Hydrate heartbeat configuration once runtime handles are available
     pub fn hydrate_heartbeat(&mut self, runtime: &NodeRuntimeState) {
         self.heartbeat_emitter = Some(runtime.heartbeat_emitter(self.heartbeat_interval_seconds));
+    }
+
+    /// Hydrate health reporter once runtime is available
+    ///
+    /// Note: Actual hydration will be done in processor runtime (Phase 3)
+    /// where we have access to NATS client for SelfObserver creation.
+    pub fn hydrate_health_reporter(&mut self, _runtime: &NodeRuntimeState) {
+        // TODO: Implement in Phase 3 when integrating with processor runtime
+        // Will create HealthReporter with proper SelfObserver from runtime handles
     }
 
     /// Get heartbeat counter handle for tracking metrics
@@ -96,6 +116,11 @@ impl LifecycleManager {
         self.heartbeat_emitter
             .as_ref()
             .map(|emitter| emitter.get_counter_handle())
+    }
+
+    /// Get health reporter for tracking component health
+    pub fn health_reporter(&self) -> Option<&Arc<HealthReporter>> {
+        self.health_reporter.as_ref()
     }
 
     /// Get current status

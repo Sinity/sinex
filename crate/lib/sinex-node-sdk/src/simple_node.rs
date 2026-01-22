@@ -362,7 +362,7 @@ where
                             self.persisted_state = persisted;
 
                             // Clean up the file since we've loaded it
-                            let _ = CheckpointState::delete_file(&checkpoint_path);
+                            let _ = CheckpointState::delete_file(&checkpoint_path).await;
                             return Ok(());
                         }
                         Err(e) => {

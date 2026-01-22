@@ -538,7 +538,10 @@ async fn verify_service_integration(_messages: &mut [String]) -> Result<Value> {
         .await
         .wrap_err("Failed to connect to NATS for checkpoint verification")?;
     let js = async_nats::jetstream::new(client);
-    let bucket = crate::checkpoint::checkpoint_bucket_name(Some("preflight"));
+    let bucket = format!(
+        "KV_{}",
+        crate::checkpoint::checkpoint_bucket_name(Some("preflight"))
+    );
     let kv_store = match js
         .create_key_value(kv::Config {
             bucket: bucket.clone(),
@@ -548,7 +551,7 @@ async fn verify_service_integration(_messages: &mut [String]) -> Result<Value> {
         .await
     {
         Ok(store) => Ok(store),
-        Err(_) => js.get_key_value(bucket).await,
+        Err(_) => js.get_key_value(&bucket).await,
     }
     .wrap_err("Failed to create/open checkpoint KV bucket")?;
 
