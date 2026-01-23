@@ -185,6 +185,29 @@ enum Commands {
         #[command(subcommand)]
         cmd: tls::TlsCommand,
     },
+    /// Mutation testing via cargo-mutants
+    Mutants {
+        /// Filter by package
+        #[arg(short, long)]
+        package: Option<String>,
+        /// Filter by file path
+        #[arg(short, long)]
+        file: Option<String>,
+        /// Timeout per mutant in seconds
+        #[arg(long, default_value = "300")]
+        timeout: u64,
+        /// Number of parallel jobs
+        #[arg(short, long, default_value = "4")]
+        jobs: usize,
+        /// Additional cargo-mutants args (use `--` before them)
+        #[arg(last = true)]
+        args: Vec<String>,
+    },
+    /// SQLx compile-time query verification
+    Sqlx {
+        #[command(subcommand)]
+        cmd: SqlxCommand,
+    },
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -291,6 +314,21 @@ enum CoverageCommand {
         /// Show file-level detail
         #[arg(long)]
         files: bool,
+    },
+    /// Measure coverage and enforce minimum threshold
+    Enforce {
+        /// Minimum coverage percentage (0-100)
+        #[arg(long, default_value = "60")]
+        threshold: f64,
+        /// Package to measure (default: all)
+        #[arg(short, long)]
+        package: Option<String>,
+        /// Generate HTML report alongside enforcement
+        #[arg(long)]
+        html: bool,
+        /// Output directory for HTML report
+        #[arg(long, default_value = "target/coverage/html")]
+        output: String,
     },
     /// Clean coverage artifacts
     Clean,
@@ -509,6 +547,16 @@ enum DbCommand {
     },
 }
 
+#[derive(Subcommand)]
+enum SqlxCommand {
+    /// Verify queries against cached metadata (.sqlx/)
+    Check,
+    /// Generate/update .sqlx query cache (requires DATABASE_URL)
+    Prepare,
+    /// Full verification: prepare then check (local dev workflow)
+    Verify,
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let ctx = CommandContext::new(cli.global.clone());
@@ -543,6 +591,16 @@ fn main() -> Result<()> {
         Commands::Status { .. } => ("status", None, None),
         Commands::Logs { .. } => ("logs", None, None),
         Commands::Tls { .. } => ("tls", None, None),
+        Commands::Mutants { .. } => ("mutants", None, None),
+        Commands::Sqlx { cmd } => (
+            "sqlx",
+            Some(match cmd {
+                SqlxCommand::Check => "check",
+                SqlxCommand::Prepare => "prepare",
+                SqlxCommand::Verify => "verify",
+            }),
+            None,
+        ),
     };
 
     // Track invocation in history (skip for history commands themselves)
@@ -594,6 +652,14 @@ fn main() -> Result<()> {
             follow,
         } => devenv_logs(&process, lines, follow, &ctx),
         Commands::Tls { cmd } => tls::run(cmd, ctx.global.json),
+        Commands::Mutants {
+            package,
+            file,
+            timeout,
+            jobs,
+            args,
+        } => mutants(package.as_deref(), file.as_deref(), timeout, jobs, &args, &ctx),
+        Commands::Sqlx { cmd } => sqlx(cmd, &ctx),
     };
 
     // Record invocation result in history
@@ -1373,6 +1439,60 @@ fn lint(ctx: &CommandContext) -> Result<()> {
     run_cmd_ctx("cargo clippy -D warnings", cmd, ctx)
 }
 
+fn mutants(
+    package: Option<&str>,
+    file: Option<&str>,
+    timeout: u64,
+    jobs: usize,
+    args: &[String],
+    ctx: &CommandContext,
+) -> Result<()> {
+    // Check if cargo-mutants is available
+    let check_result = Command::new("cargo")
+        .arg("mutants")
+        .arg("--version")
+        .output();
+
+    if check_result.is_err() || !check_result.unwrap().status.success() {
+        return Err(anyhow!(
+            "cargo-mutants not found. Setup with: cargo binstall cargo-mutants"
+        ));
+    }
+
+    let mut cmd = Command::new("cargo");
+    cmd.arg("mutants");
+
+    // Add timeout per mutant
+    cmd.arg("--timeout").arg(format!("{}", timeout));
+
+    // Add parallelism
+    cmd.arg("--jobs").arg(format!("{}", jobs));
+
+    // Add package filter if specified
+    if let Some(pkg) = package {
+        cmd.arg("--package").arg(pkg);
+    }
+
+    // Add file filter if specified
+    if let Some(f) = file {
+        cmd.arg("--file").arg(f);
+    }
+
+    // Add any additional arguments
+    for arg in args {
+        cmd.arg(arg);
+    }
+
+    // Run with context
+    let description = match (package, file) {
+        (Some(pkg), _) => format!("cargo mutants --package {}", pkg),
+        (None, Some(f)) => format!("cargo mutants --file {}", f),
+        (None, None) => "cargo mutants (full workspace)".to_string(),
+    };
+
+    run_cmd_ctx(&description, cmd, ctx)
+}
+
 fn test(
     profile: &str,
     prime: bool,
@@ -1678,6 +1798,8 @@ fn ci_preflight(ctx: &CommandContext) -> Result<()> {
     check(false, false, ctx)?;
     lint(ctx)?;
     lint_forbidden(ctx)?;
+    // Verify SQLx query cache is up-to-date.
+    sqlx_check(ctx)?;
     // Regenerate schemas to ensure artifacts stay in sync with code.
     schema_generate("schemas/v1", false)?;
     ensure_schemas_clean()?;
@@ -2376,6 +2498,36 @@ fn run_db_migrate(ctx: &CommandContext) -> Result<()> {
     )
 }
 
+fn sqlx(cmd: SqlxCommand, ctx: &CommandContext) -> Result<()> {
+    match cmd {
+        SqlxCommand::Check => sqlx_check(ctx),
+        SqlxCommand::Prepare => sqlx_prepare(ctx),
+        SqlxCommand::Verify => {
+            sqlx_prepare(ctx)?;
+            sqlx_check(ctx)
+        }
+    }
+}
+
+fn sqlx_check(ctx: &CommandContext) -> Result<()> {
+    ctx.heading("cargo sqlx prepare --check");
+    let mut cmd = Command::new("cargo");
+    cmd.args(["sqlx", "prepare", "--check", "--workspace"]);
+    run_cmd_ctx("cargo sqlx prepare --check", cmd, ctx)
+}
+
+fn sqlx_prepare(ctx: &CommandContext) -> Result<()> {
+    // Check if DATABASE_URL is set
+    if env::var("DATABASE_URL").is_err() {
+        bail!("DATABASE_URL not set. SQLx prepare requires a live database connection.");
+    }
+
+    ctx.heading("cargo sqlx prepare");
+    let mut cmd = Command::new("cargo");
+    cmd.args(["sqlx", "prepare", "--workspace"]);
+    run_cmd_ctx("cargo sqlx prepare", cmd, ctx)
+}
+
 fn schema(cmd: SchemaCommand) -> Result<()> {
     match cmd {
         SchemaCommand::Generate { output, sync } => schema_generate(&output, sync),
@@ -2922,6 +3074,12 @@ fn coverage(cmd: CoverageCommand, ctx: &CommandContext) -> Result<()> {
         CoverageCommand::Summary { package, files } => {
             coverage_summary(package.as_deref(), files, ctx)
         }
+        CoverageCommand::Enforce {
+            threshold,
+            package,
+            html,
+            output,
+        } => coverage_enforce(threshold, package.as_deref(), html, &output, ctx),
         CoverageCommand::Clean => coverage_clean(ctx),
     }
 }
@@ -3029,6 +3187,104 @@ fn coverage_summary(package: Option<&str>, files: bool, ctx: &CommandContext) ->
     cmd.arg("--exclude").arg("xtask");
 
     run_cmd_ctx("cargo llvm-cov", cmd, ctx)
+}
+
+fn coverage_enforce(
+    threshold: f64,
+    package: Option<&str>,
+    generate_html: bool,
+    html_output: &str,
+    ctx: &CommandContext,
+) -> Result<()> {
+    ctx.heading("coverage enforcement");
+
+    // Validate threshold
+    if !(0.0..=100.0).contains(&threshold) {
+        bail!("Threshold must be between 0 and 100, got {}", threshold);
+    }
+
+    // Check for cargo-llvm-cov
+    check_llvm_cov_installed()?;
+
+    // Build coverage command with JSON output for parsing
+    let mut cmd = Command::new("cargo");
+    cmd.arg("llvm-cov")
+        .arg("--json")
+        .arg("--summary-only")
+        .arg("--ignore-filename-regex")
+        .arg("(tests?/|test_|_test\\.rs|/target/)");
+
+    if let Some(pkg) = package {
+        cmd.arg("--package").arg(pkg);
+    } else {
+        cmd.arg("--workspace");
+    }
+
+    cmd.arg("--exclude").arg("sinex-test-utils");
+    cmd.arg("--exclude").arg("xtask");
+
+    // Run coverage measurement
+    if ctx.is_human() {
+        println!("Running coverage measurement...");
+    }
+
+    let output = cmd
+        .output()
+        .with_context(|| "Failed to run cargo llvm-cov")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("Coverage measurement failed: {}", stderr);
+    }
+
+    // Parse JSON output
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let coverage_data: serde_json::Value = serde_json::from_str(&stdout)
+        .with_context(|| "Failed to parse coverage JSON output")?;
+
+    // Extract total coverage percentage
+    let total_coverage = coverage_data["data"][0]["totals"]["lines"]["percent"]
+        .as_f64()
+        .ok_or_else(|| anyhow!("Failed to extract coverage percentage from JSON"))?;
+
+    // Optionally generate HTML report
+    if generate_html {
+        if ctx.is_human() {
+            println!("Generating HTML report...");
+        }
+        coverage_html(html_output, false, package, ctx)?;
+    }
+
+    // Determine pass/fail
+    let passed = total_coverage >= threshold;
+
+    // Human-readable output
+    if ctx.is_human() {
+        println!();
+        println!("Code Coverage Report");
+        println!("====================");
+        println!("Total coverage: {:.1}%", total_coverage);
+        println!("Threshold:      {:.1}%", threshold);
+        println!();
+
+        if passed {
+            println!("\u{2713} Coverage meets threshold");
+        } else {
+            println!("\u{2717} Coverage below threshold by {:.1}%", threshold - total_coverage);
+        }
+
+        if generate_html {
+            println!();
+            println!("HTML report: {}/html/index.html", html_output);
+        }
+    }
+
+    // Exit with error if threshold not met
+    if !passed {
+        bail!("Coverage {:.2}% is below threshold {:.2}%", total_coverage, threshold);
+    }
+
+    Ok(())
 }
 
 fn coverage_clean(ctx: &CommandContext) -> Result<()> {
