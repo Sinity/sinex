@@ -265,12 +265,16 @@ impl AcquisitionManager {
         self
     }
 
+    /// Create a builder for new source material
+    pub fn build_material(&self, source_identifier: impl Into<String>) -> MaterialBuilder<'_> {
+        MaterialBuilder::new(self, source_identifier)
+    }
+
     /// Begin capturing a new source material
     ///
     /// Ported from TemporalLedger::create_material + MaterialRotationManager logic
     pub async fn begin_material(&self, source_identifier: &str) -> Result<SourceMaterialHandle> {
-        self.begin_material_with_metadata(source_identifier, json!({}))
-            .await
+        self.build_material(source_identifier).begin().await
     }
 
     pub async fn begin_material_with_metadata(
@@ -278,42 +282,10 @@ impl AcquisitionManager {
         source_identifier: &str,
         metadata: JsonValue,
     ) -> Result<SourceMaterialHandle> {
-        self.ensure_streams_ready().await?;
-
-        // Generate a new material id locally; ingestd is the sole database writer.
-        let material_id = Ulid::new();
-
-        // Create temporary file for local buffering
-        let temp_dir = self.work_dir.clone().unwrap_or_else(|| self.env.temp_dir());
-        tokio::fs::create_dir_all(&temp_dir).await?;
-        let temp_path = temp_dir.join(format!("sinex_material_{}.tmp", Uuid::new_v4()));
-        let temp_file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&temp_path)
+        self.build_material(source_identifier)
+            .with_metadata(metadata)
+            .begin()
             .await
-            .context("Failed to create temp file")?;
-
-        info!(
-            material_id = %material_id,
-            source_identifier = %source_identifier,
-            temp_path = %temp_path.display(),
-            "Created new source material"
-        );
-
-        // Publish begin message to NATS
-        self.publish_begin(material_id, source_identifier, metadata)
-            .await?;
-
-        Ok(SourceMaterialHandle {
-            material_id,
-            temp_file: Some(temp_file),
-            temp_path,
-            hasher: blake3::Hasher::new(),
-            slice_count: 0,
-            bytes_written: 0,
-            started_at: Utc::now(),
-        })
     }
 
     async fn ensure_streams_ready(&self) -> Result<()> {
@@ -543,6 +515,83 @@ impl AcquisitionManager {
 
         handle.bytes_written >= self.rotation_policy.max_bytes.as_u64() as i64
             || age_seconds >= self.rotation_policy.max_age_seconds.as_secs()
+    }
+}
+
+/// Builder for source material creation
+pub struct MaterialBuilder<'a> {
+    manager: &'a AcquisitionManager,
+    source_identifier: String,
+    metadata: JsonValue,
+}
+
+impl<'a> MaterialBuilder<'a> {
+    pub fn new(manager: &'a AcquisitionManager, source_identifier: impl Into<String>) -> Self {
+        Self {
+            manager,
+            source_identifier: source_identifier.into(),
+            metadata: json!({}),
+        }
+    }
+
+    pub fn with_metadata(mut self, metadata: JsonValue) -> Self {
+        self.metadata = metadata;
+        self
+    }
+
+    pub fn with_metadata_field(mut self, key: &str, value: JsonValue) -> Self {
+        if !self.metadata.is_object() {
+            self.metadata = json!({});
+        }
+        self.metadata
+            .as_object_mut()
+            .unwrap()
+            .insert(key.to_string(), value);
+        self
+    }
+
+    pub async fn begin(self) -> Result<SourceMaterialHandle> {
+        self.manager.ensure_streams_ready().await?;
+
+        // Generate a new material id locally; ingestd is the sole database writer.
+        let material_id = Ulid::new();
+
+        // Create temporary file for local buffering
+        let temp_dir = self
+            .manager
+            .work_dir
+            .clone()
+            .unwrap_or_else(|| self.manager.env.temp_dir());
+        tokio::fs::create_dir_all(&temp_dir).await?;
+        let temp_path = temp_dir.join(format!("sinex_material_{}.tmp", Uuid::new_v4()));
+        let temp_file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temp_path)
+            .await
+            .context("Failed to create temp file")?;
+
+        info!(
+            material_id = %material_id,
+            source_identifier = %self.source_identifier,
+            temp_path = %temp_path.display(),
+            "Created new source material"
+        );
+
+        // Publish begin message to NATS
+        self.manager
+            .publish_begin(material_id, &self.source_identifier, self.metadata)
+            .await?;
+
+        Ok(SourceMaterialHandle {
+            material_id,
+            temp_file: Some(temp_file),
+            temp_path,
+            hasher: blake3::Hasher::new(),
+            slice_count: 0,
+            bytes_written: 0,
+            started_at: Utc::now(),
+        })
     }
 }
 

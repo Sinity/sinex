@@ -6,7 +6,10 @@
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use sinex_core::{
-    db::{models::blob::Blob, query_helpers::ulid_to_uuid, DbPoolExt},
+    db::{
+        models::blob::Blob,
+        repositories::{DbPoolExt, TemporalLedgerEntry},
+    },
     types::Ulid,
     Id, JsonValue, SourceMaterialRecord,
 };
@@ -151,24 +154,19 @@ impl MaterialAssembler {
 
     /// Append entry in raw.temporal_ledger
     pub(super) async fn record_ledger_entry(&self, state: &FinalizationState) -> IngestdResult<()> {
-        sqlx::query!(
-            r#"
-            INSERT INTO raw.temporal_ledger
-                (source_material_id, offset_start, offset_end, offset_kind, ts_capture, precision, clock, source_type)
-            VALUES (($1::uuid)::ulid, $2, $3, $4, $5, $6, $7, $8)
-            "#,
-            ulid_to_uuid(state.material_id),
-            0_i64,
+        let entry = TemporalLedgerEntry::realtime_capture(
+            state.material_id,
             state.expected_offset,
-            "byte",
             state.started_at,
-            "bounded",
-            "wall",
-            "realtime_capture"
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| SinexError::database(format!("Failed to append temporal ledger entry: {}", e)))?;
+        );
+
+        self.pool
+            .source_materials()
+            .append_temporal_ledger(entry)
+            .await
+            .map_err(|e| {
+                SinexError::database(format!("Failed to append temporal ledger entry: {}", e))
+            })?;
 
         Ok(())
     }
@@ -363,10 +361,12 @@ impl MaterialAssembler {
             // Complete: transition into finalization. Prevent concurrent slice writes by taking
             // the file handle and marking finalizing.
             state.finalizing = true;
-            let end = state
-                .pending_end
-                .take()
-                .expect("pending_end must exist when finalizing");
+            let end = state.pending_end.take().ok_or_else(|| {
+                SinexError::service(format!(
+                    "State corruption: pending_end missing during finalization for material {}",
+                    material_id
+                ))
+            })?;
 
             if let Some(mut file) = state.temp_file.take() {
                 if let Err(e) = file.flush().await {
@@ -540,7 +540,7 @@ impl MaterialAssembler {
             ended_at,
             end.total_size_bytes,
             &end.content_hash,
-        );
+        )?;
 
         if let Err(e) = self
             .finalize_material_record(

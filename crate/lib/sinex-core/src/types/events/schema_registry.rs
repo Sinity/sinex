@@ -7,8 +7,6 @@ use crate::domain::{EventSource, EventType};
 use crate::Ulid;
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
-use sinex_schema::ulid_conversions::uuid_to_ulid;
-// no Row import needed when using SQLx macros
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -41,6 +39,8 @@ pub async fn lookup_schema_id(
     source: &EventSource,
     event_type: &EventType,
 ) -> Option<Ulid> {
+    use crate::db::repositories::DbPoolExt;
+
     let schema_name = format!("{}.{}", source.as_str(), event_type.as_str());
 
     // Check cache first
@@ -51,25 +51,13 @@ pub async fn lookup_schema_id(
         }
     }
 
-    // Query database - fetch as UUID then convert to ULID
-    let result = sqlx::query_scalar!(
-        r#"
-        SELECT id::uuid as "id!"
-        FROM sinex_schemas.event_payload_schemas
-        WHERE source = $1
-          AND event_type = $2
-          AND schema_version = 'v1'
-          AND is_active = true
-        LIMIT 1
-        "#,
-        source.as_str(),
-        event_type.as_str()
-    )
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten()
-    .map(uuid_to_ulid);
+    // Query database via centralized repository
+    let result = pool
+        .schema_cache()
+        .lookup_schema_id(source, event_type)
+        .await
+        .ok()
+        .flatten();
 
     // Update cache if found
     if let Some(id) = result {
@@ -113,24 +101,20 @@ pub fn cache_schema_version(schema_id: Ulid, version: String) {
 /// Note: Prefer using `get_schema_version` for synchronous access after
 /// ensuring the cache is populated.
 pub async fn lookup_schema_version(pool: &sqlx::PgPool, schema_id: Ulid) -> Option<String> {
+    use crate::db::repositories::DbPoolExt;
+
     // Check cache first
     if let Some(version) = get_schema_version(schema_id) {
         return Some((*version).clone());
     }
 
-    // Query database for the schema version
-    let result = sqlx::query_scalar!(
-        r#"
-        SELECT schema_version
-        FROM sinex_schemas.event_payload_schemas
-        WHERE id = $1
-        "#,
-        schema_id as _
-    )
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten();
+    // Query database via centralized repository
+    let result = pool
+        .schema_cache()
+        .lookup_schema_version(schema_id)
+        .await
+        .ok()
+        .flatten();
 
     // Cache the result if found
     if let Some(ref version) = result {
@@ -175,30 +159,24 @@ pub async fn initialize_schema_cache(
 /// This can be called at startup to avoid lazy loading during runtime.
 /// It caches both schema IDs (by name) and versions (by ID).
 pub async fn preload_schemas(pool: &sqlx::PgPool) -> Result<usize, sqlx::Error> {
-    let schemas = sqlx::query!(
-        r#"
-        SELECT 
-            id::uuid as "id!: Ulid", 
-            source,
-            event_type,
-            schema_version
-        FROM sinex_schemas.event_payload_schemas
-        WHERE is_active = true
-        "#
-    )
-    .fetch_all(pool)
-    .await?;
+    use crate::db::repositories::DbPoolExt;
+
+    let metadata = pool
+        .schema_cache()
+        .preload_schema_metadata()
+        .await
+        .map_err(|e| sqlx::Error::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
 
     let mut cache = SCHEMA_CACHE.write();
     let mut version_cache = VERSION_CACHE.write();
 
-    for schema in &schemas {
-        let schema_name = format!("{}.{}", schema.source, schema.event_type);
-        cache.insert(schema_name, schema.id);
-        version_cache.insert(schema.id, Arc::new(schema.schema_version.clone()));
+    for (id, source, event_type, schema_version) in &metadata {
+        let schema_name = format!("{}.{}", source, event_type);
+        cache.insert(schema_name, *id);
+        version_cache.insert(*id, Arc::new(schema_version.clone()));
     }
 
-    Ok(schemas.len())
+    Ok(metadata.len())
 }
 
 /// Get all registered payload types via inventory

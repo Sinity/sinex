@@ -1,0 +1,43 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Content classification",
+  "properties": {
+    "analysis_type": {
+      "type": "string"
+    },
+    "categories": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "confidence": {
+      "format": "double",
+      "type": "number"
+    },
+    "content_length": {
+      "format": "uint",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "generated_at": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "source_event_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "analysis_type",
+    "categories",
+    "confidence",
+    "content_length",
+    "generated_at"
+  ],
+  "title": "ContentClassifiedPayload",
+  "type": "object"
+}

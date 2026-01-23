@@ -11,4 +11,10 @@ use sinex_system_ingestor::SystemProcessor;
 static GLOBAL: MiMalloc = MiMalloc;
 
 // Use the new unified architecture with macro
-sinex_processor_runtime::processor_main!(SystemProcessor);
+use sinex_node_sdk::simple_ingestor::SimpleIngestorWrapper;
+
+// Use the new unified architecture with macro
+sinex_processor_runtime::processor_main!(
+    SimpleIngestorWrapper<SystemProcessor>,
+    SimpleIngestorWrapper::new(SystemProcessor::default())
+);

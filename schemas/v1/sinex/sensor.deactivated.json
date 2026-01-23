@@ -6,10 +6,10 @@
       "minimum": 0.0,
       "type": "integer"
     },
-    "reason": {
+    "node": {
       "type": "string"
     },
-    "satellite": {
+    "reason": {
       "type": "string"
     },
     "sensor": {
@@ -23,8 +23,8 @@
   },
   "required": [
     "events_generated",
+    "node",
     "reason",
-    "satellite",
     "sensor",
     "uptime_seconds"
   ],

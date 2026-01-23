@@ -12,7 +12,7 @@ async fn schema_content_hash_has_sufficient_entropy() -> color_eyre::Result<()> 
         schema_content: json!({ "type": "object", "properties": { "id": { "type": "string" } } }),
     };
 
-    let hash = schema.calculate_content_hash();
+    let hash = schema.calculate_content_hash()?;
     assert!(
         hash.len() >= 32,
         "expected a stable cryptographic hash, got `{hash}`"
@@ -45,7 +45,7 @@ async fn register_new_schema_records_metadata(ctx: TestContext) -> TestResult<()
     assert_eq!(schema.event_type, "user.created");
     assert_eq!(schema.schema_version, "1.0.0");
     assert!(schema.is_active);
-    assert_eq!(schema.content_hash, new_schema.calculate_content_hash());
+    assert_eq!(schema.content_hash, new_schema.calculate_content_hash()?);
     Ok(())
 }
 

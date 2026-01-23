@@ -162,12 +162,13 @@ async fn gateway_tls_accepts_handshake(ctx: TestContext) -> Result<()> {
     );
 
     let services = ServiceContainer::new(Some(ctx.database_url().to_string())).await?;
+    let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let port = reserve_port()?;
     let tcp_listen = format!("127.0.0.1:{port}");
     let server_handle = tokio::spawn({
         let services = services.clone();
         async move {
-            let _ = rpc_server::run(Some(tcp_listen.as_str()), services).await;
+            let _ = rpc_server::run(Some(tcp_listen.as_str()), services, shutdown_rx).await;
         }
     });
 

@@ -968,7 +968,7 @@ macro_rules! processor_main {
             use $crate::cli::{NodeCli, NodeCliRunner, NodeCommand};
 
             let args = NodeCli::parse();
-            let processor = <$processor_type>::new();
+            let processor = <$processor_type as Default>::default();
             let mut runner = NodeCliRunner::new(processor);
 
             // Auto-spawn HeartbeatEmitter and Coordination for service mode

@@ -208,8 +208,8 @@ impl CheckpointState {
     ///
     /// Called after successfully syncing state to the primary checkpoint store
     /// (NATS KV) to avoid stale file state.
-    pub fn delete_file(path: &std::path::Path) -> std::io::Result<()> {
-        match std::fs::remove_file(path) {
+    pub async fn delete_file(path: &std::path::Path) -> std::io::Result<()> {
+        match tokio::fs::remove_file(path).await {
             Ok(()) => {
                 debug!(path = %path.display(), "Deleted checkpoint file");
                 Ok(())

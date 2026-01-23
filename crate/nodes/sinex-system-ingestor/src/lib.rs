@@ -23,25 +23,16 @@ use sinex_core::types::Seconds;
 mod common {
     // Core types facade
 
-    pub use sinex_processor_runtime::{
-        ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
-        MissingItem, SourceState,
-    };
     // SDK facade for common processor types
     pub use sinex_node_sdk::{
-        stream_processor::{
-            Checkpoint, Node, NodeCapabilities, NodeType, ScanArgs, ScanEstimate, ScanReport,
-            TimeHorizon,
-        },
-        NodeError, NodeResult,
+        stream_processor::{Checkpoint, Node, NodeCapabilities, ScanArgs, ScanReport, TimeHorizon},
+        NodeResult,
     };
 
     // External dependencies
     pub use {
         async_trait::async_trait,
         chrono::{DateTime, Utc},
-        serde::{Deserialize, Serialize},
-        std::{collections::HashMap, time::Duration},
         tracing::{info, instrument},
     };
 }

@@ -6,6 +6,7 @@ pub mod common;
 pub mod events;
 pub mod events_extensions;
 pub mod knowledge_graph;
+pub mod schema_cache;
 pub mod schema_management;
 pub mod source_materials;
 pub mod state;
@@ -18,19 +19,21 @@ pub use common::{
 };
 pub use events::{
     CommandCount, EventAnnotation, EventPayloadSchema, EventRepository, EventRepositoryTx,
-    EventSearchRow, EventTypeCount, NewSchema, SourceActivity,
+    EventSearchRow, EventTypeCount, NewSchema, SourceActivity, StreamBatchInsertResult,
+    StreamBatchRow,
 };
 pub use knowledge_graph::{
     CreateEntity, CreateEntityRelation, EntityExt, EntityRecord, EntityRelationExt,
     EntityRelationRecord, EntityType, KnowledgeGraphRepository,
 };
+pub use schema_cache::{CachedSchema, SchemaCacheRepository};
 pub use schema_management::{
     EventPayloadSchema as ManagedEventSchema, NewEventSchema, SchemaManagementRepository,
     SchemaStatistics, ValidationError, ValidationResult,
 };
 pub use source_materials::{
     material_kinds, material_types, status as material_status, timing_info_types, SourceMaterial,
-    SourceMaterialExt, SourceMaterialRepository,
+    SourceMaterialExt, SourceMaterialRepository, TemporalLedgerEntry,
 };
 pub use state::{
     Operation, OperationRecord, OperationStatistics, StateRepository, SystemHealthReport,
@@ -54,6 +57,7 @@ pub trait DbPoolExt {
     fn knowledge_graph(&self) -> knowledge_graph::KnowledgeGraphRepository<'_>;
     fn state(&self) -> state::StateRepository<'_>;
     fn schemas(&self) -> schema_management::SchemaManagementRepository<'_>;
+    fn schema_cache(&self) -> schema_cache::SchemaCacheRepository<'_>;
 }
 
 impl DbPoolExt for PgPool {
@@ -83,5 +87,9 @@ impl DbPoolExt for PgPool {
 
     fn schemas(&self) -> schema_management::SchemaManagementRepository<'_> {
         schema_management::SchemaManagementRepository::new(self)
+    }
+
+    fn schema_cache(&self) -> schema_cache::SchemaCacheRepository<'_> {
+        schema_cache::SchemaCacheRepository::new(self)
     }
 }

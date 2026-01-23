@@ -12,19 +12,23 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use sinex_core::JsonValue;
-use std::sync::Arc;
-use tokio::sync::watch;
-use tracing::{info, warn};
 
 use crate::checkpoint::{CheckpointManager, CheckpointState};
 use crate::shutdown::ShutdownConfig;
 use crate::stream_processor::{
     Checkpoint, Node, NodeCapabilities, NodeInitContext, NodeRuntimeState, NodeType, ScanArgs,
-    ScanEstimate, ScanReport, TimeHorizon,
+    ScanReport, TimeHorizon,
 };
-use crate::NodeResult;
-use crate::{NodeError, SimpleNodeConfig};
+use crate::{
+    exploration::{
+        CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
+    },
+    NodeError, NodeResult, SimpleNodeConfig,
+};
+use sinex_core::SanitizedPath;
+use std::sync::Arc;
+use tokio::sync::watch;
+use tracing::info;
 
 // Re-use PersistedState from simple_node or define a new one?
 // For now, let's redefine similar structure to decouple or use the one from simple_node if public.
@@ -109,6 +113,44 @@ pub trait SimpleIngestor: Send + Sync + 'static {
     async fn shutdown(&mut self, _state: &Self::State) -> NodeResult<()> {
         Ok(())
     }
+
+    // Exploration provider methods
+    fn get_source_state(&self, _state: &Self::State) -> NodeResult<SourceState> {
+        Err(NodeError::NotSupported(
+            "Source state exploration not implemented".into(),
+        ))
+    }
+
+    fn get_ingestion_history(
+        &self,
+        _state: &Self::State,
+        _limit: u64,
+    ) -> NodeResult<Vec<IngestionHistoryEntry>> {
+        Err(NodeError::NotSupported(
+            "Ingestion history not implemented".into(),
+        ))
+    }
+
+    fn get_coverage_analysis(
+        &self,
+        _state: &Self::State,
+        _time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
+    ) -> NodeResult<CoverageAnalysis> {
+        Err(NodeError::NotSupported(
+            "Coverage analysis not implemented".into(),
+        ))
+    }
+
+    fn export_data(
+        &self,
+        _state: &Self::State,
+        _path: &SanitizedPath,
+        _format: ExportFormat,
+    ) -> NodeResult<()> {
+        Err(NodeError::NotSupported(
+            "Data export not implemented".into(),
+        ))
+    }
 }
 
 /// Wrapper implementing `Node` for `SimpleIngestor`.
@@ -165,7 +207,7 @@ impl<I: SimpleIngestor> SimpleIngestorWrapper<I> {
                 if let Some(data) = ckpt.data {
                     if let Ok(s) = serde_json::from_value(data) {
                         self.state = s;
-                        let _ = CheckpointState::delete_file(&path);
+                        let _ = CheckpointState::delete_file(&path).await;
                         return Ok(());
                     }
                 }
@@ -294,5 +336,39 @@ impl<I: SimpleIngestor> Node for SimpleIngestorWrapper<I> {
     // Default current_checkpoint impl which returns None or we could implement it
     async fn current_checkpoint(&self) -> NodeResult<Checkpoint> {
         Ok(Checkpoint::None) // Ingestors often manage checkpointing internally or via the state saving
+    }
+}
+
+impl<I: SimpleIngestor> ExplorationProvider for SimpleIngestorWrapper<I> {
+    fn get_source_state(&self) -> color_eyre::eyre::Result<SourceState> {
+        Ok(self.ingestor.get_source_state(&self.state.user_state)?)
+    }
+
+    fn get_ingestion_history(
+        &self,
+        limit: u64,
+    ) -> color_eyre::eyre::Result<Vec<IngestionHistoryEntry>> {
+        Ok(self
+            .ingestor
+            .get_ingestion_history(&self.state.user_state, limit)?)
+    }
+
+    fn get_coverage_analysis(
+        &self,
+        time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
+    ) -> color_eyre::eyre::Result<CoverageAnalysis> {
+        Ok(self
+            .ingestor
+            .get_coverage_analysis(&self.state.user_state, time_range)?)
+    }
+
+    fn export_data(
+        &self,
+        path: &SanitizedPath,
+        format: ExportFormat,
+    ) -> color_eyre::eyre::Result<()> {
+        Ok(self
+            .ingestor
+            .export_data(&self.state.user_state, path, format)?)
     }
 }

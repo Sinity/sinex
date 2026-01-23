@@ -17,6 +17,7 @@ mod history;
 mod jobs;
 mod output;
 mod resources;
+mod tls;
 
 use config::config;
 use history::{HistoryDb, InvocationStatus};
@@ -179,6 +180,34 @@ enum Commands {
         #[arg(long, short)]
         follow: bool,
     },
+    /// TLS certificate management
+    Tls {
+        #[command(subcommand)]
+        cmd: tls::TlsCommand,
+    },
+    /// Mutation testing via cargo-mutants
+    Mutants {
+        /// Filter by package
+        #[arg(short, long)]
+        package: Option<String>,
+        /// Filter by file path
+        #[arg(short, long)]
+        file: Option<String>,
+        /// Timeout per mutant in seconds
+        #[arg(long, default_value = "300")]
+        timeout: u64,
+        /// Number of parallel jobs
+        #[arg(short, long, default_value = "4")]
+        jobs: usize,
+        /// Additional cargo-mutants args (use `--` before them)
+        #[arg(last = true)]
+        args: Vec<String>,
+    },
+    /// SQLx compile-time query verification
+    Sqlx {
+        #[command(subcommand)]
+        cmd: SqlxCommand,
+    },
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -285,6 +314,21 @@ enum CoverageCommand {
         /// Show file-level detail
         #[arg(long)]
         files: bool,
+    },
+    /// Measure coverage and enforce minimum threshold
+    Enforce {
+        /// Minimum coverage percentage (0-100)
+        #[arg(long, default_value = "60")]
+        threshold: f64,
+        /// Package to measure (default: all)
+        #[arg(short, long)]
+        package: Option<String>,
+        /// Generate HTML report alongside enforcement
+        #[arg(long)]
+        html: bool,
+        /// Output directory for HTML report
+        #[arg(long, default_value = "target/coverage/html")]
+        output: String,
     },
     /// Clean coverage artifacts
     Clean,
@@ -503,6 +547,16 @@ enum DbCommand {
     },
 }
 
+#[derive(Subcommand)]
+enum SqlxCommand {
+    /// Verify queries against cached metadata (.sqlx/)
+    Check,
+    /// Generate/update .sqlx query cache (requires DATABASE_URL)
+    Prepare,
+    /// Full verification: prepare then check (local dev workflow)
+    Verify,
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let ctx = CommandContext::new(cli.global.clone());
@@ -536,6 +590,17 @@ fn main() -> Result<()> {
         Commands::Up { .. } => ("up", None, None),
         Commands::Status { .. } => ("status", None, None),
         Commands::Logs { .. } => ("logs", None, None),
+        Commands::Tls { .. } => ("tls", None, None),
+        Commands::Mutants { .. } => ("mutants", None, None),
+        Commands::Sqlx { cmd } => (
+            "sqlx",
+            Some(match cmd {
+                SqlxCommand::Check => "check",
+                SqlxCommand::Prepare => "prepare",
+                SqlxCommand::Verify => "verify",
+            }),
+            None,
+        ),
     };
 
     // Track invocation in history (skip for history commands themselves)
@@ -563,7 +628,9 @@ fn main() -> Result<()> {
             preflight,
             affected,
             args,
-        } => test(&profile, prime, list, dry_run, preflight, affected, &args, &ctx),
+        } => test(
+            &profile, prime, list, dry_run, preflight, affected, &args, &ctx,
+        ),
         Commands::Db { cmd } => db(cmd, &ctx),
         Commands::Schema { cmd } => schema(cmd),
         Commands::LintForbidden => lint_forbidden(&ctx),
@@ -579,7 +646,20 @@ fn main() -> Result<()> {
         Commands::Jobs { cmd } => jobs_cmd(cmd, &ctx),
         Commands::Up { all, processes } => devenv_up(all, &processes, &ctx),
         Commands::Status { watch } => devenv_status(watch, &ctx),
-        Commands::Logs { process, lines, follow } => devenv_logs(&process, lines, follow, &ctx),
+        Commands::Logs {
+            process,
+            lines,
+            follow,
+        } => devenv_logs(&process, lines, follow, &ctx),
+        Commands::Tls { cmd } => tls::run(cmd, ctx.global.json),
+        Commands::Mutants {
+            package,
+            file,
+            timeout,
+            jobs,
+            args,
+        } => mutants(package.as_deref(), file.as_deref(), timeout, jobs, &args, &ctx),
+        Commands::Sqlx { cmd } => sqlx(cmd, &ctx),
     };
 
     // Record invocation result in history
@@ -730,11 +810,7 @@ fn history_cmd(cmd: HistoryCommand, ctx: &CommandContext) -> Result<()> {
 }
 
 /// Handle history tests subcommands.
-fn history_tests_cmd(
-    cmd: HistoryTestsCommand,
-    db: &HistoryDb,
-    ctx: &CommandContext,
-) -> Result<()> {
+fn history_tests_cmd(cmd: HistoryTestsCommand, db: &HistoryDb, ctx: &CommandContext) -> Result<()> {
     match cmd {
         HistoryTestsCommand::Slowest { limit } => {
             let tests = db.get_slowest_tests(limit)?;
@@ -845,7 +921,8 @@ fn history_tests_cmd(
                             test.package, test.test_name, test.avg_duration_secs
                         );
                         for (i, duration) in test.durations.iter().enumerate() {
-                            let timestamp = test.timestamps.get(i).map(|s| s.as_str()).unwrap_or("-");
+                            let timestamp =
+                                test.timestamps.get(i).map(|s| s.as_str()).unwrap_or("-");
                             println!("  {}: {:.3}s", timestamp, duration);
                         }
                         println!();
@@ -964,7 +1041,11 @@ fn jobs_cmd(cmd: JobsCommand, ctx: &CommandContext) -> Result<()> {
             } else {
                 if ctx.is_human() {
                     println!("Job {}", id);
-                    println!("  Command:  {} {}", job.meta.command, job.meta.args.join(" "));
+                    println!(
+                        "  Command:  {} {}",
+                        job.meta.command,
+                        job.meta.args.join(" ")
+                    );
                     println!("  Status:   {:?}", job.meta.status);
                     println!("  Started:  {}", job.meta.started_at);
                     if let Some(finished) = job.meta.finished_at {
@@ -1086,7 +1167,11 @@ fn devenv_status(watch: bool, ctx: &CommandContext) -> Result<()> {
             .unwrap_or(false);
 
         let db_sym = if db_ok { "✓" } else { "✗" };
-        println!("  Database: {} {}", db_sym, if db_ok { "connected" } else { "unavailable" });
+        println!(
+            "  Database: {} {}",
+            db_sym,
+            if db_ok { "connected" } else { "unavailable" }
+        );
 
         // NATS status
         let nats_url = std::env::var("SINEX_NATS_URL").unwrap_or_else(|_| "localhost:4222".into());
@@ -1100,7 +1185,11 @@ fn devenv_status(watch: bool, ctx: &CommandContext) -> Result<()> {
         .is_ok();
 
         let nats_sym = if nats_ok { "✓" } else { "✗" };
-        println!("  NATS:     {} {}", nats_sym, if nats_ok { &nats_url } else { "unavailable" });
+        println!(
+            "  NATS:     {} {}",
+            nats_sym,
+            if nats_ok { &nats_url } else { "unavailable" }
+        );
 
         // Git status
         if let Ok(output) = Command::new("git")
@@ -1350,6 +1439,60 @@ fn lint(ctx: &CommandContext) -> Result<()> {
     run_cmd_ctx("cargo clippy -D warnings", cmd, ctx)
 }
 
+fn mutants(
+    package: Option<&str>,
+    file: Option<&str>,
+    timeout: u64,
+    jobs: usize,
+    args: &[String],
+    ctx: &CommandContext,
+) -> Result<()> {
+    // Check if cargo-mutants is available
+    let check_result = Command::new("cargo")
+        .arg("mutants")
+        .arg("--version")
+        .output();
+
+    if check_result.is_err() || !check_result.unwrap().status.success() {
+        return Err(anyhow!(
+            "cargo-mutants not found. Setup with: cargo binstall cargo-mutants"
+        ));
+    }
+
+    let mut cmd = Command::new("cargo");
+    cmd.arg("mutants");
+
+    // Add timeout per mutant
+    cmd.arg("--timeout").arg(format!("{}", timeout));
+
+    // Add parallelism
+    cmd.arg("--jobs").arg(format!("{}", jobs));
+
+    // Add package filter if specified
+    if let Some(pkg) = package {
+        cmd.arg("--package").arg(pkg);
+    }
+
+    // Add file filter if specified
+    if let Some(f) = file {
+        cmd.arg("--file").arg(f);
+    }
+
+    // Add any additional arguments
+    for arg in args {
+        cmd.arg(arg);
+    }
+
+    // Run with context
+    let description = match (package, file) {
+        (Some(pkg), _) => format!("cargo mutants --package {}", pkg),
+        (None, Some(f)) => format!("cargo mutants --file {}", f),
+        (None, None) => "cargo mutants (full workspace)".to_string(),
+    };
+
+    run_cmd_ctx(&description, cmd, ctx)
+}
+
 fn test(
     profile: &str,
     prime: bool,
@@ -1378,9 +1521,7 @@ fn test(
     if ctx.is_human() && !list && !dry_run {
         if let Ok(db) = open_history_db() {
             if let Ok(estimate) = db.estimate_runtime() {
-                if estimate.test_count > 0
-                    && estimate.confidence != history::Confidence::Low
-                {
+                if estimate.test_count > 0 && estimate.confidence != history::Confidence::Low {
                     println!(
                         "Estimated runtime: {:.0}s ({} tests)",
                         estimate.estimated_secs, estimate.test_count
@@ -1488,7 +1629,11 @@ fn test_preflight(ctx: &CommandContext) -> Result<()> {
     if ctx.is_human() {
         println!(
             "  Database:   {}",
-            if db_ok { "✓ connected" } else { "✗ unavailable" }
+            if db_ok {
+                "✓ connected"
+            } else {
+                "✗ unavailable"
+            }
         );
         println!(
             "  NATS:       {}",
@@ -1590,9 +1735,16 @@ fn test_dry_run(profile: &str, args: &[String], ctx: &CommandContext) -> Result<
     }
 
     if ctx.is_human() {
-        println!("Would run {} tests in {} packages:", test_count, packages.len());
+        println!(
+            "Would run {} tests in {} packages:",
+            test_count,
+            packages.len()
+        );
         println!("  Profile: {}", profile);
-        println!("  Packages: {}", packages.into_iter().collect::<Vec<_>>().join(", "));
+        println!(
+            "  Packages: {}",
+            packages.into_iter().collect::<Vec<_>>().join(", ")
+        );
         if !args.is_empty() {
             println!("  Filters: {}", args.join(" "));
         }
@@ -1646,6 +1798,8 @@ fn ci_preflight(ctx: &CommandContext) -> Result<()> {
     check(false, false, ctx)?;
     lint(ctx)?;
     lint_forbidden(ctx)?;
+    // Verify SQLx query cache is up-to-date.
+    sqlx_check(ctx)?;
     // Regenerate schemas to ensure artifacts stay in sync with code.
     schema_generate("schemas/v1", false)?;
     ensure_schemas_clean()?;
@@ -2328,8 +2482,50 @@ fn db(cmd: DbCommand, ctx: &CommandContext) -> Result<()> {
 
 fn run_db_migrate(ctx: &CommandContext) -> Result<()> {
     let mut cmd = Command::new("cargo");
-    cmd.args(["run", "--package", "sinex-schema", "--", "up"]);
-    run_cmd_ctx("cargo run -p sinex-schema -- up", cmd, ctx)
+    cmd.args([
+        "run",
+        "--package",
+        "sinex-schema",
+        "--bin",
+        "sinex-schema",
+        "--",
+        "up",
+    ]);
+    run_cmd_ctx(
+        "cargo run -p sinex-schema --bin sinex-schema -- up",
+        cmd,
+        ctx,
+    )
+}
+
+fn sqlx(cmd: SqlxCommand, ctx: &CommandContext) -> Result<()> {
+    match cmd {
+        SqlxCommand::Check => sqlx_check(ctx),
+        SqlxCommand::Prepare => sqlx_prepare(ctx),
+        SqlxCommand::Verify => {
+            sqlx_prepare(ctx)?;
+            sqlx_check(ctx)
+        }
+    }
+}
+
+fn sqlx_check(ctx: &CommandContext) -> Result<()> {
+    ctx.heading("cargo sqlx prepare --check");
+    let mut cmd = Command::new("cargo");
+    cmd.args(["sqlx", "prepare", "--check", "--workspace"]);
+    run_cmd_ctx("cargo sqlx prepare --check", cmd, ctx)
+}
+
+fn sqlx_prepare(ctx: &CommandContext) -> Result<()> {
+    // Check if DATABASE_URL is set
+    if env::var("DATABASE_URL").is_err() {
+        bail!("DATABASE_URL not set. SQLx prepare requires a live database connection.");
+    }
+
+    ctx.heading("cargo sqlx prepare");
+    let mut cmd = Command::new("cargo");
+    cmd.args(["sqlx", "prepare", "--workspace"]);
+    run_cmd_ctx("cargo sqlx prepare", cmd, ctx)
 }
 
 fn schema(cmd: SchemaCommand) -> Result<()> {
@@ -2664,6 +2860,16 @@ fn lint_forbidden(ctx: &CommandContext) -> Result<()> {
         &sqlx_query_as_allow,
     )?);
 
+    // Report unwrap/expect in production code (informational, not blocking)
+    // This tracks technical debt without breaking the build
+    report_unwrap_expect_count()?;
+
+    // Report runtime vs compile-time SQLx query usage
+    report_sqlx_query_stats()?;
+
+    // Check for test-utils usage in production code (layering violation)
+    check_test_utils_layering(&mut violations)?;
+
     if violations.is_empty() {
         println!("✅ No forbidden patterns found");
         return Ok(());
@@ -2674,6 +2880,129 @@ fn lint_forbidden(ctx: &CommandContext) -> Result<()> {
         eprintln!("  {v}");
     }
     bail!("forbidden pattern scan failed");
+}
+
+/// Report count of unwrap/expect calls in production code (informational only).
+/// This helps track technical debt without blocking the build.
+fn report_unwrap_expect_count() -> Result<()> {
+    let unwrap_count = count_pattern_outside_tests(r"\.unwrap\(\)")?;
+    let expect_count = count_pattern_outside_tests(r"\.expect\(")?;
+    let total = unwrap_count + expect_count;
+
+    if total > 0 {
+        println!(
+            "⚠️  unwrap/expect in production code: {} total ({} unwrap, {} expect)",
+            total, unwrap_count, expect_count
+        );
+        println!("   Run: rg '\\.unwrap\\(\\)|.expect\\(' --glob '*.rs' --glob '!**/tests/**' -c");
+    } else {
+        println!("✅ No unwrap/expect in production code");
+    }
+    Ok(())
+}
+
+/// Check for sinex_test_utils usage outside expected locations.
+/// Reports usage for awareness but doesn't block (inline #[cfg(test)] modules are OK).
+fn check_test_utils_layering(_violations: &mut Vec<String>) -> Result<()> {
+    // Allow test-utils imports in expected locations
+    let allow_prefixes = [
+        "xtask/src/",                  // Build tooling
+        "crate/lib/sinex-test-utils/", // Test utils itself
+    ];
+
+    let matches = run_rg(r"use sinex_test_utils")?;
+    let filtered: Vec<String> = matches
+        .into_iter()
+        .filter(|line| {
+            let file = line.split(':').next().unwrap_or_default();
+            // Skip if in allow list
+            if allow_prefixes.iter().any(|a| file.starts_with(a)) {
+                return false;
+            }
+            // Skip if in tests/ directory
+            if is_tests_path(file) {
+                return false;
+            }
+            true
+        })
+        .collect();
+
+    // Note: Many of these may be in inline #[cfg(test)] modules, which is fine.
+    // We report the count for awareness but don't block builds.
+    if !filtered.is_empty() {
+        println!(
+            "📋 sinex_test_utils usage: {} locations (inline #[cfg(test)] modules are expected)",
+            filtered.len()
+        );
+    }
+    Ok(())
+}
+
+/// Report SQLx query usage statistics (runtime vs compile-time checked).
+/// Runtime queries use sqlx::query()/query_as(), compile-time use sqlx::query!()/query_as!().
+fn report_sqlx_query_stats() -> Result<()> {
+    // Count runtime queries (sqlx::query(, sqlx::query_as()
+    let runtime_query = count_pattern_outside_tests(r"sqlx::query\(")?;
+    let runtime_query_as = count_pattern_outside_tests(r"sqlx::query_as\(")?;
+    let runtime_total = runtime_query + runtime_query_as;
+
+    // Count compile-time queries (sqlx::query!, sqlx::query_as!, sqlx::query_scalar!)
+    let compile_query = count_pattern_outside_tests(r"sqlx::query!\(")?;
+    let compile_query_as = count_pattern_outside_tests(r"sqlx::query_as!\(")?;
+    let compile_query_scalar = count_pattern_outside_tests(r"sqlx::query_scalar!\(")?;
+    let compile_total = compile_query + compile_query_as + compile_query_scalar;
+
+    let total = runtime_total + compile_total;
+    if total > 0 {
+        let compile_pct = if total > 0 {
+            (compile_total as f64 / total as f64 * 100.0) as u32
+        } else {
+            0
+        };
+        println!(
+            "📊 SQLx queries: {} compile-time ({}%), {} runtime ({} query, {} query_as)",
+            compile_total, compile_pct, runtime_total, runtime_query, runtime_query_as
+        );
+    }
+    Ok(())
+}
+
+/// Count occurrences of a pattern outside test directories
+fn count_pattern_outside_tests(pattern: &str) -> Result<usize> {
+    let output = Command::new("rg")
+        .args([
+            "--color=never",
+            "--no-heading",
+            "-c",
+            pattern,
+            "--glob",
+            "*.rs",
+            "--glob",
+            "!**/tests/**",
+            "--glob",
+            "!tests/**",
+            "--glob",
+            "!*_test.rs",
+            "--glob",
+            "!test_*.rs",
+        ])
+        .output()
+        .with_context(|| "failed to invoke ripgrep for unwrap/expect count")?;
+
+    let code = output.status.code().unwrap_or_default();
+    if code != 0 && code != 1 {
+        bail!("ripgrep failed with status {}", output.status);
+    }
+
+    // Each line is "filename:count", sum the counts
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let total: usize = stdout
+        .lines()
+        .filter_map(|line| line.rsplit(':').next())
+        .filter_map(|count| count.parse::<usize>().ok())
+        .sum();
+
+    Ok(total)
 }
 
 fn check_pattern_strict(label: &str, pattern: &str, allow: &[&str]) -> Result<Vec<String>> {
@@ -2745,6 +3074,12 @@ fn coverage(cmd: CoverageCommand, ctx: &CommandContext) -> Result<()> {
         CoverageCommand::Summary { package, files } => {
             coverage_summary(package.as_deref(), files, ctx)
         }
+        CoverageCommand::Enforce {
+            threshold,
+            package,
+            html,
+            output,
+        } => coverage_enforce(threshold, package.as_deref(), html, &output, ctx),
         CoverageCommand::Clean => coverage_clean(ctx),
     }
 }
@@ -2852,6 +3187,104 @@ fn coverage_summary(package: Option<&str>, files: bool, ctx: &CommandContext) ->
     cmd.arg("--exclude").arg("xtask");
 
     run_cmd_ctx("cargo llvm-cov", cmd, ctx)
+}
+
+fn coverage_enforce(
+    threshold: f64,
+    package: Option<&str>,
+    generate_html: bool,
+    html_output: &str,
+    ctx: &CommandContext,
+) -> Result<()> {
+    ctx.heading("coverage enforcement");
+
+    // Validate threshold
+    if !(0.0..=100.0).contains(&threshold) {
+        bail!("Threshold must be between 0 and 100, got {}", threshold);
+    }
+
+    // Check for cargo-llvm-cov
+    check_llvm_cov_installed()?;
+
+    // Build coverage command with JSON output for parsing
+    let mut cmd = Command::new("cargo");
+    cmd.arg("llvm-cov")
+        .arg("--json")
+        .arg("--summary-only")
+        .arg("--ignore-filename-regex")
+        .arg("(tests?/|test_|_test\\.rs|/target/)");
+
+    if let Some(pkg) = package {
+        cmd.arg("--package").arg(pkg);
+    } else {
+        cmd.arg("--workspace");
+    }
+
+    cmd.arg("--exclude").arg("sinex-test-utils");
+    cmd.arg("--exclude").arg("xtask");
+
+    // Run coverage measurement
+    if ctx.is_human() {
+        println!("Running coverage measurement...");
+    }
+
+    let output = cmd
+        .output()
+        .with_context(|| "Failed to run cargo llvm-cov")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("Coverage measurement failed: {}", stderr);
+    }
+
+    // Parse JSON output
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let coverage_data: serde_json::Value = serde_json::from_str(&stdout)
+        .with_context(|| "Failed to parse coverage JSON output")?;
+
+    // Extract total coverage percentage
+    let total_coverage = coverage_data["data"][0]["totals"]["lines"]["percent"]
+        .as_f64()
+        .ok_or_else(|| anyhow!("Failed to extract coverage percentage from JSON"))?;
+
+    // Optionally generate HTML report
+    if generate_html {
+        if ctx.is_human() {
+            println!("Generating HTML report...");
+        }
+        coverage_html(html_output, false, package, ctx)?;
+    }
+
+    // Determine pass/fail
+    let passed = total_coverage >= threshold;
+
+    // Human-readable output
+    if ctx.is_human() {
+        println!();
+        println!("Code Coverage Report");
+        println!("====================");
+        println!("Total coverage: {:.1}%", total_coverage);
+        println!("Threshold:      {:.1}%", threshold);
+        println!();
+
+        if passed {
+            println!("\u{2713} Coverage meets threshold");
+        } else {
+            println!("\u{2717} Coverage below threshold by {:.1}%", threshold - total_coverage);
+        }
+
+        if generate_html {
+            println!();
+            println!("HTML report: {}/html/index.html", html_output);
+        }
+    }
+
+    // Exit with error if threshold not met
+    if !passed {
+        bail!("Coverage {:.2}% is below threshold {:.2}%", total_coverage, threshold);
+    }
+
+    Ok(())
 }
 
 fn coverage_clean(ctx: &CommandContext) -> Result<()> {

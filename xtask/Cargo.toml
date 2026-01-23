@@ -24,3 +24,8 @@ dirs = "5.0"
 toml = { workspace = true }
 gethostname = { workspace = true }
 libc = "0.2"
+
+# TLS certificate generation and verification
+rcgen = "0.13"
+x509-parser = "0.16"
+time = "0.3"

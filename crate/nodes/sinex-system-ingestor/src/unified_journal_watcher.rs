@@ -10,11 +10,13 @@
 //! events based on the presence of `_SYSTEMD_UNIT` field to emit both journal
 //! and systemd-specific events, reducing process overhead by 50%.
 
+use chrono::Utc;
 use sinex_core::fs::atomic_write;
 use sinex_core::{Event, JsonValue};
 
 use crate::payloads::*;
 use crate::WatcherMaterialContext;
+use sha2::{Digest, Sha256};
 use sinex_core::types::events::{
     JournalEntryWrittenPayload as EventJournalEntryWrittenPayload,
     JournalSyncCompletedPayload as EventJournalSyncCompletedPayload, SystemdTimerTriggeredPayload,
@@ -31,7 +33,6 @@ use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
-use sha2::{Digest, Sha256};
 
 use crate::watcher_lifecycle::{WatcherHealth, WatcherLifecycle};
 
@@ -51,6 +52,8 @@ pub struct UnifiedJournalWatcher {
     pending_cursor: Arc<Mutex<Option<String>>>,
     cursor_save_count: Arc<AtomicU64>,
     last_cursor_save: Arc<Mutex<Instant>>,
+    // Backpressure metrics
+    channel_drops: Arc<AtomicU64>,
 }
 
 impl UnifiedJournalWatcher {
@@ -104,6 +107,7 @@ impl UnifiedJournalWatcher {
             pending_cursor: Arc::new(Mutex::new(None)),
             cursor_save_count: Arc::new(AtomicU64::new(0)),
             last_cursor_save: Arc::new(Mutex::new(Instant::now())),
+            channel_drops: Arc::new(AtomicU64::new(0)),
         })
     }
 
@@ -235,7 +239,7 @@ impl UnifiedJournalWatcher {
 
                         if batch.len() >= self.journal_config.batch_size {
                             for event in batch.drain(..) {
-                                Self::send_event(journal_tx, event, "journal_batch", material)
+                                self.send_event(journal_tx, event, "journal_batch", material)
                                     .await?;
                             }
                         }
@@ -245,7 +249,7 @@ impl UnifiedJournalWatcher {
                     if self.systemd_enabled {
                         if let Some(systemd_event) = self.parse_systemd_entry(&entry, material) {
                             if let Some(ref tx) = systemd_tx {
-                                Self::send_event(tx, systemd_event, "systemd_batch", material)
+                                self.send_event(tx, systemd_event, "systemd_batch", material)
                                     .await?;
                             }
                         }
@@ -259,7 +263,8 @@ impl UnifiedJournalWatcher {
 
         // Send remaining batch
         for event in batch {
-            Self::send_event(journal_tx, event, "journal_final_batch", material).await?;
+            self.send_event(journal_tx, event, "journal_final_batch", material)
+                .await?;
         }
 
         // Update cursor
@@ -294,7 +299,8 @@ impl UnifiedJournalWatcher {
             )
             .to_json_event()
             .expect("serializing journal sync event should not fail");
-            Self::send_event(journal_tx, sync_event, "journal_sync_event", material).await?;
+            self.send_event(journal_tx, sync_event, "journal_sync_event", material)
+                .await?;
         }
 
         info!(
@@ -410,7 +416,7 @@ impl UnifiedJournalWatcher {
                                     self.save_cursor(cursor).await?;
                                 }
 
-                                Self::send_event(
+                                self.send_event(
                                     journal_tx,
                                     event,
                                     "journal_follow_event",
@@ -425,7 +431,7 @@ impl UnifiedJournalWatcher {
                                     self.parse_systemd_entry(&entry, material)
                                 {
                                     if let Some(ref tx) = systemd_tx {
-                                        Self::send_event(
+                                        self.send_event(
                                             tx,
                                             systemd_event,
                                             "systemd_follow_event",
@@ -602,7 +608,10 @@ impl UnifiedJournalWatcher {
             fields,
         };
 
-        let event = Event::new(
+        let cursor_str = payload.cursor.clone();
+        let timestamp_str = payload.timestamp.clone();
+
+        let mut event = Event::new(
             EventJournalEntryWrittenPayload {
                 cursor: payload.cursor,
                 timestamp_us: payload.timestamp_us,
@@ -625,26 +634,28 @@ impl UnifiedJournalWatcher {
         );
 
         // Set deterministic ID based on cursor to prevent duplicates (discriminator 0 for generic entry)
-        let id_entropy = Self::calculate_entropy(payload.cursor.as_str(), 0);
-        let id = sinex_core::types::Ulid::from_parts(
-            (payload.timestamp_us / 1000) as u64, 
-            id_entropy
-        );
-        event.id = Some(sinex_core::types::Id::from_ulid(id));
+        let id_entropy = Self::calculate_entropy(cursor_str.as_str(), 0);
+        let timestamp_ms = payload.timestamp_us / 1000;
+        let id_val = (timestamp_ms as u128) << 80 | (id_entropy & 0xFFFF_FFFF_FFFF_FFFF_FFFF);
+        let ulid = sinex_core::types::Ulid::from_bytes(id_val.to_be_bytes())
+            .unwrap_or_else(|_| sinex_core::types::Ulid::new());
+
+        let id = sinex_core::types::Id::from_ulid(ulid);
+        event.id = Some(id);
+
         // Ensure ts_orig matches journal timestamp (already passed as payload.timestamp but good to be explicit)
-        if let Ok(ts) = chrono::DateTime::parse_from_rfc3339(&payload.timestamp) {
-             event.ts_orig = Some(ts.with_timezone(&Utc));
+        if let Ok(ts) = chrono::DateTime::parse_from_rfc3339(&timestamp_str) {
+            event.ts_orig = Some(ts.with_timezone(&Utc));
         }
 
-        event.to_json_event()
-        .map_err(|e| {
+        let json_event = event.to_json_event().map_err(|e| {
             sinex_node_sdk::NodeError::Processing(format!(
                 "Failed to serialize journal entry: {}",
                 e
             ))
         })?;
 
-        Ok(Some(event))
+        Ok(Some(json_event))
     }
 
     /// Parse systemd-specific event from journal entry
@@ -662,143 +673,109 @@ impl UnifiedJournalWatcher {
             return None;
         }
 
-        // Look for systemd state change messages
-        if message.contains("Started ") {
+        // Parse timestamp once
+        let timestamp_us = entry["__REALTIME_TIMESTAMP"]
+            .as_str()
+            .and_then(|t| t.parse::<u64>().ok())
+            .unwrap_or_else(|| Utc::now().timestamp_micros() as u64);
+
+        // Helper to construct deterministic ID
+        // timestamp (48 bits) | entropy (80 bits)
+        let id_entropy = Self::calculate_entropy(cursor, 1);
+        let timestamp_ms = timestamp_us / 1000;
+        let id_val = (timestamp_ms as u128) << 80 | (id_entropy & 0xFFFF_FFFF_FFFF_FFFF_FFFF);
+        let ulid = sinex_core::types::Ulid::from_bytes(id_val.to_be_bytes())
+            .unwrap_or_else(|_| sinex_core::types::Ulid::new());
+
+        // Note: We create typed IDs inside each branch to satisfy type inference
+
+        let ts_orig = Some(Utc::now());
+
+        // Construct payload based on message type
+        let event = if message.contains("Started ") {
             let unit_type = SystemdUnitType::from_unit_name(unit_name);
-
-            Some(
-                Event::new(
-                    SystemdUnitStartedPayload {
-                        unit_name: unit_name.to_string(),
-                        unit_type: unit_type.to_string(),
-                        main_pid: entry["_PID"].as_str().and_then(|s| s.parse().ok()),
-                        active_state: SystemdUnitState::Active.to_string(),
-                        sub_state: "running".to_string(),
-                    },
-                    material.initial_provenance(),
-                );
-                
-                // Set deterministic ID based on cursor (discriminator 1 for systemd events)
-                let id_entropy = Self::calculate_entropy(cursor, 1);
-                let timestamp_us = entry["__REALTIME_TIMESTAMP"].as_str()
-                    .and_then(|t| t.parse::<u64>().ok())
-                    .unwrap_or_else(|| chrono::Utc::now().timestamp_micros() as u64);
-
-                let id = sinex_core::types::Ulid::from_parts(
-                    timestamp_us / 1000, 
-                    id_entropy
-                );
-                event.id = Some(sinex_core::types::Id::from_ulid(id));
-                event.ts_orig = Some(chrono::Utc::now()); // Approximate if not parsed from entry, but better to parse.
-                /* Better to parse timestamp from entry for ts_orig if possible, but kept simple here as main issue is ID */
-                
-                Some(event.to_json_event().ok()?)
-            )
+            let mut e = Event::new(
+                SystemdUnitStartedPayload {
+                    unit_name: unit_name.to_string(),
+                    unit_type: unit_type.to_string(),
+                    main_pid: entry["_PID"].as_str().and_then(|s| s.parse().ok()),
+                    active_state: SystemdUnitState::Active.to_string(),
+                    sub_state: "running".to_string(),
+                },
+                material.initial_provenance(),
+            );
+            e.id = Some(sinex_core::types::Id::from_ulid(ulid));
+            e.ts_orig = ts_orig;
+            e.to_json_event().ok()?
         } else if message.contains("Stopped ") {
             let unit_type = SystemdUnitType::from_unit_name(unit_name);
-
-            Some(
-                Event::new(
-                    SystemdUnitStoppedPayload {
-                        unit_name: unit_name.to_string(),
-                        unit_type: unit_type.to_string(),
-                        exit_code: None,
-                        active_state: SystemdUnitState::Inactive.to_string(),
-                        sub_state: "dead".to_string(),
-                    },
-                    material.initial_provenance(),
-                );
-                // Set deterministic ID based on cursor (discriminator 1 for systemd events)
-                let id_entropy = Self::calculate_entropy(cursor, 1);
-                let timestamp_us = entry["__REALTIME_TIMESTAMP"].as_str()
-                    .and_then(|t| t.parse::<u64>().ok())
-                    .unwrap_or_else(|| chrono::Utc::now().timestamp_micros() as u64);
-                let id = sinex_core::types::Ulid::from_parts(timestamp_us / 1000, id_entropy);
-                event.id = Some(sinex_core::types::Id::from_ulid(id));
-                event.ts_orig = Some(chrono::Utc::now());
-
-                Some(event.to_json_event().ok()?)
-            )
+            let mut e = Event::new(
+                SystemdUnitStoppedPayload {
+                    unit_name: unit_name.to_string(),
+                    unit_type: unit_type.to_string(),
+                    exit_code: None,
+                    active_state: SystemdUnitState::Inactive.to_string(),
+                    sub_state: "dead".to_string(),
+                },
+                material.initial_provenance(),
+            );
+            e.id = Some(sinex_core::types::Id::from_ulid(ulid));
+            e.ts_orig = ts_orig;
+            e.to_json_event().ok()?
         } else if message.contains("Failed ") {
-            Some(
-                Event::new(
-                    SystemdUnitFailedPayload {
-                        unit_name: unit_name.to_string(),
-                        message: message.to_string(),
-                        cursor: cursor.to_string(),
-                        pid: entry["_PID"].as_str().map(String::from),
-                        uid: entry["_UID"].as_str().map(String::from),
-                        timestamp: chrono::Utc::now().to_rfc3339(),
-                        journal_timestamp: entry["__REALTIME_TIMESTAMP"].as_str().map(String::from),
-                    },
-                    material.initial_provenance(),
-                );
-                // Set deterministic ID based on cursor (discriminator 1 for systemd events)
-                let id_entropy = Self::calculate_entropy(cursor, 1);
-                let timestamp_us = entry["__REALTIME_TIMESTAMP"].as_str()
-                    .and_then(|t| t.parse::<u64>().ok())
-                    .unwrap_or_else(|| chrono::Utc::now().timestamp_micros() as u64);
-                let id = sinex_core::types::Ulid::from_parts(timestamp_us / 1000, id_entropy);
-                event.id = Some(sinex_core::types::Id::from_ulid(id));
-                event.ts_orig = Some(chrono::Utc::now());
-
-                Some(event.to_json_event().ok()?)
-            )
+            let mut e = Event::new(
+                SystemdUnitFailedPayload {
+                    unit_name: unit_name.to_string(),
+                    message: message.to_string(),
+                    cursor: cursor.to_string(),
+                    pid: entry["_PID"].as_str().map(String::from),
+                    uid: entry["_UID"].as_str().map(String::from),
+                    timestamp: Utc::now().to_rfc3339(),
+                    journal_timestamp: entry["__REALTIME_TIMESTAMP"].as_str().map(String::from),
+                },
+                material.initial_provenance(),
+            );
+            e.id = Some(sinex_core::types::Id::from_ulid(ulid));
+            e.ts_orig = ts_orig;
+            e.to_json_event().ok()?
         } else if message.contains("Reloaded ") {
-            Some(
-                Event::new(
-                    SystemdUnitReloadedPayload {
-                        unit_name: Some(unit_name.to_string()),
-                        message: message.to_string(),
-                        cursor: cursor.to_string(),
-                        pid: entry["_PID"].as_str().map(String::from),
-                        uid: entry["_UID"].as_str().map(String::from),
-                        timestamp: chrono::Utc::now().to_rfc3339(),
-                        journal_timestamp: entry["__REALTIME_TIMESTAMP"].as_str().map(String::from),
-                    },
-                    material.initial_provenance(),
-                );
-                // Set deterministic ID based on cursor (discriminator 1 for systemd events)
-                let id_entropy = Self::calculate_entropy(cursor, 1);
-                let timestamp_us = entry["__REALTIME_TIMESTAMP"].as_str()
-                    .and_then(|t| t.parse::<u64>().ok())
-                    .unwrap_or_else(|| chrono::Utc::now().timestamp_micros() as u64);
-                let id = sinex_core::types::Ulid::from_parts(timestamp_us / 1000, id_entropy);
-                event.id = Some(sinex_core::types::Id::from_ulid(id));
-                event.ts_orig = Some(chrono::Utc::now());
-
-                Some(event.to_json_event().ok()?)
-            )
+            let mut e = Event::new(
+                SystemdUnitReloadedPayload {
+                    unit_name: Some(unit_name.to_string()),
+                    message: message.to_string(),
+                    cursor: cursor.to_string(),
+                    pid: entry["_PID"].as_str().map(String::from),
+                    uid: entry["_UID"].as_str().map(String::from),
+                    timestamp: Utc::now().to_rfc3339(),
+                    journal_timestamp: entry["__REALTIME_TIMESTAMP"].as_str().map(String::from),
+                },
+                material.initial_provenance(),
+            );
+            e.id = Some(sinex_core::types::Id::from_ulid(ulid));
+            e.ts_orig = ts_orig;
+            e.to_json_event().ok()?
         } else if message.contains("Triggered ") {
-            Some(
-                Event::new(
-                    SystemdTimerTriggeredPayload {
-                        unit_name: Some(unit_name.to_string()),
-                        message: message.to_string(),
-                        cursor: cursor.to_string(),
-                        pid: entry["_PID"].as_str().map(String::from),
-                        uid: entry["_UID"].as_str().map(String::from),
-                        timestamp: chrono::Utc::now().to_rfc3339(),
-                        journal_timestamp: entry["__REALTIME_TIMESTAMP"].as_str().map(String::from),
-                    },
-                    material.initial_provenance(),
-                );
-                // Set deterministic ID based on cursor (discriminator 1 for systemd events)
-                let id_entropy = Self::calculate_entropy(cursor, 1);
-                let timestamp_us = entry["__REALTIME_TIMESTAMP"].as_str()
-                    .and_then(|t| t.parse::<u64>().ok())
-                    .unwrap_or_else(|| chrono::Utc::now().timestamp_micros() as u64);
-                let id = sinex_core::types::Ulid::from_parts(timestamp_us / 1000, id_entropy);
-                event.id = Some(sinex_core::types::Id::from_ulid(id));
-                event.ts_orig = Some(chrono::Utc::now());
-
-                Some(event.to_json_event().ok()?)
-            )
+            let mut e = Event::new(
+                SystemdTimerTriggeredPayload {
+                    unit_name: Some(unit_name.to_string()),
+                    message: message.to_string(),
+                    cursor: cursor.to_string(),
+                    pid: entry["_PID"].as_str().map(String::from),
+                    uid: entry["_UID"].as_str().map(String::from),
+                    timestamp: Utc::now().to_rfc3339(),
+                    journal_timestamp: entry["__REALTIME_TIMESTAMP"].as_str().map(String::from),
+                },
+                material.initial_provenance(),
+            );
+            e.id = Some(sinex_core::types::Id::from_ulid(ulid));
+            e.ts_orig = ts_orig;
+            e.to_json_event().ok()?
         } else {
-            None // Not a state change we care about
-        }
-    }
+            return None;
+        };
 
+        Some(event)
+    }
 
     /// Calculate deterministic entropy from cursor and discriminator
     fn calculate_entropy(cursor: &str, discriminator: u8) -> u128 {
@@ -806,7 +783,7 @@ impl UnifiedJournalWatcher {
         hasher.update(cursor.as_bytes());
         hasher.update(&[discriminator]);
         let hash = hasher.finalize();
-        
+
         // Use first 16 bytes for 128-bit entropy
         let mut bytes = [0u8; 16];
         bytes.copy_from_slice(&hash[0..16]);
@@ -885,8 +862,9 @@ impl UnifiedJournalWatcher {
         Ok(())
     }
 
-    /// Send event with error logging
+    /// Send event with error logging and backpressure metrics
     async fn send_event(
+        &self,
         tx: &mpsc::Sender<Event<JsonValue>>,
         mut event: Event<JsonValue>,
         context: &str,
@@ -894,9 +872,12 @@ impl UnifiedJournalWatcher {
     ) -> NodeResult<()> {
         material.decorate_event(&mut event).await?;
         if let Err(err) = tx.send(event).await {
+            let drops = self.channel_drops.fetch_add(1, Ordering::Relaxed) + 1;
             warn!(
-                "Event channel unavailable while sending {}: {}",
-                context, err
+                channel_drops = drops,
+                context = context,
+                "Event channel backpressure: dropped event ({})",
+                err
             );
         }
         Ok(())

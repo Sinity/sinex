@@ -6,13 +6,11 @@ use serde_json::json;
 use sinex_core::types::buffers::DEFAULT_EVENT_CHANNEL_SIZE;
 use sinex_core::{db::models::Event, JsonValue};
 use sinex_node_sdk::acquisition_manager::{AcquisitionManager, RotationPolicy};
-use sinex_node_sdk::{
-    spawn_event_processor, EventBatcherConfig, EventTransport,
-};
 use sinex_node_sdk::nats_publisher::NatsPublisher;
 use sinex_node_sdk::stage_as_you_go::{
     LogFileStageProcessor, StageAsYouGoContext, StageAsYouGoProcessor,
 };
+use sinex_node_sdk::{spawn_event_processor, EventBatcherConfig, EventTransport};
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::timing_utils::WaitHelpers;
 use sinex_test_utils::{start_test_ingestd_with_config, TestIngestdConfig};
@@ -63,11 +61,10 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
     );
 
     let context = StageAsYouGoContext::from_sender(
-        Arc::new(AcquisitionManager::new(
+        Arc::new(AcquisitionManager::with_defaults(
             nats_client.clone(),
-            RotationPolicy::default(),
-            "integration-log".to_string(),
-            "/tmp/integration.log".to_string(),
+            "integration-log",
+            "/tmp/integration.log",
         )),
         event_tx,
         false,
@@ -185,11 +182,10 @@ async fn stage_as_you_go_reconciliation_cancels_stale_materials(ctx: TestContext
     let nats_client = ctx.nats_client();
     AcquisitionManager::bootstrap_streams(&nats_client).await?;
 
-    let acquisition = Arc::new(AcquisitionManager::new(
+    let acquisition = Arc::new(AcquisitionManager::with_defaults(
         nats_client.clone(),
-        RotationPolicy::default(),
-        "reconciliation-log".to_string(),
-        "/tmp/reconciliation.log".to_string(),
+        "reconciliation-log",
+        "/tmp/reconciliation.log",
     ));
 
     let (event_tx, mut event_rx) = mpsc::channel::<Event<JsonValue>>(DEFAULT_EVENT_CHANNEL_SIZE);

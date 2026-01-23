@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Rate limit event for specific token\n\nIndividual rate limit violations (for audit/debugging)",
+  "properties": {
+    "limit": {
+      "description": "Configured limit",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "method": {
+      "description": "Method being called",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "requests_in_window": {
+      "description": "Number of requests in current window",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "token_prefix": {
+      "description": "Token prefix (first 8 chars for identification without full exposure)",
+      "type": "string"
+    }
+  },
+  "required": [
+    "limit",
+    "requests_in_window",
+    "token_prefix"
+  ],
+  "title": "RateLimitExceededPayload",
+  "type": "object"
+}

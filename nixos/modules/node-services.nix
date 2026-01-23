@@ -5,7 +5,7 @@ with lib;
 let
   cfg = config.services.sinex;
   coreCfg = cfg.core;
-  nodesCfg = cfg.nodes;
+  nodesCfg = cfg.satellites;
 
   sinexEnabled = cfg.enable;
   coreEnabled = sinexEnabled && coreCfg.enable;
@@ -350,7 +350,7 @@ in
   config = mkMerge [
     (mkIf sinexEnabled {
       systemd.services = mkMerge [ coreServices nodeservices automataServices ];
-      services.sinex.nodes.generatedUnits = generatedUnits;
+      services.sinex.satellites.generatedUnits = generatedUnits;
     })
   ];
 }

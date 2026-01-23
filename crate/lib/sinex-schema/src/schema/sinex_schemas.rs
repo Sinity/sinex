@@ -4,7 +4,7 @@
 //! that are responsible for managing the system's "meta-layer". This includes:
 //! - Data contracts for event payloads (`event_payload_schemas`).
 //! - Manifests for the processors that interpret data (`processor_manifests`).
-//! - Sources for discovering schemas via GitOps (`gitops_schema_sources`).
+//! - Sources for discovering schemas via GitOps (`gitops_schema_sources` - aspirational, see docs).
 //! - Caching for validation results (`validation_cache`).
 
 use crate::schema::{Events, TableDef};
@@ -277,6 +277,9 @@ impl ProcessorManifests {
 /// or updated schema files (e.g., `.json` files), and automatically register
 /// them in the `event_payload_schemas` table. This enables a fully automated,
 /// CI/CD-driven workflow for managing data contracts.
+///
+/// **STATUS:** Aspirational (table defined, no sync implementation).
+/// See `crate/lib/sinex-schema/docs/gitops-schema-sources-status.md` for roadmap.
 #[derive(Iden, Copy, Clone)]
 pub enum GitopsSchemaSources {
     Table,

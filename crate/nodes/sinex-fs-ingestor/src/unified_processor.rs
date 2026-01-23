@@ -1041,11 +1041,10 @@ mod tests {
 
         AcquisitionManager::bootstrap_streams(&nats_client).await?;
 
-        let acquisition = Arc::new(AcquisitionManager::new(
+        let acquisition = Arc::new(AcquisitionManager::with_defaults(
             nats_client,
-            RotationPolicy::default(),
-            "filesystem".to_string(),
-            "/tmp".to_string(),
+            "filesystem",
+            "/tmp",
         ));
 
         let (event_tx, mut event_rx) =

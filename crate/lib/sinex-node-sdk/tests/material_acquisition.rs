@@ -31,13 +31,8 @@ async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
     AcquisitionManager::bootstrap_streams(&nats_client).await?;
 
     // Create AcquisitionManager
-    let rotation_policy = RotationPolicy::default();
-    let manager = AcquisitionManager::new(
-        nats_client.clone(),
-        rotation_policy,
-        "test-source".to_string(),
-        "/test/path".to_string(),
-    );
+    let manager =
+        AcquisitionManager::with_defaults(nats_client.clone(), "test-source", "/test/path");
 
     // Begin material
     let mut handle = manager.begin_material("test-identifier").await?;
@@ -117,13 +112,8 @@ async fn material_acquisition_cancel_mid_slice(ctx: TestContext) -> Result<()> {
     let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
     AcquisitionManager::bootstrap_streams(&nats_client).await?;
 
-    let rotation_policy = RotationPolicy::default();
-    let manager = AcquisitionManager::new(
-        nats_client.clone(),
-        rotation_policy,
-        "cancel-source".to_string(),
-        "/cancel/path".to_string(),
-    );
+    let manager =
+        AcquisitionManager::with_defaults(nats_client.clone(), "cancel-source", "/cancel/path");
 
     let mut handle = manager.begin_material("cancel-identifier").await?;
     let material_id = handle.material_id;
@@ -473,13 +463,8 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
     nats.wait_for_stream(&js, &ingest_handle.stream_name, Duration::from_secs(10))
         .await?;
 
-    let rotation_policy = RotationPolicy::default();
-    let manager = AcquisitionManager::new(
-        nats_client.clone(),
-        rotation_policy,
-        "restart-test".to_string(),
-        "/restart".to_string(),
-    );
+    let manager =
+        AcquisitionManager::with_defaults(nats_client.clone(), "restart-test", "/restart");
 
     let mut handle = manager
         .begin_material(&format!("restart-session-{run_suffix}"))
@@ -624,12 +609,9 @@ async fn material_acquisition_concurrent_sessions_isolated(mut ctx: TestContext)
     nats.wait_for_stream(&js, &ingest_handle.stream_name, Duration::from_secs(10))
         .await?;
 
-    let rotation_policy = RotationPolicy::default();
     let futures = (0..4).map(|idx| {
-        let policy = rotation_policy.clone();
-        let manager = AcquisitionManager::new(
+        let manager = AcquisitionManager::with_defaults(
             nats_client.clone(),
-            policy,
             format!("concurrent-{idx}"),
             format!("/concurrent/{idx}"),
         );
@@ -711,12 +693,8 @@ async fn material_acquisition_rotation_by_size(ctx: TestContext) -> Result<()> {
         overlap_duration_ms: 100,
     };
 
-    let manager = AcquisitionManager::new(
-        nats_client.clone(),
-        rotation_policy,
-        "test-rotation".to_string(),
-        "/test/rotation".to_string(),
-    );
+    let manager =
+        AcquisitionManager::with_defaults(nats_client.clone(), "test-rotation", "/test/rotation");
 
     // Use AppendStreamAcquirer for automatic rotation
     let mut acquirer = sinex_node_sdk::AppendStreamAcquirer::new(std::sync::Arc::new(manager));

@@ -1,7 +1,7 @@
 //! Database migration utilities for SeaORM integration
 
 use color_eyre::eyre::Result;
-use sea_orm_migration::{prelude::*, MigratorTrait};
+use sea_orm_migration::MigratorTrait;
 use sinex_schema;
 use sqlx::PgPool;
 

@@ -482,43 +482,45 @@ struct SchemaRecord {
 }
 #[cfg(feature = "sqlx")]
 async fn fetch_latest_active_schemas(pool: &DbPool) -> Result<Vec<SchemaRecord>> {
-    sqlx::query_as!(
-        SchemaRecord,
-        r#"
-        SELECT DISTINCT ON (source, event_type)
-            id::uuid as "id!: Ulid",
-            source,
-            event_type,
-            schema_version,
-            schema_content as "schema_content!"
-        FROM sinex_schemas.event_payload_schemas
-        WHERE is_active = true
-        ORDER BY source, event_type, updated_at DESC, schema_version DESC
-        "#
-    )
-    .fetch_all(pool)
-    .await
-    .wrap_err("failed to load active schemas for EventValidator")
+    use crate::db::repositories::DbPoolExt;
+
+    let cached_schemas = pool
+        .schema_cache()
+        .fetch_latest_active_schemas()
+        .await
+        .wrap_err("failed to load active schemas for EventValidator")?;
+
+    Ok(cached_schemas
+        .into_iter()
+        .map(|s| SchemaRecord {
+            id: s.id,
+            source: s.source,
+            event_type: s.event_type,
+            schema_version: s.schema_version,
+            schema_content: s.schema_content,
+        })
+        .collect())
 }
 #[cfg(feature = "sqlx")]
 async fn fetch_all_active_schemas(pool: &DbPool) -> Result<Vec<SchemaRecord>> {
-    sqlx::query_as!(
-        SchemaRecord,
-        r#"
-        SELECT 
-            id::uuid as "id!: Ulid",
-            source,
-            event_type,
-            schema_version,
-            schema_content as "schema_content!"
-        FROM sinex_schemas.event_payload_schemas
-        WHERE is_active = true
-        ORDER BY source, event_type, schema_version
-        "#
-    )
-    .fetch_all(pool)
-    .await
-    .wrap_err("failed to load schema versions")
+    use crate::db::repositories::DbPoolExt;
+
+    let cached_schemas = pool
+        .schema_cache()
+        .fetch_all_active_schemas()
+        .await
+        .wrap_err("failed to load schema versions")?;
+
+    Ok(cached_schemas
+        .into_iter()
+        .map(|s| SchemaRecord {
+            id: s.id,
+            source: s.source,
+            event_type: s.event_type,
+            schema_version: s.schema_version,
+            schema_content: s.schema_content,
+        })
+        .collect())
 }
 fn compile_schemas(
     schemas: Vec<SchemaRecord>,

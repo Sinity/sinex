@@ -130,6 +130,8 @@ async fn create_checkpoint_kv(transport: &EventTransport) -> NodeResult<kv::Stor
 
     let js = async_nats::jetstream::new(client);
     let env = sinex_core::environment();
+    // nats_kv_bucket_name() returns base_name (e.g. "dev_sinex_checkpoints")
+    // We need to prepend "KV_" prefix for NATS bucket naming
     let bucket = format!("KV_{}", env.nats_kv_bucket_name("sinex_checkpoints"));
     let kv_store = match js
         .create_key_value(kv::Config {
@@ -154,6 +156,7 @@ async fn maybe_start_schema_listener(
 ) -> NodeResult<(
     Option<Arc<SchemaBroadcastCache>>,
     Option<Arc<crate::schema_validator::NodeSchemaValidator>>,
+    Option<tokio::task::JoinHandle<()>>,
 )> {
     // Enable schema cache and validation when infrastructure is available.
     // Schemas are broadcast from ingestd and stored in NATS KV.
@@ -168,18 +171,20 @@ async fn maybe_start_schema_listener(
         Ok(sub) => sub,
         Err(e) => {
             debug!("Schema broadcast subscription unavailable (edge mode): {e}");
-            return Ok((None, None));
+            return Ok((None, None, None));
         }
     };
     let mut sub = sub;
 
     // Get KV bucket for fetching full schemas - if unavailable, skip schema validation
     let js = async_nats::jetstream::new(client);
-    let kv = match js.get_key_value("KV_sinex_schemas").await {
+    let env = sinex_core::environment();
+    let schema_bucket = format!("KV_{}", env.nats_kv_bucket_name("sinex_schemas"));
+    let kv = match js.get_key_value(&schema_bucket).await {
         Ok(kv) => kv,
         Err(e) => {
             debug!("Schema KV bucket unavailable (edge mode): {e}");
-            return Ok((None, None));
+            return Ok((None, None, None));
         }
     };
 
@@ -190,7 +195,7 @@ async fn maybe_start_schema_listener(
     let validator_clone = validator.clone();
 
     // Background task to update cache and validator
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         while let Some(msg) = sub.next().await {
             match serde_json::from_slice::<Vec<SchemaBroadcastEntry>>(&msg.payload) {
                 Ok(entries) => {
@@ -212,6 +217,7 @@ async fn maybe_start_schema_listener(
                 }
             }
         }
+        debug!("Schema broadcast listener task ended");
     });
 
     info!(
@@ -219,7 +225,7 @@ async fn maybe_start_schema_listener(
         subject
     );
 
-    Ok((Some(cache), Some(validator)))
+    Ok((Some(cache), Some(validator), Some(handle)))
 }
 
 /// Report from a completed scan operation
@@ -407,6 +413,7 @@ pub struct NodeRunner<T: Node> {
     shutdown_receiver: Option<tokio::sync::oneshot::Receiver<()>>,
     event_processor_handle: Option<tokio::task::JoinHandle<NodeResult<()>>>,
     event_processor_shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+    schema_listener_handle: Option<tokio::task::JoinHandle<()>>,
     processing_model: ProcessingModel,
     leader_state: Option<LeaderState>,
 }
@@ -429,6 +436,7 @@ impl<T: Node + 'static> NodeRunner<T> {
             shutdown_receiver: None,
             event_processor_handle: None,
             event_processor_shutdown: None,
+            schema_listener_handle: None,
             processing_model: ProcessingModel::StatelessWorker,
             leader_state: None,
         }
@@ -480,15 +488,17 @@ impl<T: Node + 'static> NodeRunner<T> {
         let transport_clone_for_runner = transport.clone();
 
         let kv_store = create_checkpoint_kv(&transport).await?;
-        let kv_store = create_checkpoint_kv(&transport).await?;
 
         #[cfg(feature = "messaging")]
-        let (schema_cache, schema_validator) = maybe_start_schema_listener(&transport).await?;
+        let (schema_cache, schema_validator, schema_listener_handle) =
+            maybe_start_schema_listener(&transport).await?;
         #[cfg(not(feature = "messaging"))]
-        let (schema_cache, schema_validator) = (
+        let (schema_cache, schema_validator, schema_listener_handle) = (
             Option::<Arc<crate::runtime::stream::SchemaBroadcastCache>>::None,
             Option::<()>::None,
+            Option::<tokio::task::JoinHandle<()>>::None,
         );
+        self.schema_listener_handle = schema_listener_handle;
 
         // Start checkpoint cleanup background task if enabled
         // Start checkpoint cleanup background task if enabled
@@ -1172,12 +1182,21 @@ impl<T: Node + 'static> NodeRunner<T> {
     /// Graceful shutdown
     pub async fn shutdown(&mut self) -> NodeResult<()> {
         info!("Shutting down stream processor runner");
+
+        // Abort schema listener task if running
+        if let Some(handle) = self.schema_listener_handle.take() {
+            handle.abort();
+            debug!("Aborted schema broadcast listener task");
+        }
+
+        // Clean up leader state
         if let Some(state) = self.leader_state.take() {
             state.heartbeat_handle.abort();
             if let Err(err) = state.kv_client.release_leadership(&state.instance_id).await {
                 warn!(error = %err, "Failed to release leadership on shutdown");
             }
         }
+
         self.node.shutdown().await
     }
 }

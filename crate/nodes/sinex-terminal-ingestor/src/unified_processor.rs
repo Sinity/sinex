@@ -33,7 +33,7 @@ use tokio::{
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
     sync::{watch, Mutex},
 };
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, info, warn};
 use validator::ValidationError;
 
 const MATERIAL_REASON_HISTORY: &str = "terminal-history";

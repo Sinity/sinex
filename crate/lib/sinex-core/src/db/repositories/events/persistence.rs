@@ -7,9 +7,59 @@ use crate::types::error::SinexError;
 use crate::types::{Id, Ulid};
 use crate::EventRecord;
 use chrono::{DateTime, Timelike, Utc};
+use serde::{Deserialize, Serialize};
 use sqlx::{Executor, FromRow, PgPool, Postgres, QueryBuilder, Transaction};
 use tracing::instrument;
 use uuid::Uuid;
+
+/// Lightweight DTO for stream batch inserts from ingestd.
+///
+/// This struct provides a minimal representation of event data for high-throughput
+/// batch inserts, avoiding the overhead of the full `Event<T>` type tree.
+/// All fields are pre-validated and pre-parsed by the caller.
+#[derive(Debug, Clone)]
+pub struct StreamBatchRow {
+    /// Pre-parsed ULID for the event
+    pub id: Ulid,
+    /// Event source identifier
+    pub source: String,
+    /// Event type identifier
+    pub event_type: String,
+    /// Pre-parsed timestamp
+    pub ts_orig: DateTime<Utc>,
+    /// Hostname where event originated
+    pub host: String,
+    /// Event payload as JSON
+    pub payload: JsonValue,
+    /// Source material ID (for material provenance)
+    pub source_material_id: Option<Uuid>,
+    /// Anchor byte offset into source material
+    pub anchor_byte: Option<i64>,
+    /// Start offset within source material
+    pub offset_start: Option<i64>,
+    /// End offset within source material
+    pub offset_end: Option<i64>,
+    /// Offset kind (e.g., "byte", "line")
+    pub offset_kind: Option<String>,
+    /// Parent event IDs (for synthesis provenance)
+    pub source_event_ids: Option<Vec<Uuid>>,
+    /// Schema ID for payload validation
+    pub payload_schema_id: Option<Uuid>,
+    /// Version of the ingestor that produced this event
+    pub ingestor_version: Option<String>,
+    /// Associated blob IDs
+    pub associated_blob_ids: Option<Vec<Uuid>>,
+}
+
+/// Result of a stream batch insert operation.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct StreamBatchInsertResult {
+    /// Number of rows successfully inserted
+    pub inserted_count: usize,
+    /// IDs of events that were actually inserted (excludes conflicts).
+    /// Only populated when using ON CONFLICT DO NOTHING.
+    pub inserted_ids: Option<Vec<Ulid>>,
+}
 
 /// Event repository for database operations
 pub struct EventRepository<'a> {
@@ -884,6 +934,133 @@ impl<'a> EventRepository<'a> {
         })?;
 
         Ok(events)
+    }
+
+    // ========== Stream Batch Insert (for ingestd) ==========
+
+    /// Insert a batch of pre-validated events from the stream consumer.
+    ///
+    /// This method is optimized for high-throughput ingestion from JetStream.
+    /// It uses `ON CONFLICT DO NOTHING` to handle duplicate IDs gracefully
+    /// and returns the IDs of events that were actually inserted.
+    ///
+    /// Unlike `insert_batch`, this method:
+    /// - Accepts pre-parsed/pre-validated data via `StreamBatchRow`
+    /// - Uses `ON CONFLICT DO NOTHING` instead of failing on duplicates
+    /// - Returns which IDs were inserted vs skipped
+    ///
+    /// # Arguments
+    /// * `batch` - Slice of pre-validated event rows
+    ///
+    /// # Returns
+    /// * `StreamBatchInsertResult` with inserted count and IDs
+    #[instrument(skip(self, batch), fields(batch_size = batch.len()))]
+    pub async fn insert_stream_batch(
+        &self,
+        batch: &[StreamBatchRow],
+    ) -> DbResult<StreamBatchInsertResult> {
+        if batch.is_empty() {
+            return Ok(StreamBatchInsertResult::default());
+        }
+
+        // Build vectors for QueryBuilder
+        let mut ids = Vec::with_capacity(batch.len());
+        let mut sources = Vec::with_capacity(batch.len());
+        let mut event_types = Vec::with_capacity(batch.len());
+        let mut ts_orig_values = Vec::with_capacity(batch.len());
+        let mut ts_orig_subnanos = Vec::with_capacity(batch.len());
+        let mut hosts = Vec::with_capacity(batch.len());
+        let mut payloads = Vec::with_capacity(batch.len());
+        let mut source_material_ids = Vec::with_capacity(batch.len());
+        let mut anchor_bytes = Vec::with_capacity(batch.len());
+        let mut offset_starts = Vec::with_capacity(batch.len());
+        let mut offset_ends = Vec::with_capacity(batch.len());
+        let mut offset_kinds = Vec::with_capacity(batch.len());
+        let mut source_event_ids = Vec::with_capacity(batch.len());
+        let mut payload_schema_ids = Vec::with_capacity(batch.len());
+        let mut ingestor_versions = Vec::with_capacity(batch.len());
+        let mut associated_blob_ids = Vec::with_capacity(batch.len());
+
+        for row in batch {
+            // Postgres timestamps are microsecond precision. Store sub-microsecond
+            // remainder separately so we can reconstruct full nanosecond timestamps.
+            let ts_orig_subnano = (row.ts_orig.nanosecond() % 1_000) as i32;
+            let ts_truncated = {
+                let truncated_nano = (row.ts_orig.nanosecond() / 1_000) * 1_000;
+                row.ts_orig
+                    .with_nanosecond(truncated_nano)
+                    .unwrap_or(row.ts_orig)
+            };
+
+            ids.push(row.id.as_uuid());
+            sources.push(row.source.clone());
+            event_types.push(row.event_type.clone());
+            ts_orig_values.push(ts_truncated);
+            ts_orig_subnanos.push(ts_orig_subnano);
+            hosts.push(row.host.clone());
+            payloads.push(row.payload.clone());
+            source_material_ids.push(row.source_material_id);
+            anchor_bytes.push(row.anchor_byte);
+            offset_starts.push(row.offset_start);
+            offset_ends.push(row.offset_end);
+            offset_kinds.push(row.offset_kind.clone());
+            source_event_ids.push(row.source_event_ids.clone());
+            payload_schema_ids.push(row.payload_schema_id);
+            ingestor_versions.push(row.ingestor_version.clone());
+            associated_blob_ids.push(row.associated_blob_ids.clone());
+        }
+
+        // Build INSERT with VALUES using QueryBuilder (required for ragged arrays)
+        let mut builder = QueryBuilder::new(
+            "INSERT INTO core.events (
+                id, source, event_type, ts_orig, ts_orig_subnano, host, payload,
+                source_material_id, anchor_byte, offset_start, offset_end, offset_kind,
+                source_event_ids, payload_schema_id, ingestor_version, associated_blob_ids
+            ) ",
+        );
+
+        builder.push_values(0..batch.len(), |mut b, idx| {
+            b.push_bind(&ids[idx]).push_unseparated("::uuid::ulid");
+            b.push_bind(&sources[idx]);
+            b.push_bind(&event_types[idx]);
+            b.push_bind(&ts_orig_values[idx]);
+            b.push_bind(&ts_orig_subnanos[idx]);
+            b.push_bind(&hosts[idx]);
+            b.push_bind(&payloads[idx]);
+            b.push_bind(&source_material_ids[idx])
+                .push_unseparated("::uuid::ulid");
+            b.push_bind(&anchor_bytes[idx]);
+            b.push_bind(&offset_starts[idx]);
+            b.push_bind(&offset_ends[idx]);
+            b.push_bind(&offset_kinds[idx]);
+            b.push_bind(&source_event_ids[idx])
+                .push_unseparated("::uuid[]::ulid[]");
+            b.push_bind(&payload_schema_ids[idx])
+                .push_unseparated("::uuid::ulid");
+            b.push_bind(&ingestor_versions[idx]);
+            b.push_bind(&associated_blob_ids[idx])
+                .push_unseparated("::uuid[]::ulid[]");
+        });
+
+        builder.push(" ON CONFLICT (id) DO NOTHING RETURNING id::uuid");
+
+        let rows: Vec<(Uuid,)> = builder
+            .build_query_as()
+            .fetch_all(self.pool)
+            .await
+            .map_err(|e| {
+                db_error(
+                    e,
+                    &format!("Failed to insert stream batch of {} events", batch.len()),
+                )
+            })?;
+
+        let inserted_ids: Vec<Ulid> = rows.into_iter().map(|(uuid,)| Ulid::from(uuid)).collect();
+
+        Ok(StreamBatchInsertResult {
+            inserted_count: inserted_ids.len(),
+            inserted_ids: Some(inserted_ids),
+        })
     }
 
     // ========== Event Annotations ==========

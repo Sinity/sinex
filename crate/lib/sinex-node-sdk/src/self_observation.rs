@@ -37,7 +37,7 @@ use sinex_core::types::events::payloads::{
 use sinex_core::{EventId, Provenance, Ulid};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
 
@@ -54,8 +54,8 @@ pub struct SelfObserver {
     subject_prefix: String,
     /// Whether self-observation is enabled
     enabled: bool,
-    /// Emission interval tracking
-    last_emission: Arc<RwLock<std::time::Instant>>,
+    /// Per-metric emission tracking (metric_key -> last_emission_time)
+    metric_emissions: Arc<RwLock<HashMap<String, Instant>>>,
     /// Minimum interval between emissions (rate limiting)
     min_interval: Duration,
 }
@@ -113,7 +113,7 @@ impl SelfObserver {
             component: config.component,
             subject_prefix: config.subject_prefix,
             enabled: config.enabled,
-            last_emission: Arc::new(RwLock::new(std::time::Instant::now())),
+            metric_emissions: Arc::new(RwLock::new(HashMap::new())),
             min_interval: config.min_emission_interval,
         }
     }
@@ -125,7 +125,7 @@ impl SelfObserver {
             component: "disabled".to_string(),
             subject_prefix: "sinex.telemetry".to_string(),
             enabled: false,
-            last_emission: Arc::new(RwLock::new(std::time::Instant::now())),
+            metric_emissions: Arc::new(RwLock::new(HashMap::new())),
             min_interval: Duration::from_secs(1),
         }
     }
@@ -153,24 +153,31 @@ impl SelfObserver {
             return Ok(());
         }
 
-        // Rate limiting check
-        {
-            let last = self.last_emission.read().await;
-            if last.elapsed() < self.min_interval {
-                debug!("Self-observation rate limited, skipping emission");
-                return Ok(());
-            }
-        }
-
-        // Update last emission time
-        {
-            let mut last = self.last_emission.write().await;
-            *last = std::time::Instant::now();
-        }
-
         let event = Event::new(payload, self.self_provenance())
             .to_json_event()
             .map_err(|e| SelfObservationError::Serialization(e.to_string()))?;
+
+        let metric_key = event.event_type.to_string();
+
+        // Per-metric rate limiting check
+        {
+            let emissions = self.metric_emissions.read().await;
+            if let Some(last) = emissions.get(&metric_key) {
+                if last.elapsed() < self.min_interval {
+                    debug!(
+                        event_type = %metric_key,
+                        "Self-observation rate limited for this metric, skipping emission"
+                    );
+                    return Ok(());
+                }
+            }
+        }
+
+        // Update last emission time for this metric
+        {
+            let mut emissions = self.metric_emissions.write().await;
+            emissions.insert(metric_key.clone(), Instant::now());
+        }
 
         let subject = format!("{}.{}", self.subject_prefix, self.component);
         let data = serde_json::to_vec(&event)

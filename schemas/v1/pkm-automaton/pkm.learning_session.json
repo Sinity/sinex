@@ -1,0 +1,45 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Learning session tracking",
+  "properties": {
+    "activity_count": {
+      "format": "uint",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "analysis_type": {
+      "type": "string"
+    },
+    "duration_minutes": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "end_time": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "generated_at": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "intensity": {
+      "format": "double",
+      "type": "number"
+    },
+    "start_time": {
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "required": [
+    "activity_count",
+    "analysis_type",
+    "duration_minutes",
+    "end_time",
+    "generated_at",
+    "intensity",
+    "start_time"
+  ],
+  "title": "PKMLearningSessionPayload",
+  "type": "object"
+}

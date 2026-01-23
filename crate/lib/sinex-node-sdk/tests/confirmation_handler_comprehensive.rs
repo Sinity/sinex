@@ -87,7 +87,10 @@ async fn add_duplicate_event_overwrites_existing() -> TestResult<()> {
     assert_eq!(buffer.len().await, 1);
 
     // Confirm should return the second event (overwrite)
-    let confirmed = buffer.confirm(event_id.into()).await.expect("Should confirm");
+    let confirmed = buffer
+        .confirm(event_id.into())
+        .await
+        .expect("Should confirm");
     assert_eq!(confirmed.source, "source2".into());
     assert_eq!(confirmed.event_type, "type2".into());
 

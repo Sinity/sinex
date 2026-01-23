@@ -160,6 +160,7 @@ impl JetStreamEventConsumer {
             )
             .await
         });
+        let provisional_abort = provisional_task.abort_handle();
 
         let confirmations_buffer = self.confirmation_buffer.clone();
         let running_confirmations = self.running.clone();
@@ -173,6 +174,7 @@ impl JetStreamEventConsumer {
             )
             .await
         });
+        let confirmation_abort = confirmation_task.abort_handle();
 
         let timeout_buffer = self.confirmation_buffer.clone();
         let provisional_handler_timeout = self.provisional_handler.clone();
@@ -188,16 +190,26 @@ impl JetStreamEventConsumer {
             )
             .await
         });
+        let timeout_abort = timeout_task.abort_handle();
 
         tokio::select! {
             result = provisional_task => {
                 error!("Provisional events task stopped: {:?}", result);
+                // Abort remaining tasks
+                confirmation_abort.abort();
+                timeout_abort.abort();
             }
             result = confirmation_task => {
                 error!("Confirmation task stopped: {:?}", result);
+                // Abort remaining tasks
+                provisional_abort.abort();
+                timeout_abort.abort();
             }
             result = timeout_task => {
                 error!("Timeout check task stopped: {:?}", result);
+                // Abort remaining tasks
+                provisional_abort.abort();
+                confirmation_abort.abort();
             }
         }
 

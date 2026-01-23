@@ -41,6 +41,6 @@
   "required": [
     "service_name"
   ],
-  "title": "SatelliteHeartbeatPayload",
+  "title": "NodeHeartbeatPayload",
   "type": "object"
 }

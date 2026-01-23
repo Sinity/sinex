@@ -116,7 +116,7 @@ mod tests {
         let js = async_nats::jetstream::new(nats_client);
         let kv = js
             .create_key_value(async_nats::jetstream::kv::Config {
-                bucket: env.nats_kv_bucket_name("sinex_checkpoints"),
+                bucket: "sinex_checkpoints".to_string(),
                 history: 1,
                 ..Default::default()
             })
@@ -381,6 +381,7 @@ pub struct NodeCoordination {
     handoff_receiver: Option<mpsc::Receiver<HandoffRequest>>,
     work_tracker: Arc<RwLock<WorkTracker>>,
     leadership_failures: CoordinationPrimitive,
+    handoff_drops: CoordinationPrimitive,
 }
 
 impl NodeCoordination {
@@ -415,6 +416,7 @@ impl NodeCoordination {
                 0,
                 "coordination_leadership_failures",
             ),
+            handoff_drops: CoordinationPrimitive::event_counter(0, "coordination_handoff_drops"),
         })
     }
 
@@ -562,6 +564,7 @@ impl NodeCoordination {
         let nats_clone = self.nats_client.clone();
         let service_name_clone = self.instance.service_name.clone();
         let handoff_sender_clone = handoff_sender.clone();
+        let handoff_drops_clone = self.handoff_drops.clone();
 
         // Issue 12 fix: Monitor spawned task health
         let service_name_health = self.instance.service_name.clone();
@@ -571,7 +574,13 @@ impl NodeCoordination {
                 Ok(mut sub) => {
                     while let Some(msg) = sub.next().await {
                         if let Ok(req) = serde_json::from_slice::<HandoffRequest>(&msg.payload) {
-                            let _ = handoff_sender_clone.send(req).await;
+                            if let Err(_) = handoff_sender_clone.send(req).await {
+                                handoff_drops_clone.add(1);
+                                warn!(
+                                    handoff_drops = handoff_drops_clone.get(),
+                                    "Handoff channel backpressure: dropped handoff request"
+                                );
+                            }
                         }
                     }
                     // Normal completion

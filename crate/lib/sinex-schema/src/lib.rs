@@ -48,6 +48,8 @@ impl MigratorTrait for Migrator {
             Box::new(migrations::m20250121_000013_fix_partitioning::Migration),
             Box::new(migrations::m20260121_000014_add_jsonb_merge_function::Migration),
             Box::new(migrations::m20260121_000015_drop_payload_expensive_indexes::Migration),
+            Box::new(migrations::m20260122_000016_add_embeddings::Migration),
+            Box::new(migrations::m20260122_000017_add_user_state_aggregates::Migration),
         ]
     }
 }

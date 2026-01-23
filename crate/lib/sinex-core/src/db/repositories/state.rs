@@ -214,11 +214,9 @@ impl<'a> StateRepository<'a> {
     /// Validate a ReplayScope JSON object
     pub fn validate_replay_scope(scope: &JsonValue) -> DbResult<()> {
         // Required fields for replay scope
-        if !scope.is_object() {
-            return Err(SinexError::validation("ReplayScope must be a JSON object"));
-        }
-
-        let obj = scope.as_object().unwrap();
+        let obj = scope
+            .as_object()
+            .ok_or_else(|| SinexError::validation("ReplayScope must be a JSON object"))?;
 
         // Check required fields
         if !obj.contains_key("target_type") {
@@ -343,6 +341,20 @@ impl<'a> StateRepository<'a> {
         .await?;
 
         Ok(result)
+    }
+
+    /// Check if an operation exists by ID (lightweight check without full record fetch)
+    pub async fn operation_exists(&self, id: &Id<Operation>) -> DbResult<bool> {
+        Self::validate_operation_id(id)?;
+        let exists = sqlx::query_scalar!(
+            r#"SELECT EXISTS(SELECT 1 FROM core.operations_log WHERE id::uuid = $1::uuid) as "exists!""#,
+            id.to_uuid()
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|e| db_error(e, "check operation exists"))?;
+
+        Ok(exists)
     }
 
     /// Get operation by ID

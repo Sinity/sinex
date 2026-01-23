@@ -229,6 +229,18 @@ impl<T> Event<T> {
 
 impl<T: Serialize> Event<T> {
     /// Convert to Event<JsonValue> (type erasure)
+    ///
+    /// This conversion erases the payload type parameter but **preserves the event ID**.
+    /// If the event has an ID, it will be carried over to the JsonValue variant.
+    /// This ensures ID stability across type boundaries, which is critical for
+    /// event tracking, provenance chains, and database operations.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let typed_event: Event<MyPayload> = Event::new(payload, provenance);
+    /// let json_event: Event<JsonValue> = typed_event.to_json_event()?;
+    /// // json_event.id == typed_event.id (if set)
+    /// ```
     pub fn to_json_event(self) -> Result<Event<JsonValue>, serde_json::Error> {
         Ok(Event {
             id: self.id.map(|id| Id::from_ulid(*id.as_ulid())),
@@ -248,6 +260,18 @@ impl<T: Serialize> Event<T> {
 
 impl Event<JsonValue> {
     /// Try to convert to typed event (type recovery)
+    ///
+    /// This conversion recovers the typed payload from JsonValue while **preserving the event ID**.
+    /// If the event has an ID, it will be carried over to the typed variant. This is essential
+    /// for maintaining event identity when deserializing from the database or when converting
+    /// between typed representations.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let json_event: Event<JsonValue> = fetch_from_db().await?;
+    /// let typed_event: Event<MyPayload> = json_event.to_typed()?;
+    /// // typed_event.id == json_event.id (if set)
+    /// ```
     pub fn to_typed<T>(&self) -> Result<Event<T>, serde_json::Error>
     where
         T: for<'de> Deserialize<'de>,

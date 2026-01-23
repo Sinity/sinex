@@ -7,7 +7,7 @@ use mimalloc::MiMalloc;
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
-use sinex_processor_runtime::processor_main;
 use sinex_content_automaton::ContentAutomatonNode;
+use sinex_processor_runtime::processor_main;
 
 processor_main!(ContentAutomatonNode);

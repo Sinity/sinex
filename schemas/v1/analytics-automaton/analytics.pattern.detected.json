@@ -1,0 +1,40 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Pattern detection event",
+  "properties": {
+    "avg_delta_ms": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "from_event": {
+      "type": "string"
+    },
+    "last_seen": {
+      "format": "date-time",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "occurrences": {
+      "format": "uint",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "pattern_type": {
+      "type": "string"
+    },
+    "to_event": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "avg_delta_ms",
+    "from_event",
+    "occurrences",
+    "pattern_type",
+    "to_event"
+  ],
+  "title": "AnalyticsPatternDetectedPayload",
+  "type": "object"
+}

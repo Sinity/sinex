@@ -5,7 +5,7 @@
       "format": "date-time",
       "type": "string"
     },
-    "satellite": {
+    "node": {
       "type": "string"
     },
     "sensor": {
@@ -14,7 +14,7 @@
   },
   "required": [
     "activation_time",
-    "satellite",
+    "node",
     "sensor"
   ],
   "title": "SensorActivatedPayload",

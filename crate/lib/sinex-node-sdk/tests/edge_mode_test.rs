@@ -10,8 +10,8 @@ use sinex_node_sdk::{
     checkpoint::CheckpointManager,
     nats_publisher::NatsPublisher,
     stream_processor::{
-        EventEmitter, Node, NodeCapabilities, NodeHandles, NodeInitContext, NodeType,
-        SchemaBroadcastEntry, NodeRunner,
+        EventEmitter, Node, NodeCapabilities, NodeHandles, NodeInitContext, NodeRunner, NodeType,
+        SchemaBroadcastEntry,
     },
     EventTransport, NodeResult,
 };

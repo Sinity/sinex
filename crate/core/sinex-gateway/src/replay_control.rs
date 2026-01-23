@@ -631,10 +631,10 @@ impl ReplayTelemetry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_core::db::ulid_to_uuid;
     use chrono::Duration as ChronoDuration;
     use serde_json::json;
-    use sinex_core::{types::ulid::Ulid, DbPool};
+    use sinex_core::db::repositories::DbPoolExt;
+    use sinex_core::{types::ulid::Ulid, DbPool, Id};
     use sinex_test_utils::{sinex_test, EphemeralNats, TestContext};
     use tokio::time::sleep;
 
@@ -648,15 +648,9 @@ mod tests {
     }
 
     async fn wait_for_operation(pool: &DbPool, operation_id: Ulid) -> Result<()> {
-        let uuid = ulid_to_uuid(operation_id);
+        let op_id = Id::<Operation>::from_ulid(operation_id);
         for attempt in 0..20 {
-            let exists = sqlx::query_scalar!(
-                "SELECT 1 FROM core.operations_log WHERE id::uuid = $1::uuid",
-                uuid
-            )
-            .fetch_optional(pool)
-            .await?;
-            if exists.is_some() {
+            if pool.state().operation_exists(&op_id).await? {
                 return Ok(());
             }
             sleep(Duration::from_millis(10 * (attempt + 1) as u64)).await;
@@ -665,27 +659,21 @@ mod tests {
             %operation_id,
             "operation record missing; inserting fallback for test context"
         );
-        sqlx::query!(
-            r#"
-            INSERT INTO core.operations_log (
-                id,
-                operation_type,
-                operator,
-                scope,
-                result_status
-            ) VALUES (
-                $1::uuid::ulid,
-                'replay',
-                'test-suite',
-                '{}'::jsonb,
-                'running'
-            )
-            ON CONFLICT (id) DO NOTHING
-            "#,
-            uuid
-        )
-        .execute(pool)
-        .await?;
+        // Fallback: insert a minimal test operation if polling times out via repository
+        use sinex_core::db::repositories::state::Operation;
+        let fallback_operation = Operation {
+            id: Some(Id::from_ulid(operation_id)),
+            operation_type: "replay".to_string(),
+            operator: "test-suite".to_string(),
+            scope: Some(json!({})),
+            result_status: "running".to_string(),
+            result_message: None,
+            preview_summary: None,
+            duration_ms: None,
+        };
+
+        // Insert directly with the specific ID
+        pool.state().log_operation(fallback_operation).await?;
         Ok(())
     }
 

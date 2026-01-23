@@ -8,7 +8,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sinex_node_sdk::simple_node::{SimpleNode, SimpleNodeError};
+use sinex_node_sdk::simple_node::{SimpleNode, SimpleNodeContext, SimpleNodeError};
 use std::collections::HashMap;
 
 // ============================================================================
@@ -124,6 +124,7 @@ impl SimpleNode for GitActivityDetector {
         &mut self,
         state: &mut Self::State,
         input: Self::Input,
+        _context: &SimpleNodeContext,
     ) -> Result<Option<Self::Output>, SimpleNodeError> {
         // Filter: only process git commands
         if !input.command.trim_start().starts_with("git ") {

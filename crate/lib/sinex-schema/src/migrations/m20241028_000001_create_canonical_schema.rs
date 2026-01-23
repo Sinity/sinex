@@ -425,10 +425,6 @@ impl MigrationTrait for Migration {
             .create_table(EventClusterMembers::create_table_statement())
             .await?;
 
-        manager
-            .create_table(TransactionalOutbox::create_table_statement())
-            .await?;
-
         // --- Phase 3: Apply Foreign Keys and Triggers ---
         // This is done after all tables exist to avoid dependency issues.
 
@@ -540,10 +536,6 @@ impl MigrationTrait for Migration {
                 .execute_unprepared(&index_sql)
                 .await?;
         }
-        for index in TransactionalOutbox::create_indexes() {
-            manager.create_index(index).await?;
-        }
-
         for index in EventPayloadSchemas::create_indexes() {
             manager.create_index(index).await?;
         }

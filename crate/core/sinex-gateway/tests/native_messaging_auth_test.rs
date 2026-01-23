@@ -100,7 +100,8 @@ async fn native_messaging_rejects_untrusted_extensions(ctx: TestContext) -> Resu
     let transport = HarnessTransport::new(vec![malicious_request]);
     let probe = transport.clone();
 
-    run_with_transport(services, config, transport).await?;
+    let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    run_with_transport(services, config, transport, shutdown_rx).await?;
 
     let responses = probe.responses().await;
     assert!(
@@ -148,7 +149,8 @@ async fn native_messaging_accepts_trusted_extension_with_secret(ctx: TestContext
     let transport = HarnessTransport::new(vec![request]);
     let probe = transport.clone();
 
-    run_with_transport(services, config, transport).await?;
+    let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    run_with_transport(services, config, transport, shutdown_rx).await?;
 
     let responses = probe.responses().await;
     assert!(!responses.is_empty());
@@ -186,7 +188,8 @@ async fn native_messaging_rejects_missing_secret(ctx: TestContext) -> Result<()>
     let transport = HarnessTransport::new(vec![request]);
     let probe = transport.clone();
 
-    run_with_transport(services, config, transport).await?;
+    let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    run_with_transport(services, config, transport, shutdown_rx).await?;
 
     let responses = probe.responses().await;
     assert!(!responses.is_empty());
@@ -223,7 +226,8 @@ async fn native_messaging_rejects_untrusted_host(ctx: TestContext) -> Result<()>
     let transport = HarnessTransport::new(vec![request]);
     let probe = transport.clone();
 
-    run_with_transport(services, config, transport).await?;
+    let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    run_with_transport(services, config, transport, shutdown_rx).await?;
 
     let responses = probe.responses().await;
     assert!(!responses.is_empty());
@@ -262,7 +266,8 @@ async fn native_messaging_accepts_trusted_host_and_protocol(ctx: TestContext) ->
     let transport = HarnessTransport::new(vec![request]);
     let probe = transport.clone();
 
-    run_with_transport(services, config, transport).await?;
+    let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    run_with_transport(services, config, transport, shutdown_rx).await?;
 
     let responses = probe.responses().await;
     assert!(!responses.is_empty());

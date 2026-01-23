@@ -39,6 +39,22 @@ use state::{
 };
 
 /// Material assembler service
+///
+/// # Lock Contention & Concurrency Model
+///
+/// The assembler uses a per-material isolation strategy to eliminate global lock contention:
+///
+/// - `assembler_state: Arc<DashMap<Ulid, Arc<Mutex<AssemblerState>>>>` provides independent
+///   locking for each material. Materials do not block each other.
+/// - Each material's Mutex lock is held only for state snapshots (~1ms), never during slow I/O.
+/// - Lock-free reads via DashMap::get() for handle retrieval (~100ns).
+/// - Semaphore limits concurrent assemblies to 50 to prevent memory exhaustion.
+///
+/// Critical fix applied in commit c799300cd:
+/// - Locks are explicitly dropped before git-annex imports and database writes.
+/// - This prevents blocking other slice handlers on the same material.
+///
+/// For detailed analysis, see `docs/current/analysis/lock-contention-analysis.md`
 pub struct MaterialAssembler {
     js: jetstream::Context,
     nats_client: NatsClient,
@@ -182,7 +198,7 @@ impl MaterialAssembler {
             pending_end: None,
             finalizing: false,
             last_slice_received: Utc::now(),
-            permit: Some(permit),
+            _permit: Some(permit),
         })
     }
 
@@ -357,7 +373,12 @@ impl MaterialAssembler {
             // Collect stale materials
             for entry in self.assembler_state.iter() {
                 let material_id = *entry.key();
+                let acquire_start = std::time::Instant::now();
                 let state = entry.value().lock().await;
+                let acquire_ms = acquire_start.elapsed().as_millis() as u64;
+                if acquire_ms > 50 {
+                    tracing::warn!(material_id = %material_id, acquire_ms, "Slow lock acquisition in stale assembly check");
+                }
 
                 // Skip if finalizing
                 if state.finalizing {

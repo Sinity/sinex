@@ -1,7 +1,28 @@
 {
   "version": "v1",
-  "generated_at": "2025-11-20T20:45:35.485208430+00:00",
+  "generated_at": "2026-01-22T16:30:37.984910112+00:00",
   "entries": [
+    {
+      "source": "analytics-automaton",
+      "event_type": "analytics.correlation",
+      "version": "1.0.0",
+      "path": "analytics-automaton/analytics.correlation.json",
+      "content_hash": "da0775bb90a800d854d4cffb06cc854f93cff8a9eca0492ff4c0c2ffd717f0c6"
+    },
+    {
+      "source": "analytics-automaton",
+      "event_type": "analytics.frequency",
+      "version": "1.0.0",
+      "path": "analytics-automaton/analytics.frequency.json",
+      "content_hash": "7f7266533a57d667d310e58ce7f7ac2f488b003e1ce1346f4d3e3eced1886874"
+    },
+    {
+      "source": "analytics-automaton",
+      "event_type": "analytics.pattern.detected",
+      "version": "1.0.0",
+      "path": "analytics-automaton/analytics.pattern.detected.json",
+      "content_hash": "7909c310c59e122ad407c497a207fcc127f6cb433e3ff17cc5297df89c9abf60"
+    },
     {
       "source": "atuin",
       "event_type": "entry.imported",
@@ -71,6 +92,27 @@
       "version": "1.0.0",
       "path": "clipboard/clipboard.selected.json",
       "content_hash": "42698a16fd3804b6c6b65b8041c4809726883321d07ece555d8c8c96e82b2239"
+    },
+    {
+      "source": "content-automaton",
+      "event_type": "content.analyzed",
+      "version": "1.0.0",
+      "path": "content-automaton/content.analyzed.json",
+      "content_hash": "a858d38416c3193edb5a328e6b4df7d34fa134af7a907ff1acf06d8572c437ae"
+    },
+    {
+      "source": "content-automaton",
+      "event_type": "content.classified",
+      "version": "1.0.0",
+      "path": "content-automaton/content.classified.json",
+      "content_hash": "7ee0c80528b2358bfd9dfa42cda22880738e1e6c2e2349a05deccf287ff16baa"
+    },
+    {
+      "source": "content-automaton",
+      "event_type": "content.similarity_detected",
+      "version": "1.0.0",
+      "path": "content-automaton/content.similarity_detected.json",
+      "content_hash": "59474bb9f8916537c5bd28e48502df7266d4c1b714f73c2f1b41663f51eeedb4"
     },
     {
       "source": "dbus",
@@ -234,6 +276,27 @@
       "content_hash": "e69622c8a589ba5d3e09dda781760a77c73a9ecbc8986869cd3ddb5d78c66c31"
     },
     {
+      "source": "health-automaton",
+      "event_type": "health.alert",
+      "version": "1.0.0",
+      "path": "health-automaton/health.alert.json",
+      "content_hash": "9747f7072bafe71c151f559f2eafc929b6fddb9d86bda7f769181bc9083caa0a"
+    },
+    {
+      "source": "health-automaton",
+      "event_type": "health.component_report",
+      "version": "1.0.0",
+      "path": "health-automaton/health.component_report.json",
+      "content_hash": "626bf38bc0da910c52d10b736f182eaccaf9c81c3b685c7054d1b75bca210075"
+    },
+    {
+      "source": "health-automaton",
+      "event_type": "health.system_status",
+      "version": "1.0.0",
+      "path": "health-automaton/health.system_status.json",
+      "content_hash": "a4cea1d08f8d152bcb85f7ed21c283896dbea8fc4a4ee3b22f299218688b55c0"
+    },
+    {
       "source": "journald",
       "event_type": "entry.written",
       "version": "1.0.0",
@@ -249,10 +312,10 @@
     },
     {
       "source": "journald",
-      "event_type": "satellite.heartbeat",
+      "event_type": "node.heartbeat",
       "version": "1.0.0",
-      "path": "journald/satellite.heartbeat.json",
-      "content_hash": "5e5ea66aa984bad0106e26e568bc48690e7fa953ae5f664920c96518c4089200"
+      "path": "journald/node.heartbeat.json",
+      "content_hash": "bc21514b109b98015db0cd6914ac024a6308e5e67bff76d57ce899a9134a242a"
     },
     {
       "source": "journald",
@@ -269,6 +332,34 @@
       "content_hash": "a72e67b793ed79f5bd304f6586bb2e2b7e6a387e4216b8926b02e8654c2e6ba0"
     },
     {
+      "source": "pkm-automaton",
+      "event_type": "pkm.knowledge_extraction",
+      "version": "1.0.0",
+      "path": "pkm-automaton/pkm.knowledge_extraction.json",
+      "content_hash": "2de64f146d7c2b8b76bce068cd76a767e616188fad65d50421a6e88019c6bf6b"
+    },
+    {
+      "source": "pkm-automaton",
+      "event_type": "pkm.knowledge_graph",
+      "version": "1.0.0",
+      "path": "pkm-automaton/pkm.knowledge_graph.json",
+      "content_hash": "b251607b562b711816072b734e22e0291a22baf657cbcaf72451db8758326459"
+    },
+    {
+      "source": "pkm-automaton",
+      "event_type": "pkm.learning_session",
+      "version": "1.0.0",
+      "path": "pkm-automaton/pkm.learning_session.json",
+      "content_hash": "38cc4f12cc31952f5f4ff61e9215d3d78c0e97dbb9ddfa5a94bad9bb5da77077"
+    },
+    {
+      "source": "pkm-automaton",
+      "event_type": "pkm.workflow_pattern",
+      "version": "1.0.0",
+      "path": "pkm-automaton/pkm.workflow_pattern.json",
+      "content_hash": "98b035030ae9fa8a94095085aaf434184a0f0054d5ee26add5e3b445caf698d3"
+    },
+    {
       "source": "rpc.content",
       "event_type": "rpc.response",
       "version": "1.0.0",
@@ -281,6 +372,27 @@
       "version": "1.0.0",
       "path": "rpc.pkm/rpc.response.json",
       "content_hash": "7100229b490b69573c569e0be511738ffd16cb87c79e77b257f84e7b80085c5a"
+    },
+    {
+      "source": "search-automaton",
+      "event_type": "search.analytics",
+      "version": "1.0.0",
+      "path": "search-automaton/search.analytics.json",
+      "content_hash": "5c0dc64f8a874fb5b42cbaae8f98c744344694d5bb28cc73bf2c39936ba00461"
+    },
+    {
+      "source": "search-automaton",
+      "event_type": "search.discoverability",
+      "version": "1.0.0",
+      "path": "search-automaton/search.discoverability.json",
+      "content_hash": "da6a1d06af101e320011d219051b6cb5cd5f4522b243637b2339d4986649eb8d"
+    },
+    {
+      "source": "search-automaton",
+      "event_type": "search.index_built",
+      "version": "1.0.0",
+      "path": "search-automaton/search.index_built.json",
+      "content_hash": "8ac04a5abeb202a1346c587be8ef7e0074e86288c2cb22b3663e9f3fdea8b26d"
     },
     {
       "source": "shell",
@@ -403,6 +515,34 @@
     },
     {
       "source": "sinex",
+      "event_type": "health.status",
+      "version": "1.0.0",
+      "path": "sinex/health.status.json",
+      "content_hash": "2547ffc7f2ec106cad2c4b2737ff3bf9ebb22050c3b7e3817478b8bd456ecc94"
+    },
+    {
+      "source": "sinex",
+      "event_type": "metric.counter",
+      "version": "1.0.0",
+      "path": "sinex/metric.counter.json",
+      "content_hash": "53db5c5a0de83bb735c7d869866c0356626ea178b1e7e123ec3a2a6b0c44a8c1"
+    },
+    {
+      "source": "sinex",
+      "event_type": "metric.gauge",
+      "version": "1.0.0",
+      "path": "sinex/metric.gauge.json",
+      "content_hash": "76923e4388ffa051da97e468be0815ad948165db08ba8474f16b0122c78d0bd6"
+    },
+    {
+      "source": "sinex",
+      "event_type": "metric.histogram",
+      "version": "1.0.0",
+      "path": "sinex/metric.histogram.json",
+      "content_hash": "b993ad6bb1a8ab15fba87c448ba42ca6109775283639816207bf374e7ea61804"
+    },
+    {
+      "source": "sinex",
       "event_type": "process.degraded",
       "version": "1.0.0",
       "path": "sinex/process.degraded.json",
@@ -441,21 +581,63 @@
       "event_type": "sensor.activated",
       "version": "1.0.0",
       "path": "sinex/sensor.activated.json",
-      "content_hash": "8225374104549fdfe6068f26b1e32a5c6843bf910d6d90ddbdb6dd597a1a8326"
+      "content_hash": "c83b536819413dca137374b10d3c326f8892c733b22967c750fced343e7a9722"
     },
     {
       "source": "sinex",
       "event_type": "sensor.deactivated",
       "version": "1.0.0",
       "path": "sinex/sensor.deactivated.json",
-      "content_hash": "fa642bcca37b01f6939bae3f1329d764cc97d45607f14051d32c5e1d73aa2023"
+      "content_hash": "ca8acbd48c34e9e2eb373a8806249cd9bd6543fb1750cb9e098ea5a5b64b8abd"
     },
     {
-      "source": "system",
-      "event_type": "journald.historical",
+      "source": "sinex.gateway",
+      "event_type": "pool.stats",
       "version": "1.0.0",
-      "path": "system/journald.historical.json",
-      "content_hash": "2fe0eebe42b86429e2a4197d83e22419bb586d3cbe3c3039a8ef044edb2b1cfa"
+      "path": "sinex.gateway/pool.stats.json",
+      "content_hash": "b818efb75bfb4aa2a02d6f79491563ae8ad6197ae30e83721105ee17523cd409"
+    },
+    {
+      "source": "sinex.gateway",
+      "event_type": "rate_limit.exceeded",
+      "version": "1.0.0",
+      "path": "sinex.gateway/rate_limit.exceeded.json",
+      "content_hash": "fdf3ebb5af1d79dc22df2b48b0472f94a61e11209458db0fb58b24fce7ff0d1b"
+    },
+    {
+      "source": "sinex.gateway",
+      "event_type": "replay.stats",
+      "version": "1.0.0",
+      "path": "sinex.gateway/replay.stats.json",
+      "content_hash": "af2897703adafca04c14227fc6b326a4d4ad3546efe78cfbe490d1f21dcc3ddf"
+    },
+    {
+      "source": "sinex.gateway",
+      "event_type": "request.stats",
+      "version": "1.0.0",
+      "path": "sinex.gateway/request.stats.json",
+      "content_hash": "5eed66f7b4b633da292b77e426913eabdf6abb80bf1fdfbb2e7f65be8cfd5a92"
+    },
+    {
+      "source": "sinex.ingestd",
+      "event_type": "assembly.stats",
+      "version": "1.0.0",
+      "path": "sinex.ingestd/assembly.stats.json",
+      "content_hash": "721eec60592214e699c9a6946b3b67526c4221c460fc8fe9a0cf81e10fef0da6"
+    },
+    {
+      "source": "sinex.ingestd",
+      "event_type": "stream.stats",
+      "version": "1.0.0",
+      "path": "sinex.ingestd/stream.stats.json",
+      "content_hash": "a91ffe38f6e5e2e6fc0cec181bade02eee0d5e7f0b4aa1ce8c2df2463b8975be"
+    },
+    {
+      "source": "sinex.node",
+      "event_type": "processing.stats",
+      "version": "1.0.0",
+      "path": "sinex.node/processing.stats.json",
+      "content_hash": "332998456977a97bd2872648789fffda2ea47c1d97361753fc065f984a023618"
     },
     {
       "source": "system",
@@ -484,20 +666,6 @@
       "version": "1.0.0",
       "path": "system/snapshot.json",
       "content_hash": "b61eefc15581cbb3e73b1bf1db0b2e4a873b97240cadcfccc51f49f7fed6c38f"
-    },
-    {
-      "source": "system",
-      "event_type": "systemd.units_historical",
-      "version": "1.0.0",
-      "path": "system/systemd.units_historical.json",
-      "content_hash": "21d7bc00b9070d97197718baa86cc693ec4607c5a5bda8d95b7dedb0638892ae"
-    },
-    {
-      "source": "system",
-      "event_type": "udev.device_historical",
-      "version": "1.0.0",
-      "path": "system/udev.device_historical.json",
-      "content_hash": "cf70d1e6c5b94714b7a3a9a631d05156efe6f8941aab98637bf760e792fd9b0f"
     },
     {
       "source": "systemd",

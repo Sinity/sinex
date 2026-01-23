@@ -71,7 +71,10 @@ impl<'ctx> TestRuntimeBuilder<'ctx> {
         let js = async_nats::jetstream::new(nats_client);
         let kv = js
             .create_key_value(async_nats::jetstream::kv::Config {
-                bucket: sinex_core::environment().nats_kv_bucket_name("sinex_checkpoints"),
+                bucket: format!(
+                    "KV_{}",
+                    sinex_core::environment().nats_kv_bucket_name("sinex_checkpoints")
+                ),
                 history: 1,
                 ..Default::default()
             })

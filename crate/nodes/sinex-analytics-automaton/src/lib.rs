@@ -5,10 +5,11 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sinex_core::{JsonValue, Ulid};
-use sinex_node_sdk::simple_node::{SimpleNode, SimpleNodeError, SimpleNodeContext, SimpleNodeWrapper};
+use sinex_core::JsonValue;
+use sinex_node_sdk::simple_node::{
+    SimpleNode, SimpleNodeContext, SimpleNodeError, SimpleNodeWrapper,
+};
 use std::collections::{HashMap, VecDeque};
-use tracing::info;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AnalyticsState {
@@ -22,6 +23,7 @@ pub struct EventSummary {
     pub timestamp: DateTime<Utc>,
 }
 
+#[derive(Default)]
 pub struct AnalyticsAutomaton;
 
 #[async_trait]
@@ -30,9 +32,15 @@ impl SimpleNode for AnalyticsAutomaton {
     type Input = JsonValue;
     type Output = JsonValue;
 
-    fn name(&self) -> &str { "analytics-automaton" }
-    fn input_event_type(&self) -> &str { "*" } // Match all events for global analytics
-    fn output_event_type(&self) -> &str { "analytics.insight" }
+    fn name(&self) -> &'static str {
+        "analytics-automaton"
+    }
+    fn input_event_type(&self) -> &'static str {
+        "*"
+    } // Match all events for global analytics
+    fn output_event_type(&self) -> &'static str {
+        "analytics.insight"
+    }
 
     async fn process(
         &mut self,
@@ -41,14 +49,17 @@ impl SimpleNode for AnalyticsAutomaton {
         context: &SimpleNodeContext,
     ) -> Result<Option<Self::Output>, SimpleNodeError> {
         // Track frequency
-        *state.event_counts.entry(context.event_type.clone()).or_insert(0) += 1;
-        
+        *state
+            .event_counts
+            .entry(context.event_type.clone())
+            .or_insert(0) += 1;
+
         // Add to window
         state.recent_events.push_back(EventSummary {
             event_type: context.event_type.clone(),
             timestamp: context.ts_orig.unwrap_or_else(Utc::now),
         });
-        
+
         // Prune window (keep last 1000)
         if state.recent_events.len() > 1000 {
             state.recent_events.pop_front();

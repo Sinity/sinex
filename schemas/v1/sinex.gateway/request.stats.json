@@ -1,0 +1,61 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Gateway request statistics\n\nAddresses Issue 133: Load Shedding Metrics",
+  "properties": {
+    "active_connections": {
+      "description": "Active connections",
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "avg_latency_ms": {
+      "description": "Average latency in milliseconds",
+      "format": "double",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "p99_latency_ms": {
+      "description": "P99 latency in milliseconds",
+      "format": "double",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "rate_limited_requests": {
+      "description": "Requests rate-limited (subset of rejected)",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "rejected_requests": {
+      "description": "Requests rejected (rate limited, auth failed, etc.)",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "successful_requests": {
+      "description": "Requests successfully processed",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "total_requests": {
+      "description": "Total requests received",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "active_connections",
+    "rate_limited_requests",
+    "rejected_requests",
+    "successful_requests",
+    "total_requests"
+  ],
+  "title": "GatewayRequestStatsPayload",
+  "type": "object"
+}

@@ -1,0 +1,33 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Gauge metric - point-in-time value that can increase or decrease\n\nUse for: connection count, queue depth, memory usage, fill percentage",
+  "properties": {
+    "component": {
+      "description": "Component emitting this metric",
+      "type": "string"
+    },
+    "labels": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Labels for dimensional filtering",
+      "type": "object"
+    },
+    "name": {
+      "description": "Metric name (e.g., \"stream.fill_pct\", \"pool.active_connections\")",
+      "type": "string"
+    },
+    "value": {
+      "description": "Current gauge value",
+      "format": "double",
+      "type": "number"
+    }
+  },
+  "required": [
+    "component",
+    "name",
+    "value"
+  ],
+  "title": "MetricGaugePayload",
+  "type": "object"
+}
