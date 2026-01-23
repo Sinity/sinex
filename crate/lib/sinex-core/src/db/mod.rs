@@ -82,7 +82,20 @@ pub use crate::{JsonValue, Timestamp};
 pub type OptionalTimestamp = Option<Timestamp>;
 
 /// Acquire a database connection with a hard timeout.
+///
+/// Instrumentation: Emits tracing spans with pool metrics and warns on slow acquires.
+/// Configure warn threshold via `SINEX_POOL_ACQUIRE_WARN_MS` (default: 100ms).
 #[cfg(feature = "sqlx")]
+#[tracing::instrument(
+    level = "trace",
+    skip(pool),
+    fields(
+        pool_size = pool.size(),
+        pool_idle = pool.num_idle(),
+        timeout_ms = timeout.as_millis() as u64,
+        acquire_ms = tracing::field::Empty
+    )
+)]
 pub async fn acquire_with_timeout(
     pool: &DbPool,
     timeout: Duration,
@@ -91,6 +104,10 @@ pub async fn acquire_with_timeout(
     let start = Instant::now();
     let result = tokio::time::timeout(timeout, pool.acquire()).await;
     let elapsed = start.elapsed();
+
+    // Record acquire latency in current span
+    tracing::Span::current().record("acquire_ms", elapsed.as_millis() as u64);
+
     if !warn_threshold.is_zero() && elapsed >= warn_threshold {
         warn!(
             acquire_latency_ms = elapsed.as_millis(),
@@ -103,9 +120,17 @@ pub async fn acquire_with_timeout(
 
     match result {
         Ok(result) => result.map_err(SinexError::from),
-        Err(_) => Err(SinexError::timeout(format!(
-            "Timed out acquiring database connection after {timeout:?}"
-        ))),
+        Err(_) => {
+            tracing::error!(
+                timeout_ms = timeout.as_millis(),
+                pool_size = pool.size(),
+                pool_idle = pool.num_idle(),
+                "Database pool acquire timed out"
+            );
+            Err(SinexError::timeout(format!(
+                "Timed out acquiring database connection after {timeout:?}"
+            )))
+        }
     }
 }
 

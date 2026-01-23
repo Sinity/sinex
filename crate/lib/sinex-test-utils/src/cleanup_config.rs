@@ -121,13 +121,6 @@ impl Default for CleanupConfig {
                     reason: None,
                 },
                 TableCleanupStrategy {
-                    table_name: "core.transactional_outbox",
-                    method: CleanupMethod::Truncate,
-                    disable_triggers: false,
-                    protected: false,
-                    reason: None,
-                },
-                TableCleanupStrategy {
                     table_name: "core.tags",
                     method: CleanupMethod::Truncate,
                     disable_triggers: false,
@@ -222,7 +215,6 @@ impl CleanupConfig {
             "core.processor_manifests",
             "sinex_schemas.event_payload_schemas",
             "core.operations_log",
-            "core.transactional_outbox",
             "core.tags",
             "core.tagged_items",
             "core.blobs",

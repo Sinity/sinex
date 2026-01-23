@@ -10,7 +10,7 @@ fn content_hash_is_sha256() -> TestResult<()> {
         }
     });
 
-    let hash = compute_content_hash_for_testing(&schema);
+    let hash = compute_content_hash_for_testing(&schema)?;
     assert!(!hash.is_empty());
     assert_eq!(hash.len(), 64); // SHA-256 -> 32 bytes -> 64 hex chars
     Ok(())

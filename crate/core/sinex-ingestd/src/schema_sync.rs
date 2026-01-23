@@ -23,7 +23,9 @@ pub async fn synchronize_schemas(pool: &PgPool) -> IngestdResult<SchemaSyncResul
 }
 
 /// Compute the canonical content hash for a schema (exposed for tests)
-pub fn compute_content_hash_for_testing(content: &serde_json::Value) -> String {
+pub fn compute_content_hash_for_testing(
+    content: &serde_json::Value,
+) -> Result<String, sinex_core::types::error::SinexError> {
     let schema = NewEventSchema {
         source: "test-source".to_string(),
         event_type: "test-event".to_string(),

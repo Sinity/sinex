@@ -17,15 +17,13 @@ mod common {
     pub use sinex_core::{db::models::Event, types::Timestamp, JsonValue};
 
     pub use sinex_processor_runtime::{
-        ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
-        MissingItem, SourceState,
+        ActivityEntry, CoverageAnalysis, IngestionHistoryEntry, SourceState,
     };
     // SDK facade for common processor types
     pub use sinex_node_sdk::{
         error_helpers::{parse_config_value, parse_typed_config, path_utils},
         stream_processor::{
-            Checkpoint, Node, NodeCapabilities, NodeInitContext, NodeRuntimeState, NodeType,
-            ScanArgs, ScanEstimate, ScanReport, TimeHorizon,
+            Checkpoint, Node, NodeCapabilities, NodeRuntimeState, ScanArgs, ScanReport, TimeHorizon,
         },
         NodeError, NodeResult,
     };

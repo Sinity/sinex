@@ -1,0 +1,81 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Histogram metric - distribution of values with percentiles\n\nUse for: latency distributions, size distributions",
+  "properties": {
+    "component": {
+      "description": "Component emitting this metric",
+      "type": "string"
+    },
+    "count": {
+      "description": "Sample count in this window",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "labels": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Labels for dimensional filtering",
+      "type": "object"
+    },
+    "max": {
+      "description": "Maximum value",
+      "format": "double",
+      "type": "number"
+    },
+    "min": {
+      "description": "Minimum value",
+      "format": "double",
+      "type": "number"
+    },
+    "name": {
+      "description": "Metric name (e.g., \"gateway.request_latency_ms\")",
+      "type": "string"
+    },
+    "p50": {
+      "description": "Percentiles: p50, p90, p95, p99",
+      "format": "double",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "p90": {
+      "format": "double",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "p95": {
+      "format": "double",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "p99": {
+      "format": "double",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "sum": {
+      "description": "Sum of all values",
+      "format": "double",
+      "type": "number"
+    }
+  },
+  "required": [
+    "component",
+    "count",
+    "max",
+    "min",
+    "name",
+    "sum"
+  ],
+  "title": "MetricHistogramPayload",
+  "type": "object"
+}

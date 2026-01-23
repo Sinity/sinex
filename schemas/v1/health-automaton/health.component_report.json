@@ -1,0 +1,63 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "ComponentHealthStatus": {
+      "description": "Health status for a system component (health automaton)",
+      "enum": [
+        "Healthy",
+        "Warning",
+        "Critical",
+        "Unknown"
+      ],
+      "type": "string"
+    }
+  },
+  "description": "Component health report from health automaton",
+  "properties": {
+    "component_name": {
+      "type": "string"
+    },
+    "generated_at": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "last_seen": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "metrics": {
+      "additionalProperties": {
+        "format": "double",
+        "type": "number"
+      },
+      "type": "object"
+    },
+    "minutes_since_last_update": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "recent_event_count": {
+      "format": "uint",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "report_type": {
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/definitions/ComponentHealthStatus"
+    }
+  },
+  "required": [
+    "component_name",
+    "generated_at",
+    "last_seen",
+    "metrics",
+    "minutes_since_last_update",
+    "recent_event_count",
+    "report_type",
+    "status"
+  ],
+  "title": "HealthComponentReportPayload",
+  "type": "object"
+}

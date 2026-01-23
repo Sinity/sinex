@@ -166,12 +166,26 @@ impl TokenRateLimiter {
     }
 
     /// Spawn a background cleanup task
-    pub fn spawn_cleanup_task(self: Arc<Self>) -> tokio::task::JoinHandle<()> {
+    pub fn spawn_cleanup_task(
+        self: Arc<Self>,
+        mut shutdown: tokio::sync::watch::Receiver<bool>,
+    ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(600)); // 10 minutes
             loop {
-                interval.tick().await;
-                self.cleanup_stale();
+                tokio::select! {
+                    _ = interval.tick() => {
+                        self.cleanup_stale();
+                    }
+                    _ = shutdown.changed() => {
+                        if *shutdown.borrow() {
+                            debug!("Rate limiter cleanup task shutting down");
+                            // Final cleanup before shutdown
+                            self.cleanup_stale();
+                            break;
+                        }
+                    }
+                }
             }
         })
     }

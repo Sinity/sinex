@@ -7,6 +7,7 @@ use sinex_core::db::repositories::EventRepositoryTx;
 use sinex_core::types::ulid::Ulid;
 use sqlx::PgPool;
 use std::collections::{HashMap, VecDeque};
+use std::time::Duration;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
@@ -14,6 +15,7 @@ use uuid::Uuid;
 const DEFAULT_CASCADE_BATCH_SIZE: usize = 1000;
 const DEFAULT_CASCADE_MAX_DEPTH: usize = 100;
 const DEFAULT_CASCADE_MEMORY_LIMIT: usize = 1024 * 1024 * 1024; // 1GB
+const DEFAULT_CASCADE_TIMEOUT_SECS: u64 = 60;
 
 /// Analysis of cascade effects for a replay operation
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,6 +86,8 @@ pub struct CascadeAnalyzerConfig {
     pub include_weak_dependencies: bool,
     /// Memory limit for analysis (bytes)
     pub memory_limit_bytes: Option<usize>,
+    /// Timeout for analysis operations (prevents indefinite transaction hold)
+    pub timeout: Duration,
 }
 
 impl Default for CascadeAnalyzerConfig {
@@ -93,8 +97,49 @@ impl Default for CascadeAnalyzerConfig {
             max_depth: DEFAULT_CASCADE_MAX_DEPTH,
             include_weak_dependencies: false,
             memory_limit_bytes: Some(DEFAULT_CASCADE_MEMORY_LIMIT),
+            timeout: Duration::from_secs(DEFAULT_CASCADE_TIMEOUT_SECS),
         }
     }
+}
+
+impl CascadeAnalyzerConfig {
+    /// Create config from environment variables
+    pub fn from_env() -> Self {
+        Self {
+            batch_size: env_var_usize("SINEX_CASCADE_BATCH_SIZE", DEFAULT_CASCADE_BATCH_SIZE),
+            max_depth: env_var_usize("SINEX_CASCADE_MAX_DEPTH", DEFAULT_CASCADE_MAX_DEPTH),
+            include_weak_dependencies: env_var_bool("SINEX_CASCADE_INCLUDE_WEAK", false),
+            memory_limit_bytes: Some(env_var_usize(
+                "SINEX_CASCADE_MEMORY_LIMIT_BYTES",
+                DEFAULT_CASCADE_MEMORY_LIMIT,
+            )),
+            timeout: Duration::from_secs(env_var_u64(
+                "SINEX_CASCADE_TIMEOUT_SECS",
+                DEFAULT_CASCADE_TIMEOUT_SECS,
+            )),
+        }
+    }
+}
+
+fn env_var_usize(var: &str, default: usize) -> usize {
+    std::env::var(var)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(default)
+}
+
+fn env_var_u64(var: &str, default: u64) -> u64 {
+    std::env::var(var)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(default)
+}
+
+fn env_var_bool(var: &str, default: bool) -> bool {
+    std::env::var(var)
+        .ok()
+        .map(|s| matches!(s.to_lowercase().as_str(), "true" | "1" | "yes"))
+        .unwrap_or(default)
 }
 
 /// Memory-efficient cascade analyzer using streaming algorithms
@@ -153,40 +198,66 @@ impl StreamingCascadeAnalyzer {
 
     /// Analyze cascades for a set of events to be modified
     pub async fn analyze_cascades(&self, event_ids: &[Ulid]) -> Result<CascadeAnalysis> {
-        info!("Analyzing cascades for {} events", event_ids.len());
+        info!(
+            "Analyzing cascades for {} events (timeout: {:?})",
+            event_ids.len(),
+            self.config.timeout
+        );
 
         // Generate unique session ID for this analysis
         let session_id = sinex_core::types::ulid::Ulid::new().to_string();
 
-        // Start a transaction for the entire analysis
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| db_error(e, "begin cascade analysis transaction"))?;
+        // Wrap the entire transaction in a timeout to prevent indefinite holds
+        let timeout_duration = self.config.timeout;
+        let analysis_future = async {
+            // Start a transaction for the entire analysis
+            let mut tx = self
+                .pool
+                .begin()
+                .await
+                .map_err(|e| db_error(e, "begin cascade analysis transaction"))?;
 
-        // Execute analysis within transaction
-        let result = self
-            .analyze_cascades_in_transaction(&mut tx, event_ids, &session_id)
-            .await;
+            // Execute analysis within transaction
+            let result = self
+                .analyze_cascades_in_transaction(&mut tx, event_ids, &session_id)
+                .await;
 
-        // Commit or rollback based on result
-        match result {
-            Ok(analysis) => {
-                tx.commit()
-                    .await
-                    .map_err(|e| db_error(e, "commit cascade analysis transaction"))?;
-                Ok(analysis)
-            }
-            Err(e) => {
-                // Rollback automatically happens on drop, but be explicit
-                if let Err(rollback_err) = tx.rollback().await {
-                    warn!(
-                        "Failed to rollback cascade analysis transaction: {}",
-                        rollback_err
-                    );
+            // Commit or rollback based on result
+            match result {
+                Ok(analysis) => {
+                    tx.commit()
+                        .await
+                        .map_err(|e| db_error(e, "commit cascade analysis transaction"))?;
+                    Ok(analysis)
                 }
-                Err(e)
+                Err(e) => {
+                    // Rollback automatically happens on drop, but be explicit
+                    if let Err(rollback_err) = tx.rollback().await {
+                        warn!(
+                            "Failed to rollback cascade analysis transaction: {}",
+                            rollback_err
+                        );
+                    }
+                    Err(e)
+                }
+            }
+        };
+
+        match tokio::time::timeout(timeout_duration, analysis_future).await {
+            Ok(result) => result,
+            Err(_elapsed) => {
+                warn!(
+                    timeout_secs = timeout_duration.as_secs(),
+                    event_count = event_ids.len(),
+                    session_id = %session_id,
+                    "Cascade analysis exceeded timeout - transaction aborted"
+                );
+                Err(eyre!(
+                    "Cascade analysis timeout after {:?} (analyzed {} events). \
+                    Consider increasing SINEX_CASCADE_TIMEOUT_SECS or reducing max_depth.",
+                    timeout_duration,
+                    event_ids.len()
+                ))
             }
         }
     }

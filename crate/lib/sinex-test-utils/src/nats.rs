@@ -649,9 +649,10 @@ pub async fn reset_shared_ephemeral_nats() -> Result<()> {
 pub async fn ensure_coordination_buckets(js: &jetstream::Context) -> Result<()> {
     const LEADERSHIP_TTL_SECS: u64 = 15;
 
+    let env = sinex_core::environment::environment();
     let _ = js
         .create_key_value(jetstream::kv::Config {
-            bucket: "KV_sinex_instances".to_string(),
+            bucket: format!("KV_{}", env.nats_kv_bucket_name("sinex_instances")),
             history: 1,
             ..Default::default()
         })
@@ -660,7 +661,7 @@ pub async fn ensure_coordination_buckets(js: &jetstream::Context) -> Result<()> 
 
     let _ = js
         .create_key_value(jetstream::kv::Config {
-            bucket: "KV_sinex_leadership".to_string(),
+            bucket: format!("KV_{}", env.nats_kv_bucket_name("sinex_leadership")),
             history: 5,
             max_age: Duration::from_secs(LEADERSHIP_TTL_SECS),
             ..Default::default()

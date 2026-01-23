@@ -1,0 +1,50 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Database connection pool statistics",
+  "properties": {
+    "active": {
+      "description": "Active connections in use",
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "idle": {
+      "description": "Idle connections available",
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "pending": {
+      "description": "Pending connection acquisitions",
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "pool": {
+      "description": "Pool name/identifier",
+      "type": "string"
+    },
+    "size": {
+      "description": "Total connections in pool",
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "timeout_count": {
+      "description": "Connection acquire timeout count",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "active",
+    "idle",
+    "pending",
+    "pool",
+    "size",
+    "timeout_count"
+  ],
+  "title": "PoolStatsPayload",
+  "type": "object"
+}

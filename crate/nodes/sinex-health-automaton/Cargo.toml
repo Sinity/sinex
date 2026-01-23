@@ -31,6 +31,9 @@ sqlx = { workspace = true, features = ["postgres", "runtime-tokio-rustls"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
+# Configuration
+figment = { workspace = true }
+
 # Time
 chrono = { workspace = true }
 

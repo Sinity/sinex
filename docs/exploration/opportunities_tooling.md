@@ -1,5 +1,56 @@
 # Opportunities & Tooling Directions
 
+## Recent Completions (2026-01-23)
+
+The following items from this exploration have been implemented:
+
+### CI & Quality Gates
+
+- **Mutation testing**: Added `cargo xtask mutants` command wrapping cargo-mutants with `--package`, `--file`, `--timeout`, `--jobs` options. Reference: `xtask/src/main.rs`
+
+- **Coverage enforcement**: Added `cargo xtask coverage enforce` subcommand with configurable `--threshold` (default 60%), optional `--html` report generation, and CI-friendly JSON output. Reference: `xtask/src/main.rs`
+
+- **SQLx compile-time verification**: Added `cargo xtask sqlx` command with `check` (verify against .sqlx/), `prepare` (regenerate cache), and `verify` (prepare then check) subcommands. Wired `sqlx_check()` into `ci_preflight()`. Reference: `xtask/src/main.rs`
+
+- **cargo-deny integration**: Wired `cargo deny check` into `ci_preflight()` for supply chain security scanning.
+
+- **Dependency visualization**: Added `cargo xtask graph` command using cargo-depgraph for dependency graph rendering.
+
+### Testing Infrastructure
+
+- **Property-based testing**: Expanded property tests with adversarial strategies for SQL injection, path traversal, command injection, and overflow payloads. Added `sinex_prop` macro and builtin strategies. Reference: `sinex-test-utils/src/property_testing.rs`
+
+- **Test timing histograms**: Added `cargo xtask history tests slowest` and `getting-slower` commands for test performance regression detection. Reference: `xtask/src/main.rs`
+
+- **Secure TLS nextest profile**: Added nextest profile for TLS/nkey-enabled test suites with chaos injection support. Reference: `.config/nextest.toml`
+
+- **Chaos testing integration**: Added `ChaosConfig` and chaos injection support to node SDK for fault tolerance testing. Reference: `sinex-node-sdk/src/chaos.rs`
+
+- **EphemeralNats nkey support**: Extended `EphemeralNatsBuilder` with nkey authentication knobs for isolated test accounts. Reference: `sinex-test-utils/src/nats/`
+
+### TLS & Security
+
+- **TLS bootstrap utilities**: Added `cargo xtask tls generate-dev-certs`, `check`, `generate-client-cert`, and `setup-env` commands for local/CI TLS setup. Reference: `xtask/src/tls.rs`
+
+- **TLS NixOS integration**: Documented NixOS module integration for TLS certificate management. Reference: `docs/current/configuration/tls-nixos-integration.md`
+
+### Documentation
+
+- **GitOps workflow**: Added GitOps workflow documentation for deployment patterns. Reference: `docs/current/operations/`
+
+### Previous Completions (2026-01-22)
+
+- **Pool acquire timeout metrics**: Added `#[tracing::instrument]` to `acquire_with_timeout()` with pool metrics (size, idle, acquire_ms). Warning threshold configurable via `SINEX_POOL_ACQUIRE_WARN_MS`. Reference: `sinex-core/src/db/mod.rs`
+
+- **Schema validation coverage metrics**: Added `ValidationStats` and `ValidationStatsSnapshot` to track Valid/Skipped/NoSchema/SchemaNotFound/Invalid outcomes. Accessible via `EventValidator::stats()`. Reference: `sinex-ingestd/src/validator.rs`
+
+- **NATS subject registry**: Created canonical documentation at `docs/current/architecture/nats-subjects.md` covering all subjects, streams, and naming conventions.
+
+- **Lint tooling**: Extended `cargo xtask lint-forbidden` with:
+  - unwrap/expect count reporting (informational)
+  - SQLx compile-time vs runtime query statistics
+  - sinex_test_utils layering check
+
 ## Data & Analytics
 
 - Embed columnar engines (DataFusion, Polars) alongside Postgres exports to keep analytics/service workloads off the shared pool. We can mirror `core.events` into Parquet snapshots or DuckDB databases, letting gateway/CLI queries run locally without bypassing auth.

@@ -761,11 +761,10 @@ mod tests {
         let nats_client = nats.connect().await?;
         AcquisitionManager::bootstrap_streams(&nats_client).await?;
 
-        let acquisition = Arc::new(AcquisitionManager::new(
+        let acquisition = Arc::new(AcquisitionManager::with_defaults(
             nats_client,
-            RotationPolicy::default(),
-            "desktop".to_string(),
-            "/desktop".to_string(),
+            "desktop",
+            "/desktop",
         ));
         let (event_tx, event_rx) = mpsc::channel::<Event<JsonValue>>(
             sinex_core::types::buffers::DEFAULT_EVENT_CHANNEL_SIZE,

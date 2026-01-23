@@ -594,9 +594,10 @@ async fn generate_verification_report(
 async fn ensure_coordination_buckets(js: &async_nats::jetstream::Context) -> Result<()> {
     const LEADERSHIP_TTL_SECS: Seconds = Seconds::from_secs(15);
 
+    let env = sinex_core::environment::environment();
     let _ = js
         .create_key_value(async_nats::jetstream::kv::Config {
-            bucket: "KV_sinex_instances".to_string(),
+            bucket: format!("KV_{}", env.nats_kv_bucket_name("sinex_instances")),
             history: 1,
             ..Default::default()
         })
@@ -605,7 +606,7 @@ async fn ensure_coordination_buckets(js: &async_nats::jetstream::Context) -> Res
 
     let _ = js
         .create_key_value(async_nats::jetstream::kv::Config {
-            bucket: "KV_sinex_leadership".to_string(),
+            bucket: format!("KV_{}", env.nats_kv_bucket_name("sinex_leadership")),
             history: 5,
             max_age: Duration::from_secs(LEADERSHIP_TTL_SECS.as_secs()),
             ..Default::default()

@@ -736,7 +736,6 @@ pub async fn clear_pg_cache(pool: &DbPool) -> TestResult<()> {
 /// - core.tags
 /// - core.tagged_items
 /// - core.operations_log
-/// - core.transactional_outbox
 /// - raw.source_material_registry
 /// - raw.temporal_ledger
 /// - sinex_schemas.event_payload_schemas
@@ -773,7 +772,6 @@ pub async fn get_row_counts(pool: &DbPool) -> TestResult<HashMap<String, i64>> {
         "core.tags",
         "core.tagged_items",
         "core.operations_log",
-        "core.transactional_outbox",
         // Raw data tables
         "raw.source_material_registry",
         "raw.temporal_ledger",

@@ -165,10 +165,7 @@ impl JobManager {
                 .unwrap_or_default(),
         };
 
-        let job = Job {
-            meta,
-            dir: job_dir,
-        };
+        let job = Job { meta, dir: job_dir };
         job.update_meta()?;
 
         // Spawn a background thread to wait for the process and update status
@@ -361,14 +358,14 @@ mod tests {
         let manager = JobManager::new(dir.path().join("jobs")).unwrap();
 
         // Spawn a simple job
-        let job = manager
-            .spawn("echo", &["hello".to_string()])
-            .unwrap();
+        let job = manager.spawn("echo", &["hello".to_string()]).unwrap();
 
         assert!(job.meta.id > 0);
 
         // Wait for it to complete
-        let job = manager.wait(job.meta.id, Some(Duration::from_secs(5))).unwrap();
+        let job = manager
+            .wait(job.meta.id, Some(Duration::from_secs(5)))
+            .unwrap();
         assert!(job.meta.status.is_terminal());
 
         // Check stdout

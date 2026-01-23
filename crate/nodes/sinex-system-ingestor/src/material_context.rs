@@ -35,7 +35,9 @@ impl WatcherMaterialContext {
         metadata: JsonValue,
     ) -> NodeResult<Self> {
         let handle = acquisition
-            .begin_material_with_metadata(source_identifier, metadata)
+            .build_material(source_identifier)
+            .with_metadata(metadata)
+            .begin()
             .await
             .map_err(|e| {
                 NodeError::General(eyre!("Failed to begin system watcher material: {}", e))

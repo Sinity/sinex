@@ -4,9 +4,14 @@ use async_nats::{jetstream, Client as NatsClient};
 use chrono::{DateTime, SecondsFormat, Timelike, Utc};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
-use sinex_core::{db::DbPool, environment::SinexEnvironment, types::ulid::Ulid, JsonValue};
+use sinex_core::{
+    db::{repositories::DbPoolExt, DbPool},
+    environment::SinexEnvironment,
+    repositories::StreamBatchRow,
+    types::ulid::Ulid,
+    JsonValue,
+};
 use sqlx::postgres::PgPoolCopyExt;
-use sqlx::QueryBuilder;
 use std::collections::{HashSet, VecDeque};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -210,6 +215,7 @@ struct ConsumerStats {
     confirmation_failures: AtomicU64,
     dlq_publish_failures: AtomicU64,
     nack_failures: AtomicU64,
+    nats_errors: AtomicU64,
 }
 
 impl ConsumerStats {
@@ -218,6 +224,7 @@ impl ConsumerStats {
             events_processed = self.events_processed.load(Ordering::Relaxed),
             events_failed = self.events_failed.load(Ordering::Relaxed),
             validation_failures = self.validation_failures.load(Ordering::Relaxed),
+            nats_errors = self.nats_errors.load(Ordering::Relaxed),
             dlq_routed = self.dlq_routed.load(Ordering::Relaxed),
             confirmation_failures = self.confirmation_failures.load(Ordering::Relaxed),
             dlq_publish_failures = self.dlq_publish_failures.load(Ordering::Relaxed),
@@ -455,7 +462,11 @@ impl JetStreamConsumer {
             let msg = match msg {
                 Ok(m) => m,
                 Err(e) => {
-                    error!("Error receiving message: {}", e);
+                    self.stats.nats_errors.fetch_add(1, Ordering::Relaxed);
+                    error!(
+                        nats_errors = self.stats.nats_errors.load(Ordering::Relaxed),
+                        "Error receiving message: {}", e
+                    );
                     continue;
                 }
             };
@@ -790,10 +801,21 @@ impl JetStreamConsumer {
         let guard = self.validator.read().await;
         let validation =
             guard.validate_payload_for(&event.source, &event.event_type, &event.payload);
+        let strict_mode = guard.is_strict_mode();
 
         match validation {
-            ValidationResult::Valid | ValidationResult::Skipped | ValidationResult::NoSchema => {
-                Ok(())
+            ValidationResult::Valid | ValidationResult::Skipped => Ok(()),
+            ValidationResult::NoSchema => {
+                if strict_mode {
+                    Err(SinexError::validation(format!(
+                        "Strict validation enabled: event has no registered schema (source={}, event_type={})",
+                        event.source, event.event_type
+                    ))
+                    .with_operation("jetstream_consumer.validate_event")
+                    .with_context("strict_mode", "enabled"))
+                } else {
+                    Ok(())
+                }
             }
             ValidationResult::SchemaNotFound { schema_id } => {
                 warn!(
@@ -935,58 +957,31 @@ impl JetStreamConsumer {
         &self,
         batch: &[&PreparedEvent],
     ) -> IngestdResult<Vec<Ulid>> {
-        let mut builder = QueryBuilder::new(
-            "INSERT INTO core.events (id, source, event_type, ts_orig, ts_orig_subnano, host, payload, \
-             source_material_id, anchor_byte, offset_start, offset_end, offset_kind, \
-             source_event_ids, payload_schema_id, ingestor_version, associated_blob_ids) ",
-        );
-        builder.push("VALUES ");
-        for (idx, prepared) in batch.iter().enumerate() {
-            let prepared = *prepared;
-            if idx > 0 {
-                builder.push(", ");
-            }
-            builder.push("(");
-            let ts_orig_subnano = (prepared.parsed_ts.nanosecond() % 1_000) as i32;
-            builder.push_bind(prepared.parsed_id.as_uuid());
-            builder.push(", ");
-            builder.push_bind(prepared.raw.source.as_str());
-            builder.push(", ");
-            builder.push_bind(prepared.raw.event_type.as_str());
-            builder.push(", ");
-            builder.push_bind(prepared.parsed_ts);
-            builder.push(", ");
-            builder.push_bind(ts_orig_subnano);
-            builder.push(", ");
-            builder.push_bind(prepared.raw.host.as_str());
-            builder.push(", ");
-            builder.push_bind(prepared.raw.payload.clone());
-            builder.push(", ");
-            builder.push_bind(prepared.source_material_id);
-            builder.push(", ");
-            builder.push_bind(prepared.anchor_byte);
-            builder.push(", ");
-            builder.push_bind(prepared.offset_start);
-            builder.push(", ");
-            builder.push_bind(prepared.offset_end);
-            builder.push(", ");
-            builder.push_bind(prepared.offset_kind.as_deref());
-            builder.push(", ");
-            builder.push_bind(prepared.source_event_ids.as_deref());
-            builder.push(", ");
-            builder.push_bind(prepared.payload_schema_id);
-            builder.push(", ");
-            builder.push_bind(prepared.ingestor_version.as_deref());
-            builder.push(", ");
-            builder.push_bind(prepared.associated_blob_ids.as_deref());
-            builder.push(")");
-        }
+        // Convert PreparedEvent to StreamBatchRow for repository method
+        let rows: Vec<StreamBatchRow> = batch
+            .iter()
+            .map(|prepared| StreamBatchRow {
+                id: prepared.parsed_id,
+                source: prepared.raw.source.clone(),
+                event_type: prepared.raw.event_type.clone(),
+                ts_orig: prepared.parsed_ts,
+                host: prepared.raw.host.clone(),
+                payload: prepared.raw.payload.clone(),
+                source_material_id: prepared.source_material_id,
+                anchor_byte: prepared.anchor_byte,
+                offset_start: prepared.offset_start,
+                offset_end: prepared.offset_end,
+                offset_kind: prepared.offset_kind.clone(),
+                source_event_ids: prepared.source_event_ids.clone(),
+                payload_schema_id: prepared.payload_schema_id,
+                ingestor_version: prepared.ingestor_version.clone(),
+                associated_blob_ids: prepared.associated_blob_ids.clone(),
+            })
+            .collect();
 
-        builder.push(" ON CONFLICT (id) DO NOTHING RETURNING id::uuid as \"id!\"");
-
-        let rows = timeout(
+        let result = timeout(
             DB_WRITE_TIMEOUT,
-            builder.build_query_as::<(Uuid,)>().fetch_all(&self.pool),
+            self.pool.events().insert_stream_batch(&rows),
         )
         .await
         .map_err(|_| {
@@ -1002,10 +997,10 @@ impl JetStreamConsumer {
         })?
         .map_err(|err| {
             error!("Failed to persist events batch: {}", err);
-            err
+            SinexError::database(err.to_string())
         })?;
 
-        Ok(rows.into_iter().map(|row| Ulid::from(row.0)).collect())
+        Ok(result.inserted_ids.unwrap_or_default())
     }
 
     /// Publish confirmation to NATS

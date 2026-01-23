@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "ComponentHealthStatus": {
+      "description": "Health status for a system component (health automaton)",
+      "enum": [
+        "Healthy",
+        "Warning",
+        "Critical",
+        "Unknown"
+      ],
+      "type": "string"
+    }
+  },
+  "description": "System-wide health status summary",
+  "properties": {
+    "component_summary": {
+      "additionalProperties": {
+        "$ref": "#/definitions/ComponentHealthStatus"
+      },
+      "type": "object"
+    },
+    "critical_components": {
+      "format": "uint",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "generated_at": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "health_score": {
+      "format": "double",
+      "type": "number"
+    },
+    "healthy_components": {
+      "format": "uint",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "overall_status": {
+      "$ref": "#/definitions/ComponentHealthStatus"
+    },
+    "report_type": {
+      "type": "string"
+    },
+    "total_components": {
+      "format": "uint",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "warning_components": {
+      "format": "uint",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "component_summary",
+    "critical_components",
+    "generated_at",
+    "health_score",
+    "healthy_components",
+    "overall_status",
+    "report_type",
+    "total_components",
+    "warning_components"
+  ],
+  "title": "HealthSystemStatusPayload",
+  "type": "object"
+}

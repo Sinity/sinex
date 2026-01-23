@@ -101,6 +101,65 @@ struct UnknownMethodError {
     method: String,
 }
 
+/// Map SinexError variants to JSON-RPC error codes and messages.
+///
+/// Code ranges follow JSON-RPC 2.0 conventions:
+/// - -32700 to -32600: Protocol errors (parse, invalid request, etc.)
+/// - -32099 to -32000: Server errors (reserved)
+/// - -32899 to -32800: Application errors (custom)
+fn sinex_error_to_rpc_code(err: &sinex_core::types::error::SinexError) -> (i32, String) {
+    use sinex_core::types::error::SinexError;
+
+    match err {
+        // Client errors (4xx equivalent)
+        SinexError::Validation(details) => (-32800, details.to_string()),
+        SinexError::NotFound(details) => (-32801, details.to_string()),
+        SinexError::AlreadyExists(details) => (-32802, details.to_string()),
+        SinexError::InvalidState(details) => (-32803, details.to_string()),
+        SinexError::PermissionDenied(details) => (-32804, details.to_string()),
+        SinexError::Parse(details) => (-32805, details.to_string()),
+
+        // Server/infrastructure errors (5xx equivalent)
+        SinexError::Database(details) => (-32810, format!("Database error: {}", details)),
+        SinexError::Network(details) => (-32811, format!("Network error: {}", details)),
+        SinexError::Timeout(details) => (-32812, format!("Timeout: {}", details)),
+        SinexError::ResourceExhausted(details) => {
+            (-32813, format!("Resource exhausted: {}", details))
+        }
+
+        // Service/processing errors
+        SinexError::Service(details) => (-32820, format!("Service error: {}", details)),
+        SinexError::Io(details) => (-32821, format!("IO error: {}", details)),
+        SinexError::Configuration(details) => (-32822, format!("Configuration error: {}", details)),
+        SinexError::Serialization(details) => (-32823, format!("Serialization error: {}", details)),
+
+        // Cancellation and lifecycle
+        SinexError::Cancelled(details) => (-32830, format!("Cancelled: {}", details)),
+        SinexError::MaxRetriesExceeded(details) => {
+            (-32831, format!("Max retries exceeded: {}", details))
+        }
+
+        // Channel errors
+        SinexError::ChannelSend(details) => (-32840, format!("Channel send error: {}", details)),
+        SinexError::ChannelReceive(details) => {
+            (-32841, format!("Channel receive error: {}", details))
+        }
+
+        // Domain-specific errors
+        SinexError::Kv(details) => (-32850, format!("KV store error: {}", details)),
+        SinexError::Automaton(details) => (-32851, format!("Automaton error: {}", details)),
+        SinexError::Checkpoint(details) => (-32852, format!("Checkpoint error: {}", details)),
+        SinexError::Lifecycle(details) => (-32853, format!("Lifecycle error: {}", details)),
+        SinexError::Processing(details) => (-32854, format!("Processing error: {}", details)),
+
+        // Fallback
+        SinexError::Unknown(details) => (-32899, format!("Unknown error: {}", details)),
+
+        // Non-exhaustive catch-all (future variants)
+        _ => (-32603, "Internal server error".to_string()),
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct RpcServerLimits {
     pub(crate) concurrency_limit: usize,
@@ -187,7 +246,10 @@ impl GatewayAuth {
         })
     }
 
-    fn start_file_watcher(self) -> color_eyre::eyre::Result<Self> {
+    fn start_file_watcher(
+        self,
+        shutdown: tokio::sync::watch::Receiver<bool>,
+    ) -> color_eyre::eyre::Result<Self> {
         if let Some(ref path) = self.token_path {
             let token_clone = Arc::clone(&self.token);
             let path_clone = path.clone();
@@ -259,9 +321,14 @@ impl GatewayAuth {
 
                 info!("Watching token file {:?} for changes", path_clone);
 
-                // Keep the watcher alive
+                // Keep the watcher alive until shutdown
                 loop {
-                    std::thread::sleep(Duration::from_secs(60));
+                    // Check shutdown signal
+                    if shutdown.has_changed().unwrap_or(false) && *shutdown.borrow() {
+                        debug!("Token file watcher shutting down");
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(500));
                 }
             });
         }
@@ -387,6 +454,19 @@ impl JsonRpcResponse {
                 code,
                 message,
                 data: None,
+            }),
+            id,
+        }
+    }
+
+    fn error_with_data(id: Option<Value>, code: i32, message: String, data: Value) -> Self {
+        Self {
+            jsonrpc: "2.0".to_string(),
+            result: None,
+            error: Some(JsonRpcError {
+                code,
+                message,
+                data: Some(data),
             }),
             id,
         }
@@ -811,11 +891,22 @@ async fn handle_rpc(
                 error = %err,
                 "RPC method failed"
             );
-            JsonRpcResponse::error(
-                request.id,
-                -32603,
-                format!("Internal error (ref: {})", error_id),
-            )
+
+            // Try to extract structured error info from SinexError
+            if let Some(sinex_err) = err.downcast_ref::<sinex_core::types::error::SinexError>() {
+                let (code, message) = sinex_error_to_rpc_code(sinex_err);
+                let data = serde_json::json!({
+                    "error_id": error_id.to_string(),
+                    "error": sinex_err,
+                });
+                JsonRpcResponse::error_with_data(request.id, code, message, data)
+            } else {
+                JsonRpcResponse::error(
+                    request.id,
+                    -32603,
+                    format!("Internal error (ref: {})", error_id),
+                )
+            }
         }
     };
 
@@ -1374,18 +1465,24 @@ mod tests {
 }
 
 /// Run the RPC server with configurable binding
+///
+/// Accepts a shutdown signal receiver that will trigger graceful shutdown when signaled.
 pub async fn run(
     tcp_listen: Option<&str>,
     services: ServiceContainer,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> color_eyre::eyre::Result<()> {
     let bind_address = BindAddress::from_env_or_default(tcp_listen)?;
 
-    let auth = GatewayAuth::from_env()?.start_file_watcher()?;
+    // Create shutdown channels for background tasks
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+
+    let auth = GatewayAuth::from_env()?.start_file_watcher(shutdown_rx.clone())?;
     let limits = RpcServerLimits::from_env().apply_pool_limit(services.pool_max_connections());
 
     // Issue 143: Per-token rate limiting
     let rate_limiter = Arc::new(TokenRateLimiter::from_env());
-    let _cleanup_task = Arc::clone(&rate_limiter).spawn_cleanup_task();
+    let cleanup_task = Arc::clone(&rate_limiter).spawn_cleanup_task(shutdown_rx.clone());
 
     // Self-observation metrics
     let metrics = Arc::new(match services.nats_client() {
@@ -1397,12 +1494,9 @@ pub async fn run(
     });
 
     // Spawn metrics emission background task
-    // The cancel_tx and metrics_task are kept alive for the lifetime of the server
-    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
-    let _metrics_task = if metrics.is_enabled() {
-        Some(Arc::clone(&metrics).spawn_emission_task(cancel_rx))
+    let metrics_task = if metrics.is_enabled() {
+        Some(Arc::clone(&metrics).spawn_emission_task(shutdown_rx.clone()))
     } else {
-        drop(cancel_rx);
         None
     };
 
@@ -1433,31 +1527,69 @@ pub async fn run(
     let acceptor = TlsAcceptor::from(Arc::new(tls_config));
     info!("RPC server listening on TLS {}", addr);
 
+    // Main accept loop with shutdown signal handling
     loop {
-        let (stream, peer) = listener
-            .accept()
-            .await
-            .wrap_err("Failed to accept incoming TCP connection")?;
-        let app_clone = app.clone();
-        let acceptor = acceptor.clone();
+        tokio::select! {
+            accept_result = listener.accept() => {
+                let (stream, peer) = accept_result
+                    .wrap_err("Failed to accept incoming TCP connection")?;
+                let app_clone = app.clone();
+                let acceptor = acceptor.clone();
 
-        tokio::spawn(async move {
-            match acceptor.accept(stream).await {
-                Ok(tls_stream) => {
-                    let builder = HyperBuilder::new(TokioExecutor::new());
-                    let service = TowerToHyperService::new(app_clone);
-                    let io = TokioIo::new(tls_stream);
-                    if let Err(err) = builder.serve_connection(io, service).await {
-                        error!(?err, "TLS RPC connection from {:?} closed with error", peer);
+                tokio::spawn(async move {
+                    match acceptor.accept(stream).await {
+                        Ok(tls_stream) => {
+                            let builder = HyperBuilder::new(TokioExecutor::new());
+                            let service = TowerToHyperService::new(app_clone);
+                            let io = TokioIo::new(tls_stream);
+                            if let Err(err) = builder.serve_connection(io, service).await {
+                                error!(?err, "TLS RPC connection from {:?} closed with error", peer);
+                            }
+                        }
+                        Err(err) => {
+                            error!(?err, "TLS handshake failed for {:?}", peer);
+                        }
                     }
-                }
-                Err(err) => {
-                    error!(?err, "TLS handshake failed for {:?}", peer);
+                });
+            }
+            _ = shutdown.changed() => {
+                if *shutdown.borrow() {
+                    info!("Shutdown signal received, stopping RPC server");
+                    break;
                 }
             }
-        });
+        }
     }
 
-    #[allow(unreachable_code)]
+    // Signal all background tasks to shut down
+    info!("Shutting down background tasks...");
+    let _ = shutdown_tx.send(true);
+
+    // Wait for background tasks to complete with timeout
+    let shutdown_timeout = std::time::Duration::from_secs(30);
+
+    if let Some(task) = metrics_task {
+        info!("Awaiting metrics emission task shutdown...");
+        match tokio::time::timeout(shutdown_timeout, task).await {
+            Ok(Ok(())) => info!("Metrics emission task shut down successfully"),
+            Ok(Err(e)) => warn!(?e, "Metrics emission task exited with error"),
+            Err(_) => warn!(
+                "Metrics emission task did not shut down within {:?}",
+                shutdown_timeout
+            ),
+        }
+    }
+
+    info!("Awaiting rate limiter cleanup task shutdown...");
+    match tokio::time::timeout(shutdown_timeout, cleanup_task).await {
+        Ok(Ok(())) => info!("Rate limiter cleanup task shut down successfully"),
+        Ok(Err(e)) => warn!(?e, "Rate limiter cleanup task exited with error"),
+        Err(_) => warn!(
+            "Rate limiter cleanup task did not shut down within {:?}",
+            shutdown_timeout
+        ),
+    }
+
+    info!("RPC server shutdown complete");
     Ok(())
 }

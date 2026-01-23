@@ -5,7 +5,9 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sinex_core::JsonValue;
-use sinex_node_sdk::simple_node::{SimpleNode, SimpleNodeError, SimpleNodeContext, SimpleNodeWrapper};
+use sinex_node_sdk::simple_node::{
+    SimpleNode, SimpleNodeContext, SimpleNodeError, SimpleNodeWrapper,
+};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -14,6 +16,7 @@ pub struct PKMState {
     pub sessions_detected: u64,
 }
 
+#[derive(Default)]
 pub struct PKMAutomaton;
 
 #[async_trait]
@@ -22,9 +25,15 @@ impl SimpleNode for PKMAutomaton {
     type Input = JsonValue;
     type Output = JsonValue;
 
-    fn name(&self) -> &str { "pkm-automaton" }
-    fn input_event_type(&self) -> &str { "*" } 
-    fn output_event_type(&self) -> &str { "pkm.knowledge_extraction" }
+    fn name(&self) -> &'static str {
+        "pkm-automaton"
+    }
+    fn input_event_type(&self) -> &'static str {
+        "*"
+    }
+    fn output_event_type(&self) -> &'static str {
+        "pkm.knowledge_extraction"
+    }
 
     async fn process(
         &mut self,

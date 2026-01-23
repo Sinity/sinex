@@ -7,7 +7,6 @@ use color_eyre::eyre::{eyre, Result};
 pub struct TestSnapshot {
     pub db_events: u64,
     pub jetstream_msgs: u64,
-    pub outbox_pending: u64,
     pub dlq_entries: u64,
     pub metrics: HashMap<String, u64>,
 }

@@ -7,7 +7,6 @@ use crate::{
     config::IngestdConfig, validator::EventValidator, IngestdResult, JetStreamTopology, SinexError,
 };
 use sinex_core::error::AnyhowContext;
-use sinex_core::JsonValue;
 
 // External crates
 use async_nats::{jetstream, Client as NatsClient};
@@ -124,9 +123,17 @@ impl IngestService {
                 );
             }
 
-            EventValidator::load_schemas_from_db(pool, config.validate_schemas).await?
+            if config.strict_validation {
+                EventValidator::load_schemas_from_db_strict(pool, config.validate_schemas).await?
+            } else {
+                EventValidator::load_schemas_from_db(pool, config.validate_schemas).await?
+            }
         } else {
-            EventValidator::new(false)
+            if config.strict_validation {
+                EventValidator::new_strict(false)
+            } else {
+                EventValidator::new(false)
+            }
         };
 
         if let Some(ref nats_client) = nats_client {
@@ -171,28 +178,31 @@ impl IngestService {
         let stats = self.stats.clone();
         let shutdown_flag = self.shutdown_flag.clone();
 
-        // Start JetStream consumer task
+        // Start JetStream consumer task (critical - failure stops service)
+        let mut jetstream_consumer_handle = None;
         if let Some(ref nats_client) = self.nats_client {
             if let Some(ref pool) = self.db_pool {
-                let handle = self
-                    .start_jetstream_consumer_task(nats_client.clone(), pool.clone())
-                    .await;
-                self.track_task(handle).await;
+                jetstream_consumer_handle = Some(
+                    self.start_jetstream_consumer_task(nats_client.clone(), pool.clone())
+                        .await,
+                );
             }
         }
 
-        // Start MaterialAssembler task
+        // Start MaterialAssembler task (critical - failure stops service)
+        let mut material_assembler_handle = None;
         if let Some(ref nats_client) = self.nats_client {
             if let Some(ref pool) = self.db_pool {
-                let handle = self
-                    .start_material_assembler_task(nats_client.clone(), pool.clone())
-                    .await;
-                self.track_task(handle).await;
+                material_assembler_handle = Some(
+                    self.start_material_assembler_task(nats_client.clone(), pool.clone())
+                        .await,
+                );
             }
         }
 
         // Stats logging task with self-observation emission
         let observer = self.observer.clone();
+        let stats_shutdown = shutdown_flag.clone();
         let stats_handle = tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(60));
 
@@ -221,7 +231,7 @@ impl IngestService {
                             }
                         }
                     }
-                    _ = shutdown_signal(&shutdown_flag) => {
+                    _ = shutdown_signal(&stats_shutdown) => {
                         break;
                     }
                 }
@@ -242,14 +252,80 @@ impl IngestService {
             warn!("Failed to notify systemd ready state: {}", e);
         }
 
-        // Wait for shutdown signal
-        shutdown_signal(&self.shutdown_flag).await;
+        // Monitor critical tasks - exit on first failure or shutdown signal
+        let monitor_result = tokio::select! {
+            // JetStream consumer exited
+            result = async {
+                match jetstream_consumer_handle {
+                    Some(handle) => handle.await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                match result {
+                    Ok(Ok(())) if shutdown_flag.load(Ordering::Relaxed) => {
+                        info!("JetStream consumer completed during shutdown");
+                        Ok(())
+                    }
+                    Ok(Ok(())) => {
+                        error!("JetStream consumer exited unexpectedly without error");
+                        self.shutdown_flag.store(true, Ordering::Relaxed);
+                        Err(SinexError::service("JetStream consumer exited unexpectedly"))
+                    }
+                    Ok(Err(e)) => {
+                        error!(error = %e, "JetStream consumer failed");
+                        self.shutdown_flag.store(true, Ordering::Relaxed);
+                        Err(e)
+                    }
+                    Err(join_err) => {
+                        error!(error = ?join_err, "JetStream consumer panicked");
+                        self.shutdown_flag.store(true, Ordering::Relaxed);
+                        Err(SinexError::service(format!("JetStream consumer panicked: {}", join_err)))
+                    }
+                }
+            }
+
+            // MaterialAssembler exited
+            result = async {
+                match material_assembler_handle {
+                    Some(handle) => handle.await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                match result {
+                    Ok(Ok(())) if shutdown_flag.load(Ordering::Relaxed) => {
+                        info!("MaterialAssembler completed during shutdown");
+                        Ok(())
+                    }
+                    Ok(Ok(())) => {
+                        error!("MaterialAssembler exited unexpectedly without error");
+                        self.shutdown_flag.store(true, Ordering::Relaxed);
+                        Err(SinexError::service("MaterialAssembler exited unexpectedly"))
+                    }
+                    Ok(Err(e)) => {
+                        error!(error = %e, "MaterialAssembler failed");
+                        self.shutdown_flag.store(true, Ordering::Relaxed);
+                        Err(e)
+                    }
+                    Err(join_err) => {
+                        error!(error = ?join_err, "MaterialAssembler panicked");
+                        self.shutdown_flag.store(true, Ordering::Relaxed);
+                        Err(SinexError::service(format!("MaterialAssembler panicked: {}", join_err)))
+                    }
+                }
+            }
+
+            // Normal shutdown signal
+            _ = shutdown_signal(&shutdown_flag) => {
+                info!("Received shutdown signal");
+                Ok(())
+            }
+        };
 
         // Ensure background tasks have a chance to shut down before closing resources.
         self.wait_for_tasks(Duration::from_secs(5)).await;
 
         info!("Ingestion service stopped");
-        Ok(())
+        monitor_result
     }
 
     /// Start the JetStream consumer task
@@ -257,7 +333,7 @@ impl IngestService {
         &self,
         nats_client: NatsClient,
         pool: PgPool,
-    ) -> JoinHandle<()> {
+    ) -> JoinHandle<IngestdResult<()>> {
         let shutdown_flag = self.shutdown_flag.clone();
         let validator = self.validator.clone();
         let env = sinex_environment();
@@ -285,12 +361,19 @@ impl IngestService {
             tokio::select! {
                 result = consumer.run() => {
                     match result {
-                        Ok(()) => info!("JetStream consumer completed"),
-                        Err(e) => error!("JetStream consumer failed: {}", e),
+                        Ok(()) => {
+                            info!("JetStream consumer completed normally");
+                            Ok(())
+                        }
+                        Err(e) => {
+                            error!(error = %e, "JetStream consumer failed");
+                            Err(e)
+                        }
                     }
                 }
                 _ = shutdown_signal(&shutdown_flag) => {
                     info!("JetStream consumer shutting down");
+                    Ok(())
                 }
             }
         })
@@ -301,7 +384,7 @@ impl IngestService {
         &self,
         nats_client: NatsClient,
         pool: PgPool,
-    ) -> JoinHandle<()> {
+    ) -> JoinHandle<IngestdResult<()>> {
         let shutdown_flag = self.shutdown_flag.clone();
         let annex_repo_path = self.config.annex_repo_path.clone();
         let assembler_state_dir = self.config.assembler_state_dir.clone();
@@ -320,10 +403,13 @@ impl IngestService {
                 Err(e) => {
                     error!(
                         path = %annex_repo_path,
-                        "Failed to initialize git-annex repository: {}",
-                        e
+                        error = %e,
+                        "Failed to initialize git-annex repository"
                     );
-                    return;
+                    return Err(SinexError::service(format!(
+                        "Failed to initialize git-annex at {}: {}",
+                        annex_repo_path, e
+                    )));
                 }
             };
 
@@ -339,18 +425,26 @@ impl IngestService {
             ) {
                 Ok(assembler) => assembler,
                 Err(e) => {
-                    error!("Failed to create MaterialAssembler: {}", e);
-                    return;
+                    error!(error = %e, "Failed to create MaterialAssembler");
+                    return Err(e);
                 }
             };
 
             let result = assembler.run_with_shutdown(shutdown_flag.clone()).await;
             if shutdown_flag.load(Ordering::Relaxed) {
-                info!("MaterialAssembler shutting down");
-            }
-            match result {
-                Ok(()) => info!("MaterialAssembler completed"),
-                Err(e) => error!("MaterialAssembler failed: {}", e),
+                info!("MaterialAssembler shutting down normally");
+                Ok(())
+            } else {
+                match result {
+                    Ok(()) => {
+                        info!("MaterialAssembler completed normally");
+                        Ok(())
+                    }
+                    Err(e) => {
+                        error!(error = %e, "MaterialAssembler failed");
+                        Err(e)
+                    }
+                }
             }
         })
     }
@@ -588,6 +682,7 @@ impl IngestService {
         pool: &PgPool,
         js: &jetstream::Context,
     ) -> IngestdResult<()> {
+        use sinex_core::db::repositories::DbPoolExt;
         use sinex_core::Ulid;
 
         // Create or get KV bucket
@@ -605,48 +700,35 @@ impl IngestService {
                 .map_err(|e| SinexError::kv(format!("Failed to get schema KV bucket: {e}")))?,
         };
 
-        // For each schema entry, fetch full JSON from DB and store in KV
-        for entry in entries {
-            let schema_id = entry
-                .schema_id
-                .parse::<Ulid>()
-                .map_err(|e| SinexError::validation(format!("Invalid schema ID: {e}")))?;
+        // Parse schema IDs and fetch in bulk via centralized repository
+        let schema_ids: Vec<Ulid> = entries
+            .iter()
+            .filter_map(|entry| entry.schema_id.parse::<Ulid>().ok())
+            .collect();
 
-            // Fetch full schema from database using regular query to avoid ulid/uuid casting issues
-            let schema_json: Option<JsonValue> = sqlx::query_scalar(
-                r#"
-                SELECT schema_content
-                FROM sinex_schemas.event_payload_schemas
-                WHERE id::uuid = $1 AND is_active = true
-                "#,
-            )
-            .bind(schema_id)
-            .fetch_optional(pool)
+        let schemas = pool
+            .schema_cache()
+            .get_schemas_by_ids(&schema_ids)
             .await
-            .wrap_err_with(|| {
-                format!(
-                    "Failed to fetch schema content for {} ({})",
-                    entry.name, entry.schema_id
-                )
-            })
-            .map_err(|e| SinexError::database(format!("Failed to fetch schema: {e}")))?;
+            .wrap_err("Failed to fetch schema content for KV storage")
+            .map_err(|e| SinexError::database(format!("Failed to fetch schemas: {e}")))?;
 
-            if let Some(json) = schema_json {
-                let key = format!("schema:{}", entry.schema_id);
-                let payload = serde_json::to_vec(&json).map_err(|e| {
-                    SinexError::serialization(format!("Failed to serialize schema: {e}"))
-                })?;
+        // Store each schema in KV
+        for schema in schemas {
+            let key = format!("schema:{}", schema.id);
+            let payload = serde_json::to_vec(&schema.schema_content).map_err(|e| {
+                SinexError::serialization(format!("Failed to serialize schema: {e}"))
+            })?;
 
-                kv.put(&key, payload.into())
-                    .await
-                    .wrap_err_with(|| {
-                        format!(
-                            "Failed to store schema {} ({}) in NATS KV bucket",
-                            entry.name, entry.schema_id
-                        )
-                    })
-                    .map_err(|e| SinexError::kv(format!("Failed to store schema in KV: {e}")))?;
-            }
+            kv.put(&key, payload.into())
+                .await
+                .wrap_err_with(|| {
+                    format!(
+                        "Failed to store schema {}.{} ({}) in NATS KV bucket",
+                        schema.source, schema.event_type, schema.id
+                    )
+                })
+                .map_err(|e| SinexError::kv(format!("Failed to store schema in KV: {e}")))?;
         }
 
         info!(

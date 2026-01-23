@@ -45,16 +45,16 @@ struct NodeSetHorizonParams {
 /// Handle GET /nodes request - list all nodes
 pub async fn handle_nodes_list(
     nats_client: &async_nats::Client,
-    _env: &SinexEnvironment, // Reserved for environment-specific KV bucket naming
+    env: &SinexEnvironment,
     _params: Value,
 ) -> Result<Value> {
     // Query node status from KV store
     let js = async_nats::jetstream::new(nats_client.clone());
 
-    let kv_bucket_name = "KV_sinex_NODE_STATE";
+    let kv_bucket_name = format!("KV_{}", env.nats_kv_bucket_name("sinex_node_state"));
 
     // Try to get the KV bucket - if it doesn't exist, return empty list
-    let kv = match js.get_key_value(kv_bucket_name).await {
+    let kv = match js.get_key_value(&kv_bucket_name).await {
         Ok(kv) => kv,
         Err(_) => {
             // Bucket doesn't exist yet, return empty node list

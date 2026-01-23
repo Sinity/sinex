@@ -1,0 +1,46 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Replay operation metrics\n\nAddresses Issue 145: Replay Control Metrics",
+  "properties": {
+    "avg_duration_ms": {
+      "description": "Average replay duration (ms)",
+      "format": "double",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "events_affected": {
+      "description": "Events affected by replays",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "failed": {
+      "description": "Failed replays",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "successful": {
+      "description": "Successful replays",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "total_requests": {
+      "description": "Total replay requests",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "events_affected",
+    "failed",
+    "successful",
+    "total_requests"
+  ],
+  "title": "ReplayStatsPayload",
+  "type": "object"
+}

@@ -57,6 +57,7 @@ pub enum SystemdUnitState {
 }
 
 /// Modern systemd monitor using cgroup filesystem
+#[derive(Clone)]
 pub struct SystemdMonitor {
     cgroup_base: PathBuf,
 }
@@ -352,11 +353,20 @@ impl SystemdChangeMonitor {
     pub async fn poll_changes(&mut self) -> Result<Vec<SystemdChange>> {
         let mut changes = Vec::new();
 
-        // Get current units
-        let units = self.monitor.list_service_units()?;
+        // Get current units (spawn_blocking for /proc reads)
+        let monitor = self.monitor.clone();
+        let units = tokio::task::spawn_blocking(move || monitor.list_service_units())
+            .await
+            .map_err(|e| eyre!("Task join error: {}", e))??;
 
         for unit_name in units.clone() {
-            match self.monitor.get_unit_status(&unit_name) {
+            // Spawn blocking for cgroup/proc reads
+            let monitor = self.monitor.clone();
+            let unit_name_clone = unit_name.clone();
+            match tokio::task::spawn_blocking(move || monitor.get_unit_status(&unit_name_clone))
+                .await
+                .map_err(|e| eyre!("Task join error: {}", e))?
+            {
                 Ok(current_unit) => {
                     if let Some(known_unit) = self.known_units.get(&unit_name) {
                         // Check for state changes

@@ -167,11 +167,7 @@ fn parse_test_name(full_name: &str, default_package: &str) -> (String, String) {
 impl HistoryDb {
     /// Store test results for an invocation.
     #[allow(dead_code)]
-    pub fn store_test_results(
-        &self,
-        invocation_id: i64,
-        results: &[TestResult],
-    ) -> Result<usize> {
+    pub fn store_test_results(&self, invocation_id: i64, results: &[TestResult]) -> Result<usize> {
         let mut stored = 0;
         for result in results {
             self.conn.execute(
@@ -242,9 +238,7 @@ impl HistoryDb {
             "#,
         )?;
 
-        let rows = stmt.query_map([limit], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-        })?;
+        let rows = stmt.query_map([limit], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
 
         rows.collect::<Result<Vec<_>, _>>()
             .context("failed to collect flaky tests")
@@ -268,9 +262,7 @@ impl HistoryDb {
             "#,
         )?;
 
-        let rows = stmt.query_map([limit], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-        })?;
+        let rows = stmt.query_map([limit], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
 
         rows.collect::<Result<Vec<_>, _>>()
             .context("failed to collect failing tests")

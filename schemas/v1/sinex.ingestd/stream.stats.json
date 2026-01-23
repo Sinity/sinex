@@ -1,0 +1,70 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "NATS JetStream stream statistics\n\nAddresses Issue 3: Stream Capacity Monitoring",
+  "properties": {
+    "bytes": {
+      "description": "Current byte count",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "consumer_count": {
+      "description": "Consumer count",
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "fill_pct": {
+      "description": "Fill percentage (0.0 - 100.0)",
+      "format": "double",
+      "type": "number"
+    },
+    "first_seq": {
+      "description": "First sequence number",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "last_seq": {
+      "description": "Last sequence number",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "max_bytes": {
+      "description": "Maximum bytes",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "max_messages": {
+      "description": "Maximum message count (capacity)",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "messages": {
+      "description": "Current message count",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "stream": {
+      "description": "Stream name",
+      "type": "string"
+    }
+  },
+  "required": [
+    "bytes",
+    "consumer_count",
+    "fill_pct",
+    "first_seq",
+    "last_seq",
+    "max_bytes",
+    "max_messages",
+    "messages",
+    "stream"
+  ],
+  "title": "StreamStatsPayload",
+  "type": "object"
+}

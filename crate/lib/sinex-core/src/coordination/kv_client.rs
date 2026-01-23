@@ -14,6 +14,8 @@ const LEADERSHIP_TTL_SECS: Seconds = Seconds::from_secs(15);
 pub struct CoordinationKvClient {
     js: Context,
     service_name: String,
+    instances_bucket: String,
+    leadership_bucket: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,19 +29,27 @@ pub struct InstanceMetadata {
 
 impl CoordinationKvClient {
     pub fn new(js: Context, service_name: String) -> Self {
-        Self { js, service_name }
+        let env = crate::environment::environment();
+        let instances_bucket = format!("KV_{}", env.nats_kv_bucket_name("sinex_instances"));
+        let leadership_bucket = format!("KV_{}", env.nats_kv_bucket_name("sinex_leadership"));
+        Self {
+            js,
+            service_name,
+            instances_bucket,
+            leadership_bucket,
+        }
     }
 
     async fn instances_bucket(&self) -> Result<Store, SinexError> {
         self.js
-            .get_key_value("KV_sinex_instances")
+            .get_key_value(&self.instances_bucket)
             .await
             .map_err(|e| SinexError::kv(format!("Failed to get instances bucket: {}", e)))
     }
 
     async fn leadership_bucket(&self) -> Result<Store, SinexError> {
         let config = async_nats::jetstream::kv::Config {
-            bucket: "KV_sinex_leadership".to_string(),
+            bucket: self.leadership_bucket.clone(),
             history: 5,
             max_age: Duration::from_secs(LEADERSHIP_TTL_SECS.as_secs()),
             ..Default::default()
@@ -49,7 +59,7 @@ impl CoordinationKvClient {
             Ok(store) => Ok(store),
             Err(create_err) => self
                 .js
-                .get_key_value("KV_sinex_leadership")
+                .get_key_value(&self.leadership_bucket)
                 .await
                 .map_err(|e| {
                     SinexError::kv(format!(

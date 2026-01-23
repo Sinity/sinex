@@ -134,6 +134,16 @@ pub struct IngestdConfig {
     ))]
     #[builder(default = default_assembler_state_dir())]
     pub assembler_state_dir: Utf8PathBuf,
+
+    /// Strict validation mode: reject events without registered schemas
+    ///
+    /// When enabled, ingestd will reject any event that doesn't have a registered schema.
+    /// When disabled (default), events without schemas are allowed but won't be validated.
+    ///
+    /// Set via: SINEX_INGESTD_STRICT_VALIDATION=true
+    #[serde(default)]
+    #[builder(default = false)]
+    pub strict_validation: bool,
 }
 
 impl IngestdConfig {
@@ -412,6 +422,7 @@ impl Default for IngestdConfig {
             nats_namespace: None,
             annex_repo_path: default_annex_repo_path(),
             assembler_state_dir: default_assembler_state_dir(),
+            strict_validation: false,
         }
     }
 }

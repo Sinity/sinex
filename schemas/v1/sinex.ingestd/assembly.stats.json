@@ -1,0 +1,60 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Material assembly progress\n\nAddresses Issue 16: Assembly Metrics",
+  "properties": {
+    "active_assemblies": {
+      "description": "Number of assemblies currently in progress",
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "avg_duration_ms": {
+      "description": "Average assembly duration (ms)",
+      "format": "double",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "buffered_slices": {
+      "description": "Buffered slices waiting for completion",
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "total_completed": {
+      "description": "Total assemblies completed successfully",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "total_failed": {
+      "description": "Total assemblies failed",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "total_started": {
+      "description": "Total assemblies started since service start",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "total_timed_out": {
+      "description": "Total assemblies timed out",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "active_assemblies",
+    "buffered_slices",
+    "total_completed",
+    "total_failed",
+    "total_started",
+    "total_timed_out"
+  ],
+  "title": "AssemblyStatsPayload",
+  "type": "object"
+}

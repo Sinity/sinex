@@ -1,0 +1,89 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "FrequencyAnomaly": {
+      "description": "Frequency anomaly detection",
+      "properties": {
+        "event_type": {
+          "type": "string"
+        },
+        "share": {
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "event_type",
+        "share"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Frequency analysis of events",
+  "properties": {
+    "analysis_type": {
+      "type": "string"
+    },
+    "anomalies": {
+      "items": {
+        "$ref": "#/definitions/FrequencyAnomaly"
+      },
+      "type": "array"
+    },
+    "events_per_minute": {
+      "format": "double",
+      "type": "number"
+    },
+    "top_event_types": {
+      "items": {
+        "items": [
+          {
+            "type": "string"
+          },
+          {
+            "format": "uint",
+            "minimum": 0.0,
+            "type": "integer"
+          }
+        ],
+        "maxItems": 2,
+        "minItems": 2,
+        "type": "array"
+      },
+      "type": "array"
+    },
+    "top_sources": {
+      "items": {
+        "items": [
+          {
+            "type": "string"
+          },
+          {
+            "format": "uint",
+            "minimum": 0.0,
+            "type": "integer"
+          }
+        ],
+        "maxItems": 2,
+        "minItems": 2,
+        "type": "array"
+      },
+      "type": "array"
+    },
+    "window_seconds": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "analysis_type",
+    "anomalies",
+    "events_per_minute",
+    "top_event_types",
+    "top_sources",
+    "window_seconds"
+  ],
+  "title": "AnalyticsFrequencyPayload",
+  "type": "object"
+}

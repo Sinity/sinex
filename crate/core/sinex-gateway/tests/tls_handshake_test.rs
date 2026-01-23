@@ -48,11 +48,14 @@ async fn test_gateway_tcp_tls_handshake(ctx: TestContext) -> color_eyre::Result<
     // Initialize ServiceContainer
     let services = ServiceContainer::new(Some(ctx.database_url().to_string())).await?;
 
+    // Create shutdown channel
+    let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+
     // Spawn gateway in background
     let gateway_handle = tokio::spawn(async move {
         // Pass the explicit TCP listen address override
         let tcp_listen = format!("127.0.0.1:{}", port);
-        rpc_server::run(Some(&tcp_listen), services)
+        rpc_server::run(Some(&tcp_listen), services, shutdown_rx)
             .await
             .expect("Gateway failed");
     });

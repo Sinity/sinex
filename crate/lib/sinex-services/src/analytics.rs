@@ -9,6 +9,7 @@ use sinex_core::db::replay::state_machine::{ReplayOperation, ReplayState, Replay
 use sinex_core::db::repositories::common::db_error;
 use sinex_core::db::DbPool;
 use sinex_core::repositories::common::TimeBucketResult;
+use sinex_core::types::query::Pagination;
 use sqlx::postgres::types::PgInterval;
 use sqlx::types::chrono::{DateTime, Utc};
 use sqlx::{pool::PoolConnection, Postgres, Row};
@@ -84,7 +85,7 @@ impl AnalyticsService {
             "#,
             start,
             end_time,
-            100_i64
+            Pagination::DEFAULT_LIMIT
         )
         .fetch_all(&mut *conn)
         .await
@@ -100,6 +101,7 @@ impl AnalyticsService {
 
     /// Get detailed statistics for each source.
     pub async fn get_source_statistics(&self, limit: i64) -> ServiceResult<Vec<SourceStatistics>> {
+        let limit = limit.clamp(1, Pagination::MAX_LIMIT);
         let mut conn = self.acquire_connection().await?;
         let rows = sqlx::query!(
             r#"
@@ -179,7 +181,7 @@ impl AnalyticsService {
                     ORDER BY COUNT(*) DESC
                     LIMIT $1
                     "#,
-                    100_i64
+                    Pagination::DEFAULT_LIMIT
                 )
                 .fetch_all(&mut *conn)
                 .await
@@ -219,7 +221,7 @@ impl AnalyticsService {
             interval,
             start_time,
             end_time,
-            1000_i64
+            Pagination::MAX_LIMIT
         )
         .fetch_all(&mut *conn)
         .await
@@ -235,6 +237,7 @@ impl AnalyticsService {
         end_time: Option<DateTime<Utc>>,
         limit: i32,
     ) -> ServiceResult<Vec<(String, i64)>> {
+        let limit = (limit as i64).clamp(1, Pagination::MAX_LIMIT);
         let mut conn = self.acquire_connection().await?;
         let rows = match (start_time, end_time) {
             (Some(start), Some(end)) => sqlx::query(
@@ -254,7 +257,7 @@ impl AnalyticsService {
             )
             .bind(start)
             .bind(end)
-            .bind(limit as i64)
+            .bind(limit)
             .fetch_all(&mut *conn)
             .await
             .map_err(|e| db_error(e, "top commands"))?,
@@ -271,7 +274,7 @@ impl AnalyticsService {
                 LIMIT $1
                 "#,
             )
-            .bind(limit as i64)
+            .bind(limit)
             .fetch_all(&mut *conn)
             .await
             .map_err(|e| db_error(e, "top commands all time"))?,
@@ -301,6 +304,7 @@ impl AnalyticsService {
         bucket_size_minutes: i32,
         limit: i32,
     ) -> ServiceResult<Vec<(DateTime<Utc>, i64)>> {
+        let limit = (limit as i64).clamp(1, Pagination::MAX_LIMIT);
         let mut conn = self.acquire_connection().await?;
         let interval = minutes_to_interval(bucket_size_minutes);
 
@@ -316,7 +320,7 @@ impl AnalyticsService {
             LIMIT $2
             "#,
             interval,
-            limit as i64
+            limit
         )
         .fetch_all(&mut *conn)
         .await
