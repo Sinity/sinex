@@ -1,7 +1,8 @@
 use clap::Subcommand;
+use sinex_core::rpc::system::SystemHealthResponse;
 
 use crate::client::GatewayClient;
-use crate::fmt::{format_json, format_yaml};
+use crate::fmt::CommandOutput;
 use crate::model::OutputFormat;
 use crate::Result;
 
@@ -17,32 +18,45 @@ impl CoreCommands {
         match self {
             Self::Health => {
                 let health = client.health().await?;
-                match format {
-                    OutputFormat::Table => {
-                        println!("System Health:");
-                        println!("  Node ID: {}", health.id);
-                        println!(
-                            "  Status: {}",
-                            if health.healthy {
-                                "✓ Healthy"
-                            } else {
-                                "✗ Unhealthy"
-                            }
-                        );
-                        if let Some(details) = &health.details {
-                            println!("  Details: {}", details);
-                        }
-                        println!("  Checked: {}", health.checked_at);
-                    }
-                    OutputFormat::Json => {
-                        println!("{}", format_json(&health)?);
-                    }
-                    OutputFormat::Yaml => {
-                        println!("{}", format_yaml(&health)?);
-                    }
-                }
+                CommandOutput::single(health, format_health_table).display(&format)?;
             }
         }
         Ok(())
     }
+}
+
+/// Format health response as table
+fn format_health_table(health: &SystemHealthResponse) -> String {
+    let status_icon = match health.status.as_str() {
+        "healthy" => "✓",
+        "degraded" => "⚠",
+        _ => "✗",
+    };
+
+    let mut output = String::new();
+    output.push_str(&format!(
+        "System Health: {} {}\n",
+        status_icon, health.status
+    ));
+    output.push_str("\n");
+    output.push_str("Components:\n");
+    output.push_str(&format!(
+        "  Database: {} (connected: {})\n",
+        health.components.database.status, health.components.database.connected
+    ));
+    output.push_str(&format!(
+        "  NATS: {} (connected: {})\n",
+        health.components.nats.status, health.components.nats.connected
+    ));
+    output.push_str(&format!(
+        "  Replay Control: {} (enabled: {}, connected: {})\n",
+        health.components.replay_control.status,
+        health.components.replay_control.enabled,
+        health.components.replay_control.connected
+    ));
+    if let Some(ref err) = health.components.replay_control.last_error {
+        output.push_str(&format!("    Last error: {}\n", err));
+    }
+
+    output
 }

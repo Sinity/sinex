@@ -95,3 +95,155 @@ where
     spinner.finish_and_clear();
     result
 }
+
+/// Execute an async Result-returning operation with a spinner that handles success/failure.
+///
+/// The spinner automatically shows success on Ok, or abandons with error message on Err.
+/// This provides RAII-style cleanup - the spinner is properly cleaned up even on panic.
+///
+/// # Examples
+///
+/// ```ignore
+/// let result = with_spinner_result(
+///     "Draining node...",
+///     "Node drained successfully",
+///     client.drain_node(node_id)
+/// ).await?;
+/// ```
+pub async fn with_spinner_result<T, E, F>(
+    message: impl Into<String>,
+    success_msg: impl Into<String>,
+    future: F,
+) -> Result<T, E>
+where
+    F: std::future::Future<Output = Result<T, E>>,
+    E: std::fmt::Display,
+{
+    let spinner = Spinner::new(&message.into());
+    let success_msg = success_msg.into();
+
+    match future.await {
+        Ok(value) => {
+            spinner.finish_with_message(&success_msg);
+            Ok(value)
+        }
+        Err(error) => {
+            spinner.abandon_with_message(&format!("Failed: {}", error));
+            Err(error)
+        }
+    }
+}
+
+/// RAII guard for spinners that automatically cleans up on drop.
+///
+/// This ensures the spinner is properly abandoned/finished even if the
+/// operation panics or returns early.
+///
+/// # Examples
+///
+/// ```ignore
+/// async fn complex_operation() -> Result<()> {
+///     let mut spinner = SpinnerGuard::new("Starting operation...");
+///
+///     // Step 1
+///     some_work().await?;
+///     spinner.update_message("Processing step 2...");
+///
+///     // Step 2
+///     more_work().await?;
+///
+///     // On success, mark as complete
+///     spinner.finish("Operation completed");
+///     Ok(())
+///     // If there's an error, Drop abandons the spinner automatically
+/// }
+/// ```
+pub struct SpinnerGuard {
+    spinner: Option<Spinner>,
+    default_error_msg: String,
+}
+
+impl SpinnerGuard {
+    /// Create a new spinner guard with a message.
+    pub fn new(message: impl Into<String>) -> Self {
+        let msg = message.into();
+        Self {
+            spinner: Some(Spinner::new(&msg)),
+            default_error_msg: "Operation failed".to_string(),
+        }
+    }
+
+    /// Create a new spinner guard with a custom error message.
+    pub fn with_error_msg(message: impl Into<String>, error_msg: impl Into<String>) -> Self {
+        let msg = message.into();
+        Self {
+            spinner: Some(Spinner::new(&msg)),
+            default_error_msg: error_msg.into(),
+        }
+    }
+
+    /// Update the spinner message during operation.
+    pub fn update_message(&self, message: &str) {
+        if let Some(ref spinner) = self.spinner {
+            spinner.set_message(message);
+        }
+    }
+
+    /// Finish the spinner successfully with a message and consume the guard.
+    pub fn finish(mut self, message: &str) {
+        if let Some(spinner) = self.spinner.take() {
+            spinner.finish_with_message(message);
+        }
+    }
+
+    /// Abandon the spinner with an error message and consume the guard.
+    pub fn abandon(mut self, message: &str) {
+        if let Some(spinner) = self.spinner.take() {
+            spinner.abandon_with_message(message);
+        }
+    }
+}
+
+impl Drop for SpinnerGuard {
+    fn drop(&mut self) {
+        // If spinner wasn't explicitly finished/abandoned, abandon it with default error
+        if let Some(spinner) = self.spinner.take() {
+            spinner.abandon_with_message(&self.default_error_msg);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_with_spinner_result_success() {
+        let result: Result<i32, &str> =
+            with_spinner_result("Testing...", "Success!", async { Ok(42) }).await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 42);
+    }
+
+    #[tokio::test]
+    async fn test_with_spinner_result_failure() {
+        let result: Result<i32, &str> =
+            with_spinner_result("Testing...", "Success!", async { Err("test error") }).await;
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_spinner_guard_explicit_finish() {
+        let guard = SpinnerGuard::new("Testing...");
+        guard.finish("Done!");
+        // Should not panic on drop
+    }
+
+    #[test]
+    fn test_spinner_guard_auto_abandon() {
+        let _guard = SpinnerGuard::new("Testing...");
+        // Should auto-abandon on drop
+    }
+}

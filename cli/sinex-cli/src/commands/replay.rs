@@ -1,9 +1,9 @@
 use clap::Subcommand;
+use sinex_core::rpc::replay::ReplayState;
 use tokio::time::{sleep, Duration};
 
 use crate::client::GatewayClient;
-use crate::fmt::{format_json, format_table_replay, format_yaml, ProgressReporter};
-use crate::model::replay::ReplayStatus;
+use crate::fmt::{format_json, format_yaml, CommandOutput, ProgressReporter};
 use crate::model::OutputFormat;
 use crate::Result;
 
@@ -11,8 +11,11 @@ use crate::Result;
 #[derive(Debug, Subcommand)]
 #[command(after_help = "\
 EXAMPLES:
-    # Create a replay plan for a query
-    sinexctl replay plan --query 'source:terminal since:1h'
+    # Create a replay plan for a processor
+    sinexctl replay plan --processor terminal-ingestor
+
+    # Create a replay plan with time window
+    sinexctl replay plan --processor terminal-ingestor --since 1h
 
     # Submit a replay plan for execution
     sinexctl replay submit 01HQ2KM...
@@ -35,9 +38,17 @@ EXAMPLES:
 pub enum ReplayCommands {
     /// Create a replay plan
     Plan {
-        /// Query specification
+        /// Processor ID to replay events for
         #[arg(long)]
-        query: String,
+        processor: String,
+
+        /// Start time (RFC3339 or relative like "1h", "24h")
+        #[arg(long)]
+        since: Option<String>,
+
+        /// End time (RFC3339 or relative, defaults to now)
+        #[arg(long)]
+        until: Option<String>,
 
         /// Output format
         #[arg(long, short = 'f', value_enum, default_value = "table")]
@@ -80,45 +91,20 @@ pub enum ReplayCommands {
 impl ReplayCommands {
     pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
         match self {
-            Self::Plan { query, format } => {
-                let plan = client.replay_plan(query).await?;
-                match format {
-                    OutputFormat::Table => {
-                        println!("Replay Plan Created:");
-                        println!("  Plan ID: {}", plan.id);
-                        println!("  Event Count: {}", plan.event_count);
-                        println!("  Query: {}", plan.query);
-                        println!("  Created: {}", plan.created_at);
-                        println!("\nTo execute: sinexctl replay submit {}", plan.id);
-                    }
-                    OutputFormat::Json => {
-                        println!("{}", format_json(&plan)?);
-                    }
-                    OutputFormat::Yaml => {
-                        println!("{}", format_yaml(&plan)?);
-                    }
-                }
+            Self::Plan {
+                processor,
+                since,
+                until,
+                format,
+            } => {
+                let operation = client
+                    .replay_plan(processor, since.as_deref(), until.as_deref())
+                    .await?;
+                CommandOutput::single(operation, format_replay_plan_table).display(format)?;
             }
             Self::Submit { plan_id, format } => {
                 let operation = client.replay_submit(plan_id).await?;
-                match format {
-                    OutputFormat::Table => {
-                        println!("Replay Operation Started:");
-                        println!("  Operation ID: {}", operation.id);
-                        println!("  Status: {}", operation.status);
-                        println!("  Total Events: {}", operation.total_events);
-                        println!(
-                            "\nTo watch progress: sinexctl replay watch {}",
-                            operation.id
-                        );
-                    }
-                    OutputFormat::Json => {
-                        println!("{}", format_json(&operation)?);
-                    }
-                    OutputFormat::Yaml => {
-                        println!("{}", format_yaml(&operation)?);
-                    }
-                }
+                CommandOutput::single(operation, format_replay_submit_table).display(format)?;
             }
             Self::Watch {
                 operation_id,
@@ -128,28 +114,28 @@ impl ReplayCommands {
                 match format {
                     OutputFormat::Table => {
                         // Progress bar mode
-                        let status = client.replay_status(operation_id).await?;
+                        let op = client.replay_status(operation_id).await?;
                         let progress =
-                            ProgressReporter::new(status.total_events, "Replay operation");
+                            ProgressReporter::new(op.checkpoint.total_events, "Replay operation");
 
                         loop {
-                            let status = client.replay_status(operation_id).await?;
-                            progress.set_position(status.events_processed);
+                            let op = client.replay_status(operation_id).await?;
+                            progress.set_position(op.checkpoint.processed_events);
 
-                            match status.status {
-                                ReplayStatus::Completed => {
+                            match op.state {
+                                ReplayState::Completed => {
                                     progress.finish_with_message("✓ Completed successfully");
                                     break;
                                 }
-                                ReplayStatus::Failed => {
+                                ReplayState::Failed => {
                                     let msg = format!(
                                         "✗ Failed: {}",
-                                        status.error.as_deref().unwrap_or("Unknown error")
+                                        op.error_details.as_deref().unwrap_or("Unknown error")
                                     );
                                     progress.abandon_with_message(&msg);
                                     return Err(color_eyre::eyre::eyre!(msg));
                                 }
-                                ReplayStatus::Cancelled => {
+                                ReplayState::Cancelled => {
                                     progress.abandon_with_message("Cancelled");
                                     break;
                                 }
@@ -163,15 +149,10 @@ impl ReplayCommands {
                     OutputFormat::Json => {
                         // Streaming JSON mode
                         loop {
-                            let status = client.replay_status(operation_id).await?;
-                            println!("{}", format_json(&status)?);
+                            let op = client.replay_status(operation_id).await?;
+                            println!("{}", format_json(&op)?);
 
-                            if matches!(
-                                status.status,
-                                ReplayStatus::Completed
-                                    | ReplayStatus::Failed
-                                    | ReplayStatus::Cancelled
-                            ) {
+                            if op.state.is_terminal() {
                                 break;
                             }
 
@@ -180,32 +161,77 @@ impl ReplayCommands {
                     }
                     OutputFormat::Yaml => {
                         // Just show final status
-                        let status = client.replay_status(operation_id).await?;
-                        println!("{}", format_yaml(&status)?);
+                        let op = client.replay_status(operation_id).await?;
+                        println!("{}", format_yaml(&op)?);
                     }
                 }
             }
             Self::List { format } => {
                 let operations = client.replay_list().await?;
-                match format {
-                    OutputFormat::Table => {
-                        if operations.is_empty() {
-                            println!("No replay operations found.");
-                        } else {
-                            println!("{}", format_table_replay(&operations));
-                        }
-                    }
-                    OutputFormat::Json => {
-                        for op in &operations {
-                            println!("{}", format_json(op)?);
-                        }
-                    }
-                    OutputFormat::Yaml => {
-                        println!("{}", format_yaml(&operations)?);
-                    }
-                }
+                CommandOutput::list(
+                    operations,
+                    "No replay operations found.",
+                    format_replay_list_table,
+                )
+                .display(format)?;
             }
         }
         Ok(())
     }
+}
+
+use sinex_core::rpc::replay::ReplayOperation;
+
+/// Format replay plan creation as table
+fn format_replay_plan_table(operation: &ReplayOperation) -> String {
+    let mut output = String::new();
+    output.push_str("Replay Operation Created:\n");
+    output.push_str(&format!("  Operation ID: {}\n", operation.operation_id));
+    output.push_str(&format!("  State: {:?}\n", operation.state));
+    output.push_str(&format!("  Processor: {}\n", operation.scope.processor_id));
+    if let Some(ref window) = operation.scope.time_window {
+        output.push_str(&format!("  Time Window: {} to {}\n", window.0, window.1));
+    }
+    output.push_str(&format!("  Created: {}\n", operation.created_at));
+    output.push_str(&format!(
+        "\nTo execute: sinexctl replay submit {}\n",
+        operation.operation_id
+    ));
+    output
+}
+
+/// Format replay submission as table
+fn format_replay_submit_table(operation: &ReplayOperation) -> String {
+    let mut output = String::new();
+    output.push_str("Replay Operation Started:\n");
+    output.push_str(&format!("  Operation ID: {}\n", operation.operation_id));
+    output.push_str(&format!("  State: {:?}\n", operation.state));
+    output.push_str(&format!(
+        "  Total Events: {}\n",
+        operation.checkpoint.total_events
+    ));
+    output.push_str(&format!(
+        "\nTo watch progress: sinexctl replay watch {}\n",
+        operation.operation_id
+    ));
+    output
+}
+
+/// Format replay operations list as table
+fn format_replay_list_table(operations: &[ReplayOperation]) -> String {
+    let mut output = String::new();
+    output.push_str(&format!(
+        "{:<28} {:<12} {:<20} {:<10}\n",
+        "OPERATION ID", "STATE", "PROCESSOR", "EVENTS"
+    ));
+    for op in operations {
+        output.push_str(&format!(
+            "{:<28} {:<12} {:<20} {:<10}\n",
+            op.operation_id,
+            format!("{:?}", op.state),
+            op.scope.processor_id,
+            op.checkpoint.total_events
+        ));
+    }
+    output
 }

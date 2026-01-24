@@ -1,7 +1,8 @@
 use clap::Subcommand;
+use sinex_core::rpc::coordination::InstanceHealthResponse;
 
 use crate::client::GatewayClient;
-use crate::fmt::{format_json, format_table_nodes, format_yaml, Spinner};
+use crate::fmt::{format_table_nodes, with_spinner_result, CommandOutput};
 use crate::model::{NodeRole, OutputFormat};
 use crate::Result;
 
@@ -53,6 +54,9 @@ pub enum NodeCommands {
     Drain {
         /// Node ID or name
         node: String,
+        /// Reason for draining
+        #[arg(long, short)]
+        reason: Option<String>,
     },
 
     /// Resume a drained node
@@ -76,87 +80,75 @@ impl NodeCommands {
         match self {
             Self::List { role, format } => {
                 let nodes = client.list_nodes(*role).await?;
-                match format {
-                    OutputFormat::Table => {
-                        if nodes.is_empty() {
-                            println!("No nodes found.");
-                        } else {
-                            println!("{}", format_table_nodes(&nodes));
-                        }
-                    }
-                    OutputFormat::Json => {
-                        for node in &nodes {
-                            println!("{}", format_json(node)?);
-                        }
-                    }
-                    OutputFormat::Yaml => {
-                        println!("{}", format_yaml(&nodes)?);
-                    }
-                }
+                CommandOutput::list(nodes, "No nodes found.", format_table_nodes)
+                    .display(format)?;
             }
             Self::Status { node, format } => {
-                let node_info = client.node_status(node).await?;
-                match format {
-                    OutputFormat::Table => {
-                        println!("Node Status:");
-                        println!("  ID: {}", node_info.id);
-                        println!("  Name: {}", node_info.name);
-                        println!("  Role: {}", node_info.role);
-                        println!("  Status: {}", node_info.status);
-                        println!("  Last Heartbeat: {}", node_info.last_heartbeat);
-                        if let Some(is_leader) = node_info.is_leader {
-                            println!("  Leader: {}", if is_leader { "Yes" } else { "No" });
-                        }
-                    }
-                    OutputFormat::Json => {
-                        println!("{}", format_json(&node_info)?);
-                    }
-                    OutputFormat::Yaml => {
-                        println!("{}", format_yaml(&node_info)?);
-                    }
-                }
+                let response = client.node_status(node).await?;
+                CommandOutput::single(response, format_node_status_table).display(format)?;
             }
-            Self::Drain { node } => {
-                let spinner = Spinner::new(&format!("Draining node {}...", node));
-                match client.drain_node(node).await {
-                    Ok(()) => {
-                        spinner.finish_with_message(&format!("Node {} drained", node));
-                    }
-                    Err(e) => {
-                        spinner.abandon_with_message(&format!("Failed to drain {}", node));
-                        return Err(e);
-                    }
-                }
+            Self::Drain { node, reason } => {
+                with_spinner_result(
+                    format!("Draining node {}...", node),
+                    format!("Node {} drained", node),
+                    client.drain_node(node, reason.as_deref()),
+                )
+                .await?;
             }
             Self::Resume { node } => {
-                let spinner = Spinner::new(&format!("Resuming node {}...", node));
-                match client.resume_node(node).await {
-                    Ok(()) => {
-                        spinner.finish_with_message(&format!("Node {} resumed", node));
-                    }
-                    Err(e) => {
-                        spinner.abandon_with_message(&format!("Failed to resume {}", node));
-                        return Err(e);
-                    }
-                }
+                with_spinner_result(
+                    format!("Resuming node {}...", node),
+                    format!("Node {} resumed", node),
+                    client.resume_node(node),
+                )
+                .await?;
             }
             Self::SetHorizon { node, horizon } => {
-                let spinner = Spinner::new(&format!("Setting horizon for {}...", node));
-                match client.set_node_horizon(node, horizon).await {
-                    Ok(()) => {
-                        spinner.finish_with_message(&format!(
-                            "Node {} horizon set to {}",
-                            node, horizon
-                        ));
-                    }
-                    Err(e) => {
-                        spinner
-                            .abandon_with_message(&format!("Failed to set horizon for {}", node));
-                        return Err(e);
-                    }
-                }
+                with_spinner_result(
+                    format!("Setting horizon for {}...", node),
+                    format!("Node {} horizon set to {}", node, horizon),
+                    client.set_node_horizon(node, horizon),
+                )
+                .await?;
             }
         }
         Ok(())
     }
+}
+
+/// Format node status as table
+fn format_node_status_table(response: &InstanceHealthResponse) -> String {
+    let mut output = String::new();
+    output.push_str("Node Status:\n");
+    output.push_str(&format!(
+        "  Instance ID: {}\n",
+        response.instance.instance_id
+    ));
+    output.push_str(&format!("  Type: {}\n", response.instance.node_type));
+    if let Some(ref hostname) = response.instance.hostname {
+        output.push_str(&format!("  Hostname: {}\n", hostname));
+    }
+    output.push_str(&format!(
+        "  Status: {}\n",
+        if response.healthy {
+            "✓ Healthy"
+        } else {
+            "✗ Unhealthy"
+        }
+    ));
+    if let Some(ref heartbeat) = response.instance.last_heartbeat {
+        output.push_str(&format!("  Last Heartbeat: {}\n", heartbeat));
+    }
+    output.push_str(&format!(
+        "  Leader: {}\n",
+        if response.instance.is_leader {
+            "Yes"
+        } else {
+            "No"
+        }
+    ));
+    if let Some(ref err) = response.last_error {
+        output.push_str(&format!("  Last Error: {}\n", err));
+    }
+    output
 }

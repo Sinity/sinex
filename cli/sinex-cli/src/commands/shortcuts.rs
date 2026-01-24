@@ -5,7 +5,6 @@ use console::style;
 use std::collections::HashSet;
 
 use crate::client::GatewayClient;
-use crate::model::nodes::NodeStatus;
 use crate::model::search::SearchQuery;
 
 /// Quick system status check
@@ -44,50 +43,41 @@ impl StatusCommand {
         match client.list_nodes(None).await {
             Ok(nodes) => {
                 let total = nodes.len();
-                let active = nodes
-                    .iter()
-                    .filter(|n| matches!(n.status, NodeStatus::Active))
-                    .count();
-                let draining = nodes
-                    .iter()
-                    .filter(|n| matches!(n.status, NodeStatus::Draining))
-                    .count();
-                let inactive = total - active - draining;
+                // Consider healthy if has heartbeat
+                let healthy = nodes.iter().filter(|n| n.last_heartbeat.is_some()).count();
+                let unhealthy = total - healthy;
 
-                let status_color = if active == total {
+                let status_color = if healthy == total {
                     style("●").green()
-                } else if active > 0 {
+                } else if healthy > 0 {
                     style("●").yellow()
                 } else {
                     style("●").red()
                 };
 
                 println!(
-                    "Nodes:   {} {}/{} active{}{}",
+                    "Nodes:   {} {}/{} healthy{}",
                     status_color,
-                    active,
+                    healthy,
                     total,
-                    if draining > 0 {
-                        format!(", {} draining", draining)
-                    } else {
-                        String::new()
-                    },
-                    if inactive > 0 {
-                        format!(", {} inactive", inactive)
+                    if unhealthy > 0 {
+                        format!(", {} unhealthy", unhealthy)
                     } else {
                         String::new()
                     }
                 );
 
                 // List nodes if there are issues
-                if active != total {
+                if healthy != total {
                     for node in &nodes {
-                        let icon = match node.status {
-                            NodeStatus::Active => style("  ✓").green(),
-                            NodeStatus::Draining => style("  ◐").yellow(),
-                            _ => style("  ✗").red(),
+                        let has_heartbeat = node.last_heartbeat.is_some();
+                        let icon = if has_heartbeat {
+                            style("  ✓").green()
+                        } else {
+                            style("  ✗").red()
                         };
-                        println!("{} {} ({})", icon, node.name, node.status);
+                        let name = node.hostname.as_deref().unwrap_or(&node.instance_id);
+                        println!("{} {} ({})", icon, name, node.node_type);
                     }
                 }
             }
@@ -102,9 +92,8 @@ impl StatusCommand {
 
         // DLQ
         match client.dlq_list().await {
-            Ok(queues) => {
-                let total_messages: u64 = queues.iter().map(|q| q.message_count).sum();
-                let status = if total_messages == 0 {
+            Ok(stats) => {
+                let status = if stats.total_messages == 0 {
                     style("●").green()
                 } else {
                     style("●").yellow()
@@ -112,25 +101,12 @@ impl StatusCommand {
                 println!(
                     "DLQ:     {} {} messages",
                     status,
-                    if total_messages == 0 {
+                    if stats.total_messages == 0 {
                         "0 ✓".to_string()
                     } else {
-                        format!("{} ⚠", total_messages)
+                        format!("{} ⚠", stats.total_messages)
                     }
                 );
-
-                if total_messages > 0 {
-                    for q in &queues {
-                        if q.message_count > 0 {
-                            println!(
-                                "  {} {} messages in {}",
-                                style("⚠").yellow(),
-                                q.message_count,
-                                q.subject
-                            );
-                        }
-                    }
-                }
             }
             Err(e) => {
                 println!(

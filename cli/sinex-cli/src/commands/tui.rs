@@ -18,9 +18,10 @@ use std::io;
 use std::time::Instant;
 
 use crate::client::GatewayClient;
-use crate::model::nodes::{NodeInfo, NodeStatus};
-use crate::model::replay::DlqInfo;
+use crate::fmt::format_heartbeat_age;
 use crate::model::search::{SearchQuery, SearchResult};
+use sinex_core::rpc::coordination::InstanceInfo;
+use sinex_core::rpc::dlq::DlqListResponse;
 
 /// Launch interactive TUI dashboard
 #[derive(Debug, Args)]
@@ -82,8 +83,8 @@ struct App {
     refresh_interval: u64,
 
     // Live data
-    nodes: Vec<NodeInfo>,
-    dlq_queues: Vec<DlqInfo>,
+    nodes: Vec<InstanceInfo>,
+    dlq_stats: Option<DlqListResponse>,
     recent_events: Vec<SearchResult>,
     gateway_version: String,
 
@@ -102,7 +103,7 @@ impl App {
             client,
             refresh_interval,
             nodes: Vec::new(),
-            dlq_queues: Vec::new(),
+            dlq_stats: None,
             recent_events: Vec::new(),
             gateway_version: String::from("unknown"),
             loading: false,
@@ -150,7 +151,7 @@ impl App {
             Tab::Dashboard => 0,
             Tab::Nodes => self.nodes.len(),
             Tab::Events => self.recent_events.len(),
-            Tab::Dlq => self.dlq_queues.len(),
+            Tab::Dlq => 0, // DLQ shows stats, not a navigable list
         }
     }
 
@@ -184,7 +185,7 @@ impl App {
 
         // Fetch DLQ info
         match self.client.dlq_list().await {
-            Ok(dlq) => self.dlq_queues = dlq,
+            Ok(stats) => self.dlq_stats = Some(stats),
             Err(e) => {
                 if self.error.is_none() {
                     self.error = Some(format!("Failed to fetch DLQ: {}", e));
@@ -395,19 +396,24 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
         .split(area);
 
     // Left: System overview
-    let active_nodes = app
+    // Consider node healthy if it has a heartbeat (we'll derive active status from heartbeat age later)
+    let healthy_nodes = app
         .nodes
         .iter()
-        .filter(|n| matches!(n.status, NodeStatus::Active))
+        .filter(|n| n.last_heartbeat.is_some())
         .count();
     let total_nodes = app.nodes.len();
-    let dlq_total: u64 = app.dlq_queues.iter().map(|q| q.message_count).sum();
+    let dlq_total = app
+        .dlq_stats
+        .as_ref()
+        .map(|s| s.total_messages)
+        .unwrap_or(0);
     let events_count = app.recent_events.len();
 
     let overview_items = vec![
         ListItem::new(format!("Gateway Version: {}", app.gateway_version)),
         ListItem::new(""),
-        ListItem::new(format!("Active Nodes: {}/{}", active_nodes, total_nodes)),
+        ListItem::new(format!("Healthy Nodes: {}/{}", healthy_nodes, total_nodes)),
         ListItem::new(format!("Recent Events (1h): {}", events_count)),
         ListItem::new(format!(
             "DLQ Messages: {}",
@@ -433,18 +439,20 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
         .nodes
         .iter()
         .map(|n| {
-            let status_icon = match n.status {
-                NodeStatus::Active => "●",
-                NodeStatus::Draining => "◐",
-                _ => "○",
+            let has_heartbeat = n.last_heartbeat.is_some();
+            let status_icon = if has_heartbeat { "●" } else { "○" };
+            let color = if has_heartbeat {
+                Color::Green
+            } else {
+                Color::Red
             };
-            let color = match n.status {
-                NodeStatus::Active => Color::Green,
-                NodeStatus::Draining => Color::Yellow,
-                _ => Color::Red,
-            };
-            ListItem::new(format!("{} {} ({})", status_icon, n.name, n.role))
-                .style(Style::default().fg(color))
+            let leader = if n.is_leader { " [leader]" } else { "" };
+            let name = n.hostname.as_deref().unwrap_or(&n.instance_id);
+            ListItem::new(format!(
+                "{} {} ({}){}",
+                status_icon, name, n.node_type, leader
+            ))
+            .style(Style::default().fg(color))
         })
         .collect();
 
@@ -463,24 +471,28 @@ fn render_nodes(f: &mut Frame, area: Rect, app: &App) {
         .iter()
         .enumerate()
         .map(|(i, n)| {
-            let status_icon = match n.status {
-                NodeStatus::Active => "●",
-                NodeStatus::Draining => "◐",
-                _ => "○",
-            };
-            let color = match n.status {
-                NodeStatus::Active => Color::Green,
-                NodeStatus::Draining => Color::Yellow,
-                _ => Color::Red,
+            let has_heartbeat = n.last_heartbeat.is_some();
+            let status_icon = if has_heartbeat { "●" } else { "○" };
+            let color = if has_heartbeat {
+                Color::Green
+            } else {
+                Color::Red
             };
             let style = if i == app.selected_index {
                 Style::default().fg(color).add_modifier(Modifier::REVERSED)
             } else {
                 Style::default().fg(color)
             };
+            let name = n.hostname.as_deref().unwrap_or(&n.instance_id);
+            let leader = if n.is_leader { " [leader]" } else { "" };
+            let heartbeat_str = n
+                .last_heartbeat
+                .as_ref()
+                .map(|hb| format_heartbeat_age(hb))
+                .unwrap_or_else(|| "none".to_string());
             ListItem::new(format!(
-                "{} {} | Role: {} | Status: {}",
-                status_icon, n.name, n.role, n.status
+                "{} {} | Type: {} | Heartbeat: {}{}",
+                status_icon, name, n.node_type, heartbeat_str, leader
             ))
             .style(style)
         })
@@ -541,42 +553,37 @@ fn render_events(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_dlq(f: &mut Frame, area: Rect, app: &App) {
-    let total_messages: u64 = app.dlq_queues.iter().map(|q| q.message_count).sum();
-
-    let items: Vec<ListItem> = app
-        .dlq_queues
-        .iter()
-        .enumerate()
-        .map(|(i, q)| {
-            let style = if i == app.selected_index {
-                Style::default().add_modifier(Modifier::REVERSED)
-            } else if q.message_count > 0 {
-                Style::default().fg(Color::Yellow)
-            } else {
-                Style::default()
-            };
-            ListItem::new(format!("{}: {} messages", q.subject, q.message_count)).style(style)
-        })
-        .collect();
-
-    let block_title = if total_messages > 0 {
-        format!("Dead Letter Queue ({} total messages) ⚠", total_messages)
-    } else {
-        "Dead Letter Queue (empty) ✓".to_string()
+    let (block_title, items) = match &app.dlq_stats {
+        Some(stats) if stats.total_messages > 0 => {
+            let title = format!("Dead Letter Queue ({} messages) ⚠", stats.total_messages);
+            let items = vec![
+                ListItem::new(format!("Total Messages: {}", stats.total_messages))
+                    .style(Style::default().fg(Color::Yellow)),
+                ListItem::new(format!("Total Size: {} bytes", stats.total_bytes)),
+                ListItem::new(format!("First Sequence: {}", stats.first_seq)),
+                ListItem::new(format!("Last Sequence: {}", stats.last_seq)),
+                ListItem::new(""),
+                ListItem::new("Use 'sinexctl dlq peek' to inspect messages."),
+                ListItem::new("Use 'sinexctl dlq requeue --all' to retry."),
+            ];
+            (title, items)
+        }
+        Some(_) => {
+            let title = "Dead Letter Queue (empty) ✓".to_string();
+            let items = vec![
+                ListItem::new("No messages in DLQ.").style(Style::default().fg(Color::Green)),
+                ListItem::new(""),
+                ListItem::new("Messages that fail processing appear here."),
+            ];
+            (title, items)
+        }
+        None => {
+            let title = "Dead Letter Queue".to_string();
+            let items = vec![ListItem::new("Loading...")];
+            (title, items)
+        }
     };
 
-    let help_text = if items.is_empty() {
-        vec![
-            ListItem::new("No DLQ entries found."),
-            ListItem::new(""),
-            ListItem::new("Messages that fail processing appear here."),
-            ListItem::new("Use 'sinexctl dlq peek <subject>' to inspect."),
-        ]
-    } else {
-        items
-    };
-
-    let list =
-        List::new(help_text).block(Block::default().title(block_title).borders(Borders::ALL));
+    let list = List::new(items).block(Block::default().title(block_title).borders(Borders::ALL));
     f.render_widget(list, area);
 }

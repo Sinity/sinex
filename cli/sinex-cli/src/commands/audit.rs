@@ -1,10 +1,10 @@
 use clap::Args;
+use sinex_core::rpc::audit::AuditGetResponse;
 
 use crate::client::GatewayClient;
 use crate::error::is_not_found_error;
 use crate::fmt::{format_json, format_yaml};
 use crate::model::OutputFormat;
-use crate::util::json::get_str;
 use crate::Result;
 
 /// Get audit trail for an operation
@@ -32,8 +32,8 @@ pub struct AuditCommand {
 impl AuditCommand {
     pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
         // Try to fetch audit trail, handle 404 gracefully
-        let audit = match client.audit_get(&self.operation_id).await {
-            Ok(audit) => audit,
+        let response: AuditGetResponse = match client.audit_get(&self.operation_id).await {
+            Ok(resp) => resp,
             Err(e) if is_not_found_error(&e) => {
                 eprintln!("Operation '{}' not found", self.operation_id);
                 eprintln!();
@@ -48,26 +48,39 @@ impl AuditCommand {
                 println!("Audit Trail for Operation: {}", self.operation_id);
                 println!("{}", "─".repeat(80));
 
-                if let Some(operation) = audit.get("operation") {
-                    println!("Operation:");
-                    println!("  Type: {}", get_str(operation, "operation_type"));
-                    println!("  Status: {}", get_str(operation, "status"));
-                    println!("  Operator: {}", get_str(operation, "operator"));
-                    println!("  Started: {}", get_str(operation, "started_at"));
+                let op = &response.audit_trail.operation;
+                println!("Operation:");
+                println!("  Type: {}", op.operation_type);
+                println!("  Status: {}", op.result_status);
+                println!("  Operator: {}", op.operator);
+                if let Some(msg) = &op.result_message {
+                    println!("  Message: {}", msg);
+                }
+                if let Some(duration) = op.duration_ms {
+                    println!("  Duration: {}ms", duration);
                 }
 
-                if let Some(events) = audit.get("events").and_then(|v| v.as_array()) {
-                    println!("\nAudit Events:");
+                let events = &response.audit_trail.affected_events;
+                if !events.is_empty() {
+                    println!("\nAffected Events ({}):", events.len());
                     for (i, event) in events.iter().enumerate() {
-                        println!("  {}. {}", i + 1, serde_json::to_string_pretty(event)?);
+                        println!(
+                            "  {}. {} / {} ({})",
+                            i + 1,
+                            event.source,
+                            event.event_type,
+                            event.id
+                        );
                     }
+                } else {
+                    println!("\nNo affected events recorded.");
                 }
             }
             OutputFormat::Json => {
-                println!("{}", format_json(&audit)?);
+                println!("{}", format_json(&response)?);
             }
             OutputFormat::Yaml => {
-                println!("{}", format_yaml(&audit)?);
+                println!("{}", format_yaml(&response)?);
             }
         }
 

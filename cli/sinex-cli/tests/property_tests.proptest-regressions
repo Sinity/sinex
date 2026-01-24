@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 1d8921ae194566d92a092135752e088c0f133ea487dd4b0798f3fb9c2adc80ad # shrinks to config = Config { rpc_url: "https://127.0.0.1:9999", token: Some("3Dkk0_ssF-S_8-XBU-tIYQ_-h2xC_zK-1hhZlak-4l0d-j-WW-zLw591y-G"), token_file: Some("OBS49NSJgAH61/FSO_pWe-2EN_.9_rk0e_v_bCKOE_M_6gH"), ca_cert: None, client_cert: None, client_key: None, insecure: true, timeout: 224, default_format: Table, aliases: {"n9_le_y": ["d-g3p0n65-9-i--o2-l", "kmp9y-3jsl", "kdd-3i", "--x2ks-c4tqu-s", "m0uhys-65m8ple"], "e64b__oln": ["---y7yi-bx-m-0", "-1z7-y-", "4mu"]}, theme: ThemeConfig { table_style: "minimal", success_color: "cyan", error_color: "blue", warning_color: "yellow" }, editor: "vim" }
