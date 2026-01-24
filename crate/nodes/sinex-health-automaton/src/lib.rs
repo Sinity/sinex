@@ -114,7 +114,7 @@ pub enum HealthStatus {
 }
 
 pub struct HealthAggregator {
-    config: HealthAggregatorConfig,
+    pub config: HealthAggregatorConfig,
 }
 
 impl Default for HealthAggregator {
