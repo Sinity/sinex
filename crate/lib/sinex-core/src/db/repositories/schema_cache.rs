@@ -245,8 +245,9 @@ impl<'a> SchemaCacheRepository<'a> {
 mod tests {
     use super::*;
     use crate::db::repositories::schema_management::{NewEventSchema, SchemaManagementRepository};
+    use sinex_test_utils::{sinex_test, TestContext, TestResult};
 
-    async fn setup_test_schema(pool: &PgPool) -> DbResult<Ulid> {
+    async fn setup_test_schema(pool: &PgPool) -> TestResult<Ulid> {
         let repo = SchemaManagementRepository::new(pool);
         let schema = NewEventSchema {
             source: "test-source".to_string(),
@@ -260,11 +261,12 @@ mod tests {
             }),
         };
         let result = repo.register_schema(schema).await?;
-        Ok(result.id)
+        Ok(*result.id.as_ulid())
     }
 
-    #[sqlx::test]
-    async fn test_lookup_schema_id(pool: PgPool) -> DbResult<()> {
+    #[sinex_test]
+    async fn test_lookup_schema_id(ctx: TestContext) -> TestResult<()> {
+        let pool = ctx.pool();
         let schema_id = setup_test_schema(&pool).await?;
         let cache_repo = SchemaCacheRepository::new(&pool);
 
@@ -277,8 +279,9 @@ mod tests {
         Ok(())
     }
 
-    #[sqlx::test]
-    async fn test_lookup_schema_version(pool: PgPool) -> DbResult<()> {
+    #[sinex_test]
+    async fn test_lookup_schema_version(ctx: TestContext) -> TestResult<()> {
+        let pool = ctx.pool();
         let schema_id = setup_test_schema(&pool).await?;
         let cache_repo = SchemaCacheRepository::new(&pool);
 
@@ -288,8 +291,9 @@ mod tests {
         Ok(())
     }
 
-    #[sqlx::test]
-    async fn test_get_schema_content(pool: PgPool) -> DbResult<()> {
+    #[sinex_test]
+    async fn test_get_schema_content(ctx: TestContext) -> TestResult<()> {
+        let pool = ctx.pool();
         let schema_id = setup_test_schema(&pool).await?;
         let cache_repo = SchemaCacheRepository::new(&pool);
 
@@ -301,8 +305,9 @@ mod tests {
         Ok(())
     }
 
-    #[sqlx::test]
-    async fn test_fetch_latest_active_schemas(pool: PgPool) -> DbResult<()> {
+    #[sinex_test]
+    async fn test_fetch_latest_active_schemas(ctx: TestContext) -> TestResult<()> {
+        let pool = ctx.pool();
         setup_test_schema(&pool).await?;
         let cache_repo = SchemaCacheRepository::new(&pool);
 
@@ -317,8 +322,9 @@ mod tests {
         Ok(())
     }
 
-    #[sqlx::test]
-    async fn test_get_schemas_by_ids(pool: PgPool) -> DbResult<()> {
+    #[sinex_test]
+    async fn test_get_schemas_by_ids(ctx: TestContext) -> TestResult<()> {
+        let pool = ctx.pool();
         let schema_id = setup_test_schema(&pool).await?;
         let cache_repo = SchemaCacheRepository::new(&pool);
 
@@ -329,8 +335,9 @@ mod tests {
         Ok(())
     }
 
-    #[sqlx::test]
-    async fn test_preload_schema_metadata(pool: PgPool) -> DbResult<()> {
+    #[sinex_test]
+    async fn test_preload_schema_metadata(ctx: TestContext) -> TestResult<()> {
+        let pool = ctx.pool();
         let schema_id = setup_test_schema(&pool).await?;
         let cache_repo = SchemaCacheRepository::new(&pool);
 
