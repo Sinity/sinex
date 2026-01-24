@@ -82,6 +82,7 @@ async fn checkpoint_updates_are_idempotent(
         last_activity: chrono::Utc::now(),
         data: Some(checkpoint_data.clone()),
         version: 2,
+        revision: 0,
     };
 
     // Save checkpoint twice
@@ -136,6 +137,7 @@ async fn checkpoint_recovery_is_robust(
             last_activity: chrono::Utc::now(),
             data: Some(data.clone()),
             version: 2,
+            revision: 0,
         };
 
         checkpoint_manager
@@ -185,6 +187,7 @@ async fn concurrent_checkpoint_access_is_safe(
                 last_activity: chrono::Utc::now(),
                 data: Some(serde_json::json!({ "task": i })),
                 version: 2,
+                revision: 0,
             };
 
             manager.save_checkpoint(&state).await
@@ -240,6 +243,7 @@ async fn checkpoint_state_transitions_are_valid(
         last_activity: chrono::Utc::now(),
         data: Some(serde_json::json!({ "sequence": 0 })),
         version: 2,
+        revision: 0,
     };
 
     checkpoint_manager
@@ -316,6 +320,7 @@ async fn checkpoint_data_integrity_is_preserved(
                     last_activity: chrono::Utc::now(),
                     data: Some(expected_data.clone()),
                     version: 2,
+                    revision: 0,
                 };
 
                 checkpoint_manager
@@ -344,6 +349,7 @@ async fn checkpoint_data_integrity_is_preserved(
                     last_activity: chrono::Utc::now(),
                     data: Some(expected_data.clone()),
                     version: 2,
+                    revision: 0,
                 };
 
                 checkpoint_manager
@@ -396,6 +402,7 @@ async fn checkpoint_cleanup_maintains_consistency(
             last_activity: chrono::Utc::now(),
             data: Some(serde_json::json!({ "automaton": processor_name })),
             version: 2,
+            revision: 0,
         };
 
         manager
@@ -475,6 +482,7 @@ mod stress_tests {
                         last_activity: chrono::Utc::now(),
                         data: Some(serde_json::json!({"thread": thread_id, "iteration": i})),
                         version: 2,
+                        revision: 0,
                     };
 
                     if checkpoint_manager.save_checkpoint(&state).await.is_ok() {

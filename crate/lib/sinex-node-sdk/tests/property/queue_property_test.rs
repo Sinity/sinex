@@ -71,6 +71,7 @@ fn checkpoint_progress_is_monotonic() -> TestResult<()> {
                     last_activity: chrono::Utc::now(),
                     data: Some(serde_json::json!({"batch": idx})),
                     version: 2,
+                    revision: 0,
                 };
 
                 manager.save_checkpoint(&state).await?;
@@ -113,6 +114,7 @@ sinex_proptest! {
             last_activity: chrono::Utc::now(),
             data: Some(json_payload.clone()),
             version: 1,
+            revision: 0,
         };
 
         let encoded = serde_json::to_string(&state)?;
