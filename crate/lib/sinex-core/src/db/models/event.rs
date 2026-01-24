@@ -30,9 +30,17 @@ pub type OptionalTimestamp = Option<chrono::DateTime<chrono::Utc>>;
 /// This is the canonical event structure used throughout the system.
 ///
 /// - `Event<T>` provides strongly-typed payloads for homogeneous processing
-/// - `Event<JsonValue>` (aka Event<JsonValue>) for heterogeneous processing and storage
+/// - `Event<JsonValue>` (aka RawEvent) for heterogeneous processing and storage
 /// - ALL events MUST have provenance (Material or Synthesis)
 /// - The id field determines if this is a new event or a persisted one
+///
+/// # Serialization Format
+///
+/// Events serialize provenance fields flatly (not nested) for compatibility with NATS/ingestd:
+/// - Material: `{"source_material_id": "...", "anchor_byte": 0, "offset_start": ..., ...}`
+/// - Synthesis: `{"source_event_ids": ["...", "..."]}`
+///
+/// The `Provenance` enum handles this serialization automatically via custom Serialize/Deserialize.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Event<T = JsonValue> {
     /// Event ID - elegant distinction between new and persisted events
@@ -66,7 +74,9 @@ pub struct Event<T = JsonValue> {
     /// Schema ID for payload validation
     pub payload_schema_id: Option<Ulid>,
 
-    /// REQUIRED: Provenance tracking (Material or Synthesis)
+    /// Provenance tracking the origin of this event
+    /// Serializes flatly for wire format compatibility
+    #[serde(flatten)]
     pub provenance: Provenance,
 
     /// Array of associated blob IDs (screenshots, recordings, etc.)
@@ -98,40 +108,6 @@ impl<T> Event<T> {
     pub fn with_associated_blobs(mut self, blobs: Vec<Ulid>) -> Self {
         self.associated_blob_ids = Some(blobs);
         self
-    }
-
-    #[cfg(feature = "testing")]
-    /// Create a test event with dummy Material provenance
-    ///
-    /// This is for testing only and creates events with a well-known test
-    /// material ID. In production, all events must have real provenance.
-    pub fn test_event(
-        source: impl Into<EventSource>,
-        event_type: impl Into<EventType>,
-        payload: T,
-    ) -> Self {
-        let test_material_id = Id::<SourceMaterial>::from_ulid(
-            crate::types::Ulid::from_bytes([
-                0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54,
-                0x32, 0x10,
-            ])
-            .unwrap_or_else(|_| {
-                panic!("hardcoded test ULID bytes should be valid - this is a programming error")
-            }),
-        );
-
-        Self {
-            id: None,
-            source: source.into(),
-            event_type: event_type.into(),
-            payload,
-            ts_orig: Some(Utc::now()),
-            host: get_hostname(),
-            ingestor_version: get_ingestor_version(),
-            payload_schema_id: None,
-            provenance: Provenance::from_material(test_material_id, 0, None, None),
-            associated_blob_ids: None,
-        }
     }
 }
 
@@ -198,6 +174,11 @@ impl<T> Event<T> {
         self.id.is_some()
     }
 
+    /// Get a reference to provenance
+    pub fn provenance(&self) -> &Provenance {
+        &self.provenance
+    }
+
     /// Check if this is a first-order event (derived from Source Material)
     pub fn is_first_order_event(&self) -> bool {
         matches!(self.provenance, Provenance::Material { .. })
@@ -209,7 +190,7 @@ impl<T> Event<T> {
     }
 
     /// Get the anchor byte if this is a Material event
-    pub fn anchor_byte(&self) -> Option<i64> {
+    pub fn get_anchor_byte(&self) -> Option<i64> {
         match &self.provenance {
             Provenance::Material { anchor_byte, .. } => Some(*anchor_byte),
             _ => None,
@@ -217,11 +198,11 @@ impl<T> Event<T> {
     }
 
     /// Get the source event IDs if this is a Synthesis event
-    pub fn source_event_ids(&self) -> Option<&[EventId]> {
+    pub fn get_source_event_ids(&self) -> Option<&[EventId]> {
         match &self.provenance {
             Provenance::Synthesis {
                 source_event_ids, ..
-            } => Some(source_event_ids),
+            } => Some(source_event_ids.as_slice()),
             _ => None,
         }
     }
@@ -247,7 +228,6 @@ impl<T: Serialize> Event<T> {
             source: self.source,
             event_type: self.event_type,
             payload: serde_json::to_value(self.payload)?,
-
             ts_orig: self.ts_orig,
             host: self.host,
             ingestor_version: self.ingestor_version,
@@ -281,7 +261,6 @@ impl Event<JsonValue> {
             source: self.source.clone(),
             event_type: self.event_type.clone(),
             payload: serde_json::from_value(self.payload.clone())?,
-
             ts_orig: self.ts_orig,
             host: self.host.clone(),
             ingestor_version: self.ingestor_version.clone(),
@@ -289,6 +268,96 @@ impl Event<JsonValue> {
             provenance: self.provenance.clone(),
             associated_blob_ids: self.associated_blob_ids.clone(),
         })
+    }
+
+    /// Create a dynamic JSON event with explicit provenance.
+    ///
+    /// Use this for constructing events with runtime-determined source/type
+    /// when you already have a Provenance value.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let event = Event::new_json(
+    ///     "my-source",
+    ///     "my.event",
+    ///     json!({"key": "value"}),
+    ///     provenance,
+    /// );
+    /// ```
+    pub fn new_json(
+        source: impl Into<EventSource>,
+        event_type: impl Into<EventType>,
+        payload: JsonValue,
+        provenance: Provenance,
+    ) -> Self {
+        Self {
+            id: None,
+            source: source.into(),
+            event_type: event_type.into(),
+            payload,
+            ts_orig: Some(chrono::Utc::now()),
+            host: get_hostname(),
+            ingestor_version: get_ingestor_version(),
+            payload_schema_id: None,
+            provenance,
+            associated_blob_ids: None,
+        }
+    }
+
+    /// Create a test event with dynamic JSON payload for in-memory testing.
+    ///
+    /// This is a convenience method for creating events in tests without
+    /// requiring database persistence. Uses a random material ID since
+    /// FK constraints are only enforced at the database layer.
+    ///
+    /// # Important
+    /// **Do NOT use this with database operations** - the random material ID will fail
+    /// FK constraints. For database tests, use:
+    /// - `pool.events().insert_test_event()` for direct DB insertion
+    /// - `ctx.publish()` for pipeline tests
+    ///
+    /// # Use Cases
+    /// - Property tests verifying serialization/deserialization
+    /// - Unit tests checking event validation logic
+    /// - Fuzzing tests with generated payloads
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// use sinex_core::Event;
+    /// use serde_json::json;
+    ///
+    /// let event = Event::test_event("fs-watcher", "file.created", json!({
+    ///     "path": "/test/file.txt",
+    ///     "size": 1024
+    /// }));
+    /// ```
+    #[cfg(any(test, feature = "testing"))]
+    pub fn test_event(
+        source: impl Into<EventSource>,
+        event_type: impl Into<EventType>,
+        payload: JsonValue,
+    ) -> Self {
+        use crate::types::Id;
+        use chrono::Utc;
+
+        Self {
+            id: None,
+            source: source.into(),
+            event_type: event_type.into(),
+            payload,
+            ts_orig: Some(Utc::now()),
+            host: get_hostname(),
+            ingestor_version: Some("test".to_string()),
+            payload_schema_id: None,
+            provenance: Provenance::Material {
+                id: Id::<SourceMaterial>::new(),
+                anchor_byte: 0,
+                offset_start: None,
+                offset_end: None,
+                offset_kind: OffsetKind::Byte,
+            },
+            associated_blob_ids: None,
+        }
     }
 }
 
@@ -318,13 +387,14 @@ pub(crate) fn get_ingestor_version() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::events::DynamicPayload;
     use serde_json::json;
 
     #[test]
     fn event_builder_sets_offsets_for_material_provenance() {
         let material_id = Id::from_ulid(Ulid::new());
-        let event = EventBuilder::dynamic("offset-test", "offset.event", json!({"key": "value"}))
-            .from_material(material_id, 4)
+        let event = DynamicPayload::new("offset-test", "offset.event", json!({"key": "value"}))
+            .from_material_at(material_id, 4)
             .with_offset_start(10)
             .expect("offset start should apply to material provenance")
             .with_offset_end(20)
@@ -334,16 +404,16 @@ mod tests {
             .build()
             .expect("event should build with material provenance");
 
-        match event.provenance {
+        match event.provenance() {
             Provenance::Material {
                 offset_start,
                 offset_end,
                 offset_kind,
                 ..
             } => {
-                assert_eq!(offset_start, Some(10));
-                assert_eq!(offset_end, Some(20));
-                assert_eq!(offset_kind, OffsetKind::Line);
+                assert_eq!(*offset_start, Some(10));
+                assert_eq!(*offset_end, Some(20));
+                assert_eq!(*offset_kind, OffsetKind::Line);
             }
             _ => panic!("expected material provenance"),
         }
@@ -353,8 +423,8 @@ mod tests {
     fn events_contain_build_version() {
         // Create a test event with material provenance
         let material_id = Id::from_ulid(Ulid::new());
-        let event = EventBuilder::dynamic("test", "test.event", json!({"key": "value"}))
-            .from_material(material_id, 4)
+        let event = DynamicPayload::new("test", "test.event", json!({"key": "value"}))
+            .from_material_at(material_id, 4)
             .build()
             .expect("Event should build");
 

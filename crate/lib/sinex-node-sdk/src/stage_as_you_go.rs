@@ -63,7 +63,7 @@ impl StageCleanupConfig {
 mod tests {
     use super::StageAsYouGoContext;
     use crate::stream_processor::EventEmitter;
-    use sinex_core::{EventBuilder, EventId, Provenance, Ulid};
+    use sinex_core::{DynamicPayload, EventId, Provenance, Ulid};
     use sinex_test_utils::sinex_test;
     use tokio::sync::mpsc;
     use tokio::time::{timeout, Duration};
@@ -74,7 +74,7 @@ mod tests {
         let emitter = EventEmitter::new(tx, false);
         let context = StageAsYouGoContext::from_optional_emitter(emitter);
 
-        let event = EventBuilder::dynamic(
+        let event = DynamicPayload::new(
             "stage.test",
             "line.captured",
             serde_json::json!({"line": "hello"}),
@@ -97,7 +97,7 @@ mod tests {
         let stored_id = emitted.id.expect("event ID should be assigned");
         assert_eq!(*stored_id.as_ulid(), emitted_id);
 
-        match emitted.provenance {
+        match emitted.provenance() {
             Provenance::Material { anchor_byte, .. } => {
                 assert_eq!(anchor_byte, 12);
             }

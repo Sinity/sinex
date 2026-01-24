@@ -1,9 +1,10 @@
 use super::conversions::{extract_provenance, EventRecordExt};
 use crate::db::schema::Events;
-use crate::models::{Event, EventBuilder, JsonValue};
+use crate::models::{Event, JsonValue};
 use crate::repositories::common::{db_error, DbResult, EnhancedRepository, Repository};
 use crate::types::domain::{EventSource, EventType, SchemaVersion};
 use crate::types::error::SinexError;
+use crate::types::events::DynamicPayload;
 use crate::types::{Id, Ulid};
 use crate::EventRecord;
 use chrono::{DateTime, Timelike, Utc};
@@ -158,7 +159,7 @@ impl<'a> EnhancedRepository<'a> for EventRepository<'a> {
 }
 
 /// Event payload schema record
-#[derive(Debug, FromRow)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, FromRow)]
 pub struct EventPayloadSchema {
     pub id: Id<EventPayloadSchema>,
     pub source: String,
@@ -484,37 +485,6 @@ impl<'a> EventRepository<'a> {
 
                     if let Some(source_event_ids) = source_event_ids.as_ref() {
                         ensure_no_synthesis_cycles(&mut **tx, &id, source_event_ids).await?;
-                    }
-
-                    // Test hook: source material registration (idempotent ON CONFLICT DO NOTHING)
-                    #[cfg(any(test, feature = "testing"))]
-                    if let Some(material_ulid) = source_material_id {
-                        let source_identifier = format!("test-material-{}", material_ulid);
-                        // This is a test-only helper that tries to register source material if it doesn't exist.
-                        // Since it uses ON CONFLICT DO NOTHING, it's safe to ignore the result - the material
-                        // may already exist. However, we log errors for debugging test failures.
-                        if let Err(e) = sqlx::query(
-                            r#"
-                            INSERT INTO raw.source_material_registry (
-                                id, material_kind, source_identifier, status,
-                                timing_info_type, metadata
-                            ) VALUES (
-                                $1::uuid::ulid, 'annex', $2, 'completed',
-                                'realtime', '{}'::jsonb
-                            )
-                            ON CONFLICT (id) DO NOTHING
-                            "#,
-                        )
-                        .bind(material_ulid.as_uuid())
-                        .bind(source_identifier)
-                        .execute(&mut **tx)
-                        .await {
-                            tracing::debug!(
-                                material_id = %material_ulid,
-                                error = %e,
-                                "Test hook: Failed to insert bootstrap source material (may already exist)"
-                            );
-                        }
                     }
 
                     let record = sqlx::query_as!(
@@ -1189,8 +1159,8 @@ impl<'a> EventRepository<'a> {
             )
             .await
             .map_err(|e| e.with_context("operation", "register test source material"))?;
-        let event = EventBuilder::dynamic(source, event_type, payload)
-            .from_material(test_material_id, 0)
+        let event = DynamicPayload::new(source, event_type, payload)
+            .from_material(test_material_id)
             .build()?;
 
         self.insert(event).await

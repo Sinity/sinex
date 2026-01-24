@@ -241,17 +241,20 @@ impl EventSanitizer {
 #[cfg(test)]
 mod tests {
     use super::EventSanitizer;
-    use crate::types::domain::{EventSource, EventType};
-    use crate::Event;
+    use crate::types::events::DynamicPayload;
+    use crate::types::Id;
     use serde_json::json;
 
     #[test]
     fn encoded_traversal_is_idempotent_once_sanitized() {
-        let mut event = Event::test_event(
-            EventSource::new("..%2f..%2f..%2fetc%2fpasswd"),
-            EventType::new("test.event"),
+        let mut event = DynamicPayload::new(
+            "..%2f..%2f..%2fetc%2fpasswd",
+            "test.event",
             json!({"test": "data"}),
-        );
+        )
+        .from_material(Id::new())
+        .build()
+        .expect("test event should build");
 
         EventSanitizer::sanitize_event(&mut event).unwrap();
         let mut sanitized = event.clone();

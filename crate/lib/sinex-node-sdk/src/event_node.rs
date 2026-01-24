@@ -354,7 +354,7 @@ pub fn spawn_event_processor(
 #[cfg(test)]
 mod tests {
     use super::EventBatcher;
-    use sinex_core::{EventBuilder, EventId, Provenance, Ulid};
+    use sinex_core::{DynamicPayload, EventId, Provenance, Ulid};
     use sinex_test_utils::sinex_test;
     use std::fs;
     use tempfile::tempdir;
@@ -368,7 +368,7 @@ mod tests {
         read_only.set_readonly(true);
         fs::set_permissions(temp_dir.path(), read_only)?;
 
-        let event = EventBuilder::dynamic(
+        let event = DynamicPayload::new(
             "dlq.test",
             "dead_letter.failure",
             serde_json::json!({"ok": true}),
