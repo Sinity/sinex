@@ -158,6 +158,7 @@ impl CommandResult {
         }
     }
 
+    #[allow(dead_code)]
     pub fn with_subcommand(mut self, subcommand: impl Into<String>) -> Self {
         self.subcommand = Some(subcommand.into());
         self
@@ -200,6 +201,11 @@ impl OutputWriter {
             format,
             is_tty: atty::is(atty::Stream::Stdout),
         }
+    }
+
+    /// Get the output format.
+    pub fn format(&self) -> OutputFormat {
+        self.format
     }
 
     /// Write a command result in the configured format.

@@ -17,6 +17,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 /// Counter for generating unique job IDs within a session.
+#[allow(dead_code)]
 static JOB_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Status of a background job.
@@ -135,6 +136,7 @@ impl JobManager {
     }
 
     /// Start a new background job.
+    #[allow(dead_code)]
     pub fn spawn(&self, command: &str, args: &[String]) -> Result<Job> {
         // Generate unique job ID
         let id = generate_job_id();
@@ -291,6 +293,7 @@ impl JobManager {
 }
 
 /// Generate a unique job ID based on timestamp + counter.
+#[allow(dead_code)]
 fn generate_job_id() -> u64 {
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -304,6 +307,7 @@ fn generate_job_id() -> u64 {
 }
 
 /// Wait for a child process and update job status.
+#[allow(dead_code)]
 fn wait_for_child(mut child: Child, job_dir: &Path) -> Result<()> {
     let start = std::time::Instant::now();
     let result = child.wait()?;

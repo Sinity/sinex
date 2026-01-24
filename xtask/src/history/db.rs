@@ -273,6 +273,11 @@ impl HistoryDb {
 
     /// Prune old invocations older than the given number of days.
     pub fn prune(&self, older_than_days: u32) -> Result<usize> {
+        // If 0 days, don't prune anything (nothing is "older than right now")
+        if older_than_days == 0 {
+            return Ok(0);
+        }
+
         let cutoff = Utc::now() - chrono::Duration::days(older_than_days as i64);
         let cutoff_str = cutoff.to_rfc3339();
 
@@ -285,6 +290,7 @@ impl HistoryDb {
     }
 
     /// Get count of invocations.
+    #[allow(dead_code)]
     pub fn count(&self) -> Result<usize> {
         let count: usize = self
             .conn

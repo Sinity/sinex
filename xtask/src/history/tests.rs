@@ -49,6 +49,7 @@ pub struct TestResult {
 }
 
 /// Nextest libtest-json event types we care about.
+#[cfg(test)]
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
 enum NextestEvent {
@@ -74,6 +75,7 @@ enum NextestEvent {
     },
 }
 
+#[cfg(test)]
 #[derive(Debug, Deserialize, Default)]
 struct NextestMeta {
     #[serde(rename = "crate")]
@@ -81,6 +83,7 @@ struct NextestMeta {
 }
 
 /// Parse nextest libtest-json output and extract test results.
+#[cfg(test)]
 pub fn parse_nextest_output(output: &str) -> Vec<TestResult> {
     let mut results = Vec::new();
     let mut current_package = String::from("unknown");
@@ -147,6 +150,7 @@ pub fn parse_nextest_output(output: &str) -> Vec<TestResult> {
 
 /// Parse nextest test name format to extract package and test name.
 /// Format: "crate::binary$module::path::test_name"
+#[cfg(test)]
 fn parse_test_name(full_name: &str, default_package: &str) -> (String, String) {
     // Example: "xtask::xtask$bench::stats::tests::test_mean"
     // Package: "xtask", Test: "bench::stats::tests::test_mean"
