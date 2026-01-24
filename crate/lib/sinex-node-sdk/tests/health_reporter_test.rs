@@ -1,8 +1,8 @@
 //! Comprehensive tests for HealthReporter
 
 use sinex_core::SinexError;
-use sinex_node_sdk::health_reporter::{HealthMetrics, HealthReporter, HealthThresholds};
-use sinex_node_sdk::lifecycle::ProcessStatus;
+use sinex_node_sdk::health_reporter::{HealthReporter, HealthThresholds};
+use sinex_node_sdk::prelude::ProcessStatus;
 use sinex_node_sdk::self_observation::{SelfObserver, SelfObserverConfig};
 use sinex_test_utils::prelude::*;
 use std::sync::atomic::Ordering;
@@ -10,8 +10,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 /// Create a test health reporter with NATS connection
-async fn create_test_reporter(ctx: &TestContext) -> TestResult<Arc<HealthReporter>> {
-    let nats_client = ctx.with_nats().shared().await?.nats_client().clone();
+async fn create_test_reporter(ctx: TestContext) -> TestResult<(TestContext, Arc<HealthReporter>)> {
+    let ctx = ctx.with_nats().shared().await?;
+    let nats_client = ctx.nats_client().clone();
 
     let config = SelfObserverConfig {
         component: "test-component".to_string(),
@@ -28,16 +29,19 @@ async fn create_test_reporter(ctx: &TestContext) -> TestResult<Arc<HealthReporte
         window_seconds: 5,         // 5 second window for tests
     };
 
-    Ok(Arc::new(HealthReporter::new(
-        "test-component".to_string(),
-        observer,
-        thresholds,
-    )))
+    Ok((
+        ctx,
+        Arc::new(HealthReporter::new(
+            "test-component".to_string(),
+            observer,
+            thresholds,
+        )),
+    ))
 }
 
 #[sinex_test]
 async fn health_reporter_starts_healthy(ctx: TestContext) -> TestResult<()> {
-    let reporter = create_test_reporter(&ctx).await?;
+    let (ctx, reporter) = create_test_reporter(ctx).await?;
 
     let status = reporter.current_status();
     ctx.assert("initial status")
@@ -48,7 +52,7 @@ async fn health_reporter_starts_healthy(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_test]
 async fn health_reporter_tracks_successful_events(ctx: TestContext) -> TestResult<()> {
-    let reporter = create_test_reporter(&ctx).await?;
+    let (ctx, reporter) = create_test_reporter(ctx).await?;
 
     // Record 100 successful events
     for _ in 0..100 {
@@ -70,7 +74,7 @@ async fn health_reporter_tracks_successful_events(ctx: TestContext) -> TestResul
 
 #[sinex_test]
 async fn health_reporter_transitions_to_degraded(ctx: TestContext) -> TestResult<()> {
-    let reporter = create_test_reporter(&ctx).await?;
+    let (ctx, reporter) = create_test_reporter(ctx).await?;
 
     // Process 100 events with 6 errors (6% error rate → degraded)
     for _ in 0..94 {
@@ -92,7 +96,7 @@ async fn health_reporter_transitions_to_degraded(ctx: TestContext) -> TestResult
 
 #[sinex_test]
 async fn health_reporter_transitions_to_failed(ctx: TestContext) -> TestResult<()> {
-    let reporter = create_test_reporter(&ctx).await?;
+    let (ctx, reporter) = create_test_reporter(ctx).await?;
 
     // Process 100 events with 21 errors (21% error rate → failed)
     for _ in 0..79 {
@@ -114,7 +118,7 @@ async fn health_reporter_transitions_to_failed(ctx: TestContext) -> TestResult<(
 
 #[sinex_test]
 async fn health_reporter_recovers_to_healthy(ctx: TestContext) -> TestResult<()> {
-    let reporter = create_test_reporter(&ctx).await?;
+    let (ctx, reporter) = create_test_reporter(ctx).await?;
 
     // First, degrade the status with errors
     for _ in 0..94 {
@@ -146,8 +150,7 @@ async fn health_reporter_recovers_to_healthy(ctx: TestContext) -> TestResult<()>
 
 #[sinex_test]
 async fn health_reporter_only_emits_on_status_change(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_nats().shared().await?;
-    let reporter = create_test_reporter(&ctx).await?;
+    let (ctx, reporter) = create_test_reporter(ctx).await?;
 
     // Record successful events
     for _ in 0..10 {
@@ -167,7 +170,7 @@ async fn health_reporter_only_emits_on_status_change(ctx: TestContext) -> TestRe
 
 #[sinex_test]
 async fn health_reporter_handles_warnings(ctx: TestContext) -> TestResult<()> {
-    let reporter = create_test_reporter(&ctx).await?;
+    let (ctx, reporter) = create_test_reporter(ctx).await?;
 
     // Record warnings (should not affect error rate)
     for _ in 0..10 {
@@ -191,7 +194,7 @@ async fn health_reporter_handles_warnings(ctx: TestContext) -> TestResult<()> {
 async fn health_reporter_calculates_error_rate_in_sliding_window(
     ctx: TestContext,
 ) -> TestResult<()> {
-    let reporter = create_test_reporter(&ctx).await?;
+    let (ctx, reporter) = create_test_reporter(ctx).await?;
 
     // Process events with errors
     for _ in 0..90 {
@@ -224,7 +227,8 @@ async fn health_reporter_calculates_error_rate_in_sliding_window(
 
 #[sinex_test]
 async fn health_reporter_with_custom_thresholds(ctx: TestContext) -> TestResult<()> {
-    let nats_client = ctx.with_nats().shared().await?.nats_client().clone();
+    let ctx = ctx.with_nats().shared().await?;
+    let nats_client = ctx.nats_client().clone();
 
     let config = SelfObserverConfig {
         component: "test-strict".to_string(),
@@ -266,7 +270,7 @@ async fn health_reporter_with_custom_thresholds(ctx: TestContext) -> TestResult<
 
 #[sinex_test(timeout = 60)]
 async fn health_reporter_stress_test(ctx: TestContext) -> TestResult<()> {
-    let reporter = create_test_reporter(&ctx).await?;
+    let (ctx, reporter) = create_test_reporter(ctx).await?;
 
     // Process 10,000 events rapidly
     for i in 0..10_000 {
