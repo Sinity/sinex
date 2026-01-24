@@ -1,4 +1,5 @@
 use serde_json::json;
+use sinex_core::DynamicPayload;
 use sinex_services::AnalyticsService;
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::timing_utils::{WaitHelpers, DEFAULT_WAIT_SECS};
@@ -6,7 +7,7 @@ use sinex_test_utils::timing_utils::{WaitHelpers, DEFAULT_WAIT_SECS};
 #[sinex_test]
 async fn pipeline_end_to_end(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let scope = ctx.pipeline_scope().await?;
+    let scope = ctx.pipeline().await?;
     let ctx = scope.ctx();
 
     let events = vec![
@@ -18,7 +19,11 @@ async fn pipeline_end_to_end(ctx: TestContext) -> TestResult<()> {
     let mut event_ids = Vec::new();
     for payload in &events {
         let id = scope
-            .publish("integration-e2e", "log.line", payload.clone())
+            .publish(DynamicPayload::new(
+                "integration-e2e",
+                "log.line",
+                payload.clone(),
+            ))
             .await?;
         event_ids.push(id);
     }

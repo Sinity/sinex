@@ -40,7 +40,7 @@ fn arbitrary_event() -> impl Strategy<Value = RawEvent> {
         prop::bool::ANY,         // random bool for ts_orig
     )
         .prop_map(|(source, event_type, host, payload, has_ts_orig)| {
-            let mut event = RawEvent::test_event(
+            let mut event = Event::test_event(
                 EventSource::new(source),
                 EventType::new(event_type),
                 payload,
@@ -72,7 +72,7 @@ fn empty_source_event() -> impl Strategy<Value = RawEvent> {
         event_payloads(),        // payload
     )
         .prop_map(|(source, event_type, payload)| {
-            let mut event = RawEvent::test_event(
+            let mut event = Event::test_event(
                 EventSource::new(source),
                 EventType::new(event_type),
                 payload,
@@ -97,7 +97,7 @@ fn metadata_rich_events() -> impl Strategy<Value = RawEvent> {
                 }
             });
 
-            let mut event = RawEvent::test_event(
+            let mut event = Event::test_event(
                 EventSource::new(source),
                 EventType::new(event_type),
                 payload,
@@ -145,7 +145,7 @@ fn boundary_condition_events() -> impl Strategy<Value = RawEvent> {
     ];
 
     proptest::sample::select(edge_cases).prop_map(|(source, event_type, payload)| {
-        let mut event = RawEvent::test_event(
+        let mut event = Event::test_event(
             EventSource::new(source),
             EventType::new(event_type),
             payload,
@@ -166,7 +166,7 @@ fn concurrent_operation_events() -> impl Strategy<Value = Vec<RawEvent>> {
                 "timestamp": Utc::now().timestamp_millis()
             });
 
-            let mut event = RawEvent::test_event(
+            let mut event = Event::test_event(
                 EventSource::new("concurrent_test"),
                 EventType::new("worker.operation"),
                 payload,
@@ -225,7 +225,7 @@ sinex_proptest! {
         host in "[a-zA-Z0-9_.-]{1,255}",
         payload in event_payloads()
     ) -> TestResult<()> {
-        let mut event = RawEvent::test_event(
+        let mut event = Event::test_event(
             EventSource::new(source.clone()),
             EventType::new(event_type.clone()),
             payload,
@@ -250,7 +250,7 @@ sinex_proptest! {
             "size_kb": size_kb
         });
 
-        let mut event = RawEvent::test_event(
+        let mut event = Event::test_event(
             EventSource::new("test"),
             EventType::new("payload.size.test"),
             payload,
@@ -362,7 +362,7 @@ sinex_proptest! {
             "size_kb": size_kb
         });
 
-        let mut event = RawEvent::test_event(
+        let mut event = Event::test_event(
             EventSource::new("test"),
             EventType::new("payload.size.test"),
             payload,
@@ -572,14 +572,14 @@ mod performance_tests {
         ) -> TestResult<()> {
             // Property: Same invalid input should always produce same error
             if source.is_empty() || event_type.is_empty() {
-                let mut event1 = RawEvent::test_event(
+                let mut event1 = Event::test_event(
                     EventSource::new(source.clone()),
                     EventType::new(event_type.clone()),
                     payload.clone(),
                 );
                 event1.id = Some(Id::from_ulid(Ulid::new()));
 
-                let mut event2 = RawEvent::test_event(
+                let mut event2 = Event::test_event(
                     EventSource::new(source),
                     EventType::new(event_type),
                     payload,

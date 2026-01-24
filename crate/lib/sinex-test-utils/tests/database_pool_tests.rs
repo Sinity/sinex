@@ -6,7 +6,7 @@ use std::time::Duration;
 use sinex_core::db::repositories::source_materials::material_types;
 use sinex_core::types::error::SinexError;
 use sinex_core::DbPoolExt;
-use sinex_core::{Event, EventSource, EventType, HostName, JsonValue, Provenance, SourceMaterial};
+use sinex_core::{Event, EventSource, EventType, HostName, Provenance, SourceMaterial};
 use sinex_test_utils::db_common::verify_clean_state;
 use sinex_test_utils::timing_utils::Timeouts;
 use sinex_test_utils::{
@@ -81,7 +81,7 @@ async fn test_database_cleanup_on_drop() -> sinex_test_utils::Result<()> {
         db_name = db.name().to_string();
 
         let repo = db.pool().events();
-        let event = Event::<JsonValue>::test_event(
+        let event = Event::test_event(
             EventSource::new("test"),
             EventType::new("test.event"),
             serde_json::json!({}),
@@ -160,7 +160,7 @@ async fn test_clean_database_handles_complex_data() -> sinex_test_utils::Result<
     verify_clean_state(db.pool()).await?;
 
     let repo = db.pool().events();
-    let event_to_insert = Event::<JsonValue>::test_event(
+    let event_to_insert = Event::test_event(
         EventSource::new("test"),
         EventType::new("test"),
         serde_json::json!({}),
@@ -235,7 +235,7 @@ async fn test_stress_concurrent_operations() -> sinex_test_utils::Result<()> {
 
             let repo = db.pool().events();
             for _ in 0..5 {
-                let mut event = Event::<JsonValue>::test_event(
+                let mut event = Event::test_event(
                     EventSource::new(format!("task_{i}")),
                     EventType::new("stress.test"),
                     serde_json::json!({}),
@@ -356,7 +356,7 @@ async fn test_pool_reset_clears_state() -> sinex_test_utils::Result<()> {
     assert_eq!(baseline, 0);
 
     let repo = db.pool().events();
-    let event = Event::<JsonValue>::test_event(
+    let event = Event::test_event(
         EventSource::new("reset"),
         EventType::new("pool.reset"),
         serde_json::json!({}),

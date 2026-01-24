@@ -48,22 +48,15 @@ use crate::{Result, TestContext, TestResult};
 use camino::Utf8PathBuf;
 use color_eyre::eyre::eyre;
 use futures::future::BoxFuture;
-use once_cell::sync::Lazy;
 use sinex_core::db::DbPool;
 use sinex_core::types::error::SinexError;
-use sinex_core::types::ulid::Ulid;
 use sqlx::pool::PoolConnection;
 use sqlx::Postgres;
 use std::collections::HashMap;
-use std::str::FromStr;
 use std::sync::atomic::{AtomicI64, Ordering};
 
 static BASELINE_EVENT_COUNT: AtomicI64 = AtomicI64::new(-1);
 static BASELINE_MATERIAL_COUNT: AtomicI64 = AtomicI64::new(-1);
-static BOOTSTRAP_MATERIAL_ID: Lazy<Ulid> = Lazy::new(|| {
-    Ulid::from_str("014D2PF2DBSQQZXQ5TK1V58CGG").expect("valid bootstrap material id")
-});
-
 struct OperationIdGuard {
     previous: Option<String>,
     is_active: bool,
@@ -457,137 +450,6 @@ pub async fn reset_database(pool: &DbPool) -> TestResult<()> {
                 }
             }
             operation_guard.restore(&mut conn).await?;
-
-            // Ensure no stale bootstrap records remain from prior runs
-            // This DELETE needs operation_id for RLS policy
-            let operation_guard2 =
-                OperationIdGuard::apply(&mut conn, "bootstrap-cleanup").await?;
-            sqlx::query(
-                r#"
-                DELETE FROM core.events
-                WHERE source_material_id = $1::uuid::ulid
-                   OR source_material_id IN (
-                        SELECT id
-                        FROM raw.source_material_registry
-                        WHERE source_identifier LIKE 'test-material-%'
-                    )
-                "#,
-            )
-            .bind(BOOTSTRAP_MATERIAL_ID.as_uuid())
-            .execute(conn.as_mut())
-            .await?;
-            operation_guard2.restore(&mut conn).await?;
-
-            // Ensure any stale canonical record is removed before re-seeding to avoid PK/unique conflicts.
-            let delete_canonical = sqlx::query(
-                r#"
-                DELETE FROM raw.source_material_registry
-                WHERE id = $1::uuid::ulid
-                   OR source_identifier = 'test-material-bootstrap'
-                "#,
-            )
-            .bind(BOOTSTRAP_MATERIAL_ID.as_uuid())
-            .execute(conn.as_mut())
-            .await;
-
-            if let Err(e) = delete_canonical {
-                tracing::warn!(
-                    error = %e,
-                    "Failed to delete canonical bootstrap material, purging dependent events and retrying"
-                );
-                // Remove any events still referencing source materials, then retry.
-                if let Err(ev_err) =
-                    sqlx::query("DELETE FROM core.events WHERE source_material_id IS NOT NULL")
-                        .execute(conn.as_mut())
-                        .await
-                {
-                    tracing::warn!(
-                        error = %ev_err,
-                        "Failed to purge events referencing source materials before retry"
-                    );
-                }
-                let retry = sqlx::query(
-                    r#"
-                    DELETE FROM raw.source_material_registry
-                    WHERE id = $1::uuid::ulid
-                       OR source_identifier = 'test-material-bootstrap'
-                    "#,
-                )
-                .bind(BOOTSTRAP_MATERIAL_ID.as_uuid())
-                .execute(conn.as_mut())
-                .await;
-
-                if let Err(retry_err) = retry {
-                    tracing::warn!(error = %retry_err, "Second attempt to delete canonical bootstrap material failed, forcing purge of events/materials");
-                    let force_guard =
-                        OperationIdGuard::apply(&mut conn, "canonical-force-purge").await?;
-                    let purge =
-                        force_purge_events_and_materials(&mut conn, &pool_for_chunks).await;
-                    force_guard.restore(&mut conn).await?;
-                    purge?;
-
-                    sqlx::query(
-                        r#"
-                        DELETE FROM raw.source_material_registry
-                        WHERE id = $1::uuid::ulid
-                           OR source_identifier = 'test-material-bootstrap'
-                        "#,
-                    )
-                    .bind(BOOTSTRAP_MATERIAL_ID.as_uuid())
-                    .execute(conn.as_mut())
-                    .await?;
-                }
-            }
-
-            // Final sweep to remove any lingering rows that might have been left by mid-test
-            // crashes or RLS quirks. We reinsert the canonical record afterwards.
-            let force_guard = OperationIdGuard::apply(&mut conn, "force-clean").await?;
-            let purge_result =
-                force_purge_events_and_materials(&mut conn, &pool_for_chunks).await;
-            force_guard.restore(&mut conn).await?;
-            purge_result?;
-
-            // Ensure canonical row slot is free before re-seeding to avoid unique constraint conflicts
-            // (replication role already disabled by outer guard)
-            sqlx::query(
-                r#"
-                DELETE FROM raw.source_material_registry
-                WHERE id = $1::uuid::ulid
-                   OR source_identifier = 'test-material-bootstrap'
-                "#,
-            )
-            .bind(BOOTSTRAP_MATERIAL_ID.as_uuid())
-            .execute(conn.as_mut())
-            .await?;
-
-            // Restore canonical test material record relied upon by Event::test_event.
-            sqlx::query(
-                r#"
-                INSERT INTO raw.source_material_registry (
-                    id,
-                    material_kind,
-                    source_identifier,
-                    status,
-                    timing_info_type,
-                    metadata
-                ) VALUES (
-                    $1::uuid::ulid,
-                    'annex',
-                    'test-material-bootstrap',
-                    'completed',
-                    'realtime',
-                    '{}'::jsonb
-                )
-                ON CONFLICT (id) DO UPDATE
-                SET id = EXCLUDED.id,
-                    status = EXCLUDED.status,
-                    timing_info_type = EXCLUDED.timing_info_type,
-                    metadata = EXCLUDED.metadata
-                "#,
-            )
-            .bind(BOOTSTRAP_MATERIAL_ID.as_uuid())
-            .execute(conn.as_mut())
-            .await?;
 
             sqlx::query("RESET sinex.operation_id")
                 .execute(conn.as_mut())
@@ -1034,7 +896,7 @@ mod tests {
     use crate::test_context::TestContext;
     use crate::{sinex_serial_test, sinex_test};
     use serde_json::json;
-    use sinex_core::{DbPoolExt, EventSource, EventType, HostName, Id};
+    use sinex_core::{DbPoolExt, DynamicPayload, EventSource, EventType, HostName, Id};
 
     #[sinex_serial_test]
     async fn test_reset_database() -> TestResult<()> {
@@ -1045,16 +907,10 @@ mod tests {
         db.force_cleanup().await?;
         verify_clean_state(pool).await?;
 
-        // Insert some test data
-        use sinex_core::{Event, JsonValue, SourceMaterial};
-
-        let new_event = Event::<JsonValue>::test_event(
-            EventSource::new("test"),
-            EventType::new("test.event"),
-            serde_json::json!({}),
-        )
-        .with_host(HostName::new("test-host"));
-        pool.events().insert(new_event).await?;
+        // Insert some test data using repository method that creates proper material
+        pool.events()
+            .insert_test_event("test", "test.event", serde_json::json!({}))
+            .await?;
 
         // Verify data exists
         let count = pool.events().count_all().await?;
@@ -1077,10 +933,18 @@ mod tests {
         ctx.ensure_clean().await?;
 
         // Seed a couple of events to ensure both event and source material rows exist.
-        ctx.publish_event("force-clean", "cleanup.test", json!({"n": 1}))
-            .await?;
-        ctx.publish_event("force-clean", "cleanup.test", json!({"n": 2}))
-            .await?;
+        ctx.publish(DynamicPayload::new(
+            "force-clean",
+            "cleanup.test",
+            json!({"n": 1}),
+        ))
+        .await?;
+        ctx.publish(DynamicPayload::new(
+            "force-clean",
+            "cleanup.test",
+            json!({"n": 2}),
+        ))
+        .await?;
 
         // Validate force cleanup succeeds and leaves database clean.
         force_event_material_cleanup_for_tests(ctx.pool()).await?;
@@ -1122,13 +986,13 @@ mod tests {
             .await?;
         let material_id = Id::<SourceMaterial>::from_ulid(material_record.id);
 
-        let new_event = sinex_core::db::models::event_builder::EventBuilder::dynamic(
+        let new_event = DynamicPayload::new(
             EventSource::new("test"),
             EventType::new("test"),
             serde_json::json!({}),
         )
         .hostname(HostName::new("test"))
-        .from_material(material_id, 0)
+        .from_material(material_id)
         .build()
         .expect("Event should build for cleanup test");
         pool.events().insert(new_event).await?;

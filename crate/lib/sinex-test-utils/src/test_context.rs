@@ -1,7 +1,7 @@
 //! Test Context - Database Isolation and Test Utilities
 //!
 //! The `TestContext` provides isolated database access and test-specific utilities
-//! without wrapping production APIs. Tests use production `Event::<JsonValue>::test_event()`
+//! without wrapping production APIs. Tests use production `test_event()`
 //! and repository methods directly through the exposed pool.
 //!
 //! # Architecture
@@ -18,7 +18,7 @@
 //! #[sinex_test]
 //! async fn test_example(ctx: TestContext) -> TestResult<()> {
 //!     // Direct production API - no wrapper
-//!     let event = Event::<JsonValue>::test_event(
+//!     let event = test_event(
 //!         "fs-watcher",
 //!         "file.created",
 //!         json!({"path": "/test/file.txt", "size": 1024})
@@ -40,12 +40,11 @@
 
 use crate::database_pool::{acquire_test_database, TestDatabase};
 use crate::db_common::{self, verify_clean_state};
-use crate::event_assertion::EventAssertion;
-use crate::event_publisher::EventPublisher;
+use crate::event_assertion::EventAssert;
 use crate::ingestd_test_utils::{
     start_test_ingestd_with_config, TestIngestdConfig, TestIngestdHandle,
 };
-use crate::nats::{EphemeralNats, EphemeralNatsBuilder};
+use crate::nats::EphemeralNats;
 use crate::nats_setup::NatsSetup;
 use crate::pipeline::shared_nats_handle;
 use crate::pipeline_namespace::PipelineNamespace;
@@ -61,16 +60,15 @@ use futures::StreamExt;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use serde_json::Value as JsonValue;
-use sinex_core::db::models::event::{Event, Provenance, SourceMaterial};
+use sinex_core::db::models::event::{Event, OffsetKind, Provenance, SourceMaterial};
 use sinex_core::db::query_helpers::ulid_to_uuid;
 use sinex_core::environment::SinexEnvironment;
 use sinex_core::types::{DbPool, Id, Timestamp, Ulid};
 use std::result::Result as StdResult;
 
-use sinex_core::{DbPoolExt, EventSource, EventType};
+use sinex_core::{DbPoolExt, EventSource, EventType, Publishable};
 use std::collections::HashSet;
 use std::mem;
-use std::str::FromStr;
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
@@ -81,9 +79,6 @@ use tokio::sync::OnceCell as AsyncOnceCell;
 use tokio::task::JoinHandle;
 use tracing::warn;
 use uuid::Uuid;
-
-const BOOTSTRAP_MATERIAL_ID: &str = "014D2PF2DBSQQZXQ5TK1V58CGG";
-const BOOTSTRAP_MATERIAL_IDENTIFIER: &str = "test-material-bootstrap";
 
 fn format_cleanup_failure_context(
     message: &str,
@@ -230,11 +225,6 @@ pub struct TestContextFailureSnapshot {
 impl TestContextFailureSnapshot {
     pub fn test_name(&self) -> &str {
         &self.test_name
-    }
-
-    #[deprecated(since = "0.5.0", note = "Use baseline_event_count() instead")]
-    pub fn baseline_events(&self) -> i64 {
-        self.baseline_events
     }
 
     pub fn baseline_event_count(&self) -> i64 {
@@ -387,29 +377,6 @@ impl TestContext {
 
         await_pending_cleanups().await;
 
-        if let Ok(bootstrap_ulid) = Ulid::from_str(BOOTSTRAP_MATERIAL_ID) {
-            let bootstrap_id = Id::<SourceMaterial>::from_ulid(bootstrap_ulid);
-            let _ = sqlx::query!(
-                r#"
-                    INSERT INTO raw.source_material_registry
-                        (id, material_kind, source_identifier, status, timing_info_type, metadata)
-                    VALUES ($1::uuid::ulid, $2, $3, $4, $5, '{}'::jsonb)
-                    ON CONFLICT (source_identifier) DO UPDATE
-                    SET id = EXCLUDED.id,
-                        status = EXCLUDED.status,
-                        timing_info_type = EXCLUDED.timing_info_type,
-                        metadata = EXCLUDED.metadata
-                "#,
-                bootstrap_id.to_uuid(),
-                "annex",
-                BOOTSTRAP_MATERIAL_IDENTIFIER,
-                "completed",
-                "realtime"
-            )
-            .execute(&pool)
-            .await;
-        }
-
         if let Err(err) = verify_clean_state(&pool).await {
             let diagnostics = db.cleanup_diagnostics();
             return Err(err).wrap_err_with(|| {
@@ -489,54 +456,6 @@ impl TestContext {
     /// Internal: Register client with reaper for cleanup (used by NatsSetup builder).
     pub(crate) fn register_reaper_client(&self, client: NatsClient) {
         self._reaper.nats.lock().replace(client);
-    }
-
-    // Legacy NATS methods - deprecated, use with_nats() builder instead
-
-    /// Enable NATS/JetStream with custom configuration.
-    ///
-    /// # Deprecated
-    /// Use `with_nats().config(builder).dedicated().await?` instead.
-    #[deprecated(
-        since = "0.5.0",
-        note = "Use with_nats().config(builder).dedicated() instead"
-    )]
-    pub async fn with_nats_builder(self, builder: EphemeralNatsBuilder) -> TestResult<Self> {
-        self.with_nats().config(builder).dedicated().await
-    }
-
-    /// Attach to the shared process-wide NATS instance.
-    ///
-    /// # Deprecated
-    /// Use `with_nats().shared().await?` instead.
-    #[deprecated(since = "0.5.0", note = "Use with_nats().shared() instead")]
-    pub async fn with_shared_nats(self) -> TestResult<Self> {
-        self.with_nats().shared().await
-    }
-
-    /// Attach to a shared NATS instance with a custom key.
-    ///
-    /// # Deprecated
-    /// Use `with_nats().key(key).config(builder).shared().await?` instead.
-    #[deprecated(
-        since = "0.5.0",
-        note = "Use with_nats().key(key).config(builder).shared() instead"
-    )]
-    pub async fn with_shared_nats_builder(
-        self,
-        key: &str,
-        builder: EphemeralNatsBuilder,
-    ) -> TestResult<Self> {
-        self.with_nats().key(key).config(builder).shared().await
-    }
-
-    /// Explicitly opt into the TLS-enabled shared NATS profile.
-    ///
-    /// # Deprecated
-    /// Use `with_nats().shared().secure().await?` instead.
-    #[deprecated(since = "0.5.0", note = "Use with_nats().shared().secure() instead")]
-    pub async fn with_secure_shared_nats(self) -> TestResult<Self> {
-        self.with_nats().shared().secure().await
     }
 
     /// Get the NATS client for this test context
@@ -681,7 +600,7 @@ impl TestContext {
     }
 
     /// Create a pipeline scope that resets the DB slot and starts ingestd.
-    pub async fn pipeline_scope(&self) -> TestResult<PipelineScope<'_>> {
+    pub async fn pipeline(&self) -> TestResult<PipelineScope<'_>> {
         PipelineScope::new(self).await
     }
 
@@ -750,14 +669,6 @@ impl TestContext {
         self.nats.as_ref().map(|n| n.client_url().to_string())
     }
 
-    /// Launch ingestd attached to this context and return a pipeline scope.
-    ///
-    /// Deprecated: Use `pipeline_scope()` instead for the same functionality.
-    #[deprecated(since = "0.5.0", note = "Use pipeline_scope() instead")]
-    pub async fn pipeline(&self) -> TestResult<PipelineScope<'_>> {
-        self.pipeline_scope().await
-    }
-
     /// Initialize tracing for tests (static method for use without context)
     pub fn init_tracing(level: &str) {
         use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -817,6 +728,11 @@ impl TestContext {
         self.baseline_events
     }
 
+    /// Events created since test context was initialized
+    pub async fn event_delta(&self) -> TestResult<i64> {
+        Ok(self.pool.events().count_all().await? - self.baseline_events)
+    }
+
     /// Capture snapshot metadata that survives if the context is moved.
     pub fn failure_snapshot(&self) -> TestContextFailureSnapshot {
         TestContextFailureSnapshot {
@@ -826,24 +742,6 @@ impl TestContext {
             captured_logs: Arc::clone(&self.captured_logs),
             background: self.background.clone(),
         }
-    }
-
-    /// Current total number of events
-    #[deprecated(
-        since = "0.5.0",
-        note = "Use ctx.pool.events().count_all().await? directly"
-    )]
-    pub async fn current_event_count(&self) -> TestResult<i64> {
-        Ok(self.pool.events().count_all().await?)
-    }
-
-    /// Difference between current and baseline event count
-    #[deprecated(
-        since = "0.5.0",
-        note = "Use (ctx.pool.events().count_all().await? - ctx.baseline_event_count()) instead"
-    )]
-    pub async fn event_delta(&self) -> TestResult<i64> {
-        Ok(self.pool.events().count_all().await? - self.baseline_events)
     }
 
     fn record_created_event(&self, event_id: Ulid, material_id: Option<Ulid>) {
@@ -981,44 +879,27 @@ impl TestContext {
     /// Publish a test event through the ingestion pipeline.
     ///
     /// This is the recommended method for publishing events in tests. It accepts
-    /// typed `EventSource` and `EventType` parameters (strings also work via `Into`).
+    /// any type implementing `Publishable`, which includes:
+    /// - All typed `EventPayload` implementations (recommended)
+    /// - `DynamicPayload` for runtime source/type (escape hatch)
     ///
     /// # Examples
     ///
     /// ```rust,ignore
-    /// // Using typed constants (recommended)
-    /// ctx.publish_event(EVENT_SOURCE_FS_WATCHER, EVENT_TYPE_FILE_CREATED, json!({...})).await?;
+    /// // Typed payload (recommended) - compile-time source/type safety
+    /// ctx.publish(FileCreatedPayload { path: sp("/test"), size: 1024, ... }).await?;
     ///
-    /// // Using strings (backward compatible)
-    /// ctx.publish_event("fs-watcher", "file.created", json!({...})).await?;
+    /// // Dynamic payload (escape hatch) - runtime source/type
+    /// ctx.publish(DynamicPayload::new("source", "type", json!({...}))).await?;
     /// ```
-    pub async fn publish_event(
-        &self,
-        source: impl Into<EventSource>,
-        event_type: impl Into<EventType>,
-        payload: JsonValue,
-    ) -> TestResult<Event<JsonValue>> {
-        self.publish_event_internal(source.into(), event_type.into(), payload, None)
-            .await
-    }
-
-    /// Create a fluent event publisher for advanced options.
-    ///
-    /// Use this when you need to set a custom timestamp or configure
-    /// other event properties.
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// ctx.publish()
-    ///     .source(EVENT_SOURCE_FS_WATCHER)
-    ///     .event_type(EVENT_TYPE_FILE_CREATED)
-    ///     .payload(json!({"path": "/test.txt"}))
-    ///     .at(timestamp)  // optional
-    ///     .send().await?;
-    /// ```
-    pub fn publish(&self) -> EventPublisher<'_> {
-        EventPublisher::new(self)
+    pub async fn publish<P: Publishable>(&self, payload: P) -> TestResult<Event<JsonValue>> {
+        self.publish_event_internal(
+            payload.source(),
+            payload.event_type(),
+            payload.to_json_value(),
+            None,
+        )
+        .await
     }
 
     /// Internal implementation for event publishing (used by EventPublisher).
@@ -1058,7 +939,13 @@ impl TestContext {
             host: HostName::new(gethostname::gethostname().to_string_lossy().to_string()),
             ingestor_version: Some("test-ingestor".to_string()),
             payload_schema_id: None,
-            provenance: Provenance::from_material(material_id, 0, None, None),
+            provenance: Provenance::Material {
+                id: material_id,
+                anchor_byte: 0,
+                offset_start: None,
+                offset_end: None,
+                offset_kind: OffsetKind::Byte,
+            },
             associated_blob_ids: None,
         };
 
@@ -1079,86 +966,13 @@ impl TestContext {
                 )
             })?;
 
-        let cleanup_material = match &stored.provenance {
+        let cleanup_material = match &stored.provenance() {
             Provenance::Material { id, .. } => Some(id.as_ulid().clone()),
             _ => Some(material_ulid),
         };
         self.record_created_event(published_event_id.as_ulid().clone(), cleanup_material);
 
         Ok(stored)
-    }
-
-    // Legacy publish methods - deprecated, use publish_event() or publish() instead
-
-    /// Publish and persist a test event through the ingestion pipeline.
-    ///
-    /// # Deprecated
-    /// Use `publish_event(source, event_type, payload)` instead.
-    #[deprecated(
-        since = "0.5.0",
-        note = "Use publish_event(source, event_type, payload) instead"
-    )]
-    pub async fn publish_json_event<S, T>(
-        &self,
-        source: S,
-        event_type: T,
-        payload: JsonValue,
-    ) -> TestResult<Event<JsonValue>>
-    where
-        S: AsRef<str>,
-        T: AsRef<str>,
-    {
-        self.publish_event_internal(
-            EventSource::new(source.as_ref()),
-            EventType::new(event_type.as_ref()),
-            payload,
-            None,
-        )
-        .await
-    }
-
-    /// Publish and persist a test event with an explicit timestamp override.
-    ///
-    /// # Deprecated
-    /// Use `publish().source(s).event_type(t).payload(p).at(ts).send()` instead.
-    #[deprecated(
-        since = "0.5.0",
-        note = "Use publish().source().event_type().payload().at().send() instead"
-    )]
-    pub async fn publish_json_event_with_timestamp<S, T>(
-        &self,
-        source: S,
-        event_type: T,
-        payload: JsonValue,
-        timestamp: Timestamp,
-    ) -> TestResult<Event<JsonValue>>
-    where
-        S: AsRef<str>,
-        T: AsRef<str>,
-    {
-        self.publish_event_internal(
-            EventSource::new(source.as_ref()),
-            EventType::new(event_type.as_ref()),
-            payload,
-            Some(timestamp),
-        )
-        .await
-    }
-
-    /// Create a fluent event builder for publishing test events.
-    ///
-    /// # Deprecated
-    /// Use `publish().source(s).event_type(t).payload(p).send()` instead.
-    #[deprecated(
-        since = "0.5.0",
-        note = "Use publish().source(s).event_type(t).payload(p).send() instead"
-    )]
-    pub fn event<'a, S, T>(&'a self, source: S, event_type: T) -> TestEventBuilder<'a>
-    where
-        S: Into<String>,
-        T: Into<String>,
-    {
-        TestEventBuilder::new(self, source.into(), event_type.into())
     }
 
     /// Ensure a source material record exists for tests that construct provenance manually.
@@ -1168,13 +982,9 @@ impl TestContext {
         source_identifier: Option<&str>,
     ) -> TestResult<()> {
         let material_ulid_uuid = id.to_uuid();
-        let identifier = source_identifier.map(|s| s.to_string()).unwrap_or_else(|| {
-            if id.to_string() == BOOTSTRAP_MATERIAL_ID {
-                BOOTSTRAP_MATERIAL_IDENTIFIER.to_string()
-            } else {
-                format!("test-material-{id}")
-            }
-        });
+        let identifier = source_identifier
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("test-material-{id}"));
 
         let update_result = sqlx::query!(
             r#"
@@ -1321,97 +1131,22 @@ impl TestContext {
     ///
     /// ```rust,ignore
     /// // Exact count assertion
-    /// ctx.assert_events().count(5).await?;
+    /// ctx.assert_event().count(5).await?;
     ///
     /// // At least N events
-    /// ctx.assert_events().at_least(3).await?;
+    /// ctx.assert_event().at_least(3).await?;
     ///
     /// // Filtered by source (using typed constant)
-    /// ctx.assert_events().source(EVENT_SOURCE_FS_WATCHER).count(5).await?;
+    /// ctx.assert_event().source(EVENT_SOURCE_FS_WATCHER).count(5).await?;
     ///
     /// // Filtered by event type
-    /// ctx.assert_events().event_type(EVENT_TYPE_FILE_CREATED).at_least(3).await?;
+    /// ctx.assert_event().event_type(EVENT_TYPE_FILE_CREATED).at_least(3).await?;
     ///
     /// // Strings work too via Into trait
-    /// ctx.assert_events().source("fs-watcher").count(5).await?;
+    /// ctx.assert_event().source("fs-watcher").count(5).await?;
     /// ```
-    pub fn assert_events(&self) -> EventAssertion<'_> {
-        EventAssertion::new(self)
-    }
-
-    // Legacy assertion methods - deprecated, use assert_events() instead
-
-    /// Assert the total event count matches expectation.
-    ///
-    /// # Deprecated
-    /// Use `assert_events().count(expected)` instead.
-    #[deprecated(since = "0.5.0", note = "Use assert_events().count(expected) instead")]
-    pub async fn assert_event_count(&self, expected: usize) -> TestResult<usize> {
-        let count = self.pool.events().count_all().await? as usize;
-        if count != expected {
-            color_eyre::eyre::bail!("Expected {expected} events, found {count}");
-        }
-        Ok(count)
-    }
-
-    /// Assert the total event count is at least the expectation.
-    ///
-    /// # Deprecated
-    /// Use `assert_events().at_least(expected)` instead.
-    #[deprecated(
-        since = "0.5.0",
-        note = "Use assert_events().at_least(expected) instead"
-    )]
-    pub async fn assert_event_count_at_least(&self, expected: usize) -> TestResult<usize> {
-        let count = self.pool.events().count_all().await? as usize;
-        if count < expected {
-            color_eyre::eyre::bail!("Expected at least {expected} events, found {count}");
-        }
-        Ok(count)
-    }
-
-    /// Assert the event count for a source matches expectation.
-    ///
-    /// # Deprecated
-    /// Use `assert_events().source(source).count(expected)` instead.
-    #[deprecated(
-        since = "0.5.0",
-        note = "Use assert_events().source(source).count(expected) instead"
-    )]
-    pub async fn assert_event_count_by_source(
-        &self,
-        source: &str,
-        expected: usize,
-    ) -> TestResult<usize> {
-        let event_source = sinex_core::EventSource::new(source);
-        let count = self.pool.events().count_by_source(&event_source).await? as usize;
-        if count != expected {
-            color_eyre::eyre::bail!("Expected {expected} events for '{source}', found {count}");
-        }
-        Ok(count)
-    }
-
-    /// Assert the event count for a source is at least the expectation.
-    ///
-    /// # Deprecated
-    /// Use `assert_events().source(source).at_least(expected)` instead.
-    #[deprecated(
-        since = "0.5.0",
-        note = "Use assert_events().source(source).at_least(expected) instead"
-    )]
-    pub async fn assert_event_count_by_source_at_least(
-        &self,
-        source: &str,
-        expected: usize,
-    ) -> TestResult<usize> {
-        let event_source = sinex_core::EventSource::new(source);
-        let count = self.pool.events().count_by_source(&event_source).await? as usize;
-        if count < expected {
-            color_eyre::eyre::bail!(
-                "Expected at least {expected} events for '{source}', found {count}"
-            );
-        }
-        Ok(count)
+    pub fn assert_event(&self) -> EventAssert<'_> {
+        EventAssert::new(self)
     }
 
     /// Assert that a collection of events has unique IDs.
@@ -1879,87 +1614,5 @@ impl ContextualAssert {
             }
         }
         Ok(self)
-    }
-}
-
-/// Fluent builder for publishing test events.
-///
-/// Created via `TestContext::event()`. Allows ergonomic event publishing
-/// with optional payload and timestamp.
-///
-/// # Examples
-///
-/// ```rust,ignore
-/// // Minimal event (empty payload)
-/// ctx.event("source", "event.type").publish().await?;
-///
-/// // With payload
-/// ctx.event("source", "event.type")
-///     .payload(json!({"key": "value"}))
-///     .publish()
-///     .await?;
-///
-/// // With timestamp
-/// ctx.event("source", "event.type")
-///     .at(Utc::now())
-///     .publish()
-///     .await?;
-///
-/// // Full options
-/// ctx.event("source", "event.type")
-///     .payload(json!({"key": "value"}))
-///     .at(Utc::now())
-///     .publish()
-///     .await?;
-/// ```
-pub struct TestEventBuilder<'a> {
-    ctx: &'a TestContext,
-    source: String,
-    event_type: String,
-    payload: JsonValue,
-    timestamp: Option<Timestamp>,
-}
-
-impl<'a> TestEventBuilder<'a> {
-    fn new(ctx: &'a TestContext, source: String, event_type: String) -> Self {
-        Self {
-            ctx,
-            source,
-            event_type,
-            payload: serde_json::json!({}),
-            timestamp: None,
-        }
-    }
-
-    /// Set the event payload.
-    ///
-    /// If not called, defaults to an empty JSON object `{}`.
-    pub fn payload(mut self, payload: JsonValue) -> Self {
-        self.payload = payload;
-        self
-    }
-
-    /// Set a specific timestamp for the event.
-    ///
-    /// Accepts any type that can be converted to `Timestamp`, including:
-    /// - `chrono::DateTime<Utc>`
-    /// - `Timestamp`
-    pub fn at<T: Into<Timestamp>>(mut self, timestamp: T) -> Self {
-        self.timestamp = Some(timestamp.into());
-        self
-    }
-
-    /// Publish the event and wait for it to be persisted.
-    ///
-    /// Returns the persisted event from the database.
-    pub async fn publish(self) -> TestResult<Event<JsonValue>> {
-        self.ctx
-            .publish_event_internal(
-                EventSource::new(self.source),
-                EventType::new(self.event_type),
-                self.payload,
-                self.timestamp,
-            )
-            .await
     }
 }

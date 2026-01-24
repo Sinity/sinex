@@ -6,6 +6,7 @@
 
 use serde_json::json;
 use sinex_core::types::domain::EventSource;
+use sinex_core::DynamicPayload;
 use sinex_node_sdk::CheckpointManager;
 use sinex_test_utils::prelude::*;
 use tracing::info;
@@ -62,12 +63,24 @@ async fn test_checkpoint_manager_basic_functionality(ctx: TestContext) -> TestRe
 
     // Create test events to simulate processed events
     let test_events = vec![
-        ctx.publish_event("checkpoint-test", "test.event", json!({"test": "event1"}))
-            .await?,
-        ctx.publish_event("checkpoint-test", "test.event", json!({"test": "event2"}))
-            .await?,
-        ctx.publish_event("checkpoint-test", "test.event", json!({"test": "event3"}))
-            .await?,
+        ctx.publish(DynamicPayload::new(
+            "checkpoint-test",
+            "test.event",
+            json!({"test": "event1"}),
+        ))
+        .await?,
+        ctx.publish(DynamicPayload::new(
+            "checkpoint-test",
+            "test.event",
+            json!({"test": "event2"}),
+        ))
+        .await?,
+        ctx.publish(DynamicPayload::new(
+            "checkpoint-test",
+            "test.event",
+            json!({"test": "event3"}),
+        ))
+        .await?,
     ];
 
     info!(
@@ -208,23 +221,23 @@ async fn test_checkpoint_with_events_context(ctx: TestContext) -> TestResult<()>
 
     // Create events that could be referenced by checkpoints
     let test_events = vec![
-        ctx.publish_event(
+        ctx.publish(DynamicPayload::new(
             "checkpoint-context",
             "file.created",
             json!({
                 "path": "/test/file1.txt",
                 "size": 1024
             }),
-        )
+        ))
         .await?,
-        ctx.publish_event(
+        ctx.publish(DynamicPayload::new(
             "checkpoint-context",
             "file.modified",
             json!({
                 "path": "/test/file2.txt",
                 "size": 2048
             }),
-        )
+        ))
         .await?,
     ];
 

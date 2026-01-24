@@ -18,6 +18,7 @@ use futures::StreamExt;
 use serde_json::json;
 use sinex_core::coordination::kv_client::{CoordinationKvClient, InstanceMetadata};
 use sinex_core::environment::environment;
+use sinex_core::DynamicPayload;
 use sinex_node_sdk::stream_processor::SchemaBroadcastEntry;
 use sinex_test_utils::nats::ensure_coordination_buckets;
 use sinex_test_utils::prelude::*;
@@ -88,7 +89,11 @@ async fn test_pool_recovery_after_connection_invalidation(ctx: TestContext) -> R
     let ctx = ctx.with_nats().await?;
     // Create initial event to verify baseline functionality
     let baseline_event = ctx
-        .publish_event("pool-recovery", "baseline", json!({"phase": "before"}))
+        .publish(DynamicPayload::new(
+            "pool-recovery",
+            "baseline",
+            json!({"phase": "before"}),
+        ))
         .await?;
     assert!(baseline_event.id.is_some());
 
@@ -126,11 +131,11 @@ async fn test_pool_recovery_after_connection_invalidation(ctx: TestContext) -> R
             let ctx = &ctx;
             async move {
                 match ctx
-                    .publish_event(
+                    .publish(DynamicPayload::new(
                         "pool-recovery",
                         "after",
                         json!({"phase": "after", "attempt": attempt}),
-                    )
+                    ))
                     .await
                 {
                     Ok(event) => {
@@ -178,7 +183,7 @@ async fn test_pool_concurrent_stress_recovery(ctx: TestContext) -> Result<()> {
 
         let handle = tokio::spawn(async move {
             for iteration in 0..10 {
-                let event = Event::<JsonValue>::test_event(
+                let event = Event::test_event(
                     EventSource::from(format!("stress-{}", task_id)),
                     EventType::from("concurrent.operation"),
                     json!({
@@ -283,7 +288,7 @@ async fn test_ingestd_restart_event_continuity(ctx: TestContext) -> Result<()> {
     let publisher = TestNodePublisher::new(nats_client.clone(), "restart-test");
     for i in 0..5 {
         publisher
-            .publish_event("before.restart", json!({"sequence": i, "phase": "before"}))
+            .publish("before.restart", json!({"sequence": i, "phase": "before"}))
             .await?;
     }
 
@@ -320,7 +325,7 @@ async fn test_ingestd_restart_event_continuity(ctx: TestContext) -> Result<()> {
     // Publish events to second instance
     for i in 0..5 {
         publisher
-            .publish_event("after.restart", json!({"sequence": i, "phase": "after"}))
+            .publish("after.restart", json!({"sequence": i, "phase": "after"}))
             .await?;
     }
 
@@ -434,7 +439,7 @@ async fn test_multi_source_concurrent_ingestion(ctx: TestContext) -> Result<()> 
         let handle = tokio::spawn(async move {
             for i in 0..events_per_source {
                 publisher
-                    .publish_event(
+                    .publish(
                         &event_type,
                         json!({
                             "source": source,
@@ -828,7 +833,7 @@ async fn test_publisher_reconnection_resilience(ctx: TestContext) -> Result<()> 
         let handle = tokio::spawn(async move {
             for i in 0..20 {
                 match publisher
-                    .publish_event(
+                    .publish(
                         "stress.publish",
                         json!({
                             "batch": batch,

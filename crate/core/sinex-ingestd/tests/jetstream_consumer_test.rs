@@ -100,7 +100,7 @@ async fn consume_event_from_jetstream() -> color_eyre::Result<()> {
         TestNodePublisher::with_namespace(nats_client.clone(), "test", Some(namespace.clone()));
     let event_id = Ulid::new();
     publisher
-        .publish_event_with_overrides(
+        .publish_with_overrides(
             "test.event",
             json!({"data": "test"}),
             EventOverrides {
@@ -173,7 +173,7 @@ async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
     let mut confirmation_sub = publisher.client().subscribe(confirmation_subject).await?;
 
     publisher
-        .publish_event_with_overrides(
+        .publish_with_overrides(
             "test.event",
             json!({"data": "test"}),
             EventOverrides {
@@ -244,7 +244,7 @@ async fn consumer_persists_offset_kind(ctx: TestContext) -> color_eyre::Result<(
         Some(namespace.clone()),
     );
     let event_id = publisher
-        .publish_event_with_overrides(
+        .publish_with_overrides(
             "offset.check",
             json!({"data": "value"}),
             EventOverrides {
@@ -321,7 +321,7 @@ async fn invalid_timestamp_routes_to_dlq_and_allows_progress() -> color_eyre::Re
     let publisher =
         TestNodePublisher::with_namespace(nats_client.clone(), "test", Some(namespace.clone()));
     let bad_event_id = publisher
-        .publish_event_with_overrides(
+        .publish_with_overrides(
             "test.bad_timestamp",
             json!({"data": "invalid"}),
             EventOverrides {
@@ -332,7 +332,7 @@ async fn invalid_timestamp_routes_to_dlq_and_allows_progress() -> color_eyre::Re
         .await?;
 
     let good_event_id = publisher
-        .publish_event("test.good", json!({"data": "ok"}))
+        .publish("test.good", json!({"data": "ok"}))
         .await?;
 
     WaitHelpers::wait_for_event_id(&ctx.pool, good_event_id.into(), Timeouts::SHORT).await?;
@@ -389,14 +389,14 @@ async fn duplicate_events_are_idempotent(ctx: TestContext) -> TestResult<()> {
     };
 
     publisher
-        .publish_event_with_overrides("pipeline.event", json!({"sequence": 1}), overrides.clone())
+        .publish_with_overrides("pipeline.event", json!({"sequence": 1}), overrides.clone())
         .await?;
 
     WaitHelpers::wait_for_event_id(&ctx.pool, event_id.into(), Timeouts::SHORT).await?;
 
     // Publish the exact same payload again to simulate replay / duplicate delivery.
     publisher
-        .publish_event_with_overrides("pipeline.event", json!({"sequence": 1}), overrides)
+        .publish_with_overrides("pipeline.event", json!({"sequence": 1}), overrides)
         .await?;
 
     // Wait deterministically for the single persisted row to remain stable.
@@ -439,7 +439,7 @@ async fn dlq_captures_multiple_validation_failures(ctx: TestContext) -> TestResu
     let invalid_total = 5;
     for idx in 0..invalid_total {
         publisher
-            .publish_event_with_overrides(
+            .publish_with_overrides(
                 &format!("validation.bad.{}", idx),
                 json!({"data": "bad"}),
                 EventOverrides {
@@ -452,7 +452,7 @@ async fn dlq_captures_multiple_validation_failures(ctx: TestContext) -> TestResu
 
     // Follow the invalid batch with a valid event to prove the consumer keeps making progress.
     let good_id = publisher
-        .publish_event("validation.good", json!({"ok": true}))
+        .publish("validation.good", json!({"ok": true}))
         .await?;
 
     WaitHelpers::wait_for_event_id(&ctx.pool, good_id.into(), Timeouts::SHORT).await?;

@@ -55,7 +55,7 @@ async fn test_id_database_integration_type_safety(ctx: TestContext) -> Result<()
     let ctx = ctx.with_nats().shared().await?;
 
     // Create an event and verify its ID type is preserved through database operations
-    let mut event = Event::<JsonValue>::test_event(
+    let mut event = Event::test_event(
         "type-safety-test",
         "id.type_safety",
         json!({ "test": "id_type_safety" }),
@@ -104,8 +104,7 @@ async fn test_id_collection_type_safety(ctx: TestContext) -> Result<()> {
     let mut event_ids = Vec::new();
 
     for i in 0..5 {
-        let mut event =
-            Event::<JsonValue>::test_event(&*source, "id.collection_safety", json!({ "index": i }));
+        let mut event = Event::test_event(&*source, "id.collection_safety", json!({ "index": i }));
         event.id = Some(Id::new());
         let id = event.id.clone().expect("Event should have ID");
 
@@ -168,7 +167,7 @@ async fn test_event_source_type_safety(ctx: TestContext) -> Result<()> {
     let dynamic_source = EventSource::new("dynamic-test-source");
 
     // Verify both work for event creation
-    let mut event1 = Event::<JsonValue>::test_event(
+    let mut event1 = Event::test_event(
         static_source.as_str(),
         "source.type_safety",
         json!({ "source_type": "static" }),
@@ -176,7 +175,7 @@ async fn test_event_source_type_safety(ctx: TestContext) -> Result<()> {
     event1.id = Some(Id::new());
     ctx.publish_test_event(&event1).await?;
 
-    let mut event2 = Event::<JsonValue>::test_event(
+    let mut event2 = Event::test_event(
         dynamic_source.as_str(),
         "source.type_safety",
         json!({ "source_type": "dynamic" }),
@@ -230,7 +229,7 @@ async fn test_event_type_safety(ctx: TestContext) -> Result<()> {
     let dynamic_type = EventType::new("dynamic.test");
 
     // Create events with different type construction methods
-    let mut event1 = Event::<JsonValue>::test_event(
+    let mut event1 = Event::test_event(
         "type-safety-source",
         static_type.as_str(),
         json!({ "type_construction": "static" }),
@@ -238,7 +237,7 @@ async fn test_event_type_safety(ctx: TestContext) -> Result<()> {
     event1.id = Some(Id::new());
     ctx.publish_test_event(&event1).await?;
 
-    let mut event2 = Event::<JsonValue>::test_event(
+    let mut event2 = Event::test_event(
         "type-safety-source",
         dynamic_type.as_str(),
         json!({ "type_construction": "dynamic" }),
@@ -286,7 +285,7 @@ async fn test_domain_string_const_support(ctx: TestContext) -> Result<()> {
     const TEST_TYPE: EventType = EventType::from_static("const.type");
 
     // Use const values in runtime
-    let mut event = Event::<JsonValue>::test_event(
+    let mut event = Event::test_event(
         TEST_SOURCE.as_str(),
         TEST_TYPE.as_str(),
         json!({ "const_test": true }),
@@ -320,8 +319,7 @@ async fn test_payload_validation_type_safety(ctx: TestContext) -> Result<()> {
         "array_field": [1, 2, 3]
     });
 
-    let mut event =
-        Event::<JsonValue>::test_event("payload-test", "payload.validation", valid_payload.clone());
+    let mut event = Event::test_event("payload-test", "payload.validation", valid_payload.clone());
     event.id = Some(Id::new());
     ctx.publish_test_event(&event).await?;
 
@@ -376,7 +374,7 @@ async fn test_nested_payload_type_preservation(ctx: TestContext) -> Result<()> {
         }
     });
 
-    let mut event = Event::<JsonValue>::test_event(
+    let mut event = Event::test_event(
         "complex-payload",
         "nested.type_safety",
         complex_payload.clone(),
@@ -431,7 +429,7 @@ async fn test_repository_query_type_safety(ctx: TestContext) -> Result<()> {
     let repo_source_secondary = EventSource::new(&secondary_source);
 
     // Create test data
-    let mut e1 = Event::<JsonValue>::test_event(
+    let mut e1 = Event::test_event(
         repo_source_primary.as_str(),
         repo_type.as_str(),
         json!({"index": 1}),
@@ -439,7 +437,7 @@ async fn test_repository_query_type_safety(ctx: TestContext) -> Result<()> {
     e1.id = Some(Id::new());
     ctx.publish_test_event(&e1).await?;
 
-    let mut e2 = Event::<JsonValue>::test_event(
+    let mut e2 = Event::test_event(
         repo_source_primary.as_str(),
         repo_type.as_str(),
         json!({"index": 2}),
@@ -447,7 +445,7 @@ async fn test_repository_query_type_safety(ctx: TestContext) -> Result<()> {
     e2.id = Some(Id::new());
     ctx.publish_test_event(&e2).await?;
 
-    let mut e3 = Event::<JsonValue>::test_event(
+    let mut e3 = Event::test_event(
         repo_source_secondary.as_str(),
         repo_type.as_str(),
         json!({"index": 3}),
@@ -513,7 +511,7 @@ async fn test_repository_id_query_type_safety(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().shared().await?;
 
     // Create an event
-    let mut event = Event::<JsonValue>::test_event(
+    let mut event = Event::test_event(
         "id-query-test",
         "id.query_safety",
         json!({ "test_data": "repository_id_safety" }),
@@ -623,7 +621,7 @@ async fn test_concurrent_type_safety(ctx: TestContext) -> Result<()> {
     for (source, event_type, payload) in test_cases {
         let ctx_clone = ctx.clone();
         join_set.spawn(async move {
-            let mut event = Event::<JsonValue>::test_event(source, event_type, payload);
+            let mut event = Event::test_event(source, event_type, payload);
             event.id = Some(Id::new());
             let id = event.id.clone().unwrap();
 
@@ -715,7 +713,7 @@ async fn test_type_safety_boundary_conditions(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().shared().await?;
 
     // Empty but valid domain strings
-    let mut minimal_event = Event::<JsonValue>::test_event(
+    let mut minimal_event = Event::test_event(
         "a",       // Minimal valid source
         "b",       // Minimal valid type
         json!({}), // Minimal valid payload

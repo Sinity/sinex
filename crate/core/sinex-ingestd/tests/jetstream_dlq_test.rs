@@ -117,7 +117,7 @@ async fn test_dlq_cases_table() -> TestResult<()> {
     };
 
     publisher
-        .publish_event_with_overrides(
+        .publish_with_overrides(
             "test.invalid",
             json!({"data": "test"}),
             EventOverrides {

@@ -78,7 +78,7 @@ async fn test_ingestd_graceful_shutdown_completes_inflight(ctx: TestContext) -> 
     let mut event_ids = Vec::new();
     for idx in 0..5 {
         let event_id = publisher
-            .publish_event("graceful.event", json!({ "seq": idx }))
+            .publish("graceful.event", json!({ "seq": idx }))
             .await?;
         event_ids.push(event_id);
     }
@@ -170,9 +170,7 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
         let publisher = TestNodePublisher::new(nats_client, "load-source");
         let mut idx = 0;
         while !shutdown_flag_clone.load(Ordering::SeqCst) {
-            let _ = publisher
-                .publish_event("load.event", json!({ "seq": idx }))
-                .await;
+            let _ = publisher.publish("load.event", json!({ "seq": idx })).await;
             published_count_clone.fetch_add(1, Ordering::SeqCst);
             idx += 1;
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -371,7 +369,7 @@ async fn test_shutdown_data_consistency(ctx: TestContext) -> TestResult<()> {
     let publisher = TestNodePublisher::new(ctx.nats_client(), "consistency-source");
     for idx in 0..10 {
         publisher
-            .publish_event(
+            .publish(
                 "consistency.event",
                 json!({
                     "index": idx,

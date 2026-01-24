@@ -10,7 +10,9 @@
 
 use serde_json::json;
 // Using shorter imports from sinex-core's re-exports
-use sinex_core::{DbPoolExt, Event, EventSource, EventType, HostName, Id, JsonValue, Ulid};
+use sinex_core::{
+    DbPoolExt, DynamicPayload, Event, EventSource, EventType, HostName, Id, JsonValue, Ulid,
+};
 use sinex_test_utils::prelude::*;
 use std::collections::HashSet;
 use std::str::FromStr;
@@ -286,7 +288,7 @@ fn test_domain_types_with_various_values(#[case] source_name: &str, #[case] type
 }
 
 // =============================================================================
-// EVENT CREATION TESTS - Event::<JsonValue>::test_event()
+// EVENT CREATION TESTS - Event::test_event()
 // =============================================================================
 
 #[sinex_test]
@@ -299,7 +301,7 @@ fn test_event_builder_basic() -> TestResult<()> {
         "message": "Unit test event"
     });
 
-    let event = Event::<JsonValue>::test_event(source.clone(), event_type.clone(), payload.clone());
+    let event = Event::test_event(source.clone(), event_type.clone(), payload.clone());
 
     // Verify event structure
     assert_eq!(event.source, source);
@@ -312,7 +314,7 @@ fn test_event_builder_basic() -> TestResult<()> {
 
 #[sinex_test]
 fn test_event_builder_with_optional_fields() -> TestResult<()> {
-    let mut event = Event::<JsonValue>::test_event(
+    let mut event = Event::test_event(
         EventSource::from_static("optional-test"),
         EventType::from_static("optional.event"),
         json!({"basic": true}),
@@ -332,7 +334,7 @@ fn test_event_builder_with_timestamps() -> TestResult<()> {
 
     let custom_timestamp = Utc::now() - chrono::Duration::hours(1);
 
-    let mut event = Event::<JsonValue>::test_event(
+    let mut event = Event::test_event(
         EventSource::from_static("timestamp-test"),
         EventType::from_static("timestamp.event"),
         json!({"timestamp_test": true}),
@@ -353,7 +355,7 @@ fn test_event_builder_with_timestamps() -> TestResult<()> {
 #[case(json!([1, 2, 3]))]
 #[case(json!({"nested": {"deep": {"value": [1, 2, 3]}}}))]
 fn test_event_builder_with_various_payloads(#[case] payload: serde_json::Value) {
-    let event = Event::<JsonValue>::test_event(
+    let event = Event::test_event(
         EventSource::from_static("payload-test"),
         EventType::from_static("various.payload"),
         payload.clone(),
@@ -397,8 +399,12 @@ async fn test_sinex_error_propagation(ctx: TestContext) -> TestResult<()> {
     // Test that SinexError works properly with Result
 
     // This should work fine
-    ctx.publish_event("error-test", "valid.test", json!({"test": true}))
-        .await?;
+    ctx.publish(DynamicPayload::new(
+        "error-test",
+        "valid.test",
+        json!({"test": true}),
+    ))
+    .await?;
 
     // Test error handling with invalid data - empty source should work but be empty
     let empty_source = EventSource::new("");
@@ -433,8 +439,7 @@ fn test_edge_case_strings() -> TestResult<()> {
         assert_eq!(event_type.as_str(), format!("edge.{test_name}"));
 
         // Should work in event creation
-        let event =
-            Event::<JsonValue>::test_event(source, event_type, json!({"test_value": test_value}));
+        let event = Event::test_event(source, event_type, json!({"test_value": test_value}));
 
         assert_eq!(event.payload["test_value"], json!(test_value));
     }
@@ -501,7 +506,7 @@ fn test_large_payload_creation() -> TestResult<()> {
         }
     });
 
-    let event = Event::<JsonValue>::test_event(
+    let event = Event::test_event(
         EventSource::from_static("stress-test"),
         EventType::from_static("large.payload"),
         large_payload.clone(),
@@ -548,7 +553,7 @@ fn test_domain_type_serialization() -> TestResult<()> {
 
 #[sinex_test]
 fn test_event_json_roundtrip() -> TestResult<()> {
-    let original_event = Event::<JsonValue>::test_event(
+    let original_event = Event::test_event(
         EventSource::from_static("json-test"),
         EventType::from_static("roundtrip.test"),
         json!({
@@ -568,11 +573,47 @@ fn test_event_json_roundtrip() -> TestResult<()> {
     let deserialized_event: Event<JsonValue> =
         serde_json::from_str(&json_str).expect("Should deserialize event from JSON");
 
-    // Should be equal
+    // Should be equal - verify all critical fields including provenance
     assert_eq!(deserialized_event.source, original_event.source);
     assert_eq!(deserialized_event.event_type, original_event.event_type);
     assert_eq!(deserialized_event.payload, original_event.payload);
     assert_eq!(deserialized_event.id, original_event.id);
+
+    // CRITICAL: Verify provenance survives JSON roundtrip
+    // This was added after discovering silent provenance corruption through NATS
+    match (deserialized_event.provenance(), original_event.provenance()) {
+        (
+            Provenance::Material {
+                id: deser_id,
+                anchor_byte: deser_anchor,
+                ..
+            },
+            Provenance::Material {
+                id: orig_id,
+                anchor_byte: orig_anchor,
+                ..
+            },
+        ) => {
+            assert_eq!(
+                deser_id, orig_id,
+                "Material ID should survive JSON roundtrip"
+            );
+            assert_eq!(
+                deser_anchor, orig_anchor,
+                "Anchor byte should survive JSON roundtrip"
+            );
+        }
+        (Provenance::Synthesis { .. }, Provenance::Synthesis { .. }) => {
+            // Synthesis provenance matched correctly
+        }
+        _ => panic!(
+            "Provenance type changed during JSON roundtrip! \
+             Original: {:?}, Deserialized: {:?}",
+            original_event.provenance(),
+            deserialized_event.provenance()
+        ),
+    }
+
     Ok(())
 }
 
@@ -619,7 +660,7 @@ fn test_event_creation_performance() -> TestResult<()> {
 
     let mut events = Vec::with_capacity(count);
     for i in 0..count {
-        let event = Event::<JsonValue>::test_event(
+        let event = Event::test_event(
             EventSource::from_static("perf-test"),
             EventType::from_static("performance.test"),
             json!({
@@ -670,7 +711,11 @@ async fn test_event_ordering_preserved(ctx: TestContext) -> TestResult<()> {
 
     for i in 0..5 {
         let event = ctx
-            .publish_event(source.as_str(), "sequential.event", json!({"sequence": i}))
+            .publish(DynamicPayload::new(
+                source.as_str(),
+                "sequential.event",
+                json!({"sequence": i}),
+            ))
             .await?;
         events.push(event);
 
@@ -711,9 +756,13 @@ async fn test_event_ordering_preserved(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 async fn test_builder_method_chaining_order(ctx: TestContext) -> TestResult<()> {
     // Test event creation with different sources
-    let event1 = ctx.publish_event("order1", "test", json!({"a": 1})).await?;
+    let event1 = ctx
+        .publish(DynamicPayload::new("order1", "test", json!({"a": 1})))
+        .await?;
 
-    let event2 = ctx.publish_event("order2", "test", json!({"a": 1})).await?;
+    let event2 = ctx
+        .publish(DynamicPayload::new("order2", "test", json!({"a": 1})))
+        .await?;
 
     // Both should succeed despite different order
     assert_eq!(event1.event_type.as_str(), "test");

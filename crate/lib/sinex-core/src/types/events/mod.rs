@@ -7,6 +7,10 @@
 mod event_payload;
 pub use event_payload::*;
 
+// Strongly-typed enums for payload fields
+pub mod enums;
+pub use enums::*;
+
 // Typed event representation removed - use db::models::Event instead
 
 // Blanket implementations

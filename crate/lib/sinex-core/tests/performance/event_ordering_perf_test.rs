@@ -1,7 +1,7 @@
 //! Performance-oriented event ordering tests.
 
 use serde_json::json;
-use sinex_core::types::Ulid;
+use sinex_core::{types::Ulid, DynamicPayload};
 use sinex_test_utils::prelude::*;
 use std::collections::HashSet;
 use std::time::Duration;
@@ -18,11 +18,11 @@ async fn perf_ulid_sequence_ordering_validation(ctx: TestContext) -> Result<()> 
         }
 
         let event = ctx
-            .publish_event(
+            .publish(DynamicPayload::new(
                 test_source.as_str(),
                 "sequence.test",
                 json!({"sequence": i, "group": test_source.as_str()}),
-            )
+            ))
             .await?;
         event_ulids.push(event.id.expect("Event should have ID"));
     }
@@ -80,11 +80,11 @@ async fn perf_database_ordering_consistency(ctx: TestContext) -> Result<()> {
 
     for i in 0..50 {
         let event = ctx
-            .publish_event(
+            .publish(DynamicPayload::new(
                 "db-ordering-perf",
                 "rapid.batch",
                 json!({"batch": 1, "sequence": i}),
-            )
+            ))
             .await?;
         all_event_ulids.push(event.id.expect("Event should have ID"));
     }
@@ -93,11 +93,11 @@ async fn perf_database_ordering_consistency(ctx: TestContext) -> Result<()> {
 
     for i in 0..30 {
         let event = ctx
-            .publish_event(
+            .publish(DynamicPayload::new(
                 "db-ordering-perf",
                 "delayed.batch",
                 json!({"batch": 2, "sequence": i}),
-            )
+            ))
             .await?;
         all_event_ulids.push(event.id.expect("Event should have ID"));
         sleep(Duration::from_millis(2)).await;

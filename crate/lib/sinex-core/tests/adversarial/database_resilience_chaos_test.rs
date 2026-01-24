@@ -5,6 +5,7 @@
 
 use futures::future::join_all;
 use serde_json::json;
+use sinex_core::DynamicPayload;
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::timing_utils::Timeouts;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -44,10 +45,12 @@ async fn test_database_failure_resilience(ctx: TestContext) -> TestResult<()> {
                         tokio::time::sleep(Duration::from_millis(100 * (1 << retry))).await;
 
                         match ctx_clone
-                            .publish_event(
-                                &format!("chaos-worker-{}", worker_id),
-                                &format!("database.retry.{}.{}", operation_id, retry),
-                                json!({"worker": worker_id, "operation": operation_id, "retry": retry}),
+                            .publish(
+                                DynamicPayload::new(
+                                    &format!("chaos-worker-{}", worker_id),
+                                    &format!("database.retry.{}.{}", operation_id, retry),
+                                    json!({"worker": worker_id, "operation": operation_id, "retry": retry}),
+                                )
                             )
                             .await
                         {
@@ -70,10 +73,12 @@ async fn test_database_failure_resilience(ctx: TestContext) -> TestResult<()> {
                 } else {
                     // Normal database operation
                     match ctx_clone
-                        .publish_event(
-                            &format!("chaos-worker-{}", worker_id),
-                            &format!("database.operation.{}", operation_id),
-                            json!({"worker": worker_id, "operation": operation_id}),
+                        .publish(
+                            DynamicPayload::new(
+                                &format!("chaos-worker-{}", worker_id),
+                                &format!("database.operation.{}", operation_id),
+                                json!({"worker": worker_id, "operation": operation_id}),
+                            )
                         )
                         .await
                     {
@@ -172,10 +177,12 @@ async fn test_stream_failure_resilience(ctx: TestContext) -> TestResult<()> {
                         tokio::time::sleep(Duration::from_millis(200 * (1 << retry))).await;
 
                         match ctx_clone
-                            .publish_event(
-                                &format!("stream-chaos-{}", worker_id),
-                                &format!("stream.retry.{}", stream_id),
-                                event_data.clone(),
+                            .publish(
+                                DynamicPayload::new(
+                                    &format!("stream-chaos-{}", worker_id),
+                                    &format!("stream.retry.{}", stream_id),
+                                    event_data.clone(),
+                                )
                             )
                             .await
                         {
@@ -198,10 +205,12 @@ async fn test_stream_failure_resilience(ctx: TestContext) -> TestResult<()> {
                 } else {
                     // Normal stream operation
                     match ctx_clone
-                        .publish_event(
-                            &format!("stream-chaos-{}", worker_id),
-                            &format!("stream.operation.{}", stream_id),
-                            event_data,
+                        .publish(
+                            DynamicPayload::new(
+                                &format!("stream-chaos-{}", worker_id),
+                                &format!("stream.operation.{}", stream_id),
+                                event_data,
+                            )
                         )
                         .await
                     {

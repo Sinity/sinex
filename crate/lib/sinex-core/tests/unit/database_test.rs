@@ -7,13 +7,13 @@
 //! - Transaction semantics
 //! - Performance characteristics
 
-use sinex_core::db::models::{Event, EventBuilder, JsonValue};
+use sinex_core::db::models::{Event, JsonValue};
 use sinex_core::types::domain::{EventSource, EventType, SanitizedPath};
 use sinex_core::types::events::payloads::{FileCreatedPayload, KittyCommandExecutedPayload};
 use sinex_core::types::Seconds;
 use sinex_core::{
-    acquire_with_timeout, create_pool_with_config, Id, PoolConfig, Provenance, SinexError,
-    SourceMaterial, Ulid,
+    acquire_with_timeout, create_pool_with_config, DynamicPayload, Id, PoolConfig, Provenance,
+    SinexError, Ulid,
 };
 use sinex_test_utils::prelude::*;
 
@@ -144,7 +144,7 @@ async fn test_edge_case_payloads(ctx: TestContext) -> TestResult<()> {
 
     for (test_name, payload) in test_cases {
         let event = ctx
-            .publish_event("edge-test", test_name, payload.clone())
+            .publish(DynamicPayload::new("edge-test", test_name, payload.clone()))
             .await?;
 
         assert_eq!(event.payload, payload);
@@ -184,7 +184,7 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> TestResult<()> {
             for event_num in 0..events_per_task {
                 let source = format!("task-{task_id}-{run_suffix}");
                 let inserted = ctx_clone
-                    .publish_event(
+                    .publish(DynamicPayload::new(
                         source.as_str(),
                         "concurrent.test",
                         json!({
@@ -192,7 +192,7 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> TestResult<()> {
                             "event_num": event_num,
                             "timestamp": chrono::Utc::now()
                         }),
-                    )
+                    ))
                     .await
                     .map_err(|e| SinexError::unknown(e.to_string()))?;
 
@@ -266,7 +266,11 @@ async fn test_transaction_rollback(ctx: TestContext) -> TestResult<()> {
 
     // Test successful transaction
     let _success_event = ctx
-        .publish_event("transaction-test", "success", json!({"test": "commit"}))
+        .publish(DynamicPayload::new(
+            "transaction-test",
+            "success",
+            json!({"test": "commit"}),
+        ))
         .await?;
 
     let after_success = ctx.pool.events().count_all().await?;
@@ -275,11 +279,11 @@ async fn test_transaction_rollback(ctx: TestContext) -> TestResult<()> {
     // Note: Complex transaction rollback testing requires low-level database access
     // For now, we test that invalid events are properly rejected
     let invalid_result = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "", // Empty source should be rejected
             "rollback",
             json!({"test": "rollback"}),
-        )
+        ))
         .await;
 
     assert!(invalid_result.is_err(), "Empty source should be rejected");
@@ -309,14 +313,14 @@ async fn test_transaction_rollback(ctx: TestContext) -> TestResult<()> {
 async fn test_schema_validation(ctx: TestContext) -> TestResult<()> {
     // Test creating events with valid payloads
     let valid_event = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "schema-test",
             "valid.event",
             json!({
                 "required_field": "value",
                 "optional_field": 42
             }),
-        )
+        ))
         .await?;
 
     assert!(valid_event.id.is_some());
@@ -326,7 +330,7 @@ async fn test_schema_validation(ctx: TestContext) -> TestResult<()> {
     // We're testing the repository layer behavior
 
     let edge_case_event = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "schema-test",
             "edge.case",
             json!({
@@ -335,7 +339,7 @@ async fn test_schema_validation(ctx: TestContext) -> TestResult<()> {
                 "array_field": [],   // Empty array
                 "object_field": {}   // Empty object
             }),
-        )
+        ))
         .await?;
 
     assert!(edge_case_event.id.is_some());
@@ -351,15 +355,14 @@ async fn test_schema_validation(ctx: TestContext) -> TestResult<()> {
 async fn test_bulk_insert_performance(ctx: TestContext) -> TestResult<()> {
     let batch_size = 100;
     let start_time = std::time::Instant::now();
-    let bootstrap_material =
-        Id::<SourceMaterial>::from_str("014D2PF2DBSQQZXQ5TK1V58CGG").expect("valid bootstrap id");
-    ctx.ensure_source_material(bootstrap_material, Some("test-material-bootstrap"))
-        .await?;
+
+    // Create a material for this test's events
+    let material_id = ctx.create_source_material(Some("bulk-insert-test")).await?;
 
     // Create batch of events
     let mut events = Vec::new();
     for i in 0..batch_size {
-        let event = EventBuilder::dynamic(
+        let event = DynamicPayload::new(
             EventSource::from("performance-test"),
             EventType::from("bulk.insert"),
             json!({
@@ -367,7 +370,7 @@ async fn test_bulk_insert_performance(ctx: TestContext) -> TestResult<()> {
                 "data": format!("event_{}", i)
             }),
         )
-        .from_material(bootstrap_material, 0)
+        .from_material(material_id)
         .build()?;
         events.push(event);
     }
@@ -429,7 +432,7 @@ async fn test_query_performance(ctx: TestContext) -> TestResult<()> {
     let mut events = Vec::with_capacity(num_events);
     for i in 0..num_events {
         let source = format!("query-perf-{}", i % 10); // 10 different sources
-        events.push(Event::<JsonValue>::test_event(
+        events.push(Event::test_event(
             EventSource::from(source),
             EventType::from("query.test"),
             json!({
@@ -495,7 +498,7 @@ async fn test_ulid_persistence(ctx: TestContext) -> TestResult<()> {
     // Test specific ULID edge cases
     let test_ulid = Ulid::from_str("01ARZ3NDEKTSV4RRFFQ69G5FAV")?;
 
-    let event = Event::<JsonValue>::test_event(
+    let event = Event::test_event(
         EventSource::from("ulid-test"),
         EventType::from("regression.test"),
         json!({"ulid": test_ulid.to_string()}),
@@ -528,7 +531,7 @@ async fn test_timestamp_handling(ctx: TestContext) -> TestResult<()> {
     // Test with specific original timestamp
     let original_time = Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap();
 
-    let event = Event::<JsonValue>::test_event(
+    let event = Event::test_event(
         EventSource::from("timestamp-test"),
         EventType::from("time.test"),
         json!({"test": "timestamp"}),
@@ -583,21 +586,21 @@ async fn test_constraint_violations(ctx: TestContext) -> TestResult<()> {
 
     // Empty source should be rejected
     let empty_source_result = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "", // Empty source
             "test.event",
             json!({"data": "test"}),
-        )
+        ))
         .await;
     assert!(empty_source_result.is_err());
 
     // Empty event type should be rejected
     let empty_type_result = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "test-source",
             "", // Empty event type
             json!({"data": "test"}),
-        )
+        ))
         .await;
     assert!(empty_type_result.is_err());
 
@@ -629,7 +632,11 @@ async fn test_database_recovery_scenarios(ctx: TestContext) -> TestResult<()> {
     });
 
     let large_event = ctx
-        .publish_event("recovery-test", "large.payload", large_payload)
+        .publish(DynamicPayload::new(
+            "recovery-test",
+            "large.payload",
+            large_payload,
+        ))
         .await?;
 
     assert!(large_event.id.is_some());

@@ -41,7 +41,7 @@ async fn health_reporter_starts_healthy(ctx: TestContext) -> TestResult<()> {
 
     let status = reporter.current_status();
     ctx.assert("initial status")
-        .eq(status, ProcessStatus::Healthy)?;
+        .eq(&status, &ProcessStatus::Healthy)?;
 
     Ok(())
 }
@@ -57,13 +57,13 @@ async fn health_reporter_tracks_successful_events(ctx: TestContext) -> TestResul
 
     let metrics = reporter.metrics();
     ctx.assert("events processed")
-        .eq(metrics.events_processed.load(Ordering::Relaxed), 100)?;
+        .eq(&metrics.events_processed.load(Ordering::Relaxed), &100)?;
     ctx.assert("errors")
-        .eq(metrics.errors.load(Ordering::Relaxed), 0)?;
+        .eq(&metrics.errors.load(Ordering::Relaxed), &0)?;
 
     let status = reporter.current_status();
     ctx.assert("status after success")
-        .eq(status, ProcessStatus::Healthy)?;
+        .eq(&status, &ProcessStatus::Healthy)?;
 
     Ok(())
 }
@@ -85,7 +85,7 @@ async fn health_reporter_transitions_to_degraded(ctx: TestContext) -> TestResult
     let status = reporter.check_and_emit().await?;
 
     ctx.assert("status transitioned to degraded")
-        .eq(status, ProcessStatus::Degraded)?;
+        .eq(&status, &ProcessStatus::Degraded)?;
 
     Ok(())
 }
@@ -107,7 +107,7 @@ async fn health_reporter_transitions_to_failed(ctx: TestContext) -> TestResult<(
     let status = reporter.check_and_emit().await?;
 
     ctx.assert("status transitioned to failed")
-        .eq(status, ProcessStatus::Failed)?;
+        .eq(&status, &ProcessStatus::Failed)?;
 
     Ok(())
 }
@@ -126,7 +126,8 @@ async fn health_reporter_recovers_to_healthy(ctx: TestContext) -> TestResult<()>
     }
 
     let status = reporter.check_and_emit().await?;
-    ctx.assert("degraded").eq(status, ProcessStatus::Degraded)?;
+    ctx.assert("degraded")
+        .eq(&status, &ProcessStatus::Degraded)?;
 
     // Wait for sliding window to move
     tokio::time::sleep(Duration::from_secs(6)).await;
@@ -138,7 +139,7 @@ async fn health_reporter_recovers_to_healthy(ctx: TestContext) -> TestResult<()>
 
     let status = reporter.check_and_emit().await?;
     ctx.assert("recovered to healthy")
-        .eq(status, ProcessStatus::Healthy)?;
+        .eq(&status, &ProcessStatus::Healthy)?;
 
     Ok(())
 }
@@ -159,7 +160,7 @@ async fn health_reporter_only_emits_on_status_change(ctx: TestContext) -> TestRe
 
     let status = reporter.current_status();
     ctx.assert("status remained healthy")
-        .eq(status, ProcessStatus::Healthy)?;
+        .eq(&status, &ProcessStatus::Healthy)?;
 
     Ok(())
 }
@@ -175,13 +176,13 @@ async fn health_reporter_handles_warnings(ctx: TestContext) -> TestResult<()> {
 
     let metrics = reporter.metrics();
     ctx.assert("warnings recorded")
-        .eq(metrics.warnings.load(Ordering::Relaxed), 10)?;
+        .eq(&metrics.warnings.load(Ordering::Relaxed), &10)?;
     ctx.assert("no errors")
-        .eq(metrics.errors.load(Ordering::Relaxed), 0)?;
+        .eq(&metrics.errors.load(Ordering::Relaxed), &0)?;
 
     let status = reporter.current_status();
     ctx.assert("status healthy despite warnings")
-        .eq(status, ProcessStatus::Healthy)?;
+        .eq(&status, &ProcessStatus::Healthy)?;
 
     Ok(())
 }
@@ -204,7 +205,7 @@ async fn health_reporter_calculates_error_rate_in_sliding_window(
     // Should be degraded (10% error rate)
     let status1 = reporter.check_and_emit().await?;
     ctx.assert("degraded at 10%")
-        .eq(status1, ProcessStatus::Degraded)?;
+        .eq(&status1, &ProcessStatus::Degraded)?;
 
     // Wait for window to slide past old errors
     tokio::time::sleep(Duration::from_secs(6)).await;
@@ -216,7 +217,7 @@ async fn health_reporter_calculates_error_rate_in_sliding_window(
 
     let status2 = reporter.check_and_emit().await?;
     ctx.assert("recovered after window slid")
-        .eq(status2, ProcessStatus::Healthy)?;
+        .eq(&status2, &ProcessStatus::Healthy)?;
 
     Ok(())
 }
@@ -258,7 +259,7 @@ async fn health_reporter_with_custom_thresholds(ctx: TestContext) -> TestResult<
 
     let status = reporter.check_and_emit().await?;
     ctx.assert("failed with stricter threshold")
-        .eq(status, ProcessStatus::Failed)?;
+        .eq(&status, &ProcessStatus::Failed)?;
 
     Ok(())
 }
@@ -285,9 +286,9 @@ async fn health_reporter_stress_test(ctx: TestContext) -> TestResult<()> {
 
     let metrics = reporter.metrics();
     ctx.assert("processed 10k events")
-        .eq(metrics.events_processed.load(Ordering::Relaxed), 9800)?;
+        .eq(&metrics.events_processed.load(Ordering::Relaxed), &9800)?;
     ctx.assert("recorded 200 errors")
-        .eq(metrics.errors.load(Ordering::Relaxed), 200)?;
+        .eq(&metrics.errors.load(Ordering::Relaxed), &200)?;
 
     Ok(())
 }

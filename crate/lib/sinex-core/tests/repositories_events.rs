@@ -71,7 +71,7 @@ async fn events_repository_preserves_provenance(ctx: TestContext) -> TestResult<
         .build()?;
 
     let inserted = ctx.pool.events().insert(derived_event).await?;
-    match inserted.provenance {
+    match inserted.provenance() {
         Provenance::Synthesis {
             source_event_ids, ..
         } => {

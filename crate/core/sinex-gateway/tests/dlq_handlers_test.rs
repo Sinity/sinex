@@ -7,6 +7,7 @@
 use async_nats::jetstream;
 use serde_json::json;
 use sinex_core::environment;
+use sinex_core::rpc::dlq::{DlqListResponse, DlqPurgeResponse};
 use sinex_gateway::handlers::dlq::{handle_dlq_list, handle_dlq_purge};
 use sinex_test_utils::{nats::EphemeralNats, prelude::*};
 
@@ -61,9 +62,10 @@ async fn dlq_list_returns_empty_for_new_stream() -> TestResult<()> {
     setup_dlq_stream(&client, &env).await?;
 
     let result = handle_dlq_list(&client, &env, json!({})).await?;
+    let response: DlqListResponse = serde_json::from_value(result)?;
 
-    assert_eq!(result["total_messages"], 0);
-    assert_eq!(result["total_bytes"], 0);
+    assert_eq!(response.total_messages, 0);
+    assert_eq!(response.total_bytes, 0);
 
     Ok(())
 }
@@ -92,9 +94,10 @@ async fn dlq_list_counts_messages_correctly() -> TestResult<()> {
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     let result = handle_dlq_list(&client, &env, json!({})).await?;
+    let response: DlqListResponse = serde_json::from_value(result)?;
 
-    assert_eq!(result["total_messages"], 3);
-    assert!(result["total_bytes"].as_u64().unwrap() > 0);
+    assert_eq!(response.total_messages, 3);
+    assert!(response.total_bytes > 0);
 
     Ok(())
 }
@@ -122,10 +125,11 @@ async fn dlq_list_shows_sequence_info() -> TestResult<()> {
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     let result = handle_dlq_list(&client, &env, json!({})).await?;
+    let response: DlqListResponse = serde_json::from_value(result)?;
 
     // Should have valid sequence numbers
-    assert!(result["first_seq"].as_u64().unwrap() > 0);
-    assert!(result["last_seq"].as_u64().unwrap() >= result["first_seq"].as_u64().unwrap());
+    assert!(response.first_seq > 0);
+    assert!(response.last_seq >= response.first_seq);
 
     Ok(())
 }
@@ -171,18 +175,21 @@ async fn dlq_purge_clears_all_messages() -> TestResult<()> {
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     // Verify messages exist
-    let before = handle_dlq_list(&client, &env, json!({})).await?;
-    assert_eq!(before["total_messages"], 5);
+    let before: DlqListResponse =
+        serde_json::from_value(handle_dlq_list(&client, &env, json!({})).await?)?;
+    assert_eq!(before.total_messages, 5);
 
     // Purge with confirmation
     let result = handle_dlq_purge(&client, &env, json!({"confirm": true})).await?;
+    let response: DlqPurgeResponse = serde_json::from_value(result)?;
 
-    assert_eq!(result["purged"], 5);
-    assert_eq!(result["status"], "success");
+    assert_eq!(response.purged_count, 5);
+    assert_eq!(response.status, "success");
 
     // Verify stream is empty
-    let after = handle_dlq_list(&client, &env, json!({})).await?;
-    assert_eq!(after["total_messages"], 0);
+    let after: DlqListResponse =
+        serde_json::from_value(handle_dlq_list(&client, &env, json!({})).await?)?;
+    assert_eq!(after.total_messages, 0);
 
     Ok(())
 }
@@ -197,9 +204,10 @@ async fn dlq_purge_handles_empty_stream() -> TestResult<()> {
 
     // Purge empty stream should succeed
     let result = handle_dlq_purge(&client, &env, json!({"confirm": true})).await?;
+    let response: DlqPurgeResponse = serde_json::from_value(result)?;
 
-    assert_eq!(result["purged"], 0);
-    assert_eq!(result["status"], "success");
+    assert_eq!(response.purged_count, 0);
+    assert_eq!(response.status, "success");
 
     Ok(())
 }
@@ -245,8 +253,9 @@ async fn dlq_list_after_publish_and_purge_cycle() -> TestResult<()> {
     }
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-    let mid1 = handle_dlq_list(&client, &env, json!({})).await?;
-    assert_eq!(mid1["total_messages"], 3);
+    let mid1: DlqListResponse =
+        serde_json::from_value(handle_dlq_list(&client, &env, json!({})).await?)?;
+    assert_eq!(mid1.total_messages, 3);
 
     // Purge
     handle_dlq_purge(&client, &env, json!({"confirm": true})).await?;
@@ -264,8 +273,9 @@ async fn dlq_list_after_publish_and_purge_cycle() -> TestResult<()> {
     }
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-    let mid2 = handle_dlq_list(&client, &env, json!({})).await?;
-    assert_eq!(mid2["total_messages"], 2);
+    let mid2: DlqListResponse =
+        serde_json::from_value(handle_dlq_list(&client, &env, json!({})).await?)?;
+    assert_eq!(mid2.total_messages, 2);
 
     Ok(())
 }

@@ -68,7 +68,7 @@ async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResul
     let mut event_ids = Vec::new();
     for idx in 0..3 {
         let event_id = publisher
-            .publish_event("backlog.event", json!({ "seq": idx }))
+            .publish("backlog.event", json!({ "seq": idx }))
             .await?;
         event_ids.push(event_id);
     }

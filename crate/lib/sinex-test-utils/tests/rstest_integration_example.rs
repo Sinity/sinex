@@ -97,7 +97,7 @@ async fn publish_and_fetch(
     event_type: &str,
     payload: JsonValue,
 ) -> TestResult<Event<JsonValue>> {
-    let event = Event::<JsonValue>::test_event(source, event_type, payload);
+    let event = Event::test_event(source, event_type, payload);
     let id = ctx.publish_test_event(&event).await?;
     WaitHelpers::wait_for_source_events(&ctx.pool, source, 1, 20).await?;
     let stored = ctx

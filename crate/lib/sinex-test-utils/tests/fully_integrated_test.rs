@@ -4,8 +4,7 @@
 //! without requiring separate attributes or manual setup.
 
 use serde_json::{json, Value};
-use sinex_core::DbPoolExt;
-use sinex_core::EventSource;
+use sinex_core::{DbPoolExt, DynamicPayload, EventSource};
 use sinex_test_utils::prelude::*;
 
 // Example 1: Basic rstest integration with automatic TestContext
@@ -27,7 +26,7 @@ async fn test_automatic_rstest_integration(
     // 4. Provides timeout and progress tracking
 
     let event = ctx
-        .publish_event(source, event_type, payload.clone())
+        .publish(DynamicPayload::new(source, event_type, payload.clone()))
         .await?;
 
     assert_eq!(event.source.as_str(), source);
@@ -47,7 +46,7 @@ async fn test_automatic_tracing(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Starting test with automatic tracing");
 
     let event = ctx
-        .publish_event("traced-test", "test.event", json!({}))
+        .publish(DynamicPayload::new("traced-test", "test.event", json!({})))
         .await?;
 
     tracing::debug!("Created event: {:?}", event.id);
@@ -106,7 +105,7 @@ async fn test_snapshots_with_rstest(
     let ctx = ctx.with_nats().await?;
     let event_type = format!("file.{operation}");
     let _event = ctx
-        .publish_event("filesystem", event_type.as_str(), data)
+        .publish(DynamicPayload::new("filesystem", event_type.as_str(), data))
         .await?;
 
     // Snapshot paths are automatically configured to include:
@@ -145,7 +144,7 @@ async fn test_all_features_combined(
     let mut event_ids = Vec::new();
     for i in 0..count {
         let event = ctx
-            .publish_event(
+            .publish(DynamicPayload::new(
                 "bulk-test",
                 "item.created",
                 json!({
@@ -153,7 +152,7 @@ async fn test_all_features_combined(
                     "size_category": size_name,
                     "tags": tags
                 }),
-            )
+            ))
             .await?;
 
         event_ids.push(event.id);
@@ -212,11 +211,11 @@ async fn test_property_testing_integration(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().await?;
     // Test context is available for actual database operations
     let _event = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "proptest",
             "validation.test",
             json!({"test": "property_testing"}),
-        )
+        ))
         .await?;
 
     // Simple validation without proptest for now
@@ -246,8 +245,12 @@ async fn test_with_fixtures(
     let event_type = format!("file.{operation}");
     for source in &test_sources {
         for path in &test_paths {
-            ctx.publish_event(*source, event_type.as_str(), json!({"path": path.as_str()}))
-                .await?;
+            ctx.publish(DynamicPayload::new(
+                *source,
+                event_type.as_str(),
+                json!({"path": path.as_str()}),
+            ))
+            .await?;
         }
     }
 
@@ -263,14 +266,14 @@ async fn test_with_fixtures(
         );
         let deficit = expected - count;
         for extra in 0..deficit {
-            ctx.publish_event(
+            ctx.publish(DynamicPayload::new(
                 test_sources
                     .get(extra as usize % test_sources.len())
                     .copied()
                     .unwrap_or("fixture"),
                 event_type.as_str(),
                 json!({"path": format!("/fixture/topup/{extra}")}),
-            )
+            ))
             .await?;
         }
 

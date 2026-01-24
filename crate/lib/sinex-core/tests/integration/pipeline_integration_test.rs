@@ -16,6 +16,7 @@ use color_eyre::eyre::ensure;
 use futures::{future::join_all, StreamExt};
 use serde_json::json;
 use sinex_core::types::domain::EventSource;
+use sinex_core::DynamicPayload;
 use sinex_test_utils::prelude::*;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -32,13 +33,13 @@ use tokio::task::yield_now;
 #[sinex_serial_test(timeout = 60)]
 async fn test_pipeline_smoke(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let scope = ctx.pipeline_scope().await?;
+    let scope = ctx.pipeline().await?;
     let event_id = scope
-        .publish(
+        .publish(DynamicPayload::new(
             "pipeline-smoke",
             "smoke.event",
             json!({"step": "smoke", "note": "pipeline"}),
-        )
+        ))
         .await?;
     scope.wait_for_event_id(event_id.clone()).await?;
     let stored = scope
@@ -112,8 +113,7 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> 
 
     // Phase 2: Process each event through the ingestion pipeline
     for (source, event_type, payload) in test_events.iter() {
-        let mut event =
-            Event::<JsonValue>::test_event(source.as_str(), *event_type, payload.clone());
+        let mut event = Event::test_event(source.as_str(), *event_type, payload.clone());
         event.id = Some(sinex_core::types::Id::new());
         let event_id = event.id.clone();
 
@@ -270,8 +270,7 @@ async fn test_concurrent_pipeline_processing(ctx: TestContext) -> Result<()> {
                     "sequence": stream_id * events_per_stream + event_idx
                 });
 
-                let mut event =
-                    Event::<JsonValue>::test_event(&*stream_name, "stream.data", event_payload);
+                let mut event = Event::test_event(&*stream_name, "stream.data", event_payload);
                 event.id = Some(sinex_core::types::Id::new());
 
                 match ctx_clone.publish_test_event(&event).await {
@@ -408,7 +407,7 @@ async fn test_pipeline_data_transformation(ctx: TestContext) -> Result<()> {
 
     // Phase 1: Insert raw events
     for (source, event_type, payload) in raw_events.iter() {
-        let mut event = Event::<JsonValue>::test_event(*source, *event_type, payload.clone());
+        let mut event = Event::test_event(*source, *event_type, payload.clone());
         event.id = Some(sinex_core::types::Id::new());
         ctx.publish_test_event(&event).await?;
         raw_event_ids.push(event.id);
@@ -462,7 +461,7 @@ async fn test_pipeline_data_transformation(ctx: TestContext) -> Result<()> {
             _ => continue,
         };
 
-        let mut transformed_event = Event::<JsonValue>::test_event(
+        let mut transformed_event = Event::test_event(
             raw_event.source.as_str(),
             &*format!("{}.processed", raw_event.event_type),
             transformed_payload,
@@ -615,7 +614,7 @@ async fn test_pipeline_error_handling(ctx: TestContext) -> Result<()> {
 
     // Process all scenarios through the pipeline
     for (source, event_type, payload, should_succeed) in test_scenarios {
-        let mut event = Event::<JsonValue>::test_event(source, event_type, payload.clone());
+        let mut event = Event::test_event(source, event_type, payload.clone());
         event.id = Some(sinex_core::types::Id::new());
 
         match ctx.publish_test_event(&event).await {
@@ -682,7 +681,7 @@ async fn test_pipeline_error_handling(ctx: TestContext) -> Result<()> {
     );
 
     // Verify pipeline resilience - system should still be functional after errors
-    let mut recovery_event = Event::<JsonValue>::test_event(
+    let mut recovery_event = Event::test_event(
         "recovery",
         "test.recovery",
         json!({
@@ -738,7 +737,7 @@ async fn test_confirmation_emitted_after_persistence_pipeline(
     ctx: TestContext,
 ) -> color_eyre::Result<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let scope = ctx.pipeline_scope().await?;
+    let scope = ctx.pipeline().await?;
     let source = format!("confirm-order-{}", Ulid::new());
     let publisher = scope.publisher(source.clone());
     let confirmation_prefix = scope.subject("events.confirmations");
@@ -751,7 +750,7 @@ async fn test_confirmation_emitted_after_persistence_pipeline(
     let mut event_ids = Vec::new();
     for idx in 0..5 {
         let event_id = publisher
-            .publish_event(
+            .publish(
                 "confirmation.order",
                 json!({"source": source, "seq": idx, "check": "persisted-before-confirmation"}),
             )
@@ -797,7 +796,7 @@ async fn test_confirmation_emitted_after_persistence_pipeline(
 #[sinex_serial_test(timeout = 60)]
 async fn test_mixed_validity_batch_semantics(ctx: TestContext) -> color_eyre::Result<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let scope = ctx.pipeline_scope().await?;
+    let scope = ctx.pipeline().await?;
     let source = format!("mixed-validity-{}", Ulid::new());
     let event_type = "batch.mixed";
     let publisher = scope.publisher(source.clone());
@@ -814,7 +813,7 @@ async fn test_mixed_validity_batch_semantics(ctx: TestContext) -> color_eyre::Re
         .await?;
 
     let valid_id = publisher
-        .publish_event(event_type, json!({"kind": "valid", "batch": "mixed"}))
+        .publish(event_type, json!({"kind": "valid", "batch": "mixed"}))
         .await?;
 
     scope.wait_for_event_id(valid_id.into()).await?;

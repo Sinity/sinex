@@ -115,7 +115,7 @@ sinex_proptest! {
         event_type: EventType in arb_event_type(),
         payload: JsonValue in arb_json_value()
     ) -> TestResult<()> {
-        let mut event = Event::<JsonValue>::test_event(
+        let mut event = Event::test_event(
             source.clone(),
             event_type.clone(),
             payload.clone(),
@@ -146,7 +146,7 @@ sinex_proptest! {
             "boolean": bool_value
         });
 
-        let original_event = Event::<JsonValue>::test_event(
+        let original_event = Event::test_event(
             EventSource::new(&source),
             EventType::new(&event_type),
             payload,
@@ -269,7 +269,7 @@ sinex_proptest! {
         unicode_type: String in "\\PC*",
         unicode_value: String in "\\PC*"
     ) -> TestResult<()> {
-        let event = Event::<JsonValue>::test_event(
+        let event = Event::test_event(
             EventSource::new(&unicode_source),
             EventType::new(&unicode_type),
             json!({
@@ -311,7 +311,7 @@ sinex_proptest! {
             }
         });
 
-        let event = Event::<JsonValue>::test_event(
+        let event = Event::test_event(
             EventSource::from_static("large-payload-test"),
             EventType::from_static("large.payload"),
             payload.clone(),
@@ -385,7 +385,7 @@ sinex_proptest! {
         prop_assert_eq!(source.as_str().len(), source_len);
         prop_assert_eq!(event_type.as_str().len(), type_len);
 
-        let event = Event::<JsonValue>::test_event(
+        let event = Event::test_event(
             source,
             event_type,
             json!({"test": true}),

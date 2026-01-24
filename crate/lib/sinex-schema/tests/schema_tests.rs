@@ -4,6 +4,7 @@
 //! executed against a real PostgreSQL database with the required extensions.
 
 use sea_orm_migration::prelude::*;
+use sinex_core::DynamicPayload;
 use sinex_schema::schema::*;
 use sinex_test_utils::prelude::*;
 use sqlx::{PgPool, Row};
@@ -369,9 +370,13 @@ mod index_tests {
         }
 
         for i in 0..40 {
-            ctx.publish_event("test-source", "test-event", serde_json::json!({"index": i}))
-                .await
-                .unwrap();
+            ctx.publish(DynamicPayload::new(
+                "test-source",
+                "test-event",
+                serde_json::json!({"index": i}),
+            ))
+            .await
+            .unwrap();
         }
 
         sqlx::query("SET enable_seqscan = OFF")

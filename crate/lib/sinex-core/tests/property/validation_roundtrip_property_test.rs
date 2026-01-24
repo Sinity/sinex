@@ -29,8 +29,8 @@ async fn sanitized_events_roundtrip_through_db(
     );
 
     EventSanitizer::sanitize_event(&mut event)?;
-    if let Provenance::Material { id, .. } = &event.provenance {
-        ctx.ensure_source_material(*id, None).await?;
+    if let Provenance::Material { id, .. } = &event.provenance() {
+        ctx.ensure_source_material(id, None).await?;
     }
 
     let stored = ctx.pool.events().insert(event.clone()).await?;

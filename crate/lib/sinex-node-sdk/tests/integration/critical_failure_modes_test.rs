@@ -4,6 +4,7 @@
 //! in production, focusing on system resilience and error handling.
 
 use sinex_core::db::repositories::DbPoolExt;
+use sinex_core::DynamicPayload;
 use sinex_node_sdk::VersionInfo;
 use sinex_test_utils::prelude::*;
 use std::fs;
@@ -79,14 +80,14 @@ async fn test_database_high_load_resilience(ctx: TestContext) -> TestResult<()> 
     for i in 0..100 {
         // Reduced from 1000 for faster testing
         let event = ctx
-            .publish_event(
+            .publish(DynamicPayload::new(
                 "load-test",
                 "high.volume",
                 json!({
                     "index": i,
                     "data": format!("load-test-data-{}", i)
                 }),
-            )
+            ))
             .await?;
         events.push(event);
 
@@ -149,7 +150,7 @@ async fn test_database_connection_exhaustion_recovery(ctx: TestContext) -> TestR
             };
 
             // Create and insert event directly using repository
-            let event = Event::<JsonValue>::test_event(
+            let event = Event::test_event(
                 EventSource::new("conn-test"),
                 EventType::new("exhaustion"),
                 json!({"task": i}),
@@ -222,7 +223,7 @@ async fn test_event_creation_extreme_payloads(ctx: TestContext) -> TestResult<()
 
     for (name, payload) in test_cases {
         let result = ctx
-            .publish_event("extreme-test", name, payload.clone())
+            .publish(DynamicPayload::new("extreme-test", name, payload.clone()))
             .await;
 
         match result {
@@ -277,7 +278,7 @@ async fn test_concurrent_event_creation_stress(ctx: TestContext) -> TestResult<(
             // Create a batch of events from this task
             let mut local_successes = 0u32;
             for j in 0..10 {
-                let event = Event::<JsonValue>::test_event(
+                let event = Event::test_event(
                     EventSource::new(format!("stress-{i}")),
                     EventType::new("concurrent"),
                     json!({"task": i, "iteration": j}),
@@ -339,7 +340,11 @@ async fn test_invalid_configuration_handling(ctx: TestContext) -> TestResult<()>
 
     for (source, event_type) in test_cases {
         let result = ctx
-            .publish_event(source, event_type, json!({"test": "invalid"}))
+            .publish(DynamicPayload::new(
+                source,
+                event_type,
+                json!({"test": "invalid"}),
+            ))
             .await;
 
         // Either succeeds (unicode may be valid) or fails with validation error
@@ -372,11 +377,11 @@ async fn test_error_recovery_patterns(ctx: TestContext) -> TestResult<()> {
 
     for i in 0..10 {
         let result = ctx
-            .publish_event(
+            .publish(DynamicPayload::new(
                 "recovery-test",
                 "valid",
                 json!({"iteration": i, "valid": true}),
-            )
+            ))
             .await;
 
         if result.is_ok() {
@@ -393,7 +398,11 @@ async fn test_error_recovery_patterns(ctx: TestContext) -> TestResult<()> {
 
     // System should still be able to create events after the test
     let final_event = ctx
-        .publish_event("recovery-test", "final", json!({"recovered": true}))
+        .publish(DynamicPayload::new(
+            "recovery-test",
+            "final",
+            json!({"recovered": true}),
+        ))
         .await?;
     assert_eq!(final_event.payload["recovered"], json!(true));
 

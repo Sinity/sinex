@@ -8,6 +8,7 @@
 //! - Slow consumers
 
 use async_nats::jetstream::consumer::AckPolicy;
+use sinex_core::DynamicPayload;
 use sinex_node_sdk::simple_node::{ErrorAction, SimpleNode, SimpleNodeError};
 use sinex_node_sdk::CheckpointManager;
 use sinex_test_utils::prelude::*;
@@ -89,11 +90,11 @@ async fn test_node_recovers_from_network_partition(ctx: TestContext) -> TestResu
 
     // Publish some events before partition
     for i in 0..5 {
-        ctx.publish_event(
+        ctx.publish(DynamicPayload::new(
             "chaos-test",
             "counter.increment",
             json!({"value": i + 1}),
-        )
+        ))
         .await?;
     }
 
@@ -111,11 +112,11 @@ async fn test_node_recovers_from_network_partition(ctx: TestContext) -> TestResu
 
     // Publish events after partition
     for i in 5..10 {
-        ctx.publish_event(
+        ctx.publish(DynamicPayload::new(
             "chaos-test",
             "counter.increment",
             json!({"value": i + 1}),
-        )
+        ))
         .await?;
     }
 
@@ -135,7 +136,11 @@ async fn test_node_recovers_from_network_partition(ctx: TestContext) -> TestResu
         )
         .await?;
 
-    assert_eq!(events.len(), 10, "All events should be stored after partition");
+    assert_eq!(
+        events.len(),
+        10,
+        "All events should be stored after partition"
+    );
 
     Ok(())
 }
@@ -166,11 +171,11 @@ async fn test_checkpoint_survives_message_loss(ctx: TestContext) -> TestResult<(
         // Inject chaos into publish operation
         let result = chaos_injector
             .with_simulated_failures(|| async {
-                ctx.publish_event(
+                ctx.publish(DynamicPayload::new(
                     "chaos-test",
                     "counter.increment",
                     json!({"value": i + 1}),
-                )
+                ))
                 .await
             })
             .await;
@@ -196,7 +201,10 @@ async fn test_checkpoint_survives_message_loss(ctx: TestContext) -> TestResult<(
         successful < total_events,
         "Should have lost some messages due to chaos"
     );
-    assert!(successful > 0, "Should have successfully published some messages");
+    assert!(
+        successful > 0,
+        "Should have successfully published some messages"
+    );
 
     Ok(())
 }
@@ -229,16 +237,17 @@ async fn test_node_handles_corrupted_messages(ctx: TestContext) -> TestResult<()
                 corrupted_count += 1;
             } else {
                 // Publish non-corrupted messages
-                ctx.publish_event("chaos-test", "counter.increment", json!({"value": i + 1}))
-                    .await?;
+                ctx.publish(DynamicPayload::new(
+                    "chaos-test",
+                    "counter.increment",
+                    json!({"value": i + 1}),
+                ))
+                .await?;
             }
         }
     }
 
-    assert!(
-        corrupted_count > 0,
-        "Should have corrupted some messages"
-    );
+    assert!(corrupted_count > 0, "Should have corrupted some messages");
 
     // Verify some messages still got through
     tokio::time::sleep(Duration::from_secs(1)).await;
@@ -287,7 +296,7 @@ async fn test_node_handles_message_reordering(ctx: TestContext) -> TestResult<()
             if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&msg) {
                 let seq = val["seq"].as_u64().unwrap();
                 published_order.push(seq);
-                ctx.publish_event("chaos-test", "counter.increment", val)
+                ctx.publish(DynamicPayload::new("chaos-test", "counter.increment", val))
                     .await?;
             }
         }
@@ -299,7 +308,7 @@ async fn test_node_handles_message_reordering(ctx: TestContext) -> TestResult<()
         if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&msg) {
             let seq = val["seq"].as_u64().unwrap();
             published_order.push(seq);
-            ctx.publish_event("chaos-test", "counter.increment", val)
+            ctx.publish(DynamicPayload::new("chaos-test", "counter.increment", val))
                 .await?;
         }
     }
@@ -352,7 +361,7 @@ async fn test_node_handles_slow_consumer_scenario(ctx: TestContext) -> TestResul
 
         for msg in processed {
             if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&msg) {
-                ctx.publish_event("chaos-test", "counter.increment", val)
+                ctx.publish(DynamicPayload::new("chaos-test", "counter.increment", val))
                     .await?;
             }
         }
@@ -399,8 +408,12 @@ async fn test_worst_case_chaos_scenario(ctx: TestContext) -> TestResult<()> {
                 for msg in processed {
                     match serde_json::from_slice::<serde_json::Value>(&msg) {
                         Ok(val) => {
-                            ctx.publish_event("chaos-test", "counter.increment", val)
-                                .await?;
+                            ctx.publish(DynamicPayload::new(
+                                "chaos-test",
+                                "counter.increment",
+                                val,
+                            ))
+                            .await?;
                         }
                         Err(_) => {
                             // Corrupted message
@@ -431,7 +444,11 @@ async fn test_worst_case_chaos_scenario(ctx: TestContext) -> TestResult<()> {
 
     // But node should still be responsive
     let health_check = ctx
-        .publish_event("chaos-test", "counter.increment", json!({"value": 999}))
+        .publish(DynamicPayload::new(
+            "chaos-test",
+            "counter.increment",
+            json!({"value": 999}),
+        ))
         .await;
     assert!(
         health_check.is_ok(),

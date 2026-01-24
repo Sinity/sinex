@@ -3,7 +3,7 @@ use serde_json::json;
 use sinex_core::db::models::Provenance;
 use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::db::validation::{EventValidator, ValidationError};
-use sinex_core::{Event, EventBuilder, EventId, Id, JsonValue, Ulid};
+use sinex_core::{DynamicPayload, Event, EventId, Id, JsonValue, Ulid};
 use sinex_test_utils::prelude::*;
 use tracing::info;
 
@@ -22,7 +22,7 @@ async fn test_basic_event_creation_and_persistence(ctx: TestContext) -> TestResu
     info!("Testing basic event creation and persistence");
 
     // Create a test event using the test context convenience method
-    let mut event = Event::<JsonValue>::test_event(
+    let mut event = Event::test_event(
         "provenance-test",
         "test.event",
         json!({
@@ -83,17 +83,15 @@ async fn test_multiple_event_sources(ctx: TestContext) -> TestResult<()> {
     info!("Testing multiple event sources");
 
     // Create events from different sources
-    let mut event1 =
-        Event::<JsonValue>::test_event(&*suffix_a, "test.event", json!({"data": "from source A"}));
+    let mut event1 = Event::test_event(&*suffix_a, "test.event", json!({"data": "from source A"}));
     event1.id = Some(Id::new());
     ctx.publish_test_event(&event1).await?;
 
-    let mut event2 =
-        Event::<JsonValue>::test_event(&*suffix_b, "test.event", json!({"data": "from source B"}));
+    let mut event2 = Event::test_event(&*suffix_b, "test.event", json!({"data": "from source B"}));
     event2.id = Some(Id::new());
     ctx.publish_test_event(&event2).await?;
 
-    let mut event3 = Event::<JsonValue>::test_event(
+    let mut event3 = Event::test_event(
         &*suffix_c,
         "different.type",
         json!({"data": "from source C"}),
@@ -157,18 +155,15 @@ async fn test_event_querying_by_type(ctx: TestContext) -> TestResult<()> {
     info!("Testing event querying by type");
 
     // Create events of different types
-    let mut event1 =
-        Event::<JsonValue>::test_event("test-source", "type.a", json!({"category": "A"}));
+    let mut event1 = Event::test_event("test-source", "type.a", json!({"category": "A"}));
     event1.id = Some(Id::new());
     ctx.publish_test_event(&event1).await?;
 
-    let mut event2 =
-        Event::<JsonValue>::test_event("test-source", "type.a", json!({"category": "A2"}));
+    let mut event2 = Event::test_event("test-source", "type.a", json!({"category": "A2"}));
     event2.id = Some(Id::new());
     ctx.publish_test_event(&event2).await?;
 
-    let mut event3 =
-        Event::<JsonValue>::test_event("test-source", "type.b", json!({"category": "B"}));
+    let mut event3 = Event::test_event("test-source", "type.b", json!({"category": "B"}));
     event3.id = Some(Id::new());
     ctx.publish_test_event(&event3).await?;
 
@@ -221,7 +216,7 @@ async fn test_batch_event_creation(ctx: TestContext) -> TestResult<()> {
     let mut event_ids = Vec::new();
 
     for i in 0..5 {
-        let mut event = Event::<JsonValue>::test_event(
+        let mut event = Event::test_event(
             "batch-test",
             "batch.item",
             json!({
@@ -307,8 +302,7 @@ async fn test_event_payload_preservation(ctx: TestContext) -> TestResult<()> {
         }
     });
 
-    let mut event =
-        Event::<JsonValue>::test_event("payload-test", "complex.payload", complex_payload.clone());
+    let mut event = Event::test_event("payload-test", "complex.payload", complex_payload.clone());
     event.id = Some(Id::new());
 
     ctx.publish_test_event(&event).await?;
@@ -382,7 +376,11 @@ async fn provenance_xor_constraint_enforced(ctx: TestContext) -> TestResult<()> 
     let pool = ctx.pool();
     let material = ctx.create_source_material(Some("xor-constraint")).await?;
     let parent = ctx
-        .publish_event("prov-parent", "prov.event", json!({ "p": true }))
+        .publish(DynamicPayload::new(
+            "prov-parent",
+            "prov.event",
+            json!({ "p": true }),
+        ))
         .await?
         .id
         .expect("parent event id");
@@ -464,7 +462,7 @@ async fn synthesis_provenance_rejects_direct_cycles(ctx: TestContext) -> TestRes
     let child_id = Id::<Event<JsonValue>>::new();
 
     let mut parent_event =
-        EventBuilder::dynamic("cycle-test", "cycle.parent", json!({"role": "parent"}))
+        DynamicPayload::new("cycle-test", "cycle.parent", json!({"role": "parent"}))
             .with_provenance(
                 Provenance::from_synthesis(vec![EventId::from_ulid(*child_id.as_ulid())])
                     .expect("non-empty"),
@@ -475,7 +473,7 @@ async fn synthesis_provenance_rejects_direct_cycles(ctx: TestContext) -> TestRes
     repo.insert(parent_event).await?;
 
     let mut child_event =
-        EventBuilder::dynamic("cycle-test", "cycle.child", json!({"role": "child"}))
+        DynamicPayload::new("cycle-test", "cycle.child", json!({"role": "child"}))
             .with_provenance(
                 Provenance::from_synthesis(vec![EventId::from_ulid(*parent_id.as_ulid())])
                     .expect("non-empty"),
@@ -506,7 +504,7 @@ async fn synthesis_provenance_rejects_indirect_cycles(ctx: TestContext) -> TestR
     let child_id = Id::<Event<JsonValue>>::new();
 
     let mut ancestor_event =
-        EventBuilder::dynamic("cycle-test", "cycle.ancestor", json!({"role": "ancestor"}))
+        DynamicPayload::new("cycle-test", "cycle.ancestor", json!({"role": "ancestor"}))
             .with_provenance(
                 Provenance::from_synthesis(vec![EventId::from_ulid(*child_id.as_ulid())])
                     .expect("non-empty"),
@@ -516,7 +514,7 @@ async fn synthesis_provenance_rejects_indirect_cycles(ctx: TestContext) -> TestR
     repo.insert(ancestor_event).await?;
 
     let mut parent_event =
-        EventBuilder::dynamic("cycle-test", "cycle.parent", json!({"role": "parent"}))
+        DynamicPayload::new("cycle-test", "cycle.parent", json!({"role": "parent"}))
             .with_provenance(
                 Provenance::from_synthesis(vec![EventId::from_ulid(*ancestor_id.as_ulid())])
                     .expect("non-empty"),
@@ -526,7 +524,7 @@ async fn synthesis_provenance_rejects_indirect_cycles(ctx: TestContext) -> TestR
     repo.insert(parent_event).await?;
 
     let mut child_event =
-        EventBuilder::dynamic("cycle-test", "cycle.child", json!({"role": "child"}))
+        DynamicPayload::new("cycle-test", "cycle.child", json!({"role": "child"}))
             .with_provenance(
                 Provenance::from_synthesis(vec![EventId::from_ulid(*parent_id.as_ulid())])
                     .expect("non-empty"),
@@ -552,7 +550,7 @@ async fn duplicate_parent_ids_rejected_by_validator() -> TestResult<()> {
     let parent = EventId::new();
 
     let mut event =
-        EventBuilder::dynamic("prov-security", "duplicate.parents", json!({"case": "dup"}))
+        DynamicPayload::new("prov-security", "duplicate.parents", json!({"case": "dup"}))
             .from_parents(vec![parent.clone(), parent])?
             .build()?;
 
@@ -569,6 +567,142 @@ async fn duplicate_parent_ids_rejected_by_validator() -> TestResult<()> {
         ),
         "expected duplicate parent validation error, got {err:?}"
     );
+
+    Ok(())
+}
+
+/// CRITICAL TEST: Verify provenance survives NATS pipeline roundtrip
+///
+/// This test exposes the silent provenance loss bug where:
+/// - Events serialize with nested `{"provenance": {"type": "material", ...}}`
+/// - ingestd RawEvent expects flat fields `{"source_material_id": "...", "anchor_byte": 0}`
+/// - serde ignores unknown `provenance` field → provenance lost
+/// - ingestd falls back to "self-referential synthesis" for ALL events
+///
+/// WITHOUT THIS TEST: All 297 tests using NATS pipeline passed despite provenance being silently lost!
+#[sinex_test]
+async fn test_provenance_survives_nats_roundtrip(ctx: TestContext) -> TestResult<()> {
+    ctx.ensure_clean().await?;
+    let ctx = ctx.with_nats().shared().await?;
+    let pool = ctx.pool().clone();
+
+    info!("Testing provenance survives NATS pipeline roundtrip");
+
+    // Create a material provenance event (first-order event from source material)
+    let material = ctx.create_source_material(Some("nats-roundtrip")).await?;
+
+    let mut event = DynamicPayload::new(
+        "provenance-roundtrip-test",
+        "material.event",
+        json!({"test": "provenance through nats"}),
+    )
+    .from_material_at(material, 100) // anchor_byte = 100
+    .build()?;
+
+    event.id = Some(Id::new());
+    let event_id = event.id.clone().unwrap();
+
+    // Publish through NATS (this is where provenance gets lost in the bug)
+    ctx.publish_test_event(&event).await?;
+
+    // Wait for persistence
+    ctx.timing()
+        .wait_for_source_events("provenance-roundtrip-test", 1)
+        .await?;
+
+    // Retrieve from database and verify provenance is MATERIAL, not synthesis
+    let retrieved = pool
+        .events()
+        .get_by_id(event_id.clone())
+        .await?
+        .expect("Event should exist");
+
+    // CRITICAL ASSERTIONS: These fail without the fix!
+    match retrieved.provenance() {
+        Provenance::Material {
+            id, anchor_byte, ..
+        } => {
+            assert_eq!(*id, material, "Material ID should match what was sent");
+            assert_eq!(*anchor_byte, 100, "Anchor byte should match what was sent");
+            info!("✅ Provenance correctly preserved through NATS pipeline");
+        }
+        Provenance::Synthesis { .. } => {
+            panic!(
+                "BUG DETECTED: Event was created with Material provenance but retrieved as Synthesis! \
+                 Provenance was lost in NATS serialization/deserialization."
+            );
+        }
+        _ => panic!("Unexpected provenance variant"),
+    }
+
+    Ok(())
+}
+
+/// Test that synthesis provenance also survives NATS roundtrip
+#[sinex_test]
+async fn test_synthesis_provenance_survives_nats_roundtrip(ctx: TestContext) -> TestResult<()> {
+    ctx.ensure_clean().await?;
+    let ctx = ctx.with_nats().shared().await?;
+    let pool = ctx.pool().clone();
+
+    info!("Testing synthesis provenance survives NATS roundtrip");
+
+    // Create a parent event first
+    let parent = ctx
+        .publish(DynamicPayload::new(
+            "parent-source",
+            "parent.event",
+            json!({"parent": true}),
+        ))
+        .await?;
+    let parent_id = parent.id.expect("Parent should have ID");
+
+    // Create a synthesis event (derived from parent)
+    let mut synthesis_event = DynamicPayload::new(
+        "synthesis-roundtrip-test",
+        "derived.event",
+        json!({"derived": "from parent"}),
+    )
+    .from_parents(vec![parent_id])?
+    .build()?;
+
+    synthesis_event.id = Some(Id::new());
+    let synthesis_id = synthesis_event.id.clone().unwrap();
+
+    // Publish through NATS
+    ctx.publish_test_event(&synthesis_event).await?;
+
+    // Wait for persistence
+    ctx.timing()
+        .wait_for_source_events("synthesis-roundtrip-test", 1)
+        .await?;
+
+    // Retrieve and verify synthesis provenance preserved
+    let retrieved = pool
+        .events()
+        .get_by_id(synthesis_id.clone())
+        .await?
+        .expect("Event should exist");
+
+    match retrieved.provenance() {
+        Provenance::Synthesis {
+            source_event_ids, ..
+        } => {
+            assert_eq!(source_event_ids.len(), 1, "Should have one parent event ID");
+            assert_eq!(
+                source_event_ids[0], parent_id,
+                "Parent ID should match what was sent"
+            );
+            info!("✅ Synthesis provenance correctly preserved through NATS pipeline");
+        }
+        Provenance::Material { .. } => {
+            panic!(
+                "BUG DETECTED: Event was created with Synthesis provenance but retrieved as Material! \
+                 Provenance was corrupted in NATS serialization/deserialization."
+            );
+        }
+        _ => panic!("Unexpected provenance variant"),
+    }
 
     Ok(())
 }

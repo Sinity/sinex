@@ -189,7 +189,7 @@ async fn publish_event(
     event_type: &str,
     payload: JsonValue,
 ) -> color_eyre::Result<()> {
-    let event = Event::<JsonValue>::test_event(source, event_type, payload);
+    let event = Event::test_event(source, event_type, payload);
     ctx.publish_test_event(&event).await?;
     Ok(())
 }
