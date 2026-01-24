@@ -10,6 +10,7 @@
 use serde_json::json;
 use sinex_core::db::models::Event;
 use sinex_core::types::domain::{EventSource, EventType};
+use sinex_core::types::events::DynamicPayload;
 use sinex_core::types::{Id, Ulid};
 use sinex_core::EventSearchFilters;
 use sinex_test_utils::prelude::*;
@@ -55,17 +56,16 @@ async fn test_id_database_integration_type_safety(ctx: TestContext) -> Result<()
     let ctx = ctx.with_nats().shared().await?;
 
     // Create an event and verify its ID type is preserved through database operations
-    let mut event = Event::test_event(
-        "type-safety-test",
-        "id.type_safety",
-        json!({ "test": "id_type_safety" }),
-    );
-    event.id = Some(Id::new());
+    let event = ctx
+        .publish(DynamicPayload::new(
+            "type-safety-test",
+            "id.type_safety",
+            json!({ "test": "id_type_safety" }),
+        ))
+        .await?;
 
     // Extract the ID (should be Id<Event>)
     let event_id = event.id.clone().expect("Event should have ID");
-
-    ctx.publish_test_event(&event).await?;
 
     // Wait for ingestion
     ctx.timing()
@@ -104,11 +104,15 @@ async fn test_id_collection_type_safety(ctx: TestContext) -> Result<()> {
     let mut event_ids = Vec::new();
 
     for i in 0..5 {
-        let mut event = Event::test_event(&*source, "id.collection_safety", json!({ "index": i }));
-        event.id = Some(Id::new());
+        let event = ctx
+            .publish(DynamicPayload::new(
+                &*source,
+                "id.collection_safety",
+                json!({ "index": i }),
+            ))
+            .await?;
         let id = event.id.clone().expect("Event should have ID");
 
-        ctx.publish_test_event(&event).await?;
         event_ids.push(id);
     }
 
@@ -167,21 +171,21 @@ async fn test_event_source_type_safety(ctx: TestContext) -> Result<()> {
     let dynamic_source = EventSource::new("dynamic-test-source");
 
     // Verify both work for event creation
-    let mut event1 = Event::test_event(
-        static_source.as_str(),
-        "source.type_safety",
-        json!({ "source_type": "static" }),
-    );
-    event1.id = Some(Id::new());
-    ctx.publish_test_event(&event1).await?;
+    let event1 = ctx
+        .publish(DynamicPayload::new(
+            static_source.as_str(),
+            "source.type_safety",
+            json!({ "source_type": "static" }),
+        ))
+        .await?;
 
-    let mut event2 = Event::test_event(
-        dynamic_source.as_str(),
-        "source.type_safety",
-        json!({ "source_type": "dynamic" }),
-    );
-    event2.id = Some(Id::new());
-    ctx.publish_test_event(&event2).await?;
+    let event2 = ctx
+        .publish(DynamicPayload::new(
+            dynamic_source.as_str(),
+            "source.type_safety",
+            json!({ "source_type": "dynamic" }),
+        ))
+        .await?;
 
     // Verify sources are preserved correctly
     assert_eq!(event1.source.as_str(), "test-source");
@@ -229,21 +233,21 @@ async fn test_event_type_safety(ctx: TestContext) -> Result<()> {
     let dynamic_type = EventType::new("dynamic.test");
 
     // Create events with different type construction methods
-    let mut event1 = Event::test_event(
-        "type-safety-source",
-        static_type.as_str(),
-        json!({ "type_construction": "static" }),
-    );
-    event1.id = Some(Id::new());
-    ctx.publish_test_event(&event1).await?;
+    let event1 = ctx
+        .publish(DynamicPayload::new(
+            "type-safety-source",
+            static_type.as_str(),
+            json!({ "type_construction": "static" }),
+        ))
+        .await?;
 
-    let mut event2 = Event::test_event(
-        "type-safety-source",
-        dynamic_type.as_str(),
-        json!({ "type_construction": "dynamic" }),
-    );
-    event2.id = Some(Id::new());
-    ctx.publish_test_event(&event2).await?;
+    let event2 = ctx
+        .publish(DynamicPayload::new(
+            "type-safety-source",
+            dynamic_type.as_str(),
+            json!({ "type_construction": "dynamic" }),
+        ))
+        .await?;
 
     // Verify types are preserved
     assert_eq!(event1.event_type.as_str(), "static.test");
@@ -285,13 +289,13 @@ async fn test_domain_string_const_support(ctx: TestContext) -> Result<()> {
     const TEST_TYPE: EventType = EventType::from_static("const.type");
 
     // Use const values in runtime
-    let mut event = Event::test_event(
-        TEST_SOURCE.as_str(),
-        TEST_TYPE.as_str(),
-        json!({ "const_test": true }),
-    );
-    event.id = Some(Id::new());
-    ctx.publish_test_event(&event).await?;
+    let event = ctx
+        .publish(DynamicPayload::new(
+            TEST_SOURCE.as_str(),
+            TEST_TYPE.as_str(),
+            json!({ "const_test": true }),
+        ))
+        .await?;
 
     ctx.timing()
         .wait_for_source_events(TEST_SOURCE.as_str(), 1)
@@ -319,9 +323,13 @@ async fn test_payload_validation_type_safety(ctx: TestContext) -> Result<()> {
         "array_field": [1, 2, 3]
     });
 
-    let mut event = Event::test_event("payload-test", "payload.validation", valid_payload.clone());
-    event.id = Some(Id::new());
-    ctx.publish_test_event(&event).await?;
+    let event = ctx
+        .publish(DynamicPayload::new(
+            "payload-test",
+            "payload.validation",
+            valid_payload.clone(),
+        ))
+        .await?;
 
     // Verify payload structure is preserved
     assert_eq!(event.payload["required_field"], json!("value"));
@@ -374,13 +382,13 @@ async fn test_nested_payload_type_preservation(ctx: TestContext) -> Result<()> {
         }
     });
 
-    let mut event = Event::test_event(
-        "complex-payload",
-        "nested.type_safety",
-        complex_payload.clone(),
-    );
-    event.id = Some(Id::new());
-    ctx.publish_test_event(&event).await?;
+    let event = ctx
+        .publish(DynamicPayload::new(
+            "complex-payload",
+            "nested.type_safety",
+            complex_payload.clone(),
+        ))
+        .await?;
 
     // Verify complex structure is preserved
     assert_eq!(event.payload["metadata"]["version"], json!("1.0.0"));
@@ -429,29 +437,26 @@ async fn test_repository_query_type_safety(ctx: TestContext) -> Result<()> {
     let repo_source_secondary = EventSource::new(&secondary_source);
 
     // Create test data
-    let mut e1 = Event::test_event(
+    ctx.publish(DynamicPayload::new(
         repo_source_primary.as_str(),
         repo_type.as_str(),
         json!({"index": 1}),
-    );
-    e1.id = Some(Id::new());
-    ctx.publish_test_event(&e1).await?;
+    ))
+    .await?;
 
-    let mut e2 = Event::test_event(
+    ctx.publish(DynamicPayload::new(
         repo_source_primary.as_str(),
         repo_type.as_str(),
         json!({"index": 2}),
-    );
-    e2.id = Some(Id::new());
-    ctx.publish_test_event(&e2).await?;
+    ))
+    .await?;
 
-    let mut e3 = Event::test_event(
+    ctx.publish(DynamicPayload::new(
         repo_source_secondary.as_str(),
         repo_type.as_str(),
         json!({"index": 3}),
-    );
-    e3.id = Some(Id::new());
-    ctx.publish_test_event(&e3).await?;
+    ))
+    .await?;
 
     // Test source-based queries return correct types
     ctx.timing()
@@ -511,17 +516,16 @@ async fn test_repository_id_query_type_safety(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().shared().await?;
 
     // Create an event
-    let mut event = Event::test_event(
-        "id-query-test",
-        "id.query_safety",
-        json!({ "test_data": "repository_id_safety" }),
-    );
-    event.id = Some(Id::new());
+    let event = ctx
+        .publish(DynamicPayload::new(
+            "id-query-test",
+            "id.query_safety",
+            json!({ "test_data": "repository_id_safety" }),
+        ))
+        .await?;
 
     // Extract the ID (should be Id<Event>)
     let event_id = event.id.clone().expect("Event should have ID");
-
-    ctx.publish_test_event(&event).await?;
 
     ctx.timing()
         .wait_for_source_events("id-query-test", 1)
@@ -559,33 +563,32 @@ async fn test_event_creation_pipeline_type_safety(ctx: TestContext) -> Result<()
     let source = EventSource::from_static("pipeline-test");
     let event_type = EventType::from_static("pipeline.type_safety");
 
-    // 2. Event creation (test helper ensures provenance)
-    let event = Event::test_event(
-        source.clone(),
-        event_type.clone(),
-        json!({
-            "pipeline_stage": "creation",
-            "type_safety": true
-        }),
-    );
+    // 2. Event creation and insertion via publish
+    let inserted = ctx
+        .publish(DynamicPayload::new(
+            source.as_str(),
+            event_type.as_str(),
+            json!({
+                "pipeline_stage": "creation",
+                "type_safety": true
+            }),
+        ))
+        .await?;
 
     // 3. Verify event structure
-    assert_eq!(event.source, source);
-    assert_eq!(event.event_type, event_type);
-    // New events have no ID until inserted
+    assert_eq!(inserted.source, source);
+    assert_eq!(inserted.event_type, event_type);
 
-    // 4. Insert into database
-    let inserted = ctx.pool.events().insert(event.clone()).await?;
     let inserted_id = inserted
         .id
         .clone()
         .expect("Inserted event should have an ID");
 
-    // 5. Verify ID type preservation happens in storage
+    // 4. Verify ID type preservation happens in storage
     let inserted_ulid: Ulid = inserted_id.clone().into();
     assert_ne!(inserted_ulid.to_uuid(), uuid::Uuid::nil());
 
-    // 6. Query back using repository pattern
+    // 5. Query back using repository pattern
     let retrieved = ctx
         .pool
         .events()
@@ -593,7 +596,7 @@ async fn test_event_creation_pipeline_type_safety(ctx: TestContext) -> Result<()
         .await?
         .expect("Event should exist");
 
-    // 7. Verify all types preserved through entire pipeline
+    // 6. Verify all types preserved through entire pipeline
     assert_eq!(retrieved.source, source);
     assert_eq!(retrieved.event_type, event_type);
     assert_eq!(retrieved.id.unwrap(), inserted_id);
@@ -621,11 +624,10 @@ async fn test_concurrent_type_safety(ctx: TestContext) -> Result<()> {
     for (source, event_type, payload) in test_cases {
         let ctx_clone = ctx.clone();
         join_set.spawn(async move {
-            let mut event = Event::test_event(source, event_type, payload);
-            event.id = Some(Id::new());
+            let event = ctx_clone
+                .publish(DynamicPayload::new(source, event_type, payload))
+                .await?;
             let id = event.id.clone().unwrap();
-
-            ctx_clone.publish_test_event(&event).await?;
 
             Ok::<_, color_eyre::eyre::Error>((
                 event.source.as_str().to_string(),
@@ -713,14 +715,13 @@ async fn test_type_safety_boundary_conditions(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().shared().await?;
 
     // Empty but valid domain strings
-    let mut minimal_event = Event::test_event(
-        "a",       // Minimal valid source
-        "b",       // Minimal valid type
-        json!({}), // Minimal valid payload
-    );
-    minimal_event.id = Some(Id::new());
-
-    ctx.publish_test_event(&minimal_event).await?;
+    let minimal_event = ctx
+        .publish(DynamicPayload::new(
+            "a",       // Minimal valid source
+            "b",       // Minimal valid type
+            json!({}), // Minimal valid payload
+        ))
+        .await?;
 
     // Wait for persistence
     ctx.timing().wait_for_source_events("a", 1).await?;

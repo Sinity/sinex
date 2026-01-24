@@ -4,26 +4,14 @@
 //! the structure and validation rules for event payloads in the Sinex system.
 
 use crate::db::db_error;
+use crate::db::repositories::events::EventPayloadSchema;
+use crate::types::domain::SchemaVersion;
 use crate::types::error::SinexError;
 use crate::types::{Id, Ulid};
 use crate::{DbResult, Event, JsonValue};
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use std::collections::HashMap;
-
-/// Event payload schema record
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EventPayloadSchema {
-    pub id: Ulid,
-    pub source: String,
-    pub event_type: String,
-    pub schema_version: String,
-    pub schema_content: JsonValue,
-    pub content_hash: String,
-    pub is_active: bool,
-    pub updated_at: DateTime<Utc>,
-}
 
 /// Input for registering a new schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -213,10 +201,10 @@ impl<'a> SchemaManagementRepository<'a> {
                 .map_err(|e| db_error(e, "commit schema reactivation transaction"))?;
 
             return Ok(EventPayloadSchema {
-                id: row.id,
+                id: Id::from_ulid(row.id),
                 source: row.source,
                 event_type: row.event_type,
-                schema_version: row.schema_version,
+                schema_version: SchemaVersion::new(row.schema_version),
                 schema_content: row.schema_content,
                 content_hash: row.content_hash,
                 is_active: row.is_active,
@@ -309,10 +297,10 @@ impl<'a> SchemaManagementRepository<'a> {
             .map_err(|e| db_error(e, "commit schema registration transaction"))?;
 
         Ok(EventPayloadSchema {
-            id: row.id,
+            id: Id::from_ulid(row.id),
             source: row.source,
             event_type: row.event_type,
-            schema_version: row.schema_version,
+            schema_version: SchemaVersion::new(row.schema_version),
             schema_content: row.schema_content,
             content_hash: row.content_hash,
             is_active: row.is_active,
@@ -343,10 +331,10 @@ impl<'a> SchemaManagementRepository<'a> {
         .map_err(|e| db_error(e, "find schema by hash"))?;
 
         Ok(EventPayloadSchema {
-            id: row.id,
+            id: Id::from_ulid(row.id),
             source: row.source,
             event_type: row.event_type,
-            schema_version: row.schema_version,
+            schema_version: SchemaVersion::new(row.schema_version),
             schema_content: row.schema_content,
             content_hash: row.content_hash,
             is_active: row.is_active,
@@ -384,10 +372,10 @@ impl<'a> SchemaManagementRepository<'a> {
         .map_err(|e| db_error(e, "get active schema"))?;
 
         Ok(EventPayloadSchema {
-            id: row.id,
+            id: Id::from_ulid(row.id),
             source: row.source,
             event_type: row.event_type,
-            schema_version: row.schema_version,
+            schema_version: SchemaVersion::new(row.schema_version),
             schema_content: row.schema_content,
             content_hash: row.content_hash,
             is_active: row.is_active,
@@ -418,10 +406,10 @@ impl<'a> SchemaManagementRepository<'a> {
         .map_err(|e| db_error(e, "get schema by id"))?;
 
         Ok(EventPayloadSchema {
-            id: row.id,
+            id: Id::from_ulid(row.id),
             source: row.source,
             event_type: row.event_type,
-            schema_version: row.schema_version,
+            schema_version: SchemaVersion::new(row.schema_version),
             schema_content: row.schema_content,
             content_hash: row.content_hash,
             is_active: row.is_active,
@@ -462,10 +450,10 @@ impl<'a> SchemaManagementRepository<'a> {
         Ok(rows
             .into_iter()
             .map(|row| EventPayloadSchema {
-                id: row.id,
+                id: Id::from_ulid(row.id),
                 source: row.source,
                 event_type: row.event_type,
-                schema_version: row.schema_version,
+                schema_version: SchemaVersion::new(row.schema_version),
                 schema_content: row.schema_content,
                 content_hash: row.content_hash,
                 is_active: row.is_active,
@@ -544,7 +532,7 @@ impl<'a> SchemaManagementRepository<'a> {
                 .await?
         };
 
-        let resolved_schema_id = schema_id.unwrap_or(schema.id);
+        let resolved_schema_id = schema_id.unwrap_or_else(|| *schema.id.as_ulid());
         if let Some(event_id) = event.id.as_ref().map(|id| *id.as_ulid()) {
             if let Some(cached) = self
                 .fetch_cached_validation(&event_id, &resolved_schema_id)
@@ -592,7 +580,9 @@ impl<'a> SchemaManagementRepository<'a> {
                 .await?
         };
 
-        let schema_id_for_cache = event_row.payload_schema_id.unwrap_or(schema.id);
+        let schema_id_for_cache = event_row
+            .payload_schema_id
+            .unwrap_or_else(|| *schema.id.as_ulid());
 
         if let Some(cached) = self
             .fetch_cached_validation(event_id, &schema_id_for_cache)

@@ -113,12 +113,15 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> 
 
     // Phase 2: Process each event through the ingestion pipeline
     for (source, event_type, payload) in test_events.iter() {
-        let mut event = Event::test_event(source.as_str(), *event_type, payload.clone());
-        event.id = Some(sinex_core::types::Id::new());
+        let event = ctx
+            .publish(DynamicPayload::new(
+                source.as_str(),
+                *event_type,
+                payload.clone(),
+            ))
+            .await?;
+
         let event_id = event.id.clone();
-
-        ctx.publish_test_event(&event).await?;
-
         created_event_ids.push(event_id.clone());
 
         let event_id_display = event_id
@@ -270,11 +273,15 @@ async fn test_concurrent_pipeline_processing(ctx: TestContext) -> Result<()> {
                     "sequence": stream_id * events_per_stream + event_idx
                 });
 
-                let mut event = Event::test_event(&*stream_name, "stream.data", event_payload);
-                event.id = Some(sinex_core::types::Id::new());
-
-                match ctx_clone.publish_test_event(&event).await {
-                    Ok(_) => {
+                match ctx_clone
+                    .publish(DynamicPayload::new(
+                        &*stream_name,
+                        "stream.data",
+                        event_payload,
+                    ))
+                    .await
+                {
+                    Ok(event) => {
                         let event_id = event.id.clone();
                         let event_id_display = event_id
                             .as_ref()
@@ -407,9 +414,9 @@ async fn test_pipeline_data_transformation(ctx: TestContext) -> Result<()> {
 
     // Phase 1: Insert raw events
     for (source, event_type, payload) in raw_events.iter() {
-        let mut event = Event::test_event(*source, *event_type, payload.clone());
-        event.id = Some(sinex_core::types::Id::new());
-        ctx.publish_test_event(&event).await?;
+        let event = ctx
+            .publish(DynamicPayload::new(*source, *event_type, payload.clone()))
+            .await?;
         raw_event_ids.push(event.id);
     }
 
@@ -423,13 +430,14 @@ async fn test_pipeline_data_transformation(ctx: TestContext) -> Result<()> {
     let mut transformed_event_ids = Vec::new();
 
     for raw_event_id in &raw_event_ids {
-        let Some(ref id) = raw_event_id else {
-            continue;
-        };
         let raw_event = ctx
             .pool
             .events()
-            .get_by_id(id.clone())
+            .get_by_id(
+                raw_event_id
+                    .clone()
+                    .expect("raw_event_id should be present"),
+            )
             .await?
             .expect("Raw event should exist");
 
@@ -461,23 +469,24 @@ async fn test_pipeline_data_transformation(ctx: TestContext) -> Result<()> {
             _ => continue,
         };
 
-        let mut transformed_event = Event::test_event(
-            raw_event.source.as_str(),
-            &*format!("{}.processed", raw_event.event_type),
-            transformed_payload,
-        );
-        transformed_event.id = Some(sinex_core::types::Id::new());
-        ctx.publish_test_event(&transformed_event).await?;
-        if let Some(ref event_id) = transformed_event.id {
+        let transformed_event = ctx
+            .publish(DynamicPayload::new(
+                raw_event.source.as_str(),
+                &*format!("{}.processed", raw_event.event_type),
+                transformed_payload,
+            ))
+            .await?;
+        let transformed_event_id = transformed_event.id.clone();
+        if let Some(ref id) = transformed_event_id {
             sinex_test_utils::timing_utils::WaitHelpers::wait_for_event_id(
                 &ctx.pool,
-                event_id.clone(),
+                id.clone(),
                 sinex_test_utils::timing_utils::DEFAULT_WAIT_SECS,
             )
             .await?;
         }
 
-        transformed_event_ids.push(transformed_event.id);
+        transformed_event_ids.push(transformed_event_id);
     }
 
     // Phase 3: Verify transformation results
@@ -614,18 +623,18 @@ async fn test_pipeline_error_handling(ctx: TestContext) -> Result<()> {
 
     // Process all scenarios through the pipeline
     for (source, event_type, payload, should_succeed) in test_scenarios {
-        let mut event = Event::test_event(source, event_type, payload.clone());
-        event.id = Some(sinex_core::types::Id::new());
-
-        match ctx.publish_test_event(&event).await {
-            Ok(_) => {
+        match ctx
+            .publish(DynamicPayload::new(source, event_type, payload.clone()))
+            .await
+        {
+            Ok(event) => {
                 if should_succeed {
-                    let event_id_display = event
-                        .id
+                    let event_id = event.id.clone();
+                    let event_id_display = event_id
                         .as_ref()
                         .map(|id| id.to_string())
                         .unwrap_or_else(|| "missing".to_string());
-                    successful_events.push(event.id.clone());
+                    successful_events.push(event_id);
                     tracing::debug!(
                         source = source,
                         event_type = event_type,
@@ -681,41 +690,40 @@ async fn test_pipeline_error_handling(ctx: TestContext) -> Result<()> {
     );
 
     // Verify pipeline resilience - system should still be functional after errors
-    let mut recovery_event = Event::test_event(
-        "recovery",
-        "test.recovery",
-        json!({
-            "message": "pipeline recovery verification",
-            "processed_after_errors": true,
-            "timestamp": Utc::now()
-        }),
-    );
-    recovery_event.id = Some(sinex_core::types::Id::new());
-    ctx.publish_test_event(&recovery_event).await?;
-    sinex_test_utils::timing_utils::WaitHelpers::wait_for_event_id(
-        &ctx.pool,
-        recovery_event
-            .id
-            .clone()
-            .expect("recovery event should have id"),
-        sinex_test_utils::timing_utils::DEFAULT_WAIT_SECS,
-    )
-    .await?;
+    let recovery_event = ctx
+        .publish(DynamicPayload::new(
+            "recovery",
+            "test.recovery",
+            json!({
+                "message": "pipeline recovery verification",
+                "processed_after_errors": true,
+                "timestamp": Utc::now()
+            }),
+        ))
+        .await?;
+    let recovery_event_id = recovery_event.id.clone();
+    if let Some(ref id) = recovery_event_id {
+        sinex_test_utils::timing_utils::WaitHelpers::wait_for_event_id(
+            &ctx.pool,
+            id.clone(),
+            sinex_test_utils::timing_utils::DEFAULT_WAIT_SECS,
+        )
+        .await?;
+    }
 
     // Verify recovery event is processed correctly
     let recovery_stored = ctx
         .pool
         .events()
         .get_by_id(
-            recovery_event
-                .id
+            recovery_event_id
                 .clone()
                 .expect("recovery event should have id"),
         )
         .await?
         .expect("Recovery event should exist");
 
-    assert_eq!(recovery_stored.id, recovery_event.id);
+    assert_eq!(recovery_stored.id, recovery_event_id);
     assert_eq!(recovery_stored.source.as_ref(), "recovery");
     assert_eq!(recovery_stored.event_type.as_ref(), "test.recovery");
 

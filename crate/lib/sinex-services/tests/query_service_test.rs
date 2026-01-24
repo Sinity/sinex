@@ -274,7 +274,10 @@ async fn test_query_pagination_stable_during_concurrent_ingestion(
                     ..Default::default()
                 };
                 scope
-                    .publish_with_overrides(source, event_type, json!({ "seq": seq }), overrides)
+                    .publish_with_overrides(
+                        sinex_core::DynamicPayload::new(source, event_type, json!({ "seq": seq })),
+                        overrides,
+                    )
                     .await?;
                 progress.fetch_add(1, Ordering::SeqCst);
                 tokio::task::yield_now().await;

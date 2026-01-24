@@ -17,7 +17,7 @@
 //!
 //! // Simple database benchmark
 //! bench_with_db!(bench_insert_event, |ctx: &BenchContext| async move {
-//!     let event = Event::<JsonValue>::test_event("bench.source", "bench.event", json!({}));
+//!     let event = test_event("bench.source", "bench.event", json!({}));
 //!     ctx.pool().events().insert(event).await
 //! });
 //!
@@ -26,7 +26,7 @@
 //! fn bench_bulk_insert(bencher: Bencher, count: usize) {
 //!     let ctx = &*BENCH_CONTEXT;
 //!     let events: Vec<_> = (0..count)
-//!         .map(|i| Event::<JsonValue>::test_event("bench.source", format!("bench.event.{i}"), json!({})))
+//!         .map(|i| test_event("bench.source", format!("bench.event.{i}"), json!({})))
 //!         .collect();
 //!
 //!     bencher.bench_local(|| {
@@ -180,26 +180,6 @@ impl BenchmarkResult {
 ///     .samples(100)
 ///     .build();
 /// ```
-#[cfg(feature = "bench")]
-#[deprecated(
-    since = "0.1.0",
-    note = "Use BenchmarkResult::builder() for better ergonomics and type safety"
-)]
-pub fn create_benchmark_result(
-    name: &str,
-    suite: &str,
-    dataset: &str,
-    mean_ns: u64,
-    samples: usize,
-) -> BenchmarkResult {
-    BenchmarkResult::builder()
-        .name(name)
-        .suite(suite)
-        .dataset(dataset)
-        .mean_ns(mean_ns)
-        .samples(samples)
-        .build()
-}
 
 /// Extract suite name from fully qualified function name
 ///

@@ -8,7 +8,6 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use sinex_core::db::DbPool;
 use sinex_core::types::error::SinexError;
-use sinex_core::types::ulid::Ulid;
 
 use sha2::{Digest, Sha256};
 use sqlx::pool::PoolConnection;
@@ -20,7 +19,6 @@ use std::collections::HashMap;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -37,10 +35,6 @@ const ADMIN_MAX_CONNECTIONS: u32 = 8;
 static POOL_METRICS: Lazy<PoolMetrics> = Lazy::new(PoolMetrics::new);
 static OPTIONAL_EXTENSION_MISSING: Lazy<Mutex<HashMap<String, String>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
-static BOOTSTRAP_MATERIAL_ID: Lazy<Ulid> = Lazy::new(|| {
-    Ulid::from_str("014D2PF2DBSQQZXQ5TK1V58CGG").expect("valid bootstrap material id")
-});
-
 /// Pool performance metrics for monitoring
 struct PoolMetrics {
     acquisitions: AtomicUsize,
@@ -3162,60 +3156,6 @@ async fn ensure_template_database(
                 }
             }
 
-            // Seed a canonical test source material so Event::test_event() inserts pass FK checks.
-            sqlx::query(
-                r#"
-            INSERT INTO raw.source_material_registry (
-                id,
-                material_kind,
-                source_identifier,
-                status,
-                timing_info_type,
-                metadata
-            ) VALUES (
-                $1::uuid::ulid,
-                'annex',
-                'test-material-bootstrap',
-                'completed',
-                'realtime',
-                '{}'::jsonb
-            )
-            ON CONFLICT (id) DO NOTHING
-            "#,
-            )
-            .bind(BOOTSTRAP_MATERIAL_ID.as_uuid())
-            .execute(&template_pool)
-            .await?;
-
-            // Ensure canonical bootstrap material exists for test events
-            sqlx::query(
-                r#"
-            INSERT INTO raw.source_material_registry (
-                id,
-                material_kind,
-                source_identifier,
-                status,
-                timing_info_type,
-                metadata
-            ) VALUES (
-                $1::uuid::ulid,
-                'annex',
-                'test-material-bootstrap',
-                'completed',
-                'realtime',
-                '{}'::jsonb
-            )
-            ON CONFLICT (source_identifier) DO UPDATE
-            SET id = EXCLUDED.id,
-                status = EXCLUDED.status,
-                timing_info_type = EXCLUDED.timing_info_type,
-                metadata = EXCLUDED.metadata
-            "#,
-            )
-            .bind(BOOTSTRAP_MATERIAL_ID.as_uuid())
-            .execute(&template_pool)
-            .await?;
-
             // Optimize template for faster copying
             optimize_template_for_tests(&template_pool).await?;
 
@@ -3685,40 +3625,6 @@ mod benches {
         Ok(())
     }
 
-    /// Benchmark database cleanup performance
-    ///
-    /// Measures the time to clean a database with various amounts of data
-    #[sinex_bench]
-    fn bench_database_cleanup() -> TestResult<()> {
-        // Setup: Get a database and populate it
-        let db = acquire_test_database().await?;
-        let pool = db.pool();
-
-        // Insert test data
-        use sinex_core::*;
-        use sinex_core::*;
-        use sinex_core::{
-            Blob, BlobRecord, Entity, EntityRecord, EntityRelation, Event, JsonValue, Operation,
-            OperationRecord, Provenance, SourceMaterial,
-        };
-
-        let repo = pool.events();
-        for i in 0..100 {
-            let new_event = Event::<JsonValue>::test_event(
-                EventSource::new("bench"),
-                EventType::new("test"),
-                serde_json::json!({"index": i}),
-            )
-            .with_host(HostName::new("host"));
-            repo.insert(new_event).await?;
-        }
-
-        // Perform cleanup
-        db.force_cleanup().await?;
-        drop(db);
-        Ok(())
-    }
-
     /// Benchmark template database operations
     #[sinex_bench]
     fn bench_ensure_template_database() -> TestResult<()> {
@@ -3741,39 +3647,6 @@ mod benches {
         let _ = acquire_test_database().await?;
 
         check_pool_health().await?;
-        Ok(())
-    }
-
-    /// Benchmark database statistics collection
-    #[sinex_bench]
-    fn bench_get_database_stats() -> TestResult<()> {
-        let db = acquire_test_database().await?;
-
-        // Insert some varied data
-        let pool = db.pool();
-        use sinex_core::*;
-        use sinex_core::*;
-        use sinex_core::{
-            Blob, BlobRecord, Entity, EntityRecord, EntityRelation, Event, JsonValue, Operation,
-            OperationRecord, Provenance, SourceMaterial,
-        };
-
-        let repo = pool.events();
-        for i in 0..50 {
-            let new_event = Event::<JsonValue>::test_event(
-                EventSource::new(&format!("source_{}", i % 10)),
-                EventType::new("test"),
-                serde_json::json!({}),
-            )
-            .with_host(HostName::new("bench"));
-            repo.insert(new_event).await?;
-        }
-
-        let stats = db.get_stats().await?;
-        #[cfg(feature = "bench")]
-        divan::black_box(stats);
-        #[cfg(not(feature = "bench"))]
-        drop(stats);
         Ok(())
     }
 }

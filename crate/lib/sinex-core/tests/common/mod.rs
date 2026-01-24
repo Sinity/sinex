@@ -23,31 +23,12 @@ pub use sinex_core::DynamicPayload;
 pub mod patterns {
     use super::*;
     use sinex_core::db::models::{Event, JsonValue};
-    
+
     /// Common assertion pattern for event validation
     pub fn assert_event_basic_structure(event: &Event<JsonValue>) {
         assert!(!event.source.is_empty(), "Event source should not be empty");
         assert!(!event.event_type.is_empty(), "Event type should not be empty");
         assert!(!event.host.is_empty(), "Event host should not be empty");
-    }
-    
-    /// Common pattern for creating test events with provenance
-    pub fn create_event_with_source_ids(
-        ctx: &TestContext,
-        source: &str,
-        event_type: &str,
-        payload: Value,
-        source_events: Vec<Id<Event<JsonValue>>>,
-    ) -> impl std::future::Future<Output = Result<Event<JsonValue>>> + '_ {
-        async move {
-            let event = Event::test_event(
-                EventSource::new(source),
-                EventType::new(event_type),
-                payload,
-            );
-            let inserted = ctx.pool.events().insert(event).await?;
-            Ok(inserted)
-        }
     }
 }
 

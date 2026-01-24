@@ -6,17 +6,17 @@ validate real behavior, not just mock wiring.
 
 ## The Pipeline-First Rule
 
-> Before seeding any events, call `ctx.with_shared_nats().await?` and use
-> `ctx.publish_json_event(...)` so every test exercises the actual ingestion path.
+> Before seeding any events, call `ctx.with_nats().shared().await?` and use
+> `ctx.publish_event(...)` so every test exercises the actual ingestion path.
 
 ```rust
 #[sinex_test]
 async fn test_pipeline(ctx: TestContext) -> TestResult<()> {
     // Step 1: Enable shared NATS (required)
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
 
     // Step 2: Publish through the pipeline
-    let event = ctx.publish_json_event(
+    let event = ctx.publish_event(
         "fs-watcher",
         "file.created",
         json!({"path": "/tmp/test.txt"})
@@ -75,7 +75,7 @@ PipelineScope provides full pipeline testing with in-process ingestd:
 ```rust
 #[sinex_test]
 async fn test_full_pipeline(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
 
     // Start in-process ingestd
     let scope = ctx.pipeline_scope().await?;
@@ -133,7 +133,7 @@ consumers, use the namespace helper:
 ```rust
 use async_nats::jetstream;
 
-let ctx = ctx.with_shared_nats().await?;
+let ctx = ctx.with_nats().shared().await?;
 let namespace = ctx.pipeline_namespace();
 let js = ctx.jetstream().await?;
 
@@ -157,7 +157,7 @@ For tests that need to simulate node behavior directly:
 ```rust
 use sinex_test_utils::TestNodePublisher;
 
-let ctx = ctx.with_shared_nats().await?;
+let ctx = ctx.with_nats().shared().await?;
 let namespace = ctx.pipeline_namespace().prefix().to_string();
 
 let publisher = TestNodePublisher::with_namespace(
@@ -207,16 +207,16 @@ concurrency guard before increasing individual test timeouts.
 ```rust
 #[sinex_test]
 async fn test_complete_workflow(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
 
     // 1. Create events using production event creation
-    let fs_event = ctx.publish_json_event(
+    let fs_event = ctx.publish_event(
         "fs-watcher",
         "file.created",
         json!({"path": "/data/report.pdf", "size": 2048}),
     ).await?;
 
-    let term_event = ctx.publish_json_event(
+    let term_event = ctx.publish_event(
         "terminal",
         "command.executed",
         json!({
@@ -252,12 +252,12 @@ async fn test_complete_workflow(ctx: TestContext) -> Result<()> {
 
 | Need | Helper |
 |------|--------|
-| Start NATS | `ctx.with_shared_nats().await?` |
+| Start NATS | `ctx.with_nats().shared().await?` |
 | JetStream context | `ctx.jetstream().await?` |
 | Namespace | `ctx.pipeline_namespace()` |
 | Stream name | `namespace.stream("STREAM")` |
 | Subject pattern | `namespace.subject("subject.>")` |
-| Publish event | `ctx.publish_json_event(...)` |
+| Publish event | `ctx.publish_event(...)` |
 | Full pipeline + ingestd | `ctx.pipeline_scope().await?` |
 | Node-style publisher | `TestNodePublisher::with_namespace(...)` |
 | Wait for persistence | `scope.wait_for_event_count(n)` |
@@ -267,7 +267,7 @@ async fn test_complete_workflow(ctx: TestContext) -> Result<()> {
 | Scenario | Approach |
 |----------|----------|
 | Unit test, no pipeline | Direct repository: `ctx.pool.events().insert()` |
-| Integration test | `ctx.publish_json_event()` |
+| Integration test | `ctx.publish_event()` |
 | Full pipeline with ingestd | `ctx.pipeline_scope()` |
 | Simulating node behavior | `TestNodePublisher` |
 | Custom JetStream setup | `ctx.jetstream()` + namespace |
@@ -278,7 +278,7 @@ async fn test_complete_workflow(ctx: TestContext) -> Result<()> {
 
 **Cause**: Forgot to call `with_shared_nats()`.
 
-**Solution**: Add `let ctx = ctx.with_shared_nats().await?;` before publishing.
+**Solution**: Add `let ctx = ctx.with_nats().shared().await?;` before publishing.
 
 ### "Stream already exists with different config"
 

@@ -475,13 +475,41 @@ pub async fn handle_replay_list_operations(
 
 // Coordination handlers
 
+use sinex_core::rpc::coordination::{InstanceHealthResponse, InstanceInfo, ListInstancesResponse};
+
+/// Convert InstanceMetadata to InstanceInfo for RPC response
+fn metadata_to_instance_info(
+    meta: &sinex_core::coordination::InstanceMetadata,
+    is_leader: bool,
+) -> InstanceInfo {
+    use sinex_core::types::domain::{HostName, InstanceId, NodeType};
+
+    InstanceInfo {
+        instance_id: InstanceId::new(&meta.instance_id),
+        node_type: NodeType::Service, // InstanceMetadata doesn't have node_type, assume Service
+        hostname: Some(HostName::new(&meta.hostname)),
+        last_heartbeat: chrono::DateTime::from_timestamp(meta.last_heartbeat, 0),
+        is_leader,
+    }
+}
+
 /// List all registered instances for a service
 pub async fn handle_coordination_list_instances(
     kv_client: &CoordinationKvClient,
     _params: Value,
 ) -> Result<Value> {
     let instances = kv_client.list_instances().await?;
-    Ok(json!({ "instances": instances }))
+    let leader = kv_client.get_leader().await?.unwrap_or_default();
+
+    let instance_infos: Vec<InstanceInfo> = instances
+        .iter()
+        .map(|meta| metadata_to_instance_info(meta, meta.instance_id == leader))
+        .collect();
+
+    let response = ListInstancesResponse {
+        instances: instance_infos,
+    };
+    Ok(serde_json::to_value(response)?)
 }
 
 /// Get the current leader for a service
@@ -502,22 +530,21 @@ pub async fn handle_coordination_instance_health(
     let instance_id = params.require_str("instance_id")?;
 
     let metadata = kv_client.get_instance(instance_id).await?;
+    let leader = kv_client.get_leader().await?.unwrap_or_default();
 
     match metadata {
         Some(meta) => {
             let now = chrono::Utc::now().timestamp();
             let heartbeat_age_secs = now - meta.last_heartbeat;
             let is_healthy = heartbeat_age_secs < 60; // Consider healthy if heartbeat within 60s
+            let is_leader = meta.instance_id == leader;
 
-            Ok(json!({
-                "instance_id": meta.instance_id,
-                "hostname": meta.hostname,
-                "version": meta.version,
-                "started_at": meta.started_at,
-                "last_heartbeat": meta.last_heartbeat,
-                "heartbeat_age_secs": heartbeat_age_secs,
-                "is_healthy": is_healthy
-            }))
+            let response = InstanceHealthResponse {
+                instance: metadata_to_instance_info(&meta, is_leader),
+                healthy: is_healthy,
+                last_error: None,
+            };
+            Ok(serde_json::to_value(response)?)
         }
         None => Err(eyre!("Instance not found: {}", instance_id)),
     }

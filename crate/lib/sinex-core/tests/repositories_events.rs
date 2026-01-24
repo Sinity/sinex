@@ -1,7 +1,7 @@
 use chrono::Utc;
 use serde_json::json;
 use sinex_core::repositories::DbPoolExt;
-use sinex_core::types::domain::{HostName, SanitizedPath};
+use sinex_core::types::domain::SanitizedPath;
 use sinex_core::types::events::payloads::{FileCreatedPayload, KittyCommandExecutedPayload};
 use sinex_core::types::Id;
 use sinex_core::{Event, Provenance};
@@ -80,56 +80,6 @@ async fn events_repository_preserves_provenance(ctx: TestContext) -> TestResult<
         }
         _ => panic!("Expected synthesis provenance"),
     }
-    Ok(())
-}
-
-#[sinex_test]
-async fn cleanup_test_events_does_not_match_production_names(
-    ctx: TestContext,
-) -> color_eyre::Result<()> {
-    let material_record = ctx
-        .pool
-        .source_materials()
-        .register_in_flight(
-            sinex_core::db::repositories::source_materials::material_types::STREAM,
-            Some("prod-source-material"),
-            json!({ "note": "production" }),
-        )
-        .await?;
-    let material_id = Id::<sinex_core::models::SourceMaterial>::from_ulid(material_record.id);
-
-    let payload = FileCreatedPayload::test_default(
-        SanitizedPath::from_str_validated("/tmp/release.txt")
-            .map_err(|e| color_eyre::eyre::eyre!(e))?,
-    );
-    let event = Event::new(
-        payload,
-        Provenance::from_material(material_id, 0, None, None),
-    )
-    .to_json_event()?
-    .with_host(HostName::new("latest-prod-node"));
-
-    let inserted = ctx.pool.events().insert(event).await?;
-    let deleted = ctx
-        .pool
-        .events()
-        .cleanup_test_events_with_context(None, None, "tester", "cleanup sweep")
-        .await?;
-
-    assert_eq!(
-        deleted, 0,
-        "cleanup should not delete events with production hostnames"
-    );
-
-    let fetched = ctx
-        .pool
-        .events()
-        .get_by_id(inserted.id.expect("event id"))
-        .await?;
-    assert!(
-        fetched.is_some(),
-        "event should still exist after cleanup guard"
-    );
     Ok(())
 }
 

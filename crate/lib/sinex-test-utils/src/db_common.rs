@@ -899,17 +899,16 @@ mod tests {
     use sinex_core::{DbPoolExt, DynamicPayload, EventSource, EventType, HostName, Id};
 
     #[sinex_serial_test]
-    async fn test_reset_database() -> TestResult<()> {
-        let db = acquire_test_database().await?;
-        let pool = db.pool();
+    async fn test_reset_database(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let pool = ctx.pool();
 
         // Ensure the pool starts clean before we seed any rows.
-        db.force_cleanup().await?;
+        ctx.force_cleanup().await?;
         verify_clean_state(pool).await?;
 
-        // Insert some test data using repository method that creates proper material
-        pool.events()
-            .insert_test_event("test", "test.event", serde_json::json!({}))
+        // Insert some test data using NATS pipeline
+        ctx.publish(DynamicPayload::new("test", "test.event", json!({})))
             .await?;
 
         // Verify data exists
@@ -921,7 +920,7 @@ mod tests {
 
         // Verify clean
         verify_clean_state(pool).await?;
-        db.force_cleanup().await?;
+        ctx.force_cleanup().await?;
 
         Ok(())
     }
@@ -992,7 +991,7 @@ mod tests {
             serde_json::json!({}),
         )
         .hostname(HostName::new("test"))
-        .from_material(material_id)
+        .from_material(material_id, 0)
         .build()
         .expect("Event should build for cleanup test");
         pool.events().insert(new_event).await?;

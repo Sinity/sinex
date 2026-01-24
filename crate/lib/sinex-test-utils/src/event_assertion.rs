@@ -1,4 +1,4 @@
-//! EventAssertion builder for fluent event count assertions.
+//! EventAssert builder for fluent event count assertions.
 //!
 //! This module provides a composable filter pattern for asserting event counts,
 //! replacing the previous proliferation of `assert_event_count*` methods.
@@ -7,16 +7,16 @@
 //!
 //! ```rust,ignore
 //! // Exact count assertion
-//! ctx.assert_events().count(5).await?;
+//! ctx.assert_event().count(5).await?;
 //!
 //! // At least N events
-//! ctx.assert_events().at_least(3).await?;
+//! ctx.assert_event().at_least(3).await?;
 //!
 //! // Filtered by source (typed constant)
-//! ctx.assert_events().source(EVENT_SOURCE_FS_WATCHER).count(5).await?;
+//! ctx.assert_event().source(EVENT_SOURCE_FS_WATCHER).count(5).await?;
 //!
 //! // Filtered by source and type
-//! ctx.assert_events()
+//! ctx.assert_event()
 //!     .source(EVENT_SOURCE_FS_WATCHER)
 //!     .event_type(EVENT_TYPE_FILE_CREATED)
 //!     .at_least(3)
@@ -30,15 +30,15 @@ use sinex_core::{DbPoolExt, EventSource, EventType};
 
 /// Builder for event count assertions with composable filters.
 ///
-/// Created via `TestContext::assert_events()`. Configure filters using method
+/// Created via `TestContext::assert_event()`. Configure filters using method
 /// chaining, then call `.count(n)` or `.at_least(n)` to assert.
-pub struct EventAssertion<'a> {
+pub struct EventAssert<'a> {
     ctx: &'a TestContext,
     source_filter: Option<EventSource>,
     event_type_filter: Option<EventType>,
 }
 
-impl<'a> EventAssertion<'a> {
+impl<'a> EventAssert<'a> {
     pub(crate) fn new(ctx: &'a TestContext) -> Self {
         Self {
             ctx,
@@ -120,7 +120,7 @@ impl<'a> EventAssertion<'a> {
                 // Combined source + type filtering not yet supported.
                 // Use separate assertions for now.
                 bail!(
-                    "EventAssertion does not yet support combined source + event_type filtering. \
+                    "EventAssert does not yet support combined source + event_type filtering. \
                      Use separate assertions or direct repository queries."
                 );
             }
@@ -146,7 +146,7 @@ impl<'a> EventAssertion<'a> {
 }
 
 // Enable direct `.await` on the builder (defaults to at_least(1))
-impl<'a> std::future::IntoFuture for EventAssertion<'a> {
+impl<'a> std::future::IntoFuture for EventAssert<'a> {
     type Output = TestResult<usize>;
     type IntoFuture =
         std::pin::Pin<Box<dyn std::future::Future<Output = Self::Output> + Send + 'a>>;

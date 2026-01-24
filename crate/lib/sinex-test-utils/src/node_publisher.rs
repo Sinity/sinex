@@ -69,17 +69,13 @@ impl TestNodePublisher {
     }
 
     /// Publish an event to the standard `events.raw.<source>.<event_type>` subject.
-    pub async fn publish_event(
-        &self,
-        event_type: &str,
-        payload: serde_json::Value,
-    ) -> Result<Ulid> {
-        self.publish_event_with_overrides(event_type, payload, EventOverrides::default())
+    pub async fn publish(&self, event_type: &str, payload: serde_json::Value) -> Result<Ulid> {
+        self.publish_with_overrides(event_type, payload, EventOverrides::default())
             .await
     }
 
     /// Publish an event with optional envelope overrides.
-    pub async fn publish_event_with_overrides(
+    pub async fn publish_with_overrides(
         &self,
         event_type: &str,
         payload: serde_json::Value,

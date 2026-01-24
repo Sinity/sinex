@@ -5,12 +5,9 @@
 //! rstest drives the cases and `#[sinex_test]` wires up the Tokio runtime
 //! plus a fresh `TestContext` for each case.
 
-use color_eyre::eyre::eyre;
 use rstest::rstest;
-use serde_json::{json, Value as JsonValue};
-use sinex_core::db::models::event::Event;
-use sinex_core::types::Id;
-use sinex_test_utils::timing_utils::WaitHelpers;
+use serde_json::json;
+use sinex_core::types::events::DynamicPayload;
 use sinex_test_utils::{prelude::*, sinex_test, TestResult};
 
 #[sinex_test]
@@ -27,7 +24,13 @@ async fn test_event_creation_with_cases(
     event_type: &str,
 ) -> TestResult<()> {
     let ctx = ctx.with_nats().await?;
-    let event = publish_and_fetch(&ctx, source, event_type, json!({"rstest": true})).await?;
+    let event = ctx
+        .publish(DynamicPayload::new(
+            source,
+            event_type,
+            json!({"rstest": true}),
+        ))
+        .await?;
 
     assert_eq!(event.source.as_str(), source);
     assert_eq!(event.event_type.as_str(), event_type);
@@ -56,7 +59,9 @@ async fn test_payload_variations(
         "size_kb": size / 1024,
     });
 
-    let result = publish_and_fetch(&ctx, "test", "payload.test", payload.clone()).await;
+    let result = ctx
+        .publish(DynamicPayload::new("test", "payload.test", payload))
+        .await;
 
     if expected_valid {
         let event = result?;
@@ -76,7 +81,8 @@ async fn test_with_fixture_and_cases(ctx: TestContext, event_type: &str) -> Test
     let test_sources = vec!["fs", "shell", "service"];
 
     for source in &test_sources {
-        publish_and_fetch(&ctx, source, event_type, json!({})).await?;
+        ctx.publish(DynamicPayload::new(source, event_type, json!({})))
+            .await?;
     }
 
     let counts = ctx.pool.events().count_by_type_all_time(None).await?;
@@ -89,22 +95,4 @@ async fn test_with_fixture_and_cases(ctx: TestContext, event_type: &str) -> Test
     assert_eq!(count_for_type, test_sources.len() as i64);
 
     Ok(())
-}
-
-async fn publish_and_fetch(
-    ctx: &TestContext,
-    source: &str,
-    event_type: &str,
-    payload: JsonValue,
-) -> TestResult<Event<JsonValue>> {
-    let event = Event::test_event(source, event_type, payload);
-    let id = ctx.publish_test_event(&event).await?;
-    WaitHelpers::wait_for_source_events(&ctx.pool, source, 1, 20).await?;
-    let stored = ctx
-        .pool
-        .events()
-        .get_by_id(Id::<Event<JsonValue>>::from_ulid(id))
-        .await?
-        .ok_or_else(|| eyre!("Event not found after publishing"))?;
-    Ok(stored)
 }

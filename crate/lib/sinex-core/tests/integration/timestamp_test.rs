@@ -26,7 +26,7 @@ async fn test_timestamp_boundaries(ctx: TestContext) -> color_eyre::Result<()> {
     ];
 
     for (i, ts) in timestamp_cases.iter().enumerate() {
-        let event = Event::test_event(
+        let event = test_event(
             EventSource::from("timestamp_test"),
             EventType::from(format!("boundary_{i}")),
             json!({
@@ -87,7 +87,7 @@ async fn test_out_of_order_timestamps(ctx: TestContext) -> color_eyre::Result<()
     let mut inserted_events = Vec::new();
 
     for (i, &ts) in timestamps.iter().enumerate() {
-        let event = Event::test_event(
+        let event = test_event(
             EventSource::from("out_of_order_test"),
             EventType::from("sequenced_event"),
             json!({
@@ -160,7 +160,7 @@ async fn test_timestamp_precision(ctx: TestContext) -> color_eyre::Result<()> {
     ];
 
     for (i, &ts) in precision_cases.iter().enumerate() {
-        let event = Event::test_event(
+        let event = test_event(
             EventSource::from(source.as_str()),
             EventType::from("precision_event"),
             json!({
@@ -232,7 +232,7 @@ async fn test_timezone_handling(ctx: TestContext) -> color_eyre::Result<()> {
     ];
 
     for (name, ts) in &timezone_cases {
-        let event = Event::test_event(
+        let event = test_event(
             EventSource::from("timezone_test"),
             EventType::from("timezone_event"),
             json!({
@@ -276,7 +276,7 @@ async fn test_timezone_handling(ctx: TestContext) -> color_eyre::Result<()> {
 #[sinex_test]
 async fn test_timestamp_validation(ctx: TestContext) -> color_eyre::Result<()> {
     // Test that valid timestamps are handled correctly
-    let valid_event = Event::test_event(
+    let valid_event = test_event(
         EventSource::from("validation_test"),
         EventType::from("valid_event"),
         json!({"message": "This should work"}),
@@ -289,7 +289,7 @@ async fn test_timestamp_validation(ctx: TestContext) -> color_eyre::Result<()> {
 
     // Test edge case: distant future (should work but might be logged)
     let far_future = Utc.with_ymd_and_hms(2999, 12, 31, 23, 59, 59).unwrap();
-    let future_event = Event::test_event(
+    let future_event = test_event(
         EventSource::from("validation_test"),
         EventType::from("future_event"),
         json!({"message": "From the future"}),
@@ -316,7 +316,7 @@ async fn test_timestamp_query_ordering(ctx: TestContext) -> color_eyre::Result<(
         let logical_time = base_time + chrono::Duration::minutes(i * 5);
         expected_order.push(logical_time);
 
-        let event = Event::test_event(
+        let event = test_event(
             EventSource::from("ordering_test"),
             EventType::from("ordered_event"),
             json!({
@@ -398,7 +398,7 @@ async fn test_timestamps_with_various_payloads(ctx: TestContext) -> color_eyre::
     ];
 
     for (case_name, payload) in payload_cases {
-        let event = Event::test_event(
+        let event = test_event(
             EventSource::from("payload_test"),
             EventType::from(format!("payload_{case_name}")),
             payload,

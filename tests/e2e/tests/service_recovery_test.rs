@@ -169,7 +169,7 @@ async fn test_pool_recovery_after_connection_invalidation(ctx: TestContext) -> R
 /// database maintenance or network instability.
 #[sinex_test]
 async fn test_pool_concurrent_stress_recovery(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_nats().await?;
+    let ctx = Arc::new(ctx.with_nats().await?);
     let success_count = Arc::new(AtomicU32::new(0));
     let failure_count = Arc::new(AtomicU32::new(0));
 
@@ -177,33 +177,34 @@ async fn test_pool_concurrent_stress_recovery(ctx: TestContext) -> Result<()> {
 
     // Spawn concurrent tasks that create events
     for task_id in 0..20 {
-        let pool = ctx.pool.clone();
+        let ctx = ctx.clone();
         let successes = success_count.clone();
         let failures = failure_count.clone();
 
         let handle = tokio::spawn(async move {
             for iteration in 0..10 {
-                let event = Event::test_event(
-                    EventSource::from(format!("stress-{}", task_id)),
-                    EventType::from("concurrent.operation"),
-                    json!({
-                        "task_id": task_id,
-                        "iteration": iteration,
-                        "timestamp": chrono::Utc::now().to_rfc3339()
-                    }),
-                );
-
-                let mut inserted = false;
+                let mut published = false;
                 for attempt in 0..3 {
-                    match pool.events().insert(event.clone()).await {
+                    match ctx
+                        .publish(DynamicPayload::new(
+                            format!("stress-{}", task_id),
+                            "concurrent.operation",
+                            json!({
+                                "task_id": task_id,
+                                "iteration": iteration,
+                                "timestamp": chrono::Utc::now().to_rfc3339()
+                            }),
+                        ))
+                        .await
+                    {
                         Ok(_) => {
                             successes.fetch_add(1, Ordering::SeqCst);
-                            inserted = true;
+                            published = true;
                             break;
                         }
                         Err(e) => {
                             tracing::debug!(
-                                "Concurrent insert failed (task_id={}, iteration={}, attempt={}): {}",
+                                "Concurrent publish failed (task_id={}, iteration={}, attempt={}): {}",
                                 task_id,
                                 iteration,
                                 attempt,
@@ -217,7 +218,7 @@ async fn test_pool_concurrent_stress_recovery(ctx: TestContext) -> Result<()> {
                     }
                 }
 
-                if !inserted {
+                if !published {
                     failures.fetch_add(1, Ordering::SeqCst);
                 }
 

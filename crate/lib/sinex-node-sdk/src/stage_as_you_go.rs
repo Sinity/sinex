@@ -99,7 +99,7 @@ mod tests {
 
         match emitted.provenance() {
             Provenance::Material { anchor_byte, .. } => {
-                assert_eq!(anchor_byte, 12);
+                assert_eq!(*anchor_byte, 12);
             }
             other => {
                 return Err(color_eyre::eyre::eyre!(

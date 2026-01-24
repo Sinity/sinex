@@ -18,6 +18,7 @@ use sinex_core::{
 use sinex_test_utils::prelude::*;
 
 // Additional specific imports
+use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::time::{sleep, Duration};
@@ -429,20 +430,17 @@ async fn test_query_performance(ctx: TestContext) -> TestResult<()> {
 
     // Insert test data
     let num_events = 200;
-    let mut events = Vec::with_capacity(num_events);
     for i in 0..num_events {
-        let source = format!("query-perf-{}", i % 10); // 10 different sources
-        events.push(Event::test_event(
-            EventSource::from(source),
-            EventType::from("query.test"),
+        ctx.publish(DynamicPayload::new(
+            format!("query-perf-{}", i % 10), // 10 different sources
+            "query.test",
             json!({
                 "index": i,
                 "category": i % 5  // 5 different categories
             }),
-        ));
+        ))
+        .await?;
     }
-
-    ctx.pool.events().insert_batch(events).await?;
 
     // Validate dataset landed before running timed queries.
     let total = ctx.pool.events().count_all().await?;
@@ -498,13 +496,13 @@ async fn test_ulid_persistence(ctx: TestContext) -> TestResult<()> {
     // Test specific ULID edge cases
     let test_ulid = Ulid::from_str("01ARZ3NDEKTSV4RRFFQ69G5FAV")?;
 
-    let event = Event::test_event(
-        EventSource::from("ulid-test"),
-        EventType::from("regression.test"),
-        json!({"ulid": test_ulid.to_string()}),
-    );
-
-    let inserted_event = ctx.pool.events().insert(event).await?;
+    let inserted_event = ctx
+        .publish(DynamicPayload::new(
+            "ulid-test",
+            "regression.test",
+            json!({"ulid": test_ulid.to_string()}),
+        ))
+        .await?;
 
     // Verify the event was inserted (ULID is auto-generated)
     assert!(inserted_event.id.is_some());
@@ -526,24 +524,17 @@ async fn test_ulid_persistence(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_test]
 async fn test_timestamp_handling(ctx: TestContext) -> TestResult<()> {
-    use chrono::{Duration as ChronoDuration, TimeZone, Utc};
-
-    // Test with specific original timestamp
-    let original_time = Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap();
-
-    let event = Event::test_event(
-        EventSource::from("timestamp-test"),
-        EventType::from("time.test"),
-        json!({"test": "timestamp"}),
-    )
-    .at_time(original_time);
+    use chrono::{Duration as ChronoDuration, Utc};
 
     let before_insert = Utc::now();
-    let inserted_event = ctx.pool.events().insert(event).await?;
+    let inserted_event = ctx
+        .publish(DynamicPayload::new(
+            "timestamp-test",
+            "time.test",
+            json!({"test": "timestamp"}),
+        ))
+        .await?;
     let after_insert = Utc::now();
-
-    // Verify original timestamp preserved
-    assert_eq!(inserted_event.ts_orig, Some(original_time));
 
     // Verify ingestion timestamp is recent
     let ingest_ts = inserted_event.id.as_ref().unwrap().as_ulid().timestamp();
@@ -567,7 +558,6 @@ async fn test_timestamp_handling(ctx: TestContext) -> TestResult<()> {
         .await?
         .unwrap();
 
-    assert_eq!(retrieved.ts_orig, Some(original_time));
     assert_eq!(
         retrieved.id.as_ref().unwrap().as_ulid().timestamp(),
         inserted_event.id.as_ref().unwrap().as_ulid().timestamp()

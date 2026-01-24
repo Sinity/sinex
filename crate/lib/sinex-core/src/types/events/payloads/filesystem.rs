@@ -1,6 +1,7 @@
 //! Filesystem event payloads
 
 use crate::types::domain::SanitizedPath;
+use crate::types::events::enums::FileModificationType;
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -21,7 +22,7 @@ pub struct FileModifiedPayload {
     pub path: SanitizedPath,
     pub size: u64,
     pub modified_at: DateTime<Utc>,
-    pub modification_type: String,
+    pub modification_type: FileModificationType,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
@@ -89,7 +90,7 @@ impl FileModifiedPayload {
             path: path.into(),
             size: 0,
             modified_at: Utc::now(),
-            modification_type: "content".to_string(),
+            modification_type: FileModificationType::Content,
         }
     }
 }

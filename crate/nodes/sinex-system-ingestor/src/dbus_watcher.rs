@@ -7,6 +7,7 @@
 
 use crate::payloads::DbusConfig; // Only import what we need
 use crate::WatcherMaterialContext;
+use chrono::{DateTime, Utc};
 use dbus::channel::MatchingReceiver;
 use dbus::message::{MatchRule, MessageType};
 use dbus_tokio::connection;
@@ -17,7 +18,10 @@ use sinex_core::types::events::{
     DbusMethodCalledPayload, DbusMountEventPayload, DbusNetworkStateChangedPayload,
     DbusNotificationSentPayload, DbusPowerStateChangedPayload, DbusSignalPayload,
 };
-use sinex_core::JsonValue;
+use sinex_core::{
+    BluetoothEventType, DBusBus, DeviceType, JsonValue, MountEventType, NetworkConnectionType,
+    NetworkEventType, NetworkState, PlaybackStatus, PowerEventType,
+};
 
 use sinex_node_sdk::NodeResult;
 use std::sync::Arc;
@@ -66,6 +70,55 @@ impl FromStr for DBusType {
             "system" => Ok(DBusType::System),
             _ => Err(format!("Unsupported DBus type: {}", s)),
         }
+    }
+}
+
+/// Convert D-Bus member name to PowerEventType
+fn parse_power_event(member: &str) -> PowerEventType {
+    match member {
+        "PrepareForSleep" => PowerEventType::Sleep,
+        "PrepareForShutdown" => PowerEventType::Shutdown,
+        "DeviceChanged" => PowerEventType::BatteryChanged,
+        _ => PowerEventType::ProfileChanged, // Default for unknown
+    }
+}
+
+/// Convert D-Bus member name to BluetoothEventType
+fn parse_bluetooth_event(member: &str) -> BluetoothEventType {
+    match member {
+        "Connected" => BluetoothEventType::Connected,
+        "Disconnected" => BluetoothEventType::Disconnected,
+        "Paired" => BluetoothEventType::Paired,
+        "Unpaired" => BluetoothEventType::Unpaired,
+        "DeviceAdded" | "DeviceDiscovered" => BluetoothEventType::Discovered,
+        _ => BluetoothEventType::PropertiesChanged, // Default for property changes
+    }
+}
+
+/// Convert D-Bus member name to NetworkEventType
+fn parse_network_event(member: &str) -> NetworkEventType {
+    match member {
+        "Connected" | "Activated" => NetworkEventType::Connected,
+        "Disconnected" | "Deactivated" => NetworkEventType::Disconnected,
+        "IpChanged" | "Ip4ConfigChanged" | "Ip6ConfigChanged" => NetworkEventType::IpChanged,
+        _ => NetworkEventType::StateChanged,
+    }
+}
+
+/// Parse bus type string to DBusBus enum
+fn parse_bus_type(bus_type: &str) -> DBusBus {
+    match bus_type {
+        "session" => DBusBus::Session,
+        _ => DBusBus::System,
+    }
+}
+
+/// Parse playback status string to PlaybackStatus enum
+fn parse_playback_status(s: &str) -> PlaybackStatus {
+    match s {
+        "Playing" => PlaybackStatus::Playing,
+        "Paused" => PlaybackStatus::Paused,
+        _ => PlaybackStatus::Stopped,
     }
 }
 
@@ -384,7 +437,7 @@ impl DbusWatcher {
             return Ok(());
         }
 
-        let timestamp = chrono::Utc::now().to_rfc3339();
+        let timestamp = chrono::Utc::now();
 
         match msg_type {
             MessageType::Signal => {
@@ -425,7 +478,7 @@ impl DbusWatcher {
         member: &str,
         sender: &Option<String>,
         args: &serde_json::Value,
-        timestamp: String,
+        timestamp: DateTime<Utc>,
         tx: &mpsc::Sender<Event<JsonValue>>,
         config: &DbusConfig,
         material: &WatcherMaterialContext,
@@ -463,7 +516,7 @@ impl DbusWatcher {
         {
             let event = Event::new(
                 DbusPowerStateChangedPayload {
-                    event_type: member.to_string(),
+                    event_type: parse_power_event(member),
                     details: json!({
                         "bus": bus_type,
                         "interface": interface,
@@ -482,14 +535,14 @@ impl DbusWatcher {
                 || interface == "org.freedesktop.UPower.Device")
         {
             let device_type = if interface.contains("UDisks2") {
-                "storage"
+                DeviceType::Storage
             } else {
-                "power"
+                DeviceType::Battery
             };
 
             let event = Event::new(
                 DbusDeviceConnectedPayload {
-                    device_type: device_type.to_string(),
+                    device_type,
                     event_type: member.to_string(),
                     device_path: path.to_string(),
                     device_name: None,
@@ -508,7 +561,7 @@ impl DbusWatcher {
         if config.extract_bluetooth && interface.starts_with("org.bluez") {
             let event = Event::new(
                 DbusBluetoothDeviceChangedPayload {
-                    event_type: member.to_string(),
+                    event_type: parse_bluetooth_event(member),
                     device_address: "unknown".to_string(),
                     device_name: None,
                     device_class: None,
@@ -527,12 +580,12 @@ impl DbusWatcher {
         if config.extract_network && interface.starts_with("org.freedesktop.NetworkManager") {
             let event = Event::new(
                 DbusNetworkStateChangedPayload {
-                    event_type: member.to_string(),
+                    event_type: parse_network_event(member),
                     interface: path.to_string(),
-                    connection_type: "unknown".to_string(),
+                    connection_type: NetworkConnectionType::Other,
                     ssid: None,
                     ip_address: None,
-                    state: "unknown".to_string(),
+                    state: NetworkState::Unknown,
                     timestamp: timestamp.clone(),
                 },
                 material.initial_provenance(),
@@ -542,11 +595,15 @@ impl DbusWatcher {
         }
 
         if config.extract_mounts && interface == "org.freedesktop.UDisks2.Filesystem" {
-            let mounted = member == "Mount";
+            let mount_event_type = if member == "Mount" {
+                MountEventType::Mounted
+            } else {
+                MountEventType::Unmounted
+            };
 
             let event = Event::new(
                 DbusMountEventPayload {
-                    event_type: if mounted { "mounted" } else { "unmounted" }.to_string(),
+                    event_type: mount_event_type,
                     device: path.to_string(),
                     mount_point: "/unknown".to_string(),
                     filesystem: "unknown".to_string(),
@@ -564,7 +621,7 @@ impl DbusWatcher {
         // Always emit generic signal events
         let event = Event::new(
             DbusSignalPayload {
-                bus: bus_type.to_string(),
+                bus: parse_bus_type(bus_type),
                 sender: sender.as_deref().unwrap_or_default().to_string(),
                 path: path.to_string(),
                 interface: interface.to_string(),
@@ -590,14 +647,14 @@ impl DbusWatcher {
         sender: &Option<String>,
         destination: &Option<String>,
         args: &serde_json::Value,
-        timestamp: String,
+        timestamp: DateTime<Utc>,
         tx: &mpsc::Sender<Event<JsonValue>>,
         _config: &DbusConfig,
         material: &WatcherMaterialContext,
     ) -> NodeResult<()> {
         let event = Event::new(
             DbusMethodCalledPayload {
-                bus: bus_type.to_string(),
+                bus: parse_bus_type(bus_type),
                 sender: sender.as_deref().unwrap_or_default().to_string(),
                 destination: destination.as_deref().unwrap_or_default().to_string(),
                 path: path.to_string(),
@@ -746,7 +803,7 @@ impl DbusWatcher {
     /// Parse notification arguments into structured payload
     fn parse_notification_args(
         args: &serde_json::Value,
-        timestamp: String,
+        timestamp: DateTime<Utc>,
     ) -> DbusNotificationSentPayload {
         if let serde_json::Value::Array(arg_array) = args {
             let app_name = arg_array
@@ -834,7 +891,7 @@ impl DbusWatcher {
         args: &serde_json::Value,
         player: &str,
         sender: &Option<String>,
-        timestamp: String,
+        timestamp: DateTime<Utc>,
     ) -> Option<DbusMediaStateChangedPayload> {
         if let serde_json::Value::Array(arg_array) = args {
             if let Some(changed_props) = arg_array.get(1) {
@@ -846,8 +903,9 @@ impl DbusWatcher {
                             for (key, value) in obj {
                                 match key.as_str() {
                                     "PlaybackStatus" => {
-                                        payload.status =
-                                            value.as_str().unwrap_or("Unknown").to_string();
+                                        payload.status = parse_playback_status(
+                                            value.as_str().unwrap_or("Stopped"),
+                                        );
                                     }
                                     "Volume" => {
                                         payload.volume = value.as_f64();
@@ -890,12 +948,12 @@ impl DbusWatcher {
     fn default_media_payload(
         player: &str,
         sender: &Option<String>,
-        timestamp: String,
+        timestamp: DateTime<Utc>,
     ) -> DbusMediaStateChangedPayload {
         DbusMediaStateChangedPayload {
             player: player.to_string(),
             player_instance: sender.as_deref().unwrap_or_default().to_string(),
-            status: "Unknown".to_string(),
+            status: PlaybackStatus::Stopped,
             track_id: None,
             title: None,
             artist: None,

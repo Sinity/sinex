@@ -14,11 +14,11 @@ use sinex_test_utils::prelude::*;
 #[sinex_test]
 async fn test_event_creation(ctx: TestContext) -> TestResult<()> {
     // Enable NATS (required for pipeline testing)
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
 
     // Create test event using the real pipeline
     let event = ctx
-        .publish_json_event(
+        .publish_event(
             "fs-watcher",
             "file.created",
             json!({"path": "/test.txt", "size": 1024})
@@ -50,28 +50,27 @@ async fn test_event_creation(ctx: TestContext) -> TestResult<()> {
 
 ## The Pipeline-First Rule
 
-Before seeding any events, call `ctx.with_shared_nats().await?` and use
-`ctx.publish_json_event(...)` so every test exercises the actual ingestion path.
+Before seeding any events, call `ctx.with_nats().shared().await?` and use
+`ctx.publish_event(...)` so every test exercises the actual ingestion path.
 
 ```rust
 // PREFERRED: Pipeline-first approach (exercises NATS → ingestd → DB)
-let ctx = ctx.with_shared_nats().await?;
-let event = ctx.publish_json_event(
+let ctx = ctx.with_nats().shared().await?;
+let event = ctx.publish_event(
     "fs-watcher",
     "file.created",
     json!({"path": "/test/file.txt", "size": 1024})
 ).await?;
 
 // ALTERNATIVE: Direct repository access (only for unit tests)
-let event = Event::<JsonValue>::test_event(
+let event = pool.events().insert_test_event(
     "fs-watcher",
     "file.created",
     json!({"path": "/test/file.txt", "size": 1024})
-);
-ctx.pool.events().insert(event).await?;
+).await?;
 ```
 
-Direct database fabrication bypasses ingestd and should be used sparingly.
+Direct database insertion bypasses ingestd and should be used sparingly.
 
 ## Test Macros
 

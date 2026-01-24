@@ -22,7 +22,7 @@ async fn sanitized_events_roundtrip_through_db(
     ctx: &TestContext,
     #[strategy(arb_event_payload())] payload: serde_json::Value,
 ) -> TestResult<()> {
-    let mut event = Event::test_event(
+    let mut event = test_event(
         EventSource::new("validation.cross"),
         EventType::new("sanitization.check"),
         payload,

@@ -16,8 +16,8 @@ async fn filesystem_property(
     #[strategy(filesystem_event_strategy())] event: (String, String, Value),
 ) -> TestResult<()> {
     let (source, ty, payload) = event;
-    let ctx = ctx.with_shared_nats().await?;
-    let inserted = ctx.publish_json_event(&source, &ty, payload).await?;
+    let ctx = ctx.with_nats().shared().await?;
+    let inserted = ctx.publish_event(&source, &ty, payload).await?;
     assert_eq!(inserted.source.as_str(), source);
     Ok(())
 }
@@ -283,8 +283,8 @@ async fn property_events_roundtrip(
     #[strategy(filesystem_event_strategy())] event: (String, String, Value),
 ) -> TestResult<()> {
     let (source, ty, payload) = event;
-    let ctx = ctx.with_shared_nats().await?;
-    let inserted = ctx.publish_json_event(&source, &ty, payload.clone()).await?;
+    let ctx = ctx.with_nats().shared().await?;
+    let inserted = ctx.publish_event(&source, &ty, payload.clone()).await?;
 
     let fetched = ctx
         .pool
@@ -306,7 +306,7 @@ async fn fuzz_path_sanitization(
     ctx: &TestContext,
     #[strategy(malicious_path_strategy())] path: String,
 ) -> TestResult<()> {
-    let result = ctx.publish_json_event(
+    let result = ctx.publish_event(
         "fs-watcher",
         "file.created",
         json!({"path": path}),

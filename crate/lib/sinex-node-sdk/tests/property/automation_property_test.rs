@@ -9,7 +9,7 @@ use serde_json::json;
 use sinex_core::types::domain::{EventSource, EventType};
 use sinex_core::{Event, JsonValue};
 use sinex_node_sdk::{Checkpoint, NodeType, ScanArgs, TimeHorizon};
-use sinex_test_utils::{prelude::*, sinex_proptest, TestResult};
+use sinex_test_utils::{prelude::*, sinex_proptest, test_event, TestResult};
 use std::collections::HashMap;
 
 /// Create property test strategies for events
@@ -73,7 +73,7 @@ fn create_test_event(
     event_type: &str,
     payload: serde_json::Value,
 ) -> Event<JsonValue> {
-    Event::test_event(
+    test_event(
         EventSource::new(source),
         EventType::new(event_type),
         payload,
@@ -313,7 +313,7 @@ sinex_proptest! {
         let mut events = Vec::new();
 
         for i in 0..event_count {
-            let event = Event::test_event(
+            let event = test_event(
                 EventSource::from_static("automation-test"),
                 EventType::from_static("batch.test"),
                 json!({

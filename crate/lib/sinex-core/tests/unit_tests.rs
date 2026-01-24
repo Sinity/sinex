@@ -288,7 +288,7 @@ fn test_domain_types_with_various_values(#[case] source_name: &str, #[case] type
 }
 
 // =============================================================================
-// EVENT CREATION TESTS - Event::test_event()
+// EVENT CREATION TESTS - test_event()
 // =============================================================================
 
 #[sinex_test]
@@ -301,7 +301,7 @@ fn test_event_builder_basic() -> TestResult<()> {
         "message": "Unit test event"
     });
 
-    let event = Event::test_event(source.clone(), event_type.clone(), payload.clone());
+    let event = test_event(source.clone(), event_type.clone(), payload.clone());
 
     // Verify event structure
     assert_eq!(event.source, source);
@@ -314,7 +314,7 @@ fn test_event_builder_basic() -> TestResult<()> {
 
 #[sinex_test]
 fn test_event_builder_with_optional_fields() -> TestResult<()> {
-    let mut event = Event::test_event(
+    let mut event = test_event(
         EventSource::from_static("optional-test"),
         EventType::from_static("optional.event"),
         json!({"basic": true}),
@@ -334,7 +334,7 @@ fn test_event_builder_with_timestamps() -> TestResult<()> {
 
     let custom_timestamp = Utc::now() - chrono::Duration::hours(1);
 
-    let mut event = Event::test_event(
+    let mut event = test_event(
         EventSource::from_static("timestamp-test"),
         EventType::from_static("timestamp.event"),
         json!({"timestamp_test": true}),
@@ -355,7 +355,7 @@ fn test_event_builder_with_timestamps() -> TestResult<()> {
 #[case(json!([1, 2, 3]))]
 #[case(json!({"nested": {"deep": {"value": [1, 2, 3]}}}))]
 fn test_event_builder_with_various_payloads(#[case] payload: serde_json::Value) {
-    let event = Event::test_event(
+    let event = test_event(
         EventSource::from_static("payload-test"),
         EventType::from_static("various.payload"),
         payload.clone(),
@@ -439,7 +439,7 @@ fn test_edge_case_strings() -> TestResult<()> {
         assert_eq!(event_type.as_str(), format!("edge.{test_name}"));
 
         // Should work in event creation
-        let event = Event::test_event(source, event_type, json!({"test_value": test_value}));
+        let event = test_event(source, event_type, json!({"test_value": test_value}));
 
         assert_eq!(event.payload["test_value"], json!(test_value));
     }
@@ -506,7 +506,7 @@ fn test_large_payload_creation() -> TestResult<()> {
         }
     });
 
-    let event = Event::test_event(
+    let event = test_event(
         EventSource::from_static("stress-test"),
         EventType::from_static("large.payload"),
         large_payload.clone(),
@@ -553,7 +553,7 @@ fn test_domain_type_serialization() -> TestResult<()> {
 
 #[sinex_test]
 fn test_event_json_roundtrip() -> TestResult<()> {
-    let original_event = Event::test_event(
+    let original_event = test_event(
         EventSource::from_static("json-test"),
         EventType::from_static("roundtrip.test"),
         json!({
@@ -660,7 +660,7 @@ fn test_event_creation_performance() -> TestResult<()> {
 
     let mut events = Vec::with_capacity(count);
     for i in 0..count {
-        let event = Event::test_event(
+        let event = test_event(
             EventSource::from_static("perf-test"),
             EventType::from_static("performance.test"),
             json!({

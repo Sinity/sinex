@@ -6,7 +6,7 @@ use std::borrow::Cow;
 pub struct SecretRedactor;
 
 struct RedactionPattern {
-    name: &'static str,
+    _name: &'static str, // Kept for documentation/debugging
     regex: Regex,
     placeholder: &'static str,
 }
@@ -15,13 +15,13 @@ lazy_static! {
     static ref PATTERNS: Vec<RedactionPattern> = vec![
         // AWS Access Key ID (AKIA/ASIA...)
         RedactionPattern {
-            name: "aws_access_key",
+            _name: "aws_access_key",
             regex: Regex::new(r"(?i)\b(AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}\b").unwrap(),
             placeholder: "<AWS_ACCESS_KEY>",
         },
         // AWS Secret Access Key (approximate)
         RedactionPattern {
-            name: "aws_secret_key",
+            _name: "aws_secret_key",
             regex: Regex::new(r"(?i)\b[0-9a-zA-Z/+]{40}\b").unwrap(),
             // Be conservative with 40-char strings; only matching if preceded by common context
             // actually standard regex for this is hard without false positives.
@@ -35,19 +35,19 @@ lazy_static! {
         },
         // Generic Password/Secret assignment
         RedactionPattern {
-            name: "generic_assignment",
+            _name: "generic_assignment",
             regex: Regex::new(r"(?i)(password|passwd|secret|token|api[_-]?key|access[_-]?key)\s*[:=]\s*([^\s;]+)").unwrap(),
             placeholder: "$1=<REDACTED>",
         },
         // URLs with credentials
         RedactionPattern {
-            name: "url_credentials",
+            _name: "url_credentials",
             regex: Regex::new(r"(?i)([a-z]+://)([^:/]+):([^@]+)@").unwrap(),
             placeholder: "${1}${2}:<REDACTED>@",
         },
         // Private Key Headers
         RedactionPattern {
-            name: "private_key_header",
+            _name: "private_key_header",
             regex: Regex::new(r"(?i)-----BEGIN[ A-Z]+PRIVATE KEY-----").unwrap(),
             placeholder: "<PRIVATE_KEY_HEADER>",
         },
@@ -62,7 +62,7 @@ lazy_static! {
 
 impl SecretRedactor {
     /// Redact sensitive information from the input string
-    pub fn redact(input: &str) -> Cow<str> {
+    pub fn redact<'a>(input: &'a str) -> Cow<'a, str> {
         let mut result = Cow::Borrowed(input);
 
         // Apply global patterns

@@ -1,6 +1,6 @@
 [workspace]
 members = [
-  # Library crates  
+  # Library crates
   "crate/lib/sinex-core",
   "crate/lib/sinex-schema",
   "crate/lib/sinex-macros",

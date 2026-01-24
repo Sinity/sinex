@@ -66,7 +66,9 @@ impl SimpleNode for TerminalCommandCanonicalizer {
                 .and_then(|v| v.as_str())
                 .unwrap_or_default()
                 .to_string(),
-            exit_code: input.get("exit_code").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+            exit_code: sinex_core::ExitCode::from_raw(
+                input.get("exit_code").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+            ),
             duration_ms: input
                 .get("duration_ms")
                 .and_then(|v| v.as_u64())

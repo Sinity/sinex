@@ -303,62 +303,6 @@ impl Event<JsonValue> {
             associated_blob_ids: None,
         }
     }
-
-    /// Create a test event with dynamic JSON payload for in-memory testing.
-    ///
-    /// This is a convenience method for creating events in tests without
-    /// requiring database persistence. Uses a random material ID since
-    /// FK constraints are only enforced at the database layer.
-    ///
-    /// # Important
-    /// **Do NOT use this with database operations** - the random material ID will fail
-    /// FK constraints. For database tests, use:
-    /// - `pool.events().insert_test_event()` for direct DB insertion
-    /// - `ctx.publish()` for pipeline tests
-    ///
-    /// # Use Cases
-    /// - Property tests verifying serialization/deserialization
-    /// - Unit tests checking event validation logic
-    /// - Fuzzing tests with generated payloads
-    ///
-    /// # Example
-    /// ```rust,ignore
-    /// use sinex_core::Event;
-    /// use serde_json::json;
-    ///
-    /// let event = Event::test_event("fs-watcher", "file.created", json!({
-    ///     "path": "/test/file.txt",
-    ///     "size": 1024
-    /// }));
-    /// ```
-    #[cfg(any(test, feature = "testing"))]
-    pub fn test_event(
-        source: impl Into<EventSource>,
-        event_type: impl Into<EventType>,
-        payload: JsonValue,
-    ) -> Self {
-        use crate::types::Id;
-        use chrono::Utc;
-
-        Self {
-            id: None,
-            source: source.into(),
-            event_type: event_type.into(),
-            payload,
-            ts_orig: Some(Utc::now()),
-            host: get_hostname(),
-            ingestor_version: Some("test".to_string()),
-            payload_schema_id: None,
-            provenance: Provenance::Material {
-                id: Id::<SourceMaterial>::new(),
-                anchor_byte: 0,
-                offset_start: None,
-                offset_end: None,
-                offset_kind: OffsetKind::Byte,
-            },
-            associated_blob_ids: None,
-        }
-    }
 }
 
 // EventBuilder implementations

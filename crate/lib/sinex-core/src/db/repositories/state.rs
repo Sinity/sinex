@@ -7,7 +7,7 @@
 use super::common::{db_error, DbResult, EnhancedRepository, Repository};
 use crate::db::schema::OperationsLog;
 use crate::db::{with_retry_transaction_idempotent, IdempotentTransaction, RetryConfig};
-use crate::types::domain::{EventSource, EventType, ProcessorName};
+use crate::types::domain::ProcessorName;
 use crate::types::error::SinexError;
 use crate::types::Seconds;
 use crate::types::Ulid;
@@ -789,34 +789,6 @@ impl<'a> StateRepository<'a> {
         .map_err(|e| db_error(e, "check table existence"))?;
 
         Ok(row.exists.unwrap_or(false))
-    }
-
-    /// Delete test events by source
-    pub async fn cleanup_test_events_by_source(&self, source: &EventSource) -> DbResult<u64> {
-        let result = sqlx::query!("DELETE FROM core.events WHERE source = $1", source.as_str())
-            .execute(self.pool)
-            .await
-            .map_err(|e| db_error(e, "cleanup test events by source"))?;
-
-        Ok(result.rows_affected())
-    }
-
-    /// Delete test events by source and event type
-    pub async fn cleanup_test_events(
-        &self,
-        source: &EventSource,
-        event_type: &EventType,
-    ) -> DbResult<u64> {
-        let result = sqlx::query!(
-            "DELETE FROM core.events WHERE source = $1 AND event_type = $2",
-            source.as_str(),
-            event_type.as_str()
-        )
-        .execute(self.pool)
-        .await
-        .map_err(|e| db_error(e, "cleanup test events"))?;
-
-        Ok(result.rows_affected())
     }
 
     /// Count events by source and phase (for testing)

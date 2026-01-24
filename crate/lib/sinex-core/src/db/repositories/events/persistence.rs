@@ -4,7 +4,6 @@ use crate::models::{Event, JsonValue};
 use crate::repositories::common::{db_error, DbResult, EnhancedRepository, Repository};
 use crate::types::domain::{EventSource, EventType, SchemaVersion};
 use crate::types::error::SinexError;
-use crate::types::events::DynamicPayload;
 use crate::types::{Id, Ulid};
 use crate::EventRecord;
 use chrono::{DateTime, Timelike, Utc};
@@ -1130,102 +1129,21 @@ impl<'a> EventRepository<'a> {
         Ok(result.rows_affected() > 0)
     }
 
-    // ========== Test Support Operations ==========
+    // ========== Event Deletion Operations ==========
 
-    /// Insert a test event
-    pub async fn insert_test_event(
-        &self,
-        source: &str,
-        event_type: &str,
-        payload: serde_json::Value,
-    ) -> DbResult<Event<JsonValue>> {
-        use crate::models::SourceMaterial;
-
-        // Use proper material provenance for test events
-        let test_material_id = crate::types::Id::<SourceMaterial>::new();
-        let source_identifier = format!("test-material-{}", test_material_id.as_ulid());
-        let metadata = serde_json::json!({
-            "test_material": true,
-            "event_source": source,
-            "event_type": event_type,
-        });
-        crate::db::repositories::source_materials::SourceMaterialRepository::new(self.pool)
-            .register_external_in_flight(
-                *test_material_id.as_ulid(),
-                crate::db::repositories::source_materials::material_types::BLOB,
-                Some(&source_identifier),
-                metadata,
-                Utc::now(),
-            )
-            .await
-            .map_err(|e| e.with_context("operation", "register test source material"))?;
-        let event = DynamicPayload::new(source, event_type, payload)
-            .from_material(test_material_id)
-            .build()?;
-
-        self.insert(event).await
-    }
-
-    /// Update test event payload
-    pub async fn update_test_event(
-        &self,
-        id: Id<Event<JsonValue>>,
-        payload: serde_json::Value,
-    ) -> DbResult<bool> {
-        let result = sqlx::query!(
-            r#"
-            UPDATE core.events
-            SET payload = $2
-            WHERE id = $1
-            "#,
-            *id.as_ulid() as _,
-            payload
-        )
-        .execute(self.pool)
-        .await
-        .map_err(|e| db_error(e, "update test event"))?;
-
-        Ok(result.rows_affected() > 0)
-    }
-
-    /// Delete a test event (hard delete for test cleanup)
-    pub async fn delete_test_event(&self, id: Id<Event<JsonValue>>) -> DbResult<bool> {
-        let result = sqlx::query!("DELETE FROM core.events WHERE id = $1", *id.as_ulid() as _)
-            .execute(self.pool)
-            .await
-            .map_err(|e| db_error(e, "delete test event"))?;
-
-        Ok(result.rows_affected() > 0)
-    }
-
-    /// Cleanup test events by source and type (soft delete)
-    pub async fn cleanup_test_events(
-        &self,
-        source: &EventSource,
-        event_type: &EventType,
-    ) -> DbResult<u64> {
-        self.cleanup_test_events_with_context(
-            Some(source),
-            Some(event_type),
-            "test_system",
-            "Test cleanup by source and type",
-        )
-        .await
-    }
-
-    /// Cleanup test events by source only (soft delete)
-    pub async fn cleanup_test_events_by_source(&self, source: &EventSource) -> DbResult<u64> {
-        self.cleanup_test_events_with_context(
-            Some(source),
-            None,
-            "test_system",
-            "Test cleanup by source",
-        )
-        .await
-    }
-
-    /// Cleanup events with audit context (proper deletion with audit trail)
-    pub async fn cleanup_test_events_with_context(
+    /// Delete events with filter and audit context
+    ///
+    /// This method deletes events matching the provided source and/or event_type filters,
+    /// with proper audit trail tracking. It includes a safety constraint to only delete
+    /// events that appear to be test events (source/type contains "test", payload has
+    /// {"test": true}, or host matches "test").
+    ///
+    /// # Arguments
+    /// * `source` - Optional source filter
+    /// * `event_type` - Optional event type filter
+    /// * `deleted_by` - Audit trail: who is performing the deletion
+    /// * `deletion_reason` - Audit trail: why the deletion is happening
+    pub async fn delete_events_with_filter(
         &self,
         source: Option<&EventSource>,
         event_type: Option<&EventType>,
@@ -1310,7 +1228,7 @@ impl<'a> EventRepository<'a> {
         let result = query
             .execute(&mut *tx)
             .await
-            .map_err(|e| db_error(e, "delete test events"))?;
+            .map_err(|e| db_error(e, "delete events with filter"))?;
 
         let deleted_count = result.rows_affected();
 
@@ -1319,7 +1237,7 @@ impl<'a> EventRepository<'a> {
             db_error(
                 e,
                 &format!(
-                    "Failed to commit test event cleanup transaction (deleted {} events)",
+                    "Failed to commit event deletion transaction (deleted {} events)",
                     deleted_count
                 ),
             )
@@ -1330,7 +1248,7 @@ impl<'a> EventRepository<'a> {
             deleted_by = %deleted_by,
             deletion_reason = %deletion_reason,
             deleted_count = %deleted_count,
-            "Cleaned up test events with audit trail"
+            "Deleted events with audit trail"
         );
 
         Ok(deleted_count)
@@ -1338,9 +1256,12 @@ impl<'a> EventRepository<'a> {
 
     // ========== Analytics Queries ==========
 
-    /// Delete all events from a specific source (soft delete, useful for test cleanup)
+    /// Delete all events from a specific source (with audit trail)
+    ///
+    /// Note: This includes a safety constraint that only deletes events that appear
+    /// to be test events. Use `hard_delete_by_source` for unconditional deletion.
     pub async fn delete_by_source(&self, source: &EventSource) -> DbResult<u64> {
-        self.cleanup_test_events_with_context(Some(source), None, "system", "Delete by source")
+        self.delete_events_with_filter(Some(source), None, "system", "Delete by source")
             .await
     }
 

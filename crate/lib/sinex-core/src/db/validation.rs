@@ -3,7 +3,7 @@
 //! The real-time ingestion path relies on the same validator that powers the
 //! integration and adversarial tests, ensuring that schema enforcement,
 //! provenance validation, and payload guards stay in lock-step.
-use crate::db::models::event::{Event, Provenance, SourceMaterial};
+use crate::db::models::event::{Event, OffsetKind, Provenance, SourceMaterial};
 #[cfg(feature = "sqlx")]
 use crate::db::DbPool;
 use crate::types::domain::{EventSource, EventType, HostName};
@@ -228,7 +228,7 @@ impl EventValidator {
         self.ensure_object_payload(&event.payload)?;
         self.validate_domain_specific_rules(event)?;
         self.validate_ulid_timestamp(event)?;
-        self.validate_provenance(&event.provenance)?;
+        self.validate_provenance(&event.provenance())?;
         if !self.validation_enabled {
             return Ok(());
         }
@@ -263,7 +263,13 @@ impl EventValidator {
             host: HostName::from_static("validator"),
             ingestor_version: None,
             payload_schema_id: None,
-            provenance: Provenance::from_material(Id::<SourceMaterial>::new(), 0, None, None),
+            provenance: Provenance::Material {
+                id: Id::<SourceMaterial>::new(),
+                anchor_byte: 0,
+                offset_start: None,
+                offset_end: None,
+                offset_kind: OffsetKind::Byte,
+            },
             associated_blob_ids: None,
         };
         self.validate(&event)

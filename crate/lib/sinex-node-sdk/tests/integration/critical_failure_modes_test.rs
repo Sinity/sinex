@@ -3,7 +3,6 @@
 //! This module tests critical failure scenarios that could break the system
 //! in production, focusing on system resilience and error handling.
 
-use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::DynamicPayload;
 use sinex_node_sdk::VersionInfo;
 use sinex_test_utils::prelude::*;
@@ -124,8 +123,6 @@ async fn test_database_high_load_resilience(ctx: TestContext) -> TestResult<()> 
 /// Test database connection exhaustion recovery
 #[sinex_test]
 async fn test_database_connection_exhaustion_recovery(ctx: TestContext) -> TestResult<()> {
-    use sinex_core::types::domain::{EventSource, EventType};
-    use sinex_core::{Event, JsonValue};
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
 
@@ -149,14 +146,16 @@ async fn test_database_connection_exhaustion_recovery(ctx: TestContext) -> TestR
                 }
             };
 
-            // Create and insert event directly using repository
-            let event = Event::test_event(
-                EventSource::new("conn-test"),
-                EventType::new("exhaustion"),
-                json!({"task": i}),
-            );
+            // Create and insert event using publish pattern
+            let result = task_ctx
+                .publish(DynamicPayload::new(
+                    "conn-test",
+                    "exhaustion",
+                    json!({"task": i}),
+                ))
+                .await;
 
-            match task_ctx.pool.events().insert(event).await {
+            match result {
                 Ok(_) => {
                     success_count.fetch_add(1, Ordering::SeqCst);
                 }
@@ -255,8 +254,6 @@ async fn test_event_creation_extreme_payloads(ctx: TestContext) -> TestResult<()
 /// Test concurrent event creation under stress
 #[sinex_test]
 async fn test_concurrent_event_creation_stress(ctx: TestContext) -> TestResult<()> {
-    use sinex_core::types::domain::{EventSource, EventType};
-    use sinex_core::{Event, JsonValue};
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
 
@@ -278,13 +275,15 @@ async fn test_concurrent_event_creation_stress(ctx: TestContext) -> TestResult<(
             // Create a batch of events from this task
             let mut local_successes = 0u32;
             for j in 0..10 {
-                let event = Event::test_event(
-                    EventSource::new(format!("stress-{i}")),
-                    EventType::new("concurrent"),
-                    json!({"task": i, "iteration": j}),
-                );
+                let result = task_ctx
+                    .publish(DynamicPayload::new(
+                        format!("stress-{i}"),
+                        "concurrent",
+                        json!({"task": i, "iteration": j}),
+                    ))
+                    .await;
 
-                match task_ctx.pool.events().insert(event).await {
+                match result {
                     Ok(_) => local_successes += 1,
                     Err(_) => {} // Count failures silently
                 }

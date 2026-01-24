@@ -277,8 +277,8 @@ ctx.pool.events().insert(event).await?;
 ### Pipeline Insertion (Preferred)
 
 ```rust
-let ctx = ctx.with_shared_nats().await?;
-let event = ctx.publish_json_event(
+let ctx = ctx.with_nats().shared().await?;
+let event = ctx.publish_event(
     "fs-watcher",
     "file.created",
     json!({"path": "/test.txt"})
@@ -295,8 +295,8 @@ let specs = vec![
     EventSpec::new("fs-watcher", "file.created", json!({"path": "/a"})),
     EventSpec::new("terminal", "command.executed", json!({"cmd": "ls"})),
 ];
-let ctx = ctx.with_shared_nats().await?;
-let pipeline = ctx.pipeline().await?;
+let ctx = ctx.with_nats().shared().await?;
+let pipeline = ctx.pipeline_scope().await?;
 let ids = seed_events_via_pipeline(&pipeline, &clock, &specs).await?;
 ```
 

@@ -3,7 +3,7 @@ use serde_json::json;
 use sinex_core::db::models::Provenance;
 use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::db::validation::{EventValidator, ValidationError};
-use sinex_core::{DynamicPayload, Event, EventId, Id, JsonValue, Ulid};
+use sinex_core::{DynamicPayload, EventId, Id, JsonValue, Ulid};
 use sinex_test_utils::prelude::*;
 use tracing::info;
 
@@ -22,27 +22,20 @@ async fn test_basic_event_creation_and_persistence(ctx: TestContext) -> TestResu
     info!("Testing basic event creation and persistence");
 
     // Create a test event using the test context convenience method
-    let mut event = Event::test_event(
-        "provenance-test",
-        "test.event",
-        json!({
-            "message": "test provenance tracking",
-            "step": 1
-        }),
-    );
-    event.id = Some(Id::new());
-
-    // Publish via pipeline
-    ctx.publish_test_event(&event).await?;
+    let event = ctx
+        .publish(DynamicPayload::new(
+            "provenance-test",
+            "test.event",
+            json!({
+                "message": "test provenance tracking",
+                "step": 1
+            }),
+        ))
+        .await?;
 
     // Verify the event was created
     let event_id = event.id.clone().expect("Event should have ID");
     info!("Created event with ID: {}", event_id);
-
-    // Wait for persistence
-    ctx.timing()
-        .wait_for_source_events("provenance-test", 1)
-        .await?;
 
     // Verify we can query recent events using the repository API
     let recent_events = pool.events().get_recent(10).await?;
@@ -83,31 +76,34 @@ async fn test_multiple_event_sources(ctx: TestContext) -> TestResult<()> {
     info!("Testing multiple event sources");
 
     // Create events from different sources
-    let mut event1 = Event::test_event(&*suffix_a, "test.event", json!({"data": "from source A"}));
-    event1.id = Some(Id::new());
-    ctx.publish_test_event(&event1).await?;
+    let event1 = ctx
+        .publish(DynamicPayload::new(
+            &*suffix_a,
+            "test.event",
+            json!({"data": "from source A"}),
+        ))
+        .await?;
 
-    let mut event2 = Event::test_event(&*suffix_b, "test.event", json!({"data": "from source B"}));
-    event2.id = Some(Id::new());
-    ctx.publish_test_event(&event2).await?;
+    let event2 = ctx
+        .publish(DynamicPayload::new(
+            &*suffix_b,
+            "test.event",
+            json!({"data": "from source B"}),
+        ))
+        .await?;
 
-    let mut event3 = Event::test_event(
-        &*suffix_c,
-        "different.type",
-        json!({"data": "from source C"}),
-    );
-    event3.id = Some(Id::new());
-    ctx.publish_test_event(&event3).await?;
+    let event3 = ctx
+        .publish(DynamicPayload::new(
+            &*suffix_c,
+            "different.type",
+            json!({"data": "from source C"}),
+        ))
+        .await?;
 
     // Verify all events were created
     assert!(event1.id.is_some());
     assert!(event2.id.is_some());
     assert!(event3.id.is_some());
-
-    // Wait for persistence
-    ctx.timing().wait_for_source_events(&suffix_a, 1).await?;
-    ctx.timing().wait_for_source_events(&suffix_b, 1).await?;
-    ctx.timing().wait_for_source_events(&suffix_c, 1).await?;
 
     // Query events by source
     let events_from_a = pool
@@ -155,22 +151,26 @@ async fn test_event_querying_by_type(ctx: TestContext) -> TestResult<()> {
     info!("Testing event querying by type");
 
     // Create events of different types
-    let mut event1 = Event::test_event("test-source", "type.a", json!({"category": "A"}));
-    event1.id = Some(Id::new());
-    ctx.publish_test_event(&event1).await?;
+    ctx.publish(DynamicPayload::new(
+        "test-source",
+        "type.a",
+        json!({"category": "A"}),
+    ))
+    .await?;
 
-    let mut event2 = Event::test_event("test-source", "type.a", json!({"category": "A2"}));
-    event2.id = Some(Id::new());
-    ctx.publish_test_event(&event2).await?;
+    ctx.publish(DynamicPayload::new(
+        "test-source",
+        "type.a",
+        json!({"category": "A2"}),
+    ))
+    .await?;
 
-    let mut event3 = Event::test_event("test-source", "type.b", json!({"category": "B"}));
-    event3.id = Some(Id::new());
-    ctx.publish_test_event(&event3).await?;
-
-    // Wait for persistence (by source is reliable)
-    ctx.timing()
-        .wait_for_source_events("test-source", 3)
-        .await?;
+    ctx.publish(DynamicPayload::new(
+        "test-source",
+        "type.b",
+        json!({"category": "B"}),
+    ))
+    .await?;
 
     // Query by event type
     let type_a_events = pool
@@ -216,18 +216,17 @@ async fn test_batch_event_creation(ctx: TestContext) -> TestResult<()> {
     let mut event_ids = Vec::new();
 
     for i in 0..5 {
-        let mut event = Event::test_event(
-            "batch-test",
-            "batch.item",
-            json!({
-                "index": i,
-                "data": format!("batch item {}", i)
-            }),
-        );
-        event.id = Some(Id::new());
+        let event = ctx
+            .publish(DynamicPayload::new(
+                "batch-test",
+                "batch.item",
+                json!({
+                    "index": i,
+                    "data": format!("batch item {}", i)
+                }),
+            ))
+            .await?;
         let id = event.id.clone().expect("Event should have ID");
-
-        ctx.publish_test_event(&event).await?;
         event_ids.push(id);
     }
 
@@ -302,15 +301,12 @@ async fn test_event_payload_preservation(ctx: TestContext) -> TestResult<()> {
         }
     });
 
-    let mut event = Event::test_event("payload-test", "complex.payload", complex_payload.clone());
-    event.id = Some(Id::new());
-
-    ctx.publish_test_event(&event).await?;
-
-    // Wait for persistence
-    ctx.timing()
-        .wait_for_source_events("payload-test", 1)
-        .await?;
+    ctx.publish(DynamicPayload::new(
+        "payload-test",
+        "complex.payload",
+        complex_payload.clone(),
+    ))
+    .await?;
 
     // Retrieve the event and verify payload integrity
     let retrieved_events = pool
@@ -603,7 +599,7 @@ async fn test_provenance_survives_nats_roundtrip(ctx: TestContext) -> TestResult
     let event_id = event.id.clone().unwrap();
 
     // Publish through NATS (this is where provenance gets lost in the bug)
-    ctx.publish_test_event(&event).await?;
+    ctx.publish_prebuilt_event(&event).await?;
 
     // Wait for persistence
     ctx.timing()
@@ -670,7 +666,7 @@ async fn test_synthesis_provenance_survives_nats_roundtrip(ctx: TestContext) -> 
     let synthesis_id = synthesis_event.id.clone().unwrap();
 
     // Publish through NATS
-    ctx.publish_test_event(&synthesis_event).await?;
+    ctx.publish_prebuilt_event(&synthesis_event).await?;
 
     // Wait for persistence
     ctx.timing()

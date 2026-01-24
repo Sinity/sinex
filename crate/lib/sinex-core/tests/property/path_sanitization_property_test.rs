@@ -158,7 +158,7 @@ fn test_event_sanitization_is_idempotent(
     ])]
     path: String,
 ) -> TestResult<()> {
-    let mut event1 = Event::test_event(
+    let mut event1 = test_event(
         EventSource::new(path.clone()),
         EventType::new("test.event"),
         json!({"test": "data"}),
@@ -191,7 +191,7 @@ fn test_event_sanitization_is_idempotent(
 fn test_path_sanitization_removes_dangerous_sequences(
     #[strategy(arb_malicious_path())] malicious_path: String,
 ) -> TestResult<()> {
-    let mut event = Event::test_event(
+    let mut event = test_event(
         EventSource::new(malicious_path.clone()),
         EventType::new("security.test"),
         json!({"path": malicious_path.clone()}),
@@ -253,7 +253,7 @@ fn test_safe_content_preservation_in_events(
     #[strategy(proptest::string::string_regex("[a-zA-Z0-9_. /-]{1,100}").unwrap())]
     safe_string: String,
 ) -> TestResult<()> {
-    let mut event = Event::test_event(
+    let mut event = test_event(
         EventSource::new(safe_string.clone()),
         EventType::new("safe.test"),
         json!({"content": safe_string.clone()}),
