@@ -949,7 +949,7 @@ impl TestContext {
             associated_blob_ids: None,
         };
 
-        let persisted_id = self.publish_test_event(&event).await?;
+        let persisted_id = self.publish_prebuilt_event(&event).await?;
         let published_event_id = Id::<Event<JsonValue>>::from_ulid(persisted_id);
         WaitHelpers::wait_for_event_id(&self.pool, published_event_id.clone(), DEFAULT_WAIT_SECS)
             .await?;
@@ -976,24 +976,29 @@ impl TestContext {
     }
 
     /// Ensure a source material record exists for tests that construct provenance manually.
+    ///
+    /// If a record with the given ID already exists, this is a no-op.
+    /// This avoids FK constraint issues from trying to update existing source materials.
     pub async fn ensure_source_material(
         &self,
         id: Id<SourceMaterial>,
         source_identifier: Option<&str>,
     ) -> TestResult<()> {
         let material_ulid_uuid = id.to_uuid();
+        // Include the ID in the identifier to avoid source_identifier uniqueness conflicts.
+        // Each unique id gets its own unique source_identifier.
         let identifier = source_identifier
-            .map(|s| s.to_string())
+            .map(|s| format!("{s}-{id}"))
             .unwrap_or_else(|| format!("test-material-{id}"));
 
-        let update_result = sqlx::query!(
+        // Use INSERT with ON CONFLICT DO NOTHING to avoid FK violations.
+        // If the record already exists (by id), we don't need to update it.
+        sqlx::query!(
             r#"
-                UPDATE raw.source_material_registry
-                SET id = $1::uuid::ulid,
-                    material_kind = $2,
-                    status = $4,
-                    timing_info_type = $5
-                WHERE source_identifier = $3
+                INSERT INTO raw.source_material_registry
+                    (id, material_kind, source_identifier, status, timing_info_type)
+                VALUES ($1::uuid::ulid, $2, $3, $4, $5)
+                ON CONFLICT (id) DO NOTHING
             "#,
             material_ulid_uuid,
             "annex",
@@ -1003,28 +1008,6 @@ impl TestContext {
         )
         .execute(&self.pool)
         .await?;
-
-        if update_result.rows_affected() == 0 {
-            sqlx::query!(
-                r#"
-                    INSERT INTO raw.source_material_registry 
-                        (id, material_kind, source_identifier, status, timing_info_type)
-                    VALUES ($1::uuid::ulid, $2, $3, $4, $5)
-                    ON CONFLICT (id) DO UPDATE
-                    SET material_kind = EXCLUDED.material_kind,
-                        status = EXCLUDED.status,
-                        timing_info_type = EXCLUDED.timing_info_type,
-                        source_identifier = EXCLUDED.source_identifier
-                "#,
-                material_ulid_uuid,
-                "annex",
-                identifier,
-                "completed",
-                "realtime"
-            )
-            .execute(&self.pool)
-            .await?;
-        }
 
         Ok(())
     }
@@ -1226,15 +1209,21 @@ impl TestContext {
 }
 
 impl TestContext {
-    /// Publish a test event to the ingestion pipeline via NATS.
+    /// Publish a pre-built event to the ingestion pipeline via NATS.
     ///
-    /// This is the preferred method for "Pipeline-First" testing. It sends the event
-    /// to NATS (simulating a node), where it will be picked up by ingestd,
-    /// validated, and inserted into the database.
+    /// **For most tests, use `ctx.publish(DynamicPayload::new(...))` instead.**
+    ///
+    /// This method is for specialized tests that need to publish events with
+    /// explicit provenance that was constructed ahead of time. For example:
+    /// - Testing that Material provenance survives NATS serialization
+    /// - Testing that Synthesis provenance survives NATS serialization
+    ///
+    /// The event must already have its provenance set. This method just publishes
+    /// the pre-built event to NATS without modifying its provenance.
     ///
     /// If the event doesn't have an ID, one will be assigned automatically.
-    /// The event ID is returned so tests can wait for it using `WaitHelpers`.
-    pub async fn publish_test_event(&self, event: &Event<JsonValue>) -> TestResult<Ulid> {
+    /// The event ID (ULID) is returned so tests can wait for it using `WaitHelpers`.
+    pub async fn publish_prebuilt_event(&self, event: &Event<JsonValue>) -> TestResult<Ulid> {
         self.ensure_pipeline_ingestd().await?;
         let client = self.nats_client();
         let mut envelope = event.clone();
