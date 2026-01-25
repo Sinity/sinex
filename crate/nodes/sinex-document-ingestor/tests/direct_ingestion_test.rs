@@ -57,7 +57,7 @@ async fn document_processor_emits_events_for_targets(ctx: TestContext) -> TestRe
     // NOTE: the AcquisitionManager is JetStream-first; ingestd is the sole database writer for
     // `raw.source_material_registry`. This test runs the processor directly (no ingestd), so the
     // material should not appear in the database.
-    let material_id = match event.provenance {
+    let material_id = match event.provenance() {
         sinex_core::Provenance::Material { id, .. } => *id.as_ulid(),
         _ => panic!("expected material provenance"),
     };

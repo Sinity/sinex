@@ -1,6 +1,6 @@
 [workspace]
 members = [
-  # Library crates  
+  # Library crates
   "crate/lib/sinex-core",
   "crate/lib/sinex-schema",
   "crate/lib/sinex-macros",
@@ -36,9 +36,6 @@ members = [
   # CLI tools
   "cli/sinex-cli",
   "cli/sinexctl",
-
-  # Development tools
-  "crate/tools/sx",
 
   # Keep experimental automata disabled until stabilized
   # "crate/nodes/sinex-content-automaton",

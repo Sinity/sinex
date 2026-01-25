@@ -11,6 +11,7 @@
 
 use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::types::ulid::Ulid;
+use sinex_core::DynamicPayload;
 use sinex_test_utils::prelude::*;
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
@@ -60,7 +61,7 @@ async fn test_event_ingestion_flow(ctx: TestContext) -> Result<()> {
 
     // Create test event that would come from a node
     let node_event = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "fs-watcher",
             "file.created",
             serde_json::json!({
@@ -69,7 +70,7 @@ async fn test_event_ingestion_flow(ctx: TestContext) -> Result<()> {
                 "timestamp": chrono::Utc::now().to_rfc3339(),
                 "permissions": "0644"
             }),
-        )
+        ))
         .await?;
 
     // Event is automatically stored via publish_json_event
@@ -113,16 +114,16 @@ async fn test_batch_ingestion(ctx: TestContext) -> Result<()> {
 
     // Create multiple events as would be sent in a batch
     let batch_events = vec![
-        ctx.publish_event(
+        ctx.publish(DynamicPayload::new(
             "fs-watcher",
             "file.created",
             serde_json::json!({
                 "path": "/tmp/batch_file_1.txt",
                 "size": 512
             }),
-        )
+        ))
         .await?,
-        ctx.publish_event(
+        ctx.publish(DynamicPayload::new(
             "terminal",
             "command.executed",
             serde_json::json!({
@@ -130,16 +131,16 @@ async fn test_batch_ingestion(ctx: TestContext) -> Result<()> {
                 "exit_code": 0,
                 "duration_ms": 42
             }),
-        )
+        ))
         .await?,
-        ctx.publish_event(
+        ctx.publish(DynamicPayload::new(
             "desktop",
             "window.focused",
             serde_json::json!({
                 "window_title": "Terminal",
                 "application": "gnome-terminal"
             }),
-        )
+        ))
         .await?,
     ];
 
@@ -191,7 +192,7 @@ async fn test_ingestion_validation(ctx: TestContext) -> Result<()> {
 
     // Test valid event with complete payload
     let valid_event = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "fs-watcher",
             "file.created",
             serde_json::json!({
@@ -201,20 +202,20 @@ async fn test_ingestion_validation(ctx: TestContext) -> Result<()> {
                 "permissions": "0644",
                 "inode": 12345
             }),
-        )
+        ))
         .await?;
 
     assert!(valid_event.id.is_some(), "Valid event should be stored");
 
     // Test edge case validation - minimal payload
     let minimal_event = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "system",
             "service.started",
             serde_json::json!({
                 "service_name": "test-service"
             }),
-        )
+        ))
         .await?;
 
     assert!(
@@ -225,14 +226,14 @@ async fn test_ingestion_validation(ctx: TestContext) -> Result<()> {
     // Test large payload handling
     let large_payload = "x".repeat(10000); // 10KB payload
     let large_event_result = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "application",
             "log.entry",
             serde_json::json!({
                 "message": large_payload,
                 "level": "info"
             }),
-        )
+        ))
         .await;
 
     assert!(
@@ -290,7 +291,9 @@ async fn test_source_and_type_patterns(ctx: TestContext) -> Result<()> {
 
     let mut stored_events = Vec::new();
     for (source, event_type, payload) in test_patterns {
-        let event = ctx.publish_event(source, event_type, payload).await?;
+        let event = ctx
+            .publish(DynamicPayload::new(source, event_type, payload))
+            .await?;
         stored_events.push((source, event_type, event));
     }
 
@@ -368,7 +371,7 @@ async fn test_ingestion_performance(ctx: TestContext) -> Result<()> {
         attempt += 1;
 
         match ctx
-            .publish_event(
+            .publish(DynamicPayload::new(
                 source.as_str(),
                 "throughput.test",
                 serde_json::json!({
@@ -377,7 +380,7 @@ async fn test_ingestion_performance(ctx: TestContext) -> Result<()> {
                     "timestamp": chrono::Utc::now().to_rfc3339(),
                     "payload_data": format!("Performance test event {}", sequence)
                 }),
-            )
+            ))
             .await
         {
             Ok(_) => processed_events += 1,
@@ -474,7 +477,7 @@ async fn test_sequential_ingestion(ctx: TestContext) -> Result<()> {
         while attempts < 4 {
             attempts += 1;
             let event_result = ctx
-                .publish_event(
+                .publish(DynamicPayload::new(
                     source.as_str(),
                     "sequential.test",
                     serde_json::json!({
@@ -482,7 +485,7 @@ async fn test_sequential_ingestion(ctx: TestContext) -> Result<()> {
                         "batch_id": i / 5,
                         "data": format!("Sequential ingestion test {}", i)
                     }),
-                )
+                ))
                 .await;
 
             match event_result {
@@ -553,14 +556,14 @@ async fn test_ingestion_error_handling(ctx: TestContext) -> Result<()> {
 
     // Test successful ingestion
     let valid_event = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "error-test",
             "error.handling",
             serde_json::json!({
                 "test_case": "valid_event",
                 "data": "This should ingest successfully"
             }),
-        )
+        ))
         .await;
 
     assert!(
@@ -608,7 +611,9 @@ async fn test_ingestion_error_handling(ctx: TestContext) -> Result<()> {
 
     let mut processed_count = 0;
     for (case_name, payload) in edge_cases {
-        let edge_event_result = ctx.publish_event("error-test", "edge.case", payload).await;
+        let edge_event_result = ctx
+            .publish(DynamicPayload::new("error-test", "edge.case", payload))
+            .await;
 
         match edge_event_result {
             Ok(_) => {
@@ -628,14 +633,14 @@ async fn test_ingestion_error_handling(ctx: TestContext) -> Result<()> {
 
     // Verify service recovery after edge case processing
     let recovery_event = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "error-test",
             "error.recovery",
             serde_json::json!({
                 "test_case": "post_recovery",
                 "data": "Service should continue working after error handling"
             }),
-        )
+        ))
         .await;
 
     assert!(
@@ -694,7 +699,9 @@ async fn test_schema_validation_patterns(ctx: TestContext) -> Result<()> {
     ];
 
     for (source, event_type, payload) in schema_test_events {
-        let event = ctx.publish_event(source, event_type, payload).await?;
+        let event = ctx
+            .publish(DynamicPayload::new(source, event_type, payload))
+            .await?;
 
         assert!(
             event.id.is_some(),
@@ -754,7 +761,11 @@ async fn test_payload_validation_patterns(ctx: TestContext) -> Result<()> {
 
     for (pattern_name, payload) in validation_patterns {
         let event = ctx
-            .publish_event("validation-test", "payload.test", payload)
+            .publish(DynamicPayload::new(
+                "validation-test",
+                "payload.test",
+                payload,
+            ))
             .await?;
 
         assert!(
@@ -784,14 +795,14 @@ async fn test_service_health_monitoring(ctx: TestContext) -> Result<()> {
 
     // Test basic health indicators through event processing
     let health_check_event = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             source.as_str(),
             "health.check",
             serde_json::json!({
                 "timestamp": chrono::Utc::now().to_rfc3339(),
                 "status": "healthy"
             }),
-        )
+        ))
         .await?;
 
     assert!(
@@ -817,7 +828,7 @@ async fn test_service_health_monitoring(ctx: TestContext) -> Result<()> {
     // Simulate service processing over time
     for i in 0..3 {
         let status_event = ctx
-            .publish_event(
+            .publish(DynamicPayload::new(
                 source.as_str(),
                 "status.update",
                 serde_json::json!({
@@ -825,7 +836,7 @@ async fn test_service_health_monitoring(ctx: TestContext) -> Result<()> {
                     "uptime_seconds": i * 60,
                     "events_processed": i * 10
                 }),
-            )
+            ))
             .await?;
 
         assert!(
@@ -885,7 +896,7 @@ async fn test_resource_management(ctx: TestContext) -> Result<()> {
 
         for i in 0..events_per_pattern {
             let event = ctx
-                .publish_event(
+                .publish(DynamicPayload::new(
                     source.as_str(),
                     "resource.test",
                     serde_json::json!({
@@ -894,7 +905,7 @@ async fn test_resource_management(ctx: TestContext) -> Result<()> {
                         "sequence": i,
                         "data": large_data
                     }),
-                )
+                ))
                 .await?;
 
             assert!(
@@ -907,13 +918,13 @@ async fn test_resource_management(ctx: TestContext) -> Result<()> {
 
     // Test service stability after resource variation
     let stability_event = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             source.as_str(),
             "stability.check",
             serde_json::json!({
                 "message": "Service should remain stable after resource variation"
             }),
-        )
+        ))
         .await?;
 
     assert!(
@@ -969,14 +980,14 @@ async fn test_timeout_and_deadline_handling(ctx: TestContext) -> Result<()> {
     let timeout_duration = Duration::from_secs(5);
 
     let normal_operation = timeout(timeout_duration, async {
-        ctx.publish_event(
+        ctx.publish(DynamicPayload::new(
             "timeout-test",
             "timeout.test",
             serde_json::json!({
                 "operation": "normal",
                 "timestamp": chrono::Utc::now().to_rfc3339()
             }),
-        )
+        ))
         .await
     })
     .await;
@@ -998,14 +1009,14 @@ async fn test_timeout_and_deadline_handling(ctx: TestContext) -> Result<()> {
 
         for i in 0..10 {
             let event = ctx
-                .publish_event(
+                .publish(DynamicPayload::new(
                     "timeout-test",
                     "batch.timeout.test",
                     serde_json::json!({
                         "batch_sequence": i,
                         "data": format!("Batch timeout test {}", i)
                     }),
-                )
+                ))
                 .await?;
 
             batch_results.push(event);

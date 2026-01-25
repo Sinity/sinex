@@ -5,55 +5,35 @@
 //! - Follow provenance links from operation to affected events
 
 use color_eyre::eyre::{eyre, Context, Result};
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use sqlx::PgPool;
 
-/// Audit trail record combining operation and provenance information
-#[derive(Debug, Serialize)]
-pub struct AuditTrail {
-    pub operation: OperationRecord,
-    pub affected_events: Vec<EventSummary>,
-}
+// Re-export shared types
+pub use sinex_core::rpc::audit::{
+    AuditGetRequest, AuditGetResponse, AuditTrail, EventSummary, OperationRecord,
+};
 
-/// Operation record from database
-#[derive(Debug, Serialize, sqlx::FromRow)]
-pub struct OperationRecord {
-    pub id: String,
-    pub operation_type: String,
-    pub operator: String,
-    pub scope: Option<Value>,
-    pub result_status: String,
-    pub result_message: Option<String>,
-    pub preview_summary: Option<Value>,
-    pub duration_ms: Option<i32>,
-}
-
-/// Event summary for audit trail
-#[derive(Debug, Serialize, sqlx::FromRow)]
-pub struct EventSummary {
-    pub id: String,
-    pub source: String,
-    pub event_type: String,
-    pub ts_orig: Option<String>,
-    pub ts_ingest: String,
-    pub provenance_operation_id: Option<String>,
-}
-
-/// Parameters for fetching audit trail
-#[derive(Debug, Deserialize)]
-struct AuditGetParams {
-    operation_id: String,
+/// Internal DB row type for operation records
+#[derive(Debug, sqlx::FromRow)]
+struct OperationRow {
+    id: String,
+    operation_type: String,
+    operator: String,
+    scope: Option<Value>,
+    result_status: String,
+    result_message: Option<String>,
+    preview_summary: Option<Value>,
+    duration_ms: Option<i32>,
 }
 
 /// Handle GET /audit/{operation_id} - get audit trail for an operation
 pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
-    let audit_params: AuditGetParams =
+    let request: AuditGetRequest =
         serde_json::from_value(params).wrap_err("Invalid audit parameters")?;
 
     // Fetch the operation record
-    let operation = sqlx::query_as!(
-        OperationRecord,
+    let row = sqlx::query_as!(
+        OperationRow,
         r#"
         SELECT
             id::text as "id!",
@@ -67,14 +47,26 @@ pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
         FROM core.operations_log
         WHERE id::text = $1
         "#,
-        audit_params.operation_id
+        request.operation_id
     )
     .fetch_optional(pool)
     .await
     .map_err(|e| eyre!("Failed to fetch operation: {}", e))?;
 
-    let Some(operation) = operation else {
-        return Err(eyre!("Operation not found: {}", audit_params.operation_id));
+    let Some(row) = row else {
+        return Err(eyre!("Operation not found: {}", request.operation_id));
+    };
+
+    // Convert DB row to RPC type
+    let operation = OperationRecord {
+        id: row.id,
+        operation_type: row.operation_type,
+        operator: row.operator,
+        scope: row.scope,
+        result_status: row.result_status,
+        result_message: row.result_message,
+        preview_summary: row.preview_summary,
+        duration_ms: row.duration_ms,
     };
 
     // TODO: Implement provenance tracking for audit trail
@@ -83,20 +75,22 @@ pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
     // For now, return empty array
     let affected_events: Vec<EventSummary> = Vec::new();
 
-    let trail = AuditTrail {
-        operation,
-        affected_events,
+    let event_count = affected_events.len();
+    let response = AuditGetResponse {
+        audit_trail: AuditTrail {
+            operation,
+            affected_events,
+        },
+        event_count,
     };
 
-    Ok(json!({
-        "audit_trail": trail,
-        "event_count": trail.affected_events.len(),
-    }))
+    Ok(serde_json::to_value(response)?)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use sinex_test_utils::{sinex_test, TestContext};
 
     #[sinex_test]
@@ -114,12 +108,13 @@ mod tests {
         // Fetch audit trail
         let result = handle_audit_get(ctx.pool(), json!({ "operation_id": operation_id })).await?;
 
-        assert_eq!(result["audit_trail"]["operation"]["id"], operation_id);
-        assert_eq!(
-            result["audit_trail"]["operation"]["operation_type"],
-            "test-audit"
-        );
-        assert!(result["audit_trail"]["affected_events"].is_array());
+        // Parse as typed response
+        let response: AuditGetResponse = serde_json::from_value(result)?;
+
+        assert_eq!(response.audit_trail.operation.id, operation_id);
+        assert_eq!(response.audit_trail.operation.operation_type, "test-audit");
+        assert!(response.audit_trail.affected_events.is_empty());
+        assert_eq!(response.event_count, 0);
 
         Ok(())
     }

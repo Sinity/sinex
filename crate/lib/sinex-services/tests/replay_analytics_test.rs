@@ -1,16 +1,22 @@
 use chrono::{Duration as ChronoDuration, Utc};
 use serde_json::json;
-use sinex_core::db::models::event::Event;
 use sinex_core::db::replay::state_machine::{ReplayScope, ReplayState, ReplayStateMachine};
+use sinex_core::DynamicPayload;
 use sinex_services::AnalyticsService;
 use sinex_test_utils::prelude::*;
 use std::collections::HashMap;
 
 #[sinex_test]
 async fn replay_outcomes_surface_in_analytics(ctx: TestContext) -> TestResult<()> {
-    let event =
-        Event::<serde_json::Value>::test_event("fs-test", "file.created", json!({"path": "/tmp"}));
-    ctx.pool.events().insert(event).await?;
+    let ctx = ctx.with_nats().shared().await?;
+
+    // Publish test event via NATS pipeline
+    ctx.publish(DynamicPayload::new(
+        "fs-test",
+        "file.created",
+        json!({"path": "/tmp"}),
+    ))
+    .await?;
 
     let replay = ReplayStateMachine::new(ctx.pool.clone());
     let end = Utc::now();

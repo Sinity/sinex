@@ -1,14 +1,14 @@
 use std::path::Path;
 use std::time::Duration;
 
+use chrono::{DateTime, Utc};
 use reqwest::ClientBuilder;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sinex_core::rpc::{coordination::*, dlq::*, methods, nodes::*, replay::*, system::*};
 
 use crate::auth::{load_client_cert, load_root_ca, load_token};
 use crate::client::RetryConfig;
-use crate::model::nodes::{NodeHealth, NodeInfo};
-use crate::model::replay::{DlqInfo, DlqMessage, ReplayOperation, ReplayPlan};
 use crate::model::search::{SearchQuery, SearchResult};
 use crate::model::NodeRole;
 use crate::Result;
@@ -286,9 +286,10 @@ impl GatewayClient {
     // ==================== Core Commands ====================
 
     /// Get system health status
-    pub async fn health(&self) -> Result<NodeHealth> {
+    pub async fn health(&self) -> Result<SystemHealthResponse> {
+        let req = SystemHealthRequest {};
         let result = self
-            .call_rpc("coordination.instance_health", json!({}))
+            .call_rpc(methods::SYSTEM_HEALTH, serde_json::to_value(&req)?)
             .await?;
         serde_json::from_value(result).map_err(Into::into)
     }
@@ -296,128 +297,239 @@ impl GatewayClient {
     // ==================== Node Commands ====================
 
     /// List all nodes
-    pub async fn list_nodes(&self, role: Option<NodeRole>) -> Result<Vec<NodeInfo>> {
-        let params = if let Some(r) = role {
-            json!({ "role": r })
-        } else {
-            json!({})
-        };
-
-        let result = self.call_rpc("coordination.list_instances", params).await?;
-        serde_json::from_value(result).map_err(Into::into)
+    pub async fn list_nodes(&self, _role: Option<NodeRole>) -> Result<Vec<InstanceInfo>> {
+        let req = ListInstancesRequest::default();
+        let result = self
+            .call_rpc(
+                methods::COORDINATION_LIST_INSTANCES,
+                serde_json::to_value(&req)?,
+            )
+            .await?;
+        let response: ListInstancesResponse = serde_json::from_value(result)?;
+        Ok(response.instances)
     }
 
     /// Get node status
-    pub async fn node_status(&self, node_id: &str) -> Result<NodeInfo> {
+    pub async fn node_status(&self, node_id: &str) -> Result<InstanceHealthResponse> {
+        let req = InstanceHealthRequest {
+            instance_id: node_id.into(),
+        };
         let result = self
-            .call_rpc("coordination.instance_health", json!({ "id": node_id }))
+            .call_rpc(
+                methods::COORDINATION_INSTANCE_HEALTH,
+                serde_json::to_value(&req)?,
+            )
             .await?;
         serde_json::from_value(result).map_err(Into::into)
     }
 
     /// Drain a node for maintenance
-    pub async fn drain_node(&self, node_id: &str) -> Result<()> {
-        self.call_rpc("nodes.drain", json!({ "id": node_id }))
+    pub async fn drain_node(&self, node_id: &str, reason: Option<&str>) -> Result<()> {
+        let req = NodeDrainRequest {
+            node_id: node_id.into(),
+            reason: reason.map(String::from),
+        };
+        self.call_rpc(methods::NODES_DRAIN, serde_json::to_value(&req)?)
             .await?;
         Ok(())
     }
 
     /// Resume a drained node
     pub async fn resume_node(&self, node_id: &str) -> Result<()> {
-        self.call_rpc("nodes.resume", json!({ "id": node_id }))
+        let req = NodeResumeRequest {
+            node_id: node_id.into(),
+        };
+        self.call_rpc(methods::NODES_RESUME, serde_json::to_value(&req)?)
             .await?;
         Ok(())
     }
 
     /// Set node horizon (cutoff time for event processing)
     pub async fn set_node_horizon(&self, node_id: &str, horizon: &str) -> Result<()> {
-        self.call_rpc(
-            "nodes.set_horizon",
-            json!({ "node_id": node_id, "horizon": horizon }),
-        )
-        .await?;
+        // Parse horizon string to DateTime<Utc>
+        let horizon_dt: DateTime<Utc> = DateTime::parse_from_rfc3339(horizon)
+            .map(|dt| dt.with_timezone(&Utc))
+            .or_else(|_| {
+                // Try parsing as unix timestamp
+                horizon
+                    .parse::<i64>()
+                    .ok()
+                    .and_then(|ts| DateTime::from_timestamp(ts, 0))
+                    .ok_or_else(|| color_eyre::eyre::eyre!("Invalid horizon format"))
+            })?;
+
+        let req = NodeSetHorizonRequest {
+            node_id: node_id.into(),
+            horizon: horizon_dt,
+        };
+        self.call_rpc(methods::NODES_SET_HORIZON, serde_json::to_value(&req)?)
+            .await?;
         Ok(())
     }
 
     // ==================== Replay Commands ====================
 
     /// Create a replay plan
-    pub async fn replay_plan(&self, query: &str) -> Result<ReplayPlan> {
+    pub async fn replay_plan(
+        &self,
+        processor_id: &str,
+        since: Option<&str>,
+        until: Option<&str>,
+    ) -> Result<ReplayOperation> {
+        // Build time window from relative or absolute times
+        let time_window = if since.is_some() || until.is_some() {
+            let now = chrono::Utc::now();
+            let start = since
+                .map(|s| Self::parse_time(s, now))
+                .transpose()?
+                .unwrap_or_else(|| (now - chrono::Duration::hours(24)).to_rfc3339());
+            let end = until
+                .map(|u| Self::parse_time(u, now))
+                .transpose()?
+                .unwrap_or_else(|| now.to_rfc3339());
+            Some((start, end))
+        } else {
+            None
+        };
+
+        let req = ReplayCreateRequest {
+            scope: ReplayScope {
+                processor_id: processor_id.to_string(),
+                time_window,
+                material_filter: None,
+                filters: std::collections::HashMap::new(),
+            },
+            actor: Some("sinexctl".to_string()),
+        };
+
         let result = self
-            .call_rpc("replay.create_operation", json!({ "query": query }))
+            .call_rpc(methods::REPLAY_CREATE, serde_json::to_value(&req)?)
             .await?;
-        serde_json::from_value(result).map_err(Into::into)
+
+        // Gateway returns { "operation": ReplayOperation }
+        let response: ReplayCreateResponse = serde_json::from_value(result)?;
+        Ok(response.operation)
+    }
+
+    /// Parse relative time (e.g., "1h", "24h") or RFC3339 timestamp
+    fn parse_time(input: &str, now: chrono::DateTime<chrono::Utc>) -> Result<String> {
+        // Try relative format first (e.g., "1h", "24h", "7d")
+        if let Some(hours) = input.strip_suffix('h') {
+            if let Ok(h) = hours.parse::<i64>() {
+                return Ok((now - chrono::Duration::hours(h)).to_rfc3339());
+            }
+        }
+        if let Some(days) = input.strip_suffix('d') {
+            if let Ok(d) = days.parse::<i64>() {
+                return Ok((now - chrono::Duration::days(d)).to_rfc3339());
+            }
+        }
+        if let Some(mins) = input.strip_suffix('m') {
+            if let Ok(m) = mins.parse::<i64>() {
+                return Ok((now - chrono::Duration::minutes(m)).to_rfc3339());
+            }
+        }
+
+        // Try RFC3339 format
+        if chrono::DateTime::parse_from_rfc3339(input).is_ok() {
+            return Ok(input.to_string());
+        }
+
+        Err(color_eyre::eyre::eyre!(
+            "Invalid time format '{}': use relative (1h, 24h, 7d) or RFC3339",
+            input
+        ))
     }
 
     /// Submit a replay plan for execution
-    pub async fn replay_submit(&self, plan_id: &str) -> Result<ReplayOperation> {
+    pub async fn replay_submit(&self, operation_id: &str) -> Result<ReplayOperation> {
         // First approve
-        self.call_rpc(
-            "replay.approve_operation",
-            json!({ "operation_id": plan_id }),
-        )
-        .await?;
+        let approve_req = ReplayApproveRequest {
+            operation_id: operation_id.to_string(),
+            approver: Some("sinexctl".to_string()),
+        };
+        self.call_rpc(methods::REPLAY_APPROVE, serde_json::to_value(&approve_req)?)
+            .await?;
 
         // Then execute
+        let exec_req = ReplayExecuteRequest {
+            operation_id: operation_id.to_string(),
+            executor: Some("sinexctl".to_string()),
+        };
         let result = self
-            .call_rpc(
-                "replay.execute_operation",
-                json!({ "operation_id": plan_id }),
-            )
+            .call_rpc(methods::REPLAY_EXECUTE, serde_json::to_value(&exec_req)?)
             .await?;
-        serde_json::from_value(result).map_err(Into::into)
+
+        let response: ReplayExecuteResponse = serde_json::from_value(result)?;
+        Ok(response.operation)
     }
 
     /// Get replay operation status
     pub async fn replay_status(&self, operation_id: &str) -> Result<ReplayOperation> {
+        let req = ReplayStatusRequest {
+            operation_id: operation_id.to_string(),
+        };
         let result = self
-            .call_rpc(
-                "replay.operation_status",
-                json!({ "operation_id": operation_id }),
-            )
+            .call_rpc(methods::REPLAY_STATUS, serde_json::to_value(&req)?)
             .await?;
-        serde_json::from_value(result).map_err(Into::into)
+
+        let response: ReplayStatusResponse = serde_json::from_value(result)?;
+        Ok(response.operation)
     }
 
     /// List all replay operations
     pub async fn replay_list(&self) -> Result<Vec<ReplayOperation>> {
-        let result = self.call_rpc("replay.list_operations", json!({})).await?;
-        serde_json::from_value(result).map_err(Into::into)
+        let req = ReplayListRequest::default();
+        let result = self
+            .call_rpc(methods::REPLAY_LIST, serde_json::to_value(&req)?)
+            .await?;
+
+        let response: ReplayListResponse = serde_json::from_value(result)?;
+        Ok(response.operations)
     }
 
     // ==================== DLQ Commands ====================
 
     /// List dead letter queues
-    pub async fn dlq_list(&self) -> Result<Vec<DlqInfo>> {
-        let result = self.call_rpc("dlq.list", json!({})).await?;
+    pub async fn dlq_list(&self) -> Result<DlqListResponse> {
+        let req = DlqListRequest {};
+        let result = self
+            .call_rpc(methods::DLQ_LIST, serde_json::to_value(&req)?)
+            .await?;
         serde_json::from_value(result).map_err(Into::into)
     }
 
     /// Peek at messages in a DLQ
-    pub async fn dlq_peek(&self, subject: &str, limit: Option<u32>) -> Result<Vec<DlqMessage>> {
-        let params = json!({
-            "subject": subject,
-            "limit": limit.unwrap_or(10)
-        });
-        let result = self.call_rpc("dlq.peek", params).await?;
+    pub async fn dlq_peek(&self, limit: Option<usize>) -> Result<DlqPeekResponse> {
+        let req = DlqPeekRequest {
+            limit: limit.unwrap_or(10),
+        };
+        let result = self
+            .call_rpc(methods::DLQ_PEEK, serde_json::to_value(&req)?)
+            .await?;
         serde_json::from_value(result).map_err(Into::into)
     }
 
     /// Requeue messages from DLQ
-    pub async fn dlq_requeue(&self, event_id: Option<String>, all: bool) -> Result<()> {
-        let params = json!({
-            "event_id": event_id,
-            "all": all
-        });
-        self.call_rpc("dlq.requeue", params).await?;
-        Ok(())
+    pub async fn dlq_requeue(
+        &self,
+        event_id: Option<String>,
+        all: bool,
+    ) -> Result<DlqRequeueResponse> {
+        let req = DlqRequeueRequest { event_id, all };
+        let result = self
+            .call_rpc(methods::DLQ_REQUEUE, serde_json::to_value(&req)?)
+            .await?;
+        serde_json::from_value(result).map_err(Into::into)
     }
 
     /// Purge all messages from DLQ
-    pub async fn dlq_purge(&self, confirm: bool) -> Result<()> {
-        let params = json!({ "confirm": confirm });
-        self.call_rpc("dlq.purge", params).await?;
-        Ok(())
+    pub async fn dlq_purge(&self, confirm: bool) -> Result<DlqPurgeResponse> {
+        let req = DlqPurgeRequest { confirm };
+        let result = self
+            .call_rpc(methods::DLQ_PURGE, serde_json::to_value(&req)?)
+            .await?;
+        serde_json::from_value(result).map_err(Into::into)
     }
 
     // ==================== Search Commands ====================
@@ -487,8 +599,19 @@ impl GatewayClient {
     // ==================== Audit Commands ====================
 
     /// Get audit trail for an operation
-    pub async fn audit_get(&self, operation_id: &str) -> Result<Value> {
-        let params = json!({ "operation_id": operation_id });
-        self.call_rpc("audit.get", params).await
+    pub async fn audit_get(
+        &self,
+        operation_id: &str,
+    ) -> Result<sinex_core::rpc::audit::AuditGetResponse> {
+        use sinex_core::rpc::audit::{AuditGetRequest, AuditGetResponse};
+
+        let request = AuditGetRequest {
+            operation_id: operation_id.to_string(),
+        };
+        let result = self
+            .call_rpc("audit.get", serde_json::to_value(&request)?)
+            .await?;
+        let response: AuditGetResponse = serde_json::from_value(result)?;
+        Ok(response)
     }
 }

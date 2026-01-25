@@ -17,7 +17,7 @@ use sinex_core::types::events::{
     BlobIngestedPayload, BlobRetrievedPayload, BlobVerifiedPayload, StorageStatisticsPayload,
 };
 use sinex_core::DbPoolExt;
-use sinex_core::{Blob, Event, EventBuilder, Id, JsonValue, SourceMaterial};
+use sinex_core::{Blob, DynamicPayload, Event, Id, JsonValue, SourceMaterial};
 use std::time::Instant;
 use tracing::{debug, info, warn};
 
@@ -65,8 +65,8 @@ impl BlobManager {
     ) -> Result<Event<JsonValue>> {
         let payload_value = serde_json::to_value(payload)
             .map_err(|e| eyre!("Failed to serialize blob event payload: {}", e))?;
-        EventBuilder::dynamic("blob-manager", event_type, payload_value)
-            .from_material(material_id, 0)
+        DynamicPayload::new("blob-manager", event_type, payload_value)
+            .from_material(material_id)
             .build()
             .map_err(|err| {
                 eyre!(

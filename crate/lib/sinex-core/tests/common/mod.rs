@@ -8,43 +8,27 @@ pub use sinex_test_utils::prelude::*;
 
 // Test-specific payload imports that are frequently used
 pub use sinex_core::types::events::payloads::{
-    AtuinCommandExecutedPayload, 
+    AtuinCommandExecutedPayload,
     ClipboardCopiedPayload,
-    FileCreatedPayload, 
+    FileCreatedPayload,
     FileDeletedPayload,
-    FileModifiedPayload, 
+    FileModifiedPayload,
     KittyCommandExecutedPayload,
 };
+
+// DynamicPayload for runtime-specified source/type
+pub use sinex_core::DynamicPayload;
 
 // Common test patterns for nested modules
 pub mod patterns {
     use super::*;
     use sinex_core::db::models::{Event, JsonValue};
-    
+
     /// Common assertion pattern for event validation
     pub fn assert_event_basic_structure(event: &Event<JsonValue>) {
         assert!(!event.source.is_empty(), "Event source should not be empty");
         assert!(!event.event_type.is_empty(), "Event type should not be empty");
         assert!(!event.host.is_empty(), "Event host should not be empty");
-    }
-    
-    /// Common pattern for creating test events with provenance
-    pub fn create_event_with_source_ids(
-        ctx: &TestContext,
-        source: &str,
-        event_type: &str,
-        payload: Value,
-        source_events: Vec<Id<Event<JsonValue>>>,
-    ) -> impl std::future::Future<Output = Result<Event<JsonValue>>> + '_ {
-        async move {
-            let event = Event::<JsonValue>::test_event(
-                EventSource::new(source),
-                EventType::new(event_type),
-                payload,
-            );
-            let inserted = ctx.pool.events().insert(event).await?;
-            Ok(inserted)
-        }
     }
 }
 
@@ -120,14 +104,14 @@ pub mod builders {
         
         pub async fn build(self, ctx: &TestContext) -> Result<RawEvent> {
             let mut payload = json!({"path": self.path});
-            
+
             if let Some(size) = self.size {
                 payload["size"] = json!(size);
             }
-            
+
             payload["timestamp"] = json!(Utc::now().to_rfc3339());
-            
-            ctx.publish_event("fs-watcher", self.event_type.as_str(), payload).await
+
+            ctx.publish(DynamicPayload::new("fs-watcher", self.event_type.as_str(), payload)).await
         }
     }
 }
@@ -165,22 +149,24 @@ pub mod performance {
     
     /// Helper to create bulk events for performance testing
     pub async fn create_bulk_events(
-        ctx: &TestContext, 
+        ctx: &TestContext,
         count: usize,
         source: &str,
         event_type: &str,
     ) -> Result<Vec<Event<JsonValue>>> {
         let mut events = Vec::new();
-        
+
         for i in 0..count {
-            let event = ctx.publish_event(
-                source,
-                event_type,
-                json!({"index": i, "batch_id": uuid::Uuid::new_v4()}),
+            let event = ctx.publish(
+                DynamicPayload::new(
+                    source,
+                    event_type,
+                    json!({"index": i, "batch_id": uuid::Uuid::new_v4()}),
+                ),
             ).await?;
             events.push(event);
         }
-        
+
         Ok(events)
     }
     

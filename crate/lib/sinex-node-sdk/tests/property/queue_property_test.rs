@@ -14,6 +14,7 @@ use proptest::prelude::*;
 use proptest::test_runner::TestCaseError;
 use serde_json::{json, Value};
 use sinex_core::types::ulid::Ulid;
+use sinex_core::DynamicPayload;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
 use sinex_test_utils::{prelude::*, EphemeralNats, TestResult};
 use std::sync::LazyLock;
@@ -70,6 +71,7 @@ fn checkpoint_progress_is_monotonic() -> TestResult<()> {
                     last_activity: chrono::Utc::now(),
                     data: Some(serde_json::json!({"batch": idx})),
                     version: 2,
+                    revision: 0,
                 };
 
                 manager.save_checkpoint(&state).await?;
@@ -112,6 +114,7 @@ sinex_proptest! {
             last_activity: chrono::Utc::now(),
             data: Some(json_payload.clone()),
             version: 1,
+            revision: 0,
         };
 
         let encoded = serde_json::to_string(&state)?;
@@ -136,11 +139,11 @@ async fn queue_event_insertion_preserves_order(
 
     for batch in 0..batch_count {
         for index in 0..batch_size {
-            ctx.publish_event(
+            ctx.publish(DynamicPayload::new(
                 "queue.test",
                 "batch.event",
                 json!({ "batch": batch, "index": index }),
-            )
+            ))
             .await
             .map_err(report_to_test_error)?;
         }

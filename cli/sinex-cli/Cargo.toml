@@ -36,7 +36,7 @@ chrono = { workspace = true, features = ["serde"] }
 # ULID support (for event IDs)
 sinex-schema = { path = "../../crate/lib/sinex-schema", features = ["arbitrary"] }
 
-# Core types - domain types, validation (no sqlx/nats)
+# Core types - domain types, validation, RPC types (no sqlx/nats)
 sinex-core = { path = "../../crate/lib/sinex-core", default-features = false, features = ["types-only"] }
 
 # Configuration management
@@ -71,3 +71,5 @@ insta = { workspace = true }
 assert_cmd = "2"
 predicates = "3"
 tempfile = "3"
+toml = "0.8"
+serial_test = "3"

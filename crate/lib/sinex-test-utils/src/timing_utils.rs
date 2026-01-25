@@ -919,8 +919,12 @@ mod tests {
         ctx.ensure_clean().await?;
         // Insert some events
         for i in 0..5 {
-            ctx.publish_event("wait-test", "test.event", json!({"index": i}))
-                .await?;
+            ctx.publish(DynamicPayload::new(
+                "wait-test",
+                "test.event",
+                json!({"index": i}),
+            ))
+            .await?;
         }
 
         // Wait for event count
@@ -942,13 +946,21 @@ mod tests {
                 crate::db_common::verify_clean_state(&ctx.pool).await?;
                 // Insert events from different sources
                 for i in 0..3 {
-                    ctx.publish_event("source-a", "test.event", json!({"index": i}))
-                        .await?;
+                    ctx.publish(DynamicPayload::new(
+                        "source-a",
+                        "test.event",
+                        json!({"index": i}),
+                    ))
+                    .await?;
                 }
 
                 for i in 0..2 {
-                    ctx.publish_event("source-b", "test.event", json!({"index": i}))
-                        .await?;
+                    ctx.publish(DynamicPayload::new(
+                        "source-b",
+                        "test.event",
+                        json!({"index": i}),
+                    ))
+                    .await?;
                 }
 
                 // Wait for specific source
@@ -957,8 +969,12 @@ mod tests {
                 if count_a < 3 {
                     let missing = 3 - count_a;
                     for i in 0..missing {
-                        ctx.publish_event("source-a", "test.event", json!({"index": 10 + i}))
-                            .await?;
+                        ctx.publish(DynamicPayload::new(
+                            "source-a",
+                            "test.event",
+                            json!({"index": 10 + i}),
+                        ))
+                        .await?;
                     }
                     count_a =
                         WaitHelpers::wait_for_source_events(&ctx.pool, "source-a", 3, 10).await?;
@@ -970,8 +986,12 @@ mod tests {
                 if count_b < 2 {
                     let missing = 2 - count_b;
                     for i in 0..missing {
-                        ctx.publish_event("source-b", "test.event", json!({"index": 20 + i}))
-                            .await?;
+                        ctx.publish(DynamicPayload::new(
+                            "source-b",
+                            "test.event",
+                            json!({"index": 20 + i}),
+                        ))
+                        .await?;
                     }
                     count_b =
                         WaitHelpers::wait_for_source_events(&ctx.pool, "source-b", 2, 10).await?;
@@ -1098,8 +1118,12 @@ mod tests {
 
         // Insert events
         for i in 0..3 {
-            ctx.publish_event("timing-test", "integration", json!({"index": i}))
-                .await?;
+            ctx.publish(DynamicPayload::new(
+                "timing-test",
+                "integration",
+                json!({"index": i}),
+            ))
+            .await?;
         }
 
         // Use timing utils to wait
@@ -1108,8 +1132,12 @@ mod tests {
             .unwrap_or(0);
         if count < 3 {
             for j in 0..(3 - count) {
-                ctx.publish_event("timing-test", "integration", json!({"topup": j}))
-                    .await?;
+                ctx.publish(DynamicPayload::new(
+                    "timing-test",
+                    "integration",
+                    json!({"topup": j}),
+                ))
+                .await?;
             }
         }
 

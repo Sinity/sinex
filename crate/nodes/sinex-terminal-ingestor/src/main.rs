@@ -26,6 +26,7 @@ static GLOBAL: MiMalloc = MiMalloc;
 struct UnifiedTerminalNode(SimpleIngestorWrapper<TerminalProcessor>);
 
 impl UnifiedTerminalNode {
+    #[allow(dead_code)] // Convenience constructor
     pub fn new() -> Self {
         Self::default()
     }

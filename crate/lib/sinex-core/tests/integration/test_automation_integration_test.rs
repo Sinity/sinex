@@ -42,7 +42,7 @@ async fn publish_event_via_pipeline(
     payload: serde_json::Value,
 ) -> TestResult<EventId> {
     let publisher = TestNodePublisher::new(ctx.nats_client(), source.to_string());
-    let event_id = publisher.publish_event(event_type, payload).await?;
+    let event_id = publisher.publish(event_type, payload).await?;
     WaitHelpers::wait_for_condition(
         || {
             let pool = ctx.pool.clone();
@@ -478,7 +478,7 @@ async fn test_automaton_performance_under_load(ctx: TestContext) -> TestResult<(
     let publisher = TestNodePublisher::new(ctx.nats_client(), "performance".to_string());
     for i in 0..event_count {
         publisher
-            .publish_event(
+            .publish(
                 "load.test",
                 json!({
                     "sequence": i,

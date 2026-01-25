@@ -26,6 +26,9 @@ sqlx = { workspace = true, features = ["runtime-tokio-rustls", "postgres", "uuid
 # Async runtime
 tokio = { workspace = true, features = ["full"] }
 
+# Socket options for hot reload (SO_REUSEPORT)
+socket2 = "0.5"
+
 # Web framework for RPC server
 axum = { workspace = true }
 tower = { version = "0.5", features = ["util", "timeout", "limit", "load-shed"] }

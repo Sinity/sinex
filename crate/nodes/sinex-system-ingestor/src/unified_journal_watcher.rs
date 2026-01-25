@@ -10,7 +10,7 @@
 //! events based on the presence of `_SYSTEMD_UNIT` field to emit both journal
 //! and systemd-specific events, reducing process overhead by 50%.
 
-use chrono::Utc;
+use chrono::{DateTime, TimeZone, Utc};
 use sinex_core::fs::atomic_write;
 use sinex_core::{Event, JsonValue};
 
@@ -22,6 +22,11 @@ use sinex_core::types::events::{
     JournalSyncCompletedPayload as EventJournalSyncCompletedPayload, SystemdTimerTriggeredPayload,
     SystemdUnitFailedPayload, SystemdUnitReloadedPayload, SystemdUnitStartedPayload,
     SystemdUnitStoppedPayload,
+};
+use sinex_core::{
+    JournalSyncType, Microseconds, ProcessId, SyslogPriority,
+    SystemdActiveState as CoreSystemdActiveState, SystemdUnitType as CoreSystemdUnitType, UnixGid,
+    UnixUid,
 };
 use sinex_node_sdk::NodeResult;
 use std::collections::{HashMap, HashSet};
@@ -35,6 +40,35 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use crate::watcher_lifecycle::{WatcherHealth, WatcherLifecycle};
+
+/// Convert local SystemdUnitType to core SystemdUnitType
+fn convert_unit_type(local: SystemdUnitType) -> CoreSystemdUnitType {
+    match local {
+        SystemdUnitType::Service => CoreSystemdUnitType::Service,
+        SystemdUnitType::Timer => CoreSystemdUnitType::Timer,
+        SystemdUnitType::Socket => CoreSystemdUnitType::Socket,
+        SystemdUnitType::Target => CoreSystemdUnitType::Target,
+        SystemdUnitType::Mount => CoreSystemdUnitType::Mount,
+        SystemdUnitType::Other => CoreSystemdUnitType::Other,
+    }
+}
+
+/// Parse unit type string to core SystemdUnitType
+fn parse_systemd_unit_type(s: &str) -> CoreSystemdUnitType {
+    if s.ends_with(".service") {
+        CoreSystemdUnitType::Service
+    } else if s.ends_with(".timer") {
+        CoreSystemdUnitType::Timer
+    } else if s.ends_with(".socket") {
+        CoreSystemdUnitType::Socket
+    } else if s.ends_with(".target") {
+        CoreSystemdUnitType::Target
+    } else if s.ends_with(".mount") {
+        CoreSystemdUnitType::Mount
+    } else {
+        CoreSystemdUnitType::Other
+    }
+}
 
 /// Unified journal watcher with systemd event filtering
 pub struct UnifiedJournalWatcher {
@@ -276,7 +310,7 @@ impl UnifiedJournalWatcher {
         // Send sync event
         if entries_count > 0 {
             let sync_payload = JournalSyncPayload {
-                sync_type: "initial_import".to_string(),
+                sync_type: JournalSyncType::InitialImport,
                 start_cursor: first_cursor,
                 end_cursor: last_cursor.unwrap_or_default(),
                 entries_count,
@@ -491,12 +525,10 @@ impl UnifiedJournalWatcher {
             .to_string();
 
         // Parse timestamp
-        let timestamp = if timestamp_us > 0 {
-            chrono::DateTime::from_timestamp_micros(timestamp_us)
-                .map(|dt| dt.to_rfc3339())
-                .unwrap_or_else(|| chrono::Utc::now().to_rfc3339())
+        let timestamp: DateTime<Utc> = if timestamp_us > 0 {
+            chrono::DateTime::from_timestamp_micros(timestamp_us).unwrap_or_else(chrono::Utc::now)
         } else {
-            chrono::Utc::now().to_rfc3339()
+            chrono::Utc::now()
         };
 
         // Extract optional fields
@@ -609,23 +641,23 @@ impl UnifiedJournalWatcher {
         };
 
         let cursor_str = payload.cursor.clone();
-        let timestamp_str = payload.timestamp.clone();
+        let timestamp_dt = payload.timestamp;
 
         let mut event = Event::new(
             EventJournalEntryWrittenPayload {
                 cursor: payload.cursor,
-                timestamp_us: payload.timestamp_us,
+                timestamp_us: Microseconds::from_micros(payload.timestamp_us),
                 timestamp: payload.timestamp,
                 hostname: payload.hostname,
                 unit: payload.unit,
                 syslog_identifier: payload.syslog_identifier,
-                pid: payload.pid,
-                uid: payload.uid,
-                gid: payload.gid,
+                pid: payload.pid.map(ProcessId::from_raw),
+                uid: payload.uid.map(UnixUid::from_raw),
+                gid: payload.gid.map(UnixGid::from_raw),
                 cmdline: payload.cmdline,
                 exe: payload.exe,
-                unit_type: payload.unit_type,
-                priority: payload.priority,
+                unit_type: payload.unit_type.as_deref().map(parse_systemd_unit_type),
+                priority: payload.priority.map(SyslogPriority::from_raw),
                 facility: payload.facility,
                 message: payload.message,
                 fields: payload.fields,
@@ -643,10 +675,8 @@ impl UnifiedJournalWatcher {
         let id = sinex_core::types::Id::from_ulid(ulid);
         event.id = Some(id);
 
-        // Ensure ts_orig matches journal timestamp (already passed as payload.timestamp but good to be explicit)
-        if let Ok(ts) = chrono::DateTime::parse_from_rfc3339(&timestamp_str) {
-            event.ts_orig = Some(ts.with_timezone(&Utc));
-        }
+        // Ensure ts_orig matches journal timestamp
+        event.ts_orig = Some(timestamp_dt);
 
         let json_event = event.to_json_event().map_err(|e| {
             sinex_node_sdk::NodeError::Processing(format!(
@@ -693,13 +723,17 @@ impl UnifiedJournalWatcher {
 
         // Construct payload based on message type
         let event = if message.contains("Started ") {
-            let unit_type = SystemdUnitType::from_unit_name(unit_name);
+            let unit_type = convert_unit_type(SystemdUnitType::from_unit_name(unit_name));
+            let main_pid = entry["_PID"]
+                .as_str()
+                .and_then(|s| s.parse::<u32>().ok())
+                .map(ProcessId::from_raw);
             let mut e = Event::new(
                 SystemdUnitStartedPayload {
                     unit_name: unit_name.to_string(),
-                    unit_type: unit_type.to_string(),
-                    main_pid: entry["_PID"].as_str().and_then(|s| s.parse().ok()),
-                    active_state: SystemdUnitState::Active.to_string(),
+                    unit_type,
+                    main_pid,
+                    active_state: CoreSystemdActiveState::Active,
                     sub_state: "running".to_string(),
                 },
                 material.initial_provenance(),
@@ -708,13 +742,13 @@ impl UnifiedJournalWatcher {
             e.ts_orig = ts_orig;
             e.to_json_event().ok()?
         } else if message.contains("Stopped ") {
-            let unit_type = SystemdUnitType::from_unit_name(unit_name);
+            let unit_type = convert_unit_type(SystemdUnitType::from_unit_name(unit_name));
             let mut e = Event::new(
                 SystemdUnitStoppedPayload {
                     unit_name: unit_name.to_string(),
-                    unit_type: unit_type.to_string(),
+                    unit_type,
                     exit_code: None,
-                    active_state: SystemdUnitState::Inactive.to_string(),
+                    active_state: CoreSystemdActiveState::Inactive,
                     sub_state: "dead".to_string(),
                 },
                 material.initial_provenance(),
@@ -730,8 +764,11 @@ impl UnifiedJournalWatcher {
                     cursor: cursor.to_string(),
                     pid: entry["_PID"].as_str().map(String::from),
                     uid: entry["_UID"].as_str().map(String::from),
-                    timestamp: Utc::now().to_rfc3339(),
-                    journal_timestamp: entry["__REALTIME_TIMESTAMP"].as_str().map(String::from),
+                    timestamp: Utc::now(),
+                    journal_timestamp: entry["__REALTIME_TIMESTAMP"]
+                        .as_str()
+                        .and_then(|s| s.parse::<i64>().ok())
+                        .and_then(|us| Utc.timestamp_micros(us).single()),
                 },
                 material.initial_provenance(),
             );
@@ -746,8 +783,11 @@ impl UnifiedJournalWatcher {
                     cursor: cursor.to_string(),
                     pid: entry["_PID"].as_str().map(String::from),
                     uid: entry["_UID"].as_str().map(String::from),
-                    timestamp: Utc::now().to_rfc3339(),
-                    journal_timestamp: entry["__REALTIME_TIMESTAMP"].as_str().map(String::from),
+                    timestamp: Utc::now(),
+                    journal_timestamp: entry["__REALTIME_TIMESTAMP"]
+                        .as_str()
+                        .and_then(|s| s.parse::<i64>().ok())
+                        .and_then(|us| Utc.timestamp_micros(us).single()),
                 },
                 material.initial_provenance(),
             );
@@ -762,8 +802,11 @@ impl UnifiedJournalWatcher {
                     cursor: cursor.to_string(),
                     pid: entry["_PID"].as_str().map(String::from),
                     uid: entry["_UID"].as_str().map(String::from),
-                    timestamp: Utc::now().to_rfc3339(),
-                    journal_timestamp: entry["__REALTIME_TIMESTAMP"].as_str().map(String::from),
+                    timestamp: Utc::now(),
+                    journal_timestamp: entry["__REALTIME_TIMESTAMP"]
+                        .as_str()
+                        .and_then(|s| s.parse::<i64>().ok())
+                        .and_then(|us| Utc.timestamp_micros(us).single()),
                 },
                 material.initial_provenance(),
             );

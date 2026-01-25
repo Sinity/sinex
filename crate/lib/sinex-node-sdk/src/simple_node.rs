@@ -53,8 +53,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use sinex_core::db::models::{Event, EventId, Provenance};
-use sinex_core::types::non_empty::NonEmptyVec;
+use sinex_core::db::models::{Event, EventId};
 use sinex_core::{EventSource, EventType, HostName, JsonValue, Ulid};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -563,8 +562,11 @@ where
                     host: HostName::new(&self.host),
                     ingestor_version: None,
                     payload_schema_id: None,
-                    provenance: Provenance::Synthesis {
-                        source_event_ids: NonEmptyVec::single(source_event_id),
+                    provenance: sinex_core::Provenance::Synthesis {
+                        source_event_ids: sinex_core::types::non_empty::NonEmptyVec::from_head_tail(
+                            source_event_id,
+                            vec![],
+                        ),
                         operation_id: None,
                     },
                     associated_blob_ids: None,

@@ -211,7 +211,7 @@ pub async fn execute_dry_run(
             // Check for dependencies
             if let Provenance::Synthesis {
                 source_event_ids, ..
-            } = &event.provenance
+            } = &event.provenance()
             {
                 if !source_event_ids.is_empty() {
                     let deps: Vec<Id<Event<JsonValue>>> = source_event_ids.to_vec();

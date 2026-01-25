@@ -43,7 +43,7 @@ async fn register_new_schema_records_metadata(ctx: TestContext) -> TestResult<()
     let schema = repo.register_schema(new_schema.clone()).await?;
     assert_eq!(schema.source, "test-source");
     assert_eq!(schema.event_type, "user.created");
-    assert_eq!(schema.schema_version, "1.0.0");
+    assert_eq!(schema.schema_version.as_ref(), "1.0.0");
     assert!(schema.is_active);
     assert_eq!(schema.content_hash, new_schema.calculate_content_hash()?);
     Ok(())
@@ -96,7 +96,7 @@ async fn active_schema_returns_latest_version(ctx: TestContext) -> TestResult<()
         .get_active_schema("test-source", "config.changed")
         .await?;
     assert_eq!(active.id, v2.id);
-    assert_eq!(active.schema_version, "2.0.0");
+    assert_eq!(active.schema_version.as_ref(), "2.0.0");
     assert!(active.is_active);
     Ok(())
 }
@@ -137,7 +137,7 @@ async fn deprecating_schema_disables_active_version(ctx: TestContext) -> TestRes
         })
         .await?;
 
-    repo.deprecate_schema(&schema.id).await?;
+    repo.deprecate_schema(schema.id.as_ulid()).await?;
     let active = repo
         .get_active_schema("test-source", "deprecated.event")
         .await;
@@ -183,7 +183,7 @@ async fn re_registering_schema_reactivates_latest(ctx: TestContext) -> color_eyr
         })
         .await?;
 
-    repo.deprecate_schema(&schema.id).await?;
+    repo.deprecate_schema(schema.id.as_ulid()).await?;
     let inactive = repo
         .find_schema_by_hash(&schema.content_hash)
         .await

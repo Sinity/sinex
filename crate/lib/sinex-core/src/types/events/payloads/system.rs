@@ -1,5 +1,11 @@
 //! System event payloads
 
+use crate::types::events::enums::{
+    BluetoothEventType, DBusBus, DeviceType, JournalSyncType, LoopStatus, MountEventType,
+    NetworkConnectionType, NetworkEventType, NetworkState, PlaybackStatus, PowerEventType,
+    ScanType, SystemdActiveState, SystemdUnitType, UdevAction,
+};
+use crate::types::units::{ExitCode, Microseconds, ProcessId, SyslogPriority, UnixGid, UnixUid};
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -10,7 +16,7 @@ use std::collections::HashMap;
 #[event_payload(source = "system", event_type = "scan.started")]
 /// Emitted when a system scan kicks off.
 pub struct ScanStartedPayload {
-    pub scan_type: String,
+    pub scan_type: ScanType,
     pub target: String,
     pub options: HashMap<String, serde_json::Value>,
 }
@@ -19,7 +25,7 @@ pub struct ScanStartedPayload {
 #[event_payload(source = "system", event_type = "scan.completed")]
 /// Summarises a completed scan.
 pub struct ScanCompletedPayload {
-    pub scan_type: String,
+    pub scan_type: ScanType,
     pub target: String,
     pub items_scanned: u64,
     pub items_found: u64,
@@ -32,7 +38,7 @@ pub struct ScanCompletedPayload {
 /// Captures a journald log entry with raw fields.
 pub struct JournalEntryPayload {
     pub unit: Option<String>,
-    pub priority: u8,
+    pub priority: SyslogPriority,
     pub message: String,
     pub fields: HashMap<String, String>,
     pub timestamp: DateTime<Utc>,
@@ -42,12 +48,12 @@ pub struct JournalEntryPayload {
 #[event_payload(source = "journald", event_type = "sync.completed")]
 /// Records the outcome of a journald cursor sync.
 pub struct JournalSyncCompletedPayload {
-    pub sync_type: String,
+    pub sync_type: JournalSyncType,
     pub start_cursor: Option<String>,
     pub end_cursor: String,
     pub entries_count: u64,
-    pub time_start: Option<String>,
-    pub time_end: Option<String>,
+    pub time_start: Option<DateTime<Utc>>,
+    pub time_end: Option<DateTime<Utc>>,
     pub duration_ms: u64,
 }
 
@@ -56,18 +62,18 @@ pub struct JournalSyncCompletedPayload {
 /// Describes a journald entry flushed to disk.
 pub struct JournalEntryWrittenPayload {
     pub cursor: String,
-    pub timestamp_us: i64,
-    pub timestamp: String,
+    pub timestamp_us: Microseconds,
+    pub timestamp: DateTime<Utc>,
     pub hostname: Option<String>,
     pub unit: Option<String>,
     pub syslog_identifier: Option<String>,
-    pub pid: Option<u32>,
-    pub uid: Option<u32>,
-    pub gid: Option<u32>,
+    pub pid: Option<ProcessId>,
+    pub uid: Option<UnixUid>,
+    pub gid: Option<UnixGid>,
     pub cmdline: Option<String>,
     pub exe: Option<String>,
-    pub unit_type: Option<String>,
-    pub priority: Option<u8>,
+    pub unit_type: Option<SystemdUnitType>,
+    pub priority: Option<SyslogPriority>,
     pub facility: Option<String>,
     pub message: String,
     pub fields: HashMap<String, String>,
@@ -77,27 +83,27 @@ pub struct JournalEntryWrittenPayload {
 #[event_payload(source = "dbus", event_type = "signal.received")]
 /// Raw D-Bus signal payload.
 pub struct DbusSignalPayload {
-    pub bus: String,
+    pub bus: DBusBus,
     pub sender: String,
     pub path: String,
     pub interface: String,
     pub signal: String, // member/signal name
     pub args: serde_json::Value,
-    pub timestamp: String,
+    pub timestamp: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "dbus", event_type = "method.called")]
 /// Invocation of a D-Bus method.
 pub struct DbusMethodCalledPayload {
-    pub bus: String,
+    pub bus: DBusBus,
     pub sender: String,
     pub destination: String,
     pub path: String,
     pub interface: String,
     pub method: String,
     pub args: serde_json::Value,
-    pub timestamp: String,
+    pub timestamp: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
@@ -111,7 +117,7 @@ pub struct DbusNotificationSentPayload {
     pub timeout: i32,
     pub actions: Vec<String>,
     pub hints: HashMap<String, serde_json::Value>,
-    pub timestamp: String,
+    pub timestamp: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
@@ -120,7 +126,7 @@ pub struct DbusNotificationSentPayload {
 pub struct DbusMediaStateChangedPayload {
     pub player: String,
     pub player_instance: String,
-    pub status: String,
+    pub status: PlaybackStatus,
     pub track_id: Option<String>,
     pub title: Option<String>,
     pub artist: Option<Vec<String>>,
@@ -130,7 +136,7 @@ pub struct DbusMediaStateChangedPayload {
     pub length: Option<i64>,
     pub position: Option<i64>,
     pub volume: Option<f64>,
-    pub loop_status: Option<String>,
+    pub loop_status: Option<LoopStatus>,
     pub shuffle: Option<bool>,
     pub can_go_next: bool,
     pub can_go_previous: bool,
@@ -138,23 +144,23 @@ pub struct DbusMediaStateChangedPayload {
     pub can_pause: bool,
     pub can_seek: bool,
     pub art_url: Option<String>,
-    pub timestamp: String,
+    pub timestamp: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "dbus", event_type = "power.state_changed")]
 /// High-level power management notification.
 pub struct DbusPowerStateChangedPayload {
-    pub event_type: String,
+    pub event_type: PowerEventType,
     pub details: serde_json::Value,
-    pub timestamp: String,
+    pub timestamp: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "dbus", event_type = "device.connected")]
 /// D-Bus announcement for a newly connected device.
 pub struct DbusDeviceConnectedPayload {
-    pub device_type: String,
+    pub device_type: DeviceType,
     pub event_type: String,
     pub device_path: String,
     pub device_name: Option<String>,
@@ -162,13 +168,13 @@ pub struct DbusDeviceConnectedPayload {
     pub model: Option<String>,
     pub serial: Option<String>,
     pub properties: HashMap<String, serde_json::Value>,
-    pub timestamp: String,
+    pub timestamp: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "dbus", event_type = "bluetooth.device_changed")]
 pub struct DbusBluetoothDeviceChangedPayload {
-    pub event_type: String,
+    pub event_type: BluetoothEventType,
     pub device_address: String,
     pub device_name: Option<String>,
     pub device_class: Option<String>,
@@ -176,32 +182,32 @@ pub struct DbusBluetoothDeviceChangedPayload {
     pub connected: bool,
     pub paired: bool,
     pub trusted: bool,
-    pub timestamp: String,
+    pub timestamp: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "dbus", event_type = "network.state_changed")]
 pub struct DbusNetworkStateChangedPayload {
-    pub event_type: String,
+    pub event_type: NetworkEventType,
     pub interface: String,
-    pub connection_type: String,
+    pub connection_type: NetworkConnectionType,
     pub ssid: Option<String>,
     pub ip_address: Option<String>,
-    pub state: String,
-    pub timestamp: String,
+    pub state: NetworkState,
+    pub timestamp: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "dbus", event_type = "mount.event")]
 pub struct DbusMountEventPayload {
-    pub event_type: String, // mounted, unmounted
+    pub event_type: MountEventType,
     pub device: String,
     pub mount_point: String,
     pub filesystem: String,
     pub label: Option<String>,
     pub uuid: Option<String>,
     pub size_bytes: Option<u64>,
-    pub timestamp: String,
+    pub timestamp: DateTime<Utc>,
 }
 
 // Systemd unit events
@@ -210,9 +216,9 @@ pub struct DbusMountEventPayload {
 #[event_payload(source = "systemd", event_type = "unit.started")]
 pub struct SystemdUnitStartedPayload {
     pub unit_name: String,
-    pub unit_type: String,
-    pub main_pid: Option<u32>,
-    pub active_state: String,
+    pub unit_type: SystemdUnitType,
+    pub main_pid: Option<ProcessId>,
+    pub active_state: SystemdActiveState,
     pub sub_state: String,
 }
 
@@ -220,9 +226,9 @@ pub struct SystemdUnitStartedPayload {
 #[event_payload(source = "systemd", event_type = "unit.stopped")]
 pub struct SystemdUnitStoppedPayload {
     pub unit_name: String,
-    pub unit_type: String,
-    pub exit_code: Option<i32>,
-    pub active_state: String,
+    pub unit_type: SystemdUnitType,
+    pub exit_code: Option<ExitCode>,
+    pub active_state: SystemdActiveState,
     pub sub_state: String,
 }
 
@@ -230,10 +236,10 @@ pub struct SystemdUnitStoppedPayload {
 #[event_payload(source = "systemd", event_type = "unit.status")]
 pub struct SystemdUnitStatusPayload {
     pub unit_name: String,
-    pub unit_type: String,
+    pub unit_type: SystemdUnitType,
     pub description: String,
     pub action: String,
-    pub timestamp: String,
+    pub timestamp: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
@@ -244,8 +250,8 @@ pub struct SystemdUnitFailedPayload {
     pub cursor: String,
     pub pid: Option<String>,
     pub uid: Option<String>,
-    pub timestamp: String,
-    pub journal_timestamp: Option<String>,
+    pub timestamp: DateTime<Utc>,
+    pub journal_timestamp: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
@@ -256,8 +262,8 @@ pub struct SystemdUnitReloadedPayload {
     pub cursor: String,
     pub pid: Option<String>,
     pub uid: Option<String>,
-    pub timestamp: String,
-    pub journal_timestamp: Option<String>,
+    pub timestamp: DateTime<Utc>,
+    pub journal_timestamp: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
@@ -268,8 +274,8 @@ pub struct SystemdTimerTriggeredPayload {
     pub cursor: String,
     pub pid: Option<String>,
     pub uid: Option<String>,
-    pub timestamp: String,
-    pub journal_timestamp: Option<String>,
+    pub timestamp: DateTime<Utc>,
+    pub journal_timestamp: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
@@ -277,7 +283,7 @@ pub struct SystemdTimerTriggeredPayload {
 pub struct SystemdUnitStartingPayload {
     pub status: String,
     pub status_detail: String,
-    pub timestamp: String,
+    pub timestamp: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
@@ -285,7 +291,7 @@ pub struct SystemdUnitStartingPayload {
 pub struct SystemdUnitStoppingPayload {
     pub status: String,
     pub status_detail: String,
-    pub timestamp: String,
+    pub timestamp: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
@@ -293,7 +299,7 @@ pub struct SystemdUnitStoppingPayload {
 pub struct SystemdUnitStateChangedPayload {
     pub status: String,
     pub status_detail: String,
-    pub timestamp: String,
+    pub timestamp: DateTime<Utc>,
 }
 
 // udev device events
@@ -321,76 +327,76 @@ pub struct UdevDeviceRemovedPayload {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "udev", event_type = "device.connected")]
 pub struct UdevDeviceConnectedPayload {
-    pub action: String,
+    pub action: UdevAction,
     pub device_path: String,
-    pub device_type: String,
+    pub device_type: DeviceType,
     pub subsystem: Option<String>,
     pub devtype: Option<String>,
     pub vendor: Option<String>,
     pub model: Option<String>,
     pub serial: Option<String>,
     pub properties: HashMap<String, String>,
-    pub timestamp: String,
+    pub timestamp: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "udev", event_type = "device.disconnected")]
 pub struct UdevDeviceDisconnectedPayload {
-    pub action: String,
+    pub action: UdevAction,
     pub device_path: String,
-    pub device_type: String,
+    pub device_type: DeviceType,
     pub subsystem: Option<String>,
     pub devtype: Option<String>,
     pub vendor: Option<String>,
     pub model: Option<String>,
     pub serial: Option<String>,
     pub properties: HashMap<String, String>,
-    pub timestamp: String,
+    pub timestamp: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "udev", event_type = "device.changed")]
 pub struct UdevDeviceChangedPayload {
-    pub action: String,
+    pub action: UdevAction,
     pub device_path: String,
-    pub device_type: String,
+    pub device_type: DeviceType,
     pub subsystem: Option<String>,
     pub devtype: Option<String>,
     pub vendor: Option<String>,
     pub model: Option<String>,
     pub serial: Option<String>,
     pub properties: HashMap<String, String>,
-    pub timestamp: String,
+    pub timestamp: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "udev", event_type = "device.driver_changed")]
 pub struct UdevDeviceDriverChangedPayload {
-    pub action: String,
+    pub action: UdevAction,
     pub device_path: String,
-    pub device_type: String,
+    pub device_type: DeviceType,
     pub subsystem: Option<String>,
     pub devtype: Option<String>,
     pub vendor: Option<String>,
     pub model: Option<String>,
     pub serial: Option<String>,
     pub properties: HashMap<String, String>,
-    pub timestamp: String,
+    pub timestamp: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "udev", event_type = "device.other")]
 pub struct UdevDeviceOtherPayload {
-    pub action: String,
+    pub action: UdevAction,
     pub device_path: String,
-    pub device_type: String,
+    pub device_type: DeviceType,
     pub subsystem: Option<String>,
     pub devtype: Option<String>,
     pub vendor: Option<String>,
     pub model: Option<String>,
     pub serial: Option<String>,
     pub properties: HashMap<String, String>,
-    pub timestamp: String,
+    pub timestamp: DateTime<Utc>,
 }
 
 // Log processing events

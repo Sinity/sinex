@@ -59,6 +59,130 @@ pub fn empty_result(format: &OutputFormat, message: &str) {
     }
 }
 
+/// Type alias for table formatting functions
+pub type TableFormatter<T> = Box<dyn FnOnce(&T) -> String>;
+
+/// Self-describing command output that handles all format types.
+///
+/// This enum wraps the existing `format_list` and `format_single` helpers
+/// with a cleaner API that eliminates the need for manual format matching.
+///
+/// # Examples
+///
+/// ```ignore
+/// // List output
+/// let nodes = vec![node1, node2];
+/// CommandOutput::list(nodes, "No nodes found", |nodes| format_table(nodes))
+///     .display(&OutputFormat::Table)?;
+///
+/// // Single item output
+/// CommandOutput::single(status, |s| format_status(s))
+///     .display(&OutputFormat::Json)?;
+///
+/// // Empty result
+/// CommandOutput::empty("No results")
+///     .display(&OutputFormat::Table)?;
+///
+/// // Success message
+/// CommandOutput::success("Operation completed")
+///     .display(&OutputFormat::Table)?;
+/// ```
+pub enum CommandOutput<T: Serialize> {
+    /// List of items with optional empty message
+    List {
+        items: Vec<T>,
+        empty_msg: &'static str,
+        table_formatter: Box<dyn FnOnce(&[T]) -> String>,
+    },
+    /// Single item
+    Single {
+        item: T,
+        table_formatter: Box<dyn FnOnce(&T) -> String>,
+    },
+    /// Empty result with message
+    Empty { message: &'static str },
+    /// Success message (table shows message, JSON/YAML show {"status": "success", "message": "..."})
+    Success { message: String },
+}
+
+impl<T: Serialize> CommandOutput<T> {
+    /// Create a list output.
+    pub fn list<F>(items: Vec<T>, empty_msg: &'static str, table_formatter: F) -> Self
+    where
+        F: FnOnce(&[T]) -> String + 'static,
+    {
+        Self::List {
+            items,
+            empty_msg,
+            table_formatter: Box::new(table_formatter),
+        }
+    }
+
+    /// Create a single item output.
+    pub fn single<F>(item: T, table_formatter: F) -> Self
+    where
+        F: FnOnce(&T) -> String + 'static,
+    {
+        Self::Single {
+            item,
+            table_formatter: Box::new(table_formatter),
+        }
+    }
+
+    /// Create an empty result output.
+    pub fn empty(message: &'static str) -> Self {
+        Self::Empty { message }
+    }
+
+    /// Create a success message output.
+    pub fn success(message: impl Into<String>) -> Self {
+        Self::Success {
+            message: message.into(),
+        }
+    }
+
+    /// Display the output in the given format.
+    pub fn display(self, format: &OutputFormat) -> Result<()> {
+        match self {
+            Self::List {
+                items,
+                empty_msg,
+                table_formatter,
+            } => format_list(&items, format, empty_msg, table_formatter),
+            Self::Single {
+                item,
+                table_formatter,
+            } => format_single(&item, format, table_formatter),
+            Self::Empty { message } => {
+                empty_result(format, message);
+                Ok(())
+            }
+            Self::Success { message } => match format {
+                OutputFormat::Table => {
+                    println!("{}", message);
+                    Ok(())
+                }
+                OutputFormat::Json => {
+                    let result = serde_json::json!({
+                        "status": "success",
+                        "message": message
+                    });
+                    println!("{}", format_json(&result)?);
+                    Ok(())
+                }
+                OutputFormat::Yaml => {
+                    let result = serde_json::json!({
+                        "status": "success",
+                        "message": message
+                    });
+                    println!("{}", format_yaml(&result)?);
+                    Ok(())
+                }
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

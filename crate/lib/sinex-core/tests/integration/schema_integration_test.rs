@@ -14,7 +14,8 @@ use sinex_core::db::models::event::{Event, Provenance, SourceMaterial};
 use sinex_core::db::validation::{EventValidator, ValidationError, DEFAULT_MAX_PAYLOAD_BYTES};
 use sinex_core::types::domain::{EventSource, EventType, HostName};
 use sinex_core::types::Id;
-use sinex_test_utils::{sinex_serial_test, sinex_test, TestContext};
+use sinex_core::DynamicPayload;
+use sinex_test_utils::{sinex_serial_test, sinex_test, test_event, TestContext, TestResult};
 
 const FS_WATCHER_SOURCE: &str = "fs-watcher";
 
@@ -290,11 +291,11 @@ async fn test_comprehensive_integrity_validation(ctx: TestContext) -> TestResult
     let validator = EventValidator::load_from_db(&pool).await?;
 
     let persisted = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "schema.comprehensive",
             "valid_event",
             json!({"data": "valid"}),
-        )
+        ))
         .await?;
     let _persisted_id = persisted.id.as_ref().map(|id| id.to_string());
 
@@ -511,16 +512,5 @@ async fn test_event_type_specific_validation(ctx: TestContext) -> TestResult<()>
 }
 
 fn build_test_event(source: &str, event_type: &str, payload: Value) -> Event<Value> {
-    Event {
-        id: None,
-        source: EventSource::from(source.to_string()),
-        event_type: EventType::from(event_type.to_string()),
-        payload,
-        ts_orig: Some(Utc::now()),
-        host: HostName::from_static("schema-tests"),
-        ingestor_version: None,
-        payload_schema_id: None,
-        provenance: Provenance::from_material(Id::<SourceMaterial>::new(), 0, None, None),
-        associated_blob_ids: None,
-    }
+    test_event(source, event_type, payload)
 }

@@ -4,7 +4,7 @@
 
 use serde_json::json;
 // Using shorter imports from sinex-core's re-exports
-use sinex_core::{EventSource, Ulid};
+use sinex_core::{DynamicPayload, EventSource, Ulid};
 use sinex_test_utils::prelude::*;
 
 #[sinex_test]
@@ -31,7 +31,11 @@ async fn test_basic_database_connection(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 async fn test_event_creation(ctx: TestContext) -> TestResult<()> {
     let event = ctx
-        .publish_event("test", "test.event", json!({"value": 42}))
+        .publish(DynamicPayload::new(
+            "test",
+            "test.event",
+            json!({"value": 42}),
+        ))
         .await?;
 
     assert_eq!(event.source.as_str(), "test");

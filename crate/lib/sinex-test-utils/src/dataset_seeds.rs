@@ -7,7 +7,7 @@ use chrono::{DateTime, Duration as ChronoDuration, TimeZone, Utc};
 use color_eyre::eyre::{eyre, WrapErr};
 use futures::future::try_join_all;
 use serde_json::{json, Value};
-use sinex_core::{types::Ulid, Event};
+use sinex_core::{types::Ulid, DynamicPayload, Event};
 use std::collections::HashMap;
 
 #[derive(Clone, Debug)]
@@ -159,9 +159,8 @@ pub async fn seed_events_via_scope(
         let clock = clock.clone();
         async move {
             let overrides = spec.overrides_with_timestamp(&clock);
-            let event_id = scope
-                .publish_with_overrides(&spec.source, &spec.event_type, spec.payload, overrides)
-                .await?;
+            let payload = DynamicPayload::new(spec.source, spec.event_type, spec.payload);
+            let event_id = scope.publish_with_overrides(payload, overrides).await?;
             Ok::<Ulid, color_eyre::eyre::Report>(*event_id.as_ulid())
         }
     });

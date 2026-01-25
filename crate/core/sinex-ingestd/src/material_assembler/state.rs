@@ -17,6 +17,7 @@ use super::MaterialAssembler;
 use crate::{IngestdResult, SinexError};
 
 pub(super) const BUFFER_DIR_NAME: &str = "buffers";
+#[allow(dead_code)] // Future use for state persistence
 pub(super) const STATE_FILE_NAME: &str = "state.json";
 
 pub(super) const WAL_FILE_NAME: &str = "state.wal";

@@ -1,11 +1,12 @@
 use chrono::{Duration, Utc};
 use serde_json::json;
+use sinex_core::DynamicPayload;
 use sinex_test_utils::prelude::*;
 
 #[sinex_test]
 async fn pipeline_preserves_ingest_order_over_ts_orig(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let scope = ctx.pipeline_scope().await?;
+    let scope = ctx.pipeline().await?;
 
     let source = "ordering-guard";
     let event_type = "ordering.event";
@@ -15,9 +16,7 @@ async fn pipeline_preserves_ingest_order_over_ts_orig(ctx: TestContext) -> TestR
 
     let first = scope
         .publish_with_overrides(
-            source,
-            event_type,
-            json!({"seq": 1}),
+            DynamicPayload::new(source, event_type, json!({"seq": 1})),
             EventOverrides {
                 ts_orig: Some(later.to_rfc3339()),
                 ..Default::default()
@@ -26,9 +25,7 @@ async fn pipeline_preserves_ingest_order_over_ts_orig(ctx: TestContext) -> TestR
         .await?;
     let second = scope
         .publish_with_overrides(
-            source,
-            event_type,
-            json!({"seq": 2}),
+            DynamicPayload::new(source, event_type, json!({"seq": 2})),
             EventOverrides {
                 ts_orig: Some(earlier.to_rfc3339()),
                 ..Default::default()

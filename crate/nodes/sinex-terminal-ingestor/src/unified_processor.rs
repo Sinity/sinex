@@ -534,8 +534,6 @@ async fn process_command(
         return Ok(());
     }
 
-    let bytes = command.as_bytes();
-
     // Redact sensitive information
     let redacted_command = SecretRedactor::redact(command);
     let final_command = redacted_command.as_ref();
@@ -644,10 +642,12 @@ impl TerminalProcessor {
         })
     }
 
+    #[allow(dead_code)] // Used by runtime initialization
     fn service_info(&self) -> NodeResult<&ServiceInfo> {
         Ok(self.runtime()?.service_info())
     }
 
+    #[allow(dead_code)] // Used by runtime initialization
     async fn initialise_from_runtime(
         &mut self,
         config: TerminalConfig,
@@ -1063,7 +1063,7 @@ mod tests {
 
         assert_eq!(event.event_type.as_str(), "command.imported");
 
-        let material_ulid = match event.provenance {
+        let material_ulid = match event.provenance() {
             Provenance::Material { ref id, .. } => *id.as_ulid(),
             _ => {
                 return Err(color_eyre::eyre::eyre!(

@@ -27,7 +27,10 @@ fn test_graph_help() {
 
     cmd.assert()
         .success()
-        .stdout(predicate::str::contains("Graph visualization").or(predicate::str::contains("Dependency graph")))
+        .stdout(
+            predicate::str::contains("Graph visualization")
+                .or(predicate::str::contains("Dependency graph")),
+        )
         .stdout(predicate::str::contains("deps"));
 }
 
@@ -127,7 +130,10 @@ fn test_graph_deps_dot_has_closing_brace() {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     // DOT output should have closing brace (may have extra newline from println)
-    assert!(stdout.contains("}"), "DOT output should contain closing brace");
+    assert!(
+        stdout.contains("}"),
+        "DOT output should contain closing brace"
+    );
     assert!(
         stdout.contains("digraph dependencies"),
         "DOT output should start with digraph declaration"
@@ -147,9 +153,12 @@ fn test_graph_deps_dot_contains_nodes() {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     // Should have at least some nodes (package names in quotes)
-    let has_nodes = stdout
-        .lines()
-        .any(|line| line.trim().ends_with(";") && !line.contains("->") && !line.contains("rankdir") && !line.contains("shape"));
+    let has_nodes = stdout.lines().any(|line| {
+        line.trim().ends_with(";")
+            && !line.contains("->")
+            && !line.contains("rankdir")
+            && !line.contains("shape")
+    });
 
     assert!(has_nodes, "DOT output should contain node declarations");
 }
@@ -221,16 +230,10 @@ fn test_graph_deps_json_valid_structure() {
     );
 
     // Verify nodes is an array
-    assert!(
-        parsed["nodes"].is_array(),
-        "'nodes' should be an array"
-    );
+    assert!(parsed["nodes"].is_array(), "'nodes' should be an array");
 
     // Verify edges is an array
-    assert!(
-        parsed["edges"].is_array(),
-        "'edges' should be an array"
-    );
+    assert!(parsed["edges"].is_array(), "'edges' should be an array");
 }
 
 #[test]
@@ -278,8 +281,14 @@ fn test_graph_deps_json_edge_structure() {
     // Check that edges have the expected structure
     if let Some(edges) = parsed["edges"].as_array() {
         if let Some(edge) = edges.first() {
-            assert!(edge.get("source").is_some(), "Edge should have 'source' field");
-            assert!(edge.get("target").is_some(), "Edge should have 'target' field");
+            assert!(
+                edge.get("source").is_some(),
+                "Edge should have 'source' field"
+            );
+            assert!(
+                edge.get("target").is_some(),
+                "Edge should have 'target' field"
+            );
         }
     }
 }
@@ -446,8 +455,7 @@ fn test_graph_deps_output_to_file_ascii() {
     );
 
     // Verify file has content
-    let contents = fs::read_to_string(&output_path)
-        .expect("Failed to read output file");
+    let contents = fs::read_to_string(&output_path).expect("Failed to read output file");
     assert!(
         !contents.is_empty(),
         "Output file should contain graph data"
@@ -481,13 +489,15 @@ fn test_graph_deps_output_to_file_dot() {
     );
 
     // Verify file content
-    let contents = fs::read_to_string(&output_path)
-        .expect("Failed to read output file");
+    let contents = fs::read_to_string(&output_path).expect("Failed to read output file");
     assert!(
         contents.starts_with("digraph dependencies"),
         "DOT file should start with digraph declaration"
     );
-    assert!(contents.ends_with("}\n"), "DOT file should end with closing brace");
+    assert!(
+        contents.ends_with("}\n"),
+        "DOT file should end with closing brace"
+    );
 }
 
 #[test]
@@ -513,10 +523,9 @@ fn test_graph_deps_output_to_file_json() {
     );
 
     // Verify file content is valid JSON
-    let contents = fs::read_to_string(&output_path)
-        .expect("Failed to read output file");
-    let parsed: serde_json::Value = serde_json::from_str(&contents)
-        .expect("Output file should contain valid JSON");
+    let contents = fs::read_to_string(&output_path).expect("Failed to read output file");
+    let parsed: serde_json::Value =
+        serde_json::from_str(&contents).expect("Output file should contain valid JSON");
 
     assert!(parsed.get("nodes").is_some(), "JSON should have nodes");
     assert!(parsed.get("edges").is_some(), "JSON should have edges");
@@ -526,8 +535,7 @@ fn test_graph_deps_output_to_file_json() {
 fn test_graph_deps_output_to_nested_directory() {
     let dir = tempdir().expect("Failed to create temp directory");
     let output_path = dir.path().join("subdir").join("graph.dot");
-    std::fs::create_dir_all(output_path.parent().unwrap())
-        .expect("Failed to create subdirectory");
+    std::fs::create_dir_all(output_path.parent().unwrap()).expect("Failed to create subdirectory");
 
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
@@ -591,8 +599,7 @@ fn test_graph_deps_focus_reverse_and_output() {
     // Verify file was created
     assert!(output_path.exists(), "Output file should be created");
 
-    let contents = fs::read_to_string(&output_path)
-        .expect("Failed to read output file");
+    let contents = fs::read_to_string(&output_path).expect("Failed to read output file");
     assert!(
         contents.starts_with("digraph dependencies"),
         "File should contain valid DOT"
@@ -645,9 +652,7 @@ fn test_deps_impact_all_packages() {
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
-            stdout.contains("Impact")
-                || stdout.contains("Critical")
-                || stdout.contains("impact"),
+            stdout.contains("Impact") || stdout.contains("Critical") || stdout.contains("impact"),
             "Should have impact-related output"
         );
     }
@@ -724,9 +729,7 @@ fn test_graph_output_stdout_vs_file() {
         .arg("deps")
         .arg("--render-format")
         .arg("dot");
-    let stdout_output = cmd_stdout
-        .output()
-        .expect("Failed to run command");
+    let stdout_output = cmd_stdout.output().expect("Failed to run command");
     let stdout_str = String::from_utf8_lossy(&stdout_output.stdout);
 
     // Get file output
@@ -741,8 +744,7 @@ fn test_graph_output_stdout_vs_file() {
     cmd_file.assert().success();
 
     // File should exist
-    let file_str = fs::read_to_string(&output_path)
-        .expect("Failed to read output file");
+    let file_str = fs::read_to_string(&output_path).expect("Failed to read output file");
 
     // Both should contain similar content (file may have additional newline)
     assert!(

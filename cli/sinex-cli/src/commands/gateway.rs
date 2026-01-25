@@ -1,6 +1,8 @@
 use clap::Subcommand;
+use serde::Serialize;
 
 use crate::client::GatewayClient;
+use crate::fmt::CommandOutput;
 use crate::model::OutputFormat;
 use crate::Result;
 
@@ -19,29 +21,21 @@ impl GatewayCommands {
         match self {
             Self::Ping => {
                 let response = client.ping().await?;
-                match format {
-                    OutputFormat::Table => println!("{}", response),
-                    OutputFormat::Json => {
-                        println!("{}", serde_json::json!({"response": response}))
-                    }
-                    OutputFormat::Yaml => {
-                        println!("response: {}", response)
-                    }
-                }
+                CommandOutput::single(SimpleResponse { value: response }, |r| r.value.clone())
+                    .display(&format)?;
             }
             Self::Version => {
                 let version = client.version().await?;
-                match format {
-                    OutputFormat::Table => println!("{}", version),
-                    OutputFormat::Json => {
-                        println!("{}", serde_json::json!({"version": version}))
-                    }
-                    OutputFormat::Yaml => {
-                        println!("version: {}", version)
-                    }
-                }
+                CommandOutput::single(SimpleResponse { value: version }, |r| r.value.clone())
+                    .display(&format)?;
             }
         }
         Ok(())
     }
+}
+
+#[derive(Serialize)]
+struct SimpleResponse {
+    #[serde(rename = "response")]
+    value: String,
 }

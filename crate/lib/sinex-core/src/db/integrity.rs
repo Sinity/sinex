@@ -180,7 +180,7 @@ pub mod checkpoint_verification {
 /// Utilities used by schema validation tests to synthesize malformed events and
 /// detect obvious anomalies before schema-level validation kicks in.
 pub mod malformed_detection {
-    use crate::db::models::event::{Event, Provenance, SourceMaterial};
+    use crate::db::models::event::{Event, OffsetKind, Provenance, SourceMaterial};
     use crate::db::validation::DEFAULT_MAX_PAYLOAD_BYTES;
     use crate::types::domain::{EventSource, EventType, HostName};
     use crate::types::Id;
@@ -247,7 +247,13 @@ pub mod malformed_detection {
             host: HostName::from_static("malformed-detector"),
             ingestor_version: None,
             payload_schema_id: None,
-            provenance: Provenance::from_material(Id::<SourceMaterial>::new(), 0, None, None),
+            provenance: Provenance::Material {
+                id: Id::<SourceMaterial>::new(),
+                anchor_byte: 0,
+                offset_start: None,
+                offset_end: None,
+                offset_kind: OffsetKind::Byte,
+            },
             associated_blob_ids: None,
         }
     }

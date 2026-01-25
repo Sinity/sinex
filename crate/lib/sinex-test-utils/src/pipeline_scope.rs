@@ -9,7 +9,7 @@ use crate::pipeline_namespace::PipelineNamespace;
 use crate::timing_utils::{WaitHelpers, DEFAULT_WAIT_SECS};
 use crate::{EventOverrides, TestContext, TestNodePublisher, TestResult};
 use chrono::{DateTime, Utc};
-use sinex_core::{EventId, EventType};
+use sinex_core::{DynamicPayload, EventId, EventType, Publishable};
 use std::collections::VecDeque;
 use std::time::Instant;
 use tokio::runtime::Handle;
@@ -94,43 +94,74 @@ impl<'ctx> PipelineScope<'ctx> {
     }
 
     /// Publish a test event through JetStream and wait until ingestd persists it.
-    pub async fn publish(
-        &self,
-        source: &str,
-        event_type: &str,
-        payload: serde_json::Value,
-    ) -> TestResult<EventId> {
-        self.publish_with_overrides(source, event_type, payload, EventOverrides::default())
-            .await
+    ///
+    /// Accepts any type implementing `Publishable`:
+    /// - Typed `EventPayload` implementations (recommended)
+    /// - `DynamicPayload` for runtime source/type (escape hatch)
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// // Typed payload (recommended)
+    /// scope.publish(FileCreatedPayload { path: sp("/test"), ... }).await?;
+    ///
+    /// // Dynamic payload (escape hatch)
+    /// scope.publish(DynamicPayload::new("source", "type", json!({...}))).await?;
+    /// ```
+    pub async fn publish<P: Publishable>(&self, payload: P) -> TestResult<EventId> {
+        self.publish_with_overrides_internal(
+            payload.source(),
+            payload.event_type(),
+            payload.to_json_value(),
+            EventOverrides::default(),
+        )
+        .await
     }
 
     /// Publish a test event with overrides (ts_orig, id, etc.) and wait until persisted.
-    pub async fn publish_with_overrides(
+    pub async fn publish_with_overrides<P: Publishable>(
         &self,
-        source: &str,
-        event_type: &str,
+        payload: P,
+        overrides: EventOverrides,
+    ) -> TestResult<EventId> {
+        self.publish_with_overrides_internal(
+            payload.source(),
+            payload.event_type(),
+            payload.to_json_value(),
+            overrides,
+        )
+        .await
+    }
+
+    /// Internal implementation for publish with overrides.
+    async fn publish_with_overrides_internal(
+        &self,
+        source: sinex_core::EventSource,
+        event_type: EventType,
         payload: serde_json::Value,
         overrides: EventOverrides,
     ) -> TestResult<EventId> {
         let op_start = Instant::now();
         let publisher = TestNodePublisher::with_namespace(
             self.ctx.nats_client(),
-            source.to_string(),
+            source.as_str().to_string(),
             Some(self.namespace.clone()),
         );
         let publish_start = Instant::now();
         let event_id = publisher
-            .publish_event_with_overrides(event_type, payload, overrides)
+            .publish_with_overrides(event_type.as_str(), payload, overrides)
             .await?;
         let publish_ms = publish_start.elapsed().as_millis();
         let wait_start = Instant::now();
         wait_for_event_persisted(self.ctx, event_id).await?;
         let wait_ms = wait_start.elapsed().as_millis();
         let total_ms = op_start.elapsed().as_millis();
+        let source_str = source.as_str();
+        let event_type_str = event_type.as_str();
         info!(
             target: "pipeline_scope",
-            source,
-            event_type,
+            source = source_str,
+            event_type = event_type_str,
             publish_ms,
             wait_ms,
             total_ms,
@@ -140,19 +171,16 @@ impl<'ctx> PipelineScope<'ctx> {
     }
 
     /// Publish an event with a concrete timestamp and wait until persisted.
-    pub async fn publish_with_timestamp(
+    pub async fn publish_with_timestamp<P: Publishable>(
         &self,
-        source: &str,
-        event_type: &str,
-        payload: serde_json::Value,
+        payload: P,
         timestamp: DateTime<Utc>,
     ) -> TestResult<EventId> {
         let overrides = EventOverrides {
             ts_orig: Some(timestamp.to_rfc3339()),
             ..Default::default()
         };
-        self.publish_with_overrides(source, event_type, payload, overrides)
-            .await
+        self.publish_with_overrides(payload, overrides).await
     }
 
     /// Wait for a specific number of events to be persisted.
@@ -213,7 +241,9 @@ impl<'ctx> PipelineScope<'ctx> {
         let mut ids = Vec::with_capacity(count);
         for i in 0..count {
             let payload = payload_fn(i);
-            let id = self.publish(source, event_type, payload).await?;
+            let id = self
+                .publish(DynamicPayload::new(source, event_type, payload))
+                .await?;
             ids.push(id);
         }
         self.wait_for_source_events(source, count).await?;
@@ -265,7 +295,7 @@ impl<'ctx> PipelineScope<'ctx> {
             let timestamp = start + step * (i as i32);
             let payload = payload_fn(i);
             let id = self
-                .publish_with_timestamp(source, event_type, payload, timestamp)
+                .publish_with_timestamp(DynamicPayload::new(source, event_type, payload), timestamp)
                 .await?;
             ids.push(id);
         }

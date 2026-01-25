@@ -3,9 +3,8 @@ use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use proptest::test_runner::TestCaseError;
 use serde_json::json;
-use sinex_core::{
-    DbPoolExt, EventBuilder, EventSource, Id, JsonValue, Provenance, SourceMaterial, Ulid,
-};
+use sinex_core::DynamicPayload;
+use sinex_core::{DbPoolExt, EventSource, Id, JsonValue, Provenance, SourceMaterial, Ulid};
 use sinex_test_utils::{sinex_prop, sinex_proptest, sinex_test, TestContext};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Barrier};
@@ -377,7 +376,7 @@ async fn insert_event_with_ulid(
 ) -> Result<Ulid, TestCaseError> {
     let material_id = Id::<SourceMaterial>::new();
     let provenance = Provenance::from_material(material_id, 0, None, None);
-    let mut event = EventBuilder::dynamic(source, event_type, payload)
+    let mut event = DynamicPayload::new(source, event_type, payload)
         .with_provenance(provenance)
         .build()
         .expect("infallible: provenance set via with_provenance")

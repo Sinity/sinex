@@ -83,7 +83,7 @@ async fn test_node_publisher_emits_events_and_confirmations() -> TestResult<()> 
 
     let publisher = TestNodePublisher::new(nats.connect().await?, "test.source");
     let event_id = publisher
-        .publish_event("test.event", json!({"hello": "world"}))
+        .publish("test.event", json!({"hello": "world"}))
         .await?;
 
     // Ensure the raw event landed on JetStream.

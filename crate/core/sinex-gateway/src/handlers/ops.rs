@@ -9,75 +9,62 @@
 //! Reuses the existing core.operations_log table pattern.
 
 use color_eyre::eyre::{eyre, Context, Result};
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use sqlx::PgPool;
 
-/// Operation record from database
-#[derive(Debug, Serialize, sqlx::FromRow)]
-pub struct Operation {
-    pub id: String,
-    pub operation_type: String,
-    pub operator: String,
-    pub scope: Option<Value>,
-    pub result_status: String,
-    pub result_message: Option<String>,
-    pub preview_summary: Option<Value>,
-    pub duration_ms: Option<i32>,
-}
-
-/// Parameters for starting a new operation
-#[derive(Debug, Deserialize)]
-struct OpsStartParams {
-    operation_type: String,
-    operator: String,
-    scope: Option<Value>,
-}
-
-/// Parameters for listing operations
-#[derive(Debug, Deserialize)]
-struct OpsListParams {
-    /// Filter by operation type
-    operation_type: Option<String>,
-    /// Filter by status
-    status: Option<String>,
-    /// Limit number of results
-    #[serde(default = "default_ops_limit")]
-    limit: i64,
-}
+// Re-export shared types
+pub use sinex_core::rpc::ops::{
+    Operation, OpsCancelRequest, OpsCancelResponse, OpsGetRequest, OpsGetResponse, OpsListRequest,
+    OpsListResponse, OpsStartRequest, OpsStartResponse,
+};
 
 fn default_ops_limit() -> i64 {
     100
 }
 
-/// Parameters for getting operation details
-#[derive(Debug, Deserialize)]
-struct OpsGetParams {
-    operation_id: String,
+/// Internal DB row type for operations
+#[derive(Debug, sqlx::FromRow)]
+struct OperationRow {
+    id: String,
+    operation_type: String,
+    operator: String,
+    scope: Option<Value>,
+    result_status: String,
+    result_message: Option<String>,
+    preview_summary: Option<Value>,
+    duration_ms: Option<i32>,
 }
 
-/// Parameters for cancelling an operation
-#[derive(Debug, Deserialize)]
-struct OpsCancelParams {
-    operation_id: String,
-    reason: Option<String>,
+impl From<OperationRow> for Operation {
+    fn from(row: OperationRow) -> Self {
+        Operation {
+            id: row.id,
+            operation_type: row.operation_type,
+            operator: row.operator,
+            scope: row.scope,
+            result_status: row.result_status,
+            result_message: row.result_message,
+            preview_summary: row.preview_summary,
+            duration_ms: row.duration_ms,
+        }
+    }
 }
 
 /// Handle POST /ops/start - start a new operation
 pub async fn handle_ops_start(pool: &PgPool, params: Value) -> Result<Value> {
-    let start_params: OpsStartParams =
+    let request: OpsStartRequest =
         serde_json::from_value(params).wrap_err("Invalid ops start parameters")?;
 
     // Parse scope as JSONB if provided
-    let scope_jsonb = start_params.scope.unwrap_or(json!({}));
+    let scope_jsonb = request.scope.unwrap_or(serde_json::json!({}));
 
     // Call the database function to start an operation
     let operation_id = sqlx::query_scalar!(
         r#"
         SELECT core.start_operation($1, $2, $3)::text
         "#,
-        start_params.operation_type,
-        start_params.operator,
+        request.operation_type,
+        request.operator,
         scope_jsonb,
     )
     .fetch_one(pool)
@@ -85,8 +72,8 @@ pub async fn handle_ops_start(pool: &PgPool, params: Value) -> Result<Value> {
     .map_err(|e| eyre!("Failed to start operation: {}", e))?;
 
     // Fetch the created operation
-    let operation = sqlx::query_as!(
-        Operation,
+    let row = sqlx::query_as!(
+        OperationRow,
         r#"
         SELECT
             id::text as "id!",
@@ -106,24 +93,27 @@ pub async fn handle_ops_start(pool: &PgPool, params: Value) -> Result<Value> {
     .await
     .map_err(|e| eyre!("Failed to fetch created operation: {}", e))?;
 
-    Ok(json!({
-        "operation": operation,
-    }))
+    let response = OpsStartResponse {
+        operation: row.into(),
+    };
+
+    Ok(serde_json::to_value(response)?)
 }
 
 /// Handle GET /ops - list operations with optional filtering
 pub async fn handle_ops_list(pool: &PgPool, params: Value) -> Result<Value> {
-    let list_params: OpsListParams =
-        serde_json::from_value(params).unwrap_or_else(|_| OpsListParams {
-            operation_type: None,
-            status: None,
-            limit: default_ops_limit(),
-        });
+    let request: OpsListRequest = serde_json::from_value(params).unwrap_or_default();
+
+    let limit = if request.limit > 0 {
+        request.limit
+    } else {
+        default_ops_limit()
+    };
 
     // Build dynamic query based on filters
-    let operations = if list_params.operation_type.is_some() && list_params.status.is_some() {
+    let rows: Vec<OperationRow> = if request.operation_type.is_some() && request.status.is_some() {
         sqlx::query_as!(
-            Operation,
+            OperationRow,
             r#"
             SELECT
                 id::text as "id!",
@@ -140,15 +130,15 @@ pub async fn handle_ops_list(pool: &PgPool, params: Value) -> Result<Value> {
             ORDER BY id DESC
             LIMIT $3
             "#,
-            list_params.operation_type,
-            list_params.status,
-            list_params.limit
+            request.operation_type,
+            request.status,
+            limit
         )
         .fetch_all(pool)
         .await
-    } else if list_params.operation_type.is_some() {
+    } else if request.operation_type.is_some() {
         sqlx::query_as!(
-            Operation,
+            OperationRow,
             r#"
             SELECT
                 id::text as "id!",
@@ -164,14 +154,14 @@ pub async fn handle_ops_list(pool: &PgPool, params: Value) -> Result<Value> {
             ORDER BY id DESC
             LIMIT $2
             "#,
-            list_params.operation_type,
-            list_params.limit
+            request.operation_type,
+            limit
         )
         .fetch_all(pool)
         .await
-    } else if list_params.status.is_some() {
+    } else if request.status.is_some() {
         sqlx::query_as!(
-            Operation,
+            OperationRow,
             r#"
             SELECT
                 id::text as "id!",
@@ -187,14 +177,14 @@ pub async fn handle_ops_list(pool: &PgPool, params: Value) -> Result<Value> {
             ORDER BY id DESC
             LIMIT $2
             "#,
-            list_params.status,
-            list_params.limit
+            request.status,
+            limit
         )
         .fetch_all(pool)
         .await
     } else {
         sqlx::query_as!(
-            Operation,
+            OperationRow,
             r#"
             SELECT
                 id::text as "id!",
@@ -209,26 +199,27 @@ pub async fn handle_ops_list(pool: &PgPool, params: Value) -> Result<Value> {
             ORDER BY id DESC
             LIMIT $1
             "#,
-            list_params.limit
+            limit
         )
         .fetch_all(pool)
         .await
     }
     .map_err(|e| eyre!("Failed to list operations: {}", e))?;
 
-    Ok(json!({
-        "operations": operations,
-        "count": operations.len(),
-    }))
+    let response = OpsListResponse {
+        operations: rows.into_iter().map(Into::into).collect(),
+    };
+
+    Ok(serde_json::to_value(response)?)
 }
 
 /// Handle GET /ops/{id} - get operation details
 pub async fn handle_ops_get(pool: &PgPool, params: Value) -> Result<Value> {
-    let get_params: OpsGetParams =
+    let request: OpsGetRequest =
         serde_json::from_value(params).wrap_err("Invalid ops get parameters")?;
 
-    let operation = sqlx::query_as!(
-        Operation,
+    let row = sqlx::query_as!(
+        OperationRow,
         r#"
         SELECT
             id::text as "id!",
@@ -242,17 +233,20 @@ pub async fn handle_ops_get(pool: &PgPool, params: Value) -> Result<Value> {
         FROM core.operations_log
         WHERE id::text = $1
         "#,
-        get_params.operation_id
+        request.operation_id
     )
     .fetch_optional(pool)
     .await
     .map_err(|e| eyre!("Failed to fetch operation: {}", e))?;
 
-    match operation {
-        Some(op) => Ok(json!({
-            "operation": op,
-        })),
-        None => Err(eyre!("Operation not found: {}", get_params.operation_id)),
+    match row {
+        Some(row) => {
+            let response = OpsGetResponse {
+                operation: row.into(),
+            };
+            Ok(serde_json::to_value(response)?)
+        }
+        None => Err(eyre!("Operation not found: {}", request.operation_id)),
     }
 }
 
@@ -269,7 +263,7 @@ pub async fn handle_ops_cancel(
 ) -> Result<Value> {
     use tracing::info;
 
-    let cancel_params: OpsCancelParams =
+    let request: OpsCancelRequest =
         serde_json::from_value(params).wrap_err("Invalid ops cancel parameters")?;
 
     // Check if operation exists and is running
@@ -279,14 +273,14 @@ pub async fn handle_ops_cancel(
         FROM core.operations_log
         WHERE id::text = $1
         "#,
-        cancel_params.operation_id
+        request.operation_id
     )
     .fetch_optional(pool)
     .await
     .map_err(|e| eyre!("Failed to check operation status: {}", e))?;
 
     let Some(op) = operation else {
-        return Err(eyre!("Operation not found: {}", cancel_params.operation_id));
+        return Err(eyre!("Operation not found: {}", request.operation_id));
     };
 
     if op.result_status != "running" {
@@ -298,12 +292,12 @@ pub async fn handle_ops_cancel(
 
     info!(
         token_prefix = %auth.token_prefix,
-        operation_id = %cancel_params.operation_id,
+        operation_id = %request.operation_id,
         "Operation cancel initiated"
     );
 
     // Mark operation as cancelled
-    let reason = cancel_params
+    let reason = request
         .reason
         .unwrap_or_else(|| "Cancelled by user".to_string());
 
@@ -315,7 +309,7 @@ pub async fn handle_ops_cancel(
             duration_ms = EXTRACT(MILLISECONDS FROM (NOW() - (id::timestamp)))::integer
         WHERE id::text = $1
         "#,
-        cancel_params.operation_id,
+        request.operation_id,
         reason
     )
     .execute(pool)
@@ -323,8 +317,8 @@ pub async fn handle_ops_cancel(
     .map_err(|e| eyre!("Failed to cancel operation: {}", e))?;
 
     // Fetch updated operation
-    let updated_operation = sqlx::query_as!(
-        Operation,
+    let row = sqlx::query_as!(
+        OperationRow,
         r#"
         SELECT
             id::text as "id!",
@@ -338,21 +332,24 @@ pub async fn handle_ops_cancel(
         FROM core.operations_log
         WHERE id::text = $1
         "#,
-        cancel_params.operation_id
+        request.operation_id
     )
     .fetch_one(pool)
     .await
     .map_err(|e| eyre!("Failed to fetch cancelled operation: {}", e))?;
 
-    Ok(json!({
-        "operation": updated_operation,
-        "cancelled": true,
-    }))
+    let response = OpsCancelResponse {
+        operation: row.into(),
+        cancelled: true,
+    };
+
+    Ok(serde_json::to_value(response)?)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use sinex_test_utils::{sinex_test, TestContext};
 
     #[sinex_test]
@@ -364,9 +361,11 @@ mod tests {
         });
 
         let result = handle_ops_start(ctx.pool(), params).await?;
-        assert!(result["operation"]["id"].is_string());
-        assert_eq!(result["operation"]["operation_type"], "test-operation");
-        assert_eq!(result["operation"]["result_status"], "running");
+        let response: OpsStartResponse = serde_json::from_value(result)?;
+
+        assert!(!response.operation.id.is_empty());
+        assert_eq!(response.operation.operation_type, "test-operation");
+        assert_eq!(response.operation.result_status, "running");
 
         Ok(())
     }
@@ -382,8 +381,9 @@ mod tests {
 
         // List all operations
         let result = handle_ops_list(ctx.pool(), json!({})).await?;
-        assert!(result["operations"].is_array());
-        assert!(result["operations"].as_array().unwrap().len() > 0);
+        let response: OpsListResponse = serde_json::from_value(result)?;
+
+        assert!(!response.operations.is_empty());
 
         Ok(())
     }
@@ -400,11 +400,14 @@ mod tests {
         )
         .await?;
 
-        let operation_id = start_result["operation"]["id"].as_str().unwrap();
+        let start_response: OpsStartResponse = serde_json::from_value(start_result)?;
+        let operation_id = &start_response.operation.id;
 
         // Get the operation
         let result = handle_ops_get(ctx.pool(), json!({ "operation_id": operation_id })).await?;
-        assert_eq!(result["operation"]["id"], operation_id);
+        let response: OpsGetResponse = serde_json::from_value(result)?;
+
+        assert_eq!(response.operation.id, *operation_id);
 
         Ok(())
     }
@@ -421,7 +424,8 @@ mod tests {
         )
         .await?;
 
-        let operation_id = start_result["operation"]["id"].as_str().unwrap();
+        let start_response: OpsStartResponse = serde_json::from_value(start_result)?;
+        let operation_id = &start_response.operation.id;
 
         // Cancel it
         let auth = crate::rpc_server::RpcAuthContext::system();
@@ -435,9 +439,14 @@ mod tests {
         )
         .await?;
 
-        assert_eq!(result["operation"]["result_status"], "cancelled");
-        assert_eq!(result["operation"]["result_message"], "test cancellation");
-        assert_eq!(result["cancelled"], true);
+        let response: OpsCancelResponse = serde_json::from_value(result)?;
+
+        assert_eq!(response.operation.result_status, "cancelled");
+        assert_eq!(
+            response.operation.result_message,
+            Some("test cancellation".to_string())
+        );
+        assert!(response.cancelled);
 
         Ok(())
     }
@@ -454,7 +463,8 @@ mod tests {
         )
         .await?;
 
-        let operation_id = start_result["operation"]["id"].as_str().unwrap();
+        let start_response: OpsStartResponse = serde_json::from_value(start_result)?;
+        let operation_id = &start_response.operation.id;
 
         // Cancel once
         let auth = crate::rpc_server::RpcAuthContext::system();

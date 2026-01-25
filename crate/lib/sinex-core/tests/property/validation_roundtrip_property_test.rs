@@ -22,15 +22,15 @@ async fn sanitized_events_roundtrip_through_db(
     ctx: &TestContext,
     #[strategy(arb_event_payload())] payload: serde_json::Value,
 ) -> TestResult<()> {
-    let mut event = Event::test_event(
+    let mut event = test_event(
         EventSource::new("validation.cross"),
         EventType::new("sanitization.check"),
         payload,
     );
 
     EventSanitizer::sanitize_event(&mut event)?;
-    if let Provenance::Material { id, .. } = &event.provenance {
-        ctx.ensure_source_material(*id, None).await?;
+    if let Provenance::Material { id, .. } = &event.provenance() {
+        ctx.ensure_source_material(id, None).await?;
     }
 
     let stored = ctx.pool.events().insert(event.clone()).await?;

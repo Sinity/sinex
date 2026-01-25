@@ -3,6 +3,7 @@
 //! Generates deterministic, reproducible datasets for benchmarks and tests.
 //! All datasets use fixed seeds to ensure reproducibility across runs.
 
+use crate::test_event;
 use crate::Result;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
@@ -378,7 +379,7 @@ impl FixtureGenerator {
 
         use sinex_core::types::domain::{EventSource, EventType};
 
-        let mut event = Event::<JsonValue>::test_event(
+        let mut event = test_event(
             EventSource::new(source),
             EventType::new(event_type),
             serde_json::to_value(payload).map_err(|e| {

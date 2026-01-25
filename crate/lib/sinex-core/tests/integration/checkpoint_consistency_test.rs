@@ -11,7 +11,7 @@ use chrono::{Duration as ChronoDuration, Utc};
 use serde_json::json;
 use sinex_core::db::integrity::checkpoint_verification;
 use sinex_core::types::ulid::Ulid;
-use sinex_core::DbPool;
+use sinex_core::{DbPool, DynamicPayload};
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::timing_utils::WaitHelpers;
@@ -65,11 +65,11 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult<
     let mut event_ids = Vec::new();
     for i in 0..10 {
         let event = ctx
-            .publish_event(
+            .publish(DynamicPayload::new(
                 "test.checkpoint",
                 "consistency_test",
                 json!({"sequence": i}),
-            )
+            ))
             .await?;
         event_ids.push(event.id.expect("event should have id"));
 
@@ -143,11 +143,11 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult<()> {
     let mut batch1_events = Vec::new();
     for i in 0..5 {
         let event = ctx
-            .publish_event(
+            .publish(DynamicPayload::new(
                 "test.gap_detection",
                 "batch1",
                 json!({"batch": 1, "sequence": i}),
-            )
+            ))
             .await?;
         batch1_events.push(event.id.expect("event id"));
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
@@ -173,11 +173,11 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult<()> {
     let mut batch2_events = Vec::new();
     for i in 0..8 {
         let event = ctx
-            .publish_event(
+            .publish(DynamicPayload::new(
                 "test.gap_detection",
                 "batch2",
                 json!({"batch": 2, "sequence": i}),
-            )
+            ))
             .await?;
         batch2_events.push(event.id.expect("event id"));
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
@@ -198,11 +198,11 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult<()> {
     while observed < expected_total {
         let sequence = 30_000 + observed;
         let event = ctx
-            .publish_event(
+            .publish(DynamicPayload::new(
                 "test.gap_detection",
                 "batch2",
                 json!({"batch": 2, "sequence": sequence}),
-            )
+            ))
             .await?;
         batch2_events.push(event.id.expect("event id"));
         expected_gap += 1;
@@ -246,11 +246,11 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult<()> {
             expected_gap
         );
         let event = ctx
-            .publish_event(
+            .publish(DynamicPayload::new(
                 "test.gap_detection",
                 "batch2",
                 json!({"batch": 2, "sequence": 20_000 + attempt as i32}),
-            )
+            ))
             .await?;
         batch2_events.push(event.id.expect("event id"));
         expected_gap += 1;
@@ -370,11 +370,11 @@ async fn test_stale_checkpoint_detection(ctx: TestContext) -> TestResult<()> {
     ensure_processor_manifest(&pool, &processor_name).await?;
 
     let event = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "test.stale_checkpoint",
             "stale_test",
             json!({"data": "test"}),
-        )
+        ))
         .await?;
     let event_id = event.id.expect("event id");
 
@@ -439,11 +439,11 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
 
     // Insert events for cross-validation
     for i in 0..15 {
-        ctx.publish_event(
+        ctx.publish(DynamicPayload::new(
             "test.cross_validation",
             "shared_event",
             json!({"sequence": i}),
-        )
+        ))
         .await?;
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
@@ -534,11 +534,11 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
             }
             // Backfill an extra event and retry if nothing was found; this guards against
             // rare timing where analysis runs before inserts are visible.
-            ctx.publish_event(
+            ctx.publish(DynamicPayload::new(
                 "test.cross_validation",
                 "shared_event",
                 json!({"sequence": 10_000 + attempts}),
-            )
+            ))
             .await?;
             sinex_test_utils::timing_utils::WaitHelpers::wait_for_source_events(
                 &ctx.pool,
@@ -772,7 +772,11 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult<()>
     let mut created_event_ids = Vec::with_capacity(20);
     for i in 0..20 {
         let event = ctx
-            .publish_event("test.data_loss", "sequence_event", json!({"sequence": i}))
+            .publish(DynamicPayload::new(
+                "test.data_loss",
+                "sequence_event",
+                json!({"sequence": i}),
+            ))
             .await?;
         if let Some(id) = event.id {
             created_event_ids.push(*id.as_ulid());
@@ -819,11 +823,11 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult<()>
     // Now add more events after the checkpoint
     for i in 20..25 {
         let event = ctx
-            .publish_event(
+            .publish(DynamicPayload::new(
                 "test.data_loss",
                 "post_checkpoint_event",
                 json!({"sequence": i}),
-            )
+            ))
             .await?;
         if let Some(id) = event.id {
             created_event_ids.push(*id.as_ulid());
@@ -841,11 +845,11 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult<()>
     .unwrap_or(0);
 
     if post_checkpoint_events == 0 {
-        ctx.publish_event(
+        ctx.publish(DynamicPayload::new(
             "test.data_loss",
             "post_checkpoint_event",
             json!({"sequence": 25, "forced": true}),
-        )
+        ))
         .await?;
     }
 

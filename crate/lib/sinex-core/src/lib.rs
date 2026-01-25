@@ -24,6 +24,9 @@ pub mod environment;
 // Filesystem helpers
 pub mod fs;
 
+// RPC request/response types for gateway communication
+pub mod rpc;
+
 // NATS configuration module (only with nats feature)
 #[cfg(feature = "nats")]
 pub mod nats;
@@ -57,7 +60,7 @@ pub use types::ids::Id;
 pub use environment::{environment, SinexEnvironment};
 
 // Re-export event system at crate root for short imports
-pub use types::events::EventPayload;
+pub use types::events::{DynamicPayload, EventPayload, Publishable};
 
 // Create facade for event payloads to flatten hierarchy
 pub mod payloads {
@@ -112,8 +115,23 @@ pub use db::repositories::{
 
 // Re-export all domain types at crate root for short imports
 pub use types::domain::{
-    ConsumerGroup, ConsumerName, EventSource, EventType, HostName, ProcessorName, SanitizedPath,
-    SchemaName, SchemaVersion,
+    ConsumerGroup, ConsumerName, EntityTypeName, EventSource, EventType, HostName, InstanceId,
+    NodeId, NodeState, NodeType, OperationStatus, ProcessorName, RelationType, SanitizedPath,
+    SchemaName, SchemaVersion, UserId,
+};
+
+// Re-export event enums at crate root for short imports
+pub use types::events::enums::{
+    BluetoothEventType, DBusBus, DeactivationReason, DeviceEventType, DeviceType,
+    FileModificationType, JournalSyncType, LoopStatus, MountEventType, NetworkConnectionType,
+    NetworkEventType, NetworkState, PlaybackStatus, PowerEventType, ScanType, ShutdownReason,
+    SystemdActiveState, SystemdUnitType, TerminalType, UdevAction,
+};
+
+// Re-export unit types at crate root for short imports
+pub use types::units::{
+    Bytes, EventCount, ExitCode, LineCount, Microseconds, Milliseconds, Nanoseconds, ProcessId,
+    Seconds, SequenceNumber, SyslogPriority, UnixGid, UnixUid,
 };
 
 // Re-export migration functionality
@@ -155,18 +173,43 @@ pub mod prelude {
         // Domain types
         ConsumerGroup,
         ConsumerName,
+        // Event payload enums
+        DeactivationReason,
+        // Dynamic payload for runtime source/type
+        DynamicPayload,
+        EntityTypeName,
         // Event types
         Event,
+        // Unit types
+        EventCount,
         EventId,
         EventPayload,
+        ExitCode,
+        FileModificationType,
         HasProvenance,
+        InstanceId,
         JsonValue,
+        Nanoseconds,
+        NodeId,
+        NodeState,
+        NodeType,
+        OperationStatus,
+        ProcessId,
         Provenance,
+        // Publishable trait for unified event creation
+        Publishable,
+        RelationType,
+        ScanType,
         SchemaName,
         SchemaVersion,
+        SequenceNumber,
+        ShutdownReason,
         // Error types
         SinexError,
         SourceMaterial,
+        SyslogPriority,
+        TerminalType,
+        UserId,
     };
 
     // Common external crates that are used throughout the codebase

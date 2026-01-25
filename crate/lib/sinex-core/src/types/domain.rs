@@ -390,6 +390,158 @@ define_validated_string_type!(
     NatsSubject
 );
 
+// ─────────────────────────────────────────────────────────────
+// Coordination and Node Types
+// ─────────────────────────────────────────────────────────────
+
+define_string_type!(
+    #[doc = "A unique identifier for a node instance"]
+    NodeId
+);
+
+define_string_type!(
+    #[doc = "A unique identifier for a distributed instance (used in leader election)"]
+    InstanceId
+);
+
+define_string_type!(
+    #[doc = "The type of relationship between entities (e.g., `works_on`, `mentions`, `depends_on`)"]
+    RelationType
+);
+
+define_string_type!(
+    #[doc = "The type of an entity (e.g., `person`, `project`, `document`)"]
+    EntityTypeName
+);
+
+define_string_type!(
+    #[doc = "User identifier for attribution"]
+    UserId
+);
+
+/// State of a processing node
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NodeState {
+    /// Node is actively processing events
+    Running,
+    /// Node is gracefully stopping (finishing current work)
+    Draining,
+    /// Node is paused and not processing
+    Paused,
+    /// Node has encountered a fatal error
+    Failed,
+    /// Node state is unknown
+    Unknown,
+}
+
+impl std::fmt::Display for NodeState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Running => write!(f, "running"),
+            Self::Draining => write!(f, "draining"),
+            Self::Paused => write!(f, "paused"),
+            Self::Failed => write!(f, "failed"),
+            Self::Unknown => write!(f, "unknown"),
+        }
+    }
+}
+
+impl std::str::FromStr for NodeState {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "running" => Ok(Self::Running),
+            "draining" => Ok(Self::Draining),
+            "paused" => Ok(Self::Paused),
+            "failed" => Ok(Self::Failed),
+            "unknown" => Ok(Self::Unknown),
+            _ => Err(format!("unknown node state: {s}")),
+        }
+    }
+}
+
+impl Default for NodeState {
+    fn default() -> Self {
+        Self::Unknown
+    }
+}
+
+/// Result status of an operation
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationStatus {
+    /// Operation completed successfully
+    Success,
+    /// Operation failed
+    Failed,
+    /// Operation is pending/in progress
+    Pending,
+}
+
+impl std::fmt::Display for OperationStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Success => write!(f, "success"),
+            Self::Failed => write!(f, "failed"),
+            Self::Pending => write!(f, "pending"),
+        }
+    }
+}
+
+impl std::str::FromStr for OperationStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "success" | "ok" => Ok(Self::Success),
+            "failed" | "error" => Ok(Self::Failed),
+            "pending" | "in_progress" => Ok(Self::Pending),
+            _ => Err(format!("unknown operation status: {s}")),
+        }
+    }
+}
+
+/// Type of node in the system
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum NodeType {
+    /// Ingestor node (captures events from external sources)
+    Ingestor,
+    /// Automaton node (processes events and generates derived data)
+    Automaton,
+    /// Service node (provides API endpoints)
+    Service,
+    /// Processor node (transforms events)
+    Processor,
+}
+
+impl std::fmt::Display for NodeType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Ingestor => write!(f, "ingestor"),
+            Self::Automaton => write!(f, "automaton"),
+            Self::Service => write!(f, "service"),
+            Self::Processor => write!(f, "processor"),
+        }
+    }
+}
+
+impl std::str::FromStr for NodeType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "ingestor" => Ok(Self::Ingestor),
+            "automaton" => Ok(Self::Automaton),
+            "service" => Ok(Self::Service),
+            "processor" => Ok(Self::Processor),
+            _ => Err(format!("unknown node type: {s}")),
+        }
+    }
+}
+
 // Validation for specific types
 impl EventType {
     /// Validate that the event type follows the hierarchical naming convention

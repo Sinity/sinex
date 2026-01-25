@@ -157,18 +157,13 @@ pub fn extract_provenance(event: &Event<JsonValue>) -> ExtractedProvenance {
             offset_end,
             offset_kind,
         } => {
-            let kind = match offset_kind {
-                crate::OffsetKind::Byte => "byte",
-                crate::OffsetKind::Line => "line",
-                crate::OffsetKind::Record => "rowid",
-                crate::OffsetKind::Character => "logical",
-            };
+            let kind = Some(offset_kind.as_wire_str().to_string());
             (
                 None,
                 Some(*id.as_ulid()),
                 *offset_start,
                 *offset_end,
-                Some(kind.to_string()),
+                kind,
                 Some(*anchor_byte),
             )
         }

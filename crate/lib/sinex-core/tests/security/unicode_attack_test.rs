@@ -8,6 +8,7 @@
 //! - Encoding-based attacks
 
 use sinex_core::db::sanitization::EventSanitizer;
+use sinex_core::{DynamicPayload, Id};
 use sinex_test_utils::prelude::*;
 use std::collections::HashMap;
 use unicode_normalization::UnicodeNormalization;
@@ -50,43 +51,31 @@ async fn test_unicode_homograph_attacks(ctx: TestContext) -> TestResult<()> {
         ("Amazon", "Аmazon", "Cyrillic 'А' looks like Latin 'A'"),
     ];
 
-    let pool = ctx.pool();
-
     for (legitimate, attack, description) in homograph_pairs {
         println!("\nTesting: {} vs {} - {}", legitimate, attack, description);
 
         // Create event with homograph attack
-        let event = EventBuilder::dynamic()
-            .source("unicode_security_test")
-            .event_type("homograph.test")
-            .payload(json!({
+        let event = ctx.publish(DynamicPayload::new(
+            "unicode_security_test",
+            "homograph.test",
+            json!({
                 "username": attack,
                 "legitimate": legitimate,
                 "description": description
-            }))
-            .build()?;
+            }),
+        )).await?;
 
-        // Insert event
-        let insert_result = insert_event(pool, &event).await?;
+        let event_id = event.id.expect("Event should have ID");
 
         // Query back and check if it was normalized or flagged
-        let retrieved = sqlx::query!(
-            r#"
-            SELECT payload,
-                   payload->>'username' as username
-            FROM core.events
-            WHERE id::uuid = $1::uuid
-            "#,
-            event.id.to_uuid()
-        )
-        .fetch_one(pool)
-        .await?;
+        let retrieved = ctx.pool().events().get_by_id(event_id).await?
+            .expect("Event should be retrievable");
 
-        let stored_username = retrieved.username.unwrap_or_default();
+        let stored_username = retrieved.payload["username"].as_str().unwrap_or_default();
 
         // Check if the system detected the homograph
         if stored_username == attack {
-            println!("  ⚠️  Homograph stored as-is: {}", attack);
+            println!("  Warning: Homograph stored as-is: {}", attack);
 
             // Check if we can detect it programmatically
             let is_mixed_script = contains_mixed_scripts(&attack);
@@ -95,7 +84,7 @@ async fn test_unicode_homograph_attacks(ctx: TestContext) -> TestResult<()> {
             println!("  Mixed scripts: {}", is_mixed_script);
             println!("  Has confusables: {}", has_confusables);
         } else {
-            println!("  ✓ Homograph was normalized or rejected");
+            println!("  Homograph was normalized or rejected");
         }
     }
 
@@ -130,8 +119,6 @@ async fn test_unicode_normalization_attacks(ctx: TestContext) -> TestResult<()> 
         ("½", "1/2", "Fraction vs regular characters"),
     ];
 
-    let pool = ctx.pool();
-
     for (normalized, variant, description) in normalization_tests {
         println!("\nTesting: {} - {}", description, variant);
 
@@ -150,46 +137,18 @@ async fn test_unicode_normalization_attacks(ctx: TestContext) -> TestResult<()> 
         // Create events with different normalizations
         for (form_name, form_value) in [("NFC", nfc), ("NFD", nfd), ("NFKC", nfkc), ("NFKD", nfkd)]
         {
-            let event = EventBuilder::dynamic()
-                .source("unicode_normalization_test")
-                .event_type("normalization.test")
-                .payload(json!({
+            ctx.publish(DynamicPayload::new(
+                "unicode_normalization_test",
+                "normalization.test",
+                json!({
                     "original": variant,
                     "normalized": normalized,
                     "form": form_name,
                     "value": form_value,
                     "description": description
-                }))
-                .build()?;
-
-            insert_event(pool, &event).await?;
+                }),
+            )).await?;
         }
-    }
-
-    // Query to see how different forms are stored
-    let stored_forms = sqlx::query!(
-        r#"
-        SELECT 
-            payload->>'form' as form,
-            payload->>'value' as value,
-            LENGTH(payload->>'value') as value_length
-        FROM core.events
-        WHERE source = 'unicode_normalization_test'
-        ORDER BY ts_ingest DESC
-        LIMIT 20
-        "#
-    )
-    .fetch_all(pool)
-    .await?;
-
-    println!("\nStored normalization forms:");
-    for form in stored_forms {
-        println!(
-            "  {}: {} (len={})",
-            form.form.unwrap_or_default(),
-            form.value.unwrap_or_default(),
-            form.value_length.unwrap_or(0)
-        );
     }
 
     Ok(())
@@ -225,8 +184,6 @@ async fn test_zero_width_character_attacks(ctx: TestContext) -> TestResult<()> {
         ("\u{200B}both\u{200B}", "both", "Zero-width at both ends"),
     ];
 
-    let pool = ctx.pool();
-
     for (clean, injected, description) in zero_width_tests {
         println!("\nTesting: {} - {}", description, clean);
         println!(
@@ -242,33 +199,34 @@ async fn test_zero_width_character_attacks(ctx: TestContext) -> TestResult<()> {
             injected.as_bytes().len()
         );
 
-        // Create event with zero-width characters
-        let event = EventBuilder::dynamic()
-            .source("zero_width_test")
-            .event_type("zw.injection")
-            .payload(json!({
+        // Create event with zero-width characters using the fluent API
+        let mut event = DynamicPayload::new(
+            "zero_width_test",
+            "zw.injection",
+            json!({
                 "username": injected,
                 "clean_username": clean,
                 "description": description,
                 "char_count": injected.chars().count(),
                 "byte_count": injected.as_bytes().len()
-            }))
-            .build()?;
+            }),
+        )
+        .from_material(Id::new())
+        .build()?;
 
         // Test sanitization
-        let mut sanitizable_event = event.clone();
-        let was_sanitized = EventSanitizer::sanitize_event(&mut sanitizable_event)?;
+        let was_sanitized = EventSanitizer::sanitize_event(&mut event)?;
 
         if was_sanitized {
-            println!("  ✓ Event was sanitized");
-            let sanitized_username = sanitizable_event.payload["username"].as_str().unwrap_or("");
+            println!("  Event was sanitized");
+            let sanitized_username = event.payload["username"].as_str().unwrap_or("");
             println!("  Sanitized to: {:?}", sanitized_username);
         } else {
-            println!("  ⚠️  Event was not sanitized");
+            println!("  Warning: Event was not sanitized");
         }
 
-        // Insert and verify
-        insert_event(pool, &event).await?;
+        // Insert via test context
+        ctx.pool().events().insert(event).await?;
     }
 
     Ok(())
@@ -309,8 +267,6 @@ async fn test_direction_override_attacks(ctx: TestContext) -> TestResult<()> {
         ),
     ];
 
-    let pool = ctx.pool();
-
     for (legitimate, attack, description) in direction_tests {
         println!("\nTesting: {}", description);
         println!("  Legitimate: {:?}", legitimate);
@@ -319,24 +275,22 @@ async fn test_direction_override_attacks(ctx: TestContext) -> TestResult<()> {
         // Visual representation (approximate)
         println!("  Visual: {}", attack);
 
-        let event = EventBuilder::dynamic()
-            .source("direction_override_test")
-            .event_type("bidi.attack")
-            .payload(json!({
+        ctx.publish(DynamicPayload::new(
+            "direction_override_test",
+            "bidi.attack",
+            json!({
                 "filename": attack,
                 "legitimate": legitimate,
                 "description": description,
                 "contains_bidi": contains_bidi_override(&attack)
-            }))
-            .build()?;
-
-        insert_event(pool, &event).await?;
+            }),
+        )).await?;
 
         // Check if the attack would be caught
         if contains_bidi_override(&attack) {
-            println!("  ✓ Bidirectional override detected");
+            println!("  Bidirectional override detected");
         } else {
-            println!("  ⚠️  Bidirectional override not detected");
+            println!("  Warning: Bidirectional override not detected");
         }
     }
 
@@ -363,35 +317,33 @@ async fn test_encoding_based_attacks(ctx: TestContext) -> TestResult<()> {
         ("", vec![0xED, 0xB0, 0x80], "UTF-16 low surrogate"),
     ];
 
-    let pool = ctx.pool();
-
-    for (expected, bytes, description) in encoding_tests {
+    for (_expected, bytes, description) in encoding_tests {
         println!("\nTesting: {}", description);
         println!("  Bytes: {:?}", bytes);
 
         // Try to create string from bytes
         match String::from_utf8(bytes.clone()) {
             Ok(s) => {
-                println!("  ⚠️  Invalid UTF-8 was accepted: {:?}", s);
+                println!("  Warning: Invalid UTF-8 was accepted: {:?}", s);
 
                 // Try to insert into database
-                let event = EventBuilder::dynamic()
-                    .source("encoding_attack_test")
-                    .event_type("encoding.invalid")
-                    .payload(json!({
+                let result = ctx.publish(DynamicPayload::new(
+                    "encoding_attack_test",
+                    "encoding.invalid",
+                    json!({
                         "value": s,
                         "description": description,
                         "bytes": bytes
-                    }))
-                    .build()?;
+                    }),
+                )).await;
 
-                match insert_event(pool, &event).await {
-                    Ok(_) => println!("  ⚠️  Database accepted invalid encoding"),
-                    Err(e) => println!("  ✓ Database rejected: {}", e),
+                match result {
+                    Ok(_) => println!("  Warning: Database accepted invalid encoding"),
+                    Err(e) => println!("  Database rejected: {}", e),
                 }
             }
             Err(e) => {
-                println!("  ✓ Invalid UTF-8 correctly rejected: {}", e);
+                println!("  Invalid UTF-8 correctly rejected: {}", e);
             }
         }
     }
@@ -420,8 +372,6 @@ async fn test_combined_unicode_attacks(ctx: TestContext) -> TestResult<()> {
         ),
     ];
 
-    let pool = ctx.pool();
-
     for (legitimate, attack, description) in combined_attacks {
         println!("\nTesting combined attack: {}", description);
         println!("  Legitimate: {:?}", legitimate);
@@ -435,18 +385,16 @@ async fn test_combined_unicode_attacks(ctx: TestContext) -> TestResult<()> {
         let attack_vectors = analyze_unicode_attacks(&attack);
         println!("  Detected vectors: {:?}", attack_vectors);
 
-        let event = EventBuilder::dynamic()
-            .source("combined_unicode_test")
-            .event_type("unicode.combined")
-            .payload(json!({
+        ctx.publish(DynamicPayload::new(
+            "combined_unicode_test",
+            "unicode.combined",
+            json!({
                 "input": attack,
                 "legitimate": legitimate,
                 "description": description,
                 "attack_vectors": attack_vectors
-            }))
-            .build()?;
-
-        insert_event(pool, &event).await?;
+            }),
+        )).await?;
     }
 
     Ok(())
@@ -543,22 +491,4 @@ fn analyze_unicode_attacks(s: &str) -> HashMap<String, bool> {
     vectors.insert("non_nfc".to_string(), s != &s.nfc().collect::<String>());
 
     vectors
-}
-
-async fn insert_event(pool: &DbPool, event: &RawEvent) -> TestResult<()> {
-    sqlx::query!(
-        r#"
-        INSERT INTO core.events (id, source, event_type, payload, ts_orig)
-        VALUES ($1::uuid::ulid, $2, $3, $4, $5)
-        "#,
-        event.id.to_uuid(),
-        event.source,
-        event.event_type,
-        event.payload,
-        event.ts_orig
-    )
-    .execute(pool)
-    .await
-    .wrap_err("Failed to insert event")?;
-    Ok(())
 }

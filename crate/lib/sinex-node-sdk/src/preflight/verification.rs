@@ -1,22 +1,22 @@
 /*!
  * Core verification module for Sinex Pre-Flight system
  *
- * Handles end-to-end integration verification including:
- * - Complete system workflow testing
- * - Event pipeline validation
- * - Service integration testing
- * - Performance baseline verification
+ * Handles infrastructure verification using lightweight query-based checks:
+ * - Database connectivity and schema validation
+ * - Transaction support verification
+ * - Concurrent query capability
+ * - Required extension availability
+ *
+ * This module does NOT insert, update, or delete any events.
+ * All verification is done via SELECT queries and schema introspection.
  */
 
+use crate::{Checkpoint, CheckpointManager, CheckpointState};
 use async_nats::jetstream::kv;
 use chrono::Utc;
-use color_eyre::eyre::{bail, Context, ContextCompat, Result};
+use color_eyre::eyre::{Context, Result};
 use serde_json::{json, Value};
-// use sinex_core::db::models::Event;
-use crate::{Checkpoint, CheckpointManager, CheckpointState};
 use sinex_core::types::ulid::Ulid;
-use sinex_core::DbPoolExt;
-use sinex_core::{EventSource, EventType};
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::time::Instant;
@@ -44,20 +44,7 @@ pub async fn verify_end_to_end_integration() -> Result<(VerificationStatus, Valu
         }
     }
 
-    // Event pipeline test
-    if !has_failures {
-        match verify_event_pipeline(&mut messages).await {
-            Ok(pipeline_info) => {
-                details.insert("event_pipeline", pipeline_info);
-            }
-            Err(e) => {
-                messages.push(format!("✗ Event pipeline test failed: {}", e));
-                has_failures = true;
-            }
-        }
-    }
-
-    // Service integration test
+    // Service integration test (NATS/checkpoint KV)
     if !has_failures {
         match verify_service_integration(&mut messages).await {
             Ok(service_info) => {
@@ -87,7 +74,7 @@ pub async fn verify_end_to_end_integration() -> Result<(VerificationStatus, Valu
     Ok((status, result, messages))
 }
 
-/// Verify database integration
+/// Verify database integration using query-based checks only
 async fn verify_database_integration(messages: &mut Vec<String>) -> Result<Value> {
     let pool = get_test_pool().await?;
 
@@ -95,14 +82,14 @@ async fn verify_database_integration(messages: &mut Vec<String>) -> Result<Value
     let mut has_warnings = false;
     let mut has_failures = false;
 
-    // Test CRUD operations
-    match test_crud_operations(&pool, messages).await {
-        Ok(crud_info) => {
-            tests.insert("crud_operations", crud_info);
-            messages.push("✓ CRUD operations test passed".to_string());
+    // Test schema and table access
+    match test_schema_access(&pool, messages).await {
+        Ok(schema_info) => {
+            tests.insert("schema_access", schema_info);
+            messages.push("✓ Schema access test passed".to_string());
         }
         Err(e) => {
-            messages.push(format!("✗ CRUD operations test failed: {}", e));
+            messages.push(format!("✗ Schema access test failed: {}", e));
             has_failures = true;
         }
     }
@@ -123,13 +110,13 @@ async fn verify_database_integration(messages: &mut Vec<String>) -> Result<Value
 
     // Test concurrent operations
     if !has_failures {
-        match test_concurrent_operations(&pool, messages).await {
+        match test_concurrent_queries(&pool, messages).await {
             Ok(concurrent_info) => {
-                tests.insert("concurrent_operations", concurrent_info);
-                messages.push("✓ Concurrent operations test passed".to_string());
+                tests.insert("concurrent_queries", concurrent_info);
+                messages.push("✓ Concurrent queries test passed".to_string());
             }
             Err(e) => {
-                messages.push(format!("⚠ Concurrent operations test failed: {}", e));
+                messages.push(format!("⚠ Concurrent queries test failed: {}", e));
                 has_warnings = true;
             }
         }
@@ -156,157 +143,127 @@ async fn verify_database_integration(messages: &mut Vec<String>) -> Result<Value
     }))
 }
 
-/// Test basic CRUD operations
-async fn test_crud_operations(pool: &PgPool, messages: &mut Vec<String>) -> Result<Value> {
-    let test_source = EventSource::new("sinex-preflight-integration-test");
-    let test_event_type = EventType::new("verification.crud_test");
-    let mut has_warnings = false;
-    let mut has_failures = false;
-
-    // CREATE: Insert a test event
-    let inserted_event = pool
-        .events()
-        .insert_test_event(
-            &test_source,
-            &test_event_type,
-            json!({"test": "crud_operations", "operation": "insert", "host": "localhost"}),
+/// Test schema access - verify core tables exist and are queryable
+async fn test_schema_access(pool: &PgPool, _messages: &mut Vec<String>) -> Result<Value> {
+    // Check that core.events table exists
+    let events_table_exists = sqlx::query_scalar::<_, bool>(
+        r#"
+        SELECT EXISTS (
+            SELECT FROM information_schema.tables
+            WHERE table_schema = 'core'
+            AND table_name = 'events'
         )
-        .await
-        .wrap_err("Failed to insert test event")?;
+        "#,
+    )
+    .fetch_one(pool)
+    .await
+    .wrap_err("Failed to check core.events table existence")?;
 
-    let inserted_id = inserted_event
-        .id
-        .wrap_err("Inserted event should have an ID")?;
-
-    // Store ID for reuse (workaround for Copy trait issue)
-    let event_id = inserted_id.clone();
-
-    // READ: Query the test event
-    let read_event = pool
-        .events()
-        .get_by_id(inserted_id)
-        .await
-        .wrap_err("Failed to read test event")?
-        .wrap_err("Test event not found after insert")?;
-
-    if read_event.source != test_source {
-        bail!(
-            "Read event source mismatch: got {}, expected {}",
-            read_event.source.as_str(),
-            test_source.as_str()
-        );
+    if !events_table_exists {
+        color_eyre::eyre::bail!("core.events table does not exist");
     }
 
-    // UPDATE: Modify the test event payload
-    let updated = pool
-        .events()
-        .update_test_event(
-            event_id.clone(),
-            json!({"test": "crud_operations", "operation": "update", "modified": true}),
+    // Check that we can SELECT from core.events
+    let select_works = sqlx::query("SELECT id, source, event_type FROM core.events LIMIT 0")
+        .execute(pool)
+        .await
+        .is_ok();
+
+    // Check that we can run a COUNT query
+    let count_result = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM core.events")
+        .fetch_one(pool)
+        .await
+        .wrap_err("Failed to count events")?;
+
+    // Check core.source_materials table exists
+    let source_materials_exists = sqlx::query_scalar::<_, bool>(
+        r#"
+        SELECT EXISTS (
+            SELECT FROM information_schema.tables
+            WHERE table_schema = 'core'
+            AND table_name = 'source_materials'
         )
-        .await
-        .wrap_err("Failed to update test event")?;
+        "#,
+    )
+    .fetch_one(pool)
+    .await
+    .wrap_err("Failed to check core.source_materials table existence")?;
 
-    if !updated {
-        messages.push("⚠ Update affected unexpected number of rows".to_string());
-        has_warnings = true;
-    }
-
-    // DELETE: Remove the test event
-    let deleted = pool
-        .events()
-        .delete_test_event(event_id.clone())
-        .await
-        .wrap_err("Failed to delete test event")?;
-
-    if !deleted {
-        messages.push("⚠ Delete affected unexpected number of rows".to_string());
-        has_warnings = true;
-    }
-
-    // Verify deletion
-    let verify_result = pool
-        .events()
-        .get_by_id(event_id.clone())
-        .await
-        .wrap_err("Failed to verify deletion")?;
-
-    if verify_result.is_some() {
-        messages.push("✗ Event still exists after deletion".to_string());
-        has_failures = true;
-    }
+    // Check core.blobs table exists
+    let blobs_exists = sqlx::query_scalar::<_, bool>(
+        r#"
+        SELECT EXISTS (
+            SELECT FROM information_schema.tables
+            WHERE table_schema = 'core'
+            AND table_name = 'blobs'
+        )
+        "#,
+    )
+    .fetch_one(pool)
+    .await
+    .wrap_err("Failed to check core.blobs table existence")?;
 
     Ok(json!({
-        "insert": { "success": true, "event_id": event_id.to_string() },
-        "read": { "success": true, "source_verified": true },
-        "update": { "success": !has_warnings },
-        "delete": { "success": !has_failures },
-        "all_operations_passed": !has_warnings && !has_failures
+        "events_table_exists": events_table_exists,
+        "select_works": select_works,
+        "count_query_works": true,
+        "current_event_count": count_result,
+        "source_materials_exists": source_materials_exists,
+        "blobs_exists": blobs_exists,
+        "all_checks_passed": events_table_exists && select_works && source_materials_exists && blobs_exists
     }))
 }
 
-/// Test transaction operations
+/// Test transaction support using SELECT queries only
 async fn test_transactions(pool: &PgPool, _messages: &mut [String]) -> Result<Value> {
-    // Test committed transaction
-    let tx = pool.begin().await.wrap_err("Failed to begin transaction")?;
+    // Test committed transaction with SELECT
+    let mut tx = pool.begin().await.wrap_err("Failed to begin transaction")?;
 
-    let committed_event = pool
-        .events()
-        .insert_test_event(
-            &EventSource::new("sinex-preflight-tx-test"),
-            &EventType::new("verification.transaction_test"),
-            json!({"test": "transaction", "phase": "commit", "host": "localhost"}),
-        )
+    // Run a simple SELECT inside the transaction
+    let select_in_tx = sqlx::query_scalar::<_, i32>("SELECT 1")
+        .fetch_one(&mut *tx)
         .await
-        .wrap_err("Failed to insert in transaction")?;
+        .wrap_err("Failed to SELECT inside transaction")?;
 
     tx.commit().await.wrap_err("Failed to commit transaction")?;
 
-    // Verify committed transaction exists
-    let committed_id = committed_event
-        .id
-        .wrap_err("Committed event should have an ID")?;
-    let verify_commit = pool.events().get_by_id(committed_id).await?.is_some();
+    let commit_works = select_in_tx == 1;
 
-    // Test rollback
-    let tx_rollback = pool
+    // Test rollback with SELECT
+    let mut tx_rollback = pool
         .begin()
         .await
         .wrap_err("Failed to begin rollback transaction")?;
 
-    let _rollback_event = pool
-        .events()
-        .insert_test_event(
-            &EventSource::new("sinex-preflight-tx-test"),
-            &EventType::new("verification.transaction_test"),
-            json!({"test": "transaction", "phase": "rollback", "host": "localhost"}),
-        )
+    // Run a simple SELECT inside the transaction
+    let _select_in_rollback = sqlx::query_scalar::<_, i32>("SELECT 1")
+        .fetch_one(&mut *tx_rollback)
         .await
-        .wrap_err("Failed to insert in rollback transaction")?;
+        .wrap_err("Failed to SELECT inside rollback transaction")?;
 
     tx_rollback
         .rollback()
         .await
         .wrap_err("Failed to rollback transaction")?;
 
-    // Cleanup committed event
-    pool.events()
-        .cleanup_test_events(
-            &EventSource::new("sinex-preflight-tx-test"),
-            &EventType::new("verification.transaction_test"),
-        )
+    // Verify no side effects by checking we can still query
+    let after_rollback = sqlx::query_scalar::<_, i32>("SELECT 1")
+        .fetch_one(pool)
         .await
-        .ok(); // Ignore cleanup errors
+        .wrap_err("Failed to SELECT after rollback")?;
+
+    let rollback_works = after_rollback == 1;
 
     Ok(json!({
-        "commit_test": verify_commit,
-        "rollback_test": true,
-        "all_passed": verify_commit
+        "commit_test": commit_works,
+        "rollback_test": rollback_works,
+        "no_side_effects": true,
+        "all_passed": commit_works && rollback_works
     }))
 }
 
-/// Test concurrent operations
-async fn test_concurrent_operations(pool: &PgPool, messages: &mut Vec<String>) -> Result<Value> {
+/// Test concurrent query operations
+async fn test_concurrent_queries(pool: &PgPool, messages: &mut Vec<String>) -> Result<Value> {
     use tokio::task::JoinSet;
 
     let concurrent_count = 10;
@@ -315,14 +272,13 @@ async fn test_concurrent_operations(pool: &PgPool, messages: &mut Vec<String>) -
     for i in 0..concurrent_count {
         let pool_clone = pool.clone();
         join_set.spawn(async move {
-            pool_clone
-                .events()
-                .insert_test_event(
-                    &EventSource::new("sinex-preflight-concurrent-test"),
-                    &EventType::new("verification.concurrent_test"),
-                    json!({"test": "concurrent", "operation_id": i, "host": "localhost", "revision": 0}),
-                )
-                .await
+            // Run concurrent SELECT queries - no mutations
+            sqlx::query_scalar::<_, i64>(&format!(
+                "SELECT COUNT(*) + {} - {} FROM core.events",
+                i, i
+            ))
+            .fetch_one(&pool_clone)
+            .await
         });
     }
 
@@ -337,23 +293,14 @@ async fn test_concurrent_operations(pool: &PgPool, messages: &mut Vec<String>) -
         }
     }
 
-    // Cleanup test events
-    pool.events()
-        .cleanup_test_events(
-            &EventSource::new("sinex-preflight-concurrent-test"),
-            &EventType::new("verification.concurrent_test"),
-        )
-        .await
-        .ok(); // Ignore cleanup errors
-
     if !failures.is_empty() {
         for failure in &failures {
-            messages.push(format!("⚠ Concurrent operation failed: {}", failure));
+            messages.push(format!("⚠ Concurrent query failed: {}", failure));
         }
     }
 
     Ok(json!({
-        "total_operations": concurrent_count,
+        "total_queries": concurrent_count,
         "successful": success_count,
         "failed": failures.len(),
         "failure_messages": failures,
@@ -470,65 +417,7 @@ async fn test_database_extensions(pool: &PgPool, _messages: &mut [String]) -> Re
     }))
 }
 
-/// Verify event pipeline
-async fn verify_event_pipeline(_messages: &mut [String]) -> Result<Value> {
-    let pool = get_test_pool().await?;
-
-    // Test rapid event ingestion
-    let event_count = 100;
-    let start_time = Instant::now();
-
-    // Simulate rapid event ingestion
-    for i in 0..event_count {
-        pool.events()
-            .insert_test_event(
-                &EventSource::new("sinex-preflight-pipeline-test"),
-                &EventType::new("verification.ingestion_test"),
-                json!({
-                    "test": "event_ingestion",
-                    "sequence": i,
-                    "timestamp": Utc::now().to_rfc3339(),
-                    "host": "localhost"
-                }),
-            )
-            .await
-            .wrap_err(format!("Failed to insert event {}", i))?;
-    }
-
-    let ingestion_duration = start_time.elapsed();
-
-    // Verify all events were inserted
-    let inserted_count = pool
-        .events()
-        .count_by_source(&EventSource::new("sinex-preflight-pipeline-test"))
-        .await
-        .wrap_err("Failed to count inserted events")?;
-
-    // Cleanup test events
-    pool.events()
-        .cleanup_test_events_by_source(&EventSource::new("sinex-preflight-pipeline-test"))
-        .await
-        .ok(); // Ignore cleanup errors
-
-    if inserted_count < event_count as i64 {
-        bail!(
-            "Only {} of {} events were successfully ingested",
-            inserted_count,
-            event_count
-        );
-    }
-
-    let events_per_second = event_count as f64 / ingestion_duration.as_secs_f64();
-
-    Ok(json!({
-        "events_ingested": event_count,
-        "duration_ms": ingestion_duration.as_millis(),
-        "events_per_second": events_per_second,
-        "all_events_persisted": inserted_count == event_count as i64
-    }))
-}
-
-/// Verify service integration
+/// Verify service integration (NATS checkpoint KV)
 async fn verify_service_integration(_messages: &mut [String]) -> Result<Value> {
     let nats_url = resolve_nats_url()?;
     let mut nats_config = sinex_core::nats::NatsConnectionConfig::from_env();
@@ -664,20 +553,20 @@ pub async fn run_preflight_checks() -> Result<(VerificationStatus, Value, Vec<St
     Ok((status, result, messages))
 }
 
-/// Verify performance baseline
+/// Verify performance baseline using read-only queries
 pub async fn verify_performance_baseline() -> Result<(VerificationStatus, Value, Vec<String>)> {
     let mut messages = Vec::new();
     let pool = get_test_pool().await?;
 
-    // Baseline query performance
+    // Baseline query performance using COUNT query
     let iterations = 10;
     let mut query_times = Vec::new();
 
     for _ in 0..iterations {
         let query_start = Instant::now();
 
-        pool.events()
-            .count_all()
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM core.events")
+            .fetch_one(&pool)
             .await
             .wrap_err("Performance test query failed")?;
 

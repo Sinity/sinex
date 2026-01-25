@@ -4,6 +4,7 @@
 //! These tests verify that events can be generated correctly through various mechanisms.
 
 use sinex_core::db::models::{Event, JsonValue};
+use sinex_core::DynamicPayload;
 use sinex_test_utils::prelude::*;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -62,7 +63,7 @@ async fn test_event_basic_generation(ctx: TestContext) -> TestResult<()> {
     let mut events = Vec::new();
     for i in 0..5 {
         let event = ctx
-            .publish_event(
+            .publish(DynamicPayload::new(
                 "test-source",
                 format!("test.event.{}", i),
                 serde_json::json!({
@@ -70,7 +71,7 @@ async fn test_event_basic_generation(ctx: TestContext) -> TestResult<()> {
                     "data": format!("test data {}", i),
                     "timestamp": chrono::Utc::now().to_rfc3339(),
                 }),
-            )
+            ))
             .await?;
         events.push(event);
     }
@@ -98,30 +99,34 @@ async fn test_event_generation_payload_varieties(ctx: TestContext) -> TestResult
 
     // Test simple string payload
     let string_event = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "payload-test",
             "payload.string",
             serde_json::json!("simple string payload"),
-        )
+        ))
         .await?;
 
     // Test numeric payload
     let numeric_event = ctx
-        .publish_event("payload-test", "payload.numeric", serde_json::json!(42))
+        .publish(DynamicPayload::new(
+            "payload-test",
+            "payload.numeric",
+            serde_json::json!(42),
+        ))
         .await?;
 
     // Test array payload
     let array_event = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "payload-test",
             "payload.array",
             serde_json::json!([1, 2, 3, "test", true]),
-        )
+        ))
         .await?;
 
     // Test nested object payload
     let complex_event = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "payload-test",
             "payload.complex",
             serde_json::json!({
@@ -144,7 +149,7 @@ async fn test_event_generation_payload_varieties(ctx: TestContext) -> TestResult
                     }
                 }
             }),
-        )
+        ))
         .await?;
 
     // Verify events were created
@@ -178,7 +183,11 @@ async fn test_filesystem_event_generation(ctx: TestContext) -> TestResult<()> {
     for i in 0..10 {
         let data = TestEventData::filesystem_event(i, "fs-ingestor");
         let event = ctx
-            .publish_event(data.source, data.event_type, data.payload)
+            .publish(DynamicPayload::new(
+                data.source,
+                data.event_type,
+                data.payload,
+            ))
             .await?;
         generated_events.push(event);
         tokio::time::sleep(Duration::from_millis(1)).await;
@@ -222,7 +231,11 @@ async fn test_command_event_generation(ctx: TestContext) -> TestResult<()> {
         let command = commands[i % commands.len()];
         let data = TestEventData::command_event(i, command);
         let event = ctx
-            .publish_event(data.source, data.event_type, data.payload)
+            .publish(DynamicPayload::new(
+                data.source,
+                data.event_type,
+                data.payload,
+            ))
             .await?;
         generated_events.push(event);
         tokio::time::sleep(Duration::from_millis(2)).await;
@@ -265,7 +278,11 @@ async fn test_concurrent_event_generation(ctx: TestContext) -> TestResult<()> {
         for i in 0..5 {
             let data = TestEventData::filesystem_event(i, "concurrent-fs");
             if let Ok(event) = task_ctx
-                .publish_event(data.source, data.event_type, data.payload)
+                .publish(DynamicPayload::new(
+                    data.source,
+                    data.event_type,
+                    data.payload,
+                ))
                 .await
             {
                 let _ = fs_tx.send(event).await;
@@ -286,7 +303,11 @@ async fn test_concurrent_event_generation(ctx: TestContext) -> TestResult<()> {
         for i in 0..5 {
             let data = TestEventData::command_event(i, commands[i]);
             if let Ok(event) = task_ctx
-                .publish_event(data.source, data.event_type, data.payload)
+                .publish(DynamicPayload::new(
+                    data.source,
+                    data.event_type,
+                    data.payload,
+                ))
                 .await
             {
                 let _ = cmd_tx.send(event).await;
@@ -298,8 +319,12 @@ async fn test_concurrent_event_generation(ctx: TestContext) -> TestResult<()> {
     // Create events from main context in parallel
     for i in 0..5 {
         let data = TestEventData::filesystem_event(i + 100, "main-source");
-        ctx.publish_event(data.source, data.event_type, data.payload)
-            .await?;
+        ctx.publish(DynamicPayload::new(
+            data.source,
+            data.event_type,
+            data.payload,
+        ))
+        .await?;
     }
 
     // Collect events from spawned tasks
@@ -356,7 +381,7 @@ async fn test_event_generation_performance(ctx: TestContext) -> TestResult<()> {
 
     for i in 0..event_count {
         let event = ctx
-            .publish_event(
+            .publish(DynamicPayload::new(
                 "perf-test",
                 "performance.test",
                 serde_json::json!({
@@ -368,7 +393,7 @@ async fn test_event_generation_performance(ctx: TestContext) -> TestResult<()> {
                         "total_events": event_count
                     }
                 }),
-            )
+            ))
             .await?;
         all_events.push(event);
     }
@@ -404,33 +429,33 @@ async fn test_event_generation_payload_sizes(ctx: TestContext) -> TestResult<()>
 
     // Generate small payload event
     let small_event = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "size-test",
             "payload.small",
             serde_json::json!({
                 "size": "small",
                 "data": "x"
             }),
-        )
+        ))
         .await?;
 
     // Generate medium payload event
     let medium_data = "x".repeat(1000);
     let medium_event = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "size-test",
             "payload.medium",
             serde_json::json!({
                 "size": "medium",
                 "data": medium_data
             }),
-        )
+        ))
         .await?;
 
     // Generate large payload event
     let large_data = "x".repeat(10000);
     let large_event = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "size-test",
             "payload.large",
             serde_json::json!({
@@ -441,7 +466,7 @@ async fn test_event_generation_payload_sizes(ctx: TestContext) -> TestResult<()>
                     "description": "Large payload test with substantial data"
                 }
             }),
-        )
+        ))
         .await?;
 
     // Verify events were created with correct sizes
@@ -464,24 +489,24 @@ async fn test_event_generation_edge_cases(ctx: TestContext) -> TestResult<()> {
 
     // Test with special characters in event type
     let special_event = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "edge-test",
             "test.special_chars",
             serde_json::json!({"test": "special characters"}),
-        )
+        ))
         .await?;
     assert_eq!(special_event.event_type.as_str(), "test.special_chars");
 
     // Test with unicode in payload
     let unicode_event = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "edge-test",
             "test.unicode",
             serde_json::json!({
                 "greeting": "Hello, 世界! 🌍",
                 "description": "Unicode test with émojis and accénts"
             }),
-        )
+        ))
         .await?;
     assert!(unicode_event.payload["greeting"]
         .as_str()
@@ -490,7 +515,7 @@ async fn test_event_generation_edge_cases(ctx: TestContext) -> TestResult<()> {
 
     // Test with null values in payload
     let null_event = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "edge-test",
             "test.nulls",
             serde_json::json!({
@@ -498,7 +523,7 @@ async fn test_event_generation_edge_cases(ctx: TestContext) -> TestResult<()> {
                 "absent": null,
                 "nested": {"also_null": null}
             }),
-        )
+        ))
         .await?;
     assert!(null_event.payload["absent"].is_null());
 

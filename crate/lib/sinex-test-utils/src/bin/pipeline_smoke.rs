@@ -1,4 +1,5 @@
 use serde_json::json;
+use sinex_core::DynamicPayload;
 use sinex_test_utils::{TestContext, TestResult};
 
 #[tokio::main]
@@ -10,10 +11,14 @@ async fn main() -> TestResult<()> {
         .with_nats()
         .shared()
         .await?;
-    let scope = ctx.pipeline_scope().await?;
+    let scope = ctx.pipeline().await?;
 
     let event_id = scope
-        .publish("pipeline-smoke", "smoke.event", json!({"ok": true}))
+        .publish(DynamicPayload::new(
+            "pipeline-smoke",
+            "smoke.event",
+            json!({"ok": true}),
+        ))
         .await?;
     scope.wait_for_event_id(event_id).await?;
 

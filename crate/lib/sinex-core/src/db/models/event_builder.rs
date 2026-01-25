@@ -37,7 +37,7 @@ pub struct HasProvenance;
 
 impl<T> EventBuilder<T, NoProvenance> {
     /// Internal constructor - use `Event::builder(payload)` for typed payloads
-    /// or `EventBuilder::dynamic()` for JsonValue.
+    /// or `DynamicPayload::new(...).into_builder()` for JsonValue.
     pub(crate) fn new_internal(source: EventSource, event_type: EventType, payload: T) -> Self {
         Self {
             id: None,
@@ -54,38 +54,6 @@ impl<T> EventBuilder<T, NoProvenance> {
             associated_blob_ids: None,
             _phantom: std::marker::PhantomData,
         }
-    }
-}
-
-/// Dynamic event builder for `JsonValue` payloads.
-///
-/// Use this when you need to construct events with runtime-determined source/type,
-/// such as in test utilities or heterogeneous event processing.
-///
-/// For typed payloads, use the fluent API instead:
-/// ```ignore
-/// let event = MyPayload { ... }
-///     .from_material(material_id)
-///     .build();
-/// ```
-impl EventBuilder<serde_json::Value, NoProvenance> {
-    /// Create a dynamic event builder with explicit source and event type.
-    ///
-    /// This is the escape hatch for when typed payloads aren't available.
-    /// Prefer typed payloads with `.from_material()` or `.from_parents()` when possible.
-    ///
-    /// # Example
-    /// ```ignore
-    /// let event = EventBuilder::dynamic("test-source", "test.event", json!({"key": "value"}))
-    ///     .from_material(material_id, 0)
-    ///     .build()?;
-    /// ```
-    pub fn dynamic(
-        source: impl Into<EventSource>,
-        event_type: impl Into<EventType>,
-        payload: serde_json::Value,
-    ) -> Self {
-        Self::new_internal(source.into(), event_type.into(), payload)
     }
 }
 
@@ -210,20 +178,14 @@ impl<T> EventBuilder<T, HasProvenance> {
             SinexError::invalid_state("EventBuilder missing provenance when building")
         })?;
 
-        // We need to construct Event.
-        // But Event fields are private?
-        // No, Event fields are public in event.rs (except id maybe?).
-        // L40: pub id: Option<Id<Event<T>>>.
-        // All fields are pub!
-
         Ok(Event {
             id: self.id,
             source: self.source,
             event_type: self.event_type,
             payload: self.payload,
             ts_orig: self.timestamp.or_else(|| Some(Utc::now())),
-            host: super::event::get_hostname(), // Need to make get_hostname public? or copy logic?
-            ingestor_version: super::event::get_ingestor_version(), // same
+            host: super::event::get_hostname(),
+            ingestor_version: super::event::get_ingestor_version(),
             payload_schema_id: self.payload_schema_id,
             provenance,
             associated_blob_ids: self.associated_blob_ids,
@@ -231,24 +193,25 @@ impl<T> EventBuilder<T, HasProvenance> {
     }
 }
 
-// Copied Provenance Types
+// Provenance Types with flat serialization for wire format compatibility
 
 /// Provenance information tracking the origin of an event
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+///
+/// Serializes to flat fields for NATS wire format compatibility:
+/// - Material: `{"source_material_id": "...", "anchor_byte": 0, ...}`
+/// - Synthesis: `{"source_event_ids": ["...", "..."]}`
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum Provenance {
     /// Event derived from source material (first-order event)
     Material {
         id: Id<SourceMaterial>,
         anchor_byte: i64,
-        #[serde(skip_serializing_if = "Option::is_none")]
         offset_start: Option<i64>,
-        #[serde(skip_serializing_if = "Option::is_none")]
         offset_end: Option<i64>,
         offset_kind: OffsetKind,
     },
-    /// Event derived from other events (synthesized event)  
+    /// Event derived from other events (synthesized event)
     Synthesis {
         source_event_ids: NonEmptyVec<EventId>,
         operation_id: Option<Id<Operation>>,
@@ -256,18 +219,141 @@ pub enum Provenance {
 }
 
 /// Type of offset measurement
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum OffsetKind {
+    #[default]
     Byte,
     Line,
     Record,
     Character,
 }
 
-impl Default for OffsetKind {
-    fn default() -> Self {
-        Self::Byte
+impl OffsetKind {
+    /// Convert to wire format string
+    pub fn as_wire_str(&self) -> &'static str {
+        match self {
+            OffsetKind::Byte => "byte",
+            OffsetKind::Line => "line",
+            OffsetKind::Record => "rowid",
+            OffsetKind::Character => "logical",
+        }
+    }
+
+    /// Parse from wire format string
+    pub fn from_wire_str(s: &str) -> Self {
+        match s {
+            "byte" => OffsetKind::Byte,
+            "line" => OffsetKind::Line,
+            "rowid" => OffsetKind::Record,
+            "logical" => OffsetKind::Character,
+            _ => OffsetKind::Byte, // default fallback
+        }
+    }
+}
+
+impl Serialize for OffsetKind {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_wire_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for OffsetKind {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Ok(OffsetKind::from_wire_str(&s))
+    }
+}
+
+/// Flat wire format for provenance serialization
+#[derive(Serialize, Deserialize)]
+struct ProvenanceWire {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_material_id: Option<Id<SourceMaterial>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    anchor_byte: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    offset_start: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    offset_end: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    offset_kind: Option<OffsetKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_event_ids: Option<Vec<EventId>>,
+}
+
+impl Serialize for Provenance {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let wire = match self {
+            Provenance::Material {
+                id,
+                anchor_byte,
+                offset_start,
+                offset_end,
+                offset_kind,
+            } => ProvenanceWire {
+                source_material_id: Some(*id),
+                anchor_byte: Some(*anchor_byte),
+                offset_start: *offset_start,
+                offset_end: *offset_end,
+                offset_kind: Some(*offset_kind),
+                source_event_ids: None,
+            },
+            Provenance::Synthesis {
+                source_event_ids, ..
+            } => ProvenanceWire {
+                source_material_id: None,
+                anchor_byte: None,
+                offset_start: None,
+                offset_end: None,
+                offset_kind: None,
+                source_event_ids: Some(source_event_ids.clone().into_vec()),
+            },
+        };
+        wire.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Provenance {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = ProvenanceWire::deserialize(deserializer)?;
+
+        match (wire.source_material_id, wire.source_event_ids) {
+            (Some(id), None) => Ok(Provenance::Material {
+                id,
+                anchor_byte: wire.anchor_byte.unwrap_or(0),
+                offset_start: wire.offset_start,
+                offset_end: wire.offset_end,
+                offset_kind: wire.offset_kind.unwrap_or_default(),
+            }),
+            (None, Some(ids)) => {
+                let source_event_ids = NonEmptyVec::from_vec(ids).ok_or_else(|| {
+                    serde::de::Error::custom("source_event_ids cannot be empty for Synthesis")
+                })?;
+                Ok(Provenance::Synthesis {
+                    source_event_ids,
+                    operation_id: None,
+                })
+            }
+            (Some(_), Some(_)) => Err(serde::de::Error::custom(
+                "cannot have both source_material_id and source_event_ids",
+            )),
+            (None, None) => Err(serde::de::Error::custom(
+                "must have either source_material_id or source_event_ids",
+            )),
+        }
     }
 }
 

@@ -139,7 +139,7 @@ fn arb_event() -> impl Strategy<Value = RawEvent> {
         prop::option::of(arb_timestamp()),
     )
         .prop_map(|(source, event_type, payload, ts_orig)| {
-            let mut event = RawEvent::test_event(
+            let mut event = test_event(
                 EventSource::new(source),
                 EventType::new(event_type),
                 payload,
@@ -185,7 +185,7 @@ sinex_proptest! {
         event_type: String in arb_event_type_name(),
         payload: Value in arb_json_value()
     ) -> Result<()> {
-        let mut event1 = RawEvent::test_event(
+        let mut event1 = test_event(
             EventSource::new(source.clone()),
             EventType::new(event_type.clone()),
             payload.clone(),
@@ -194,7 +194,7 @@ sinex_proptest! {
 
         std::thread::yield_now();
 
-        let mut event2 = RawEvent::test_event(
+        let mut event2 = test_event(
             EventSource::new(source),
             EventType::new(event_type),
             payload,
@@ -244,7 +244,7 @@ sinex_proptest! {
         ts_orig: chrono::DateTime<Utc> in arb_timestamp(),
         host: String in arb_hostname()
     ) -> Result<()> {
-        let mut event = RawEvent::test_event(
+        let mut event = test_event(
             EventSource::new(source.clone()),
             EventType::new(event_type.clone()),
             payload.clone(),
@@ -269,7 +269,7 @@ sinex_proptest! {
         let mut events = Vec::new();
 
         for payload in payloads {
-            let mut event = RawEvent::test_event(
+            let mut event = test_event(
                 EventSource::new(source.clone()),
                 EventType::new(event_type.clone()),
                 payload,
@@ -304,7 +304,7 @@ sinex_proptest! {
         ];
 
         for payload in edge_cases {
-            let mut event = RawEvent::test_event(
+            let mut event = test_event(
                 EventSource::new(source.clone()),
                 EventType::new(event_type.clone()),
                 payload.clone(),
@@ -435,7 +435,7 @@ mod unit_tests {
 
     #[sinex_test]
     fn test_event_builder_defaults() -> Result<()> {
-        let mut event = RawEvent::test_event(
+        let mut event = test_event(
             EventSource::new("test_source"),
             EventType::new("test.event"),
             json!({"key": "value"}),
@@ -447,12 +447,12 @@ mod unit_tests {
         assert_eq!(event.payload, json!({"key": "value"}));
         let ts_orig = event
             .ts_orig
-            .expect("RawEvent::test_event should stamp an original timestamp");
+            .expect("test_event should stamp an original timestamp");
         let now = Utc::now();
         assert!(ts_orig <= now);
         assert!(now - ts_orig < ChronoDuration::seconds(5));
         assert!(!event.host.is_empty()); // Should get hostname
-        assert!(event.ingestor_version.is_none());
+        assert_eq!(event.ingestor_version.as_deref(), Some("test"));
         assert!(event.payload_schema_id.is_none());
         Ok(())
     }

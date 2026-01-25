@@ -76,7 +76,7 @@ async fn end_to_end_single_node_full_flow(ctx: TestContext) -> TestResult<()> {
     let mut ids = Vec::new();
     for idx in 0..25u32 {
         let id = publisher
-            .publish_event("e2e.event", json!({ "seq": idx, "note": "end-to-end" }))
+            .publish("e2e.event", json!({ "seq": idx, "note": "end-to-end" }))
             .await?;
         ids.push(id);
     }

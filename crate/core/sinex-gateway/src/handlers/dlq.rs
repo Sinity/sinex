@@ -7,11 +7,16 @@
 //! - Purge DLQ messages
 
 use color_eyre::eyre::{eyre, Context, Result};
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use sinex_core::environment::SinexEnvironment;
 use sinex_node_sdk::dlq_retry::{DlqRetryConfig, DlqRetryHandler};
 use std::time::Duration;
+
+// Re-export RPC types for consistency
+pub use sinex_core::rpc::dlq::{
+    DlqListResponse, DlqMessagePeek, DlqPeekRequest, DlqPeekResponse, DlqPurgeRequest,
+    DlqPurgeResponse, DlqRequeueRequest, DlqRequeueResponse,
+};
 
 fn env_var_duration_secs(name: &str, default: u64) -> Duration {
     Duration::from_secs(
@@ -20,53 +25,6 @@ fn env_var_duration_secs(name: &str, default: u64) -> Duration {
             .and_then(|s| s.parse().ok())
             .unwrap_or(default),
     )
-}
-
-/// DLQ statistics response
-#[derive(Debug, Serialize)]
-pub struct DlqStatsResponse {
-    pub total_messages: u64,
-    pub total_bytes: u64,
-    pub first_seq: u64,
-    pub last_seq: u64,
-}
-
-/// DLQ message peek response
-#[derive(Debug, Serialize)]
-pub struct DlqMessagePeek {
-    pub subject: String,
-    pub sequence: u64,
-    pub retry_count: u32,
-    pub original_subject: Option<String>,
-    pub payload_preview: String,
-}
-
-/// Parameters for peeking at DLQ messages
-#[derive(Debug, Deserialize)]
-struct DlqPeekParams {
-    #[serde(default = "default_peek_limit")]
-    limit: usize,
-}
-
-fn default_peek_limit() -> usize {
-    10
-}
-
-/// Parameters for requeuing DLQ messages
-#[derive(Debug, Deserialize)]
-struct DlqRequeueParams {
-    /// Optional event ID to requeue specific message
-    #[serde(default)]
-    event_id: Option<String>,
-    /// Requeue all DLQ messages (required, must be explicitly true or false)
-    all: bool,
-}
-
-/// Parameters for purging DLQ messages
-#[derive(Debug, Deserialize)]
-struct DlqPurgeParams {
-    /// Confirm purge operation
-    confirm: bool,
 }
 
 /// Handle DLQ list request - returns statistics about DLQ
@@ -83,14 +41,14 @@ pub async fn handle_dlq_list(
         .await
         .map_err(|e| eyre!("Failed to get DLQ statistics: {}", e))?;
 
-    let response = DlqStatsResponse {
+    let response = DlqListResponse {
         total_messages: stats.total_messages,
         total_bytes: stats.total_bytes,
         first_seq: stats.first_seq,
         last_seq: stats.last_seq,
     };
 
-    Ok(json!(response))
+    Ok(serde_json::to_value(response)?)
 }
 
 /// Handle DLQ peek request - preview messages without removing them
@@ -102,7 +60,7 @@ pub async fn handle_dlq_peek(
     use async_nats::jetstream;
     use futures::StreamExt;
 
-    let peek_params: DlqPeekParams =
+    let peek_params: DlqPeekRequest =
         serde_json::from_value(params).wrap_err("Invalid DLQ peek parameters")?;
 
     let js = jetstream::new(nats_client.clone());
@@ -182,10 +140,8 @@ pub async fn handle_dlq_peek(
         }
     }
 
-    Ok(json!({
-        "messages": previews,
-        "total_peeked": count,
-    }))
+    let response = DlqPeekResponse { messages: previews };
+    Ok(serde_json::to_value(response)?)
 }
 
 /// Handle DLQ requeue request - move messages back to main stream
@@ -202,7 +158,7 @@ pub async fn handle_dlq_requeue(
 ) -> Result<Value> {
     use tracing::info;
 
-    let requeue_params: DlqRequeueParams =
+    let requeue_params: DlqRequeueRequest =
         serde_json::from_value(params).wrap_err("Invalid DLQ requeue parameters")?;
 
     let config = DlqRetryConfig::default();
@@ -234,9 +190,11 @@ pub async fn handle_dlq_requeue(
         return Err(eyre!("Must specify either 'event_id' or 'all: true'"));
     };
 
-    Ok(json!({
-        "requeued": requeued_count,
-    }))
+    let response = DlqRequeueResponse {
+        status: "success".to_string(),
+        requeued_count: requeued_count as u64,
+    };
+    Ok(serde_json::to_value(response)?)
 }
 
 /// Handle DLQ purge request - permanently delete DLQ messages
@@ -247,7 +205,7 @@ pub async fn handle_dlq_purge(
 ) -> Result<Value> {
     use async_nats::jetstream;
 
-    let purge_params: DlqPurgeParams =
+    let purge_params: DlqPurgeRequest =
         serde_json::from_value(params).wrap_err("Invalid DLQ purge parameters")?;
 
     if !purge_params.confirm {
@@ -275,15 +233,17 @@ pub async fn handle_dlq_purge(
         .await
         .map_err(|e| eyre!("Failed to purge DLQ stream: {}", e))?;
 
-    Ok(json!({
-        "purged": messages_before,
-        "status": "success",
-    }))
+    let response = DlqPurgeResponse {
+        status: "success".to_string(),
+        purged_count: messages_before,
+    };
+    Ok(serde_json::to_value(response)?)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use sinex_core::environment;
     use sinex_test_utils::{sinex_test, EphemeralNats};
 

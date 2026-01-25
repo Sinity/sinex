@@ -634,7 +634,7 @@ mod tests {
     use chrono::Duration as ChronoDuration;
     use serde_json::json;
     use sinex_core::db::repositories::DbPoolExt;
-    use sinex_core::{types::ulid::Ulid, DbPool, Id};
+    use sinex_core::{types::ulid::Ulid, DbPool, DynamicPayload, Id};
     use sinex_test_utils::{sinex_test, EphemeralNats, TestContext};
     use tokio::time::sleep;
 
@@ -793,11 +793,11 @@ mod tests {
     async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
         let nats = EphemeralNats::start().await?;
 
-        ctx.publish_event(
+        ctx.publish(DynamicPayload::new(
             "fs-test",
             "file.created",
             json!({ "path": "/tmp/replay.txt" }),
-        )
+        ))
         .await?;
 
         let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));

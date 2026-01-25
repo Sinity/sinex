@@ -1,8 +1,9 @@
 use clap::Subcommand;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::client::GatewayClient;
-use crate::fmt::{format_json, format_yaml, Spinner};
+use crate::fmt::{with_spinner_result, CommandOutput};
 use crate::model::OutputFormat;
 use crate::util::json::get_str;
 use crate::Result;
@@ -104,47 +105,20 @@ impl OpsCommands {
                     .map(|s| serde_json::from_str(s))
                     .transpose()?;
 
-                let spinner = Spinner::new(&format!("Starting {} operation...", operation_type));
-                let operation_id =
-                    match client.ops_start(operation_type, operator, scope_json).await {
-                        Ok(id) => {
-                            spinner.finish_and_clear();
-                            id
-                        }
-                        Err(e) => {
-                            spinner.abandon_with_message("Failed to start operation");
-                            return Err(e);
-                        }
-                    };
+                let operation_id = with_spinner_result(
+                    format!("Starting {} operation...", operation_type),
+                    "Operation started",
+                    client.ops_start(operation_type, operator, scope_json),
+                )
+                .await?;
 
-                match format {
-                    OutputFormat::Table => {
-                        println!("Operation started successfully");
-                        println!("  ID: {}", operation_id);
-                        println!("  Type: {}", operation_type);
-                        println!("  Operator: {}", operator);
-                    }
-                    OutputFormat::Json => {
-                        println!(
-                            "{}",
-                            format_json(&serde_json::json!({
-                                "operation_id": operation_id,
-                                "operation_type": operation_type,
-                                "operator": operator
-                            }))?
-                        );
-                    }
-                    OutputFormat::Yaml => {
-                        println!(
-                            "{}",
-                            format_yaml(&serde_json::json!({
-                                "operation_id": operation_id,
-                                "operation_type": operation_type,
-                                "operator": operator
-                            }))?
-                        );
-                    }
-                }
+                let response = OpsStartResponse {
+                    operation_id,
+                    operation_type: operation_type.clone(),
+                    operator: operator.clone(),
+                };
+
+                CommandOutput::single(response, format_ops_start_table).display(format)?;
             }
             Self::List {
                 operation_type,
@@ -156,84 +130,94 @@ impl OpsCommands {
                     .ops_list(operation_type.clone(), status.clone(), Some(*limit))
                     .await?;
 
-                match format {
-                    OutputFormat::Table => {
-                        if operations.is_empty() {
-                            println!("No operations found.");
-                        } else {
-                            println!("Operations:");
-                            println!("{}", "─".repeat(80));
-                            for op in &operations {
-                                println!("ID: {}", get_str(op, "operation_id"));
-                                println!("Type: {}", get_str(op, "operation_type"));
-                                println!("Status: {}", get_str(op, "status"));
-                                println!("Started: {}", get_str(op, "started_at"));
-                                println!("{}", "─".repeat(80));
-                            }
-                        }
-                    }
-                    OutputFormat::Json => {
-                        for op in &operations {
-                            println!("{}", format_json(op)?);
-                        }
-                    }
-                    OutputFormat::Yaml => {
-                        println!("{}", format_yaml(&operations)?);
-                    }
-                }
+                CommandOutput::list(operations, "No operations found.", format_ops_list_table)
+                    .display(format)?;
             }
             Self::Get {
                 operation_id,
                 format,
             } => {
                 let operation = client.ops_get(operation_id).await?;
-
-                match format {
-                    OutputFormat::Table => {
-                        println!("Operation Details:");
-                        println!("  ID: {}", get_str(&operation, "operation_id"));
-                        println!("  Type: {}", get_str(&operation, "operation_type"));
-                        println!("  Status: {}", get_str(&operation, "status"));
-                        println!("  Operator: {}", get_str(&operation, "operator"));
-                        println!("  Started: {}", get_str(&operation, "started_at"));
-                        if operation.get("completed_at").is_some() {
-                            println!("  Completed: {}", get_str(&operation, "completed_at"));
-                        }
-                        if let Some(scope) = operation.get("scope") {
-                            println!("  Scope: {}", serde_json::to_string_pretty(scope)?);
-                        }
-                    }
-                    OutputFormat::Json => {
-                        println!("{}", format_json(&operation)?);
-                    }
-                    OutputFormat::Yaml => {
-                        println!("{}", format_yaml(&operation)?);
-                    }
-                }
+                CommandOutput::single(operation, format_ops_get_table).display(format)?;
             }
             Self::Cancel {
                 operation_id,
                 reason,
             } => {
-                let spinner = Spinner::new(&format!("Cancelling operation {}...", operation_id));
-                match client.ops_cancel(operation_id, reason.clone()).await {
-                    Ok(()) => {
-                        spinner
-                            .finish_with_message(&format!("Operation {} cancelled", operation_id));
-                        if let Some(r) = reason {
-                            println!("Reason: {}", r);
-                        }
-                    }
-                    Err(e) => {
-                        spinner.abandon_with_message(&format!(
-                            "Failed to cancel operation {}",
-                            operation_id
-                        ));
-                        return Err(e);
-                    }
+                with_spinner_result(
+                    format!("Cancelling operation {}...", operation_id),
+                    format!("Operation {} cancelled", operation_id),
+                    client.ops_cancel(operation_id, reason.clone()),
+                )
+                .await?;
+
+                if let Some(r) = reason {
+                    println!("Reason: {}", r);
                 }
             }
         }
         Ok(())
     }
+}
+
+/// Response for ops.start command
+#[derive(Debug, Serialize, Deserialize)]
+struct OpsStartResponse {
+    operation_id: String,
+    operation_type: String,
+    operator: String,
+}
+
+/// Format ops start response as table
+fn format_ops_start_table(response: &OpsStartResponse) -> String {
+    let mut output = String::new();
+    output.push_str("Operation started successfully\n");
+    output.push_str(&format!("  ID: {}\n", response.operation_id));
+    output.push_str(&format!("  Type: {}\n", response.operation_type));
+    output.push_str(&format!("  Operator: {}\n", response.operator));
+    output
+}
+
+/// Format ops list as table
+fn format_ops_list_table(operations: &[Value]) -> String {
+    let mut output = String::new();
+    output.push_str("Operations:\n");
+    output.push_str(&format!("{}\n", "─".repeat(80)));
+    for op in operations {
+        output.push_str(&format!("ID: {}\n", get_str(op, "operation_id")));
+        output.push_str(&format!("Type: {}\n", get_str(op, "operation_type")));
+        output.push_str(&format!("Status: {}\n", get_str(op, "status")));
+        output.push_str(&format!("Started: {}\n", get_str(op, "started_at")));
+        output.push_str(&format!("{}\n", "─".repeat(80)));
+    }
+    output
+}
+
+/// Format ops get response as table
+fn format_ops_get_table(operation: &Value) -> String {
+    let mut output = String::new();
+    output.push_str("Operation Details:\n");
+    output.push_str(&format!("  ID: {}\n", get_str(operation, "operation_id")));
+    output.push_str(&format!(
+        "  Type: {}\n",
+        get_str(operation, "operation_type")
+    ));
+    output.push_str(&format!("  Status: {}\n", get_str(operation, "status")));
+    output.push_str(&format!("  Operator: {}\n", get_str(operation, "operator")));
+    output.push_str(&format!(
+        "  Started: {}\n",
+        get_str(operation, "started_at")
+    ));
+    if operation.get("completed_at").is_some() {
+        output.push_str(&format!(
+            "  Completed: {}\n",
+            get_str(operation, "completed_at")
+        ));
+    }
+    if let Some(scope) = operation.get("scope") {
+        if let Ok(pretty_scope) = serde_json::to_string_pretty(scope) {
+            output.push_str(&format!("  Scope: {}\n", pretty_scope));
+        }
+    }
+    output
 }

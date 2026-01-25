@@ -5,7 +5,7 @@
 //! inter-component interactions using the current architecture:
 //! - Repository pattern with `DbPoolExt`
 //! - Generic `Id<T>` types
-//! - Event::<JsonValue>::test_event constructor for test events
+//! - test_event constructor for test events
 //! - `#[sinex_test]` macro for async tests
 //! - Modern test infrastructure (rstest, insta, tracing-test)
 
@@ -16,7 +16,7 @@ mod integration;
 use serde_json::json;
 use std::sync::Arc;
 // Using shorter imports from sinex-core's re-exports
-use sinex_core::{Blob, DbPoolExt, Event, EventSource, EventType, Id, JsonValue, Ulid};
+use sinex_core::{Blob, DbPoolExt, DynamicPayload, EventSource, EventType, Id, Ulid};
 use sinex_test_utils::constants::SOURCE_FIXTURE_REPO_PRIMARY;
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::timing_utils::{Timeouts, WaitHelpers};
@@ -28,26 +28,18 @@ use sinex_test_utils::timing_utils::{Timeouts, WaitHelpers};
 #[sinex_test]
 async fn test_basic_event_insertion_and_retrieval(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let _pipeline = ctx.pipeline_scope().await?;
+    let _pipeline = ctx.pipeline().await?;
 
     // Test the fundamental event lifecycle: create -> insert -> retrieve
-    let mut event = Event::<JsonValue>::test_event(
-        "integration-test",
-        "basic.test",
-        json!({
-            "test_value": 42,
-            "description": "Basic integration test"
-        }),
-    );
-    // Explicitly assume ID for verification
-    event.id = Some(Id::new());
-
-    ctx.publish_test_event(&event).await?;
-
-    // Wait for ingestion
-    // Wait for ingestion
-    ctx.timing()
-        .wait_for_source_events("integration-test", 1)
+    let event = ctx
+        .publish(DynamicPayload::new(
+            "integration-test",
+            "basic.test",
+            json!({
+                "test_value": 42,
+                "description": "Basic integration test"
+            }),
+        ))
         .await?;
 
     // Verify event structure
@@ -76,27 +68,24 @@ async fn test_basic_event_insertion_and_retrieval(ctx: TestContext) -> TestResul
 async fn test_batch_event_insertion(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
     let ctx = ctx.with_nats().shared().await?;
-    let _pipeline = ctx.pipeline_scope().await?;
+    let _pipeline = ctx.pipeline().await?;
 
     let source = format!("batch-test-{}", Ulid::new());
     // Test batch insertion performance and correctness
     let mut events = Vec::new();
     for i in 0..10 {
-        let mut event = Event::<JsonValue>::test_event(
-            &*source,
-            "batch.item",
-            json!({
-                "index": i,
-                "batch_id": "test-batch-001"
-            }),
-        );
-        event.id = Some(Id::new());
-        ctx.publish_test_event(&event).await?;
+        let event = ctx
+            .publish(DynamicPayload::new(
+                &*source,
+                "batch.item",
+                json!({
+                    "index": i,
+                    "batch_id": "test-batch-001"
+                }),
+            ))
+            .await?;
         events.push(event);
     }
-
-    sinex_test_utils::timing_utils::WaitHelpers::wait_for_source_events(&ctx.pool, &source, 10, 20)
-        .await?;
 
     // Verify all events were inserted
     let retrieved = ctx
@@ -124,7 +113,7 @@ async fn test_batch_event_insertion(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 async fn test_different_event_sources(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let _pipeline = ctx.pipeline_scope().await?;
+    let _pipeline = ctx.pipeline().await?;
     let test_cases = vec![
         (
             "filesystem",
@@ -142,12 +131,9 @@ async fn test_different_event_sources(ctx: TestContext) -> TestResult<()> {
 
     for (source, event_type, payload) in test_cases {
         // Test various event source patterns
-        let mut event = Event::<JsonValue>::test_event(source, event_type, payload.clone());
-        event.id = Some(Id::new());
-        ctx.publish_test_event(&event).await?;
-
-        // Verify event can be queried by source (wait for it)
-        ctx.timing().wait_for_source_events(source, 1).await?;
+        let event = ctx
+            .publish(DynamicPayload::new(source, event_type, payload.clone()))
+            .await?;
 
         assert_eq!(event.source.as_str(), source);
         assert_eq!(event.event_type.as_str(), event_type);
@@ -180,12 +166,15 @@ async fn test_ulid_ordering_and_consistency(ctx: TestContext) -> TestResult<()> 
     let mut event_ids = Vec::new();
 
     for i in 0..5 {
-        let mut event =
-            Event::<JsonValue>::test_event("ulid-test", "ordering.test", json!({"sequence": i}));
-        event.id = Some(Id::new());
-        ctx.publish_test_event(&event).await?;
+        let event = ctx
+            .publish(DynamicPayload::new(
+                "ulid-test",
+                "ordering.test",
+                json!({"sequence": i}),
+            ))
+            .await?;
 
-        event_ids.push(event.id.expect("Event should have an ID generated in test"));
+        event_ids.push(event.id.expect("Event should have an ID"));
 
         // Small delay to ensure different timestamps
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
@@ -221,40 +210,30 @@ async fn test_generic_id_type_safety(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
 
     // Test that generic IDs provide type safety
-    let event_id = Id::<Event<JsonValue>>::new();
     let blob_id = Id::<Blob>::new();
+
+    // Create an event and verify ID type safety
+    let event = ctx
+        .publish(DynamicPayload::new(
+            "id-test",
+            "id.safety.test",
+            json!({"test": "id_safety"}),
+        ))
+        .await?;
+
+    let event_id = event.id.clone().expect("Event should have ID");
 
     // IDs should be unique even across types
     assert_ne!(event_id.to_string(), blob_id.to_string());
 
-    // Create an event with a specific ID
-    let mut event = Event::<JsonValue>::test_event(
-        EventSource::from_static("id-test"),
-        EventType::from_static("id.safety.test"),
-        json!({"event_id": event_id.to_string()}),
-    );
-    // Explicitly set ID
-    event.id = Some(event_id.clone());
-
-    // Insert (Publish) and verify
-    ctx.publish_test_event(&event).await?;
-    ctx.timing().wait_for_source_events("id-test", 1).await?;
-
-    let retrieved_events = ctx
+    // Retrieve and verify
+    let retrieved = ctx
         .pool
         .events()
-        .get_by_source(
-            &EventSource::from_static("id-test"),
-            sinex_core::types::Pagination::new(Some(1), None),
-        )
-        .await?;
-
-    let retrieved = retrieved_events
-        .into_iter()
-        .next()
+        .get_by_id(event_id.clone())
+        .await?
         .expect("Event should exist");
 
-    assert_eq!(retrieved.payload["event_id"], json!(event_id.to_string()));
     assert_eq!(retrieved.id, Some(event_id));
 
     Ok(())
@@ -273,25 +252,26 @@ async fn test_repository_pattern_functionality(ctx: TestContext) -> TestResult<(
     // Insert test data
     let source_suffix = format!("{}-{}", SOURCE_FIXTURE_REPO_PRIMARY, Ulid::new());
 
-    let mut e1 =
-        Event::<JsonValue>::test_event(&*source_suffix, "type.a", json!({"category": "alpha"}));
-    e1.id = Some(Id::new());
-    ctx.publish_test_event(&e1).await?;
+    ctx.publish(DynamicPayload::new(
+        &*source_suffix,
+        "type.a",
+        json!({"category": "alpha"}),
+    ))
+    .await?;
 
-    let mut e2 =
-        Event::<JsonValue>::test_event(&*source_suffix, "type.b", json!({"category": "beta"}));
-    e2.id = Some(Id::new());
-    ctx.publish_test_event(&e2).await?;
+    ctx.publish(DynamicPayload::new(
+        &*source_suffix,
+        "type.b",
+        json!({"category": "beta"}),
+    ))
+    .await?;
 
-    let mut e3 =
-        Event::<JsonValue>::test_event(&*source_suffix, "type.a", json!({"category": "gamma"}));
-    e3.id = Some(Id::new());
-    ctx.publish_test_event(&e3).await?;
-
-    // Wait for ingestion
-    ctx.timing()
-        .wait_for_source_events(&source_suffix, 3)
-        .await?;
+    ctx.publish(DynamicPayload::new(
+        &*source_suffix,
+        "type.a",
+        json!({"category": "gamma"}),
+    ))
+    .await?;
 
     let repo = ctx.pool.events();
 
@@ -330,16 +310,13 @@ async fn test_repository_pagination_and_limits(ctx: TestContext) -> TestResult<(
 
     // Insert 20 test events
     for i in 0..20 {
-        let mut event =
-            Event::<JsonValue>::test_event("pagination-test", "page.test", json!({"index": i}));
-        event.id = Some(Id::new());
-        ctx.publish_test_event(&event).await?;
-    }
-
-    let expected = 20usize;
-    ctx.timing()
-        .wait_for_source_events("pagination-test", expected)
+        ctx.publish(DynamicPayload::new(
+            "pagination-test",
+            "page.test",
+            json!({"index": i}),
+        ))
         .await?;
+    }
 
     let repo = ctx.pool.events();
 
@@ -380,25 +357,24 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> TestResult<()> {
 
     // Share a single test context across concurrent tasks
     let ctx = Arc::new(ctx);
-    let _pipeline = ctx.pipeline_scope().await?;
+    let _pipeline = ctx.pipeline().await?;
     let mut handles = Vec::new();
 
     for i in 0..10 {
         let ctx_clone = Arc::clone(&ctx);
         let handle = tokio::spawn(async move {
-            let mut event = Event::<JsonValue>::test_event(
-                "concurrent-test",
-                "concurrent.event",
-                json!({
-                    "task_id": i,
-                    "timestamp": chrono::Utc::now().timestamp()
-                }),
-            );
-            event.id = Some(Id::new());
+            let event = ctx_clone
+                .publish(DynamicPayload::new(
+                    "concurrent-test",
+                    "concurrent.event",
+                    json!({
+                        "task_id": i,
+                        "timestamp": chrono::Utc::now().timestamp()
+                    }),
+                ))
+                .await?;
 
-            ctx_clone.publish_test_event(&event).await?;
-
-            Ok::<_, color_eyre::eyre::Error>(event.id.expect("Event should have ID after creation"))
+            Ok::<_, color_eyre::eyre::Error>(event.id.expect("Event should have ID"))
         });
         handles.push(handle);
     }
@@ -449,18 +425,12 @@ async fn test_database_transaction_isolation(ctx: TestContext) -> TestResult<()>
     let test_id = uuid::Uuid::new_v4().to_string();
 
     // Create event in this context
-    let mut event = Event::<JsonValue>::test_event(
+    ctx.publish(DynamicPayload::new(
         "isolation-test",
         "isolation.marker",
         json!({"test_id": test_id.clone()}),
-    );
-    event.id = Some(Id::new());
-    ctx.publish_test_event(&event).await?;
-
-    // Wait for ingestion
-    ctx.timing()
-        .wait_for_source_events("isolation-test", 1)
-        .await?;
+    ))
+    .await?;
 
     // Create another context (should be isolated). If it happens to reuse the same
     // database, allocate a fresh one to avoid cross-contamination.
@@ -503,7 +473,7 @@ async fn test_database_transaction_isolation(ctx: TestContext) -> TestResult<()>
 async fn test_json_schema_validation_integration(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
 
-    ctx.publish_event(
+    ctx.publish(DynamicPayload::new(
         "schema-test",
         "validated.event",
         json!({
@@ -511,7 +481,7 @@ async fn test_json_schema_validation_integration(ctx: TestContext) -> TestResult
             "quantity": 10,
             "tags": ["sale", "summer"]
         }),
-    )
+    ))
     .await?;
 
     let retrieved = ctx
@@ -539,14 +509,14 @@ async fn test_large_payload_handling(ctx: TestContext) -> TestResult<()> {
 
     let large_string = "a".repeat(1024 * 1024); // 1MB
 
-    ctx.publish_event(
+    ctx.publish(DynamicPayload::new(
         "load-test",
         "large.payload",
         json!({
             "data": large_string,
             "meta": "metadata"
         }),
-    )
+    ))
     .await?;
 
     let retrieved = ctx
@@ -573,31 +543,14 @@ async fn test_high_throughput_insertion(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
 
     let source = format!("throughput-{}", Ulid::new());
-    let mut events = Vec::new();
-
-    // Prepare 1000 events
-    for i in 0..1000 {
-        let mut event = Event::<JsonValue>::test_event(&*source, "perf.test", json!({"i": i}));
-        event.id = Some(Id::new());
-        events.push(event);
-    }
 
     let start = std::time::Instant::now();
 
-    // Concurrent publish
-    // Note: We don't use tokio::spawn here to avoid overhead of task creation dominating the test,
-    // but synchronous publish might be slow. Let's use futures::join_all or similar if needed.
-    // For now, sequential publish is fine as NATS publish is fast.
-    for event in &events {
-        ctx.publish_test_event(event).await?;
+    // Sequential publish - 1000 events
+    for i in 0..1000 {
+        ctx.publish(DynamicPayload::new(&*source, "perf.test", json!({"i": i})))
+            .await?;
     }
-
-    // Wait for all to be ingested
-    // This includes the time for NATS->Ingestd->DB
-    sinex_test_utils::timing_utils::WaitHelpers::wait_for_source_events(
-        &ctx.pool, &source, 1000, 30,
-    )
-    .await?;
 
     let duration = start.elapsed();
     tracing::info!("Inserted 1000 events in {:?}", duration);
@@ -628,22 +581,22 @@ async fn test_error_propagation_and_recovery(ctx: TestContext) -> TestResult<()>
 
     // Test invalid source (empty string)
     let invalid_result = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "", // Empty source should fail
             "error.test",
             json!({}),
-        )
+        ))
         .await;
 
     assert!(invalid_result.is_err(), "Empty source should cause error");
 
     // Test that pool is still usable after error
     let valid_event = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "error-recovery-test",
             "recovery.test",
             json!({"recovery": true}),
-        )
+        ))
         .await?;
 
     assert_eq!(valid_event.source.as_str(), "error-recovery-test");
@@ -667,7 +620,11 @@ async fn test_unicode_and_special_characters(ctx: TestContext) -> TestResult<()>
 
     for s in special_strings {
         let inserted = ctx
-            .publish_event("unicode-test", "special.chars", json!({ "content": s }))
+            .publish(DynamicPayload::new(
+                "unicode-test",
+                "special.chars",
+                json!({ "content": s }),
+            ))
             .await?;
 
         let retrieved = ctx
@@ -725,11 +682,11 @@ async fn test_assertion_helpers(ctx: TestContext) -> TestResult<()> {
 
     // Create test data
     let events = vec![
-        ctx.publish_event("assertion-test", "test.a", json!({}))
+        ctx.publish(DynamicPayload::new("assertion-test", "test.a", json!({})))
             .await?,
-        ctx.publish_event("assertion-test", "test.b", json!({}))
+        ctx.publish(DynamicPayload::new("assertion-test", "test.b", json!({})))
             .await?,
-        ctx.publish_event("assertion-test", "test.c", json!({}))
+        ctx.publish(DynamicPayload::new("assertion-test", "test.c", json!({})))
             .await?,
     ];
 
@@ -766,14 +723,14 @@ async fn test_rstest_integration_10(ctx: TestContext) -> TestResult<()> {
 
     // Create specified number of events
     for i in 0..event_count {
-        ctx.publish_event(
+        ctx.publish(DynamicPayload::new(
             "rstest-integration",
             "parameterized.test",
             json!({
                 "index": i,
                 "total": event_count
             }),
-        )
+        ))
         .await?;
     }
 
@@ -795,26 +752,19 @@ async fn test_rstest_integration_10(ctx: TestContext) -> TestResult<()> {
 async fn test_insta_snapshots(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     // Test snapshot testing with insta
-    let mut e1 = Event::<JsonValue>::test_event(
+    ctx.publish(DynamicPayload::new(
         "snapshot-test",
         "snapshot.a",
         json!({"value": 1, "name": "first"}),
-    );
-    e1.id = Some(Id::new());
-    ctx.publish_test_event(&e1).await?;
+    ))
+    .await?;
 
-    let mut e2 = Event::<JsonValue>::test_event(
+    ctx.publish(DynamicPayload::new(
         "snapshot-test",
         "snapshot.b",
         json!({"value": 2, "name": "second"}),
-    );
-    e2.id = Some(Id::new());
-    ctx.publish_test_event(&e2).await?;
-
-    // Wait for ingestion
-    ctx.timing()
-        .wait_for_source_events("snapshot-test", 2)
-        .await?;
+    ))
+    .await?;
 
     let retrieved = ctx
         .pool
@@ -874,19 +824,18 @@ async fn test_complete_event_processing_workflow(ctx: TestContext) -> TestResult
     // Test a complete end-to-end workflow
 
     // 1. Create initial event
-    let mut e1 = Event::<JsonValue>::test_event(
+    ctx.publish(DynamicPayload::new(
         "workflow-test",
         "workflow.started",
         json!({
             "workflow_id": "wf-001",
             "step": 1
         }),
-    );
-    e1.id = Some(Id::new());
-    ctx.publish_test_event(&e1).await?;
+    ))
+    .await?;
 
     // 2. Create processing events
-    let mut e2 = Event::<JsonValue>::test_event(
+    ctx.publish(DynamicPayload::new(
         "workflow-test",
         "workflow.processing",
         json!({
@@ -894,11 +843,10 @@ async fn test_complete_event_processing_workflow(ctx: TestContext) -> TestResult
             "step": 2,
             "action": "validate_input"
         }),
-    );
-    e2.id = Some(Id::new());
-    ctx.publish_test_event(&e2).await?;
+    ))
+    .await?;
 
-    let mut e3 = Event::<JsonValue>::test_event(
+    ctx.publish(DynamicPayload::new(
         "workflow-test",
         "workflow.processing",
         json!({
@@ -906,12 +854,11 @@ async fn test_complete_event_processing_workflow(ctx: TestContext) -> TestResult
             "step": 3,
             "action": "transform_data"
         }),
-    );
-    e3.id = Some(Id::new());
-    ctx.publish_test_event(&e3).await?;
+    ))
+    .await?;
 
     // 3. Create completion event
-    let mut e4 = Event::<JsonValue>::test_event(
+    ctx.publish(DynamicPayload::new(
         "workflow-test",
         "workflow.completed",
         json!({
@@ -920,14 +867,8 @@ async fn test_complete_event_processing_workflow(ctx: TestContext) -> TestResult
             "result": "success",
             "duration_ms": 1250
         }),
-    );
-    e4.id = Some(Id::new());
-    ctx.publish_test_event(&e4).await?;
-
-    // Wait for all 4 events
-    ctx.timing()
-        .wait_for_source_events("workflow-test", 4)
-        .await?;
+    ))
+    .await?;
 
     // 4. Verify complete workflow
     let workflow_events = ctx

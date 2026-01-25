@@ -2,8 +2,12 @@
 
 // Local crate imports
 use crate::{
-    gateway_metrics::GatewayMetrics, handlers::*, rate_limit::TokenRateLimiter,
-    replay_control::ReplayControlClient, service_container::ServiceContainer,
+    distributed_rate_limit::{DistributedRateLimiter, DistributedRateLimitConfig},
+    gateway_metrics::GatewayMetrics,
+    handlers::*,
+    rate_limit::TokenRateLimiter,
+    replay_control::ReplayControlClient,
+    service_container::ServiceContainer,
 };
 
 // External crates
@@ -506,13 +510,58 @@ impl RpcAuthContext {
     }
 }
 
+/// RAII guard that decrements connection counter on drop
+struct ConnectionGuard {
+    counter: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl ConnectionGuard {
+    fn new(counter: Arc<std::sync::atomic::AtomicUsize>) -> Self {
+        Self { counter }
+    }
+}
+
+impl Drop for ConnectionGuard {
+    fn drop(&mut self) {
+        self.counter.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Rate limiter that can be either in-memory or distributed via NATS KV
+#[derive(Clone)]
+enum RateLimiter {
+    /// In-memory rate limiter (fast, but state lost on restart)
+    InMemory(Arc<TokenRateLimiter>),
+    /// Distributed rate limiter via NATS KV (shared across instances, survives restarts)
+    Distributed(Arc<DistributedRateLimiter>),
+}
+
+impl RateLimiter {
+    /// Check if request is allowed for the given token
+    async fn check(&self, token: &str) -> bool {
+        match self {
+            RateLimiter::InMemory(limiter) => limiter.check(token).is_ok(),
+            RateLimiter::Distributed(limiter) => limiter.check_and_increment(token).await,
+        }
+    }
+
+    fn is_enabled(&self) -> bool {
+        match self {
+            RateLimiter::InMemory(limiter) => limiter.is_enabled(),
+            RateLimiter::Distributed(limiter) => limiter.is_enabled(),
+        }
+    }
+}
+
 /// State shared between handlers
 #[derive(Clone)]
 struct AppState {
     services: ServiceContainer,
     auth: GatewayAuth,
-    rate_limiter: Arc<TokenRateLimiter>,
+    rate_limiter: RateLimiter,
     metrics: Arc<GatewayMetrics>,
+    /// Track active connections for graceful shutdown
+    active_connections: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 /// Shared dispatch function for RPC methods (used by both rpc_server and native_messaging)
@@ -834,7 +883,7 @@ async fn handle_rpc(
     let auth_context = RpcAuthContext::from_token(&token);
 
     // Issue 143: Per-token rate limiting
-    if state.rate_limiter.check(&token).is_err() {
+    if !state.rate_limiter.check(&token).await {
         let token_prefix = &token[..8.min(token.len())];
         warn!(token_prefix, "Request rejected: rate limit exceeded");
         state.metrics.record_rate_limited(token_prefix);
@@ -957,6 +1006,47 @@ fn parse_tcp_listen(spec: &str) -> color_eyre::eyre::Result<(String, u16)> {
     Err(eyre!(
         "Invalid TCP listen specification '{spec}'. Expected host:port."
     ))
+}
+
+/// Bind a TCP listener with SO_REUSEPORT for seamless hot reload
+///
+/// This allows multiple processes to bind to the same port simultaneously,
+/// enabling zero-downtime upgrades:
+/// - Old instance continues serving while new instance starts
+/// - Both can accept connections (kernel load balances)
+/// - Coordination/handoff mechanism ensures only one is the leader
+/// - Old instance exits gracefully after handoff
+async fn bind_with_reuseport(addr: &str) -> std::io::Result<tokio::net::TcpListener> {
+    use socket2::{Domain, Protocol, Socket, Type};
+    use std::net::SocketAddr;
+
+    let socket_addr: SocketAddr = addr
+        .parse()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+
+    let domain = if socket_addr.is_ipv4() {
+        Domain::IPV4
+    } else {
+        Domain::IPV6
+    };
+
+    let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
+
+    // Enable SO_REUSEADDR (standard practice)
+    socket.set_reuse_address(true)?;
+
+    // Enable SO_REUSEPORT (allows multiple instances to bind same port)
+    #[cfg(unix)]
+    socket.set_reuse_port(true)?;
+
+    socket.set_nonblocking(true)?;
+    socket.bind(&socket_addr.into())?;
+    socket.listen(128)?; // Backlog size
+
+    // Convert socket2::Socket to std::net::TcpListener then to tokio::net::TcpListener
+    let std_listener: std::net::TcpListener = socket.into();
+    std_listener.set_nonblocking(true)?;
+    tokio::net::TcpListener::from_std(std_listener)
 }
 
 fn tls_paths_from_env() -> color_eyre::eyre::Result<(String, String, Option<String>)> {
@@ -1481,8 +1571,31 @@ pub async fn run(
     let limits = RpcServerLimits::from_env().apply_pool_limit(services.pool_max_connections());
 
     // Issue 143: Per-token rate limiting
-    let rate_limiter = Arc::new(TokenRateLimiter::from_env());
-    let cleanup_task = Arc::clone(&rate_limiter).spawn_cleanup_task(shutdown_rx.clone());
+    // Use distributed rate limiting via NATS KV when available, fall back to in-memory
+    let (rate_limiter, cleanup_task) = match services.nats_client() {
+        Some(nats) => {
+            let jetstream = async_nats::jetstream::new(nats.clone());
+            let config = DistributedRateLimitConfig::from_env();
+            match DistributedRateLimiter::new(jetstream, config).await {
+                Ok(limiter) => {
+                    info!("Using distributed rate limiting via NATS KV (shared across instances, survives restarts)");
+                    (RateLimiter::Distributed(Arc::new(limiter)), None)
+                }
+                Err(e) => {
+                    warn!(error = %e, "Failed to create distributed rate limiter, falling back to in-memory");
+                    let in_memory = Arc::new(TokenRateLimiter::from_env());
+                    let task = Arc::clone(&in_memory).spawn_cleanup_task(shutdown_rx.clone());
+                    (RateLimiter::InMemory(in_memory), Some(task))
+                }
+            }
+        }
+        None => {
+            info!("NATS not available - using in-memory rate limiting (state lost on restart)");
+            let in_memory = Arc::new(TokenRateLimiter::from_env());
+            let task = Arc::clone(&in_memory).spawn_cleanup_task(shutdown_rx.clone());
+            (RateLimiter::InMemory(in_memory), Some(task))
+        }
+    };
 
     // Self-observation metrics
     let metrics = Arc::new(match services.nats_client() {
@@ -1500,11 +1613,14 @@ pub async fn run(
         None
     };
 
+    let active_connections = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
     let state = AppState {
         services,
         auth,
         rate_limiter,
         metrics,
+        active_connections: Arc::clone(&active_connections),
     };
 
     let base_router = Router::new()
@@ -1520,7 +1636,7 @@ pub async fn run(
 
     let BindAddress::Tcp { host, port } = bind_address;
     let addr = format!("{}:{}", host, port);
-    let listener = tokio::net::TcpListener::bind(&addr)
+    let listener = bind_with_reuseport(&addr)
         .await
         .wrap_err_with(|| format!("Failed to bind TCP listener to {}", addr))?;
     let tls_config = load_rustls_config(&cert_path, &key_path, client_ca.as_deref())?;
@@ -1535,8 +1651,15 @@ pub async fn run(
                     .wrap_err("Failed to accept incoming TCP connection")?;
                 let app_clone = app.clone();
                 let acceptor = acceptor.clone();
+                let conn_counter = Arc::clone(&active_connections);
+
+                // Track active connection
+                conn_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
                 tokio::spawn(async move {
+                    // Ensure connection is counted down when this task exits
+                    let _guard = ConnectionGuard::new(Arc::clone(&conn_counter));
+
                     match acceptor.accept(stream).await {
                         Ok(tls_stream) => {
                             let builder = HyperBuilder::new(TokioExecutor::new());
@@ -1561,6 +1684,28 @@ pub async fn run(
         }
     }
 
+    // Graceful connection drain - wait for active connections to complete
+    let drain_start = std::time::Instant::now();
+    let drain_timeout = std::time::Duration::from_secs(30);
+
+    info!("Waiting for {} active connections to drain...",
+          active_connections.load(std::sync::atomic::Ordering::Relaxed));
+
+    loop {
+        let active = active_connections.load(std::sync::atomic::Ordering::Relaxed);
+        if active == 0 {
+            info!("All connections drained successfully");
+            break;
+        }
+
+        if drain_start.elapsed() >= drain_timeout {
+            warn!("Drain timeout reached with {} active connections remaining", active);
+            break;
+        }
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+
     // Signal all background tasks to shut down
     info!("Shutting down background tasks...");
     let _ = shutdown_tx.send(true);
@@ -1580,14 +1725,18 @@ pub async fn run(
         }
     }
 
-    info!("Awaiting rate limiter cleanup task shutdown...");
-    match tokio::time::timeout(shutdown_timeout, cleanup_task).await {
-        Ok(Ok(())) => info!("Rate limiter cleanup task shut down successfully"),
-        Ok(Err(e)) => warn!(?e, "Rate limiter cleanup task exited with error"),
-        Err(_) => warn!(
-            "Rate limiter cleanup task did not shut down within {:?}",
-            shutdown_timeout
-        ),
+    if let Some(task) = cleanup_task {
+        info!("Awaiting rate limiter cleanup task shutdown...");
+        match tokio::time::timeout(shutdown_timeout, task).await {
+            Ok(Ok(())) => info!("Rate limiter cleanup task shut down successfully"),
+            Ok(Err(e)) => warn!(?e, "Rate limiter cleanup task exited with error"),
+            Err(_) => warn!(
+                "Rate limiter cleanup task did not shut down within {:?}",
+                shutdown_timeout
+            ),
+        }
+    } else {
+        info!("No rate limiter cleanup task (using distributed rate limiting)");
     }
 
     info!("RPC server shutdown complete");

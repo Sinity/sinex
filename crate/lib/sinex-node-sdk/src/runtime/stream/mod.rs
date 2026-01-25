@@ -27,12 +27,11 @@ use camino::Utf8PathBuf;
 use chrono::{DateTime, Utc};
 use color_eyre::eyre::eyre;
 use serde::{Deserialize, Serialize};
-use sinex_core::db::models::{Event, EventId, Provenance, SourceMaterial};
+use sinex_core::db::models::{Event, EventId, SourceMaterial};
 use sinex_core::db::repositories::DbPoolExt;
 #[cfg(feature = "db")]
 use sinex_core::db::SqlxPgPool as PgPool;
 use sinex_core::types::buffers::DEFAULT_EVENT_CHANNEL_SIZE;
-use sinex_core::types::non_empty::NonEmptyVec;
 use sinex_core::{EventSource, EventType, HostName, JsonValue, OffsetKind, Ulid};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -1093,15 +1092,16 @@ impl<T: Node + 'static> NodeRunner<T> {
                 ))
             })?;
 
+        // Parse provenance fields for flat Event struct
         let provenance = match (published.source_material_id, published.source_event_ids) {
             (Some(material_id), None) => {
-                let anchor = published.anchor_byte.ok_or_else(|| {
+                let anchor_byte = published.anchor_byte.ok_or_else(|| {
                     NodeError::Processing("Material provenance missing anchor_byte".to_string())
                 })?;
                 let material_ulid = Self::parse_ulid(&material_id, "source_material_id")?;
-                Provenance::Material {
+                sinex_core::Provenance::Material {
                     id: sinex_core::Id::<SourceMaterial>::from_ulid(material_ulid),
-                    anchor_byte: anchor,
+                    anchor_byte,
                     offset_start: published.offset_start,
                     offset_end: published.offset_end,
                     offset_kind: Self::parse_offset_kind(published.offset_kind.as_deref()),
@@ -1113,13 +1113,14 @@ impl<T: Node + 'static> NodeRunner<T> {
                     let ulid = Self::parse_ulid(&raw_id, "source_event_ids")?;
                     ids.push(EventId::from_ulid(ulid));
                 }
-                let non_empty = NonEmptyVec::from_vec(ids).ok_or_else(|| {
-                    NodeError::Processing(
-                        "Synthesis provenance missing source_event_ids".to_string(),
-                    )
-                })?;
-                Provenance::Synthesis {
-                    source_event_ids: non_empty,
+                let source_event_ids = sinex_core::types::non_empty::NonEmptyVec::from_vec(ids)
+                    .ok_or_else(|| {
+                        NodeError::Processing(
+                            "Synthesis provenance missing source_event_ids".to_string(),
+                        )
+                    })?;
+                sinex_core::Provenance::Synthesis {
+                    source_event_ids,
                     operation_id: None,
                 }
             }

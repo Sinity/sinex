@@ -65,7 +65,7 @@ async fn ingestion_handles_burst_under_latency_budget(ctx: TestContext) -> TestR
     for idx in 0..total_events {
         let event_type = format!("latency.event.{idx}");
         publisher
-            .publish_event(event_type.as_str(), json!({"sequence": idx}))
+            .publish(event_type.as_str(), json!({"sequence": idx}))
             .await?;
     }
 
@@ -108,7 +108,7 @@ async fn replaying_events_after_restart_does_not_duplicate(ctx: TestContext) -> 
     let ids: Vec<Ulid> = (0..10).map(|_| Ulid::new()).collect();
     for (idx, id) in ids.iter().enumerate() {
         publisher
-            .publish_event_with_overrides(
+            .publish_with_overrides(
                 &format!("restart.event.{idx}"),
                 json!({"sequence": idx}),
                 EventOverrides {
@@ -147,7 +147,7 @@ async fn replaying_events_after_restart_does_not_duplicate(ctx: TestContext) -> 
         TestNodePublisher::with_namespace(nats_client, "restart-suite", Some(namespace.clone()));
     for (idx, id) in ids.iter().enumerate() {
         publisher
-            .publish_event_with_overrides(
+            .publish_with_overrides(
                 &format!("restart.event.{idx}"),
                 json!({"sequence": idx, "phase": "replay"}),
                 EventOverrides {

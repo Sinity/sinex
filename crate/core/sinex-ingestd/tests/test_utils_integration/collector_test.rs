@@ -83,7 +83,7 @@ async fn test_modern_event_ingestion_flow(ctx: TestContext) -> TestResult<()> {
     // Create test events directly using the modern API
     let events = ctx.events();
     
-    let test_event = ctx.publish_event(
+    let test_event = ctx.publish(
         "test.collector",
         serde_json::json!({
             "test_type": "ingestion_flow",
@@ -125,7 +125,7 @@ async fn test_modern_event_filtering_and_validation(ctx: TestContext) -> TestRes
     let events = ctx.events();
 
     // Test valid event
-    let valid_event = ctx.publish_event(
+    let valid_event = ctx.publish(
         "fs.file_created",
         serde_json::json!({
             "path": "/tmp/test_file.txt",
@@ -138,7 +138,7 @@ async fn test_modern_event_filtering_and_validation(ctx: TestContext) -> TestRes
     assert!(!stored_valid.id.to_string().is_empty(), "Valid event should be stored");
 
     // Test event with minimal payload
-    let minimal_event = ctx.publish_event(
+    let minimal_event = ctx.publish(
         "terminal.command_executed",
         serde_json::json!({
             "command": "ls -la",
@@ -175,7 +175,7 @@ async fn test_modern_database_output_config(ctx: TestContext) -> TestResult<()> 
     // Create multiple test events to verify database persistence
     let mut event_ids = Vec::new();
     for i in 0..5 {
-        let test_event = ctx.publish_event(
+        let test_event = ctx.publish(
             "test.database_output",
             serde_json::json!({
                 "sequence": i,
@@ -263,7 +263,7 @@ async fn test_node_integration_patterns(ctx: TestContext) -> TestResult<()> {
 
     let mut stored_events = Vec::new();
     for (source, payload) in node_events {
-        let event = ctx.publish_event(source, payload).await?;
+        let event = ctx.publish(source, payload).await?;
         let stored = events.store(&event).await?;
         stored_events.push(stored);
     }
@@ -307,7 +307,7 @@ async fn test_concurrent_event_processing_pipeline(ctx: TestContext) -> TestResu
     for i in 0..20 {
         let ctx_clone = ctx.clone();
         let task = tokio::spawn(async move {
-            let event = ctx_clone.publish_event(
+            let event = ctx_clone.publish(
                 "test.concurrent_processing",
                 serde_json::json!({
                     "batch_id": i / 5,
@@ -366,7 +366,7 @@ async fn test_event_processing_error_handling(ctx: TestContext) -> TestResult<()
     let events = ctx.events();
 
     // Test successful event processing
-    let valid_event = ctx.publish_event(
+    let valid_event = ctx.publish(
         "test.error_handling",
         serde_json::json!({
             "test_case": "valid_event",
@@ -400,7 +400,7 @@ async fn test_event_processing_error_handling(ctx: TestContext) -> TestResult<()
 
     let mut processed_count = 0;
     for (case_name, payload) in edge_cases {
-        let edge_event = ctx.publish_event(
+        let edge_event = ctx.publish(
             "test.error_handling",
             payload
         ).await?;
@@ -419,7 +419,7 @@ async fn test_event_processing_error_handling(ctx: TestContext) -> TestResult<()
     assert!(processed_count >= 3, "Most edge cases should be handled gracefully");
 
     // Verify system is still operational after edge case processing
-    let recovery_event = ctx.publish_event(
+    let recovery_event = ctx.publish(
         "test.error_handling",
         serde_json::json!({
             "test_case": "post_recovery",
@@ -458,7 +458,7 @@ async fn test_resource_usage_management(ctx: TestContext) -> TestResult<()> {
         let large_data = "x".repeat(payload_size);
 
         for i in 0..events_per_size {
-            let event = ctx.publish_event(
+            let event = ctx.publish(
                 "test.resource_usage",
                 serde_json::json!({
                     "payload_size": payload_size,
@@ -477,7 +477,7 @@ async fn test_resource_usage_management(ctx: TestContext) -> TestResult<()> {
     }
 
     // Verify system stability after processing various payload sizes
-    let stability_event = ctx.publish_event(
+    let stability_event = ctx.publish(
         "test.resource_usage",
         serde_json::json!({
             "test_phase": "stability_check",

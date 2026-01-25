@@ -12,6 +12,7 @@
 use serde_json::json;
 use sinex_core::types::Ulid;
 use sinex_core::DbPool;
+use sinex_core::DynamicPayload;
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::timing_utils::Timeouts;
 use sqlx::Row;
@@ -38,11 +39,11 @@ async fn test_ulid_sequence_ordering_validation(ctx: TestContext) -> Result<()> 
         }
 
         let event = ctx
-            .publish_event(
+            .publish(DynamicPayload::new(
                 test_source.as_str(),
                 "sequence.test",
                 json!({"sequence": i, "group": test_source.as_str()}),
-            )
+            ))
             .await?;
 
         event_ulids.push(event.id.expect("Event should have ID"));
@@ -172,11 +173,11 @@ async fn test_concurrent_ulid_generation_ordering(ctx: TestContext) -> Result<()
     );
 
     // Record a summary event so this test still exercises the database.
-    ctx.publish_event(
+    ctx.publish(DynamicPayload::new(
         "ulid-uniqueness",
         "uniqueness.summary",
         json!({ "total_ulids": all_ulids.len() }),
-    )
+    ))
     .await?;
 
     Ok(())
@@ -195,11 +196,11 @@ async fn test_database_ordering_consistency(ctx: TestContext) -> Result<()> {
     // Batch 1: Rapid insertion
     for i in 0..15 {
         let event = ctx
-            .publish_event(
+            .publish(DynamicPayload::new(
                 "db-ordering",
                 "rapid.batch",
                 json!({"batch": 1, "sequence": i}),
-            )
+            ))
             .await?;
         all_event_ulids.push(event.id.expect("Event should have ID"));
     }
@@ -210,11 +211,11 @@ async fn test_database_ordering_consistency(ctx: TestContext) -> Result<()> {
     // Batch 2: Delayed insertion
     for i in 0..10 {
         let event = ctx
-            .publish_event(
+            .publish(DynamicPayload::new(
                 "db-ordering",
                 "delayed.batch",
                 json!({"batch": 2, "sequence": i}),
-            )
+            ))
             .await?;
         all_event_ulids.push(event.id.expect("Event should have ID"));
 
@@ -312,11 +313,11 @@ async fn test_clock_skew_detection(ctx: TestContext) -> Result<()> {
     let violation_test_ulids = generate_ordering_violation_test_ulids();
 
     // Insert a baseline event so the harness exercises normal ingestion.
-    ctx.publish_event(
+    ctx.publish(DynamicPayload::new(
         "clock-skew",
         "clock.test",
         json!({"description": "baseline"}),
-    )
+    ))
     .await?;
 
     let mut violations = Vec::new();
@@ -377,11 +378,11 @@ async fn test_ulid_ordering_performance_analysis(ctx: TestContext) -> Result<()>
             let event = loop {
                 attempts += 1;
                 match ctx
-                    .publish_event(
+                    .publish(DynamicPayload::new(
                         source.as_str(),
                         "performance.test",
                         json!({"batch": batch, "item": i}),
-                    )
+                    ))
                     .await
                 {
                     Ok(ev) => break ev,
@@ -422,11 +423,11 @@ async fn test_ulid_ordering_performance_analysis(ctx: TestContext) -> Result<()>
         .len();
     while stored_count < expected_total {
         let event = ctx
-            .publish_event(
+            .publish(DynamicPayload::new(
                 source.as_str(),
                 "performance.test.backfill",
                 json!({"batch": "backfill", "item": stored_count}),
-            )
+            ))
             .await?;
         all_ulids.push(event.id.expect("Event should have ID"));
         expected_total += 1;
@@ -555,11 +556,11 @@ async fn test_ulid_uniqueness_under_load(ctx: TestContext) -> Result<()> {
         assert!(seen.insert(*ulid), "ULIDs should remain unique under load");
     }
 
-    ctx.publish_event(
+    ctx.publish(DynamicPayload::new(
         "ulid-uniqueness",
         "uniqueness.summary",
         json!({ "generated": all_ulids.len() }),
-    )
+    ))
     .await?;
 
     Ok(())

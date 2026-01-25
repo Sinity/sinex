@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use sinex_core::{
     types::{
         domain::SanitizedPath,
-        events::EventPayload,
+        events::{EventPayload, FileModificationType},
         validation::{validate_watch_path, FileWatchingSecurityPolicy},
         Bytes, Ulid,
     },
@@ -636,7 +636,8 @@ async fn handle_event(ctx: &WatchContext, root: &str, event: Event) -> NodeResul
                 }
                 ModifyKind::Data(_) | ModifyKind::Metadata(_) | ModifyKind::Any => {
                     for path in event.paths {
-                        handle_file_modified(ctx, root, &path, "modified").await?;
+                        handle_file_modified(ctx, root, &path, FileModificationType::Content)
+                            .await?;
                     }
                 }
                 _ => {}
@@ -708,7 +709,7 @@ async fn handle_file_modified(
     ctx: &WatchContext,
     _root: &str,
     path: &Path,
-    modification_type: &str,
+    modification_type: FileModificationType,
 ) -> NodeResult<()> {
     if !path.is_file() {
         return Ok(());
@@ -737,7 +738,7 @@ async fn handle_file_modified(
         path: sanitize_path(path)?,
         size,
         modified_at: file_modified_at(&metadata),
-        modification_type: modification_type.to_string(),
+        modification_type,
     };
 
     let event = payload
@@ -1077,7 +1078,7 @@ mod tests {
 
         assert_eq!(event.event_type.as_str(), "file.created");
 
-        let material_ulid = match event.provenance {
+        let material_ulid = match event.provenance() {
             Provenance::Material { ref id, .. } => *id.as_ulid(),
             _ => {
                 return Err(color_eyre::eyre::eyre!(

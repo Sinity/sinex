@@ -116,7 +116,17 @@ impl Ord for NodeVersion {
                 match (self.is_dirty, other.is_dirty) {
                     (false, true) => Ordering::Greater,
                     (true, false) => Ordering::Less,
-                    _ => Ordering::Equal,
+                    _ => {
+                        // Both dirty or both clean - compare commit count (more commits = newer)
+                        match self.commit_count.cmp(&other.commit_count) {
+                            Ordering::Equal => {
+                                // Same commit count - use build timestamp (development rebuilds)
+                                // This enables hot reload with same semver to prefer newer builds
+                                self.build_timestamp.cmp(&other.build_timestamp)
+                            }
+                            other => other,
+                        }
+                    }
                 }
             }
             other => other,

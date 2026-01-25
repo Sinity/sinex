@@ -41,7 +41,7 @@ macro_rules! sinex_pipeline_test {
         #[sinex_test]
         async fn $name(ctx: $crate::TestContext) -> $ret {
             let ctx = ctx.with_nats().shared().await?;
-            let $scope = ctx.pipeline_scope().await?;
+            let $scope = ctx.pipeline().await?;
             $body
         }
     };

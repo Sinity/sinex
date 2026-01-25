@@ -167,7 +167,7 @@ async fn test_concurrent_execution(ctx: TestContext) -> Result<()> {
 
             // Concurrent operations
             for j in 0..10 {
-                ctx.publish_json_event(
+                ctx.publish_event(
                     &format!("task_{i}"),
                     "concurrent.test",
                     json!({"iteration": j}),
@@ -216,9 +216,9 @@ Use ULID timestamps for event ordering verification:
 ```rust
 #[sinex_test]
 async fn test_event_ordering(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
 
-    let first = ctx.publish_json_event(
+    let first = ctx.publish_event(
         "timeline",
         "event.first",
         json!({"seq": 1}),
@@ -227,7 +227,7 @@ async fn test_event_ordering(ctx: TestContext) -> Result<()> {
     // Small delay to ensure different ULID timestamps
     tokio::time::sleep(Duration::from_millis(10)).await;
 
-    let second = ctx.publish_json_event(
+    let second = ctx.publish_event(
         "timeline",
         "event.second",
         json!({"seq": 2}),
@@ -277,7 +277,7 @@ async fn test_ingestor_without_database(ctx: TestContext) -> Result<()> {
     std::env::set_var("SINEX_EDGE_MODE", "1");
     std::env::remove_var("DATABASE_URL");
 
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
 
     // Initialize ingestor - works without DATABASE_URL
     let processor = MyIngestor::new(/* ... */);
@@ -298,7 +298,7 @@ async fn test_ingestor_without_database(ctx: TestContext) -> Result<()> {
 #[sinex_test]
 async fn test_automaton_queries_events(ctx: TestContext) -> Result<()> {
     // DATABASE_URL present via TestContext
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
 
     let processor = MyAutomaton::new(/* ... */);
     let runner = StreamProcessorRunner::new(/* ... */).await?;
