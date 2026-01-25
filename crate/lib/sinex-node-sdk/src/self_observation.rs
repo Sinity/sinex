@@ -144,8 +144,8 @@ impl SelfObserver {
         Provenance::from_synthesis_safe(EventId::from_ulid(Ulid::new()), Vec::new())
     }
 
-    /// Publish an event to NATS
-    async fn publish_event<P: sinex_core::EventPayload>(
+    /// Publish a self-observation event to NATS (internal method)
+    async fn publish<P: sinex_core::EventPayload>(
         &self,
         payload: P,
     ) -> Result<(), SelfObservationError> {
@@ -218,7 +218,7 @@ impl SelfObserver {
         value: u64,
         labels: Option<HashMap<String, String>>,
     ) -> Result<(), SelfObservationError> {
-        self.publish_event(MetricCounterPayload {
+        self.publish(MetricCounterPayload {
             name: name.to_string(),
             value,
             delta: None,
@@ -236,7 +236,7 @@ impl SelfObserver {
         delta: u64,
         labels: Option<HashMap<String, String>>,
     ) -> Result<(), SelfObservationError> {
-        self.publish_event(MetricCounterPayload {
+        self.publish(MetricCounterPayload {
             name: name.to_string(),
             value,
             delta: Some(delta),
@@ -253,7 +253,7 @@ impl SelfObserver {
         value: f64,
         labels: Option<HashMap<String, String>>,
     ) -> Result<(), SelfObservationError> {
-        self.publish_event(MetricGaugePayload {
+        self.publish(MetricGaugePayload {
             name: name.to_string(),
             value,
             labels: labels.unwrap_or_default(),
@@ -277,7 +277,7 @@ impl SelfObserver {
             Some((a, b, c, d)) => (Some(a), Some(b), Some(c), Some(d)),
             None => (None, None, None, None),
         };
-        self.publish_event(MetricHistogramPayload {
+        self.publish(MetricHistogramPayload {
             name: name.to_string(),
             count,
             sum,
@@ -317,7 +317,7 @@ impl SelfObserver {
             0.0
         };
 
-        self.publish_event(StreamStatsPayload {
+        self.publish(StreamStatsPayload {
             stream: stream.to_string(),
             messages,
             max_messages,
@@ -342,7 +342,7 @@ impl SelfObserver {
         avg_duration_ms: Option<f64>,
         buffered_slices: u32,
     ) -> Result<(), SelfObservationError> {
-        self.publish_event(AssemblyStatsPayload {
+        self.publish(AssemblyStatsPayload {
             active_assemblies: active,
             total_started: started,
             total_completed: completed,
@@ -365,7 +365,7 @@ impl SelfObserver {
         p99_latency_ms: Option<f64>,
         active_connections: u32,
     ) -> Result<(), SelfObservationError> {
-        self.publish_event(GatewayRequestStatsPayload {
+        self.publish(GatewayRequestStatsPayload {
             total_requests: total,
             successful_requests: successful,
             rejected_requests: rejected,
@@ -385,7 +385,7 @@ impl SelfObserver {
         limit: u64,
         method: Option<&str>,
     ) -> Result<(), SelfObservationError> {
-        self.publish_event(RateLimitExceededPayload {
+        self.publish(RateLimitExceededPayload {
             token_prefix: token_prefix.to_string(),
             requests_in_window,
             limit,
@@ -402,7 +402,7 @@ impl SelfObserver {
         current: &str,
         reason: Option<&str>,
     ) -> Result<(), SelfObservationError> {
-        self.publish_event(HealthStatusPayload {
+        self.publish(HealthStatusPayload {
             component: component.to_string(),
             previous_status: previous.to_string(),
             current_status: current.to_string(),
@@ -422,7 +422,7 @@ impl SelfObserver {
         pending: u32,
         timeout_count: u64,
     ) -> Result<(), SelfObservationError> {
-        self.publish_event(PoolStatsPayload {
+        self.publish(PoolStatsPayload {
             pool: pool.to_string(),
             size,
             idle,
@@ -443,7 +443,7 @@ impl SelfObserver {
         queue_depth: u32,
         error_count: u64,
     ) -> Result<(), SelfObservationError> {
-        self.publish_event(NodeProcessingStatsPayload {
+        self.publish(NodeProcessingStatsPayload {
             node_type: node_type.to_string(),
             events_processed,
             events_dropped,
@@ -463,7 +463,7 @@ impl SelfObserver {
         avg_duration_ms: Option<f64>,
         events_affected: u64,
     ) -> Result<(), SelfObservationError> {
-        self.publish_event(ReplayStatsPayload {
+        self.publish(ReplayStatsPayload {
             total_requests: total,
             successful,
             failed,

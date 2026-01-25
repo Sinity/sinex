@@ -70,9 +70,10 @@ fn status_code_mapping_matches_expectations() -> TestResult<()> {
 
 #[sinex_test]
 fn error_serializes_and_deserializes() -> TestResult<()> {
+    // Note: Context keys must be in the SAFE_KEYS whitelist to be serialized
     let error = SinexError::database("Connection failed")
-        .with_context("host", "localhost")
-        .with_context("port", 5432);
+        .with_context("table_name", "users")
+        .with_context("retry_count", 3);
 
     let json = serde_json::to_string(&error).unwrap();
     assert!(json.contains("Database"));
@@ -265,9 +266,10 @@ fn result_ext_with_context_builds_custom_error() -> TestResult<()> {
 
 #[sinex_test]
 fn error_serialization_roundtrip_preserves_context() -> TestResult<()> {
+    // Note: Context keys must be in the SAFE_KEYS whitelist to be serialized
     let original = SinexError::database("Connection failed")
-        .with_context("host", "localhost")
-        .with_context("port", 5432)
+        .with_context("table_name", "users")
+        .with_context("retry_count", 5)
         .with_source("Network timeout")
         .with_source("DNS failed");
 

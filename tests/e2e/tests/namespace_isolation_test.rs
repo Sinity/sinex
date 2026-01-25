@@ -30,7 +30,7 @@ async fn pipeline_namespace_subjects_are_isolated(ctx: TestContext) -> TestResul
         Some(ns_a.prefix().to_string()),
     );
     publisher
-        .publish_event(event_type, json!({"namespace": "a"}))
+        .publish(event_type, json!({"namespace": "a"}))
         .await?;
 
     let js = ctx.jetstream().await?;

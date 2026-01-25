@@ -39,49 +39,39 @@ let ctx = TestContext::with_name("my_test").await?;
 
 ## NATS Initialization
 
-NATS is not started by default. Use one of these methods to enable:
+NATS is not started by default. Use the `with_nats()` builder to enable:
 
-### `with_shared_nats()` (Recommended)
+### Shared NATS (Recommended)
 
 Reuses a process-wide NATS instance with namespace isolation:
 
 ```rust
-let ctx = ctx.with_shared_nats().await?;
+let ctx = ctx.with_nats().shared().await?;
 ```
 
-### `with_secure_shared_nats()`
+### Secure Shared NATS
 
 Shared NATS with TLS enabled:
 
 ```rust
-let ctx = ctx.with_secure_shared_nats().await?;
+let ctx = ctx.with_nats().shared().secure().await?;
 ```
 
-### `with_nats()` (Deprecated)
+### Dedicated NATS
 
-Creates a dedicated ephemeral NATS instance (slower, use only when isolation is required):
+Creates an ephemeral NATS instance (slower, use only when isolation is required):
 
 ```rust
-let ctx = ctx.with_nats().await?;
+let ctx = ctx.with_nats().dedicated().await?;
 ```
 
-### `with_nats_builder()`
-
-Custom NATS configuration:
+### Custom Configuration
 
 ```rust
 let builder = EphemeralNatsBuilder::new()
     .with_jetstream(true)
     .with_auth_token("secret");
-let ctx = ctx.with_nats_builder(builder).await?;
-```
-
-### `with_shared_nats_builder()`
-
-Shared NATS with custom builder:
-
-```rust
-let ctx = ctx.with_shared_nats_builder(builder).await?;
+let ctx = ctx.with_nats().config(builder).shared().await?;
 ```
 
 ## NATS Access
@@ -180,7 +170,7 @@ scope.wait_for_event_count(1).await?;
 ### PipelineHarness (Lower-Level)
 
 ```rust
-let harness = ctx.pipeline().await?;
+let harness = ctx.pipeline_scope().await?;
 ```
 
 ## Event Publishing
@@ -188,37 +178,41 @@ let harness = ctx.pipeline().await?;
 ### JSON Events (Pipeline-First)
 
 ```rust
-let ctx = ctx.with_shared_nats().await?;
+let ctx = ctx.with_nats().shared().await?;
 
-// Basic publish
-let event = ctx.publish_json_event("fs-watcher", "file.created", json!({
+// Basic publish (most common)
+let event = ctx.publish_event("fs-watcher", "file.created", json!({
     "path": "/test.txt"
 })).await?;
 
 // With explicit timestamp
-let event = ctx.publish_json_event_with_timestamp(
-    "fs-watcher",
-    "file.created",
-    json!({"path": "/test.txt"}),
-    Timestamp::now(),
-).await?;
-```
-
-### TestEventBuilder (Fluent API)
-
-```rust
-let event = ctx.event("fs-watcher", "file.created")
-    .payload(json!({"path": "/test.txt"}))
+let event = ctx.publish_dynamic("fs-watcher", "file.created", json!({"path": "/test.txt"}))
     .at(Timestamp::now())
-    .publish()
+    .send()
     .await?;
 ```
 
-### Raw Event Publishing
+### Typed Payloads
 
 ```rust
-let event = Event::<JsonValue>::test_event("source", "type", json!({}));
-let ulid = ctx.publish_test_event(&event).await?;
+use sinex_core::types::events::payloads::FileCreatedPayload;
+
+let event = ctx.publish(FileCreatedPayload {
+    path: sp("/test.txt"),
+    size: 1024,
+    created_at: Utc::now(),
+    permissions: None,
+}).await?;
+```
+
+### Pre-built Event Publishing (for provenance tests only)
+
+```rust
+// For specialized provenance tests - most tests should use ctx.publish() instead
+let event = DynamicPayload::new("source", "type", json!({}))
+    .from_material_at(material_id, 100)
+    .build()?;
+let ulid = ctx.publish_prebuilt_event(&event).await?;
 ```
 
 ## Source Material Management
@@ -257,15 +251,11 @@ ctx.assert("validation context")
 ### Event Assertions
 
 ```rust
-// Assert exact event count
-let count = ctx.assert_event_count(5).await?;
-
-// Assert minimum event count
-let count = ctx.assert_event_count_at_least(3).await?;
-
-// Assert by source
-let count = ctx.assert_event_count_by_source("fs-watcher", 5).await?;
-let count = ctx.assert_event_count_by_source_at_least("fs-watcher", 3).await?;
+// Fluent event assertions
+ctx.assert_events().count(5).await?;
+ctx.assert_events().at_least(3).await?;
+ctx.assert_events().source("fs-watcher").count(5).await?;
+ctx.assert_events().source("fs-watcher").at_least(3).await?;
 
 // Assert unique IDs
 ctx.assert_unique_event_ids(&events)?;
@@ -313,8 +303,8 @@ let (result, duration) = ctx.measure(|| async {
 
 // Event count tracking
 let baseline = ctx.baseline_event_count();
-let current = ctx.current_event_count().await?;
-let delta = ctx.event_delta().await?;
+let current = ctx.pool.events().count_all().await?;
+let delta = ctx.pool.events().count_all().await? - ctx.baseline_event_count();
 ```
 
 ## Tracing and Logging
@@ -446,20 +436,16 @@ impl ContextualAssert {
 }
 ```
 
-### TestEventBuilder
+### DynamicEventPublisher
 
-Fluent event builder:
+Fluent builder for publishing dynamic JSON events:
 
 ```rust
-pub struct TestEventBuilder<'a> {
-    // Created via ctx.event(source, event_type)
-}
-
-impl TestEventBuilder<'_> {
-    pub fn payload(self, payload: JsonValue) -> Self;
-    pub fn at<T: Into<Timestamp>>(self, timestamp: T) -> Self;
-    pub async fn publish(self) -> TestResult<Event<JsonValue>>;
-}
+// Created via ctx.publish_dynamic(source, event_type, payload)
+ctx.publish_dynamic("source", "event.type", json!({}))
+    .at(Timestamp::now())  // optional timestamp
+    .send()
+    .await?;
 ```
 
 ### BackgroundSnapshot

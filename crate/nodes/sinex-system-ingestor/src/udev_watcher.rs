@@ -12,7 +12,7 @@ use sinex_core::types::events::{
     UdevDeviceChangedPayload, UdevDeviceConnectedPayload, UdevDeviceDisconnectedPayload,
     UdevDeviceDriverChangedPayload, UdevDeviceOtherPayload,
 };
-use sinex_core::JsonValue;
+use sinex_core::{DeviceType, JsonValue, UdevAction};
 use sinex_node_sdk::NodeResult;
 use std::path::Path;
 use tokio::sync::mpsc;
@@ -25,9 +25,9 @@ macro_rules! create_udev_event {
      $properties:expr, $timestamp:expr) => {{
         let event = Event::new(
             $payload_type {
-                action: $action.to_string(),
+                action: $action,
                 device_path: $device_path.to_string(),
-                device_type: $device_type.to_string(),
+                device_type: $device_type,
                 subsystem: $subsystem,
                 devtype: $devtype,
                 vendor: $vendor,
@@ -42,6 +42,33 @@ macro_rules! create_udev_event {
 
         Ok(event)
     }};
+}
+
+/// Parse udev action string to UdevAction enum
+fn parse_udev_action(action: &str) -> UdevAction {
+    match action {
+        "add" => UdevAction::Add,
+        "remove" => UdevAction::Remove,
+        "change" => UdevAction::Change,
+        "bind" => UdevAction::Bind,
+        "unbind" => UdevAction::Unbind,
+        _ => UdevAction::Other,
+    }
+}
+
+/// Parse device type string to DeviceType enum
+fn parse_udev_device_type(s: &str) -> DeviceType {
+    match s.to_lowercase().as_str() {
+        "usb" | "usb_device" | "usb_interface" => DeviceType::Usb,
+        "disk" | "partition" | "block" => DeviceType::Storage,
+        "net" | "network" => DeviceType::Network,
+        "input" | "input_device" => DeviceType::Input,
+        "sound" | "audio" => DeviceType::Audio,
+        "video" | "drm" => DeviceType::Video,
+        "bluetooth" => DeviceType::Bluetooth,
+        "power_supply" | "battery" => DeviceType::Battery,
+        _ => DeviceType::Other,
+    }
 }
 
 /// udev watcher
@@ -84,15 +111,19 @@ impl UdevWatcher {
             .get("ID_SERIAL_SHORT")
             .or_else(|| properties.get("ID_SERIAL"))
             .cloned();
-        let timestamp = chrono::Utc::now().to_rfc3339();
+        let timestamp = chrono::Utc::now();
+
+        // Parse string types to enums
+        let action_enum = parse_udev_action(action);
+        let device_type_enum = parse_udev_device_type(device_type);
 
         match action {
             "add" => create_udev_event!(
                 material,
                 UdevDeviceConnectedPayload,
-                action,
+                action_enum,
                 device_path,
-                device_type,
+                device_type_enum,
                 subsystem,
                 devtype,
                 vendor,
@@ -104,9 +135,9 @@ impl UdevWatcher {
             "remove" => create_udev_event!(
                 material,
                 UdevDeviceDisconnectedPayload,
-                action,
+                action_enum,
                 device_path,
-                device_type,
+                device_type_enum,
                 subsystem,
                 devtype,
                 vendor,
@@ -118,9 +149,9 @@ impl UdevWatcher {
             "change" => create_udev_event!(
                 material,
                 UdevDeviceChangedPayload,
-                action,
+                action_enum,
                 device_path,
-                device_type,
+                device_type_enum,
                 subsystem,
                 devtype,
                 vendor,
@@ -132,9 +163,9 @@ impl UdevWatcher {
             "bind" | "unbind" => create_udev_event!(
                 material,
                 UdevDeviceDriverChangedPayload,
-                action,
+                action_enum,
                 device_path,
-                device_type,
+                device_type_enum,
                 subsystem,
                 devtype,
                 vendor,
@@ -146,9 +177,9 @@ impl UdevWatcher {
             _ => create_udev_event!(
                 material,
                 UdevDeviceOtherPayload,
-                action,
+                action_enum,
                 device_path,
-                device_type,
+                device_type_enum,
                 subsystem,
                 devtype,
                 vendor,

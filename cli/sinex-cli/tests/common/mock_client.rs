@@ -1,0 +1,389 @@
+//! Mock GatewayClient for testing sinex-cli commands
+
+#![allow(dead_code)]
+
+use serde_json::Value;
+use sinex_core::rpc::{
+    coordination::InstanceInfo, dlq::*, nodes::*, replay::*, system::SystemHealthResponse,
+};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+use sinex_cli::model::search::{SearchQuery, SearchResult};
+use sinex_cli::Result;
+
+/// Mock gateway client that records method calls and returns preset responses
+#[derive(Clone)]
+pub struct MockGatewayClient {
+    inner: Arc<Mutex<MockClientInner>>,
+}
+
+struct MockClientInner {
+    /// Recorded method calls (method_name, args)
+    calls: Vec<(String, Vec<String>)>,
+    /// Preset responses for specific methods
+    responses: HashMap<String, MockResponse>,
+}
+
+#[derive(Clone)]
+pub enum MockResponse {
+    String(String),
+    Health(SystemHealthResponse),
+    Nodes(Vec<InstanceInfo>),
+    NodeStatus(NodeStatus),
+    ReplayOperation(ReplayOperation),
+    ReplayOperations(Vec<ReplayOperation>),
+    DlqList(DlqListResponse),
+    DlqPeek(DlqPeekResponse),
+    DlqRequeue(DlqRequeueResponse),
+    DlqPurge(DlqPurgeResponse),
+    SearchResults(Vec<SearchResult>),
+    Value(Value),
+}
+
+impl MockGatewayClient {
+    /// Create a new mock client with default responses
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(MockClientInner {
+                calls: Vec::new(),
+                responses: HashMap::new(),
+            })),
+        }
+    }
+
+    /// Set a mock response for a specific method
+    pub fn set_response(&self, method: &str, response: MockResponse) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.responses.insert(method.to_string(), response);
+    }
+
+    /// Get the list of recorded method calls
+    pub fn get_calls(&self) -> Vec<(String, Vec<String>)> {
+        let inner = self.inner.lock().unwrap();
+        inner.calls.clone()
+    }
+
+    /// Clear all recorded calls
+    pub fn clear_calls(&self) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.calls.clear();
+    }
+
+    /// Record a method call
+    fn record_call(&self, method: &str, args: Vec<String>) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.calls.push((method.to_string(), args));
+    }
+
+    /// Get a preset response or return a default
+    fn get_response(&self, method: &str) -> Option<MockResponse> {
+        let inner = self.inner.lock().unwrap();
+        inner.responses.get(method).cloned()
+    }
+
+    // Mock implementations of GatewayClient methods
+
+    pub async fn ping(&self) -> Result<String> {
+        self.record_call("ping", vec![]);
+        Ok(self
+            .get_response("ping")
+            .and_then(|r| match r {
+                MockResponse::String(s) => Some(s),
+                _ => None,
+            })
+            .unwrap_or_else(|| "pong".to_string()))
+    }
+
+    pub async fn version(&self) -> Result<String> {
+        self.record_call("version", vec![]);
+        Ok(self
+            .get_response("version")
+            .and_then(|r| match r {
+                MockResponse::String(s) => Some(s),
+                _ => None,
+            })
+            .unwrap_or_else(|| "0.4.2".to_string()))
+    }
+
+    pub async fn health(&self) -> Result<SystemHealthResponse> {
+        use sinex_core::rpc::system::{ComponentHealth, ComponentsHealth, ReplayControlHealth};
+
+        self.record_call("health", vec![]);
+        Ok(self
+            .get_response("health")
+            .and_then(|r| match r {
+                MockResponse::Health(h) => Some(h),
+                _ => None,
+            })
+            .unwrap_or_else(|| SystemHealthResponse {
+                status: "healthy".to_string(),
+                components: ComponentsHealth {
+                    database: ComponentHealth {
+                        status: "healthy".to_string(),
+                        connected: true,
+                    },
+                    nats: ComponentHealth {
+                        status: "healthy".to_string(),
+                        connected: true,
+                    },
+                    replay_control: ReplayControlHealth {
+                        status: "healthy".to_string(),
+                        enabled: true,
+                        bypass_allowed: false,
+                        bypass_active: false,
+                        connected: true,
+                        last_error: None,
+                    },
+                },
+            }))
+    }
+
+    pub async fn list_nodes(&self) -> Result<Vec<InstanceInfo>> {
+        self.record_call("list_nodes", vec![]);
+        Ok(self
+            .get_response("list_nodes")
+            .and_then(|r| match r {
+                MockResponse::Nodes(nodes) => Some(nodes),
+                _ => None,
+            })
+            .unwrap_or_default())
+    }
+
+    pub async fn node_status(&self, node_id: &str) -> Result<NodeStatus> {
+        use sinex_core::types::domain::{NodeId, NodeState};
+
+        self.record_call("node_status", vec![node_id.to_string()]);
+        Ok(self
+            .get_response("node_status")
+            .and_then(|r| match r {
+                MockResponse::NodeStatus(status) => Some(status),
+                _ => None,
+            })
+            .unwrap_or_else(|| NodeStatus {
+                node_id: NodeId::new(node_id),
+                state: NodeState::Running,
+                last_heartbeat: None,
+                processing_horizon: None,
+            }))
+    }
+
+    pub async fn drain_node(&self, node_id: &str, reason: Option<&str>) -> Result<()> {
+        self.record_call(
+            "drain_node",
+            vec![node_id.to_string(), reason.unwrap_or("").to_string()],
+        );
+        Ok(())
+    }
+
+    pub async fn resume_node(&self, node_id: &str) -> Result<()> {
+        self.record_call("resume_node", vec![node_id.to_string()]);
+        Ok(())
+    }
+
+    pub async fn set_node_horizon(&self, node_id: &str, horizon: &str) -> Result<()> {
+        self.record_call(
+            "set_node_horizon",
+            vec![node_id.to_string(), horizon.to_string()],
+        );
+        Ok(())
+    }
+
+    pub async fn replay_list(&self) -> Result<Vec<ReplayOperation>> {
+        self.record_call("replay_list", vec![]);
+        Ok(self
+            .get_response("replay_list")
+            .and_then(|r| match r {
+                MockResponse::ReplayOperations(ops) => Some(ops),
+                _ => None,
+            })
+            .unwrap_or_default())
+    }
+
+    pub async fn replay_status(&self, operation_id: &str) -> Result<ReplayOperation> {
+        use sinex_core::rpc::replay::{ReplayCheckpoint, ReplayScope, ReplayState};
+        use std::collections::HashMap;
+
+        self.record_call("replay_status", vec![operation_id.to_string()]);
+        Ok(self
+            .get_response("replay_status")
+            .and_then(|r| match r {
+                MockResponse::ReplayOperation(op) => Some(op),
+                _ => None,
+            })
+            .unwrap_or_else(|| ReplayOperation {
+                operation_id: operation_id.to_string(),
+                state: ReplayState::Planning,
+                scope: ReplayScope {
+                    processor_id: "test-processor".to_string(),
+                    time_window: None,
+                    material_filter: None,
+                    filters: HashMap::new(),
+                },
+                preview_summary: None,
+                checkpoint: ReplayCheckpoint {
+                    processed_events: 0,
+                    total_events: 0,
+                    last_event_id: None,
+                    batch_number: 0,
+                    savepoint_id: None,
+                    updated_at: chrono::Utc::now().to_rfc3339(),
+                },
+                actor: "test-actor".to_string(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                approved_by: None,
+                approved_at: None,
+                executor_node: None,
+                started_at: None,
+                finished_at: None,
+                outcome: None,
+                error_details: None,
+            }))
+    }
+
+    pub async fn dlq_list(&self) -> Result<DlqListResponse> {
+        self.record_call("dlq_list", vec![]);
+        Ok(self
+            .get_response("dlq_list")
+            .and_then(|r| match r {
+                MockResponse::DlqList(resp) => Some(resp),
+                _ => None,
+            })
+            .unwrap_or_else(|| DlqListResponse {
+                total_messages: 0,
+                total_bytes: 0,
+                first_seq: 0,
+                last_seq: 0,
+            }))
+    }
+
+    pub async fn dlq_peek(&self, limit: Option<usize>) -> Result<DlqPeekResponse> {
+        self.record_call("dlq_peek", vec![format!("{:?}", limit)]);
+        Ok(self
+            .get_response("dlq_peek")
+            .and_then(|r| match r {
+                MockResponse::DlqPeek(resp) => Some(resp),
+                _ => None,
+            })
+            .unwrap_or_else(|| DlqPeekResponse {
+                messages: Vec::new(),
+            }))
+    }
+
+    pub async fn dlq_requeue(&self, event_ids: Vec<String>) -> Result<DlqRequeueResponse> {
+        self.record_call("dlq_requeue", event_ids);
+        Ok(self
+            .get_response("dlq_requeue")
+            .and_then(|r| match r {
+                MockResponse::DlqRequeue(resp) => Some(resp),
+                _ => None,
+            })
+            .unwrap_or_else(|| DlqRequeueResponse {
+                status: "success".to_string(),
+                requeued_count: 0,
+            }))
+    }
+
+    pub async fn dlq_purge(&self, confirm: bool) -> Result<DlqPurgeResponse> {
+        self.record_call("dlq_purge", vec![confirm.to_string()]);
+        Ok(self
+            .get_response("dlq_purge")
+            .and_then(|r| match r {
+                MockResponse::DlqPurge(resp) => Some(resp),
+                _ => None,
+            })
+            .unwrap_or_else(|| DlqPurgeResponse {
+                status: "success".to_string(),
+                purged_count: 0,
+            }))
+    }
+
+    pub async fn search_events(&self, query: SearchQuery) -> Result<Vec<SearchResult>> {
+        self.record_call("search_events", vec![format!("{:?}", query)]);
+        Ok(self
+            .get_response("search_events")
+            .and_then(|r| match r {
+                MockResponse::SearchResults(results) => Some(results),
+                _ => None,
+            })
+            .unwrap_or_default())
+    }
+}
+
+impl Default for MockGatewayClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_mock_client_ping() {
+        let client = MockGatewayClient::new();
+        let result = client.ping().await.unwrap();
+        assert_eq!(result, "pong");
+
+        let calls = client.get_calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "ping");
+    }
+
+    #[tokio::test]
+    async fn test_mock_client_custom_response() {
+        let client = MockGatewayClient::new();
+        client.set_response("ping", MockResponse::String("custom_pong".to_string()));
+
+        let result = client.ping().await.unwrap();
+        assert_eq!(result, "custom_pong");
+    }
+
+    #[tokio::test]
+    async fn test_mock_client_records_calls() {
+        let client = MockGatewayClient::new();
+
+        client.ping().await.unwrap();
+        client.version().await.unwrap();
+        client.health().await.unwrap();
+
+        let calls = client.get_calls();
+        assert_eq!(calls.len(), 3);
+        assert_eq!(calls[0].0, "ping");
+        assert_eq!(calls[1].0, "version");
+        assert_eq!(calls[2].0, "health");
+    }
+
+    #[tokio::test]
+    async fn test_mock_client_clear_calls() {
+        let client = MockGatewayClient::new();
+
+        client.ping().await.unwrap();
+        assert_eq!(client.get_calls().len(), 1);
+
+        client.clear_calls();
+        assert_eq!(client.get_calls().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_mock_client_node_operations() {
+        let client = MockGatewayClient::new();
+
+        client
+            .drain_node("node-1", Some("maintenance"))
+            .await
+            .unwrap();
+        client.resume_node("node-1").await.unwrap();
+        client
+            .set_node_horizon("node-1", "2024-01-01T00:00:00Z")
+            .await
+            .unwrap();
+
+        let calls = client.get_calls();
+        assert_eq!(calls.len(), 3);
+        assert_eq!(calls[0].0, "drain_node");
+        assert_eq!(calls[1].0, "resume_node");
+        assert_eq!(calls[2].0, "set_node_horizon");
+    }
+}

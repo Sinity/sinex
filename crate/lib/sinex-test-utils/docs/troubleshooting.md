@@ -9,8 +9,8 @@ Common issues, debugging strategies, and patterns for writing reliable tests.
 | Practice | Reason |
 |----------|--------|
 | Use `#[sinex_test]` | Automatic lifecycle management |
-| Use `ctx.with_shared_nats()` | Required for pipeline testing |
-| Use `ctx.publish_json_event()` | Exercises real ingestion path |
+| Use `ctx.with_nats().shared()` | Required for pipeline testing |
+| Use `ctx.publish_event()` | Exercises real ingestion path |
 | Use `ctx.assert()` | Rich error messages with context |
 | Use `ctx.timing().wait_for_*()` | Adaptive polling without flakiness |
 | Use production APIs directly | Tests validate real behavior |
@@ -103,7 +103,7 @@ ps aux | grep sqlx
 
 **Solution**: Add before publishing:
 ```rust
-let ctx = ctx.with_shared_nats().await?;
+let ctx = ctx.with_nats().shared().await?;
 ```
 
 ### "Stream already exists with different config"
@@ -224,8 +224,8 @@ async fn test_unit_example(
     #[case] event_type: &str,
 ) -> Result<()> {
     // Arrange
-    let ctx = ctx.with_shared_nats().await?;
-    let event = ctx.publish_json_event(
+    let ctx = ctx.with_nats().shared().await?;
+    let event = ctx.publish_event(
         source,
         event_type,
         json!({"test_key": "test_value"}),
@@ -251,11 +251,11 @@ async fn test_unit_example(
 ```rust
 #[sinex_test]
 async fn test_integration_example(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
 
     // Setup: Create test data
     for i in 0..5 {
-        ctx.publish_json_event(
+        ctx.publish_event(
             "integration-test",
             "test.event",
             json!({"index": i}),
@@ -291,8 +291,8 @@ async fn property_events_roundtrip(
     #[strategy(filesystem_event_strategy())] event: (String, String, Value),
 ) -> TestResult<()> {
     let (source, ty, payload) = event;
-    let ctx = ctx.with_shared_nats().await?;
-    let inserted = ctx.publish_json_event(&source, &ty, payload.clone()).await?;
+    let ctx = ctx.with_nats().shared().await?;
+    let inserted = ctx.publish_event(&source, &ty, payload.clone()).await?;
 
     let fetched = ctx
         .pool
@@ -312,7 +312,7 @@ async fn property_events_roundtrip(
 #[sinex_test]
 async fn test_error_handling(ctx: TestContext) -> Result<()> {
     // Test validation rejection
-    let result = ctx.publish_json_event("", "valid.type", json!({})).await;
+    let result = ctx.publish_event("", "valid.type", json!({})).await;
     assert!(result.is_err());
 
     let err = result.unwrap_err();

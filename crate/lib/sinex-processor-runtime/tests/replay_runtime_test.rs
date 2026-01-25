@@ -1,11 +1,10 @@
 use chrono::{Duration as ChronoDuration, Utc};
 use color_eyre::eyre::eyre;
 use serde_json::{json, Value as JsonValue};
-use sinex_core::db::models::event::Event;
 use sinex_core::db::DbPoolExt;
+use sinex_core::types::events::DynamicPayload;
 use sinex_core::types::Id;
 use sinex_processor_runtime::replay::{ReplayMode, ReplayProgress, ReplayRuntimeExt};
-use sinex_test_utils::timing_utils::WaitHelpers;
 use sinex_test_utils::{sinex_test, TestContext, TestRuntimeBuilder};
 use tokio::time::{timeout, Duration};
 
@@ -60,12 +59,7 @@ async fn publish_event(
     event_type: &str,
     payload: JsonValue,
 ) -> color_eyre::Result<()> {
-    let event = Event::<JsonValue>::test_event(source, event_type, payload);
-    let id = ctx.publish_test_event(&event).await?;
-    WaitHelpers::wait_for_source_events(&ctx.pool, source, 1, 20).await?;
-    ctx.pool
-        .events()
-        .get_by_id(Id::<Event<JsonValue>>::from_ulid(id))
+    ctx.publish(DynamicPayload::new(source, event_type, payload))
         .await?;
     Ok(())
 }

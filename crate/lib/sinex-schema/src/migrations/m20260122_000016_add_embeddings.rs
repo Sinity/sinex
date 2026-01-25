@@ -36,29 +36,20 @@ impl MigrationTrait for Migration {
             .create_table(EventClusterMembers::create_table_statement())
             .await?;
 
-        // Create standard indexes
-        for index in EmbeddingModels::create_indexes() {
-            manager.create_index(index).await?;
-        }
-        for index in EmbeddingCache::create_indexes() {
-            manager.create_index(index).await?;
-        }
-        for index in EventEmbeddings::create_indexes() {
-            manager.create_index(index).await?;
-        }
+        // Create all indexes via raw SQL with IF NOT EXISTS for idempotency
+        let index_statements = vec![
+            // EmbeddingModels indexes
+            "CREATE UNIQUE INDEX IF NOT EXISTS uk_embedding_models_provider_model ON core.embedding_models (provider, model_name)",
+            // EmbeddingCache indexes
+            "CREATE UNIQUE INDEX IF NOT EXISTS uk_embedding_cache_hash_model ON core.embedding_cache (text_hash, embedding_model_id)",
+            "CREATE INDEX IF NOT EXISTS ix_embedding_cache_vector ON core.embedding_cache USING hnsw (embedding vector_cosine_ops)",
+            // EventEmbeddings indexes
+            "CREATE UNIQUE INDEX IF NOT EXISTS uk_event_embeddings_event_model ON core.event_embeddings (event_id, embedding_model_id)",
+            "CREATE INDEX IF NOT EXISTS ix_event_embeddings_vector ON core.event_embeddings USING hnsw (embedding vector_cosine_ops)",
+        ];
 
-        // Create vector indexes (HNSW) via raw SQL
-        for sql in EmbeddingCache::create_indexes_sql() {
-            manager
-                .get_connection()
-                .execute_unprepared(sql.as_str())
-                .await?;
-        }
-        for sql in EventEmbeddings::create_indexes_sql() {
-            manager
-                .get_connection()
-                .execute_unprepared(sql.as_str())
-                .await?;
+        for sql in index_statements {
+            manager.get_connection().execute_unprepared(sql).await?;
         }
 
         Ok(())

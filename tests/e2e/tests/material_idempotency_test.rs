@@ -1,13 +1,13 @@
 use serde_json::json;
 use sinex_core::db::query_helpers::ulid_to_uuid;
-use sinex_core::Ulid;
+use sinex_core::{DynamicPayload, Ulid};
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::timing_utils::{WaitHelpers, DEFAULT_WAIT_SECS};
 
 #[sinex_test]
 async fn material_stream_idempotency(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let scope = ctx.pipeline_scope().await?;
+    let scope = ctx.pipeline().await?;
     let publisher = scope.publisher("material-idempotency");
 
     let material_id = Ulid::new();
@@ -52,11 +52,11 @@ async fn material_stream_idempotency(ctx: TestContext) -> TestResult<()> {
     );
 
     let event_id = scope
-        .publish(
+        .publish(DynamicPayload::new(
             "material-idempotency",
             "material.ingested",
             json!({ "material_id": material_id.to_string() }),
-        )
+        ))
         .await?;
     scope.wait_for_event_id(event_id).await?;
 

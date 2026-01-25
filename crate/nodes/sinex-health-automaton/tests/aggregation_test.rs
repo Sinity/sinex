@@ -26,16 +26,19 @@ async fn health_aggregator_tracks_component_status(ctx: TestContext) -> TestResu
     };
 
     let output = aggregator.process(&mut state, input, &context).await;
-
-    ctx.assert("process succeeded").is_ok(&output)?;
+    assert!(output.is_ok(), "process should succeed");
 
     // Verify component was tracked
-    ctx.assert("component tracked")
-        .eq(state.component_health.contains_key("test-component"), true)?;
+    assert!(
+        state.component_health.contains_key("test-component"),
+        "component should be tracked"
+    );
 
     let component = &state.component_health["test-component"];
-    ctx.assert("status updated")
-        .eq(&component.current_status, "degraded")?;
+    assert_eq!(
+        component.current_status, "degraded",
+        "status should be updated"
+    );
 
     Ok(())
 }
@@ -62,21 +65,24 @@ async fn health_aggregator_emits_alert_on_failed_transition(ctx: TestContext) ->
     let output = aggregator.process(&mut state, input, &context).await?;
 
     // Should emit an immediate alert
-    ctx.assert("alert emitted").is_some(&output)?;
+    assert!(output.is_some(), "alert should be emitted");
 
     let alert = output.unwrap();
-    ctx.assert("alert type").eq(
+    assert_eq!(
         alert.get("alert_type").and_then(|v| v.as_str()),
         Some("component_status_change"),
-    )?;
-    ctx.assert("severity").eq(
+        "alert_type should match"
+    );
+    assert_eq!(
         alert.get("severity").and_then(|v| v.as_str()),
         Some("critical"),
-    )?;
-    ctx.assert("component").eq(
+        "severity should match"
+    );
+    assert_eq!(
         alert.get("component").and_then(|v| v.as_str()),
         Some("critical-service"),
-    )?;
+        "component should match"
+    );
 
     Ok(())
 }
@@ -110,8 +116,10 @@ async fn health_aggregator_tracks_transition_count(ctx: TestContext) -> TestResu
     }
 
     let component = &state.component_health["flaky-service"];
-    ctx.assert("transition count")
-        .eq(component.transition_count, 4)?;
+    assert_eq!(
+        component.transition_count, 4,
+        "transition count should match"
+    );
 
     Ok(())
 }
@@ -176,8 +184,10 @@ async fn health_aggregator_prunes_old_events_outside_window(ctx: TestContext) ->
         .filter(|e| future_time.signed_duration_since(e.timestamp).num_seconds() <= 300)
         .count();
 
-    ctx.assert("only recent events kept")
-        .less_or_equal(component.events.len(), events_in_window + 1)?;
+    assert!(
+        component.events.len() <= events_in_window + 1,
+        "only recent events should be kept"
+    );
 
     Ok(())
 }
@@ -215,7 +225,7 @@ async fn health_aggregator_emits_system_status_periodically(ctx: TestContext) ->
     };
 
     let output1 = aggregator.process(&mut state, input1, &context1).await?;
-    ctx.assert("first emission").is_some(&output1)?;
+    assert!(output1.is_some(), "first emission should occur");
 
     // Process second event within window (should NOT emit system status)
     let input2 = json!({
@@ -231,7 +241,7 @@ async fn health_aggregator_emits_system_status_periodically(ctx: TestContext) ->
         event_id: sinex_core::EventId::new().into(),
     };
 
-    let output2 = aggregator.process(&mut state, input2, &context2).await?;
+    let _output2 = aggregator.process(&mut state, input2, &context2).await?;
     // Might or might not emit depending on component check interval
 
     // Process third event after window (should emit system status again)
@@ -249,7 +259,10 @@ async fn health_aggregator_emits_system_status_periodically(ctx: TestContext) ->
     };
 
     let output3 = aggregator.process(&mut state, input3, &context3).await?;
-    ctx.assert("system status after window").is_some(&output3)?;
+    assert!(
+        output3.is_some(),
+        "system status after window should be emitted"
+    );
 
     Ok(())
 }
@@ -303,24 +316,27 @@ async fn health_aggregator_calculates_overall_system_status(ctx: TestContext) ->
 
     let output = aggregator.process(&mut state, input, &context).await?;
 
-    ctx.assert("system status emitted").is_some(&output)?;
+    assert!(output.is_some(), "system status should be emitted");
 
     let system_status = output.unwrap();
-    ctx.assert("report type").eq(
+    assert_eq!(
         system_status.get("report_type").and_then(|v| v.as_str()),
         Some("system_health_status"),
-    )?;
+        "report_type should match"
+    );
 
     // Overall should be "degraded" (not all healthy, no failures)
-    ctx.assert("overall status").eq(
+    assert_eq!(
         system_status.get("overall_status").and_then(|v| v.as_str()),
         Some("degraded"),
-    )?;
+        "overall status should be degraded"
+    );
 
-    ctx.assert("degraded count").eq(
+    assert_eq!(
         system_status.get("degraded_count").and_then(|v| v.as_u64()),
         Some(1),
-    )?;
+        "degraded count should match"
+    );
 
     Ok(())
 }
@@ -363,7 +379,7 @@ async fn health_aggregator_respects_component_check_intervals(ctx: TestContext) 
         event_id: sinex_core::EventId::new().into(),
     };
 
-    let output1 = aggregator.process(&mut state, input1, &context1).await?;
+    let _output1 = aggregator.process(&mut state, input1, &context1).await?;
     // Should emit component report (first time)
 
     // Second event for fast-check 0.5 seconds later (should NOT emit)
@@ -380,7 +396,7 @@ async fn health_aggregator_respects_component_check_intervals(ctx: TestContext) 
         event_id: sinex_core::EventId::new().into(),
     };
 
-    let output2 = aggregator.process(&mut state, input2, &context2).await?;
+    let _output2 = aggregator.process(&mut state, input2, &context2).await?;
     // Should not emit (within check interval)
 
     // Third event for fast-check 1.5 seconds later (should emit)
@@ -397,7 +413,7 @@ async fn health_aggregator_respects_component_check_intervals(ctx: TestContext) 
         event_id: sinex_core::EventId::new().into(),
     };
 
-    let output3 = aggregator.process(&mut state, input3, &context3).await?;
+    let _output3 = aggregator.process(&mut state, input3, &context3).await?;
     // Should emit component report (after check interval)
 
     Ok(())

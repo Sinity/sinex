@@ -14,7 +14,7 @@ use serde_json::json;
 // Using shorter imports from sinex-core's re-exports
 use sinex_core::{
     payloads::filesystem::{FileCreatedPayload, FileModifiedPayload},
-    DbPoolExt, EventSource, Ulid,
+    DbPoolExt, DynamicPayload, EventSource, Ulid,
 };
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::timing_utils::WaitHelpers;
@@ -36,14 +36,14 @@ async fn test_batch_event_insertion(ctx: TestContext) -> TestResult<()> {
 
     for i in 0..10 {
         let event = ctx
-            .publish_event(
+            .publish(DynamicPayload::new(
                 source.as_str(),
                 event_type.as_str(),
                 json!({
                     "path": format!("/test/file_{}.txt", i),
                     "size": 1024 * (i + 1)
                 }),
-            )
+            ))
             .await?;
 
         inserted_events.push(event);
@@ -93,26 +93,28 @@ async fn test_query_events_by_source(ctx: TestContext) -> TestResult<()> {
 
     // Create filesystem events
     let _fs_event1 = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             fs_source.as_str(),
             FileCreatedPayload::EVENT_TYPE.as_str(),
             json!({"path": "/test/file1.txt", "size": 1024}),
-        )
+        ))
         .await?;
 
     let _fs_event2 = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             fs_source.as_str(),
             FileModifiedPayload::EVENT_TYPE.as_str(),
             json!({"path": "/test/file2.txt", "size": 2048}),
-        )
+        ))
         .await?;
 
     let _term_event = ctx
-        .publish_event(
-            terminal_source.as_str(),
-            "command.executed",
-            json!({"command": "ls -la", "exit_status": 0, "kitty_window_id": "test", "kitty_tab_id": "test"}),
+        .publish(
+            DynamicPayload::new(
+                terminal_source.as_str(),
+                "command.executed",
+                json!({"command": "ls -la", "exit_status": 0, "kitty_window_id": "test", "kitty_tab_id": "test"}),
+            ),
         )
         .await?;
 
@@ -153,11 +155,11 @@ async fn test_ulid_time_ordering(ctx: TestContext) -> TestResult<()> {
 
     // Insert events with a small delay to ensure different timestamps
     let event1 = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             FileCreatedPayload::SOURCE.as_str(),
             FileCreatedPayload::EVENT_TYPE.as_str(),
             json!({"path": "/test/first.txt", "size": 100}),
-        )
+        ))
         .await?;
     let id1 = event1.id.unwrap();
 
@@ -165,11 +167,11 @@ async fn test_ulid_time_ordering(ctx: TestContext) -> TestResult<()> {
     tokio::time::sleep(StdDuration::from_millis(1)).await;
 
     let event2 = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             FileCreatedPayload::SOURCE.as_str(),
             FileCreatedPayload::EVENT_TYPE.as_str(),
             json!({"path": "/test/second.txt", "size": 200}),
-        )
+        ))
         .await?;
     let id2 = event2.id.unwrap();
 
@@ -197,11 +199,11 @@ async fn test_ulid_ordering_in_database(ctx: TestContext) -> TestResult<()> {
 
     for i in 0..5 {
         let event = ctx
-            .publish_event(
+            .publish(DynamicPayload::new(
                 FileCreatedPayload::SOURCE.as_str(),
                 FileCreatedPayload::EVENT_TYPE.as_str(),
                 json!({"path": format!("/test/file_{}.txt", i), "size": (i + 1) * 1024}),
-            )
+            ))
             .await?;
         ulids.push(event.id.unwrap());
 
@@ -271,11 +273,11 @@ async fn test_basic_event_creation_patterns(ctx: TestContext) -> TestResult<()> 
 
     // Test simple event creation
     let simple_event = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "test-service",
             "simple.event",
             json!({"message": "Basic test event"}),
-        )
+        ))
         .await?;
 
     assert!(simple_event.id.is_some());
@@ -284,7 +286,7 @@ async fn test_basic_event_creation_patterns(ctx: TestContext) -> TestResult<()> 
 
     // Test event with complex payload
     let complex_event = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "test-service",
             "complex.event",
             json!({
@@ -299,7 +301,7 @@ async fn test_basic_event_creation_patterns(ctx: TestContext) -> TestResult<()> 
                     }
                 }
             }),
-        )
+        ))
         .await?;
 
     assert!(complex_event.id.is_some());
@@ -321,15 +323,15 @@ async fn test_event_payload_validation(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
     // Test with different payload structures
     let simple_event = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "test-service",
             "simple.event",
             json!({"message": "hello world"}),
-        )
+        ))
         .await?;
 
     let complex_event = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "test-service",
             "complex.event",
             json!({
@@ -343,7 +345,7 @@ async fn test_event_payload_validation(ctx: TestContext) -> TestResult<()> {
                     "timestamp": "2025-01-01T00:00:00Z"
                 }
             }),
-        )
+        ))
         .await?;
 
     // Verify events were created successfully

@@ -14,7 +14,7 @@ use tracing::info;
 #[sinex_test(timeout = 60)]
 async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let scope = ctx.pipeline_scope().await?;
+    let scope = ctx.pipeline().await?;
     info!("🚀 Starting E2E JetStream test");
 
     let ctx = scope.ctx();
@@ -47,7 +47,7 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
         Some(namespace.clone()),
     );
     let event_id = publisher
-        .publish_event(
+        .publish(
             "test.event",
             json!({
                 "message": "E2E JetStream test event",
@@ -96,7 +96,7 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
 #[sinex_test]
 async fn test_jetstream_idempotency(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let scope = ctx.pipeline_scope().await?;
+    let scope = ctx.pipeline().await?;
     info!("🚀 Starting JetStream idempotency test");
 
     let ctx = scope.ctx();
@@ -116,7 +116,7 @@ async fn test_jetstream_idempotency(ctx: TestContext) -> Result<()> {
 
     for i in 1..=2 {
         publisher
-            .publish_event_with_overrides(
+            .publish_with_overrides(
                 "test.duplicate",
                 json!({"test": "idempotency"}),
                 overrides.clone(),

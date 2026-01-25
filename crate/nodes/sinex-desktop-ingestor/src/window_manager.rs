@@ -11,7 +11,7 @@ use sinex_core::payloads::{
 };
 use sinex_core::types::domain::{EventSource, EventType};
 use sinex_core::types::events::EventPayload;
-use sinex_core::{EventBuilder, Id, OffsetKind, Provenance, Ulid};
+use sinex_core::{DynamicPayload, Id, OffsetKind, Provenance, Ulid};
 use sinex_node_sdk::stage_as_you_go::StageAsYouGoContext;
 use std::{fmt, str::FromStr, time::SystemTime};
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -370,7 +370,7 @@ impl WindowManagerWatcher {
                         offset_end: Some(payload_bytes.len() as i64),
                         offset_kind: OffsetKind::Byte,
                     };
-                    let event = EventBuilder::dynamic(
+                    let event = DynamicPayload::new(
                         EventSource::from_static("wm.hyprland"),
                         EventType::from_static("wm.unhandled"),
                         payload,

@@ -147,7 +147,7 @@ impl NatsPublisher {
             offset_end,
             offset_kind,
             source_event_ids,
-        ) = match &event.provenance {
+        ) = match event.provenance() {
             Provenance::Material {
                 id,
                 anchor_byte,
@@ -282,7 +282,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::{build_publish_payload, wait_for_publish_ack};
-    use sinex_core::{EventBuilder, EventId, Provenance, Ulid};
+    use sinex_core::{DynamicPayload, EventId, Provenance, Ulid};
     use sinex_test_utils::sinex_test;
     use std::{future, io, time::Duration};
 
@@ -297,7 +297,7 @@ mod tests {
 
     #[sinex_test]
     async fn publish_payload_serializes_json_once() -> TestResult<()> {
-        let mut event = EventBuilder::dynamic(
+        let mut event = DynamicPayload::new(
             "publisher.test",
             "payload.check",
             serde_json::json!({"nested": {"a": 1}}),

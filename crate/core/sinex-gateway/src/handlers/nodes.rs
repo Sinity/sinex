@@ -7,40 +7,14 @@
 //! - Set processing horizon (control replay boundaries)
 
 use color_eyre::eyre::{eyre, Context, Result};
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sinex_core::environment::SinexEnvironment;
 
-/// Node status information
-#[derive(Debug, Serialize, Deserialize)]
-pub struct NodeStatus {
-    pub node_id: String,
-    pub state: String,
-    pub last_heartbeat: Option<String>,
-    pub processing_horizon: Option<String>,
-}
-
-/// Parameters for draining a node
-#[derive(Debug, Deserialize)]
-struct NodeDrainParams {
-    node_id: String,
-    /// Optional reason for draining
-    reason: Option<String>,
-}
-
-/// Parameters for resuming a node
-#[derive(Debug, Deserialize)]
-struct NodeResumeParams {
-    node_id: String,
-}
-
-/// Parameters for setting processing horizon
-#[derive(Debug, Deserialize)]
-struct NodeSetHorizonParams {
-    node_id: String,
-    /// Horizon timestamp in RFC3339 format
-    horizon: String,
-}
+// Re-export shared types for use by other modules
+pub use sinex_core::rpc::nodes::{
+    NodeDrainRequest, NodeDrainResponse, NodeResumeRequest, NodeResumeResponse,
+    NodeSetHorizonRequest, NodeSetHorizonResponse, NodeStatus, NodesListRequest, NodesListResponse,
+};
 
 /// Handle GET /nodes request - list all nodes
 pub async fn handle_nodes_list(
@@ -98,7 +72,7 @@ pub async fn handle_nodes_drain(
     env: &SinexEnvironment,
     params: Value,
 ) -> Result<Value> {
-    let drain_params: NodeDrainParams =
+    let drain_params: NodeDrainRequest =
         serde_json::from_value(params).wrap_err("Invalid node drain parameters")?;
 
     // Publish drain command to NATS control subject
@@ -131,7 +105,7 @@ pub async fn handle_nodes_resume(
     env: &SinexEnvironment,
     params: Value,
 ) -> Result<Value> {
-    let resume_params: NodeResumeParams =
+    let resume_params: NodeResumeRequest =
         serde_json::from_value(params).wrap_err("Invalid node resume parameters")?;
 
     // Publish resume command to NATS control subject
@@ -163,12 +137,11 @@ pub async fn handle_nodes_set_horizon(
     env: &SinexEnvironment,
     params: Value,
 ) -> Result<Value> {
-    let horizon_params: NodeSetHorizonParams =
+    let horizon_params: NodeSetHorizonRequest =
         serde_json::from_value(params).wrap_err("Invalid set horizon parameters")?;
 
-    // Validate horizon timestamp
-    let _horizon_dt = chrono::DateTime::parse_from_rfc3339(&horizon_params.horizon)
-        .wrap_err("Invalid horizon timestamp format (expected RFC3339)")?;
+    // horizon is already a DateTime<Utc>, no parsing needed
+    let _horizon_dt = &horizon_params.horizon;
 
     // Publish set-horizon command to NATS control subject
     let subject = env.nats_subject(&format!(

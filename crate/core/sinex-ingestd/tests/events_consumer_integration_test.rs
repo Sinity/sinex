@@ -105,7 +105,7 @@ async fn jetstream_consumer_processes_batches_without_dlq(ctx: TestContext) -> T
 
     for idx in 0..100u32 {
         publisher
-            .publish_event(
+            .publish(
                 "batch.event",
                 json!({"idx": idx, "emitted_at": Utc::now().to_rfc3339()}),
             )
@@ -162,7 +162,7 @@ async fn jetstream_consumer_survives_transient_db_failure(ctx: TestContext) -> T
         Some(setup.namespace.clone()),
     );
     publisher
-        .publish_event_with_overrides(
+        .publish_with_overrides(
             "transient.failure",
             json!({"kind": "force-retry"}),
             EventOverrides {
@@ -253,7 +253,7 @@ async fn confirmation_emitted_after_persistence(ctx: TestContext) -> TestResult<
         Some(setup.namespace.clone()),
     );
     let event_id = publisher
-        .publish_event("confirmation.test", json!({"confirm": true}))
+        .publish("confirmation.test", json!({"confirm": true}))
         .await?;
 
     let confirmation_subject = format!(
@@ -315,7 +315,7 @@ async fn jetstream_consumer_redelivers_when_confirmation_publish_fails(
         Some(setup.namespace.clone()),
     );
     publisher
-        .publish_event_with_overrides(
+        .publish_with_overrides(
             "confirmation.retry",
             json!({"confirm": true}),
             EventOverrides {
@@ -387,7 +387,7 @@ async fn jetstream_consumer_preserves_ts_orig_subnano(ctx: TestContext) -> TestR
         Some(setup.namespace.clone()),
     );
     let event_id = publisher
-        .publish_event_with_overrides(
+        .publish_with_overrides(
             "timestamp.subnano",
             json!({"ts": ts_orig_str}),
             EventOverrides {
@@ -428,7 +428,7 @@ async fn jetstream_consumer_redelivers_when_ack_wait_expires(ctx: TestContext) -
         Some(setup.namespace.clone()),
     );
     publisher
-        .publish_event_with_overrides(
+        .publish_with_overrides(
             "slow.ack",
             json!({"slow": true}),
             EventOverrides {
@@ -494,7 +494,7 @@ async fn jetstream_consumer_routes_validation_failures_to_dlq(ctx: TestContext) 
         Some(setup.namespace.clone()),
     );
     publisher
-        .publish_event_with_overrides(
+        .publish_with_overrides(
             "dlq.event.invalid",
             json!({"kind": "invalid"}),
             EventOverrides {
@@ -504,7 +504,7 @@ async fn jetstream_consumer_routes_validation_failures_to_dlq(ctx: TestContext) 
         )
         .await?;
     publisher
-        .publish_event_with_overrides(
+        .publish_with_overrides(
             "dlq.event.valid",
             json!({"kind": "valid"}),
             EventOverrides {
@@ -604,7 +604,7 @@ async fn jetstream_consumer_routes_db_failures_to_dlq(ctx: TestContext) -> TestR
         Some(setup.namespace.clone()),
     );
     publisher
-        .publish_event_with_overrides(
+        .publish_with_overrides(
             "db.failure",
             json!({"force": "db_error"}),
             EventOverrides {
@@ -721,7 +721,7 @@ async fn jetstream_consumer_dlq_reason_classification(ctx: TestContext) -> TestR
         .await?;
 
     publisher
-        .publish_event_with_overrides(
+        .publish_with_overrides(
             "dlq.timestamp",
             json!({"case": "timestamp"}),
             EventOverrides {
@@ -736,7 +736,7 @@ async fn jetstream_consumer_dlq_reason_classification(ctx: TestContext) -> TestR
         .await?;
 
     publisher
-        .publish_event_with_overrides(
+        .publish_with_overrides(
             "dlq.db",
             json!({"case": "db"}),
             EventOverrides {
@@ -805,7 +805,7 @@ async fn chaos_injector_produces_clean_snapshot(ctx: TestContext) -> TestResult<
         .with_simulated_failures(|| async {
             for idx in 0..20 {
                 publisher
-                    .publish_event(
+                    .publish(
                         "chaos.event",
                         json!({"idx": idx, "note": "chaos-resilience"}),
                     )

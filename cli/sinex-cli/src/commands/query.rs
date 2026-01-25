@@ -6,7 +6,7 @@ use sinex_core::types::domain::{EventSource, EventType};
 use sinex_core::types::utils::timestamp_helpers::parse_relative_duration;
 
 use crate::client::GatewayClient;
-use crate::fmt::{format_json, format_yaml};
+use crate::fmt::CommandOutput;
 use crate::model::search::{SearchQuery, SearchResult};
 use crate::model::OutputFormat;
 use crate::Result;
@@ -107,25 +107,7 @@ async fn execute_query(
     format: OutputFormat,
 ) -> Result<()> {
     let results = client.search_events(query).await?;
-
-    match format {
-        OutputFormat::Table => {
-            if results.is_empty() {
-                println!("No events found.");
-            } else {
-                println!("{}", format_table_results(&results));
-            }
-        }
-        OutputFormat::Json => {
-            for result in &results {
-                println!("{}", format_json(result)?);
-            }
-        }
-        OutputFormat::Yaml => {
-            println!("{}", format_yaml(&results)?);
-        }
-    }
-
+    CommandOutput::list(results, "No events found.", format_table_results).display(&format)?;
     Ok(())
 }
 
@@ -183,7 +165,7 @@ async fn interactive_query(client: &GatewayClient, format: OutputFormat) -> Resu
             if nodes.is_empty() {
                 default_sources
             } else {
-                nodes.iter().map(|n| n.name.clone()).collect()
+                nodes.iter().map(|n| n.node_type.to_string()).collect()
             }
         }
         Err(_) => default_sources,

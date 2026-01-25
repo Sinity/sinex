@@ -103,6 +103,11 @@ impl TokenRateLimiter {
         Self::new(RateLimitConfig::from_env())
     }
 
+    /// Check if rate limiting is enabled
+    pub fn is_enabled(&self) -> bool {
+        self.config.enabled
+    }
+
     /// Check if the given token is allowed to make a request
     ///
     /// Returns `Ok(())` if allowed, `Err(())` if rate limited

@@ -99,7 +99,7 @@ async fn run_duplicate_event_rejection(event_count: usize) -> color_eyre::Result
         };
 
         publisher
-            .publish_event_with_overrides(
+            .publish_with_overrides(
                 "test.idempotency",
                 json!({"iteration": "first"}),
                 overrides.clone(),
@@ -116,7 +116,7 @@ async fn run_duplicate_event_rejection(event_count: usize) -> color_eyre::Result
         .await?;
 
         publisher
-            .publish_event_with_overrides(
+            .publish_with_overrides(
                 "test.idempotency",
                 json!({"iteration": "duplicate"}),
                 overrides,
@@ -185,7 +185,7 @@ async fn test_concurrent_duplicate_submission() -> color_eyre::Result<()> {
 
         let handle = tokio::spawn(async move {
             publisher
-                .publish_event_with_overrides("test.concurrent", json!({"attempt": i}), overrides)
+                .publish_with_overrides("test.concurrent", json!({"attempt": i}), overrides)
                 .await
                 .unwrap();
         });

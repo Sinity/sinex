@@ -2,9 +2,11 @@
 
 //! Payload structures for system events handled by the system node.
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use sinex_core::types::Seconds;
+use sinex_core::JournalSyncType;
 use std::collections::HashMap;
 
 // Default configuration values for systemd journal monitoring
@@ -167,7 +169,7 @@ pub struct JournalEntryPayload {
     /// Timestamp from journal (microseconds since epoch)
     pub timestamp_us: i64,
     /// Parsed timestamp
-    pub timestamp: String,
+    pub timestamp: DateTime<Utc>,
     /// Hostname
     pub hostname: Option<String>,
     /// Unit name (for systemd services)
@@ -199,8 +201,8 @@ pub struct JournalEntryPayload {
 /// Journal sync/import status event
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JournalSyncPayload {
-    /// Sync operation type (initial_import, incremental_sync)
-    pub sync_type: String,
+    /// Sync operation type
+    pub sync_type: JournalSyncType,
     /// Starting cursor
     pub start_cursor: Option<String>,
     /// Ending cursor
@@ -208,9 +210,9 @@ pub struct JournalSyncPayload {
     /// Number of entries processed
     pub entries_count: u64,
     /// Time range start
-    pub time_start: Option<String>,
+    pub time_start: Option<DateTime<Utc>>,
     /// Time range end
-    pub time_end: Option<String>,
+    pub time_end: Option<DateTime<Utc>>,
     /// Duration in milliseconds
     pub duration_ms: u64,
 }

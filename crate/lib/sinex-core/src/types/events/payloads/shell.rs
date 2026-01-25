@@ -4,6 +4,8 @@
 //! from a command from Atuin, even if they have similar fields.
 
 use crate::types::domain::{CommandText, HostName, SanitizedPath, ShellName};
+use crate::types::events::enums::{ScanType, TerminalType};
+use crate::types::units::{ExitCode, Nanoseconds, ProcessId};
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -16,7 +18,7 @@ define_event_payload! {
     pub struct KittyCommandExecutedPayload {
         command: CommandText,
         working_directory: Option<SanitizedPath>,
-        exit_status: Option<i32>,
+        exit_status: Option<ExitCode>,
         execution_time_ms: Option<u64>,
         shell_type: Option<ShellName>,
         kitty_window_id: String,
@@ -29,9 +31,9 @@ define_event_payload! {
     pub struct KittyCommandCompletedPayload {
         command: CommandText,
         working_directory: SanitizedPath,
-        exit_status: i32,
+        exit_status: ExitCode,
         duration_ms: u64,
-        shell_pid: u32,
+        shell_pid: ProcessId,
         kitty_window_id: String,
         kitty_tab_id: String,
         output_lines: Option<u32>,
@@ -56,7 +58,7 @@ define_event_payload! {
         window_id: String,
         tab_id: String,
         duration_seconds: u64,
-        exit_code: Option<i32>,
+        exit_code: Option<ExitCode>,
     } => ("terminal.kitty", "session.ended");
 }
 
@@ -67,8 +69,8 @@ define_event_payload! {
     pub struct AtuinCommandExecutedPayload {
         command_string: CommandText,
         cwd: SanitizedPath,
-        exit_code: i32,
-        duration_ns: i64,
+        exit_code: ExitCode,
+        duration_ns: Nanoseconds,
         atuin_history_id: String,
         atuin_session_id: String,
         timestamp: i64,
@@ -86,7 +88,7 @@ impl KittyCommandExecutedPayload {
         Self {
             command: command.into().into(),
             working_directory: None,
-            exit_status: Some(0),
+            exit_status: Some(ExitCode::SUCCESS),
             execution_time_ms: Some(1),
             shell_type: None,
             kitty_window_id: "test".to_string(),
@@ -101,8 +103,8 @@ impl AtuinCommandExecutedPayload {
         Self {
             command_string: command.into().into(),
             cwd: cwd.into(),
-            exit_code: 0,
-            duration_ns: 1,
+            exit_code: ExitCode::SUCCESS,
+            duration_ns: Nanoseconds::from_nanos(1),
             atuin_history_id: "h1".to_string(),
             atuin_session_id: "s1".to_string(),
             timestamp: 0,
@@ -119,7 +121,7 @@ define_event_payload! {
     pub struct AtuinCommandCompletedPayload {
         command: String,
         working_directory: String,
-        exit_status: i32,
+        exit_status: ExitCode,
         duration_ms: u64,
         hostname: String,
         username: String,
@@ -151,7 +153,7 @@ define_event_payload! {
         command: String,
         timestamp: DateTime<Utc>,
         duration_ms: u64,
-        exit_code: i32,
+        exit_code: ExitCode,
         directory: String,
         session: String,
         hostname: String,
@@ -223,7 +225,7 @@ pub struct TerminalCommandHistoricalPayload {
     pub source: String,
     pub db_path: Option<std::path::PathBuf>,
     pub file_path: Option<std::path::PathBuf>,
-    pub scan_type: String,
+    pub scan_type: ScanType,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
@@ -231,7 +233,7 @@ pub struct TerminalCommandHistoricalPayload {
 pub struct TerminalHistoryHistoricalPayload {
     pub source: String,
     pub file_path: std::path::PathBuf,
-    pub scan_type: String,
+    pub scan_type: ScanType,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
@@ -251,7 +253,7 @@ pub struct KittyProcessChangedPayload {
     pub kitty_tab_id: String,
     pub previous_process: Option<serde_json::Value>,
     pub current_process: serde_json::Value,
-    pub change_timestamp: String,
+    pub change_timestamp: DateTime<Utc>,
     pub working_directory: Option<String>,
 }
 
@@ -263,7 +265,7 @@ pub struct KittyTabFocusedPayload {
     pub tab_title: String,
     pub tab_index: usize,
     pub previous_tab_id: Option<String>,
-    pub focus_timestamp: String,
+    pub focus_timestamp: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
@@ -272,7 +274,7 @@ pub struct KittyContentStreamedPayload {
     pub kitty_window_id: String,
     pub new_lines: Vec<String>,
     pub line_start_offset: usize,
-    pub capture_timestamp: String,
+    pub capture_timestamp: DateTime<Utc>,
 }
 
 // Canonical command payloads
@@ -282,7 +284,7 @@ pub struct KittyContentStreamedPayload {
 pub struct CanonicalCommandPayload {
     pub command: String,
     pub working_directory: String,
-    pub exit_code: i32,
+    pub exit_code: ExitCode,
     pub duration_ms: u64,
     pub start_time: DateTime<Utc>,
     pub end_time: DateTime<Utc>,
@@ -299,7 +301,7 @@ pub struct CanonicalCommandPayload {
 #[event_payload(source = "shell.scrollback", event_type = "shell.output_captured")]
 pub struct ShellOutputCapturedPayload {
     pub window_id: String,
-    pub terminal_type: String,
+    pub terminal_type: TerminalType,
     pub cwd: String,
     pub window_title: String,
     pub scrollback_text: Option<String>,
@@ -312,7 +314,7 @@ pub struct ShellOutputCapturedPayload {
     pub chunk_count: Option<usize>,
     pub includes_screen: bool,
     pub has_ansi_codes: bool,
-    pub timestamp: String,
+    pub timestamp: DateTime<Utc>,
 }
 
 impl KittyCommandExecutedPayload {
@@ -362,13 +364,13 @@ impl HistoryCommandImportedPayload {}
 #[event_payload(source = "shell.asciinema", event_type = "shell.session_started")]
 pub struct AsciinemaSessionStartedPayload {
     pub session_id: String,
-    pub terminal_type: String,
+    pub terminal_type: TerminalType,
     pub terminal_id: String,
     pub cwd: String,
     pub command: Option<String>,
     pub environment: serde_json::Value,
     pub dimensions: serde_json::Value,
-    pub start_time: String,
+    pub start_time: DateTime<Utc>,
     pub recording_file: String,
 }
 
@@ -376,9 +378,9 @@ pub struct AsciinemaSessionStartedPayload {
 #[event_payload(source = "shell.asciinema", event_type = "shell.session_ended")]
 pub struct AsciinemaSessionEndedPayload {
     pub session_id: String,
-    pub terminal_type: String,
+    pub terminal_type: TerminalType,
     pub terminal_id: String,
-    pub end_time: String,
+    pub end_time: DateTime<Utc>,
     pub duration_seconds: f64,
     pub event_count: usize,
     pub recording_file: String,

@@ -1,5 +1,8 @@
 //! Process lifecycle event payloads
 
+use crate::types::domain::NodeType;
+use crate::types::events::enums::{DeactivationReason, ShutdownReason};
+use crate::types::units::{EventCount, ExitCode, ProcessId, SequenceNumber};
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -31,8 +34,8 @@ impl fmt::Display for ProcessStatus {
 #[event_payload(source = "sinex", event_type = "process.started")]
 pub struct ProcessStartedPayload {
     pub process_name: String,
-    pub process_type: String, // ingestor, automaton, service
-    pub pid: u32,
+    pub process_type: NodeType,
+    pub pid: ProcessId,
     pub version: String,
     pub config: serde_json::Value,
 }
@@ -43,7 +46,7 @@ pub struct ProcessHeartbeatPayload {
     /// Name of the service/process emitting the heartbeat
     pub source: String,
     /// Sequence number of this heartbeat (increments each emission)
-    pub sequence: u64,
+    pub sequence: SequenceNumber,
     /// Status of the process
     pub status: ProcessStatus,
     /// Optional metrics collected from MetricsProviders
@@ -79,11 +82,11 @@ pub struct ProcessFailedPayload {
 #[event_payload(source = "sinex", event_type = "process.shutdown")]
 pub struct ProcessShutdownPayload {
     pub process_name: String,
-    pub process_type: String,
-    pub pid: u32,
+    pub process_type: NodeType,
+    pub pid: ProcessId,
     pub uptime_seconds: u64,
-    pub shutdown_reason: String,
-    pub exit_code: i32,
+    pub shutdown_reason: ShutdownReason,
+    pub exit_code: ExitCode,
 }
 
 // Automaton error events
@@ -114,6 +117,6 @@ pub struct SensorDeactivatedPayload {
     pub sensor: String,
     pub node: String,
     pub uptime_seconds: u64,
-    pub events_generated: u64,
-    pub reason: String,
+    pub events_generated: EventCount,
+    pub reason: DeactivationReason,
 }

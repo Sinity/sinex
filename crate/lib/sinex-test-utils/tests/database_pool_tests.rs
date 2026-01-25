@@ -5,13 +5,14 @@ use std::time::Duration;
 
 use sinex_core::db::repositories::source_materials::material_types;
 use sinex_core::types::error::SinexError;
+use sinex_core::types::events::DynamicPayload;
 use sinex_core::DbPoolExt;
-use sinex_core::{Event, EventSource, EventType, HostName, JsonValue, Provenance, SourceMaterial};
+use sinex_core::SourceMaterial;
 use sinex_test_utils::db_common::verify_clean_state;
 use sinex_test_utils::timing_utils::Timeouts;
 use sinex_test_utils::{
     acquire_admin_connection, acquire_test_database, check_pool_health, get_pool_stats,
-    pool_slot_count, reset_pool, sinex_serial_test, sinex_test,
+    pool_slot_count, reset_pool, sinex_serial_test, sinex_test, TestContext,
 };
 use sqlx::postgres::PgConnection;
 use sqlx::Connection;
@@ -72,7 +73,7 @@ async fn test_pool_handles_concurrent_acquisition() -> sinex_test_utils::Result<
 }
 
 #[sinex_test]
-async fn test_database_cleanup_on_drop() -> sinex_test_utils::Result<()> {
+async fn test_database_cleanup_on_drop(ctx: TestContext) -> sinex_test_utils::Result<()> {
     let db_name;
 
     {
@@ -80,14 +81,12 @@ async fn test_database_cleanup_on_drop() -> sinex_test_utils::Result<()> {
         let baseline = db.pool().events().count_all().await?;
         db_name = db.name().to_string();
 
-        let repo = db.pool().events();
-        let event = Event::<JsonValue>::test_event(
-            EventSource::new("test"),
-            EventType::new("test.event"),
+        ctx.publish(DynamicPayload::new(
+            "test",
+            "test.event",
             serde_json::json!({}),
-        )
-        .with_host(HostName::new("test-host"));
-        repo.insert(event).await?;
+        ))
+        .await?;
 
         let count = db.pool().events().count_all().await?;
         assert_eq!(count, baseline + 1);
@@ -154,19 +153,16 @@ async fn test_pool_statistics() -> sinex_test_utils::Result<()> {
 }
 
 #[sinex_test]
-async fn test_clean_database_handles_complex_data() -> sinex_test_utils::Result<()> {
+async fn test_clean_database_handles_complex_data(
+    ctx: TestContext,
+) -> sinex_test_utils::Result<()> {
     let db = acquire_test_database().await?;
     db.force_cleanup().await?;
     verify_clean_state(db.pool()).await?;
 
-    let repo = db.pool().events();
-    let event_to_insert = Event::<JsonValue>::test_event(
-        EventSource::new("test"),
-        EventType::new("test"),
-        serde_json::json!({}),
-    )
-    .with_host(HostName::new("test"));
-    let event = repo.insert(event_to_insert).await?;
+    let event = ctx
+        .publish(DynamicPayload::new("test", "test", serde_json::json!({})))
+        .await?;
 
     sinex_test_utils::timing_utils::WaitHelpers::wait_for_source_events(db.pool(), "test", 1, 30)
         .await?;
@@ -235,13 +231,10 @@ async fn test_stress_concurrent_operations() -> sinex_test_utils::Result<()> {
 
             let repo = db.pool().events();
             for _ in 0..5 {
-                let mut event = Event::<JsonValue>::test_event(
-                    EventSource::new(format!("task_{i}")),
-                    EventType::new("stress.test"),
-                    serde_json::json!({}),
-                )
-                .with_host(HostName::new("test"));
-                event.provenance = Provenance::from_material(material_id, 0, None, None);
+                let event =
+                    DynamicPayload::new(format!("task_{i}"), "stress.test", serde_json::json!({}))
+                        .from_material(material_id)
+                        .build()?;
                 repo.insert(event).await?;
             }
 
@@ -350,18 +343,17 @@ async fn test_basic_pool_functionality() -> sinex_test_utils::Result<()> {
 }
 
 #[sinex_test]
-async fn test_pool_reset_clears_state() -> sinex_test_utils::Result<()> {
+async fn test_pool_reset_clears_state(ctx: TestContext) -> sinex_test_utils::Result<()> {
     let db = acquire_test_database().await?;
     let baseline = db.pool().events().count_all().await?;
     assert_eq!(baseline, 0);
 
-    let repo = db.pool().events();
-    let event = Event::<JsonValue>::test_event(
-        EventSource::new("reset"),
-        EventType::new("pool.reset"),
+    ctx.publish(DynamicPayload::new(
+        "reset",
+        "pool.reset",
         serde_json::json!({}),
-    );
-    repo.insert(event).await?;
+    ))
+    .await?;
 
     reset_pool().await?;
 

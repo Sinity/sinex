@@ -57,6 +57,9 @@ Thumbs.db
 result
 target-ci
 
+# Legacy local dev stack configuration (no longer used)
+.sinex-dev.local
+
 # Project specific
 /spec/combo/
 .claude-outputs/

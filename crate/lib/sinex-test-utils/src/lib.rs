@@ -87,6 +87,58 @@ pub use color_eyre::eyre::{anyhow, bail, ensure, Context};
 // Re-export SinexError
 pub use sinex_core::types::error::SinexError;
 
+// Re-export DynamicPayload for test convenience
+pub use sinex_core::DynamicPayload;
+
+/// Creates a test event for in-memory testing only.
+///
+/// This function generates an Event with a random material ID in its provenance.
+/// It is suitable for:
+/// - Unit tests that don't touch the database
+/// - Property tests verifying serialization/deserialization
+/// - Fuzzing tests with generated payloads
+///
+/// **WARNING**: Do NOT insert events created with this function into the database.
+/// The random material ID will fail FK constraints. For DB tests, use
+/// `ctx.publish(DynamicPayload::new(...))` instead.
+///
+/// # Example
+/// ```rust,ignore
+/// use sinex_test_utils::test_event;
+/// use serde_json::json;
+///
+/// let event = test_event("fs-watcher", "file.created", json!({
+///     "path": "/test/file.txt",
+///     "size": 1024
+/// }));
+/// ```
+pub fn test_event(
+    source: impl Into<sinex_core::EventSource>,
+    event_type: impl Into<sinex_core::EventType>,
+    payload: sinex_core::JsonValue,
+) -> sinex_core::Event<sinex_core::JsonValue> {
+    use sinex_core::{Event, HostName, Id, OffsetKind, Provenance, SourceMaterial};
+
+    Event {
+        id: None,
+        source: source.into(),
+        event_type: event_type.into(),
+        payload,
+        ts_orig: Some(chrono::Utc::now()),
+        host: HostName::new(gethostname::gethostname().to_string_lossy().to_string()),
+        ingestor_version: Some("test".to_string()),
+        payload_schema_id: None,
+        provenance: Provenance::Material {
+            id: Id::<SourceMaterial>::new(),
+            anchor_byte: 0,
+            offset_start: None,
+            offset_end: None,
+            offset_kind: OffsetKind::Byte,
+        },
+        associated_blob_ids: None,
+    }
+}
+
 // Library Result type using SinexError
 pub type Result<T> = std::result::Result<T, SinexError>;
 pub type TestResult<T = ()> = color_eyre::eyre::Result<T>;
@@ -111,8 +163,7 @@ pub use dataset_seeds::{
     SeedClock,
     TimestampSpec,
 };
-pub use event_assertion::EventAssertion;
-pub use event_publisher::EventPublisher;
+pub use event_assertion::EventAssert;
 pub use jetstream::ensure_material_streams;
 pub use jetstream_test_helper::JetStreamTestHelper;
 pub use nats_setup::NatsSetup;
@@ -126,7 +177,6 @@ pub use snapshot::TestSnapshot;
 pub use test_context::NatsMode;
 pub use test_context::TestContextFailureSnapshot;
 pub use test_context::TestContextHandle;
-pub use test_context::TestEventBuilder;
 pub use test_hooks::{TestCounters, TestHooks, TestHooksBuilder};
 
 pub struct ProptestCasesGuard {
@@ -222,15 +272,15 @@ pub mod prelude {
     };
     pub use crate::jetstream_test_helper::JetStreamTestHelper;
     pub use crate::system_test_preflight;
-    pub use crate::test_context::TestEventBuilder;
+    pub use crate::test_event;
     pub use crate::test_hooks::{TestCounters, TestHooks};
     pub use crate::timing_utils::{Timeouts, WaitHelpers, DEFAULT_WAIT_SECS};
     pub use crate::TestContext;
     pub use crate::TestResult;
     pub use crate::{sinex_prop, sinex_proptest, sinex_serial_test, sinex_test};
     pub use crate::{
-        ChaosInjestor, EphemeralNats, EventOverrides, EventPublisher, NatsSetup, PipelineScope,
-        TestNodePublisher, TestSnapshot,
+        ChaosInjestor, EphemeralNats, EventOverrides, NatsSetup, PipelineScope, TestNodePublisher,
+        TestSnapshot,
     };
     pub use color_eyre::eyre::{bail, ensure, Context, Result};
 
@@ -463,18 +513,18 @@ mod tests {
 
         // 1. Create events using production event creation
         let fs_event = ctx
-            .publish_event(
+            .publish(DynamicPayload::new(
                 "fs-watcher",
                 "file.created",
                 json!({
                     "path": "/data/report.pdf",
                     "size": 2048
                 }),
-            )
+            ))
             .await?;
 
         let term_event = ctx
-            .publish_event(
+            .publish(DynamicPayload::new(
                 "terminal",
                 "command.executed",
                 json!({
@@ -482,7 +532,7 @@ mod tests {
                     "working_dir": "/app",
                     "exit_code": 0
                 }),
-            )
+            ))
             .await?;
 
         // 2. Query using direct repository access
@@ -529,7 +579,11 @@ mod tests {
         // Create event with parameterized values
         let ctx = ctx.with_nats().shared().await?;
         let event = ctx
-            .publish_event(source, event_type, json!({"param_test": true}))
+            .publish(DynamicPayload::new(
+                source,
+                event_type,
+                json!({"param_test": true}),
+            ))
             .await?;
 
         // Verify event was created correctly
@@ -573,11 +627,11 @@ mod tests {
 
         let source = "a".repeat(length);
         let event = ctx
-            .publish_event(
+            .publish(DynamicPayload::new(
                 source.as_str(),
                 "proptest.length",
                 json!({"test_name": name}),
-            )
+            ))
             .await?;
         assert_eq!(event.source.as_str(), source);
         Ok(())
@@ -600,7 +654,7 @@ mod tests {
 
         for (source, event_type, payload) in test_cases {
             let event = ctx
-                .publish_event(source, event_type, payload.clone())
+                .publish(DynamicPayload::new(source, event_type, payload.clone()))
                 .await?;
             assert_eq!(event.source.as_str(), source);
             assert_eq!(event.event_type.as_str(), event_type);
@@ -622,20 +676,24 @@ mod tests {
             // Large payload test
             let large = "x".repeat(size_kb * 1024);
             let event = ctx
-                .publish_event(
+                .publish(DynamicPayload::new(
                     "edge",
                     "large",
                     json!({
                         "data": large.as_str(),
                         "size_kb": size_kb
                     }),
-                )
+                ))
                 .await?;
             assert_eq!(event.payload["size_kb"], json!(size_kb));
 
             // Special characters test
             let event = ctx
-                .publish_event("edge", "special", json!({"text": special_chars}))
+                .publish(DynamicPayload::new(
+                    "edge",
+                    "special",
+                    json!({"text": special_chars}),
+                ))
                 .await?;
             let mut expected_payload = json!({"text": special_chars});
             TestContext::sanitize_payload(&mut expected_payload);
@@ -646,7 +704,8 @@ mod tests {
             for _ in 0..nested_depth {
                 nested = json!({"nested": nested});
             }
-            ctx.publish_event("edge", "nested", nested).await?;
+            ctx.publish(DynamicPayload::new("edge", "nested", nested))
+                .await?;
         }
 
         Ok(())
@@ -664,11 +723,11 @@ mod tests {
 
         // Test validation error
         let result = ctx
-            .publish_event(
+            .publish(DynamicPayload::new(
                 "", // Empty source should fail
                 "test",
                 json!({}),
-            )
+            ))
             .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("source"));
@@ -698,8 +757,12 @@ mod tests {
 
         // Do some work
         for i in 0..10 {
-            ctx.publish_event("timeout_test", "test", json!({"index": i}))
-                .await?;
+            ctx.publish(DynamicPayload::new(
+                "timeout_test",
+                "test",
+                json!({"index": i}),
+            ))
+            .await?;
         }
 
         let elapsed = start.elapsed();
@@ -735,9 +798,13 @@ mod tests {
     #[sinex_test]
     async fn test_builder_method_chaining_order(ctx: TestContext) -> TestResult<()> {
         // Test that events can be created with different parameter orders
-        let event1 = ctx.publish_event("order1", "test", json!({"a": 1})).await?;
+        let event1 = ctx
+            .publish(DynamicPayload::new("order1", "test", json!({"a": 1})))
+            .await?;
 
-        let event2 = ctx.publish_event("order2", "test", json!({"a": 1})).await?;
+        let event2 = ctx
+            .publish(DynamicPayload::new("order2", "test", json!({"a": 1})))
+            .await?;
 
         // Both should succeed despite different order
         assert_eq!(event1.event_type.as_str(), "test");
@@ -789,8 +856,12 @@ mod tests {
 
         // Insert events one by one and verify count
         for i in 1..=5 {
-            ctx.publish_event("count-test", "increment", json!({"index": i}))
-                .await?;
+            ctx.publish(DynamicPayload::new(
+                "count-test",
+                "increment",
+                json!({"index": i}),
+            ))
+            .await?;
 
             let current_count = ctx.pool.events().count_all().await?;
             assert_eq!(
@@ -802,8 +873,12 @@ mod tests {
 
         // Batch insert and verify
         for i in 0..10 {
-            ctx.publish_event("count-test", "batch", json!({"batch_index": i}))
-                .await?;
+            ctx.publish(DynamicPayload::new(
+                "count-test",
+                "batch",
+                json!({"batch_index": i}),
+            ))
+            .await?;
         }
 
         let final_count = ctx.pool.events().count_all().await?;
@@ -879,8 +954,12 @@ mod tests {
                 match TestContext::with_name(&format!("concurrent_alloc_{i}")).await {
                     Ok(ctx) => {
                         // Do some work to hold the context
-                        ctx.publish_event("pool-test", "allocation", json!({"task_id": i}))
-                            .await?;
+                        ctx.publish(DynamicPayload::new(
+                            "pool-test",
+                            "allocation",
+                            json!({"task_id": i}),
+                        ))
+                        .await?;
 
                         success_count.fetch_add(1, Ordering::SeqCst);
                         Ok(())
@@ -919,7 +998,11 @@ mod tests {
 
             // Insert identifiable data
             temp_ctx
-                .publish_event("cleanup-test", "marker", json!({"test_id": test_id}))
+                .publish(DynamicPayload::new(
+                    "cleanup-test",
+                    "marker",
+                    json!({"test_id": test_id}),
+                ))
                 .await?;
 
             // Verify it exists using direct repository access
@@ -964,8 +1047,12 @@ mod tests {
         ctx.force_cleanup().await?;
         let baseline = ctx.pool.events().count_all().await?;
 
-        ctx.publish_event("fixture-test", "initialization", json!({"lazy": true}))
-            .await?;
+        ctx.publish(DynamicPayload::new(
+            "fixture-test",
+            "initialization",
+            json!({"lazy": true}),
+        ))
+        .await?;
 
         let after_event = ctx.pool.events().count_all().await?;
         assert_eq!(
@@ -1025,25 +1112,25 @@ mod tests {
         // Test that we can create and query events with dependencies
 
         // Create a checkpoint event
-        ctx.publish_event(
+        ctx.publish(DynamicPayload::new(
             "sinex",
             "checkpoint.saved",
             json!({
                 "checkpoint_id": "test_checkpoint_123",
                 "status": "saved"
             }),
-        )
+        ))
         .await?;
 
         // Create an automaton event that references the checkpoint
-        ctx.publish_event(
+        ctx.publish(DynamicPayload::new(
             "automaton",
             "checkpoint.processed",
             json!({
                 "checkpoint_id": "test_checkpoint_123",
                 "processing_time_ms": 42
             }),
-        )
+        ))
         .await?;
 
         // Verify the events were created using direct repository access

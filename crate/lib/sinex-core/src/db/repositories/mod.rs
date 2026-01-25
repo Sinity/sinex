@@ -28,8 +28,7 @@ pub use knowledge_graph::{
 };
 pub use schema_cache::{CachedSchema, SchemaCacheRepository};
 pub use schema_management::{
-    EventPayloadSchema as ManagedEventSchema, NewEventSchema, SchemaManagementRepository,
-    SchemaStatistics, ValidationError, ValidationResult,
+    NewEventSchema, SchemaManagementRepository, SchemaStatistics, ValidationError, ValidationResult,
 };
 pub use source_materials::{
     material_kinds, material_types, status as material_status, timing_info_types, SourceMaterial,

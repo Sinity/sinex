@@ -14,7 +14,7 @@ use sinex_core::{
         validation::{EventValidator, SchemaValidationOutcome},
     },
     types::validation::{validate_json, ValidationError},
-    DbPoolExt,
+    DbPoolExt, DynamicPayload,
 };
 use sinex_test_utils::prelude::*;
 use std::collections::HashMap;
@@ -401,7 +401,11 @@ async fn test_json_validation_database_integration(ctx: TestContext) -> TestResu
 
     // Should be able to create events and validate them
     let event = ctx
-        .publish_event("test_source", "test.event", json!({"key": "value"}))
+        .publish(DynamicPayload::new(
+            "test_source",
+            "test.event",
+            json!({"key": "value"}),
+        ))
         .await?;
 
     // Basic validation should not fail

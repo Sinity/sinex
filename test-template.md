@@ -20,10 +20,10 @@ use serde_json::json;
 #[sinex_test]
 async fn test_basic_event_flow(ctx: TestContext) -> TestResult<()> {
     // Enable NATS/ingestd (pipeline-first)
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
 
     // Create event via pipeline
-    let event = ctx.publish_json_event(
+    let event = ctx.publish_event(
         "test-source",
         "test.event",
         json!({"key": "value"}),
@@ -65,9 +65,9 @@ async fn test_multiple_sources(
     #[case] event_type: &str,
     #[case] payload: serde_json::Value,
 ) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
 
-    let event = ctx.publish_json_event(source, event_type, payload.clone()).await?;
+    let event = ctx.publish_event(source, event_type, payload.clone()).await?;
 
     let events = ctx.pool.events()
         .get_by_source(&EventSource::from(source.to_string()), Some(10), None)
@@ -95,10 +95,10 @@ use serde_json::json;
 
 #[sinex_test]
 async fn test_multi_event_workflow(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
 
     // Create sequence of related events
-    let file_event = ctx.publish_json_event(
+    let file_event = ctx.publish_event(
         "fs-watcher",
         "file.created",
         json!({
@@ -107,7 +107,7 @@ async fn test_multi_event_workflow(ctx: TestContext) -> TestResult<()> {
         }),
     ).await?;
 
-    let cmd_event = ctx.publish_json_event(
+    let cmd_event = ctx.publish_event(
         "terminal",
         "command.executed",
         json!({
@@ -182,10 +182,10 @@ async fn property_filesystem_events_roundtrip(
     ctx: &TestContext,
     #[strategy(filesystem_event_strategy())] event: (String, String, serde_json::Value),
 ) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let (source, event_type, payload) = event;
 
-    let inserted = ctx.publish_json_event(&source, &event_type, payload.clone()).await?;
+    let inserted = ctx.publish_event(&source, &event_type, payload.clone()).await?;
 
     let fetched = ctx.pool.events()
         .get_by_source(&EventSource::from(source.clone()), Some(10), None)
@@ -209,10 +209,10 @@ use serde_json::json;
 
 #[sinex_test]
 async fn test_invalid_event_source(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
 
     // Empty source should fail validation
-    let result = ctx.publish_json_event(
+    let result = ctx.publish_event(
         "",  // Invalid: empty source
         "valid.type",
         json!({"data": "value"}),
@@ -244,7 +244,7 @@ use serde_json::json;
 
 #[sinex_test]
 async fn test_concurrent_ingestion(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     const TASKS: usize = 5;
     const EVENTS_PER_TASK: usize = 10;
 
@@ -261,7 +261,7 @@ async fn test_concurrent_ingestion(ctx: TestContext) -> TestResult<()> {
 
             // Each task publishes events
             for i in 0..EVENTS_PER_TASK {
-                ctx_clone.publish_json_event(
+                ctx_clone.publish_event(
                     &format!("concurrent-task-{task_id}"),
                     "concurrent.test",
                     json!({"task": task_id, "index": i}),
@@ -304,7 +304,7 @@ use serde_json::json;
 
 #[sinex_test]
 async fn test_background_processing(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let sync = ctx.timing().synchronizer(Duration::from_secs(5));
 
     // Spawn background task
@@ -312,7 +312,7 @@ async fn test_background_processing(ctx: TestContext) -> TestResult<()> {
     let ctx_clone = ctx.clone();
     tokio::spawn(async move {
         // Simulate background work
-        ctx_clone.publish_json_event(
+        ctx_clone.publish_event(
             "background-worker",
             "work.completed",
             json!({"status": "done"}),
@@ -350,7 +350,7 @@ use serde_json::json;
 
 #[sinex_test]
 async fn test_pipeline_scope(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline_scope().await?;
 
     // Publish via pipeline scope (isolated namespace)
@@ -388,9 +388,9 @@ use serde_json::json;
 
 #[sinex_test]
 async fn test_event_temporal_ordering(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
 
-    let first = ctx.publish_json_event(
+    let first = ctx.publish_event(
         "timeline",
         "event.first",
         json!({"sequence": 1}),
@@ -399,7 +399,7 @@ async fn test_event_temporal_ordering(ctx: TestContext) -> TestResult<()> {
     // Small delay to ensure different ULID timestamps
     tokio::time::sleep(Duration::from_millis(10)).await;
 
-    let second = ctx.publish_json_event(
+    let second = ctx.publish_event(
         "timeline",
         "event.second",
         json!({"sequence": 2}),
@@ -407,7 +407,7 @@ async fn test_event_temporal_ordering(ctx: TestContext) -> TestResult<()> {
 
     tokio::time::sleep(Duration::from_millis(10)).await;
 
-    let third = ctx.publish_json_event(
+    let third = ctx.publish_event(
         "timeline",
         "event.third",
         json!({"sequence": 3}),
@@ -438,9 +438,9 @@ use serde_json::json;
 
 #[sinex_test]
 async fn test_event_snapshot(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
 
-    let event = ctx.publish_json_event(
+    let event = ctx.publish_event(
         "snapshot-test",
         "test.snapshot",
         json!({
@@ -482,7 +482,7 @@ struct FileCreatedPayload {
 
 #[sinex_test]
 async fn test_typed_event(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_shared_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
 
     let payload = FileCreatedPayload {
         path: "/tmp/test.txt".to_string(),
@@ -519,8 +519,8 @@ async fn test_typed_event(ctx: TestContext) -> TestResult<()> {
 ## Best Practices Summary
 
 ### DO
-- ✅ Use `ctx.with_shared_nats().await?` before creating events (pipeline-first)
-- ✅ Use `ctx.publish_json_event()` for simple test events
+- ✅ Use `ctx.with_nats().shared().await?` before creating events (pipeline-first)
+- ✅ Use `ctx.publish_event()` for simple test events
 - ✅ Use `ctx.timing().wait_for_event_count()` instead of `sleep()`
 - ✅ Use ULID timestamps for event ordering assertions
 - ✅ Define property test strategies locally in the test module
@@ -538,10 +538,10 @@ async fn test_typed_event(ctx: TestContext) -> TestResult<()> {
 ### Pipeline-First Rule
 Before seeding any events, call:
 ```rust
-let ctx = ctx.with_shared_nats().await?;
+let ctx = ctx.with_nats().shared().await?;
 ```
 
-Then use `ctx.publish_json_event(...)` so every test exercises the actual ingestion path (NATS → ingestd → DB).
+Then use `ctx.publish_event(...)` so every test exercises the actual ingestion path (NATS → ingestd → DB).
 
 Direct database fabrication bypasses ingestd and should be avoided.
 

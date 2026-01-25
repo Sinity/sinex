@@ -26,6 +26,7 @@ static GLOBAL: MiMalloc = MiMalloc;
 struct UnifiedDocumentNode(SimpleIngestorWrapper<DocumentProcessor>);
 
 impl UnifiedDocumentNode {
+    #[allow(dead_code)] // Convenience constructor
     pub fn new() -> Self {
         Self::default()
     }

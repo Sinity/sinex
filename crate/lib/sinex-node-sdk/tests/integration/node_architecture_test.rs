@@ -6,6 +6,7 @@
 // - Schema contract enforcement
 
 use sinex_core::db::repositories::DbPoolExt;
+use sinex_core::DynamicPayload;
 use sinex_node_sdk::stream_processor::{Checkpoint, TimeHorizon};
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::sinex_test;
@@ -75,14 +76,14 @@ async fn test_phase1_single_writer_pattern(ctx: TestContext) -> TestResult<()> {
 
     // Test that events created via TestContext (simulating ingestd) have proper structure
     let test_event = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "single-writer-test",
             "pattern.validation",
             serde_json::json!({
                 "test": "All writes must go through ingestd",
                 "phase": "1.2"
             }),
-        )
+        ))
         .await?;
 
     // Verify event has been assigned ULID by the "single writer" (ingestd simulation)
@@ -117,7 +118,7 @@ async fn test_phase1_schema_contracts(ctx: TestContext) -> TestResult<()> {
 
     // Test event with valid schema
     let valid_event = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "schema-test",
             "contract.valid",
             serde_json::json!({
@@ -127,7 +128,7 @@ async fn test_phase1_schema_contracts(ctx: TestContext) -> TestResult<()> {
                     "structure": "valid"
                 }
             }),
-        )
+        ))
         .await?;
 
     assert!(valid_event.id.is_some());
@@ -211,7 +212,7 @@ async fn test_node_event_flow_simulation(ctx: TestContext) -> TestResult<()> {
 
     // Step 1: Create a raw event using modern TestContext API
     let raw_event = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "terminal",
             "command.executed",
             serde_json::json!({
@@ -220,14 +221,14 @@ async fn test_node_event_flow_simulation(ctx: TestContext) -> TestResult<()> {
                 "exit_code": 0,
                 "duration_ms": 150
             }),
-        )
+        ))
         .await?;
 
     info!("✓ Raw event written to database");
 
     // Step 2: Create canonical event (simulating what an automaton would do)
     let canonical_event = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "canonical.terminal",
             "command.canonical",
             serde_json::json!({
@@ -237,7 +238,7 @@ async fn test_node_event_flow_simulation(ctx: TestContext) -> TestResult<()> {
                 "synthesis_timestamp": chrono::Utc::now().to_rfc3339(),
                 "enrichment_history": []
             }),
-        )
+        ))
         .await?;
 
     info!("✓ Canonical event created from raw event");
@@ -268,7 +269,7 @@ async fn test_phase2_acquisition_integration(ctx: TestContext) -> TestResult<()>
 
     // Simulate event with material provenance
     let event_with_material = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "acquisition-test",
             "material.captured",
             serde_json::json!({
@@ -282,7 +283,7 @@ async fn test_phase2_acquisition_integration(ctx: TestContext) -> TestResult<()>
                     "mode": "continuous"
                 }
             }),
-        )
+        ))
         .await?;
 
     assert!(event_with_material.id.is_some());
@@ -315,7 +316,9 @@ async fn test_phase2_acquisition_integration(ctx: TestContext) -> TestResult<()>
     ];
 
     for (source, event_type, payload) in temporal_events {
-        let event = ctx.publish_event(source, event_type, payload).await?;
+        let event = ctx
+            .publish(DynamicPayload::new(source, event_type, payload))
+            .await?;
         assert!(event.id.is_some());
     }
 
@@ -323,7 +326,7 @@ async fn test_phase2_acquisition_integration(ctx: TestContext) -> TestResult<()>
 
     // Phase 2.3: Test capture job submission pattern
     let job_event = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "acquisition",
             "capture.requested",
             serde_json::json!({
@@ -336,7 +339,7 @@ async fn test_phase2_acquisition_integration(ctx: TestContext) -> TestResult<()>
                     "max_depth": 10
                 }
             }),
-        )
+        ))
         .await?;
 
     assert!(job_event.id.is_some());

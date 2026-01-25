@@ -11,11 +11,16 @@
 
 use async_nats::jetstream;
 use color_eyre::eyre::{eyre, Context, Result};
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use sinex_core::environment::SinexEnvironment;
 use std::time::Duration;
 use tracing::{info, warn};
+
+// Re-export shared types
+pub use sinex_core::rpc::shadow::{
+    ShadowConsumerInfo, ShadowCreateRequest, ShadowCreateResponse, ShadowDeleteRequest,
+    ShadowDeleteResponse, ShadowListRequest, ShadowListResponse,
+};
 
 fn env_var_duration_secs(name: &str, default: u64) -> Duration {
     Duration::from_secs(
@@ -24,51 +29,6 @@ fn env_var_duration_secs(name: &str, default: u64) -> Duration {
             .and_then(|s| s.parse().ok())
             .unwrap_or(default),
     )
-}
-
-/// Response for shadow consumer creation
-#[derive(Debug, Serialize)]
-pub struct ShadowConsumerInfo {
-    /// The unique consumer name
-    pub consumer_name: String,
-    /// The stream this consumer is attached to
-    pub stream_name: String,
-    /// The subject filter pattern
-    pub subject_filter: String,
-    /// Number of pending messages
-    pub num_pending: u64,
-    /// First available sequence number
-    pub first_sequence: u64,
-}
-
-/// Parameters for creating a shadow consumer
-#[derive(Debug, Deserialize)]
-pub struct ShadowCreateParams {
-    /// Unique identifier for this shadow consumer (e.g., "dev-user-20250117")
-    pub consumer_name: String,
-    /// Subject filter pattern (required - must be explicitly specified for security)
-    #[serde(default)]
-    pub subject_filter: Option<String>,
-    /// Start from the beginning of the stream (required, must be explicitly specified)
-    pub from_beginning: bool,
-    /// Start from a specific sequence number
-    #[serde(default)]
-    pub from_sequence: Option<u64>,
-}
-
-/// Parameters for listing shadow consumers
-#[derive(Debug, Deserialize)]
-pub struct ShadowListParams {
-    /// Optional prefix filter for consumer names
-    #[serde(default)]
-    pub prefix: Option<String>,
-}
-
-/// Parameters for deleting a shadow consumer
-#[derive(Debug, Deserialize)]
-pub struct ShadowDeleteParams {
-    /// The consumer name to delete
-    pub consumer_name: String,
 }
 
 /// Create a shadow consumer for development/testing
@@ -80,11 +40,11 @@ pub async fn handle_shadow_create(
     env: &SinexEnvironment,
     params: Value,
 ) -> Result<Value> {
-    let create_params: ShadowCreateParams =
+    let request: ShadowCreateRequest =
         serde_json::from_value(params).wrap_err("Invalid shadow.create parameters")?;
 
     // Validate consumer name format (must start with "dev-" for safety)
-    if !create_params.consumer_name.starts_with("dev-") {
+    if !request.consumer_name.starts_with("dev-") {
         return Err(eyre!(
             "Shadow consumer names must start with 'dev-' prefix for safety"
         ));
@@ -99,7 +59,7 @@ pub async fn handle_shadow_create(
         .map_err(|e| eyre!("Failed to get events stream: {}", e))?;
 
     // Require explicit subject filter - no default to prevent unintended access
-    let subject_filter = match create_params.subject_filter {
+    let subject_filter = match request.subject_filter {
         Some(filter) => filter,
         None => {
             return Err(eyre!(
@@ -111,18 +71,18 @@ pub async fn handle_shadow_create(
     // Warn on overly broad patterns
     if subject_filter.ends_with(".>") || subject_filter == "*" {
         warn!(
-            consumer_name = %create_params.consumer_name,
+            consumer_name = %request.consumer_name,
             subject_filter = %subject_filter,
             "Shadow consumer created with broad subject filter"
         );
     }
 
     // Determine deliver policy
-    let deliver_policy = if let Some(seq) = create_params.from_sequence {
+    let deliver_policy = if let Some(seq) = request.from_sequence {
         jetstream::consumer::DeliverPolicy::ByStartSequence {
             start_sequence: seq,
         }
-    } else if create_params.from_beginning {
+    } else if request.from_beginning {
         jetstream::consumer::DeliverPolicy::All
     } else {
         jetstream::consumer::DeliverPolicy::New
@@ -134,8 +94,8 @@ pub async fn handle_shadow_create(
     let mut consumer = tokio::time::timeout(
         timeout,
         stream.create_consumer(jetstream::consumer::pull::Config {
-            name: Some(create_params.consumer_name.clone()),
-            durable_name: Some(create_params.consumer_name.clone()),
+            name: Some(request.consumer_name.clone()),
+            durable_name: Some(request.consumer_name.clone()),
             filter_subject: subject_filter.clone(),
             ack_policy: jetstream::consumer::AckPolicy::Explicit,
             deliver_policy,
@@ -156,22 +116,24 @@ pub async fn handle_shadow_create(
         .map_err(|e| eyre!("Failed to get consumer info: {}", e))?;
 
     info!(
-        consumer_name = %create_params.consumer_name,
+        consumer_name = %request.consumer_name,
         stream = %stream_name,
         subject_filter = %subject_filter,
         num_pending = info.num_pending,
         "Created shadow consumer for The Tether"
     );
 
-    let response = ShadowConsumerInfo {
-        consumer_name: create_params.consumer_name,
-        stream_name,
-        subject_filter,
-        num_pending: info.num_pending,
-        first_sequence: info.delivered.stream_sequence,
+    let response = ShadowCreateResponse {
+        consumer: ShadowConsumerInfo {
+            consumer_name: request.consumer_name,
+            stream_name,
+            subject_filter,
+            num_pending: info.num_pending,
+            first_sequence: info.delivered.stream_sequence,
+        },
     };
 
-    Ok(json!(response))
+    Ok(serde_json::to_value(response)?)
 }
 
 /// List active shadow consumers
@@ -182,8 +144,7 @@ pub async fn handle_shadow_list(
 ) -> Result<Value> {
     use futures::StreamExt;
 
-    let list_params: ShadowListParams =
-        serde_json::from_value(params).wrap_err("Invalid shadow.list parameters")?;
+    let request: ShadowListRequest = serde_json::from_value(params).unwrap_or_default();
 
     let js = jetstream::new(nats_client.clone());
     let stream_name = env.nats_stream_name("EVENTS");
@@ -204,7 +165,7 @@ pub async fn handle_shadow_list(
                 if let Some(ref name) = info.config.name {
                     if name.starts_with("dev-") {
                         // Apply optional prefix filter
-                        let include = match &list_params.prefix {
+                        let include = match &request.prefix {
                             Some(prefix) => name.starts_with(prefix),
                             None => true,
                         };
@@ -227,10 +188,11 @@ pub async fn handle_shadow_list(
         }
     }
 
-    Ok(json!({
-        "consumers": shadow_consumers,
-        "count": shadow_consumers.len(),
-    }))
+    let response = ShadowListResponse {
+        consumers: shadow_consumers,
+    };
+
+    Ok(serde_json::to_value(response)?)
 }
 
 /// Delete a shadow consumer
@@ -245,11 +207,11 @@ pub async fn handle_shadow_delete(
     params: Value,
     auth: &crate::rpc_server::RpcAuthContext,
 ) -> Result<Value> {
-    let delete_params: ShadowDeleteParams =
+    let request: ShadowDeleteRequest =
         serde_json::from_value(params).wrap_err("Invalid shadow.delete parameters")?;
 
     // Safety check: only allow deleting dev- prefixed consumers
-    if !delete_params.consumer_name.starts_with("dev-") {
+    if !request.consumer_name.starts_with("dev-") {
         return Err(eyre!("Can only delete shadow consumers with 'dev-' prefix"));
     }
 
@@ -262,31 +224,34 @@ pub async fn handle_shadow_delete(
         .map_err(|e| eyre!("Failed to get events stream: {}", e))?;
 
     stream
-        .delete_consumer(&delete_params.consumer_name)
+        .delete_consumer(&request.consumer_name)
         .await
         .map_err(|e| {
             eyre!(
                 "Failed to delete consumer '{}': {}",
-                delete_params.consumer_name,
+                request.consumer_name,
                 e
             )
         })?;
 
     info!(
         token_prefix = %auth.token_prefix,
-        consumer_name = %delete_params.consumer_name,
+        consumer_name = %request.consumer_name,
         "Shadow consumer deleted"
     );
 
-    Ok(json!({
-        "deleted": delete_params.consumer_name,
-        "status": "success",
-    }))
+    let response = ShadowDeleteResponse {
+        status: "success".to_string(),
+        consumer_name: request.consumer_name,
+    };
+
+    Ok(serde_json::to_value(response)?)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use sinex_core::environment;
     use sinex_test_utils::{sinex_test, EphemeralNats};
 
@@ -301,7 +266,8 @@ mod tests {
             &client,
             &env,
             json!({
-                "consumer_name": "production-consumer"
+                "consumer_name": "production-consumer",
+                "from_beginning": true
             }),
         )
         .await
@@ -342,12 +308,14 @@ mod tests {
         )
         .await?;
 
-        assert_eq!(result["consumer_name"], "dev-test-123");
-        assert_eq!(result["stream_name"], stream_name);
+        let create_response: ShadowCreateResponse = serde_json::from_value(result)?;
+        assert_eq!(create_response.consumer.consumer_name, "dev-test-123");
+        assert_eq!(create_response.consumer.stream_name, stream_name);
 
         // List should show the consumer
         let list_result = handle_shadow_list(&client, &env, json!({})).await?;
-        assert_eq!(list_result["count"], 1);
+        let list_response: ShadowListResponse = serde_json::from_value(list_result)?;
+        assert_eq!(list_response.consumers.len(), 1);
 
         // Delete the consumer
         let test_auth = crate::rpc_server::RpcAuthContext {
@@ -364,11 +332,13 @@ mod tests {
         )
         .await?;
 
-        assert_eq!(delete_result["status"], "success");
+        let delete_response: ShadowDeleteResponse = serde_json::from_value(delete_result)?;
+        assert_eq!(delete_response.status, "success");
 
         // List should now be empty
         let list_result = handle_shadow_list(&client, &env, json!({})).await?;
-        assert_eq!(list_result["count"], 0);
+        let list_response: ShadowListResponse = serde_json::from_value(list_result)?;
+        assert!(list_response.consumers.is_empty());
 
         Ok(())
     }

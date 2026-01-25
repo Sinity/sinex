@@ -264,17 +264,6 @@ impl WorkTracker {
         }
     }
 
-    /// Finish an operation (decrements in-flight counter)
-    ///
-    /// Deprecated: Use the WorkGuard returned by start_operation() instead
-    #[deprecated(note = "Use start_operation() guard instead to prevent counter drift")]
-    pub fn finish_operation(&self) {
-        let current = self.in_flight_operations.get();
-        if current > 0 {
-            self.in_flight_operations.subtract(1);
-        }
-    }
-
     /// Check if shutdown has been requested
     pub fn is_shutdown_requested(&self) -> bool {
         self.shutdown_requested.get() > 0

@@ -3,29 +3,55 @@ name = "xtask"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "xtask"
+path = "src/lib.rs"
+
+[[bin]]
+name = "xtask"
+path = "src/main.rs"
+
 [dependencies]
 clap = { workspace = true, features = ["derive"] }
 anyhow = { workspace = true }
 once_cell = { workspace = true }
 walkdir = "2.5"
+which = "6.0"
 sha2 = "0.10"
 hex = { workspace = true }
 clap_complete = "4.5"
 tempfile = "3.14"
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+semver = "1.0"
 rusqlite = { version = "0.32", features = ["bundled"] }
 chrono = { workspace = true }
 console = "0.15"
 indicatif = "0.17"
 num_cpus = "1.16"
 atty = "0.2"
+cargo_metadata = "0.18"
 dirs = "5.0"
 toml = { workspace = true }
 gethostname = { workspace = true }
+guppy = "0.17"
 libc = "0.2"
 
 # TLS certificate generation and verification
 rcgen = "0.13"
 x509-parser = "0.16"
 time = "0.3"
+
+# Hot reload and development orchestration (merged from sx)
+notify = "6"
+notify-debouncer-mini = "0.4"
+nix = { version = "0.27", features = ["signal", "process"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+camino = "1"
+tokio = { workspace = true, features = ["full", "signal", "process"] }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+assert_cmd = "2.0"
+predicates = "3.0"
+proptest = { workspace = true }

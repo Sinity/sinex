@@ -4,10 +4,8 @@
 use proptest::prelude::*;
 use sinex_core::db::sanitization::EventSanitizer;
 use sinex_core::types::domain::{EventSource, EventType};
-use sinex_core::Event;
 use sinex_node_sdk::CheckpointState;
 use sinex_test_utils::prelude::*;
-use sinex_test_utils::TestResult;
 
 fn arb_event_payload() -> impl Strategy<Value = serde_json::Value> {
     prop_oneof![
@@ -24,7 +22,7 @@ sinex_proptest! {
     fn sanitized_payload_fits_checkpoint_state(
         payload in arb_event_payload()
     ) -> TestResult<()> {
-        let mut event = Event::test_event(
+        let mut event = test_event(
             EventSource::new("validation.checkpoint"),
             EventType::new("compat"),
             payload,
@@ -37,6 +35,7 @@ sinex_proptest! {
             last_activity: chrono::Utc::now(),
             data: Some(event.payload.clone()),
             version: 1,
+            revision: 0,
         };
 
         let encoded = serde_json::to_string(&state)?;

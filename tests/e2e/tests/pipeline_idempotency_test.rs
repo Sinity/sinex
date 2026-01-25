@@ -1,5 +1,5 @@
 use serde_json::json;
-use sinex_core::{db::query_helpers::ulid_to_uuid, EventId, Ulid};
+use sinex_core::{db::query_helpers::ulid_to_uuid, DynamicPayload, EventId, Ulid};
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::timing_utils::{Timeouts, WaitHelpers, DEFAULT_WAIT_SECS};
 use tokio::time::{timeout, Duration};
@@ -29,7 +29,7 @@ async fn wait_for_single_row(ctx: &TestContext, event_ulid: Ulid) -> TestResult<
 #[sinex_test]
 async fn pipeline_rejects_duplicate_event_ids(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let scope = ctx.pipeline_scope().await?;
+    let scope = ctx.pipeline().await?;
     let event_ulid = Ulid::new();
     let confirmation_subject = scope.subject(&format!("events.confirmations.{event_ulid}"));
     let mut confirmations = ctx.nats_client().subscribe(confirmation_subject).await?;
@@ -41,17 +41,13 @@ async fn pipeline_rejects_duplicate_event_ids(ctx: TestContext) -> TestResult<()
 
     scope
         .publish_with_overrides(
-            "integration-dup",
-            "log.line",
-            json!({"step": "first"}),
+            DynamicPayload::new("integration-dup", "log.line", json!({"step": "first"})),
             overrides.clone(),
         )
         .await?;
     scope
         .publish_with_overrides(
-            "integration-dup",
-            "log.line",
-            json!({"step": "duplicate"}),
+            DynamicPayload::new("integration-dup", "log.line", json!({"step": "duplicate"})),
             overrides,
         )
         .await?;
@@ -80,7 +76,7 @@ async fn pipeline_rejects_duplicate_event_ids(ctx: TestContext) -> TestResult<()
 #[sinex_test]
 async fn pipeline_rejects_concurrent_duplicates(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let scope = ctx.pipeline_scope().await?;
+    let scope = ctx.pipeline().await?;
     let publisher = scope.publisher("integration-dup-concurrent");
 
     let event_ulid = Ulid::new();
@@ -95,7 +91,7 @@ async fn pipeline_rejects_concurrent_duplicates(ctx: TestContext) -> TestResult<
         let overrides = overrides.clone();
         tasks.push(tokio::spawn(async move {
             publisher
-                .publish_event_with_overrides("log.line", json!({ "attempt": attempt }), overrides)
+                .publish_with_overrides("log.line", json!({ "attempt": attempt }), overrides)
                 .await
         }));
     }

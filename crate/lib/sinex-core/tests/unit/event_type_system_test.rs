@@ -15,12 +15,13 @@ use sinex_test_utils::prelude::*;
 // Additional imports for specific payload types
 use sinex_core::db::models::event::SourceMaterial;
 use sinex_core::types::domain::{SanitizedPath, ShellName};
+use sinex_core::types::events::enums::FileModificationType;
 use sinex_core::types::events::payloads::{
     AtuinCommandExecutedPayload, ClipboardCopiedPayload, FileCreatedPayload, FileDeletedPayload,
     FileModifiedPayload, KittyCommandExecutedPayload,
 };
 use sinex_core::types::events::EventPayload;
-use sinex_core::{Event, Id, JsonValue, Provenance, Ulid};
+use sinex_core::{DynamicPayload, Event, ExitCode, Id, JsonValue, Provenance, Ulid};
 
 async fn ensure_material(ctx: &TestContext, label: &str) -> TestResult<Id<SourceMaterial>> {
     let material_id = Id::<SourceMaterial>::from_ulid(Ulid::new());
@@ -201,7 +202,7 @@ async fn test_filesystem_payload_system(ctx: TestContext) -> TestResult<()> {
     // Test FileModifiedPayload
     let modified_payload = FileModifiedPayload::test_default(sp("/test/modified.txt"))
         .with_size(2048u64)
-        .with_modification_type("content");
+        .with_modification_type(FileModificationType::Content);
 
     let material_id = ensure_material(&ctx, "shell-atuin").await?;
     let prov = Provenance::from_material(material_id, 0, None, None);
@@ -236,7 +237,7 @@ async fn test_shell_payload_system(ctx: TestContext) -> TestResult<()> {
     // Test KittyCommandExecutedPayload
     let kitty_payload = KittyCommandExecutedPayload::test_default("ls -la")
         .with_working_directory(Some(sp("/home/user")))
-        .with_exit_status(0)
+        .with_exit_status(Some(ExitCode::SUCCESS))
         .with_execution_time_ms(150)
         .with_shell_type(Some(ShellName::new("bash".to_string())));
 
@@ -358,7 +359,9 @@ async fn test_source_event_type_mapping(ctx: TestContext) -> TestResult<()> {
                 _ => json!({"test": true}),
             };
 
-            let event = ctx.publish_event(source, event_type, test_payload).await?;
+            let event = ctx
+                .publish(DynamicPayload::new(source, event_type, test_payload))
+                .await?;
             created_events.push(event);
         }
 

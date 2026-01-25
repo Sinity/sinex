@@ -2,7 +2,7 @@
 //
 // Tests system behavior at boundaries, limits, and edge cases
 
-use sinex_test_utils::{prelude::*, sinex_prop};
+use sinex_test_utils::{prelude::*, sinex_prop, DynamicPayload};
 use proptest::prelude::*;
 use std::sync::Arc;
 use tokio::time::{Duration, timeout};
@@ -20,7 +20,7 @@ async fn test_maximum_payload_sizes(ctx: TestContext) -> Result<()> {
     for size in payload_sizes {
         let large_data = "x".repeat(size);
         let result = ctx
-            .publish_event(
+            .publish(DynamicPayload::new(
                 "boundary_test",
                 &format!("large_payload_{}", size),
                 serde_json::json!({
@@ -28,7 +28,7 @@ async fn test_maximum_payload_sizes(ctx: TestContext) -> Result<()> {
                     "size": size,
                     "test_type": "boundary"
                 }),
-            )
+            ))
             .await;
 
         // Very large payloads might fail, but shouldn't crash
@@ -49,27 +49,27 @@ async fn test_maximum_payload_sizes(ctx: TestContext) -> Result<()> {
 #[sinex_test]
 async fn test_minimal_boundary_values(ctx: TestContext) -> Result<()> {
     // Test empty payload
-    ctx.publish_event("boundary_test", "empty_payload", serde_json::json!({}))
+    ctx.publish(DynamicPayload::new("boundary_test", "empty_payload", serde_json::json!({})))
         .await?;
 
     // Test minimal string
-    ctx.publish_event(
+    ctx.publish(DynamicPayload::new(
         "boundary_test",
         "minimal_payload",
         serde_json::json!({"data": ""}),
-    )
+    ))
     .await?;
 
     // Test single character
-    ctx.publish_event(
+    ctx.publish(DynamicPayload::new(
         "boundary_test",
         "single_char",
         serde_json::json!({"data": "a"}),
-    )
+    ))
     .await?;
 
     // Test zero values
-    ctx.publish_event(
+    ctx.publish(DynamicPayload::new(
         "boundary_test",
         "zero_values",
         serde_json::json!({
@@ -78,7 +78,7 @@ async fn test_minimal_boundary_values(ctx: TestContext) -> Result<()> {
             "array": [],
             "object": {}
         }),
-    )
+    ))
     .await?;
 
     ctx.wait_for_event_count(4).await?;
@@ -106,7 +106,7 @@ async fn test_unicode_boundary_cases(ctx: TestContext) -> Result<()> {
     ];
 
     for (name, text) in unicode_cases {
-        ctx.publish_event(
+        ctx.publish(DynamicPayload::new(
             "unicode_test",
             name,
             serde_json::json!({
@@ -114,7 +114,7 @@ async fn test_unicode_boundary_cases(ctx: TestContext) -> Result<()> {
                 "length": text.len(),
                 "chars": text.chars().count()
             }),
-        )
+        ))
         .await?;
     }
 
@@ -142,15 +142,14 @@ async fn test_timestamp_boundaries(ctx: TestContext) -> Result<()> {
     ];
 
     for (i, ts) in timestamp_cases.iter().enumerate() {
-        ctx.publish_json_event_with_timestamp(
+        ctx.publish(DynamicPayload::new(
             "timestamp_test",
-            &format!("boundary_{}", i),
+            format!("boundary_{}", i),
             serde_json::json!({
                 "timestamp": ts.to_rfc3339(),
                 "epoch": ts.timestamp()
             }),
-            *ts,
-        )
+        ))
         .await?;
     }
 
@@ -161,27 +160,27 @@ async fn test_timestamp_boundaries(ctx: TestContext) -> Result<()> {
 #[sinex_test]
 async fn test_collection_boundaries(ctx: TestContext) -> Result<()> {
     // Empty arrays
-    ctx.publish_event(
+    ctx.publish(DynamicPayload::new(
         "collection_test",
         "empty_array",
         serde_json::json!({
             "items": [],
             "count": 0
         }),
-    )
+    ))
     .await?;
 
     // Large array
     let large_array: Vec<i32> = (0..10000).collect();
     let result = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "collection_test",
             "large_array",
             serde_json::json!({
                 "items": large_array,
                 "count": 10000
             }),
-        )
+        ))
         .await;
 
     match result {
@@ -196,14 +195,14 @@ async fn test_collection_boundaries(ctx: TestContext) -> Result<()> {
     }
 
     let nested_result = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "collection_test",
             "deeply_nested",
             serde_json::json!({
                 "nested": nested,
                 "depth": 50
             }),
-        )
+        ))
         .await;
 
     match nested_result {
@@ -232,14 +231,14 @@ async fn test_numeric_boundaries(ctx: TestContext) -> Result<()> {
 
     for (name, value) in numeric_cases {
         let result = ctx
-            .publish_event(
+            .publish(DynamicPayload::new(
                 "numeric_test",
                 name,
                 serde_json::json!({
                     "value": value,
                     "type": name
                 }),
-            )
+            ))
             .await;
 
         match result {
@@ -270,14 +269,14 @@ async fn test_concurrent_access_boundaries(ctx: TestContext) -> Result<()> {
             let pool = ctx_task.pool.clone();
             for i in 0..events_per_task {
                 let event = ctx_task
-                    .publish_event(
+                    .publish(DynamicPayload::new(
                         "concurrent_test",
                         &format!("task_{}_event_{}", task_id, i),
                         serde_json::json!({
                             "task_id": task_id,
                             "event_index": i
                         }),
-                    )
+                    ))
                     .await?;
 
                 pool.events().insert(event).await?;
@@ -321,14 +320,14 @@ async fn test_string_length_boundaries(ctx: TestContext) -> Result<()> {
     for length in string_lengths {
         let text = "a".repeat(length);
         let result = ctx
-            .publish_event(
+            .publish(DynamicPayload::new(
                 "string_test",
                 &format!("length_{}", length),
                 serde_json::json!({
                     "text": text,
                     "length": length
                 }),
-            )
+            ))
             .await;
 
         match result {
@@ -357,7 +356,7 @@ async fn test_property_based_boundaries(
     }
 
     let _ = ctx
-        .publish_event(
+        .publish(DynamicPayload::new(
             "property_test",
             "boundary",
             serde_json::json!({
@@ -368,7 +367,7 @@ async fn test_property_based_boundaries(
                 "string_len": string_len,
                 "nest_depth": nest_depth
             }),
-        )
+        ))
         .await;
 
     // We don't assert success, just that it doesn't panic

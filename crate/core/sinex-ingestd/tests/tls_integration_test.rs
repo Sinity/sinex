@@ -57,7 +57,7 @@ async fn tls_enabled_event_pipeline(ctx: TestContext) -> TestResult<()> {
 
     // Publish a test event
     let event_id = publisher
-        .publish_event(
+        .publish(
             "tls.test.event",
             json!({
                 "message": "Hello over TLS",
