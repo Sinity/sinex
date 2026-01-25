@@ -61,6 +61,7 @@ pub mod sqlx;
 pub mod status;
 pub mod test;
 pub mod up;
+pub mod vm;
 
 // Re-export command structs for convenience
 pub use check::CheckCommand;
@@ -83,3 +84,4 @@ pub use sqlx::{SqlxCommand, SqlxSubcommand};
 pub use status::StatusCommand;
 pub use test::TestCommand;
 pub use up::UpCommand;
+pub use vm::{VmCommand, VmSnapshotSubcommand, VmSubcommand};

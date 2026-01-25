@@ -8,6 +8,7 @@ mod command;
 mod commands;
 mod config;
 mod deps;
+mod devtools;
 mod graph;
 mod history;
 mod jobs;
@@ -164,6 +165,11 @@ enum Commands {
         #[command(subcommand)]
         cmd: JobsCommand,
     },
+    /// NixOS VM management for integration testing
+    Vm {
+        #[command(subcommand)]
+        cmd: VmCommand,
+    },
     /// Start devenv processes
     Up {
         /// Start all processes
@@ -284,12 +290,162 @@ enum CiCommand {
 
 #[derive(Subcommand)]
 enum DevCommand {
+    /// Manage the isolated development stack (Postgres, NATS, git-annex)
+    Stack {
+        #[command(subcommand)]
+        cmd: StackCommand,
+    },
+    /// Run a sinex binary with hot reload and lazy-start
+    Run {
+        /// Binary to run (e.g., ingestd, gateway, fs-ingestor)
+        binary: String,
+        /// Build in release mode
+        #[arg(long)]
+        release: bool,
+        /// Disable hot reload (just run once)
+        #[arg(long)]
+        no_watch: bool,
+        /// Connect to production for real events ("prod" or "staging")
+        #[arg(long)]
+        tether: Option<String>,
+        /// Checkpoint file for state continuity
+        #[arg(long)]
+        checkpoint: Option<PathBuf>,
+        /// Additional arguments to pass to the binary
+        #[arg(last = true)]
+        args: Vec<String>,
+    },
+    /// Build a processor crate
+    Build {
+        /// Path to the processor crate
+        #[arg(default_value = ".")]
+        path: String,
+        /// Build in release mode
+        #[arg(long)]
+        release: bool,
+    },
+    /// Generate a SimpleProcessor from a natural language spec
+    Generate {
+        /// Natural language specification (e.g., "detect git commands from terminal events")
+        spec: String,
+        /// Explicit name for the generated node
+        #[arg(long)]
+        name: Option<String>,
+        /// Dry run - show what would be generated without creating files
+        #[arg(long)]
+        dry_run: bool,
+        /// Workspace root (defaults to current directory)
+        #[arg(long, default_value = ".")]
+        workspace: String,
+    },
+    /// Snapshot management (create, restore, pull from production)
+    Snapshot {
+        #[command(subcommand)]
+        cmd: SnapshotCommand,
+    },
     /// Generate TLS fixtures for secure NATS tests
     TlsFixtures {
         /// Output directory for the generated PEM files
         #[arg(long, default_value = "tests/fixtures/tls")]
         output: String,
     },
+}
+
+#[derive(Subcommand)]
+enum SnapshotCommand {
+    /// Import a snapshot from production
+    PullProd {
+        /// Production host to connect to
+        #[arg(long)]
+        host: Option<String>,
+        /// Database name on production
+        #[arg(long)]
+        database: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum StackCommand {
+    /// Start the isolated stack (Postgres, NATS, git-annex)
+    Start,
+    /// Stop the isolated stack
+    Stop,
+    /// Show stack status
+    Status,
+    /// Reset the stack (wipe all data and reinitialize)
+    Reset {
+        /// Skip confirmation prompt
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Create a named snapshot of the current state
+    Snapshot {
+        /// Name for the snapshot
+        name: String,
+    },
+    /// Restore from a named snapshot
+    Restore {
+        /// Name of the snapshot to restore
+        name: String,
+    },
+    /// List available snapshots
+    Snapshots,
+}
+
+#[derive(Subcommand)]
+enum VmCommand {
+    /// Run VM tests (wraps run-vm-tests.sh)
+    Test {
+        /// Test category: smoke, integration, performance, chaos
+        #[arg(long, short)]
+        category: Option<String>,
+        /// Run tests in parallel
+        #[arg(long)]
+        parallel: bool,
+        /// Timeout per test in seconds
+        #[arg(long, default_value = "300")]
+        timeout: u64,
+        /// Specific test names to run
+        #[arg(last = true)]
+        tests: Vec<String>,
+    },
+    /// Start an interactive VM
+    Start {
+        /// VM preset: minimal, standard, full
+        #[arg(long, default_value = "standard")]
+        preset: String,
+        /// Keep state between runs
+        #[arg(long)]
+        persistent: bool,
+        /// Start from a snapshot
+        #[arg(long)]
+        snapshot: Option<String>,
+    },
+    /// SSH into a running VM
+    Ssh,
+    /// Stop a running VM
+    Stop,
+    /// Manage VM snapshots
+    Snapshot {
+        #[command(subcommand)]
+        cmd: VmSnapshotCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum VmSnapshotCommand {
+    /// Create a named snapshot
+    Create {
+        /// Snapshot name
+        name: String,
+    },
+    /// Restore from a snapshot
+    Restore {
+        /// Snapshot name
+        name: String,
+    },
+    /// List available snapshots
+    List,
 }
 
 #[derive(Subcommand)]
@@ -598,6 +754,7 @@ fn main() -> Result<()> {
         Commands::Fuzz { .. } => ("fuzz", None, None),
         Commands::History { .. } => ("history", None, None),
         Commands::Jobs { .. } => ("jobs", None, None),
+        Commands::Vm { .. } => ("vm", None, None),
         Commands::Up { .. } => ("up", None, None),
         Commands::Status { .. } => ("status", None, None),
         Commands::Logs { .. } => ("logs", None, None),
@@ -758,6 +915,61 @@ fn main() -> Result<()> {
         Commands::Dev { cmd } => dispatch_command(
             commands::DevCommand {
                 subcommand: match cmd {
+                    DevCommand::Stack { cmd: stack_cmd } => commands::DevSubcommand::Stack {
+                        cmd: match stack_cmd {
+                            StackCommand::Start => commands::dev::StackSubcommand::Start,
+                            StackCommand::Stop => commands::dev::StackSubcommand::Stop,
+                            StackCommand::Status => commands::dev::StackSubcommand::Status,
+                            StackCommand::Reset { yes } => {
+                                commands::dev::StackSubcommand::Reset { yes }
+                            }
+                            StackCommand::Snapshot { name } => {
+                                commands::dev::StackSubcommand::Snapshot { name }
+                            }
+                            StackCommand::Restore { name } => {
+                                commands::dev::StackSubcommand::Restore { name }
+                            }
+                            StackCommand::Snapshots => commands::dev::StackSubcommand::Snapshots,
+                        },
+                    },
+                    DevCommand::Run {
+                        binary,
+                        release,
+                        no_watch,
+                        tether,
+                        checkpoint,
+                        args,
+                    } => commands::DevSubcommand::Run {
+                        binary,
+                        release,
+                        no_watch,
+                        tether,
+                        checkpoint,
+                        args,
+                    },
+                    DevCommand::Build { path, release } => {
+                        commands::DevSubcommand::Build { path, release }
+                    }
+                    DevCommand::Generate {
+                        spec,
+                        name,
+                        dry_run,
+                        workspace,
+                    } => commands::DevSubcommand::Generate {
+                        spec,
+                        name,
+                        dry_run,
+                        workspace,
+                    },
+                    DevCommand::Snapshot { cmd: snap_cmd } => {
+                        commands::DevSubcommand::Snapshot {
+                            cmd: match snap_cmd {
+                                SnapshotCommand::PullProd { host, database } => {
+                                    commands::dev::SnapshotSubcommand::PullProd { host, database }
+                                }
+                            },
+                        }
+                    }
                     DevCommand::TlsFixtures { output } => {
                         commands::DevSubcommand::TlsFixtures { output }
                     }
@@ -888,6 +1100,46 @@ fn main() -> Result<()> {
                     JobsCommand::Prune { older_than } => {
                         commands::JobsSubcommand::Prune { older_than }
                     }
+                },
+            },
+            &ctx,
+        ),
+        Commands::Vm { cmd } => dispatch_command(
+            commands::VmCommand {
+                subcommand: match cmd {
+                    VmCommand::Test {
+                        category,
+                        parallel,
+                        timeout,
+                        tests,
+                    } => commands::VmSubcommand::Test {
+                        category,
+                        parallel,
+                        timeout,
+                        tests,
+                    },
+                    VmCommand::Start {
+                        preset,
+                        persistent,
+                        snapshot,
+                    } => commands::VmSubcommand::Start {
+                        preset,
+                        persistent,
+                        snapshot,
+                    },
+                    VmCommand::Ssh => commands::VmSubcommand::Ssh,
+                    VmCommand::Stop => commands::VmSubcommand::Stop,
+                    VmCommand::Snapshot { cmd: snap_cmd } => commands::VmSubcommand::Snapshot {
+                        cmd: match snap_cmd {
+                            VmSnapshotCommand::Create { name } => {
+                                commands::VmSnapshotSubcommand::Create { name }
+                            }
+                            VmSnapshotCommand::Restore { name } => {
+                                commands::VmSnapshotSubcommand::Restore { name }
+                            }
+                            VmSnapshotCommand::List => commands::VmSnapshotSubcommand::List,
+                        },
+                    },
                 },
             },
             &ctx,

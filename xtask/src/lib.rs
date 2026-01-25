@@ -7,6 +7,7 @@ pub mod command;
 pub mod commands;
 pub mod config;
 pub mod deps;
+pub mod devtools;
 pub mod graph;
 pub mod history;
 pub mod jobs;

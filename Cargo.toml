@@ -37,9 +37,6 @@ members = [
   "cli/sinex-cli",
   "cli/sinexctl",
 
-  # Development tools
-  "crate/tools/sx",
-
   # Keep experimental automata disabled until stabilized
   # "crate/nodes/sinex-content-automaton",
   # "crate/nodes/sinex-pkm-automaton",

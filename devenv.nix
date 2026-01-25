@@ -101,8 +101,6 @@ in
 
   env = {
     DATABASE_NAME = "sinex_dev";
-    DATABASE_URL = "postgresql:///sinex_dev?host=/run/postgresql";
-    PGHOST = "/run/postgresql";
     PGUSER = "sinity";
     PGDATABASE = "sinex_dev";
     SINEX_TEST_OPTIMIZATIONS = "true";
@@ -113,18 +111,20 @@ in
     DEVENV_TASKS_QUIET = "1";
     SINEX_DEVENV_SYSTEM = system;
     SINEX_DEVENV_TOOLCHAIN = if hasFenix then "fenix (${system})" else "nixpkgs (${system})";
-    SINEX_DEVENV_PROCESS_HINT = "devenv up nats ingestd gateway";
     SINEX_STATE_DIR = sinexStateDir;
     SINEX_CACHE_DIR = sinexCacheDir;
-    SINEX_NATS_DIR = "${sinexStateDir}/nats";
     SINEX_TEST_RESULTS_DIR = "${sinexCacheDir}/test-results";
     SINEX_GATEWAY_TLS_CERT = "${tlsFixtures}/server.pem";
     SINEX_GATEWAY_TLS_KEY = "${tlsFixtures}/server-key.pem";
     SINEX_GATEWAY_TLS_CLIENT_CA = "${tlsFixtures}/ca.pem";
-    SINEX_RPC_URL = "https://127.0.0.1:9999";
     SINEX_RPC_CA_CERT = "${tlsFixtures}/ca.pem";
     SINEX_RPC_CLIENT_CERT = "${tlsFixtures}/client.pem";
     SINEX_RPC_CLIENT_KEY = "${tlsFixtures}/client-key.pem";
+    # Per-checkout dev stack configuration (unconditionally isolated)
+    # Ports are determined by checkout path hash in xtask
+    SINEX_DEV_PG_PORT = "5433";
+    SINEX_DEV_NATS_PORT = "4223";
+    SINEX_DEV_GATEWAY_PORT = "9998";
   };
 
   enterShell = ''
@@ -132,10 +132,30 @@ in
     SINEX_STATE_DIR="''${SINEX_STATE_DIR:-''${XDG_STATE_HOME:-$HOME/.local/state}/sinex}"
     SINEX_CACHE_DIR="''${SINEX_CACHE_DIR:-''${XDG_CACHE_HOME:-$HOME/.cache}/sinex}"
     export SINEX_STATE_DIR SINEX_CACHE_DIR
-    export SINEX_NATS_DIR="''${SINEX_NATS_DIR:-$SINEX_STATE_DIR/nats}"
     export SINEX_TEST_RESULTS_DIR="''${SINEX_TEST_RESULTS_DIR:-$SINEX_CACHE_DIR/test-results}"
     export LD_LIBRARY_PATH="${dbusLibPath}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+    # Per-checkout isolated dev stack (unconditional - each checkout is independent)
+    SINEX_DEV_STATE_DIR="$PWD/.devenv/sinex-dev"
+    SINEX_DEV_PG_PORT="''${SINEX_DEV_PG_PORT:-5433}"
+    SINEX_DEV_NATS_PORT="''${SINEX_DEV_NATS_PORT:-4223}"
+    SINEX_DEV_GATEWAY_PORT="''${SINEX_DEV_GATEWAY_PORT:-9998}"
+    export SINEX_DEV_STATE_DIR SINEX_DEV_PG_PORT SINEX_DEV_NATS_PORT SINEX_DEV_GATEWAY_PORT
+
+    # Database connection to per-checkout stack
+    export DATABASE_URL="postgresql:///sinex_dev?host=$SINEX_DEV_STATE_DIR/run&port=$SINEX_DEV_PG_PORT"
+    export PGHOST="$SINEX_DEV_STATE_DIR/run"
+    export PGPORT="$SINEX_DEV_PG_PORT"
+    export SINEX_NATS_URL="nats://localhost:$SINEX_DEV_NATS_PORT"
+    export SINEX_NATS_DIR="$SINEX_DEV_STATE_DIR/data/nats"
     export NATS_CREDS="$SINEX_NATS_DIR/nsc/creds/sinex-dev/sinex-dev/sinex-dev.creds"
+
+    # Git-annex blob storage in per-checkout stack
+    export SINEX_ANNEX_PATH="$SINEX_DEV_STATE_DIR/data/annex"
+
+    # Gateway RPC URL
+    export SINEX_RPC_URL="https://127.0.0.1:$SINEX_DEV_GATEWAY_PORT"
+
     tls_dir="$PWD/${tlsFixtures}"
     if [ ! -f "$tls_dir/server.pem" ] || [ ! -f "$tls_dir/client.pem" ]; then
       if [ -x "$PWD/scripts/generate_tls_fixtures.sh" ]; then
@@ -164,13 +184,30 @@ in
 
       alias sinex-cli="python3 cli/exo.py"
       xt() { cargo xtask "$@"; }
+      sx() { cargo xtask dev "$@"; }  # Short alias for dev commands
       alias e2e-test="cargo xtask test --profile fast -- -p sinex-e2e-tests"
-      alias vm-smoke="./tests/e2e/nixos-vm/run-vm-tests.sh -c smoke"
+      alias vm-smoke="cargo xtask vm test -c smoke"
 
       if [ -x "$PWD/scripts/dev-env-banner.sh" ] && [ -z "''${SINEX_DEVENV_MOTD_ONCE:-}" ]; then
         "$PWD/scripts/dev-env-banner.sh" || true
         export SINEX_DEVENV_MOTD_ONCE=1
       fi
+
+      # Show per-checkout stack status
+      printf '\033[1;36m[sinex-dev]\033[0m '
+      printf 'PG:%s NATS:%s\n' "$SINEX_DEV_PG_PORT" "$SINEX_DEV_NATS_PORT"
+      # Quick inline status check
+      if [ -f "$SINEX_DEV_STATE_DIR/run/postgres.pid" ] && kill -0 "$(cat "$SINEX_DEV_STATE_DIR/run/postgres.pid" 2>/dev/null)" 2>/dev/null; then
+        printf '  \033[32m✓\033[0m PostgreSQL running\n'
+      else
+        printf '  \033[90m○\033[0m PostgreSQL stopped (run: sx stack start)\n'
+      fi
+      if [ -f "$SINEX_DEV_STATE_DIR/run/nats.pid" ] && kill -0 "$(cat "$SINEX_DEV_STATE_DIR/run/nats.pid" 2>/dev/null)" 2>/dev/null; then
+        printf '  \033[32m✓\033[0m NATS running\n'
+      else
+        printf '  \033[90m○\033[0m NATS stopped (run: sx stack start)\n'
+      fi
+      echo ""
 
         if [ -z "''${DIRENV_IN_ENVRC:-}" ] \
           && [ "''${SINEX_DEVENV_COMPLETIONS:-1}" != "0" ] \

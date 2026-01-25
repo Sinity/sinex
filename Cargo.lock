@@ -5661,6 +5661,7 @@ dependencies = [
  "sinex-node-sdk",
  "sinex-services",
  "sinex-test-utils",
+ "socket2 0.5.10",
  "sqlx",
  "subtle",
  "tempfile",
@@ -6474,28 +6475,6 @@ name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
-
-[[package]]
-name = "sx"
-version = "0.1.0"
-dependencies = [
- "camino",
- "chrono",
- "clap",
- "color-eyre",
- "nix 0.27.1",
- "notify",
- "notify-debouncer-mini",
- "reqwest 0.12.24",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "toml",
- "tracing",
- "tracing-subscriber",
-]
 
 [[package]]
 name = "syn"
@@ -8183,7 +8162,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
+ "async-trait",
  "atty",
+ "camino",
  "cargo_metadata 0.18.1",
  "chrono",
  "clap",
@@ -8195,11 +8176,15 @@ dependencies = [
  "hex",
  "indicatif",
  "libc",
+ "nix 0.27.1",
+ "notify",
+ "notify-debouncer-mini",
  "num_cpus",
  "once_cell",
  "predicates",
  "proptest",
  "rcgen",
+ "reqwest 0.12.24",
  "rusqlite",
  "semver",
  "serde",
@@ -8207,6 +8192,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "time",
+ "tokio",
  "toml",
  "walkdir",
  "which 6.0.3",

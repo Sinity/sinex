@@ -97,6 +97,24 @@ pub fn config() -> &'static Config {
     &CONFIG
 }
 
+/// Determine the workspace root directory.
+///
+/// Uses `CARGO_MANIFEST_DIR` (set when running via cargo xtask) and navigates
+/// to the parent directory (since xtask is a workspace member in `xtask/`).
+/// Falls back to the current directory if the env var is not set.
+pub fn workspace_root() -> PathBuf {
+    env::var("CARGO_MANIFEST_DIR")
+        .map(PathBuf::from)
+        .map(|p| {
+            // CARGO_MANIFEST_DIR points to xtask/, go up one level for workspace root
+            p.parent().map(|p| p.to_path_buf()).unwrap_or(p)
+        })
+        .unwrap_or_else(|_| {
+            // Fallback: use current directory
+            env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
