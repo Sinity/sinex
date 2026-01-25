@@ -214,14 +214,18 @@ impl TlsFixture {
 /// HTTP mock server helpers
 #[cfg(feature = "wiremock")]
 pub mod http {
-    use wiremock::{Mock, MockServer, ResponseTemplate};
     use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     pub async fn mock_gateway() -> MockServer {
         MockServer::start().await
     }
 
-    pub async fn mock_success_response(server: &MockServer, path_str: &str, body: impl Into<String>) {
+    pub async fn mock_success_response(
+        server: &MockServer,
+        path_str: &str,
+        body: impl Into<String>,
+    ) {
         Mock::given(method("POST"))
             .and(path(path_str))
             .respond_with(ResponseTemplate::new(200).set_body_string(body))
@@ -301,9 +305,7 @@ mod tests {
 
     #[test]
     fn test_config_fixture_toml() {
-        let config = ConfigFixture::new()
-            .insecure()
-            .timeout(120);
+        let config = ConfigFixture::new().insecure().timeout(120);
 
         let toml = config.to_toml();
         assert!(toml.contains("insecure = true"));

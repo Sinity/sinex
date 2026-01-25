@@ -808,8 +808,7 @@ fn test_completions_all_shells() {
         cmd.arg("completions").arg(shell);
 
         // Should succeed (output may go to stderr or stdout depending on clap_complete)
-        cmd.assert()
-            .success();
+        cmd.assert().success();
     }
 }
 

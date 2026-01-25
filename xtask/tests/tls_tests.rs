@@ -35,9 +35,18 @@ fn test_generate_dev_certs_creates_all_files() {
     generate_dev_certs(&config, false).expect("Certificate generation should succeed");
 
     // Verify all expected files exist
-    assert!(output_path.join("ca.pem").exists(), "CA certificate should exist");
-    assert!(output_path.join("ca-key.pem").exists(), "CA key should exist");
-    assert!(output_path.join("server.pem").exists(), "Server certificate should exist");
+    assert!(
+        output_path.join("ca.pem").exists(),
+        "CA certificate should exist"
+    );
+    assert!(
+        output_path.join("ca-key.pem").exists(),
+        "CA key should exist"
+    );
+    assert!(
+        output_path.join("server.pem").exists(),
+        "Server certificate should exist"
+    );
     assert!(
         output_path.join("server-key.pem").exists(),
         "Server key should exist"
@@ -70,7 +79,8 @@ fn test_generate_dev_certs_with_custom_san() {
         force: false,
     };
 
-    generate_dev_certs(&config, false).expect("Certificate generation with custom SANs should succeed");
+    generate_dev_certs(&config, false)
+        .expect("Certificate generation with custom SANs should succeed");
 
     // Verify server certificate exists
     let server_cert = fs::read_to_string(output_path.join("server.pem")).unwrap();
@@ -94,7 +104,8 @@ fn test_generate_dev_certs_json_output() {
     };
 
     // JSON output goes to stdout, just ensure it doesn't panic
-    generate_dev_certs(&config, true).expect("Certificate generation with JSON output should succeed");
+    generate_dev_certs(&config, true)
+        .expect("Certificate generation with JSON output should succeed");
 }
 
 #[test]
@@ -115,9 +126,15 @@ fn test_generate_dev_certs_refuses_overwrite_without_force() {
 
     // Second generation without force should fail
     let result = generate_dev_certs(&config, false);
-    assert!(result.is_err(), "Should refuse to overwrite existing certificates");
     assert!(
-        result.unwrap_err().to_string().contains("already contains certificates"),
+        result.is_err(),
+        "Should refuse to overwrite existing certificates"
+    );
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("already contains certificates"),
         "Error message should mention existing certificates"
     );
 }
@@ -152,7 +169,10 @@ fn test_generate_dev_certs_force_overwrites() {
     let second_ca = fs::read_to_string(output_path.join("ca.pem")).unwrap();
 
     // Keys should be different (new generation)
-    assert_ne!(first_ca, second_ca, "Force should generate new certificates");
+    assert_ne!(
+        first_ca, second_ca,
+        "Force should generate new certificates"
+    );
 }
 
 // ============================================================================
@@ -350,7 +370,9 @@ fn test_generate_client_cert_sanitizes_name() {
 
     // Name should be sanitized to safe characters
     assert!(
-        client_output.join("test_service_with_special_chars.pem").exists(),
+        client_output
+            .join("test_service_with_special_chars.pem")
+            .exists(),
         "Sanitized client certificate should exist"
     );
 }
@@ -374,7 +396,10 @@ fn test_generate_client_cert_missing_ca() {
 
     assert!(result.is_err(), "Should fail when CA doesn't exist");
     assert!(
-        result.unwrap_err().to_string().contains("Failed to read CA"),
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("Failed to read CA"),
         "Error should mention CA reading failure"
     );
 }
@@ -466,11 +491,10 @@ fn test_tls_check_without_certs() {
     cmd.arg("tls").arg("check");
 
     // Should fail since no certificates are configured
-    cmd.assert()
-        .failure()
-        .stdout(predicate::str::contains("No certificate path provided").or(
-            predicate::str::contains("not found"),
-        ));
+    cmd.assert().failure().stdout(
+        predicate::str::contains("No certificate path provided")
+            .or(predicate::str::contains("not found")),
+    );
 }
 
 #[test]

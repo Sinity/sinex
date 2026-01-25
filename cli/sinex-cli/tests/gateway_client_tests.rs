@@ -15,7 +15,9 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 use common::{MockGatewayClient, MockResponse, TestDir, TokenFixture};
 use sinex_cli::client::{ClientConfig, GatewayClient, RetryConfig};
 use sinex_core::rpc::dlq::DlqListResponse;
-use sinex_core::rpc::system::{ComponentHealth, ComponentsHealth, ReplayControlHealth, SystemHealthResponse};
+use sinex_core::rpc::system::{
+    ComponentHealth, ComponentsHealth, ReplayControlHealth, SystemHealthResponse,
+};
 
 // ============================================================================
 // MockGatewayClient Tests
@@ -139,7 +141,9 @@ async fn test_mock_client_replay_operations() {
     // Verify calls
     let calls = client.get_calls();
     assert!(calls.iter().any(|(m, _)| m == "replay_list"));
-    assert!(calls.iter().any(|(m, args)| m == "replay_status" && args[0] == "op-123"));
+    assert!(calls
+        .iter()
+        .any(|(m, args)| m == "replay_status" && args[0] == "op-123"));
 }
 
 #[tokio::test]
@@ -263,9 +267,7 @@ async fn test_gateway_client_handles_http_error() {
         url: mock_server.uri(),
         token: Some("test-token".to_string()),
         insecure: true,
-        retry_config: RetryConfig::builder()
-            .max_attempts(1)
-            .build(),
+        retry_config: RetryConfig::builder().max_attempts(1).build(),
         ..Default::default()
     };
 
@@ -290,9 +292,7 @@ async fn test_gateway_client_handles_401_unauthorized() {
         url: mock_server.uri(),
         token: Some("invalid-token".to_string()),
         insecure: true,
-        retry_config: RetryConfig::builder()
-            .max_attempts(1)
-            .build(),
+        retry_config: RetryConfig::builder().max_attempts(1).build(),
         ..Default::default()
     };
 
@@ -440,9 +440,7 @@ async fn test_gateway_client_timeout() {
         token: Some("test-token".to_string()),
         insecure: true,
         timeout: 1, // 1 second timeout
-        retry_config: RetryConfig::builder()
-            .max_attempts(1)
-            .build(),
+        retry_config: RetryConfig::builder().max_attempts(1).build(),
         ..Default::default()
     };
 

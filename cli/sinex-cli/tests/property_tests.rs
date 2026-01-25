@@ -242,11 +242,7 @@ struct TestOutputItem {
 
 /// Generate a TestOutputItem.
 fn test_output_item_strategy() -> impl Strategy<Value = TestOutputItem> {
-    (
-        "[a-zA-Z0-9]{8,16}",
-        "[a-zA-Z ]{3,20}",
-        0u64..=1_000_000u64,
-    )
+    ("[a-zA-Z0-9]{8,16}", "[a-zA-Z ]{3,20}", 0u64..=1_000_000u64)
         .prop_map(|(id, name, count)| TestOutputItem { id, name, count })
 }
 
