@@ -8,6 +8,7 @@
 // Expose modules for testing and external use
 pub mod cascade_analyzer;
 pub mod client;
+pub mod distributed_rate_limit;
 pub mod gateway_metrics;
 pub mod handlers;
 #[cfg(any(feature = "test-support", test))]
