@@ -3,8 +3,6 @@ name = "xtask"
 version = "0.1.0"
 edition = "2021"
 
-
-
 [[bin]]
 name = "xtask"
 path = "src/main.rs"
@@ -39,12 +37,12 @@ gethostname = { workspace = true }
 guppy = "0.17"
 libc = "0.2"
 
-# TLS certificate generation and verification
+# TLS certificate generation
 rcgen = "0.13"
 x509-parser = "0.16"
 time = "0.3"
 
-# Hot reload and development orchestration (merged from sx)
+# Hot reload and orchestration
 notify = "6"
 notify-debouncer-mini = "0.4"
 nix = { version = "0.27", features = ["signal", "process"] }
@@ -53,9 +51,10 @@ camino = "1"
 tokio = { workspace = true, features = ["full", "signal", "process"] }
 async-trait = { workspace = true }
 
-# Sandbox infrastructure dependencies
+# Sandbox infrastructure
 async-nats = { workspace = true, optional = true }
 sinex-core = { path = "../crate/lib/sinex-core", optional = true }
+sinex-node-sdk = { path = "../crate/lib/sinex-node-sdk", optional = true }
 rand = "0.8"
 tokio-stream = "0.1"
 color-eyre = { workspace = true, optional = true }
@@ -63,35 +62,35 @@ uuid = { workspace = true, optional = true }
 bon = { workspace = true, optional = true }
 sqlx = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
 futures = { version = "0.3", optional = true }
 parking_lot = { version = "0.12", optional = true }
+insta = { workspace = true, optional = true }
+blake3 = { workspace = true, optional = true }
+
+# Macros
+xtask-macros = { path = "../xtask-macros" }
 
 [dev-dependencies]
 assert_cmd = "2.0"
 predicates = "3.0"
 proptest = { workspace = true }
 
-
-# Additional sandbox dependencies for extracted test-utils functionality
-tracing-subscriber = { workspace = true, optional = true }
-insta = { workspace = true, optional = true }
-blake3 = { workspace = true, optional = true }
-sinex-node-sdk = { path = "../crate/lib/sinex-node-sdk", optional = true }
 [features]
 default = ["cli"]
 cli = []
 sandbox = [
-    "tracing-subscriber",
-    "insta",
-    "blake3",
-    "sinex-node-sdk",
     "async-nats",
     "sinex-core",
+    "sinex-node-sdk",
     "color-eyre",
     "uuid",
     "bon",
     "sqlx",
     "tracing",
+    "tracing-subscriber",
     "futures",
-    "parking_lot"
+    "parking_lot",
+    "insta",
+    "blake3"
 ]

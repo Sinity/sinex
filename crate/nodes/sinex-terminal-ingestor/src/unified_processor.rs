@@ -967,7 +967,7 @@ mod tests {
     use sinex_core::db::query_helpers::ulid_to_uuid;
     use sinex_core::Id;
     use sinex_node_sdk::{acquisition_manager::RotationPolicy, AcquisitionManager};
-    use sinex_test_utils::sinex_test;
+    use xtask::sandbox::sinex_test;
     use xtask::sandbox::{
         prelude::*, start_test_ingestd_with_config, TestIngestdConfig, TestRuntime,
         TestRuntimeBuilder,

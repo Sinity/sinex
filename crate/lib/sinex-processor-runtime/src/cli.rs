@@ -248,7 +248,7 @@ pub fn parse_checkpoint(checkpoint_str: &str) -> eyre::Result<Checkpoint> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_test_utils::sinex_test;
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     fn scan_mode_emits_heartbeats() -> TestResult<()> {

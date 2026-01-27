@@ -3,7 +3,7 @@
 //! Tests lifecycle state transitions, shutdown handling, and health check integration.
 
 use sinex_node_sdk::lifecycle::{LifecycleManager, ServiceStatus};
-use sinex_test_utils::sinex_test;
+use xtask::sandbox::sinex_test;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;

@@ -1,6 +1,6 @@
 use sinex_schema::ulid::Ulid;
 use sinex_schema::ulid_conversions::{ulid_to_uuid, uuid_to_ulid, UlidArrayExt};
-use sinex_test_utils::sinex_test;
+use xtask::sandbox::sinex_test;
 
 #[sinex_test]
 fn ulid_round_trips() -> color_eyre::eyre::Result<()> {

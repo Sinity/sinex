@@ -1409,7 +1409,7 @@ mod tests {
     use super::*;
     use chrono::{Timelike, Utc};
     use serde_json::json;
-    use sinex_test_utils::sinex_test;
+    use xtask::sandbox::sinex_test;
 
     fn base_record() -> EventRecord {
         let ts = Utc::now();

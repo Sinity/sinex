@@ -1,5 +1,5 @@
 use sinex_core::types::events::payloads::process::ProcessStatus;
-use sinex_test_utils::sinex_test;
+use xtask::sandbox::sinex_test;
 
 #[sinex_test]
 async fn process_status_rejects_invalid_strings() -> color_eyre::Result<()> {

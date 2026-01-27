@@ -9,7 +9,7 @@ use sinex_core::types::validation::{
     SecurePath,
 };
 use sinex_test_utils::TestResult;
-use sinex_test_utils::sinex_test;
+use xtask::sandbox::sinex_test;
 
 #[sinex_test]
 fn test_secure_path_validation_levels() -> TestResult<()> {

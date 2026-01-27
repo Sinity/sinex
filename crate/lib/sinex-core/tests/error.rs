@@ -1,6 +1,6 @@
 use camino::Utf8Path;
 use sinex_core::types::error::{ErrorDetails, Result, ResultExt, SinexError};
-use sinex_test_utils::sinex_test;
+use xtask::sandbox::sinex_test;
 use sinex_test_utils::TestResult;
 use std::collections::HashMap;
 

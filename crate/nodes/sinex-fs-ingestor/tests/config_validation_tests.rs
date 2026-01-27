@@ -1,6 +1,6 @@
 use sinex_core::types::Bytes;
 use sinex_fs_ingestor::FilesystemConfig;
-use sinex_test_utils::sinex_test;
+use xtask::sandbox::sinex_test;
 
 fn base_config() -> FilesystemConfig {
     FilesystemConfig {

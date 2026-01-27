@@ -1,6 +1,6 @@
 use semver::Version;
 use sinex_node_sdk::version::{node_version, NodeVersion};
-use sinex_test_utils::sinex_test;
+use xtask::sandbox::sinex_test;
 
 #[sinex_test]
 fn node_version_env_is_valid() -> TestResult<()> {

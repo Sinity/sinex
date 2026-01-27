@@ -6,7 +6,7 @@ use chrono::{Duration, Utc};
 use sinex_core::types::domain::{EventSource, EventType};
 use sinex_core::types::Ulid;
 use sinex_node_sdk::confirmation_handler::{ConfirmationBuffer, ProvisionalEvent};
-use sinex_test_utils::sinex_test;
+use xtask::sandbox::sinex_test;
 use xtask::sandbox::timing::Timeouts;
 
 use std::sync::Arc;

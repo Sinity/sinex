@@ -248,7 +248,7 @@ fn generate_event_envelope_impl(events: &[EventCategory]) -> proc_macro2::TokenS
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_test_utils::sinex_test;
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     fn test_event_registry_parsing() -> TestResult<()> {

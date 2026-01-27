@@ -4,7 +4,7 @@ use std::time::Duration;
 use camino::Utf8PathBuf;
 use sinex_core::types::utils::file_watcher::{FileChangeKind, FileWatcher, FileWatcherConfig};
 use sinex_core::types::validation::FileWatchingSecurityPolicy;
-use sinex_test_utils::sinex_test;
+use xtask::sandbox::sinex_test;
 use tempfile::TempDir;
 use tokio::time::sleep;
 

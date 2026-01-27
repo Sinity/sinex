@@ -14,7 +14,7 @@ use std::collections::HashMap;
 mod table_creation_tests {
     use super::*;
 
-    use sinex_test_utils::sinex_test;
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     async fn test_events_table_creation() -> color_eyre::eyre::Result<()> {
@@ -175,7 +175,7 @@ mod table_creation_tests {
 #[cfg(test)]
 mod constraint_tests {
     use super::*;
-    use sinex_test_utils::sinex_test;
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     async fn test_events_provenance_constraint() -> color_eyre::eyre::Result<()> {
@@ -309,7 +309,7 @@ mod constraint_tests {
 #[cfg(test)]
 mod index_tests {
     use super::*;
-    use sinex_test_utils::sinex_test;
+    use xtask::sandbox::sinex_test;
     #[sinex_test]
     async fn test_events_indexes_creation() -> color_eyre::eyre::Result<()> {
         let ctx = TestContext::new().await.unwrap();
@@ -405,7 +405,7 @@ mod index_tests {
 #[cfg(test)]
 mod migration_tests {
     use super::*;
-    use sinex_test_utils::sinex_test;
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     async fn test_migration_up_down_cycle() -> color_eyre::eyre::Result<()> {

@@ -10,7 +10,7 @@ mod serde_tests {
     use serde_json;
     use sinex_schema::schema::records::*;
     use sinex_schema::ulid::Ulid;
-    use sinex_test_utils::sinex_test;
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     fn test_event_record_serialization() -> color_eyre::eyre::Result<()> {
@@ -328,7 +328,7 @@ mod serde_tests {
 mod no_serde_tests {
     // When serde feature is disabled, Record structs should not have serde derives
     // This is enforced at compile time, so these tests mainly document the behavior
-    use sinex_test_utils::sinex_test;
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     fn test_serde_feature_disabled() -> color_eyre::eyre::Result<()> {

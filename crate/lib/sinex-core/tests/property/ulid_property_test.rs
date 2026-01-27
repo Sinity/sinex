@@ -653,7 +653,7 @@ mod stress_tests {
 #[cfg(test)]
 mod unit_tests {
     use super::*;
-    use sinex_test_utils::sinex_test;
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     fn test_ulid_sequence_generator() -> TestResult<()> {

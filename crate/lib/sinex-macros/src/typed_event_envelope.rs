@@ -272,7 +272,7 @@ fn is_event_type(ty: &Type) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_test_utils::sinex_test;
+    use xtask::sandbox::sinex_test;
     use syn::parse_quote;
 
     #[sinex_test]

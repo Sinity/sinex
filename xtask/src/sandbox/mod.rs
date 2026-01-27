@@ -42,3 +42,6 @@ pub use preflight::*;
 pub use snapshot::*;
 pub use snapshot_helper::*;
 // pub use timing::*;  // TODO: Enable after fixing dependencies
+
+// Re-export test macro
+pub use xtask_macros::sinex_test;

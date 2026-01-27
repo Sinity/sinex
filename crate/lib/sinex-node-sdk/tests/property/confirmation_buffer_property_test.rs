@@ -322,7 +322,7 @@ async fn property_buffer_operations_are_deterministic(
 #[cfg(test)]
 mod unit_tests {
     use super::*;
-    use sinex_test_utils::sinex_test;
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     async fn test_empty_buffer_has_zero_pending() -> TestResult<()> {
