@@ -192,8 +192,14 @@ impl EventSanitizer {
             }
             Value::Object(map) => {
                 for (key, value) in map.iter_mut() {
-                    // Special handling for path-like fields
-                    if key.contains("path") || key == "file" || key == "directory" {
+                    let is_path_field = matches!(
+                        key.as_str(),
+                        "path" | "file" | "directory" | "folder" | "root"
+                    ) || key.ends_with("_path")
+                        || key.ends_with("_file")
+                        || key.ends_with("_dir");
+
+                    if is_path_field {
                         if let Value::String(s) = value {
                             let original = s.clone();
                             match SecurityValidator::sanitize_path(s) {

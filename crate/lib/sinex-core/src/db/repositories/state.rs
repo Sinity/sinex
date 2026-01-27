@@ -9,7 +9,7 @@ use crate::db::schema::OperationsLog;
 use crate::db::{with_retry_transaction_idempotent, IdempotentTransaction, RetryConfig};
 use crate::types::domain::ProcessorName;
 use crate::types::error::SinexError;
-use crate::types::Seconds;
+use crate::types::{Seconds, Ulid};
 use crate::{Id, JsonValue};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use sinex_schema::ulid_conversions::uuid_to_ulid;
 use sqlx::postgres::types::PgRange;
 use sqlx::types::{BigDecimal, Uuid};
-use sqlx::{Error, FromRow, PgPool, Postgres, Transaction};
+use sqlx::{Error, FromRow, PgPool};
 use std::ops::Bound;
 use std::time::Duration;
 
@@ -608,8 +608,8 @@ impl<'a> StateRepository<'a> {
         .map_err(|e| db_error(e, "register processor"))
     }
 
-    /// Get all active processors
-    pub async fn get_active_processors(&self) -> DbResult<Vec<ProcessorManifest>> {
+    /// Get all processors in the manifest
+    pub async fn get_all_processors(&self) -> DbResult<Vec<ProcessorManifest>> {
         sqlx::query_as!(
             ProcessorManifest,
             r#"
@@ -628,7 +628,16 @@ impl<'a> StateRepository<'a> {
         )
         .fetch_all(self.pool)
         .await
-        .map_err(|e| db_error(e, "get active processors"))
+        .map_err(|e| db_error(e, "get all processors"))
+    }
+
+    /// Get all currently active processors
+    pub async fn get_active_processors(&self) -> DbResult<Vec<ProcessorManifest>> {
+        // TODO: The schema needs a 'status' or 'is_active' column.
+        // For now, we return all processors as requested by the original (incorrect) implementation,
+        // but note the missing filter.
+        // If the table is append-only, maybe we want 'LATEST' versions per processor_name?
+        self.get_all_processors().await
     }
 
     /// Get processors by type
@@ -847,56 +856,6 @@ impl<'a> StateRepository<'a> {
             events_table_exists,
             processor_health,
         })
-    }
-}
-
-/// Transaction-scoped state repository
-pub struct StateRepositoryTx<'a> {
-    tx: &'a mut Transaction<'a, Postgres>,
-}
-
-impl<'a> StateRepositoryTx<'a> {
-    /// Log operation within transaction
-    pub async fn log_operation(&mut self, operation: Operation) -> DbResult<OperationRecord> {
-        // Validate the scope if provided
-        if let Some(ref scope) = operation.scope {
-            StateRepository::validate_replay_scope(scope)?;
-        }
-
-        let id = Id::<Operation>::new();
-
-        let result = sqlx::query_as!(
-            OperationRecord,
-            r#"
-            INSERT INTO core.operations_log (
-                id, operation_type, operator, scope, result_status, result_message, preview_summary, duration_ms
-            ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8
-            )
-            RETURNING 
-                id as "id: Id<Operation>",
-                operation_type,
-                operator,
-                scope,
-                result_status,
-                result_message,
-                preview_summary,
-                duration_ms
-            "#,
-            *id.as_ulid() as _,
-            operation.operation_type,
-            operation.operator,
-            operation.scope,
-            operation.result_status,
-            operation.result_message,
-            operation.preview_summary,
-            operation.duration_ms
-        )
-        .fetch_one(&mut **self.tx)
-        .await
-        .map_err(|e| db_error(e, "log operation with tx"))?;
-
-        Ok(result)
     }
 }
 

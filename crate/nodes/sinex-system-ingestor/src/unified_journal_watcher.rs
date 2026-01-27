@@ -406,7 +406,7 @@ impl UnifiedJournalWatcher {
             args.push("--system");
         }
 
-        let mut child = Command::new("journalctl")
+        let child = Command::new("journalctl")
             .args(&args)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -418,8 +418,10 @@ impl UnifiedJournalWatcher {
         // Store child process for lifecycle management
         let child_id = child.id();
         info!("Spawned journalctl process with PID: {:?}", child_id);
+        self.child_process = Some(child);
 
-        let stdout = child
+        let child_ref = self.child_process.as_mut().unwrap();
+        let stdout = child_ref
             .stdout
             .take()
             .ok_or_else(|| sinex_node_sdk::NodeError::Processing("No stdout".to_string()))?;
@@ -489,7 +491,9 @@ impl UnifiedJournalWatcher {
         }
 
         // Wait for child process
-        let _ = child.wait().await;
+        if let Some(mut child) = self.child_process.take() {
+            let _ = child.wait().await;
+        }
 
         Ok(())
     }

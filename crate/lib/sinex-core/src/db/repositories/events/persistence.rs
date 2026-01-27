@@ -4,7 +4,7 @@ use crate::models::{Event, JsonValue};
 use crate::repositories::common::{db_error, DbResult, EnhancedRepository, Repository};
 use crate::types::domain::{EventSource, EventType, SchemaVersion};
 use crate::types::{Id, Ulid};
-use crate::SinexError;
+use crate::{EventRecord, SinexError};
 
 use chrono::{DateTime, Timelike, Utc};
 use serde::{Deserialize, Serialize};
@@ -928,6 +928,11 @@ impl<'a> EventRepository<'a> {
         &self,
         batch: &[StreamBatchRow],
     ) -> DbResult<StreamBatchInsertResult> {
+        // Warning: This batch method bypasses `ensure_no_synthesis_cycles`.
+        // While efficient, it risks introducing circular synthesis dependencies.
+        // Consider implementing a batched cycle check or ensuring upstream validation.
+        // See: crate::lib::sinex-core::docs::event_persistence.md
+
         if batch.is_empty() {
             return Ok(StreamBatchInsertResult::default());
         }
@@ -1208,7 +1213,7 @@ impl<'a> EventRepository<'a> {
             " AND (source ILIKE '%test%' \
                   OR event_type ILIKE '%test%' \
                   OR payload @> '{\"test\": true}' \
-                  OR host ~* '\\\\mtest\\\\M')"
+                  OR host ~* '\\\\ytest\\\\y')"
                 .to_string(),
         );
 

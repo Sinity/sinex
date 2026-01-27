@@ -1,54 +1,28 @@
 # Stage-as-you-go Pattern
 
-Stage-as-You-Go pattern implementation for real-time provenance tracking
+This module provides helpers for implementing the Stage-as-You-Go pattern where source material is registered in-flight as events are being created, enabling real-time provenance tracking without waiting for full ingestion completion.
 
-This module provides helpers for implementing the Stage-as-You-Go pattern where
-source material is registered in-flight as events are being created, enabling
-real-time provenance tracking without waiting for full ingestion completion.
-
-This critical architectural pattern ensures zero provenance gaps for real-time streams.
-It solves the fundamental problem of maintaining data lineage when events are being
-processed and emitted before the complete source material is available.
-
-## The Problem
-
-Traditional approaches face a dilemma:
-- **Option 1**: Wait for complete ingestion before emitting events (high latency)
-- **Option 2**: Emit events immediately without provenance (broken lineage)
-
-## The Solution
-
-Stage-as-You-Go allows immediate event emission with full provenance by:
-
-```rust
-// 1. Create in-flight source material record on startup
-let blob_id = source_material_registry.create_in_flight().await?;
-
-// 2. Emit events immediately with provenance
-let event = Event {
-source_material_id: Some(blob_id),
-// ... events flow in real-time
-};
-
-// 3. Periodically finalize chunks (e.g., every 5 minutes)
-source_material_registry.finalize_chunk(blob_id).await?;
-```
-
-## Key Benefits
-
-- **Real-time Processing**: No delay for event emission
-- **Complete Provenance**: Every event linked to its source
-- **Incremental Updates**: Source material details filled in as available
-- **Crash Recovery**: In-flight records can be resumed or finalized
+This pattern ensures zero provenance gaps for real-time streams by maintaining data lineage even when events are processed before the complete source material is available.
 
 ## Implementation Pattern
 
-1. **Register In-Flight**: Create an in-flight source material record with initial metadata
-2. **Process & Emit**: Process data and emit events with source_material_id
-3. **Finalize**: Update source material with complete details (size, checksum, etc.)
+1.  **Register In-Flight**: Create an in-flight source material record with initial metadata to get a stable ID.
+2.  **Process & Emit**: Process data and emit events referencing this `source_material_id`.
+3.  **Finalize**: Update the source material record with complete details (size, hashes) once the stream ends.
 
-## Example Use Cases
+## Design Principles
 
-- **Log Tailing**: Emit log events as lines arrive, finalize after rotation
-- **Terminal Sessions**: Track commands immediately, finalize on session end
-- **Network Streams**: Process packets in real-time, finalize on connection close
+### 1. Per-Material Isolation
+Fine-grained locking (via material ID) ensures that concurrent operations on different materials proceed without global contention.
+
+### 2. Resource Management
+The system employs concurrency limits (via semaphores) to ensure predictable resource usage during high-volume assembly operations.
+
+### 3. State Reconciliation
+A background task periodically cleans up staging resources associated with completed or abandoned operations based on activity timestamps.
+
+## Key Benefits
+
+- **Real-time Processing**: No delay for event emission.
+- **Complete Provenance**: Every event linked to its source from the start.
+- **Incremental Updates**: Source material details filled in as available.

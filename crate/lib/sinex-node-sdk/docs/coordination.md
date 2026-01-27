@@ -1,48 +1,34 @@
-# Coordination Error Recovery
+# Distributed Coordination
 
-Coordination helpers for leader election, handoff, and failure recovery.
+## Overview
 
-The module wraps advisory-lock arbitration, version-aware priority, optional
-preflight gating, and the work-tracking needed to leave leadership cleanly.
-Refer to `crate/lib/sinex-node-sdk/docs/overview.md` for the lifecycle
-narrative and timing diagrams that inform this implementation.
+The `sinex-node-sdk::coordination` module implements high-level distributed patterns on top of the `sinex-core` primitives. It handles:
+1.  **Leadership Election**: Ensuring only one "Leader" instance runs for a service.
+2.  **Graceful Handoff**: Coordinating zero-downtime upgrades between old and new versions.
+3.  **Work Tracking**: Ensuring critical operations complete before shutdown.
 
-- **Timeout Handling**: Force shutdown if graceful completion takes too long
-- **Heartbeat Integration**: Report work status via heartbeat metrics
+## Concurrency Model & Lock Ordering
 
-## Error Recovery Patterns
+This module uses a mix of `RwLock` and atomic primitives. To prevent deadlocks, a strict lock hierarchy is enforced:
 
-### Heartbeat Timeout Recovery
+1.  **`work_tracker: RwLock<WorkTracker>`**: Top-level lock. Acquire BEFORE accessing internal tracker state.
+2.  **Internal Atomics**: `CoordinationPrimitive` uses atomics internally (lock-free).
 
-```rust
-// Standby instances detect leader failure
-if leader_heartbeat_age > 30_seconds {
-attempt_leadership_takeover();
-}
-```
+**Deadlock Prevention Rules**:
+*   Never hold a read lock while waiting for a write lock (upgrade deadlock).
+*   Release locks before performing I/O.
 
-### Critical Failure Recovery
+## Handoff Protocol
 
-```rust
-// Leader detects critical error
-coordination.signal_critical_failure("Database connection lost").await?;
-// Standby instances receive signal and attempt takeover
-```
+When a new version of a service starts:
+1.  **Detection**: It lists instances in NATS KV to find older versions.
+2.  **Request**: It publishes a `HandoffRequest` to `sinex.coordination.<service>.handoff`.
+3.  **Drain**: The old leader receives the request, stops accepting new work, and waits for in-flight ops to zero out.
+4.  **Signal**: The old leader publishes to `handoff_ready`.
+5.  **Release**: The old leader releases its NATS KV leadership lease.
+6.  **Takeover**: The new leader acquires the lease and begins processing.
 
-### Version Upgrade Handoff
+## Error Recovery
 
-```rust
-// New version starts and requests handoff
-let handoff_request = HandoffRequest {
-from_instance: new_instance_id,
-to_version: nodeVersion::current(),
-timeout_seconds: 30,
-};
-send_handoff_request(handoff_request).await?;
-```
-
-## Edge Mode Limitations
-
-Distributed coordination currently relies on PostgreSQL (advisory locks and `core.node_signals`).
-nodes in Edge Mode (`SINEX_EDGE_MODE=1`) or without a database connection cannot participate in leader election.
-Ensure `SINEX_COORDINATION_ENABLED` is not set or coordination is explicitly disabled in configuration for Edge nodes.
+*   **Lease Expiry**: If a leader crashes, its NATS KV key TTL expires (15s), allowing a standby to take over.
+*   **Critical Failure**: Leaders can broadcast a "critical failure" signal to trigger immediate takeover.

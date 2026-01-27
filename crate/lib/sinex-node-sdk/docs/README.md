@@ -3,15 +3,15 @@
 ## Core Documentation
 
 - `overview.md` – SDK purpose, constellation architecture, startup patterns
-- `stream_processor.md` – Unified stream processor interface and time horizons
+- `stream_runtime.md` – Unified stream processor engine and event loop (NEW)
 - `patterns.md` – Processor vs Automaton patterns and deployment
 - `provenance.md` – Ingestion patterns, sensor/ingestor separation, checklists
 - `vision.md` – SDK development vision (SimpleProcessor, Aggregator, sx tool, Tether)
 
 ## Implementation Guides
 
-- `stage_as_you_go.md` – Stage-as-you-go pattern for real-time provenance
-- `coordination.md` – Heartbeat and upgrade recovery flows
+- `coordination.md` – Leadership election, handoff protocol, and lock ordering (UPDATED)
+- `stage_as_you_go.md` – Real-time provenance and material staging pattern (NEW)
 - `preflight.md` – Node preflight verification categories
 - `annex.md` – Annex subsystem architecture and workflows
 

@@ -188,6 +188,8 @@ impl CoordinationKvClient {
         if let Some(entry) = entry {
             let current_leader = std::str::from_utf8(&entry).unwrap_or("");
             if current_leader == candidate_id {
+                // Warning: TOCTTOU race condition (BUG-002). Between the check and delete,
+                // another instance could have acquired leadership. NATS KV delete is unconditional.
                 bucket
                     .delete(key)
                     .await
@@ -205,8 +207,8 @@ impl CoordinationKvClient {
     pub async fn list_instances(&self) -> Result<Vec<InstanceMetadata>, SinexError> {
         let bucket = self.instances_bucket().await?;
 
-        // Get all keys for this service (keys are formatted as "service_name:instance_id")
-        let prefix = format!("{}:", self.service_name);
+        // Get all keys for this service (keys are formatted as "service_name.instance_id")
+        let prefix = format!("{}.", self.service_name);
         let mut instances = Vec::new();
 
         // Note: NATS KV doesn't have a native prefix scan, so we need to list all keys

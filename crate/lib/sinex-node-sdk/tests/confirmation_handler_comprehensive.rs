@@ -8,7 +8,6 @@ use sinex_core::types::Ulid;
 use sinex_node_sdk::confirmation_handler::{ConfirmationBuffer, ProvisionalEvent};
 use sinex_test_utils::sinex_test;
 use sinex_test_utils::timing_utils::Timeouts;
-use sinex_test_utils::TestResult;
 
 use std::sync::Arc;
 use tokio::sync::Barrier;

@@ -217,7 +217,9 @@ impl Ulid {
         } else {
             timestamp_ms as i64
         };
-        DateTime::from_timestamp_millis(timestamp_i64).unwrap_or_else(Utc::now)
+        // fallback to unix epoch instead of current time to avoid non-deterministic behavior
+        DateTime::from_timestamp_millis(timestamp_i64)
+            .unwrap_or_else(|| DateTime::from_timestamp_millis(0).unwrap_or_default())
     }
 
     /// Convert to UUID for PostgreSQL storage

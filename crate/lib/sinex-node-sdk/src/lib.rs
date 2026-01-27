@@ -1,6 +1,9 @@
 #![doc = include_str!("../docs/README.md")]
 #![doc = include_str!("../docs/overview.md")]
 #![doc = include_str!("../../../../docs/current/architecture/SystemOperations_And_Integrity_Architecture.md")]
+#![doc = include_str!("../docs/coordination.md")]
+#![doc = include_str!("../docs/stage_as_you_go.md")]
+#![doc = include_str!("../docs/stream_runtime.md")]
 
 //! Shared runtime for Sinex nodes (ingestors and automata).
 //!

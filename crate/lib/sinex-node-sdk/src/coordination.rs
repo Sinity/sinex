@@ -1,5 +1,7 @@
 #![doc = include_str!("../docs/coordination.md")]
 //!
+//! See `crate::docs::coordination` for architectural details on leadership election and handoff.
+//!
 //! # Issue 83: Lock Ordering Documentation
 //!
 //! This module uses multiple synchronization primitives that must be acquired in a

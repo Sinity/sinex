@@ -377,15 +377,17 @@ async fn test_extension_functionality(
 
     // Test ULID generation - using transaction directly
     // NOTE: This raw SQL is intentional - testing database function existence
-    // Commented out as it fails in SQLx offline mode
-    /*
-    let ulid_result = sqlx::query!("SELECT ulid_generate() as ulid")
+    let ulid_result = sqlx::query!("SELECT gen_ulid()::text as ulid")
         .fetch_one(&mut **tx)
         .await
-        .wrap_err("Failed to test ULID generation functionality")?;
-    messages.push(format!("✓ ULID generation: {}", ulid_result.ulid.map(|u| u.to_string()).unwrap_or_else(|| "OK".to_string())));
-    */
-    messages.push("✓ ULID generation: (skipped in offline mode)".to_string());
+        .wrap_err("Failed to test ULID generation functionality (gen_ulid() function missing?)")?;
+    messages.push(format!(
+        "✓ ULID generation: {}",
+        ulid_result
+            .ulid
+            .as_deref()
+            .unwrap_or("OK")
+    ));
 
     // Test TimescaleDB extension by checking version
     let timescale_version =
@@ -399,22 +401,26 @@ async fn test_extension_functionality(
     }
 
     // Test JSON schema validation (if available)
-    // Commented out as it fails in SQLx offline mode
-    /*
     let schema_test_result = sqlx::query!(
-        r#"SELECT jsonb_matches_schema(
-            '{"type": "object"}'::jsonb,
-            '{"test": true}'::jsonb
+        r#"SELECT json_matches_schema(
+            '{"type": "object"}',
+            '{"test": true}'
         ) as matches"#
     )
     .fetch_one(&mut **tx)
     .await;
 
-    if schema_test_result.is_ok() {
-        messages.push("✓ JSON schema validation tested".to_string());
+    match schema_test_result {
+        Ok(_) => {
+            messages.push("✓ JSON schema validation tested".to_string());
+        }
+        Err(e) => {
+            bail!(
+                "JSON schema validation test failed (pg_jsonschema extension broken?): {}",
+                e
+            );
+        }
     }
-    */
-    messages.push("✓ JSON schema validation: (skipped in offline mode)".to_string());
 
     Ok(())
 }
@@ -652,7 +658,14 @@ async fn verify_schema_compatibility(
     info!("Verifying schema compatibility");
 
     // Check for existence of critical tables
-    let critical_tables = vec!["core.events"];
+    let critical_tables = vec![
+        "core.events",
+        "core.blobs",
+        "raw.source_material_registry",
+        "sinex_schemas.event_payload_schemas",
+        "core.processor_manifests",
+        "core.operations_log",
+    ];
 
     let mut table_status = HashMap::new();
 

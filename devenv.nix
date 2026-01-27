@@ -138,6 +138,11 @@ in
     export PGHOST="$SINEX_DEV_STATE_DIR/run"
     export PGPORT="$SINEX_DEV_PG_PORT"
     export SINEX_NATS_URL="nats://localhost:$SINEX_DEV_NATS_PORT"
+
+    # Use xtask to refine ports if already built (handles checkout-based isolation offsets)
+    if [ -x "$PWD/target/debug/xtask" ]; then
+      eval "$("$PWD/target/debug/xtask" stack env --export)"
+    fi
     export SINEX_NATS_DIR="$SINEX_DEV_STATE_DIR/data/nats"
     export NATS_CREDS="$SINEX_NATS_DIR/nsc/creds/sinex-dev/sinex-dev/sinex-dev.creds"
 

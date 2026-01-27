@@ -1,6 +1,9 @@
 #![doc = include_str!("../docs/overview.md")]
 #![doc = include_str!("../../../../docs/current/architecture/Core_Architecture.md")]
 #![doc = include_str!("../../sinex-schema/docs/ulid.md")]
+#![doc = include_str!("../docs/distributed_coordination.md")]
+#![doc = include_str!("../docs/domain_types.md")]
+#![doc = include_str!("../docs/event_persistence.md")]
 
 //! Core Sinex abstractions for types, persistence, and environment wiring.
 #![allow(async_fn_in_trait)]

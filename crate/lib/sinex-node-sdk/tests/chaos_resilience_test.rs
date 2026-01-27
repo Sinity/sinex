@@ -7,15 +7,12 @@
 //! - Message reordering
 //! - Slow consumers
 
-use async_nats::jetstream::consumer::AckPolicy;
-use sinex_core::DynamicPayload;
 use sinex_node_sdk::simple_node::{ErrorAction, SimpleNode, SimpleNodeError};
-use sinex_node_sdk::CheckpointManager;
 use sinex_test_utils::prelude::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 
+#[allow(dead_code)]
 /// Simple counter node for testing chaos scenarios
 #[derive(Debug)]
 struct ChaosCounterNode {
@@ -23,22 +20,26 @@ struct ChaosCounterNode {
     errors: Arc<AtomicU64>,
 }
 
+#[allow(dead_code)]
 impl ChaosCounterNode {
     fn new(processed: Arc<AtomicU64>, errors: Arc<AtomicU64>) -> Self {
         Self { processed, errors }
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 struct CounterState {
     total: u64,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct CounterInput {
     value: u64,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct CounterOutput {
     new_total: u64,
