@@ -3,7 +3,7 @@
 use proptest::prelude::*;
 use sinex_node_sdk::error_helpers::*;
 use sinex_test_utils::sinex_proptest;
-use sinex_test_utils::TestResult;
+
 use std::io::ErrorKind;
 
 fn arbitrary_error_message() -> impl Strategy<Value = String> {

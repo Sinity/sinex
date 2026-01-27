@@ -56,7 +56,7 @@ impl<'a> IntegrityTester<'a> {
             )
         })?;
 
-        let mut processors = sqlx::query_scalar!(
+        let mut processors: Vec<String> = sqlx::query_scalar!(
             r#"SELECT processor_name FROM core.processor_manifests ORDER BY processor_name"#
         )
         .fetch_all(self.pool)
@@ -73,7 +73,7 @@ impl<'a> IntegrityTester<'a> {
         processors.sort();
 
         let mut issues = Vec::new();
-        for processor in processors {
+        for processor in processors.into_iter() {
             let snapshot = latest_snapshot_for_processor(snapshots, &processor);
             let mut detected = analyze_processor(
                 self.pool,

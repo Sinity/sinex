@@ -5,7 +5,7 @@ use async_nats::jetstream;
 use serde_json::json;
 use sinex_core::types::buffers::DEFAULT_EVENT_CHANNEL_SIZE;
 use sinex_core::{db::models::Event, JsonValue};
-use sinex_node_sdk::acquisition_manager::{AcquisitionManager, RotationPolicy};
+use sinex_node_sdk::acquisition_manager::AcquisitionManager;
 use sinex_node_sdk::nats_publisher::NatsPublisher;
 use sinex_node_sdk::stage_as_you_go::{
     LogFileStageProcessor, StageAsYouGoContext, StageAsYouGoProcessor,

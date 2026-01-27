@@ -2,7 +2,7 @@
 
 // Local crate imports
 use crate::{
-    distributed_rate_limit::{DistributedRateLimiter, DistributedRateLimitConfig},
+    distributed_rate_limit::{DistributedRateLimitConfig, DistributedRateLimiter},
     gateway_metrics::GatewayMetrics,
     handlers::*,
     rate_limit::TokenRateLimiter,
@@ -523,7 +523,8 @@ impl ConnectionGuard {
 
 impl Drop for ConnectionGuard {
     fn drop(&mut self) {
-        self.counter.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        self.counter
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -1688,8 +1689,10 @@ pub async fn run(
     let drain_start = std::time::Instant::now();
     let drain_timeout = std::time::Duration::from_secs(30);
 
-    info!("Waiting for {} active connections to drain...",
-          active_connections.load(std::sync::atomic::Ordering::Relaxed));
+    info!(
+        "Waiting for {} active connections to drain...",
+        active_connections.load(std::sync::atomic::Ordering::Relaxed)
+    );
 
     loop {
         let active = active_connections.load(std::sync::atomic::Ordering::Relaxed);
@@ -1699,7 +1702,10 @@ pub async fn run(
         }
 
         if drain_start.elapsed() >= drain_timeout {
-            warn!("Drain timeout reached with {} active connections remaining", active);
+            warn!(
+                "Drain timeout reached with {} active connections remaining",
+                active
+            );
             break;
         }
 
