@@ -25,8 +25,10 @@ The Gateway serves as the **hardened external interface** for the Sinex platform
 ## Implementation Details
 
 - `cascade_analyzer.md` – Cascade planning algorithms and performance
+- `replay_control.md` – Distributed replay orchestration
 - `replay_state_machine.md` – State machine lifecycle and transitions
 - `native_messaging.md` – Browser extension protocol and security
+- `rate_limit.md` – Per-token rate limiting strategy
 
 ## See Also
 

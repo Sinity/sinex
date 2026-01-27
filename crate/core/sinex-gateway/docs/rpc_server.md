@@ -53,21 +53,18 @@ The RPC server implements a **defense-in-depth** strategy with 7 layers of prote
 - `replay.operation_status` – fetch replay status.
 - `replay.list_operations` – list replay operations by state.
 
+## Configuration
+
+- `SINEX_GATEWAY_TLS_CERT` / `SINEX_GATEWAY_TLS_KEY`: Mandatory TLS certificate paths.
+- `SINEX_GATEWAY_TLS_CLIENT_CA`: Trusted client CA bundle (required for mTLS).
+- `SINEX_RPC_TOKEN`: Bearer token for authentication.
+- `SINEX_GATEWAY_MAX_CONCURRENCY`: Max concurrent requests (default 32).
+- `SINEX_GATEWAY_REQUEST_TIMEOUT_SECS`: Request timeout (default 30s).
+- `SINEX_GATEWAY_MAX_BODY_BYTES`: Request body size limit (default 2MB).
+- `SINEX_GATEWAY_MAX_BLOB_BYTES`: Blob content size limit (default 5MB).
+
 ## Protocol Specification
 
 - Requests: `{"jsonrpc": "2.0", "method": "...", "params": {...}, "id": 1}`.
 - Success: `{"jsonrpc": "2.0", "result": {...}, "id": 1}`.
 - Error: `{"jsonrpc": "2.0", "error": {"code": -1, "message": "..."},"id": 1}`.
-
-## Security & Resource Guards
-
-- CORS headers configured for local development.
-- Request/response logging for audit trails.
-- Error sanitisation to avoid leaking sensitive details.
-- TLS is mandatory for the RPC server; configure `SINEX_GATEWAY_TLS_CERT` + `SINEX_GATEWAY_TLS_KEY` (optional `SINEX_GATEWAY_TLS_CLIENT_CA` for mTLS).
-- Non-loopback binds require mTLS; set `SINEX_GATEWAY_TLS_CLIENT_CA` to a trusted client CA bundle.
-- Mandatory RPC auth token (`SINEX_RPC_TOKEN` or `SINEX_GATEWAY_ADMIN_TOKEN_FILE` / `SINEX_RPC_TOKEN_FILE`); requests must send `Authorization: Bearer <token>`.
-- Concurrency limit (`SINEX_GATEWAY_MAX_CONCURRENCY`, default 32) enforced via tower middleware.
-- Request timeout (`SINEX_GATEWAY_REQUEST_TIMEOUT_SECS`, default 30s) returns JSON-RPC gateway timeout errors.
-- Payload size cap (`SINEX_GATEWAY_MAX_BODY_BYTES`, default 2MB) returns 413 errors when exceeded.
-- Blob uploads have an explicit content quota (`SINEX_GATEWAY_MAX_BLOB_BYTES`, default 5MB) that is enforced after base64 decoding to keep git-annex writes bounded.

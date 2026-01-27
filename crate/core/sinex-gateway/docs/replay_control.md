@@ -2,6 +2,13 @@
 
 Distributed replay orchestration via NATS RPC.
 
+## ⚠️ Current Status
+
+**Note: This subsystem is currently in active development.**
+- The **Execution** phase is currently a simulation stub (fast-forwards state without re-emitting events).
+- There is an architectural disconnect between this gateway-driven control plane and the `sinex-node-sdk` replay service (see architectural issue INS-027).
+- Authorization checks are currently disabled (TODOs in code).
+
 ## Architecture
 
 The replay control system orchestrates distributed replay operations across the cluster.
