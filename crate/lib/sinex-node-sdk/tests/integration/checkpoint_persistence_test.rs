@@ -8,7 +8,7 @@ use serde_json::json;
 use sinex_core::types::domain::EventSource;
 use sinex_core::DynamicPayload;
 use sinex_node_sdk::CheckpointManager;
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use tracing::info;
 
 #[sinex_test]

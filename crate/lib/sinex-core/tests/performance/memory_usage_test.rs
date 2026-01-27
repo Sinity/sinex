@@ -8,7 +8,7 @@ use serde_json::json;
 use sinex_core::db::queries::{CheckpointQueries, EventQueries};
 use sinex_core::db::query_builder::{QueryBuilder, QueryParam};
 use sinex_core::types::events::{event_types, sources, EventFactory};
-use sinex_test_utils::{prelude::*, timing_utils::Timeouts};
+use xtask::sandbox::{prelude::*, timing_utils::Timeouts};
 use std::sync::Arc;
 use std::time::{Duration as StdDuration, Instant};
 use tokio::sync::Mutex;

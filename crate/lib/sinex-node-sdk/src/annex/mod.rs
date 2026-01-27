@@ -552,12 +552,7 @@ impl GitAnnex {
     }
 
     /// Check filesystem integrity
-    pub async fn fsck(
-        &self,
-        fast: bool,
-        incremental: bool,
-        key: Option<&str>,
-    ) -> Result<String> {
+    pub async fn fsck(&self, fast: bool, incremental: bool, key: Option<&str>) -> Result<String> {
         info!("Running git-annex fsck");
 
         let mut cmd = AsyncCommand::new("git-annex");

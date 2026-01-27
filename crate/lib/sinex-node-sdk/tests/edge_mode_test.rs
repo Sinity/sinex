@@ -15,8 +15,8 @@ use sinex_node_sdk::{
     },
     EventTransport, NodeResult,
 };
-use sinex_test_utils::timing_utils::{WaitHelpers, DEFAULT_WAIT_SECS};
-use sinex_test_utils::{sinex_serial_test, TestContext};
+use xtask::sandbox::timing::{WaitHelpers, DEFAULT_WAIT_SECS};
+use xtask::sandbox::{sinex_serial_test, TestContext};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
@@ -178,6 +178,17 @@ async fn test_schema_broadcast_cache_updates(ctx: TestContext) -> TestResult<()>
 
     let nats = ctx.nats_handle()?;
     let nats_client = nats.connect().await?;
+    let js = async_nats::jetstream::new(nats_client.clone());
+
+    // Create the schema KV bucket that the runner expects
+    let env = sinex_core::environment();
+    let schema_bucket = format!("KV_{}", env.nats_kv_bucket_name("sinex_schemas"));
+    js.create_key_value(async_nats::jetstream::kv::Config {
+        bucket: schema_bucket,
+        ..Default::default()
+    })
+    .await?;
+
     let publisher = Arc::new(NatsPublisher::new(nats_client.clone()));
     let transport = EventTransport::Nats(publisher);
 

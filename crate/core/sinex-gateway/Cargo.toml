@@ -67,7 +67,6 @@ chrono = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "http2", "rustls-tls"] }
 
 [dev-dependencies]
-sinex-test-utils = { path = "../../lib/sinex-test-utils" }
 tempfile = "3.10"
 
 which = "6"

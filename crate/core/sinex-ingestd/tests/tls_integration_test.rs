@@ -4,7 +4,7 @@
 //! through all components: EphemeralNats → TestIngestdConfig → IngestService.
 
 use serde_json::json;
-use sinex_test_utils::{
+use xtask::sandbox::{
     nats::{shared_ephemeral_nats, SharedNatsProfile},
     prelude::*,
     sinex_test, start_test_ingestd_with_config,

@@ -1,5 +1,5 @@
 use sinex_core::db::acquire_with_timeout;
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use std::time::Duration;
 
 #[sinex_test]

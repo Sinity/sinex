@@ -3,7 +3,7 @@
 //! Tests comprehensive security validation for filesystem watching operations,
 //! including path validation, boundary enforcement, symlink protection, and security policy compliance.
 
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 
 // Additional specific imports
 use sinex_core::types::validation::FileWatchingSecurityPolicy;

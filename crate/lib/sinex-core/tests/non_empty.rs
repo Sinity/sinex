@@ -1,5 +1,5 @@
 use sinex_core::types::non_empty::NonEmptyVec;
-use sinex_test_utils::sinex_test;
+use xtask::sandbox::sinex_test;
 
 #[sinex_test]
 fn non_empty_vec_construction_variants_work() -> TestResult<()> {

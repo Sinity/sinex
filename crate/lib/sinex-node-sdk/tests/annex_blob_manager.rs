@@ -1,6 +1,6 @@
 use camino::Utf8Path;
 use sinex_node_sdk::annex::blob_manager::BlobManager;
-use sinex_test_utils::sinex_test;
+use xtask::sandbox::sinex_test;
 
 #[sinex_test]
 fn detect_mime_type_matches_extension() -> TestResult<()> {

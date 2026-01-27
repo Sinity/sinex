@@ -12,7 +12,7 @@ use sinex_core::types::ulid::Ulid;
 use sinex_core::DbPool;
 use sinex_node_sdk::checkpoint::parse_checkpoint_key;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use std::str::FromStr;
 
 /// Types of checkpoint inconsistencies that can be detected

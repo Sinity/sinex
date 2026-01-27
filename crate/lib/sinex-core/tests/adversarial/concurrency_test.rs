@@ -9,11 +9,11 @@
 // - **Database Concurrency**: Transaction isolation, lock contention, deadlock detection
 // - **Memory Concurrency**: Shared state, atomic operations, cache coherency
 
-use sinex_test_utils::prelude::*;
-use sinex_test_utils::timing_utils::Timeouts;
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::Timeouts;
 
 use chrono::Utc;
-use sinex_test_utils::events;
+use xtask::sandbox::events;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Barrier};
 use std::time::Instant;

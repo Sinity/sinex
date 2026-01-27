@@ -8,7 +8,7 @@
 //!
 //! Migrated to modern infrastructure: #[sinex_test], TestContext, repository pattern.
 
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 
 // Additional specific imports
 

@@ -9,7 +9,7 @@ use serde_json::json;
 use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::types::domain::{EventSource, EventType};
 use sinex_core::{Event, JsonValue};
-use sinex_test_utils::{prelude::*, sinex_prop, sinex_proptest, test_event};
+use xtask::sandbox::{prelude::*, sinex_prop, sinex_proptest, test_event};
 use std::time::Duration;
 
 /// Helper to convert color_eyre::Report errors to TestCaseError for property tests
@@ -94,6 +94,10 @@ async fn node_event_processing_preserves_order(
     #[strategy(event_sequences())] events: Vec<Event<JsonValue>>,
     #[strategy(1usize..100usize)] batch_size: usize,
 ) -> Result<(), TestCaseError> {
+    ctx.reset_database_slot()
+        .await
+        .map_err(report_to_test_error)?;
+
     if events.is_empty() {
         return Ok::<(), TestCaseError>(());
     }
@@ -127,13 +131,14 @@ async fn node_event_processing_preserves_order(
         .map_err(report_to_test_error)?;
     assert_eq!(actual_count, processed_events.len() as i64);
 
-    let db_events = ctx
+    let mut db_events = ctx
         .pool
         .events()
         .get_recent(processed_events.len() as i64)
         .await
         .map_err(report_to_test_error)?;
     assert_eq!(db_events.len(), processed_events.len());
+    db_events.reverse(); // get_recent is DESC, we want ASC to match insertion order
 
     // Verify ULID ordering is preserved (ULIDs are time-ordered)
     for i in 1..db_events.len() {
@@ -155,6 +160,10 @@ async fn node_handles_intermittent_failures(
     events: Vec<(String, String, serde_json::Value)>,
     #[strategy(1u64..100u64)] recovery_delay: u64,
 ) -> Result<(), TestCaseError> {
+    ctx.reset_database_slot()
+        .await
+        .map_err(report_to_test_error)?;
+
     if events.is_empty() {
         return Ok::<(), TestCaseError>(());
     }
@@ -217,6 +226,10 @@ async fn node_manages_resources_efficiently(
     #[strategy(1usize..50usize)] events_per_operation: usize,
     #[strategy(1u64..50u64)] processing_delay: u64,
 ) -> Result<(), TestCaseError> {
+    ctx.reset_database_slot()
+        .await
+        .map_err(report_to_test_error)?;
+
     // Generate events for concurrent processing
     let mut total_events = 0;
     let mut handles = Vec::new();
@@ -225,9 +238,9 @@ async fn node_manages_resources_efficiently(
         let source = format!("concurrent-{i}");
         let per_op = events_per_operation;
         let delay = processing_delay;
+        let pool = ctx.pool.clone();
 
         let handle = tokio::spawn(async move {
-            let ctx_clone = TestContext::new().await.expect("test context");
             let mut operation_events = 0;
 
             for j in 0..per_op {
@@ -237,9 +250,7 @@ async fn node_manages_resources_efficiently(
                     json!({ "operation": i, "event": j }),
                 );
 
-                ctx_clone
-                    .pool
-                    .events()
+                pool.events()
                     .insert(event)
                     .await
                     .expect("insert event");
@@ -317,6 +328,10 @@ async fn node_batch_processing_is_consistent(
     ))]
     events: Vec<(String, String, serde_json::Value)>,
 ) -> Result<(), TestCaseError> {
+    ctx.reset_database_slot()
+        .await
+        .map_err(report_to_test_error)?;
+
     if events.is_empty() {
         return Ok::<(), TestCaseError>(());
     }
@@ -377,6 +392,10 @@ async fn node_survives_processing_interruptions(
     #[strategy(1usize..20usize)] events_during_interruption: usize,
     #[strategy(1usize..20usize)] events_after_interruption: usize,
 ) -> Result<(), TestCaseError> {
+    ctx.reset_database_slot()
+        .await
+        .map_err(report_to_test_error)?;
+
     // Phase 1: Normal operation
     for i in 0..events_before_interruption {
         let event = test_event(
@@ -446,6 +465,10 @@ async fn node_maintains_event_ordering_under_load(
     #[strategy(1usize..20usize)] events_per_source: usize,
     #[strategy(1u64..20u64)] processing_jitter: u64,
 ) -> Result<(), TestCaseError> {
+    ctx.reset_database_slot()
+        .await
+        .map_err(report_to_test_error)?;
+
     let mut handles = Vec::new();
 
     // Create concurrent event producers
@@ -453,9 +476,9 @@ async fn node_maintains_event_ordering_under_load(
         let source_name = format!("ordering-test-{source_id}");
         let per_source = events_per_source;
         let jitter = processing_jitter;
+        let pool = ctx.pool.clone();
 
         let handle = tokio::spawn(async move {
-            let ctx_clone = TestContext::new().await.expect("test context");
             for event_id in 0..per_source {
                 let event = test_event(
                     EventSource::new(source_name.clone()),
@@ -467,9 +490,7 @@ async fn node_maintains_event_ordering_under_load(
                     }),
                 );
 
-                ctx_clone
-                    .pool
-                    .events()
+                pool.events()
                     .insert(event)
                     .await
                     .expect("insert event");

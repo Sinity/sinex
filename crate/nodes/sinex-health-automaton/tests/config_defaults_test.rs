@@ -1,5 +1,5 @@
 use sinex_health_automaton::HealthAggregatorConfig;
-use sinex_test_utils::sinex_test;
+use xtask::sandbox::sinex_test;
 
 #[sinex_test]
 fn health_aggregator_config_defaults_are_sane() -> sinex_test_utils::TestResult<()> {

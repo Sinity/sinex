@@ -212,7 +212,6 @@ impl TlsFixture {
 }
 
 /// HTTP mock server helpers
-#[cfg_attr(feature = "wiremock", allow(unexpected_cfgs))]
 #[cfg(feature = "wiremock")]
 pub mod http {
     use wiremock::matchers::{method, path};

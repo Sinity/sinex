@@ -6,7 +6,7 @@ use serde_json::{json, Value as JsonValue};
 use sinex_core::types::events::DynamicPayload;
 use sinex_core::types::ulid::Ulid;
 use sinex_node_sdk::replay::{ReplayFilters, ReplayMode, ReplayProgress, ReplayService};
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use std::{collections::HashMap, time::Duration as StdDuration};
 use support::runtime::TestRuntimeBuilder;
 use tokio::time::timeout;
@@ -110,7 +110,7 @@ async fn custom_filters_emit_only_matching_events(ctx: TestContext) -> color_eyr
         (format!("terminal-history-{run_id}"), 1usize),
         (format!("desktop-{run_id}"), 1usize),
     ] {
-        if let Err(err) = sinex_test_utils::timing_utils::WaitHelpers::wait_for_source_events(
+        if let Err(err) = xtask::sandbox::timing::WaitHelpers::wait_for_source_events(
             &ctx.pool, &source, expected, 24,
         )
         .await

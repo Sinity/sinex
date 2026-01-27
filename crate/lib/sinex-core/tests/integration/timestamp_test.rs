@@ -9,7 +9,7 @@
 use chrono::{DateTime, TimeZone, Timelike, Utc};
 use serde_json::json;
 use sinex_core::db::repositories::DbPoolExt;
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 
 /// Test timestamp boundary conditions
 #[sinex_test]

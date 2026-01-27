@@ -245,7 +245,7 @@ mod tests {
     use super::*;
     use serde_json::json;
     use sinex_core::environment;
-    use sinex_test_utils::{sinex_test, EphemeralNats};
+    use xtask::sandbox::{sinex_test, EphemeralNats};
 
     #[sinex_test]
     async fn dlq_list_returns_stats() -> TestResult<()> {

@@ -1,7 +1,7 @@
 #[cfg(feature = "testing")]
 use sinex_core::environment::override_environment_for_tests;
 use sinex_core::environment::{environment, SinexEnvironment};
-use sinex_test_utils::sinex_test;
+use xtask::sandbox::sinex_test;
 use sinex_test_utils::TestResult;
 use std::env;
 use std::path::PathBuf;

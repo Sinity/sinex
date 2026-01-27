@@ -15,7 +15,7 @@ use sinex_core::{
     acquire_with_timeout, create_pool_with_config, DynamicPayload, Id, PoolConfig, Provenance,
     SinexError, Ulid,
 };
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 
 // Additional specific imports
 use std::collections::HashSet;

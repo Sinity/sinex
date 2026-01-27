@@ -73,7 +73,6 @@ sinex-core = { path = "../../lib/sinex-core", features = ["macros"] }
 lazy_static.workspace = true
 
 [dev-dependencies]
-sinex-test-utils = { path = "../../lib/sinex-test-utils" }
 gethostname = { workspace = true }
 tempfile = "3.13"
 

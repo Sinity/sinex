@@ -1,6 +1,6 @@
 use sinex_ingestd::service::try_acquire_migration_lock;
-use sinex_test_utils::timing_utils::WaitHelpers;
-use sinex_test_utils::{sinex_test, TestContext};
+use xtask::sandbox::timing::WaitHelpers;
+use xtask::sandbox::{sinex_test, TestContext};
 
 #[sinex_test]
 async fn migration_lock_blocks_second_holder(ctx: TestContext) -> sinex_test_utils::TestResult<()> {

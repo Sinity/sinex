@@ -13,7 +13,7 @@ use serde_json::json;
 use sinex_core::{
     DbPoolExt, DynamicPayload, Event, EventSource, EventType, HostName, Id, JsonValue, Ulid,
 };
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use std::collections::HashSet;
 use std::str::FromStr;
 

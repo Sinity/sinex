@@ -6,7 +6,7 @@
 
 use futures::future::BoxFuture;
 use sinex_schema::schema_registry;
-use sinex_test_utils::{sinex_test, test_db_pool, TestResult};
+use xtask::sandbox::{sinex_test, test_db_pool, TestResult};
 use sqlx::{PgPool, Row};
 
 /// Verifies that all schemas from the registry are accessible.
@@ -230,7 +230,7 @@ async fn can_toggle_core_events_triggers() -> TestResult<()> {
 /// Ensures CI can DELETE from all tables that cleanup needs to clear.
 #[sinex_test]
 async fn can_delete_from_all_cleanup_tables() -> TestResult<()> {
-    use sinex_test_utils::cleanup_config::{CleanupConfig, CleanupMethod};
+    use xtask::sandbox::fs::{CleanupConfig, CleanupMethod};
 
     let pool = test_db_pool().await;
     let config = CleanupConfig::default();
@@ -273,7 +273,7 @@ async fn can_delete_from_all_cleanup_tables() -> TestResult<()> {
 /// This ensures connections don't leak altered state back to the pool.
 #[sinex_test]
 async fn session_guards_restore_state() -> TestResult<()> {
-    use sinex_test_utils::cleanup_config::CleanupConfig;
+    use xtask::sandbox::fs::CleanupConfig;
 
     let pool = test_db_pool().await;
     let mut conn = pool.acquire().await?;
@@ -338,7 +338,7 @@ async fn session_guards_restore_state() -> TestResult<()> {
 /// Verifies guards restore state even when the inner block errors.
 #[sinex_test]
 async fn session_guards_restore_on_error() -> TestResult<()> {
-    use sinex_test_utils::cleanup_config::CleanupConfig;
+    use xtask::sandbox::fs::CleanupConfig;
 
     let pool = test_db_pool().await;
     let mut conn = pool.acquire().await?;
@@ -349,7 +349,7 @@ async fn session_guards_restore_on_error() -> TestResult<()> {
         .await?;
 
     // Force an error inside the guard block
-    let result = sinex_test_utils::db_common::with_cleanup_session(&mut conn, &config, |_conn| {
+    let result = xtask::sandbox::db_common::with_cleanup_session(&mut conn, &config, |_conn| {
         let fut: BoxFuture<'_, TestResult<()>> =
             Box::pin(async move { Err(color_eyre::eyre::eyre!("intentional failure")) });
         fut
@@ -375,7 +375,7 @@ async fn session_guards_restore_on_error() -> TestResult<()> {
 /// No hardcoded table lists should exist in cleanup functions.
 #[sinex_test]
 async fn cleanup_config_is_authoritative() -> TestResult<()> {
-    use sinex_test_utils::cleanup_config::CleanupConfig;
+    use xtask::sandbox::fs::CleanupConfig;
 
     let config = CleanupConfig::default();
 
@@ -416,8 +416,8 @@ async fn cleanup_config_is_authoritative() -> TestResult<()> {
 /// Ensures pool stats helpers are usable inside async runtimes (no blocking_lock panics).
 #[sinex_test]
 async fn pool_stats_helpers_are_async_safe() -> TestResult<()> {
-    let _ = sinex_test_utils::database_pool::get_pool_stats();
-    let _ = sinex_test_utils::database_pool::get_pool_stats_async().await;
+    let _ = xtask::sandbox::db::get_pool_stats();
+    let _ = xtask::sandbox::db::get_pool_stats_async().await;
     Ok(())
 }
 
@@ -425,6 +425,6 @@ async fn pool_stats_helpers_are_async_safe() -> TestResult<()> {
 #[sinex_test]
 async fn can_reset_session_state_via_helper() -> TestResult<()> {
     let pool = test_db_pool().await;
-    sinex_test_utils::database_pool::ensure_default_session_state(&pool).await?;
+    xtask::sandbox::db::ensure_default_session_state(&pool).await?;
     Ok(())
 }

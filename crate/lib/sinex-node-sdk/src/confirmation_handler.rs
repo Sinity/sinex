@@ -248,7 +248,7 @@ impl ConfirmationBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_test_utils::sinex_test;
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     async fn test_confirmation_buffer_add_and_confirm() -> TestResult<()> {

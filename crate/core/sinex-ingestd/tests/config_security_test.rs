@@ -1,6 +1,6 @@
 use sinex_core::types::Seconds;
 use sinex_ingestd::config::IngestdConfig;
-use sinex_test_utils::sinex_test;
+use xtask::sandbox::sinex_test;
 
 #[sinex_test]
 async fn test_config_requires_tls_scheme_when_flag_set() -> TestResult<()> {

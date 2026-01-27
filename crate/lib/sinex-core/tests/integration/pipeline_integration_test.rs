@@ -17,7 +17,7 @@ use futures::{future::join_all, StreamExt};
 use serde_json::json;
 use sinex_core::types::domain::EventSource;
 use sinex_core::DynamicPayload;
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration as StdDuration;
@@ -145,7 +145,7 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> 
 
     // Ensure all events persisted.
     let expected_total = test_events.len();
-    sinex_test_utils::timing_utils::WaitHelpers::wait_for_event_count(
+    xtask::sandbox::timing::WaitHelpers::wait_for_event_count(
         &ctx.pool,
         expected_total,
         20,
@@ -478,10 +478,10 @@ async fn test_pipeline_data_transformation(ctx: TestContext) -> Result<()> {
             .await?;
         let transformed_event_id = transformed_event.id.clone();
         if let Some(ref id) = transformed_event_id {
-            sinex_test_utils::timing_utils::WaitHelpers::wait_for_event_id(
+            xtask::sandbox::timing::WaitHelpers::wait_for_event_id(
                 &ctx.pool,
                 id.clone(),
-                sinex_test_utils::timing_utils::DEFAULT_WAIT_SECS,
+                xtask::sandbox::timing::DEFAULT_WAIT_SECS,
             )
             .await?;
         }
@@ -703,10 +703,10 @@ async fn test_pipeline_error_handling(ctx: TestContext) -> Result<()> {
         .await?;
     let recovery_event_id = recovery_event.id.clone();
     if let Some(ref id) = recovery_event_id {
-        sinex_test_utils::timing_utils::WaitHelpers::wait_for_event_id(
+        xtask::sandbox::timing::WaitHelpers::wait_for_event_id(
             &ctx.pool,
             id.clone(),
-            sinex_test_utils::timing_utils::DEFAULT_WAIT_SECS,
+            xtask::sandbox::timing::DEFAULT_WAIT_SECS,
         )
         .await?;
     }

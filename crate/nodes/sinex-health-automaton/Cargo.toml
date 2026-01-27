@@ -56,4 +56,3 @@ async-trait = { workspace = true }
 camino = { workspace = true }
 
 [dev-dependencies]
-sinex-test-utils = { path = "../../lib/sinex-test-utils" }

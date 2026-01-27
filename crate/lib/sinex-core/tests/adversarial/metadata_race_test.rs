@@ -1,8 +1,8 @@
 use serde_json::json;
 use sinex_core::db::models::SourceMaterial;
 use sinex_core::db::repositories::SourceMaterialRepository;
-use sinex_test_utils::prelude::*;
-use sinex_test_utils::{sinex_test, TestContext, TestResult};
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::{sinex_test, TestContext, TestResult};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::Barrier;

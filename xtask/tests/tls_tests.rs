@@ -10,8 +10,7 @@ use std::fs::{self, Permissions};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-#[allow(deprecated)]
-use assert_cmd::Command;
+use assert_cmd::cargo::cargo_bin_cmd;
 use predicates::prelude::*;
 use tempfile::TempDir;
 use xtask::tls::{generate_dev_certs, CertConfig};
@@ -33,7 +32,7 @@ fn test_generate_dev_certs_creates_all_files() {
         force: false,
     };
 
-    generate_dev_certs(&config, false).expect("Certificate generation should succeed");
+    generate_dev_certs(&config).expect("Certificate generation should succeed");
 
     // Verify all expected files exist
     assert!(
@@ -80,7 +79,7 @@ fn test_generate_dev_certs_with_custom_san() {
         force: false,
     };
 
-    generate_dev_certs(&config, false)
+    generate_dev_certs(&config)
         .expect("Certificate generation with custom SANs should succeed");
 
     // Verify server certificate exists
@@ -105,7 +104,7 @@ fn test_generate_dev_certs_json_output() {
     };
 
     // JSON output goes to stdout, just ensure it doesn't panic
-    generate_dev_certs(&config, true)
+    generate_dev_certs(&config)
         .expect("Certificate generation with JSON output should succeed");
 }
 
@@ -123,10 +122,10 @@ fn test_generate_dev_certs_refuses_overwrite_without_force() {
     };
 
     // First generation should succeed
-    generate_dev_certs(&config, false).expect("First generation should succeed");
+    generate_dev_certs(&config).expect("First generation should succeed");
 
     // Second generation without force should fail
-    let result = generate_dev_certs(&config, false);
+    let result = generate_dev_certs(&config);
     assert!(
         result.is_err(),
         "Should refuse to overwrite existing certificates"
@@ -154,7 +153,7 @@ fn test_generate_dev_certs_force_overwrites() {
     };
 
     // First generation
-    generate_dev_certs(&config, false).expect("First generation should succeed");
+    generate_dev_certs(&config).expect("First generation should succeed");
     let first_ca = fs::read_to_string(output_path.join("ca.pem")).unwrap();
 
     // Second generation with force
@@ -166,7 +165,7 @@ fn test_generate_dev_certs_force_overwrites() {
         force: true,
     };
 
-    generate_dev_certs(&force_config, false).expect("Force overwrite should succeed");
+    generate_dev_certs(&force_config).expect("Force overwrite should succeed");
     let second_ca = fs::read_to_string(output_path.join("ca.pem")).unwrap();
 
     // Keys should be different (new generation)
@@ -194,7 +193,7 @@ fn test_private_key_permissions() {
         force: false,
     };
 
-    generate_dev_certs(&config, false).expect("Certificate generation should succeed");
+    generate_dev_certs(&config).expect("Certificate generation should succeed");
 
     // Check CA key permissions
     let ca_key_meta = fs::metadata(output_path.join("ca-key.pem")).unwrap();
@@ -232,7 +231,7 @@ fn test_certificate_permissions_are_readable() {
         force: false,
     };
 
-    generate_dev_certs(&config, false).expect("Certificate generation should succeed");
+    generate_dev_certs(&config).expect("Certificate generation should succeed");
 
     // Check CA cert permissions (should be more permissive than keys)
     let ca_cert_meta = fs::metadata(output_path.join("ca.pem")).unwrap();
@@ -261,7 +260,7 @@ fn test_generated_certificates_are_valid_pem() {
         force: false,
     };
 
-    generate_dev_certs(&config, false).expect("Certificate generation should succeed");
+    generate_dev_certs(&config).expect("Certificate generation should succeed");
 
     // Validate PEM format for certificates
     for cert_name in &["ca.pem", "server.pem", "client.pem"] {
@@ -314,7 +313,7 @@ fn test_generate_client_cert_with_existing_ca() {
         force: false,
     };
 
-    generate_dev_certs(&config, false).expect("Initial certificate generation should succeed");
+    generate_dev_certs(&config).expect("Initial certificate generation should succeed");
 
     // Generate an additional client certificate
     let client_output = output_path.join("clients");
@@ -324,7 +323,6 @@ fn test_generate_client_cert_with_existing_ca() {
         &output_path.join("ca.pem"),
         &output_path.join("ca-key.pem"),
         365,
-        false,
     )
     .expect("Client certificate generation should succeed");
 
@@ -355,7 +353,7 @@ fn test_generate_client_cert_sanitizes_name() {
         force: false,
     };
 
-    generate_dev_certs(&config, false).expect("Initial certificate generation should succeed");
+    generate_dev_certs(&config).expect("Initial certificate generation should succeed");
 
     // Generate client cert with special characters in name
     let client_output = output_path.join("clients");
@@ -365,7 +363,6 @@ fn test_generate_client_cert_sanitizes_name() {
         &output_path.join("ca.pem"),
         &output_path.join("ca-key.pem"),
         365,
-        false,
     )
     .expect("Client certificate generation should succeed");
 
@@ -392,7 +389,6 @@ fn test_generate_client_cert_missing_ca() {
         &output_path.join("nonexistent-ca.pem"),
         &output_path.join("nonexistent-ca-key.pem"),
         365,
-        false,
     );
 
     assert!(result.is_err(), "Should fail when CA doesn't exist");
@@ -411,9 +407,9 @@ fn test_generate_client_cert_missing_ca() {
 
 #[test]
 fn test_tls_command_help() {
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("tls").arg("--help");
+    cmd.arg("stack").arg("tls").arg("--help");
 
     cmd.assert()
         .success()
@@ -425,9 +421,9 @@ fn test_tls_command_help() {
 
 #[test]
 fn test_tls_generate_dev_certs_help() {
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("tls").arg("generate-dev-certs").arg("--help");
+    cmd.arg("stack").arg("tls").arg("generate-dev-certs").arg("--help");
 
     cmd.assert()
         .success()
@@ -443,9 +439,9 @@ fn test_tls_generate_dev_certs_via_cli() {
     let temp_dir = TempDir::new().unwrap();
     let output_path = temp_dir.path();
 
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("tls")
+    cmd.arg("stack").arg("tls")
         .arg("generate-dev-certs")
         .arg("--output")
         .arg(output_path)
@@ -465,9 +461,10 @@ fn test_tls_generate_dev_certs_json_output_via_cli() {
     let temp_dir = TempDir::new().unwrap();
     let output_path = temp_dir.path();
 
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = cargo_bin_cmd!("xtask");
 
     cmd.arg("--json")
+        .arg("stack")
         .arg("tls")
         .arg("generate-dev-certs")
         .arg("--output")
@@ -483,13 +480,13 @@ fn test_tls_generate_dev_certs_json_output_via_cli() {
 
 #[test]
 fn test_tls_check_without_certs() {
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = cargo_bin_cmd!("xtask");
 
     // Unset TLS env vars to ensure clean state
     cmd.env_remove("SINEX_GATEWAY_TLS_CERT")
         .env_remove("SINEX_GATEWAY_TLS_KEY");
 
-    cmd.arg("tls").arg("check");
+    cmd.arg("stack").arg("tls").arg("check");
 
     // Should fail since no certificates are configured
     cmd.assert().failure().stdout(
@@ -512,12 +509,12 @@ fn test_tls_check_with_generated_certs() {
         force: false,
     };
 
-    generate_dev_certs(&config, false).expect("Certificate generation should succeed");
+    generate_dev_certs(&config).expect("Certificate generation should succeed");
 
     // Now check the certificates
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("tls")
+    cmd.arg("stack").arg("tls")
         .arg("check")
         .arg("--cert")
         .arg(output_path.join("server.pem"))
@@ -545,12 +542,12 @@ fn test_tls_check_with_chain_verification() {
         force: false,
     };
 
-    generate_dev_certs(&config, false).expect("Certificate generation should succeed");
+    generate_dev_certs(&config).expect("Certificate generation should succeed");
 
     // Check with chain verification
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("tls")
+    cmd.arg("stack").arg("tls")
         .arg("check")
         .arg("--cert")
         .arg(output_path.join("server.pem"))
@@ -577,15 +574,16 @@ fn test_tls_check_json_output() {
         force: false,
     };
 
-    generate_dev_certs(&config, false).expect("Certificate generation should succeed");
+    generate_dev_certs(&config).expect("Certificate generation should succeed");
 
     // Check with JSON output - include CA to avoid environment variable lookup issues
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = cargo_bin_cmd!("xtask");
 
     // Clear any environment variables that might interfere
     cmd.env_remove("SINEX_GATEWAY_TLS_CLIENT_CA");
 
     cmd.arg("--json")
+        .arg("stack")
         .arg("tls")
         .arg("check")
         .arg("--cert")
@@ -615,12 +613,12 @@ fn test_tls_generate_client_cert_via_cli() {
         force: false,
     };
 
-    generate_dev_certs(&config, false).expect("Certificate generation should succeed");
+    generate_dev_certs(&config).expect("Certificate generation should succeed");
 
     // Generate client cert via CLI
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("tls")
+    cmd.arg("stack").arg("tls")
         .arg("generate-client-cert")
         .arg("--output")
         .arg(output_path)
@@ -652,13 +650,13 @@ fn test_tls_setup_env_creates_env_file() {
         force: false,
     };
 
-    generate_dev_certs(&config, false).expect("Certificate generation should succeed");
+    generate_dev_certs(&config).expect("Certificate generation should succeed");
 
     // Setup env file
     let env_file = output_path.join(".env.tls");
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("tls")
+    cmd.arg("stack").arg("tls")
         .arg("setup-env")
         .arg("--tls-dir")
         .arg(output_path)
@@ -695,13 +693,13 @@ fn test_tls_setup_env_with_mtls() {
         force: false,
     };
 
-    generate_dev_certs(&config, false).expect("Certificate generation should succeed");
+    generate_dev_certs(&config).expect("Certificate generation should succeed");
 
     // Setup env with mTLS
     let env_file = output_path.join(".env.mtls");
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("tls")
+    cmd.arg("stack").arg("tls")
         .arg("setup-env")
         .arg("--tls-dir")
         .arg(output_path)
@@ -728,9 +726,9 @@ fn test_tls_setup_env_with_mtls() {
 
 #[test]
 fn test_tls_check_nonexistent_cert() {
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("tls")
+    cmd.arg("stack").arg("tls")
         .arg("check")
         .arg("--cert")
         .arg("/nonexistent/path/cert.pem")
@@ -750,9 +748,9 @@ fn test_tls_check_invalid_cert_content() {
     fs::write(&invalid_cert, "not a valid certificate").unwrap();
     fs::write(&invalid_key, "not a valid key").unwrap();
 
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("tls")
+    cmd.arg("stack").arg("tls")
         .arg("check")
         .arg("--cert")
         .arg(&invalid_cert)
@@ -768,9 +766,9 @@ fn test_tls_setup_env_missing_certs() {
     let empty_dir = temp_dir.path();
     let env_file = empty_dir.join(".env.tls");
 
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("tls")
+    cmd.arg("stack").arg("tls")
         .arg("setup-env")
         .arg("--tls-dir")
         .arg(empty_dir)
@@ -801,7 +799,7 @@ fn test_generate_certs_in_readonly_directory() {
         force: false,
     };
 
-    let result = generate_dev_certs(&config, false);
+    let result = generate_dev_certs(&config);
 
     // Restore permissions for cleanup
     let _ = fs::set_permissions(&readonly_dir, Permissions::from_mode(0o755));
@@ -830,7 +828,7 @@ fn test_generate_certs_with_various_validity_periods() {
             force: false,
         };
 
-        generate_dev_certs(&config, false)
+        generate_dev_certs(&config)
             .unwrap_or_else(|_| panic!("Certificate generation should succeed for {} days", days));
 
         // Just verify files exist

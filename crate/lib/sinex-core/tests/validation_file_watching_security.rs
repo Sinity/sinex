@@ -3,7 +3,7 @@ use sinex_core::types::validation::file_watching_security::{
     check_path_depth, validate_discovered_file, validate_watch_path, validate_watch_paths,
     FileWatchingSecurityPolicy,
 };
-use sinex_test_utils::sinex_test;
+use xtask::sandbox::sinex_test;
 
 #[sinex_test]
 fn file_watching_policy_respects_forbidden_paths() -> TestResult<()> {

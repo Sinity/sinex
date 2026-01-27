@@ -350,7 +350,7 @@ pub async fn handle_ops_cancel(
 mod tests {
     use super::*;
     use serde_json::json;
-    use sinex_test_utils::{sinex_test, TestContext};
+    use xtask::sandbox::{sinex_test, TestContext};
 
     #[sinex_test]
     async fn ops_start_creates_operation(ctx: &TestContext) -> TestResult<()> {

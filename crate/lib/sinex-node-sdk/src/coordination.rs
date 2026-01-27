@@ -93,7 +93,7 @@ mod tests {
     use sinex_core::types::buffers::DEFAULT_EVENT_CHANNEL_SIZE;
     use sinex_core::types::ulid::Ulid;
     use sinex_core::JsonValue;
-    use sinex_test_utils::{sinex_test, EphemeralNats, TestContext, TestResult};
+    use xtask::sandbox::{sinex_test, EphemeralNats, TestContext, TestResult};
     use std::collections::HashMap;
     use std::sync::Arc;
     use tokio::sync::mpsc;

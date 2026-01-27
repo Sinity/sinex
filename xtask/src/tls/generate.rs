@@ -25,7 +25,7 @@ pub struct CertConfig {
 /// - CA certificate and key
 /// - Server certificate and key (signed by CA)
 /// - Client certificate and key (signed by CA)
-pub fn generate_dev_certs(config: &CertConfig, json: bool) -> Result<()> {
+pub fn generate_dev_certs(config: &CertConfig) -> Result<serde_json::Value> {
     // Check output directory
     if config.output_dir.exists() && !config.force {
         let ca_exists = config.output_dir.join("ca.pem").exists();
@@ -67,64 +67,20 @@ pub fn generate_dev_certs(config: &CertConfig, json: bool) -> Result<()> {
     write_pem(&client_cert_path, &client_cert_pem)?;
     write_pem_with_mode(&client_key_path, &client_key_pem, 0o600)?;
 
-    if json {
-        let result = serde_json::json!({
-            "status": "success",
-            "output_dir": config.output_dir.display().to_string(),
-            "files": {
-                "ca_cert": ca_cert_path.display().to_string(),
-                "ca_key": ca_key_path.display().to_string(),
-                "server_cert": server_cert_path.display().to_string(),
-                "server_key": server_key_path.display().to_string(),
-                "client_cert": client_cert_path.display().to_string(),
-                "client_key": client_key_path.display().to_string(),
-            },
-            "san": config.san,
-            "validity_days": config.validity_days,
-        });
-        println!("{}", serde_json::to_string_pretty(&result)?);
-    } else {
-        println!(
-            "TLS certificates generated in: {}",
-            config.output_dir.display()
-        );
-        println!();
-        println!("Generated files:");
-        println!("  CA certificate:     {}", ca_cert_path.display());
-        println!(
-            "  CA key:             {} (mode 0600)",
-            ca_key_path.display()
-        );
-        println!("  Server certificate: {}", server_cert_path.display());
-        println!(
-            "  Server key:         {} (mode 0600)",
-            server_key_path.display()
-        );
-        println!("  Client certificate: {}", client_cert_path.display());
-        println!(
-            "  Client key:         {} (mode 0600)",
-            client_key_path.display()
-        );
-        println!();
-        println!("Subject Alternative Names: {}", config.san.join(", "));
-        println!("Validity: {} days", config.validity_days);
-        println!();
-        println!("Usage:");
-        println!(
-            "  export SINEX_GATEWAY_TLS_CERT={}",
-            server_cert_path.display()
-        );
-        println!(
-            "  export SINEX_GATEWAY_TLS_KEY={}",
-            server_key_path.display()
-        );
-        println!(
-            "  export SINEX_GATEWAY_TLS_CLIENT_CA={}  # for mTLS",
-            ca_cert_path.display()
-        );
-    }
-
-    Ok(())
+    Ok(serde_json::json!({
+        "status": "success",
+        "output_dir": config.output_dir.display().to_string(),
+        "files": {
+            "ca_cert": ca_cert_path.display().to_string(),
+            "ca_key": ca_key_path.display().to_string(),
+            "server_cert": server_cert_path.display().to_string(),
+            "server_key": server_key_path.display().to_string(),
+            "client_cert": client_cert_path.display().to_string(),
+            "client_key": client_key_path.display().to_string(),
+        },
+        "san": config.san,
+        "validity_days": config.validity_days,
+    }))
 }
 
 /// Generate a Certificate Authority.
@@ -248,8 +204,7 @@ pub fn generate_client_cert(
     ca_cert_path: &Path,
     ca_key_path: &Path,
     validity_days: u32,
-    json: bool,
-) -> Result<()> {
+) -> Result<serde_json::Value> {
     // Read CA files
     let ca_cert_pem = fs::read_to_string(ca_cert_path)
         .with_context(|| format!("Failed to read CA certificate: {}", ca_cert_path.display()))?;
@@ -305,27 +260,14 @@ pub fn generate_client_cert(
     write_pem(&cert_path, &cert_pem)?;
     write_pem_with_mode(&key_path, &key_pem, 0o600)?;
 
-    if json {
-        let result = serde_json::json!({
-            "status": "success",
-            "client_name": name,
-            "cert_path": cert_path.display().to_string(),
-            "key_path": key_path.display().to_string(),
-            "validity_days": validity_days,
-            "signed_by": ca_cert_path.display().to_string(),
-        });
-        println!("{}", serde_json::to_string_pretty(&result)?);
-    } else {
-        println!("Client certificate generated for: {name}");
-        println!();
-        println!("  Certificate: {}", cert_path.display());
-        println!("  Private key: {} (mode 0600)", key_path.display());
-        println!();
-        println!("  Signed by:   {}", ca_cert_path.display());
-        println!("  Validity:    {validity_days} days");
-    }
-
-    Ok(())
+    Ok(serde_json::json!({
+        "status": "success",
+        "client_name": name,
+        "cert_path": cert_path.display().to_string(),
+        "key_path": key_path.display().to_string(),
+        "validity_days": validity_days,
+        "signed_by": ca_cert_path.display().to_string(),
+    }))
 }
 
 fn write_pem(path: &Path, content: &str) -> Result<()> {

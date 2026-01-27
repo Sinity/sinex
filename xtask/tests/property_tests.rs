@@ -91,6 +91,8 @@ fn output_command_result_strategy() -> impl Strategy<Value = xtask::output::Comm
 
                     timestamp: chrono::Utc::now(),
                     details: None,
+                    data: None, // Simplified for now, could use a json strategy
+                    is_silent: false,
                     errors,
                     suggested_fixes,
                     message: None,
@@ -114,6 +116,8 @@ fn command_result_strategy() -> impl Strategy<Value = CommandResult> {
                 status,
                 message,
                 details,
+                data: None,
+                is_silent: false,
                 errors,
                 warnings,
                 duration_secs,

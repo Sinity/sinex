@@ -10,8 +10,8 @@
 // - **Individual tests**: 15-30 seconds
 // - **Resource usage**: Minimal (file system only)
 
-use sinex_test_utils::prelude::*;
-use sinex_test_utils::timing_utils::Timeouts;
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::Timeouts;
 use std::fs;
 
 /// Test configuration validation and hot reload scenarios

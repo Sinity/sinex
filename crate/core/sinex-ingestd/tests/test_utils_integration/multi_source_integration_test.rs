@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use sinex_core::db::models::{EventFactory, RawEvent};
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use std::time::Duration;
 use tokio::sync::mpsc;
 

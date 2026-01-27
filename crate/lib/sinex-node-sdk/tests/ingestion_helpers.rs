@@ -6,7 +6,7 @@ use sinex_node_sdk::ingestion_helpers::{
     ChangeType, IdempotenceKey, LedgerEntry, LedgerReader, RowIdentitySpec, SliceAssembler,
     SnapshotDiff, SnapshotRow, TimeQuality,
 };
-use sinex_test_utils::sinex_test;
+use xtask::sandbox::sinex_test;
 
 #[sinex_test]
 async fn slice_assembler_emits_complete_lines() -> color_eyre::Result<()> {

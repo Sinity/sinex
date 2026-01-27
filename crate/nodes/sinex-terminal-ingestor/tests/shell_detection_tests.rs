@@ -1,5 +1,5 @@
 use sinex_terminal_ingestor::shell_detection::{detect_capabilities, detect_shell_type, ShellType};
-use sinex_test_utils::sinex_test;
+use xtask::sandbox::sinex_test;
 
 #[sinex_test]
 fn detects_common_shell_types() -> TestResult<()> {

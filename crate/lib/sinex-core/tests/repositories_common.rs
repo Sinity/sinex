@@ -1,7 +1,7 @@
 use sinex_core::db::schema::*;
 use sinex_core::repositories::{DbPoolExt, DbResult, EnhancedRepository, TableDef};
 use sinex_core::{Event, Id, JsonValue};
-use sinex_test_utils::{sinex_test, TestContext};
+use xtask::sandbox::{sinex_test, TestContext};
 
 // #[sinex_test]
 // async fn enhanced_repository_counts_records(ctx: TestContext) -> TestResult<()> {

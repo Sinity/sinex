@@ -8,7 +8,7 @@
 
 use sinex_core::db::validation::EventValidator;
 use sinex_core::{Event, EventSource, EventType, HostName, Id, JsonValue, Ulid};
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 type RawEvent = Event<JsonValue>;
 // =============================================================================
 // Property Test Helpers

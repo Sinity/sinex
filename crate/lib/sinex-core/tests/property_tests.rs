@@ -12,7 +12,7 @@ use serde_json::json;
 use std::collections::HashSet;
 // Using shorter imports from sinex-core's re-exports
 use sinex_core::{Event, EventSource, EventType, HostName, Id, JsonValue, Ulid};
-use sinex_test_utils::{sinex_proptest, test_event};
+use xtask::sandbox::{sinex_proptest, test_event};
 
 // =============================================================================
 // ULID PROPERTY TESTS - Invariants for time-ordered identifiers

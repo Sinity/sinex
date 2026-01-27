@@ -967,8 +967,8 @@ mod tests {
     use sinex_core::db::query_helpers::ulid_to_uuid;
     use sinex_core::Id;
     use sinex_node_sdk::{acquisition_manager::RotationPolicy, AcquisitionManager};
-    use sinex_test_utils::sinex_test;
-    use sinex_test_utils::{
+    use xtask::sandbox::sinex_test;
+    use xtask::sandbox::{
         prelude::*, start_test_ingestd_with_config, TestIngestdConfig, TestRuntime,
         TestRuntimeBuilder,
     };
@@ -1073,7 +1073,7 @@ mod tests {
         };
 
         let expected_bytes = command.as_bytes().len() as i64;
-        sinex_test_utils::timing_utils::WaitHelpers::wait_for_condition(
+        xtask::sandbox::timing::WaitHelpers::wait_for_condition(
             || {
                 let pool = ctx.pool.clone();
                 let material_ulid = material_ulid;

@@ -1,7 +1,7 @@
 use sinex_core::db::query_helpers::{is_retryable_db_error, RetryConfig};
 use sinex_core::types::error::SinexError;
 use sinex_core::types::{retry, timeouts};
-use sinex_test_utils::sinex_test;
+use xtask::sandbox::sinex_test;
 
 #[sinex_test]
 async fn retry_config_default() -> TestResult<()> {

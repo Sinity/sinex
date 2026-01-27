@@ -1,6 +1,6 @@
 use sinex_core::types::{validation::config_validation::ConfigValidation, Seconds};
 use sinex_ingestd::IngestdConfig;
-use sinex_test_utils::sinex_test;
+use xtask::sandbox::sinex_test;
 
 #[sinex_test]
 fn defaults_match_constants() -> TestResult<()> {

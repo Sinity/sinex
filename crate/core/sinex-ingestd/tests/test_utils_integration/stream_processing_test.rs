@@ -7,7 +7,7 @@
 use async_nats::jetstream::consumer::pull::Config as ConsumerConfig;
 use futures::StreamExt;
 use serde_json::json;
-use sinex_test_utils::{prelude::*, EphemeralNats};
+use xtask::sandbox::{prelude::*, EphemeralNats};
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::time::timeout;

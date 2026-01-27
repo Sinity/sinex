@@ -1238,7 +1238,7 @@ mod tests {
     };
     use reqwest::Client;
     use serde_json::json;
-    use sinex_test_utils::{sinex_test, TestResult};
+    use xtask::sandbox::{sinex_test, TestResult};
     use std::net::SocketAddr;
     use tokio::sync::Mutex;
     use tokio::task::JoinHandle;

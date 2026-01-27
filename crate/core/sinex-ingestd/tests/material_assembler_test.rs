@@ -4,7 +4,7 @@ use async_nats::jetstream;
 use serde_json::json;
 use sinex_ingestd::{IngestdResult, MaterialAssembler};
 use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
@@ -191,7 +191,7 @@ async fn assembler_handles_early_slices_before_begin(ctx: TestContext) -> TestRe
     .await?;
 
     let material_state_dir = state_path.join(material_id.to_string());
-    sinex_test_utils::timing_utils::WaitHelpers::wait_for_condition(
+    xtask::sandbox::timing::WaitHelpers::wait_for_condition(
         || {
             let material_state_dir = material_state_dir.clone();
             async move {
@@ -238,7 +238,7 @@ async fn assembler_handles_early_slices_before_begin(ctx: TestContext) -> TestRe
 
     // Wait for completion
     let pool = ctx.pool.clone();
-    sinex_test_utils::timing_utils::WaitHelpers::wait_for_condition(
+    xtask::sandbox::timing::WaitHelpers::wait_for_condition(
         || {
             let pool = pool.clone();
             async move {
@@ -256,7 +256,7 @@ async fn assembler_handles_early_slices_before_begin(ctx: TestContext) -> TestRe
     )
     .await?;
 
-    sinex_test_utils::timing_utils::WaitHelpers::wait_for_condition(
+    xtask::sandbox::timing::WaitHelpers::wait_for_condition(
         || {
             let material_state_dir = material_state_dir.clone();
             async move {
@@ -423,7 +423,7 @@ async fn assembler_cleans_up_state_on_corruption(ctx: TestContext) -> TestResult
 
     // Verify cleanup happened despite failure
     let material_state_dir = state_path.join(material_id.to_string());
-    sinex_test_utils::timing_utils::WaitHelpers::wait_for_condition(
+    xtask::sandbox::timing::WaitHelpers::wait_for_condition(
         || {
             let material_state_dir = material_state_dir.clone();
             async move {
@@ -483,7 +483,7 @@ async fn assembler_handles_end_before_begin(ctx: TestContext) -> TestResult<()> 
     .await?;
 
     let material_state_dir = state_path.join(material_id.to_string());
-    sinex_test_utils::timing_utils::WaitHelpers::wait_for_condition(
+    xtask::sandbox::timing::WaitHelpers::wait_for_condition(
         || {
             let material_state_dir = material_state_dir.clone();
             async move {
@@ -615,7 +615,7 @@ async fn assembler_is_idempotent_for_duplicate_slices(ctx: TestContext) -> TestR
 
     let pool = ctx.pool.clone();
 
-    sinex_test_utils::timing_utils::WaitHelpers::wait_for_condition(
+    xtask::sandbox::timing::WaitHelpers::wait_for_condition(
         || {
             let pool = pool.clone();
 

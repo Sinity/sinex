@@ -7,8 +7,8 @@
 use serde_json::json;
 use sinex_core::types::events::{event_types, sources, EventFactory};
 use async_nats::jetstream::Context as JetStream;
-use sinex_test_utils::nats::EphemeralNats;
-use sinex_test_utils::{prelude::*, timing_utils::Timeouts};
+use xtask::sandbox::nats::EphemeralNats;
+use xtask::sandbox::{prelude::*, timing_utils::Timeouts};
 use std::collections::HashMap;
 use std::time::{Duration as StdDuration, Instant};
 

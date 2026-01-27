@@ -383,10 +383,7 @@ async fn test_extension_functionality(
         .wrap_err("Failed to test ULID generation functionality (gen_ulid() function missing?)")?;
     messages.push(format!(
         "✓ ULID generation: {}",
-        ulid_result
-            .ulid
-            .as_deref()
-            .unwrap_or("OK")
+        ulid_result.ulid.as_deref().unwrap_or("OK")
     ));
 
     // Test TimescaleDB extension by checking version

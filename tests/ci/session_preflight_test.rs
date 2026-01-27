@@ -1,11 +1,11 @@
 //! Tests for session preflight reset helpers.
-use sinex_test_utils::{sinex_test, test_db_pool, TestResult};
+use xtask::sandbox::{sinex_test, test_db_pool, TestResult};
 
 /// Intentionally corrupt session state and ensure ensure_default_session_state fixes it.
 #[sinex_test]
 async fn preflight_resets_session_state() -> TestResult<()> {
-    use sinex_test_utils::database_pool::ensure_default_session_state;
-    use sinex_test_utils::cleanup_config::CleanupConfig;
+    use xtask::sandbox::db::ensure_default_session_state;
+    use xtask::sandbox::fs::CleanupConfig;
 
     let pool = test_db_pool().await;
     let mut conn = pool.acquire().await?;

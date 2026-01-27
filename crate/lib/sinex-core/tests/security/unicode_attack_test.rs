@@ -9,7 +9,7 @@
 
 use sinex_core::db::sanitization::EventSanitizer;
 use sinex_core::{DynamicPayload, Id};
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use std::collections::HashMap;
 use unicode_normalization::UnicodeNormalization;
 

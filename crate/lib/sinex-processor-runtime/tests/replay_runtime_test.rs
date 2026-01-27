@@ -3,7 +3,7 @@ use color_eyre::eyre::eyre;
 use serde_json::{json, Value as JsonValue};
 use sinex_core::types::events::DynamicPayload;
 use sinex_processor_runtime::replay::{ReplayMode, ReplayProgress, ReplayRuntimeExt};
-use sinex_test_utils::{sinex_test, TestContext, TestRuntimeBuilder};
+use xtask::sandbox::{sinex_test, TestContext, TestRuntimeBuilder};
 use tokio::time::{timeout, Duration};
 
 #[sinex_test]

@@ -37,8 +37,7 @@ pub fn check_tls_config(
     ca_path: Option<PathBuf>,
     verify_chain: bool,
     nats: bool,
-    json: bool,
-) -> Result<()> {
+) -> Result<TlsCheckResult> {
     let mut result = TlsCheckResult {
         valid: true,
         certificate: None,
@@ -212,18 +211,7 @@ pub fn check_tls_config(
         check_nats_tls(&mut result);
     }
 
-    // Output results
-    if json {
-        println!("{}", serde_json::to_string_pretty(&result)?);
-    } else {
-        print_check_result(&result);
-    }
-
-    if result.valid {
-        Ok(())
-    } else {
-        anyhow::bail!("TLS configuration check failed")
-    }
+    Ok(result)
 }
 
 fn check_certificate(path: &PathBuf) -> Result<CertInfo> {
@@ -390,79 +378,5 @@ fn check_nats_tls(result: &mut TlsCheckResult) {
                 .push(format!("NATS client key not found: {key}"));
             result.valid = false;
         }
-    }
-}
-
-fn print_check_result(result: &TlsCheckResult) {
-    let status = if result.valid { "PASS" } else { "FAIL" };
-    let status_sym = if result.valid { "\u{2713}" } else { "\u{2717}" };
-
-    println!("TLS Configuration Check: {status_sym} {status}");
-    println!();
-
-    // Certificate info
-    if let Some(ref cert) = result.certificate {
-        println!("Server Certificate:");
-        println!("  Path:    {}", cert.path);
-        println!("  Subject: {}", cert.subject);
-        println!("  Issuer:  {}", cert.issuer);
-        println!("  Valid:   {} - {}", cert.not_before, cert.not_after);
-        if !cert.san.is_empty() {
-            println!("  SANs:    {}", cert.san.join(", "));
-        }
-        if cert.is_expired {
-            println!("  Status:  \u{2717} EXPIRED");
-        } else {
-            println!(
-                "  Status:  \u{2713} Valid ({} days until expiry)",
-                cert.days_until_expiry
-            );
-        }
-        println!();
-    }
-
-    // Key match
-    if let Some(matches) = result.key_matches {
-        let sym = if matches { "\u{2713}" } else { "\u{2717}" };
-        println!(
-            "Key/Certificate Match: {sym} {}",
-            if matches { "OK" } else { "MISMATCH" }
-        );
-        println!();
-    }
-
-    // CA info
-    if let Some(ref ca) = result.ca {
-        println!("CA Certificate:");
-        println!("  Path:    {}", ca.path);
-        println!("  Subject: {}", ca.subject);
-        println!("  Is CA:   {}", if ca.is_ca { "Yes" } else { "No" });
-        if ca.is_expired {
-            println!("  Status:  \u{2717} EXPIRED");
-        } else {
-            println!(
-                "  Status:  \u{2713} Valid ({} days until expiry)",
-                ca.days_until_expiry
-            );
-        }
-        println!();
-    }
-
-    // Issues
-    if !result.issues.is_empty() {
-        println!("Issues:");
-        for issue in &result.issues {
-            println!("  \u{2717} {issue}");
-        }
-        println!();
-    }
-
-    // Warnings
-    if !result.warnings.is_empty() {
-        println!("Warnings:");
-        for warning in &result.warnings {
-            println!("  \u{26A0} {warning}");
-        }
-        println!();
     }
 }

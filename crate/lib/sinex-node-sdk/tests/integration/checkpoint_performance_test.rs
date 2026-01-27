@@ -13,7 +13,7 @@ use futures::StreamExt;
 use serde_json::json;
 use sinex_core::types::ulid::Ulid;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
-use sinex_test_utils::{prelude::*, EphemeralNats};
+use xtask::sandbox::{prelude::*, EphemeralNats};
 use std::time::{Duration as StdDuration, Instant};
 
 async fn provision_stream(js: &JetStream, stream: &str, subject: &str) -> Result<()> {

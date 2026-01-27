@@ -2,8 +2,8 @@ use camino::Utf8PathBuf;
 use serde_json::json;
 use sinex_core::nats::NatsConnectionConfig;
 use sinex_ingestd::{config::IngestdConfig, service::IngestService, JetStreamTopology};
-use sinex_test_utils::prelude::*;
-use sinex_test_utils::timing_utils::{Timeouts, WaitHelpers};
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 use tempfile::TempDir;
 use tokio::time::{timeout, Duration};
 

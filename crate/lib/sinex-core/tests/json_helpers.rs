@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_core::error::Result;
 use sinex_core::types::utils::json_helpers::{extract_field, parse_json};
-use sinex_test_utils::sinex_test;
+use xtask::sandbox::sinex_test;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 struct TestStruct {

@@ -8,7 +8,7 @@ use proptest::strategy::ValueTree;
 use proptest::test_runner::TestCaseError;
 use sinex_node_sdk::Checkpoint;
 use sinex_node_sdk::{CheckpointManager, CheckpointState};
-use sinex_test_utils::{prelude::*, sinex_prop};
+use xtask::sandbox::{prelude::*, sinex_prop};
 use std::sync::Arc;
 
 /// Helper to convert color_eyre::Report errors to TestCaseError for property tests
@@ -59,9 +59,13 @@ async fn checkpoint_updates_are_idempotent(
         .ensure_checkpoint_kv()
         .await
         .map_err(report_to_test_error)?;
+    
+    let case_id = sinex_core::Ulid::new().to_string();
+    let unique_processor_name = format!("{processor_name}-{case_id}");
+
     let checkpoint_manager = CheckpointManager::new(
         kv,
-        processor_name.clone(),
+        unique_processor_name.clone(),
         format!("{processor_name}-group"),
         format!("{processor_name}-consumer"),
     );
@@ -116,9 +120,13 @@ async fn checkpoint_recovery_is_robust(
         .ensure_checkpoint_kv()
         .await
         .map_err(report_to_test_error)?;
+    
+    let case_id = sinex_core::Ulid::new().to_string();
+    let unique_processor_name = format!("{processor_name}-{case_id}");
+
     let checkpoint_manager = CheckpointManager::new(
         kv,
-        processor_name.clone(),
+        unique_processor_name.clone(),
         format!("{processor_name}-group"),
         format!("{processor_name}-consumer"),
     );
@@ -165,9 +173,13 @@ async fn concurrent_checkpoint_access_is_safe(
         .ensure_checkpoint_kv()
         .await
         .map_err(report_to_test_error)?;
+    
+    let case_id = sinex_core::Ulid::new().to_string();
+    let unique_processor_name = format!("{processor_name}-{case_id}");
+
     let checkpoint_manager = Arc::new(CheckpointManager::new(
         kv,
-        processor_name.clone(),
+        unique_processor_name.clone(),
         format!("{processor_name}-group"),
         format!("{processor_name}-consumer"),
     ));
@@ -225,9 +237,13 @@ async fn checkpoint_state_transitions_are_valid(
         .ensure_checkpoint_kv()
         .await
         .map_err(report_to_test_error)?;
+    
+    let case_id = sinex_core::Ulid::new().to_string();
+    let unique_processor_name = format!("{processor_name}-{case_id}");
+
     let checkpoint_manager = CheckpointManager::new(
         kv,
-        processor_name.clone(),
+        unique_processor_name.clone(),
         format!("{processor_name}-group"),
         format!("{processor_name}-consumer"),
     );
@@ -297,9 +313,13 @@ async fn checkpoint_data_integrity_is_preserved(
         .ensure_checkpoint_kv()
         .await
         .map_err(report_to_test_error)?;
+    
+    let case_id = sinex_core::Ulid::new().to_string();
+    let unique_processor_name = format!("{processor_name}-{case_id}");
+
     let checkpoint_manager = CheckpointManager::new(
         kv,
-        processor_name.clone(),
+        unique_processor_name.clone(),
         format!("{processor_name}-group"),
         format!("{processor_name}-consumer"),
     );
@@ -383,11 +403,17 @@ async fn checkpoint_cleanup_maintains_consistency(
         .map_err(report_to_test_error)?; // Shared KV for this test run
 
     // Create multiple automata with checkpoints
+    let case_id = sinex_core::Ulid::new().to_string();
     let mut managers = Vec::new();
+    let mut unique_names = Vec::new();
+
     for processor_name in processor_names.iter() {
+        let unique_name = format!("{processor_name}-{case_id}");
+        unique_names.push(unique_name.clone());
+
         let manager = CheckpointManager::new(
             kv.clone(),
-            processor_name.clone(),
+            unique_name,
             format!("{processor_name}-group"),
             format!("{processor_name}-consumer"),
         );
@@ -423,10 +449,11 @@ async fn checkpoint_cleanup_maintains_consistency(
     }
 
     // Test cleanup doesn't affect other automata
+    let first_unique_name = &unique_names[0];
     let first_automaton = &processor_names[0];
     let cleaned_manager = CheckpointManager::new(
         kv.clone(),
-        first_automaton.clone(),
+        first_unique_name.clone(),
         format!("{first_automaton}-group"),
         format!("{first_automaton}-consumer"),
     );

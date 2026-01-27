@@ -15,12 +15,14 @@
 # Use for: CI, pre-commit checks, general development
 # Excludes: perf/stress/external tests
 [profile.default]
-test-threads = 12
-retries = 3
+fail-fast = false
+test-threads = 24
+retries = 0
 slow-timeout = { period = "180s", terminate-after = 1 }
 failure-output = "immediate-final"
 success-output = "never"
 status-level = "pass"
+final-status-level = "fail"
 default-filter = '''
 all() - (
   (package(sinex-schema) & test(test_index_performance_benefit))
@@ -50,7 +52,7 @@ store-failure-output = true
 # Use for: Rapid feedback during development
 # No retries, shorter timeout
 [profile.fast]
-test-threads = 12
+test-threads = 24
 retries = 0
 slow-timeout = { period = "60s", terminate-after = 1 }
 failure-output = "immediate-final"

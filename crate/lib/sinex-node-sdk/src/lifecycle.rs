@@ -500,7 +500,7 @@ mod tests {
     use std::time::Duration;
     use tokio::time::timeout;
 
-    #[tokio::test]
+    #[sinex_test]
     async fn shutdown_future_notifies_without_polling() {
         let manager = LifecycleManager::new("test-service".to_string());
         let mut wait_future = Box::pin(manager.shutdown_future());
@@ -516,7 +516,7 @@ mod tests {
             .expect("shutdown future should resolve immediately");
     }
 
-    #[tokio::test]
+    #[sinex_test]
     async fn status_lock_survives_panics() {
         let manager = LifecycleManager::new("test-service".to_string());
         let status_handle = manager.status.clone();

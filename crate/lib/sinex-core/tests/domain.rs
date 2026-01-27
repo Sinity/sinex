@@ -10,7 +10,7 @@ use sinex_core::types::events::payloads::{
     shell::TerminalMonitoringStartedPayload,
 };
 use sinex_core::EventPayload;
-use sinex_test_utils::sinex_test;
+use xtask::sandbox::sinex_test;
 
 #[sinex_test]
 fn string_wrappers_retain_values() -> TestResult<()> {

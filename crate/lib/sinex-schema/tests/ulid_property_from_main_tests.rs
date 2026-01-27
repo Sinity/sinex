@@ -5,7 +5,7 @@
 use chrono::{DateTime, Utc};
 use proptest::prelude::*;
 use sinex_schema::ulid::Ulid;
-use sinex_test_utils::{sinex_proptest, sinex_test};
+use xtask::sandbox::{sinex_proptest, sinex_test};
 use std::collections::HashSet;
 use std::sync::{Arc, Barrier};
 

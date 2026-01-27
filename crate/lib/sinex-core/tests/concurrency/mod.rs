@@ -7,7 +7,7 @@
 //! - Lock contention analysis
 //! - Atomic operation verification
 
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 
 /// Concurrent checkpoint update tests
 pub mod checkpoint_concurrency_test;

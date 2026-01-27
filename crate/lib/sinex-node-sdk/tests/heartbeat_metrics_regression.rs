@@ -6,7 +6,7 @@ use serde_json::Value;
 use sinex_core::types::events::payloads::process::ProcessStatus;
 use sinex_core::types::Seconds;
 use sinex_node_sdk::heartbeat::{HeartbeatEmitter, HeartbeatLogSink};
-use sinex_test_utils::sinex_test;
+use xtask::sandbox::sinex_test;
 
 #[derive(Default, Debug)]
 struct RecordingSink {

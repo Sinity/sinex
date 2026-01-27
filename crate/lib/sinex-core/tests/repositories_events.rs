@@ -5,7 +5,7 @@ use sinex_core::types::domain::SanitizedPath;
 use sinex_core::types::events::payloads::{FileCreatedPayload, KittyCommandExecutedPayload};
 use sinex_core::types::Id;
 use sinex_core::{Event, Provenance};
-use sinex_test_utils::{sinex_test, TestContext};
+use xtask::sandbox::{sinex_test, TestContext};
 
 #[sinex_test]
 async fn events_repository_inserts_typed_events(ctx: TestContext) -> TestResult<()> {

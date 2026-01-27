@@ -2,7 +2,7 @@ use proptest::prelude::*;
 use sinex_core::types::ulid::Ulid;
 use sinex_node_sdk::checkpoint::CheckpointState;
 use sinex_node_sdk::stream_processor::Checkpoint;
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 
 fn arb_ulid() -> impl Strategy<Value = Ulid> {
     prop::array::uniform16(any::<u8>())

@@ -1,7 +1,7 @@
 use chrono::{Duration, Utc};
 use serde_json::json;
 use sinex_core::DynamicPayload;
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn pipeline_preserves_ingest_order_over_ts_orig(ctx: TestContext) -> TestResult<()> {

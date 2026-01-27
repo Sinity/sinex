@@ -4,16 +4,16 @@
 //! stored in git-annex with metadata in PostgreSQL.
 
 use chrono::Utc;
-use color_eyre::eyre::{eyre, Context, Result};
 use num_traits::ToPrimitive;
 use sqlx::Error as SqlxError;
 use sqlx::PgPool;
 use tokio::time::{sleep, Duration};
 use tracing::instrument;
 
+use crate::db::repositories::common::{db_error, DbResult};
 use crate::models::Blob;
 use crate::types::Id;
-use crate::BlobRecord;
+use crate::{BlobRecord, SinexError};
 
 /// Repository for blob operations
 #[derive(Debug, Clone)]
@@ -29,7 +29,16 @@ impl BlobRepository {
 
     /// Insert a new blob
     #[instrument(skip(self, blob))]
-    pub async fn insert(&self, blob: Blob) -> Result<Blob> {
+    pub async fn insert(&self, blob: Blob) -> DbResult<Blob> {
+        self.insert_with_executor(&self.pool, blob).await
+    }
+
+    /// Insert a new blob with a specific executor (e.g. for transactions)
+    #[instrument(skip(self, executor, blob))]
+    pub async fn insert_with_executor<'e, E>(&self, executor: E, blob: Blob) -> DbResult<Blob>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+    {
         let natural_backend = blob.annex_backend.clone();
         let natural_hash = blob.content_hash.clone();
         let natural_size = blob.size_bytes;
@@ -69,7 +78,7 @@ impl BlobRepository {
             record.last_verified_at,
             record.verification_status
         )
-        .fetch_one(&self.pool)
+        .fetch_one(executor)
         .await;
 
         match insert_result {
@@ -104,33 +113,28 @@ impl BlobRepository {
 
                 eprintln!(
                     "Blob insert dedup lookup failed after {} retries (backend={}, hash={}, size={})",
-                    MAX_FETCH_RETRIES,
-                    natural_backend,
-                    natural_hash,
-                    natural_size
+                    MAX_FETCH_RETRIES, natural_backend, natural_hash, natural_size
                 );
-                Err(eyre!(
+                Err(SinexError::database(format!(
                     "Blob exists but could not be retrieved after {} retries (backend={}, hash={}, size={})",
                     MAX_FETCH_RETRIES,
                     natural_backend,
                     natural_hash,
                     natural_size
-                ))
+                )))
             }
             Err(err) => {
-                return Err(eyre!(
+                return Err(SinexError::database(format!(
                     "Failed to insert blob (backend={}, hash={}): {}",
-                    natural_backend,
-                    natural_hash,
-                    err
-                ));
+                    natural_backend, natural_hash, err
+                )));
             }
         }
     }
 
     /// Get a blob by ID
     #[instrument(skip(self))]
-    pub async fn get_by_id(&self, id: Id<Blob>) -> Result<Option<Blob>> {
+    pub async fn get_by_id(&self, id: Id<Blob>) -> DbResult<Option<Blob>> {
         let id_uuid = sinex_schema::ulid_conversions::to_db(*id.as_ulid());
         let result = sqlx::query_as!(
             BlobRecord,
@@ -154,7 +158,7 @@ impl BlobRepository {
         )
         .fetch_optional(&self.pool)
         .await
-        .wrap_err("Failed to get blob by id")?;
+        .map_err(|e| db_error(e, "get blob by id"))?;
 
         Ok(result.map(Into::into))
     }
@@ -166,7 +170,7 @@ impl BlobRepository {
         backend: &str,
         hash: &str,
         size: i64,
-    ) -> Result<Option<Blob>> {
+    ) -> DbResult<Option<Blob>> {
         let result = sqlx::query_as!(
             BlobRecord,
             r#"
@@ -191,14 +195,14 @@ impl BlobRepository {
         )
         .fetch_optional(&self.pool)
         .await
-        .wrap_err("Failed to get blob by content")?;
+        .map_err(|e| db_error(e, "get blob by content"))?;
 
         Ok(result.map(Into::into))
     }
 
     /// Find blob by BLAKE3 checksum (for deduplication)
     #[instrument(skip(self))]
-    pub async fn find_by_blake3(&self, blake3_hash: &str) -> Result<Option<Blob>> {
+    pub async fn find_by_blake3(&self, blake3_hash: &str) -> DbResult<Option<Blob>> {
         let result = sqlx::query_as!(
             BlobRecord,
             r#"
@@ -222,14 +226,14 @@ impl BlobRepository {
         )
         .fetch_optional(&self.pool)
         .await
-        .wrap_err("Failed to find blob by BLAKE3")?;
+        .map_err(|e| db_error(e, "find blob by BLAKE3"))?;
 
         Ok(result.map(Into::into))
     }
 
     /// Update blob verification status
     #[instrument(skip(self))]
-    pub async fn update_verification_status(&self, id: Id<Blob>, status: &str) -> Result<()> {
+    pub async fn update_verification_status(&self, id: Id<Blob>, status: &str) -> DbResult<()> {
         let id_uuid = sinex_schema::ulid_conversions::to_db(*id.as_ulid());
         sqlx::query!(
             r#"
@@ -245,14 +249,14 @@ impl BlobRepository {
         )
         .execute(&self.pool)
         .await
-        .wrap_err("Failed to update verification status")?;
+        .map_err(|e| db_error(e, "update verification status"))?;
 
         Ok(())
     }
 
     /// Add an original filename to the metadata array
     #[instrument(skip(self))]
-    pub async fn add_original_filename(&self, id: Id<Blob>, filename: &str) -> Result<()> {
+    pub async fn add_original_filename(&self, id: Id<Blob>, filename: &str) -> DbResult<()> {
         // Update the metadata JSON to include the filename in an array
         let id_uuid = sinex_schema::ulid_conversions::to_db(*id.as_ulid());
         sqlx::query!(
@@ -271,14 +275,14 @@ impl BlobRepository {
         )
         .execute(&self.pool)
         .await
-        .wrap_err("Failed to add original filename")?;
+        .map_err(|e| db_error(e, "add original filename"))?;
 
         Ok(())
     }
 
     /// Get storage statistics
     #[instrument(skip(self))]
-    pub async fn get_storage_stats(&self) -> Result<StorageStats> {
+    pub async fn get_storage_stats(&self) -> DbResult<StorageStats> {
         let stats = sqlx::query!(
             r#"
             SELECT 
@@ -297,7 +301,7 @@ impl BlobRepository {
         )
         .fetch_one(&self.pool)
         .await
-        .wrap_err("Failed to get storage statistics")?;
+        .map_err(|e| db_error(e, "get storage statistics"))?;
 
         Ok(StorageStats {
             total_blobs: stats.total_blobs.to_i64().unwrap_or(0),

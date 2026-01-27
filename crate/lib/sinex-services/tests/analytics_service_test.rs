@@ -8,12 +8,12 @@ use color_eyre::eyre::ensure;
 use serde_json::json;
 use sinex_core::types::Ulid;
 use sinex_services::{AnalyticsService, SearchQuery, SearchService};
-use sinex_test_utils::dataset_seeds::{
+use xtask::sandbox::dataset_seeds::{
     seed_analytics_dataset_perf_via_scope, seed_analytics_dataset_semantic_min_via_scope,
     seed_events_via_scope, seed_query_dataset_semantic_min_via_scope, AnalyticsDataset, EventSpec,
     QueryDataset, SeedClock,
 };
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use sqlx::postgres::PgPoolOptions;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -631,7 +631,7 @@ async fn test_activity_heatmap(ctx: TestContext) -> TestResult<()> {
     seed_analytics_dataset(&scope).await?;
 
     let service = Arc::new(AnalyticsService::new(ctx.pool.clone()));
-    let heatmap = service.activity_heatmap(60, 10).await?;
+    let heatmap = service.activity_heatmap(None, None, 60, 10).await?;
     assert!(!heatmap.is_empty(), "Should have activity data");
 
     for window in heatmap.windows(2) {

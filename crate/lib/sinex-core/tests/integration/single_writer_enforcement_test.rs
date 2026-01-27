@@ -5,7 +5,7 @@
 //! - Nodes must go through ingestd for all event writes
 //! - Events only appear in DB after commit (post-commit publish property)
 
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use sqlx::Row;
 
 /// Test that nodes cannot directly write to core.events table

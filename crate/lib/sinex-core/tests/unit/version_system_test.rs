@@ -10,7 +10,7 @@
 //! - Semantic versioning concepts
 //! - Error handling for version-related operations
 
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use std::cmp::Ordering;
 
 // =============================================================================

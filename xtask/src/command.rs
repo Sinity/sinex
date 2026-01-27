@@ -140,6 +140,10 @@ pub struct CommandResult {
     pub message: Option<String>,
     /// Additional details (e.g., list of checks passed)
     pub details: Vec<String>,
+    /// Optional structured data
+    pub data: Option<serde_json::Value>,
+    /// Whether to suppress all output in human/compact modes
+    pub is_silent: bool,
     /// Errors that occurred (empty if success)
     pub errors: Vec<StructuredError>,
     /// Warnings (non-fatal issues)
@@ -157,6 +161,8 @@ impl CommandResult {
             status: Status::Success,
             message: None,
             details: Vec::new(),
+            data: None,
+            is_silent: false,
             errors: Vec::new(),
             warnings: Vec::new(),
             duration_secs: None,
@@ -170,6 +176,8 @@ impl CommandResult {
             status: Status::Failed,
             message: None,
             details: Vec::new(),
+            data: None,
+            is_silent: false,
             errors: vec![error],
             warnings: Vec::new(),
             duration_secs: None,
@@ -184,6 +192,8 @@ impl CommandResult {
             status: Status::Partial,
             message: None,
             details: Vec::new(),
+            data: None,
+            is_silent: false,
             errors: Vec::new(),
             warnings: Vec::new(),
             duration_secs: None,
@@ -191,9 +201,22 @@ impl CommandResult {
         }
     }
 
+    /// Suppress all output in human/compact modes
+    #[allow(dead_code)]
+    pub fn with_silent(mut self) -> Self {
+        self.is_silent = true;
+        self
+    }
+
     /// Add a success message.
     pub fn with_message(mut self, message: impl Into<String>) -> Self {
         self.message = Some(message.into());
+        self
+    }
+
+    /// Add structured data.
+    pub fn with_data(mut self, data: serde_json::Value) -> Self {
+        self.data = Some(data);
         self
     }
 
@@ -270,6 +293,8 @@ impl CommandResult {
             } else {
                 Some(serde_json::to_value(&self.details).unwrap_or(serde_json::json!([])))
             },
+            data: self.data.clone(),
+            is_silent: self.is_silent,
             errors: self.errors.clone(),
             suggested_fixes: self.warnings.clone(),
         };

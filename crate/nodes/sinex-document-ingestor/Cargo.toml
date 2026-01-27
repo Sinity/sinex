@@ -25,5 +25,4 @@ camino = { workspace = true }
 mime_guess = "2.0"
 
 [dev-dependencies]
-sinex-test-utils = { path = "../../lib/sinex-test-utils" }
 tempfile = "3.10"

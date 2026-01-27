@@ -4,7 +4,7 @@
 // Tests version info creation, consistency, and performance across different scenarios.
 
 use sinex_node_sdk::VersionInfo;
-use sinex_test_utils::sinex_test;
+use xtask::sandbox::sinex_test;
 use std::collections::HashMap;
 use std::fs;
 use tempfile::TempDir;

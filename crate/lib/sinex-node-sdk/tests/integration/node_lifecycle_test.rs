@@ -16,7 +16,7 @@ use sinex_node_sdk::{
     coordination::{InstanceMode, NodeCoordination},
     stream_processor::Checkpoint,
 };
-use sinex_test_utils::{sinex_test, TestContext};
+use xtask::sandbox::{sinex_test, TestContext};
 use std::collections::HashMap;
 use std::sync::{
     atomic::{AtomicBool, AtomicU32, Ordering},

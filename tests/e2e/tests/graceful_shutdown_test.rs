@@ -14,8 +14,8 @@ use camino::Utf8PathBuf;
 use serde_json::json;
 use sinex_core::nats::NatsConnectionConfig;
 use sinex_ingestd::{config::IngestdConfig, service::IngestService, JetStreamTopology};
-use sinex_test_utils::prelude::*;
-use sinex_test_utils::timing_utils::Timeouts;
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::Timeouts;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -508,7 +508,7 @@ async fn test_shutdown_timeout_handling(ctx: TestContext) -> TestResult<()> {
     });
 
     // Let consumer start
-    tokio::time::sleep(Duration::from_secs(Timeouts::QUICK)).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Request shutdown
     shutdown_requested.store(true, Ordering::SeqCst);

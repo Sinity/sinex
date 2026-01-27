@@ -5,7 +5,7 @@
 use serde_json::json;
 // Using shorter imports from sinex-core's re-exports
 use sinex_core::{DynamicPayload, EventSource, Ulid};
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 fn test_ulid_generation() -> TestResult<()> {

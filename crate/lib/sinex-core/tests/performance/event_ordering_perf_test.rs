@@ -2,7 +2,7 @@
 
 use serde_json::json;
 use sinex_core::{types::Ulid, DynamicPayload};
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use std::collections::HashSet;
 use std::time::Duration;
 use tokio::time::sleep;

@@ -1,6 +1,6 @@
 use sinex_core::db::repositories::{CreateEntity, CreateEntityRelation};
 use sinex_core::repositories::DbPoolExt;
-use sinex_test_utils::{sinex_test, TestContext};
+use xtask::sandbox::{sinex_test, TestContext};
 
 #[sinex_test]
 async fn find_paths_returns_direct_and_indirect(ctx: TestContext) -> color_eyre::Result<()> {

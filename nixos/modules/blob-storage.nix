@@ -83,6 +83,7 @@ in
         description = "Initialize Sinex blob repository";
         wantedBy = [ "multi-user.target" ];
         after = [ "local-fs.target" ];
+        path = [ pkgs.git pkgs.git-annex ];
         serviceConfig = {
           Type = "oneshot";
           User = repositoryUser;
@@ -98,6 +99,7 @@ in
         description = "Sinex blob garbage collection";
         after = [ "sinex-blob-init.service" ];
         requires = [ "sinex-blob-init.service" ];
+        path = [ pkgs.git pkgs.git-annex ];
         serviceConfig = {
           Type = "oneshot";
           User = repositoryUser;
@@ -122,6 +124,7 @@ in
         description = "Sinex blob fsck";
         after = [ "sinex-blob-init.service" ];
         requires = [ "sinex-blob-init.service" ];
+        path = [ pkgs.git pkgs.git-annex ];
         serviceConfig = {
           Type = "oneshot";
           User = repositoryUser;
@@ -147,6 +150,7 @@ in
         description = "Sinex blob health check";
         after = [ "sinex-blob-init.service" ];
         requires = [ "sinex-blob-init.service" ];
+        path = [ pkgs.git pkgs.git-annex ];
         serviceConfig = {
           Type = "oneshot";
           User = repositoryUser;

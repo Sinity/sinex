@@ -16,8 +16,8 @@ use sinex_core::{
     payloads::filesystem::{FileCreatedPayload, FileModifiedPayload},
     DbPoolExt, DynamicPayload, EventSource, Ulid,
 };
-use sinex_test_utils::prelude::*;
-use sinex_test_utils::timing_utils::WaitHelpers;
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::WaitHelpers;
 use std::time::Duration as StdDuration;
 
 // =============================================================================

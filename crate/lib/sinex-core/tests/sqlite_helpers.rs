@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use sinex_core::types::utils::sqlite_helpers::{
     QueryResultExt, SqliteConnection, SqliteQueryBuilder, SqliteStatementExt,
 };
-use sinex_test_utils::sinex_test;
+use xtask::sandbox::sinex_test;
 use tempfile::NamedTempFile;
 
 #[sinex_test]

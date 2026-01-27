@@ -10,7 +10,7 @@ use sinex_core::{Event, JsonValue};
 use sinex_node_sdk::annex::{
     blob_manager::BLOB_EVENT_CHANNEL_CAPACITY, AnnexConfig, BlobManager, VerifiedPath,
 };
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use sinex_test_utils::TestResult;
 use std::path::Path;
 use tempfile::TempDir;

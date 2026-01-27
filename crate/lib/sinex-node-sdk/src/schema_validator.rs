@@ -443,7 +443,7 @@ mod tests {
 
     use tokio;
 
-    #[tokio::test]
+    #[sinex_test]
     async fn test_edge_mode_validator_strict() {
         let validator = NodeSchemaValidator::new();
 

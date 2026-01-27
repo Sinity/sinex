@@ -355,7 +355,7 @@ pub fn spawn_event_processor(
 mod tests {
     use super::EventBatcher;
     use sinex_core::{DynamicPayload, EventId, Provenance, Ulid};
-    use sinex_test_utils::sinex_test;
+    use xtask::sandbox::sinex_test;
     use std::fs;
     use tempfile::tempdir;
 

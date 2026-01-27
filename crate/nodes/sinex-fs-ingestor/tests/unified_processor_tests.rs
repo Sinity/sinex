@@ -1,6 +1,6 @@
 use sinex_core::types::Bytes;
 use sinex_fs_ingestor::{FilesystemConfig, FilesystemProcessor};
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn processor_initialization(ctx: TestContext) -> TestResult<()> {
