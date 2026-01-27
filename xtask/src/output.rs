@@ -112,6 +112,9 @@ pub struct CommandResult {
     /// Optional subcommand (e.g., "html" for "coverage html")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subcommand: Option<String>,
+    /// Optional summary message
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
     /// Execution status
     pub status: Status,
     /// Duration in seconds
@@ -135,6 +138,7 @@ impl CommandResult {
         Self {
             command: command.into(),
             subcommand: None,
+            message: None,
             status: Status::Success,
             duration_secs,
             timestamp: Utc::now(),
@@ -149,6 +153,7 @@ impl CommandResult {
         Self {
             command: command.into(),
             subcommand: None,
+            message: None,
             status: Status::Failed,
             duration_secs,
             timestamp: Utc::now(),
@@ -219,7 +224,7 @@ impl OutputWriter {
     }
 
     fn write_human(&self, result: &CommandResult) -> io::Result<()> {
-        let mut stdout = io::stdout().lock();
+        let mut out = io::stderr().lock();
 
         // Status line
         let status_str = if self.is_tty {
@@ -233,37 +238,41 @@ impl OutputWriter {
             format!("{} ", result.status.symbol())
         };
 
-        write!(stdout, "{}", status_str)?;
+        write!(out, "{}", status_str)?;
 
         // Command name
         let cmd_name = match &result.subcommand {
             Some(sub) => format!("{} {}", result.command, sub),
             None => result.command.clone(),
         };
-        writeln!(stdout, "{} ({:.2}s)", cmd_name, result.duration_secs)?;
+        writeln!(out, "{} ({:.2}s)", cmd_name, result.duration_secs)?;
+
+        if let Some(msg) = &result.message {
+            writeln!(out, "{}", msg)?;
+        }
 
         // Errors
         for error in &result.errors {
             if self.is_tty {
-                write!(stdout, "  \x1b[31m{}\x1b[0m: ", error.code)?;
+                write!(out, "  \x1b[31m{}\x1b[0m: ", error.code)?;
             } else {
-                write!(stdout, "  {}: ", error.code)?;
+                write!(out, "  {}: ", error.code)?;
             }
-            writeln!(stdout, "{}", error.message)?;
+            writeln!(out, "{}", error.message)?;
             if let Some(loc) = &error.location {
-                writeln!(stdout, "    at {}", loc)?;
+                writeln!(out, "    at {}", loc)?;
             }
             if let Some(sug) = &error.suggestion {
-                writeln!(stdout, "    suggestion: {}", sug)?;
+                writeln!(out, "    suggestion: {}", sug)?;
             }
         }
 
         // Suggestions
         if !result.suggested_fixes.is_empty() {
-            writeln!(stdout)?;
-            writeln!(stdout, "Suggested fixes:")?;
+            writeln!(out)?;
+            writeln!(out, "Suggested fixes:")?;
             for fix in &result.suggested_fixes {
-                writeln!(stdout, "  - {}", fix)?;
+                writeln!(out, "  - {}", fix)?;
             }
         }
 
@@ -355,11 +364,11 @@ impl OutputWriter {
                     total,
                     message
                 );
-                io::stdout().flush()?;
+                io::stderr().flush()?;
             }
             OutputFormat::Human => {
                 // Non-TTY: simple line
-                println!("[{}/{}] {} {}", current, total, stage, message);
+                eprintln!("[{}/{}] {} {}", current, total, stage, message);
             }
             OutputFormat::Compact | OutputFormat::Silent => {}
         }
@@ -370,8 +379,8 @@ impl OutputWriter {
     #[allow(dead_code)]
     pub fn clear_progress(&self) -> io::Result<()> {
         if matches!(self.format, OutputFormat::Human) && self.is_tty {
-            print!("\r{}\r", " ".repeat(80));
-            io::stdout().flush()?;
+            eprint!("\r{}\r", " ".repeat(80));
+            io::stderr().flush()?;
         }
         Ok(())
     }

@@ -81,9 +81,7 @@ impl CheckoutState {
             }
             match current.parent() {
                 Some(parent) => current = parent,
-                None => bail!(
-                    "Not in a git repository. Run from within the sinex checkout."
-                ),
+                None => bail!("Not in a git repository. Run from within the sinex checkout."),
             }
         }
     }
@@ -104,39 +102,48 @@ impl CheckoutState {
     }
 
     /// Derived paths within the state directory
+    #[allow(dead_code)]
     pub fn data_dir(&self) -> PathBuf {
         self.state_dir.join("data")
     }
 
+    #[allow(dead_code)]
     pub fn run_dir(&self) -> PathBuf {
         self.state_dir.join("run")
     }
 
+    #[allow(dead_code)]
     pub fn logs_dir(&self) -> PathBuf {
         self.run_dir().join("logs")
     }
 
+    #[allow(dead_code)]
     pub fn snapshots_dir(&self) -> PathBuf {
         self.state_dir.join("snapshots")
     }
 
+    #[allow(dead_code)]
     pub fn config_dir(&self) -> PathBuf {
         self.state_dir.join("config")
     }
 
+    #[allow(dead_code)]
     pub fn pg_data(&self) -> PathBuf {
         self.data_dir().join("postgres")
     }
 
+    #[allow(dead_code)]
     pub fn nats_data(&self) -> PathBuf {
         self.data_dir().join("nats")
     }
 
+    #[allow(dead_code)]
     pub fn annex_data(&self) -> PathBuf {
         self.data_dir().join("annex")
     }
 
     /// Ensure all directories exist
+    #[allow(dead_code)]
     pub fn ensure_directories(&self) -> Result<()> {
         fs::create_dir_all(self.config_dir().join("nats"))?;
         fs::create_dir_all(self.pg_data())?;
@@ -157,11 +164,10 @@ impl CheckoutState {
             return Ok(None);
         }
 
-        let content = fs::read_to_string(&lock_file)
-            .context("Failed to read lock file")?;
+        let content = fs::read_to_string(&lock_file).context("Failed to read lock file")?;
 
-        let lock_info: LockInfo = serde_json::from_str(&content)
-            .context("Failed to parse lock file")?;
+        let lock_info: LockInfo =
+            serde_json::from_str(&content).context("Failed to parse lock file")?;
 
         // Check if the locking process is still alive
         if !lock_info.is_alive() {

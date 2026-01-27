@@ -6,6 +6,7 @@
 //! - deps timings command with parametrization
 //! - Enhanced list/tree/duplicates commands from Phase 1
 
+#![allow(deprecated)]
 use assert_cmd::Command;
 use predicates::prelude::*;
 

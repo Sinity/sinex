@@ -23,10 +23,6 @@ use reports::{write_timing_report, write_unused_report};
 pub enum DepsCommand {
     /// List all workspace packages
     List {
-        /// Output format (human or json)
-        #[arg(long, default_value = "human", value_parser = ["human", "json"])]
-        format: String,
-
         /// Include transitive dependencies
         #[arg(long)]
         all: bool,
@@ -35,7 +31,7 @@ pub enum DepsCommand {
     /// Show dependency tree for a package
     Tree {
         /// Target package (defaults to all workspace packages)
-        #[arg(value_name = "PACKAGE")]
+        #[arg(long)]
         package: Option<String>,
 
         /// Maximum tree depth
@@ -48,10 +44,6 @@ pub enum DepsCommand {
         /// Minimum number of versions to report
         #[arg(long, default_value = "2")]
         threshold: usize,
-
-        /// Output format (human or json)
-        #[arg(long, default_value = "human", value_parser = ["human", "json"])]
-        format: String,
     },
 
     /// Detect unused dependencies
@@ -59,10 +51,6 @@ pub enum DepsCommand {
         /// Fail build if unused dependencies found (for CI)
         #[arg(long)]
         ci: bool,
-
-        /// Output format (human or json)
-        #[arg(long, default_value = "human", value_parser = ["human", "json"])]
-        format: String,
     },
 
     /// Analyze build timings
@@ -79,20 +67,16 @@ pub enum DepsCommand {
     /// Analyze rebuild impact of package changes
     Impact {
         /// Target package to analyze (defaults to all)
-        #[arg(value_name = "PACKAGE")]
+        #[arg(long)]
         package: Option<String>,
-
-        /// Output format (human or json)
-        #[arg(long, default_value = "human", value_parser = ["human", "json"])]
-        format: String,
     },
 }
 
 impl DepsCommand {
     /// Execute the deps command
-    pub fn run(&self) -> Result<()> {
+    pub fn run(&self, ctx: &crate::command::CommandContext) -> Result<()> {
         match self {
-            Self::List { format, all: _ } => {
+            Self::List { all: _ } => {
                 use crate::deps::analyzer::WorkspaceAnalyzer;
                 use crate::deps::reports::{write_dependency_list, OutputFormat};
 
@@ -106,7 +90,11 @@ impl DepsCommand {
                     .context("Failed to get workspace packages")?;
 
                 // Parse output format
-                let output_format = OutputFormat::from_str(format);
+                let output_format = if ctx.is_json() {
+                    OutputFormat::Json
+                } else {
+                    OutputFormat::Human
+                };
 
                 // Write report to stdout
                 let stdout = std::io::stdout();
@@ -163,10 +151,7 @@ impl DepsCommand {
                 Ok(())
             }
 
-            Self::Duplicates {
-                threshold,
-                format: _,
-            } => {
+            Self::Duplicates { threshold } => {
                 use crate::deps::analyzer::WorkspaceAnalyzer;
                 use crate::deps::reports::{write_duplicates_report, OutputFormat};
 
@@ -190,7 +175,7 @@ impl DepsCommand {
                 Ok(())
             }
 
-            Self::Unused { ci, format } => {
+            Self::Unused { ci } => {
                 use crate::deps::unused::UnusedDetector;
 
                 // Detect unused dependencies
@@ -198,7 +183,8 @@ impl DepsCommand {
                     UnusedDetector::detect().context("Failed to detect unused dependencies")?;
 
                 // Write report to stdout
-                write_unused_report(&report, format)?;
+                let format = if ctx.is_json() { "json" } else { "human" }.to_string();
+                write_unused_report(&report, &format)?;
 
                 // In CI mode, fail if unused dependencies found
                 if *ci && !report.unused.is_empty() {
@@ -214,7 +200,7 @@ impl DepsCommand {
                 Ok(())
             }
 
-            Self::Impact { package, format } => {
+            Self::Impact { package } => {
                 use crate::graph::impact::generate_report;
                 use crate::graph::workspace::WorkspaceGraph;
 
@@ -224,45 +210,39 @@ impl DepsCommand {
                     // Single package analysis
                     let metrics = graph.compute_impact_metrics(&pkg_name)?;
 
-                    match format.as_str() {
-                        "json" => {
-                            let json = serde_json::to_string_pretty(&metrics)?;
-                            println!("{}", json);
-                        }
-                        _ => {
-                            println!("Impact Analysis for {}", pkg_name);
-                            println!("  Dependent packages: {}", metrics.dependent_count);
-                            println!("  Direct dependencies: {}", metrics.dependency_count);
-                            println!(
-                                "  Criticality: {:.2}% ({:?})",
-                                metrics.criticality * 100.0,
-                                metrics.criticality_level()
-                            );
-                        }
+                    if ctx.is_json() {
+                        let json = serde_json::to_string_pretty(&metrics)?;
+                        println!("{}", json);
+                    } else {
+                        println!("Impact Analysis for {}", pkg_name);
+                        println!("  Dependent packages: {}", metrics.dependent_count);
+                        println!("  Direct dependencies: {}", metrics.dependency_count);
+                        println!(
+                            "  Criticality: {:.2}% ({:?})",
+                            metrics.criticality * 100.0,
+                            metrics.criticality_level()
+                        );
                     }
                 } else {
                     // Full workspace report
                     let report = generate_report(&graph)?;
 
-                    match format.as_str() {
-                        "json" => {
-                            let json = serde_json::to_string_pretty(&report)?;
-                            println!("{}", json);
-                        }
-                        _ => {
-                            if !report.critical_packages.is_empty() {
-                                println!("Critical Packages (>80% rebuild impact):");
-                                for pkg in &report.critical_packages {
-                                    println!("  - {}", pkg);
-                                }
-                                println!();
+                    if ctx.is_json() {
+                        let json = serde_json::to_string_pretty(&report)?;
+                        println!("{}", json);
+                    } else {
+                        if !report.critical_packages.is_empty() {
+                            println!("Critical Packages (>80% rebuild impact):");
+                            for pkg in &report.critical_packages {
+                                println!("  - {}", pkg);
                             }
+                            println!();
+                        }
 
-                            if !report.high_impact_packages.is_empty() {
-                                println!("High Impact Packages (50-80% rebuild impact):");
-                                for pkg in &report.high_impact_packages {
-                                    println!("  - {}", pkg);
-                                }
+                        if !report.high_impact_packages.is_empty() {
+                            println!("High Impact Packages (50-80% rebuild impact):");
+                            for pkg in &report.high_impact_packages {
+                                println!("  - {}", pkg);
                             }
                         }
                     }
@@ -276,7 +256,6 @@ impl DepsCommand {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     // Tests will be added as functionality is implemented
 }

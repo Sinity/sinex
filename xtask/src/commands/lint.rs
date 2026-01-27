@@ -7,6 +7,7 @@ use crate::process::ProcessBuilder;
 use crate::resources;
 
 /// Lint command configuration
+#[derive(Debug, Clone, clap::Args)]
 pub struct LintCommand;
 
 impl XtaskCommand for LintCommand {
@@ -51,7 +52,6 @@ impl XtaskCommand for LintCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::output::{OutputFormat, OutputWriter};
 
     #[test]
     fn test_lint_command_name() {

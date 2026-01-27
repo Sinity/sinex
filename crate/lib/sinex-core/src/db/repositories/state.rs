@@ -10,10 +10,10 @@ use crate::db::{with_retry_transaction_idempotent, IdempotentTransaction, RetryC
 use crate::types::domain::ProcessorName;
 use crate::types::error::SinexError;
 use crate::types::Seconds;
-use crate::types::Ulid;
 use crate::{Id, JsonValue};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+
 use sinex_schema::ulid_conversions::uuid_to_ulid;
 use sqlx::postgres::types::PgRange;
 use sqlx::types::{BigDecimal, Uuid};

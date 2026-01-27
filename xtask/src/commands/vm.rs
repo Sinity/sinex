@@ -15,13 +15,15 @@ use crate::config;
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// VM management command variants
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, clap::Subcommand)]
 pub enum VmSubcommand {
     /// Run VM tests (wraps run-vm-tests.sh)
     Test {
         /// Test category: smoke, integration, performance, chaos
+        #[arg(long, short)]
         category: Option<String>,
         /// Run tests in parallel
+        #[arg(long)]
         parallel: bool,
         /// Timeout per test in seconds
         timeout: u64,
@@ -33,8 +35,10 @@ pub enum VmSubcommand {
         /// VM preset: minimal, standard, full
         preset: String,
         /// Keep state between runs
+        #[arg(long)]
         persistent: bool,
         /// Start from a snapshot
+        #[arg(long)]
         snapshot: Option<String>,
     },
     /// SSH into a running VM
@@ -42,11 +46,14 @@ pub enum VmSubcommand {
     /// Stop a running VM
     Stop,
     /// Manage VM snapshots
-    Snapshot { cmd: VmSnapshotSubcommand },
+    Snapshot {
+        #[command(subcommand)]
+        cmd: VmSnapshotSubcommand,
+    },
 }
 
 /// VM snapshot subcommands
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, clap::Subcommand)]
 pub enum VmSnapshotSubcommand {
     /// Create a named snapshot
     Create { name: String },
@@ -248,7 +255,10 @@ fn run_vm(
     if persistent {
         let state_dir = config::workspace_root().join(".vm-state");
         std::fs::create_dir_all(&state_dir)?;
-        cmd.env("QEMU_OPTS", format!("-drive file={}/vm.qcow2,if=virtio", state_dir.display()));
+        cmd.env(
+            "QEMU_OPTS",
+            format!("-drive file={}/vm.qcow2,if=virtio", state_dir.display()),
+        );
     }
 
     if let Some(snap) = snapshot {
@@ -280,9 +290,12 @@ fn execute_ssh(ctx: &CommandContext) -> Result<CommandResult> {
 
     let status = Command::new("ssh")
         .args([
-            "-o", "StrictHostKeyChecking=no",
-            "-o", "UserKnownHostsFile=/dev/null",
-            "-p", &ssh_port,
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+            "-p",
+            &ssh_port,
             "root@localhost",
         ])
         .status()
@@ -328,8 +341,7 @@ fn execute_stop(ctx: &CommandContext) -> Result<CommandResult> {
             .context("Failed to stop VM")?;
     }
 
-    Ok(CommandResult::success()
-        .with_message(format!("Stopped {} VM process(es)", pids.len())))
+    Ok(CommandResult::success().with_message(format!("Stopped {} VM process(es)", pids.len())))
 }
 
 fn execute_snapshot(cmd: &VmSnapshotSubcommand, ctx: &CommandContext) -> Result<CommandResult> {
@@ -346,8 +358,10 @@ fn execute_snapshot(cmd: &VmSnapshotSubcommand, ctx: &CommandContext) -> Result<
                 println!("Use Ctrl+A C in the VM console, then: savevm {}", name);
             }
 
-            Ok(CommandResult::success()
-                .with_message(format!("Snapshot '{}' created (manual step required)", name)))
+            Ok(CommandResult::success().with_message(format!(
+                "Snapshot '{}' created (manual step required)",
+                name
+            )))
         }
         VmSnapshotSubcommand::Restore { name } => {
             ctx.heading("vm snapshot restore");

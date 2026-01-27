@@ -15,29 +15,46 @@ pub struct CiCommand {
 }
 
 /// CI subcommands
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, clap::Subcommand)]
 pub enum CiSubcommand {
     /// Start an ephemeral Postgres and run the given command with env vars set
     Postgres {
+        #[arg(long, default_value = "5433")]
         port: u16,
+        #[arg(long)]
         data_dir: Option<PathBuf>,
+        #[arg(long)]
         socket_dir: Option<PathBuf>,
+        #[arg(long)]
         keep_data: bool,
+        #[arg(long, default_value = "sinex_app")]
         app_user: String,
+        #[arg(long, default_value = "sinex_superuser")]
         superuser: String,
+        #[arg(long, default_value = "sinex_dev")]
         database: String,
+        #[arg(long, default_value = "default-op")]
         operation_id: String,
+        #[arg(last = true)]
         command: Vec<String>,
     },
     /// Full workspace validation (schema setup + lint + tests)
-    Workspace { target_dir: String },
+    Workspace {
+        #[arg(long, default_value = "target/ci")]
+        target_dir: String,
+    },
     /// Schema-only pipeline (migrate, check-ready, regenerate)
     SchemaOnly {
+        #[arg(long, default_value = "target/ci-schema")]
         target_dir: String,
+        #[arg(long)]
         skip_clean: bool,
     },
     /// Schema validation pipeline (migrate, check-ready, seed registry, sync)
-    SchemaSync { target_dir: String },
+    SchemaSync {
+        #[arg(long, default_value = "target/ci-sync")]
+        target_dir: String,
+    },
 }
 
 impl XtaskCommand for CiCommand {
@@ -241,7 +258,7 @@ fn execute_workspace(target_dir: &str, ctx: &CommandContext) -> Result<CommandRe
     if ctx.is_human() {
         println!("Running check...");
     }
-    let check_result = crate::commands::CheckCommand {
+    let check_result = crate::commands::check::CheckCommand {
         skip_fmt: false,
         skip_check: false,
     }
@@ -253,7 +270,7 @@ fn execute_workspace(target_dir: &str, ctx: &CommandContext) -> Result<CommandRe
     if ctx.is_human() {
         println!("Running lint...");
     }
-    let lint_result = crate::commands::LintCommand {}.execute(ctx)?;
+    let lint_result = crate::commands::lint::LintCommand {}.execute(ctx)?;
     if !lint_result.is_success() {
         return Ok(lint_result);
     }
@@ -261,7 +278,7 @@ fn execute_workspace(target_dir: &str, ctx: &CommandContext) -> Result<CommandRe
     if ctx.is_human() {
         println!("Running lint-forbidden...");
     }
-    let forbidden_result = crate::commands::LintForbiddenCommand {}.execute(ctx)?;
+    let forbidden_result = crate::commands::lint_forbidden::LintForbiddenCommand {}.execute(ctx)?;
     if !forbidden_result.is_success() {
         return Ok(forbidden_result);
     }

@@ -8,10 +8,15 @@ use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskComman
 use crate::process::ProcessBuilder;
 
 /// Mutation testing command configuration
+#[derive(Debug, Clone, clap::Args)]
 pub struct MutantsCommand {
+    #[arg(short, long)]
     pub package: Option<String>,
+    #[arg(short, long)]
     pub file: Option<String>,
+    #[arg(long, default_value = "300")]
     pub timeout: u64,
+    #[arg(short, long, default_value = "1")]
     pub jobs: usize,
     pub args: Vec<String>,
 }

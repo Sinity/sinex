@@ -353,11 +353,19 @@
           ) vmTests;
         in
         rec {
-          vmPackages = pkgs.lib.mapAttrs' (
+          vmPackagesAll = pkgs.lib.mapAttrs' (
             name: value: pkgs.lib.nameValuePair "sinex-vm-${name}" value
           ) vmTests;
+          
+          vmPackagesEssential = pkgs.lib.mapAttrs' (
+            name: value: pkgs.lib.nameValuePair "sinex-vm-${name}" value
+          ) limitedVmTests;
 
-          packages = sinexPackages // vmPackages;
+          packages = sinexPackages // vmPackagesEssential;
+          
+          # Expose all VMs via legacyPackages so they can still be built (e.g. by xtask)
+          # but don't force evaluation during standard package enumeration.
+          legacyPackages = vmPackagesAll;
 
           formatter = pkgs.nixpkgs-fmt;
 

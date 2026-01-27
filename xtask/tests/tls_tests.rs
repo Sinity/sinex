@@ -10,6 +10,7 @@ use std::fs::{self, Permissions};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
+#[allow(deprecated)]
 use assert_cmd::Command;
 use predicates::prelude::*;
 use tempfile::TempDir;

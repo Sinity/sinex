@@ -7,8 +7,13 @@ use crate::process::ProcessBuilder;
 use crate::resources;
 
 /// Check command configuration
+#[derive(Debug, Clone, clap::Args)]
 pub struct CheckCommand {
+    /// Skip formatting check
+    #[arg(long)]
     pub skip_fmt: bool,
+    /// Skip cargo check
+    #[arg(long)]
     pub skip_check: bool,
 }
 
@@ -58,7 +63,6 @@ impl XtaskCommand for CheckCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::output::{OutputFormat, OutputWriter};
 
     #[test]
     fn test_check_command_metadata() {

@@ -7,54 +7,72 @@ use crate::config::config;
 use crate::history::HistoryDb;
 
 /// History command variants
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, clap::Subcommand)]
 pub enum HistorySubcommand {
     List {
+        #[arg(long, default_value = "20")]
         limit: usize,
+        #[arg(long)]
         command: Option<String>,
     },
     Last {
+        #[arg(long)]
         command: String,
     },
     Stats {
+        #[arg(long)]
         command: String,
+        #[arg(long, default_value = "30")]
         days: u32,
     },
     Prune {
+        #[arg(long, default_value = "90")]
         older_than: u32,
     },
     Export {
+        #[arg(long)]
         limit: usize,
     },
     Tests {
+        #[command(subcommand)]
         tests_cmd: HistoryTestsSubcommand,
     },
 }
 
 /// History tests subcommand variants
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, clap::Subcommand)]
 pub enum HistoryTestsSubcommand {
     Slowest {
+        #[arg(long, default_value = "10")]
         limit: usize,
     },
     Flaky {
+        #[arg(long, default_value = "10")]
         limit: usize,
     },
     GettingSlower {
+        #[arg(long, default_value = "20.0")]
         threshold_pct: f64,
+        #[arg(long, default_value = "10")]
         window: usize,
+        #[arg(long, default_value = "10")]
         limit: usize,
     },
     Trends {
+        #[arg(long)]
         pattern: Option<String>,
+        #[arg(long)]
         package: Option<String>,
+        #[arg(long, default_value = "30")]
         runs: usize,
     },
     Eta,
 }
 
 /// History management command
+#[derive(Debug, Clone, clap::Args)]
 pub struct HistoryCommand {
+    #[command(subcommand)]
     pub subcommand: HistorySubcommand,
 }
 
@@ -434,7 +452,6 @@ fn execute_tests_eta(db: &HistoryDb, ctx: &CommandContext) -> Result<CommandResu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::output::OutputWriter;
 
     #[test]
     fn test_history_command_metadata() {

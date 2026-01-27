@@ -1,5 +1,6 @@
 //! Integration tests for deps commands
 
+#![allow(deprecated)]
 use assert_cmd::Command;
 use predicates::prelude::*;
 

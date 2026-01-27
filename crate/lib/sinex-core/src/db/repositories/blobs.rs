@@ -3,10 +3,10 @@
 //! Provides access to core.blobs table for managing binary large objects
 //! stored in git-annex with metadata in PostgreSQL.
 
-use chrono::Utc;
 use color_eyre::eyre::{eyre, Context, Result};
 use num_traits::ToPrimitive;
-use sqlx::{Error as SqlxError, PgPool};
+use sqlx::Error as SqlxError;
+use sqlx::PgPool;
 use tokio::time::{sleep, Duration};
 use tracing::instrument;
 
