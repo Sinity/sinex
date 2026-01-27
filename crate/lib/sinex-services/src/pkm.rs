@@ -197,7 +197,6 @@ impl PkmService {
         created_by: &str,
     ) -> ServiceResult<Vec<Ulid>> {
         // Verify source material exists
-
         let source_material = self
             .pool
             .source_materials()
@@ -212,6 +211,7 @@ impl PkmService {
             .with_id("source_material_id", source_material_id));
         }
 
+        let mut tx = self.pool.begin().await?;
         let mut entity_ids = Vec::new();
 
         for (name, entity_type) in entities {
@@ -224,10 +224,12 @@ impl PkmService {
             let entity = EntityTypeMapper::create_entity_from_type(&name, &entity_type)?
                 .with_properties(serde_json::to_value(metadata)?);
 
-            let entity = self.pool.knowledge_graph().create_entity(entity).await?;
+            let entity = self.pool.knowledge_graph().create_entity_with_executor(&mut *tx, entity).await?;
 
             entity_ids.push(entity.id.as_ulid().clone());
         }
+
+        tx.commit().await?;
 
         info!(
             source_material_id = %source_material_id,
@@ -405,11 +407,13 @@ impl PkmService {
             .checksum_blake3(blake3_checksum)
             .build();
 
+        let mut tx = self.pool.begin().await?;
+
         // Insert the blob
         let inserted_blob = self
             .pool
             .blobs()
-            .insert(blob)
+            .insert_with_executor(&mut *tx, blob)
             .await
             .map_err(|e| SinexError::service(format!("blob insert failed: {}", e)))?;
 
@@ -421,7 +425,8 @@ impl PkmService {
 
         self.pool
             .source_materials()
-            .finalize_in_flight(
+            .finalize_in_flight_with_executor(
+                &mut *tx,
                 id.into(),
                 Some(inserted_blob.id), // blob_id
                 None,                   // encoding
@@ -429,6 +434,8 @@ impl PkmService {
                 Some(content.len() as i64), // total_bytes
             )
             .await?;
+
+        tx.commit().await?;
 
         info!(
             blob_id = %id,
@@ -445,10 +452,11 @@ impl PkmService {
         material_type: Option<&str>,
         limit: Option<i64>,
     ) -> ServiceResult<Vec<serde_json::Value>> {
+        let limit = limit.unwrap_or(50).clamp(1, sinex_core::types::query::Pagination::MAX_LIMIT);
         let materials = self
             .pool
             .source_materials()
-            .get_recent(limit.unwrap_or(50))
+            .get_recent(limit)
             .await?;
 
         // Filter by material_type if specified
@@ -493,7 +501,7 @@ impl PkmService {
         let materials = self
             .pool
             .source_materials()
-            .search_by_metadata(key, &value, None)
+            .search_by_metadata(key, &value, Some(sinex_core::types::query::Pagination::MAX_LIMIT))
             .await?;
 
         let summaries: Vec<MaterialSummary> = materials

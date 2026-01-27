@@ -35,6 +35,7 @@ use proc_macro::TokenStream;
 ///     // function body
 /// }
 /// ```
+#[deprecated(note = "This macro generates non-functional code (BUG-020) and is unused.")]
 #[proc_macro_attribute]
 pub fn with_context(attr: TokenStream, item: TokenStream) -> TokenStream {
     error_context::with_context(attr, item)
@@ -196,6 +197,7 @@ pub fn derive_event_payload(input: TokenStream) -> TokenStream {
 ///     // ... other fields matching the schema
 /// }
 /// ```
+#[deprecated(note = "This macro is a no-op stub (BUG-019) and is unused.")]
 #[proc_macro_derive(ValidateRecord, attributes(validate_against))]
 pub fn validate_record(input: TokenStream) -> TokenStream {
     validate_record::validate_record_impl(input)

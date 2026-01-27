@@ -98,14 +98,18 @@ macro_rules! define_validated_string_type {
 
         impl $name {
             /// Create a new instance from a string without validation
-            /// For validated creation, use FromStr::from_str
+            ///
+            /// # Safety
+            /// This bypasses validation. Prefer `from_str` for untrusted input.
+            #[deprecated(note = "Use from_str for validation, or new_unchecked if you are sure.")]
             pub fn new(s: impl Into<String>) -> Self {
                 Self(Cow::Owned(s.into()))
             }
 
             /// Create a new instance from a string without validation
-            /// Alias for new() for clarity
+            /// Alias for new() for clarity, but explicit about bypassing checks.
             pub fn new_unchecked(s: impl Into<String>) -> Self {
+                #[allow(deprecated)]
                 Self::new(s)
             }
 
@@ -138,12 +142,6 @@ macro_rules! define_validated_string_type {
 
         // FromStr implementation will be provided by the specific type
         // This allows for validation in the FromStr impl
-
-        impl From<String> for $name {
-            fn from(s: String) -> Self {
-                Self(Cow::Owned(s))
-            }
-        }
 
         impl AsRef<str> for $name {
             fn as_ref(&self) -> &str {

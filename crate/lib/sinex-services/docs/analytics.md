@@ -1,27 +1,32 @@
 # Analytics Service
 
-`AnalyticsService` exposes the read-only rollups used by the CLI and gateway.
-All methods execute against `sinex-core` repositories and return lightweight
-structures for direct serialization.
+`AnalyticsService` provides read-only rollups and time-series analysis for dashboards and telemetry. It leverages TimescaleDB hypertable capabilities to perform efficient aggregations over high-volume event data.
 
 ## API Surface
 
 | Method | Description |
 |--------|-------------|
-| `get_event_count_by_source(start?, end?)` | Counts events grouped by `source`. Applies optional time-window filtering in SQL. |
-| `get_event_count_by_type(start?, end?)` | Counts events grouped by `event_type`. Falls back to all-time counts when no range is provided. |
-| `get_events_over_time(start, end, interval_minutes)` | Buckets events into fixed intervals using `get_events_over_time` repository helpers. |
-| `get_top_commands(start?, end?, limit)` | Returns the most frequent terminal commands for the requested window. |
-| `activity_heatmap(bucket_size_minutes, limit)` | Produces high-level activity buckets (e.g., for heatmaps). |
-| `list_replay_operations(state?)` | Lists replay operations for automation reporting (optionally filtered by state). |
+| `get_event_count_by_source` | Counts events grouped by `source` with optional time-window filtering. |
+| `get_source_statistics` | Detailed per-source metrics: event/type/host counts and average ingest delay. |
+| `get_event_count_by_type` | Counts events grouped by `event_type`. |
+| `get_events_over_time` | Buckets events into fixed intervals (e.g., 5m, 1h) using `time_bucket`. |
+| `get_top_commands` | Frequency analysis of terminal commands extracted from JSON payloads. |
+| `activity_heatmap` | Produces high-level activity density buckets. |
+| `list_replay_operations` | Diagnostic listing of replay state machine transitions. |
 
-All functions return plain maps or `(timestamp, count)` tuples suitable for
-JSON-RPC responses.
+## Implementation Details
 
-## Error Handling
+### Resource Protection
+To prevent long-running analytical queries from starving the primary ingestion pool, the service uses an aggressive **40ms connection acquisition timeout**. If the database pool is under heavy load, analytics requests fail fast rather than blocking.
 
-Errors are surfaced as `SinexError::service(...)` with the originating
-repository operation annotated in the context.
+### Time Bucketing
+The service uses TimescaleDB's `time_bucket` function for all temporal aggregations. When possible, it prefers `ts_orig` (event occurrence) but falls back to `ts_ingest` (arrival time) to ensure consistent bucketing.
 
-See `docs/current/architecture/SystemOperations_And_Integrity_Architecture.md` for the
-dashboards that consume these rollups.
+### Ingest Delay Analysis
+The `avg_ingest_delay` metric computes the delta between `ts_orig` and `ts_ingest`. This is a critical observability metric used to detect backpressure or processing lag in the node fleet.
+
+## Safety & Performance
+
+- **Limit Clamping**: All statistical queries are clamped to `MAX_LIMIT` (5000) to prevent OOM on the gateway or client.
+- **Read-Only Enforced**: All queries are strictly `SELECT` operations; any state-changing operations (like replay management) are delegated to the core state machine.
+- **Partial Scans**: Where possible, queries are scoped by `ts_orig` to leverage hypertable partition pruning.

@@ -73,6 +73,12 @@ pub enum StackSubcommand {
         #[arg(long)]
         pipelines: bool,
     },
+    /// Print stack environment variables
+    Env {
+        /// Shell format (export NAME=VALUE)
+        #[arg(long, default_value_t = true)]
+        export: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -116,6 +122,7 @@ impl XtaskCommand for StackCommand {
                 crate::tls::run(cmd.clone(), false).map(|_| CommandResult::success())
             }
             StackSubcommand::Doctor { pipelines } => execute_doctor(&config, *pipelines, ctx),
+            StackSubcommand::Env { export } => execute_env(&config, *export),
         }
     }
 
@@ -415,5 +422,15 @@ fn execute_doctor(
             .run();
     }
 
+    Ok(CommandResult::success())
+}
+
+fn execute_env(config: &StackConfig, export: bool) -> Result<CommandResult> {
+    let prefix = if export { "export " } else { "" };
+    println!("{}DATABASE_URL=\"{}\"", prefix, config.database_url());
+    println!("{}SINEX_NATS_URL=\"{}\"", prefix, config.nats_url());
+    println!("{}PGPORT=\"{}\"", prefix, config.postgres.port);
+    println!("{}SINEX_DEV_PG_PORT=\"{}\"", prefix, config.postgres.port);
+    println!("{}SINEX_DEV_NATS_PORT=\"{}\"", prefix, config.nats.port);
     Ok(CommandResult::success())
 }

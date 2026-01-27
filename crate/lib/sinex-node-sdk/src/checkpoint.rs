@@ -529,20 +529,13 @@ impl CheckpointManager {
                     ))
                 })?
         } else {
-            // Revision 0 means potentially new. Try create first to ensure no overwrite?
-            // Or use put if we want upsert behavior for "first write".
-            // Since we want strict correctness:
-            // If we think it's new (rev 0), we should probably use `create` to ensure we don't overwrite existing.
-            // BUT, if we just want "last write wins" for the *first* write (maybe previously deleted), `put` is safer?
-            // "Split-Brain" implies we want to prevent overwriting *concurrent* modifications.
-            // So `create` is safer for rev 0.
+            // Use create() for initial write to correctly handle tombstone cases after purge()
             self.kv
-                .update(&self.kv_key(), encoded.into(), 0)
+                .create(&self.kv_key(), encoded.into())
                 .await
                 .map_err(|e| {
-                    // unexpected error or key exists
                     NodeError::Checkpoint(format!(
-                        "Failed to create checkpoint in KV (Key exists?): {e}"
+                        "Failed to create checkpoint in KV (Already exists?): {e}"
                     ))
                 })?
         };

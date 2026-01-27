@@ -798,7 +798,7 @@ fn create_test_module_options_schema() -> serde_json::Value {
                 "enable": {
                     "type": "bool",
                     "default": true,
-                    "description": "Enable node constellation"
+                    "description": "Enable node ecosystem"
                 },
                 "eventSources": {
                     "type": "submodule",

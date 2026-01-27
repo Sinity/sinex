@@ -1,3 +1,5 @@
+#![doc = include_str!("../docs/cli_framework.md")]
+
 //! Unified CLI structure for stream processor nodes
 //!
 //! This module provides the standardized CLI interface for all node binaries
@@ -75,6 +77,7 @@ pub struct NatsArgs {
     pub name: Option<String>,
 
     /// Require TLS for the connection
+    // TODO: CRITICAL - TLS disabled by default. Production must explicitly enable it.
     #[arg(long, env = "SINEX_NATS_REQUIRE_TLS", default_value_t = false)]
     pub require_tls: bool,
 
@@ -209,6 +212,7 @@ pub enum NodeCommand {
 
 /// Parse checkpoint as JSON
 fn parse_checkpoint_json(checkpoint_str: &str) -> eyre::Result<Checkpoint> {
+    // TODO: Add size limit to prevent DoS via massive JSON checkpoint strings
     serde_json::from_str::<serde_json::Value>(checkpoint_str)
         .and_then(serde_json::from_value::<Checkpoint>)
         .context("Invalid checkpoint JSON")
@@ -726,12 +730,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
                 }
 
                 if coverage_analysis {
-                    match self
-                        .node
-                        .as_ref()
-                        .expect("Node required")
-                        .get_coverage_analysis(None)
-                    {
+                    match node.get_coverage_analysis(None) {
                         Ok(analysis) => {
                             println!("Coverage Analysis:");
                             println!(
@@ -779,12 +778,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
                         _ => ExportFormat::Raw,
                     };
 
-                    match self
-                        .node
-                        .as_ref()
-                        .expect("Node required")
-                        .export_data(&export_path, format)
-                    {
+                    match node.export_data(&export_path, format) {
                         Ok(_) => {
                             println!("Data exported to: {}", export_path.as_str());
                         }
@@ -811,6 +805,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
             let namespaced = env.work_directory("/tmp/sinex/node");
             let namespaced = namespaced.to_string_lossy();
             SanitizedPath::from_str(namespaced.as_ref())
+                // TODO: CRITICAL - Validation bypass! new_unchecked defeats the purpose of SanitizedPath.
                 .unwrap_or_else(|_| SanitizedPath::new_unchecked(namespaced.as_ref()))
         })
     }

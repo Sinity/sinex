@@ -1,6 +1,8 @@
 #![doc = include_str!("../docs/README.md")]
 #![doc = include_str!("../../../../docs/current/architecture/Core_Architecture.md")]
 #![doc = include_str!("../../../../docs/current/architecture/SystemOperations_And_Integrity_Architecture.md")]
+#![doc = include_str!("../docs/ingestion_pipeline.md")]
+#![doc = include_str!("../docs/material_assembly.md")]
 #![allow(unexpected_cfgs)]
 
 //! Runtime entry points for the Sinex ingestion daemon.

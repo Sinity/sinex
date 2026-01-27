@@ -1,10 +1,4 @@
-//! Per-Token Rate Limiting (Issue 143)
-//!
-//! Provides rate limiting on a per-token basis to prevent a single compromised
-//! or misbehaving token from DoSing the gateway.
-//!
-//! Uses the `governor` crate for rate limiting with automatic cleanup of
-//! stale token entries.
+#![doc = include_str!("../docs/rate_limit.md")]
 
 use dashmap::DashMap;
 use governor::{

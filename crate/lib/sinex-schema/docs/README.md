@@ -1,10 +1,22 @@
-# sinex-schema Documentation
+# Sinex Schema
 
-Crate-local design notes embedded into rustdoc:
+The single source of truth for the Sinex database schema, implemented using `sea-orm-migration` and `sea-query`.
 
-- `overview.md` – migration crate architecture and layout.
-- `ulid.md` – ULID decision record and usage guidance.
-- `ulid_conversions.md` – ULID/UUID database conversion helpers.
-- `migrations.md` – module registration guidance.
-- `schema_design.md` – historical analysis of database architecture, indexing, and constraints.
-- `event-taxonomy.md` – canonical event families, naming rules, and minimal payload keys.
+## Core Components
+
+-   **Schema Definitions**: `src/schema/*.rs` defines tables, columns, and constraints using type-safe builders.
+-   **Migrations**: `src/migrations/` contains the ordered history of database changes.
+-   **ULID**: `src/ulid.rs` provides the robust, monotonic ULID implementation used as primary keys.
+
+## Key Features
+
+-   **Provenance**: Every event tracks its source material or parent events via XOR constraints.
+-   **Immutability**: `core.events` is append-only, enforced by triggers.
+-   **TimescaleDB**: `core.events` is a hypertable partitioned by ULID timestamp.
+-   **Self-Observation**: Continuous aggregates track system health and metrics.
+
+## Documentation
+
+-   `migrations.md`: Analysis of migration history and safety.
+-   `ulid.md`: Deep dive into ULID generation and conversion.
+-   `schema_design.md`: Architectural decisions behind the schema.

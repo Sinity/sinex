@@ -1,18 +1,33 @@
 # PKM Service
 
-`PkmService` offers helper methods for creating annotations and knowledge-graph
-entities while preserving provenance. It sits directly on top of the
-`sinex-core` repositories and keeps gateway handlers small.
+The Personal Knowledge Management (PKM) service coordinates the creation and curation of the Sinex knowledge graph. It bridges the gap between raw source materials and structured entities and relationships.
 
 ## API Surface
 
 | Method | Description |
 |--------|-------------|
-| `create_note(event_id, content, tags, created_by, source_material_id?)` | Adds a note annotation to an event with metadata (tags, timestamps, optional source material). |
-| `create_entities_from_source_material(source_material_id, entities, created_by)` | Creates entities linked to the source material; accepts `(name, type)` tuples. |
-| `link_entities(from_id, to_id, relationship_type, properties, source_material_id?)` | Establishes a relationship between two entities with optional provenance metadata. |
+| `create_note` | Attaches a curated annotation to an event, optionally linked to source material. |
+| `create_entities_from_source_material` | Batch-creates entities extracted from a specific source artifact. |
+| `link_entities` | Establishes a directed, typed relationship between two graph nodes. |
+| `register_source_material` | Canonical entry point for tracking external artifacts (files, streams). |
+| `register_in_flight_material` | Support for the "Stage-as-you-go" pattern (pre-registration). |
+| `finalize_in_flight_material` | Completes an in-flight registration with full content and checksums. |
 
-The service relies on `MetadataBuilder` helpers to keep annotation payloads
-uniform, and returns ULIDs for any newly created records.
+## Knowledge Graph Patterns
 
-For broader UX flows see `docs/current/architecture/UserInteraction_And_Query_Architecture.md`.
+### Stage-as-you-go
+To support streaming ingestion, the service allows materials to be registered in a `sensing` state. This provides a stable `material_id` that ingestors can use for event provenance *before* the full artifact has been captured. The material is transitioned to `completed` once the content hash is verified.
+
+### Metadata Segregation
+The system automatically manages `_system_metadata` (checksums, sizes, timestamps) while preserving `caller_metadata` in its original form. This ensures system invariants are never corrupted by user-provided data.
+
+### Provenance XOR Invariant
+The service enforces the core architectural principle that an event or entity must have exactly one type of provenance:
+- **Material Provenance**: Direct link to raw source material.
+- **Synthesis Provenance**: Derived from other system events.
+
+## Safety & Integrity
+
+- **Deterministic Deduplication**: Material registration uses BLAKE3 hashes to prevent duplicate entries for identical content.
+- **Unicode Safety**: Content previews are generated with UTF-8 character boundary awareness to prevent splitting multi-byte sequences.
+- **Type Mapping**: String-based entity types are validated against a canonical allowlist (`person`, `project`, `topic`, etc.) before creation.

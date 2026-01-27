@@ -57,6 +57,7 @@ resolver = "2"
 [workspace.lints.rust]
 unreachable_pub = { level = "forbid", priority = -1 }
 unused_crate_dependencies = { level = "forbid", priority = -1 }
+unexpected_cfgs = { level = "allow", priority = -1 }
 
 [workspace.lints.clippy]
 # Treat all clippy warnings as errors for production code

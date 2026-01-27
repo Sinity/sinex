@@ -1,6 +1,6 @@
 use camino::Utf8Path;
-use sinex_node_sdk::annex::{AnnexConfig, AnnexKey, GitAnnex};
-use sinex_test_utils::{sinex_test, TestResult};
+use sinex_node_sdk::annex::{AnnexKey, GitAnnex};
+use sinex_test_utils::sinex_test;
 use tempfile::TempDir;
 
 #[sinex_test]

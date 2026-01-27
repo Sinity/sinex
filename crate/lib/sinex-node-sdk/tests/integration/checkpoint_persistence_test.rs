@@ -160,6 +160,7 @@ async fn test_checkpoint_manager_isolation(ctx: TestContext) -> TestResult<()> {
 }
 
 #[sinex_test]
+#[allow(unused_comparisons)]
 async fn test_checkpoint_database_integration(ctx: TestContext) -> TestResult<()> {
     // Test that checkpoint manager properly integrates with NATS KV
     let ctx = ctx.with_nats().await?;
@@ -180,6 +181,7 @@ async fn test_checkpoint_database_integration(ctx: TestContext) -> TestResult<()
     let loaded_checkpoint = checkpoint_manager.load_checkpoint().await?;
 
     // Verify the checkpoint has the expected structure
+    #[allow(unused_comparisons)]
     ctx.assert("checkpoint structure").that(
         loaded_checkpoint.processed_count >= 0,
         "Processed count should be non-negative",
@@ -203,6 +205,7 @@ async fn test_checkpoint_database_integration(ctx: TestContext) -> TestResult<()
 }
 
 #[sinex_test]
+#[allow(unused_comparisons)]
 async fn test_checkpoint_with_events_context(ctx: TestContext) -> TestResult<()> {
     // Test checkpoint functionality in the context of actual events
     let ctx = ctx.with_nats().await?;
@@ -250,6 +253,7 @@ async fn test_checkpoint_with_events_context(ctx: TestContext) -> TestResult<()>
     let checkpoint = checkpoint_manager.load_checkpoint().await?;
 
     // Verify checkpoint state
+    #[allow(unused_comparisons)]
     ctx.assert("checkpoint with events context").that(
         checkpoint.processed_count >= 0,
         "Checkpoint processed count should be valid",

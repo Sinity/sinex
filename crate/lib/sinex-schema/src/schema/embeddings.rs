@@ -14,6 +14,7 @@ use sqlx::FromRow;
 // A constant representing the dimensions of the embedding vectors.
 // This should be chosen based on the primary embedding model used.
 // e.g., OpenAI's text-embedding-ada-002 uses 1536.
+// TODO: Hardcoded to 1536. Needs to be dynamic or configurable (BUG-018).
 const EMBEDDING_DIMENSIONS: u32 = 1536;
 
 // =============================================================================

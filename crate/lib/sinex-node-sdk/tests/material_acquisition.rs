@@ -687,7 +687,7 @@ async fn material_acquisition_rotation_by_size(ctx: TestContext) -> Result<()> {
         .await?;
 
     // Create manager with small max_bytes to trigger rotation
-    let rotation_policy = RotationPolicy {
+    let _rotation_policy = RotationPolicy {
         max_bytes: Bytes::from_bytes(100), // Very small to trigger rotation
         max_age_seconds: Seconds::from_secs(3600),
         overlap_duration_ms: 100,

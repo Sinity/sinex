@@ -12,7 +12,7 @@ use crate::types::{Id, Pagination};
 use crate::EventRecord;
 use chrono::{DateTime, Utc};
 use sqlx::{types::Json, Postgres, QueryBuilder, Row};
-use tracing::instrument;
+use tracing::{instrument, warn};
 
 impl<'a> EventRepository<'a> {
     #[instrument(skip(self), fields(event_id = %id))]
@@ -298,7 +298,7 @@ impl<'a> EventRepository<'a> {
         let records = sqlx::query_as::<_, EventRecord>(concat!(
             "SELECT ",
             event_select_columns!(),
-            " FROM core.events WHERE source = $1 AND event_type = 'process.heartbeat' AND ts_ingest >= $2 AND ts_ingest <= $3 ORDER BY ts_ingest ASC"
+            " FROM core.events WHERE source = $1 AND event_type = 'process.heartbeat' AND ts_ingest >= $2 AND ts_ingest <= $3 ORDER BY ts_ingest ASC LIMIT 10000"
         ))
         .bind(source.as_str())
         .bind(start)
@@ -463,7 +463,7 @@ impl<'a> EventRepository<'a> {
                 created_at as "created_at!",
                 updated_at as "updated_at!"
             FROM core.event_annotations
-            WHERE id = $1
+            WHERE event_id = $1
             ORDER BY created_at DESC
             "#,
             *id.as_ulid() as _
@@ -701,7 +701,7 @@ impl<'a> EventRepository<'a> {
               AND (
                 jsonb_typeof(payload) NOT IN ('object', 'array')
                 OR pg_column_size(payload) > $2
-                OR payload @> '{}'::jsonb
+                OR payload = '{}'::jsonb
                 OR payload = 'null'::jsonb
               )
             ORDER BY ts_ingest DESC
@@ -1014,6 +1014,16 @@ impl<'a> EventRepository<'a> {
             return Ok(Vec::new());
         }
 
+        let ids = if ids.len() > 1000 {
+            warn!(
+                count = ids.len(),
+                "get_by_ids called with too many IDs, clamping to 1000"
+            );
+            &ids[..1000]
+        } else {
+            ids
+        };
+
         let uuids: Vec<uuid::Uuid> = ids.iter().map(|id| ulid_to_uuid(*id.as_ulid())).collect();
 
         let records = sqlx::query_as::<_, EventRecord>(
@@ -1057,6 +1067,11 @@ impl<'a> EventRepository<'a> {
             return Ok(Vec::new());
         }
 
+        // Clamp limit per source to prevent massive result sets
+        let limit_per_source = limit_per_source.min(1000).max(1);
+        // Total hard limit for entire query
+        const TOTAL_MAX_ROWS: i64 = 10000;
+
         let source_strings: Vec<String> = sources.iter().map(|s| s.as_str().to_string()).collect();
 
         let records = sqlx::query_as::<_, EventRecord>(
@@ -1085,10 +1100,12 @@ impl<'a> EventRepository<'a> {
             ) ranked_events
             WHERE rn <= $2
             ORDER BY source, ts_ingest DESC
+            LIMIT $3
             "#,
         )
         .bind(&source_strings)
         .bind(limit_per_source)
+        .bind(TOTAL_MAX_ROWS)
         .fetch_all(self.pool)
         .await
         .map_err(|e| db_error(e, "get recent by sources"))?;

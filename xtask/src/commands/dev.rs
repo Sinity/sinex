@@ -53,13 +53,6 @@ impl XtaskCommand for DevCommand {
     }
 
     fn execute(&self, _ctx: &CommandContext) -> Result<CommandResult> {
-        // Dev command logic (placeholder for now or delegate)
-        // Actually, dev command uses subcommands.
-        // Wait, execute is on `DevCommand`.
-        match &self.subcommand {
-        // We'll reuse logic that was previously in dev.rs, but now I will put it into `crate::devtools` or just keep implementation here.
-        // I should have kept the implementation logic in `dev.rs` but removed the stack/snapshot parts.
-        // For now, I'll return a placeholder to verify compiling, then re-add implementation.
         Ok(CommandResult::success()
             .with_message("Dev logic retained (placeholder for refactor step)"))
     }

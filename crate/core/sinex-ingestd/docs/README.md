@@ -11,18 +11,26 @@
 - Publish derived data to JetStream so downstream services receive updates
 - Coordinate schema migrations by integrating with `sinex-schema`
 
-## Documentation
+## Architecture & Deep Dives
 
+- `ingestion_pipeline.md` – JetStream consumer, batch persistence, confirmation logic, and DLQ (NEW)
+- `material_assembly.md` – Source material reconstruction, WAL-based recovery, and git-annex integration (NEW)
 - `architecture.md` – Service role and separation rationale
 - `diagrams.md` – Visual architecture diagrams (NATS topology, pipeline flow)
-- `patterns.md` – Event sourcing, idempotency, backpressure patterns
-- `pipeline-design.md` – Future event pipeline design patterns
+
+## Operational Documentation
+
+- `config.md` – Configuration options and defaults
+- `validator.md` – Event schema validation rules
 - `environment.md` – Ingestd-specific environment variables
 - `transport_security.md` – NATS TLS and authentication requirements
-- `config.md` – Configuration options
+- `schema_sync.md` – Schema synchronization details
+
+## Legacy / Reference
+
+- `patterns.md` – Event sourcing, idempotency, backpressure patterns
+- `pipeline-design.md` – Future event pipeline design patterns
 - `service.md` – Service architecture
-- `validator.md` – Event validation
-- `schema_sync.md` – Schema synchronization
 - `figment_config.md` – Figment configuration patterns
 
 ## See Also

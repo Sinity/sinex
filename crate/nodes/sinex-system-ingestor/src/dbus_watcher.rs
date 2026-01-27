@@ -157,6 +157,7 @@ impl DbusWatcher {
     ) -> NodeResult<()> {
         info!("Starting D-Bus monitoring");
 
+        let cancel_token = tokio_util::sync::CancellationToken::new();
         let mut tasks = Vec::new();
 
         // Monitor session bus if enabled
@@ -167,8 +168,12 @@ impl DbusWatcher {
                 config: self.config.clone(),
                 material: material.clone(),
             };
+            let token = cancel_token.clone();
             tasks.push(tokio::spawn(async move {
-                Self::monitor_bus_with_config(monitor_config).await
+                tokio::select! {
+                    res = Self::monitor_bus_with_config(monitor_config) => res,
+                    _ = token.cancelled() => Ok(()),
+                }
             }));
         }
 
@@ -180,8 +185,12 @@ impl DbusWatcher {
                 config: self.config.clone(),
                 material: material.clone(),
             };
+            let token = cancel_token.clone();
             tasks.push(tokio::spawn(async move {
-                Self::monitor_bus_with_config(monitor_config).await
+                tokio::select! {
+                    res = Self::monitor_bus_with_config(monitor_config) => res,
+                    _ = token.cancelled() => Ok(()),
+                }
             }));
         }
 
@@ -192,6 +201,9 @@ impl DbusWatcher {
 
         // Wait for any task to complete (or fail) with panic handling
         let (result, index, remaining) = futures::future::select_all(tasks).await;
+
+        // Signal cancellation to other tasks
+        cancel_token.cancel();
 
         // Check if the task panicked
         match result {
@@ -206,9 +218,9 @@ impl DbusWatcher {
             }
         }
 
-        // Cancel remaining tasks
+        // Await remaining tasks with timeout
         for task in remaining {
-            task.abort();
+            let _ = tokio::time::timeout(Duration::from_secs(5), task).await;
         }
 
         error!("D-Bus monitoring stopped unexpectedly");

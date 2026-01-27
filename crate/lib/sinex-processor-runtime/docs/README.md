@@ -1,75 +1,22 @@
-# sinex-processor-runtime
+# Sinex Processor Runtime
 
-Standardized CLI framework and runtime utilities for all Sinex node binaries.
+A unified CLI and runtime framework for Sinex nodes (processors).
 
-## Purpose
+## Features
 
-This crate provides the shared CLI infrastructure used by all nodes (fs-ingestor, terminal-ingestor, desktop-ingestor, health-automaton, etc.). It ensures consistent:
-
-- **CLI structure** - All nodes use the same subcommand pattern
-- **Configuration** - Unified NATS, database, and logging args
-- **Execution modes** - Service, Scan, Explore, Replay, Checkpoint commands
-
-## Relationship to sinex-node-sdk
-
-```
-sinex-node-sdk          sinex-processor-runtime
-────────────────        ─────────────────────────
-Core node logic         CLI + runtime wrappers
-├── EventProcessor      ├── ProcessorCli (clap)
-├── StreamProcessor     ├── ProcessorCommand enum
-├── Checkpoint          ├── ProcessorCliRunner
-├── ReplayService       └── Re-exports replay types
-└── HeartbeatEmitter
-```
-
-- **sinex-node-sdk**: Library code for building nodes (processing logic, checkpoints, heartbeats)
-- **sinex-processor-runtime**: Binary entrypoint code (CLI parsing, command dispatch, runtime setup)
-
-## Standard Subcommands
-
-All nodes built with this framework support:
-
-```
-my-node service     # Run as persistent service (normal mode)
-my-node scan        # One-shot scan with exit
-my-node explore     # Interactive exploration mode
-my-node replay      # Replay historical events
-my-node checkpoint  # View/manage checkpoints
-```
+-   **Standardized CLI**: `service`, `scan`, `explore` subcommands for all nodes.
+-   **Configuration**: Layered config (CLI > Env > JSON) with validation.
+-   **Replay**: Built-in support for replaying event streams.
+-   **Coordination**: Leader election and heartbeat integration.
 
 ## Usage
 
+Nodes typically use the `processor_main!` macro:
+
 ```rust
-use sinex_processor_runtime::{ProcessorCli, ProcessorCliRunner, ProcessorCommand};
-use clap::Parser;
+use sinex_processor_runtime::processor_main;
 
-fn main() -> color_eyre::Result<()> {
-    let cli = ProcessorCli::parse();
-
-    // Dispatch based on command
-    match &cli.command {
-        ProcessorCommand::Service { .. } => run_service(&cli),
-        ProcessorCommand::Scan { .. } => run_scan(&cli),
-        ProcessorCommand::Explore { .. } => run_explore(&cli),
-        // ...
-    }
-}
+processor_main!(MyProcessor);
 ```
 
-## Configuration
-
-Common CLI arguments available to all nodes:
-
-| Flag | Env Variable | Description |
-|------|--------------|-------------|
-| `--nats-url` | `SINEX_NATS_URL` | NATS server URL |
-| `--database-url` | `DATABASE_URL` | PostgreSQL connection |
-| `--service-name` | - | Service identifier for metrics |
-| `--work-dir` | - | Temp file directory |
-| `-v/-vv/-vvv` | - | Verbosity level |
-
-## See Also
-
-- Node SDK: `crate/lib/sinex-node-sdk/docs/overview.md`
-- Example node: `crate/nodes/sinex-fs-ingestor/`
+See `docs/cli_framework.md` for architectural details.

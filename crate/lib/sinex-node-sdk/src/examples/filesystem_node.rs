@@ -122,7 +122,7 @@ impl FilesystemNode {
                         .unwrap_or_else(Utc::now);
 
                     let payload = FileDiscoveredPayload {
-                        path: SanitizedPath::from(entry_path.to_string_lossy().to_string()),
+                        path: SanitizedPath::new_unchecked(entry_path.to_string_lossy().to_string()),
                         size: metadata.len(),
                         modified_at: modified_time,
                         permissions: Some(metadata.permissions().mode()),
@@ -146,7 +146,7 @@ impl FilesystemNode {
                         .unwrap_or_else(Utc::now);
 
                     let payload = DirDiscoveredPayload {
-                        path: SanitizedPath::from(entry_path.to_string_lossy().to_string()),
+                        path: SanitizedPath::new_unchecked(entry_path.to_string_lossy().to_string()),
                         modified_at: modified_time,
                     };
 

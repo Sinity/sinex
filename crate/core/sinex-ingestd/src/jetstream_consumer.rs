@@ -1,4 +1,6 @@
 //! JetStream event consumer with confirmations and DLQ support
+//!
+//! See `crate::docs::ingestion_pipeline` for architectural details.
 
 use async_nats::{jetstream, Client as NatsClient};
 use chrono::{DateTime, SecondsFormat, Timelike, Utc};
@@ -1275,6 +1277,10 @@ fn push_copy_i64_field(buf: &mut Vec<u8>, value: Option<i64>) {
     }
 }
 
+/// Manual escaping for PostgreSQL text format used in COPY.
+///
+/// Handles standard escapes (backslash, newline, tab, etc.) required for the text format.
+/// This is a performance-critical path for high-throughput ingestion.
 fn escape_copy_text(buf: &mut Vec<u8>, value: &str) {
     for byte in value.as_bytes() {
         match byte {

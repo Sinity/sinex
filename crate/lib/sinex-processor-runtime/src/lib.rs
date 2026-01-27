@@ -1,3 +1,6 @@
+#![doc = include_str!("../docs/README.md")]
+#![doc = include_str!("../docs/cli_framework.md")]
+
 //! Processor-facing CLI and runner utilities shared by all nodes.
 
 pub mod cli;
