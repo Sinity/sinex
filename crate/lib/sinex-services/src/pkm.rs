@@ -224,7 +224,11 @@ impl PkmService {
             let entity = EntityTypeMapper::create_entity_from_type(&name, &entity_type)?
                 .with_properties(serde_json::to_value(metadata)?);
 
-            let entity = self.pool.knowledge_graph().create_entity_with_executor(&mut *tx, entity).await?;
+            let entity = self
+                .pool
+                .knowledge_graph()
+                .create_entity_with_executor(&mut *tx, entity)
+                .await?;
 
             entity_ids.push(entity.id.as_ulid().clone());
         }
@@ -452,12 +456,10 @@ impl PkmService {
         material_type: Option<&str>,
         limit: Option<i64>,
     ) -> ServiceResult<Vec<serde_json::Value>> {
-        let limit = limit.unwrap_or(50).clamp(1, sinex_core::types::query::Pagination::MAX_LIMIT);
-        let materials = self
-            .pool
-            .source_materials()
-            .get_recent(limit)
-            .await?;
+        let limit = limit
+            .unwrap_or(50)
+            .clamp(1, sinex_core::types::query::Pagination::MAX_LIMIT);
+        let materials = self.pool.source_materials().get_recent(limit).await?;
 
         // Filter by material_type if specified
         let filtered_materials = if let Some(filter_type) = material_type {
@@ -501,7 +503,11 @@ impl PkmService {
         let materials = self
             .pool
             .source_materials()
-            .search_by_metadata(key, &value, Some(sinex_core::types::query::Pagination::MAX_LIMIT))
+            .search_by_metadata(
+                key,
+                &value,
+                Some(sinex_core::types::query::Pagination::MAX_LIMIT),
+            )
             .await?;
 
         let summaries: Vec<MaterialSummary> = materials

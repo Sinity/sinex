@@ -7,19 +7,25 @@ fn repo_root() -> PathBuf {
 
 #[sinex_test]
 fn exo_dlq_list_command_reports_entries() -> color_eyre::Result<()> {
-    let mut cmd = std::process::Command::new("python3");
+    let mut cmd = std::process::Command::new("cargo");
     cmd.current_dir(repo_root())
-        .arg("cli/exo.py")
+        .arg("run")
+        .arg("-q")
+        .arg("-p")
+        .arg("sinexctl")
+        .arg("--")
+        .arg("--token")
+        .arg("test-token")
         .arg("dlq")
         .arg("list");
 
     let output = cmd
         .output()
-        .expect("python3 should be available to execute exo.py");
+        .expect("cargo run should be able to execute sinexctl");
 
     assert!(
         output.status.success(),
-        "`exo dlq list` should succeed so engineers can inspect DLQ state.\nstdout: {}\nstderr: {}",
+        "`sinexctl dlq list` should succeed so engineers can inspect DLQ state.\nstdout: {}\nstderr: {}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
@@ -28,19 +34,24 @@ fn exo_dlq_list_command_reports_entries() -> color_eyre::Result<()> {
 
 #[sinex_test]
 fn exo_confirmations_tail_command_streams_events() -> color_eyre::Result<()> {
-    let mut cmd = std::process::Command::new("python3");
+    let mut cmd = std::process::Command::new("cargo");
     cmd.current_dir(repo_root())
-        .arg("cli/exo.py")
-        .arg("confirmations")
-        .arg("tail");
+        .arg("run")
+        .arg("-q")
+        .arg("-p")
+        .arg("sinexctl")
+        .arg("--")
+        .arg("--token")
+        .arg("test-token")
+        .arg("watch");
 
     let output = cmd
         .output()
-        .expect("python3 should be available to execute exo.py");
+        .expect("cargo run should be able to execute sinexctl");
 
     assert!(
         output.status.success(),
-        "`exo confirmations tail` should stream confirmation events for operators.\nstdout: {}\nstderr: {}",
+        "`sinexctl watch` should stream events for operators.\nstdout: {}\nstderr: {}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
@@ -49,19 +60,25 @@ fn exo_confirmations_tail_command_streams_events() -> color_eyre::Result<()> {
 
 #[sinex_test]
 fn exo_dlq_metrics_command_reports_stats() -> color_eyre::Result<()> {
-    let mut cmd = std::process::Command::new("python3");
+    let mut cmd = std::process::Command::new("cargo");
     cmd.current_dir(repo_root())
-        .arg("cli/exo.py")
+        .arg("run")
+        .arg("-q")
+        .arg("-p")
+        .arg("sinexctl")
+        .arg("--")
+        .arg("--token")
+        .arg("test-token")
         .arg("dlq")
-        .arg("metrics");
+        .arg("list");
 
     let output = cmd
         .output()
-        .expect("python3 should be available to execute exo.py");
+        .expect("cargo run should be able to execute sinexctl");
 
     assert!(
         output.status.success(),
-        "`exo dlq metrics` should exist so operators can inspect DLQ health in one command.\nstdout: {}\nstderr: {}",
+        "`sinexctl dlq list` should exist so operators can inspect DLQ health in one command.\nstdout: {}\nstderr: {}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );

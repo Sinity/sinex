@@ -236,7 +236,7 @@ mod tests {
         let err = handle_nodes_set_horizon(&client, &env, invalid_params)
             .await
             .unwrap_err();
-        assert!(err.to_string().contains("Invalid horizon timestamp"));
+        assert!(err.to_string().contains("Invalid set horizon parameters"));
 
         // Valid timestamp should succeed
         let valid_params = json!({

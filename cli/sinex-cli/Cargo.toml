@@ -63,6 +63,9 @@ atty = "0.2"
 ratatui = "0.28"
 crossterm = "0.29"
 
+[features]
+wiremock = []
+
 [dev-dependencies]
 sinex-test-utils = { path = "../../crate/lib/sinex-test-utils" }
 wiremock = "0.6"

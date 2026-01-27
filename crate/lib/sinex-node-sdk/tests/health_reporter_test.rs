@@ -290,9 +290,9 @@ async fn health_reporter_stress_test(ctx: TestContext) -> TestResult<()> {
 
     let metrics = reporter.metrics();
     ctx.assert("processed 10k events")
-        .eq(&metrics.events_processed.load(Ordering::Relaxed), &9800)?;
+        .eq(&metrics.events_processed.load(Ordering::Relaxed), &10000u64)?;
     ctx.assert("recorded 200 errors")
-        .eq(&metrics.errors.load(Ordering::Relaxed), &200)?;
+        .eq(&metrics.errors.load(Ordering::Relaxed), &200u64)?;
 
     Ok(())
 }

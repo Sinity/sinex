@@ -208,6 +208,7 @@ async fn timeout_prevents_indefinite_transaction_hold(ctx: TestContext) -> color
 
     // Create a simple event
     let event_id = CoreUlid::new();
+    let empty_parents: Vec<Uuid> = vec![];
     sqlx::query!(
         r#"
         INSERT INTO core.events (
@@ -216,14 +217,16 @@ async fn timeout_prevents_indefinite_transaction_hold(ctx: TestContext) -> color
             event_type,
             host,
             payload,
-            ts_orig
+            ts_orig,
+            source_event_ids
         ) VALUES (
             $1::uuid::ulid,
             $2,
             $3,
             $4,
             $5,
-            $6
+            $6,
+            $7::uuid[]::ulid[]
         )
         "#,
         event_id.to_uuid(),
@@ -231,7 +234,8 @@ async fn timeout_prevents_indefinite_transaction_hold(ctx: TestContext) -> color
         "timeout.test",
         "localhost",
         json!({"test": "timeout"}),
-        Utc::now()
+        Utc::now(),
+        &empty_parents
     )
     .execute(&pool)
     .await?;

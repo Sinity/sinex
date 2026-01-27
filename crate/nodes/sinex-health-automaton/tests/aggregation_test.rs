@@ -48,10 +48,24 @@ async fn health_aggregator_emits_alert_on_failed_transition(ctx: TestContext) ->
     let mut aggregator = HealthAggregator::default();
     let mut state = HealthState::default();
 
+    // Establish baseline status first
+    let baseline = json!({
+        "component": "critical-service",
+        "previous_status": "unknown",
+        "current_status": "healthy",
+    });
+    let context_baseline = SimpleNodeContext {
+        source: "test".to_string(),
+        event_type: "health.status".to_string(),
+        ts_orig: Some(Utc::now() - Duration::seconds(10)),
+        event_id: sinex_core::EventId::new().into(),
+    };
+    aggregator.process(&mut state, baseline, &context_baseline).await?;
+
     // Transition to failed status
     let input = json!({
         "component": "critical-service",
-        "previous_status": "degraded",
+        "previous_status": "healthy",
         "current_status": "failed",
     });
 
@@ -92,7 +106,21 @@ async fn health_aggregator_tracks_transition_count(ctx: TestContext) -> TestResu
     let mut aggregator = HealthAggregator::default();
     let mut state = HealthState::default();
 
-    let base_time = Utc::now();
+    let base_time = Utc::now() - Duration::seconds(10);
+
+    // Establish baseline status
+    let baseline = json!({
+        "component": "flaky-service",
+        "previous_status": "unknown",
+        "current_status": "healthy",
+    });
+    let context_baseline = SimpleNodeContext {
+        source: "test".to_string(),
+        event_type: "health.status".to_string(),
+        ts_orig: Some(base_time),
+        event_id: sinex_core::EventId::new().into(),
+    };
+    aggregator.process(&mut state, baseline, &context_baseline).await?;
 
     // Simulate multiple transitions for the same component
     for (i, status) in ["degraded", "failed", "degraded", "healthy"]
@@ -108,7 +136,7 @@ async fn health_aggregator_tracks_transition_count(ctx: TestContext) -> TestResu
         let context = SimpleNodeContext {
             source: "test".to_string(),
             event_type: "health.status".to_string(),
-            ts_orig: Some(base_time + Duration::seconds(i as i64)),
+            ts_orig: Some(base_time + Duration::seconds(i as i64 + 1)),
             event_id: sinex_core::EventId::new().into(),
         };
 

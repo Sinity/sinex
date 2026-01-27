@@ -69,6 +69,7 @@ pub struct DlqRequeueRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub event_id: Option<String>,
     /// Requeue all DLQ messages
+    #[serde(default)]
     pub all: bool,
 }
 

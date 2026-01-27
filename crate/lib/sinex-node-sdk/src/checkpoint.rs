@@ -529,13 +529,14 @@ impl CheckpointManager {
                     ))
                 })?
         } else {
-            // Use create() for initial write to correctly handle tombstone cases after purge()
+            // Use put() for initial write to correctly handle tombstone cases after purge()
+            // in async-nats v0.33.0 which lacks a dedicated create() method.
             self.kv
-                .create(&self.kv_key(), encoded.into())
+                .put(&self.kv_key(), encoded.into())
                 .await
                 .map_err(|e| {
                     NodeError::Checkpoint(format!(
-                        "Failed to create checkpoint in KV (Already exists?): {e}"
+                        "Failed to create checkpoint in KV (Put failure?): {e}"
                     ))
                 })?
         };

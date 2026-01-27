@@ -6,6 +6,32 @@ use sinex_test_utils::sinex_test;
 fn node_config_loads_from_custom_file() -> TestResult<()> {
     use std::fs;
 
+    struct EnvGuard {
+        keys: Vec<(String, Option<String>)>,
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for (key, value) in self.keys.drain(..) {
+                match value {
+                    Some(val) => std::env::set_var(key, val),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+    }
+
+    let keys = vec!["SINEX_NATS_URL", "SINEX_LOG_LEVEL", "SINEX_DRY_RUN"];
+    let previous = keys
+        .iter()
+        .map(|key| ((*key).to_string(), std::env::var(key).ok()))
+        .collect();
+    let _guard = EnvGuard { keys: previous };
+
+    for key in &keys {
+        std::env::remove_var(key);
+    }
+
     let temp_dir = tempfile::tempdir()?;
     let config_path = temp_dir.path().join("test-node.toml");
     fs::write(

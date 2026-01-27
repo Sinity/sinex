@@ -631,7 +631,7 @@ async fn test_activity_heatmap(ctx: TestContext) -> TestResult<()> {
     seed_analytics_dataset(&scope).await?;
 
     let service = Arc::new(AnalyticsService::new(ctx.pool.clone()));
-    let heatmap = service.activity_heatmap(60, 10).await?;
+    let heatmap = service.activity_heatmap(None, None, 60, 10).await?;
     assert!(!heatmap.is_empty(), "Should have activity data");
 
     for window in heatmap.windows(2) {

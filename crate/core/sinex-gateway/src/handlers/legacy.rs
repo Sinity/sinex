@@ -239,6 +239,8 @@ pub async fn handle_event_count_by_source(
 }
 
 pub async fn handle_activity_heatmap(service: &AnalyticsService, params: Value) -> Result<Value> {
+    use chrono::{Duration, Utc};
+
     let params = RpcParams::new(&params);
     let bucket_size_minutes_raw = params
         .optional_i64("bucket_size_minutes")
@@ -249,14 +251,35 @@ pub async fn handle_activity_heatmap(service: &AnalyticsService, params: Value) 
         .optional_i64("limit")
         .unwrap_or(DEFAULT_HEATMAP_LIMIT) as i32;
 
-    let heatmap = service.activity_heatmap(bucket_size_minutes, limit).await?;
+    let days_back = params
+        .optional_i64("days_back")
+        .unwrap_or(DEFAULT_ANALYTICS_DAYS_BACK);
+
+    let end_time = Utc::now();
+    let start_time = end_time - Duration::days(days_back);
+
+    let heatmap = service
+        .activity_heatmap(Some(start_time), Some(end_time), bucket_size_minutes, limit)
+        .await?;
     Ok(json!(heatmap))
 }
 
 pub async fn handle_sources_statistics(service: &AnalyticsService, params: Value) -> Result<Value> {
+    use chrono::{Duration, Utc};
+
     let params = RpcParams::new(&params);
     let limit = params.optional_i64("limit").unwrap_or(100);
-    let stats = service.get_source_statistics(limit).await?;
+
+    let days_back = params
+        .optional_i64("days_back")
+        .unwrap_or(DEFAULT_ANALYTICS_DAYS_BACK);
+
+    let end_time = Utc::now();
+    let start_time = end_time - Duration::days(days_back);
+
+    let stats = service
+        .get_source_statistics(Some(start_time), Some(end_time), limit)
+        .await?;
     Ok(json!(stats))
 }
 

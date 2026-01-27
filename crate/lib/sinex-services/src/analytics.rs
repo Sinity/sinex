@@ -169,11 +169,10 @@ impl AnalyticsService {
                                         ORDER BY COUNT(*) DESC
                                         LIMIT $3
                                     "#,
-                                    start,
-                                    end,
-                                    Pagination::DEFAULT_LIMIT
-                                )
-                    
+                    start,
+                    end,
+                    Pagination::DEFAULT_LIMIT
+                )
                 .fetch_all(&mut *conn)
                 .await
                 .map_err(|e| db_error(e, "count by type in range"))?;
