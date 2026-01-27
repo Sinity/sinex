@@ -2,6 +2,7 @@
 //!
 //! The `TestContext` provides isolated database access and test-specific utilities
 //! without wrapping production APIs. Tests use production `test_event()`
+use crate::sandbox::prelude::*;
 //! and repository methods directly through the exposed pool.
 //!
 //! # Architecture

@@ -1,4 +1,5 @@
 //! Development sandbox and infrastructure modules.
+pub mod prelude;
 //!
 //! Comprehensive isolated development environment including:
 //! - Ephemeral NATS servers and JetStream

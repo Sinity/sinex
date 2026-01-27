@@ -31,4 +31,3 @@ clap = { version = "4.0", features = ["derive"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
-sinex-test-utils = { path = "../../lib/sinex-test-utils" }

@@ -72,10 +72,19 @@ predicates = "3.0"
 proptest = { workspace = true }
 
 
+# Additional sandbox dependencies for extracted test-utils functionality
+tracing-subscriber = { workspace = true, optional = true }
+insta = { workspace = true, optional = true }
+blake3 = { workspace = true, optional = true }
+sinex-node-sdk = { path = "../crate/lib/sinex-node-sdk", optional = true }
 [features]
 default = ["cli"]
 cli = []
 sandbox = [
+    "tracing-subscriber",
+    "insta",
+    "blake3",
+    "sinex-node-sdk",
     "async-nats",
     "sinex-core",
     "color-eyre",

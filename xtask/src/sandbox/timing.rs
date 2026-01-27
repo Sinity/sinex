@@ -2,6 +2,7 @@
 //
 // This module provides timing patterns and coordination primitives
 // for sandboxed development and testing.
+use crate::sandbox::prelude::*;
 
 use anyhow::Result;
 use std::sync::atomic::{AtomicUsize, Ordering};

@@ -80,7 +80,6 @@ external-tests = []
 
 [dev-dependencies]
 tempfile = "3.13"
-sinex-test-utils = { path = "../sinex-test-utils" }
 xtask = { path = "../../../xtask", default-features = false, features = ["sandbox"] }
 proptest = { workspace = true }
 
