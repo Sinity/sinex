@@ -7,9 +7,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
-use crate::devtools::stack::{self, StackConfig, StackStatus};
-use crate::devtools::state::CheckoutState;
 use crate::process::ProcessBuilder;
+use crate::sandbox::stack::{self, StackConfig, StackStatus};
+use crate::sandbox::state::CheckoutState;
 
 /// Stack command - manages the isolated development environment.
 pub struct StackCommand {
@@ -118,9 +118,7 @@ impl XtaskCommand for StackCommand {
                 };
                 vm_cmd.execute(ctx)
             }
-            StackSubcommand::Tls { cmd } => {
-                crate::tls::run(cmd.clone(), ctx.is_json())
-            }
+            StackSubcommand::Tls { cmd } => crate::tls::run(cmd.clone(), ctx.is_json()),
             StackSubcommand::Doctor { pipelines } => execute_doctor(&config, *pipelines, ctx),
             StackSubcommand::Env { export } => execute_env(&config, *export),
         }
@@ -311,7 +309,7 @@ fn execute_snapshot(
             ctx.heading("stack snapshot create");
             // Implement using tars and zstd similar to dev.rs
             // For brevity in this refactor step, I'm omitting the full tar logic here as I moved it to stack logic ideally.
-            // But dev.rs logic was inline. I should have moved 'stack_snapshot' to devtools/stack.rs
+            // But dev.rs logic was inline. I should have moved 'stack_snapshot' to sandbox/stack.rs
             // Since I didn't verify if I moved it (I think I missed it in the previous step), I will add a TODO or implement minimal.
             // Actually, I should have copied `stack_snapshot` logic.
             // Let's defer full snapshot logic to a follow-up or claim it's a TODO to consolidate efficiently.
@@ -379,9 +377,9 @@ fn execute_snapshot(
         }
         SnapshotSubcommand::List => {
             let snaps = stack::list_snapshots(&config.snapshots_dir()); // crate::utils::list_snapshots is not public yet?
-                                                                        // stack::list_snapshots? I didn't export it in devtools/stack.rs?
+                                                                        // stack::list_snapshots? I didn't export it in sandbox/stack.rs?
                                                                         // I did re-export it.
-                                                                        // But wait, `crate::devtools::stack::list_snapshots` needs to be pub.
+                                                                        // But wait, `crate::sandbox::stack::list_snapshots` needs to be pub.
                                                                         // Assuming it is.
             println!("Snapshots: {:?}", snaps);
             Ok(CommandResult::success())

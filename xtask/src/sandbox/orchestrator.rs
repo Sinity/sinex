@@ -3,7 +3,7 @@
 //! This module implements the hot reload loop for running sinex binaries
 //! in development mode with automatic rebuilding on source changes.
 
-use crate::devtools::watcher::{FileWatcher, WatchEvent};
+use crate::sandbox::watcher::{FileWatcher, WatchEvent};
 use anyhow::{bail, Result};
 use camino::Utf8PathBuf;
 use std::path::PathBuf;

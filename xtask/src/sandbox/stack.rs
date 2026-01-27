@@ -7,7 +7,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use crate::devtools::state::CheckoutState;
+use crate::sandbox::state::CheckoutState;
 
 /// Stack configuration, uses per-checkout state
 #[derive(Debug, Clone, Serialize, Deserialize)]
