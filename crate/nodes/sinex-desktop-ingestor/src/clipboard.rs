@@ -733,7 +733,7 @@ impl ClipboardWatcher {
 mod tests {
     use super::*;
     use chrono::Utc;
-    use sinex_node_sdk::acquisition_manager::{AcquisitionManager, RotationPolicy};
+    use sinex_node_sdk::acquisition_manager::AcquisitionManager;
     use sinex_test_utils::{sinex_test, EphemeralNats, TestContext, TestResult};
     use std::sync::Arc;
     use tokio::sync::mpsc;

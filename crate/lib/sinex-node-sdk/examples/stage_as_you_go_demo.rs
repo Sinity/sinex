@@ -16,11 +16,11 @@ use serde_json::json;
 use sinex_core::db::models::Event;
 use sinex_core::types::events::LogLinePayload;
 use sinex_core::types::ulid::Ulid;
-use sinex_node_sdk::acquisition_manager::{AcquisitionManager, RotationPolicy};
+use sinex_node_sdk::acquisition_manager::AcquisitionManager;
 use sinex_node_sdk::stage_as_you_go::{
     StageAsYouGoContext, StageAsYouGoProcessor, StageAsYouGoResult,
 };
-use sinex_node_sdk::{NodeError, NodeResult};
+use sinex_node_sdk::NodeResult;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 

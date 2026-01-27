@@ -6,7 +6,7 @@ mod support;
 use sinex_core::SinexError;
 use sinex_core::Ulid;
 use sinex_node_sdk::{InstanceMode, NodeCoordination};
-use sinex_test_utils::{sinex_test, TestContext, TestResult};
+use sinex_test_utils::{sinex_test, TestContext};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use support::runtime::TestRuntimeBuilder;

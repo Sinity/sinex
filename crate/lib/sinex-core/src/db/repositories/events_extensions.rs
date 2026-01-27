@@ -4,6 +4,7 @@ use crate::db::models::{Event, JsonValue};
 use crate::db::repositories::common::{db_error, DbResult, Repository};
 use crate::db::repositories::events::queries::extract_plan_rows;
 use crate::db::repositories::events::{event_select_columns, EventRecordExt, EventRepository};
+use crate::query_helpers::ulid_to_uuid;
 
 use crate::types::domain::EventSource;
 use crate::types::Pagination;

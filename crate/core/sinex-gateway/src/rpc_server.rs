@@ -296,6 +296,7 @@ impl GatewayAuth {
                                         // File was deleted - disable auth (with warning)
                                         let mut token_lock = token_clone.blocking_write();
                                         *token_lock = None;
+                                        // TODO: Consider shutting down after grace period if not recreated (analysis/rpc_server.md Insight 2)
                                         warn!("RPC token file {:?} deleted - authentication disabled!", path_for_closure);
                                     }
                                     _ => {
@@ -510,24 +511,6 @@ impl RpcAuthContext {
     }
 }
 
-/// RAII guard that decrements connection counter on drop
-struct ConnectionGuard {
-    counter: Arc<std::sync::atomic::AtomicUsize>,
-}
-
-impl ConnectionGuard {
-    fn new(counter: Arc<std::sync::atomic::AtomicUsize>) -> Self {
-        Self { counter }
-    }
-}
-
-impl Drop for ConnectionGuard {
-    fn drop(&mut self) {
-        self.counter
-            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
-    }
-}
-
 /// Rate limiter that can be either in-memory or distributed via NATS KV
 #[derive(Clone)]
 enum RateLimiter {
@@ -545,13 +528,6 @@ impl RateLimiter {
             RateLimiter::Distributed(limiter) => limiter.check_and_increment(token).await,
         }
     }
-
-    fn is_enabled(&self) -> bool {
-        match self {
-            RateLimiter::InMemory(limiter) => limiter.is_enabled(),
-            RateLimiter::Distributed(limiter) => limiter.is_enabled(),
-        }
-    }
 }
 
 /// State shared between handlers
@@ -561,8 +537,6 @@ struct AppState {
     auth: GatewayAuth,
     rate_limiter: RateLimiter,
     metrics: Arc<GatewayMetrics>,
-    /// Track active connections for graceful shutdown
-    active_connections: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 /// Shared dispatch function for RPC methods (used by both rpc_server and native_messaging)
@@ -945,6 +919,7 @@ async fn handle_rpc(
             // Try to extract structured error info from SinexError
             if let Some(sinex_err) = err.downcast_ref::<sinex_core::types::error::SinexError>() {
                 let (code, message) = sinex_error_to_rpc_code(sinex_err);
+                // TODO: Implement production error sanitization (analysis/rpc_server.md OPP-002)
                 let data = serde_json::json!({
                     "error_id": error_id.to_string(),
                     "error": sinex_err,
@@ -1202,6 +1177,7 @@ where
                 .layer(ConcurrencyLimitLayer::new(limits.concurrency_limit))
                 .layer(TimeoutLayer::new(limits.request_timeout))
                 .layer(RequestBodyLimitLayer::new(limits.max_body_bytes.as_usize()))
+                // TODO: Review CORS policy for production (analysis/rpc_server.md Q-003)
                 .layer(CorsLayer::permissive())
                 .into_inner(),
         )
@@ -1614,14 +1590,11 @@ pub async fn run(
         None
     };
 
-    let active_connections = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-
     let state = AppState {
         services,
         auth,
         rate_limiter,
         metrics,
-        active_connections: Arc::clone(&active_connections),
     };
 
     let base_router = Router::new()
@@ -1652,15 +1625,8 @@ pub async fn run(
                     .wrap_err("Failed to accept incoming TCP connection")?;
                 let app_clone = app.clone();
                 let acceptor = acceptor.clone();
-                let conn_counter = Arc::clone(&active_connections);
-
-                // Track active connection
-                conn_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
                 tokio::spawn(async move {
-                    // Ensure connection is counted down when this task exits
-                    let _guard = ConnectionGuard::new(Arc::clone(&conn_counter));
-
                     match acceptor.accept(stream).await {
                         Ok(tls_stream) => {
                             let builder = HyperBuilder::new(TokioExecutor::new());
@@ -1683,33 +1649,6 @@ pub async fn run(
                 }
             }
         }
-    }
-
-    // Graceful connection drain - wait for active connections to complete
-    let drain_start = std::time::Instant::now();
-    let drain_timeout = std::time::Duration::from_secs(30);
-
-    info!(
-        "Waiting for {} active connections to drain...",
-        active_connections.load(std::sync::atomic::Ordering::Relaxed)
-    );
-
-    loop {
-        let active = active_connections.load(std::sync::atomic::Ordering::Relaxed);
-        if active == 0 {
-            info!("All connections drained successfully");
-            break;
-        }
-
-        if drain_start.elapsed() >= drain_timeout {
-            warn!(
-                "Drain timeout reached with {} active connections remaining",
-                active
-            );
-            break;
-        }
-
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 
     // Signal all background tasks to shut down

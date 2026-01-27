@@ -107,7 +107,7 @@ in the qcow2 image.
 - [x] Baseline smoke test (`basic`)
 - [x] Pre-flight / coordination coverage (`preflight`)
 - [x] Maintenance timers & blob storage (`maintenance`)
-- [x] Satellite constellation matrix (`satellite-matrix`)
+- [x] Node service matrix (`node-matrix`)
 - [x] Re-enable multi-source stress testing on satellites
 - [x] Port failure-recovery suite to new services
 - [x] Restore performance suite on satellites

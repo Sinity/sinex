@@ -1,3 +1,5 @@
+#![doc = include_str!("../docs/replay_control.md")]
+
 pub use crate::replay_state_machine::ReplayScope;
 use crate::replay_state_machine::{ReplayOperation, ReplayState, ReplayStateMachine};
 use async_nats::connection::State as NatsState;
@@ -202,6 +204,7 @@ impl ReplayControlClient {
     }
 
     pub async fn plan(&self, actor: String, scope: ReplayScope) -> Result<ReplayOperation> {
+        // TODO: CRITICAL - Add authentication/authorization (analysis/crates/sinex-gateway/replay_control.md)
         let response = self
             .send(ReplayControlRequest::Plan { actor, scope })
             .await?;
@@ -504,6 +507,8 @@ impl ReplayExecutionEngine {
             ));
         }
 
+        // TODO: CRITICAL - Implement actual event replay logic. This is currently a stub that fast-forwards state.
+        // See analysis/crates/sinex-gateway/replay_control.md
         let preview = initial.preview_summary.clone().ok_or_else(|| {
             eyre!(
                 "Operation {} is missing preview summary; run preview before execution",

@@ -94,7 +94,7 @@ async fn backpressure_buffer_flushes() -> sinex_test_utils::TestResult<()> {
 
 #[sinex_test]
 async fn backpressure_drop_newest() -> sinex_test_utils::TestResult<()> {
-    let mut harness = ChannelHarness::small_capacity();
+    let harness = ChannelHarness::small_capacity();
     let mut manager = BackpressureManager::new(BackpressureStrategy::DropNewest);
 
     manager

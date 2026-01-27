@@ -67,7 +67,7 @@ async fn sql_injection_payload_preserved() -> TestResult<()> {
 #[sinex_test]
 async fn generic_sanitizer_with_typed_event() -> TestResult<()> {
     let payload = FileCreatedPayload {
-        path: SanitizedPath::from("../../../malicious/file.txt".to_string()),
+        path: SanitizedPath::new_unchecked("../../../malicious/file.txt".to_string()),
         size: 1024,
         created_at: chrono::Utc::now(),
         permissions: Some(0o644),

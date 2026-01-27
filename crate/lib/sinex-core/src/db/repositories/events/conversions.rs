@@ -9,10 +9,11 @@ use crate::types::domain::{EventSource, EventType, HostName};
 use chrono::{DateTime, Utc};
 
 pub fn records_to_events(records: Vec<EventRecord>) -> DbResult<Vec<Event<JsonValue>>> {
-    records
-        .into_iter()
-        .map(|record| record.try_to_event())
-        .collect()
+    let mut events = Vec::with_capacity(records.len());
+    for record in records {
+        events.push(record.try_to_event()?);
+    }
+    Ok(events)
 }
 
 #[derive(Debug, sqlx::FromRow)]

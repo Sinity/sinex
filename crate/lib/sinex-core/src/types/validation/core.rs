@@ -363,11 +363,7 @@ pub fn contains_shell_metacharacters(s: &str) -> bool {
 
 /// Detect potential billion laughs pattern in JSON
 pub fn check_json_expansion(value: &Value) -> Result<()> {
-    fn estimate_expanded_size(
-        value: &Value,
-        depth: usize,
-        _seen_refs: &mut std::collections::HashSet<String>,
-    ) -> Result<usize> {
+    fn estimate_expanded_size(value: &Value, depth: usize) -> Result<usize> {
         if depth > 10 {
             return Err(ValidationError::Json(
                 "Potential billion laughs attack detected".into(),
@@ -379,14 +375,14 @@ pub fn check_json_expansion(value: &Value) -> Result<()> {
                 let mut size = 0;
                 for (k, v) in map {
                     size += k.len();
-                    size += estimate_expanded_size(v, depth + 1, _seen_refs)?;
+                    size += estimate_expanded_size(v, depth + 1)?;
                 }
                 Ok(size)
             }
             Value::Array(arr) => {
                 let mut size = 0;
                 for v in arr {
-                    size += estimate_expanded_size(v, depth + 1, _seen_refs)?;
+                    size += estimate_expanded_size(v, depth + 1)?;
                 }
                 // Check for exponential expansion
                 if depth > 3 && arr.len() > 100 {
@@ -401,8 +397,7 @@ pub fn check_json_expansion(value: &Value) -> Result<()> {
         }
     }
 
-    let mut seen = std::collections::HashSet::new();
-    let estimated_size = estimate_expanded_size(value, 0, &mut seen)?;
+    let estimated_size = estimate_expanded_size(value, 0)?;
 
     // If expanded size is more than 100x the original, reject
     if estimated_size > value.to_string().len() * 100 {

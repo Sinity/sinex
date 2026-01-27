@@ -460,7 +460,8 @@ async fn verify_postgresql_service(messages: &mut Vec<String>) -> Result<Value> 
                                 "error": e.to_string()
                             }),
                         );
-                        messages.push(format!("⚠ PostgreSQL connectivity issue: {}", e));
+                        messages.push(format!("✗ PostgreSQL connectivity failed: {}", e));
+                        bail!("PostgreSQL connectivity test failed: {}", e);
                     }
                 }
             } else {

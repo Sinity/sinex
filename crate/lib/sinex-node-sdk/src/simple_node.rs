@@ -365,7 +365,13 @@ where
                             self.persisted_state = persisted;
 
                             // Clean up the file since we've loaded it
-                            let _ = CheckpointState::delete_file(&checkpoint_path).await;
+                            if let Err(e) = CheckpointState::delete_file(&checkpoint_path).await {
+                                error!(
+                                    processor = %self.processor.name(),
+                                    error = %e,
+                                    "Failed to delete hot reload file after loading state"
+                                );
+                            }
                             return Ok(());
                         }
                         Err(e) => {
@@ -909,16 +915,18 @@ where
             );
         }
 
+        let mut file_save_success = true;
         // Save state to file for hot reload (fast, no network required)
         if let Err(e) = self.save_state_to_file().await {
             warn!(
                 processor = %self.processor.name(),
-
                 error = %e,
                 "Failed to save state to file for hot reload"
             );
+            file_save_success = false;
         }
 
+        let mut nats_save_success = true;
         // Also save to NATS KV (primary checkpoint)
         if let Err(e) = self.save_state().await {
             warn!(
@@ -926,6 +934,13 @@ where
                 error = %e,
                 "Failed to save final checkpoint on shutdown"
             );
+            nats_save_success = false;
+        }
+
+        if !file_save_success && !nats_save_success {
+            return Err(NodeError::Checkpoint(
+                "Failed to save final state to both file and NATS KV on shutdown".to_string(),
+            ));
         }
 
         Ok(())

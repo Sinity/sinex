@@ -4,7 +4,6 @@ use tokio::time::{sleep, Duration};
 
 use sinex_core::types::utils::resource_guard::{ResourceGuard, SimpleGuard};
 use sinex_test_utils::sinex_test;
-use sinex_test_utils::timing_utils::Timeouts;
 
 #[sinex_test]
 async fn resource_guard_runs_async_cleanup_on_drop() -> TestResult<()> {

@@ -20,7 +20,7 @@ User: "I need a node that detects git activity from terminal commands"
 
 **Bespoke event-sourced data flows become routine** because:
 1. SimpleProcessor is trivial enough for LLM to generate reliably
-2. Holographic DX means no manual compile/deploy friction
+2. Seamless Developer Experience means no manual compile/deploy friction
 3. The Tether provides real data for immediate validation
 
 ### The Workflow
@@ -98,7 +98,7 @@ No manual compilation. No synthetic test data. No lost state.
 
 ---
 
-## Holographic DX: The Infrastructure
+## Seamless Developer Experience: The Infrastructure
 
 **The system IS the development environment.**
 
@@ -107,7 +107,7 @@ Current model:
 DEVELOPER ──> Write Rust ──> cargo build ──> restart service ──> lose state ──> replay events
 ```
 
-Holographic model:
+Integrated model:
 ```
 DEVELOPER ──> Edit Rust ──> [auto-rebuilds] ──> [state transfers] ──> continue from where you were
                               (invisible)       (automatic)
@@ -129,7 +129,7 @@ DEVELOPER ──> Edit Rust ──> [auto-rebuilds] ──> [state transfers] �
 | **Erlang/OTP** | Hot code reload. Running system accepts new modules without restart. |
 | **Jupyter** | Interactive exploration with persistent state across cell executions. |
 
-All features below enable prompt-to-node development. SimpleProcessor is the LLM-friendly API. The sx tool orchestrates the holographic experience. The Tether provides real data validation. Wasm plugins offer instant reload for non-Rust logic.
+All features below enable prompt-to-node development. SimpleProcessor is the LLM-friendly API. The sx tool orchestrates the integrated experience. The Tether provides real data validation. Wasm plugins offer instant reload for non-Rust logic.
 
 ---
 
@@ -361,18 +361,18 @@ impl Aggregator for HealthAggregatorLogic {
 
 ---
 
-## 3. `sx` Holographic Developer Tool
+## 3. `sx` Integrated Developer Tool
 
 **Goal:** Single binary that makes the compile/deploy cycle invisible.
 
-**Note:** This is distinct from `sinexctl` (production RPC client). `sx` is the holographic development orchestrator.
+**Note:** This is distinct from `sinexctl` (production RPC client). `sx` is the integrated development orchestrator.
 
 ### Command Structure
 
 ```bash
 sx
-  # Development (core holographic experience)
-  dev [node]               # Holographic dev environment
+  # Development (core integrated experience)
+  dev [node]               # Integrated dev environment
   dev --tether prod        # Live debugging against production
 
   # Operations (wraps sinexctl for convenience)
@@ -390,7 +390,7 @@ sx
   logs [service]           # Tail logs
 ```
 
-### Holographic Development Environment
+### Integrated Development Environment
 
 ```bash
 $ sx dev analytics-automaton
@@ -496,7 +496,7 @@ Production                          Development Machine
 - **Core Logic:** Native binaries (Rust) for privileged I/O
 - **Refinement Logic:** Wasm modules (WASI) for transformations/enrichments
 
-Wasm plugins complement the holographic DX by providing instant reload for extension logic without any compilation wait.
+Wasm plugins complement the seamless Developer Experience by providing instant reload for extension logic without any compilation wait.
 
 ### Use Cases
 

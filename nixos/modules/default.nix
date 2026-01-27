@@ -808,12 +808,12 @@ in
             type = listOf str;
             default = [];
             internal = true;
-            description = "Systemd units generated for satellite services.";
+            description = "Systemd units generated for node services.";
           };
         };
       };
       default = {};
-      description = "Satellite constellation configuration.";
+      description = "Node ecosystem configuration.";
     };
 
     observability = mkOption {

@@ -1,4 +1,5 @@
 #![doc = include_str!("../docs/stage_as_you_go.md")]
+//! Utilities for staging files during processing.
 
 use crate::acquisition_manager::{AcquisitionManager, SourceMaterialHandle};
 use crate::stream_processor::{EventEmitter, NodeHandles, NodeRuntimeState};

@@ -1008,7 +1008,7 @@ mod tests {
     use sinex_core::db::models::{Event as SinexEvent, Provenance};
     use sinex_core::db::query_helpers::ulid_to_uuid;
     use sinex_core::Id;
-    use sinex_node_sdk::{acquisition_manager::RotationPolicy, AcquisitionManager};
+    use sinex_node_sdk::AcquisitionManager;
     use sinex_test_utils::prelude::*;
     use sinex_test_utils::{sinex_test, EphemeralNats};
     use std::sync::Arc;

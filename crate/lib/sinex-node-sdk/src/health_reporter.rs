@@ -9,6 +9,13 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc, RwLock,
 };
+use std::time::Instant;
+
+static PROCESS_START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+
+fn get_process_start() -> Instant {
+    *PROCESS_START.get_or_init(Instant::now)
+}
 
 /// Atomic counters for health metrics
 #[derive(Debug, Default)]
@@ -16,21 +23,19 @@ pub struct HealthMetrics {
     pub events_processed: AtomicU64,
     pub errors: AtomicU64,
     pub warnings: AtomicU64,
-    pub last_error_time: AtomicU64, // Unix timestamp in seconds
+    pub last_error_time: AtomicU64, // Unix timestamp in seconds (wall clock)
+    pub last_error_monotonic: AtomicU64, // Seconds since process start (monotonic)
 }
 
 impl HealthMetrics {
     /// Calculate error rate over the sliding window
     pub fn error_rate(&self, window_seconds: u64) -> f64 {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now_monotonic = Instant::now().duration_since(get_process_start()).as_secs();
 
-        let last_error = self.last_error_time.load(Ordering::Relaxed);
+        let last_error = self.last_error_monotonic.load(Ordering::Relaxed);
 
         // If last error is outside the window, error rate is 0
-        if last_error > 0 && now.saturating_sub(last_error) > window_seconds {
+        if last_error > 0 && now_monotonic.saturating_sub(last_error) > window_seconds {
             return 0.0;
         }
 
@@ -129,12 +134,20 @@ impl HealthReporter {
             .fetch_add(1, Ordering::Relaxed);
         self.metrics.errors.fetch_add(1, Ordering::Relaxed);
 
-        let now = std::time::SystemTime::now()
+        // Update wall clock time (for display/observability)
+        let now_wall = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
+        self.metrics
+            .last_error_time
+            .store(now_wall, Ordering::Relaxed);
 
-        self.metrics.last_error_time.store(now, Ordering::Relaxed);
+        // Update monotonic time (for accurate rate calculation)
+        let now_monotonic = Instant::now().duration_since(get_process_start()).as_secs();
+        self.metrics
+            .last_error_monotonic
+            .store(now_monotonic, Ordering::Relaxed);
     }
 
     /// Record a warning (non-fatal issue)

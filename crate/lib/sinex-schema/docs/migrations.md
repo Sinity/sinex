@@ -1,27 +1,33 @@
-# Migration Module
+# Migrations Analysis
 
-The central module for all database migrations.
+## Executive Summary
 
-This file serves as the entry point for the `migrations` directory. Its purpose
-is to declare all individual migration files as public sub-modules of the
-`migrations` module. This makes them accessible to the `Migrator` struct
-defined in the crate's `lib.rs`.
+- **Total Migrations**: 17
+- **Strategy**: Initial canonical schema (v7.0 squash) followed by incremental updates.
+- **Safety**: All migrations implement `down()`, but some (001, 008) are destructive.
 
-### The Migration Process
+## Critical Migrations
 
-1.  **Declaration (Here):** Every new migration file created in this directory
-must have a corresponding `pub mod <filename>;` line added here.
+### m20241028_000001_create_canonical_schema.rs
+- **Purpose**: Creates the entire v7.0 schema (core, raw, audit).
+- **Risk**: Destructive rollback (drops all data). Protected by `SINEX_ALLOW_SCHEMA_DOWN`.
 
-2.  **Registration (`lib.rs`):** The `Migrator` struct in `lib.rs` collects these
-declared modules and adds them to the execution sequence.
+### m20250117_000008_add_retention_policy.rs
+- **Purpose**: Enforces 90-day retention on `core.events`.
+- **Risk**: **Permanent Data Loss**. Data older than 90 days is deleted by background jobs.
 
-This two-step process ensures that the Rust compiler is aware of all migration
-modules and that they are correctly ordered for execution by the migration tool.
+### m20250121_000013_fix_partitioning.rs
+- **Purpose**: Fixes partition function volatility for TimescaleDB.
+- **Change**: `ulid_to_timestamptz` now uses explicit UTC timezone to be IMMUTABLE.
 
-### Note on the "Squashed" Migration
+## Known Issues
 
-As per the canonical architectural refactoring, all previous, incremental migration
-files have been consolidated into a single, comprehensive initial schema migration.
-This simplifies the setup of new databases and provides a clean baseline. All
-future schema changes will be new, timestamped migration files added to this
-module.
+- **BUG-018**: Embedding dimensions hardcoded to 1536 (OpenAI). See `schema/embeddings.rs`.
+- **Migration Dates**: Some 2026 migrations likely meant 2025.
+
+## Verification
+
+To verify schema state:
+```bash
+cargo xtask schema check-ready
+```

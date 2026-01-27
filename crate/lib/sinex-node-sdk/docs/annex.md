@@ -1,62 +1,49 @@
-# Annex Subsystem
+# Large File Management (Annex Subsystem)
 
-Git-annex integration for large file management
+The Annex subsystem provides content-addressed storage for large binary files using `git-annex`. It ensures data deduplication and integrity across the entire Sinex ecosystem.
 
-This crate provides integration with git-annex for managing large binary files
-within Sinex, using content-addressed storage with deduplication.
+## 🛡️ Data Integrity: Dual-Hash Verification
 
-## Architecture Overview
+Sinex uses a defense-in-depth approach to data integrity:
 
-- **Git-annex**: Provides content-addressed storage, deduplication, and integrity checking
-- **core.blobs table**: PostgreSQL metadata registry for annexed files
-- **BLAKE3 hashing**: Fast content hashing for deduplication
-- **Symlink management**: Working tree files replaced by symlinks to annexed content
+1.  **BLAKE3 (Sinex-Native)**: Fast hashing used for pre-ingestion deduplication and local verification.
+2.  **SHA256 (Git-Annex Native)**: The canonical hash stored within the git-annex backend.
 
-## Workflow
+Every file retrieval triggers a **Dual-Hash Verification**. If the content fails to match *either* hash, the blob is marked as `corrupted` in the database, and the retrieval fails.
 
-1. Large files detected during ingestion (e.g., >100KB)
-2. File added to git-annex repository via `git annex add`
-3. Annex key extracted and metadata stored in core.blobs
-4. Original file location tracked via symlink
-5. Content retrievable via annex key or blob_id
+## 🧱 The `BlobManager`
 
-## Git-annex Key Format
+The `BlobManager` is the primary interface for large file operations. It orchestrates:
+- **Deduplication**: BLAKE3 hashes are checked before ingestion to prevent redundant storage.
+- **Metadata Registry**: Metadata is stored in the `core.blobs` table.
+- **Lifecycle Events**: Emits `blob.ingested`, `blob.retrieved`, and `blob.verified` events for auditability.
 
-Keys follow the pattern: `BACKEND-sSIZE--HASH.ext`
-- Example: `SHA256E-s12345--abc123def456.dat`
-- Backend: Hash algorithm (SHA256E, BLAKE3, etc.)
-- Size: File size in bytes
-- Hash: Content hash
+### Ingestion Workflow
 
-## Deduplication
+1.  **Detect**: Node detects a large file (>100KB) or raw bytes.
+2.  **Hash**: BLAKE3 hash is computed locally.
+3.  **Check**: `BlobManager` queries the database for an existing BLAKE3 match.
+4.  **Store**: If new, the file is added via `git-annex add`.
+5.  **Register**: Metadata (MIME type, size, hashes) is persisted to `core.blobs`.
 
-Files with identical content share the same annex object:
-- Multiple symlinks can point to same annexed content
-- Reduces storage for duplicate files
-- BLAKE3 hash used for fast content comparison
+## 📂 Path Security
 
-## Future Enhancements (Not Yet Implemented)
+To prevent path traversal and symlink attacks, the Annex subsystem enforces strict rules:
+- **`VerifiedPath`**: All ingestion paths must pass through the `VerifiedPath` type, which rejects `../` patterns.
+- **Secure Temp Files**: Byte-based ingestion uses `create_secure_temp_path` with unpredictable names to prevent symlink-following vulnerabilities.
 
-### Health Monitoring and Verification
-- Automated fsck scheduling via systemd timer
-- Log results as `sinex.data_integrity.annex_fsck_result` events
-- Track verification status per blob
-- Monitor available space and annex.numcopies compliance
-- Alert on missing/corrupted content
+## 🚦 Verification Status
 
-### Advanced Metadata Extraction
-- File-type specific extractors:
-- Images: EXIF data, dimensions, color profile
-- Documents: Page count, author, creation date
-- Media: Duration, codec, bitrate
-- Archives: Contents listing, compression ratio
-- Automatic MIME type detection
-- Text extraction for searchability
-- Thumbnail generation for preview
+The system tracks the integrity status of every blob:
+- `sensing`: In-flight ingestion.
+- `verified`: Passed hash check on last retrieval.
+- `corrupted`: Failed hash check (triggering alerts).
 
-### Performance Optimizations
-- Parallel file processing with worker pools
-- Multi-threaded BLAKE3 checksum computation
-- Bulk database insertions
-- In-memory cache for frequently accessed blob metadata
-- Filesystem cache for small annexed files
+## 🛠️ Operational Tasks
+
+### Cleanup
+Stale temporary buffers are automatically cleaned up after 5 minutes of inactivity via the `reconcile_inflight` mechanism.
+
+### In-place vs. Byte Ingestion
+- **`ingest_file`**: Adds an existing file on disk to the annex (moves it to the object store).
+- **`ingest_from_bytes`**: buffers in-memory data (e.g., clipboard) to a secure temp file before annexing.

@@ -203,13 +203,7 @@ impl Serialize for ErrorDetails {
     fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
         let mut state = serializer.serialize_struct("ErrorDetails", 3)?;
 
-        // 1. Sanitize message
-        #[cfg(not(debug_assertions))]
-        let message = strip_internal_paths(&self.message);
-        #[cfg(debug_assertions)]
-        let message = &self.message;
-
-        state.serialize_field("message", &message)?;
+        state.serialize_field("message", &self.message)?;
 
         // 2. Sanitize context
         const SAFE_KEYS: &[&str] = &[
