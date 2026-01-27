@@ -8,7 +8,7 @@
 //! - CommandContext behavior
 //! - CommandResult construction
 
-use assert_cmd::Command;
+use assert_cmd::cargo::cargo_bin_cmd;
 use predicates::prelude::*;
 use std::time::Duration;
 
@@ -508,7 +508,7 @@ fn test_xtask_command_trait_metadata() {
 
 #[test]
 fn test_cli_unknown_command() {
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = cargo_bin_cmd!("xtask");
 
     cmd.arg("nonexistent-command");
 
@@ -520,9 +520,9 @@ fn test_cli_unknown_command() {
 
 #[test]
 fn test_cli_unknown_flag() {
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("check").arg("--nonexistent-flag");
+    cmd.arg("qa").arg("check").arg("--nonexistent-flag");
 
     cmd.assert()
         .failure()
@@ -531,10 +531,10 @@ fn test_cli_unknown_flag() {
 
 #[test]
 fn test_cli_missing_required_arg() {
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = cargo_bin_cmd!("xtask");
 
-    // tls generate-client-cert requires --name
-    cmd.arg("tls").arg("generate-client-cert");
+    // stack tls generate-client-cert requires --name
+    cmd.arg("stack").arg("tls").arg("generate-client-cert");
 
     cmd.assert().failure().stderr(
         predicate::str::contains("required")
@@ -545,9 +545,9 @@ fn test_cli_missing_required_arg() {
 
 #[test]
 fn test_cli_invalid_format_option() {
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("--format").arg("invalid_format").arg("check");
+    cmd.arg("--format").arg("invalid_format").arg("qa").arg("check");
 
     cmd.assert()
         .failure()
@@ -556,10 +556,10 @@ fn test_cli_invalid_format_option() {
 
 #[test]
 fn test_cli_redundant_json_options() {
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = cargo_bin_cmd!("xtask");
 
     // --json and --format json are redundant but should both work
-    cmd.arg("--json").arg("--format").arg("json").arg("check");
+    cmd.arg("--json").arg("--format").arg("json").arg("qa").arg("check");
 
     // This might succeed or fail depending on format checks
     // The key is it shouldn't crash or give an obscure error
@@ -583,9 +583,9 @@ fn test_cli_redundant_json_options() {
 
 #[test]
 fn test_json_output_is_valid_json() {
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("--json").arg("check");
+    cmd.arg("--json").arg("qa").arg("check");
 
     let output = cmd.output().expect("command should run");
 
@@ -599,9 +599,9 @@ fn test_json_output_is_valid_json() {
 
 #[test]
 fn test_json_output_contains_required_fields() {
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("--json").arg("check");
+    cmd.arg("--json").arg("qa").arg("check");
 
     let output = cmd.output().expect("command should run");
 
@@ -618,9 +618,9 @@ fn test_json_output_contains_required_fields() {
 
 #[test]
 fn test_json_output_status_values() {
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("--json").arg("check");
+    cmd.arg("--json").arg("qa").arg("check");
 
     let output = cmd.output().expect("command should run");
 
@@ -643,10 +643,10 @@ fn test_json_output_status_values() {
 
 #[test]
 fn test_json_output_for_failing_command() {
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = cargo_bin_cmd!("xtask");
 
     // This should fail because the database likely isn't available
-    cmd.arg("--json").arg("db").arg("status");
+    cmd.arg("--json").arg("db").arg("schema").arg("status");
 
     let output = cmd.output().expect("command should run");
 
@@ -720,9 +720,9 @@ fn test_status_color_codes() {
 
 #[test]
 fn test_test_command_with_invalid_profile() {
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("test").arg("--profile").arg("nonexistent_profile");
+    cmd.arg("qa").arg("test").arg("nonexistent_profile");
 
     // Should fail because nextest won't find the profile
     let output = cmd.output().expect("command should run");
@@ -737,10 +737,10 @@ fn test_test_command_with_invalid_profile() {
 
 #[test]
 fn test_db_reset_without_confirmation() {
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = cargo_bin_cmd!("xtask");
 
     // db reset requires --yes flag
-    cmd.arg("db").arg("reset");
+    cmd.arg("stack").arg("reset");
 
     cmd.assert()
         .failure()
@@ -749,12 +749,13 @@ fn test_db_reset_without_confirmation() {
 
 #[test]
 fn test_schema_deploy_missing_database_url() {
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = cargo_bin_cmd!("xtask");
 
     // Unset DATABASE_URL to ensure it's missing
     cmd.env_remove("DATABASE_URL");
 
-    cmd.arg("schema")
+    cmd.arg("db")
+        .arg("schema")
         .arg("deploy")
         .arg("--input")
         .arg("schemas/v1");
@@ -769,21 +770,20 @@ fn test_schema_deploy_missing_database_url() {
 #[test]
 fn test_help_works_for_all_subcommands() {
     let subcommands = [
-        vec!["check", "--help"],
-        vec!["lint", "--help"],
-        vec!["test", "--help"],
-        vec!["db", "--help"],
-        vec!["schema", "--help"],
-        vec!["deps", "--help"],
-        vec!["graph", "--help"],
-        vec!["doctor", "--help"],
-        vec!["tls", "--help"],
-        vec!["history", "--help"],
-        vec!["jobs", "--help"],
+        vec!["qa", "check", "--help"],
+        vec!["qa", "lint", "--help"],
+        vec!["qa", "test", "--help"],
+        vec!["stack", "reset", "--help"],
+        vec!["db", "schema", "deploy", "--help"],
+        vec!["analyze", "deps", "--help"],
+        vec!["analyze", "graph", "--help"],
+        vec!["stack", "doctor", "--help"],
+        vec!["stack", "tls", "--help"],
+        vec!["jobs", "help"],
     ];
 
     for args in subcommands {
-        let mut cmd = Command::cargo_bin("xtask").unwrap();
+        let mut cmd = cargo_bin_cmd!("xtask");
         for arg in &args {
             cmd.arg(arg);
         }
@@ -793,9 +793,9 @@ fn test_help_works_for_all_subcommands() {
 
 #[test]
 fn test_check_skip_options() {
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
+    let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("check").arg("--skip-fmt").arg("--skip-check");
+    cmd.arg("qa").arg("check").arg("--skip-fmt").arg("--skip-check");
 
     // With both skipped, should succeed quickly (doing nothing)
     cmd.assert().success();
@@ -804,7 +804,7 @@ fn test_check_skip_options() {
 #[test]
 fn test_completions_all_shells() {
     for shell in ["bash", "zsh", "fish"] {
-        let mut cmd = Command::cargo_bin("xtask").unwrap();
+        let mut cmd = cargo_bin_cmd!("xtask");
         cmd.arg("completions").arg(shell);
 
         // Should succeed (output may go to stderr or stdout depending on clap_complete)
@@ -814,9 +814,9 @@ fn test_completions_all_shells() {
 
 #[test]
 fn test_completions_power_shell() {
-    let mut cmd = Command::cargo_bin("xtask").unwrap();
-    cmd.arg("completions").arg("power-shell");
+    let mut cmd = cargo_bin_cmd!("xtask");
+    cmd.arg("completions").arg("powershell");
 
-    // power-shell should work as well
+    // powershell should work as well
     cmd.assert().success();
 }

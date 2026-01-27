@@ -16,7 +16,7 @@ pub mod unused; // Created in P2.W3.T1 // Created in P2.W3.T4
 pub use timing::{TimingAnalyzer, TimingReport};
 pub use unused::UnusedReport;
 
-use reports::{write_timing_report, write_unused_report};
+use reports::OutputFormat;
 
 /// Dependency analysis commands
 #[derive(Debug, Subcommand)]
@@ -74,7 +74,8 @@ pub enum DepsCommand {
 
 impl DepsCommand {
     /// Execute the deps command
-    pub fn run(&self, ctx: &crate::command::CommandContext) -> Result<()> {
+    pub fn run(&self, ctx: &crate::command::CommandContext) -> Result<crate::command::CommandResult> {
+        use crate::command::CommandResult;
         match self {
             Self::List { all: _ } => {
                 use crate::deps::analyzer::WorkspaceAnalyzer;
@@ -96,12 +97,23 @@ impl DepsCommand {
                     OutputFormat::Human
                 };
 
-                // Write report to stdout
-                let stdout = std::io::stdout();
-                let mut handle = stdout.lock();
-                write_dependency_list(&mut handle, &packages, output_format)?;
+                // Capture output to string
+                let mut buffer = Vec::new();
+                write_dependency_list(&mut buffer, &packages, output_format)?;
+                let rendered = String::from_utf8(buffer)?;
 
-                Ok(())
+                if ctx.is_json() {
+                    let json_data: serde_json::Value = serde_json::from_str(&rendered)?;
+                    Ok(CommandResult::success()
+                        .with_data(json_data)
+                        .with_silent()
+                        .with_duration(ctx.elapsed()))
+                } else {
+                    Ok(CommandResult::success()
+                        .with_data(serde_json::Value::String(rendered))
+                        .with_silent()
+                        .with_duration(ctx.elapsed()))
+                }
             }
 
             Self::Tree { package, depth } => {
@@ -110,6 +122,8 @@ impl DepsCommand {
                 // Create analyzer
                 let analyzer =
                     WorkspaceAnalyzer::new().context("Failed to create workspace analyzer")?;
+
+                let mut rendered = String::new();
 
                 // Verify package exists if specified
                 if let Some(pkg_name) = package {
@@ -131,24 +145,27 @@ impl DepsCommand {
                         );
                     }
 
-                    println!("Dependency tree for '{}' (depth: {}):", pkg_name, depth);
-                    println!("(Full tree visualization will be available in Phase 3)");
+                    rendered.push_str(&format!("Dependency tree for '{}' (depth: {}):\n", pkg_name, depth));
+                    rendered.push_str("(Full tree visualization will be available in Phase 3)\n");
                 } else {
-                    println!("Workspace dependency tree (depth: {}):", depth);
-                    println!("(Full tree visualization will be available in Phase 3)");
+                    rendered.push_str(&format!("Workspace dependency tree (depth: {}):\n", depth));
+                    rendered.push_str("(Full tree visualization will be available in Phase 3)\n");
 
                     // Show workspace packages as placeholder
                     let packages = analyzer
                         .workspace_packages()
                         .context("Failed to get workspace packages")?;
 
-                    println!("\nWorkspace packages:");
+                    rendered.push_str("\nWorkspace packages:\n");
                     for pkg in packages {
-                        println!("  - {} v{}", pkg.name, pkg.version);
+                        rendered.push_str(&format!("  - {} v{}\n", pkg.name, pkg.version));
                     }
                 }
 
-                Ok(())
+                Ok(CommandResult::success()
+                    .with_data(serde_json::Value::String(rendered))
+                    .with_silent()
+                    .with_duration(ctx.elapsed()))
             }
 
             Self::Duplicates { threshold } => {
@@ -167,12 +184,15 @@ impl DepsCommand {
                 // Filter by threshold
                 duplicates.retain(|d| d.versions.len() >= *threshold);
 
-                // Write report to stdout (always human format for now)
-                let stdout = std::io::stdout();
-                let mut handle = stdout.lock();
-                write_duplicates_report(&mut handle, &duplicates, OutputFormat::Human)?;
+                // Write report to buffer
+                let mut buffer = Vec::new();
+                write_duplicates_report(&mut buffer, &duplicates, OutputFormat::Human)?;
+                let rendered = String::from_utf8(buffer)?;
 
-                Ok(())
+                Ok(CommandResult::success()
+                    .with_data(serde_json::Value::String(rendered))
+                    .with_silent()
+                    .with_duration(ctx.elapsed()))
             }
 
             Self::Unused { ci } => {
@@ -182,22 +202,43 @@ impl DepsCommand {
                 let report =
                     UnusedDetector::detect().context("Failed to detect unused dependencies")?;
 
-                // Write report to stdout
-                let format = if ctx.is_json() { "json" } else { "human" }.to_string();
-                write_unused_report(&report, &format)?;
+                let rendered;
+                if ctx.is_json() {
+                    rendered = serde_json::to_string_pretty(&report)?;
+                } else {
+                    // write_unused_report prints directly, we should change it to return string
+                    // but for now let's just capture it if possible or assume it's okay.
+                    // Actually, let's fix write_unused_report too.
+                    let mut buffer = Vec::new();
+                    crate::deps::reports::write_unused_report_to_buffer(&mut buffer, &report, "human")?;
+                    rendered = String::from_utf8(buffer)?;
+                }
 
                 // In CI mode, fail if unused dependencies found
                 if *ci && !report.unused.is_empty() {
-                    anyhow::bail!("Found {} unused dependencies", report.unused.len());
+                    return Ok(CommandResult::failure(crate::output::StructuredError::new(
+                        "UNUSED_DEPS",
+                        format!("Found {} unused dependencies", report.unused.len()),
+                    ))
+                    .with_data(serde_json::Value::String(rendered)));
                 }
 
-                Ok(())
+                Ok(CommandResult::success()
+                    .with_data(serde_json::Value::String(rendered))
+                    .with_silent()
+                    .with_duration(ctx.elapsed()))
             }
 
             Self::Timings { compare: _, top } => {
                 let report = TimingAnalyzer::analyze()?;
-                write_timing_report(&report, *top)?;
-                Ok(())
+                let mut buffer = Vec::new();
+                crate::deps::reports::write_timing_report_to_buffer(&mut buffer, &report, *top)?;
+                let rendered = String::from_utf8(buffer)?;
+                
+                Ok(CommandResult::success()
+                    .with_data(serde_json::Value::String(rendered))
+                    .with_silent()
+                    .with_duration(ctx.elapsed()))
             }
 
             Self::Impact { package } => {
@@ -211,44 +252,56 @@ impl DepsCommand {
                     let metrics = graph.compute_impact_metrics(&pkg_name)?;
 
                     if ctx.is_json() {
-                        let json = serde_json::to_string_pretty(&metrics)?;
-                        println!("{}", json);
+                        Ok(CommandResult::success()
+                            .with_data(serde_json::to_value(metrics)?)
+                            .with_silent()
+                            .with_duration(ctx.elapsed()))
                     } else {
-                        println!("Impact Analysis for {}", pkg_name);
-                        println!("  Dependent packages: {}", metrics.dependent_count);
-                        println!("  Direct dependencies: {}", metrics.dependency_count);
-                        println!(
-                            "  Criticality: {:.2}% ({:?})",
+                        let mut rendered = String::new();
+                        rendered.push_str(&format!("Impact Analysis for {}\n", pkg_name));
+                        rendered.push_str(&format!("  Dependent packages: {}\n", metrics.dependent_count));
+                        rendered.push_str(&format!("  Direct dependencies: {}\n", metrics.dependency_count));
+                        rendered.push_str(&format!(
+                            "  Criticality: {:.2}% ({:?})\n",
                             metrics.criticality * 100.0,
                             metrics.criticality_level()
-                        );
+                        ));
+                        Ok(CommandResult::success()
+                            .with_data(serde_json::Value::String(rendered))
+                            .with_silent()
+                            .with_duration(ctx.elapsed()))
                     }
                 } else {
                     // Full workspace report
                     let report = generate_report(&graph)?;
 
                     if ctx.is_json() {
-                        let json = serde_json::to_string_pretty(&report)?;
-                        println!("{}", json);
+                        Ok(CommandResult::success()
+                            .with_data(serde_json::to_value(report)?)
+                            .with_silent()
+                            .with_duration(ctx.elapsed()))
                     } else {
+                        let mut rendered = String::new();
                         if !report.critical_packages.is_empty() {
-                            println!("Critical Packages (>80% rebuild impact):");
+                            rendered.push_str("Critical Packages (>80% rebuild impact):\n");
                             for pkg in &report.critical_packages {
-                                println!("  - {}", pkg);
+                                rendered.push_str(&format!("  - {}\n", pkg));
                             }
-                            println!();
+                            rendered.push_str("\n");
                         }
 
                         if !report.high_impact_packages.is_empty() {
-                            println!("High Impact Packages (50-80% rebuild impact):");
+                            rendered.push_str("High Impact Packages (50-80% rebuild impact):\n");
                             for pkg in &report.high_impact_packages {
-                                println!("  - {}", pkg);
+                                rendered.push_str(&format!("  - {}\n", pkg));
                             }
                         }
+                        Ok(CommandResult::success()
+                            .with_data(serde_json::Value::String(rendered))
+                            .with_silent()
+                            .with_duration(ctx.elapsed()))
                     }
                 }
-
-                Ok(())
             }
         }
     }

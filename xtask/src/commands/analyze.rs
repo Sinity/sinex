@@ -33,14 +33,8 @@ impl XtaskCommand for AnalyzeCommand {
 
     fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         match &self.subcommand {
-            AnalyzeSubcommand::Deps { command } => {
-                command.run(ctx)?;
-                Ok(CommandResult::success().with_message("Dependency analysis complete"))
-            }
-            AnalyzeSubcommand::Graph { command } => {
-                command.run(ctx)?;
-                Ok(CommandResult::success().with_message("Graph visualization complete"))
-            }
+            AnalyzeSubcommand::Deps { command } => command.run(ctx),
+            AnalyzeSubcommand::Graph { command } => command.run(ctx),
             AnalyzeSubcommand::History(cmd) => cmd.execute(ctx),
         }
     }

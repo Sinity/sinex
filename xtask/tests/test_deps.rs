@@ -12,11 +12,11 @@ use predicates::prelude::*;
 fn test_deps_help() {
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("deps").arg("--help");
+    cmd.arg("analyze").arg("deps").arg("--help");
 
     cmd.assert()
         .success()
-        .stdout(predicate::str::contains("Dependency analysis"))
+        .stdout(predicate::str::contains("Check dependencies"))
         .stdout(predicate::str::contains("list"))
         .stdout(predicate::str::contains("tree"))
         .stdout(predicate::str::contains("duplicates"));
@@ -26,7 +26,7 @@ fn test_deps_help() {
 fn test_deps_list_help() {
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("deps").arg("list").arg("--help");
+    cmd.arg("analyze").arg("deps").arg("list").arg("--help");
 
     cmd.assert()
         .success()
@@ -37,18 +37,18 @@ fn test_deps_list_help() {
 fn test_deps_list_human() {
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("deps").arg("list");
+    cmd.arg("analyze").arg("deps").arg("list");
 
     // Note: This test is for the command structure. The implementation has
     // a known issue with the format argument conflicting with the global format flag.
     // Testing help output which works correctly.
     let mut help_cmd = Command::cargo_bin("xtask").unwrap();
-    help_cmd.arg("deps").arg("list").arg("--help");
+    help_cmd.arg("analyze").arg("deps").arg("list").arg("--help");
 
     help_cmd
         .assert()
         .success()
-        .stdout(predicate::str::contains("List all workspace dependencies"));
+        .stdout(predicate::str::contains("List all workspace packages"));
 }
 
 #[test]
@@ -57,7 +57,7 @@ fn test_deps_list_json() {
     // The actual JSON formatting is validated through the help system.
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("deps").arg("list").arg("--help");
+    cmd.arg("analyze").arg("deps").arg("list").arg("--help");
 
     cmd.assert()
         .success()
@@ -68,7 +68,7 @@ fn test_deps_list_json() {
 fn test_deps_tree_help() {
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("deps").arg("tree").arg("--help");
+    cmd.arg("analyze").arg("deps").arg("tree").arg("--help");
 
     cmd.assert()
         .success()
@@ -80,7 +80,7 @@ fn test_deps_tree_help() {
 fn test_deps_tree_no_package() {
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("deps").arg("tree");
+    cmd.arg("analyze").arg("deps").arg("tree");
 
     cmd.assert()
         .success()
@@ -92,7 +92,7 @@ fn test_deps_tree_no_package() {
 fn test_deps_tree_with_valid_package() {
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("deps").arg("tree").arg("--package").arg("xtask");
+    cmd.arg("analyze").arg("deps").arg("tree").arg("--package").arg("xtask");
 
     cmd.assert()
         .success()
@@ -103,7 +103,7 @@ fn test_deps_tree_with_valid_package() {
 fn test_deps_tree_with_invalid_package() {
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("deps")
+    cmd.arg("analyze").arg("deps")
         .arg("tree")
         .arg("--package")
         .arg("nonexistent-package-xyz");
@@ -118,7 +118,7 @@ fn test_deps_tree_with_invalid_package() {
 fn test_deps_duplicates_help() {
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("deps").arg("duplicates").arg("--help");
+    cmd.arg("analyze").arg("deps").arg("duplicates").arg("--help");
 
     cmd.assert()
         .success()
@@ -129,7 +129,7 @@ fn test_deps_duplicates_help() {
 fn test_deps_duplicates_default() {
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("deps").arg("duplicates");
+    cmd.arg("analyze").arg("deps").arg("duplicates");
 
     cmd.assert()
         .success()
@@ -140,7 +140,7 @@ fn test_deps_duplicates_default() {
 fn test_deps_duplicates_custom_threshold() {
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("deps")
+    cmd.arg("analyze").arg("deps")
         .arg("duplicates")
         .arg("--threshold")
         .arg("5");

@@ -37,8 +37,7 @@ pub fn check_tls_config(
     ca_path: Option<PathBuf>,
     verify_chain: bool,
     nats: bool,
-    json: bool,
-) -> Result<()> {
+) -> Result<TlsCheckResult> {
     let mut result = TlsCheckResult {
         valid: true,
         certificate: None,
@@ -212,18 +211,7 @@ pub fn check_tls_config(
         check_nats_tls(&mut result);
     }
 
-    // Output results
-    if json {
-        println!("{}", serde_json::to_string_pretty(&result)?);
-    } else {
-        print_check_result(&result);
-    }
-
-    if result.valid {
-        Ok(())
-    } else {
-        anyhow::bail!("TLS configuration check failed")
-    }
+    Ok(result)
 }
 
 fn check_certificate(path: &PathBuf) -> Result<CertInfo> {

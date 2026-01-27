@@ -119,7 +119,7 @@ impl XtaskCommand for StackCommand {
                 vm_cmd.execute(ctx)
             }
             StackSubcommand::Tls { cmd } => {
-                crate::tls::run(cmd.clone(), false).map(|_| CommandResult::success())
+                crate::tls::run(cmd.clone(), ctx.is_json())
             }
             StackSubcommand::Doctor { pipelines } => execute_doctor(&config, *pipelines, ctx),
             StackSubcommand::Env { export } => execute_env(&config, *export),

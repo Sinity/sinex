@@ -172,6 +172,9 @@ pub fn run_cli() -> Result<()> {
     match result {
         Ok(res) => {
             res.print(&ctx.writer(), command_name);
+            if res.status == crate::output::Status::Failed || res.status == crate::output::Status::Partial {
+                anyhow::bail!("Command failed with status: {:?}", res.status);
+            }
             Ok(())
         }
         Err(err) => Err(err),

@@ -124,6 +124,12 @@ pub struct CommandResult {
     /// Command-specific details
     #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<serde_json::Value>,
+    /// Structured data
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<serde_json::Value>,
+    /// Whether to suppress all output in human/compact modes
+    #[serde(skip)]
+    pub is_silent: bool,
     /// Structured errors encountered
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub errors: Vec<StructuredError>,
@@ -143,6 +149,8 @@ impl CommandResult {
             duration_secs,
             timestamp: Utc::now(),
             details: None,
+            data: None,
+            is_silent: false,
             errors: Vec::new(),
             suggested_fixes: Vec::new(),
         }
@@ -158,9 +166,17 @@ impl CommandResult {
             duration_secs,
             timestamp: Utc::now(),
             details: None,
+            data: None,
+            is_silent: false,
             errors: Vec::new(),
             suggested_fixes: Vec::new(),
         }
+    }
+
+    #[allow(dead_code)]
+    pub fn with_silent(mut self) -> Self {
+        self.is_silent = true;
+        self
     }
 
     #[allow(dead_code)]
@@ -172,6 +188,11 @@ impl CommandResult {
     #[allow(dead_code)]
     pub fn with_details(mut self, details: serde_json::Value) -> Self {
         self.details = Some(details);
+        self
+    }
+
+    pub fn with_data(mut self, data: serde_json::Value) -> Self {
+        self.data = Some(data);
         self
     }
 
@@ -218,37 +239,67 @@ impl OutputWriter {
         match self.format {
             OutputFormat::Human => self.write_human(result),
             OutputFormat::Json => self.write_json(result),
-            OutputFormat::Compact => self.write_compact(result),
+            OutputFormat::Compact => {
+                if result.is_silent {
+                    Ok(())
+                } else {
+                    self.write_compact(result)
+                }
+            }
             OutputFormat::Silent => Ok(()), // No output
         }
     }
 
     fn write_human(&self, result: &CommandResult) -> io::Result<()> {
-        let mut out = io::stderr().lock();
+        let mut out = io::stdout().lock();
 
-        // Status line
-        let status_str = if self.is_tty {
-            format!(
-                "{}{}{} ",
-                result.status.color_code(),
-                result.status.symbol(),
-                "\x1b[0m"
-            )
-        } else {
-            format!("{} ", result.status.symbol())
-        };
+        if !result.is_silent {
+            // Status line
+            let status_str = if self.is_tty {
+                format!(
+                    "{}{}{} ",
+                    result.status.color_code(),
+                    result.status.symbol(),
+                    "\x1b[0m"
+                )
+            } else {
+                format!("{} ", result.status.symbol())
+            };
 
-        write!(out, "{}", status_str)?;
+            write!(out, "{}", status_str)?;
 
-        // Command name
-        let cmd_name = match &result.subcommand {
-            Some(sub) => format!("{} {}", result.command, sub),
-            None => result.command.clone(),
-        };
-        writeln!(out, "{} ({:.2}s)", cmd_name, result.duration_secs)?;
+            // Command name
+            let cmd_name = match &result.subcommand {
+                Some(sub) => format!("{} {}", result.command, sub),
+                None => result.command.clone(),
+            };
+            writeln!(out, "{} ({:.2}s)", cmd_name, result.duration_secs)?;
 
-        if let Some(msg) = &result.message {
-            writeln!(out, "{}", msg)?;
+            if let Some(msg) = &result.message {
+                writeln!(out, "{}", msg)?;
+            }
+        }
+
+        // Details
+        if let Some(details) = &result.details {
+            if let Some(details_array) = details.as_array() {
+                for detail in details_array {
+                    writeln!(out, "  • {}", detail.as_str().unwrap_or(""))?;
+                }
+            }
+        }
+
+        // Data (if it's a string, print it directly; if object/array, print as pretty JSON)
+        if let Some(data) = &result.data {
+            match data {
+                serde_json::Value::String(s) => writeln!(out, "{}", s)?,
+                serde_json::Value::Null => {}
+                _ => {
+                    let json = serde_json::to_string_pretty(data)
+                        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+                    writeln!(out, "{}", json)?;
+                }
+            }
         }
 
         // Errors
@@ -280,7 +331,7 @@ impl OutputWriter {
     }
 
     fn write_json(&self, result: &CommandResult) -> io::Result<()> {
-        let json = serde_json::to_string(result)
+        let json = serde_json::to_string_pretty(result)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         println!("{}", json);
         Ok(())
