@@ -3,7 +3,7 @@
 //! Watches Rust source files for changes and debounces events
 //! to avoid triggering multiple rebuilds.
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use camino::Utf8PathBuf;
 use notify::{RecommendedWatcher, RecursiveMode};
 use notify_debouncer_mini::{new_debouncer, DebouncedEvent, Debouncer};
@@ -26,6 +26,7 @@ impl FileWatcher {
     /// - Cargo.lock (locked dependencies)
     ///
     /// Changes are debounced for 300ms to avoid rapid rebuild triggers.
+    #[allow(dead_code)]
     pub fn new(path: &Utf8PathBuf, tx: mpsc::Sender<WatchEvent>) -> Result<Self> {
         let path_clone = path.clone();
 

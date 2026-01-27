@@ -13,20 +13,45 @@ pub struct JobsCommand {
 }
 
 /// Jobs subcommands
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, clap::Subcommand)]
 pub enum JobsSubcommand {
     /// List recent jobs
-    List { limit: usize },
+    /// List recent jobs
+    List {
+        #[arg(long, default_value = "20")]
+        limit: usize,
+    },
     /// Show status of a specific job
-    Status { id: u64, follow: bool },
+    Status {
+        #[arg(value_name = "JOB_ID")]
+        id: u64,
+        #[arg(short, long)]
+        follow: bool,
+    },
     /// Show full output of a job
-    Output { id: u64, stderr: bool },
+    Output {
+        #[arg(value_name = "JOB_ID")]
+        id: u64,
+        #[arg(long)]
+        stderr: bool,
+    },
     /// Wait for a job to complete
-    Wait { id: u64, timeout: u64 },
+    Wait {
+        #[arg(value_name = "JOB_ID")]
+        id: u64,
+        #[arg(short, long, default_value = "0")]
+        timeout: u64,
+    },
     /// Cancel a running job
-    Cancel { id: u64 },
+    Cancel {
+        #[arg(value_name = "JOB_ID")]
+        id: u64,
+    },
     /// Remove completed jobs older than N days
-    Prune { older_than: u32 },
+    Prune {
+        #[arg(long, default_value = "7")]
+        older_than: u32,
+    },
 }
 
 impl XtaskCommand for JobsCommand {

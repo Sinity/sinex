@@ -202,6 +202,7 @@ impl TetherClient {
     }
 
     /// List active shadow consumers
+    #[allow(dead_code)]
     pub async fn list_shadow_consumers(&self) -> Result<Vec<ShadowConsumerInfo>> {
         let result = self.rpc_call("shadow.list", serde_json::json!({})).await?;
 
@@ -213,6 +214,7 @@ impl TetherClient {
     }
 
     /// Delete a shadow consumer
+    #[allow(dead_code)]
     pub async fn delete_shadow_consumer(&self, consumer_name: &str) -> Result<()> {
         println!("[tether] Deleting shadow consumer '{}'...", consumer_name);
 
@@ -230,6 +232,7 @@ impl TetherClient {
 
 /// Event received via The Tether
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct TetheredEvent {
     /// The event subject
     pub subject: String,
@@ -240,6 +243,7 @@ pub struct TetheredEvent {
 }
 
 /// Tether session that manages the shadow consumer lifecycle
+#[allow(dead_code)]
 pub struct TetherSession {
     client: TetherClient,
     consumer_info: Option<ShadowConsumerInfo>,
@@ -263,6 +267,7 @@ impl TetherSession {
     }
 
     /// Clean up the shadow consumer on shutdown
+    #[allow(dead_code)]
     pub async fn cleanup(&mut self) {
         if let Some(ref info) = self.consumer_info.take() {
             match self
@@ -271,7 +276,10 @@ impl TetherSession {
                 .await
             {
                 Ok(()) => {
-                    println!("[tether] Shadow consumer '{}' cleaned up", info.consumer_name);
+                    println!(
+                        "[tether] Shadow consumer '{}' cleaned up",
+                        info.consumer_name
+                    );
                 }
                 Err(e) => {
                     eprintln!(
@@ -298,6 +306,7 @@ impl Drop for TetherSession {
 ///
 /// This is the main entry point for `cargo xtask dev run --tether <target>`.
 /// It creates a shadow consumer and starts receiving events.
+#[allow(dead_code)]
 pub async fn connect_tether(
     target: &str,
     _event_tx: mpsc::Sender<TetheredEvent>,

@@ -69,7 +69,6 @@ impl XtaskCommand for CompletionsCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::output::{OutputFormat, OutputWriter};
 
     #[test]
     fn test_completions_command_name() {

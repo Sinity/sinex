@@ -12,7 +12,6 @@
 use anyhow::{bail, Context, Result};
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// Configuration for the node generator
 #[derive(Debug, Clone)]
@@ -86,9 +85,7 @@ impl NodeSpec {
         let words: Vec<&str> = spec
             .split_whitespace()
             .filter(|w| w.len() > 2)
-            .filter(|w| {
-                !["the", "and", "for", "from", "that", "with", "into", "when"].contains(w)
-            })
+            .filter(|w| !["the", "and", "for", "from", "that", "with", "into", "when"].contains(w))
             .take(3)
             .collect();
 
@@ -258,6 +255,7 @@ pub struct GeneratedNode {
     /// Path to the generated crate
     pub path: Utf8PathBuf,
     /// Generated code content
+    #[allow(dead_code)]
     pub code: String,
 }
 
@@ -283,7 +281,10 @@ impl NodeGenerator {
 
     /// Generate a SimpleProcessor from a spec
     pub async fn generate(&self, spec: &NodeSpec) -> Result<GeneratedNode> {
-        println!("[generate] Creating SimpleProcessor '{}' from spec...", spec.name);
+        println!(
+            "[generate] Creating SimpleProcessor '{}' from spec...",
+            spec.name
+        );
 
         // Build the prompt
         let prompt = self.build_prompt(spec);

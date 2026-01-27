@@ -10,22 +10,30 @@ use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskComman
 use crate::process::ProcessBuilder;
 
 /// Schema command variants
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, clap::Subcommand)]
 pub enum SchemaSubcommand {
     Generate {
+        #[arg(short, long, default_value = "schemas/v1")]
         output: String,
+        #[arg(short, long)]
         sync: bool,
     },
     Deploy {
+        #[arg(short, long, default_value = "schemas/v1")]
         input: String,
+        #[arg(long)]
         database_url: String,
     },
     Compat {
+        #[arg(long)]
         base: Option<String>,
+        #[arg(long, default_value = "schemas/v1")]
         glob: String,
     },
     CheckReady {
+        #[arg(long)]
         database: Option<String>,
+        #[arg(long)]
         superuser: Option<String>,
     },
 }

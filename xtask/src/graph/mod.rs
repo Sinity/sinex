@@ -11,7 +11,7 @@ pub mod workspace;
 pub use render::Renderer;
 pub use workspace::WorkspaceGraph;
 
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Clone, Subcommand)]
 pub enum GraphCommand {
     /// Visualize dependency graph
     Deps {
@@ -39,7 +39,7 @@ pub enum GraphCommand {
 
 impl GraphCommand {
     /// Execute the graph command
-    pub fn run(self) -> Result<()> {
+    pub fn run(&self, _ctx: &crate::command::CommandContext) -> Result<()> {
         use crate::graph::render::Renderer;
 
         match self {
@@ -58,7 +58,7 @@ impl GraphCommand {
                     "dot" => {
                         let mut renderer = render::DotRenderer::new(graph);
                         if let Some(focus_pkg) = focus {
-                            renderer = renderer.with_focus(focus_pkg, reverse);
+                            renderer = renderer.with_focus(focus_pkg.clone(), *reverse);
                         }
                         renderer.render()?
                     }
@@ -67,14 +67,14 @@ impl GraphCommand {
                         renderer.render()?
                     }
                     "ascii" | _ => {
-                        let renderer = render::AsciiRenderer::new(&graph, focus, depth);
+                        let renderer = render::AsciiRenderer::new(&graph, focus.clone(), *depth);
                         renderer.render()?
                     }
                 };
 
                 // Output to file or stdout
                 if let Some(output_path) = output {
-                    std::fs::write(&output_path, &rendered)
+                    std::fs::write(output_path, &rendered)
                         .with_context(|| format!("Failed to write to {}", output_path))?;
                     println!("Graph written to {}", output_path);
                 } else {

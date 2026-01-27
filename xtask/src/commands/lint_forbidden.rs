@@ -17,6 +17,7 @@ use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskComman
 /// - Count of unwrap/expect calls in production code
 /// - SQLx query usage statistics (runtime vs compile-time)
 /// - sinex_test_utils usage in production code
+#[derive(Debug, Clone, clap::Args)]
 pub struct LintForbiddenCommand;
 
 impl XtaskCommand for LintForbiddenCommand {
@@ -371,7 +372,6 @@ fn count_pattern_outside_tests(pattern: &str) -> Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::output::{OutputFormat, OutputWriter};
 
     #[test]
     fn test_lint_forbidden_command_name() {

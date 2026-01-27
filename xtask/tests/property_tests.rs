@@ -88,10 +88,12 @@ fn output_command_result_strategy() -> impl Strategy<Value = xtask::output::Comm
                     subcommand,
                     status,
                     duration_secs,
+
                     timestamp: chrono::Utc::now(),
                     details: None,
                     errors,
                     suggested_fixes,
+                    message: None,
                 }
             },
         )

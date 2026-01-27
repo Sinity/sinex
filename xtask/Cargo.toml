@@ -3,13 +3,15 @@ name = "xtask"
 version = "0.1.0"
 edition = "2021"
 
-[lib]
-name = "xtask"
-path = "src/lib.rs"
+
 
 [[bin]]
 name = "xtask"
 path = "src/main.rs"
+
+[lib]
+name = "xtask"
+path = "src/lib.rs"
 
 [dependencies]
 clap = { workspace = true, features = ["derive"] }

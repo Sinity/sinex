@@ -256,6 +256,25 @@ impl CommandResult {
     pub fn is_failure(&self) -> bool {
         self.status == Status::Failed
     }
+    /// Print the result using the given writer.
+    pub fn print(&self, writer: &OutputWriter, command_name: &str) {
+        let output_res = crate::output::CommandResult {
+            command: command_name.to_string(),
+            subcommand: None, // Could parse from name if space? But passed name is top-level.
+            message: self.message.clone(),
+            status: self.status,
+            duration_secs: self.duration_secs.unwrap_or(0.0),
+            timestamp: self.timestamp.unwrap_or_else(Utc::now),
+            details: if self.details.is_empty() {
+                None
+            } else {
+                Some(serde_json::to_value(&self.details).unwrap_or(serde_json::json!([])))
+            },
+            errors: self.errors.clone(),
+            suggested_fixes: self.warnings.clone(),
+        };
+        writer.write_result(&output_res).ok();
+    }
 }
 
 /// Execution context passed to commands.
