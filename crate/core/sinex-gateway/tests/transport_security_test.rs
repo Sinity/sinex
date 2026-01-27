@@ -29,6 +29,12 @@ impl EnvVarGuard {
         std::env::set_var(key, value);
         Self { key, prev }
     }
+
+    fn unset(key: &'static str) -> Self {
+        let prev = std::env::var(key).ok();
+        std::env::remove_var(key);
+        Self { key, prev }
+    }
 }
 
 impl Drop for EnvVarGuard {
@@ -146,6 +152,8 @@ async fn gateway_tls_accepts_handshake(ctx: TestContext) -> Result<()> {
     let _token = EnvVarGuard::set("SINEX_RPC_TOKEN", "test-token");
     let _bypass = EnvVarGuard::set("SINEX_ALLOW_REPLAY_CONTROL_BYPASS", "1");
     let _annex = EnvVarGuard::set("SINEX_ANNEX_PATH", &annex_path);
+    // Ensure host environment CA settings don't bleed into the test
+    let _ca = EnvVarGuard::unset("SINEX_GATEWAY_TLS_CLIENT_CA");
     let _cert = EnvVarGuard::set(
         "SINEX_GATEWAY_TLS_CERT",
         bundle

@@ -266,6 +266,21 @@ async fn test_pool_concurrent_stress_recovery(ctx: TestContext) -> Result<()> {
 async fn test_ingestd_restart_event_continuity(ctx: TestContext) -> Result<()> {
     ctx.ensure_clean().await?;
 
+    // Seed schemas so ingestd has something to broadcast.
+    // Without this, the broadcast is empty, causing the test to fail.
+    sqlx::query(
+        r#"
+        INSERT INTO sinex_schemas.event_payload_schemas 
+        (source, event_type, schema_version, schema_content, content_hash, is_active)
+        VALUES 
+        ('restart-test', 'before.restart', '1.0.0', '{}'::jsonb, 'hash_before', true),
+        ('restart-test', 'after.restart', '1.0.0', '{}'::jsonb, 'hash_after', true)
+        ON CONFLICT DO NOTHING
+        "#,
+    )
+    .execute(&ctx.pool)
+    .await?;
+
     let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     let _js = jetstream::new(nats_client.clone());

@@ -508,7 +508,7 @@ async fn test_shutdown_timeout_handling(ctx: TestContext) -> TestResult<()> {
     });
 
     // Let consumer start
-    tokio::time::sleep(Duration::from_secs(Timeouts::QUICK)).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Request shutdown
     shutdown_requested.store(true, Ordering::SeqCst);
