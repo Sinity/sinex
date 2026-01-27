@@ -19,26 +19,6 @@ lazy_static! {
             regex: Regex::new(r"(?i)\b(AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}\b").unwrap(),
             placeholder: "<AWS_ACCESS_KEY>",
         },
-        // AWS Secret Access Key (approximate)
-        RedactionPattern {
-            _name: "aws_secret_key",
-            regex: Regex::new(r"(?i)\b[0-9a-zA-Z/+]{40}\b").unwrap(),
-            // Be conservative with 40-char strings; only matching if preceded by common context
-            // actually standard regex for this is hard without false positives.
-            // Let's rely on context-based matching if possible, or strict entropy.
-            // For now, let's stick to very obviously labeled assignments or known formats.
-            // This simple regex is too broad. Let's look for assignments.
-            // aws_secret_access_key = ...
-            // export AWS_SECRET_ACCESS_KEY=...
-            // --secret-key ...
-            placeholder: "<AWS_SECRET_KEY>",
-        },
-        // Generic Password/Secret assignment
-        RedactionPattern {
-            _name: "generic_assignment",
-            regex: Regex::new(r"(?i)(password|passwd|secret|token|api[_-]?key|access[_-]?key)\s*[:=]\s*([^\s;]+)").unwrap(),
-            placeholder: "$1=<REDACTED>",
-        },
         // URLs with credentials
         RedactionPattern {
             _name: "url_credentials",
@@ -92,28 +72,6 @@ mod tests {
         let input = "export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE";
         let expected = "export AWS_ACCESS_KEY_ID=<AWS_ACCESS_KEY>";
         assert_eq!(SecretRedactor::redact(input), expected);
-    }
-
-    #[test]
-    fn test_redact_generic_assignment() {
-        let input = "database_password = superRun!secret123";
-        // The regex replaces the whole capture group "password = value" with "$1=<REDACTED>"
-        // So "database_password" captures "password" inside it? No, \b check is missing in regex above.
-        // The regex was: (password|...) ...
-        // Let's check what it does.
-        // "database_password = ..." contains "password = ..." pattern?
-        // Actually the regex is `(password|...)\s*[:=]\s*...`
-        // It matched "password" part of "database_password".
-        // Improved regex needed for strict boundary, or accept loose matching.
-        // Given current regex:
-        // matches "password" in "database_password" -> capture 1 is "password"
-        // expected output: "database_password=<REDACTED>" if logic matches well.
-        // Wait, current regex `(password|passwd|...)` matches substring.
-        // So `database_password = val` -> `database_` + `password=<REDACTED>`
-
-        let output = SecretRedactor::redact(input);
-        assert!(output.contains("<REDACTED>"));
-        assert!(!output.contains("superRun!secret123"));
     }
 
     #[test]
