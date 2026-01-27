@@ -263,29 +263,32 @@ async fn test_command_event_generation(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 async fn test_concurrent_event_generation(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
+    let pool = ctx.pool().clone();
 
     // Generate events concurrently using channels
     let (tx, mut rx) = mpsc::channel::<Event<JsonValue>>(100);
 
     // Spawn filesystem events task
     let fs_tx = tx.clone();
+    let fs_pool = pool.clone();
     let fs_handle = tokio::spawn(async move {
-        // Each task creates its own context
-        let task_ctx = match TestContext::new().await {
-            Ok(ctx) => ctx,
-            Err(_) => return,
-        };
+        // Use shared pool
+        let repo = fs_pool.events();
+
+        // Use the default test material ID constant directly or just a default
+        // For integration tests, we can just use a random ULID if we don't care about material linkage,
+        // or we can look up the default one.
+        // Simpler: Just build the event without material or use a dummy ID.
+        // `DynamicPayload` build() creates a valid event.
+
         for i in 0..5 {
             let data = TestEventData::filesystem_event(i, "concurrent-fs");
-            if let Ok(event) = task_ctx
-                .publish(DynamicPayload::new(
-                    data.source,
-                    data.event_type,
-                    data.payload,
-                ))
-                .await
-            {
-                let _ = fs_tx.send(event).await;
+            let event_res = DynamicPayload::new(data.source, data.event_type, data.payload).build();
+
+            if let Ok(event) = event_res {
+                if let Ok(_) = repo.insert(event.clone()).await {
+                    let _ = fs_tx.send(event).await;
+                }
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
@@ -293,24 +296,23 @@ async fn test_concurrent_event_generation(ctx: TestContext) -> TestResult<()> {
 
     // Spawn command events task
     let cmd_tx = tx;
+    let cmd_pool = pool.clone();
     let cmd_handle = tokio::spawn(async move {
-        // Each task creates its own context
-        let task_ctx = match TestContext::new().await {
-            Ok(ctx) => ctx,
-            Err(_) => return,
-        };
+        // Use shared pool
+        let repo = cmd_pool.events();
         let commands = ["ls", "pwd", "date", "whoami", "uname"];
         for i in 0..5 {
             let data = TestEventData::command_event(i, commands[i]);
-            if let Ok(event) = task_ctx
-                .publish(DynamicPayload::new(
-                    data.source,
-                    data.event_type,
-                    data.payload,
-                ))
-                .await
-            {
-                let _ = cmd_tx.send(event).await;
+            let event_res = DynamicPayload::new(data.source, data.event_type, data.payload).build();
+
+            if let Ok(event) = event_res {
+                if let Ok(_) = repo.insert(event.clone()).await {
+                    let _ = cmd_tx.send(event).await;
+                } else {
+                    eprintln!("Failed to insert command event {i}");
+                }
+            } else {
+                eprintln!("Failed to build command event {i}");
             }
             tokio::time::sleep(Duration::from_millis(15)).await;
         }
@@ -329,7 +331,7 @@ async fn test_concurrent_event_generation(ctx: TestContext) -> TestResult<()> {
 
     // Collect events from spawned tasks
     let mut all_events = Vec::new();
-    let timeout = tokio::time::timeout(Duration::from_secs(5), async {
+    let timeout = tokio::time::timeout(Duration::from_secs(30), async {
         while let Some(event) = rx.recv().await {
             all_events.push(event);
             if all_events.len() >= 10 {

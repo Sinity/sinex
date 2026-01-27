@@ -16,8 +16,6 @@ pub mod unused; // Created in P2.W3.T1 // Created in P2.W3.T4
 pub use timing::{TimingAnalyzer, TimingReport};
 pub use unused::UnusedReport;
 
-use reports::OutputFormat;
-
 /// Dependency analysis commands
 #[derive(Debug, Subcommand)]
 pub enum DepsCommand {
@@ -74,7 +72,10 @@ pub enum DepsCommand {
 
 impl DepsCommand {
     /// Execute the deps command
-    pub fn run(&self, ctx: &crate::command::CommandContext) -> Result<crate::command::CommandResult> {
+    pub fn run(
+        &self,
+        ctx: &crate::command::CommandContext,
+    ) -> Result<crate::command::CommandResult> {
         use crate::command::CommandResult;
         match self {
             Self::List { all: _ } => {
@@ -145,7 +146,10 @@ impl DepsCommand {
                         );
                     }
 
-                    rendered.push_str(&format!("Dependency tree for '{}' (depth: {}):\n", pkg_name, depth));
+                    rendered.push_str(&format!(
+                        "Dependency tree for '{}' (depth: {}):\n",
+                        pkg_name, depth
+                    ));
                     rendered.push_str("(Full tree visualization will be available in Phase 3)\n");
                 } else {
                     rendered.push_str(&format!("Workspace dependency tree (depth: {}):\n", depth));
@@ -210,7 +214,11 @@ impl DepsCommand {
                     // but for now let's just capture it if possible or assume it's okay.
                     // Actually, let's fix write_unused_report too.
                     let mut buffer = Vec::new();
-                    crate::deps::reports::write_unused_report_to_buffer(&mut buffer, &report, "human")?;
+                    crate::deps::reports::write_unused_report_to_buffer(
+                        &mut buffer,
+                        &report,
+                        "human",
+                    )?;
                     rendered = String::from_utf8(buffer)?;
                 }
 
@@ -234,7 +242,7 @@ impl DepsCommand {
                 let mut buffer = Vec::new();
                 crate::deps::reports::write_timing_report_to_buffer(&mut buffer, &report, *top)?;
                 let rendered = String::from_utf8(buffer)?;
-                
+
                 Ok(CommandResult::success()
                     .with_data(serde_json::Value::String(rendered))
                     .with_silent()
@@ -259,8 +267,14 @@ impl DepsCommand {
                     } else {
                         let mut rendered = String::new();
                         rendered.push_str(&format!("Impact Analysis for {}\n", pkg_name));
-                        rendered.push_str(&format!("  Dependent packages: {}\n", metrics.dependent_count));
-                        rendered.push_str(&format!("  Direct dependencies: {}\n", metrics.dependency_count));
+                        rendered.push_str(&format!(
+                            "  Dependent packages: {}\n",
+                            metrics.dependent_count
+                        ));
+                        rendered.push_str(&format!(
+                            "  Direct dependencies: {}\n",
+                            metrics.dependency_count
+                        ));
                         rendered.push_str(&format!(
                             "  Criticality: {:.2}% ({:?})\n",
                             metrics.criticality * 100.0,

@@ -22,6 +22,7 @@ slow-timeout = { period = "180s", terminate-after = 1 }
 failure-output = "immediate-final"
 success-output = "never"
 status-level = "pass"
+final-status-level = "fail"
 default-filter = '''
 all() - (
   (package(sinex-schema) & test(test_index_performance_benefit))

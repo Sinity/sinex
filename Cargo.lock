@@ -6091,6 +6091,7 @@ dependencies = [
  "rstest",
  "serde_json",
  "sinex-core",
+ "sinex-gateway",
  "sinex-node-sdk",
  "sinex-test-utils",
  "tokio",

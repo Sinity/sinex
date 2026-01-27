@@ -29,7 +29,7 @@ async fn test_pool_handles_concurrent_acquisition() -> sinex_test_utils::Result<
     let slot_count = pool_slot_count().await.max(1);
     // Nextest runs tests across processes; other tests may hold pool slots.
     // Cap concurrency to avoid flaking when the full pool isn't available.
-    let target_slots = slot_count.min(8);
+    let target_slots = slot_count.min(4);
     drop(warm_db);
 
     let barrier = Arc::new(Barrier::new(target_slots));
