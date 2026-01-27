@@ -26,16 +26,25 @@ The RPC server implements a **defense-in-depth** strategy with 7 layers of prote
 
 ## Supported RPC Methods
 
-- `system.health` – basic service health probe.
+### System
+- `system.health` – Detailed health probe. Returns `healthy`, `degraded` (if DB is up but NATS is down), or `unhealthy`. Response includes per-component status for database, NATS, and replay control.
+
+### Analytics
 - `analytics.event_count_by_source` – counts per source across a time window.
 - `analytics.activity_heatmap` – time-bucketed activity totals.
 - `analytics.sources_statistics` – per-source totals, ranges, and ingest delay.
+
+### Knowledge Management (PKM)
 - `search.search_events` – query events with filters and pagination.
 - `pkm.create_note` – create a note annotation.
 - `pkm.create_entities_from_list` – create multiple entities.
 - `pkm.link_entities` – link entities together.
+
+### Content & Blobs
 - `content.store_blob` – store base64 payloads in git-annex.
 - `content.retrieve_blob` – fetch stored blobs.
+
+### Replay Control
 - `replay.create_operation` – create a new replay operation.
 - `replay.preview_operation` – preview replay cascades for a scope.
 - `replay.approve_operation` – mark a replay operation approved.
