@@ -91,6 +91,7 @@ impl NativeMessagingConfig {
             ));
         }
 
+        // TODO: Implement capability-based access control (analysis/native_messaging.md)
         let incoming_id = match message.extension_id.as_deref() {
             Some(id) => id,
             None => {
@@ -372,15 +373,7 @@ async fn read_message_async() -> Result<Option<NativeMessage>> {
     let mut len_bytes = [0u8; 4];
 
     // Issue 0.1: Wrap read in timeout to prevent indefinite blocking if stream hangs
-    // Default 5s timeout for header is arbitrary but safe for keeping watchdog happy if browser dies
-    // However, browser writes are mostly bursty. A long timeout or no timeout is technically correct
-    // for "waiting for next message", but we use timeout to ensure we yield control?
-    // Actually, `read_exact` is awaitable, so we don't *block* the thread.
-    // The requirement "Wrap reads in tokio::time::timeout" likely implies guarding against partial packets or hangs.
-    // Let's use a generous timeout (e.g., 30s) or just keep it simple async read.
-    // The instruction says "Do not use spawn_blocking for indefinite reads".
-    // Transforming this to generic async read satisfies "replace with Async".
-
+    // TODO: Add read timeout to prevent gateway hang if browser crashes (analysis/native_messaging.md)
     match stdin.read_exact(&mut len_bytes).await {
         Ok(_) => {}
         Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
@@ -485,6 +478,7 @@ async fn dispatch_method(
 ) -> Result<Value> {
     // Native messaging is a trusted local transport (stdin/stdout),
     // so we use a system auth context
+    // TODO: Use per-extension attribution in auth context (analysis/native_messaging.md OPP-NM-001)
     let auth = crate::rpc_server::RpcAuthContext::system();
 
     // Use shared dispatch table from rpc_server

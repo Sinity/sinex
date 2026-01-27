@@ -2,6 +2,28 @@
 
 Implements the JSON-RPC 2.0 compliant server that fronts Sinex gateway services for CLI tools.
 
+## Security Architecture
+
+The RPC server implements a **defense-in-depth** strategy with 7 layers of protection:
+1. **Network**: TLS is mandatory. Non-loopback connections require mTLS with client certificate validation.
+2. **Middleware**: Tower layers enforce concurrency limits, timeouts (30s default), and request body limits (2MB default).
+3. **Auth**: Bearer token authentication uses **constant-time comparison** to prevent timing attacks.
+4. **Rate Limit**: Per-token leaky bucket (default 100 req/s) prevents DoS from compromised or buggy clients.
+5. **Protocol**: Strict JSON-RPC 2.0 validation rejects malformed requests early.
+6. **Authorization**: Dangerous operations (e.g., `ops.cancel`) require explicit auth context.
+7. **Fail-Closed**: System refuses to start without a configured token; token file deletion degrades to reject-all.
+
+## Performance Characteristics
+
+- **Request Pipeline**: ~2-5ms overhead (TLS handshake + auth + dispatch).
+- **Concurrency**: Default limit of 100 concurrent requests matches the typical PostgreSQL connection pool size to prevent resource exhaustion.
+- **Connection Handling**: Uses a **spawn-per-connection** pattern for TLS handshakes, isolating the accept loop from slowloris-style attacks.
+
+## Authentication & Rate Limiting
+
+- **Token File**: Supports live reloading for zero-downtime rotation. Deleting the file immediately disables authentication (rejects all requests).
+- **Rate Limiting**: Rate limits are isolated per-token. A single compromised token cannot exhaust the global quota.
+
 ## Supported RPC Methods
 
 - `system.health` – basic service health probe.

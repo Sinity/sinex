@@ -302,6 +302,8 @@ impl ServiceContainer {
             last_error,
         }
     }
+
+    // TODO: Add unified health_report() method for all components (analysis/crates/sinex-gateway/rpc_server_ENHANCED.md)
 }
 
 async fn connect_replay_control_with_backoff(

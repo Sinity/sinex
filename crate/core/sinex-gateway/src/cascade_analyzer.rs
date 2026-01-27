@@ -85,6 +85,7 @@ pub struct CascadeAnalyzerConfig {
     /// Whether to include weak dependencies
     pub include_weak_dependencies: bool,
     /// Memory limit for analysis (bytes)
+    // TODO: Enforce this limit in analyze_cascades_in_transaction (see cascade_analyzer.md)
     pub memory_limit_bytes: Option<usize>,
     /// Timeout for analysis operations (prevents indefinite transaction hold)
     pub timeout: Duration,
@@ -399,6 +400,7 @@ impl StreamingCascadeAnalyzer {
         table_name: &str,
     ) -> Result<Vec<IntegrityViolation>> {
         let mut repo = EventRepositoryTx::new(tx);
+        // TODO: Remove hardcoded limit or implement pagination (analysis/cascade_analyzer.md)
         let rows = repo
             .cascade_integrity_violations(table_name, 100)
             .await
@@ -429,7 +431,7 @@ impl StreamingCascadeAnalyzer {
     ) -> Result<Vec<CircularDependency>> {
         let quoted_table = Self::quote_identifier(table_name);
         // For now, use a simple SQL approach to find potential cycles
-        // In production, would implement proper Tarjan's algorithm
+        // TODO: In production, implement proper Tarjan's algorithm (analysis/cascade_analyzer.md)
         let max_cycle_depth = self.config.max_depth.max(1);
         let query = format!(
             r#"

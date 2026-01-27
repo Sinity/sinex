@@ -1,4 +1,7 @@
 //! Shared RPC method handlers
+//!
+//! TODO: Refactor this monolithic module into domain-specific handlers (analytics, pkm, etc.)
+//! as identified in the module survey (analysis/crates/sinex-gateway/_module-survey.md).
 
 use crate::replay_control::ReplayControlClient;
 use crate::replay_state_machine::{ReplayScope, ReplayState};

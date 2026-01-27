@@ -296,6 +296,7 @@ impl GatewayAuth {
                                         // File was deleted - disable auth (with warning)
                                         let mut token_lock = token_clone.blocking_write();
                                         *token_lock = None;
+                                        // TODO: Consider shutting down after grace period if not recreated (analysis/rpc_server.md Insight 2)
                                         warn!("RPC token file {:?} deleted - authentication disabled!", path_for_closure);
                                     }
                                     _ => {
@@ -945,6 +946,7 @@ async fn handle_rpc(
             // Try to extract structured error info from SinexError
             if let Some(sinex_err) = err.downcast_ref::<sinex_core::types::error::SinexError>() {
                 let (code, message) = sinex_error_to_rpc_code(sinex_err);
+                // TODO: Implement production error sanitization (analysis/rpc_server.md OPP-002)
                 let data = serde_json::json!({
                     "error_id": error_id.to_string(),
                     "error": sinex_err,
@@ -1202,6 +1204,7 @@ where
                 .layer(ConcurrencyLimitLayer::new(limits.concurrency_limit))
                 .layer(TimeoutLayer::new(limits.request_timeout))
                 .layer(RequestBodyLimitLayer::new(limits.max_body_bytes.as_usize()))
+                // TODO: Review CORS policy for production (analysis/rpc_server.md Q-003)
                 .layer(CorsLayer::permissive())
                 .into_inner(),
         )

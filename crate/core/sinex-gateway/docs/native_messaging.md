@@ -11,6 +11,25 @@ Native messaging uses stdin/stdout for bidirectional communication:
 2. Maximum message size is capped at 1 MB to prevent resource exhaustion.
 3. Message types are `request` for calls and `response` (or `error`) for replies.
 
+## Security Architecture
+
+### Authentication
+- **Fail-Closed**: Requires explicit allowlist via `SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS`. Empty allowlist rejects all requests.
+- **Constant-Time Comparison**: Optional shared secrets are verified using `subtle::ConstantTimeEq` to prevent timing attacks.
+- **Host Validation**: Trusted hosts can be restricted via `SINEX_NATIVE_MESSAGING_TRUSTED_HOSTS`.
+- **Protocol Versioning**: `SINEX_NATIVE_MESSAGING_PROTOCOL_VERSION` enforcement prevents protocol downgrade attacks.
+
+### Threat Model
+- **Malicious Extension**: Prevented by fail-closed allowlist.
+- **Compromised Extension**: Audit logs record all dangerous operations (though attributed to "system" context).
+- **DoS (Size)**: 1MB message limit prevents memory exhaustion.
+- **DoS (Flooding)**: Currently relied on single-threaded event loop backpressure.
+
+### Input Validation
+- **JSON Parsing**: Strongly typed deserialization rejects malformed payloads before processing.
+- **Size Limits**: Checked before buffer allocation to prevent OOM.
+- **Async I/O**: Non-blocking reads ensure the gateway remains responsive to shutdown signals.
+
 ## Message Format
 
 Request example:
@@ -44,15 +63,9 @@ Response example:
 - Bidirectional communication enables real-time data exchange.
 - The browser cleans up the process when the extension disconnects.
 
-## Security Considerations
+## Configuration
 
-- Message size limits prevent DoS attacks.
-- All message fields are validated before dispatching.
-- Error messages are sanitized to avoid leaking sensitive details.
-- Trusted extensions must be declared via `SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS`.
-  - Format: comma-separated entries such as `chrome-extension://abc123#shared-secret`.
-  - Entries without `#secret` only check the extension ID; entries with secrets require matching `extension_secret` fields on every message.
-- Trusted native messaging hosts can be restricted via `SINEX_NATIVE_MESSAGING_TRUSTED_HOSTS`.
-  - Format: comma-separated host identifiers; when set, every message must include `host` matching one entry.
-- `SINEX_NATIVE_MESSAGING_PROTOCOL_VERSION` enforces a specific `protocol_version` value on each message.
-- Authentication decisions are logged as structured tracing events (`native_messaging.auth`) so operators can audit which extension IDs succeeded or failed, including reasons such as `missing_extension_id`, `not_trusted`, or `invalid_secret`.
+- `SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS`: Comma-separated list of `extension-id[#secret]`.
+- `SINEX_NATIVE_MESSAGING_TRUSTED_HOSTS`: Comma-separated list of allowed hosts.
+- `SINEX_NATIVE_MESSAGING_PROTOCOL_VERSION`: Expected protocol version string.
+- `SINEX_NATIVE_MESSAGING_MAX_SIZE_BYTES`: Max message size (default 1MB).
