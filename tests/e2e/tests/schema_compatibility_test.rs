@@ -1,6 +1,6 @@
 use sinex_ingestd::schema_sync::synchronize_schemas;
 use sinex_services::AnalyticsService;
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn schema_and_services_remain_compatible(ctx: TestContext) -> Result<()> {

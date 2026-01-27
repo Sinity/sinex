@@ -13,7 +13,7 @@ use sinex_core::db::models::event::Event;
 use sinex_core::db::validation::{EventValidator, ValidationError, DEFAULT_MAX_PAYLOAD_BYTES};
 
 use sinex_core::DynamicPayload;
-use sinex_test_utils::{sinex_serial_test, sinex_test, test_event, TestContext};
+use xtask::sandbox::{sinex_serial_test, sinex_test, test_event, TestContext};
 
 const FS_WATCHER_SOURCE: &str = "fs-watcher";
 

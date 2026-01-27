@@ -758,7 +758,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[sinex_test]
     async fn wait_for_tasks_aborts_hung_tasks_before_shutdown() {
         struct CancelFlag(Arc<AtomicBool>);
 

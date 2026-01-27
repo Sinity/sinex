@@ -13,7 +13,7 @@ use sinex_core::types::domain::{EventSource, EventType};
 use sinex_core::types::events::DynamicPayload;
 use sinex_core::types::{Id, Ulid};
 use sinex_core::EventSearchFilters;
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use std::collections::HashSet;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

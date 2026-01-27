@@ -66,5 +66,4 @@ sinex-core = { path = "../../lib/sinex-core", features = [] }
 sinex-node-sdk = { path = "../../lib/sinex-node-sdk" }
 
 [dev-dependencies]
-sinex-test-utils = { path = "../../lib/sinex-test-utils" }
 tempfile.workspace = true

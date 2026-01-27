@@ -1,7 +1,7 @@
 use sinex_core::types::events::payloads::clipboard::{
     ClipboardCopiedPayload, ClipboardSelectedPayload,
 };
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn clipboard_copied_payload_serializes_expected_fields() -> Result<()> {

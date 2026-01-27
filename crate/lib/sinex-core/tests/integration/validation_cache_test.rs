@@ -2,7 +2,7 @@ use chrono::Utc;
 use serde_json::json;
 use sinex_core::db::repositories::schema_management::{NewEventSchema, SchemaManagementRepository};
 use sinex_core::types::Ulid;
-use sinex_test_utils::{sinex_serial_test, sinex_test, TestContext, TestResult};
+use xtask::sandbox::{sinex_serial_test, sinex_test, TestContext, TestResult};
 use sqlx::Row;
 
 #[sinex_serial_test]

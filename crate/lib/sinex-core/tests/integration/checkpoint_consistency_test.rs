@@ -13,8 +13,8 @@ use sinex_core::db::integrity::checkpoint_verification;
 use sinex_core::types::ulid::Ulid;
 use sinex_core::{DbPool, DynamicPayload};
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
-use sinex_test_utils::prelude::*;
-use sinex_test_utils::timing_utils::WaitHelpers;
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::WaitHelpers;
 use std::collections::{HashMap, HashSet};
 
 // Import helpers from the extracted module
@@ -449,7 +449,7 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
     }
 
     let expected_events = 15usize;
-    sinex_test_utils::timing_utils::WaitHelpers::wait_for_source_events(
+    xtask::sandbox::timing::WaitHelpers::wait_for_source_events(
         &ctx.pool,
         "test.cross_validation",
         expected_events,
@@ -540,7 +540,7 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
                 json!({"sequence": 10_000 + attempts}),
             ))
             .await?;
-            sinex_test_utils::timing_utils::WaitHelpers::wait_for_source_events(
+            xtask::sandbox::timing::WaitHelpers::wait_for_source_events(
                 &ctx.pool,
                 "test.cross_validation",
                 16,

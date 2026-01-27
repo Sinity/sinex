@@ -6,7 +6,7 @@
 
 use camino::Utf8PathBuf;
 use sinex_node_sdk::annex::{AnnexConfig, BlobManager};
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use tempfile::TempDir;
 
 const TEST_BYTES: &[u8] = b"sinex-blob-manager-integration";

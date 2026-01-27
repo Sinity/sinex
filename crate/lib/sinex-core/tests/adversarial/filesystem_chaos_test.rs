@@ -5,9 +5,9 @@
 
 use chrono::Utc;
 use futures::future::join_all;
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use sinex_test_utils::resources;
-use sinex_test_utils::timing_utils::Timeouts;
+use xtask::sandbox::timing::Timeouts;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::{AtomicU64, Ordering};

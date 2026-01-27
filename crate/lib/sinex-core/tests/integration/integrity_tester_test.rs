@@ -6,7 +6,7 @@ use sinex_core::db::integrity::{
 };
 use sinex_core::repositories::DbPoolExt;
 use sinex_core::types::ulid::Ulid as CoreUlid;
-use sinex_test_utils::{sinex_test, TestContext};
+use xtask::sandbox::{sinex_test, TestContext};
 
 #[sinex_test]
 async fn windowing_limits_event_counts(ctx: TestContext) -> color_eyre::Result<()> {

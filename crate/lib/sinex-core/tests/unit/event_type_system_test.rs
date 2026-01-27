@@ -10,7 +10,7 @@
 //! - Modern payload types from sinex_core::types::events::payloads
 //! - color_eyre for error handling
 
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 
 // Additional imports for specific payload types
 use sinex_core::db::models::event::SourceMaterial;

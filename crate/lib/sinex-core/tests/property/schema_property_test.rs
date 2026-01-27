@@ -16,7 +16,7 @@ use sinex_core::{
     types::validation::{validate_json, ValidationError},
     DbPoolExt, DynamicPayload,
 };
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use std::collections::HashMap;
 
 // =============================================================================

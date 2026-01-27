@@ -2,7 +2,7 @@ use sinex_core::{DbPoolExt, Id};
 use sinex_document_ingestor::{DocumentIngestorConfig, DocumentProcessor};
 use sinex_node_sdk::stream_processor::{Checkpoint, NodeInitContext, ScanArgs, TimeHorizon};
 use sinex_node_sdk::{Node, SimpleIngestorWrapper};
-use sinex_test_utils::{node_runtime::TestRuntimeBuilder, sinex_test, TestContext};
+use xtask::sandbox::{node_runtime::TestRuntimeBuilder, sinex_test, TestContext};
 use tempfile::NamedTempFile;
 use tokio::time::{timeout, Duration};
 

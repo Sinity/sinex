@@ -4,7 +4,7 @@ use proptest::prelude::*;
 use sinex_core::db::sanitization::EventSanitizer;
 use sinex_core::types::domain::{EventSource, EventType};
 use sinex_core::{Event, Provenance};
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 
 fn arb_event_payload() -> impl Strategy<Value = serde_json::Value> {
     prop_oneof![

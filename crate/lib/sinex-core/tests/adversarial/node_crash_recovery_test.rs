@@ -11,7 +11,7 @@ use sinex_node_sdk::{
     AcquisitionManager, Checkpoint, CheckpointManager, CheckpointState, RotationPolicy,
 };
 use sinex_schema::ulid::Ulid;
-use sinex_test_utils::{
+use xtask::sandbox::{
     prelude::*, start_test_ingestd_with_config, timing_utils::Timeouts, TestIngestdConfig,
     TestIngestdHandle,
 };

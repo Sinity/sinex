@@ -12,7 +12,7 @@
 
 use axum::http::{HeaderMap, HeaderValue};
 use sinex_gateway::rpc_server_test_support as rpc_test_support;
-use sinex_test_utils::{sinex_test, EnvGuard};
+use xtask::sandbox::{sinex_test, EnvGuard};
 use std::fs;
 use tempfile::TempDir;
 
@@ -282,7 +282,7 @@ fn test_gateway_limits_matrix() -> TestResult<()> {
             timeout_secs: None,
             max_body_bytes: None,
             expected: rpc_test_support::RpcServerLimitsSnapshot {
-                concurrency_limit: 32,
+                concurrency_limit: 100,
                 request_timeout_secs: sinex_core::types::Seconds::from_secs(30),
                 max_body_bytes: sinex_core::types::Bytes::from_mebibytes(2),
             },

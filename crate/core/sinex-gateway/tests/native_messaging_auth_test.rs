@@ -10,7 +10,7 @@ use sinex_gateway::{
     },
     ServiceContainer,
 };
-use sinex_test_utils::{sinex_test, EnvGuard, TestContext};
+use xtask::sandbox::{sinex_test, EnvGuard, TestContext};
 use tokio::sync::Mutex;
 
 struct ReplayBypassGuard {

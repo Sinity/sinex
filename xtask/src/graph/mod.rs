@@ -39,8 +39,9 @@ pub enum GraphCommand {
 
 impl GraphCommand {
     /// Execute the graph command
-    pub fn run(&self, _ctx: &crate::command::CommandContext) -> Result<()> {
+    pub fn run(&self, ctx: &crate::command::CommandContext) -> Result<crate::command::CommandResult> {
         use crate::graph::render::Renderer;
+        use crate::command::CommandResult;
 
         match self {
             Self::Deps {
@@ -72,16 +73,27 @@ impl GraphCommand {
                     }
                 };
 
-                // Output to file or stdout
+                // Output to file or return data
                 if let Some(output_path) = output {
                     std::fs::write(output_path, &rendered)
                         .with_context(|| format!("Failed to write to {}", output_path))?;
-                    println!("Graph written to {}", output_path);
+                    
+                    Ok(CommandResult::success()
+                        .with_message(format!("Graph written to {}", output_path))
+                        .with_duration(ctx.elapsed()))
+                } else if render_format == "json" {
+                    // For JSON, we want the raw data if it's JSON
+                    let json_data: serde_json::Value = serde_json::from_str(&rendered)?;
+                    Ok(CommandResult::success()
+                        .with_data(json_data)
+                        .with_silent()
+                        .with_duration(ctx.elapsed()))
                 } else {
-                    println!("{}", rendered);
+                    Ok(CommandResult::success()
+                        .with_data(serde_json::Value::String(rendered))
+                        .with_silent()
+                        .with_duration(ctx.elapsed()))
                 }
-
-                Ok(())
             }
         }
     }

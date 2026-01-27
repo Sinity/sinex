@@ -48,7 +48,6 @@ json-schema = ["dep:schemars"]
 serde = ["dep:serde"]
 
 [dev-dependencies]
-sinex-test-utils = { path = "../sinex-test-utils" }
 sinex-core = { path = "../sinex-core" }
 tokio-test = "0.4"
 rstest = { workspace = true }

@@ -59,4 +59,3 @@ sinex-processor-runtime = { path = "../../lib/sinex-processor-runtime" }
 sinex-core = { path = "../../lib/sinex-core", features = [] }
 
 [dev-dependencies]
-sinex-test-utils = { path = "../../lib/sinex-test-utils" }

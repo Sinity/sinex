@@ -21,8 +21,8 @@
 // - **Baseline performance**: 1000+ events/second insertion rate
 
 use sinex_core::types::events::{event_types, services, EventFactory};
-use sinex_test_utils::prelude::*;
-use sinex_test_utils::timing_utils::Timeouts;
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::Timeouts;
 
 use sqlx::Row;
 use std::time::{Duration, Instant};

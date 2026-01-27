@@ -1,7 +1,7 @@
 use serde_json::json;
 use sinex_ingestd::MaterialAssembler;
 use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use std::sync::Arc;
 
 #[sinex_test]
@@ -79,7 +79,7 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
 
         // Wait for WAL to contain the Slice entry
         let wal_file = state_path.join(material_id.to_string()).join("state.wal");
-        sinex_test_utils::timing_utils::WaitHelpers::wait_for_condition(
+        xtask::sandbox::timing::WaitHelpers::wait_for_condition(
             || {
                 let p = wal_file.clone();
                 async move {
@@ -144,7 +144,7 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
         // Wait for completion (via DB check)
         let pool = ctx.pool.clone();
 
-        sinex_test_utils::timing_utils::WaitHelpers::wait_for_condition(
+        xtask::sandbox::timing::WaitHelpers::wait_for_condition(
             move || {
                 let pool = pool.clone();
                 async move {

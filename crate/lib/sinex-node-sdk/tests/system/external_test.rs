@@ -19,7 +19,7 @@
 // - **Dependencies**: Git Annex, external command tools, filesystem access
 
 use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use sinex_test_utils::TestResult;
 use sqlx::Row;
 use tempfile::TempDir;

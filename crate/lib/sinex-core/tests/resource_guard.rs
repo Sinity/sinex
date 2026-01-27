@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio::time::{sleep, Duration};
 
 use sinex_core::types::utils::resource_guard::{ResourceGuard, SimpleGuard};
-use sinex_test_utils::sinex_test;
+use xtask::sandbox::sinex_test;
 
 #[sinex_test]
 async fn resource_guard_runs_async_cleanup_on_drop() -> TestResult<()> {

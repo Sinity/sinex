@@ -3,7 +3,7 @@ use sinex_core::types::utils::timestamp_helpers::{
     parse_flexible_timestamp, timestamp_nanos_to_datetime, timestamp_to_datetime,
     timestamp_with_nanos_to_datetime,
 };
-use sinex_test_utils::sinex_test;
+use xtask::sandbox::sinex_test;
 
 #[sinex_test]
 fn timestamp_conversions_cover_common_units() -> TestResult<()> {

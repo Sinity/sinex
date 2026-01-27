@@ -283,7 +283,7 @@ where
 mod tests {
     use super::{build_publish_payload, wait_for_publish_ack};
     use sinex_core::{DynamicPayload, EventId, Provenance, Ulid};
-    use sinex_test_utils::sinex_test;
+    use xtask::sandbox::sinex_test;
     use std::{future, io, time::Duration};
 
     #[sinex_test]

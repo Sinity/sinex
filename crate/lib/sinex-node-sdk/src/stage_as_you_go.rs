@@ -65,7 +65,7 @@ mod tests {
     use super::StageAsYouGoContext;
     use crate::stream_processor::EventEmitter;
     use sinex_core::{DynamicPayload, EventId, Provenance, Ulid};
-    use sinex_test_utils::sinex_test;
+    use xtask::sandbox::sinex_test;
     use tokio::sync::mpsc;
     use tokio::time::{timeout, Duration};
 

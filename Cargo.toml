@@ -8,12 +8,11 @@ members = [
   "crate/lib/sinex-processor-runtime",
   "crate/lib/sinex-services",
   # Re-enabled to ensure tests compile
-  "crate/lib/sinex-test-utils",
-  
+
   # Core runtime crates
   "crate/core/sinex-ingestd",
   "crate/core/sinex-gateway",
-  
+
   # Ingestor crates (event sources)
   "crate/nodes/sinex-terminal-ingestor",
   "crate/nodes/sinex-desktop-ingestor",
@@ -40,10 +39,10 @@ members = [
   # Keep experimental automata disabled until stabilized
   # "crate/nodes/sinex-content-automaton",
   # "crate/nodes/sinex-pkm-automaton",
-  
+
   # Test modules are integration tests within the main workspace
   # "test/*", # Removed - tests are integration tests, not separate workspace members
-  
+
   # Disabled/folded crates
   # "crate/sinex-annex", # Folded into sinex-node-sdk
   # "crate/sinex-preflight", # Folded into sinex-node-sdk
@@ -224,10 +223,10 @@ tracing-test = { workspace = true }
 uuid = { workspace = true }
 color-eyre = { workspace = true }
 sinex-core = { path = "crate/lib/sinex-core", features = ["testing"] }
-sinex-test-utils = { path = "crate/lib/sinex-test-utils" }
 blake3 = { workspace = true }
 once_cell = { workspace = true }
 async-nats = { workspace = true }
+sinex-gateway = { path = "crate/core/sinex-gateway" }
 
 [dependencies]
 # Test utilities and dependencies for workspace-level integration tests

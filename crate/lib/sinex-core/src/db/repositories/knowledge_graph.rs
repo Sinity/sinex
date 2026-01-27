@@ -301,6 +301,18 @@ impl<'a> EnhancedRepository<'a> for KnowledgeGraphRepository<'a> {
 impl<'a> KnowledgeGraphRepository<'a> {
     /// Create a new entity
     pub async fn create_entity(&self, entity: CreateEntity) -> DbResult<EntityRecord> {
+        self.create_entity_with_executor(self.pool, entity).await
+    }
+
+    /// Create a new entity with a specific executor (e.g. for transactions)
+    pub async fn create_entity_with_executor<'e, E>(
+        &self,
+        executor: E,
+        entity: CreateEntity,
+    ) -> DbResult<EntityRecord>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+    {
         let id = Id::<Entity>::new();
         let canonical_name = entity
             .canonical_name
@@ -340,10 +352,13 @@ impl<'a> KnowledgeGraphRepository<'a> {
             canonical_name,
             &aliases,
             properties,
-            source_event_ids.iter().map(|id| *id.as_ulid()).collect::<Vec<_>>() as _,
+            source_event_ids
+                .iter()
+                .map(|id| *id.as_ulid())
+                .collect::<Vec<_>>() as _,
             confidence_score
         )
-        .fetch_one(self.pool)
+        .fetch_one(executor)
         .await
         .map_err(|e| db_error(e, "create entity"))
     }

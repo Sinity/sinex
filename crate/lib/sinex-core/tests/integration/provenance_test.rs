@@ -4,7 +4,7 @@ use sinex_core::db::models::Provenance;
 use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::db::validation::{EventValidator, ValidationError};
 use sinex_core::{DynamicPayload, EventId, Id, JsonValue, Ulid};
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use tracing::info;
 
 /// Integration test for provenance tracking functionality

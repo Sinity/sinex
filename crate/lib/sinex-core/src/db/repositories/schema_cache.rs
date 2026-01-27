@@ -245,7 +245,7 @@ impl<'a> SchemaCacheRepository<'a> {
 mod tests {
     use super::*;
     use crate::db::repositories::schema_management::{NewEventSchema, SchemaManagementRepository};
-    use sinex_test_utils::{sinex_test, TestContext, TestResult};
+    use xtask::sandbox::{sinex_test, TestContext, TestResult};
 
     async fn setup_test_schema(pool: &PgPool) -> TestResult<Ulid> {
         let repo = SchemaManagementRepository::new(pool);

@@ -240,7 +240,7 @@ mod tests {
         assert!(signal.is_shutdown_requested());
     }
 
-    #[tokio::test]
+    #[sinex_test]
     async fn test_state_save_load() {
         let temp_dir = TempDir::new().unwrap();
         let checkpoint_path = temp_dir.path().join("test.checkpoint.json");

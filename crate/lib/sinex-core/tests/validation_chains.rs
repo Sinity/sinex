@@ -2,7 +2,7 @@ use sinex_core::types::validation::validation_chains::{DatabaseConfig, EventVali
 use sinex_core::validation::validation_chains::ValidateExt;
 use validator::Validate;
 
-use sinex_test_utils::sinex_test;
+use xtask::sandbox::sinex_test;
 
 #[sinex_test]
 fn database_config_validation_flags_invalid_fields() -> TestResult<()> {

@@ -12,7 +12,7 @@
 use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::types::ulid::Ulid;
 use sinex_core::DynamicPayload;
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
 
@@ -88,7 +88,7 @@ async fn test_event_ingestion_flow(ctx: TestContext) -> Result<()> {
 
     // Wait for persistence
     let event_id = node_event.id.as_ref().unwrap().clone();
-    sinex_test_utils::timing_utils::WaitHelpers::wait_for_event_id(&ctx.pool, event_id.clone(), 10)
+    xtask::sandbox::timing::WaitHelpers::wait_for_event_id(&ctx.pool, event_id.clone(), 10)
         .await?;
 
     // Verify event can be retrieved
@@ -153,9 +153,9 @@ async fn test_batch_ingestion(ctx: TestContext) -> Result<()> {
     assert_eq!(stored_ids.len(), 3, "All batch events should be stored");
 
     // Verify all events were persisted
-    sinex_test_utils::timing_utils::WaitHelpers::wait_for_event_count(&ctx.pool, 3, 30).await?;
+    xtask::sandbox::timing::WaitHelpers::wait_for_event_count(&ctx.pool, 3, 30).await?;
     for (idx, event_id) in stored_ids.iter().enumerate() {
-        sinex_test_utils::timing_utils::WaitHelpers::wait_for_event_id(
+        xtask::sandbox::timing::WaitHelpers::wait_for_event_id(
             &ctx.pool,
             event_id.clone(),
             10,
@@ -402,7 +402,7 @@ async fn test_ingestion_performance(ctx: TestContext) -> Result<()> {
     );
 
     // Verify persistence with a longer retry loop to tolerate catalog latency on busy pools.
-    let persisted = match sinex_test_utils::timing_utils::WaitHelpers::wait_for_source_events(
+    let persisted = match xtask::sandbox::timing::WaitHelpers::wait_for_source_events(
         &ctx.pool,
         &source,
         processed_events,
@@ -528,7 +528,7 @@ async fn test_sequential_ingestion(ctx: TestContext) -> Result<()> {
     );
 
     // Verify events are in the database
-    let observed = sinex_test_utils::timing_utils::WaitHelpers::wait_for_source_events(
+    let observed = xtask::sandbox::timing::WaitHelpers::wait_for_source_events(
         &ctx.pool,
         &source,
         total_events as usize,
@@ -815,7 +815,7 @@ async fn test_service_health_monitoring(ctx: TestContext) -> Result<()> {
     drop(db_connection);
 
     // Wait for persistence
-    sinex_test_utils::timing_utils::WaitHelpers::wait_for_source_events(&ctx.pool, &source, 1, 10)
+    xtask::sandbox::timing::WaitHelpers::wait_for_source_events(&ctx.pool, &source, 1, 10)
         .await?;
 
     // Test event retrieval (indicates service is operational)
@@ -847,7 +847,7 @@ async fn test_service_health_monitoring(ctx: TestContext) -> Result<()> {
         tokio::task::yield_now().await;
     }
 
-    sinex_test_utils::timing_utils::WaitHelpers::wait_for_source_events(&ctx.pool, &source, 4, 12)
+    xtask::sandbox::timing::WaitHelpers::wait_for_source_events(&ctx.pool, &source, 4, 12)
         .await?;
 
     // Verify service maintains health over time
@@ -934,7 +934,7 @@ async fn test_resource_management(ctx: TestContext) -> Result<()> {
 
     // Verify persistence with wait helpers instead of backfilling.
     let expected_events = resource_patterns.len() * events_per_pattern + 1;
-    let observed = sinex_test_utils::timing_utils::WaitHelpers::wait_for_source_events(
+    let observed = xtask::sandbox::timing::WaitHelpers::wait_for_source_events(
         &ctx.pool,
         &source,
         expected_events,
@@ -1038,7 +1038,7 @@ async fn test_timeout_and_deadline_handling(ctx: TestContext) -> Result<()> {
         "All batch events should be processed within timeout"
     );
 
-    sinex_test_utils::timing_utils::WaitHelpers::wait_for_source_events(
+    xtask::sandbox::timing::WaitHelpers::wait_for_source_events(
         &ctx.pool,
         "timeout-test",
         11,

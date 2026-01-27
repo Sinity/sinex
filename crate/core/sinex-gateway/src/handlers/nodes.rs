@@ -172,7 +172,7 @@ pub async fn handle_nodes_set_horizon(
 mod tests {
     use super::*;
     use sinex_core::environment;
-    use sinex_test_utils::{sinex_test, EphemeralNats};
+    use xtask::sandbox::{sinex_test, EphemeralNats};
 
     #[sinex_test]
     async fn nodes_list_returns_empty_when_no_bucket() -> TestResult<()> {
@@ -236,7 +236,7 @@ mod tests {
         let err = handle_nodes_set_horizon(&client, &env, invalid_params)
             .await
             .unwrap_err();
-        assert!(err.to_string().contains("Invalid horizon timestamp"));
+        assert!(err.to_string().contains("Invalid set horizon parameters"));
 
         // Valid timestamp should succeed
         let valid_params = json!({

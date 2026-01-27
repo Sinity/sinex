@@ -9,7 +9,7 @@ use sinex_node_sdk::annex::{
     blob_manager::BLOB_EVENT_CHANNEL_CAPACITY, AnnexConfig, BlobManager, GitAnnex,
 };
 use sinex_services::ContentService;
-use sinex_test_utils::{sinex_serial_test, sinex_test, TestContext, TestResult};
+use xtask::sandbox::{sinex_serial_test, sinex_test, TestContext, TestResult};
 use tempfile::TempDir;
 use tokio::sync::mpsc;
 use which::which;

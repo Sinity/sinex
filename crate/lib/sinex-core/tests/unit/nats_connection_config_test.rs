@@ -1,6 +1,6 @@
 use nkeys::KeyPair;
 use sinex_core::nats::NatsConnectionConfig;
-use sinex_test_utils::{sinex_test, TestContext, TestResult};
+use xtask::sandbox::{sinex_test, TestContext, TestResult};
 use std::io::Write;
 
 #[sinex_test]

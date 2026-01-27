@@ -6,7 +6,7 @@
 //! - Wraparound behavior
 //! - Concurrent generation safety
 
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use sinex_core::types::ulid::Ulid;
 use sinex_core::{DynamicPayload, Id};
 use std::collections::{HashMap, HashSet};

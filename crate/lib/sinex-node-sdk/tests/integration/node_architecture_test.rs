@@ -8,8 +8,8 @@
 use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::DynamicPayload;
 use sinex_node_sdk::stream_processor::{Checkpoint, TimeHorizon};
-use sinex_test_utils::prelude::*;
-use sinex_test_utils::sinex_test;
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::sinex_test;
 use sinex_test_utils::TestResult;
 use tracing::info;
 

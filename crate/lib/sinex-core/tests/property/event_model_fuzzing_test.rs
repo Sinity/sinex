@@ -20,7 +20,7 @@
 //! - Test with malformed but parseable JSON structures
 //! - Focus on the modern RawEvent::schemaless() API and database insertion paths
 
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 
 use chrono::{DateTime, TimeZone, Utc};
 use proptest::{strategy::ValueTree, test_runner::TestCaseResult};

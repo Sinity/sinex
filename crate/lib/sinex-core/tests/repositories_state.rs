@@ -1,7 +1,7 @@
 use serde_json::json;
 use sinex_core::db::repositories::state::Operation;
 use sinex_core::repositories::DbPoolExt;
-use sinex_test_utils::{sinex_test, TestContext};
+use xtask::sandbox::{sinex_test, TestContext};
 
 #[sinex_test]
 async fn state_repository_logs_operations(ctx: TestContext) -> TestResult<()> {

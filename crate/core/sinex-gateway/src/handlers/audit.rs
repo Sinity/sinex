@@ -91,7 +91,7 @@ pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
 mod tests {
     use super::*;
     use serde_json::json;
-    use sinex_test_utils::{sinex_test, TestContext};
+    use xtask::sandbox::{sinex_test, TestContext};
 
     #[sinex_test]
     async fn audit_get_returns_operation(ctx: &TestContext) -> TestResult<()> {

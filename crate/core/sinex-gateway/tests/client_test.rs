@@ -1,5 +1,5 @@
 use sinex_gateway::client::GatewayClient;
-use sinex_test_utils::sinex_test;
+use xtask::sandbox::sinex_test;
 use std::time::Duration;
 
 #[sinex_test]

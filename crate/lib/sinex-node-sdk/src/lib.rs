@@ -222,7 +222,7 @@ impl VersionInfo {
 #[cfg(test)]
 mod version_info_tests {
     use super::VersionInfo;
-    use sinex_test_utils::sinex_test;
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     async fn version_info_has_build_stamp() -> color_eyre::eyre::Result<()> {

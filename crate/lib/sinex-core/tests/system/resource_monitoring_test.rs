@@ -12,8 +12,8 @@
 // - **Dependencies**: PostgreSQL
 
 use sinex_core::db::models::EventFactory;
-use sinex_test_utils::prelude::*;
-use sinex_test_utils::timing_utils::Timeouts;
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::Timeouts;
 
 use sinex_core::types::ulid::Ulid;
 

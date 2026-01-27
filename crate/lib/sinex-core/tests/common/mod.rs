@@ -4,7 +4,7 @@
 //! used across test files but don't belong in the main sinex-test-utils prelude.
 
 // Re-export everything from the main prelude for convenience
-pub use sinex_test_utils::prelude::*;
+pub use xtask::sandbox::prelude::*;
 
 // Test-specific payload imports that are frequently used
 pub use sinex_core::types::events::payloads::{

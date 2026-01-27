@@ -12,7 +12,7 @@ use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use serde_json::{json, Value};
 use sinex_core::{Event, EventSource, EventType, HostName, Id, JsonValue, Ulid};
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 type RawEvent = Event<JsonValue>;
 
 // Property tests for Event-related functionality

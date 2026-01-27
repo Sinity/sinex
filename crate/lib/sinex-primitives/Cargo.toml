@@ -1,0 +1,19 @@
+[package]
+name = "sinex-primitives"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+gethostname = { workspace = true }
+
+# For Event types
+sinex-core = { path = "../sinex-core", default-features = false, features = ["types-only"] }
+proptest = { workspace = true, optional = true }
+
+[features]
+default = []
+testing = []
+proptest = ["dep:proptest"]

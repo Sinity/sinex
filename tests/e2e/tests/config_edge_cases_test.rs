@@ -13,7 +13,7 @@
 use sinex_core::nats::NatsConnectionConfig;
 use sinex_core::types::{Bytes, Seconds};
 use sinex_ingestd::config::IngestdConfig;
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use std::env;
 use tempfile::TempDir;
 

@@ -285,7 +285,7 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
     use tokio::time::{sleep, Duration};
 
-    #[tokio::test]
+    #[sinex_test]
     async fn test_watcher_state_transitions() {
         let mut handle = WatcherHandle::<()>::initialized("test");
         assert!(!handle.is_active());
@@ -303,7 +303,7 @@ mod tests {
         // handle is consumed, can't check after
     }
 
-    #[tokio::test]
+    #[sinex_test]
     async fn test_watcher_running_constructor() {
         let task = tokio::spawn(async {
             sleep(Duration::from_secs(10)).await;
@@ -314,7 +314,7 @@ mod tests {
         assert!(health.active);
     }
 
-    #[tokio::test]
+    #[sinex_test]
     async fn test_watcher_health_tracking() {
         let handle = WatcherHandle::<()>::initialized("test");
 
@@ -332,7 +332,7 @@ mod tests {
         assert_eq!(health.last_error, Some("test error".to_string()));
     }
 
-    #[tokio::test]
+    #[sinex_test]
     async fn test_watcher_shutdown_aborts_task() {
         let flag = Arc::new(AtomicBool::new(false));
         let flag_clone = Arc::clone(&flag);
@@ -352,7 +352,7 @@ mod tests {
         assert!(!flag.load(Ordering::SeqCst));
     }
 
-    #[tokio::test]
+    #[sinex_test]
     async fn test_watcher_with_material() {
         let material = "test_context";
         let mut handle = WatcherHandle::initialized("test").with_material(material);
@@ -365,7 +365,7 @@ mod tests {
         assert!(handle.take_material().is_none());
     }
 
-    #[tokio::test]
+    #[sinex_test]
     async fn test_watcher_with_forwarder() {
         let main_task = tokio::spawn(async {
             sleep(Duration::from_secs(10)).await;

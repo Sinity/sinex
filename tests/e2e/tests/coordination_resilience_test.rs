@@ -10,15 +10,15 @@
 
 use sinex_core::coordination::kv_client::{CoordinationKvClient, InstanceMetadata};
 use sinex_core::environment::environment;
-use sinex_test_utils::nats::ensure_coordination_buckets;
+use xtask::sandbox::nats::ensure_coordination_buckets;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 
 use sinex_core::db::advisory_lock::AdvisoryLock;
-use sinex_test_utils::prelude::*;
-use sinex_test_utils::timing_utils::WaitHelpers;
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::WaitHelpers;
 
 // =============================================================================
 // Advisory Lock Tests
@@ -494,8 +494,8 @@ async fn test_concurrent_coordination_stress(ctx: TestContext) -> Result<()> {
 /// Verify that KV coordination works over mTLS.
 #[sinex_test]
 async fn test_kv_functionality_with_mtls(_ctx: TestContext) -> Result<()> {
-    use sinex_test_utils::nats::EphemeralNats;
     use std::path::PathBuf;
+    use xtask::sandbox::EphemeralNats;
 
     // Use absolute path to the generated fixtures in workspace root
     let fixture_path = PathBuf::from("/realm/project/sinex/tests/fixtures/tls");

@@ -5,7 +5,7 @@ use proptest::test_runner::TestCaseError;
 use serde_json::json;
 use sinex_core::DynamicPayload;
 use sinex_core::{DbPoolExt, EventSource, Id, JsonValue, Provenance, SourceMaterial, Ulid};
-use sinex_test_utils::{sinex_prop, sinex_proptest, sinex_test, TestContext};
+use xtask::sandbox::{sinex_prop, sinex_proptest, sinex_test, TestContext};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Barrier};
 use std::thread;
@@ -653,7 +653,7 @@ mod stress_tests {
 #[cfg(test)]
 mod unit_tests {
     use super::*;
-    use sinex_test_utils::sinex_test;
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     fn test_ulid_sequence_generator() -> TestResult<()> {

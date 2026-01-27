@@ -38,7 +38,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::RwLock;
 use tokio_stream::StreamExt;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 #[derive(Clone, Debug, Default)]
 pub struct SchemaBroadcastCache {

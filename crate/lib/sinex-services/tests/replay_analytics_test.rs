@@ -3,7 +3,7 @@ use serde_json::json;
 use sinex_core::db::replay::state_machine::{ReplayScope, ReplayState, ReplayStateMachine};
 use sinex_core::DynamicPayload;
 use sinex_services::AnalyticsService;
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use std::collections::HashMap;
 
 #[sinex_test]

@@ -1,5 +1,5 @@
 use sinex_node_sdk::replay::ReplayController;
-use sinex_test_utils::sinex_test;
+use xtask::sandbox::sinex_test;
 use tokio::sync::oneshot;
 
 #[sinex_test]

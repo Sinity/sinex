@@ -11,9 +11,9 @@ use sinex_node_sdk::stage_as_you_go::{
     LogFileStageProcessor, StageAsYouGoContext, StageAsYouGoProcessor,
 };
 use sinex_node_sdk::{spawn_event_processor, EventBatcherConfig, EventTransport};
-use sinex_test_utils::prelude::*;
-use sinex_test_utils::timing_utils::WaitHelpers;
-use sinex_test_utils::{start_test_ingestd_with_config, TestIngestdConfig};
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::WaitHelpers;
+use xtask::sandbox::{start_test_ingestd_with_config, TestIngestdConfig};
 use tokio::sync::{mpsc, oneshot};
 use tracing::info;
 use uuid::Uuid;

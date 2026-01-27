@@ -1,6 +1,6 @@
 //! Adversarial coverage for JetStream error paths (publish/connection failures).
 
-use sinex_test_utils::{sinex_test, EphemeralNats, TestResult};
+use xtask::sandbox::{sinex_test, EphemeralNats, TestResult};
 
 #[sinex_test]
 async fn nats_connect_failure_is_surfaceable() -> TestResult<()> {

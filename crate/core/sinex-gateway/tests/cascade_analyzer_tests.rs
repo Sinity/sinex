@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use sinex_core::types::ulid::Ulid;
 use sinex_gateway::{CascadeAnalysis, IntegrityViolation, Severity, ViolationType};
-use sinex_test_utils::sinex_test;
+use xtask::sandbox::sinex_test;
 
 #[sinex_test]
 async fn cascade_analysis_structure_holds_basic_invariants() -> color_eyre::Result<()> {

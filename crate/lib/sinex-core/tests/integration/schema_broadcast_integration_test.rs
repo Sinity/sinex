@@ -1,6 +1,6 @@
 use color_eyre::eyre;
 use sinex_node_sdk::stream_processor::SchemaBroadcastEntry;
-use sinex_test_utils::{sinex_test, TestContext, TestResult};
+use xtask::sandbox::{sinex_test, TestContext, TestResult};
 use futures::StreamExt;
 use tokio::time::{timeout, Duration};
 

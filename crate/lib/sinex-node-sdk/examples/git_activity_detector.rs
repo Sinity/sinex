@@ -182,7 +182,7 @@ fn main() {
 mod tests {
     use super::*;
 
-    #[tokio::test]
+    #[sinex_test]
     async fn test_filters_non_git_commands() {
         let mut processor = GitActivityDetector::new();
         let mut state = GitActivityState::default();
@@ -199,7 +199,7 @@ mod tests {
         assert_eq!(state.total_commands, 0);
     }
 
-    #[tokio::test]
+    #[sinex_test]
     async fn test_detects_git_commit() {
         let mut processor = GitActivityDetector::new();
         let mut state = GitActivityState::default();
@@ -223,7 +223,7 @@ mod tests {
         assert_eq!(state.commands_by_type.get("commit"), Some(&1));
     }
 
-    #[tokio::test]
+    #[sinex_test]
     async fn test_tracks_state_across_calls() {
         let mut processor = GitActivityDetector::new();
         let mut state = GitActivityState::default();
@@ -260,7 +260,7 @@ mod tests {
         assert_eq!(state.commands_by_repo.get("/repo2"), Some(&1));
     }
 
-    #[tokio::test]
+    #[sinex_test]
     async fn test_extracts_subcommand() {
         assert_eq!(
             GitActivityDetector::extract_subcommand("git commit -m 'msg'"),

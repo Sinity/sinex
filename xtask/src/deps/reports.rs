@@ -163,20 +163,31 @@ pub fn write_workspace_report<W: Write>(
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn write_unused_report(report: &crate::deps::UnusedReport, format: &str) -> Result<()> {
+    let stdout = std::io::stdout();
+    let mut handle = stdout.lock();
+    write_unused_report_to_buffer(&mut handle, report, format)
+}
+
+pub fn write_unused_report_to_buffer<W: Write>(
+    writer: &mut W,
+    report: &crate::deps::UnusedReport,
+    format: &str,
+) -> Result<()> {
     match format {
         "json" => {
             let json = serde_json::to_string_pretty(report)?;
-            println!("{}", json);
+            writeln!(writer, "{}", json)?;
         }
         "human" | _ => {
             if report.unused.is_empty() {
-                println!("✓ No unused dependencies found (tool: {})", report.tool);
+                writeln!(writer, "✓ No unused dependencies found (tool: {})", report.tool)?;
             } else {
-                println!(
+                writeln!(
+                    writer,
                     "Found {} unused dependencies (tool: {}):\n",
                     report.unused.len(),
                     report.tool
-                );
+                )?;
 
                 let mut by_package: std::collections::BTreeMap<&str, Vec<&str>> =
                     std::collections::BTreeMap::new();
@@ -188,9 +199,9 @@ pub fn write_unused_report(report: &crate::deps::UnusedReport, format: &str) -> 
                 }
 
                 for (package, deps) in by_package {
-                    println!("  {}:", package);
+                    writeln!(writer, "  {}:", package)?;
                     for dep in deps {
-                        println!("    - {}", dep);
+                        writeln!(writer, "    - {}", dep)?;
                     }
                 }
             }
@@ -199,41 +210,35 @@ pub fn write_unused_report(report: &crate::deps::UnusedReport, format: &str) -> 
     Ok(())
 }
 
-/// Write build timing report
-///
-/// Formats and outputs build timing analysis showing the slowest crates
-/// and their percentage of total build time.
-///
-/// # Arguments
-/// * `report` - The timing report to format
-/// * `top` - Number of top slowest crates to display
-///
-/// # Example
-/// ```no_run
-/// # use anyhow::Result;
-/// # use xtask::deps::TimingAnalyzer;
-/// let report = TimingAnalyzer::analyze()?;
-/// xtask::deps::write_timing_report(&report, 10)?;
-/// # Ok::<(), anyhow::Error>(())
-/// ```
 pub fn write_timing_report(report: &crate::deps::TimingReport, top: usize) -> Result<()> {
-    println!("Build Timing Analysis");
-    println!("Total build time: {:.2}s\n", report.total_time_secs);
+    let stdout = std::io::stdout();
+    let mut handle = stdout.lock();
+    write_timing_report_to_buffer(&mut handle, report, top)
+}
 
-    println!("Top {} slowest crates:", top);
+pub fn write_timing_report_to_buffer<W: Write>(
+    writer: &mut W,
+    report: &crate::deps::TimingReport,
+    top: usize,
+) -> Result<()> {
+    writeln!(writer, "Build Timing Analysis")?;
+    writeln!(writer, "Total build time: {:.2}s\n", report.total_time_secs)?;
+
+    writeln!(writer, "Top {} slowest crates:", top)?;
     for (i, crate_info) in report.crate_times.iter().take(top).enumerate() {
         let percent = (crate_info.duration_secs / report.total_time_secs) * 100.0;
-        println!(
+        writeln!(
+            writer,
             "  {}. {} - {:.2}s ({:.1}%)",
             i + 1,
             crate_info.name,
             crate_info.duration_secs,
             percent
-        );
+        )?;
     }
 
     if let Some(html_path) = &report.html_report {
-        println!("\nHTML report: {}", html_path.display());
+        writeln!(writer, "\nHTML report: {}", html_path.display())?;
     }
 
     Ok(())

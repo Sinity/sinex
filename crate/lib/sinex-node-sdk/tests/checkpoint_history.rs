@@ -1,6 +1,6 @@
 use sinex_core::types::ulid::Ulid;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn checkpoint_history_stats_and_reset(ctx: TestContext) -> color_eyre::Result<()> {

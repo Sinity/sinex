@@ -2,7 +2,7 @@
 //
 // Tests system behavior at boundaries, limits, and edge cases
 
-use sinex_test_utils::{prelude::*, sinex_prop, DynamicPayload};
+use xtask::sandbox::{prelude::*, sinex_prop, DynamicPayload};
 use proptest::prelude::*;
 use std::sync::Arc;
 use tokio::time::{Duration, timeout};

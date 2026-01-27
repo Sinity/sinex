@@ -4,7 +4,7 @@
 //! without requiring full database integration.
 
 use serde_json::json;
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 
 // Static regex patterns for schema validation testing - compiled once for performance
 lazy_static::lazy_static! {

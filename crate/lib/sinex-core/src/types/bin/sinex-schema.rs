@@ -652,7 +652,7 @@ fn extract_enum_set(value: &Value) -> Option<BTreeSet<String>> {
 mod tests {
     use super::*;
     use serde_json::json;
-    use sinex_test_utils::sinex_test;
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     fn detect_missing_required_fields() -> color_eyre::Result<()> {
