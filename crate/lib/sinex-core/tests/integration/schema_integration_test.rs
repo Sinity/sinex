@@ -7,15 +7,14 @@
 // - Security validation (injection attacks, null bytes, etc.)
 // - Performance under load
 
-use chrono::Utc;
 use serde_json::{json, Value};
 use sinex_core::db::integrity::malformed_detection;
-use sinex_core::db::models::event::{Event, Provenance, SourceMaterial};
-use sinex_core::db::validation::{EventValidator, ValidationError, DEFAULT_MAX_PAYLOAD_BYTES};
-use sinex_core::types::domain::{EventSource, EventType, HostName};
-use sinex_core::types::Id;
+use sinex_core::db::models::event::Event;
+use sinex_core::db::validation::{EventValidator, ValidationError};
+use sinex_core::types::domain::{EventSource, EventType};
+
 use sinex_core::DynamicPayload;
-use sinex_test_utils::{sinex_serial_test, sinex_test, test_event, TestContext, TestResult};
+use sinex_test_utils::{sinex_serial_test, sinex_test, test_event, TestContext};
 
 const FS_WATCHER_SOURCE: &str = "fs-watcher";
 

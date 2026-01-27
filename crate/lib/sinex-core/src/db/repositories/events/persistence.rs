@@ -3,9 +3,9 @@ use crate::db::schema::Events;
 use crate::models::{Event, JsonValue};
 use crate::repositories::common::{db_error, DbResult, EnhancedRepository, Repository};
 use crate::types::domain::{EventSource, EventType, SchemaVersion};
-use crate::types::error::SinexError;
 use crate::types::{Id, Ulid};
-use crate::EventRecord;
+use crate::SinexError;
+
 use chrono::{DateTime, Timelike, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{Executor, FromRow, PgPool, Postgres, QueryBuilder, Transaction};

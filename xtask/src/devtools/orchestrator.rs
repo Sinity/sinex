@@ -4,7 +4,7 @@
 //! in development mode with automatic rebuilding on source changes.
 
 use crate::devtools::watcher::{FileWatcher, WatchEvent};
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use camino::Utf8PathBuf;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -101,7 +101,11 @@ impl DevOrchestrator {
         }
 
         // Determine binary path
-        let profile = if self.args.release { "release" } else { "debug" };
+        let profile = if self.args.release {
+            "release"
+        } else {
+            "debug"
+        };
         let binary_path = self
             .workspace_root
             .join("target")
@@ -207,7 +211,10 @@ impl DevOrchestrator {
         let binary_path = match self.build().await {
             Ok(path) => path,
             Err(e) => {
-                eprintln!("[build] Build failed: {}. Keeping current process running...", e);
+                eprintln!(
+                    "[build] Build failed: {}. Keeping current process running...",
+                    e
+                );
                 return Ok(()); // Don't crash, just wait for next file change
             }
         };
@@ -216,7 +223,7 @@ impl DevOrchestrator {
         if self.child.is_some() {
             // Start new process while old still running
             println!("[handoff] Starting new instance...");
-            let mut new_child = self.spawn_new_instance(&binary_path).await?;
+            let new_child = self.spawn_new_instance(&binary_path).await?;
 
             // Wait for new instance to initialize (connect to NATS, start coordination)
             println!("[handoff] Waiting for new instance to initialize...");
@@ -389,6 +396,7 @@ impl DevOrchestrator {
     }
 
     /// Request shutdown
+    #[allow(dead_code)]
     pub fn request_shutdown(&self) {
         self.shutdown_requested.store(true, Ordering::SeqCst);
     }

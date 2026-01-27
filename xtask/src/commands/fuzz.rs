@@ -9,12 +9,14 @@ use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskComman
 use crate::output::StructuredError;
 
 /// Fuzz command configuration
+#[derive(Debug, Clone, clap::Args)]
 pub struct FuzzCommand {
+    #[command(subcommand)]
     pub subcommand: FuzzSubcommand,
 }
 
 /// Fuzz subcommands
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, clap::Subcommand)]
 pub enum FuzzSubcommand {
     /// Initialize fuzzing infrastructure for a crate
     Init { package: String },

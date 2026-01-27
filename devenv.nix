@@ -16,67 +16,58 @@ let
     ps.pgx_ulid
     pg_jsonschema
   ]);
-  pythonDeps = with pkgs.python3Packages; [
-    click
-    psycopg2
-    rich
-    pyyaml
-  ];
+
   tlsFixtures = ".devenv/tls";
-  basePackages =
-    with pkgs;
-    [
-      # Prefer the pinned Fenix toolchain when available (flake path),
-      # otherwise fall back to the nixpkgs Rust toolchain when running
-      # via plain `devenv` without Sinex flake inputs.
-      (if hasFenix then fenixPkgs.toolchain else rustc)
-      (if hasFenix then fenixPkgs.rust-analyzer else rust-analyzer)
-      (if hasFenix then fenixPkgs.clippy else cargo)
-      (if hasFenix then fenixPkgs.rustfmt else rustfmt)
-      (if hasFenix then fenixPkgs.llvm-tools else llvmPackages.bintools)
-      (if hasFenix then fenixPkgs.rust-src else rustPlatform.rustLibSrc)
-      (if hasFenix then fenixPkgs.rustc-codegen-cranelift else rustc)
-      cargo-watch
-      cargo-nextest
-      cargo-llvm-cov
-      cargo-tarpaulin
-      cargo-modules
-      bacon
-      tokei
-      cargo-audit
-      cargo-machete
-      mold
-      binutils
-      python3
-      nats-server
-      postgresForSqlx
-      mprocs
-      btop
-      jq
-      coreutils
-      protobuf
-      openssl
-      pkg-config
-      dbus
-      dbus.dev
-      qemu
-      qemu_kvm
-      git-annex
-      fd
-      fzf
-      bat
-      ripgrep
-      nsc
-    ]
-    ++ pythonDeps;
+  basePackages = with pkgs; [
+    # Prefer the pinned Fenix toolchain when available (flake path),
+    # otherwise fall back to the nixpkgs Rust toolchain when running
+    # via plain `devenv` without Sinex flake inputs.
+    (if hasFenix then fenixPkgs.toolchain else rustc)
+    (if hasFenix then fenixPkgs.rust-analyzer else rust-analyzer)
+    (if hasFenix then fenixPkgs.clippy else cargo)
+    (if hasFenix then fenixPkgs.rustfmt else rustfmt)
+    (if hasFenix then fenixPkgs.llvm-tools else llvmPackages.bintools)
+    (if hasFenix then fenixPkgs.rust-src else rustPlatform.rustLibSrc)
+    (if hasFenix then fenixPkgs.rustc-codegen-cranelift else rustc)
+    cargo-watch
+    cargo-nextest
+    cargo-llvm-cov
+    cargo-tarpaulin
+    cargo-modules
+    bacon
+    tokei
+    cargo-audit
+    cargo-machete
+    mold
+    binutils
+
+    nats-server
+    postgresForSqlx
+    mprocs
+    btop
+    jq
+    coreutils
+    protobuf
+    openssl
+    pkg-config
+    dbus
+    dbus.dev
+    qemu
+    qemu_kvm
+    git-annex
+    fd
+    fzf
+    bat
+    ripgrep
+    nsc
+  ];
   dbusLibPath = pkgs.lib.makeLibraryPath [ pkgs.dbus ];
   homeDir = builtins.getEnv "HOME";
   xdgStateHome = builtins.getEnv "XDG_STATE_HOME";
   xdgCacheHome = builtins.getEnv "XDG_CACHE_HOME";
   sinexStateDir =
     if xdgStateHome != "" then "${xdgStateHome}/sinex" else "${homeDir}/.local/state/sinex";
-  sinexCacheDir =
-    if xdgCacheHome != "" then "${xdgCacheHome}/sinex" else "${homeDir}/.cache/sinex";
+  sinexCacheDir = if xdgCacheHome != "" then "${xdgCacheHome}/sinex" else "${homeDir}/.cache/sinex";
 in
 {
   devenv = {
@@ -182,9 +173,9 @@ in
         fi
       fi
 
-      alias sinex-cli="python3 cli/exo.py"
+
       xt() { cargo xtask "$@"; }
-      sx() { cargo xtask dev "$@"; }  # Short alias for dev commands
+      sx() { cargo xtask "$@"; }  # Short alias for xtask
       alias e2e-test="cargo xtask test --profile fast -- -p sinex-e2e-tests"
       alias vm-smoke="cargo xtask vm test -c smoke"
 

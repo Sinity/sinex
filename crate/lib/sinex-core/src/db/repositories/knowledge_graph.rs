@@ -1,9 +1,10 @@
 use crate::db::schema::Entities;
 use crate::repositories::{common::*, Repository};
 use crate::types::error::SinexError;
-use crate::types::{Id, Ulid};
+use crate::types::Id;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sinex_schema::ulid::Ulid;
 use sqlx::PgPool;
 use std::collections::HashSet;
 

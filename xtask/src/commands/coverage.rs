@@ -9,34 +9,47 @@ use std::process::Command;
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 
 /// Coverage command configuration
+#[derive(Debug, Clone, clap::Args)]
 pub struct CoverageCommand {
+    #[command(subcommand)]
     pub subcommand: CoverageSubcommand,
 }
 
 /// Coverage subcommands
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, clap::Subcommand)]
 pub enum CoverageSubcommand {
     /// Generate HTML coverage report
     Html {
+        #[arg(short, long, default_value = "target/coverage")]
         output: String,
+        #[arg(long)]
         open: bool,
+        #[arg(short, long)]
         package: Option<String>,
     },
     /// Generate LCOV coverage report (for CI integration)
     Lcov {
+        #[arg(short, long, default_value = "lcov.info")]
         output: String,
+        #[arg(short, long)]
         package: Option<String>,
     },
     /// Print coverage summary to stdout
     Summary {
+        #[arg(short, long)]
         package: Option<String>,
+        #[arg(long)]
         files: bool,
     },
     /// Measure coverage and enforce minimum threshold
     Enforce {
+        #[arg(short, long)]
         threshold: f64,
+        #[arg(short, long)]
         package: Option<String>,
+        #[arg(long)]
         html: bool,
+        #[arg(short, long, default_value = "target/coverage")]
         output: String,
     },
     /// Clean coverage artifacts

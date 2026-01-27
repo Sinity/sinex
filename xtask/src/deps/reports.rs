@@ -241,7 +241,6 @@ pub fn write_timing_report(report: &crate::deps::TimingReport, top: usize) -> Re
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     // Tests will be added as needed
 }

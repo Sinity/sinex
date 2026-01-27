@@ -12,13 +12,25 @@ use crate::process::ProcessBuilder;
 use crate::resources;
 
 /// Test command configuration
+#[derive(Debug, Clone, clap::Args)]
 pub struct TestCommand {
     pub profile: String,
+    /// Prime database before testing
+    #[arg(long)]
     pub prime: bool,
+    /// List tests instead of running
+    #[arg(long, short)]
     pub list: bool,
+    /// Print what would happen
+    #[arg(long)]
     pub dry_run: bool,
+    /// Run preflight checks
+    #[arg(long)]
     pub preflight: bool,
+    /// Run only on affected packages
+    #[arg(long)]
     pub affected: bool,
+    /// Arguments passed to test binary
     pub args: Vec<String>,
 }
 
@@ -347,7 +359,6 @@ fn open_history_db() -> Result<HistoryDb> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::output::OutputFormat;
 
     #[test]
     fn test_command_name() {

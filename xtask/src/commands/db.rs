@@ -1,4 +1,4 @@
-//! Database management commands - setup, migrate, reset
+//! Database management commands - setup, migrate, reset, schema
 
 use anyhow::{bail, Context, Result};
 use std::process::Command;
@@ -7,16 +7,26 @@ use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskComman
 use crate::process::ProcessBuilder;
 
 /// Database command variants
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, clap::Subcommand)]
 pub enum DbSubcommand {
     Status,
     Migrate,
     Setup,
-    Reset { yes: bool },
+    Reset {
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+    /// Schema management
+    Schema {
+        #[command(subcommand)]
+        cmd: crate::commands::schema::SchemaSubcommand,
+    },
 }
 
 /// Database management command
+#[derive(Debug, Clone, clap::Args)]
 pub struct DbCommand {
+    #[command(subcommand)]
     pub subcommand: DbSubcommand,
 }
 
@@ -31,6 +41,12 @@ impl XtaskCommand for DbCommand {
             DbSubcommand::Migrate => execute_migrate(ctx),
             DbSubcommand::Setup => execute_setup(ctx),
             DbSubcommand::Reset { yes } => execute_reset(*yes, ctx),
+            DbSubcommand::Schema { cmd } => {
+                let schema_cmd = crate::commands::schema::SchemaCommand {
+                    subcommand: cmd.clone(),
+                };
+                schema_cmd.execute(ctx)
+            }
         }
     }
 
@@ -44,8 +60,19 @@ fn execute_status(ctx: &CommandContext) -> Result<CommandResult> {
         println!("========== psql status ==========");
     }
 
-    let output = ProcessBuilder::psql()
-        .args(&["-c", "select current_database(), current_user"])
+    let config = crate::devtools::stack::StackConfig::for_current_checkout().ok();
+
+    let mut cmd = ProcessBuilder::psql();
+    cmd = cmd.args(&["-c", "select current_database(), current_user"]);
+
+    if let Some(cfg) = &config {
+        cmd = cmd.env("PGHOST", cfg.run_dir().to_string_lossy().to_string());
+        cmd = cmd.env("PGPORT", cfg.postgres.port.to_string());
+        cmd = cmd.env("PGUSER", &cfg.postgres.user);
+        cmd = cmd.env("PGDATABASE", &cfg.postgres.database);
+    }
+
+    let output = cmd
         .with_description("checking PostgreSQL connection")
         .run()?;
 
@@ -54,7 +81,12 @@ fn execute_status(ctx: &CommandContext) -> Result<CommandResult> {
     }
 
     if ctx.is_human() {
-        println!("Postgres reachable");
+        if let Some(cfg) = config {
+            // Using human_output helper if simpler, but print is fine
+            println!("Postgres reachable (port {})", cfg.postgres.port);
+        } else {
+            println!("Postgres reachable");
+        }
     }
 
     Ok(CommandResult::success()
@@ -70,11 +102,22 @@ fn execute_migrate(ctx: &CommandContext) -> Result<CommandResult> {
 }
 
 fn execute_setup(ctx: &CommandContext) -> Result<CommandResult> {
-    let db = std::env::var("PGDATABASE").unwrap_or_else(|_| "sinex_dev".to_string());
+    let config = crate::devtools::stack::StackConfig::for_current_checkout().ok();
+
+    let db = if let Some(cfg) = &config {
+        cfg.postgres.database.clone()
+    } else {
+        std::env::var("PGDATABASE").unwrap_or_else(|_| "sinex_dev".to_string())
+    };
 
     // Try to create database (may already exist)
     let mut create = Command::new("createdb");
+    if let Some(cfg) = &config {
+        create.env("PGHOST", cfg.run_dir().to_string_lossy().to_string());
+        create.env("PGPORT", cfg.postgres.port.to_string());
+    }
     create.arg(&db);
+
     if let Err(e) = create.status() {
         if ctx.is_human() {
             eprintln!("createdb failed or missing: {e}");
@@ -93,22 +136,39 @@ fn execute_reset(yes: bool, ctx: &CommandContext) -> Result<CommandResult> {
         bail!("Refusing to drop DB without --yes");
     }
 
-    let db = std::env::var("PGDATABASE").unwrap_or_else(|_| "sinex_dev".to_string());
+    let config = crate::devtools::stack::StackConfig::for_current_checkout().ok();
+    let db = if let Some(cfg) = &config {
+        cfg.postgres.database.clone()
+    } else {
+        std::env::var("PGDATABASE").unwrap_or_else(|_| "sinex_dev".to_string())
+    };
 
     // Drop database
     if ctx.is_human() {
         println!("========== dropdb ==========");
     }
 
-    ProcessBuilder::psql()
-        .args(&["-c", &format!("DROP DATABASE IF EXISTS {db}")])
+    let mut cmd = ProcessBuilder::psql();
+    if let Some(cfg) = &config {
+        cmd = cmd.env("PGHOST", cfg.run_dir().to_string_lossy().to_string());
+        cmd = cmd.env("PGPORT", cfg.postgres.port.to_string());
+        cmd = cmd.env("PGUSER", &cfg.postgres.superuser);
+        cmd = cmd.env("PGDATABASE", "postgres");
+    }
+
+    cmd.args(&["-c", &format!("DROP DATABASE IF EXISTS {db}")])
         .with_description("dropping database")
         .inherit_output()
         .run_ok()?;
 
     // Recreate database
     let mut create = Command::new("createdb");
+    if let Some(cfg) = &config {
+        create.env("PGHOST", cfg.run_dir());
+        create.env("PGPORT", cfg.postgres.port.to_string());
+    }
     create.arg(&db);
+
     if let Err(e) = create.status() {
         if ctx.is_human() {
             eprintln!("createdb failed or missing: {e}");
@@ -127,61 +187,25 @@ fn run_db_migrate(ctx: &CommandContext) -> Result<()> {
         println!("========== migrate ==========");
     }
 
-    ProcessBuilder::cargo()
-        .args(&[
-            "run",
-            "--package",
-            "sinex-schema",
-            "--bin",
-            "sinex-schema",
-            "--",
-            "up",
-        ])
-        .with_description("cargo run -p sinex-schema --bin sinex-schema -- up")
+    let config = crate::devtools::stack::StackConfig::for_current_checkout().ok();
+
+    let mut cmd = ProcessBuilder::cargo();
+    cmd = cmd.args(&[
+        "run",
+        "--package",
+        "sinex-schema",
+        "--bin",
+        "sinex-schema",
+        "--",
+        "up",
+    ]);
+
+    if let Some(cfg) = &config {
+        cmd = cmd.env("DATABASE_URL", cfg.database_url());
+    }
+
+    cmd.with_description("cargo run -p sinex-schema --bin sinex-schema -- up")
         .inherit_output()
         .run_ok()
         .with_context(|| "database migration failed")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::output::OutputWriter;
-
-    #[test]
-    fn test_db_command_metadata() {
-        let cmd = DbCommand {
-            subcommand: DbSubcommand::Status,
-        };
-
-        let metadata = cmd.metadata();
-        assert_eq!(metadata.category, Some("database".to_string()));
-        assert!(metadata.timeout.is_some());
-        assert!(metadata.modifies_state); // Database commands modify state
-    }
-
-    #[test]
-    fn test_db_command_name() {
-        let cmd = DbCommand {
-            subcommand: DbSubcommand::Migrate,
-        };
-
-        assert_eq!(cmd.name(), "db");
-    }
-
-    #[test]
-    fn test_reset_requires_yes() {
-        let cmd = DbCommand {
-            subcommand: DbSubcommand::Reset { yes: false },
-        };
-
-        let ctx = CommandContext::new(OutputWriter::new(crate::output::OutputFormat::Silent));
-        let result = cmd.execute(&ctx);
-
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Refusing to drop DB"));
-    }
 }

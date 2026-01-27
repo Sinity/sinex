@@ -124,11 +124,7 @@ impl DistributedRateLimiter {
 
         // Increment count
         let new_count = current_count + 1;
-        if let Err(e) = self
-            .kv
-            .put(&key, new_count.to_string().into())
-            .await
-        {
+        if let Err(e) = self.kv.put(&key, new_count.to_string().into()).await {
             warn!(error = %e, token = %token, "Failed to increment rate limit counter in NATS KV");
             // Fail open - allow request even if we couldn't increment
         }
