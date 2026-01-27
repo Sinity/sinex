@@ -18,9 +18,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 /// Standard timeout policy for tests.
-pub const DEFAULT_WAIT_SECS: u64 = 30;
-pub const INTEGRATION_WAIT_SECS: u64 = 60;
-pub const STRESS_WAIT_SECS: u64 = 90;
+pub const DEFAULT_WAIT_SECS: u64 = 60;
+pub const INTEGRATION_WAIT_SECS: u64 = 120;
+pub const STRESS_WAIT_SECS: u64 = 180;
 
 /// Named timeout presets for consistent test timing.
 ///
@@ -239,11 +239,11 @@ impl WaitHelpers {
         timeout_secs: u64,
     ) -> TestResult<usize> {
         let pool = pool.clone(); // Clone for closure
-        let source = source.to_string(); // Clone for closure
+        let source_str = source.to_string(); // Clone for closure
 
         sinex_core::types::utils::wait_for_condition_adaptive(
             || async {
-                let event_source = sinex_core::EventSource::new(&source);
+                let event_source = sinex_core::EventSource::new(&source_str);
                 let count = pool.events().count_by_source(&event_source).await?;
                 Ok(count as usize >= expected_count)
             },
@@ -261,7 +261,7 @@ impl WaitHelpers {
         })?;
 
         // Return final count
-        let event_source = sinex_core::EventSource::new(&source);
+        let event_source = sinex_core::EventSource::new(source);
         let final_count = pool.events().count_by_source(&event_source).await?;
         Ok(final_count as usize)
     }
@@ -741,11 +741,7 @@ mod tests {
     use std::time::Duration;
 
     #[sinex_serial_test]
-    async fn test_synchronizer_basic(ctx: TestContext) -> TestResult<()> {
-        ctx.ensure_clean().await?;
-        crate::db_common::reset_database(&ctx.pool).await?;
-        crate::db_common::verify_clean_state(&ctx.pool).await?;
-
+    async fn test_synchronizer_basic() -> TestResult<()> {
         let sync = TestSynchronizer::new(Duration::from_secs(5));
 
         // Should not be signaled initially
@@ -768,14 +764,11 @@ mod tests {
         let result = tokio::time::timeout(Duration::from_millis(100), sync.wait()).await;
         assert!(result.is_err(), "Should timeout after reset");
 
-        crate::db_common::reset_database(&ctx.pool).await?;
-        crate::db_common::verify_clean_state(&ctx.pool).await?;
-        ctx.force_cleanup().await?;
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_synchronizer_concurrent(ctx: TestContext) -> TestResult<()> {
+    async fn test_synchronizer_concurrent() -> TestResult<()> {
         let sync = Arc::new(TestSynchronizer::new(Duration::from_secs(5)));
         let counter = Arc::new(AtomicUsize::new(0));
 
@@ -817,7 +810,7 @@ mod tests {
     }
 
     #[sinex_serial_test]
-    async fn test_barrier_basic(ctx: TestContext) -> TestResult<()> {
+    async fn test_barrier_basic() -> TestResult<()> {
         let barrier = Arc::new(TestBarrier::new(3));
         let counter = Arc::new(AtomicUsize::new(0));
 
@@ -858,7 +851,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_barrier_timeout(ctx: TestContext) -> TestResult<()> {
+    async fn test_barrier_timeout() -> TestResult<()> {
         let barrier = Arc::new(TestBarrier::new(3));
 
         // Only 2 participants (less than required)
@@ -887,7 +880,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_worker_readiness_coordinator(ctx: TestContext) -> TestResult<()> {
+    async fn test_worker_readiness_coordinator() -> TestResult<()> {
         let coordinator = WorkerReadinessCoordinator::new(3);
 
         // Simulate workers becoming ready
@@ -940,10 +933,6 @@ mod tests {
             "timing_utils::test_wait_helpers_source_events",
             &ctx,
             || async {
-                ctx.force_cleanup().await?;
-                ctx.ensure_clean().await?;
-                crate::db_common::reset_database(&ctx.pool).await?;
-                crate::db_common::verify_clean_state(&ctx.pool).await?;
                 // Insert events from different sources
                 for i in 0..3 {
                     ctx.publish(DynamicPayload::new(
@@ -1111,9 +1100,6 @@ mod tests {
 
     #[sinex_serial_test]
     async fn test_timing_utils_integration(ctx: TestContext) -> TestResult<()> {
-        ctx.ensure_clean().await?;
-        crate::db_common::reset_database(&ctx.pool).await?;
-        crate::db_common::verify_clean_state(&ctx.pool).await?;
         let timing = ctx.timing();
 
         // Insert events

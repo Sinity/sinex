@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -81,12 +82,17 @@ async fn test_database_cleanup_on_drop(ctx: TestContext) -> sinex_test_utils::Re
         let baseline = db.pool().events().count_all().await?;
         db_name = db.name().to_string();
 
-        ctx.publish(DynamicPayload::new(
-            "test",
-            "test.event",
-            serde_json::json!({}),
-        ))
-        .await?;
+        // Register default test material in THIS database slot
+        let material_id =
+            sinex_core::Ulid::from_str(sinex_test_utils::DEFAULT_TEST_MATERIAL_ID).unwrap();
+        sqlx::query!(
+            "INSERT INTO raw.source_material_registry (id, material_kind, source_identifier, status, timing_info_type) \
+             VALUES ($1::uuid::ulid, 'annex', 'test-material', 'completed', 'realtime') ON CONFLICT DO NOTHING",
+            material_id.to_uuid()
+        ).execute(db.pool()).await?;
+
+        let event = sinex_test_utils::test_event("test", "test.event", serde_json::json!({}));
+        db.pool().events().insert(event).await?;
 
         let count = db.pool().events().count_all().await?;
         assert_eq!(count, baseline + 1);
@@ -155,35 +161,54 @@ async fn test_pool_statistics() -> sinex_test_utils::Result<()> {
 #[sinex_test]
 async fn test_clean_database_handles_complex_data(
     ctx: TestContext,
-) -> sinex_test_utils::Result<()> {
-    let db = acquire_test_database().await?;
-    db.force_cleanup().await?;
-    verify_clean_state(db.pool()).await?;
+) -> sinex_test_utils::TestResult<()> {
+    // Determine the baseline event count (the system/bootstrap events)
+    // TestContext usually has some baseline events (like source material creation).
+    // ctx.force_cleanup() calculates baselines internally or cleans everything?
+    // Let's rely on ctx functionality.
 
+    // Force cleanup the context DB first if we want to be sure, though ctx.new() does this.
+    ctx.force_cleanup().await?;
+    verify_clean_state(ctx.pool()).await?;
+
+    // Create an event using the context (publishes to this context's DB)
     let event = ctx
-        .publish(DynamicPayload::new("test", "test", serde_json::json!({})))
+        .publish(DynamicPayload::new(
+            "complex-data-test",
+            "test",
+            serde_json::json!({}),
+        ))
         .await?;
 
-    sinex_test_utils::timing_utils::WaitHelpers::wait_for_source_events(db.pool(), "test", 1, 30)
-        .await?;
+    // Wait for event to appear in the DB (ctx.publish already does this implicitly, but explicit wait is fine)
+    sinex_test_utils::timing_utils::WaitHelpers::wait_for_source_events(
+        ctx.pool(),
+        "complex-data-test",
+        1,
+        60,
+    )
+    .await?;
 
+    // Insert annotation manually
     sqlx::query(
         "INSERT INTO core.event_annotations (id, event_id, annotation_type, content, metadata, created_by) \
          VALUES ($1, $2, 'test', 'test-content', '{}'::jsonb, 'test-user')",
     )
     .bind(sinex_core::types::ulid::Ulid::new().to_uuid())
     .bind(event.id.expect("Event must have an ID").to_uuid())
-    .execute(db.pool())
+    .execute(ctx.pool())
     .await?;
 
-    db.force_cleanup().await?;
+    // Perform cleanup
+    ctx.force_cleanup().await?;
 
+    // Verify everything is gone
     let mut event_count = -1;
     let mut annotation_count: i64 = -1;
     for _ in 0..50 {
-        event_count = db.pool().events().count_all().await?;
+        event_count = ctx.pool().events().count_all().await?;
         annotation_count = sqlx::query_scalar("SELECT COUNT(*) FROM core.event_annotations")
-            .fetch_one(db.pool())
+            .fetch_one(ctx.pool())
             .await?;
         if event_count == 0 && annotation_count == 0 {
             break;

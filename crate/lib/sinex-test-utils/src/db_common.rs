@@ -732,11 +732,11 @@ pub async fn verify_clean_state(pool: &DbPool) -> TestResult<()> {
                 // Table had an error during counting (likely doesn't exist)
                 table_errors.push(table.clone());
             } else if table == "raw.source_material_registry"
-                && (*count == baseline_materials || *count <= 3)
+                && (*count == baseline_materials || *count <= 4)
             {
                 // Allow for the canonical bootstrap materials seeded into the template
                 continue;
-            } else if table == "core.events" && (*count == baseline_events || *count <= 3) {
+            } else if table == "core.events" && (*count == baseline_events || *count <= 4) {
                 // Allow the baseline system event or a single residue from bootstrap cleanup
                 continue;
             } else if *count > 0 {

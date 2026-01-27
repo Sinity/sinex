@@ -108,6 +108,14 @@ pub use sinex_core::DynamicPayload;
 /// use serde_json::json;
 ///
 /// let event = test_event("fs-watcher", "file.created", json!({
+use std::str::FromStr;
+use sinex_core::Ulid;
+
+/// Constant ID used for the default test source material.
+/// This ID is registered by `TestContext::new()` to ensure foreign key
+/// constraints pass for events created via `test_event()`.
+pub const DEFAULT_TEST_MATERIAL_ID: &str = "01H00000000000000000000000";
+
 ///     "path": "/test/file.txt",
 ///     "size": 1024
 /// }));
@@ -119,6 +127,8 @@ pub fn test_event(
 ) -> sinex_core::Event<sinex_core::JsonValue> {
     use sinex_core::{Event, HostName, Id, OffsetKind, Provenance, SourceMaterial};
 
+    let material_id = Ulid::from_str(DEFAULT_TEST_MATERIAL_ID).expect("valid constant ULID");
+
     Event {
         id: None,
         source: source.into(),
@@ -129,7 +139,7 @@ pub fn test_event(
         ingestor_version: Some("test".to_string()),
         payload_schema_id: None,
         provenance: Provenance::Material {
-            id: Id::<SourceMaterial>::new(),
+            id: Id::<SourceMaterial>::from_ulid(material_id),
             anchor_byte: 0,
             offset_start: None,
             offset_end: None,

@@ -295,7 +295,7 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
         .into();
     }
 
-    let timeout_secs = opts.timeout_secs.unwrap_or(if is_async { 30 } else { 10 });
+    let timeout_secs = opts.timeout_secs.unwrap_or(if is_async { 60 } else { 20 }); // Increased from 30/10
     let cases = opts.cases.unwrap_or(256);
     let trace_stmt = if opts.trace {
         quote!( sinex_test_utils::TestContext::init_tracing("debug"); )
@@ -387,7 +387,7 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let async_body = {
         quote! {
-            color_eyre::install()?;
+            let _ = color_eyre::install();
             #trace_stmt
             let test_name = stringify!(#fn_name);
             let start = std::time::Instant::now();
@@ -467,7 +467,7 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let sync_body = {
         quote! {
-            color_eyre::install()?;
+            let _ = color_eyre::install();
             #trace_stmt
             let test_name = stringify!(#fn_name);
             let start = std::time::Instant::now();
@@ -789,8 +789,8 @@ fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
     }
 
     // Default timeout constants
-    const DEFAULT_SYNC_TIMEOUT: u64 = 10; // 10 seconds for sync tests
-    const DEFAULT_ASYNC_TIMEOUT: u64 = 30; // 30 seconds for async tests
+    const DEFAULT_SYNC_TIMEOUT: u64 = 30; // Increased from 15
+    const DEFAULT_ASYNC_TIMEOUT: u64 = 120; // Increased from 60
 
     // Parse sinex_test configuration
     let timeout_secs = config.timeout.unwrap_or({

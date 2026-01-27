@@ -837,6 +837,9 @@ impl CleanupManager {
         {
             eprintln!("⚠️  Timeout closing pool for {}", task.slot_name);
         }
+
+        // Un-quarantine the slot so it can be picked up by the next test.
+        task.slot.quarantined.store(false, Ordering::SeqCst);
     }
 }
 

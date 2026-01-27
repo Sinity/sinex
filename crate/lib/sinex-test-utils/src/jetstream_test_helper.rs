@@ -84,10 +84,39 @@ impl JetStreamTestHelper {
 
         let helper = Self {
             nats,
-            js,
-            topology,
+            js: js.clone(),
+            topology: topology.clone(),
             stream_timeout,
         };
+
+        // Create streams before waiting
+        let env = ctx.env();
+        let _ = js
+            .get_or_create_stream(async_nats::jetstream::stream::Config {
+                name: topology.events_stream.clone(),
+                subjects: vec![env.nats_subject_with_namespace(Some(&namespace), "events.>")],
+                ..Default::default()
+            })
+            .await
+            .wrap_err("Failed to create events stream")?;
+
+        let _ = js
+            .get_or_create_stream(async_nats::jetstream::stream::Config {
+                name: topology.confirmations_stream.clone(),
+                subjects: vec![format!("{}_CONFIRMATIONS", topology.events_stream)],
+                ..Default::default()
+            })
+            .await
+            .wrap_err("Failed to create confirmations stream")?;
+
+        let _ = js
+            .get_or_create_stream(async_nats::jetstream::stream::Config {
+                name: topology.dlq_stream.clone(),
+                subjects: vec![format!("{}_DLQ", topology.events_stream)],
+                ..Default::default()
+            })
+            .await
+            .wrap_err("Failed to create DLQ stream")?;
 
         // Wait for all streams to be ready
         helper.wait_for_all_streams().await?;

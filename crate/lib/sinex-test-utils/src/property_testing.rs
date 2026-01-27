@@ -401,7 +401,7 @@ mod tests {
             Just(json!({"data": "A".repeat(1_000_000)})), // 1MB string
             Just(json!({"data": "B".repeat(10_000_000)})), // 10MB string
             Just(json!({"array": vec![1; 100_000]})),     // Large array
-            Just(json!({"nested": create_deeply_nested_json(1000)})), // Very deep nesting
+            Just(json!({"nested": create_deeply_nested_json(100)})), // Deep nesting (reduced from 1000 to avoid stack overflow)
         ]
         .boxed()
     }
@@ -582,7 +582,7 @@ mod tests {
         Ok::<(), Report>(())
     }
 
-    #[sinex_prop(cases = 5)]
+    #[sinex_prop(cases = 5, timeout = 120)]
     async fn property_handles_overflow_payloads(
         ctx: &TestContext,
         #[strategy(malicious_overflow_strategy())] payload: Value,

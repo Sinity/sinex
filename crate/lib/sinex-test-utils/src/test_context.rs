@@ -80,6 +80,8 @@ use tokio::task::JoinHandle;
 use tracing::warn;
 use uuid::Uuid;
 
+use std::str::FromStr;
+
 fn format_cleanup_failure_context(
     message: &str,
     namespace: &str,
@@ -393,7 +395,7 @@ impl TestContext {
 
         let pipeline_namespace = PipelineNamespace::new(test_name);
 
-        Ok(Self {
+        let ctx = Self {
             pool,
             db,
             test_name: test_name.to_string(),
@@ -414,7 +416,15 @@ impl TestContext {
                 nats: Mutex::new(None),
             }),
             lazy_shared_nats: Arc::new(AsyncOnceCell::new()),
-        })
+        };
+
+        // Register the default test material ID so test_event() works out of the box
+        let material_id =
+            Ulid::from_str(crate::DEFAULT_TEST_MATERIAL_ID).expect("valid constant ULID");
+        ctx.ensure_source_material(Id::<SourceMaterial>::from_ulid(material_id), Some("test-material"))
+            .await?;
+
+        Ok(ctx)
     }
 
     /// Configure NATS for this test context using a fluent builder.
@@ -529,7 +539,8 @@ impl TestContext {
     /// Uses `ensure_jetstream()` internally, so NATS is lazily initialized if needed.
     pub async fn ensure_checkpoint_kv(&self) -> TestResult<jetstream::kv::Store> {
         let js = self.ensure_jetstream().await?;
-        let bucket = sinex_node_sdk::checkpoint::checkpoint_bucket_name(None);
+        let prefix = self.pipeline_namespace().prefix();
+        let bucket = sinex_node_sdk::checkpoint::checkpoint_bucket_name(Some(prefix));
         let kv_store = match js
             .create_key_value(jetstream::kv::Config {
                 bucket: bucket.clone(),
@@ -574,7 +585,8 @@ impl TestContext {
     /// Get (or create) the default checkpoint KV bucket for tests.
     pub async fn checkpoint_kv(&self) -> TestResult<jetstream::kv::Store> {
         let js = self.jetstream().await?;
-        let bucket = sinex_node_sdk::checkpoint::checkpoint_bucket_name(None);
+        let prefix = self.pipeline_namespace().prefix();
+        let bucket = sinex_node_sdk::checkpoint::checkpoint_bucket_name(Some(prefix));
         let kv_store = match js
             .create_key_value(jetstream::kv::Config {
                 bucket: bucket.clone(),
@@ -621,6 +633,7 @@ impl TestContext {
             ..Default::default()
         };
         config.batch_size = 32;
+        config.batch_timeout_secs = sinex_core::types::units::Seconds::from_secs(1);
         config.consumer_fetch_max_messages = 32;
         config.consumer_fetch_timeout_ms = 200;
         let handle = start_test_ingestd_with_config(config, Some(self)).await?;
@@ -661,6 +674,13 @@ impl TestContext {
         self.quiesce_background_tasks().await?;
         db_common::reset_database(&self.pool).await?;
         db_common::verify_clean_state(&self.pool).await?;
+
+        // Re-register the default test material ID so test_event() continues to work
+        let material_id =
+            Ulid::from_str(crate::DEFAULT_TEST_MATERIAL_ID).expect("valid constant ULID");
+        self.ensure_source_material(Id::<SourceMaterial>::from_ulid(material_id), Some("test-material"))
+            .await?;
+
         Ok(())
     }
 
