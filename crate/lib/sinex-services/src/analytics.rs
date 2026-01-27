@@ -100,7 +100,12 @@ impl AnalyticsService {
     }
 
     /// Get detailed statistics for each source.
-    pub async fn get_source_statistics(&self, limit: i64) -> ServiceResult<Vec<SourceStatistics>> {
+    pub async fn get_source_statistics(
+        &self,
+        start_time: Option<DateTime<Utc>>,
+        end_time: Option<DateTime<Utc>>,
+        limit: i64,
+    ) -> ServiceResult<Vec<SourceStatistics>> {
         let limit = limit.clamp(1, Pagination::MAX_LIMIT);
         let mut conn = self.acquire_connection().await?;
         let rows = sqlx::query!(
@@ -114,11 +119,15 @@ impl AnalyticsService {
                 MAX(ts_ingest) as "last_event?",
                 CAST(AVG(CASE WHEN ts_orig IS NOT NULL THEN EXTRACT(EPOCH FROM (ts_ingest - ts_orig)) ELSE NULL END) AS DOUBLE PRECISION) as "avg_ingest_delay?"
             FROM core.events
+            WHERE ($2::timestamptz IS NULL OR ts_orig >= $2)
+              AND ($3::timestamptz IS NULL OR ts_orig <= $3)
             GROUP BY source
             ORDER BY COUNT(*) DESC
             LIMIT $1
             "#,
-            limit
+            limit,
+            start_time,
+            end_time
         )
         .fetch_all(&mut *conn)
         .await
@@ -156,12 +165,15 @@ impl AnalyticsService {
                         COUNT(*) as "count!"
                     FROM core.events
                     WHERE ts_orig >= $1 AND ts_orig < $2
-                    GROUP BY event_type
-                    ORDER BY COUNT(*) DESC
-                    "#,
-                    start,
-                    end
-                )
+                                        GROUP BY event_type
+                                        ORDER BY COUNT(*) DESC
+                                        LIMIT $3
+                                    "#,
+                                    start,
+                                    end,
+                                    Pagination::DEFAULT_LIMIT
+                                )
+                    
                 .fetch_all(&mut *conn)
                 .await
                 .map_err(|e| db_error(e, "count by type in range"))?;
@@ -203,6 +215,18 @@ impl AnalyticsService {
         end_time: DateTime<Utc>,
         interval_minutes: i32,
     ) -> ServiceResult<Vec<(DateTime<Utc>, i64)>> {
+        if interval_minutes <= 0 {
+            return Err(SinexError::validation("Interval must be positive")
+                .with_context("interval_minutes", interval_minutes));
+        }
+
+        let expected_buckets = (end_time - start_time).num_minutes() / interval_minutes as i64;
+        if expected_buckets > Pagination::MAX_LIMIT {
+            return Err(SinexError::validation("Time range too large for interval")
+                .with_context("expected_buckets", expected_buckets)
+                .with_context("max_buckets", Pagination::MAX_LIMIT));
+        }
+
         let mut conn = self.acquire_connection().await?;
         let interval = minutes_to_interval(interval_minutes);
 
@@ -285,15 +309,21 @@ impl AnalyticsService {
             .map(|row| {
                 let command = row
                     .try_get::<Option<String>, _>("command")
-                    .unwrap_or(None)
+                    .map_err(|e| {
+                        SinexError::database("Failed to extract command column")
+                            .with_source(e.to_string())
+                    })?
                     .unwrap_or_default();
                 let count = row
                     .try_get::<Option<i64>, _>("count")
-                    .unwrap_or(Some(0))
+                    .map_err(|e| {
+                        SinexError::database("Failed to extract count column")
+                            .with_source(e.to_string())
+                    })?
                     .unwrap_or(0);
-                (command, count)
+                Ok((command, count))
             })
-            .collect();
+            .collect::<ServiceResult<Vec<_>>>()?;
 
         Ok(result)
     }
@@ -301,6 +331,8 @@ impl AnalyticsService {
     /// Get most active time periods
     pub async fn activity_heatmap(
         &self,
+        start_time: Option<DateTime<Utc>>,
+        end_time: Option<DateTime<Utc>>,
         bucket_size_minutes: i32,
         limit: i32,
     ) -> ServiceResult<Vec<(DateTime<Utc>, i64)>> {
@@ -315,12 +347,16 @@ impl AnalyticsService {
                 time_bucket($1::interval, COALESCE(ts_orig, ts_ingest)) as "bucket!",
                 COUNT(*) as "count!"
             FROM core.events
+            WHERE ($3::timestamptz IS NULL OR ts_orig >= $3)
+              AND ($4::timestamptz IS NULL OR ts_orig <= $4)
             GROUP BY time_bucket($1::interval, COALESCE(ts_orig, ts_ingest))
             ORDER BY COUNT(*) DESC
             LIMIT $2
             "#,
             interval,
-            limit
+            limit,
+            start_time,
+            end_time
         )
         .fetch_all(&mut *conn)
         .await

@@ -82,8 +82,8 @@ impl SearchService {
 
         if let Some(text) = search_text {
             // Find the search text and return surrounding context
-            let haystack = payload_str.to_ascii_lowercase();
-            let needle = text.to_ascii_lowercase();
+            let haystack = payload_str.to_lowercase();
+            let needle = text.to_lowercase();
             if let Some(pos) = haystack.find(&needle) {
                 return Self::safe_substring_with_context(&payload_str, pos, text.len(), 50);
             }

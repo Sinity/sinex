@@ -2,7 +2,7 @@
 
 Unified Stream Processor Architecture for Sinex
 
-This module implements the "Deep Symmetry" vision from Part 16 of the design discussion,
+This module implements the **Unified Node Architecture**,
 unifying ingestors and automata as both being "Stateful Stream Processors" with a single
 scan(from: Checkpoint, until: TimeHorizon) interface.
 

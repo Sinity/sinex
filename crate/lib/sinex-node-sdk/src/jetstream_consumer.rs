@@ -231,8 +231,8 @@ impl JetStreamEventConsumer {
             NodeError::Processing(format!("Failed to get stream {}: {}", stream_name, e))
         })?;
 
-        // Always use environment-prefixed subjects to match stream configuration.
-        let filter_subject = self.env.nats_subject(filter);
+        // Use the filter subject as provided; it already contains environment and namespace prefixes.
+        let filter_subject = filter.to_string();
         let ack_wait = Duration::from_secs(30);
         let max_ack_pending = self.config.max_ack_pending;
 
@@ -365,16 +365,27 @@ impl JetStreamEventConsumer {
                             continue;
                         }
 
+                        let mut handler_success = true;
                         if enable_provisional {
                             if let Some(ref handler) = provisional_handler {
                                 if let Err(e) = handler.handle_provisional(&event).await {
                                     warn!("Provisional handler failed: {}", e);
+                                    handler_success = false;
                                 }
                             }
                         }
 
-                        if let Err(e) = msg.ack().await {
-                            error!("Failed to ack message: {}", e);
+                        if handler_success {
+                            if let Err(e) = msg.ack().await {
+                                error!("Failed to ack message: {}", e);
+                            }
+                        } else {
+                            // NAK with delay to allow transient issues to resolve
+                            let _ = msg
+                                .ack_with(async_nats::jetstream::AckKind::Nak(Some(
+                                    Duration::from_secs(5),
+                                )))
+                                .await;
                         }
                     }
                     Err(e) => {
@@ -412,16 +423,27 @@ impl JetStreamEventConsumer {
             match messages.next().await {
                 Some(Ok(msg)) => match Self::parse_confirmation(&msg) {
                     Ok(confirmation) => {
+                        let mut handler_success = true;
                         if let Some(event) = buffer.confirm(confirmation.event_id).await {
                             if let Err(e) = confirmed_handler.handle_confirmed(&event).await {
                                 error!("Confirmed handler failed: {}", e);
+                                handler_success = false;
                             }
                         } else {
                             debug!("Confirmation for unknown event: {}", confirmation.event_id);
                         }
 
-                        if let Err(e) = msg.ack().await {
-                            error!("Failed to ack confirmation: {}", e);
+                        if handler_success {
+                            if let Err(e) = msg.ack().await {
+                                error!("Failed to ack confirmation: {}", e);
+                            }
+                        } else {
+                            // NAK so we can retry confirmed processing
+                            let _ = msg
+                                .ack_with(async_nats::jetstream::AckKind::Nak(Some(
+                                    Duration::from_secs(5),
+                                )))
+                                .await;
                         }
                     }
                     Err(e) => {

@@ -529,9 +529,9 @@ impl CheckpointManager {
                     ))
                 })?
         } else {
-            // NATS KV update(0) is used for initial write semantics in async-nats 0.33.0
+            // Use create() for initial write to correctly handle tombstone cases after purge()
             self.kv
-                .update(&self.kv_key(), encoded.into(), 0)
+                .create(&self.kv_key(), encoded.into())
                 .await
                 .map_err(|e| {
                     NodeError::Checkpoint(format!(

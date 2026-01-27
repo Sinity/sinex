@@ -1,10 +1,10 @@
-# Sinex - The Sentient Archive
+# Sinex - The Personal Knowledge Archive
 
 > *An ambitious endeavor to construct an empowering digital environment for thought: a persistent, universally capturing, and intelligently structured space that mirrors, supports, and augments the user's own mind.*
 
 Sinex is a comprehensive event-driven data capture system that transforms the digital realm from a source of distraction and fragmentation into a coherent, queryable, and deeply personal extension of self. It records everything happening on a computer for later analysis through a distributed satellite-based architecture with immutable storage and real-time processing capabilities.
 
-## Philosophy: Cognitive Sovereignty
+## Philosophy: User Agency and Control
 
 We stand at a peculiar juncture in human history. Our digital tools grant us unprecedented access to information, yet this abundance often engenders a profound sense of fragmentation. We generate more data about ourselves than ever before, yet we *remember* less, *understand* less of our own cognitive trails, and feel increasingly alienated from the very digital environments designed to augment us.
 
@@ -14,14 +14,14 @@ Sinex confronts this crisis of digital amnesia by creating an "anti-forgetting m
 
 1. **To Capture Comprehensively and Losslessly** - Every potentially significant digital trace at the highest fidelity, preserving original detail with multi-modal, redundant strategies
 2. **To Structure Meaningfully and Emergently** - Schemas evolve with user needs; order emerges gradually from raw data which remains inviolate for future reinterpretation
-3. **To Empower User Agency Unconditionally** - You are the absolute sovereign of your data; all components are transparent, inspectable, and modifiable
+3. **To Empower User Agency Unconditionally** - You are the absolute owner of your data; all components are transparent, inspectable, and modifiable
 4. **To Evolve Continuously and Transparently** - The system co-evolves with its user through iterative improvement, addressing personally-felt friction
 
 ### Core Design Ethos
 
 - **Universal Capture as Default**: If a signal can be instrumented, it should be captured
 - **Emergent Structure from Raw Data**: Meaning is discovered and refined, not preordained
-- **Sovereign User Agency**: Radical transparency, universal hackability, user control over automation
+- **User Control and Agency**: Radical transparency, universal hackability, user control over automation
 - **Continuous and Rich Context**: Rigorous timestamping, global identifiers, explicit linking, meticulous provenance
 - **Meta-Cognition as Valued Data**: Subjective experiences (intentions, friction, insights) are first-class eventified data
 
@@ -29,13 +29,13 @@ The promise is threefold: to restore **agency** by placing you in control of you
 
 ## 🏗️ Architecture
 
-Sinex is a "sentient archive" implemented as a satellite constellation architecture – independent services orchestrated by NixOS/systemd that comprehensively capture, intelligently process, and powerfully query personal digital experiences.
+Sinex is a personal knowledge archive implemented as a distributed service architecture – independent services orchestrated by NixOS/systemd that comprehensively capture, intelligently process, and powerfully query personal digital experiences.
 
-**Current Core Flow (implemented in code)**: Satellites → NATS JetStream → ingestd (consumer/archiver) → Postgres (`core.events`) + JetStream confirmations → Automata → Gateway (JSON‑RPC) → CLI
+**Current Core Flow (implemented in code)**: Nodes → NATS JetStream → ingestd (consumer/archiver) → Postgres (`core.events`) + JetStream confirmations → Automata → Gateway (JSON‑RPC) → CLI
 
 Satellites publish events directly to NATS JetStream (`events.raw.*` subjects); ingestd consumes from JetStream, validates, persists to Postgres, and publishes confirmations back to JetStream for consumption by automata and other processors.
 
-- **Satellites**: Independent services that capture events (filesystem, terminals, window managers, system events)
+- **Nodes**: Independent services that capture events (filesystem, terminals, window managers, system events)
 - **NATS JetStream**: Durable message bus for event ingestion, distribution, and confirmation delivery
 - **ingestd**: Consumes events from JetStream, validates, archives to Postgres, and publishes confirmations
 - **Event Substrate**: PostgreSQL + TimescaleDB with ULID keys, stores immutable events
@@ -55,29 +55,29 @@ Satellites publish events directly to NATS JetStream (`events.raw.*` subjects); 
 - **Message Bus**: NATS JetStream for real-time event distribution
 
 ### Key Features
-- **Satellite Architecture**: Each event source runs as an independent systemd service
-- **Dual-Mode Operation**: Satellites support both sensor (real-time) and scanner (batch) modes
+- **Distributed Architecture**: Each event source runs as an independent systemd service
+- **Dual-Mode Operation**: Nodes support both sensor (real-time) and scanner (batch) modes
 - **Immutable Event Storage**: All events preserved with full fidelity
 - **ULID Primary Keys**: Time-ordered, globally unique identifiers
-- **NATS JetStream Ingestion**: Satellites publish directly to JetStream; ingestd acts as consumer/archiver
+- **NATS JetStream Ingestion**: Nodes publish directly to JetStream; ingestd acts as consumer/archiver
 - **Idempotency & Confirmation**: Message deduplication via NATS-Msg-Id headers; confirmation delivery for provisionals
 - **Confirmation + DLQ Subjects**: Ingestd publishes canonical confirmations on `events.confirmations.*` and dead-letter entries on `events.dlq.*`, so automata can wait for durable IDs and handle failures deterministically
 - **Schema Validation**: JSON Schema validation for event payloads
 - **Git-Annex Integration**: Large file storage for blobs (source material slices)
 - **NixOS Module**: First-class NixOS deployment support
 
-### Satellite Architecture Details
+### Distributed Architecture Details
 
-The satellite architecture provides several key benefits:
+The distributed architecture provides several key benefits:
 
-1. **Isolation**: Each satellite runs as its own process with limited permissions
-2. **Reliability**: If one satellite crashes, others continue operating
-3. **Scalability**: Satellites can be distributed across machines
+1. **Isolation**: Each node runs as its own process with limited permissions
+2. **Reliability**: If one node crashes, others continue operating
+3. **Scalability**: Nodes can be distributed across machines
 4. **Flexibility**: Easy to add new event sources without modifying core
 
 #### Dual-Mode Operation
 
-All satellites support two operational modes:
+All nodes support two operational modes:
 
 - **Sensor Mode**: Real-time event capture as they occur
   - Runs continuously as a systemd service
@@ -93,7 +93,7 @@ All satellites support two operational modes:
 
 ### System Components Progress
 
-- ✅ **Satellite Architecture**: Independent satellite services operational, unified SDK complete
+- ✅ **Distributed Architecture**: Independent node services operational, unified SDK complete
 - ✅ **Data Substrate**: PostgreSQL + TimescaleDB with ULID keys; `core.events` operational
 - ✅ **Message Bus**: NATS JetStream ingestion and distribution fully implemented
 - 🚧 **Event Sources**: Filesystem, Terminal, Desktop, System — expanding coverage
@@ -103,14 +103,14 @@ All satellites support two operational modes:
 
 ### ✅ Implemented (Working Code)
 - **Core Infrastructure**: Event storage, ULID keys, TimescaleDB integration
-- **Satellite Architecture**: Independent satellites publish to NATS JetStream with idempotency headers
-- **Event Source Satellites**: Filesystem, Terminal (Kitty/Atuin/recordings), Desktop (clipboard/Hyprland), System (D-Bus/systemd/udev)
-- **Dual-Mode Support**: All satellites support sensor (real-time) and scanner (batch) modes
-- **Processing Pipeline**: Satellites → JetStream (`events.raw.*`) → ingestd (consumer/archiver) → Postgres + JetStream confirmations → Automata
+- **Distributed Architecture**: Independent nodes publish to NATS JetStream with idempotency headers
+- **Event Source Nodes**: Filesystem, Terminal (Kitty/Atuin/recordings), Desktop (clipboard/Hyprland), System (D-Bus/systemd/udev)
+- **Dual-Mode Support**: All nodes support sensor (real-time) and scanner (batch) modes
+- **Processing Pipeline**: Nodes → JetStream (`events.raw.*`) → ingestd (consumer/archiver) → Postgres + JetStream confirmations → Automata
 - **Confirmation Flow**: Provisional events receive confirmations with canonical IDs after persistence
 - **Storage**: Git-annex blob storage (source material slices), JSON schema validation
-- **Deployment**: NixOS module with systemd satellite services
-- **Testing**: Comprehensive test suite including satellite integration tests
+- **Deployment**: NixOS module with systemd node services
+- **Testing**: Comprehensive test suite including node integration tests
 
 ### 🚧 In Progress
 - **Automaton Development**: Terminal command canonicalizer and other stream processors
@@ -133,7 +133,7 @@ All satellites support two operational modes:
 
 ### Key Architectural Decisions
 - **ULID Primary Keys**: Time-ordered, globally unique identifiers for efficient indexing
-- **Satellite Constellation**: Independent services with unified StatefulStreamProcessor interface
+- **node ecosystem**: Independent services with unified StatefulStreamProcessor interface
 - **NATS JetStream Bus**: Real-time event distribution and durable buffering
 - **Unified Events Table**: Single `core.events` with comprehensive provenance tracking
 - **Checkpoint-based Recovery**: Unified state management for processors
@@ -214,11 +214,11 @@ export the env vars before entering the shell (or set them in your session); `.e
 # Start core services
 devenv up nats ingestd gateway
 
-# Start event source satellites
+# Start event source node services
 devenv up fs-watcher terminal desktop system
 devenv up health document canonicalizer    # Optional processors
 
-# Run satellites in scanner mode
+# Run node services in scanner mode
 cargo run --bin sinex-fs-ingestor -- scan /path/to/scan
 cargo run --bin sinex-terminal-ingestor -- scan --source kitty
 
@@ -226,7 +226,7 @@ cargo run --bin sinex-terminal-ingestor -- scan --source kitty
 python3 cli/exo.py query --rpc-token "$SINEX_RPC_TOKEN"
 LIMIT=50 python3 cli/exo.py query --rpc-token "$SINEX_RPC_TOKEN" # Increase result window
 
-# Monitor satellites via systemd
+# Monitor node services via systemd
 systemctl status sinex-ingestd
 systemctl status sinex-fs-ingestor
 ```

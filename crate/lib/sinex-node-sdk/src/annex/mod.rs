@@ -552,7 +552,12 @@ impl GitAnnex {
     }
 
     /// Check filesystem integrity
-    pub async fn fsck(&self, fast: bool, incremental: bool) -> Result<String> {
+    pub async fn fsck(
+        &self,
+        fast: bool,
+        incremental: bool,
+        key: Option<&str>,
+    ) -> Result<String> {
         info!("Running git-annex fsck");
 
         let mut cmd = AsyncCommand::new("git-annex");
@@ -564,6 +569,10 @@ impl GitAnnex {
 
         if incremental {
             cmd.arg("--incremental");
+        }
+
+        if let Some(k) = key {
+            cmd.arg("--key").arg(k);
         }
 
         cmd.current_dir(&self.config.repo_path);

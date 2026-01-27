@@ -1,20 +1,46 @@
-# Preflight Verification
+# Preflight Verification System
 
-Preflight verification system for node deployment.
+The Preflight system implements a **Fail-Fast Deployment Model**. It validates the operational readiness of a node before it begins processing real data, preventing cascading failures in production.
 
-This module provides comprehensive preflight checks to ensure nodes can
-operate correctly before they begin processing events. Preflight verification
-prevents runtime failures by validating all dependencies and prerequisites.
+## 🚦 Verification Categories
 
-## Verification Categories
+### 1. 🗄️ Database Readiness
+- **Connectivity**: Validates `DATABASE_URL` and pool acquisition.
+- **Extensions**: Verifies required Postgres extensions are loaded (`pgx_ulid`, `timescaledb`, `vector`).
+- **Migrations**: Performs a dry-run check of the `seaql_migrations` table to ensure schema compatibility.
 
-- **Configuration**: Validate all required configuration values
-- **Database**: Check database connectivity and schema compatibility
-- **Resources**: Verify filesystem access, permissions, and disk space
-- **Services**: Ensure external services (NATS, ingestd) are reachable
+### 2. 🛰️ Service Dependencies
+- **NATS JetStream**: Verifies connectivity and ensures required streams (`SINEX_RAW_EVENTS`) exist.
+- **Binary PATH**: Checks for essential tools (`git-annex`, `psql`, `systemctl`).
+- **Orchestration**: Validates SystemD service status where applicable.
 
-## Usage
+### 3. 📦 Resource Capacity
+- **Disk Space**: Verifies sufficient headroom in `/var/lib/sinex` and `/tmp`.
+- **Memory**: Checks available RSS memory against configured minimums.
+- **Permissions**: Ensures the `work_dir` is writable by the service user.
 
-Preflight checks are automatically run by the node SDK before starting
-event processing. Failed checks will prevent node startup with detailed
-error information.
+### 4. ⚙️ Configuration Validation
+- **Schema**: Validates the node's `node.toml` against its specific configuration struct.
+- **Environment**: Checks for required `SINEX_*` environment variables.
+
+## 🛠️ Usage
+
+### Automatic Execution
+The SDK runs preflight checks automatically during `NodeRunner::initialize_with_transport`. A failure here will result in a clean exit with a non-zero status code.
+
+### Manual Execution
+You can run the preflight tool independently using the `sinex-preflight` binary:
+
+```bash
+# Run all checks
+sinex-preflight verify
+
+# Run only database checks
+sinex-preflight verify --skip resources --skip configuration --skip services
+```
+
+## 📊 Status Levels
+
+- **PASS**: All critical and optional checks succeeded.
+- **WARNING**: Critical checks passed, but optional dependencies are missing (e.g., `git-annex` not installed).
+- **FAIL**: Critical dependencies are missing. Startup is blocked.

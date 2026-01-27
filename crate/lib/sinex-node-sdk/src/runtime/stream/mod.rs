@@ -1184,17 +1184,37 @@ impl<T: Node + 'static> NodeRunner<T> {
     pub async fn shutdown(&mut self) -> NodeResult<()> {
         info!("Shutting down stream processor runner");
 
-        // Abort schema listener task if running
+        // Abort and await schema listener task if running
         if let Some(handle) = self.schema_listener_handle.take() {
             handle.abort();
-            debug!("Aborted schema broadcast listener task");
+            let _ = handle.await;
+            debug!("Aborted and joined schema broadcast listener task");
         }
 
         // Clean up leader state
         if let Some(state) = self.leader_state.take() {
             state.heartbeat_handle.abort();
+            let _ = state.heartbeat_handle.await;
             if let Err(err) = state.kv_client.release_leadership(&state.instance_id).await {
                 warn!(error = %err, "Failed to release leadership on shutdown");
+            }
+        }
+
+        // Signal event processor to shutdown and await it
+        if let Some(shutdown_tx) = self.event_processor_shutdown.take() {
+            let _ = shutdown_tx.send(());
+        }
+
+        if let Some(handle) = self.event_processor_handle.take() {
+            match handle.await {
+                Ok(result) => {
+                    if let Err(err) = result {
+                        error!(error = %err, "Event processor failed during shutdown");
+                    }
+                }
+                Err(join_err) => {
+                    error!(error = %join_err, "Failed to join event processor task");
+                }
             }
         }
 

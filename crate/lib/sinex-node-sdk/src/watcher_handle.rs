@@ -230,9 +230,9 @@ impl<M> WatcherHandle<M> {
     /// Gracefully shutdown the watcher, aborting tasks and marking as stopped.
     ///
     /// This is also automatically called on `Drop`, but calling explicitly
-    /// allows for proper async cleanup of material contexts.
+    /// allows for proper async cleanup of material contexts and awaiting task completion.
     pub async fn shutdown(mut self) {
-        self.abort_tasks();
+        self.abort_tasks_async().await;
         self.state = WatcherState::Stopped;
         if let Ok(mut health) = self.health.write() {
             health.active = false;
@@ -241,8 +241,23 @@ impl<M> WatcherHandle<M> {
         // since we can't await in Drop
     }
 
-    /// Abort any running tasks (helper for shutdown and Drop).
-    fn abort_tasks(&mut self) {
+    /// Abort any running tasks and wait for them to finish.
+    async fn abort_tasks_async(&mut self) {
+        match &mut self.state {
+            WatcherState::Running { task, forwarder } => {
+                task.abort();
+                let _ = task.await;
+                if let Some(fwd) = forwarder.take() {
+                    fwd.abort();
+                    let _ = fwd.await;
+                }
+            }
+            WatcherState::Initialized | WatcherState::Stopped => {}
+        }
+    }
+
+    /// Synchronous abort for Drop (best-effort).
+    fn abort_tasks_sync(&mut self) {
         match &self.state {
             WatcherState::Running { task, forwarder } => {
                 task.abort();
@@ -257,7 +272,7 @@ impl<M> WatcherHandle<M> {
 
 impl<M> Drop for WatcherHandle<M> {
     fn drop(&mut self) {
-        self.abort_tasks();
+        self.abort_tasks_sync();
         if let Ok(mut health) = self.health.write() {
             health.active = false;
         }

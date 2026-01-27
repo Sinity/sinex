@@ -5,7 +5,35 @@
 #![doc = include_str!("../docs/stage_as_you_go.md")]
 #![doc = include_str!("../docs/stream_runtime.md")]
 
-//! Shared runtime for Sinex nodes (ingestors and automata).
+//! # Sinex Node SDK
+//!
+//! The Sinex Node SDK provides the core abstractions and runtime for building nodes in the Sinex ecosystem.
+//! It implements a **Unified Node Architecture**, where both **Ingestors** (data capturers) and
+//! **Automata** (data processors) are unified as stateful stream processors.
+//!
+//! ## Core Concepts
+//!
+//! ### Unified Node Interface
+//! All nodes implement the [`Node`] trait, which provides a single interface for point-in-time snapshots,
+//! historical gap-filling, and continuous real-time processing.
+//!
+//! ### Gen2 Patterns
+//! The SDK provides high-level traits like [`SimpleNode`] and [`SimpleIngestor`] that automate:
+//! - **State Persistence**: Automatic checkpointing to NATS KV and local backup files.
+//! - **Hot Reload**: Fast state restoration from local files during development rebuilds.
+//! - **Graceful Lifecycle**: Cooperative shutdown patterns via [`WatcherHandle`] and `CancellationToken`.
+//! - **Health Monitoring**: Automatic error-rate tracking and status emission.
+//!
+//! ### Data Integrity & Provenance
+//! - **Single-Writer Pattern**: Nodes submit provisional events to NATS; `sinex-ingestd` ensures durable database persistence.
+//! - **Dual-Hash Verification**: Large files managed by the [`annex`] subsystem are verified using both BLAKE3 and SHA256.
+//! - **Lineage Tracking**: Automatic synthesis provenance links derived events to their source.
+//!
+//! ### Distributed Coordination
+//! High-level primitives for:
+//! - **Leadership Election**: Ensuring singleton execution of stateful automata.
+//! - **Graceful Handoff**: Zero-downtime version upgrades.
+//! - **Work Tracking**: Ensuring in-flight operations complete before shutdown.
 //!
 //! # Clock Skew Considerations (Issue 7)
 //!

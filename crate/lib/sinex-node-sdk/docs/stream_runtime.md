@@ -1,38 +1,61 @@
-# Stream Processing Runtime
+# Stream Processing Runtime (Gen2)
 
-The `sinex-node-sdk` provides a high-level runtime for implementing both data ingestors and stateful automata.
+The Sinex SDK provides high-level abstractions—`SimpleNode` and `SimpleIngestor`—that reduce boilerplate and enable LLM-friendly development. These "Gen2" patterns automate state management, checkpointing, and lifecycle transitions.
 
-## The SimpleNode Abstraction
+## 🧱 The Abstractions
 
-The `SimpleNode` trait is the primary interface for implementing logic that processes events from NATS and optionally emits new events or stores internal state.
+### 1. `SimpleNode` (Automata)
+Designed for processing event streams and synthesizing new events.
+- **Auto-State**: State is automatically persisted to NATS KV.
+- **Orchestrated**: Designed for external event delivery via the `sx` orchestrator.
+- **Health**: Integrates with `HealthReporter` for automatic error rate monitoring.
 
-### Key Components
+### 2. `SimpleIngestor` (Sensors)
+Tailored for capturing data from external sources (Files, APIs, Sockets).
+- **Control**: Manages its own continuous loop (sensor mode).
+- **Symmetry**: Implements `scan_snapshot`, `scan_historical`, and `run_continuous`.
+- **Checkpointing**: In-memory state is flushed to NATS KV and local files.
 
-- **Input/Output**: Defines the expected event types.
-- **State Management**: Automatic persistence of the node's `State` type using NATS KV checkpoints.
-- **Context**: Provides access to logging, metrics, and event emission during processing.
+## 🔄 Processing Pipeline
 
-## Processing Pipeline
+The runtime follows a **provisional delivery** pattern to ensure data safety:
 
-The runtime follows a robust exactly-once (provisional) delivery pattern:
+1.  **Fetch**: Events are pulled from NATS JetStream.
+2.  **Process**: The `SimpleNode` logic executes (idempotently).
+3.  **Checkpoint**: New internal state and offsets are saved to NATS KV.
+4.  **ACK**: The message is acknowledged only *after* the state is durable.
 
-1. **Fetch**: The `JetStreamConsumer` pulls a batch of messages from NATS.
-2. **Provisional Handle**: The `SimpleNode` processes the event.
-3. **Checkpoint**: The new state and processing offset are atomically saved to NATS KV.
-4. **ACK**: The original message is acknowledged in JetStream only after the checkpoint is successful.
+## 💾 State Persistence Pattern
 
-## Error Handling
+State is stored using a dual-destination strategy:
 
-Nodes define their own error policies via the `handle_error` method:
+| Destination | Role | Rationale |
+| :--- | :--- | :--- |
+| **NATS KV** | Primary | Distributed durability for crash recovery. |
+| **Local File** | Secondary | Ultra-fast serialization for **Hot Reload** restarts. |
 
-| Policy | Action |
-|--------|--------|
-| `Retry` | NAK the message, triggering redelivery according to JetStream backoff. |
-| `Skip` | ACK the message and move to the next event, optionally logging the failure. |
-| `Fail` | Stop the node and signal a critical failure to the orchestrator. |
+> [!IMPORTANT]
+> Local files take precedence during startup. If a file-based checkpoint exists, the node assumes it was just rebuilt and resumes immediately.
 
-## Deployment Patterns
+## 🛑 Cooperative Shutdown
 
-- **Ingestors**: Nodes that produce events from external sources (e.g., FS, Terminal).
-- **Automata**: Nodes that transform existing events or maintain derived state (e.g., Health, Search).
-- **Graceful Shutdown**: The runtime supports cooperative cancellation, ensuring that in-flight events are either completed or NAKed before the process exits.
+Unlike "Gen1" nodes that used forceful task aborts, Gen2 nodes use **Cooperative Cancellation**:
+
+1.  **Signal**: Node receives SIGTERM.
+2.  **Broadcast**: `watch::channel` notifies all background watchers.
+3.  **Finalize**: Watchers finish their current slice and finalize `SourceMaterial`.
+4.  **Checkpoint**: Final state is written to disk and NATS.
+5.  **Exit**: Process terminates cleanly.
+
+## 🛡️ Path Validation
+
+All filesystem operations must pass through the `VerifiedPath` type. This prevents:
+- **Directory Traversal**: Patterns like `../../etc/passwd` are rejected at the type level.
+- **Symlink Attacks**: Predictable temp filenames are avoided via `create_secure_temp_path`.
+
+## 🚦 Error Actions
+
+Processors define their behavior via the `ErrorAction` enum:
+- `Retry`: NAK the message for redelivery.
+- `SendToDLQ`: Log failure and move message to the Dead Letter Queue.
+- `Skip`: Continue processing without further action.
