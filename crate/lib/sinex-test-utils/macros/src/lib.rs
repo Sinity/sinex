@@ -298,7 +298,7 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
     let timeout_secs = opts.timeout_secs.unwrap_or(if is_async { 60 } else { 20 }); // Increased from 30/10
     let cases = opts.cases.unwrap_or(256);
     let trace_stmt = if opts.trace {
-        quote!( sinex_test_utils::TestContext::init_tracing("debug"); )
+        quote!( xtask::sandbox::Sandbox::init_tracing("debug"); )
     } else {
         quote!()
     };
@@ -393,7 +393,7 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
             let start = std::time::Instant::now();
             eprintln!("🔄 {} [prop, timeout: {}s, cases: {}]", test_name.replace('_', " "), #timeout_secs, #cases);
             let ctx_holder = if #expects_ctx {
-                Some(sinex_test_utils::TestContext::with_name(test_name).await?)
+                Some(xtask::sandbox::Sandbox::with_name(test_name).await?)
             } else {
                 None
             };

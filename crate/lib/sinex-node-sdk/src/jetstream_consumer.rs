@@ -564,7 +564,7 @@ impl JetStreamEventConsumer {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use sinex_test_utils::{sinex_test, EphemeralNats};
+    use xtask::sandbox::{sinex_test, EphemeralNats};
 
     struct NoopHandler;
 

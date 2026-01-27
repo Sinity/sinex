@@ -8,7 +8,7 @@ use sinex_test_utils::sinex_test;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use sinex_test_utils::timing_utils::Timeouts;
+use xtask::sandbox::timing::Timeouts;
 
 #[sinex_test]
 async fn lifecycle_manager_starts_in_starting_status() -> TestResult<()> {

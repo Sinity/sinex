@@ -3,7 +3,7 @@
 use serde_json::json;
 use sinex_gateway::handlers;
 use sinex_services::AnalyticsService;
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn test_handle_activity_heatmap_defaults(ctx: TestContext) -> Result<()> {

@@ -9,7 +9,7 @@ use sinex_node_sdk::stream_processor::{
     TimeHorizon,
 };
 use sinex_node_sdk::NodeResult;
-use sinex_test_utils::{sinex_test, TestContext};
+use xtask::sandbox::{sinex_test, TestContext};
 use support::runtime::TestRuntimeBuilder;
 
 #[derive(Default)]

@@ -1,4 +1,4 @@
-use sinex_test_utils::{
+use xtask::sandbox::{
     sinex_test, BackpressureManager, BackpressureOutcome, BackpressureStrategy, ChannelHarness,
     ChannelReceiverExt, ChannelSenderExt,
 };

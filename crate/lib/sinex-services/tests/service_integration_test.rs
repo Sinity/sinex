@@ -5,11 +5,11 @@ use serde_json::json;
 use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::types::domain::EventSource;
 use sinex_services::AnalyticsService;
-use sinex_test_utils::dataset_seeds::{
+use xtask::sandbox::dataset_seeds::{
     seed_events_via_scope, seed_service_integration_dataset_semantic_min_via_scope, EventSpec,
     SeedClock,
 };
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use std::sync::Arc;
 use std::time::Instant;
 

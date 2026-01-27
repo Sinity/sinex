@@ -328,7 +328,7 @@ where
 /// # Example
 ///
 /// ```rust
-/// # use sinex_test_utils::db_common::reset_database;
+/// # use xtask::sandbox::db_common::reset_database;
 /// # async fn example(pool: &DbPool) -> TestResult<()> {
 /// reset_database(pool).await?;
 /// // Database is now empty and ready for new test data
@@ -488,7 +488,7 @@ pub async fn reset_database(pool: &DbPool) -> TestResult<()> {
 /// # Example
 ///
 /// ```rust
-/// # use sinex_test_utils::db_common::load_fixture;
+/// # use xtask::sandbox::db_common::load_fixture;
 /// # async fn example(pool: &DbPool) -> TestResult<()> {
 /// // Load standard small dataset
 /// load_fixture(pool, "small").await?;
@@ -545,7 +545,7 @@ pub async fn load_fixture(pool: &DbPool, name: &str) -> TestResult<()> {
 /// # Usage in Benchmarks
 ///
 /// ```rust
-/// # use sinex_test_utils::db_common::clear_pg_cache;
+/// # use xtask::sandbox::db_common::clear_pg_cache;
 /// # async fn benchmark(pool: &DbPool) -> TestResult<()> {
 /// // Cold cache measurement
 /// clear_pg_cache(pool).await?;
@@ -606,7 +606,7 @@ pub async fn clear_pg_cache(pool: &DbPool) -> TestResult<()> {
 /// # Example
 ///
 /// ```rust
-/// # use sinex_test_utils::db_common::get_row_counts;
+/// # use xtask::sandbox::db_common::get_row_counts;
 /// # async fn example(pool: &DbPool) -> TestResult<()> {
 /// let counts = get_row_counts(pool).await?;
 /// for (table, count) in counts {
@@ -676,7 +676,7 @@ pub async fn get_row_counts(pool: &DbPool) -> TestResult<HashMap<String, i64>> {
 /// # Example
 ///
 /// ```rust
-/// # use sinex_test_utils::db_common::{reset_database, verify_clean_state};
+/// # use xtask::sandbox::db_common::{reset_database, verify_clean_state};
 /// # async fn example(pool: &DbPool) -> TestResult<()> {
 /// reset_database(pool).await?;
 /// verify_clean_state(pool).await?; // Should pass
@@ -847,7 +847,7 @@ pub async fn verify_clean_state(pool: &DbPool) -> TestResult<()> {
 /// # Example
 ///
 /// ```rust
-/// # use sinex_test_utils::db_common::apply_test_optimizations;
+/// # use xtask::sandbox::db_common::apply_test_optimizations;
 /// # async fn example(pool: &DbPool) -> TestResult<()> {
 /// apply_test_optimizations(pool).await?;
 /// // Run performance-sensitive operations

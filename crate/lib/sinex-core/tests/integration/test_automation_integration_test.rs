@@ -15,9 +15,9 @@ use serde_json::json;
 // Using shorter imports from sinex-core's re-exports
 use sinex_core::{DbPoolExt, EventId, EventSource};
 use sinex_node_sdk::{Checkpoint, CheckpointManager};
-use sinex_test_utils::prelude::*;
-use sinex_test_utils::timing_utils::{WaitHelpers, DEFAULT_WAIT_SECS};
-use sinex_test_utils::{
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::{WaitHelpers, DEFAULT_WAIT_SECS};
+use xtask::sandbox::{
     start_test_ingestd_with_config, TestIngestdConfig, TestIngestdHandle, TestNodePublisher,
 };
 use std::collections::HashMap;

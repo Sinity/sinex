@@ -19,7 +19,7 @@
 // - **Checkpoint Performance**: Persistence and recovery speed
 // - **Bottleneck Identification**: Tools for identifying JetStream stress cases
 
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 
 /// JetStream publish/consume performance tests
 pub mod jetstream_performance_test;

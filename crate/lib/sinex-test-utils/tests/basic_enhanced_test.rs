@@ -2,7 +2,7 @@
 
 use serde_json::json;
 use sinex_core::types::events::DynamicPayload;
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 
 // Test that regular sinex_test still works
 #[sinex_test]

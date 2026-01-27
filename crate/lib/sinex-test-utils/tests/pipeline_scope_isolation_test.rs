@@ -1,6 +1,6 @@
 use serde_json::json;
 use sinex_core::DynamicPayload;
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 
 #[sinex_test(timeout = 60)]
 async fn pipeline_scope_streams_are_isolated(ctx: TestContext) -> TestResult<()> {

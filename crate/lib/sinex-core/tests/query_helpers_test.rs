@@ -2,7 +2,7 @@ use sinex_core::db::query_helpers::{
     db_error, with_retry_transaction_idempotent, with_transaction, IdempotentTransaction,
     RetryConfig,
 };
-use sinex_test_utils::{sinex_test, TestContext};
+use xtask::sandbox::{sinex_test, TestContext};
 
 #[sinex_test]
 async fn with_transaction_accepts_async_closures(ctx: TestContext) -> TestResult<()> {

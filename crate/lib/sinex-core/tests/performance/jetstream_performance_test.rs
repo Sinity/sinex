@@ -18,7 +18,7 @@ use color_eyre::eyre::eyre;
 use futures::StreamExt;
 use serde_json::json;
 use sinex_core::types::ulid::Ulid;
-use sinex_test_utils::{prelude::*, timing_utils::Timeouts, EphemeralNats};
+use xtask::sandbox::{prelude::*, timing_utils::Timeouts, EphemeralNats};
 use std::collections::HashMap;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},

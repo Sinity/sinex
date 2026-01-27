@@ -4,8 +4,8 @@
 
 use serde_json::json;
 use sinex_services::{SearchQuery, SearchService};
-use sinex_test_utils::dataset_seeds::{seed_events_via_scope, EventSpec, SeedClock};
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::dataset_seeds::{seed_events_via_scope, EventSpec, SeedClock};
+use xtask::sandbox::prelude::*;
 
 fn make_search_query() -> SearchQuery {
     SearchQuery {

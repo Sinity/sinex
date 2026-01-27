@@ -14,6 +14,7 @@ sinex-test-utils = { path = "../../crate/lib/sinex-test-utils" }
 tokio.workspace = true
 tokio-stream.workspace = true
 tempfile.workspace = true
+xtask = { path = "../../xtask", default-features = false, features = ["sandbox"] }
 sinex-core = { path = "../../crate/lib/sinex-core" }
 sinex-ingestd = { path = "../../crate/core/sinex-ingestd" }
 sinex-node-sdk = { path = "../../crate/lib/sinex-node-sdk" }

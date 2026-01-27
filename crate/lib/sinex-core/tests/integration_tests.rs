@@ -17,9 +17,9 @@ use serde_json::json;
 use std::sync::Arc;
 // Using shorter imports from sinex-core's re-exports
 use sinex_core::{Blob, DbPoolExt, DynamicPayload, EventSource, EventType, Id, Ulid};
-use sinex_test_utils::constants::SOURCE_FIXTURE_REPO_PRIMARY;
-use sinex_test_utils::prelude::*;
-use sinex_test_utils::timing_utils::{Timeouts, WaitHelpers};
+use xtask::sandbox::constants::SOURCE_FIXTURE_REPO_PRIMARY;
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 
 // =============================================================================
 // BASIC DATABASE OPERATIONS - Core functionality tests

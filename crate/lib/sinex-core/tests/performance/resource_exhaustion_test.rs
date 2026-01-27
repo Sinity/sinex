@@ -11,7 +11,7 @@ use async_nats::jetstream::{
 use futures::StreamExt;
 use serde_json::json;
 use sinex_core::types::ulid::Ulid;
-use sinex_test_utils::{prelude::*, timing_utils::Timeouts, EphemeralNats};
+use xtask::sandbox::{prelude::*, timing_utils::Timeouts, EphemeralNats};
 use std::time::{Duration, Instant};
 
 async fn setup_stream(js: &JetStream, name: &str, subject: &str, max_msgs: i64) -> TestResult<()> {

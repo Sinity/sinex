@@ -7,7 +7,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use sinex_test_utils::JetStreamTestHelper;
+//! use xtask::sandbox::JetStreamTestHelper;
 //!
 //! #[sinex_test]
 //! async fn test_consumer(ctx: TestContext) -> TestResult<()> {

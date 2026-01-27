@@ -9,8 +9,8 @@
 // - **JSON Attacks**: Circular references, billion laughs, expansion attacks
 // - **ULID Attacks**: Extreme dates, collision attempts, timestamp manipulation
 
-use sinex_test_utils::prelude::*;
-use sinex_test_utils::timing_utils::Timeouts;
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::Timeouts;
 use sinex_core::db::validation::EventValidator;
 use chrono::{Duration, TimeZone, Utc};
 use std::sync::atomic::{AtomicU64, Ordering};

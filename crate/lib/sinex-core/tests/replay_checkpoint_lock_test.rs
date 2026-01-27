@@ -1,6 +1,6 @@
 use chrono::Utc;
 use sinex_core::db::replay::state_machine::{ReplayCheckpoint, ReplayScope, ReplayStateMachine};
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use std::collections::HashMap;
 use std::sync::{
     atomic::{AtomicBool, Ordering},

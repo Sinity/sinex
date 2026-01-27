@@ -6,7 +6,7 @@
 use sea_orm_migration::prelude::*;
 use sinex_core::DynamicPayload;
 use sinex_schema::schema::*;
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use sqlx::{PgPool, Row};
 use std::collections::HashMap;
 

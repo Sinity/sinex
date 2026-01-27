@@ -8,7 +8,7 @@
 use rstest::rstest;
 use serde_json::json;
 use sinex_core::types::events::DynamicPayload;
-use sinex_test_utils::{prelude::*, sinex_test, TestResult};
+use xtask::sandbox::{prelude::*, sinex_test, TestResult};
 
 #[sinex_test]
 #[rstest(

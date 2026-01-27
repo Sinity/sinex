@@ -10,7 +10,7 @@ use chrono::Utc;
 use proptest::prelude::*;
 use sinex_core::{EventId, EventSource, EventType, Ulid};
 use sinex_node_sdk::{ConfirmationBuffer, EventConfirmation, ProvisionalEvent};
-use sinex_test_utils::{sinex_prop, TestContext, TestResult};
+use xtask::sandbox::{sinex_prop, TestContext, TestResult};
 use std::time::Duration;
 
 // =============================================================================

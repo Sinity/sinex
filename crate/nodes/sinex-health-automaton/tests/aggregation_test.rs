@@ -4,7 +4,7 @@ use chrono::{Duration, Utc};
 use serde_json::json;
 use sinex_health_automaton::{HealthAggregator, HealthAggregatorConfig, HealthState};
 use sinex_node_sdk::simple_node::{SimpleNode, SimpleNodeContext};
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn health_aggregator_tracks_component_status(ctx: TestContext) -> TestResult<()> {

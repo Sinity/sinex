@@ -1,4 +1,4 @@
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use std::path::{Path, PathBuf};
 
 fn collect_rs_files(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {

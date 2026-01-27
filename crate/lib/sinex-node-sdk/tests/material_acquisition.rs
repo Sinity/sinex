@@ -5,9 +5,9 @@ use sinex_core::types::{Bytes, Seconds};
 use sinex_core::Id;
 use sinex_core::{db::query_helpers::ulid_to_uuid, db::DbPoolExt};
 use sinex_node_sdk::{AcquisitionManager, RotationPolicy};
-use sinex_test_utils::prelude::*;
-use sinex_test_utils::timing_utils::{WaitHelpers, DEFAULT_WAIT_SECS, INTEGRATION_WAIT_SECS};
-use sinex_test_utils::{start_test_ingestd_with_config, EphemeralNats, TestIngestdConfig};
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::{WaitHelpers, DEFAULT_WAIT_SECS, INTEGRATION_WAIT_SECS};
+use xtask::sandbox::{start_test_ingestd_with_config, EphemeralNats, TestIngestdConfig};
 use std::io::ErrorKind;
 use std::sync::Arc;
 use std::time::Duration;
@@ -595,7 +595,7 @@ async fn material_acquisition_concurrent_sessions_isolated(mut ctx: TestContext)
     // `TestContext` is acquired from a pool and cleaned for us; don't do extra per-test DB resets.
     let nats = EphemeralNats::start().await?;
     let nats_client = nats.connect().await?;
-    let synchronizer = Arc::new(sinex_test_utils::timing_utils::WorkerReadinessCoordinator::new(4));
+    let synchronizer = Arc::new(xtask::sandbox::timing::WorkerReadinessCoordinator::new(4));
     let js = nats.jetstream_with_client(nats_client.clone());
 
     let ingest_config = TestIngestdConfig {

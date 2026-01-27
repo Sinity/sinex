@@ -1,6 +1,6 @@
 use sinex_core::repositories::DbPoolExt;
 use sinex_core::{CreateEntity, Event, Id, JsonValue};
-use sinex_test_utils::{sinex_test, TestContext};
+use xtask::sandbox::{sinex_test, TestContext};
 
 #[sinex_test]
 async fn merge_entities_unions_fields_and_logs_audit(ctx: TestContext) -> color_eyre::Result<()> {

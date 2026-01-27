@@ -5505,7 +5505,6 @@ dependencies = [
  "sinex-macros",
  "sinex-node-sdk",
  "sinex-schema",
- "sinex-test-utils",
  "sqlx",
  "tempfile",
  "thiserror 2.0.17",
@@ -5600,6 +5599,7 @@ dependencies = [
  "tracing",
  "uuid",
  "validator",
+ "xtask",
 ]
 
 [[package]]
@@ -5747,7 +5747,6 @@ dependencies = [
  "quote",
  "serde",
  "serde_json",
- "sinex-test-utils",
  "syn 2.0.108",
 ]
 
@@ -5797,6 +5796,7 @@ dependencies = [
  "uuid",
  "validator",
  "which 6.0.3",
+ "xtask",
 ]
 
 [[package]]
@@ -5821,6 +5821,18 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "sinex-primitives"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "gethostname 0.4.3",
+ "proptest",
+ "serde",
+ "serde_json",
+ "sinex-core",
 ]
 
 [[package]]
@@ -6021,57 +6033,16 @@ dependencies = [
 name = "sinex-test-utils"
 version = "0.1.0"
 dependencies = [
- "async-nats",
  "async-std",
- "async-trait",
- "blake3",
- "bon",
- "camino",
- "chrono",
  "color-eyre",
  "divan",
- "fastrand",
- "futures",
- "gethostname 0.4.3",
  "hostname",
- "insta",
- "lazy_static",
  "num_cpus",
- "once_cell",
- "parking_lot",
- "proptest",
- "rand 0.8.5",
- "rstest",
- "serde",
- "serde_json",
- "sha2",
- "sinex-core",
- "sinex-ingestd",
- "sinex-node-sdk",
- "sinex-schema",
- "sinex-test-utils-macros",
- "sqlx",
+ "sinex-primitives",
  "sysinfo 0.30.13",
  "tempfile",
- "tokio",
- "tokio-stream",
  "tokio-test",
- "toml",
- "tracing",
- "tracing-subscriber",
- "tracing-test",
- "url",
- "uuid",
- "which 5.0.0",
-]
-
-[[package]]
-name = "sinex-test-utils-macros"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.108",
+ "xtask",
 ]
 
 [[package]]
@@ -8163,15 +8134,19 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
+ "async-nats",
  "async-trait",
  "atty",
+ "bon",
  "camino",
  "cargo_metadata 0.18.1",
  "chrono",
  "clap",
  "clap_complete",
+ "color-eyre",
  "console",
  "dirs",
+ "futures",
  "gethostname 0.4.3",
  "guppy",
  "hex",
@@ -8182,8 +8157,10 @@ dependencies = [
  "notify-debouncer-mini",
  "num_cpus",
  "once_cell",
+ "parking_lot",
  "predicates",
  "proptest",
+ "rand 0.8.5",
  "rcgen",
  "reqwest 0.12.24",
  "rusqlite",
@@ -8191,10 +8168,15 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "sinex-core",
+ "sqlx",
  "tempfile",
  "time",
  "tokio",
+ "tokio-stream",
  "toml",
+ "tracing",
+ "uuid",
  "walkdir",
  "which 6.0.3",
  "x509-parser",

@@ -2,7 +2,7 @@ use chrono::Utc;
 use serde_json::json;
 use sinex_core::types::ulid::Ulid as CoreUlid;
 use sinex_gateway::cascade_analyzer::{CascadeAnalyzerConfig, StreamingCascadeAnalyzer};
-use sinex_test_utils::{sinex_test, TestContext};
+use xtask::sandbox::{sinex_test, TestContext};
 use sqlx::PgPool;
 use uuid::Uuid;
 

@@ -1,6 +1,6 @@
 use serde_json::json;
 use sinex_core::DynamicPayload;
-use sinex_test_utils::{TestContext, TestResult};
+use xtask::sandbox::{TestContext, TestResult};
 
 #[tokio::main]
 async fn main() -> TestResult<()> {

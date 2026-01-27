@@ -1,5 +1,5 @@
 use async_nats::jetstream;
-use sinex_test_utils::{sinex_test, EphemeralNats, PipelineNamespace};
+use xtask::sandbox::{sinex_test, EphemeralNats, PipelineNamespace};
 use std::time::Duration;
 
 #[sinex_test]

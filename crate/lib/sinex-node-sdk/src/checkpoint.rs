@@ -878,7 +878,7 @@ pub fn spawn_checkpoint_cleanup_task(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_test_utils::{sinex_test, TestContext};
+    use xtask::sandbox::{sinex_test, TestContext};
 
     #[sinex_test]
     async fn save_checkpoint_rejects_processed_count_overflow(

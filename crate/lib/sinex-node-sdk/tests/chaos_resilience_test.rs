@@ -8,7 +8,7 @@
 //! - Slow consumers
 
 use sinex_node_sdk::simple_node::{ErrorAction, SimpleNode, SimpleNodeError};
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 

@@ -4,7 +4,7 @@ use sinex_core::SinexError;
 use sinex_node_sdk::health_reporter::{HealthReporter, HealthThresholds};
 use sinex_node_sdk::prelude::ProcessStatus;
 use sinex_node_sdk::self_observation::{SelfObserver, SelfObserverConfig};
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;

@@ -6,7 +6,7 @@
 use sinex_core::db::models::EventFactory;
 use sinex_core::types::ulid::Ulid;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;

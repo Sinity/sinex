@@ -3,7 +3,7 @@ use std::time::Duration;
 use async_nats::jetstream::{self, consumer::pull::Config as ConsumerConfig, consumer::AckPolicy};
 use color_eyre::eyre;
 use serde_json::json;
-use sinex_test_utils::{sinex_test, timing_utils::Timeouts, EphemeralNats, TestNodePublisher};
+use xtask::sandbox::{sinex_test, timing_utils::Timeouts, EphemeralNats, TestNodePublisher};
 use tokio::time::{sleep, timeout};
 use tokio_stream::StreamExt;
 

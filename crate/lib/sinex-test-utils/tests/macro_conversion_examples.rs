@@ -5,7 +5,7 @@
 //! This file demonstrates before/after examples of converting verbose
 //! test implementations to use the powerful test macro system.
 
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use sinex_test_utils::test_macros::*;
 
 // =============================================================================

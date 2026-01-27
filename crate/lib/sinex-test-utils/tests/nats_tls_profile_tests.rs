@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use sinex_test_utils::nats::{
+use xtask::sandbox::nats::{
     reset_shared_ephemeral_nats, shared_ephemeral_nats, shared_ephemeral_nats_with_key,
     EphemeralNats, SharedNatsProfile,
 };
-use sinex_test_utils::prelude::*;
-use sinex_test_utils::EnvGuard;
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::EnvGuard;
 
 #[sinex_test]
 async fn shared_nats_profiles_are_distinct(_ctx: TestContext) -> TestResult<()> {

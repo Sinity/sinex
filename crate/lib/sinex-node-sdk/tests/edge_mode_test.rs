@@ -15,8 +15,8 @@ use sinex_node_sdk::{
     },
     EventTransport, NodeResult,
 };
-use sinex_test_utils::timing_utils::{WaitHelpers, DEFAULT_WAIT_SECS};
-use sinex_test_utils::{sinex_serial_test, TestContext};
+use xtask::sandbox::timing::{WaitHelpers, DEFAULT_WAIT_SECS};
+use xtask::sandbox::{sinex_serial_test, TestContext};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 

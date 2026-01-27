@@ -9,9 +9,9 @@ use sinex_core::types::error::SinexError;
 use sinex_core::types::events::DynamicPayload;
 use sinex_core::DbPoolExt;
 use sinex_core::SourceMaterial;
-use sinex_test_utils::db_common::verify_clean_state;
-use sinex_test_utils::timing_utils::Timeouts;
-use sinex_test_utils::{
+use xtask::sandbox::db_common::verify_clean_state;
+use xtask::sandbox::timing::Timeouts;
+use xtask::sandbox::{
     acquire_admin_connection, acquire_test_database, check_pool_health, get_pool_stats,
     pool_slot_count, reset_pool, sinex_serial_test, sinex_test, TestContext,
 };
@@ -181,7 +181,7 @@ async fn test_clean_database_handles_complex_data(
         .await?;
 
     // Wait for event to appear in the DB (ctx.publish already does this implicitly, but explicit wait is fine)
-    sinex_test_utils::timing_utils::WaitHelpers::wait_for_source_events(
+    xtask::sandbox::timing::WaitHelpers::wait_for_source_events(
         ctx.pool(),
         "complex-data-test",
         1,

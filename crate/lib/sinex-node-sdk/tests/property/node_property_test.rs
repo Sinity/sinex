@@ -9,7 +9,7 @@ use serde_json::json;
 use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::types::domain::{EventSource, EventType};
 use sinex_core::{Event, JsonValue};
-use sinex_test_utils::{prelude::*, sinex_prop, sinex_proptest, test_event};
+use xtask::sandbox::{prelude::*, sinex_prop, sinex_proptest, test_event};
 use std::time::Duration;
 
 /// Helper to convert color_eyre::Report errors to TestCaseError for property tests

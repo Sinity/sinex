@@ -8,7 +8,7 @@ use serde_json::json;
 use sinex_core::db::queries::{CheckpointQueries, EventQueries};
 use sinex_core::db::query_builder::{QueryBuilder, QueryParam};
 use sinex_core::types::events::{event_types, sources, EventFactory};
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;

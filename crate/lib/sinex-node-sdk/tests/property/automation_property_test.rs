@@ -9,7 +9,7 @@ use serde_json::json;
 use sinex_core::types::domain::{EventSource, EventType};
 use sinex_core::{Event, JsonValue};
 use sinex_node_sdk::{Checkpoint, NodeType, ScanArgs, TimeHorizon};
-use sinex_test_utils::{prelude::*, sinex_proptest, test_event};
+use xtask::sandbox::{prelude::*, sinex_proptest, test_event};
 use std::collections::HashMap;
 
 /// Create property test strategies for events

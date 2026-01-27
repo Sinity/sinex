@@ -5,7 +5,7 @@
 
 use sinex_core::DynamicPayload;
 use sinex_node_sdk::VersionInfo;
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use std::fs;
 use tempfile::TempDir;
 

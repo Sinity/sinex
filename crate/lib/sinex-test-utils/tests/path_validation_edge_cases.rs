@@ -1,4 +1,4 @@
-use sinex_test_utils::{path_validation::validate_test_path, sinex_test};
+use xtask::sandbox::{path_validation::validate_test_path, sinex_test};
 use std::fs;
 use tempfile::tempdir;
 

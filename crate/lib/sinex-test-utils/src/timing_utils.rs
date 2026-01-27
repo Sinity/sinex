@@ -26,7 +26,7 @@ pub const STRESS_WAIT_SECS: u64 = 180;
 ///
 /// Use these constants instead of hardcoded magic numbers in tests:
 /// ```rust
-/// use sinex_test_utils::timing_utils::Timeouts;
+/// use xtask::sandbox::timing::Timeouts;
 ///
 /// // Instead of: WaitHelpers::wait_for_event_count(&pool, 5, 10).await?
 /// // Use:        WaitHelpers::wait_for_event_count(&pool, 5, Timeouts::SHORT).await?

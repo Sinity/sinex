@@ -8,7 +8,7 @@ use proptest::strategy::ValueTree;
 use proptest::test_runner::TestCaseError;
 use sinex_node_sdk::Checkpoint;
 use sinex_node_sdk::{CheckpointManager, CheckpointState};
-use sinex_test_utils::{prelude::*, sinex_prop};
+use xtask::sandbox::{prelude::*, sinex_prop};
 use std::sync::Arc;
 
 /// Helper to convert color_eyre::Report errors to TestCaseError for property tests

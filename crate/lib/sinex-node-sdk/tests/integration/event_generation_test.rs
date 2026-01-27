@@ -5,7 +5,7 @@
 
 use sinex_core::db::models::{Event, JsonValue};
 use sinex_core::DynamicPayload;
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use std::time::Duration;
 use tokio::sync::mpsc;
 

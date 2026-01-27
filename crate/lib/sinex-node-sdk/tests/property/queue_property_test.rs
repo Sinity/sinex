@@ -16,7 +16,7 @@ use serde_json::{json, Value};
 use sinex_core::types::ulid::Ulid;
 use sinex_core::DynamicPayload;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use std::sync::LazyLock;
 
 /// Helper to convert color_eyre::Report errors to TestCaseError for property tests

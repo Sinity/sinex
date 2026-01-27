@@ -5,8 +5,8 @@ use sinex_core::DbPoolExt;
 use sinex_node_sdk::{
     AutomatonEventHandler, JetStreamEventConsumer, JetStreamEventConsumerConfig, ProcessingModel,
 };
-use sinex_test_utils::prelude::*;
-use sinex_test_utils::timing_utils::{WaitHelpers, DEFAULT_WAIT_SECS};
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::{WaitHelpers, DEFAULT_WAIT_SECS};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::info;

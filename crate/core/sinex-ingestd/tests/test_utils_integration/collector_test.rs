@@ -4,7 +4,7 @@
 // coordinator, nodes for event collection, and NATS for message streaming.
 // This replaces the deprecated sinex_collector architecture.
 
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use std::time::Duration;
 use tokio::time::timeout;
 

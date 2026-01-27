@@ -8,12 +8,12 @@ use color_eyre::eyre::ensure;
 use serde_json::json;
 use sinex_core::types::Ulid;
 use sinex_services::{AnalyticsService, SearchQuery, SearchService};
-use sinex_test_utils::dataset_seeds::{
+use xtask::sandbox::dataset_seeds::{
     seed_analytics_dataset_perf_via_scope, seed_analytics_dataset_semantic_min_via_scope,
     seed_events_via_scope, seed_query_dataset_semantic_min_via_scope, AnalyticsDataset, EventSpec,
     QueryDataset, SeedClock,
 };
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use sqlx::postgres::PgPoolOptions;
 use std::collections::HashMap;
 use std::sync::Arc;

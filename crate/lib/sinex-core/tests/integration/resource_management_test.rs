@@ -8,8 +8,8 @@
 //! - Cross-service resource coordination
 
 use sinex_core::types::utils::ResourceGuard;
-use sinex_test_utils::prelude::*;
-use sinex_test_utils::timing_utils::Timeouts;
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::Timeouts;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use tokio::time::Duration;

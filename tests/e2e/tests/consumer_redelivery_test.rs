@@ -12,8 +12,8 @@
 use async_nats::jetstream;
 use color_eyre::eyre::eyre;
 use futures::StreamExt;
-use sinex_test_utils::prelude::*;
-use sinex_test_utils::timing_utils::Timeouts;
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::Timeouts;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use tokio::time::{timeout, Duration};

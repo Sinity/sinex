@@ -1,5 +1,5 @@
 use sinex_test_utils::prelude::DbPoolExt;
-use sinex_test_utils::{sinex_test, TestContext};
+use xtask::sandbox::{sinex_test, TestContext};
 
 #[sinex_test]
 async fn test_context_basic_functionality(ctx: TestContext) -> sinex_test_utils::Result<()> {

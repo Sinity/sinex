@@ -7,7 +7,7 @@ use chrono::Utc;
 use sea_orm_migration::prelude::PostgresQueryBuilder;
 use sinex_schema::schema::*;
 use sinex_schema::ulid::Ulid;
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use sqlx::{Executor, PgPool};
 use std::str::FromStr;
 

@@ -9,7 +9,7 @@ use serde_json::json;
 use sinex_core::environment;
 use sinex_core::rpc::dlq::{DlqListResponse, DlqPurgeResponse};
 use sinex_gateway::handlers::dlq::{handle_dlq_list, handle_dlq_purge};
-use sinex_test_utils::{nats::EphemeralNats, prelude::*};
+use xtask::sandbox::{nats::EphemeralNats, prelude::*};
 
 async fn setup_dlq_stream(
     client: &async_nats::Client,

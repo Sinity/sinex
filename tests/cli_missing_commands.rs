@@ -1,5 +1,5 @@
 use sinex_gateway::{rpc_server, ServiceContainer};
-use sinex_test_utils::{sinex_test, TestContext};
+use xtask::sandbox::{sinex_test, TestContext};
 use std::net::TcpListener;
 use std::path::PathBuf;
 

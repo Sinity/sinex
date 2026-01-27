@@ -1,7 +1,7 @@
 use serde_json::json;
 use sinex_core::{db::query_helpers::ulid_to_uuid, DynamicPayload, EventId, Ulid};
-use sinex_test_utils::prelude::*;
-use sinex_test_utils::timing_utils::{Timeouts, WaitHelpers, DEFAULT_WAIT_SECS};
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::{Timeouts, WaitHelpers, DEFAULT_WAIT_SECS};
 use tokio::time::{timeout, Duration};
 use tokio_stream::StreamExt;
 

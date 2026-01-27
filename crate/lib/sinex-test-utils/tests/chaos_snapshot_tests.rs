@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use sinex_test_utils::{sinex_test, ChaosInjestor, TestSnapshot};
+use xtask::sandbox::{sinex_test, ChaosInjestor, TestSnapshot};
 
 #[sinex_test]
 async fn chaos_injestor_injects_failures() -> TestResult<()> {

@@ -5,7 +5,7 @@
 
 use serde_json::{json, Value};
 use sinex_core::{DbPoolExt, DynamicPayload, EventSource};
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 
 // Example 1: Basic rstest integration with automatic TestContext
 #[sinex_test]
@@ -239,8 +239,8 @@ async fn test_with_fixtures(
     let ctx = ctx.with_nats().await?;
     ctx.force_cleanup().await?;
     ctx.ensure_clean().await?;
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
+    xtask::sandbox::db_common::reset_database(&ctx.pool).await?;
+    xtask::sandbox::db_common::verify_clean_state(&ctx.pool).await?;
     // Fixtures are injected alongside rstest parameters
     let event_type = format!("file.{operation}");
     for source in &test_sources {
@@ -277,7 +277,7 @@ async fn test_with_fixtures(
             .await?;
         }
 
-        sinex_test_utils::timing_utils::WaitHelpers::wait_for_condition(
+        xtask::sandbox::timing::WaitHelpers::wait_for_condition(
             || {
                 let pool = ctx.pool.clone();
                 let type_ref = type_ref.clone();
@@ -295,8 +295,8 @@ async fn test_with_fixtures(
 
     assert_eq!(count, expected);
 
-    sinex_test_utils::db_common::reset_database(&ctx.pool).await?;
-    sinex_test_utils::db_common::verify_clean_state(&ctx.pool).await?;
+    xtask::sandbox::db_common::reset_database(&ctx.pool).await?;
+    xtask::sandbox::db_common::verify_clean_state(&ctx.pool).await?;
     ctx.force_cleanup().await?;
     Ok(())
 }

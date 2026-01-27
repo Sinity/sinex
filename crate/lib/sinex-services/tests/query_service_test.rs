@@ -6,11 +6,11 @@
 use chrono::Duration;
 use serde_json::json;
 use sinex_services::{SearchQuery, SearchService};
-use sinex_test_utils::dataset_seeds::{
+use xtask::sandbox::dataset_seeds::{
     seed_events_via_scope, seed_query_dataset_semantic_min_via_scope, EventSpec, QueryDataset,
     SeedClock,
 };
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 

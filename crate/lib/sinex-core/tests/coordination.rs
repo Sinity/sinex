@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use sinex_core::types::utils::coordination::{CoordinationPrimitive, ResetBehavior};
 use sinex_test_utils::sinex_test;
-use sinex_test_utils::timing_utils::Timeouts;
+use xtask::sandbox::timing::Timeouts;
 use tokio::time::sleep;
 
 #[sinex_test]

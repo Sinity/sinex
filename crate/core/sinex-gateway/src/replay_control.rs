@@ -640,7 +640,7 @@ mod tests {
     use serde_json::json;
     use sinex_core::db::repositories::DbPoolExt;
     use sinex_core::{types::ulid::Ulid, DbPool, DynamicPayload, Id};
-    use sinex_test_utils::{sinex_test, EphemeralNats, TestContext};
+    use xtask::sandbox::{sinex_test, EphemeralNats, TestContext};
     use tokio::time::sleep;
 
     fn sample_scope() -> ReplayScope {

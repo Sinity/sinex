@@ -2,8 +2,8 @@ use camino::Utf8PathBuf;
 use color_eyre::eyre::WrapErr;
 use sinex_gateway::ServiceContainer;
 use sinex_node_sdk::annex::GitAnnex;
-use sinex_test_utils::timing_utils::WaitHelpers;
-use sinex_test_utils::{sinex_test, TestContext, TestResult};
+use xtask::sandbox::timing::WaitHelpers;
+use xtask::sandbox::{sinex_test, TestContext, TestResult};
 use tempfile::TempDir;
 use which::which;
 

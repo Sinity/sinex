@@ -38,7 +38,7 @@ async fn main() -> color_eyre::Result<()> {
         return Ok(());
     }
 
-    let pool = sinex_test_utils::db_common::test_db_pool().await;
+    let pool = xtask::sandbox::db_common::test_db_pool().await;
 
     println!("\n== Session State ==");
     if let Err(e) = sinex_test_utils::ensure_default_session_state(&pool).await {
@@ -48,7 +48,7 @@ async fn main() -> color_eyre::Result<()> {
     }
 
     println!("\n== Table Row Counts ==");
-    match sinex_test_utils::db_common::get_row_counts(&pool).await {
+    match xtask::sandbox::db_common::get_row_counts(&pool).await {
         Ok(counts) => {
             let mut sorted: BTreeMap<_, _> = counts.into_iter().collect();
             for (table, count) in sorted.iter_mut() {

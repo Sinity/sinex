@@ -1,7 +1,7 @@
 use chrono::Utc;
 use sinex_core::coordination::kv_client::{CoordinationKvClient, InstanceMetadata};
-use sinex_test_utils::nats::ensure_coordination_buckets;
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::nats::ensure_coordination_buckets;
+use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn kv_leadership_handoff(ctx: TestContext) -> TestResult<()> {

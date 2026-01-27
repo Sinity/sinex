@@ -3,7 +3,7 @@ use serde_json::json;
 use sinex_core::db::validation::{EventValidator, ValidationError};
 use sinex_core::db::DbPool;
 use sinex_core::{DynamicPayload, Id, JsonValue, SourceMaterial, Ulid};
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn ulid_duplicate_insert_is_rejected(ctx: TestContext) -> TestResult<()> {

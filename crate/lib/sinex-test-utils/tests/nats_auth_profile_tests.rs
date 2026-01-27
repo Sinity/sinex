@@ -1,8 +1,8 @@
-use sinex_test_utils::nats::{
+use xtask::sandbox::nats::{
     reset_shared_ephemeral_nats, shared_ephemeral_nats_with_key, EphemeralNats,
 };
-use sinex_test_utils::prelude::*;
-use sinex_test_utils::EnvGuard;
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::EnvGuard;
 
 fn normalize_nats_url(url: &str) -> String {
     if url.starts_with("nats://") || url.starts_with("tls://") {

@@ -4,13 +4,13 @@
 // index effectiveness, connection pool behavior, and database scalability.
 // These tests help identify database bottlenecks and optimization opportunities.
 
-use sinex_test_utils::prelude::*;
+use xtask::sandbox::prelude::*;
 
 use chrono::{Duration, Utc};
 use serde_json::json;
 use sinex_core::types::events::{event_types, services, EventFactory};
-use sinex_test_utils::prelude::*;
-use sinex_test_utils::{events, generators};
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::{events, generators};
 use sinex_core::types::ulid::Ulid;
 use std::collections::HashMap;
 use std::sync::Arc;

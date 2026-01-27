@@ -5,7 +5,7 @@ use sinex_core::db::models::event::{Event, Provenance, SourceMaterial};
 use sinex_core::db::validation::{EventValidator, ValidationError};
 use sinex_core::types::domain::{EventSource, EventType, HostName};
 use sinex_core::types::Id;
-use sinex_test_utils::{sinex_test, TestResult};
+use xtask::sandbox::{sinex_test, TestResult};
 
 fn base_event() -> Event<serde_json::Value> {
     Event {

@@ -20,10 +20,10 @@ use sinex_core::coordination::kv_client::{CoordinationKvClient, InstanceMetadata
 use sinex_core::environment::environment;
 use sinex_core::DynamicPayload;
 use sinex_node_sdk::stream_processor::SchemaBroadcastEntry;
-use sinex_test_utils::nats::ensure_coordination_buckets;
-use sinex_test_utils::prelude::*;
-use sinex_test_utils::timing_utils::{Timeouts, WaitHelpers};
-use sinex_test_utils::{start_test_ingestd_with_config, TestIngestdConfig};
+use xtask::sandbox::nats::ensure_coordination_buckets;
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::{Timeouts, WaitHelpers};
+use xtask::sandbox::{start_test_ingestd_with_config, TestIngestdConfig};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use tokio::time::{timeout, Duration};
@@ -309,7 +309,7 @@ async fn test_ingestd_restart_event_continuity(ctx: TestContext) -> Result<()> {
     }
 
     // Wait for *our* events, not just "some events".
-    sinex_test_utils::timing_utils::WaitHelpers::wait_for_event_type_events(
+    xtask::sandbox::timing::WaitHelpers::wait_for_event_type_events(
         &ctx.pool,
         &EventType::from("before.restart"),
         5,
@@ -346,7 +346,7 @@ async fn test_ingestd_restart_event_continuity(ctx: TestContext) -> Result<()> {
     }
 
     // Be explicit: ensure the *after.restart* events made it through, not just "some events".
-    sinex_test_utils::timing_utils::WaitHelpers::wait_for_event_type_events(
+    xtask::sandbox::timing::WaitHelpers::wait_for_event_type_events(
         &ctx.pool,
         &EventType::from("after.restart"),
         5,
@@ -487,7 +487,7 @@ async fn test_multi_source_concurrent_ingestion(ctx: TestContext) -> Result<()> 
     }
 
     for (source, expected) in &expected_by_source {
-        sinex_test_utils::timing_utils::WaitHelpers::wait_for_source_events(
+        xtask::sandbox::timing::WaitHelpers::wait_for_source_events(
             &ctx.pool, source, *expected, 30,
         )
         .await?;

@@ -1,8 +1,8 @@
 use serde_json::json;
 use sinex_core::DynamicPayload;
 use sinex_services::AnalyticsService;
-use sinex_test_utils::prelude::*;
-use sinex_test_utils::timing_utils::{WaitHelpers, DEFAULT_WAIT_SECS};
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::{WaitHelpers, DEFAULT_WAIT_SECS};
 
 #[sinex_test]
 async fn pipeline_end_to_end(ctx: TestContext) -> TestResult<()> {
