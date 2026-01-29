@@ -3,12 +3,15 @@ use proptest::strategy::ValueTree;
 use proptest::test_runner::TestCaseError;
 use serde_json::json;
 use sinex_db::DbPoolExt;
-use sinex_primitives::{DynamicPayload, EventSource, Id, JsonValue, Provenance, SourceMaterial, Ulid};
+use sinex_primitives::{
+    DynamicPayload, EventSource, Id, JsonValue, Provenance, SourceMaterial, Ulid,
+};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::Instant;
-use time::{Duration, OffsetDateTime};
+use time::Duration;
+use xtask::sandbox::OffsetDateTime;
 use xtask::sandbox::{sinex_prop, sinex_proptest, sinex_test, TestContext};
 
 // Property tests for ULID functionality.

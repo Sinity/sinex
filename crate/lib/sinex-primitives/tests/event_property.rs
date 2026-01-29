@@ -7,19 +7,17 @@
 //! - Event field constraints
 //! - Edge case handling
 
-use chrono::{Duration as ChronoDuration, Utc};
 use proptest::prelude::*;
 use proptest::strategy::Strategy;
 use proptest::strategy::ValueTree;
-use serde_json::{json, Value};
+use serde_json::{json, Value as JsonValue};
 use sinex_primitives::events::{OffsetKind, Provenance};
-use sinex_primitives::{
-    Event, EventSource, EventType, HostName, Id, JsonValue, OffsetDateTime, Result, Ulid,
-};
+use sinex_primitives::{Event, EventSource, EventType, HostName, Id, OffsetDateTime, Result, Ulid};
+use time::Duration as TimeDuration;
 use xtask::sandbox::prelude::*;
 type RawEvent = Event<JsonValue>;
 
-fn test_event(source: EventSource, event_type: EventType, payload: Value) -> RawEvent {
+fn test_event(source: EventSource, event_type: EventType, payload: JsonValue) -> RawEvent {
     Event {
         id: None,
         source,
@@ -50,9 +48,9 @@ fn test_event(source: EventSource, event_type: EventType, payload: Value) -> Raw
 // =============================================================================
 
 /// Helper function to compare JSON values with tolerance for floating-point precision
-fn json_values_equal(a: &Value, b: &Value) -> bool {
+fn json_values_equal(a: &JsonValue, b: &JsonValue) -> bool {
     match (a, b) {
-        (Value::Number(n1), Value::Number(n2)) => {
+        (JsonValue::Number(n1), JsonValue::Number(n2)) => {
             // If both are integers, compare exactly
             if let (Some(i1), Some(i2)) = (n1.as_i64(), n2.as_i64()) {
                 i1 == i2
@@ -67,14 +65,14 @@ fn json_values_equal(a: &Value, b: &Value) -> bool {
                 false
             }
         }
-        (Value::Array(arr1), Value::Array(arr2)) => {
+        (JsonValue::Array(arr1), JsonValue::Array(arr2)) => {
             arr1.len() == arr2.len()
                 && arr1
                     .iter()
                     .zip(arr2.iter())
                     .all(|(a, b)| json_values_equal(a, b))
         }
-        (Value::Object(obj1), Value::Object(obj2)) => {
+        (JsonValue::Object(obj1), JsonValue::Object(obj2)) => {
             obj1.len() == obj2.len()
                 && obj1
                     .iter()
@@ -85,15 +83,15 @@ fn json_values_equal(a: &Value, b: &Value) -> bool {
 }
 
 /// Generate arbitrary JSON values for payloads
-fn arb_json_value() -> impl Strategy<Value = Value> {
+fn arb_json_value() -> impl Strategy<Value = JsonValue> {
     let leaf = prop_oneof![
-        Just(Value::Null),
-        any::<bool>().prop_map(Value::Bool),
-        any::<i64>().prop_map(|n| Value::Number(n.into())),
+        Just(JsonValue::Null),
+        any::<bool>().prop_map(JsonValue::Bool),
+        any::<i64>().prop_map(|n| JsonValue::Number(n.into())),
         any::<f64>()
             .prop_filter("must be finite", |f| f.is_finite())
             .prop_map(|f| json!(f)),
-        "[a-zA-Z0-9_-]{1,50}".prop_map(Value::String),
+        "[a-zA-Z0-9_-]{1,50}".prop_map(JsonValue::String),
     ];
 
     leaf.prop_recursive(
@@ -102,9 +100,9 @@ fn arb_json_value() -> impl Strategy<Value = Value> {
         10,  // Each collection is up to 10 elements
         |inner| {
             prop_oneof![
-                prop::collection::vec(inner.clone(), 0..10).prop_map(Value::Array),
+                prop::collection::vec(inner.clone(), 0..10).prop_map(JsonValue::Array),
                 prop::collection::hash_map("[a-zA-Z_][a-zA-Z0-9_-]{0,20}", inner, 0..10)
-                    .prop_map(|map| Value::Object(map.into_iter().collect())),
+                    .prop_map(|map| JsonValue::Object(map.into_iter().collect())),
             ]
         },
     )
@@ -148,8 +146,8 @@ fn arb_version() -> impl Strategy<Value = String> {
 fn arb_timestamp() -> impl Strategy<Value = OffsetDateTime> {
     // Generate timestamps from 1 year ago to 1 hour in the future
     let now = OffsetDateTime::now_utc();
-    let start = now - ChronoDuration::days(365);
-    let end = now + ChronoDuration::hours(1);
+    let start = now - TimeDuration::days(365);
+    let end = now + TimeDuration::hours(1);
 
     (start.timestamp_millis()..=end.timestamp_millis())
         .prop_map(move |ts| OffsetDateTime::from_unix_timestamp_millis(ts).unwrap_or(now))
@@ -236,8 +234,8 @@ proptest! {
         let t2 = event2.id.as_ref().unwrap().as_ulid().timestamp();
         prop_assert!(t1 <= now);
         prop_assert!(t2 <= now);
-        prop_assert!(now - t1 < ChronoDuration::seconds(10));
-        prop_assert!(now - t2 < ChronoDuration::seconds(10));
+        prop_assert!(now - t1 < TimeDuration::seconds(10));
+        prop_assert!(now - t2 < TimeDuration::seconds(10));
         Ok(())
     }
 
@@ -251,11 +249,11 @@ proptest! {
         let now = OffsetDateTime::now_utc();
         let t = event.id.as_ref().unwrap().as_ulid().timestamp();
         prop_assert!(t <= now);
-        prop_assert!(now - t < ChronoDuration::hours(1));
+        prop_assert!(now - t < TimeDuration::hours(1));
 
         if let Some(ts_orig) = event.ts_orig {
-            prop_assert!(ts_orig <= now + ChronoDuration::hours(1));
-            prop_assert!(ts_orig >= now - ChronoDuration::days(365));
+            prop_assert!(ts_orig <= now + TimeDuration::hours(1));
+            prop_assert!(ts_orig >= now - TimeDuration::days(365));
         }
 
         prop_assert!(serde_json::to_string(&event.payload).is_ok());
@@ -475,7 +473,7 @@ mod unit_tests {
             .expect("test_event should stamp an original timestamp");
         let now = OffsetDateTime::now_utc();
         assert!(ts_orig <= now);
-        assert!(now - ts_orig < ChronoDuration::seconds(5));
+        assert!(now - ts_orig < TimeDuration::seconds(5));
         assert!(!event.host.is_empty()); // Should get hostname
         assert_eq!(event.ingestor_version.as_deref(), Some("test"));
         assert!(event.payload_schema_id.is_none());
@@ -534,8 +532,8 @@ mod unit_tests {
         // Test timestamp generator
         let timestamp = arb_timestamp().new_tree(&mut runner).unwrap().current();
         let now = OffsetDateTime::now_utc();
-        assert!(timestamp >= now - ChronoDuration::days(366));
-        assert!(timestamp <= now + ChronoDuration::hours(2));
+        assert!(timestamp >= now - TimeDuration::days(366));
+        assert!(timestamp <= now + TimeDuration::hours(2));
 
         Ok(())
     }

@@ -13,6 +13,7 @@
 use xtask::sandbox::prelude::*;
 
 // Additional imports for specific payload types
+use futures::future;
 use sinex_db::models::event::SourceMaterial;
 use sinex_primitives::domain::{SanitizedPath, ShellName};
 use sinex_primitives::events::enums::FileModificationType;
@@ -22,6 +23,7 @@ use sinex_primitives::events::payloads::{
 };
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::{DynamicPayload, Event, ExitCode, Id, JsonValue, Provenance, Ulid};
+use std::collections::HashSet;
 
 async fn ensure_material(ctx: &TestContext, label: &str) -> TestResult<Id<SourceMaterial>> {
     let material_id = Id::<SourceMaterial>::from_ulid(Ulid::new());

@@ -11,7 +11,6 @@ use sinex_primitives::events::payloads::{
     shell::TerminalMonitoringStartedPayload,
 };
 use sinex_primitives::events::EventPayload;
-use sinex_primitives::EventPayload;
 use xtask::sandbox::sinex_test;
 use xtask::sandbox::TestResult;
 
