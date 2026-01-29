@@ -187,9 +187,8 @@ in
 
 
       # Ensure sx alias is available in all shells
-      xt() { cargo xtask "$@"; }
-      sx() { cargo xtask "$@"; }
-      export -f sx xt
+      # Source project-specific shell config if it exists
+      [ -f "$PWD/.zshrc.local" ] && source "$PWD/.zshrc.local"
 
       alias e2e-test="cargo xtask test -- -p sinex-e2e-tests"
       alias vm-smoke="cargo xtask vm test -c smoke"

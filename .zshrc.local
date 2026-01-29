@@ -1,0 +1,3 @@
+# Sinex project shortcuts
+sx() { cargo xtask "$@"; }
+xt() { cargo xtask "$@"; }
