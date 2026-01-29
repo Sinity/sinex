@@ -7,7 +7,8 @@
 use async_nats::jetstream::kv::Operation;
 use color_eyre::eyre::eyre;
 use futures::TryStreamExt;
-use sinex_node_sdk::types::ulid::Ulid;
+use sinex_primitives::ids::Ulid;
+use sinex_primitives::Timestamp;
 use sinex_node_sdk::DbPool;
 use sinex_node_sdk::checkpoint::parse_checkpoint_key;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
@@ -157,7 +158,7 @@ pub async fn save_checkpoint_state(
     consumer_name: &str,
     checkpoint: Checkpoint,
     processed_count: u64,
-    last_activity: OffsetDateTime,
+    last_activity: Timestamp,
     data: Option<serde_json::Value>,
 ) -> TestResult<()> {
     let manager = CheckpointManager::new(
@@ -169,7 +170,7 @@ pub async fn save_checkpoint_state(
     let state = CheckpointState {
         checkpoint,
         processed_count,
-        last_activity,
+        last_activity: last_activity.inner(),
         data,
         version: 2,
         revision: 0,

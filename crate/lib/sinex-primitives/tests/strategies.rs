@@ -1,4 +1,4 @@
-//! Shared proptest strategies for sinex-core domain types
+//! Shared proptest strategies for sinex-primitives domain types
 //!
 //! This module provides reusable strategies for generating valid instances
 //! of core domain types for property-based testing.
@@ -6,7 +6,7 @@
 use time::{Duration, OffsetDateTime};
 use proptest::prelude::*;
 use serde_json::{json, Value};
-use sinex_primitives::{EventSource, EventType, Ulid};
+use sinex_primitives::{EventSource, EventType, Timestamp, Ulid};
 
 // =============================================================================
 // Domain Type Strategies
@@ -51,8 +51,8 @@ pub fn arb_ulid() -> impl Strategy<Value = Ulid> {
     // Generate ULIDs from random timestamps within reasonable range
     // (2020-01-01 to 2030-01-01)
     (1577836800i64..1893456000i64).prop_map(|ts| {
-        let dt = DateTime::from_timestamp(ts, 0).unwrap_or_else(Utc::now);
-        Ulid::from_datetime(dt)
+        let dt = OffsetDateTime::from_unix_timestamp(ts).unwrap_or_else(|_| OffsetDateTime::now_utc());
+        Ulid::from_datetime(dt.into())
     })
 }
 
@@ -124,19 +124,21 @@ pub fn arb_processor_name() -> impl Strategy<Value = String> {
 /// Strategy for generating valid timestamps
 ///
 /// Generates timestamps within a reasonable range (2020-2030).
-pub fn arb_timestamp() -> impl Strategy<Value = DateTime<Utc>> {
+pub fn arb_timestamp() -> impl Strategy<Value = Timestamp> {
     (1577836800i64..1893456000i64).prop_map(|ts| {
-        DateTime::from_timestamp(ts, 0).unwrap_or_else(Utc::now)
+        let dt = OffsetDateTime::from_unix_timestamp(ts).unwrap_or_else(|_| OffsetDateTime::now_utc());
+        Timestamp::new(dt)
     })
 }
 
 /// Strategy for generating timestamp ranges
 ///
 /// Ensures start < end with reasonable duration between them.
-pub fn arb_timestamp_range() -> impl Strategy<Value = (DateTime<Utc>, DateTime<Utc>)> {
+pub fn arb_timestamp_range() -> impl Strategy<Value = (Timestamp, Timestamp)> {
     (arb_timestamp(), 1i64..86400i64).prop_map(|(start, duration_secs)| {
-        let end = start + ChronoDuration::seconds(duration_secs);
-        (start, end)
+        let start_dt = start.inner();
+        let end_dt = start_dt + Duration::seconds(duration_secs);
+        (start, Timestamp::new(end_dt))
     })
 }
 
@@ -164,7 +166,7 @@ pub fn arb_filesystem_event_payload() -> impl Strategy<Value = Value> {
         json!({
             "path": path,
             "size": size,
-            "modified_time": modified.format(&time::format_description::well_known::Rfc3339).unwrap()
+            "modified_time": modified.format(&time::format_description::well_known::Rfc3339).expect("RFC3339 format")
         })
     })
 }
@@ -273,7 +275,7 @@ mod tests {
             assert!(start < end, "Start should be before end");
             let duration = end - start;
             assert!(
-                duration.num_seconds() > 0,
+                duration.whole_seconds() > 0,
                 "Duration should be positive"
             );
         }

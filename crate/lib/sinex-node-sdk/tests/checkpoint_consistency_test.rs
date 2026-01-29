@@ -8,12 +8,13 @@
 // - Recovery scenarios and data loss detection
 
 use serde_json::json;
-use sinex_node_sdk::db::integrity::checkpoint_verification;
-use sinex_node_sdk::types::ulid::Ulid;
+use sinex_db::integrity::checkpoint_verification;
+use sinex_primitives::ids::Ulid;
+use sinex_primitives::Timestamp;
 use sinex_node_sdk::{DbPool, DynamicPayload};
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
 use std::collections::{HashMap, HashSet};
-use time::Duration;
+use time::{Duration, OffsetDateTime};
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::WaitHelpers;
 
@@ -28,8 +29,8 @@ const DEFAULT_CONSUMER: &str = "default";
 
 /// Helper to register a test processor manifest using repository methods
 async fn ensure_processor_manifest(pool: &DbPool, processor_name: &str) -> TestResult<()> {
-    use sinex_node_sdk::db::repositories::DbPoolExt;
-    use sinex_node_sdk::types::domain::ProcessorName;
+    use sinex_db::repositories::DbPoolExt;
+    use sinex_primitives::domain::ProcessorName;
 
     let proc_name = ProcessorName::new(processor_name.to_string());
 
@@ -88,7 +89,7 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult<
         DEFAULT_CONSUMER,
         Checkpoint::internal(checkpoint_ulid, 5),
         5,
-        OffsetDateTime::now_utc(),
+        Timestamp::new(OffsetDateTime::now_utc()),
         Some(json!({"processed": 5})),
     )
     .await?;
@@ -162,7 +163,7 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult<()> {
         DEFAULT_CONSUMER,
         Checkpoint::internal(last_batch1_ulid, 5),
         5,
-        OffsetDateTime::now_utc() - Duration::hours(2),
+        Timestamp::new(OffsetDateTime::now_utc() - Duration::hours(2)),
         Some(json!({"batch1_complete": true})),
     )
     .await?;
@@ -190,7 +191,7 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult<()> {
         .events()
         .get_by_source(
             &sinex_node_sdk::EventSource::from_static("test.gap_detection"),
-            sinex_node_sdk::types::Pagination::new(Some(128), None),
+            sinex_primitives::query::Pagination::new(Some(128), None),
         )
         .await?
         .len();
@@ -386,7 +387,7 @@ async fn test_stale_checkpoint_detection(ctx: TestContext) -> TestResult<()> {
         DEFAULT_CONSUMER,
         Checkpoint::internal(event_id.as_ulid().clone(), 1),
         1,
-        OffsetDateTime::now_utc() - Duration::hours(3),
+        Timestamp::new(OffsetDateTime::now_utc() - Duration::hours(3)),
         Some(json!({"stale": true})),
     )
     .await?;
@@ -489,7 +490,7 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
             DEFAULT_CONSUMER,
             Checkpoint::internal(checkpoint_ulid, processed_count as u64),
             processed_count as u64,
-            now - lag,
+            Timestamp::new(now - lag),
             Some(json!({"checkpoint_test": true})),
         )
         .await?;
@@ -628,7 +629,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult<()> 
         DEFAULT_CONSUMER,
         Checkpoint::internal(non_existent_ulid, 100),
         100,
-        OffsetDateTime::now_utc(),
+        Timestamp::new(OffsetDateTime::now_utc()),
         Some(json!({"scenario": "non_existent_event"})),
     )
     .await?;
@@ -661,7 +662,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult<()> 
         DEFAULT_CONSUMER,
         Checkpoint::None,
         50,
-        OffsetDateTime::now_utc(),
+        Timestamp::new(OffsetDateTime::now_utc()),
         Some(json!({"scenario": "invalid_ulid"})),
     )
     .await?;
@@ -725,7 +726,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult<()> 
         DEFAULT_CONSUMER,
         Checkpoint::internal(future_ulid, 999),
         999,
-        OffsetDateTime::now_utc(),
+        Timestamp::new(OffsetDateTime::now_utc()),
         Some(json!({"scenario": "future_checkpoint"})),
     )
     .await?;
@@ -797,7 +798,7 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult<()>
         DEFAULT_CONSUMER,
         Checkpoint::internal(checkpoint_ulid, 15),
         15,
-        OffsetDateTime::now_utc() - Duration::minutes(30),
+        Timestamp::new(OffsetDateTime::now_utc() - Duration::minutes(30)),
         Some(json!({"simulated_jump": true})),
     )
     .await?;
