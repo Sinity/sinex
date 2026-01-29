@@ -3,10 +3,10 @@
 //! This module provides reusable strategies for generating valid instances
 //! of core domain types for property-based testing.
 
-use time::{Duration, OffsetDateTime};
 use proptest::prelude::*;
 use serde_json::{json, Value};
 use sinex_primitives::{EventSource, EventType, Timestamp, Ulid};
+use time::Duration;
 
 // =============================================================================
 // Domain Type Strategies
@@ -51,8 +51,8 @@ pub fn arb_ulid() -> impl Strategy<Value = Ulid> {
     // Generate ULIDs from random timestamps within reasonable range
     // (2020-01-01 to 2030-01-01)
     (1577836800i64..1893456000i64).prop_map(|ts| {
-        let dt = OffsetDateTime::from_unix_timestamp(ts).unwrap_or_else(|_| OffsetDateTime::now_utc());
-        Ulid::from_datetime(dt.into())
+        let dt = Timestamp::from_unix_timestamp(ts).unwrap_or_else(|_| Timestamp::now());
+        Ulid::from_datetime(*dt)
     })
 }
 
@@ -75,16 +75,15 @@ pub fn arb_json_payload() -> impl Strategy<Value = Value> {
     ];
 
     leaf.prop_recursive(
-        4,   // max depth
-        64,  // max nodes
-        10,  // max items per collection
+        4,  // max depth
+        64, // max nodes
+        10, // max items per collection
         |inner| {
             prop_oneof![
                 prop::collection::vec(inner.clone(), 0..5).prop_map(Value::from),
-                prop::collection::hash_map("[a-zA-Z_][a-zA-Z0-9_]{0,20}", inner, 0..5)
-                    .prop_map(|map| {
-                        Value::from(map.into_iter().collect::<serde_json::Map<_, _>>())
-                    }),
+                prop::collection::hash_map("[a-zA-Z_][a-zA-Z0-9_]{0,20}", inner, 0..5).prop_map(
+                    |map| { Value::from(map.into_iter().collect::<serde_json::Map<_, _>>()) }
+                ),
             ]
         },
     )
@@ -125,10 +124,8 @@ pub fn arb_processor_name() -> impl Strategy<Value = String> {
 ///
 /// Generates timestamps within a reasonable range (2020-2030).
 pub fn arb_timestamp() -> impl Strategy<Value = Timestamp> {
-    (1577836800i64..1893456000i64).prop_map(|ts| {
-        let dt = OffsetDateTime::from_unix_timestamp(ts).unwrap_or_else(|_| OffsetDateTime::now_utc());
-        Timestamp::new(dt)
-    })
+    (1577836800i64..1893456000i64)
+        .prop_map(|ts| Timestamp::from_unix_timestamp(ts).unwrap_or_else(|_| Timestamp::now()))
 }
 
 /// Strategy for generating timestamp ranges
@@ -166,7 +163,7 @@ pub fn arb_filesystem_event_payload() -> impl Strategy<Value = Value> {
         json!({
             "path": path,
             "size": size,
-            "modified_time": modified.format(&time::format_description::well_known::Rfc3339).expect("RFC3339 format")
+            "modified_time": (*modified).format(&time::format_description::well_known::Rfc3339).expect("RFC3339 format")
         })
     })
 }
@@ -215,17 +212,14 @@ pub fn arb_checkpoint_data() -> impl Strategy<Value = Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proptest::test_runner::TestRunner;
     use proptest::strategy::ValueTree;
+    use proptest::test_runner::TestRunner;
 
     #[test]
     fn test_arb_event_source_generates_valid_sources() {
         let mut runner = TestRunner::deterministic();
         for _ in 0..100 {
-            let source = arb_event_source()
-                .new_tree(&mut runner)
-                .unwrap()
-                .current();
+            let source = arb_event_source().new_tree(&mut runner).unwrap().current();
             let s = source.as_str();
             assert!(!s.is_empty());
             assert!(s.len() <= 255);
@@ -240,10 +234,7 @@ mod tests {
     fn test_arb_event_type_generates_valid_types() {
         let mut runner = TestRunner::deterministic();
         for _ in 0..100 {
-            let event_type = arb_event_type()
-                .new_tree(&mut runner)
-                .unwrap()
-                .current();
+            let event_type = arb_event_type().new_tree(&mut runner).unwrap().current();
             let s = event_type.as_str();
             assert!(!s.is_empty());
             assert!(s.len() <= 255);
@@ -274,10 +265,7 @@ mod tests {
                 .current();
             assert!(start < end, "Start should be before end");
             let duration = end - start;
-            assert!(
-                duration.whole_seconds() > 0,
-                "Duration should be positive"
-            );
+            assert!(duration.whole_seconds() > 0, "Duration should be positive");
         }
     }
 
@@ -285,10 +273,7 @@ mod tests {
     fn test_arb_json_payload_generates_valid_json() {
         let mut runner = TestRunner::deterministic();
         for _ in 0..50 {
-            let payload = arb_json_payload()
-                .new_tree(&mut runner)
-                .unwrap()
-                .current();
+            let payload = arb_json_payload().new_tree(&mut runner).unwrap().current();
             // Should be serializable
             let serialized = serde_json::to_string(&payload);
             assert!(serialized.is_ok());

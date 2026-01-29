@@ -216,8 +216,8 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> 
         .pool
         .events()
         .get_by_time_range(
-            OffsetDateTime::now_utc() - Duration::minutes(5),
-            OffsetDateTime::now_utc(),
+            Timestamp::now() - Duration::minutes(5),
+            Timestamp::now(),
             sinex_primitives::Pagination::new(None, None),
         )
         .await?;

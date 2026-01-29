@@ -1,7 +1,7 @@
 use serde_json::json;
 use sinex_db::validation::{EventValidator, ValidationError};
 use sinex_db::DbPool;
-use sinex_primitives::{DynamicPayload, Id, JsonValue, SourceMaterial, Ulid};
+use sinex_primitives::{DynamicPayload, Id, JsonValue, SourceMaterial, Timestamp, Ulid};
 use time::Duration;
 use xtask::sandbox::prelude::*;
 
@@ -31,7 +31,7 @@ async fn ulid_duplicate_insert_is_rejected(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 async fn event_validator_blocks_ulid_time_skew_attack() -> TestResult<()> {
     let validator = EventValidator::new();
-    let future_ulid = Ulid::from_datetime(OffsetDateTime::now_utc() + Duration::hours(1));
+    let future_ulid = Ulid::from_datetime(*Timestamp::now() + Duration::hours(1));
 
     let mut event = DynamicPayload::new(
         "ulid-security",
@@ -42,7 +42,7 @@ async fn event_validator_blocks_ulid_time_skew_attack() -> TestResult<()> {
     .build()?;
 
     event.id = Some(Id::from_ulid(future_ulid));
-    event.ts_orig = Some(OffsetDateTime::now_utc());
+    event.ts_orig = Some(Timestamp::now());
 
     let err = validator
         .validate(&event)
@@ -61,7 +61,7 @@ async fn insert_material_event(
     material_id: Id<SourceMaterial>,
     payload: JsonValue,
 ) -> TestResult<()> {
-    let now = OffsetDateTime::now_utc();
+    let now = *Timestamp::now();
     sqlx::query!(
         r#"
         INSERT INTO core.events (

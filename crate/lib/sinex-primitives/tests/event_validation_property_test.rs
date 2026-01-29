@@ -7,8 +7,8 @@
 //! RawEvent::schemaless() builder pattern and updated validation architecture.
 
 use sinex_db::validation::EventValidator;
-use sinex_primitives::{Event, EventSource, EventType, HostName, Id, JsonValue, Ulid};
-use time::{Duration, OffsetDateTime};
+use sinex_primitives::{Event, EventSource, EventType, HostName, Id, JsonValue, Timestamp, Ulid};
+use time::Duration;
 use xtask::sandbox::prelude::*;
 type RawEvent = Event<JsonValue>;
 // =============================================================================
@@ -57,8 +57,8 @@ fn arbitrary_event() -> impl Strategy<Value = RawEvent> {
                     .id
                     .as_ref()
                     .map(|id| id.as_ulid().timestamp())
-                    .unwrap_or_else(OffsetDateTime::now_utc);
-                event.ts_orig = Some(ingest_ts - Duration::seconds(60));
+                    .unwrap_or_else(|| *Timestamp::now());
+                event.ts_orig = Some(Timestamp::from_inner(ingest_ts - Duration::seconds(60)));
             }
 
             event
@@ -94,7 +94,7 @@ fn metadata_rich_events() -> impl Strategy<Value = RawEvent> {
                 "data": "test",
                 "_metadata": {
                     "source": source,
-                    "timestamp": OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap()
+                    "timestamp": (*Timestamp::now()).format(&time::format_description::well_known::Rfc3339).unwrap()
                 }
             });
 
@@ -164,7 +164,7 @@ fn concurrent_operation_events() -> impl Strategy<Value = Vec<RawEvent>> {
             let payload = json!({
                 "worker_id": worker_id,
                 "operation_id": operation_id,
-                "timestamp": OffsetDateTime::now_utc().timestamp_millis()
+                "timestamp": (*Timestamp::now()).timestamp_millis()
             });
 
             let mut event = test_event(
@@ -274,14 +274,14 @@ sinex_proptest! {
         if let (Some(id), Some(ts_orig)) = (event.id.clone(), event.ts_orig) {
             let ingest_ts = id.timestamp();
             prop_assert!(
-                ingest_ts + Duration::hours(1) >= ts_orig,
+                ingest_ts + Duration::hours(1) >= *ts_orig,
                 "ULID timestamp should not significantly precede origin time"
             );
         }
 
         if let Some(ts_orig) = event.ts_orig {
-            let now = OffsetDateTime::now_utc();
-            let diff = (now - ts_orig).whole_days().abs();
+            let now = Timestamp::now();
+            let diff = (*now - *ts_orig).whole_days().abs();
             prop_assert!(diff < 365 * 100,
                 "Timestamp should be within 100 years of now");
         }
@@ -391,15 +391,15 @@ sinex_proptest! {
         if let (Some(id), Some(ts_orig)) = (event.id.clone(), event.ts_orig) {
             let ingest_ts = id.timestamp();
             prop_assert!(
-                ingest_ts + Duration::hours(1) >= ts_orig,
+                ingest_ts + Duration::hours(1) >= *ts_orig,
                 "ULID timestamp should not significantly precede origin time"
             );
         }
 
         // If ts_orig exists, it should be reasonable
         if let Some(ts_orig) = event.ts_orig {
-            let now = OffsetDateTime::now_utc();
-            let diff = (now - ts_orig).whole_days().abs();
+            let now = Timestamp::now();
+            let diff = (*now - *ts_orig).whole_days().abs();
             prop_assert!(diff < 365 * 100, "Timestamp should be within 100 years of now");
         }
         Ok(())

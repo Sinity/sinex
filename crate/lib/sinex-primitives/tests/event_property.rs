@@ -12,7 +12,7 @@ use proptest::strategy::Strategy;
 use proptest::strategy::ValueTree;
 use serde_json::{json, Value as JsonValue};
 use sinex_primitives::events::{OffsetKind, Provenance};
-use sinex_primitives::{Event, EventSource, EventType, HostName, Id, Timestamp, Result, Ulid};
+use sinex_primitives::{Event, EventSource, EventType, HostName, Id, Result, Timestamp, Ulid};
 use time::Duration as TimeDuration;
 use xtask::sandbox::prelude::*;
 type RawEvent = Event<JsonValue>;

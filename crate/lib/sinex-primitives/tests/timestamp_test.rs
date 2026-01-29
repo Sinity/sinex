@@ -8,7 +8,7 @@
 
 use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
-use sinex_primitives::temporal::{now, Duration, OffsetDateTime, Rfc3339, Timestamp};
+use sinex_primitives::temporal::{now, Duration, Rfc3339, Timestamp};
 use xtask::sandbox::prelude::*;
 
 /// Test timestamp boundary conditions
@@ -71,7 +71,7 @@ async fn test_timestamp_boundaries(ctx: TestContext) -> TestResult<()> {
         );
         let ingest_ts = event.id.as_ref().expect("event should have id").timestamp();
         assert!(
-            ingest_ts > OffsetDateTime::from_unix_timestamp(0, 0).unwrap(),
+            ingest_ts > time::OffsetDateTime::from_unix_timestamp(0).unwrap(),
             "Ingestion (ULID) timestamp should be set"
         );
     }
@@ -93,8 +93,8 @@ async fn test_out_of_order_timestamps(ctx: TestContext) -> TestResult<()> {
 
     let mut inserted_events = Vec::new();
 
-    for (i, &ts) in timestamps.iter().enumerate() {
-        let ts: Timestamp = ts;
+    for (i, ts) in timestamps.iter().enumerate() {
+        let ts = *ts;
         let event = test_event(
             EventSource::from("out_of_order_test"),
             EventType::from("sequenced_event"),
@@ -153,28 +153,28 @@ async fn test_timestamp_precision(ctx: TestContext) -> color_eyre::Result<()> {
     // Test various precision levels
     let precision_cases = vec![
         // Second precision
-        OffsetDateTime::new_in_utc(
+        Timestamp::from_inner(time::OffsetDateTime::new_in_utc(
             time::Date::from_calendar_date(2024, time::Month::January, 1).unwrap(),
             time::Time::from_hms(12, 0, 0).unwrap(),
-        ),
+        )),
         // Millisecond precision
-        OffsetDateTime::new_in_utc(
+        Timestamp::from_inner(time::OffsetDateTime::new_in_utc(
             time::Date::from_calendar_date(2024, time::Month::January, 1).unwrap(),
             time::Time::from_hms_nano(12, 0, 0, 123_000_000).unwrap(),
-        ),
+        )),
         // Microsecond precision
-        OffsetDateTime::new_in_utc(
+        Timestamp::from_inner(time::OffsetDateTime::new_in_utc(
             time::Date::from_calendar_date(2024, time::Month::January, 1).unwrap(),
             time::Time::from_hms_nano(12, 0, 0, 123_456_000).unwrap(),
-        ),
+        )),
         // Nanosecond precision
-        OffsetDateTime::new_in_utc(
+        Timestamp::from_inner(time::OffsetDateTime::new_in_utc(
             time::Date::from_calendar_date(2024, time::Month::January, 1).unwrap(),
             time::Time::from_hms_nano(12, 0, 0, 123_456_789).unwrap(),
-        ),
+        )),
     ];
 
-    for (i, &ts) in precision_cases.iter().enumerate() {
+    for (i, ts) in precision_cases.iter().enumerate() {
         let event = test_event(
             EventSource::from(source.as_str()),
             EventType::from("precision_event"),
@@ -184,7 +184,7 @@ async fn test_timestamp_precision(ctx: TestContext) -> color_eyre::Result<()> {
                 "original_timestamp": ts.format(&time::format_description::well_known::Rfc3339).unwrap()
             }),
         )
-        .at_time(ts);
+        .at_time(*ts);
 
         ctx.pool.events().insert(event).await?;
     }
@@ -230,23 +230,23 @@ async fn test_timestamp_precision(ctx: TestContext) -> color_eyre::Result<()> {
 #[sinex_test]
 async fn test_timezone_handling(ctx: TestContext) -> color_eyre::Result<()> {
     // All timestamps should be normalized to UTC in storage
-    let utc_time = OffsetDateTime::now_utc();
+    let utc_time = Timestamp::now();
 
     // Create events with the same logical time expressed in different ways
     let timezone_cases = vec![
         ("utc_explicit", utc_time),
         (
             "utc_parsed",
-            OffsetDateTime::parse(
-                &utc_time
+            Timestamp::from_inner(time::OffsetDateTime::parse(
+                &(*utc_time)
                     .format(&time::format_description::well_known::Rfc3339)
                     .unwrap(),
                 &time::format_description::well_known::Rfc3339,
-            )?,
+            )?),
         ),
         (
             "utc_timestamp",
-            OffsetDateTime::from_unix_timestamp_nanos(utc_time.unix_timestamp_nanos())?,
+            Timestamp::from_unix_timestamp_nanos((*utc_time).unix_timestamp_nanos())?,
         ),
     ];
 
@@ -300,23 +300,23 @@ async fn test_timestamp_validation(ctx: TestContext) -> color_eyre::Result<()> {
         EventType::from("valid_event"),
         json!({"message": "This should work"}),
     )
-    .at_time(OffsetDateTime::now_utc());
+    .at_time(*Timestamp::now());
 
     // This should succeed
     let result = ctx.pool.events().insert(valid_event).await;
     assert!(result.is_ok(), "Valid timestamp should be accepted");
 
     // Test edge case: distant future (should work but might be logged)
-    let far_future = OffsetDateTime::new_in_utc(
+    let far_future = Timestamp::from_inner(time::OffsetDateTime::new_in_utc(
         time::Date::from_calendar_date(2999, time::Month::December, 31).unwrap(),
         time::Time::from_hms(23, 59, 59).unwrap(),
-    );
+    ));
     let future_event = test_event(
         EventSource::from("validation_test"),
         EventType::from("future_event"),
         json!({"message": "From the future"}),
     )
-    .at_time(far_future);
+    .at_time(*far_future);
 
     let future_result = ctx.pool.events().insert(future_event).await;
     match future_result {
@@ -330,7 +330,7 @@ async fn test_timestamp_validation(ctx: TestContext) -> color_eyre::Result<()> {
 /// Test timestamp ordering in queries
 #[sinex_test]
 async fn test_timestamp_query_ordering(ctx: TestContext) -> color_eyre::Result<()> {
-    let base_time = OffsetDateTime::now_utc() - time::Duration::minutes(30);
+    let base_time = *Timestamp::now() - time::Duration::minutes(30);
     let mut expected_order = Vec::new();
 
     // Create events with specific logical timestamps
@@ -392,7 +392,7 @@ async fn test_timestamp_query_ordering(ctx: TestContext) -> color_eyre::Result<(
 /// Test timestamp with different payload types
 #[sinex_test]
 async fn test_timestamps_with_various_payloads(ctx: TestContext) -> color_eyre::Result<()> {
-    let test_time = OffsetDateTime::now_utc() - time::Duration::minutes(10);
+    let test_time = *Timestamp::now() - time::Duration::minutes(10);
 
     // Test with different payload complexities
     let payload_cases = vec![

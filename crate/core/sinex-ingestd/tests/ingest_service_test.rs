@@ -671,7 +671,7 @@ async fn test_schema_validation_patterns(ctx: TestContext) -> Result<()> {
             serde_json::json!({
                 "path": "/tmp/schema_test.txt",
                 "size": 1024,
-                "created_at": OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap()
+                "created_at": sinex_primitives::temporal::format_rfc3339(Timestamp::now())
             }),
         ),
         (
@@ -979,7 +979,7 @@ async fn test_timeout_and_deadline_handling(ctx: TestContext) -> Result<()> {
             "timeout.test",
             serde_json::json!({
                 "operation": "normal",
-                "timestamp": OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap()
+                "timestamp": sinex_primitives::temporal::format_rfc3339(Timestamp::now())
             }),
         ))
         .await
