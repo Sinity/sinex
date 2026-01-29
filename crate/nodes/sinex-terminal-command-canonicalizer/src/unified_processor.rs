@@ -3,11 +3,12 @@
 //! Modernized `SimpleNode` implementation for the terminal command canonicalizer.
 
 use async_trait::async_trait;
-use sinex_core::events::CanonicalCommandPayload;
-use sinex_core::JsonValue;
+use sinex_primitives::events::CanonicalCommandPayload;
+use sinex_primitives::JsonValue;
 use sinex_node_sdk::simple_node::{
     SimpleNode, SimpleNodeContext, SimpleNodeError, SimpleNodeWrapper,
 };
+use time::OffsetDateTime;
 use tracing::info;
 
 #[derive(Default)]
@@ -66,19 +67,23 @@ impl SimpleNode for TerminalCommandCanonicalizer {
                 .and_then(|v| v.as_str())
                 .unwrap_or_default()
                 .to_string(),
-            exit_code: sinex_core::ExitCode::from_raw(
+            exit_code: sinex_primitives::units::ExitCode::from_raw(
                 input.get("exit_code").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
             ),
             duration_ms: input
                 .get("duration_ms")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0),
-            start_time: context.ts_orig.unwrap_or_else(chrono::Utc::now),
+            start_time: sinex_primitives::temporal::Timestamp::from(
+                context.ts_orig.unwrap_or_else(OffsetDateTime::now_utc),
+            ),
             end_time: input
                 .get("end_time")
                 .and_then(|v| v.as_str())
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(context.ts_orig.unwrap_or_else(chrono::Utc::now)),
+                .and_then(|s| sinex_primitives::temporal::parse_rfc3339(s).ok())
+                .unwrap_or(sinex_primitives::temporal::Timestamp::from(
+                    context.ts_orig.unwrap_or_else(OffsetDateTime::now_utc),
+                )),
             user: input
                 .get("user")
                 .and_then(|v| v.as_str())

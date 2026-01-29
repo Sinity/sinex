@@ -1,5 +1,5 @@
 use serde_json::json;
-use sinex_core::DynamicPayload;
+use sinex_primitives::DynamicPayload;
 use sinex_services::AnalyticsService;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{WaitHelpers, DEFAULT_WAIT_SECS};

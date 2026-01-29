@@ -1,0 +1,59 @@
+[package]
+name = "sinex-db"
+version = "0.1.0"
+edition = "2021"
+description = "Database persistence layer for Sinex"
+
+[features]
+default = ["sqlx"]
+sqlx = []
+
+[dependencies]
+# Core dependencies
+sinex-primitives = { path = "../sinex-primitives", features = ["sqlx"] }
+sinex-schema = { path = "../sinex-schema" }
+
+# Third-party dependencies
+sqlx = { workspace = true, features = [
+    "runtime-tokio-rustls",
+    "postgres",
+    "uuid",
+    "time",
+    "json",
+    "macros",
+    "migrate",
+    "bigdecimal",
+] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+uuid = { workspace = true, features = ["serde", "v4"] }
+thiserror = { workspace = true }
+validator = { workspace = true, features = ["derive"] }
+once_cell = { workspace = true }
+tracing = { workspace = true }
+color-eyre = { workspace = true }
+rand = { workspace = true }
+urlencoding = "2.1"
+gethostname = { workspace = true }
+blake3 = "1.5"
+num-traits = "0.2"
+camino = { workspace = true }
+ahash = { workspace = true }
+jsonschema = "0.17"
+parking_lot = { workspace = true }
+percent-encoding = "2.3"
+async-trait = { workspace = true }
+sea-orm = { workspace = true, features = ["sqlx-postgres", "runtime-tokio-rustls"] }
+sea-query = { workspace = true }
+futures = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+time = { version = "0.3", features = ["macros", "formatting", "parsing"] }
+
+# For repository implementation
+bon = { workspace = true }
+
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+mockall = "0.12"
+xtask = { path = "../../../xtask", features = ["sandbox"] }

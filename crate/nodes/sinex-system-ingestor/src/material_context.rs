@@ -1,9 +1,8 @@
-use color_eyre::eyre::eyre;
-use sinex_core::db::models::event::OffsetKind;
-use sinex_core::db::models::{Event, Provenance, SourceMaterial};
-use sinex_core::{Id, JsonValue};
+use sinex_db::models::event::OffsetKind;
+use sinex_db::models::{Event, Provenance, SourceMaterial};
 use sinex_node_sdk::acquisition_manager::{AcquisitionManager, SourceMaterialHandle};
-use sinex_node_sdk::{NodeError, NodeResult};
+use sinex_node_sdk::{NodeResult, SinexError};
+use sinex_primitives::{Id, JsonValue};
 use std::fmt;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -40,7 +39,7 @@ impl WatcherMaterialContext {
             .begin()
             .await
             .map_err(|e| {
-                NodeError::General(eyre!("Failed to begin system watcher material: {}", e))
+                SinexError::general(format!("Failed to begin system watcher material: {}", e))
             })?;
         let material_id = Id::from_ulid(handle.material_id);
 
@@ -66,7 +65,7 @@ impl WatcherMaterialContext {
 
     pub(crate) async fn decorate_event(&self, event: &mut Event<JsonValue>) -> NodeResult<()> {
         let payload_bytes = serde_json::to_vec(&event.payload).map_err(|e| {
-            NodeError::Processing(format!("Failed to serialize system payload: {}", e))
+            SinexError::processing(format!("Failed to serialize system payload: {}", e))
         })?;
 
         let (offset_start, offset_end) = self.append_payload(&payload_bytes).await?;
@@ -99,7 +98,10 @@ impl WatcherMaterialContext {
                 .finalize(handle, reason)
                 .await
                 .map_err(|e| {
-                    NodeError::General(eyre!("Failed to finalize system watcher material: {}", e))
+                    SinexError::general(format!(
+                        "Failed to finalize system watcher material: {}",
+                        e
+                    ))
                 })?;
         }
 
@@ -112,14 +114,16 @@ impl WatcherMaterialContext {
         let offset_end = offset_start + payload_bytes.len() as i64;
 
         let handle = guard.handle.as_mut().ok_or_else(|| {
-            NodeError::Processing("System watcher material already finalized".to_string())
+            SinexError::processing("System watcher material already finalized".to_string())
         })?;
 
         if !payload_bytes.is_empty() {
             self.acquisition
                 .append_slice(handle, payload_bytes)
                 .await
-                .map_err(|e| NodeError::General(eyre!("Failed to append system payload: {}", e)))?;
+                .map_err(|e| {
+                    SinexError::general(format!("Failed to append system payload: {}", e))
+                })?;
         }
 
         guard.bytes_written = offset_end;

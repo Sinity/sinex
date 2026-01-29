@@ -5,9 +5,9 @@
 use chrono::{DateTime, Utc};
 use proptest::prelude::*;
 use sinex_schema::ulid::Ulid;
-use xtask::sandbox::{sinex_proptest, sinex_test};
 use std::collections::HashSet;
 use std::sync::{Arc, Barrier};
+use xtask::sandbox::{sinex_proptest, sinex_test};
 
 sinex_proptest! {
     fn test_ulid_chronological_ordering(

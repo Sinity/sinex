@@ -1,9 +1,9 @@
-use chrono::{DateTime, Duration, Utc};
 use clap::Args;
 use console::style;
 use inquire::{MultiSelect, Select, Text};
-use sinex_core::types::domain::{EventSource, EventType};
-use sinex_core::types::utils::timestamp_helpers::parse_relative_duration;
+use sinex_primitives::domain::{EventSource, EventType};
+use sinex_primitives::temporal::{Duration, Timestamp};
+use sinex_primitives::utils::timestamp_helpers::parse_relative_duration;
 
 use crate::client::GatewayClient;
 use crate::fmt::CommandOutput;
@@ -241,7 +241,9 @@ async fn interactive_query(client: &GatewayClient, format: OutputFormat) -> Resu
         "Last 24 hours" => "24h".to_string(),
         "Last 7 days" => "7d".to_string(),
         "Last 30 days" => "30d".to_string(),
-        _ => since.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+        _ => since
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_else(|_| "invalid".to_string()),
     };
     print!(" -s {}", since_arg);
     if limit != 100 {
@@ -255,8 +257,8 @@ async fn interactive_query(client: &GatewayClient, format: OutputFormat) -> Resu
 }
 
 /// Parse preset time ranges
-fn parse_preset_time(preset: &str) -> DateTime<Utc> {
-    let now = Utc::now();
+fn parse_preset_time(preset: &str) -> Timestamp {
+    let now = Timestamp::now();
     match preset {
         "Last 15 minutes" => now - Duration::minutes(15),
         "Last hour" => now - Duration::hours(1),
@@ -268,27 +270,31 @@ fn parse_preset_time(preset: &str) -> DateTime<Utc> {
     }
 }
 
-/// Parse time string into DateTime
+/// Parse time string into Timestamp
 /// Supports:
 /// - Relative: "1h", "2d", "30m", "1w"
 /// - Absolute: "2025-01-15", "2025-01-15T10:00:00Z"
-fn parse_time(s: &str) -> Result<DateTime<Utc>> {
+fn parse_time(s: &str) -> Result<Timestamp> {
     // Try relative time first using sinex-core's parse_relative_duration
-    if let Some(chrono_duration) = parse_relative_duration(s) {
-        return Ok(Utc::now() - chrono_duration);
+    if let Some(time_duration) = parse_relative_duration(s) {
+        return Ok(Timestamp::now() - time_duration);
     }
 
     // Try absolute timestamp
-    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
-        return Ok(dt.with_timezone(&Utc));
+    if let Ok(dt) =
+        sinex_primitives::temporal::OffsetDateTime::parse(s, &sinex_primitives::temporal::Rfc3339)
+    {
+        return Ok(Timestamp::from(dt));
     }
 
     // Try date-only format (YYYY-MM-DD)
-    if let Ok(naive_date) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-        let naive_datetime = naive_date
-            .and_hms_opt(0, 0, 0)
-            .ok_or_else(|| color_eyre::eyre::eyre!("Invalid date: {}", s))?;
-        return Ok(DateTime::from_naive_utc_and_offset(naive_datetime, Utc));
+    if let Ok(date) = time::Date::parse(
+        s,
+        &time::format_description::parse("[year]-[month]-[day]").unwrap(),
+    ) {
+        return Ok(Timestamp::from(
+            date.with_hms(0, 0, 0).unwrap().assume_utc(),
+        ));
     }
 
     Err(color_eyre::eyre::eyre!(
@@ -316,7 +322,13 @@ fn format_table_results(results: &[SearchResult]) -> String {
         ]);
 
     for result in results {
-        let timestamp = result.timestamp.format("%Y-%m-%d %H:%M:%S");
+        let timestamp = result
+            .timestamp
+            .format(
+                &time::format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]")
+                    .unwrap(),
+            )
+            .unwrap_or_else(|_| "invalid".to_string());
         let snippet = truncate_string(&result.snippet, 60);
 
         table.add_row(vec![
@@ -465,13 +477,13 @@ mod tests {
         #[test]
         fn prop_parse_time_relative_produces_past_datetime(hours in 1i64..100) {
             let input = format!("{}h", hours);
-            let now = Utc::now();
+            let now = Timestamp::now();
             let result = parse_time(&input).unwrap();
             // Result should be in the past
             prop_assert!(result < now);
             // And approximately hours ago (within 1 second tolerance)
             let expected = now - Duration::hours(hours);
-            let diff = (result - expected).num_seconds().abs();
+            let diff = (result - expected).whole_seconds().abs();
             prop_assert!(diff < 2, "Time difference too large: {} seconds", diff);
         }
 
@@ -521,7 +533,7 @@ mod tests {
 
     #[test]
     fn test_preset_time_ranges() {
-        let now = Utc::now();
+        let now = Timestamp::now();
 
         // Each preset should return a time in the past
         let presets = [

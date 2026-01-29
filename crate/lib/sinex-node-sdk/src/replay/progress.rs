@@ -1,5 +1,5 @@
-use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
+use sinex_primitives::temporal::{Duration, Timestamp};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -11,11 +11,11 @@ pub struct ReplayProgress {
     pub skipped_events: u64,
     pub batches_processed: usize,
     pub total_batches: usize,
-    pub start_time: DateTime<Utc>,
-    pub last_update: DateTime<Utc>,
+    pub start_time: Timestamp,
+    pub last_update: Timestamp,
     pub current_rate: f64,
     pub average_rate: f64,
-    pub eta: Option<Duration>,
+    pub beta: Option<Duration>,
     pub phase: ReplayPhase,
     pub memory_usage: Option<usize>,
     pub checkpoint: Option<ReplayCheckpoint>,
@@ -50,11 +50,11 @@ impl ProgressTracker {
             skipped_events: 0,
             batches_processed: 0,
             total_batches,
-            start_time: Utc::now(),
-            last_update: Utc::now(),
+            start_time: Timestamp::now(),
+            last_update: Timestamp::now(),
             current_rate: 0.0,
             average_rate: 0.0,
-            eta: None,
+            beta: None,
             phase: ReplayPhase::Initializing,
             memory_usage: None,
             checkpoint: None,
@@ -77,7 +77,7 @@ impl ProgressTracker {
     pub async fn set_phase(&mut self, phase: ReplayPhase) {
         let mut guard = self.state.write().await;
         guard.phase = phase;
-        guard.last_update = Utc::now();
+        guard.last_update = Timestamp::now();
         drop(guard);
         self.invoke_callback().await;
     }
@@ -86,23 +86,19 @@ impl ProgressTracker {
         let mut guard = self.state.write().await;
         guard.processed_events += processed;
         guard.batches_processed += 1;
-        guard.last_update = Utc::now();
+        guard.last_update = Timestamp::now();
 
-        let elapsed = guard
-            .last_update
-            .signed_duration_since(guard.start_time)
-            .to_std()
-            .unwrap_or_default();
-        guard.current_rate = processed as f64 / elapsed.as_secs_f64().max(1.0);
-        guard.average_rate = guard.processed_events as f64 / elapsed.as_secs_f64().max(1.0);
+        let elapsed = guard.last_update - guard.start_time;
+        guard.current_rate = processed as f64 / elapsed.as_seconds_f64().max(1.0);
+        guard.average_rate = guard.processed_events as f64 / elapsed.as_seconds_f64().max(1.0);
 
         if guard.total_events > 0 {
             let remaining = guard.total_events.saturating_sub(guard.processed_events) as f64;
             let estimate = remaining / guard.average_rate.max(0.01);
-            if estimate.is_finite() && estimate <= i64::MAX as f64 {
-                guard.eta = Some(Duration::seconds(estimate.round() as i64));
+            if estimate.is_finite() && estimate >= 0.0 && estimate <= i64::MAX as f64 {
+                guard.beta = Some(Duration::seconds_f64(estimate));
             } else {
-                guard.eta = None;
+                guard.beta = None;
             }
         }
         drop(guard);
@@ -112,7 +108,7 @@ impl ProgressTracker {
     pub async fn record_failure(&mut self, count: u64) {
         let mut guard = self.state.write().await;
         guard.failed_events += count;
-        guard.last_update = Utc::now();
+        guard.last_update = Timestamp::now();
         drop(guard);
         self.invoke_callback().await;
     }
@@ -120,7 +116,7 @@ impl ProgressTracker {
     pub async fn set_checkpoint(&mut self, checkpoint: ReplayCheckpoint) {
         let mut guard = self.state.write().await;
         guard.checkpoint = Some(checkpoint);
-        guard.last_update = Utc::now();
+        guard.last_update = Timestamp::now();
         drop(guard);
         self.invoke_callback().await;
     }
@@ -156,8 +152,8 @@ pub struct ReplaySummary {
     pub total_batches: usize,
     pub batches_processed: usize,
     pub total_events: u64,
-    pub start_time: DateTime<Utc>,
-    pub end_time: DateTime<Utc>,
+    pub start_time: Timestamp,
+    pub end_time: Timestamp,
     pub phase: ReplayPhase,
 }
 

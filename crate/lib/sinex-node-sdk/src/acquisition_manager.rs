@@ -5,15 +5,15 @@
 //! with rotation, hashing, and NATS publishing.
 
 use crate::stream_processor::NodeHandles;
-use crate::NodeResult;
+use crate::{SinexError, NodeResult};
 use async_nats::{jetstream, Client as NatsClient};
-use chrono::{DateTime, Utc};
-use color_eyre::eyre::{Context, Result};
 use serde::Serialize;
 use serde_json::{json, Value as JsonValue};
-use sinex_core::{
-    environment::SinexEnvironment,
-    types::{Bytes, Seconds, Ulid},
+use sinex_primitives::{
+    environment::{environment, SinexEnvironment},
+    temporal::{now_utc, OffsetDateTime},
+    units::{Bytes, Seconds},
+    Ulid,
 };
 use std::{
     path::{Path, PathBuf},
@@ -69,7 +69,7 @@ pub struct SourceMaterialHandle {
     hasher: blake3::Hasher,
     slice_count: usize,
     bytes_written: i64,
-    started_at: DateTime<Utc>,
+    started_at: OffsetDateTime,
 }
 
 impl SourceMaterialHandle {
@@ -143,7 +143,7 @@ impl AcquisitionManager {
     }
 
     /// Ensure JetStream streams required for material capture exist.
-    pub async fn bootstrap_streams(nats_client: &NatsClient) -> Result<()> {
+    pub async fn bootstrap_streams(nats_client: &NatsClient) -> NodeResult<()> {
         Self::bootstrap_streams_with_namespace(nats_client, None).await
     }
 
@@ -151,8 +151,8 @@ impl AcquisitionManager {
     pub async fn bootstrap_streams_with_namespace(
         nats_client: &NatsClient,
         namespace: Option<&str>,
-    ) -> Result<()> {
-        let env = sinex_core::environment().clone();
+    ) -> NodeResult<()> {
+        let env = environment().clone();
         let js = jetstream::new(nats_client.clone());
 
         let mut attempt = 0;
@@ -174,14 +174,15 @@ impl AcquisitionManager {
         js: &jetstream::Context,
         env: &SinexEnvironment,
         namespace: Option<&str>,
-    ) -> Result<()> {
+    ) -> NodeResult<()> {
         js.get_or_create_stream(jetstream::stream::Config {
             name: env.nats_stream_name_with_namespace(namespace, "SOURCE_MATERIAL_BEGIN"),
             subjects: vec![env.nats_subject_with_namespace(namespace, "source_material.begin")],
             storage: jetstream::stream::StorageType::File,
             ..Default::default()
         })
-        .await?;
+        .await
+        .map_err(|e| SinexError::messaging(e.to_string()))?;
 
         js.get_or_create_stream(jetstream::stream::Config {
             name: env.nats_stream_name_with_namespace(namespace, "SOURCE_MATERIAL_SLICES"),
@@ -191,7 +192,8 @@ impl AcquisitionManager {
             max_message_size: 512 * 1024,
             ..Default::default()
         })
-        .await?;
+        .await
+        .map_err(|e| SinexError::messaging(e.to_string()))?;
 
         js.get_or_create_stream(jetstream::stream::Config {
             name: env.nats_stream_name_with_namespace(namespace, "SOURCE_MATERIAL_END"),
@@ -199,7 +201,8 @@ impl AcquisitionManager {
             storage: jetstream::stream::StorageType::File,
             ..Default::default()
         })
-        .await?;
+        .await
+        .map_err(|e| SinexError::messaging(e.to_string()))?;
 
         Ok(())
     }
@@ -222,7 +225,7 @@ impl AcquisitionManager {
         source_path: String,
         namespace: Option<String>,
     ) -> Self {
-        let env = sinex_core::environment().clone();
+        let env = environment().clone();
         let work_dir = std::env::var("SINEX_WORK_DIR")
             .ok()
             .filter(|value| !value.trim().is_empty())
@@ -273,7 +276,10 @@ impl AcquisitionManager {
     /// Begin capturing a new source material
     ///
     /// Ported from TemporalLedger::create_material + MaterialRotationManager logic
-    pub async fn begin_material(&self, source_identifier: &str) -> Result<SourceMaterialHandle> {
+    pub async fn begin_material(
+        &self,
+        source_identifier: &str,
+    ) -> NodeResult<SourceMaterialHandle> {
         self.build_material(source_identifier).begin().await
     }
 
@@ -281,14 +287,14 @@ impl AcquisitionManager {
         &self,
         source_identifier: &str,
         metadata: JsonValue,
-    ) -> Result<SourceMaterialHandle> {
+    ) -> NodeResult<SourceMaterialHandle> {
         self.build_material(source_identifier)
             .with_metadata(metadata)
             .begin()
             .await
     }
 
-    async fn ensure_streams_ready(&self) -> Result<()> {
+    async fn ensure_streams_ready(&self) -> NodeResult<()> {
         if self.streams_ready.load(Ordering::SeqCst) {
             return Ok(());
         }
@@ -308,13 +314,15 @@ impl AcquisitionManager {
         material_id: Ulid,
         source_identifier: &str,
         metadata: JsonValue,
-    ) -> Result<()> {
+    ) -> NodeResult<()> {
         let msg = MaterialBeginMessage {
             material_id: material_id.to_string(),
             material_kind: self.source_type.clone(),
             source_identifier: source_identifier.to_string(),
             metadata,
-            started_at: Utc::now().to_rfc3339(),
+            started_at: now_utc()
+                .format(&time::format_description::well_known::Rfc3339)
+                .unwrap(),
         };
 
         let subject = self
@@ -324,9 +332,12 @@ impl AcquisitionManager {
 
         let js = async_nats::jetstream::new(self.nats_client.clone());
         js.publish(subject, payload.into())
-            .await?
             .await
-            .context("Failed to publish material begin")?;
+            .map_err(|e| SinexError::messaging(format!("Failed to publish material begin: {}", e)))?
+            .await
+            .map_err(|e| {
+                SinexError::messaging(format!("Failed to publish material begin (ack): {}", e))
+            })?;
 
         debug!(material_id = %material_id, "Published material begin");
         Ok(())
@@ -335,7 +346,11 @@ impl AcquisitionManager {
     /// Append data slice to material
     ///
     /// Writes locally and publishes slice to NATS
-    pub async fn append_slice(&self, handle: &mut SourceMaterialHandle, data: &[u8]) -> Result<()> {
+    pub async fn append_slice(
+        &self,
+        handle: &mut SourceMaterialHandle,
+        data: &[u8],
+    ) -> NodeResult<()> {
         // Write to temp file
         if let Some(ref mut file) = handle.temp_file {
             file.write_all(data).await?;
@@ -373,7 +388,7 @@ impl AcquisitionManager {
         slice_index: usize,
         data: &[u8],
         offset: i64,
-    ) -> Result<()> {
+    ) -> NodeResult<()> {
         let subject = self.env.nats_subject_with_namespace(
             self.namespace.as_deref(),
             &format!("source_material.slices.{}", material_id),
@@ -392,9 +407,12 @@ impl AcquisitionManager {
 
         let js = async_nats::jetstream::new(self.nats_client.clone());
         js.publish_with_headers(subject, headers, data.to_vec().into())
-            .await?
             .await
-            .context("Failed to publish material slice")?;
+            .map_err(|e| SinexError::messaging(format!("Failed to publish material slice: {}", e)))?
+            .await
+            .map_err(|e| {
+                SinexError::messaging(format!("Failed to publish material slice (ack): {}", e))
+            })?;
 
         debug!(
             material_id = %material_id,
@@ -409,12 +427,12 @@ impl AcquisitionManager {
     /// Finalize material and publish end event
     ///
     /// Ported from TemporalLedger::finalize_material
-    pub async fn finalize(&self, handle: SourceMaterialHandle, reason: &str) -> Result<()> {
+    pub async fn finalize(&self, handle: SourceMaterialHandle, reason: &str) -> NodeResult<()> {
         self.finalize_with_metadata(handle, reason, json!({})).await
     }
 
     /// Cancel a material capture and finalize with cancellation metadata.
-    pub async fn cancel(&self, handle: SourceMaterialHandle, reason: &str) -> Result<()> {
+    pub async fn cancel(&self, handle: SourceMaterialHandle, reason: &str) -> NodeResult<()> {
         self.finalize_with_metadata(
             handle,
             reason,
@@ -431,7 +449,7 @@ impl AcquisitionManager {
         mut handle: SourceMaterialHandle,
         _reason: &str,
         metadata: JsonValue,
-    ) -> Result<()> {
+    ) -> NodeResult<()> {
         // Close temp file
         if let Some(mut file) = handle.temp_file.take() {
             file.flush().await?;
@@ -476,10 +494,12 @@ impl AcquisitionManager {
         total_bytes: i64,
         content_hash: &str,
         metadata: JsonValue,
-    ) -> Result<()> {
+    ) -> NodeResult<()> {
         let msg = MaterialEndMessage {
             material_id: material_id.to_string(),
-            ended_at: Utc::now().to_rfc3339(),
+            ended_at: now_utc()
+                .format(&time::format_description::well_known::Rfc3339)
+                .unwrap(),
             content_hash: content_hash.to_string(),
             total_slices,
             total_size_bytes: total_bytes,
@@ -493,9 +513,12 @@ impl AcquisitionManager {
 
         let js = async_nats::jetstream::new(self.nats_client.clone());
         js.publish(subject, payload.into())
-            .await?
             .await
-            .context("Failed to publish material end")?;
+            .map_err(|e| SinexError::messaging(format!("Failed to publish material end: {}", e)))?
+            .await
+            .map_err(|e| {
+                SinexError::messaging(format!("Failed to publish material end (ack): {}", e))
+            })?;
 
         debug!(
             material_id = %material_id,
@@ -508,9 +531,9 @@ impl AcquisitionManager {
 
     /// Check if rotation is needed (ported from MaterialRotationManager)
     pub async fn should_rotate(&self, handle: &SourceMaterialHandle) -> bool {
-        let age_seconds = Utc::now()
-            .signed_duration_since(handle.started_at)
-            .num_seconds()
+        let age_seconds = (now_utc()
+            - handle.started_at)
+            .whole_seconds()
             .max(0) as u64;
 
         handle.bytes_written >= self.rotation_policy.max_bytes.as_u64() as i64
@@ -550,7 +573,7 @@ impl<'a> MaterialBuilder<'a> {
         self
     }
 
-    pub async fn begin(self) -> Result<SourceMaterialHandle> {
+    pub async fn begin(self) -> NodeResult<SourceMaterialHandle> {
         self.manager.ensure_streams_ready().await?;
 
         // Generate a new material id locally; ingestd is the sole database writer.
@@ -569,7 +592,7 @@ impl<'a> MaterialBuilder<'a> {
             .write(true)
             .open(&temp_path)
             .await
-            .context("Failed to create temp file")?;
+            .map_err(|e| SinexError::io(e))?;
 
         info!(
             material_id = %material_id,
@@ -590,7 +613,7 @@ impl<'a> MaterialBuilder<'a> {
             hasher: blake3::Hasher::new(),
             slice_count: 0,
             bytes_written: 0,
-            started_at: Utc::now(),
+            started_at: now_utc(),
         })
     }
 }
@@ -610,7 +633,7 @@ impl AppendStreamAcquirer {
     }
 
     /// Append data, automatically rotating if needed
-    pub async fn append(&mut self, data: &[u8], source_identifier: &str) -> Result<()> {
+    pub async fn append(&mut self, data: &[u8], source_identifier: &str) -> NodeResult<()> {
         // Initialize if needed
         if self.current_handle.is_none() {
             self.current_handle = Some(self.manager.begin_material(source_identifier).await?);
@@ -634,7 +657,7 @@ impl AppendStreamAcquirer {
     }
 
     /// Finalize current material
-    pub async fn finalize(&mut self, reason: &str) -> Result<()> {
+    pub async fn finalize(&mut self, reason: &str) -> NodeResult<()> {
         if let Some(handle) = self.current_handle.take() {
             self.manager.finalize(handle, reason).await?;
         }

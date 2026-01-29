@@ -1,6 +1,6 @@
 use sinex_gateway::client::GatewayClient;
-use xtask::sandbox::sinex_test;
 use std::time::Duration;
+use xtask::sandbox::sinex_test;
 
 #[sinex_test]
 async fn test_client_builder_defaults() -> TestResult<()> {

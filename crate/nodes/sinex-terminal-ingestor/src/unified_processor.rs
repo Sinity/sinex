@@ -7,14 +7,8 @@
 
 use async_trait::async_trait;
 use camino::Utf8PathBuf;
-use chrono::{DateTime, Utc};
-use color_eyre::eyre;
 use serde::{Deserialize, Serialize};
 use serde_json;
-use sinex_core::types::{
-    domain::SanitizedPath, events::EventPayload, validate_path, Bytes, Seconds,
-};
-use sinex_core::Ulid;
 use sinex_node_sdk::{
     acquisition_manager::{AcquisitionManager, RotationPolicy},
     simple_ingestor::SimpleIngestor,
@@ -22,12 +16,17 @@ use sinex_node_sdk::{
     stream_processor::{
         Checkpoint, NodeRuntimeState, ScanArgs, ScanReport, ServiceInfo, TimeHorizon,
     },
-    NodeError, NodeResult,
+    NodeResult, SinexError,
 };
+use sinex_primitives::{
+    domain::SanitizedPath, events::EventPayload, temporal::Timestamp, validate_path, Bytes, Seconds,
+};
+use sinex_primitives::Ulid;
 use sinex_processor_runtime::{
     CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
 };
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
+use time::OffsetDateTime;
 use tokio::{
     fs,
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
@@ -143,7 +142,7 @@ impl TerminalConfig {
 
 #[derive(Debug, Clone)]
 pub struct TerminalState {
-    pub captured_at: DateTime<Utc>,
+    pub captured_at: OffsetDateTime,
     pub monitored_sources: Vec<Utf8PathBuf>,
     pub host: String,
 }
@@ -556,22 +555,22 @@ async fn process_command(
         .acquisition
         .begin_material(ctx.path.as_str())
         .await
-        .map_err(|e| NodeError::General(eyre::eyre!("Failed to begin material: {}", e)))?;
+        .map_err(|e| SinexError::general(format!("Failed to begin material: {}", e)))?;
     let material_id = handle.material_id;
 
     ctx.acquisition
         .append_slice(&mut handle, bytes)
         .await
-        .map_err(|e| NodeError::General(eyre::eyre!("Failed to append slice: {}", e)))?;
+        .map_err(|e| SinexError::general(format!("Failed to append slice: {}", e)))?;
 
     ctx.acquisition
         .finalize(handle, MATERIAL_REASON_HISTORY)
         .await
-        .map_err(|e| NodeError::General(eyre::eyre!("Failed to finalize material: {}", e)))?;
+        .map_err(|e| SinexError::general(format!("Failed to finalize material: {}", e)))?;
 
-    let payload = sinex_core::types::events::payloads::shell::HistoryCommandImportedPayload {
+    let payload = sinex_primitives::events::payloads::shell::HistoryCommandImportedPayload {
         command: final_command.to_string(),
-        timestamp: Some(Utc::now()),
+        timestamp: Some(Timestamp::now()),
         shell_type: ctx.shell.clone(),
         source_file: ctx.path.to_string(),
         line_number: Some(line_number as u32),
@@ -580,19 +579,19 @@ async fn process_command(
     let event = payload
         .from_material(material_id)
         .with_offset_start(0)
-        .map_err(|e| NodeError::General(eyre::eyre!("Failed to set offset start: {}", e)))?
+        .map_err(|e| SinexError::general(format!("Failed to set offset start: {}", e)))?
         .with_offset_end(bytes.len() as i64)
-        .map_err(|e| NodeError::General(eyre::eyre!("Failed to set offset end: {}", e)))?
+        .map_err(|e| SinexError::general(format!("Failed to set offset end: {}", e)))?
         .build()
-        .map_err(|e| NodeError::General(eyre::eyre!("Failed to build event: {}", e)))?
+        .map_err(|e| SinexError::general(format!("Failed to build event: {}", e)))?
         .to_json_event()
-        .map_err(|e| NodeError::General(eyre::eyre!("Failed to convert event to JSON: {}", e)))?;
+        .map_err(|e| SinexError::general(format!("Failed to convert event to JSON: {}", e)))?;
 
     ctx.stage_context
         .emit_event_with_provenance(event, material_id, Some(0), Some(bytes.len() as i64))
         .await
         .map(|_| ())
-        .map_err(|e| NodeError::General(eyre::eyre!("Failed to emit terminal event: {}", e)))?;
+        .map_err(|e| SinexError::general(format!("Failed to emit terminal event: {}", e)))?;
 
     Ok(())
 }
@@ -636,7 +635,7 @@ impl TerminalProcessor {
 
     fn runtime(&self) -> NodeResult<&NodeRuntimeState> {
         self.runtime.as_ref().ok_or_else(|| {
-            NodeError::General(eyre::eyre!(
+            SinexError::general(format!(
                 "Terminal processor runtime not initialized prior to scan"
             ))
         })
@@ -661,10 +660,7 @@ impl TerminalProcessor {
         );
 
         config.validate_config().map_err(|e| {
-            NodeError::General(eyre::eyre!(
-                "Terminal configuration validation failed: {}",
-                e
-            ))
+            SinexError::general(format!("Terminal configuration validation failed: {}", e))
         })?;
 
         let publisher = match runtime.transport() {
@@ -673,13 +669,13 @@ impl TerminalProcessor {
 
         AcquisitionManager::bootstrap_streams(publisher.nats_client())
             .await
-            .map_err(NodeError::from)?;
+            .map_err(SinexError::from)?;
 
         let mut state_dir = service_info.work_dir().clone();
         state_dir.push("terminal-history");
 
         if let Err(e) = fs::create_dir_all(&state_dir).await {
-            return Err(NodeError::General(eyre::eyre!(
+            return Err(SinexError::general(format!(
                 "Failed to create terminal state directory {}: {}",
                 state_dir.display(),
                 e
@@ -705,7 +701,7 @@ impl TerminalProcessor {
         let stage = self
             .stage_context
             .clone()
-            .ok_or_else(|| NodeError::General(eyre::eyre!("Stage context not initialized")))?;
+            .ok_or_else(|| SinexError::general(format!("Stage context not initialized")))?;
 
         let state_dir = self.state_dir.clone();
         let mut contexts = Vec::new();
@@ -779,10 +775,7 @@ impl SimpleIngestor for TerminalProcessor {
     ) -> NodeResult<()> {
         let service_info = runtime.service_info();
         config.validate_config().map_err(|e| {
-            NodeError::General(eyre::eyre!(
-                "Terminal configuration validation failed: {}",
-                e
-            ))
+            SinexError::general(format!("Terminal configuration validation failed: {}", e))
         })?;
 
         let publisher = match runtime.transport() {
@@ -795,7 +788,7 @@ impl SimpleIngestor for TerminalProcessor {
         state_dir.push("terminal-history");
 
         if let Err(e) = fs::create_dir_all(&state_dir).await {
-            return Err(NodeError::General(eyre::eyre!(
+            return Err(SinexError::general(format!(
                 "Failed to create terminal state directory {}: {}",
                 state_dir.display(),
                 e
@@ -905,7 +898,7 @@ impl SimpleIngestor for TerminalProcessor {
 }
 
 impl ExplorationProvider for TerminalProcessor {
-    fn get_source_state(&self) -> color_eyre::eyre::Result<SourceState> {
+    fn get_source_state(&self) -> NodeResult<SourceState> {
         Ok(SourceState {
             is_connected: true,
             healthy: true,
@@ -913,7 +906,7 @@ impl ExplorationProvider for TerminalProcessor {
                 "Monitoring {} history sources",
                 self.config.history_sources.len()
             ),
-            last_updated: Utc::now(),
+            last_updated: OffsetDateTime::now_utc(),
             lag_seconds: None,
             recent_activity: vec![],
             total_items: Some(self.config.history_sources.len() as u64),
@@ -921,20 +914,17 @@ impl ExplorationProvider for TerminalProcessor {
         })
     }
 
-    fn get_ingestion_history(
-        &self,
-        _limit: u64,
-    ) -> color_eyre::eyre::Result<Vec<IngestionHistoryEntry>> {
+    fn get_ingestion_history(&self, _limit: u64) -> NodeResult<Vec<IngestionHistoryEntry>> {
         Ok(Vec::new())
     }
 
     fn get_coverage_analysis(
         &self,
-        time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
-    ) -> color_eyre::eyre::Result<CoverageAnalysis> {
+        time_range: Option<(OffsetDateTime, OffsetDateTime)>,
+    ) -> NodeResult<CoverageAnalysis> {
         let time_range = time_range.unwrap_or_else(|| {
-            let now = Utc::now();
-            (now - chrono::Duration::hours(1), now)
+            let now = OffsetDateTime::now_utc();
+            (now - time::Duration::hours(1), now)
         });
 
         Ok(CoverageAnalysis {
@@ -951,31 +941,29 @@ impl ExplorationProvider for TerminalProcessor {
         })
     }
 
-    fn export_data(
-        &self,
-        _path: &SanitizedPath,
-        _format: ExportFormat,
-    ) -> color_eyre::eyre::Result<()> {
-        Err(eyre::eyre!("Terminal watcher does not support data export"))
+    fn export_data(&self, _path: &SanitizedPath, _format: ExportFormat) -> NodeResult<()> {
+        Err(SinexError::general(
+            "Terminal watcher does not support data export",
+        ))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_core::db::models::Provenance;
-    use sinex_core::db::query_helpers::ulid_to_uuid;
-    use sinex_core::Id;
+    use sinex_db::models::Provenance;
+    use sinex_db::query_helpers::ulid_to_uuid;
     use sinex_node_sdk::{acquisition_manager::RotationPolicy, AcquisitionManager};
-    use xtask::sandbox::sinex_test;
-    use xtask::sandbox::{
-        prelude::*, start_test_ingestd_with_config, TestIngestdConfig, TestRuntime,
-        TestRuntimeBuilder,
-    };
+    use sinex_primitives::Id;
     use std::sync::Arc;
     use tokio::{
         io::AsyncWriteExt,
         time::{timeout, Duration},
+    };
+    use xtask::sandbox::sinex_test;
+    use xtask::sandbox::{
+        prelude::*, start_test_ingestd_with_config, TestIngestdConfig, TestRuntime,
+        TestRuntimeBuilder,
     };
 
     #[sinex_test]

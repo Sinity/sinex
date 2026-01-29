@@ -6,13 +6,13 @@
 use chrono::Duration;
 use serde_json::json;
 use sinex_services::{SearchQuery, SearchService};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
 use xtask::sandbox::dataset_seeds::{
     seed_events_via_scope, seed_query_dataset_semantic_min_via_scope, EventSpec, QueryDataset,
     SeedClock,
 };
 use xtask::sandbox::prelude::*;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
 
 async fn seed_query_dataset(scope: &PipelineScope<'_>) -> TestResult<(SeedClock, QueryDataset)> {
     let clock = SeedClock::fixed();
@@ -275,7 +275,11 @@ async fn test_query_pagination_stable_during_concurrent_ingestion(
                 };
                 scope
                     .publish_with_overrides(
-                        sinex_core::DynamicPayload::new(source, event_type, json!({ "seq": seq })),
+                        sinex_primitives::DynamicPayload::new(
+                            source,
+                            event_type,
+                            json!({ "seq": seq }),
+                        ),
                         overrides,
                     )
                     .await?;
@@ -442,7 +446,7 @@ async fn test_query_limit_bounds(ctx: TestContext) -> TestResult<()> {
         "limit=0 should not return an empty result set when data exists"
     );
     assert!(
-        (results.len() as i64) <= sinex_core::types::query::Pagination::DEFAULT_LIMIT,
+        (results.len() as i64) <= sinex_primitives::Pagination::DEFAULT_LIMIT,
         "limit=0 should clamp to the default pagination limit"
     );
 

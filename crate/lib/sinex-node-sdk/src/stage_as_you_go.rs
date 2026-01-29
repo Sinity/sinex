@@ -3,14 +3,13 @@
 
 use crate::acquisition_manager::{AcquisitionManager, SourceMaterialHandle};
 use crate::stream_processor::{EventEmitter, NodeHandles, NodeRuntimeState};
-use crate::{NodeError, NodeResult};
-use chrono::{DateTime, Utc};
-use color_eyre::eyre::eyre;
+use crate::{NodeResult, SinexError};
+
 use serde_json::{json, Map as JsonMap};
-use sinex_core::db::models::Event;
-use sinex_core::types::events::LogLinePayload;
-use sinex_core::types::{ulid::Ulid, Id};
-use sinex_core::JsonValue;
+use sinex_primitives::events::{payloads::LogLinePayload, Event};
+use sinex_primitives::Id;
+use sinex_primitives::JsonValue;
+use sinex_primitives::Ulid;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
@@ -41,8 +40,8 @@ pub struct StageAsYouGoContext {
 #[derive(Debug, Clone)]
 struct StageMaterialInfo {
     metadata: JsonValue,
-    _registered_at: DateTime<Utc>,
-    last_activity: DateTime<Utc>,
+    _registered_at: sinex_primitives::temporal::OffsetDateTime,
+    last_activity: sinex_primitives::temporal::OffsetDateTime,
 }
 
 #[derive(Clone, Copy)]
@@ -64,10 +63,11 @@ impl StageCleanupConfig {
 mod tests {
     use super::StageAsYouGoContext;
     use crate::stream_processor::EventEmitter;
-    use sinex_core::{DynamicPayload, EventId, Provenance, Ulid};
-    use xtask::sandbox::sinex_test;
+    use sinex_primitives::{events::Provenance, DynamicPayload, Id};
+    use sinex_schema::ulid::Ulid;
     use tokio::sync::mpsc;
     use tokio::time::{timeout, Duration};
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     async fn emit_event_assigns_id_and_anchor() -> TestResult<()> {
@@ -81,7 +81,7 @@ mod tests {
             serde_json::json!({"line": "hello"}),
         )
         .with_provenance(Provenance::from_synthesis_safe(
-            EventId::from_ulid(Ulid::new()),
+            Id::from_ulid(Ulid::new()),
             Vec::new(),
         ))
         .build()
@@ -256,7 +256,7 @@ impl StageAsYouGoContext {
         stale_ttl: Duration,
     ) -> NodeResult<StageReconciliationSummary> {
         let manager = self.acquisition_manager.as_ref().ok_or_else(|| {
-            NodeError::Processing(
+            SinexError::processing(
                 "Stage-as-You-Go context requires an acquisition manager".to_string(),
             )
         })?;
@@ -329,7 +329,7 @@ impl StageAsYouGoContext {
             .acquisition_manager
             .as_ref()
             .ok_or_else(|| {
-                NodeError::Processing(
+                SinexError::processing(
                     "Stage-as-You-Go context requires an acquisition manager".to_string(),
                 )
             })?
@@ -341,7 +341,7 @@ impl StageAsYouGoContext {
             .with_metadata(metadata.clone())
             .begin()
             .await
-            .map_err(|e| NodeError::General(eyre!("Failed to begin material: {}", e)))?;
+            .map_err(|e| SinexError::processing(format!("Failed to begin material: {}", e)))?;
         let material_id = handle.material_id;
         self.acquisition_handles
             .lock()
@@ -354,7 +354,7 @@ impl StageAsYouGoContext {
             "Registered in-flight source material via JetStream"
         );
 
-        let now = Utc::now();
+        let now = sinex_primitives::temporal::OffsetDateTime::now_utc();
         let info = StageMaterialInfo {
             metadata,
             _registered_at: now,
@@ -386,12 +386,12 @@ impl StageAsYouGoContext {
 
         // Attach source material provenance to the event
         let anchor_byte = offset_start.or(offset_end).unwrap_or(0);
-        event.provenance = sinex_core::Provenance::Material {
+        event.provenance = sinex_primitives::events::builder::Provenance::Material {
             id: source_material_id.into(),
             anchor_byte,
             offset_start,
             offset_end,
-            offset_kind: sinex_core::OffsetKind::default(),
+            offset_kind: sinex_primitives::events::builder::OffsetKind::default(),
         };
 
         // Add source material reference to payload metadata if not already present
@@ -406,7 +406,7 @@ impl StageAsYouGoContext {
         let event_id: Ulid = *event
             .id
             .as_ref()
-            .ok_or_else(|| NodeError::Processing("Event must have an ID".to_string()))?
+            .ok_or_else(|| SinexError::processing("Event must have an ID".to_string()))?
             .as_ulid();
 
         self.event_emitter.emit(event).await?;
@@ -419,8 +419,8 @@ impl StageAsYouGoContext {
 
         {
             let mut registry = self.material_registry.lock().await;
-            if let Some(info) = registry.get_mut(&source_material_id) {
-                info.last_activity = Utc::now();
+            if let Some(health) = registry.get_mut(&source_material_id) {
+                health.last_activity = sinex_primitives::temporal::OffsetDateTime::now_utc();
             }
         }
 
@@ -455,7 +455,7 @@ impl StageAsYouGoContext {
             .acquisition_manager
             .as_ref()
             .ok_or_else(|| {
-                NodeError::Processing(
+                SinexError::processing(
                     "Stage-as-You-Go context requires an acquisition manager".to_string(),
                 )
             })?
@@ -467,7 +467,7 @@ impl StageAsYouGoContext {
             .await
             .remove(&id)
             .ok_or_else(|| {
-                NodeError::Processing(format!("Missing acquisition handle for material {}", id))
+                SinexError::processing(format!("Missing acquisition handle for material {}", id))
             })?;
 
         self.finalize_via_acquisition(
@@ -513,7 +513,7 @@ impl StageAsYouGoContext {
             .acquisition_manager
             .as_ref()
             .ok_or_else(|| {
-                NodeError::Processing(
+                SinexError::processing(
                     "Stage-as-You-Go context requires an acquisition manager".to_string(),
                 )
             })?
@@ -525,7 +525,7 @@ impl StageAsYouGoContext {
             .await
             .remove(&id)
             .ok_or_else(|| {
-                NodeError::Processing(format!("Missing acquisition handle for material {}", id))
+                SinexError::processing(format!("Missing acquisition handle for material {}", id))
             })?;
 
         let mut buffer = vec![0u8; MAX_SLICE_BYTES];
@@ -533,7 +533,7 @@ impl StageAsYouGoContext {
             let read = reader
                 .read(&mut buffer)
                 .await
-                .map_err(|e| NodeError::Processing(e.to_string()))?;
+                .map_err(|e| SinexError::processing(e.to_string()))?;
             if read == 0 {
                 break;
             }
@@ -546,7 +546,7 @@ impl StageAsYouGoContext {
             manager
                 .append_slice(&mut handle, &buffer[..read])
                 .await
-                .map_err(|e| NodeError::General(eyre!("Failed to append slice: {}", e)))?;
+                .map_err(|e| SinexError::processing(format!("Failed to append slice: {}", e)))?;
             total_bytes += read as i64;
         }
 
@@ -565,7 +565,7 @@ impl StageAsYouGoContext {
         manager
             .finalize_with_metadata(handle, MATERIAL_FINALIZE_REASON, metadata)
             .await
-            .map_err(|e| NodeError::General(eyre!("Failed to finalize material: {}", e)))?;
+            .map_err(|e| SinexError::processing(format!("Failed to finalize material: {}", e)))?;
 
         info!(
             material_id = %id,
@@ -590,7 +590,7 @@ impl StageAsYouGoContext {
             manager
                 .append_slice(&mut handle, chunk)
                 .await
-                .map_err(|e| NodeError::General(eyre!("Failed to append slice: {}", e)))?;
+                .map_err(|e| SinexError::processing(format!("Failed to append slice: {}", e)))?;
         }
 
         let metadata =
@@ -599,7 +599,7 @@ impl StageAsYouGoContext {
         manager
             .finalize_with_metadata(handle, MATERIAL_FINALIZE_REASON, metadata)
             .await
-            .map_err(|e| NodeError::General(eyre!("Failed to finalize material: {}", e)))
+            .map_err(|e| SinexError::processing(format!("Failed to finalize material: {}", e)))
     }
 }
 
@@ -626,15 +626,18 @@ async fn reconcile_shared(
     manager: &Arc<AcquisitionManager>,
     stale_ttl: Duration,
 ) -> NodeResult<StageReconciliationSummary> {
-    let ttl_chrono =
-        chrono::Duration::from_std(stale_ttl).unwrap_or_else(|_| chrono::Duration::zero());
-    let now = Utc::now();
+    let ttl = time::Duration::try_from(stale_ttl).unwrap_or_else(|_| time::Duration::seconds(0));
+    let now = sinex_primitives::temporal::OffsetDateTime::now_utc();
     let stale_ids = {
         let registry_guard = registry.lock().await;
         registry_guard
             .iter()
             .filter_map(|(id, info)| {
-                if (now - info.last_activity) >= ttl_chrono {
+                // Explicitly use nanosecond precision to avoid Duration type ambiguity
+                let diff_nanos =
+                    now.unix_timestamp_nanos() - info.last_activity.unix_timestamp_nanos();
+                let diff = sinex_primitives::temporal::Duration::nanoseconds(diff_nanos as i64);
+                if diff >= ttl {
                     Some(*id)
                 } else {
                     None
@@ -819,9 +822,9 @@ impl StageAsYouGoProcessor for LogFileStageProcessor {
             // Create typed event and convert to JsonValue for emission
             let typed_event = Event::new(
                 payload,
-                sinex_core::Provenance::Synthesis {
-                    source_event_ids: sinex_core::types::non_empty::NonEmptyVec::single(
-                        sinex_core::EventId::from_ulid(Ulid::new()),
+                sinex_primitives::events::builder::Provenance::Synthesis {
+                    source_event_ids: sinex_primitives::non_empty::NonEmptyVec::single(
+                        sinex_primitives::events::builder::EventId::from_ulid(Ulid::new()),
                     ),
                     operation_id: None,
                 },
@@ -830,9 +833,9 @@ impl StageAsYouGoProcessor for LogFileStageProcessor {
             // Convert to JsonValue event for emission
             let mut event = typed_event.to_json_event()?;
             event.id = Some(Id::from_ulid(Ulid::new()));
-            let now = Utc::now();
+            let now = sinex_primitives::temporal::OffsetDateTime::now_utc();
             if event.ts_orig.is_none() {
-                event.ts_orig = Some(now);
+                event.ts_orig = Some(now.into());
             }
 
             // Emit with provenance

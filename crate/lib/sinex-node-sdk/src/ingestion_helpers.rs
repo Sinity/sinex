@@ -6,10 +6,10 @@
 //! - IdempotenceKey for first-order event deduplication
 //! - SnapshotDiff for snapshot sources (diff to inserts/updates/deletes)
 
-use chrono::{DateTime, Utc};
-use color_eyre::eyre::Result;
+use crate::NodeResult;
 use serde_json;
-use sinex_core::types::{
+use sinex_primitives::temporal::OffsetDateTime;
+use sinex_primitives::{
     domain::{EventSource, EventType},
     ulid::Ulid,
 };
@@ -51,7 +51,7 @@ impl SliceAssembler {
     }
 
     /// Add bytes and extract complete records
-    pub fn push_bytes(&mut self, bytes: &[u8]) -> Result<Vec<Vec<u8>>> {
+    pub fn push_bytes(&mut self, bytes: &[u8]) -> NodeResult<Vec<Vec<u8>>> {
         self.buffer.extend_from_slice(bytes);
 
         let mut records = Vec::new();
@@ -137,7 +137,7 @@ pub struct LedgerReader {
 pub struct LedgerEntry {
     pub offset_start: i64,
     pub offset_end: i64,
-    pub ts_capture: DateTime<Utc>,
+    pub ts_capture: OffsetDateTime,
     pub precision: String,   // "exact" or "bounded"
     pub source_type: String, // realtime_capture, intrinsic_content, etc.
 }
@@ -166,8 +166,8 @@ impl LedgerReader {
     pub fn derive_ts_orig(
         &self,
         offset: i64,
-        intrinsic_timestamp: Option<DateTime<Utc>>,
-    ) -> (DateTime<Utc>, TimeQuality) {
+        intrinsic_timestamp: Option<OffsetDateTime>,
+    ) -> (OffsetDateTime, TimeQuality) {
         // First check ledger entry
         if let Some(entry) = self.find_entry_for_offset(offset) {
             match entry.source_type.as_str() {
@@ -198,7 +198,10 @@ impl LedgerReader {
         }
 
         // Ultimate fallback to current time (staged_at)
-        (Utc::now(), TimeQuality::StagedAt)
+        (
+            sinex_primitives::temporal::OffsetDateTime::now_utc(),
+            TimeQuality::StagedAt,
+        )
     }
 }
 
@@ -232,7 +235,7 @@ impl IdempotenceKey {
 
     /// Check if this key would conflict with existing events
     #[cfg(feature = "db")]
-    pub async fn exists_in_db(&self, pool: &sqlx::PgPool) -> Result<bool> {
+    pub async fn exists_in_db(&self, pool: &sqlx::PgPool) -> NodeResult<bool> {
         let result = sqlx::query!(
             r#"
             SELECT EXISTS(
@@ -320,7 +323,7 @@ pub struct SnapshotRow {
     /// The full row data
     pub data: serde_json::Value,
     /// Optional version/timestamp for this row
-    pub version: Option<DateTime<Utc>>,
+    pub version: Option<OffsetDateTime>,
 }
 
 /// Types of changes detected in snapshot diffs

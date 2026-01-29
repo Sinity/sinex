@@ -17,7 +17,8 @@ pub struct LockInfo {
     /// Absolute path to the checkout holding the lock
     pub checkout_path: PathBuf,
     /// Timestamp when lock was acquired
-    pub acquired_at: chrono::DateTime<chrono::Utc>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub acquired_at: time::OffsetDateTime,
     /// Optional description of what's running
     pub description: Option<String>,
 }
@@ -28,7 +29,7 @@ impl LockInfo {
         Self {
             pid: std::process::id(),
             checkout_path,
-            acquired_at: chrono::Utc::now(),
+            acquired_at: time::OffsetDateTime::now_utc(),
             description,
         }
     }
@@ -211,7 +212,15 @@ impl CheckoutState {
                  Stop it first: cd {} && cargo xtask dev stack stop",
                 lock_info.checkout_path.display(),
                 lock_info.pid,
-                lock_info.acquired_at.format("%Y-%m-%d %H:%M:%S UTC"),
+                lock_info
+                    .acquired_at
+                    .format(
+                        &time::format_description::parse(
+                            "[year]-[month]-[day] [hour]:[minute]:[second] UTC"
+                        )
+                        .unwrap()
+                    )
+                    .unwrap(),
                 lock_info.description.as_deref().unwrap_or(""),
                 lock_info.checkout_path.display()
             );
@@ -275,7 +284,7 @@ mod tests {
         let info = LockInfo {
             pid: 99999999, // Very unlikely to exist
             checkout_path: PathBuf::from("/test"),
-            acquired_at: chrono::Utc::now(),
+            acquired_at: time::OffsetDateTime::now_utc(),
             description: None,
         };
         // This might actually be alive in rare cases, but usually not

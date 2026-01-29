@@ -1,5 +1,5 @@
-use sinex_core::types::{validation::config_validation::ConfigValidation, Seconds};
 use sinex_ingestd::IngestdConfig;
+use sinex_primitives::{validation::config_validation::ConfigValidation, Seconds};
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]

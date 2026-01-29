@@ -6,11 +6,11 @@
 use proptest::prelude::*;
 use proptest::test_runner::TestCaseError;
 use serde_json::json;
-use sinex_core::db::repositories::DbPoolExt;
-use sinex_core::types::domain::{EventSource, EventType};
-use sinex_core::{Event, JsonValue};
-use xtask::sandbox::{prelude::*, sinex_prop, sinex_proptest, test_event};
+use sinex_node_sdk::db::repositories::DbPoolExt;
+use sinex_node_sdk::types::domain::{EventSource, EventType};
+use sinex_node_sdk::{Event, JsonValue};
 use std::time::Duration;
+use xtask::sandbox::{prelude::*, sinex_prop, sinex_proptest, test_event};
 
 /// Helper to convert color_eyre::Report errors to TestCaseError for property tests
 fn report_to_test_error<E: std::fmt::Display>(e: E) -> TestCaseError {
@@ -250,10 +250,7 @@ async fn node_manages_resources_efficiently(
                     json!({ "operation": i, "event": j }),
                 );
 
-                pool.events()
-                    .insert(event)
-                    .await
-                    .expect("insert event");
+                pool.events().insert(event).await.expect("insert event");
                 operation_events += 1;
 
                 // Small processing delay
@@ -486,14 +483,11 @@ async fn node_maintains_event_ordering_under_load(
                     json!({
                         "source_id": source_id,
                         "event_id": event_id,
-                        "timestamp": chrono::Utc::now().timestamp_millis()
+                        "timestamp": OffsetDateTime::now_utc().timestamp_millis()
                     }),
                 );
 
-                pool.events()
-                    .insert(event)
-                    .await
-                    .expect("insert event");
+                pool.events().insert(event).await.expect("insert event");
 
                 // Add jitter to simulate real-world timing variations
                 tokio::time::sleep(Duration::from_millis(jitter)).await;

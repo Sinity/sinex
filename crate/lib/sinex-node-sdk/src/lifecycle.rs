@@ -3,10 +3,10 @@
 use crate::health_reporter::{HealthReporter, HealthThresholds};
 use crate::heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter};
 use crate::stream_processor::NodeRuntimeState;
-use crate::{NodeError, NodeResult};
+use crate::{NodeResult, SinexError};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use sinex_core::types::Seconds;
+use sinex_primitives::Seconds;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::signal::unix::{signal, SignalKind};
@@ -382,12 +382,12 @@ impl LifecycleManager {
                         if shutdown_flag.load(Ordering::Relaxed) {
                             Ok(())
                         } else {
-                            Err(NodeError::Lifecycle(format!(
+                            Err(SinexError::lifecycle(format!(
                                 "{task_name} task exited unexpectedly"
                             )))
                         }
                     }
-                    Some(Err(join_err)) => Err(NodeError::Lifecycle(format!(
+                    Some(Err(join_err)) => Err(SinexError::lifecycle(format!(
                         "Background task failed: {join_err}"
                     ))),
                     None => Ok(()),
@@ -499,9 +499,10 @@ mod tests {
     use std::panic;
     use std::time::Duration;
     use tokio::time::timeout;
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
-    async fn shutdown_future_notifies_without_polling() {
+    async fn shutdown_future_notifies_without_polling() -> Result<(), Box<dyn std::error::Error>> {
         let manager = LifecycleManager::new("test-service".to_string());
         let mut wait_future = Box::pin(manager.shutdown_future());
 
@@ -514,10 +515,11 @@ mod tests {
         timeout(Duration::from_millis(10), &mut wait_future)
             .await
             .expect("shutdown future should resolve immediately");
+        Ok(())
     }
 
     #[sinex_test]
-    async fn status_lock_survives_panics() {
+    async fn status_lock_survives_panics() -> Result<(), Box<dyn std::error::Error>> {
         let manager = LifecycleManager::new("test-service".to_string());
         let status_handle = manager.status.clone();
 
@@ -529,6 +531,7 @@ mod tests {
         assert_eq!(manager.status(), ServiceStatus::Starting);
         manager.set_status(ServiceStatus::Running);
         assert_eq!(manager.status(), ServiceStatus::Running);
+        Ok(())
     }
 }
 
@@ -552,7 +555,7 @@ macro_rules! node_main {
 
             // Create lifecycle manager with heartbeat enabled
             let mut lifecycle = LifecycleManager::new($service_name.to_string())
-                .with_heartbeat(sinex_core::types::Seconds::from_secs(30)); // 30 second heartbeat interval
+                .with_heartbeat(sinex_primitives::Seconds::from_secs(30)); // 30 second heartbeat interval
             lifecycle.initialize().await?;
 
             // Run service with lifecycle management
@@ -587,7 +590,7 @@ macro_rules! node_main {
 
             // Create lifecycle manager with heartbeat enabled
             let mut lifecycle = LifecycleManager::new($service_name.to_string())
-                .with_heartbeat(sinex_core::types::Seconds::from_secs(30)); // 30 second heartbeat interval
+                .with_heartbeat(sinex_primitives::Seconds::from_secs(30)); // 30 second heartbeat interval
             lifecycle.initialize().await?;
 
             // Run service with lifecycle management

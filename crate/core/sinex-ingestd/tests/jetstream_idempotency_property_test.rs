@@ -2,13 +2,13 @@
 
 use async_nats::jetstream;
 use serde_json::json;
-use sinex_core::{db::query_helpers::ulid_to_uuid, DbPoolExt};
 use sinex_ingestd::{validator::EventValidator, JetStreamConsumer, JetStreamTopology};
-use xtask::sandbox::timing::{WaitHelpers, DEFAULT_WAIT_SECS};
-use xtask::sandbox::{prelude::*, EventOverrides, TestNodePublisher};
+use sinex_primitives::{db::query_helpers::ulid_to_uuid, DbPoolExt};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
+use xtask::sandbox::timing::{WaitHelpers, DEFAULT_WAIT_SECS};
+use xtask::sandbox::{prelude::*, EventOverrides, TestNodePublisher};
 
 async fn start_consumer(
     ctx: &TestContext,
@@ -61,11 +61,11 @@ async fn start_consumer(
                 let mut stream = js
                     .get_stream(&base_stream)
                     .await
-                    .map_err(|e| sinex_core::types::error::SinexError::network(e.to_string()))?;
+                    .map_err(|e| sinex_primitives::error::SinexError::network(e.to_string()))?;
                 let info = stream
                     .info()
                     .await
-                    .map_err(|e| sinex_core::types::error::SinexError::network(e.to_string()))?;
+                    .map_err(|e| sinex_primitives::error::SinexError::network(e.to_string()))?;
                 Ok(info.state.consumer_count > 0)
             }
         },

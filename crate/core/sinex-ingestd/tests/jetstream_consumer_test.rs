@@ -3,16 +3,16 @@
 use async_nats::jetstream;
 use futures::StreamExt;
 use serde_json::json;
-use sinex_core::{db::query_helpers::ulid_to_uuid, types::Ulid, DbPoolExt, SinexError};
+use sinex_primitives::{db::query_helpers::ulid_to_uuid, types::Ulid, DbPoolExt, SinexError};
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
-use xtask::sandbox::timing::{Timeouts, WaitHelpers};
-use xtask::sandbox::{sinex_test, EventOverrides, TestContext, TestNodePublisher, TestResult};
 use sqlx::Row;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio::time::timeout;
+use xtask::sandbox::timing::{Timeouts, WaitHelpers};
+use xtask::sandbox::{sinex_test, EventOverrides, TestContext, TestNodePublisher, TestResult};
 
 /// Isolated consumer setup for tests.
 struct ConsumerSetup {
@@ -411,7 +411,7 @@ async fn duplicate_events_are_idempotent(ctx: TestContext) -> TestResult<()> {
                 .bind(ulid_to_uuid(event_id))
                 .fetch_one(&pool)
                 .await?;
-                Ok::<bool, sinex_test_utils::SinexError>(duplicate_count.unwrap_or(0) == 1)
+                Ok::<bool, SinexError>(duplicate_count.unwrap_or(0) == 1)
             }
         },
         Timeouts::MEDIUM,

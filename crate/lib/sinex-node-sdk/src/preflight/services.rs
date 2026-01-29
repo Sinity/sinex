@@ -8,7 +8,7 @@
  * - Service configuration validation
  */
 
-use color_eyre::eyre::{bail, Context, Result};
+use crate::{SinexError, NodeResult};
 use serde_json::{json, Value};
 use std::{collections::HashMap, fmt, process::Command, str::FromStr};
 use tracing::{debug, info};
@@ -38,7 +38,7 @@ impl fmt::Display for ServiceStatus {
 impl FromStr for ServiceStatus {
     type Err = String;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s {
             "active" => Ok(ServiceStatus::Active),
             "inactive" => Ok(ServiceStatus::Inactive),
@@ -61,7 +61,7 @@ impl ServiceStatus {
 }
 
 /// Verify service dependencies and readiness
-pub async fn verify_service_dependencies() -> Result<(VerificationStatus, Value, Vec<String>)> {
+pub async fn verify_service_dependencies() -> NodeResult<(VerificationStatus, Value, Vec<String>)> {
     let mut messages = Vec::new();
     let mut details = HashMap::new();
     let mut has_warnings = false;
@@ -145,7 +145,7 @@ pub async fn verify_service_dependencies() -> Result<(VerificationStatus, Value,
     Ok((status, json!(details), messages))
 }
 
-async fn verify_binary_availability(messages: &mut Vec<String>) -> Result<Value> {
+async fn verify_binary_availability(messages: &mut Vec<String>) -> NodeResult<Value> {
     let mut binary_info = HashMap::new();
     let mut missing_binaries = Vec::new();
 
@@ -245,7 +245,10 @@ async fn verify_binary_availability(messages: &mut Vec<String>) -> Result<Value>
     }
 
     if !missing_binaries.is_empty() {
-        bail!("Missing required binaries: {}", missing_binaries.join(", "));
+        return Err(SinexError::processing(format!(
+            "Missing required binaries: {}",
+            missing_binaries.join(", ")
+        )));
     }
 
     Ok(json!({
@@ -261,15 +264,18 @@ struct BinaryInfo {
     version: Option<String>,
 }
 
-async fn check_binary_availability(binary_name: &str) -> Result<BinaryInfo> {
+async fn check_binary_availability(binary_name: &str) -> NodeResult<BinaryInfo> {
     // First check if binary exists in PATH
     let which_output = Command::new("which")
         .arg(binary_name)
         .output()
-        .wrap_err("Failed to execute 'which' command")?;
+        .map_err(|e| SinexError::processing(format!("Failed to execute 'which' command: {}", e)))?;
 
     if !which_output.status.success() {
-        bail!("Binary '{}' not found in PATH", binary_name);
+        return Err(SinexError::processing(format!(
+            "Binary '{}' not found in PATH",
+            binary_name
+        )));
     }
 
     let path = String::from_utf8_lossy(&which_output.stdout)
@@ -301,7 +307,7 @@ async fn get_binary_version(binary_name: &str, _path: &str) -> Option<String> {
     None
 }
 
-async fn verify_systemd_services(messages: &mut Vec<String>) -> Result<Value> {
+async fn verify_systemd_services(messages: &mut Vec<String>) -> NodeResult<Value> {
     let mut service_info = HashMap::new();
 
     // Sinex-related services that should be manageable
@@ -388,7 +394,7 @@ async fn verify_systemd_services(messages: &mut Vec<String>) -> Result<Value> {
     }))
 }
 
-async fn check_systemd_service(service_name: &str) -> Result<Value> {
+async fn check_systemd_service(service_name: &str) -> NodeResult<Value> {
     let status_output = Command::new("systemctl")
         .args([
             "show",
@@ -396,10 +402,13 @@ async fn check_systemd_service(service_name: &str) -> Result<Value> {
             "--property=ActiveState,SubState,LoadState",
         ])
         .output()
-        .wrap_err("Failed to execute systemctl show")?;
+        .map_err(|e| SinexError::processing(format!("Failed to execute systemctl show: {}", e)))?;
 
     if !status_output.status.success() {
-        bail!("Failed to get service status for {}", service_name);
+        return Err(SinexError::processing(format!(
+            "Failed to get service status for {}",
+            service_name
+        )));
     }
 
     let status_text = String::from_utf8_lossy(&status_output.stdout);
@@ -434,7 +443,7 @@ async fn check_systemd_service(service_name: &str) -> Result<Value> {
     }))
 }
 
-async fn verify_postgresql_service(messages: &mut Vec<String>) -> Result<Value> {
+async fn verify_postgresql_service(messages: &mut Vec<String>) -> NodeResult<Value> {
     let mut postgres_info = HashMap::new();
 
     // Check PostgreSQL service status
@@ -461,7 +470,10 @@ async fn verify_postgresql_service(messages: &mut Vec<String>) -> Result<Value> 
                             }),
                         );
                         messages.push(format!("✗ PostgreSQL connectivity failed: {}", e));
-                        bail!("PostgreSQL connectivity test failed: {}", e);
+                        return Err(SinexError::processing(format!(
+                            "PostgreSQL connectivity test failed: {}",
+                            e
+                        )));
                     }
                 }
             } else {
@@ -470,7 +482,9 @@ async fn verify_postgresql_service(messages: &mut Vec<String>) -> Result<Value> 
                     "✗ PostgreSQL service is not active (status: {})",
                     status
                 ));
-                bail!("PostgreSQL service is not running");
+                return Err(SinexError::processing(
+                    "PostgreSQL service is not running".to_string(),
+                ));
             }
         }
         Err(e) => {
@@ -483,14 +497,17 @@ async fn verify_postgresql_service(messages: &mut Vec<String>) -> Result<Value> 
             );
 
             messages.push(format!("✗ PostgreSQL service check failed: {}", e));
-            bail!("PostgreSQL service verification failed: {}", e);
+            return Err(SinexError::processing(format!(
+                "PostgreSQL service verification failed: {}",
+                e
+            )));
         }
     }
 
     Ok(json!(postgres_info))
 }
 
-async fn test_postgresql_connectivity() -> Result<Value> {
+async fn test_postgresql_connectivity() -> NodeResult<Value> {
     let database_url = super::resolve_database_url()?;
 
     let test_output = Command::new("psql")
@@ -498,7 +515,9 @@ async fn test_postgresql_connectivity() -> Result<Value> {
         .arg("-c")
         .arg("SELECT version();")
         .output()
-        .wrap_err("Failed to execute psql test command")?;
+        .map_err(|e| {
+            SinexError::processing(format!("Failed to execute psql test command: {}", e))
+        })?;
 
     if test_output.status.success() {
         let version_output = String::from_utf8_lossy(&test_output.stdout);
@@ -515,11 +534,14 @@ async fn test_postgresql_connectivity() -> Result<Value> {
         }))
     } else {
         let error_output = String::from_utf8_lossy(&test_output.stderr);
-        bail!("PostgreSQL connection test failed: {}", error_output.trim());
+        return Err(SinexError::processing(format!(
+            "PostgreSQL connection test failed: {}",
+            error_output.trim()
+        )));
     }
 }
 
-async fn verify_external_dependencies(messages: &mut Vec<String>) -> Result<Value> {
+async fn verify_external_dependencies(messages: &mut Vec<String>) -> NodeResult<Value> {
     let mut deps_info = HashMap::new();
 
     // Git and Git-Annex for blob storage
@@ -560,7 +582,7 @@ async fn verify_external_dependencies(messages: &mut Vec<String>) -> Result<Valu
     Ok(json!(deps_info))
 }
 
-async fn verify_git_dependencies() -> Result<Value> {
+async fn verify_git_dependencies() -> NodeResult<Value> {
     let mut git_info = HashMap::new();
 
     // Check Git availability
@@ -583,7 +605,10 @@ async fn verify_git_dependencies() -> Result<Value> {
                     "error": e.to_string()
                 }),
             );
-            bail!("Git binary not available: {}", e);
+            return Err(SinexError::processing(format!(
+                "Git binary not available: {}",
+                e
+            )));
         }
     }
 
@@ -613,7 +638,7 @@ async fn verify_git_dependencies() -> Result<Value> {
     Ok(json!(git_info))
 }
 
-async fn verify_event_source_dependencies() -> Result<Value> {
+async fn verify_event_source_dependencies() -> NodeResult<Value> {
     let mut event_deps = HashMap::new();
 
     // Check clipboard tools
@@ -674,7 +699,7 @@ async fn verify_event_source_dependencies() -> Result<Value> {
     Ok(json!(event_deps))
 }
 
-async fn verify_service_configuration(messages: &mut Vec<String>) -> Result<Value> {
+async fn verify_service_configuration(messages: &mut Vec<String>) -> NodeResult<Value> {
     let mut config_info = HashMap::new();
 
     // Check systemd unit file locations

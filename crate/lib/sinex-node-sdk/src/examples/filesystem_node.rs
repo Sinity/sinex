@@ -12,10 +12,11 @@ use crate::{
 };
 use async_trait::async_trait;
 use camino::{Utf8Path, Utf8PathBuf};
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sinex_core::types::events::{DirDiscoveredPayload, EventPayload, FileDiscoveredPayload};
-use sinex_core::SanitizedPath;
+use sinex_primitives::events::payloads::{DirDiscoveredPayload, FileDiscoveredPayload};
+use sinex_primitives::events::EventPayload;
+use sinex_primitives::temporal::OffsetDateTime;
+use sinex_primitives::SanitizedPath;
 use std::collections::HashMap;
 use tokio::fs;
 use tracing::{debug, info, warn};
@@ -49,7 +50,7 @@ pub struct FilesystemNode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesystemState {
     /// Timestamp when state was captured
-    pub captured_at: DateTime<Utc>,
+    pub captured_at: OffsetDateTime,
 
     /// File count by directory
     pub file_counts: HashMap<Utf8PathBuf, u64>,
@@ -85,7 +86,7 @@ impl FilesystemNode {
             Checkpoint::Timestamp { timestamp, .. } => Some(*timestamp),
             Checkpoint::External { position, .. } => {
                 // Try to parse timestamp from position
-                serde_json::from_value::<DateTime<Utc>>(position.clone()).ok()
+                serde_json::from_value::<OffsetDateTime>(position.clone()).ok()
             }
             _ => None,
         };
@@ -101,7 +102,7 @@ impl FilesystemNode {
             // Skip files older than checkpoint
             if let Some(cutoff) = cutoff_time {
                 if let Ok(modified) = metadata.modified() {
-                    let modified_dt: DateTime<Utc> = modified.into();
+                    let modified_dt: OffsetDateTime = modified.into();
                     if modified_dt <= cutoff {
                         continue;
                     }
@@ -116,23 +117,24 @@ impl FilesystemNode {
                         .modified()
                         .ok()
                         .map(|t| {
-                            let dt: DateTime<Utc> = t.into();
+                            let dt: OffsetDateTime = t.into();
                             dt
                         })
-                        .unwrap_or_else(Utc::now);
+                        .unwrap_or_else(sinex_primitives::temporal::OffsetDateTime::now_utc);
 
                     let payload = FileDiscoveredPayload {
                         path: SanitizedPath::new_unchecked(
                             entry_path.to_string_lossy().to_string(),
                         ),
                         size: metadata.len(),
-                        modified_at: modified_time,
+                        modified_at: modified_time.into(),
                         permissions: Some(metadata.permissions().mode()),
                     };
 
                     // Example uses synthesis provenance with a placeholder parent ID
-                    let placeholder_parent =
-                        sinex_core::EventId::from_ulid(sinex_core::types::ulid::Ulid::new());
+                    let placeholder_parent = sinex_primitives::events::builder::EventId::from_ulid(
+                        sinex_primitives::Ulid::new(),
+                    );
                     payload
                         .from_parents([placeholder_parent])?
                         .build()?
@@ -142,21 +144,22 @@ impl FilesystemNode {
                         .modified()
                         .ok()
                         .map(|t| {
-                            let dt: DateTime<Utc> = t.into();
+                            let dt: OffsetDateTime = t.into();
                             dt
                         })
-                        .unwrap_or_else(Utc::now);
+                        .unwrap_or_else(sinex_primitives::temporal::OffsetDateTime::now_utc);
 
                     let payload = DirDiscoveredPayload {
                         path: SanitizedPath::new_unchecked(
                             entry_path.to_string_lossy().to_string(),
                         ),
-                        modified_at: modified_time,
+                        modified_at: modified_time.into(),
                     };
 
                     // Example uses synthesis provenance with a placeholder parent ID
-                    let placeholder_parent =
-                        sinex_core::EventId::from_ulid(sinex_core::types::ulid::Ulid::new());
+                    let placeholder_parent = sinex_primitives::events::builder::EventId::from_ulid(
+                        sinex_primitives::Ulid::new(),
+                    );
                     payload
                         .from_parents([placeholder_parent])?
                         .build()?
@@ -193,7 +196,7 @@ impl FilesystemNode {
         }
 
         let state = FilesystemState {
-            captured_at: Utc::now(),
+            captured_at: sinex_primitives::temporal::OffsetDateTime::now_utc(),
             file_counts,
             total_files,
             directories: self.watch_paths.clone(),
@@ -342,7 +345,10 @@ impl Node for FilesystemNode {
             }
         }
 
-        let final_checkpoint = Checkpoint::timestamp(Utc::now(), None);
+        let final_checkpoint = Checkpoint::timestamp(
+            sinex_primitives::temporal::OffsetDateTime::now_utc().into(),
+            None,
+        );
 
         Ok(ScanReport {
             events_processed,
@@ -351,9 +357,12 @@ impl Node for FilesystemNode {
             time_range: Some((
                 match &from {
                     Checkpoint::Timestamp { timestamp, .. } => *timestamp,
-                    _ => Utc::now() - chrono::Duration::hours(1),
+                    _ => {
+                        sinex_primitives::temporal::OffsetDateTime::now_utc()
+                            - time::Duration::hours(1)
+                    }
                 },
-                Utc::now(),
+                sinex_primitives::temporal::OffsetDateTime::now_utc(),
             )),
             processor_stats: HashMap::from([
                 (
@@ -394,7 +403,10 @@ impl Node for FilesystemNode {
 
     async fn current_checkpoint(&self) -> NodeResult<Checkpoint> {
         // Return timestamp-based checkpoint
-        Ok(Checkpoint::timestamp(Utc::now(), None))
+        Ok(Checkpoint::timestamp(
+            sinex_primitives::temporal::OffsetDateTime::now_utc().into(),
+            None,
+        ))
     }
 
     async fn estimate_scan_scope(
@@ -441,30 +453,30 @@ use crate::exploration::{
 };
 
 impl ExplorationProvider for FilesystemNode {
-    fn get_source_state(&self) -> color_eyre::eyre::Result<SourceState> {
+    fn get_source_state(&self) -> NodeResult<SourceState> {
         Ok(SourceState {
             is_connected: true,
             healthy: true,
             description: "Filesystem node running".to_string(),
-            last_updated: Utc::now(),
+            last_updated: sinex_primitives::temporal::OffsetDateTime::now_utc(),
             lag_seconds: None,
             recent_activity: Vec::new(),
             total_items: None,
             metadata: HashMap::new(),
         })
     }
-    fn get_ingestion_history(
-        &self,
-        _limit: u64,
-    ) -> color_eyre::eyre::Result<Vec<IngestionHistoryEntry>> {
+    fn get_ingestion_history(&self, _limit: u64) -> NodeResult<Vec<IngestionHistoryEntry>> {
         Ok(Vec::new())
     }
     fn get_coverage_analysis(
         &self,
-        _time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
-    ) -> color_eyre::eyre::Result<CoverageAnalysis> {
+        _time_range: Option<(OffsetDateTime, OffsetDateTime)>,
+    ) -> NodeResult<CoverageAnalysis> {
         Ok(CoverageAnalysis {
-            time_range: (Utc::now(), Utc::now()),
+            time_range: (
+                sinex_primitives::temporal::OffsetDateTime::now_utc(),
+                sinex_primitives::temporal::OffsetDateTime::now_utc(),
+            ),
             source_total: 0,
             sinex_total: 0,
             coverage_percentage: 100.0,
@@ -474,11 +486,7 @@ impl ExplorationProvider for FilesystemNode {
             recommendations: Vec::new(),
         })
     }
-    fn export_data(
-        &self,
-        _path: &SanitizedPath,
-        _format: ExportFormat,
-    ) -> color_eyre::eyre::Result<()> {
+    fn export_data(&self, _path: &SanitizedPath, _format: ExportFormat) -> NodeResult<()> {
         Ok(())
     }
 }

@@ -3,14 +3,14 @@
 #[path = "../support/mod.rs"]
 mod support;
 
-use sinex_core::SinexError;
-use sinex_core::Ulid;
+use sinex_node_sdk::SinexError;
+use sinex_node_sdk::Ulid;
 use sinex_node_sdk::{InstanceMode, NodeCoordination};
-use xtask::sandbox::{sinex_test, TestContext};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use support::runtime::TestRuntimeBuilder;
 use tokio::time::{timeout, Duration};
+use xtask::sandbox::{sinex_test, TestContext};
 
 const COORDINATION_TIMEOUT: Duration = Duration::from_secs(2);
 

@@ -8,17 +8,18 @@
  * - Event source configuration validation
  */
 
+use crate::{NodeResult, SinexError};
 use camino::{Utf8Path, Utf8PathBuf};
-use color_eyre::eyre::{bail, Context, Result};
 use serde_json::{json, Value};
-use sinex_core::types::validate_path;
+use sinex_primitives::validation::validate_path;
 use std::collections::HashMap;
 use tracing::{debug, info};
 
 use super::VerificationStatus;
 
 /// Verify configuration generation and validation
-pub async fn verify_configuration_generation() -> Result<(VerificationStatus, Value, Vec<String>)> {
+pub async fn verify_configuration_generation(
+) -> NodeResult<(VerificationStatus, Value, Vec<String>)> {
     let mut messages = Vec::new();
     let mut details = HashMap::new();
     let mut has_warnings = false;
@@ -99,7 +100,7 @@ pub async fn verify_configuration_generation() -> Result<(VerificationStatus, Va
     Ok((status, json!(details), messages))
 }
 
-async fn verify_environment_variables(messages: &mut Vec<String>) -> Result<Value> {
+async fn verify_environment_variables(messages: &mut Vec<String>) -> NodeResult<Value> {
     let mut env_vars = HashMap::new();
     let mut missing_vars = Vec::new();
     let mut has_issues = false;
@@ -205,10 +206,10 @@ async fn verify_environment_variables(messages: &mut Vec<String>) -> Result<Valu
     }
 
     if has_issues {
-        bail!(
+        return Err(SinexError::configuration(format!(
             "Missing required environment variables: {}",
             missing_vars.join(", ")
-        );
+        )));
     }
 
     Ok(json!({
@@ -218,7 +219,7 @@ async fn verify_environment_variables(messages: &mut Vec<String>) -> Result<Valu
     }))
 }
 
-async fn verify_configuration_files(messages: &mut Vec<String>) -> Result<Value> {
+async fn verify_configuration_files(messages: &mut Vec<String>) -> NodeResult<Value> {
     let mut config_files = HashMap::new();
 
     // Check for default configuration locations
@@ -354,7 +355,7 @@ async fn verify_configuration_files(messages: &mut Vec<String>) -> Result<Value>
     }))
 }
 
-async fn test_toml_generation(messages: &mut Vec<String>) -> Result<Value> {
+async fn test_toml_generation(messages: &mut Vec<String>) -> NodeResult<Value> {
     info!("Testing TOML configuration generation");
 
     // Test that we can generate a valid TOML configuration
@@ -373,12 +374,15 @@ async fn test_toml_generation(messages: &mut Vec<String>) -> Result<Value> {
         }
         Err(e) => {
             messages.push(format!("✗ Generated TOML is invalid: {}", e));
-            bail!("TOML generation produces invalid configuration: {}", e);
+            Err(SinexError::configuration(format!(
+                "TOML generation produces invalid configuration: {}",
+                e
+            )))
         }
     }
 }
 
-async fn generate_test_configuration() -> Result<String> {
+async fn generate_test_configuration() -> NodeResult<String> {
     // Generate a minimal test configuration
     let test_config = r#"
 [database]
@@ -401,7 +405,7 @@ format = "json"
     Ok(test_config.to_string())
 }
 
-async fn verify_event_source_configuration(messages: &mut Vec<String>) -> Result<Value> {
+async fn verify_event_source_configuration(messages: &mut Vec<String>) -> NodeResult<Value> {
     let mut event_sources = HashMap::new();
 
     // Default event sources that Sinex supports
@@ -434,7 +438,7 @@ async fn verify_event_source_configuration(messages: &mut Vec<String>) -> Result
     }))
 }
 
-async fn verify_event_source_config(source_name: &str, description: &str) -> Result<Value> {
+async fn verify_event_source_config(source_name: &str, description: &str) -> NodeResult<Value> {
     // Check if the event source dependencies are available
     let available = match source_name {
         "filesystem" => true, // Always available
@@ -501,7 +505,9 @@ async fn check_atuin_availability() -> bool {
         .unwrap_or(false)
 }
 
-async fn verify_service_configuration_compatibility(messages: &mut Vec<String>) -> Result<Value> {
+async fn verify_service_configuration_compatibility(
+    messages: &mut Vec<String>,
+) -> NodeResult<Value> {
     let mut compatibility_info = HashMap::new();
 
     // Check systemd service compatibility
@@ -543,16 +549,18 @@ async fn verify_service_configuration_compatibility(messages: &mut Vec<String>) 
     Ok(json!(compatibility_info))
 }
 
-async fn check_systemd_compatibility() -> Result<Value> {
+async fn check_systemd_compatibility() -> NodeResult<Value> {
     // Check if systemd is available and running
     let systemd_version = tokio::process::Command::new("systemctl")
         .arg("--version")
         .output()
         .await
-        .wrap_err("Failed to check systemd version")?;
+        .map_err(|e| SinexError::processing(format!("Failed to check systemd version: {}", e)))?;
 
     if !systemd_version.status.success() {
-        bail!("systemd is not available or not functioning");
+        return Err(SinexError::processing(
+            "systemd is not available or not functioning".to_string(),
+        ));
     }
 
     let version_output = String::from_utf8_lossy(&systemd_version.stdout);
@@ -565,7 +573,7 @@ async fn check_systemd_compatibility() -> Result<Value> {
     }))
 }
 
-async fn check_nixos_compatibility() -> Result<Value> {
+async fn check_nixos_compatibility() -> NodeResult<Value> {
     // Check if we're running on NixOS
     let nixos_version = match tokio::fs::read_to_string("/etc/NIXOS").await {
         Ok(content) => Ok(content),
@@ -588,21 +596,24 @@ async fn check_nixos_compatibility() -> Result<Value> {
     }
 }
 
-pub async fn validate_toml_file(path: &Utf8Path) -> Result<Value> {
+pub async fn validate_toml_file(path: &Utf8Path) -> NodeResult<Value> {
     // Validate path before file operation to prevent path traversal
-    let validated_path = validate_path(path.as_str())
-        .wrap_err_with(|| format!("Invalid or dangerous path: {:?}", path))?;
+    let validated_path = validate_path(path.as_str()).map_err(|e| {
+        SinexError::validation(format!("Invalid or dangerous path {:?}: {}", path, e))
+    })?;
 
     let content = tokio::fs::read_to_string(&validated_path)
         .await
-        .wrap_err_with(|| format!("Failed to read TOML file: {:?}", validated_path))?;
+        .map_err(|e| SinexError::io(e))?;
 
     validate_toml_content(&content)
 }
 
-fn validate_toml_content(content: &str) -> Result<Value> {
+fn validate_toml_content(content: &str) -> NodeResult<Value> {
     // Parse TOML to validate syntax
-    let parsed: toml::Value = content.parse().wrap_err("Invalid TOML syntax")?;
+    let parsed: toml::Value = content
+        .parse()
+        .map_err(|e| SinexError::configuration(format!("Invalid TOML syntax: {}", e)))?;
 
     let mut sections = Vec::new();
 

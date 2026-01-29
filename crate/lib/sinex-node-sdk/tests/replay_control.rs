@@ -1,6 +1,6 @@
 use sinex_node_sdk::replay::ReplayController;
-use xtask::sandbox::sinex_test;
 use tokio::sync::oneshot;
+use xtask::sandbox::sinex_test;
 
 #[sinex_test]
 async fn pause_and_resume_toggle_state() -> color_eyre::Result<()> {

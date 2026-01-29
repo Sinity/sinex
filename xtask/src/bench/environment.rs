@@ -31,7 +31,9 @@ pub struct Environment {
 impl Environment {
     pub fn capture() -> Result<Self> {
         Ok(Self {
-            timestamp: chrono::Utc::now().to_rfc3339(),
+            timestamp: time::OffsetDateTime::now_utc()
+                .format(&time::format_description::well_known::Rfc3339)
+                .unwrap_or_else(|_| "unknown".to_string()),
             hostname: hostname().unwrap_or_else(|| "unknown".to_string()),
             uname: uname().unwrap_or_else(|| "unknown".to_string()),
             kernel: kernel_version().unwrap_or_else(|| "unknown".to_string()),

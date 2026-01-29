@@ -1,10 +1,10 @@
 use chrono::{Duration as ChronoDuration, Utc};
 use color_eyre::eyre::eyre;
 use serde_json::{json, Value as JsonValue};
-use sinex_core::types::events::DynamicPayload;
+use sinex_primitives::events::DynamicPayload;
 use sinex_processor_runtime::replay::{ReplayMode, ReplayProgress, ReplayRuntimeExt};
-use xtask::sandbox::{sinex_test, TestContext, TestRuntimeBuilder};
 use tokio::time::{timeout, Duration};
+use xtask::sandbox::{sinex_test, TestContext, TestRuntimeBuilder};
 
 #[sinex_test]
 async fn replay_runtime_service_emits_events(ctx: TestContext) -> color_eyre::Result<()> {

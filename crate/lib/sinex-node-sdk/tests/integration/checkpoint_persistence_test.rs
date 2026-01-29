@@ -5,11 +5,11 @@
 //! and that checkpoint managers can persist and recover state correctly.
 
 use serde_json::json;
-use sinex_core::types::domain::EventSource;
-use sinex_core::DynamicPayload;
+use sinex_node_sdk::types::domain::EventSource;
+use sinex_node_sdk::DynamicPayload;
 use sinex_node_sdk::CheckpointManager;
-use xtask::sandbox::prelude::*;
 use tracing::info;
+use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn test_checkpoint_recovery_from_empty_state(ctx: TestContext) -> TestResult<()> {
@@ -104,7 +104,7 @@ async fn test_checkpoint_manager_basic_functionality(ctx: TestContext) -> TestRe
         .events()
         .get_by_source(
             &EventSource::from_static("checkpoint-test"),
-            sinex_core::types::Pagination::new(Some(100), None),
+            sinex_node_sdk::types::Pagination::new(Some(100), None),
         )
         .await?;
     ctx.assert("test event creation")
@@ -265,7 +265,7 @@ async fn test_checkpoint_with_events_context(ctx: TestContext) -> TestResult<()>
         .events()
         .get_by_source(
             &EventSource::from_static("checkpoint-context"),
-            sinex_core::types::Pagination::new(Some(100), None),
+            sinex_node_sdk::types::Pagination::new(Some(100), None),
         )
         .await?;
     ctx.assert("events in database")

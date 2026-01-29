@@ -12,14 +12,14 @@
 use async_nats::jetstream;
 use camino::Utf8PathBuf;
 use serde_json::json;
-use sinex_core::nats::NatsConnectionConfig;
+use sinex_primitives::nats::NatsConnectionConfig;
 use sinex_ingestd::{config::IngestdConfig, service::IngestService, JetStreamTopology};
-use xtask::sandbox::prelude::*;
-use xtask::sandbox::timing::Timeouts;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::time::{timeout, Duration};
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::Timeouts;
 
 /// Test that ingestd completes in-flight processing before shutdown.
 #[sinex_test(timeout = 60)]
@@ -392,8 +392,8 @@ async fn test_shutdown_data_consistency(ctx: TestContext) -> TestResult<()> {
         .pool
         .events()
         .get_by_event_type(
-            &sinex_core::EventType::from("consistency.event"),
-            sinex_core::types::Pagination::new(Some(100), None),
+            &sinex_primitives::EventType::from("consistency.event"),
+            sinex_primitives::Pagination::new(Some(100), None),
         )
         .await?;
 

@@ -5,10 +5,10 @@
 
 use color_eyre::Result as EyreResult;
 use sinex_gateway::ServiceContainer;
-use xtask::sandbox::sinex_test;
 use std::env;
 use std::sync::Arc;
 use tempfile::TempDir;
+use xtask::sandbox::sinex_test;
 
 fn enable_replay_control_bypass() {
     env::set_var("SINEX_ALLOW_REPLAY_CONTROL_BYPASS", "1");

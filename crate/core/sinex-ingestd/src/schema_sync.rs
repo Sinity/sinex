@@ -3,10 +3,10 @@
 //! Helpers that ensure ingestd stays in sync with schema metadata.
 
 use crate::IngestdResult;
-use sinex_core::db::repositories::schema_management::{
+use sinex_db::repositories::schema_management::{
     NewEventSchema, SchemaManagementRepository, SchemaSyncResult,
 };
-use sinex_core::types::events::schema_registry::{generate_all_schemas, get_all_payloads};
+use sinex_primitives::events::schema_registry::{generate_all_schemas, get_all_payloads};
 use sqlx::PgPool;
 use tracing::info;
 
@@ -25,7 +25,7 @@ pub async fn synchronize_schemas(pool: &PgPool) -> IngestdResult<SchemaSyncResul
 /// Compute the canonical content hash for a schema (exposed for tests)
 pub fn compute_content_hash_for_testing(
     content: &serde_json::Value,
-) -> Result<String, sinex_core::types::error::SinexError> {
+) -> Result<String, sinex_primitives::error::SinexError> {
     let schema = NewEventSchema {
         source: "test-source".to_string(),
         event_type: "test-event".to_string(),

@@ -3,11 +3,11 @@
 //! Common error handling and configuration parsing utilities to reduce code duplication
 //! across nodes. These helpers provide consistent error context and conversion patterns.
 
-use crate::{stream_processor::NodeRuntimeState, NodeError};
+use crate::{stream_processor::NodeRuntimeState, SinexError};
 use std::collections::HashMap;
 use std::io;
 
-/// Convert IO errors to NodeError with context
+/// Convert IO errors to SinexError with context
 ///
 /// # Examples
 ///
@@ -17,28 +17,28 @@ use std::io;
 /// let result = std::fs::read("nonexistent.txt")
 ///     .map_err(|e| io_error_with_context(e, "Failed to read config file"));
 /// ```
-pub fn io_error_with_context(error: io::Error, context: &str) -> NodeError {
-    NodeError::Processing(format!("{}: {}", context, error))
+pub fn io_error_with_context(error: io::Error, context: &str) -> SinexError {
+    SinexError::io(format!("{}: {}", context, error))
 }
 
-/// Convert UTF-8 conversion errors to NodeError with context
-pub fn utf8_error_with_context(error: std::string::FromUtf8Error, context: &str) -> NodeError {
-    NodeError::Processing(format!("{}: {}", context, error))
+/// Convert UTF-8 conversion errors to SinexError with context
+pub fn utf8_error_with_context(error: std::string::FromUtf8Error, context: &str) -> SinexError {
+    SinexError::processing(format!("{}: {}", context, error))
 }
 
-/// Convert serde_json errors to NodeError with context
-pub fn json_error_with_context(error: serde_json::Error, context: &str) -> NodeError {
-    NodeError::Processing(format!("{}: {}", context, error))
+/// Convert serde_json errors to SinexError with context
+pub fn json_error_with_context(error: serde_json::Error, context: &str) -> SinexError {
+    SinexError::processing(format!("{}: {}", context, error))
 }
 
 /// Create a processing error with formatted context
-pub fn processing_error(message: &str) -> NodeError {
-    NodeError::Processing(message.to_string())
+pub fn processing_error(message: &str) -> SinexError {
+    SinexError::processing(message)
 }
 
 /// Create a processing error with formatted message
-pub fn processing_error_fmt(args: std::fmt::Arguments<'_>) -> NodeError {
-    NodeError::Processing(args.to_string())
+pub fn processing_error_fmt(args: std::fmt::Arguments<'_>) -> SinexError {
+    SinexError::processing(args.to_string())
 }
 
 /// Parse configuration value from context with fallback handling
@@ -109,7 +109,7 @@ pub mod path_utils {
     pub fn sanitize_path_component(path_str: &str) -> String {
         let path = std::path::Path::new(path_str);
         if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
-            let sanitized_name = sinex_core::types::sanitize_filename_component(filename)
+            let sanitized_name = sinex_primitives::sanitize_filename_component(filename)
                 .unwrap_or_else(|_| filename.to_string());
             path.parent()
                 .map(|parent| parent.join(&sanitized_name).to_string_lossy().to_string())
@@ -149,10 +149,10 @@ pub mod path_utils {
     }
 }
 
-/// Convert any error to NodeError::General with context
+/// Convert any error to SinexError::processing with context
 ///
 /// This is a convenience function for the common pattern of wrapping errors
-/// in NodeError::General with eyre for rich error context.
+/// in SinexError::processing for rich error context.
 ///
 /// # Examples
 ///
@@ -166,15 +166,15 @@ pub mod path_utils {
 ///
 /// let node_result = result.map_err(|e| general_error(e, "Failed to read config"));
 /// ```
-pub fn general_error<E: std::fmt::Display>(error: E, context: &str) -> crate::NodeError {
-    crate::NodeError::General(color_eyre::eyre::eyre!("{}: {}", context, error))
+pub fn general_error<E: std::fmt::Display>(error: E, context: &str) -> crate::SinexError {
+    crate::SinexError::processing(format!("{}: {}", context, error))
 }
 
-/// Extension trait for Result types to simplify NodeError conversion
+/// Extension trait for Result types to simplify SinexError conversion
 ///
 /// This trait provides convenient methods to convert any Result into a
 /// NodeResult with proper error context, eliminating the verbose
-/// `.map_err(|e| NodeError::General(eyre::eyre!("context: {}", e)))?` pattern.
+/// `.map_err(|e| SinexError::processing(format!("context: {}", e)))?` pattern.
 ///
 /// # Examples
 ///
@@ -183,7 +183,7 @@ pub fn general_error<E: std::fmt::Display>(error: E, context: &str) -> crate::No
 /// acquisition
 ///     .begin_material(&identifier)
 ///     .await
-///     .map_err(|e| NodeError::General(eyre::eyre!("Failed to begin material: {}", e)))?;
+///     .map_err(|e| SinexError::processing(format!("Failed to begin material: {}", e)))?;
 /// ```
 ///
 /// **After:**
@@ -196,19 +196,19 @@ pub fn general_error<E: std::fmt::Display>(error: E, context: &str) -> crate::No
 ///     .node_err("Failed to begin material")?;
 /// ```
 pub trait NodeErrorExt<T> {
-    /// Convert error to NodeError::General with context
-    fn node_err(self, context: &str) -> Result<T, crate::NodeError>;
+    /// Convert error to SinexError::processing with context
+    fn node_err(self, context: &str) -> Result<T, crate::SinexError>;
 
-    /// Convert error to NodeError::Processing with context
-    fn processing_err(self, context: &str) -> Result<T, crate::NodeError>;
+    /// Convert error to SinexError::processing with context
+    fn processing_err(self, context: &str) -> Result<T, crate::SinexError>;
 }
 
 impl<T, E: std::fmt::Display> NodeErrorExt<T> for Result<T, E> {
-    fn node_err(self, context: &str) -> Result<T, crate::NodeError> {
+    fn node_err(self, context: &str) -> Result<T, crate::SinexError> {
         self.map_err(|e| general_error(e, context))
     }
 
-    fn processing_err(self, context: &str) -> Result<T, crate::NodeError> {
-        self.map_err(|e| crate::NodeError::Processing(format!("{}: {}", context, e)))
+    fn processing_err(self, context: &str) -> Result<T, crate::SinexError> {
+        self.map_err(|e| crate::SinexError::processing(format!("{}: {}", context, e)))
     }
 }

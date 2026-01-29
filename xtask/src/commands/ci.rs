@@ -10,7 +10,9 @@ use std::process::Command;
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 
 /// CI command configuration
+#[derive(Debug, Clone, clap::Args)]
 pub struct CiCommand {
+    #[command(subcommand)]
     pub subcommand: CiSubcommand,
 }
 
@@ -260,7 +262,10 @@ fn execute_workspace(target_dir: &str, ctx: &CommandContext) -> Result<CommandRe
     }
     let check_result = crate::commands::check::CheckCommand {
         skip_fmt: false,
-        skip_check: false,
+        lint: true,
+        forbidden: true,
+        heavy: false,
+        affected: false,
     }
     .execute(ctx)?;
     if !check_result.is_success() {

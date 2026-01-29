@@ -194,7 +194,11 @@ fn test_deps_timings_custom_top_parameter() {
     // Test timings command with custom top value
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze").arg("deps").arg("timings").arg("--top").arg("5");
+    cmd.arg("analyze")
+        .arg("deps")
+        .arg("timings")
+        .arg("--top")
+        .arg("5");
 
     let output = cmd.output().unwrap();
 
@@ -218,7 +222,11 @@ fn test_deps_timings_top_with_large_number() {
     // Test timings with a large top value
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze").arg("deps").arg("timings").arg("--top").arg("50");
+    cmd.arg("analyze")
+        .arg("deps")
+        .arg("timings")
+        .arg("--top")
+        .arg("50");
 
     let output = cmd.output().unwrap();
 
@@ -239,7 +247,11 @@ fn test_deps_timings_top_with_zero() {
     // Test timings with zero (edge case)
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze").arg("deps").arg("timings").arg("--top").arg("0");
+    cmd.arg("analyze")
+        .arg("deps")
+        .arg("timings")
+        .arg("--top")
+        .arg("0");
 
     let output = cmd.output().unwrap();
 
@@ -257,7 +269,8 @@ fn test_deps_timings_compare_parameter() {
     // Test timings command with compare option
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze").arg("deps")
+    cmd.arg("analyze")
+        .arg("deps")
         .arg("timings")
         .arg("--compare")
         .arg("previous");
@@ -312,7 +325,11 @@ fn test_deps_tree_with_depth_parameter() {
     // Test tree with explicit depth
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze").arg("deps").arg("tree").arg("--depth").arg("3");
+    cmd.arg("analyze")
+        .arg("deps")
+        .arg("tree")
+        .arg("--depth")
+        .arg("3");
 
     cmd.assert().success();
 }
@@ -322,7 +339,11 @@ fn test_deps_tree_with_max_depth() {
     // Test tree with maximum depth
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze").arg("deps").arg("tree").arg("--depth").arg("20");
+    cmd.arg("analyze")
+        .arg("deps")
+        .arg("tree")
+        .arg("--depth")
+        .arg("20");
 
     cmd.assert().success();
 }
@@ -332,7 +353,11 @@ fn test_deps_tree_with_zero_depth() {
     // Test tree with zero depth (edge case)
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze").arg("deps").arg("tree").arg("--depth").arg("0");
+    cmd.arg("analyze")
+        .arg("deps")
+        .arg("tree")
+        .arg("--depth")
+        .arg("0");
 
     let output = cmd.output().unwrap();
 
@@ -349,7 +374,10 @@ fn test_deps_duplicates_recognized_command() {
     // Test duplicates command is recognized
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze").arg("deps").arg("duplicates").arg("--help");
+    cmd.arg("analyze")
+        .arg("deps")
+        .arg("duplicates")
+        .arg("--help");
 
     cmd.assert().success();
 }
@@ -359,7 +387,8 @@ fn test_deps_duplicates_threshold_parameter() {
     // Test duplicates with threshold parameter
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze").arg("deps")
+    cmd.arg("analyze")
+        .arg("deps")
         .arg("duplicates")
         .arg("--threshold")
         .arg("5");
@@ -378,7 +407,10 @@ fn test_deps_duplicates_help_shows_threshold_param() {
     // Verify that the threshold parameter is documented in help
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze").arg("deps").arg("duplicates").arg("--help");
+    cmd.arg("analyze")
+        .arg("deps")
+        .arg("duplicates")
+        .arg("--help");
 
     cmd.assert()
         .success()
@@ -427,7 +459,11 @@ fn test_deps_timings_top_parameter_parsing() {
     // Test that top parameter is parsed correctly
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze").arg("deps").arg("timings").arg("--top").arg("15");
+    cmd.arg("analyze")
+        .arg("deps")
+        .arg("timings")
+        .arg("--top")
+        .arg("15");
 
     let output = cmd.output().unwrap();
 
@@ -443,7 +479,11 @@ fn test_deps_timings_invalid_top() {
     // Test with invalid top value (non-numeric)
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze").arg("deps").arg("timings").arg("--top").arg("invalid");
+    cmd.arg("analyze")
+        .arg("deps")
+        .arg("timings")
+        .arg("--top")
+        .arg("invalid");
 
     let output = cmd.output().unwrap();
 
@@ -458,7 +498,8 @@ fn test_deps_duplicates_invalid_threshold() {
     // Test with invalid threshold value
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze").arg("deps")
+    cmd.arg("analyze")
+        .arg("deps")
         .arg("duplicates")
         .arg("--threshold")
         .arg("not-a-number");

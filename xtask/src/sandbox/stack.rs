@@ -47,18 +47,21 @@ impl StackConfig {
 
     /// Create config from a CheckoutState
     pub fn from_checkout_state(state: &CheckoutState) -> Self {
-        let port_offset = Self::port_offset_for_checkout(state.checkout_root());
+        // Use fixed ports - no conflicts between checkouts because each has isolated
+        // Unix socket directory. TCP is disabled (listen_addresses='') so port is
+        // only used in socket filename (.s.PGSQL.5432)
+        let offset = Self::port_offset_for_checkout(state.checkout_root());
 
         Self {
             state_dir: state.state_dir().to_path_buf(),
             postgres: PostgresConfig {
-                port: 5433 + port_offset,
+                port: 5432, // PostgreSQL default - only used in Unix socket filename (TCP disabled)
                 database: "sinex_dev".to_string(),
                 user: std::env::var("USER").unwrap_or_else(|_| "sinity".to_string()),
                 superuser: "postgres".to_string(),
             },
             nats: NatsConfig {
-                port: 4223 + port_offset,
+                port: 4222 + offset, // NATS with offset to avoid TCP conflicts
                 jetstream: true,
             },
             annex: AnnexConfig {
@@ -314,7 +317,7 @@ pub fn pg_init(config: &StackConfig, verbose: bool) -> Result<()> {
         "unix_socket_directories = '{}'",
         config.run_dir().display()
     )?;
-    writeln!(conf, "listen_addresses = '127.0.0.1'")?;
+    writeln!(conf, "listen_addresses = ''")?;
     writeln!(conf, "port = {}", config.postgres.port)?;
     writeln!(conf, "max_connections = 200")?;
     writeln!(conf, "shared_preload_libraries = 'timescaledb'")?;

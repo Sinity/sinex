@@ -1,12 +1,14 @@
 [workspace]
 members = [
   # Library crates
-  "crate/lib/sinex-core",
+
+  "crate/lib/sinex-primitives",
   "crate/lib/sinex-schema",
   "crate/lib/sinex-macros",
   "crate/lib/sinex-node-sdk",
   "crate/lib/sinex-processor-runtime",
   "crate/lib/sinex-services",
+  "crate/lib/sinex-db",
   # Re-enabled to ensure tests compile
 
   # Core runtime crates
@@ -34,7 +36,6 @@ members = [
 
   # CLI tools
   "cli/sinex-cli",
-  "cli/sinexctl",
 
   # Keep experimental automata disabled until stabilized
   # "crate/nodes/sinex-content-automaton",
@@ -47,8 +48,6 @@ members = [
   # "crate/sinex-annex", # Folded into sinex-node-sdk
   # "crate/sinex-preflight", # Folded into sinex-node-sdk
   # "crate/sinex-nats", # Folded into sinex-node-sdk
-  # "crate/sinex-telemetry", # Folded into sinex-core
-  # "crate/sinex-schema-manager", # Folded into sinex-core
 ]
 resolver = "2"
 
@@ -90,13 +89,15 @@ sqlx = { version = "0.8", default-features = false, features = [
   "runtime-tokio-rustls",
   "postgres",
   "uuid",
-  "chrono",
+  "time",
   "json",
   "macros",
   "migrate",
   "bigdecimal",
 ] }
-sea-query = { version = "0.31", features = ["with-chrono", "with-uuid", "with-json", "postgres-array"] }
+sea-query = { version = "0.32", features = ["with-time", "with-uuid", "with-json", "postgres-array"] }
+sea-orm = { version = "1.1", features = ["sqlx-postgres", "runtime-tokio-rustls", "macros", "with-time"] }
+sea-orm-migration = { version = "1.1", features = ["sqlx-postgres", "runtime-tokio-rustls"] }
 
 # Serialization
 serde = { version = "1.0.219", features = ["derive"] }
@@ -118,7 +119,6 @@ tracing-subscriber = { version = "0.3.19", features = ["env-filter", "json"] }
 # IDs and time
 ulid = { version = "1.2.1", features = ["serde"] }
 uuid = { version = "1.17.0", features = ["v4", "serde"] }
-chrono = { version = "0.4.41", features = ["serde"] }
 
 # HTTP and metrics
 axum = "0.7"
@@ -147,6 +147,7 @@ parking_lot = "0.12"
 
 # Message bus
 async-nats = "0.33"
+time = { version = "0.3", features = ["serde", "formatting", "parsing", "macros"] }
 
 # System integration
 sd-notify = "0.4"
@@ -176,7 +177,7 @@ which = "5.0"
 regex = "1.11.1"
 url = "2"
 unicode-normalization = "0.1"
-schemars = { version = "0.8", features = ["chrono", "uuid1"] }
+schemars = { version = "0.8", features = ["uuid1"] }
 tempfile = "3.0"
 jsonschema = "0.17"
 validator = { version = "0.18", features = ["derive"] }
@@ -205,7 +206,7 @@ license = "MIT OR Apache-2.0"
 build = "build.rs"
 
 [build-dependencies]
-chrono = { workspace = true }
+time = { workspace = true }
 
 [dev-dependencies]
 lazy_static = { workspace = true }
@@ -215,14 +216,14 @@ which = { workspace = true }
 rstest = { workspace = true }
 proptest = { workspace = true }
 serde_json = { workspace = true }
-chrono = { workspace = true }
+time = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }
 futures = { workspace = true }
 tracing-test = { workspace = true }
 uuid = { workspace = true }
 color-eyre = { workspace = true }
-sinex-core = { path = "crate/lib/sinex-core", features = ["testing"] }
+
 blake3 = { workspace = true }
 once_cell = { workspace = true }
 async-nats = { workspace = true }

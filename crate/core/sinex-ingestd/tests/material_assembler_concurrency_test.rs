@@ -4,14 +4,14 @@ use async_nats::jetstream;
 use blake3::Hasher;
 use futures::future::join_all;
 use serde_json::json;
-use sinex_core::types::ulid::Ulid;
 use sinex_ingestd::{IngestdResult, MaterialAssembler};
 use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
-use xtask::sandbox::prelude::*;
-use xtask::sandbox::timing::{WaitHelpers, DEFAULT_WAIT_SECS};
+use sinex_primitives::Ulid;
 use sqlx::Row;
 use std::sync::Arc;
 use std::time::Duration;
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::{WaitHelpers, DEFAULT_WAIT_SECS};
 
 async fn fake_annex() -> TestResult<(Arc<GitAnnex>, tempfile::TempDir)> {
     let dir = tempfile::tempdir()?;
@@ -85,9 +85,7 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
     );
 
     // Prepare three materials with predictable hashes/offsets.
-    let material_ids: Vec<_> = (0..3)
-        .map(|_| sinex_core::types::ulid::Ulid::new())
-        .collect();
+    let material_ids: Vec<_> = (0..3).map(|_| sinex_primitives::Ulid::new()).collect();
     let mut material_plans = Vec::new();
     for (idx, material_id) in material_ids.iter().enumerate() {
         let mut slices = Vec::new();
@@ -114,7 +112,7 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
             ON CONFLICT (id) DO NOTHING
             "#,
         )
-        .bind(sinex_core::db::query_helpers::ulid_to_uuid(*material_id))
+        .bind(sinex_db::query_helpers::ulid_to_uuid(*material_id))
         .bind(format!("test://concurrent/{}", material_id))
         .execute(&ctx.pool)
         .await?;
@@ -126,13 +124,15 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
                 let js = js.clone();
                 let stream = stream.to_string();
                 async move {
-                    let mut stream_handle = js.get_stream(&stream).await.map_err(|e| {
-                        sinex_core::types::error::SinexError::network(e.to_string())
-                    })?;
-                    let info = stream_handle.info().await.map_err(|e| {
-                        sinex_core::types::error::SinexError::network(e.to_string())
-                    })?;
-                    Ok::<bool, sinex_core::types::error::SinexError>(info.state.consumer_count > 0)
+                    let mut stream_handle = js
+                        .get_stream(&stream)
+                        .await
+                        .map_err(|e| sinex_primitives::error::SinexError::network(e.to_string()))?;
+                    let info = stream_handle
+                        .info()
+                        .await
+                        .map_err(|e| sinex_primitives::error::SinexError::network(e.to_string()))?;
+                    Ok::<bool, sinex_primitives::error::SinexError>(info.state.consumer_count > 0)
                 }
             },
             DEFAULT_WAIT_SECS,
@@ -159,7 +159,7 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
                 "material_kind": "annex",
                 "source_identifier": format!("test://concurrent/{}", material_id),
                 "metadata": {"idx": material_id.to_string()},
-                "started_at": chrono::Utc::now().to_rfc3339(),
+                "started_at": crate::temporal::now().to_rfc3339(),
             })
             .to_string()
             .into(),
@@ -199,7 +199,7 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
             ctx.pipeline_namespace().subject("source_material.end"),
             json!({
                 "material_id": material_id.to_string(),
-                "ended_at": chrono::Utc::now().to_rfc3339(),
+                "ended_at": crate::temporal::now().to_rfc3339(),
                 "content_hash": hash,
                 "total_slices": slices.len(),
                 "total_size_bytes": total_size,
@@ -282,7 +282,7 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
     // Wait for ledger entries to appear for all materials, while also surfacing assembler failures.
     let ledger_wait = async {
         for (material_id, _, total_size, _) in &material_plans {
-            let material_id_uuid = sinex_core::db::query_helpers::ulid_to_uuid(*material_id);
+            let material_id_uuid = sinex_db::query_helpers::ulid_to_uuid(*material_id);
             WaitHelpers::wait_for_condition(
                 || {
                     let pool = ctx.pool.clone();
@@ -302,14 +302,14 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
                             let offset_end: i64 = row.try_get("offset_end")?;
                             let offset_kind: String = row.try_get("offset_kind")?;
                             if offset_end != *total_size {
-                                return Err(sinex_core::types::error::SinexError::database(
+                                return Err(sinex_primitives::error::SinexError::database(
                                     format!(
                                         "ledger offset_end {offset_end} != expected {total_size}"
                                     ),
                                 ));
                             }
                             if offset_kind != "byte" {
-                                return Err(sinex_core::types::error::SinexError::database(
+                                return Err(sinex_primitives::error::SinexError::database(
                                     format!("ledger offset_kind {offset_kind} != byte"),
                                 ));
                             }
@@ -373,7 +373,7 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
             WHERE id = ($1::uuid)::ulid
             "#,
         )
-        .bind(sinex_core::db::query_helpers::ulid_to_uuid(*material_id))
+        .bind(sinex_db::query_helpers::ulid_to_uuid(*material_id))
         .fetch_one(&ctx.pool)
         .await?;
 

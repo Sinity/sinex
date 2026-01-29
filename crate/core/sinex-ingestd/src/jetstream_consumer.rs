@@ -3,21 +3,17 @@
 //! See `crate::docs::ingestion_pipeline` for architectural details.
 
 use async_nats::{jetstream, Client as NatsClient};
-use chrono::{DateTime, SecondsFormat, Timelike, Utc};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
-use sinex_core::{
-    db::{repositories::DbPoolExt, DbPool},
-    environment::SinexEnvironment,
-    repositories::StreamBatchRow,
-    types::ulid::Ulid,
-    JsonValue,
-};
+use sinex_db::repositories::StreamBatchRow;
+use sinex_db::{repositories::DbPoolExt, DbPool};
+use sinex_primitives::{environment::SinexEnvironment, ulid::Ulid, JsonValue};
 use sqlx::postgres::PgPoolCopyExt;
 use std::collections::{HashSet, VecDeque};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use time::OffsetDateTime;
 use tokio::time::{timeout, Duration};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -26,26 +22,9 @@ use crate::{
     validator::{EventValidator, ValidationResult},
     IngestdResult, SinexError,
 };
+use sinex_db::postgres_copy::ToPostgresCopy;
+use sinex_primitives::events::Event;
 use tokio::sync::RwLock;
-
-#[derive(Debug, Deserialize)]
-struct RawEvent {
-    id: String,
-    source: String,
-    event_type: String,
-    ts_orig: String,
-    host: String,
-    payload: JsonValue,
-    ingestor_version: Option<String>,
-    payload_schema_id: Option<String>,
-    associated_blob_ids: Option<Vec<String>>,
-    source_material_id: Option<String>,
-    anchor_byte: Option<i64>,
-    offset_start: Option<i64>,
-    offset_end: Option<i64>,
-    offset_kind: Option<String>,
-    source_event_ids: Option<Vec<String>>,
-}
 
 #[derive(Debug, Serialize)]
 struct Confirmation {
@@ -180,18 +159,8 @@ impl RecentIdCache {
 }
 
 struct PreparedEvent {
-    raw: RawEvent,
-    parsed_id: sinex_core::types::ulid::Ulid,
-    parsed_ts: DateTime<Utc>,
-    source_material_id: Option<Uuid>,
-    anchor_byte: Option<i64>,
-    offset_start: Option<i64>,
-    offset_end: Option<i64>,
-    offset_kind: Option<String>,
-    source_event_ids: Option<Vec<Uuid>>,
-    payload_schema_id: Option<Uuid>,
-    ingestor_version: Option<String>,
-    associated_blob_ids: Option<Vec<Uuid>>,
+    event: Event<JsonValue>,
+    parsed_id: Ulid,
     message: jetstream::Message,
 }
 
@@ -490,8 +459,8 @@ impl JetStreamConsumer {
     }
 
     async fn prepare_event(&self, msg: jetstream::Message) -> IngestdResult<Option<PreparedEvent>> {
-        // Parse event
-        let raw_event: RawEvent = match serde_json::from_slice(&msg.payload) {
+        // Parse event using unified Event model
+        let event: Event<JsonValue> = match serde_json::from_slice(&msg.payload) {
             Ok(e) => e,
             Err(e) => {
                 error!(event_id = ?msg.headers, "Failed to parse event: {}", e);
@@ -502,150 +471,27 @@ impl JetStreamConsumer {
         };
 
         // Validate event using EventValidator
-        if let Err(e) = self.validate_event(&raw_event).await {
-            warn!(event_id = %raw_event.id, "Event validation failed: {}", e);
+        if let Err(e) = self.validate_event(&event).await {
+            warn!(event_id = ?event.id, "Event validation failed: {}", e);
             self.route_validation_failure(&msg, format!("Validation failed: {}", e))
                 .await?;
             return Ok(None);
         }
 
-        // Parse timestamp early to isolate poison messages
-        let parsed_ts = match raw_event.ts_orig.parse::<DateTime<Utc>>() {
-            Ok(ts) => ts,
-            Err(e) => {
-                error!(
-                    event_id = %raw_event.id,
-                    ts = %raw_event.ts_orig,
-                    "Invalid timestamp; routing to DLQ: {}",
-                    e
-                );
-                self.route_validation_failure(&msg, format!("Invalid timestamp: {}", e))
+        // The ID MUST be present for events coming from Ingestors
+        let parsed_id = match event.id {
+            Some(id) => *id.as_ulid(),
+            None => {
+                error!("Event missing required ID; routing to DLQ");
+                self.route_validation_failure(&msg, "Missing event ID".to_string())
                     .await?;
                 return Ok(None);
             }
         };
-
-        let parsed_id = match Ulid::from_str(&raw_event.id) {
-            Ok(id) => id,
-            Err(e) => {
-                error!(event_id = %raw_event.id, "Invalid ULID; routing to DLQ: {}", e);
-                self.route_validation_failure(&msg, format!("Invalid ULID: {}", e))
-                    .await?;
-                return Ok(None);
-            }
-        };
-
-        let payload_schema_id = match parse_optional_uuid(
-            raw_event.payload_schema_id.as_deref(),
-            "payload_schema_id",
-        ) {
-            Ok(value) => value,
-            Err(error) => {
-                self.route_validation_failure(&msg, error).await?;
-                return Ok(None);
-            }
-        };
-
-        let associated_blob_ids = match parse_uuid_list(
-            raw_event.associated_blob_ids.as_ref(),
-            "associated_blob_ids",
-        ) {
-            Ok(value) => value,
-            Err(error) => {
-                self.route_validation_failure(&msg, error).await?;
-                return Ok(None);
-            }
-        };
-
-        let provenance = match (
-            raw_event.source_material_id.as_deref(),
-            raw_event.source_event_ids.as_ref(),
-        ) {
-            (Some(_), Some(_)) => {
-                Err("Event cannot provide both source_material_id and source_event_ids".to_string())
-            }
-            (Some(material_id), None) => {
-                match parse_ulid_value(material_id, "source_material_id") {
-                    Ok(uuid) => match normalize_offset_kind(raw_event.offset_kind.as_deref()) {
-                        Ok(offset_kind) => Ok(PreparedProvenance::Material {
-                            source_material_id: uuid,
-                            anchor_byte: raw_event.anchor_byte.unwrap_or(0),
-                            offset_start: raw_event.offset_start,
-                            offset_end: raw_event.offset_end,
-                            offset_kind,
-                        }),
-                        Err(error) => Err(error),
-                    },
-                    Err(error) => Err(error),
-                }
-            }
-            (None, Some(source_ids)) if !source_ids.is_empty() => {
-                match parse_ulid_slice(source_ids, "source_event_ids") {
-                    Ok(parsed) => Ok(PreparedProvenance::Synthesis {
-                        source_event_ids: parsed,
-                    }),
-                    Err(error) => Err(error),
-                }
-            }
-            (None, Some(_)) => Err("source_event_ids must contain at least one entry".to_string()),
-            (None, None) => {
-                warn!(event_id = %raw_event.id, "Event missing provenance metadata; assuming self-referential synthesis");
-                Ok(PreparedProvenance::Synthesis {
-                    source_event_ids: vec![parsed_id.as_uuid()],
-                })
-            }
-        };
-
-        let provenance = match provenance {
-            Ok(provenance) => provenance,
-            Err(error) => {
-                self.route_validation_failure(&msg, error).await?;
-                return Ok(None);
-            }
-        };
-
-        let (
-            source_material_id,
-            anchor_byte,
-            offset_start,
-            offset_end,
-            offset_kind,
-            source_event_ids,
-        ) = match provenance {
-            PreparedProvenance::Material {
-                source_material_id,
-                anchor_byte,
-                offset_start,
-                offset_end,
-                offset_kind,
-            } => (
-                Some(source_material_id),
-                Some(anchor_byte),
-                offset_start,
-                offset_end,
-                Some(offset_kind),
-                None,
-            ),
-            PreparedProvenance::Synthesis { source_event_ids } => {
-                (None, None, None, None, None, Some(source_event_ids))
-            }
-        };
-
-        let ingestor_version = raw_event.ingestor_version.clone();
 
         Ok(Some(PreparedEvent {
-            raw: raw_event,
+            event,
             parsed_id,
-            parsed_ts,
-            source_material_id,
-            anchor_byte,
-            offset_start,
-            offset_end,
-            offset_kind,
-            source_event_ids,
-            payload_schema_id,
-            ingestor_version,
-            associated_blob_ids,
             message: msg,
         }))
     }
@@ -789,17 +635,7 @@ impl JetStreamConsumer {
     }
 
     /// Validate event against JSON schema
-    async fn validate_event(&self, event: &RawEvent) -> IngestdResult<()> {
-        if event.id.is_empty() {
-            return Err(SinexError::validation("Event ID cannot be empty"));
-        }
-        if event.source.is_empty() {
-            return Err(SinexError::validation("Event source cannot be empty"));
-        }
-        if event.event_type.is_empty() {
-            return Err(SinexError::validation("Event type cannot be empty"));
-        }
-
+    async fn validate_event(&self, event: &Event<JsonValue>) -> IngestdResult<()> {
         let guard = self.validator.read().await;
         let validation =
             guard.validate_payload_for(&event.source, &event.event_type, &event.payload);
@@ -942,7 +778,7 @@ impl JetStreamConsumer {
         let mut row_buf = Vec::with_capacity(1024);
         for prepared in batch {
             row_buf.clear();
-            if let Err(err) = write_copy_row(&mut row_buf, prepared) {
+            if let Err(err) = prepared.event.write_copy_row(&mut row_buf) {
                 let _ = copy.abort("COPY row encoding failed").await;
                 return Err(err);
             }
@@ -959,25 +795,56 @@ impl JetStreamConsumer {
         &self,
         batch: &[&PreparedEvent],
     ) -> IngestdResult<Vec<Ulid>> {
-        // Convert PreparedEvent to StreamBatchRow for repository method
+        // Warning: This batch method bypasses `ensure_no_synthesis_cycles`.
+        // While efficient, it risks introducing circular synthesis dependencies.
+        // Consider implementing a batched cycle check or ensuring upstream validation.
+
+        if batch.is_empty() {
+            return Ok(Vec::new());
+        }
+
         let rows: Vec<StreamBatchRow> = batch
             .iter()
-            .map(|prepared| StreamBatchRow {
-                id: prepared.parsed_id,
-                source: prepared.raw.source.clone(),
-                event_type: prepared.raw.event_type.clone(),
-                ts_orig: prepared.parsed_ts,
-                host: prepared.raw.host.clone(),
-                payload: prepared.raw.payload.clone(),
-                source_material_id: prepared.source_material_id,
-                anchor_byte: prepared.anchor_byte,
-                offset_start: prepared.offset_start,
-                offset_end: prepared.offset_end,
-                offset_kind: prepared.offset_kind.clone(),
-                source_event_ids: prepared.source_event_ids.clone(),
-                payload_schema_id: prepared.payload_schema_id,
-                ingestor_version: prepared.ingestor_version.clone(),
-                associated_blob_ids: prepared.associated_blob_ids.clone(),
+            .map(|prepared| {
+                let event = &prepared.event;
+                let (
+                    source_event_ids,
+                    source_material_id,
+                    offset_start,
+                    offset_end,
+                    offset_kind,
+                    anchor_byte,
+                ) = sinex_db::repositories::events::conversions::extract_provenance(event);
+
+                // Re-map extracted provenance to match StreamBatchRow expectations
+                // extract_provenance returns Option<Vec<Ulid>> for source_event_ids
+                // StreamBatchRow expects Option<Vec<Uuid>>.
+                let source_event_ids =
+                    source_event_ids.map(|ids| ids.iter().map(|id| id.as_uuid()).collect());
+                let source_material_id = source_material_id.map(|id| id.as_uuid());
+
+                StreamBatchRow {
+                    id: prepared.parsed_id,
+                    source: event.source.as_str().to_string(),
+                    event_type: event.event_type.as_str().to_string(),
+                    ts_orig: event
+                        .ts_orig
+                        .unwrap_or_else(sinex_primitives::Timestamp::now),
+                    host: event.host.as_str().to_string(),
+                    payload: event.payload.clone(),
+                    source_material_id,
+                    anchor_byte,
+                    offset_start,
+                    offset_end,
+                    offset_kind,
+                    source_event_ids,
+                    payload_schema_id: event.payload_schema_id.map(|id| id.as_uuid()),
+                    ingestor_version: event.ingestor_version.clone(),
+                    associated_blob_ids: event
+                        .associated_blob_ids
+                        .as_ref()
+                        .map(|ids| ids.iter().map(|id| id.as_uuid()).collect()),
+                }
             })
             .collect();
 
@@ -987,11 +854,6 @@ impl JetStreamConsumer {
         )
         .await
         .map_err(|_| {
-            error!(
-                batch_size = batch.len(),
-                timeout_seconds = DB_WRITE_TIMEOUT.as_secs(),
-                "Timed out waiting for batch insert to complete"
-            );
             SinexError::database(format!(
                 "Persisting batch timed out after {:?}",
                 DB_WRITE_TIMEOUT
@@ -1018,7 +880,9 @@ impl JetStreamConsumer {
         let confirmation = Confirmation {
             event_id: event_id_str.clone(),
             persisted: true,
-            ts_ingest: Utc::now().to_rfc3339(),
+            ts_ingest: sinex_primitives::temporal::format_rfc3339(
+                sinex_primitives::Timestamp::from(OffsetDateTime::now_utc()),
+            ),
         };
 
         let subject = format!("{}{}", self.topology.confirmations_prefix, event_id_str);
@@ -1094,7 +958,9 @@ impl JetStreamConsumer {
                 .unwrap_or_else(|| "unknown".to_string()),
             error,
             original_payload,
-            failed_at: Utc::now().to_rfc3339(),
+            failed_at: sinex_primitives::temporal::format_rfc3339(
+                sinex_primitives::Timestamp::from(OffsetDateTime::now_utc()),
+            ),
         };
 
         let payload = match serde_json::to_vec(&dlq_entry) {
@@ -1210,151 +1076,5 @@ fn is_unique_violation(err: &sqlx::Error) -> bool {
     match err {
         sqlx::Error::Database(db_err) => db_err.code().as_deref() == Some("23505"),
         _ => false,
-    }
-}
-
-fn write_copy_row(buf: &mut Vec<u8>, prepared: &PreparedEvent) -> Result<(), sqlx::Error> {
-    let id = prepared.parsed_id.to_string();
-    let ts_orig = prepared
-        .parsed_ts
-        .to_rfc3339_opts(SecondsFormat::Micros, true);
-    let ts_orig_subnano = (prepared.parsed_ts.nanosecond() % 1_000) as i32;
-    let payload = serde_json::to_string(&prepared.raw.payload).map_err(|err| {
-        sqlx::Error::Protocol(format!("Failed to serialize payload for COPY: {err}"))
-    })?;
-    let source_material_id = format_ulid_optional(prepared.source_material_id);
-    let payload_schema_id = format_ulid_optional(prepared.payload_schema_id);
-    let source_event_ids = format_ulid_array(prepared.source_event_ids.as_deref());
-    let associated_blob_ids = format_ulid_array(prepared.associated_blob_ids.as_deref());
-
-    push_copy_field(buf, Some(&id));
-    buf.push(b'\t');
-    push_copy_field(buf, Some(prepared.raw.source.as_str()));
-    buf.push(b'\t');
-    push_copy_field(buf, Some(prepared.raw.event_type.as_str()));
-    buf.push(b'\t');
-    push_copy_field(buf, Some(&ts_orig));
-    buf.push(b'\t');
-    push_copy_i64_field(buf, Some(ts_orig_subnano as i64));
-    buf.push(b'\t');
-    push_copy_field(buf, Some(prepared.raw.host.as_str()));
-    buf.push(b'\t');
-    push_copy_field(buf, Some(&payload));
-    buf.push(b'\t');
-    push_copy_field(buf, source_material_id.as_deref());
-    buf.push(b'\t');
-    push_copy_i64_field(buf, prepared.anchor_byte);
-    buf.push(b'\t');
-    push_copy_i64_field(buf, prepared.offset_start);
-    buf.push(b'\t');
-    push_copy_i64_field(buf, prepared.offset_end);
-    buf.push(b'\t');
-    push_copy_field(buf, prepared.offset_kind.as_deref());
-    buf.push(b'\t');
-    push_copy_field(buf, source_event_ids.as_deref());
-    buf.push(b'\t');
-    push_copy_field(buf, payload_schema_id.as_deref());
-    buf.push(b'\t');
-    push_copy_field(buf, prepared.ingestor_version.as_deref());
-    buf.push(b'\t');
-    push_copy_field(buf, associated_blob_ids.as_deref());
-    buf.push(b'\n');
-
-    Ok(())
-}
-
-fn push_copy_field(buf: &mut Vec<u8>, value: Option<&str>) {
-    match value {
-        Some(value) => escape_copy_text(buf, value),
-        None => buf.extend_from_slice(b"\\N"),
-    }
-}
-
-fn push_copy_i64_field(buf: &mut Vec<u8>, value: Option<i64>) {
-    match value {
-        Some(value) => buf.extend_from_slice(value.to_string().as_bytes()),
-        None => buf.extend_from_slice(b"\\N"),
-    }
-}
-
-/// Manual escaping for PostgreSQL text format used in COPY.
-///
-/// Handles standard escapes (backslash, newline, tab, etc.) required for the text format.
-/// This is a performance-critical path for high-throughput ingestion.
-fn escape_copy_text(buf: &mut Vec<u8>, value: &str) {
-    for byte in value.as_bytes() {
-        match byte {
-            b'\\' => buf.extend_from_slice(b"\\\\"),
-            b'\n' => buf.extend_from_slice(b"\\n"),
-            b'\r' => buf.extend_from_slice(b"\\r"),
-            b'\t' => buf.extend_from_slice(b"\\t"),
-            0x08 => buf.extend_from_slice(b"\\b"),
-            0x0c => buf.extend_from_slice(b"\\f"),
-            _ => buf.push(*byte),
-        }
-    }
-}
-
-fn format_ulid_optional(value: Option<Uuid>) -> Option<String> {
-    value.map(|id| Ulid::from_uuid(id).to_string())
-}
-
-fn format_ulid_array(values: Option<&[Uuid]>) -> Option<String> {
-    let values = values?;
-    if values.is_empty() {
-        return Some("{}".to_string());
-    }
-    let mut out = String::new();
-    out.push('{');
-    for (idx, id) in values.iter().enumerate() {
-        if idx > 0 {
-            out.push(',');
-        }
-        out.push_str(&Ulid::from_uuid(*id).to_string());
-    }
-    out.push('}');
-    Some(out)
-}
-
-fn parse_optional_uuid(value: Option<&str>, field: &str) -> Result<Option<Uuid>, String> {
-    match value {
-        Some(raw) => parse_ulid_value(raw, field).map(Some),
-        None => Ok(None),
-    }
-}
-
-fn parse_uuid_list(values: Option<&Vec<String>>, field: &str) -> Result<Option<Vec<Uuid>>, String> {
-    match values {
-        Some(list) => {
-            if list.is_empty() {
-                return Ok(Some(Vec::new()));
-            }
-            parse_ulid_slice(list, field).map(Some)
-        }
-        None => Ok(None),
-    }
-}
-
-fn parse_ulid_slice(values: &[String], field: &str) -> Result<Vec<Uuid>, String> {
-    let mut parsed = Vec::with_capacity(values.len());
-    for value in values {
-        parsed.push(parse_ulid_value(value, field)?);
-    }
-    Ok(parsed)
-}
-
-fn parse_ulid_value(value: &str, field: &str) -> Result<Uuid, String> {
-    Ulid::from_str(value)
-        .map(|id| id.to_uuid())
-        .map_err(|e| format!("Invalid {} '{}': {}", field, value, e))
-}
-
-fn normalize_offset_kind(value: Option<&str>) -> Result<String, String> {
-    let normalized = value
-        .map(|kind| kind.to_ascii_lowercase())
-        .unwrap_or_else(|| "byte".to_string());
-    match normalized.as_str() {
-        "byte" | "line" | "rowid" | "logical" => Ok(normalized),
-        other => Err(format!("Invalid offset_kind: {}", other)),
     }
 }

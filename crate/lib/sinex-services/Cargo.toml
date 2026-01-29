@@ -1,36 +1,69 @@
 [package]
 name = "sinex-services"
-version.workspace = true
-edition.workspace = true
-authors.workspace = true
 
 [dependencies]
-# Core dependencies
-sinex-core = { path = "../sinex-core" }
-sinex-node-sdk = { path = "../../lib/sinex-node-sdk" }
-
-# Async runtime
-tokio.workspace = true
-
-# Error handling
-color-eyre.workspace = true
-
-# Serialization
-serde.workspace = true
-serde_json.workspace = true
-
-# Database
-sqlx.workspace = true
-
-# Logging
-tracing.workspace = true
 once_cell = "1"
+blake3    = "1.5"
+sha2      = "0.10"
 
-# Utilities
-chrono.workspace = true
-blake3 = "1.5"
-sha2 = "0.10"
+[package.version]
+workspace = true
 
-[dev-dependencies]
-sinex-schema = { path = "../sinex-schema" }
-futures.workspace = true
+[package.edition]
+workspace = true
+
+[package.authors]
+workspace = true
+
+
+[dependencies.sinex-node-sdk]
+path = "../../lib/sinex-node-sdk"
+
+[dependencies.sinex-primitives]
+path = "../sinex-primitives"
+
+[dependencies.sinex-db]
+path = "../sinex-db"
+
+[dependencies.tokio]
+workspace = true
+
+[dependencies.color-eyre]
+workspace = true
+
+[dependencies.serde]
+workspace = true
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.sqlx]
+workspace = true
+
+[dependencies.time]
+workspace = true
+
+[dependencies.tracing]
+workspace = true
+
+[dev-dependencies.sinex-schema]
+path = "../sinex-schema"
+
+[dev-dependencies.futures]
+workspace = true
+
+[dev-dependencies.xtask]
+path = "../../../xtask"
+default-features = false
+features = [
+    "sandbox",
+]
+
+[dev-dependencies.xtask-macros]
+path = "../../../xtask-macros"
+
+[dev-dependencies.sinex-primitives]
+path = "../sinex-primitives"
+features = [
+    "testing",
+]

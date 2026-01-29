@@ -1,6 +1,6 @@
 use serde_json::json;
-use sinex_core::db::repositories::schema_management::NewEventSchema;
-use sinex_core::repositories::DbPoolExt;
+use sinex_db::repositories::schema_management::NewEventSchema;
+use sinex_db::repositories::DbPoolExt;
 use sinex_ingestd::validator::{EventValidator, ValidationResult};
 use xtask::sandbox::{sinex_test, TestContext};
 
@@ -52,7 +52,7 @@ async fn validator_prefers_latest_semver(ctx: TestContext) -> color_eyre::Result
     }
 }
 
-async fn ensure_ulid_extension(pool: &sinex_core::DbPool) -> color_eyre::Result<()> {
+async fn ensure_ulid_extension(pool: &sinex_db::DbPool) -> color_eyre::Result<()> {
     let available = sqlx::query_scalar::<_, String>(
         "SELECT name FROM pg_available_extensions WHERE name IN ('ulid', 'pgx_ulid') LIMIT 1",
     )

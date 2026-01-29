@@ -12,11 +12,11 @@
 use async_nats::jetstream;
 use color_eyre::eyre::eyre;
 use futures::StreamExt;
-use xtask::sandbox::prelude::*;
-use xtask::sandbox::timing::Timeouts;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use tokio::time::{timeout, Duration};
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::Timeouts;
 
 fn is_no_messages_error(msg: &str) -> bool {
     msg.contains("No Messages")

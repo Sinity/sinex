@@ -4,14 +4,14 @@
 use crate::common::*;
 
 // Window manager specific imports
-use sinex_core::payloads::{
+use sinex_primitives::payloads::{
     HyprlandMonitorFocusedPayload, HyprlandStateCapturedPayload, HyprlandWindowClosedPayload,
     HyprlandWindowFocusedPayload, HyprlandWindowMovedPayload, HyprlandWindowOpenedPayload,
     HyprlandWorkspaceSwitchedPayload, WindowGeometry,
 };
-use sinex_core::types::domain::{EventSource, EventType};
-use sinex_core::types::events::EventPayload;
-use sinex_core::{DynamicPayload, Id, OffsetKind, Provenance, Ulid};
+use sinex_primitives::domain::{EventSource, EventType};
+use sinex_primitives::events::EventPayload;
+use sinex_primitives::{DynamicPayload, Id, OffsetKind, Provenance, Ulid};
 use sinex_node_sdk::stage_as_you_go::StageAsYouGoContext;
 use std::{fmt, str::FromStr, time::SystemTime};
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -159,7 +159,7 @@ impl WindowManagerWatcher {
         if wm_type == WindowManagerType::Hyprland {
             watcher.discover_hyprland_sockets().await?;
         } else {
-            return Err(sinex_node_sdk::NodeError::Processing(format!(
+            return Err(sinex_node_sdk::SinexError::processing(format!(
                 "Unsupported window manager: {}",
                 wm_type
             )));
@@ -176,14 +176,14 @@ impl WindowManagerWatcher {
     async fn discover_hyprland_sockets(&mut self) -> NodeResult<()> {
         // Get Hyprland instance signature
         let hyprland_instance_sig = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").map_err(|_| {
-            sinex_node_sdk::NodeError::Processing(
+            sinex_node_sdk::SinexError::processing(
                 "HYPRLAND_INSTANCE_SIGNATURE not set. Is Hyprland running?".to_string(),
             )
         })?;
 
         // Get XDG_RUNTIME_DIR
         let xdg_runtime = std::env::var("XDG_RUNTIME_DIR").map_err(|_| {
-            sinex_node_sdk::NodeError::Processing("XDG_RUNTIME_DIR not set".to_string())
+            sinex_node_sdk::SinexError::processing("XDG_RUNTIME_DIR not set".to_string())
         })?;
 
         // Build socket paths
@@ -196,7 +196,7 @@ impl WindowManagerWatcher {
             self.socket_path = Some(event_socket.clone());
             info!("Found Hyprland event socket at: {}", event_socket);
         } else {
-            return Err(sinex_node_sdk::NodeError::Processing(format!(
+            return Err(sinex_node_sdk::SinexError::processing(format!(
                 "Cannot connect to Hyprland event socket: {}",
                 event_socket
             )));
@@ -222,7 +222,7 @@ impl WindowManagerWatcher {
         metadata: serde_json::Value,
     ) -> NodeResult<Ulid> {
         let stage_context = self.stage_context.as_ref().ok_or_else(|| {
-            sinex_node_sdk::NodeError::Processing(
+            sinex_node_sdk::SinexError::processing(
                 "Stage-as-you-go context not initialized".to_string(),
             )
         })?;
@@ -242,7 +242,7 @@ impl WindowManagerWatcher {
             "event_type": event_type,
             "event_data": event_data,
             "wm_type": self.wm_type.to_string(),
-            "timestamp": Utc::now(),
+            "timestamp": OffsetDateTime::now_utc(),
             "metadata": metadata,
         })
     }
@@ -254,7 +254,7 @@ impl WindowManagerWatcher {
         mut event: Event<JsonValue>,
     ) -> NodeResult<()> {
         let stage_context = self.stage_context.as_ref().ok_or_else(|| {
-            sinex_node_sdk::NodeError::Processing(
+            sinex_node_sdk::SinexError::processing(
                 "Stage-as-you-go context not initialized".to_string(),
             )
         })?;
@@ -279,11 +279,11 @@ impl WindowManagerWatcher {
     /// Connect to Hyprland event socket
     async fn connect_to_hyprland_events(&self) -> NodeResult<UnixStream> {
         let socket_path = self.socket_path.as_ref().ok_or_else(|| {
-            sinex_node_sdk::NodeError::Processing("No Hyprland socket configured".to_string())
+            sinex_node_sdk::SinexError::processing("No Hyprland socket configured".to_string())
         })?;
 
         UnixStream::connect(socket_path).await.map_err(|e| {
-            sinex_node_sdk::NodeError::Processing(format!("Failed to connect to Hyprland: {}", e))
+            sinex_node_sdk::SinexError::processing(format!("Failed to connect to Hyprland: {}", e))
         })
     }
 
@@ -355,7 +355,7 @@ impl WindowManagerWatcher {
                     let material_payload =
                         self.build_material_payload(event_type, event_data, metadata);
                     let payload_bytes = serde_json::to_vec(&material_payload).map_err(|e| {
-                        sinex_node_sdk::NodeError::Processing(format!(
+                        sinex_node_sdk::SinexError::processing(format!(
                             "Failed to serialize window material payload: {e}"
                         ))
                     })?;
@@ -378,7 +378,7 @@ impl WindowManagerWatcher {
                     .with_provenance(provenance)
                     .build()
                     .map_err(|e| {
-                        sinex_node_sdk::NodeError::Processing(format!("Failed to build event: {e}"))
+                        sinex_node_sdk::SinexError::processing(format!("Failed to build event: {e}"))
                     })?;
                     self.emit_material_event(material_id, payload_bytes, event)
                         .await?;
@@ -425,7 +425,7 @@ impl WindowManagerWatcher {
                 .await?;
             let material_payload = self.build_material_payload("focusedwindow", data, metadata);
             let payload_bytes = serde_json::to_vec(&material_payload).map_err(|e| {
-                sinex_node_sdk::NodeError::Processing(format!(
+                sinex_node_sdk::SinexError::processing(format!(
                     "Failed to serialize window material payload: {e}"
                 ))
             })?;
@@ -440,21 +440,21 @@ impl WindowManagerWatcher {
                 .from_material(material_id)
                 .with_offset_start(0)
                 .map_err(|e| {
-                    sinex_node_sdk::NodeError::Processing(format!(
+                    sinex_node_sdk::SinexError::processing(format!(
                         "Failed to set offset_start: {e}"
                     ))
                 })?
                 .with_offset_end(payload_bytes.len() as i64)
                 .map_err(|e| {
-                    sinex_node_sdk::NodeError::Processing(format!("Failed to set offset_end: {e}"))
+                    sinex_node_sdk::SinexError::processing(format!("Failed to set offset_end: {e}"))
                 })?
                 .build()
                 .map_err(|e| {
-                    sinex_node_sdk::NodeError::Processing(format!("Failed to build event: {e}"))
+                    sinex_node_sdk::SinexError::processing(format!("Failed to build event: {e}"))
                 })?
                 .to_json_event()
                 .map_err(|e| {
-                    sinex_node_sdk::NodeError::Processing(format!(
+                    sinex_node_sdk::SinexError::processing(format!(
                         "Failed to serialize window focused payload: {e}"
                     ))
                 })?;
@@ -494,7 +494,7 @@ impl WindowManagerWatcher {
                 .await?;
             let material_payload = self.build_material_payload("openwindow", data, metadata);
             let payload_bytes = serde_json::to_vec(&material_payload).map_err(|e| {
-                sinex_node_sdk::NodeError::Processing(format!(
+                sinex_node_sdk::SinexError::processing(format!(
                     "Failed to serialize window material payload: {e}"
                 ))
             })?;
@@ -516,21 +516,21 @@ impl WindowManagerWatcher {
                 .from_material(material_id)
                 .with_offset_start(0)
                 .map_err(|e| {
-                    sinex_node_sdk::NodeError::Processing(format!(
+                    sinex_node_sdk::SinexError::processing(format!(
                         "Failed to set offset_start: {e}"
                     ))
                 })?
                 .with_offset_end(payload_bytes.len() as i64)
                 .map_err(|e| {
-                    sinex_node_sdk::NodeError::Processing(format!("Failed to set offset_end: {e}"))
+                    sinex_node_sdk::SinexError::processing(format!("Failed to set offset_end: {e}"))
                 })?
                 .build()
                 .map_err(|e| {
-                    sinex_node_sdk::NodeError::Processing(format!("Failed to build event: {e}"))
+                    sinex_node_sdk::SinexError::processing(format!("Failed to build event: {e}"))
                 })?
                 .to_json_event()
                 .map_err(|e| {
-                    sinex_node_sdk::NodeError::Processing(format!(
+                    sinex_node_sdk::SinexError::processing(format!(
                         "Failed to serialize window opened payload: {e}"
                     ))
                 })?;
@@ -569,7 +569,7 @@ impl WindowManagerWatcher {
             .await?;
         let material_payload = self.build_material_payload("closewindow", data, metadata);
         let payload_bytes = serde_json::to_vec(&material_payload).map_err(|e| {
-            sinex_node_sdk::NodeError::Processing(format!(
+            sinex_node_sdk::SinexError::processing(format!(
                 "Failed to serialize window material payload: {e}"
             ))
         })?;
@@ -593,19 +593,19 @@ impl WindowManagerWatcher {
             .from_material(material_id)
             .with_offset_start(0)
             .map_err(|e| {
-                sinex_node_sdk::NodeError::Processing(format!("Failed to set offset_start: {e}"))
+                sinex_node_sdk::SinexError::processing(format!("Failed to set offset_start: {e}"))
             })?
             .with_offset_end(payload_bytes.len() as i64)
             .map_err(|e| {
-                sinex_node_sdk::NodeError::Processing(format!("Failed to set offset_end: {e}"))
+                sinex_node_sdk::SinexError::processing(format!("Failed to set offset_end: {e}"))
             })?
             .build()
             .map_err(|e| {
-                sinex_node_sdk::NodeError::Processing(format!("Failed to build event: {e}"))
+                sinex_node_sdk::SinexError::processing(format!("Failed to build event: {e}"))
             })?
             .to_json_event()
             .map_err(|e| {
-                sinex_node_sdk::NodeError::Processing(format!(
+                sinex_node_sdk::SinexError::processing(format!(
                     "Failed to serialize window closed payload: {e}"
                 ))
             })?;
@@ -631,34 +631,34 @@ impl WindowManagerWatcher {
                 .await?;
             let material_payload = self.build_material_payload("movewindow", data, metadata);
             let payload_bytes = serde_json::to_vec(&material_payload).map_err(|e| {
-                sinex_node_sdk::NodeError::Processing(format!(
+                sinex_node_sdk::SinexError::processing(format!(
                     "Failed to serialize window material payload: {e}"
                 ))
             })?;
             let payload = HyprlandWindowMovedPayload {
                 window_address: address.to_string(),
                 new_workspace_id: self.parse_id(workspace, "workspace_id"),
-                moved_at: Utc::now().to_rfc3339(),
+                moved_at: OffsetDateTime::now_utc().to_string(),
             };
             let event = payload
                 .from_material(material_id)
                 .with_offset_start(0)
                 .map_err(|e| {
-                    sinex_node_sdk::NodeError::Processing(format!(
+                    sinex_node_sdk::SinexError::processing(format!(
                         "Failed to set offset_start: {e}"
                     ))
                 })?
                 .with_offset_end(payload_bytes.len() as i64)
                 .map_err(|e| {
-                    sinex_node_sdk::NodeError::Processing(format!("Failed to set offset_end: {e}"))
+                    sinex_node_sdk::SinexError::processing(format!("Failed to set offset_end: {e}"))
                 })?
                 .build()
                 .map_err(|e| {
-                    sinex_node_sdk::NodeError::Processing(format!("Failed to build event: {e}"))
+                    sinex_node_sdk::SinexError::processing(format!("Failed to build event: {e}"))
                 })?
                 .to_json_event()
                 .map_err(|e| {
-                    sinex_node_sdk::NodeError::Processing(format!(
+                    sinex_node_sdk::SinexError::processing(format!(
                         "Failed to serialize window moved payload: {e}"
                     ))
                 })?;
@@ -690,7 +690,7 @@ impl WindowManagerWatcher {
             .await?;
         let material_payload = self.build_material_payload("workspace", data, metadata);
         let payload_bytes = serde_json::to_vec(&material_payload).map_err(|e| {
-            sinex_node_sdk::NodeError::Processing(format!(
+            sinex_node_sdk::SinexError::processing(format!(
                 "Failed to serialize window material payload: {e}"
             ))
         })?;
@@ -712,19 +712,19 @@ impl WindowManagerWatcher {
             .from_material(material_id)
             .with_offset_start(0)
             .map_err(|e| {
-                sinex_node_sdk::NodeError::Processing(format!("Failed to set offset_start: {e}"))
+                sinex_node_sdk::SinexError::processing(format!("Failed to set offset_start: {e}"))
             })?
             .with_offset_end(payload_bytes.len() as i64)
             .map_err(|e| {
-                sinex_node_sdk::NodeError::Processing(format!("Failed to set offset_end: {e}"))
+                sinex_node_sdk::SinexError::processing(format!("Failed to set offset_end: {e}"))
             })?
             .build()
             .map_err(|e| {
-                sinex_node_sdk::NodeError::Processing(format!("Failed to build event: {e}"))
+                sinex_node_sdk::SinexError::processing(format!("Failed to build event: {e}"))
             })?
             .to_json_event()
             .map_err(|e| {
-                sinex_node_sdk::NodeError::Processing(format!(
+                sinex_node_sdk::SinexError::processing(format!(
                     "Failed to serialize workspace switched payload: {e}"
                 ))
             })?;
@@ -750,7 +750,7 @@ impl WindowManagerWatcher {
                 .await?;
             let material_payload = self.build_material_payload("focusedmon", data, metadata);
             let payload_bytes = serde_json::to_vec(&material_payload).map_err(|e| {
-                sinex_node_sdk::NodeError::Processing(format!(
+                sinex_node_sdk::SinexError::processing(format!(
                     "Failed to serialize window material payload: {e}"
                 ))
             })?;
@@ -761,27 +761,27 @@ impl WindowManagerWatcher {
                     .current_monitor
                     .as_ref()
                     .map(|m| self.parse_id(m, "monitor_id")),
-                focused_at: Utc::now().to_rfc3339(),
+                focused_at: OffsetDateTime::now_utc().to_string(),
             };
             let event = payload
                 .from_material(material_id)
                 .with_offset_start(0)
                 .map_err(|e| {
-                    sinex_node_sdk::NodeError::Processing(format!(
+                    sinex_node_sdk::SinexError::processing(format!(
                         "Failed to set offset_start: {e}"
                     ))
                 })?
                 .with_offset_end(payload_bytes.len() as i64)
                 .map_err(|e| {
-                    sinex_node_sdk::NodeError::Processing(format!("Failed to set offset_end: {e}"))
+                    sinex_node_sdk::SinexError::processing(format!("Failed to set offset_end: {e}"))
                 })?
                 .build()
                 .map_err(|e| {
-                    sinex_node_sdk::NodeError::Processing(format!("Failed to build event: {e}"))
+                    sinex_node_sdk::SinexError::processing(format!("Failed to build event: {e}"))
                 })?
                 .to_json_event()
                 .map_err(|e| {
-                    sinex_node_sdk::NodeError::Processing(format!(
+                    sinex_node_sdk::SinexError::processing(format!(
                         "Failed to serialize monitor focused payload: {e}"
                     ))
                 })?;
@@ -804,7 +804,7 @@ impl WindowManagerWatcher {
         if self.wm_type == WindowManagerType::Hyprland {
             self.stream_hyprland_events().await
         } else {
-            Err(sinex_node_sdk::NodeError::Processing(format!(
+            Err(sinex_node_sdk::SinexError::processing(format!(
                 "Unsupported window manager: {}",
                 self.wm_type
             )))
@@ -989,7 +989,7 @@ impl WindowManagerWatcher {
                 .as_ref()
                 .map(|m| self.parse_id(m, "monitor_id"))
                 .unwrap_or(0),
-            captured_at: Utc::now().to_rfc3339(),
+            captured_at: OffsetDateTime::now_utc().to_string(),
         };
         let material_payload = self.build_material_payload(
             "state_snapshot",
@@ -997,7 +997,7 @@ impl WindowManagerWatcher {
             metadata.clone(),
         );
         let payload_bytes = serde_json::to_vec(&material_payload).map_err(|e| {
-            sinex_node_sdk::NodeError::Processing(format!(
+            sinex_node_sdk::SinexError::processing(format!(
                 "Failed to serialize window material payload: {e}"
             ))
         })?;
@@ -1006,19 +1006,19 @@ impl WindowManagerWatcher {
             .from_material(material_id)
             .with_offset_start(0)
             .map_err(|e| {
-                sinex_node_sdk::NodeError::Processing(format!("Failed to set offset_start: {e}"))
+                sinex_node_sdk::SinexError::processing(format!("Failed to set offset_start: {e}"))
             })?
             .with_offset_end(payload_bytes.len() as i64)
             .map_err(|e| {
-                sinex_node_sdk::NodeError::Processing(format!("Failed to set offset_end: {e}"))
+                sinex_node_sdk::SinexError::processing(format!("Failed to set offset_end: {e}"))
             })?
             .build()
             .map_err(|e| {
-                sinex_node_sdk::NodeError::Processing(format!("Failed to build event: {e}"))
+                sinex_node_sdk::SinexError::processing(format!("Failed to build event: {e}"))
             })?
             .to_json_event()
             .map_err(|e| {
-                sinex_node_sdk::NodeError::Processing(format!(
+                sinex_node_sdk::SinexError::processing(format!(
                     "Failed to serialize window snapshot payload: {e}"
                 ))
             })?;

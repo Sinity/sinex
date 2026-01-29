@@ -1,58 +1,98 @@
-[package]
-name = "sinex-health-automaton"
-version.workspace = true
-edition.workspace = true
-authors.workspace = true
-repository.workspace = true
-license.workspace = true
-
 [[bin]]
 name = "sinex-health-automaton"
 path = "src/main.rs"
 
+[package]
+name = "sinex-health-automaton"
 
 [dependencies]
-mimalloc = { workspace = true }
-# Core Sinex dependencies
-sinex-core = { path = "../../lib/sinex-core" }
-sinex-node-sdk = { path = "../../lib/sinex-node-sdk" }
-sinex-processor-runtime = { path = "../../lib/sinex-processor-runtime" }
-
-# CLI parsing
-clap = { version = "4.0", features = ["derive", "env"] }
-
-# Async runtime
-tokio = { workspace = true }
-
-# Database (for potential direct queries if needed)
-sqlx = { workspace = true, features = ["postgres", "runtime-tokio-rustls"] }
-
-# Serialization
-serde = { workspace = true }
-serde_json = { workspace = true }
-
-# Configuration
-figment = { workspace = true }
-
-# Time
-chrono = { workspace = true }
-
-# Error handling
-anyhow = { workspace = true }
-thiserror = { workspace = true }
-color-eyre = { workspace = true }
-
-# Logging
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-
-# System info
+tracing     = "0.1"
 gethostname = "0.4"
 
-# Collections (using std lib)
+[package.version]
+workspace = true
 
-# Async traits
-async-trait = { workspace = true }
-camino = { workspace = true }
+[package.edition]
+workspace = true
 
-[dev-dependencies]
+[package.authors]
+workspace = true
+
+[package.repository]
+workspace = true
+
+[package.license]
+workspace = true
+
+[dependencies.mimalloc]
+workspace = true
+
+
+[dependencies.sinex-node-sdk]
+path = "../../lib/sinex-node-sdk"
+
+[dependencies.sinex-processor-runtime]
+path = "../../lib/sinex-processor-runtime"
+
+[dependencies.clap]
+version = "4.0"
+features = [
+    "derive",
+    "env",
+]
+
+[dependencies.tokio]
+workspace = true
+
+[dependencies.sqlx]
+workspace = true
+features = [
+    "postgres",
+    "runtime-tokio-rustls",
+]
+
+[dependencies.time]
+workspace = true
+
+[dependencies.serde]
+workspace = true
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.figment]
+workspace = true
+
+[dependencies.anyhow]
+workspace = true
+
+[dependencies.thiserror]
+workspace = true
+
+[dependencies.color-eyre]
+workspace = true
+
+[dependencies.tracing-subscriber]
+version = "0.3"
+features = [
+    "env-filter",
+]
+
+[dependencies.async-trait]
+workspace = true
+
+[dependencies.camino]
+workspace = true
+
+[dev-dependencies.xtask]
+path = "../../../xtask"
+default-features = false
+features = [
+    "sandbox",
+]
+
+[dev-dependencies.sinex-primitives]
+path = "../../lib/sinex-primitives"
+features = [
+    "testing",
+]

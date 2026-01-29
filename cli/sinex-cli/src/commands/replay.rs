@@ -1,5 +1,5 @@
 use clap::Subcommand;
-use sinex_core::rpc::replay::ReplayState;
+use sinex_primitives::rpc::replay::ReplayState;
 use tokio::time::{sleep, Duration};
 
 use crate::client::GatewayClient;
@@ -180,7 +180,7 @@ impl ReplayCommands {
     }
 }
 
-use sinex_core::rpc::replay::ReplayOperation;
+use sinex_primitives::rpc::replay::ReplayOperation;
 
 /// Format replay plan creation as table
 fn format_replay_plan_table(operation: &ReplayOperation) -> String {

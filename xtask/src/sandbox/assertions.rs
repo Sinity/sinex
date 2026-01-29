@@ -23,23 +23,24 @@
 //!     .await?;
 //! ```
 
-use crate::test_context::TestContext;
-use crate::TestResult;
+use crate::sandbox::context::Sandbox;
+use crate::sandbox::prelude::TestResult;
 use color_eyre::eyre::bail;
-use sinex_core::{DbPoolExt, EventSource, EventType};
+use sinex_db::DbPoolExt;
+use sinex_primitives::{EventSource, EventType};
 
 /// Builder for event count assertions with composable filters.
 ///
-/// Created via `TestContext::assert_event()`. Configure filters using method
+/// Created via `Sandbox::assert_event()`. Configure filters using method
 /// chaining, then call `.count(n)` or `.at_least(n)` to assert.
 pub struct EventAssert<'a> {
-    ctx: &'a TestContext,
+    ctx: &'a Sandbox,
     source_filter: Option<EventSource>,
     event_type_filter: Option<EventType>,
 }
 
 impl<'a> EventAssert<'a> {
-    pub(crate) fn new(ctx: &'a TestContext) -> Self {
+    pub(crate) fn new(ctx: &'a Sandbox) -> Self {
         Self {
             ctx,
             source_filter: None,

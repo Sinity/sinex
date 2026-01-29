@@ -5,27 +5,23 @@
 use crate::error::{Result as ServiceResult, SinexError};
 use once_cell::sync::OnceCell;
 use serde::Serialize;
-use sinex_core::db::replay::state_machine::{ReplayOperation, ReplayState, ReplayStateMachine};
-use sinex_core::db::repositories::common::db_error;
-use sinex_core::db::DbPool;
-use sinex_core::repositories::common::TimeBucketResult;
-use sinex_core::types::query::Pagination;
+use sinex_db::replay::state_machine::{ReplayOperation, ReplayState, ReplayStateMachine};
+use sinex_db::repositories::common::{db_error, TimeBucketResult};
+use sinex_db::DbPool;
+use sinex_primitives::OffsetDateTime;
+use sinex_primitives::Pagination;
 use sqlx::postgres::types::PgInterval;
-use sqlx::types::chrono::{DateTime, Utc};
 use sqlx::{pool::PoolConnection, Postgres, Row};
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::time::timeout;
 
 /// Unix epoch start time cached at runtime
-static EPOCH_START: OnceCell<DateTime<Utc>> = OnceCell::new();
+static EPOCH_START: OnceCell<OffsetDateTime> = OnceCell::new();
 
-fn epoch_start() -> DateTime<Utc> {
+fn epoch_start() -> OffsetDateTime {
     EPOCH_START
-        .get_or_init(|| {
-            DateTime::from_timestamp(0, 0)
-                .expect("Unix epoch (0) should be a valid DateTime for chrono::Utc")
-        })
+        .get_or_init(|| OffsetDateTime::UNIX_EPOCH)
         .clone()
 }
 
@@ -39,8 +35,8 @@ pub struct SourceStatistics {
     pub event_count: i64,
     pub event_type_count: i64,
     pub host_count: i64,
-    pub first_event: Option<DateTime<Utc>>,
-    pub last_event: Option<DateTime<Utc>>,
+    pub first_event: Option<OffsetDateTime>,
+    pub last_event: Option<OffsetDateTime>,
     pub avg_ingest_delay: Option<f64>,
 }
 
@@ -66,8 +62,8 @@ impl AnalyticsService {
     /// Get event count by source for a time range
     pub async fn get_event_count_by_source(
         &self,
-        start_time: Option<DateTime<Utc>>,
-        end_time: Option<DateTime<Utc>>,
+        start_time: Option<OffsetDateTime>,
+        end_time: Option<OffsetDateTime>,
     ) -> ServiceResult<HashMap<String, i64>> {
         let mut conn = self.acquire_connection().await?;
         let start = start_time.unwrap_or_else(epoch_start);
@@ -102,8 +98,8 @@ impl AnalyticsService {
     /// Get detailed statistics for each source.
     pub async fn get_source_statistics(
         &self,
-        start_time: Option<DateTime<Utc>>,
-        end_time: Option<DateTime<Utc>>,
+        start_time: Option<OffsetDateTime>,
+        end_time: Option<OffsetDateTime>,
         limit: i64,
     ) -> ServiceResult<Vec<SourceStatistics>> {
         let limit = limit.clamp(1, Pagination::MAX_LIMIT);
@@ -152,8 +148,8 @@ impl AnalyticsService {
     /// Get event count by event type for a time range
     pub async fn get_event_count_by_type(
         &self,
-        start_time: Option<DateTime<Utc>>,
-        end_time: Option<DateTime<Utc>>,
+        start_time: Option<OffsetDateTime>,
+        end_time: Option<OffsetDateTime>,
     ) -> ServiceResult<HashMap<String, i64>> {
         let mut conn = self.acquire_connection().await?;
         let result = match (start_time, end_time) {
@@ -210,16 +206,16 @@ impl AnalyticsService {
     /// Get time series data with configurable intervals
     pub async fn get_events_over_time(
         &self,
-        start_time: DateTime<Utc>,
-        end_time: DateTime<Utc>,
+        start_time: OffsetDateTime,
+        end_time: OffsetDateTime,
         interval_minutes: i32,
-    ) -> ServiceResult<Vec<(DateTime<Utc>, i64)>> {
+    ) -> ServiceResult<Vec<(OffsetDateTime, i64)>> {
         if interval_minutes <= 0 {
             return Err(SinexError::validation("Interval must be positive")
                 .with_context("interval_minutes", interval_minutes));
         }
 
-        let expected_buckets = (end_time - start_time).num_minutes() / interval_minutes as i64;
+        let expected_buckets = (end_time - start_time).whole_minutes() / interval_minutes as i64;
         if expected_buckets > Pagination::MAX_LIMIT {
             return Err(SinexError::validation("Time range too large for interval")
                 .with_context("expected_buckets", expected_buckets)
@@ -247,17 +243,24 @@ impl AnalyticsService {
             Pagination::MAX_LIMIT
         )
         .fetch_all(&mut *conn)
-        .await
-        .map_err(|e| db_error(e, "get events over time"))?;
-
-        Ok(rows.into_iter().map(|r| (r.bucket, r.count)).collect())
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                (
+                    OffsetDateTime::from_unix_timestamp_nanos(r.bucket.unix_timestamp_nanos())
+                        .unwrap_or(OffsetDateTime::UNIX_EPOCH),
+                    r.count,
+                )
+            })
+            .collect())
     }
 
     /// Get most frequent commands from terminal events
     pub async fn get_top_commands(
         &self,
-        start_time: Option<DateTime<Utc>>,
-        end_time: Option<DateTime<Utc>>,
+        start_time: Option<OffsetDateTime>,
+        end_time: Option<OffsetDateTime>,
         limit: i32,
     ) -> ServiceResult<Vec<(String, i64)>> {
         let limit = (limit as i64).clamp(1, Pagination::MAX_LIMIT);
@@ -330,11 +333,11 @@ impl AnalyticsService {
     /// Get most active time periods
     pub async fn activity_heatmap(
         &self,
-        start_time: Option<DateTime<Utc>>,
-        end_time: Option<DateTime<Utc>>,
+        start_time: Option<OffsetDateTime>,
+        end_time: Option<OffsetDateTime>,
         bucket_size_minutes: i32,
         limit: i32,
-    ) -> ServiceResult<Vec<(DateTime<Utc>, i64)>> {
+    ) -> ServiceResult<Vec<(OffsetDateTime, i64)>> {
         let limit = (limit as i64).clamp(1, Pagination::MAX_LIMIT);
         let mut conn = self.acquire_connection().await?;
         let interval = minutes_to_interval(bucket_size_minutes);
@@ -361,7 +364,16 @@ impl AnalyticsService {
         .await
         .map_err(|e| db_error(e, "get activity heatmap"))?;
 
-        Ok(rows.into_iter().map(|r| (r.bucket, r.count)).collect())
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                (
+                    OffsetDateTime::from_unix_timestamp_nanos(r.bucket.unix_timestamp_nanos())
+                        .unwrap_or(OffsetDateTime::UNIX_EPOCH),
+                    r.count,
+                )
+            })
+            .collect())
     }
 
     /// List replay operations for automation reporting.

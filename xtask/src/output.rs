@@ -3,9 +3,9 @@
 //! Provides structured output in multiple formats (Human, JSON, Compact, Silent)
 //! to support both interactive use and machine consumption (AI agents, scripts).
 
-use chrono::{DateTime, Utc};
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
+use sinex_schema::primitives::Timestamp;
 use std::io::{self, Write};
 
 /// Output format for command results.
@@ -120,7 +120,7 @@ pub struct CommandResult {
     /// Duration in seconds
     pub duration_secs: f64,
     /// Timestamp when command completed
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
     /// Command-specific details
     #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<serde_json::Value>,
@@ -147,7 +147,7 @@ impl CommandResult {
             message: None,
             status: Status::Success,
             duration_secs,
-            timestamp: Utc::now(),
+            timestamp: Timestamp::now(),
             details: None,
             data: None,
             is_silent: false,
@@ -164,7 +164,7 @@ impl CommandResult {
             message: None,
             status: Status::Failed,
             duration_secs,
-            timestamp: Utc::now(),
+            timestamp: Timestamp::now(),
             details: None,
             data: None,
             is_silent: false,

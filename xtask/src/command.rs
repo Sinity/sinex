@@ -37,8 +37,8 @@
 //! ```
 
 use anyhow::Result;
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sinex_schema::primitives::Timestamp;
 use std::time::Duration;
 
 use crate::output::{OutputWriter, Status, StructuredError};
@@ -151,7 +151,7 @@ pub struct CommandResult {
     /// Execution duration in seconds
     pub duration_secs: Option<f64>,
     /// Timestamp when command completed
-    pub timestamp: Option<DateTime<Utc>>,
+    pub timestamp: Option<Timestamp>,
 }
 
 impl CommandResult {
@@ -166,7 +166,7 @@ impl CommandResult {
             errors: Vec::new(),
             warnings: Vec::new(),
             duration_secs: None,
-            timestamp: Some(Utc::now()),
+            timestamp: Some(Timestamp::now()),
         }
     }
 
@@ -181,7 +181,7 @@ impl CommandResult {
             errors: vec![error],
             warnings: Vec::new(),
             duration_secs: None,
-            timestamp: Some(Utc::now()),
+            timestamp: Some(Timestamp::now()),
         }
     }
 
@@ -197,7 +197,7 @@ impl CommandResult {
             errors: Vec::new(),
             warnings: Vec::new(),
             duration_secs: None,
-            timestamp: Some(Utc::now()),
+            timestamp: Some(Timestamp::now()),
         }
     }
 
@@ -287,7 +287,7 @@ impl CommandResult {
             message: self.message.clone(),
             status: self.status,
             duration_secs: self.duration_secs.unwrap_or(0.0),
-            timestamp: self.timestamp.unwrap_or_else(Utc::now),
+            timestamp: self.timestamp.unwrap_or_else(Timestamp::now),
             details: if self.details.is_empty() {
                 None
             } else {

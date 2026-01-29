@@ -111,10 +111,9 @@ in
     SINEX_RPC_CA_CERT = "${tlsFixtures}/ca.pem";
     SINEX_RPC_CLIENT_CERT = "${tlsFixtures}/client.pem";
     SINEX_RPC_CLIENT_KEY = "${tlsFixtures}/client-key.pem";
-    # Per-checkout dev stack configuration (unconditionally isolated)
-    # Ports are determined by checkout path hash in xtask
-    SINEX_DEV_PG_PORT = "5433";
-    SINEX_DEV_NATS_PORT = "4223";
+    # Per-checkout dev stack configuration (fixed ports, isolated by Unix socket directory)
+    SINEX_DEV_PG_PORT = "5432"; # PostgreSQL default
+    SINEX_DEV_NATS_PORT = "4222"; # NATS default
     SINEX_DEV_GATEWAY_PORT = "9998";
   };
 
@@ -126,23 +125,31 @@ in
     export SINEX_TEST_RESULTS_DIR="''${SINEX_TEST_RESULTS_DIR:-$SINEX_CACHE_DIR/test-results}"
     export LD_LIBRARY_PATH="${dbusLibPath}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
-    # Per-checkout isolated dev stack (unconditional - each checkout is independent)
+    # Per-checkout isolated dev stack
+    # Each checkout has its own Unix socket directory, so fixed ports don't conflict
     SINEX_DEV_STATE_DIR="$PWD/.devenv/sinex-dev"
-    SINEX_DEV_PG_PORT="''${SINEX_DEV_PG_PORT:-5433}"
-    SINEX_DEV_NATS_PORT="''${SINEX_DEV_NATS_PORT:-4223}"
-    SINEX_DEV_GATEWAY_PORT="''${SINEX_DEV_GATEWAY_PORT:-9998}"
+    SINEX_DEV_PG_PORT=5432        # PostgreSQL default
+    # NATS port uses offset to avoid TCP conflicts
+    # Stable fallback calculation in bash matching the 0-99 range logic
+    # Note: xtask will refine this precisely once compiled.
+    NATS_OFFSET=$(( ( $(echo "$PWD" | cksum | cut -d' ' -f1) % 100 ) ))
+    SINEX_DEV_NATS_PORT=$(( 4222 + NATS_OFFSET ))
+    SINEX_DEV_GATEWAY_PORT=9998
     export SINEX_DEV_STATE_DIR SINEX_DEV_PG_PORT SINEX_DEV_NATS_PORT SINEX_DEV_GATEWAY_PORT
 
-    # Database connection to per-checkout stack
+    # Refine ports via xtask once it is compiled
+    if [ -x "$PWD/target/debug/xtask" ]; then
+      # This will update SINEX_DEV_NATS_PORT to strictly match Rust's hash
+      eval $("$PWD/target/debug/xtask" stack env --export 2>/dev/null)
+    fi
+
+    # Database connection via Unix socket (no TCP conflicts between checkouts)
     export DATABASE_URL="postgresql:///sinex_dev?host=$SINEX_DEV_STATE_DIR/run&port=$SINEX_DEV_PG_PORT"
     export PGHOST="$SINEX_DEV_STATE_DIR/run"
     export PGPORT="$SINEX_DEV_PG_PORT"
     export SINEX_NATS_URL="nats://localhost:$SINEX_DEV_NATS_PORT"
 
-    # Use xtask to refine ports if already built (handles checkout-based isolation offsets)
-    if [ -x "$PWD/target/debug/xtask" ]; then
-      eval "$("$PWD/target/debug/xtask" stack env --export)"
-    fi
+
     export SINEX_NATS_DIR="$SINEX_DEV_STATE_DIR/data/nats"
     export NATS_CREDS="$SINEX_NATS_DIR/nsc/creds/sinex-dev/sinex-dev/sinex-dev.creds"
 
@@ -179,31 +186,19 @@ in
       fi
 
 
+      # Ensure sx alias is available in all shells
       xt() { cargo xtask "$@"; }
-      sx() { cargo xtask "$@"; }  # Short alias for xtask
-      alias e2e-test="cargo xtask test --profile fast -- -p sinex-e2e-tests"
+      sx() { cargo xtask "$@"; }
+      export -f sx xt
+
+      alias e2e-test="cargo xtask test -- -p sinex-e2e-tests"
       alias vm-smoke="cargo xtask vm test -c smoke"
 
+      # Show unified banner once per shell session
       if [ -x "$PWD/scripts/dev-env-banner.sh" ] && [ -z "''${SINEX_DEVENV_MOTD_ONCE:-}" ]; then
         "$PWD/scripts/dev-env-banner.sh" || true
         export SINEX_DEVENV_MOTD_ONCE=1
       fi
-
-      # Show per-checkout stack status
-      printf '\033[1;36m[sinex-dev]\033[0m '
-      printf 'PG:%s NATS:%s\n' "$SINEX_DEV_PG_PORT" "$SINEX_DEV_NATS_PORT"
-      # Quick inline status check
-      if [ -f "$SINEX_DEV_STATE_DIR/run/postgres.pid" ] && kill -0 "$(cat "$SINEX_DEV_STATE_DIR/run/postgres.pid" 2>/dev/null)" 2>/dev/null; then
-        printf '  \033[32m✓\033[0m PostgreSQL running\n'
-      else
-        printf '  \033[90m○\033[0m PostgreSQL stopped (run: sx stack start)\n'
-      fi
-      if [ -f "$SINEX_DEV_STATE_DIR/run/nats.pid" ] && kill -0 "$(cat "$SINEX_DEV_STATE_DIR/run/nats.pid" 2>/dev/null)" 2>/dev/null; then
-        printf '  \033[32m✓\033[0m NATS running\n'
-      else
-        printf '  \033[90m○\033[0m NATS stopped (run: sx stack start)\n'
-      fi
-      echo ""
 
         if [ -z "''${DIRENV_IN_ENVRC:-}" ] \
           && [ "''${SINEX_DEVENV_COMPLETIONS:-1}" != "0" ] \

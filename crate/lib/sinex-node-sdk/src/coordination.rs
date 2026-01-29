@@ -57,12 +57,11 @@ use crate::heartbeat::HeartbeatEmitter;
 use crate::stream_processor::NodeRuntimeState;
 use crate::version::{NodeInstance, NodeVersion};
 
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_core::coordination::kv_client::{CoordinationKvClient, InstanceMetadata};
-use sinex_core::types::utils::CoordinationPrimitive;
-use sinex_core::types::{Result, Seconds, SinexError};
+use sinex_primitives::coordination::{CoordinationKvClient, InstanceMetadata};
+use sinex_primitives::utils::CoordinationPrimitive;
+use sinex_primitives::{Result, Seconds, SinexError};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::{mpsc, RwLock};
@@ -89,14 +88,14 @@ mod tests {
     use crate::stream_processor::{EventEmitter, NodeHandles, NodeRuntimeState, ServiceInfo};
     use crate::EventTransport;
     use camino::Utf8PathBuf;
-    use sinex_core::db::models::Event;
-    use sinex_core::types::buffers::DEFAULT_EVENT_CHANNEL_SIZE;
-    use sinex_core::types::ulid::Ulid;
-    use sinex_core::JsonValue;
-    use xtask::sandbox::{sinex_test, EphemeralNats, TestContext, TestResult};
+    use sinex_db::models::Event;
+    use sinex_primitives::buffers::DEFAULT_EVENT_CHANNEL_SIZE;
+    use sinex_primitives::ulid::Ulid;
+    use sinex_primitives::JsonValue;
     use std::collections::HashMap;
     use std::sync::Arc;
     use tokio::sync::mpsc;
+    use xtask::sandbox::{sinex_test, EphemeralNats, TestContext, TestResult};
 
     struct TestRuntimeHarness {
         runtime: NodeRuntimeState,
@@ -140,7 +139,7 @@ mod tests {
             None,
         );
 
-        let work_dir = Utf8PathBuf::from_path_buf(sinex_core::environment().temp_dir())
+        let work_dir = Utf8PathBuf::from_path_buf(sinex_primitives::environment().temp_dir())
             .unwrap_or_else(|_| Utf8PathBuf::from("/tmp/sinex-test"));
 
         let service_info = ServiceInfo::new(
@@ -160,7 +159,9 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn coordination_failure_counter_increments(ctx: TestContext) -> TestResult<()> {
+    async fn coordination_failure_counter_increments(
+        ctx: TestContext,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let harness = build_runtime(&ctx, "coordination-test").await?;
         let coordination =
             NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string()).await?;
@@ -378,7 +379,8 @@ pub struct NodeCoordination {
 impl NodeCoordination {
     fn current_metadata(&self) -> InstanceMetadata {
         let mut meta: InstanceMetadata = (&self.instance).into();
-        meta.last_heartbeat = Utc::now().timestamp();
+        meta.last_heartbeat =
+            sinex_primitives::temporal::OffsetDateTime::now_utc().unix_timestamp();
         meta
     }
 

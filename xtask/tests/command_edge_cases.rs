@@ -547,7 +547,10 @@ fn test_cli_missing_required_arg() {
 fn test_cli_invalid_format_option() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("--format").arg("invalid_format").arg("qa").arg("check");
+    cmd.arg("--format")
+        .arg("invalid_format")
+        .arg("qa")
+        .arg("check");
 
     cmd.assert()
         .failure()
@@ -559,7 +562,11 @@ fn test_cli_redundant_json_options() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
     // --json and --format json are redundant but should both work
-    cmd.arg("--json").arg("--format").arg("json").arg("qa").arg("check");
+    cmd.arg("--json")
+        .arg("--format")
+        .arg("json")
+        .arg("qa")
+        .arg("check");
 
     // This might succeed or fail depending on format checks
     // The key is it shouldn't crash or give an obscure error
@@ -795,7 +802,10 @@ fn test_help_works_for_all_subcommands() {
 fn test_check_skip_options() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("qa").arg("check").arg("--skip-fmt").arg("--skip-check");
+    cmd.arg("qa")
+        .arg("check")
+        .arg("--skip-fmt")
+        .arg("--skip-check");
 
     // With both skipped, should succeed quickly (doing nothing)
     cmd.assert().success();

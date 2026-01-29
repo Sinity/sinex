@@ -29,7 +29,7 @@
 //!
 //! Common error scenarios:
 //! - **Serialization failures**: Corrupt checkpoint data falls back to `Checkpoint::None`
-//! - **KV errors**: NATS KV failures are propagated as `NodeError::Checkpoint`
+//! - **KV errors**: NATS KV failures are propagated as `SinexError::checkpoint`
 //!
 //! # Performance Considerations
 //!
@@ -37,11 +37,12 @@
 //! - Frequent checkpoint updates are batched for better performance
 //! - Historical checkpoint queries are limited to prevent memory issues
 
-use crate::{stream_processor::Checkpoint, NodeError, NodeResult};
+use crate::{stream_processor::Checkpoint, NodeResult, SinexError};
 use async_nats::jetstream::kv::Operation;
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 use std::convert::TryInto;
+use time::OffsetDateTime;
 use tracing::{debug, info, warn};
 
 /// Unified checkpoint state for both ingestors and automata.
@@ -67,7 +68,7 @@ pub struct CheckpointState {
     pub processed_count: u64,
 
     /// Last activity timestamp
-    pub last_activity: chrono::DateTime<chrono::Utc>,
+    pub last_activity: OffsetDateTime,
 
     /// Processor-specific state data
     pub data: Option<serde_json::Value>,
@@ -97,7 +98,7 @@ impl Default for CheckpointState {
         Self {
             checkpoint: Checkpoint::None,
             processed_count: 0,
-            last_activity: chrono::Utc::now(),
+            last_activity: sinex_primitives::temporal::OffsetDateTime::now_utc(),
             data: None,
             version: 2, // Version 2 for unified checkpoint format
             revision: 0,
@@ -256,7 +257,7 @@ fn sanitize_kv_key_component(raw: &str) -> String {
 
 /// Resolve the NATS KV bucket name for checkpoints.
 pub fn checkpoint_bucket_name(prefix: Option<&str>) -> String {
-    let env = sinex_core::environment();
+    let env = sinex_primitives::environment::environment();
     let base_bucket = "sinex_checkpoints";
 
     let namespaced_base = match prefix {
@@ -365,8 +366,8 @@ impl CheckpointManager {
     ///
     /// # Returns
     /// - `Ok(CheckpointState)`: Successfully loaded or migrated checkpoint
-    /// - `Err(NodeError::Checkpoint)`: NATS KV read error
-    /// - `Err(NodeError::Serialization)`: Corrupt checkpoint data (falls back to None)
+    /// - `Err(SinexError::checkpoint)`: NATS KV read error
+    /// - `Err(SinexError::Serialization)`: Corrupt checkpoint data (falls back to None)
     ///
     /// # Behavior
     /// - Corrupt checkpoint data logs warnings and falls back to `Checkpoint::None`
@@ -406,11 +407,10 @@ impl CheckpointManager {
     }
 
     async fn load_checkpoint_for_key(&self, key: &str) -> NodeResult<Option<CheckpointState>> {
-        let entry = self
-            .kv
-            .entry(key)
-            .await
-            .map_err(|e| NodeError::Checkpoint(format!("Failed to read checkpoint KV: {e}")))?;
+        let entry =
+            self.kv.entry(key).await.map_err(|e| {
+                SinexError::checkpoint(format!("Failed to read checkpoint KV: {e}"))
+            })?;
 
         let Some(entry) = entry else {
             return Ok(None);
@@ -441,22 +441,20 @@ impl CheckpointManager {
     async fn load_latest_checkpoint_for_group(&self) -> NodeResult<Option<CheckpointState>> {
         let prefix = self.kv_group_prefix();
         let mut keys = self.kv.keys().await.map_err(|e| {
-            NodeError::Checkpoint(format!("Failed to list checkpoint KV keys: {e}"))
+            SinexError::checkpoint(format!("Failed to list checkpoint KV keys: {e}"))
         })?;
 
         let mut latest: Option<(i128, CheckpointState)> = None;
 
-        while let Some(key) = keys
-            .try_next()
-            .await
-            .map_err(|e| NodeError::Checkpoint(format!("Failed to scan checkpoint KV keys: {e}")))?
-        {
+        while let Some(key) = keys.try_next().await.map_err(|e| {
+            SinexError::checkpoint(format!("Failed to scan checkpoint KV keys: {e}"))
+        })? {
             if !key.starts_with(&prefix) {
                 continue;
             }
 
             let entry = match self.kv.entry(&key).await.map_err(|e| {
-                NodeError::Checkpoint(format!("Failed to read checkpoint KV entry: {e}"))
+                SinexError::checkpoint(format!("Failed to read checkpoint KV entry: {e}"))
             })? {
                 Some(entry) => entry,
                 None => continue,
@@ -509,22 +507,24 @@ impl CheckpointManager {
     ///
     /// # Returns
     /// - `Ok(u64)`: The new revision number of the saved checkpoint
-    /// - `Err(NodeError::Checkpoint)`: KV write error (including CAS failure)
-    /// - `Err(NodeError::Serialization)`: Checkpoint serialization error
+    /// - `Err(SinexError::checkpoint)`: KV write error (including CAS failure)
+    /// - `Err(SinexError::Serialization)`: Checkpoint serialization error
     pub async fn save_checkpoint(&self, state: &CheckpointState) -> NodeResult<u64> {
         let processed_count: i64 = state.processed_count.try_into().map_err(|_| {
-            NodeError::Checkpoint("processed_count exceeds supported range for storage".to_string())
+            SinexError::checkpoint(
+                "processed_count exceeds supported range for storage".to_string(),
+            )
         })?;
 
         // Save to NATS KV only
-        let encoded = serde_json::to_vec(state).map_err(NodeError::Serialization)?;
+        let encoded = serde_json::to_vec(state).map_err(|e| SinexError::serialization(e))?;
 
         let revision = if state.revision > 0 {
             self.kv
                 .update(&self.kv_key(), encoded.into(), state.revision)
                 .await
                 .map_err(|e| {
-                    NodeError::Checkpoint(format!(
+                    SinexError::checkpoint(format!(
                         "Failed to update checkpoint in KV (CAS failure?): {e}"
                     ))
                 })?
@@ -535,7 +535,7 @@ impl CheckpointManager {
                 .put(&self.kv_key(), encoded.into())
                 .await
                 .map_err(|e| {
-                    NodeError::Checkpoint(format!(
+                    SinexError::checkpoint(format!(
                         "Failed to create checkpoint in KV (Put failure?): {e}"
                     ))
                 })?
@@ -581,27 +581,27 @@ impl CheckpointManager {
             return Ok(Vec::new());
         }
 
-        let entry = self
-            .kv
-            .get(&self.kv_key())
-            .await
-            .map_err(|e| NodeError::Checkpoint(format!("Failed to read checkpoint KV: {e}")))?;
+        let entry =
+            self.kv.get(&self.kv_key()).await.map_err(|e| {
+                SinexError::checkpoint(format!("Failed to read checkpoint KV: {e}"))
+            })?;
 
-        let Some(entry) = entry else {
-            return Ok(Vec::new());
+        let entry = match entry {
+            Some(e) => e,
+            None => return Ok(Vec::new()),
         };
 
         let state: CheckpointState =
-            serde_json::from_slice(&entry).map_err(NodeError::Serialization)?;
+            serde_json::from_slice(&entry).map_err(|e| SinexError::serialization(e))?;
         let timestamp = state.last_activity;
         let history_entry = CheckpointHistoryEntry {
             id: self.kv_key(),
             last_processed_id: state.last_processed_id(),
             processed_count: state.processed_count,
-            last_activity: state.last_activity,
+            last_activity: state.last_activity.into(),
             checkpoint_version: state.version,
-            created_at: timestamp,
-            updated_at: timestamp,
+            created_at: timestamp.into(),
+            updated_at: timestamp.into(),
         };
 
         Ok(vec![history_entry])
@@ -613,7 +613,7 @@ impl CheckpointManager {
         self.kv
             .purge(&self.kv_key())
             .await
-            .map_err(|e| NodeError::Checkpoint(format!("Failed to purge checkpoint: {e}")))?;
+            .map_err(|e| SinexError::checkpoint(format!("Failed to purge checkpoint: {e}")))?;
 
         info!(
             processor = %self.processor_name,
@@ -627,28 +627,32 @@ impl CheckpointManager {
 
     /// Get checkpoint statistics
     pub async fn get_checkpoint_stats(&self) -> NodeResult<CheckpointStats> {
-        let entry = self
-            .kv
-            .get(&self.kv_key())
-            .await
-            .map_err(|e| NodeError::Checkpoint(format!("Failed to read checkpoint KV: {e}")))?;
+        let entry =
+            self.kv.get(&self.kv_key()).await.map_err(|e| {
+                SinexError::checkpoint(format!("Failed to read checkpoint KV: {e}"))
+            })?;
 
-        let (processed_count, last_update) = if let Some(entry) = entry {
-            if let Ok(state) = serde_json::from_slice::<CheckpointState>(&entry) {
-                (state.processed_count, Some(state.last_activity))
-            } else {
-                (0, None)
+        let (processed_count, last_update) = match entry {
+            Some(e) => {
+                if let Ok(state) = serde_json::from_slice::<CheckpointState>(&e) {
+                    (state.processed_count, Some(state.last_activity))
+                } else {
+                    (0, None)
+                }
             }
-        } else if let Some(state) = self.load_latest_checkpoint_for_group().await? {
-            (state.processed_count, Some(state.last_activity))
-        } else {
-            (0, None)
+            None => {
+                if let Some(state) = self.load_latest_checkpoint_for_group().await? {
+                    (state.processed_count, Some(state.last_activity))
+                } else {
+                    (0, None)
+                }
+            }
         };
 
         Ok(CheckpointStats {
             total_checkpoints: 1, // KV stores one version
             max_processed: processed_count,
-            last_update,
+            last_update: last_update.map(|t| t.into()),
             first_checkpoint: None,
         })
     }
@@ -660,10 +664,10 @@ pub struct CheckpointHistoryEntry {
     pub id: String,
     pub last_processed_id: Option<String>,
     pub processed_count: u64,
-    pub last_activity: chrono::DateTime<chrono::Utc>,
+    pub last_activity: sinex_primitives::temporal::Timestamp,
     pub checkpoint_version: u32,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: sinex_primitives::temporal::Timestamp,
+    pub updated_at: sinex_primitives::temporal::Timestamp,
 }
 
 /// Checkpoint statistics
@@ -671,8 +675,8 @@ pub struct CheckpointHistoryEntry {
 pub struct CheckpointStats {
     pub total_checkpoints: u64,
     pub max_processed: u64,
-    pub last_update: Option<chrono::DateTime<chrono::Utc>>,
-    pub first_checkpoint: Option<chrono::DateTime<chrono::Utc>>,
+    pub last_update: Option<sinex_primitives::temporal::Timestamp>,
+    pub first_checkpoint: Option<sinex_primitives::temporal::Timestamp>,
 }
 
 /// Configuration for checkpoint cleanup (Issue 12)
@@ -747,13 +751,13 @@ pub struct CheckpointCleanupResult {
 ///
 /// # Returns
 /// - `Ok(CheckpointCleanupResult)`: Cleanup completed with stats
-/// - `Err(NodeError)`: Failed to scan or delete checkpoints
+/// - `Err(SinexError)`: Failed to scan or delete checkpoints
 pub async fn cleanup_stale_checkpoints(
     kv: &async_nats::jetstream::kv::Store,
     max_age: std::time::Duration,
 ) -> NodeResult<CheckpointCleanupResult> {
-    let now = chrono::Utc::now();
-    let cutoff = now - chrono::Duration::from_std(max_age).unwrap_or(chrono::Duration::days(30));
+    let now = sinex_primitives::temporal::OffsetDateTime::now_utc();
+    let cutoff = now - time::Duration::try_from(max_age).unwrap_or(time::Duration::days(30));
 
     let mut result = CheckpointCleanupResult {
         scanned: 0,
@@ -763,13 +767,13 @@ pub async fn cleanup_stale_checkpoints(
 
     // List all keys in the bucket
     let mut keys = kv.keys().await.map_err(|e| {
-        NodeError::Checkpoint(format!("Failed to list checkpoint keys for cleanup: {e}"))
+        SinexError::checkpoint(format!("Failed to list checkpoint keys for cleanup: {e}"))
     })?;
 
     while let Some(key) = keys
         .try_next()
         .await
-        .map_err(|e| NodeError::Checkpoint(format!("Failed to scan checkpoint keys: {e}")))?
+        .map_err(|e| SinexError::checkpoint(format!("Failed to scan checkpoint keys: {e}")))?
     {
         result.scanned += 1;
 
@@ -883,7 +887,7 @@ mod tests {
     #[sinex_test]
     async fn save_checkpoint_rejects_processed_count_overflow(
         ctx: TestContext,
-    ) -> sinex_test_utils::TestResult<()> {
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let ctx = ctx.with_nats().shared().await?;
         let kv = ctx.checkpoint_kv().await?;
         let manager = CheckpointManager::new(
@@ -896,14 +900,14 @@ mod tests {
         state.processed_count = u64::MAX;
 
         let err = manager.save_checkpoint(&state).await.unwrap_err();
-        assert!(matches!(err, NodeError::Checkpoint(_)));
+        assert!(matches!(err, SinexError::checkpoint(_)));
         Ok(())
     }
 
     #[sinex_test]
     async fn checkpoint_keys_accept_invalid_chars(
         ctx: TestContext,
-    ) -> sinex_test_utils::TestResult<()> {
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let ctx = ctx.with_nats().shared().await?;
         let kv = ctx.checkpoint_kv().await?;
         let manager = CheckpointManager::new(

@@ -34,7 +34,7 @@ impl NodeVersion {
     /// Get the current node version information
     ///
     /// # Errors
-    /// Returns `NodeError::Configuration` if any version information is invalid
+    /// Returns `SinexError::configuration` if any version information is invalid
     pub fn current() -> crate::NodeResult<Self> {
         Ok(Self {
             version: node_version()?,
@@ -60,7 +60,7 @@ impl NodeVersion {
                 commit_hash: "unknown".to_string(),
                 commit_count: 0,
                 branch: "unknown".to_string(),
-                build_timestamp: chrono::Utc::now().to_rfc3339(),
+                build_timestamp: sinex_primitives::temporal::now().format_rfc3339(),
                 is_dirty: true, // Conservative assumption
             }
         })
@@ -78,10 +78,14 @@ impl NodeVersion {
 
     /// Get age of this build in seconds
     pub fn build_age_seconds(&self) -> Option<u64> {
-        let build_time = chrono::DateTime::parse_from_rfc3339(&self.build_timestamp).ok()?;
-        let now = chrono::Utc::now();
-        let duration = now.signed_duration_since(build_time.with_timezone(&chrono::Utc));
-        Some(duration.num_seconds().max(0) as u64)
+        let build_time = sinex_primitives::temporal::OffsetDateTime::parse(
+            &self.build_timestamp,
+            &sinex_primitives::temporal::Rfc3339,
+        )
+        .ok()?;
+        let now = sinex_primitives::temporal::OffsetDateTime::now_utc();
+        let duration = now - build_time;
+        Some(duration.whole_seconds().max(0) as u64)
     }
 
     /// Create version summary for logging
@@ -141,12 +145,12 @@ impl fmt::Display for NodeVersion {
 }
 
 impl FromStr for NodeVersion {
-    type Err = crate::NodeError;
+    type Err = crate::SinexError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         // Parse version string (expected format: "major.minor.patch" or "major.minor.patch+metadata")
         let version = Version::from_str(s.split('+').next().unwrap_or(s)).map_err(|e| {
-            crate::NodeError::Configuration(format!("Invalid version string '{}': {}", s, e))
+            crate::SinexError::configuration(format!("Invalid version string '{}': {}", s, e))
         })?;
 
         Ok(Self {
@@ -155,7 +159,7 @@ impl FromStr for NodeVersion {
             commit_hash: "unknown".to_string(),
             commit_count: 0,
             branch: "unknown".to_string(),
-            build_timestamp: chrono::Utc::now().to_rfc3339(),
+            build_timestamp: sinex_primitives::temporal::now().format_rfc3339(),
             is_dirty: false,
         })
     }
@@ -175,7 +179,7 @@ impl NodeInstance {
     /// Create a new node instance
     ///
     /// # Errors
-    /// Returns `NodeError::Configuration` if version information is invalid
+    /// Returns `SinexError::configuration` if version information is invalid
     pub fn new(instance_id: String, service_name: String) -> crate::NodeResult<Self> {
         let host_name = gethostname::gethostname().to_string_lossy().to_string();
 
@@ -238,10 +242,10 @@ impl NodeInstance {
 /// Get semantic version of the node
 ///
 /// # Errors
-/// Returns `NodeError::Configuration` if the node version is invalid
+/// Returns `SinexError::configuration` if the node version is invalid
 pub fn node_version() -> crate::NodeResult<Version> {
     Version::from_str(option_env!("NODE_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")))
-        .map_err(|e| crate::NodeError::Configuration(format!("Invalid node version: {}", e)))
+        .map_err(|e| crate::SinexError::configuration(format!("Invalid node version: {}", e)))
 }
 
 /// Get full version string with build metadata
@@ -261,12 +265,12 @@ pub fn node_commit_hash() -> String {
 /// Get git commit count (used as patch version)
 ///
 /// # Errors
-/// Returns `NodeError::Configuration` if the commit count is invalid
+/// Returns `SinexError::configuration` if the commit count is invalid
 pub fn node_commit_count() -> crate::NodeResult<u32> {
     option_env!("NODE_COMMIT_COUNT")
         .unwrap_or("0")
         .parse()
-        .map_err(|e| crate::NodeError::Configuration(format!("Invalid commit count: {}", e)))
+        .map_err(|e| crate::SinexError::configuration(format!("Invalid commit count: {}", e)))
 }
 
 /// Get git branch name
@@ -284,12 +288,12 @@ pub fn node_build_timestamp() -> String {
 /// Check if working directory was dirty during build
 ///
 /// # Errors
-/// Returns `NodeError::Configuration` if the dirty flag is invalid
+/// Returns `SinexError::configuration` if the dirty flag is invalid
 pub fn node_is_dirty() -> crate::NodeResult<bool> {
     option_env!("NODE_IS_DIRTY")
         .unwrap_or("false")
         .parse()
-        .map_err(|e| crate::NodeError::Configuration(format!("Invalid dirty flag: {}", e)))
+        .map_err(|e| crate::SinexError::configuration(format!("Invalid dirty flag: {}", e)))
 }
 
 /// Print version information to stdout (for --version flags)
@@ -310,5 +314,74 @@ pub fn print_version_info() {
             println!("{}", fallback.full_version);
             println!("status: version info corrupted, using fallback");
         }
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sinex_primitives::temporal::OffsetDateTime;
+
+    #[test]
+    fn test_build_age_seconds() {
+        let now = OffsetDateTime::now_utc();
+        let one_hour_ago = now - std::time::Duration::from_secs(3600);
+        let timestamp_str = one_hour_ago
+            .format(&sinex_primitives::temporal::Rfc3339)
+            .unwrap();
+
+        let version = NodeVersion {
+            full_version: "0.0.0".to_string(),
+            version: semver::Version::new(0, 0, 0),
+            commit_hash: "test".to_string(),
+            commit_count: 0,
+            branch: "test".to_string(),
+            build_timestamp: timestamp_str,
+            is_dirty: false,
+        };
+
+        let age = version.build_age_seconds().expect("Should return age");
+        // Allow for some small delta due to execution time
+        assert!(
+            age >= 3599 && age <= 3605,
+            "Age {} should be close to 3600",
+            age
+        );
+    }
+
+    #[test]
+    fn test_build_age_future() {
+        let now = OffsetDateTime::now_utc();
+        let one_hour_future = now + std::time::Duration::from_secs(3600);
+        let timestamp_str = one_hour_future
+            .format(&sinex_primitives::temporal::Rfc3339)
+            .unwrap();
+
+        let version = NodeVersion {
+            full_version: "0.0.0".to_string(),
+            version: semver::Version::new(0, 0, 0),
+            commit_hash: "test".to_string(),
+            commit_count: 0,
+            branch: "test".to_string(),
+            build_timestamp: timestamp_str,
+            is_dirty: false,
+        };
+
+        let age = version.build_age_seconds().expect("Should return age");
+        assert_eq!(age, 0, "Future build should return 0 age");
+    }
+
+    #[test]
+    fn test_build_age_invalid_timestamp() {
+        let version = NodeVersion {
+            full_version: "0.0.0".to_string(),
+            version: semver::Version::new(0, 0, 0),
+            commit_hash: "test".to_string(),
+            commit_count: 0,
+            branch: "test".to_string(),
+            build_timestamp: "invalid-timestamp".to_string(),
+            is_dirty: false,
+        };
+
+        assert!(version.build_age_seconds().is_none());
     }
 }

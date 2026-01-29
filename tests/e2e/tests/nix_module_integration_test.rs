@@ -4,8 +4,8 @@
 //! This includes configuration validation, service management, and module behavior.
 
 use serde_json::json;
-use xtask::sandbox::{prelude::*, TestResult};
 use std::collections::HashMap;
+use xtask::sandbox::{prelude::*, TestResult};
 
 // =============================================================================
 // NIXOS MODULE CONFIGURATION TESTS

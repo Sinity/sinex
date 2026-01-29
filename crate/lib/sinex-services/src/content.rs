@@ -3,7 +3,7 @@
 //! Content service entry points for binary payload workflows.
 
 use crate::error::{Result as ServiceResult, SinexError};
-use sinex_core::db::DbPool;
+use sinex_db::DbPool;
 use sinex_node_sdk::annex::BlobManager;
 use std::sync::Arc;
 use std::time::Instant;

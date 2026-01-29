@@ -6,8 +6,7 @@
 //! entering Sinex and is the root of all external provenance chains.
 
 use crate::schema::{Blobs, TableDef};
-use crate::ulid::Ulid;
-use chrono::{DateTime, Utc};
+use crate::ulid::{Timestamp, Ulid};
 use sea_orm_migration::prelude::*;
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;
@@ -63,9 +62,9 @@ pub struct SourceMaterialRecord {
     pub status: String,
     pub timing_info_type: String,
     pub metadata: JsonValue,
-    pub staged_at: DateTime<Utc>,
-    pub start_time: Option<DateTime<Utc>>,
-    pub end_time: Option<DateTime<Utc>>,
+    pub staged_at: Timestamp,
+    pub start_time: Option<Timestamp>,
+    pub end_time: Option<Timestamp>,
     pub staged_by: Option<String>,
     pub staged_on_host: Option<String>,
     pub optional_blob_id: Option<Ulid>,

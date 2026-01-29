@@ -2,7 +2,7 @@
 //!
 //! Exercises NATS KV checkpoint persistence under concurrent updates.
 
-use sinex_core::types::ulid::Ulid;
+use sinex_node_sdk::types::ulid::Ulid;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
 use xtask::sandbox::prelude::*;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -35,7 +35,7 @@ async fn test_concurrent_checkpoint_updates_basic(ctx: TestContext) -> TestResul
             let mut state = CheckpointState::default();
             state.checkpoint = Checkpoint::internal(Ulid::new(), i + 1);
             state.processed_count = i + 1;
-            state.last_activity = chrono::Utc::now();
+            state.last_activity = OffsetDateTime::now_utc();
             if manager.save_checkpoint(&state).await.is_ok() {
                 successes.fetch_add(1, Ordering::SeqCst);
             }
@@ -79,7 +79,7 @@ async fn test_checkpoint_last_write_wins(ctx: TestContext) -> TestResult<()> {
             let mut state = CheckpointState::default();
             state.checkpoint = Checkpoint::internal(Ulid::new(), i + 1);
             state.processed_count = i + 1;
-            state.last_activity = chrono::Utc::now();
+            state.last_activity = OffsetDateTime::now_utc();
             state.data = Some(serde_json::json!({"seq": i + 1}));
             manager.save_checkpoint(&state).await
         }));

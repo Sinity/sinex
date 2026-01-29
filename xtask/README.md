@@ -67,7 +67,7 @@ Essential commands for daily development.
 cargo xtask check                    # fmt --check + cargo check (~10s)
 
 # Before commit
-cargo xtask check && cargo xtask test --profile fast
+cargo xtask check && cargo xtask test --profile default
 
 # Full CI validation (comprehensive)
 cargo xtask ci-preflight             # lint + all tests + integration
@@ -98,12 +98,28 @@ cargo xtask test --profile default
 cargo xtask test --profile debug
 
 # Include performance/stress tests
-cargo xtask test --profile perf
+# These tests are marked `#[ignore]` by default to keep feedback fast. To run them:
+# - Use the xtask alias: `cargo xtask test:heavy --prime`
+# - Or include ignored tests directly: `cargo xtask test --include-ignored --prime`
 
 # Advanced filters
-cargo xtask test --profile fast -- -p sinex-core
+cargo xtask test --profile default -- -p sinex-core
 cargo xtask test --profile debug -- -E 'test(my_test_name)'
 ```
+
+### Running heavy / ignored tests
+
+Some tests are marked `#[ignore = "long"]` or `#[ignore = "external"]` and are skipped by default. To run only those heavy/external tests via xtask (recommended):
+
+```bash
+# Run tests that are annotated with #[ignore = "long"|"external"]
+direnv exec /realm/project/sinex cargo xtask test:heavy --prime
+
+# If you want to run *all* ignored tests (including flaky or platform-specific skips):
+# direnv exec /realm/project/sinex cargo xtask test --include-ignored --prime
+```
+
+Or use the helper script at `./scripts/run-heavy-tests.sh` or the provided VS Code task "Run heavy tests (include ignored)".
 
 ### Schema Management
 
@@ -195,6 +211,7 @@ cargo xtask bench --mode refine --runs 5
 ## Implementation
 
 Built with:
+
 - **CLI**: clap v4 with derive API for command structure
 - **Workspace analysis**: guppy v0.17 for dependency graphs
 - **Output**: Human-readable format + JSON for CI integration
@@ -279,6 +296,7 @@ cargo xtask lint-forbidden --json
 ## Exit Codes
 
 All commands return:
+
 - **0** - Success
 - **1** - Failure (invalid args, operation failed)
 - **See error message** for details
@@ -303,6 +321,7 @@ JSON schema for responses is documented in `CLAUDE.md` under xtask Commands sect
 - **cargo xtask ci-preflight**: ~2-3 minutes (full validation)
 
 Timing varies based on:
+
 - Number of changed files
 - Whether clean build or incremental
 - System load and available memory

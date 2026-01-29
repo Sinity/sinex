@@ -3,21 +3,21 @@
 //! This module provides utilities for persisting test failure diagnostics
 //! and retrying flaky tests with context capture.
 
-use crate::database_pool::get_pool_stats;
-use crate::{TestContext, TestContextFailureSnapshot};
-use chrono::Utc;
+use crate::sandbox::db::pool::get_pool_stats;
+use crate::sandbox::prelude::*;
 use futures::Future;
 use serde::Serialize;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
+use time::OffsetDateTime;
 
 #[derive(Serialize)]
 struct FailureSnapshot {
     test: String,
     error: String,
     timestamp: String,
-    pool: crate::database_pool::PoolStats,
+    pool: crate::sandbox::db::pool::PoolStats,
     pool_detail: Option<Vec<SlotSnapshot>>,
     context: Option<ContextSnapshot>,
     logs: Option<Vec<String>>,
@@ -45,8 +45,8 @@ struct SlotSnapshot {
 
 pub enum FailureContext<'a> {
     None,
-    Borrowed(&'a TestContext),
-    Snapshot(TestContextFailureSnapshot),
+    Borrowed(&'a Sandbox),
+    Snapshot(SandboxFailureSnapshot),
 }
 
 /// Persist contextual information about a failing test. Artifacts are written to
@@ -90,7 +90,7 @@ pub fn persist_failure(test_name: &str, error: impl Into<String>, ctx: FailureCo
     };
 
     let slot_detail: Option<Vec<SlotSnapshot>> = {
-        let slots = crate::database_pool::get_slot_stats();
+        let slots = crate::sandbox::db::pool::get_slot_stats();
         if slots.is_empty() {
             None
         } else {
@@ -114,7 +114,9 @@ pub fn persist_failure(test_name: &str, error: impl Into<String>, ctx: FailureCo
     let snapshot = FailureSnapshot {
         test: test_name.to_string(),
         error: error.into(),
-        timestamp: Utc::now().to_rfc3339(),
+        timestamp: OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .expect("RFC3339 formatting of current UTC time should always succeed"),
         pool: get_pool_stats(),
         pool_detail: slot_detail,
         context: ctx_snapshot,
@@ -124,7 +126,14 @@ pub fn persist_failure(test_name: &str, error: impl Into<String>, ctx: FailureCo
     let sanitized = test_name.replace("::", "_");
     let filename = format!(
         "{}-{}.json",
-        Utc::now().format("%Y%m%dT%H%M%S%3f"),
+        OffsetDateTime::now_utc()
+            .format(
+                &time::format_description::parse(
+                    "[year][month][day]T[hour][minute][second][subsecond digits:3]"
+                )
+                .unwrap()
+            )
+            .unwrap(),
         sanitized
     );
     let path = snapshot_dir.join(filename);
@@ -147,12 +156,12 @@ pub fn persist_failure(test_name: &str, error: impl Into<String>, ctx: FailureCo
 /// Retry a fallible async block once, capturing diagnostics on the first failure.
 pub async fn retry_with_snapshot<F, Fut>(
     test_name: &str,
-    ctx: &crate::TestContext,
+    ctx: &Sandbox,
     f: F,
-) -> crate::TestResult<()>
+) -> crate::sandbox::prelude::TestResult<()>
 where
     F: Fn() -> Fut,
-    Fut: Future<Output = crate::TestResult<()>>,
+    Fut: Future<Output = crate::sandbox::prelude::TestResult<()>>,
 {
     match f().await {
         Ok(()) => Ok(()),

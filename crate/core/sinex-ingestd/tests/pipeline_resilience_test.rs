@@ -2,14 +2,14 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use serde_json::json;
-use sinex_core::db::query_helpers::ulid_to_uuid;
-use sinex_core::types::Ulid;
+use sinex_db::query_helpers::ulid_to_uuid;
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
-use xtask::sandbox::timing::{Timeouts, WaitHelpers};
-use xtask::sandbox::{sinex_test, EventOverrides, TestContext, TestNodePublisher, TestResult};
+use sinex_primitives::Ulid;
 use tokio::sync::RwLock;
 use tokio::time::Duration;
+use xtask::sandbox::timing::{Timeouts, WaitHelpers};
+use xtask::sandbox::{sinex_test, EventOverrides, TestContext, TestNodePublisher, TestResult};
 
 async fn spawn_consumer(
     ctx: &TestContext,

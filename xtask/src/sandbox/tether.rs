@@ -60,7 +60,12 @@ impl TetherConfig {
 
     /// Generate a unique consumer name for this session
     pub fn consumer_name(&self) -> String {
-        let timestamp = chrono::Utc::now().format("%Y%m%dT%H%M%S");
+        let timestamp = time::OffsetDateTime::now_utc()
+            .format(
+                &time::format_description::parse("[year][month][day]T[hour][minute][second]")
+                    .expect("failed to parse timestamp format description for consumer name"),
+            )
+            .expect("failed to format timestamp for consumer name");
         format!("{}-{}", self.consumer_prefix, timestamp)
     }
 }

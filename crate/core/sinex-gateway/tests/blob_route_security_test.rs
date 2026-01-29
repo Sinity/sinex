@@ -9,10 +9,10 @@ use sinex_node_sdk::annex::{
     blob_manager::BLOB_EVENT_CHANNEL_CAPACITY, AnnexConfig, BlobManager, GitAnnex,
 };
 use sinex_services::ContentService;
-use xtask::sandbox::{sinex_serial_test, sinex_test, TestContext, TestResult};
 use tempfile::TempDir;
 use tokio::sync::mpsc;
 use which::which;
+use xtask::sandbox::{sinex_serial_test, sinex_test, TestContext, TestResult};
 
 struct EnvVarGuard {
     key: &'static str,

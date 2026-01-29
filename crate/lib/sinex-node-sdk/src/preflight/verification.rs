@@ -11,12 +11,11 @@
  * All verification is done via SELECT queries and schema introspection.
  */
 
-use crate::{Checkpoint, CheckpointManager, CheckpointState};
+use crate::{Checkpoint, CheckpointManager, CheckpointState, NodeResult, SinexError};
 use async_nats::jetstream::kv;
-use chrono::Utc;
-use color_eyre::eyre::{Context, Result};
+
 use serde_json::{json, Value};
-use sinex_core::types::ulid::Ulid;
+use sinex_primitives::Ulid;
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::time::Instant;
@@ -25,7 +24,8 @@ use tracing::info;
 use super::{resolve_database_url, resolve_nats_url, VerificationStatus};
 
 /// Verify end-to-end integration of the entire Sinex system
-pub async fn verify_end_to_end_integration() -> Result<(VerificationStatus, Value, Vec<String>)> {
+pub async fn verify_end_to_end_integration() -> NodeResult<(VerificationStatus, Value, Vec<String>)>
+{
     let mut messages = Vec::new();
     let mut details = HashMap::new();
     let mut has_warnings = false;
@@ -75,7 +75,7 @@ pub async fn verify_end_to_end_integration() -> Result<(VerificationStatus, Valu
 }
 
 /// Verify database integration using query-based checks only
-async fn verify_database_integration(messages: &mut Vec<String>) -> Result<Value> {
+async fn verify_database_integration(messages: &mut Vec<String>) -> NodeResult<Value> {
     let pool = get_test_pool().await?;
 
     let mut tests = HashMap::new();
@@ -144,7 +144,7 @@ async fn verify_database_integration(messages: &mut Vec<String>) -> Result<Value
 }
 
 /// Test schema access - verify core tables exist and are queryable
-async fn test_schema_access(pool: &PgPool, _messages: &mut Vec<String>) -> Result<Value> {
+async fn test_schema_access(pool: &PgPool, _messages: &mut Vec<String>) -> NodeResult<Value> {
     // Check that core.events table exists
     let events_table_exists = sqlx::query_scalar::<_, bool>(
         r#"
@@ -157,10 +157,12 @@ async fn test_schema_access(pool: &PgPool, _messages: &mut Vec<String>) -> Resul
     )
     .fetch_one(pool)
     .await
-    .wrap_err("Failed to check core.events table existence")?;
+    .map_err(|e| SinexError::from(e))?;
 
     if !events_table_exists {
-        color_eyre::eyre::bail!("core.events table does not exist");
+        return Err(SinexError::processing(
+            "core.events table does not exist".to_string(),
+        ));
     }
 
     // Check that we can SELECT from core.events
@@ -173,7 +175,7 @@ async fn test_schema_access(pool: &PgPool, _messages: &mut Vec<String>) -> Resul
     let count_result = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM core.events")
         .fetch_one(pool)
         .await
-        .wrap_err("Failed to count events")?;
+        .map_err(|e| SinexError::from(e))?;
 
     // Check core.source_materials table exists
     let source_materials_exists = sqlx::query_scalar::<_, bool>(
@@ -187,7 +189,7 @@ async fn test_schema_access(pool: &PgPool, _messages: &mut Vec<String>) -> Resul
     )
     .fetch_one(pool)
     .await
-    .wrap_err("Failed to check core.source_materials table existence")?;
+    .map_err(|e| SinexError::from(e))?;
 
     // Check core.blobs table exists
     let blobs_exists = sqlx::query_scalar::<_, bool>(
@@ -201,7 +203,7 @@ async fn test_schema_access(pool: &PgPool, _messages: &mut Vec<String>) -> Resul
     )
     .fetch_one(pool)
     .await
-    .wrap_err("Failed to check core.blobs table existence")?;
+    .map_err(|e| SinexError::from(e))?;
 
     Ok(json!({
         "events_table_exists": events_table_exists,
@@ -215,42 +217,39 @@ async fn test_schema_access(pool: &PgPool, _messages: &mut Vec<String>) -> Resul
 }
 
 /// Test transaction support using SELECT queries only
-async fn test_transactions(pool: &PgPool, _messages: &mut [String]) -> Result<Value> {
+async fn test_transactions(pool: &PgPool, _messages: &mut [String]) -> NodeResult<Value> {
     // Test committed transaction with SELECT
-    let mut tx = pool.begin().await.wrap_err("Failed to begin transaction")?;
+    let mut tx = pool.begin().await.map_err(|e| SinexError::from(e))?;
 
     // Run a simple SELECT inside the transaction
     let select_in_tx = sqlx::query_scalar::<_, i32>("SELECT 1")
         .fetch_one(&mut *tx)
         .await
-        .wrap_err("Failed to SELECT inside transaction")?;
+        .map_err(|e| SinexError::from(e))?;
 
-    tx.commit().await.wrap_err("Failed to commit transaction")?;
+    tx.commit().await.map_err(|e| SinexError::from(e))?;
 
     let commit_works = select_in_tx == 1;
 
     // Test rollback with SELECT
-    let mut tx_rollback = pool
-        .begin()
-        .await
-        .wrap_err("Failed to begin rollback transaction")?;
+    let mut tx_rollback = pool.begin().await.map_err(|e| SinexError::from(e))?;
 
     // Run a simple SELECT inside the transaction
     let _select_in_rollback = sqlx::query_scalar::<_, i32>("SELECT 1")
         .fetch_one(&mut *tx_rollback)
         .await
-        .wrap_err("Failed to SELECT inside rollback transaction")?;
+        .map_err(|e| SinexError::from(e))?;
 
     tx_rollback
         .rollback()
         .await
-        .wrap_err("Failed to rollback transaction")?;
+        .map_err(|e| SinexError::from(e))?;
 
     // Verify no side effects by checking we can still query
     let after_rollback = sqlx::query_scalar::<_, i32>("SELECT 1")
         .fetch_one(pool)
         .await
-        .wrap_err("Failed to SELECT after rollback")?;
+        .map_err(|e| SinexError::from(e))?;
 
     let rollback_works = after_rollback == 1;
 
@@ -263,7 +262,7 @@ async fn test_transactions(pool: &PgPool, _messages: &mut [String]) -> Result<Va
 }
 
 /// Test concurrent query operations
-async fn test_concurrent_queries(pool: &PgPool, messages: &mut Vec<String>) -> Result<Value> {
+async fn test_concurrent_queries(pool: &PgPool, messages: &mut Vec<String>) -> NodeResult<Value> {
     use tokio::task::JoinSet;
 
     let concurrent_count = 10;
@@ -309,7 +308,7 @@ async fn test_concurrent_queries(pool: &PgPool, messages: &mut Vec<String>) -> R
 }
 
 /// Test database extensions
-async fn test_database_extensions(pool: &PgPool, _messages: &mut [String]) -> Result<Value> {
+async fn test_database_extensions(pool: &PgPool, _messages: &mut [String]) -> NodeResult<Value> {
     let mut tested_extensions = HashMap::new();
 
     // Test UUID generation
@@ -418,14 +417,16 @@ async fn test_database_extensions(pool: &PgPool, _messages: &mut [String]) -> Re
 }
 
 /// Verify service integration (NATS checkpoint KV)
-async fn verify_service_integration(_messages: &mut [String]) -> Result<Value> {
+async fn verify_service_integration(_messages: &mut [String]) -> NodeResult<Value> {
     let nats_url = resolve_nats_url()?;
-    let mut nats_config = sinex_core::nats::NatsConnectionConfig::from_env();
+    let mut nats_config = sinex_primitives::nats::NatsConnectionConfig::from_env();
     nats_config.url = nats_url;
-    let client = nats_config
-        .connect()
-        .await
-        .wrap_err("Failed to connect to NATS for checkpoint verification")?;
+    let client = nats_config.connect().await.map_err(|e| {
+        SinexError::processing(format!(
+            "Failed to connect to NATS for checkpoint verification: {}",
+            e
+        ))
+    })?;
     let js = async_nats::jetstream::new(client);
     let bucket = format!(
         "KV_{}",
@@ -442,7 +443,9 @@ async fn verify_service_integration(_messages: &mut [String]) -> Result<Value> {
         Ok(store) => Ok(store),
         Err(_) => js.get_key_value(&bucket).await,
     }
-    .wrap_err("Failed to create/open checkpoint KV bucket")?;
+    .map_err(|e| {
+        SinexError::processing(format!("Failed to create/open checkpoint KV bucket: {}", e))
+    })?;
 
     let consumer_name = format!("preflight-{}", Ulid::new());
     let manager = CheckpointManager::new(
@@ -455,20 +458,18 @@ async fn verify_service_integration(_messages: &mut [String]) -> Result<Value> {
     let state = CheckpointState {
         checkpoint: Checkpoint::None,
         processed_count: 1,
-        last_activity: Utc::now(),
+        last_activity: sinex_primitives::temporal::OffsetDateTime::now_utc(),
         data: Some(json!({ "preflight": true })),
         version: 2,
         revision: 0,
     };
 
-    manager
-        .save_checkpoint(&state)
-        .await
-        .wrap_err("Failed to persist checkpoint to KV")?;
-    manager
-        .reset_checkpoint()
-        .await
-        .wrap_err("Failed to delete checkpoint from KV")?;
+    manager.save_checkpoint(&state).await.map_err(|e| {
+        SinexError::processing(format!("Failed to persist checkpoint to KV: {}", e))
+    })?;
+    manager.reset_checkpoint().await.map_err(|e| {
+        SinexError::processing(format!("Failed to delete checkpoint from KV: {}", e))
+    })?;
 
     Ok(json!({
         "checkpoint_kv": true,
@@ -477,18 +478,18 @@ async fn verify_service_integration(_messages: &mut [String]) -> Result<Value> {
 }
 
 /// Get test database pool
-async fn get_test_pool() -> Result<PgPool> {
+async fn get_test_pool() -> NodeResult<PgPool> {
     let database_url = resolve_database_url()?;
 
     let pool = PgPool::connect(&database_url)
         .await
-        .wrap_err("Failed to connect to test database")?;
+        .map_err(|e| SinexError::from(e))?;
 
     Ok(pool)
 }
 
 /// Main entry point for preflight verification
-pub async fn run_preflight_checks() -> Result<(VerificationStatus, Value, Vec<String>)> {
+pub async fn run_preflight_checks() -> NodeResult<(VerificationStatus, Value, Vec<String>)> {
     let mut messages = Vec::new();
     let mut details = HashMap::new();
     let mut has_warnings = false;
@@ -554,7 +555,7 @@ pub async fn run_preflight_checks() -> Result<(VerificationStatus, Value, Vec<St
 }
 
 /// Verify performance baseline using read-only queries
-pub async fn verify_performance_baseline() -> Result<(VerificationStatus, Value, Vec<String>)> {
+pub async fn verify_performance_baseline() -> NodeResult<(VerificationStatus, Value, Vec<String>)> {
     let mut messages = Vec::new();
     let pool = get_test_pool().await?;
 
@@ -568,7 +569,7 @@ pub async fn verify_performance_baseline() -> Result<(VerificationStatus, Value,
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM core.events")
             .fetch_one(&pool)
             .await
-            .wrap_err("Performance test query failed")?;
+            .map_err(|e| SinexError::from(e))?;
 
         let query_duration = query_start.elapsed();
         query_times.push(query_duration.as_millis());

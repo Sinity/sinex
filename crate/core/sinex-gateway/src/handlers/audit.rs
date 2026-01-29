@@ -4,19 +4,23 @@
 //! - Get audit trail for a specific operation
 //! - Follow provenance links from operation to affected events
 
-use color_eyre::eyre::{eyre, Context, Result};
 use serde_json::Value;
+use sinex_primitives::SinexError;
+use sinex_primitives::events::SourceMaterial;
+use sinex_primitives::Id;
 use sqlx::PgPool;
 
 // Re-export shared types
-pub use sinex_core::rpc::audit::{
+pub use sinex_primitives::rpc::audit::{
     AuditGetRequest, AuditGetResponse, AuditTrail, EventSummary, OperationRecord,
 };
+
+type Result<T> = std::result::Result<T, SinexError>;
 
 /// Internal DB row type for operation records
 #[derive(Debug, sqlx::FromRow)]
 struct OperationRow {
-    id: String,
+    id: Id<SourceMaterial>,
     operation_type: String,
     operator: String,
     scope: Option<Value>,
@@ -29,14 +33,16 @@ struct OperationRow {
 /// Handle GET /audit/{operation_id} - get audit trail for an operation
 pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
     let request: AuditGetRequest =
-        serde_json::from_value(params).wrap_err("Invalid audit parameters")?;
+        serde_json::from_value(params).map_err(|e| SinexError::serialization(e.to_string()))?;
+
+    let operation_id = request.operation_id;
 
     // Fetch the operation record
     let row = sqlx::query_as!(
         OperationRow,
         r#"
         SELECT
-            id::text as "id!",
+            id as "id: Id<SourceMaterial>",
             operation_type as "operation_type!",
             operator as "operator!",
             scope,
@@ -45,16 +51,19 @@ pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
             preview_summary,
             duration_ms
         FROM core.operations_log
-        WHERE id::text = $1
+        WHERE id = $1
         "#,
-        request.operation_id
+        operation_id as _
     )
     .fetch_optional(pool)
     .await
-    .map_err(|e| eyre!("Failed to fetch operation: {}", e))?;
+    .map_err(|e| SinexError::service(format!("Failed to fetch operation: {}", e)))?;
 
     let Some(row) = row else {
-        return Err(eyre!("Operation not found: {}", request.operation_id));
+        return Err(SinexError::not_found(format!(
+            "Operation not found: {}",
+            operation_id
+        )));
     };
 
     // Convert DB row to RPC type
@@ -70,8 +79,6 @@ pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
     };
 
     // TODO: Implement provenance tracking for audit trail
-    // The events table doesn't have a provenance JSONB column yet
-    // Need to design how operation_id links to events
     // For now, return empty array
     let affected_events: Vec<EventSummary> = Vec::new();
 
@@ -84,7 +91,7 @@ pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
         event_count,
     };
 
-    Ok(serde_json::to_value(response)?)
+    Ok(serde_json::to_value(response).map_err(|e| SinexError::serialization(e.to_string()))?)
 }
 
 #[cfg(test)]
@@ -96,14 +103,15 @@ mod tests {
     #[sinex_test]
     async fn audit_get_returns_operation(ctx: &TestContext) -> TestResult<()> {
         // Create a test operation using the database function
-        let operation_id: String = sqlx::query_scalar!(
+        let operation_uuid: uuid::Uuid = sqlx::query_scalar!(
             r#"
-            SELECT core.start_operation('test-audit', 'test-user', '{}'::jsonb)::text
+            SELECT core.start_operation('test-audit', 'test-user', '{}'::jsonb)::uuid as "id!"
             "#
         )
         .fetch_one(ctx.pool())
-        .await?
-        .expect("operation_id should be returned");
+        .await?;
+
+        let operation_id = Id::<SourceMaterial>::from_uuid(operation_uuid);
 
         // Fetch audit trail
         let result = handle_audit_get(ctx.pool(), json!({ "operation_id": operation_id })).await?;
@@ -121,7 +129,7 @@ mod tests {
 
     #[sinex_test]
     async fn audit_get_fails_for_missing_operation(ctx: &TestContext) -> TestResult<()> {
-        let fake_id = "01HX1234567890ABCDEFGHJ000";
+        let fake_id = Id::<SourceMaterial>::new();
 
         let err = handle_audit_get(ctx.pool(), json!({ "operation_id": fake_id }))
             .await

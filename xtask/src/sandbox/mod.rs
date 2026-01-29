@@ -1,5 +1,4 @@
 //! Development sandbox and infrastructure modules.
-pub mod prelude;
 //!
 //! Comprehensive isolated development environment including:
 //! - Ephemeral NATS servers and JetStream
@@ -9,6 +8,8 @@ pub mod prelude;
 //! - Timing utilities and wait helpers
 //! - Hot reload and file watching
 //! - Stack orchestration
+
+pub mod prelude;
 
 pub mod assertions;
 pub mod chaos;
@@ -39,9 +40,27 @@ pub use fs::*;
 pub use hooks::*;
 pub use nats::*;
 pub use preflight::*;
+pub use prelude::*;
 pub use snapshot::*;
 pub use snapshot_helper::*;
 // pub use timing::*;  // TODO: Enable after fixing dependencies
 
-// Re-export test macro
-pub use xtask_macros::sinex_test;
+// Re-export test macros
+pub use xtask_macros::{sinex_bench, sinex_prop, sinex_proptest, sinex_serial_test, sinex_test};
+
+// Re-export test event helper
+pub use sinex_primitives::testing::event_fixture as test_event;
+
+/// Configures proptest runner with sandbox defaults
+pub fn sinex_prop_runner_config(
+    cases: u32,
+    _module: &str,
+    _name: &str,
+) -> proptest::test_runner::Config {
+    let mut config = proptest::test_runner::Config::with_cases(cases);
+    // Use default failure persistence for now to avoid compilation issues with version mismatches
+    config.failure_persistence = Some(Box::new(
+        proptest::test_runner::FileFailurePersistence::default(),
+    ));
+    config
+}

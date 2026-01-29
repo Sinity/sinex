@@ -2,14 +2,14 @@
 
 use async_nats::jetstream;
 use serde_json::json;
-use sinex_core::types::{error::SinexError, Ulid};
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
-use xtask::sandbox::timing::{Timeouts, WaitHelpers};
-use xtask::sandbox::{sinex_test, EventOverrides, TestContext, TestNodePublisher, TestResult};
+use sinex_primitives::{error::SinexError, Ulid};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
+use xtask::sandbox::timing::{Timeouts, WaitHelpers};
+use xtask::sandbox::{sinex_test, EventOverrides, TestContext, TestNodePublisher, TestResult};
 
 async fn wait_for_consumer(js: &jetstream::Context, base_stream: &str) -> TestResult<()> {
     WaitHelpers::wait_for_condition(

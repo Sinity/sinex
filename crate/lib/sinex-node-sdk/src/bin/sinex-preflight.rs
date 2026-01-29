@@ -7,14 +7,14 @@
 
 use camino::Utf8PathBuf;
 use clap::{Parser, Subcommand};
-use color_eyre::eyre::{Context, Result};
 use serde::{Deserialize, Serialize};
-use sinex_core::coordination::kv_client::{CoordinationKvClient, InstanceMetadata};
-use sinex_core::nats::NatsConnectionConfig;
-use sinex_core::types::domain::EventSource;
-use sinex_core::types::Seconds;
-use sinex_core::DbPoolExt;
-use sinex_core::{Event, JsonValue};
+use sinex_db::DbPoolExt;
+use sinex_node_sdk::{NodeResult, SinexError};
+use sinex_primitives::coordination::{CoordinationKvClient, InstanceMetadata};
+use sinex_primitives::domain::EventSource;
+use sinex_primitives::nats::NatsConnectionConfig;
+use sinex_primitives::Seconds;
+use sinex_primitives::{Event, JsonValue};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tracing::{error, info, warn};
@@ -97,8 +97,8 @@ enum VerificationPhase {
 struct VerificationReport {
     overall_status: VerificationStatus,
     verification_id: Uuid,
-    started_at: chrono::DateTime<chrono::Utc>,
-    completed_at: Option<chrono::DateTime<chrono::Utc>>,
+    started_at: sinex_primitives::temporal::Timestamp,
+    completed_at: Option<sinex_primitives::temporal::Timestamp>,
     duration_ms: Option<u64>,
     phases: HashMap<VerificationPhase, PhaseResult>,
     system_info: SystemInfo,
@@ -127,7 +127,7 @@ struct SystemInfo {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     // Initialize logging
@@ -171,14 +171,14 @@ async fn run_complete_verification(
     timeout_secs: Seconds,
     skip_phases: Vec<VerificationPhase>,
     output_format: OutputFormat,
-) -> Result<VerificationStatus> {
+) -> NodeResult<VerificationStatus> {
     let start_time = Instant::now();
     let timeout = Duration::from_secs(timeout_secs.as_secs());
 
     let mut report = VerificationReport {
         overall_status: VerificationStatus::Pass, // Initial state
         verification_id: Uuid::new_v4(),
-        started_at: chrono::Utc::now(),
+        started_at: sinex_primitives::temporal::now(),
         completed_at: None,
         duration_ms: None,
         phases: HashMap::new(),
@@ -272,7 +272,7 @@ async fn run_complete_verification(
     }
 
     report.overall_status = overall_status.clone();
-    report.completed_at = Some(chrono::Utc::now());
+    report.completed_at = Some(sinex_primitives::temporal::now());
     report.duration_ms = Some(start_time.elapsed().as_millis().min(u64::MAX as u128) as u64);
 
     // Output report
@@ -286,7 +286,7 @@ async fn run_complete_verification(
     Ok(overall_status)
 }
 
-async fn run_verification_phase(phase: &VerificationPhase) -> Result<PhaseResult> {
+async fn run_verification_phase(phase: &VerificationPhase) -> NodeResult<PhaseResult> {
     let start = Instant::now();
 
     let (status, details, messages) = match phase {
@@ -309,7 +309,7 @@ async fn run_verification_phase(phase: &VerificationPhase) -> Result<PhaseResult
     })
 }
 
-async fn collect_system_info() -> Result<SystemInfo> {
+async fn collect_system_info() -> NodeResult<SystemInfo> {
     use sysinfo::System;
 
     let mut sys = System::new_all();
@@ -325,7 +325,7 @@ async fn collect_system_info() -> Result<SystemInfo> {
     })
 }
 
-fn get_available_disk_space() -> Result<f64> {
+fn get_available_disk_space() -> NodeResult<f64> {
     use nix::sys::statvfs::statvfs;
     use std::env;
 
@@ -334,15 +334,19 @@ fn get_available_disk_space() -> Result<f64> {
         .or_else(|_| env::var("XDG_DATA_HOME").map(|d| format!("{}/sinex", d)))
         .unwrap_or_else(|_| "/var/lib/sinex".to_string());
 
-    let stat = statvfs(data_dir.as_str())?;
+    let stat = statvfs(data_dir.as_str())
+        .map_err(|e| SinexError::io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
     let available_bytes = stat.blocks_available() * stat.block_size();
     Ok(available_bytes as f64 / 1024.0 / 1024.0 / 1024.0)
 }
 
-async fn output_report(report: &VerificationReport, format: OutputFormat) -> Result<()> {
+async fn output_report(report: &VerificationReport, format: OutputFormat) -> NodeResult<()> {
     match format {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(report)?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(report).map_err(|e| SinexError::serialization(e))?
+            );
         }
         OutputFormat::Text => {
             println!("\n=== SINEX PRE-FLIGHT VERIFICATION REPORT ===");
@@ -396,7 +400,7 @@ async fn output_report(report: &VerificationReport, format: OutputFormat) -> Res
     Ok(())
 }
 
-async fn record_verification_result(report: &VerificationReport) -> Result<()> {
+async fn record_verification_result(report: &VerificationReport) -> NodeResult<()> {
     let status_str = match report.overall_status {
         VerificationStatus::Pass => "healthy",
         VerificationStatus::Fail => "failed",
@@ -404,17 +408,19 @@ async fn record_verification_result(report: &VerificationReport) -> Result<()> {
     };
 
     let nats_config = NatsConnectionConfig::from_env();
-    let nats_client = nats_config
-        .connect()
-        .await
-        .wrap_err("Failed to connect to NATS for verification recording")?;
+    let nats_client = nats_config.connect().await.map_err(|e| {
+        SinexError::messaging(format!(
+            "Failed to connect to NATS for verification recording: {}",
+            e
+        ))
+    })?;
     let js = async_nats::jetstream::new(nats_client);
     ensure_coordination_buckets(&js).await?;
 
     let kv_client = CoordinationKvClient::new(js, "sinex-preflight".to_string());
     let instance_id = Uuid::new_v4().to_string();
     let hostname = gethostname::gethostname().to_string_lossy().into_owned();
-    let now = chrono::Utc::now().timestamp();
+    let now = sinex_primitives::temporal::now().unix_timestamp();
     let metadata = InstanceMetadata {
         instance_id: instance_id.clone(),
         hostname,
@@ -423,11 +429,17 @@ async fn record_verification_result(report: &VerificationReport) -> Result<()> {
         last_heartbeat: now,
     };
 
-    if kv_client.acquire_leadership(&instance_id).await? {
-        kv_client
-            .register_instance(&metadata)
-            .await
-            .wrap_err("Failed to register verification metadata in KV")?;
+    if kv_client
+        .acquire_leadership(&instance_id)
+        .await
+        .map_err(|e| SinexError::processing(e.to_string()))?
+    {
+        kv_client.register_instance(&metadata).await.map_err(|e| {
+            SinexError::processing(format!(
+                "Failed to register verification metadata in KV: {}",
+                e
+            ))
+        })?;
         kv_client.heartbeat(&instance_id, &metadata).await.ok(); // heartbeat best-effort
 
         info!(
@@ -450,7 +462,7 @@ async fn record_verification_result(report: &VerificationReport) -> Result<()> {
     Ok(())
 }
 
-async fn run_migration_dry_run(output_format: OutputFormat) -> Result<VerificationStatus> {
+async fn run_migration_dry_run(output_format: OutputFormat) -> NodeResult<VerificationStatus> {
     info!("Running migration dry-run verification");
 
     let (status, details, messages) = database::verify_migration_readiness().await?;
@@ -463,7 +475,10 @@ async fn run_migration_dry_run(output_format: OutputFormat) -> Result<Verificati
     });
 
     match output_format {
-        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+        OutputFormat::Json => println!(
+            "{}",
+            serde_json::to_string_pretty(&report).map_err(|e| SinexError::serialization(e))?
+        ),
         OutputFormat::Text => {
             println!("Migration Dry-Run: {:?}", status);
             for message in messages {
@@ -475,7 +490,7 @@ async fn run_migration_dry_run(output_format: OutputFormat) -> Result<Verificati
     Ok(status)
 }
 
-async fn run_extension_check(output_format: OutputFormat) -> Result<VerificationStatus> {
+async fn run_extension_check(output_format: OutputFormat) -> NodeResult<VerificationStatus> {
     info!("Running PostgreSQL extension verification");
 
     let (status, details, messages) = database::verify_postgresql_extensions().await?;
@@ -488,7 +503,10 @@ async fn run_extension_check(output_format: OutputFormat) -> Result<Verification
     });
 
     match output_format {
-        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+        OutputFormat::Json => println!(
+            "{}",
+            serde_json::to_string_pretty(&report).map_err(|e| SinexError::serialization(e))?
+        ),
         OutputFormat::Text => {
             println!("Extension Check: {:?}", status);
             for message in messages {
@@ -500,7 +518,7 @@ async fn run_extension_check(output_format: OutputFormat) -> Result<Verification
     Ok(status)
 }
 
-async fn run_resource_check(output_format: OutputFormat) -> Result<VerificationStatus> {
+async fn run_resource_check(output_format: OutputFormat) -> NodeResult<VerificationStatus> {
     info!("Running system resource verification");
 
     let (status, details, messages) = resources::verify_system_resources().await?;
@@ -513,7 +531,10 @@ async fn run_resource_check(output_format: OutputFormat) -> Result<VerificationS
     });
 
     match output_format {
-        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+        OutputFormat::Json => println!(
+            "{}",
+            serde_json::to_string_pretty(&report).map_err(|e| SinexError::serialization(e))?
+        ),
         OutputFormat::Text => {
             println!("Resource Check: {:?}", status);
             for message in messages {
@@ -528,7 +549,7 @@ async fn run_resource_check(output_format: OutputFormat) -> Result<VerificationS
 async fn generate_verification_report(
     detailed: bool,
     output_format: OutputFormat,
-) -> Result<VerificationStatus> {
+) -> NodeResult<VerificationStatus> {
     info!("Generating verification report");
 
     // This would query the database for recent verification results
@@ -537,17 +558,18 @@ async fn generate_verification_report(
 
     let pool = sqlx::PgPool::connect(&database_url)
         .await
-        .wrap_err("Failed to connect to database")?;
-
-    let end_time = chrono::Utc::now();
-    let start_time = end_time - chrono::Duration::hours(24);
+        .map_err(|e| SinexError::database(sinex_db::SinexError::from(e)))?;
+    let end_time = sinex_primitives::temporal::now();
+    let start_time = end_time - sinex_primitives::temporal::Duration::hours(24);
 
     let recent_verifications: Vec<Event<JsonValue>> = pool
         .events()
         .get_process_heartbeats(&EventSource::new("sinex-preflight"), start_time, end_time)
         .await
-        .wrap_err("Failed to fetch verification history")?;
+        .map_err(|e| SinexError::database(sinex_db::SinexError::from(e)))?;
 
+    info!("Verifying environment...");
+    let env = sinex_primitives::environment::environment();
     let report = if detailed {
         serde_json::json!({
             "verification_count": recent_verifications.len(),
@@ -562,7 +584,10 @@ async fn generate_verification_report(
     };
 
     match output_format {
-        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+        OutputFormat::Json => println!(
+            "{}",
+            serde_json::to_string_pretty(&report).map_err(|e| SinexError::serialization(e))?
+        ),
         OutputFormat::Text => {
             println!("Recent Verification History:");
             for verification in &recent_verifications {
@@ -591,10 +616,10 @@ async fn generate_verification_report(
     Ok(VerificationStatus::Pass)
 }
 
-async fn ensure_coordination_buckets(js: &async_nats::jetstream::Context) -> Result<()> {
+async fn ensure_coordination_buckets(js: &async_nats::jetstream::Context) -> NodeResult<()> {
     const LEADERSHIP_TTL_SECS: Seconds = Seconds::from_secs(15);
 
-    let env = sinex_core::environment::environment();
+    let env = sinex_primitives::environment::environment();
     let _ = js
         .create_key_value(async_nats::jetstream::kv::Config {
             bucket: format!("KV_{}", env.nats_kv_bucket_name("sinex_instances")),

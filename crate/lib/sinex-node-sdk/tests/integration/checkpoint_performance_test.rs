@@ -11,7 +11,7 @@ use async_nats::jetstream::{
 use color_eyre::eyre::{eyre, Result};
 use futures::StreamExt;
 use serde_json::json;
-use sinex_core::types::ulid::Ulid;
+use sinex_node_sdk::types::ulid::Ulid;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
 use xtask::sandbox::{prelude::*, EphemeralNats};
 use std::time::{Duration as StdDuration, Instant};
@@ -108,7 +108,7 @@ async fn jetstream_checkpoint_roundtrip(ctx: TestContext) -> Result<()> {
                     event_id: None,
                 },
                 processed_count: processed as u64,
-                last_activity: chrono::Utc::now(),
+                last_activity: OffsetDateTime::now_utc(),
                 data: Some(json!({ "stream": stream, "subject": subject })),
                 version: 2,
             };
@@ -208,7 +208,7 @@ async fn jetstream_checkpoint_recovery_behaviour(ctx: TestContext) -> Result<()>
                     event_id: None,
                 },
                 processed_count: processed as u64,
-                last_activity: chrono::Utc::now(),
+                last_activity: OffsetDateTime::now_utc(),
                 data: Some(json!({ "phase": "initial" })),
                 version: 2,
             };
@@ -257,7 +257,7 @@ async fn jetstream_checkpoint_recovery_behaviour(ctx: TestContext) -> Result<()>
                     event_id: None,
                 },
                 processed_count: (50 + recovered) as u64,
-                last_activity: chrono::Utc::now(),
+                last_activity: OffsetDateTime::now_utc(),
                 data: Some(json!({ "phase": "recovery" })),
                 version: 2,
             };

@@ -1,5 +1,5 @@
-use sinex_core::environment::environment;
-use sinex_core::types::Ulid;
+use sinex_primitives::environment::environment;
+use sinex_primitives::Ulid;
 
 /// Generates unique JetStream subject/stream namespaces per test.
 #[derive(Clone, Debug)]

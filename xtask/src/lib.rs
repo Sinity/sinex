@@ -1,4 +1,5 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
+pub const DEFAULT_TEST_MATERIAL_ID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 use clap::{Parser, Subcommand};
 
 mod affected;
@@ -13,11 +14,15 @@ pub mod jobs;
 pub mod output;
 pub mod process;
 pub mod resources;
+#[cfg(feature = "sandbox")]
 pub mod sandbox;
+#[cfg(feature = "sandbox")]
+pub use sandbox::{EventOverrides, Sandbox, TestContext, TestResult};
 pub mod tls;
 mod tools;
 
 use command::{CommandContext, XtaskCommand};
+use commands::*;
 use config::config;
 use history::HistoryDb;
 use output::{OutputFormat, OutputWriter};
@@ -57,41 +62,41 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Manage local development environment (db, nats, vm, tls)
+    /// Apply automatic fixes (fmt, clippy, fix)
+    Fix(FixCommand),
+    /// Fast validation (check, clippy, lint-forbidden)
+    Check(CheckCommand),
+    /// Run test suite
+    Test(TestCommand),
+    /// Run benchmarks
+    Bench(BenchArgs),
+    /// Build packages
+    Build(BuildCommand),
+    /// Manage local stack (database, NATS)
     Stack {
         #[command(subcommand)]
         cmd: commands::stack::StackSubcommand,
     },
-    /// Quality Assurance (test, lint, check, bench)
-    Qa {
-        #[command(subcommand)]
-        cmd: commands::qa::QaSubcommand,
-    },
-    /// Codebase Analysis (deps, graph, history)
-    Analyze {
-        #[command(subcommand)]
-        cmd: commands::analyze::AnalyzeSubcommand,
-    },
-    /// Developer Inner Loop (build, run, generate)
-    Dev {
-        #[command(subcommand)]
-        cmd: commands::dev::DevSubcommand,
-    },
-    /// Database Management (migrate, schema, setup)
+    /// Database operations (migrate, seed, setup)
     Db {
         #[command(subcommand)]
         cmd: commands::db::DbSubcommand,
     },
-    /// CI Pipelines
-    Ci {
-        #[command(subcommand)]
-        cmd: commands::ci::CiSubcommand,
-    },
+    /// VM and NixOS operations
+    Vm(VmCommand),
+    /// Infrastructure and secrets
+    Infra(InfraCommand),
+    /// Analyze codebase (deps, graph, history)
+    Analyze(AnalyzeCommand),
     /// Background Job Management
-    Jobs {
-        #[command(subcommand)]
-        cmd: commands::jobs::JobsSubcommand,
-    },
+    Jobs(JobsCommand),
+    /// CI Pipelines
+    Ci(CiCommand),
+    /// TLS certificate management
+    #[command(subcommand)]
+    Tls(TlsCommand),
+    /// Workspace status and service health
+    Status(StatusCommand),
     /// Generate Shell Completions
     Completions {
         #[arg(value_enum)]
@@ -105,19 +110,26 @@ pub fn run_cli() -> Result<()> {
 
     // Dispatch
     let (command_name, subcommand, profile) = match &cli.command {
+        Commands::Fix(_) => ("fix", None, None),
+        Commands::Check(_) => ("check", None, None),
+        Commands::Test(_) => ("test", None, None),
+        Commands::Bench(_) => ("bench", None, None),
+        Commands::Build(_) => ("build", None, None),
         Commands::Stack { .. } => ("stack", None, None),
-        Commands::Qa { .. } => ("qa", None, None),
-        Commands::Analyze { .. } => ("analyze", None, None),
-        Commands::Dev { .. } => ("dev", None, None),
         Commands::Db { .. } => ("db", None, None),
-        Commands::Ci { .. } => ("ci", None, None),
-        Commands::Jobs { .. } => ("jobs", None, None),
+        Commands::Vm(_) => ("vm", None, None),
+        Commands::Infra(_) => ("infra", None, None),
+        Commands::Analyze(_) => ("analyze", None, None),
+        Commands::Jobs(_) => ("jobs", None, None),
+        Commands::Ci(_) => ("ci", None, None),
+        Commands::Tls(_) => ("tls", None, None),
+        Commands::Status(_) => ("status", None, None),
         Commands::Completions { .. } => ("completions", None, None),
     };
 
     // Track invocation in history
     let history_db = open_history_db();
-    let invocation_id = if command_name != "completions" {
+    let invocation_id = if command_name != "completions" && command_name != "status" {
         history_db.as_ref().ok().and_then(|db| {
             db.start_invocation(command_name, subcommand, profile, None)
                 .ok()
@@ -127,16 +139,21 @@ pub fn run_cli() -> Result<()> {
     };
 
     let result = match cli.command {
+        Commands::Fix(cmd) => cmd.execute(&ctx),
+        Commands::Check(cmd) => cmd.execute(&ctx),
+        Commands::Test(cmd) => cmd.execute(&ctx),
+        Commands::Bench(cmd) => cmd.execute(&ctx),
+        Commands::Build(cmd) => cmd.execute(&ctx),
         Commands::Stack { cmd } => commands::StackCommand { subcommand: cmd }.execute(&ctx),
-        Commands::Qa { cmd } => commands::QaCommand { subcommand: cmd }.execute(&ctx),
-        Commands::Analyze { cmd } => commands::AnalyzeCommand { subcommand: cmd }.execute(&ctx),
-        Commands::Dev { cmd } => commands::DevCommand { subcommand: cmd }.execute(&ctx),
         Commands::Db { cmd } => commands::DbCommand { subcommand: cmd }.execute(&ctx),
-        Commands::Ci { cmd } => commands::CiCommand { subcommand: cmd }.execute(&ctx),
-        Commands::Jobs { cmd } => commands::JobsCommand { subcommand: cmd }.execute(&ctx),
+        Commands::Vm(cmd) => cmd.execute(&ctx),
+        Commands::Infra(cmd) => cmd.execute(&ctx),
+        Commands::Analyze(cmd) => cmd.execute(&ctx),
+        Commands::Jobs(cmd) => cmd.execute(&ctx),
+        Commands::Ci(cmd) => cmd.execute(&ctx),
+        Commands::Tls(cmd) => cmd.execute(&ctx),
+        Commands::Status(cmd) => cmd.execute(&ctx),
         Commands::Completions { shell } => {
-            // Map clap shell to completions shell if needed, or if types match (enums match by name?)
-            // But they are distinct types. Convert by matching.
             let shell_mapped = match shell {
                 clap_complete::Shell::Bash => commands::completions::Shell::Bash,
                 clap_complete::Shell::Zsh => commands::completions::Shell::Zsh,
@@ -162,8 +179,8 @@ pub fn run_cli() -> Result<()> {
                 Err(_) => crate::history::InvocationStatus::Failed,
             };
             let duration = match &result {
-                Ok(res) => res.duration_secs.unwrap_or(0.0),
-                Err(_) => 0.0,
+                Ok(res) => res.duration_secs.unwrap_or(ctx.elapsed().as_secs_f64()),
+                Err(_) => ctx.elapsed().as_secs_f64(),
             };
             let _ = db.finish_invocation(id, status, None, duration);
         }

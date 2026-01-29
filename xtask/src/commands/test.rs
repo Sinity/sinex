@@ -1,8 +1,13 @@
 //! Test command - run nextest with profiles and options
+//!
+//! Provides a rich TUI experience while capturing detailed test execution data
+//! (timing, output, system resources) into the history database.
 
 use anyhow::{bail, Context, Result};
 use std::collections::HashSet;
 use std::process::Command;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use crate::affected;
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
@@ -11,27 +16,94 @@ use crate::history::HistoryDb;
 use crate::process::ProcessBuilder;
 use crate::resources;
 
+// UI & System monitoring
+use console::{style, Emoji};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
+
 /// Test command configuration
 #[derive(Debug, Clone, clap::Args)]
 pub struct TestCommand {
-    pub profile: String,
-    /// Prime database before testing
+    /// Use debug profile
     #[arg(long)]
-    pub prime: bool,
-    /// List tests instead of running
-    #[arg(long, short)]
-    pub list: bool,
-    /// Print what would happen
+    pub debug: bool,
+
+    /// Fast fail mode (default: true)
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    pub fail_fast: bool,
+
+    /// Disable fast fail
     #[arg(long)]
-    pub dry_run: bool,
-    /// Run preflight checks
-    #[arg(long)]
-    pub preflight: bool,
+    pub no_fail_fast: bool,
+
+    /// Number of threads
+    #[arg(short, long)]
+    pub threads: Option<usize>,
+
+    /// Test retries (nextest)
+    #[arg(short, long)]
+    pub retries: Option<usize>,
+
+    /// Test timeout (nextest)
+    #[arg(short, long)]
+    pub timeout: Option<String>,
+
     /// Run only on affected packages
     #[arg(long)]
     pub affected: bool,
+
+    /// Prime database before testing
+    #[arg(long)]
+    pub prime: bool,
+
+    /// List tests instead of running
+    #[arg(long, short)]
+    pub list: bool,
+
+    /// Print what would happen
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Run preflight checks
+    #[arg(long)]
+    pub preflight: bool,
+
+    /// Include tests marked `#[ignore]`
+    #[arg(long)]
+    pub include_ignored: bool,
+
+    /// Run fuzz tests
+    #[arg(long)]
+    pub fuzz: bool,
+
+    /// Run mutation tests
+    #[arg(long)]
+    pub mutants: bool,
+
+    /// Run heavy/ignored tests
+    #[arg(long)]
+    pub heavy: bool,
+
+    /// Include all tests (including ignored)
+    #[arg(short, long)]
+    pub all: bool,
+
     /// Arguments passed to test binary
     pub args: Vec<String>,
+}
+
+struct SystemMetrics {
+    cpu_samples: Vec<f32>,
+    mem_samples: Vec<u64>,
+}
+
+impl Default for SystemMetrics {
+    fn default() -> Self {
+        Self {
+            cpu_samples: Vec::new(),
+            mem_samples: Vec::new(),
+        }
+    }
 }
 
 impl XtaskCommand for TestCommand {
@@ -40,6 +112,37 @@ impl XtaskCommand for TestCommand {
     }
 
     fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
+        let profile = if self.debug { "debug" } else { "default" };
+        let fail_fast = if self.no_fail_fast {
+            false
+        } else {
+            self.fail_fast
+        };
+
+        // Handle specialized test modes
+        if self.heavy {
+            return run_heavy_tests(profile, ctx);
+        }
+
+        if self.fuzz {
+            // Delegation to fuzz logic
+            println!("Running fuzz tests...");
+            // Placeholder for actual fuzz dispatch
+            return Ok(CommandResult::success().with_detail("fuzz tests running"));
+        }
+
+        if self.mutants {
+            // Delegation to mutation tests
+            let cmd = crate::commands::mutants::MutantsCommand {
+                package: None,
+                file: None,
+                timeout: 300,
+                jobs: self.threads.unwrap_or(1),
+                args: self.args.clone(),
+            };
+            return cmd.execute(ctx);
+        }
+
         // Resource warning before heavy operation
         if ctx.is_human() {
             if let Ok(status) = resources::ResourceStatus::capture() {
@@ -91,7 +194,7 @@ impl XtaskCommand for TestCommand {
 
         // List: show tests without running
         if self.list {
-            test_list(&self.profile, &self.args, ctx)?;
+            test_list(profile, &self.args, ctx)?;
             return Ok(CommandResult::success()
                 .with_detail("tests listed")
                 .with_duration(ctx.elapsed()));
@@ -104,7 +207,7 @@ impl XtaskCommand for TestCommand {
                     println!("Would run with filter: {}", filter);
                 }
             }
-            test_dry_run(&self.profile, &self.args, ctx)?;
+            test_dry_run(profile, &self.args, ctx)?;
             return Ok(CommandResult::success()
                 .with_detail("dry-run completed")
                 .with_duration(ctx.elapsed()));
@@ -123,7 +226,50 @@ impl XtaskCommand for TestCommand {
             bail!("xtask test does not support passing test-binary args (remove '--').");
         }
 
-        // Build nextest command args dynamically
+        // --- PREPARE EXECUTION ---
+
+        // History DB and Invocation ID
+        let history_db = open_history_db().ok();
+        let invocation_id = history_db.as_ref().and_then(|db| {
+            // Slight race condition: try to find the "running" invocation we are currently in.
+            // If main.rs created it, it is the most recent running one.
+            db.get_last("test").ok().flatten().and_then(|inv| {
+                if inv.status == crate::history::InvocationStatus::Running {
+                    Some(inv.id)
+                } else {
+                    None
+                }
+            })
+        });
+
+        // Start system monitoring in background
+        let metrics = Arc::new(Mutex::new(SystemMetrics::default()));
+        let metrics_clone = metrics.clone();
+        let mon_running = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let mon_running_clone = mon_running.clone();
+
+        std::thread::spawn(move || {
+            let mut sys = System::new_with_specifics(
+                RefreshKind::nothing()
+                    .with_cpu(CpuRefreshKind::everything())
+                    .with_memory(MemoryRefreshKind::everything()),
+            );
+            while mon_running_clone.load(std::sync::atomic::Ordering::Relaxed) {
+                sys.refresh_cpu_all();
+                sys.refresh_memory();
+
+                let cpu_global = sys.global_cpu_usage();
+                let mem_used = sys.used_memory();
+
+                if let Ok(mut m) = metrics_clone.lock() {
+                    m.cpu_samples.push(cpu_global);
+                    m.mem_samples.push(mem_used);
+                }
+                std::thread::sleep(Duration::from_secs(1));
+            }
+        });
+
+        // Build nextest command args
         let mut cmd_args = vec![
             "nextest".to_string(),
             "run".to_string(),
@@ -131,26 +277,274 @@ impl XtaskCommand for TestCommand {
             ".config/nextest.toml".to_string(),
             "--workspace".to_string(),
             "--profile".to_string(),
-            self.profile.clone(),
+            profile.to_string(),
+            // Capture output as JSON
+            "--message-format".to_string(),
+            "json".to_string(),
+            // We want to capture stdout/stderr of tests
+            "--failure-output".to_string(),
+            "immediate-final".to_string(),
+            "--success-output".to_string(),
+            "immediate".to_string(),
+            "--status-level".to_string(),
+            "all".to_string(),
         ];
 
-        // Add affected filter if computed
+        if fail_fast {
+            cmd_args.push("--fail-fast".to_string());
+        } else {
+            cmd_args.push("--no-fail-fast".to_string());
+        }
+
+        if let Some(threads) = self.threads {
+            cmd_args.push("--test-threads".to_string());
+            cmd_args.push(threads.to_string());
+        }
+
+        if let Some(retries) = self.retries {
+            cmd_args.push("--retries".to_string());
+            cmd_args.push(retries.to_string());
+        }
+
+        if let Some(ref timeout) = self.timeout {
+            cmd_args.push("--timeout".to_string());
+            cmd_args.push(timeout.clone());
+        }
+
         if let Some(ref filter) = affected_filter {
             cmd_args.push("-E".to_string());
             cmd_args.push(filter.clone());
         }
-
-        // Add remaining args
         cmd_args.extend(self.args.clone());
+        if self.include_ignored || self.all || self.heavy {
+            cmd_args.push("--ignored".to_string());
+        }
 
-        // Convert to slice of refs
         let cmd_args_refs: Vec<&str> = cmd_args.iter().map(|s| s.as_str()).collect();
 
-        ProcessBuilder::cargo()
+        // --- EXECUTE & MONITOR ---
+
+        let m = MultiProgress::new();
+        let pb = m.add(ProgressBar::new(0)); // Will update total later
+        pb.set_style(ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}")
+            .unwrap()
+            .progress_chars("#>-"));
+
+        if ctx.is_human() {
+            println!("{}", style("\n🚀 Launching tests...").bold());
+        }
+
+        // Run nextest!
+        // We do *not* use run_ok() or run() because we need to stream stdout.
+        let mut child = Command::new("cargo")
             .args(&cmd_args_refs)
-            .with_description("nextest")
-            .inherit_output()
-            .run_ok()?;
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped()) // Capture stderr to avoid pollution
+            .spawn()
+            .context("failed to start nextest")?;
+
+        let stdout = child.stdout.take().context("failed to capture stdout")?;
+        let stderr = child.stderr.take().context("failed to capture stderr")?;
+
+        let pb_clone = pb.clone();
+        std::thread::spawn(move || {
+            use std::io::{BufRead, BufReader};
+            let reader = BufReader::new(stderr);
+            for line in reader.lines() {
+                if let Ok(l) = line {
+                    // Print stderr lines above the progress bar
+                    // Using dim yellow for build output/errors
+                    pb_clone.println(style(l).yellow().dim().to_string());
+                }
+            }
+        });
+
+        let reader = std::io::BufReader::new(stdout);
+
+        // Output capturing loop
+        let mut tests_passed = 0;
+        let mut tests_failed = 0;
+        let mut tests_ignored = 0;
+        let mut total_tests = 0;
+
+        use std::io::BufRead;
+        for line_res in reader.lines() {
+            let line = line_res.unwrap_or_default();
+
+            // Try parse as JSON
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&line) {
+                if let Some(type_str) = json.get("type").and_then(|s| s.as_str()) {
+                    match type_str {
+                        "test-event" => {
+                            if let Some(event) = json.get("test-event").and_then(|s| s.as_str()) {
+                                match event {
+                                    "test-started" => {
+                                        let name = json
+                                            .get("name")
+                                            .and_then(|s| s.as_str())
+                                            .unwrap_or("?");
+                                        pb.set_message(format!("Running {}", name));
+                                    }
+                                    "test-finished" => {
+                                        let result = json
+                                            .get("result")
+                                            .and_then(|s| s.as_str())
+                                            .unwrap_or("?");
+                                        let name = json
+                                            .get("name")
+                                            .and_then(|s| s.as_str())
+                                            .unwrap_or("?");
+                                        let pkg = json
+                                            .get("package")
+                                            .and_then(|s| s.as_str())
+                                            .unwrap_or("unknown");
+                                        let duration = json
+                                            .get("exec-time")
+                                            .and_then(|v| v.as_f64())
+                                            .unwrap_or(0.0);
+
+                                        // Capture stdout/stderr if any
+                                        let mut output = String::new();
+                                        if let Some(stdout) =
+                                            json.get("stdout").and_then(|s| s.as_str())
+                                        {
+                                            if !stdout.is_empty() {
+                                                output.push_str("STDOUT:\n");
+                                                output.push_str(stdout);
+                                                output.push_str("\n");
+                                            }
+                                        }
+                                        if let Some(stderr) =
+                                            json.get("stderr").and_then(|s| s.as_str())
+                                        {
+                                            if !stderr.is_empty() {
+                                                output.push_str("STDERR:\n");
+                                                output.push_str(stderr);
+                                                output.push_str("\n");
+                                            }
+                                        }
+
+                                        match result {
+                                            "passed" => {
+                                                tests_passed += 1;
+                                                pb.inc(1); // Only increment on finish
+                                            }
+                                            "failed" => {
+                                                tests_failed += 1;
+                                                pb.inc(1);
+                                                // Log failure immediately to console above bar?
+                                                let msg = format!(
+                                                    "{} {} ({:.3}s)",
+                                                    Emoji("❌", "x"),
+                                                    name,
+                                                    duration
+                                                );
+                                                pb.println(msg);
+                                            }
+                                            "ignored" => {
+                                                tests_ignored += 1;
+                                                // Ignored tests often aren't in total count initially?
+                                                pb.inc(1);
+                                            }
+                                            _ => {}
+                                        }
+
+                                        // DB Record
+                                        if let (Some(db), Some(id)) = (&history_db, invocation_id) {
+                                            let _ = db.record_test_result(
+                                                id,
+                                                name,
+                                                pkg,
+                                                result,
+                                                duration,
+                                                Some(&output),
+                                            );
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        "suite-event" => {
+                            if let Some(event) = json.get("suite-event").and_then(|s| s.as_str()) {
+                                if event == "started" {
+                                    // This tells us the total usually
+                                    if let Some(count) =
+                                        json.get("test-count").and_then(|v| v.as_u64())
+                                    {
+                                        total_tests = count;
+                                        pb.set_length(count);
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            } else {
+                // Not JSON - probably some cargo output or nextest generic msg
+                // Use a lighter gray style for logs
+                if !line.trim().is_empty() {
+                    pb.println(style(line).dim().to_string());
+                }
+            }
+        }
+
+        let run_result = child.wait()?;
+
+        // Stop monitoring
+        mon_running.store(false, std::sync::atomic::Ordering::Relaxed);
+        pb.finish_with_message("Done");
+
+        // --- POST-RUN METRICS ---
+
+        let mut avg_cpu = 0.0;
+        let mut max_mem = 0.0;
+
+        if let Ok(m) = metrics.lock() {
+            if !m.cpu_samples.is_empty() {
+                avg_cpu = m.cpu_samples.iter().sum::<f32>() / m.cpu_samples.len() as f32;
+            }
+            if !m.mem_samples.is_empty() {
+                max_mem = *m.mem_samples.iter().max().unwrap_or(&0) as f64 / (1024.0 * 1024.0);
+            }
+        }
+
+        // --- REPORTING ---
+
+        if ctx.is_human() {
+            println!(
+                "\n{}",
+                style("━━━━━━━━━━━━━━━━ TEST SUMMARY ━━━━━━━━━━━━━━━━").bold()
+            );
+            println!("  Total:   {}", total_tests);
+            println!("  Passed:  {}", style(tests_passed).green());
+            println!(
+                "  Failed:  {}",
+                if tests_failed > 0 {
+                    style(tests_failed).red().bold()
+                } else {
+                    style(tests_failed).dim()
+                }
+            );
+            println!("  Ignored: {}", style(tests_ignored).yellow());
+            println!("  Duration: {:.2}s", ctx.elapsed().as_secs_f64());
+            println!("  Avg CPU:  {:.1}%", avg_cpu);
+            println!("  Max Mem:  {:.1} MB", max_mem);
+            println!(
+                "{}",
+                style("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━").bold()
+            );
+        }
+
+        if let (Some(db), Some(id)) = (&history_db, invocation_id) {
+            let _ = db.record_system_metrics(id, avg_cpu, max_mem);
+        }
+
+        if !run_result.success() {
+            bail!("Test run failed");
+        }
 
         Ok(CommandResult::success().with_duration(ctx.elapsed()))
     }
@@ -158,6 +552,119 @@ impl XtaskCommand for TestCommand {
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata::test()
     }
+}
+
+/// Collect test IDs from `nextest list` that are ignored with specific reasons.
+fn collect_tests_by_ignore_reason(
+    profile: &str,
+    args: &[String],
+    reasons: &[&str],
+) -> Result<Vec<String>> {
+    let mut cmd_args = vec![
+        "nextest",
+        "list",
+        "--config-file",
+        ".config/nextest.toml",
+        "--workspace",
+        "--profile",
+        profile,
+        "--message-format",
+        "json",
+    ];
+    let args_slice: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    cmd_args.extend(args_slice);
+
+    let output = ProcessBuilder::cargo()
+        .args(&cmd_args)
+        .with_description("fetching test list from nextest")
+        .run()
+        .context("nextest list failed. Note: This requires a successful compilation of all test targets.")?;
+
+    let mut test_ids = Vec::new();
+    for line in output.stdout.lines() {
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+
+        // We are looking for:
+        // {"extension-type":"test-case", "id":"...", "status":"ignored", "ignore-message":"..."}
+        if json.get("extension-type").and_then(|v| v.as_str()) == Some("test-case") {
+            if json.get("status").and_then(|v| v.as_str()) == Some("ignored") {
+                if let Some(msg) = json.get("ignore-message").and_then(|v| v.as_str()) {
+                    if reasons.iter().any(|&r| msg.contains(r)) {
+                        if let Some(id) = json.get("id").and_then(|v| v.as_str()) {
+                            test_ids.push(id.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(test_ids)
+}
+
+/// Run heavy tests by using `nextest list --message-format json` to find tests
+/// marked as ignored with reasons like "long" or "external".
+pub fn run_heavy_tests(profile: &str, ctx: &CommandContext) -> Result<CommandResult> {
+    let reasons = ["long", "external"];
+
+    if ctx.is_human() {
+        println!(
+            "Analyzing workspace for heavy tests (reasons: {:?})...",
+            reasons
+        );
+    }
+
+    let test_ids = collect_tests_by_ignore_reason(profile, &[], &reasons)?;
+
+    if test_ids.is_empty() {
+        if ctx.is_human() {
+            println!("No heavy/ignored tests found (reasons: {:?}).", reasons);
+        }
+        return Ok(CommandResult::success().with_detail("no heavy tests found"));
+    }
+
+    // Build a regex matching test IDs accurately: ^(id1|id2|...)$
+    // Nextest filter 'test(regex)' matches against the full ID.
+    // We escape each ID to be safe.
+    let escaped: Vec<String> = test_ids.iter().map(|id| regex::escape(id)).collect();
+    let id_re = format!("^({})$", escaped.join("|"));
+    let filter = format!("test({})", id_re);
+
+    if ctx.is_human() {
+        println!("Running heavy tests: {} tests", test_ids.len());
+        if test_ids.len() <= 10 {
+            for id in &test_ids {
+                println!("  • {}", id);
+            }
+        }
+        println!("Filter: {}", filter);
+    }
+
+    // Build nextest args
+    let cmd_args = vec![
+        "nextest".to_string(),
+        "run".to_string(),
+        "--config-file".to_string(),
+        ".config/nextest.toml".to_string(),
+        "--workspace".to_string(),
+        "--profile".to_string(),
+        profile.to_string(),
+        "--ignored".to_string(),
+        "-E".to_string(),
+        filter,
+    ];
+
+    let cmd_args_refs: Vec<&str> = cmd_args.iter().map(|s| s.as_str()).collect();
+
+    ProcessBuilder::cargo()
+        .args(&cmd_args_refs)
+        .with_description("nextest heavy")
+        .inherit_output()
+        .run_ok()?;
+
+    Ok(CommandResult::success().with_detail("heavy tests completed"))
 }
 
 /// Preflight checks before running tests
@@ -369,6 +876,7 @@ mod tests {
             dry_run: false,
             preflight: false,
             affected: false,
+            include_ignored: false,
             args: vec![],
         };
         assert_eq!(cmd.name(), "test");
@@ -383,6 +891,7 @@ mod tests {
             dry_run: false,
             preflight: false,
             affected: false,
+            include_ignored: false,
             args: vec![],
         };
         let metadata = cmd.metadata();

@@ -3,6 +3,7 @@
 // This module provides timing patterns and coordination primitives
 // for sandboxed development and testing.
 use crate::sandbox::prelude::*;
+use sinex_primitives::utils::CoordinationPrimitive;
 
 use anyhow::Result;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -10,11 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 // TODO: These will need sinex-core when fully integrated
-// For now, comment out dependencies on TestContext and other test-utils types
-
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
+// For now, comment out dependencies on Sandbox and other test-utils types
 
 /// Standard timeout policy for tests.
 pub const DEFAULT_WAIT_SECS: u64 = 60;
@@ -25,7 +22,7 @@ pub const STRESS_WAIT_SECS: u64 = 180;
 ///
 /// Use these constants instead of hardcoded magic numbers in tests:
 /// ```rust
-/// use sinex_test_utils::timing_utils::Timeouts;
+/// use xtask::sandbox::timing_utils::Timeouts;
 ///
 /// // Instead of: WaitHelpers::wait_for_event_count(&pool, 5, 10).await?
 /// // Use:        WaitHelpers::wait_for_event_count(&pool, 5, Timeouts::SHORT).await?
@@ -199,7 +196,7 @@ impl WaitHelpers {
         timeout_secs: u64,
     ) -> TestResult<usize> {
         let pool = pool.clone(); // Clone for closure
-        sinex_core::types::utils::wait_for_condition_adaptive(
+        sinex_primitives::utils::wait_for_condition_adaptive(
             || async {
                 let count = pool
                     .events()
@@ -240,9 +237,9 @@ impl WaitHelpers {
         let pool = pool.clone(); // Clone for closure
         let source_str = source.to_string(); // Clone for closure
 
-        sinex_core::types::utils::wait_for_condition_adaptive(
+        sinex_primitives::utils::wait_for_condition_adaptive(
             || async {
-                let event_source = sinex_core::EventSource::new(&source_str);
+                let event_source = sinex_primitives::EventSource::new(&source_str);
                 let count = pool.events().count_by_source(&event_source).await?;
                 Ok(count as usize >= expected_count)
             },
@@ -260,7 +257,7 @@ impl WaitHelpers {
         })?;
 
         // Return final count
-        let event_source = sinex_core::EventSource::new(source);
+        let event_source = sinex_primitives::EventSource::new(source);
         let final_count = pool.events().count_by_source(&event_source).await?;
         Ok(final_count as usize)
     }
@@ -275,7 +272,7 @@ impl WaitHelpers {
         let pool = pool.clone();
         let event_type = event_type.clone();
 
-        sinex_core::types::utils::wait_for_condition_adaptive(
+        sinex_primitives::utils::wait_for_condition_adaptive(
             || async {
                 let count = pool.events().count_by_event_type(&event_type).await? as usize;
                 Ok(count >= expected_count)
@@ -300,13 +297,13 @@ impl WaitHelpers {
     /// Wait until a specific event is persisted.
     pub async fn wait_for_event_id(
         pool: &DbPool,
-        event_id: sinex_core::EventId,
+        event_id: EventId,
         timeout_secs: u64,
     ) -> TestResult<()> {
         let pool = pool.clone();
         let event_id = event_id.clone();
 
-        sinex_core::types::utils::wait_for_condition_adaptive(
+        sinex_primitives::utils::wait_for_condition_adaptive(
             || async { Ok(pool.events().get_by_id(event_id.clone()).await?.is_some()) },
             timeout_secs,
             &format!("event id {event_id} persisted"),
@@ -338,7 +335,7 @@ impl WaitHelpers {
 
         let check_pool = pool.clone();
         let check_expected = expected.clone();
-        sinex_core::types::utils::wait_for_condition_adaptive(
+        sinex_primitives::utils::wait_for_condition_adaptive(
             move || {
                 let pool = check_pool.clone();
                 let expected = check_expected.clone();
@@ -390,7 +387,7 @@ impl WaitHelpers {
         let check_pool = pool.clone();
         let check_expected = expected.clone();
         let check_source = event_source.clone();
-        sinex_core::types::utils::wait_for_condition_adaptive(
+        sinex_primitives::utils::wait_for_condition_adaptive(
             move || {
                 let pool = check_pool.clone();
                 let expected = check_expected.clone();
@@ -462,7 +459,7 @@ impl WaitHelpers {
         let check_pool = pool.clone();
         let check_expected = expected.clone();
         let check_event_type = event_type.clone();
-        sinex_core::types::utils::wait_for_condition_adaptive(
+        sinex_primitives::utils::wait_for_condition_adaptive(
             move || {
                 let pool = check_pool.clone();
                 let expected = check_expected.clone();
@@ -520,8 +517,12 @@ impl WaitHelpers {
         F: Fn() -> Fut,
         Fut: std::future::Future<Output = Result<bool>>,
     {
-        sinex_core::types::utils::wait_for_condition_adaptive(
-            || async { condition().await },
+        sinex_primitives::utils::wait_for_condition_adaptive(
+            || async {
+                condition()
+                    .await
+                    .map_err(|e| SinexError::unknown(e.to_string()))
+            },
             timeout_secs,
             "custom test condition",
         )
@@ -553,11 +554,11 @@ impl WaitHelpers {
             let owned_condition = condition.clone();
             prod_conditions.push((name, move || {
                 let cond = owned_condition.clone();
-                async move { cond().await }
+                async move { cond().await.map_err(|e| SinexError::unknown(e.to_string())) }
             }));
         }
 
-        sinex_core::types::utils::wait_for_multiple_conditions(prod_conditions, timeout_secs)
+        sinex_primitives::utils::wait_for_multiple_conditions(prod_conditions, timeout_secs)
             .await
             .map_err(|e| {
                 SinexError::timeout("Multiple conditions wait failed")
@@ -611,13 +612,13 @@ impl TimingPatterns {
     }
 }
 
-/// Timing utilities accessor for TestContext
+/// Timing utilities accessor for Sandbox
 pub struct TimingUtils<'ctx> {
-    ctx: &'ctx TestContext,
+    ctx: &'ctx Sandbox,
 }
 
 impl<'ctx> TimingUtils<'ctx> {
-    pub fn new(ctx: &'ctx TestContext) -> Self {
+    pub fn new(ctx: &'ctx Sandbox) -> Self {
         Self { ctx }
     }
 
@@ -645,7 +646,7 @@ impl<'ctx> TimingUtils<'ctx> {
     pub async fn wait_for_event_id(
         &self,
         pool: &DbPool,
-        event_id: sinex_core::EventId,
+        event_id: EventId,
         timeout_secs: u64,
     ) -> TestResult<()> {
         WaitHelpers::wait_for_event_id(pool, event_id, timeout_secs).await
@@ -731,13 +732,14 @@ impl<'ctx> TimingUtils<'ctx> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sinex_test;
-    use crate::snapshot_helper::retry_with_snapshot;
+
+    use crate::sandbox::snapshot_helper::retry_with_snapshot;
     use color_eyre::eyre::eyre;
-    use sinex_core::SinexError;
+    use sinex_primitives::SinexError;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
+    use xtask_macros::*;
 
     #[sinex_serial_test]
     async fn test_synchronizer_basic() -> TestResult<()> {
@@ -907,7 +909,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_wait_helpers_event_count(ctx: TestContext) -> TestResult<()> {
+    async fn test_wait_helpers_event_count(ctx: Sandbox) -> TestResult<()> {
         ctx.ensure_clean().await?;
         // Insert some events
         for i in 0..5 {
@@ -927,7 +929,7 @@ mod tests {
     }
 
     #[sinex_serial_test]
-    async fn test_wait_helpers_source_events(ctx: TestContext) -> TestResult<()> {
+    async fn test_wait_helpers_source_events(ctx: Sandbox) -> TestResult<()> {
         retry_with_snapshot(
             "timing_utils::test_wait_helpers_source_events",
             &ctx,
@@ -994,7 +996,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_wait_helpers_custom_condition(ctx: TestContext) -> TestResult<()> {
+    async fn test_wait_helpers_custom_condition(ctx: Sandbox) -> TestResult<()> {
         let counter = Arc::new(AtomicUsize::new(0));
         let counter_clone = counter.clone();
 
@@ -1022,7 +1024,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_wait_helpers_multiple_conditions(ctx: TestContext) -> TestResult<()> {
+    async fn test_wait_helpers_multiple_conditions(ctx: Sandbox) -> TestResult<()> {
         let counter1 = Arc::new(AtomicUsize::new(0));
         let counter2 = Arc::new(AtomicUsize::new(0));
 
@@ -1063,7 +1065,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_timing_patterns_event_processing(ctx: TestContext) -> TestResult<()> {
+    async fn test_timing_patterns_event_processing(ctx: Sandbox) -> TestResult<()> {
         let counter = TimingPatterns::wait_for_event_processing(5, Duration::from_secs(5))
             .await
             .map_err(|_| SinexError::unknown("Failed to create counter"))?;
@@ -1079,7 +1081,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_timing_patterns_test_phases(ctx: TestContext) -> TestResult<()> {
+    async fn test_timing_patterns_test_phases(ctx: Sandbox) -> TestResult<()> {
         let phases = vec!["setup", "execution", "validation", "cleanup"];
         let (tracker, phase_names) = TimingPatterns::create_test_phases(&phases);
 
@@ -1098,7 +1100,7 @@ mod tests {
     }
 
     #[sinex_serial_test]
-    async fn test_timing_utils_integration(ctx: TestContext) -> TestResult<()> {
+    async fn test_timing_utils_integration(ctx: Sandbox) -> TestResult<()> {
         let timing = ctx.timing();
 
         // Insert events
@@ -1135,14 +1137,14 @@ mod tests {
             "expected at least 3 events, saw {source_count}"
         );
 
-        crate::db_common::reset_database(&ctx.pool).await?;
-        crate::db_common::verify_clean_state(&ctx.pool).await?;
+        reset_database(&ctx.pool).await?;
+        verify_clean_state(&ctx.pool).await?;
         ctx.force_cleanup().await?;
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_timing_utils_synchronizer(ctx: TestContext) -> TestResult<()> {
+    async fn test_timing_utils_synchronizer(ctx: Sandbox) -> TestResult<()> {
         let timing = ctx.timing();
         let sync = timing.synchronizer(Duration::from_secs(5));
 
@@ -1166,7 +1168,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_timing_utils_barrier(ctx: TestContext) -> TestResult<()> {
+    async fn test_timing_utils_barrier(ctx: Sandbox) -> TestResult<()> {
         let timing = ctx.timing();
         let barrier = Arc::new(timing.barrier(2));
 
@@ -1188,7 +1190,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_timing_utils_progress_tracker(ctx: TestContext) -> TestResult<()> {
+    async fn test_timing_utils_progress_tracker(ctx: Sandbox) -> TestResult<()> {
         let timing = ctx.timing();
         let tracker = timing.progress_tracker(3);
 
@@ -1206,7 +1208,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_timing_utils_event_counter(ctx: TestContext) -> TestResult<()> {
+    async fn test_timing_utils_event_counter(ctx: Sandbox) -> TestResult<()> {
         let timing = ctx.timing();
         let counter = timing.event_counter(10);
 

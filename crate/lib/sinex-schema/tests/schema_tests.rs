@@ -4,11 +4,11 @@
 //! executed against a real PostgreSQL database with the required extensions.
 
 use sea_orm_migration::prelude::*;
-use sinex_core::DynamicPayload;
+use sinex_primitives::DynamicPayload;
 use sinex_schema::schema::*;
-use xtask::sandbox::prelude::*;
 use sqlx::{PgPool, Row};
 use std::collections::HashMap;
+use xtask::sandbox::prelude::*;
 
 #[cfg(test)]
 mod table_creation_tests {
@@ -156,7 +156,7 @@ mod table_creation_tests {
             "test-event",
             "test-host",
             serde_json::json!({"test": "data"}),
-            chrono::Utc::now()
+            crate::temporal::now()
         ).execute(pool).await.unwrap();
 
         // Basic roundtrip query validates table compatibility
@@ -206,7 +206,7 @@ mod constraint_tests {
             "test-event",
             "test-host",
             serde_json::json!({"test": "data"}),
-            chrono::Utc::now(),
+            crate::temporal::now(),
             material_id.as_uuid()
         ).execute(pool).await.unwrap();
 
@@ -219,7 +219,7 @@ mod constraint_tests {
             "test-event",
             "test-host",
             serde_json::json!({"test": "data"}),
-            chrono::Utc::now(),
+            crate::temporal::now(),
             &[event_id.as_uuid()][..]
         ).execute(pool).await.unwrap();
 
@@ -232,7 +232,7 @@ mod constraint_tests {
             "test-event",
             "test-host",
             serde_json::json!({"test": "data"}),
-            chrono::Utc::now(),
+            crate::temporal::now(),
             material_id.as_uuid(),
             &[event_id.as_uuid()][..]
         ).execute(pool).await;
@@ -251,7 +251,7 @@ mod constraint_tests {
             "test-event",
             "test-host",
             serde_json::json!({"test": "data"}),
-            chrono::Utc::now()
+            crate::temporal::now()
         ).execute(pool).await;
 
         assert!(result.is_err(), "Should reject events with no provenance");
@@ -279,7 +279,7 @@ mod constraint_tests {
             "test-event",
             "test-host",
             serde_json::json!({"test": "data"}),
-            chrono::Utc::now(),
+            crate::temporal::now(),
             material_id.as_uuid()
         ).execute(pool).await;
 
@@ -297,7 +297,7 @@ mod constraint_tests {
             "", // Empty event_type - should fail
             "test-host",
             serde_json::json!({"test": "data"}),
-            chrono::Utc::now(),
+            crate::temporal::now(),
             material_id.as_uuid()
         ).execute(pool).await;
 
@@ -348,6 +348,7 @@ mod index_tests {
     }
 
     #[sinex_test]
+    #[ignore = "long"]
     async fn test_index_performance_benefit() -> color_eyre::eyre::Result<()> {
         let ctx = TestContext::new().await.unwrap();
         let pool = &ctx.pool;
@@ -493,7 +494,7 @@ async fn get_table_columns(
 ) -> HashMap<String, ColumnInfo> {
     let rows = sqlx::query!(
         r#"
-        SELECT 
+        SELECT
             c.column_name,
             c.data_type,
             c.udt_name,
@@ -501,11 +502,11 @@ async fn get_table_columns(
             COALESCE(pk.is_primary, false) as is_primary_key
         FROM information_schema.columns c
         LEFT JOIN (
-            SELECT 
+            SELECT
                 kcu.column_name,
                 true as is_primary
             FROM information_schema.table_constraints tc
-            JOIN information_schema.key_column_usage kcu 
+            JOIN information_schema.key_column_usage kcu
                 ON tc.constraint_name = kcu.constraint_name
                 AND tc.table_schema = kcu.table_schema
                 AND tc.table_name = kcu.table_name
@@ -548,7 +549,7 @@ struct IndexInfo {
 async fn get_table_indexes(pool: &PgPool, schema: &str, table: &str) -> Vec<IndexInfo> {
     let rows = sqlx::query!(
         r#"
-        SELECT 
+        SELECT
             i.relname as index_name,
             ix.indisunique as is_unique,
             array_agg(a.attname ORDER BY a.attnum) as column_names

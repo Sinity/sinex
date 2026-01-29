@@ -6,20 +6,20 @@
 use chrono::{Duration as ChronoDuration, Utc};
 use color_eyre::eyre::ensure;
 use serde_json::json;
-use sinex_core::types::Ulid;
+use sinex_primitives::Ulid;
 use sinex_services::{AnalyticsService, SearchQuery, SearchService};
-use xtask::sandbox::dataset_seeds::{
-    seed_analytics_dataset_perf_via_scope, seed_analytics_dataset_semantic_min_via_scope,
-    seed_events_via_scope, seed_query_dataset_semantic_min_via_scope, AnalyticsDataset, EventSpec,
-    QueryDataset, SeedClock,
-};
-use xtask::sandbox::prelude::*;
 use sqlx::postgres::PgPoolOptions;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::oneshot;
 use tokio::time::{timeout, Duration as TokioDuration};
+use xtask::sandbox::dataset_seeds::{
+    seed_analytics_dataset_perf_via_scope, seed_analytics_dataset_semantic_min_via_scope,
+    seed_events_via_scope, seed_query_dataset_semantic_min_via_scope, AnalyticsDataset, EventSpec,
+    QueryDataset, SeedClock,
+};
+use xtask::sandbox::prelude::*;
 
 async fn fetch_command_counts(ctx: &TestContext) -> TestResult<HashMap<String, i64>> {
     let rows = sqlx::query!(
@@ -687,6 +687,7 @@ async fn test_pipeline_services_smoke(ctx: TestContext) -> TestResult<()> {
 }
 
 #[sinex_serial_test]
+#[ignore = "long"]
 async fn test_analytics_large_dataset_performance(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;

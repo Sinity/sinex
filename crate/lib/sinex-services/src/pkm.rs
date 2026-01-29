@@ -5,13 +5,14 @@
 use crate::error::{Result as ServiceResult, SinexError};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_core::db::repositories::source_materials::SourceMaterial;
-use sinex_core::db::DbPool;
-use sinex_core::types::ulid::Ulid;
-use sinex_core::types::Id;
-use sinex_core::{Entity as DbEntity, Event, JsonValue};
+use sinex_db::repositories::source_materials::SourceMaterial;
+use sinex_db::DbPool;
+use sinex_primitives::Id;
+use sinex_primitives::Ulid;
+use sinex_primitives::{domain::Entity as DbEntity, Event, JsonValue};
 
-use sinex_core::{CreateEntity, CreateEntityRelation, DbPoolExt};
+use sinex_db::repositories::DbPoolExt;
+use sinex_db::repositories::{CreateEntity, CreateEntityRelation};
 use std::collections::HashMap;
 use tracing::{debug, info};
 
@@ -25,7 +26,7 @@ pub struct MaterialSummary {
     pub blob_id: String,
     pub material_type: String,
     pub source_uri: Option<String>,
-    pub ingestion_time: chrono::DateTime<chrono::Utc>,
+    pub ingestion_time: sinex_primitives::Timestamp,
     pub file_size_bytes: Option<serde_json::Value>,
     pub mime_type: Option<serde_json::Value>,
     pub metadata: serde_json::Value,
@@ -49,9 +50,11 @@ impl MetadataBuilder {
         self
     }
 
-    pub fn with_created_at(mut self, timestamp: chrono::DateTime<chrono::Utc>) -> Self {
-        self.data
-            .insert("created_at".to_string(), json!(timestamp.to_rfc3339()));
+    pub fn with_created_at(mut self, timestamp: sinex_primitives::Timestamp) -> Self {
+        self.data.insert(
+            "created_at".to_string(),
+            json!(sinex_primitives::temporal::format_rfc3339(timestamp)),
+        );
         self
     }
 
@@ -169,7 +172,7 @@ impl PkmService {
     ) -> ServiceResult<Ulid> {
         let metadata = MetadataBuilder::new()
             .with_tags(tags)
-            .with_created_at(chrono::Utc::now())
+            .with_created_at(sinex_primitives::temporal::now())
             .with_source_material_id(source_material_id)
             .build();
 
@@ -393,7 +396,7 @@ impl PkmService {
         content: &[u8],
         mime_type: Option<&str>,
     ) -> ServiceResult<()> {
-        use sinex_core::Blob;
+        use sinex_db::models::blob::Blob;
 
         let (blake3_checksum, sha256_checksum) = calculate_checksums(content);
 
@@ -458,7 +461,7 @@ impl PkmService {
     ) -> ServiceResult<Vec<serde_json::Value>> {
         let limit = limit
             .unwrap_or(50)
-            .clamp(1, sinex_core::types::query::Pagination::MAX_LIMIT);
+            .clamp(1, sinex_primitives::Pagination::MAX_LIMIT);
         let materials = self.pool.source_materials().get_recent(limit).await?;
 
         // Filter by material_type if specified
@@ -503,11 +506,7 @@ impl PkmService {
         let materials = self
             .pool
             .source_materials()
-            .search_by_metadata(
-                key,
-                &value,
-                Some(sinex_core::types::query::Pagination::MAX_LIMIT),
-            )
+            .search_by_metadata(key, &value, Some(sinex_primitives::Pagination::MAX_LIMIT))
             .await?;
 
         let summaries: Vec<MaterialSummary> = materials

@@ -1,8 +1,8 @@
 use async_trait::async_trait;
-use sinex_core::db::models::{EventFactory, RawEvent};
-use xtask::sandbox::prelude::*;
+use sinex_db::models::{EventFactory, RawEvent};
 use std::time::Duration;
 use tokio::sync::mpsc;
+use xtask::sandbox::prelude::*;
 
 // EventSource trait definition for test event sources
 #[async_trait]
@@ -66,7 +66,7 @@ impl EventSource for TestFilesystemNode {
                 serde_json::json!({
                     "path": format!("/test/file_{}.txt", self.events_sent),
                     "size": 1024,
-                    "timestamp": chrono::Utc::now().to_rfc3339(),
+                    "timestamp": crate::temporal::now().to_rfc3339(),
                 }),
             );
 
@@ -94,7 +94,7 @@ impl EventSource for TestCommandNode {
                     "command": format!("echo 'test command {}'", self.events_sent),
                     "exit_code": 0,
                     "duration_ms": 100,
-                    "timestamp": chrono::Utc::now().to_rfc3339(),
+                    "timestamp": crate::temporal::now().to_rfc3339(),
                 }),
             );
 
@@ -120,7 +120,7 @@ impl EventSource for TestScannerNode {
                 serde_json::json!({
                     "item_id": self.items_scanned,
                     "scan_type": "filesystem",
-                    "timestamp": chrono::Utc::now().to_rfc3339(),
+                    "timestamp": crate::temporal::now().to_rfc3339(),
                 }),
             );
 
@@ -274,7 +274,9 @@ async fn test_multi_node_coordination(ctx: TestContext) -> color_eyre::Result<()
 
     // Verify event types
     assert!(fs_events.iter().all(|e| e.event_type == "file.created"));
-    assert!(cmd_events.iter().all(|e| e.event_type == "command.executed"));
+    assert!(cmd_events
+        .iter()
+        .all(|e| e.event_type == "command.executed"));
 
     Ok(())
 }
@@ -318,7 +320,8 @@ async fn test_node_operational_modes(ctx: TestContext) -> color_eyre::Result<()>
     let sensor_handle = tokio::spawn(async move { sensor_node.stream_events(sensor_tx).await });
 
     let mut sensor_events = Vec::new();
-    let first_event = tokio::time::timeout(Duration::from_secs(Timeouts::SHORT), sensor_rx.recv()).await??;
+    let first_event =
+        tokio::time::timeout(Duration::from_secs(Timeouts::SHORT), sensor_rx.recv()).await??;
     if let Some(event) = first_event {
         sensor_events.push(event);
     }
@@ -466,7 +469,10 @@ async fn test_multi_source_event_ordering(ctx: TestContext) -> color_eyre::Resul
     // Verify events maintain temporal consistency within each source
     let fs_events: Vec<_> = events.iter().filter(|e| e.source == "test-fs").collect();
     let cmd_events: Vec<_> = events.iter().filter(|e| e.source == "test-cmd").collect();
-    let scanner_events: Vec<_> = events.iter().filter(|e| e.source == "test-scanner").collect();
+    let scanner_events: Vec<_> = events
+        .iter()
+        .filter(|e| e.source == "test-scanner")
+        .collect();
 
     // Verify each source's events are temporally ordered
     for events_slice in [&fs_events, &cmd_events, &scanner_events] {
@@ -483,7 +489,10 @@ async fn test_multi_source_event_ordering(ctx: TestContext) -> color_eyre::Resul
                 .expect("id present")
                 .as_ulid()
                 .timestamp();
-            assert!(t0 <= t1, "Events from same source should be temporally ordered");
+            assert!(
+                t0 <= t1,
+                "Events from same source should be temporally ordered"
+            );
         }
     }
 
@@ -511,7 +520,10 @@ async fn test_multi_source_payload_diversity(ctx: TestContext) -> color_eyre::Re
     // Collect one event from each source
     let fs_event = fs_rx.recv().await.expect("Should receive filesystem event");
     let cmd_event = cmd_rx.recv().await.expect("Should receive command event");
-    let scanner_event = scanner_rx.recv().await.expect("Should receive scanner event");
+    let scanner_event = scanner_rx
+        .recv()
+        .await
+        .expect("Should receive scanner event");
 
     // Wait for nodes to complete
     let _ = fs_handle.await;

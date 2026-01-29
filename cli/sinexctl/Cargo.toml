@@ -1,27 +1,64 @@
-[package]
-name = "sinexctl"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-authors.workspace = true
-
 [[bin]]
 name = "sinexctl"
 path = "src/main.rs"
 
-[dependencies]
-sinex-cli = { path = "../sinex-cli" }
-clap = { workspace = true, features = ["derive", "env"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
-color-eyre = { workspace = true }
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true, features = ["env-filter"] }
+[package]
+name = "sinexctl"
 
 [dev-dependencies]
 assert_cmd = "2"
 predicates = "3"
-insta = { workspace = true }
 tempfile = "3"
 wiremock = "0.6"
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
-serde_json = { workspace = true }
+
+[package.version]
+workspace = true
+
+[package.edition]
+workspace = true
+
+[package.license]
+workspace = true
+
+[package.authors]
+workspace = true
+
+[dependencies.sinex-cli]
+path = "../sinex-cli"
+
+[dependencies.clap]
+workspace = true
+features = [ "derive", "env",]
+
+[dependencies.tokio]
+workspace = true
+features = [ "rt-multi-thread", "macros",]
+
+[dependencies.color-eyre]
+workspace = true
+
+[dependencies.tracing]
+workspace = true
+
+[dependencies.tracing-subscriber]
+workspace = true
+features = [ "env-filter",]
+
+[dev-dependencies.insta]
+workspace = true
+
+[dev-dependencies.tokio]
+workspace = true
+features = [ "rt-multi-thread", "macros",]
+
+[dev-dependencies.serde_json]
+workspace = true
+
+[dev-dependencies.xtask]
+path = "../../xtask"
+default-features = false
+features = [ "sandbox",]
+
+[dev-dependencies.sinex-primitives]
+path = "../../crate/lib/sinex-primitives"
+features = [ "testing",]

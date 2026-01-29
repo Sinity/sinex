@@ -1,7 +1,7 @@
 use clap::Parser;
 use color_eyre::eyre::Result;
-use sinex_core::types::Seconds;
 use sinex_ingestd::{IngestService, IngestdConfig};
+use sinex_primitives::units::Seconds;
 use std::io;
 use tracing::{error, info};
 

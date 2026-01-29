@@ -1,8 +1,8 @@
 use std::env;
 
 use sinex_gateway::ServiceContainer;
-use xtask::sandbox::{sinex_test, TestContext};
 use tempfile::TempDir;
+use xtask::sandbox::{sinex_test, TestContext};
 
 struct ReplayBypassGuard {
     previous: Option<String>,

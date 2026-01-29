@@ -4,10 +4,10 @@
 //! to sinex-core's query_validation module, using unified `SinexError` types with
 //! CLI-specific field name context.
 
-use chrono::{DateTime, Utc};
 use color_eyre::eyre::{eyre, Result};
 use reqwest::Url;
-use sinex_core::types::validation::query_validation;
+use sinex_primitives::temporal::Timestamp;
+use sinex_primitives::validation::query_validation;
 
 /// Validate a ULID or generic ID string
 ///
@@ -40,12 +40,29 @@ pub fn validate_url(url: &str, field_name: &str) -> Result<()> {
     Ok(())
 }
 
+/// A time range filter
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TimeRange {
+    since: Option<Timestamp>,
+    until: Option<Timestamp>,
+}
+
+impl TimeRange {
+    pub fn new(since: Option<Timestamp>, until: Option<Timestamp>) -> Self {
+        Self { since, until }
+    }
+
+    pub fn now() -> Timestamp {
+        Timestamp::now()
+    }
+}
+
 /// Validate a time range (since must be before until)
 ///
 /// Delegates to sinex-core's validate_time_range with CLI-specific context.
 pub fn validate_time_range(
-    since: Option<DateTime<Utc>>,
-    until: Option<DateTime<Utc>>,
+    since: Option<Timestamp>,
+    until: Option<Timestamp>,
 ) -> Result<()> {
     query_validation::validate_time_range(since, until)
         .map_err(|e| eyre!("Invalid time range: {}", e))
@@ -82,7 +99,7 @@ pub fn validate_role(role: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Duration;
+    use time::Duration;
 
     #[test]
     fn test_validate_id() {
@@ -139,9 +156,9 @@ mod tests {
 
     #[test]
     fn test_validate_time_range() {
-        let now = Utc::now();
-        let past = now - Duration::hours(1);
-        let future = now + Duration::hours(1);
+        let now = Timestamp::now();
+        let past = Timestamp::new(now.inner() - Duration::hours(1));
+        let future = Timestamp::new(now.inner() + Duration::hours(1));
 
         // Valid ranges
         assert!(validate_time_range(Some(past), Some(now)).is_ok());

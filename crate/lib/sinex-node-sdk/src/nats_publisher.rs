@@ -1,7 +1,11 @@
 //! NATS JetStream event publisher
 
 use serde::Serialize;
-use sinex_core::{db::models::Event, environment::SinexEnvironment, OffsetKind, Provenance};
+use sinex_primitives::{
+    environment::{environment, SinexEnvironment},
+    events::{Event, OffsetKind, Provenance},
+    JsonValue, Ulid,
+};
 use std::{future::IntoFuture, io, time::Duration};
 
 const DEFAULT_PUBLISH_ACK_TIMEOUT: Duration = Duration::from_secs(10);
@@ -20,7 +24,7 @@ struct PublishEvent<'a> {
     event_type: &'a str,
     ts_orig: String,
     host: &'a str,
-    payload: &'a sinex_core::JsonValue,
+    payload: &'a JsonValue,
     ingestor_version: Option<String>,
     payload_schema_id: Option<String>,
     associated_blob_ids: Option<Vec<String>>,
@@ -38,7 +42,7 @@ impl NatsPublisher {
     }
 
     pub fn with_namespace(nats_client: async_nats::Client, namespace: Option<String>) -> Self {
-        let env = sinex_core::environment().clone();
+        let env = environment().clone();
         Self {
             nats_client,
             env,
@@ -67,7 +71,7 @@ impl NatsPublisher {
             .id
             .as_ref()
             .map(|id| id.to_string())
-            .unwrap_or_else(|| sinex_core::Ulid::new().to_string());
+            .unwrap_or_else(|| Ulid::new().to_string());
 
         // Build DLQ entry with error context
         let dlq_entry = serde_json::json!({
@@ -77,7 +81,7 @@ impl NatsPublisher {
             "error": error,
             "processor": processor_name,
             "original_payload": event.payload,
-            "failed_at": chrono::Utc::now().to_rfc3339(),
+            "failed_at": sinex_primitives::temporal::format_rfc3339(sinex_primitives::temporal::now()),
         });
 
         let payload = serde_json::to_vec(&dlq_entry)?;
@@ -173,7 +177,7 @@ impl NatsPublisher {
                 Some(
                     source_event_ids
                         .iter()
-                        .map(|id| id.as_ulid().to_string())
+                        .map(|id| id.to_string())
                         .collect::<Vec<_>>(),
                 ),
             ),
@@ -244,7 +248,7 @@ fn build_publish_payload(
         id: event_id_str.clone(),
         source: event.source.as_str(),
         event_type: event.event_type.as_str(),
-        ts_orig: ts_orig.to_rfc3339(),
+        ts_orig: ts_orig.format_rfc3339(),
         host: event.host.as_str(),
         payload: &event.payload,
         ingestor_version: event.ingestor_version.clone(),
@@ -282,9 +286,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::{build_publish_payload, wait_for_publish_ack};
-    use sinex_core::{DynamicPayload, EventId, Provenance, Ulid};
-    use xtask::sandbox::sinex_test;
+    use sinex_primitives::{events::Provenance, DynamicPayload, Id, Ulid};
     use std::{future, io, time::Duration};
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     async fn publish_ack_timeout_is_reported() -> TestResult<()> {
@@ -303,15 +307,15 @@ mod tests {
             serde_json::json!({"nested": {"a": 1}}),
         )
         .with_provenance(Provenance::from_synthesis_safe(
-            EventId::from_ulid(Ulid::new()),
+            Id::from_ulid(Ulid::new()),
             Vec::new(),
         ))
         .build()
         .expect("infallible: test provenance set");
-        event.id = Some(sinex_core::Id::from_ulid(Ulid::new()));
+        event.id = Some(Id::from_ulid(Ulid::new()));
 
         let (event_id, payload) = build_publish_payload(&event, None, None, None, None, None, None)
-            .map_err(|err| color_eyre::eyre::eyre!(err))?;
+            .map_err(|err| crate::SinexError::processing(err.to_string()))?;
         let value: serde_json::Value = serde_json::from_slice(&payload)?;
 
         assert_eq!(value["id"], event_id);

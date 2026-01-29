@@ -1,11 +1,11 @@
 use camino::Utf8PathBuf;
 use serde_json::json;
-use sinex_core::nats::NatsConnectionConfig;
+use sinex_primitives::nats::NatsConnectionConfig;
 use sinex_ingestd::{config::IngestdConfig, service::IngestService, JetStreamTopology};
-use xtask::sandbox::prelude::*;
-use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 use tempfile::TempDir;
 use tokio::time::{timeout, Duration};
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 
 #[sinex_test(timeout = 60)]
 async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResult<()> {

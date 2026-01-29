@@ -3,13 +3,16 @@
 //! This module combines the previous PipelineHarness functionality directly,
 //! providing a single type for pipeline tests.
 
-use crate::ingestd_test_utils::{start_test_ingestd_with_config, TestIngestdConfig};
-use crate::pipeline::{acquire_pipeline_permit, wait_for_event_persisted};
-use crate::pipeline_namespace::PipelineNamespace;
-use crate::timing_utils::{WaitHelpers, DEFAULT_WAIT_SECS};
-use crate::{EventOverrides, TestContext, TestNodePublisher, TestResult};
-use chrono::{DateTime, Utc};
-use sinex_core::{DynamicPayload, EventId, EventType, Publishable};
+use crate::sandbox::coordination::PipelineNamespace;
+use crate::sandbox::nats::{acquire_pipeline_permit, wait_for_event_persisted};
+use crate::sandbox::orchestrator::{start_test_ingestd_with_config, TestIngestdConfig};
+use crate::sandbox::prelude::{EventId, TestResult};
+use crate::sandbox::timing::{WaitHelpers, DEFAULT_WAIT_SECS};
+use crate::sandbox::Sandbox;
+use crate::EventOverrides;
+use sinex_primitives::events::Publishable;
+use sinex_primitives::Timestamp;
+use sinex_primitives::{DynamicPayload, EventType};
 use std::collections::VecDeque;
 use std::time::Instant;
 use tokio::runtime::Handle;
@@ -21,16 +24,15 @@ use tracing::info;
 ///
 /// This is the primary type for tests that need to exercise the full ingestion pipeline.
 pub struct PipelineScope<'ctx> {
-    ctx: &'ctx TestContext,
-    ingestd: Option<crate::ingestd_test_utils::TestIngestdHandle>,
-    namespace: String,
+    ctx: &'ctx Sandbox,
+    ingestd: Option<crate::sandbox::orchestrator::TestIngestdHandle>,
     pipeline_permit: Option<OwnedSemaphorePermit>,
 }
 
 impl<'ctx> PipelineScope<'ctx> {
     /// Create a pipeline scope that enforces shared NATS, resets the DB slot,
     /// and starts ingestd.
-    pub async fn new(ctx: &'ctx TestContext) -> TestResult<Self> {
+    pub async fn new(ctx: &'ctx Sandbox) -> TestResult<Self> {
         ctx.ensure_shared_nats()?;
         ctx.reset_database_slot().await?;
 
@@ -54,13 +56,12 @@ impl<'ctx> PipelineScope<'ctx> {
         Ok(Self {
             ctx,
             ingestd: Some(ingestd),
-            namespace,
             pipeline_permit,
         })
     }
 
-    /// Access the underlying TestContext.
-    pub fn ctx(&self) -> &TestContext {
+    /// Access the underlying Sandbox.
+    pub fn ctx(&self) -> &Sandbox {
         self.ctx
     }
 
@@ -84,15 +85,6 @@ impl<'ctx> PipelineScope<'ctx> {
         self.namespace().consumer_name(base)
     }
 
-    /// Create a publisher that always uses the pipeline namespace.
-    pub fn publisher(&self, source: impl Into<String>) -> TestNodePublisher {
-        TestNodePublisher::with_namespace(
-            self.ctx.nats_client(),
-            source,
-            Some(self.namespace.clone()),
-        )
-    }
-
     /// Publish a test event through JetStream and wait until ingestd persists it.
     ///
     /// Accepts any type implementing `Publishable`:
@@ -112,7 +104,7 @@ impl<'ctx> PipelineScope<'ctx> {
         self.publish_with_overrides_internal(
             payload.source(),
             payload.event_type(),
-            payload.to_json_value(),
+            payload.to_json_value()?,
             EventOverrides::default(),
         )
         .await
@@ -127,7 +119,7 @@ impl<'ctx> PipelineScope<'ctx> {
         self.publish_with_overrides_internal(
             payload.source(),
             payload.event_type(),
-            payload.to_json_value(),
+            payload.to_json_value()?,
             overrides,
         )
         .await
@@ -136,21 +128,42 @@ impl<'ctx> PipelineScope<'ctx> {
     /// Internal implementation for publish with overrides.
     async fn publish_with_overrides_internal(
         &self,
-        source: sinex_core::EventSource,
-        event_type: EventType,
+        source: sinex_primitives::EventSource,
+        event_type: sinex_primitives::EventType,
         payload: serde_json::Value,
         overrides: EventOverrides,
     ) -> TestResult<EventId> {
         let op_start = Instant::now();
-        let publisher = TestNodePublisher::with_namespace(
-            self.ctx.nats_client(),
-            source.as_str().to_string(),
-            Some(self.namespace.clone()),
-        );
+        let timestamp_override = if let Some(ts) = overrides.ts_orig {
+            Some(Timestamp::parse_rfc3339(&ts)?)
+        } else {
+            None
+        };
+
+        // Construct event manually to handle overrides
+        let event = sinex_primitives::events::Event::<serde_json::Value> {
+            id: overrides.id.map(sinex_primitives::Id::from_ulid),
+            source: source.clone(),
+            event_type: event_type.clone(),
+            payload,
+            ts_orig: timestamp_override,
+            host: sinex_primitives::domain::HostName::new(
+                gethostname::gethostname().to_string_lossy().to_string(),
+            ),
+            ingestor_version: Some("test-ingestd".to_string()),
+            payload_schema_id: None,
+            provenance: sinex_primitives::events::Provenance::Material {
+                id: sinex_primitives::Id::new(),
+                anchor_byte: 0,
+                offset_start: None,
+                offset_end: None,
+                offset_kind: sinex_primitives::events::OffsetKind::Byte,
+            },
+            associated_blob_ids: None,
+        };
+
         let publish_start = Instant::now();
-        let event_id = publisher
-            .publish_with_overrides(event_type.as_str(), payload, overrides)
-            .await?;
+        let event_id = self.ctx.publish_prebuilt_event(&event).await?;
         let publish_ms = publish_start.elapsed().as_millis();
         let wait_start = Instant::now();
         wait_for_event_persisted(self.ctx, event_id).await?;
@@ -174,10 +187,10 @@ impl<'ctx> PipelineScope<'ctx> {
     pub async fn publish_with_timestamp<P: Publishable>(
         &self,
         payload: P,
-        timestamp: DateTime<Utc>,
+        timestamp: Timestamp,
     ) -> TestResult<EventId> {
         let overrides = EventOverrides {
-            ts_orig: Some(timestamp.to_rfc3339()),
+            ts_orig: Some(timestamp.format_rfc3339()),
             ..Default::default()
         };
         self.publish_with_overrides(payload, overrides).await
@@ -272,8 +285,8 @@ impl<'ctx> PipelineScope<'ctx> {
         count: usize,
         source: &str,
         event_type: &str,
-        start: DateTime<Utc>,
-        end: DateTime<Utc>,
+        start: Timestamp,
+        end: Timestamp,
         payload_fn: F,
     ) -> TestResult<Vec<EventId>>
     where
@@ -283,16 +296,16 @@ impl<'ctx> PipelineScope<'ctx> {
             return Ok(vec![]);
         }
 
-        let duration = end.signed_duration_since(start);
+        let duration = *end - *start;
         let step = if count > 1 {
             duration / (count as i32 - 1)
         } else {
-            chrono::Duration::zero()
+            time::Duration::seconds(0)
         };
 
         let mut ids = Vec::with_capacity(count);
         for i in 0..count {
-            let timestamp = start + step * (i as i32);
+            let timestamp = Timestamp::new(*start + step * (i as i32));
             let payload = payload_fn(i);
             let id = self
                 .publish_with_timestamp(DynamicPayload::new(source, event_type, payload), timestamp)

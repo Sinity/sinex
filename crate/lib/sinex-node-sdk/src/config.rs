@@ -41,7 +41,11 @@ use figment::{
     Figment,
 };
 use serde::{Deserialize, Serialize};
-use sinex_core::types::{validate_path, Seconds};
+use sinex_primitives::{
+    environment::environment,
+    units::Seconds,
+    validation::validate_path,
+};
 use std::collections::HashMap;
 use uncased::{Uncased, UncasedStr};
 use validator::Validate;
@@ -86,7 +90,7 @@ pub struct NodeConfig {
     /// NATS connection configuration.
     #[builder(default)]
     #[cfg(feature = "messaging")]
-    pub nats: sinex_core::nats::NatsConnectionConfig,
+    pub nats: sinex_primitives::nats::NatsConnectionConfig,
 
     /// Database URL for direct database access (automata only).
     ///
@@ -216,7 +220,7 @@ impl NodeConfig {
             service_name: service_name.to_string(),
             log_level: default_log_level(),
             #[cfg(feature = "messaging")]
-            nats: sinex_core::nats::NatsConnectionConfig::default(),
+            nats: sinex_primitives::nats::NatsConnectionConfig::default(),
             database_url: None,
             database_pool_size: default_pool_size(),
             work_dir: default_work_dir(),
@@ -299,10 +303,10 @@ impl NodeConfig {
             service_name: defaults.service_name,
             log_level: env_var_or_default("SINEX_LOG_LEVEL", default_log_level),
             #[cfg(feature = "messaging")]
-            nats: sinex_core::nats::NatsConnectionConfig::from_env(),
+            nats: sinex_primitives::nats::NatsConnectionConfig::from_env(),
             database_url: std::env::var("DATABASE_URL")
                 .ok()
-                .map(|url| sinex_core::environment().database_url(&url).unwrap_or(url)),
+                .map(|url| environment().database_url(&url).unwrap_or(url)),
             database_pool_size: std::env::var("SINEX_DB_POOL_SIZE")
                 .ok()
                 .and_then(|s| s.parse().ok())
@@ -457,7 +461,7 @@ fn default_pool_size() -> u32 {
 }
 
 fn default_work_dir() -> Utf8PathBuf {
-    let env = sinex_core::environment();
+    let env = environment();
     let work_dir = env.work_directory(get_cache_dir_or_fallback().join("sinex"));
 
     // Validate the default path
@@ -553,8 +557,6 @@ fn validate_log_level(level: &str) -> Result<(), validator::ValidationError> {
 }
 
 fn validate_work_dir(path: &Utf8PathBuf) -> Result<(), validator::ValidationError> {
-    use sinex_core::types::validate_path;
-
     let path_str = path.as_str();
 
     validate_path(path_str)
@@ -563,9 +565,11 @@ fn validate_work_dir(path: &Utf8PathBuf) -> Result<(), validator::ValidationErro
 }
 
 fn validate_rfc3339(timestamp: &str) -> Result<(), validator::ValidationError> {
-    chrono::DateTime::parse_from_rfc3339(timestamp)
-        .map(|_| ())
-        .map_err(|_| validator::ValidationError::new("invalid_rfc3339"))
+    sinex_primitives::temporal::Timestamp::parse_rfc3339(
+        timestamp,
+    )
+    .map(|_| ())
+    .map_err(|_| validator::ValidationError::new("invalid_rfc3339"))
 }
 
 fn validate_seconds_nonzero(value: &Seconds) -> Result<(), validator::ValidationError> {

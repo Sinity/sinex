@@ -23,7 +23,7 @@ fn spin_for(duration: Duration) {
 #[cfg(test)]
 mod ulid_property_tests {
     use super::*;
-    use sinex_test_utils::sinex_proptest;
+    use xtask::sandbox::sinex_proptest;
 
     sinex_proptest! {
         fn prop_ulid_string_representation_always_26_chars(ulid in ulid_strategy()) -> TestResult<()> {
@@ -187,7 +187,8 @@ mod ulid_property_tests {
 #[cfg(test)]
 mod stress_tests {
     use super::*;
-    use sinex_test_utils::sinex_proptest;
+    use xtask::sandbox::sinex_proptest;
+    #[ignore = "long"]
 
     sinex_proptest! {
         fn prop_high_frequency_generation_stress_test(
@@ -274,7 +275,7 @@ mod stress_tests {
 #[cfg(test)]
 mod edge_case_properties {
     use super::*;
-    use sinex_test_utils::sinex_proptest;
+    use xtask::sandbox::sinex_proptest;
 
     sinex_proptest! {
         fn prop_ulid_comparison_transitivity(
@@ -378,8 +379,8 @@ fn ulid_strategy() -> BoxedStrategy<Ulid> {
 #[cfg(test)]
 mod concurrent_property_tests {
     use super::*;
-    use sinex_test_utils::sinex_proptest;
     use std::sync::{Arc, Barrier, Mutex};
+    use xtask::sandbox::sinex_proptest;
 
     sinex_proptest! {
         fn prop_concurrent_ulid_generation_ordering(
@@ -430,11 +431,11 @@ mod concurrent_property_tests {
         fn prop_timestamp_consistency_under_load(
             generation_count in 100usize..=1000
         ) -> TestResult<()> {
-            let start_time = chrono::Utc::now() - chrono::Duration::seconds(2);
+            let start_time = crate::temporal::now() - chrono::Duration::seconds(2);
 
             let ulids: Vec<_> = (0..generation_count).map(|_| Ulid::new()).collect();
 
-            let end_time = chrono::Utc::now() + chrono::Duration::seconds(2);
+            let end_time = crate::temporal::now() + chrono::Duration::seconds(2);
 
             // All ULIDs should have timestamps within the generation window
             for ulid in &ulids {

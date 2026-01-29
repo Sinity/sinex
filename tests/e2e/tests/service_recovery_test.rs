@@ -12,21 +12,21 @@
 //! - JetStream consumer recovery
 
 use async_nats::jetstream;
-use chrono::{Duration as ChronoDuration, Utc};
 use color_eyre::eyre::eyre;
 use futures::StreamExt;
 use serde_json::json;
-use sinex_core::coordination::kv_client::{CoordinationKvClient, InstanceMetadata};
-use sinex_core::environment::environment;
-use sinex_core::DynamicPayload;
+use sinex_primitives::coordination::kv_client::{CoordinationKvClient, InstanceMetadata};
+use sinex_primitives::environment::environment;
+use sinex_primitives::DynamicPayload;
 use sinex_node_sdk::stream_processor::SchemaBroadcastEntry;
+use sinex_primitives::temporal::{now, Duration as SinexDuration};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
+use tokio::time::{timeout, Duration};
 use xtask::sandbox::nats::ensure_coordination_buckets;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 use xtask::sandbox::{start_test_ingestd_with_config, TestIngestdConfig};
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
-use tokio::time::{timeout, Duration};
 
 fn is_jetstream_no_messages_error(msg: &str) -> bool {
     msg.contains("No Messages")
@@ -36,7 +36,7 @@ fn is_jetstream_no_messages_error(msg: &str) -> bool {
 
 async fn ensure_raw_event_streams(
     nats_client: &async_nats::Client,
-    env: &sinex_core::environment::SinexEnvironment,
+    env: &sinex_primitives::environment::SinexEnvironment,
 ) -> Result<()> {
     let js = jetstream::new(nats_client.clone());
     let events_stream = "sinex_test_events".to_string();
@@ -192,7 +192,7 @@ async fn test_pool_concurrent_stress_recovery(ctx: TestContext) -> Result<()> {
                             json!({
                                 "task_id": task_id,
                                 "iteration": iteration,
-                                "timestamp": chrono::Utc::now().to_rfc3339()
+                                "timestamp": crate::temporal::now().to_rfc3339()
                             }),
                         ))
                         .await
@@ -382,7 +382,7 @@ async fn test_ingestd_restart_event_continuity(ctx: TestContext) -> Result<()> {
         .events()
         .get_by_event_type(
             &EventType::from("after.restart"),
-            sinex_core::types::Pagination::new(Some(10), None),
+            sinex_primitives::Pagination::new(Some(10), None),
         )
         .await?;
 
@@ -501,7 +501,7 @@ async fn test_multi_source_concurrent_ingestion(ctx: TestContext) -> Result<()> 
             .events()
             .get_by_source(
                 &EventSource::from(*source),
-                sinex_core::types::Pagination::new(Some(100), None),
+                sinex_primitives::Pagination::new(Some(100), None),
             )
             .await?;
         source_counts.insert(*source, events.len());
@@ -547,13 +547,14 @@ async fn test_leadership_heartbeat_timeout_detection(ctx: TestContext) -> Result
 
     let kv_client = CoordinationKvClient::new(js.clone(), service_name.clone());
 
+    let now_ts = now();
     // Register leader with a stale heartbeat (60 seconds old)
     let metadata = InstanceMetadata {
         instance_id: stale_instance.clone(),
         hostname: "stale-host".to_string(),
         version: "1.0.0".to_string(),
-        started_at: (Utc::now() - ChronoDuration::seconds(120)).timestamp(),
-        last_heartbeat: (Utc::now() - ChronoDuration::seconds(60)).timestamp(),
+        started_at: (now_ts - SinexDuration::seconds(120)).unix_timestamp(),
+        last_heartbeat: (now_ts - SinexDuration::seconds(60)).unix_timestamp(),
     };
     kv_client.register_instance(&metadata).await?;
     assert!(kv_client.acquire_leadership(&stale_instance).await?);
@@ -569,15 +570,15 @@ async fn test_leadership_heartbeat_timeout_detection(ctx: TestContext) -> Result
     let key = format!("{}.{}", service_name, stale_instance);
     let entry = bucket.entry(&key).await?.expect("metadata present");
     let stored: InstanceMetadata = serde_json::from_slice(&entry.value)?;
-    assert!(stored.last_heartbeat < (Utc::now() - ChronoDuration::seconds(30)).timestamp());
+    assert!(stored.last_heartbeat < (now_ts - SinexDuration::seconds(30)).unix_timestamp());
 
     // Standby registers and attempts takeover (should initially fail)
     let standby_meta = InstanceMetadata {
         instance_id: standby_instance.clone(),
         hostname: "standby-host".to_string(),
         version: "1.0.1".to_string(),
-        started_at: Utc::now().timestamp(),
-        last_heartbeat: Utc::now().timestamp(),
+        started_at: now_ts.unix_timestamp(),
+        last_heartbeat: now_ts.unix_timestamp(),
     };
     kv_client.register_instance(&standby_meta).await?;
     assert!(
@@ -622,12 +623,13 @@ async fn test_concurrent_leadership_acquisition(ctx: TestContext) -> Result<()> 
             let kv_client = CoordinationKvClient::new(js, service);
             let instance_id = uuid::Uuid::new_v4().to_string();
 
+            let now_ts = now();
             let metadata = InstanceMetadata {
                 instance_id: instance_id.clone(),
                 hostname: format!("instance-{idx}"),
                 version: "1.0.0".to_string(),
-                started_at: Utc::now().timestamp(),
-                last_heartbeat: Utc::now().timestamp(),
+                started_at: now_ts.unix_timestamp(),
+                last_heartbeat: now_ts.unix_timestamp(),
             };
             kv_client.register_instance(&metadata).await.unwrap();
 

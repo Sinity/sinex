@@ -1,11 +1,11 @@
 use std::path::Path;
 use std::time::Duration;
 
-use chrono::{DateTime, Utc};
 use reqwest::ClientBuilder;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sinex_core::rpc::{coordination::*, dlq::*, methods, nodes::*, replay::*, system::*};
+use sinex_primitives::rpc::{coordination::*, dlq::*, methods, nodes::*, replay::*, system::*};
+use sinex_primitives::temporal::Timestamp;
 
 use crate::auth::{load_client_cert, load_root_ca, load_token};
 use crate::client::RetryConfig;
@@ -346,21 +346,19 @@ impl GatewayClient {
 
     /// Set node horizon (cutoff time for event processing)
     pub async fn set_node_horizon(&self, node_id: &str, horizon: &str) -> Result<()> {
-        // Parse horizon string to DateTime<Utc>
-        let horizon_dt: DateTime<Utc> = DateTime::parse_from_rfc3339(horizon)
-            .map(|dt| dt.with_timezone(&Utc))
-            .or_else(|_| {
-                // Try parsing as unix timestamp
-                horizon
-                    .parse::<i64>()
-                    .ok()
-                    .and_then(|ts| DateTime::from_timestamp(ts, 0))
-                    .ok_or_else(|| color_eyre::eyre::eyre!("Invalid horizon format"))
-            })?;
+        // Parse horizon string to Timestamp
+        let horizon_ts = Timestamp::parse_rfc3339(horizon).or_else(|_| {
+            // Try parsing as unix timestamp
+            horizon
+                .parse::<i64>()
+                .ok()
+                .and_then(|ts| Timestamp::from_unix_timestamp(ts))
+                .ok_or_else(|| color_eyre::eyre::eyre!("Invalid horizon format"))
+        })?;
 
         let req = NodeSetHorizonRequest {
             node_id: node_id.into(),
-            horizon: horizon_dt,
+            horizon: horizon_ts,
         };
         self.call_rpc(methods::NODES_SET_HORIZON, serde_json::to_value(&req)?)
             .await?;
@@ -378,15 +376,15 @@ impl GatewayClient {
     ) -> Result<ReplayOperation> {
         // Build time window from relative or absolute times
         let time_window = if since.is_some() || until.is_some() {
-            let now = chrono::Utc::now();
+            let now = Timestamp::now();
             let start = since
                 .map(|s| Self::parse_time(s, now))
                 .transpose()?
-                .unwrap_or_else(|| (now - chrono::Duration::hours(24)).to_rfc3339());
+                .unwrap_or_else(|| (now - time::Duration::hours(24)).format_rfc3339());
             let end = until
                 .map(|u| Self::parse_time(u, now))
                 .transpose()?
-                .unwrap_or_else(|| now.to_rfc3339());
+                .unwrap_or_else(|| now.format_rfc3339());
             Some((start, end))
         } else {
             None
@@ -412,26 +410,26 @@ impl GatewayClient {
     }
 
     /// Parse relative time (e.g., "1h", "24h") or RFC3339 timestamp
-    fn parse_time(input: &str, now: chrono::DateTime<chrono::Utc>) -> Result<String> {
+    fn parse_time(input: &str, now: Timestamp) -> Result<String> {
         // Try relative format first (e.g., "1h", "24h", "7d")
         if let Some(hours) = input.strip_suffix('h') {
             if let Ok(h) = hours.parse::<i64>() {
-                return Ok((now - chrono::Duration::hours(h)).to_rfc3339());
+                return Ok((now - time::Duration::hours(h)).format_rfc3339());
             }
         }
         if let Some(days) = input.strip_suffix('d') {
             if let Ok(d) = days.parse::<i64>() {
-                return Ok((now - chrono::Duration::days(d)).to_rfc3339());
+                return Ok((now - time::Duration::days(d)).format_rfc3339());
             }
         }
         if let Some(mins) = input.strip_suffix('m') {
             if let Ok(m) = mins.parse::<i64>() {
-                return Ok((now - chrono::Duration::minutes(m)).to_rfc3339());
+                return Ok((now - time::Duration::minutes(m)).format_rfc3339());
             }
         }
 
         // Try RFC3339 format
-        if chrono::DateTime::parse_from_rfc3339(input).is_ok() {
+        if Timestamp::parse_rfc3339(input).is_ok() {
             return Ok(input.to_string());
         }
 
@@ -602,11 +600,17 @@ impl GatewayClient {
     pub async fn audit_get(
         &self,
         operation_id: &str,
-    ) -> Result<sinex_core::rpc::audit::AuditGetResponse> {
-        use sinex_core::rpc::audit::{AuditGetRequest, AuditGetResponse};
+    ) -> Result<sinex_primitives::rpc::audit::AuditGetResponse> {
+        use sinex_primitives::events::SourceMaterial;
+        use sinex_primitives::rpc::audit::{AuditGetRequest, AuditGetResponse};
+        use sinex_primitives::Id;
+
+        let op_id = operation_id
+            .parse::<Id<SourceMaterial>>()
+            .map_err(|e| color_eyre::eyre::eyre!("Invalid operation ID: {}", e))?;
 
         let request = AuditGetRequest {
-            operation_id: operation_id.to_string(),
+            operation_id: op_id,
         };
         let result = self
             .call_rpc("audit.get", serde_json::to_value(&request)?)

@@ -2,12 +2,11 @@
 //!
 //! Tests concurrent access, edge cases, and error handling scenarios.
 
-use chrono::{Duration, Utc};
-use sinex_core::types::domain::{EventSource, EventType};
-use sinex_core::types::Ulid;
+use sinex_node_sdk::types::Ulid;
 use sinex_node_sdk::confirmation_handler::{ConfirmationBuffer, ProvisionalEvent};
+use sinex_node_sdk::prelude::*;
 use xtask::sandbox::sinex_test;
-use xtask::sandbox::timing::Timeouts;
+use xtask::sandbox::Timeouts;
 
 use std::sync::Arc;
 use tokio::sync::Barrier;
@@ -18,8 +17,8 @@ fn make_event() -> ProvisionalEvent {
         source: EventSource::new("test-source"),
         event_type: EventType::new("test.event.type"),
         payload: serde_json::json!({"key": "value"}),
-        ts_orig: Utc::now(),
-        received_at: Utc::now(),
+        ts_orig: OffsetDateTime::now_utc().into(),
+        received_at: OffsetDateTime::now_utc().into(),
     }
 }
 
@@ -66,8 +65,8 @@ async fn add_duplicate_event_overwrites_existing() -> TestResult<()> {
         source: EventSource::new("source1"),
         event_type: EventType::new("type1"),
         payload: serde_json::json!({"version": 1}),
-        ts_orig: Utc::now(),
-        received_at: Utc::now(),
+        ts_orig: OffsetDateTime::now_utc().into(),
+        received_at: OffsetDateTime::now_utc().into(),
     };
 
     let event2 = ProvisionalEvent {
@@ -75,8 +74,8 @@ async fn add_duplicate_event_overwrites_existing() -> TestResult<()> {
         source: EventSource::new("source2"),
         event_type: EventType::new("type2"),
         payload: serde_json::json!({"version": 2}),
-        ts_orig: Utc::now(),
-        received_at: Utc::now(),
+        ts_orig: OffsetDateTime::now_utc().into(),
+        received_at: OffsetDateTime::now_utc().into(),
     };
 
     buffer.add_provisional(event1).await;
@@ -249,8 +248,8 @@ async fn timeout_check_identifies_only_expired_events() -> TestResult<()> {
         source: EventSource::new("test"),
         event_type: EventType::new("test.old"),
         payload: serde_json::json!({}),
-        ts_orig: Utc::now(),
-        received_at: Utc::now() - Duration::seconds(10),
+        ts_orig: OffsetDateTime::now_utc().into(),
+        received_at: OffsetDateTime::now_utc().into() - time::Duration::seconds(10),
     };
     buffer.add_provisional(old_event).await;
 
@@ -356,8 +355,8 @@ async fn event_payload_preserved_through_buffer() -> TestResult<()> {
         source: EventSource::new("complex-source"),
         event_type: EventType::new("complex.event"),
         payload: complex_payload.clone(),
-        ts_orig: Utc::now(),
-        received_at: Utc::now(),
+        ts_orig: OffsetDateTime::now_utc().into(),
+        received_at: OffsetDateTime::now_utc().into(),
     };
 
     let id = event.event_id;

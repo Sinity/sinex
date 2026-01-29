@@ -8,9 +8,9 @@
 //! - Slow consumers
 
 use sinex_node_sdk::simple_node::{ErrorAction, SimpleNode, SimpleNodeError};
-use xtask::sandbox::prelude::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use xtask::sandbox::prelude::*;
 
 #[allow(dead_code)]
 /// Simple counter node for testing chaos scenarios

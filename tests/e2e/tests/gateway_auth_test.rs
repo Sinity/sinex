@@ -12,9 +12,9 @@
 
 use axum::http::{HeaderMap, HeaderValue};
 use sinex_gateway::rpc_server_test_support as rpc_test_support;
-use xtask::sandbox::{sinex_test, EnvGuard};
 use std::fs;
 use tempfile::TempDir;
+use xtask::sandbox::{sinex_test, EnvGuard};
 
 fn reset_token_env(env: &mut EnvGuard) {
     env.clear("SINEX_GATEWAY_ADMIN_TOKEN_FILE");
@@ -283,8 +283,8 @@ fn test_gateway_limits_matrix() -> TestResult<()> {
             max_body_bytes: None,
             expected: rpc_test_support::RpcServerLimitsSnapshot {
                 concurrency_limit: 100,
-                request_timeout_secs: sinex_core::types::Seconds::from_secs(30),
-                max_body_bytes: sinex_core::types::Bytes::from_mebibytes(2),
+                request_timeout_secs: sinex_primitives::Seconds::from_secs(30),
+                max_body_bytes: sinex_primitives::Bytes::from_mebibytes(2),
             },
         },
         Case {
@@ -294,8 +294,8 @@ fn test_gateway_limits_matrix() -> TestResult<()> {
             max_body_bytes: Some("1048576"),
             expected: rpc_test_support::RpcServerLimitsSnapshot {
                 concurrency_limit: 100,
-                request_timeout_secs: sinex_core::types::Seconds::from_secs(15),
-                max_body_bytes: sinex_core::types::Bytes::from_mebibytes(1),
+                request_timeout_secs: sinex_primitives::Seconds::from_secs(15),
+                max_body_bytes: sinex_primitives::Bytes::from_mebibytes(1),
             },
         },
     ];

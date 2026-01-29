@@ -2,10 +2,10 @@
 
 // Use local facade for common types
 use crate::common::*;
-use sinex_core::payloads::{ClipboardCopiedPayload, ClipboardSelectedPayload};
-use sinex_core::types::events::EventPayload;
-use sinex_core::types::Seconds;
-use sinex_core::{Id, Ulid};
+use sinex_primitives::payloads::{ClipboardCopiedPayload, ClipboardSelectedPayload};
+use sinex_primitives::events::EventPayload;
+use sinex_primitives::Seconds;
+use sinex_primitives::{Id, Ulid};
 use sinex_node_sdk::stage_as_you_go::StageAsYouGoContext;
 use tokio::sync::watch;
 
@@ -299,7 +299,7 @@ impl ClipboardWatcher {
             return;
         }
 
-        let now = Utc::now();
+        let now = Timestamp::now();
 
         // Check if already in history
         if let Some(entry) = self
@@ -334,7 +334,7 @@ impl ClipboardWatcher {
         selection_type: &str,
     ) -> NodeResult<Ulid> {
         let stage_context = self.stage_context.as_ref().ok_or_else(|| {
-            NodeError::Lifecycle("Stage-as-you-go context not initialized".to_string())
+            SinexError::lifecycle("Stage-as-you-go context not initialized".to_string())
         })?;
 
         let data_bytes = content.text.as_bytes();
@@ -367,14 +367,14 @@ impl ClipboardWatcher {
             }
             .from_material(material_id)
             .with_offset_start(0)
-            .map_err(|e| NodeError::Processing(format!("Failed to set offset_start: {e}")))?
+            .map_err(|e| SinexError::processing(format!("Failed to set offset_start: {e}")))?
             .with_offset_end(data_bytes.len() as i64)
-            .map_err(|e| NodeError::Processing(format!("Failed to set offset_end: {e}")))?
+            .map_err(|e| SinexError::processing(format!("Failed to set offset_end: {e}")))?
             .build()
-            .map_err(|e| NodeError::Processing(format!("Failed to build event: {e}")))?
+            .map_err(|e| SinexError::processing(format!("Failed to build event: {e}")))?
             .to_json_event()
             .map_err(|e| {
-                NodeError::Processing(format!("Failed to serialize clipboard event: {e}"))
+                SinexError::processing(format!("Failed to serialize clipboard event: {e}"))
             })?
         } else {
             ClipboardCopiedPayload {
@@ -395,14 +395,14 @@ impl ClipboardWatcher {
             }
             .from_material(material_id)
             .with_offset_start(0)
-            .map_err(|e| NodeError::Processing(format!("Failed to set offset_start: {e}")))?
+            .map_err(|e| SinexError::processing(format!("Failed to set offset_start: {e}")))?
             .with_offset_end(data_bytes.len() as i64)
-            .map_err(|e| NodeError::Processing(format!("Failed to set offset_end: {e}")))?
+            .map_err(|e| SinexError::processing(format!("Failed to set offset_end: {e}")))?
             .build()
-            .map_err(|e| NodeError::Processing(format!("Failed to build event: {e}")))?
+            .map_err(|e| SinexError::processing(format!("Failed to build event: {e}")))?
             .to_json_event()
             .map_err(|e| {
-                NodeError::Processing(format!("Failed to serialize clipboard event: {e}"))
+                SinexError::processing(format!("Failed to serialize clipboard event: {e}"))
             })?
         };
         event.id = Some(Id::from_ulid(Ulid::new()));
@@ -476,7 +476,7 @@ impl ClipboardWatcher {
             let (content_type, text_preview, file_paths) = self.analyze_content(&validated_text);
             let source_app = self.get_active_window_app().await;
             let window_title = self.get_active_window_title().await;
-            let timestamp = Utc::now();
+            let timestamp = OffsetDateTime::now_utc().into();
 
             Some(ClipboardContent {
                 text: validated_text,
@@ -579,7 +579,7 @@ impl ClipboardWatcher {
                             file_paths: None,
                             source_app: None,
                             window_title: None,
-                            _timestamp: Utc::now(),
+                            _timestamp: Timestamp::now(),
                         })
                     }
                     Err(e) => {
@@ -732,11 +732,11 @@ impl ClipboardWatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
     use sinex_node_sdk::acquisition_manager::AcquisitionManager;
-    use xtask::sandbox::{sinex_test, EphemeralNats, TestContext, TestResult};
     use std::sync::Arc;
+    use time::OffsetDateTime;
     use tokio::sync::mpsc;
+    use xtask::sandbox::{sinex_test, EphemeralNats, TestContext, TestResult};
 
     fn sample_clipboard_content(text: &str, watcher: &ClipboardWatcher) -> ClipboardContent {
         ClipboardContent {
@@ -748,7 +748,7 @@ mod tests {
             file_paths: None,
             source_app: Some("test-app".to_string()),
             window_title: Some("test-window".to_string()),
-            _timestamp: Utc::now(),
+            _timestamp: Timestamp::now(),
         }
     }
 
@@ -767,7 +767,7 @@ mod tests {
             "/desktop",
         ));
         let (event_tx, event_rx) = mpsc::channel::<Event<JsonValue>>(
-            sinex_core::types::buffers::DEFAULT_EVENT_CHANNEL_SIZE,
+            sinex_primitives::buffers::DEFAULT_EVENT_CHANNEL_SIZE,
         );
         let context = StageAsYouGoContext::from_sender(acquisition, event_tx, false);
         Ok((context, nats, event_rx))

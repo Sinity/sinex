@@ -6,14 +6,14 @@
 
 use async_nats::jetstream;
 use serde_json::json;
-use sinex_core::environment;
-use sinex_core::rpc::dlq::{DlqListResponse, DlqPurgeResponse};
+use sinex_primitives::environment;
+use sinex_primitives::rpc::dlq::{DlqListResponse, DlqPurgeResponse};
 use sinex_gateway::handlers::dlq::{handle_dlq_list, handle_dlq_purge};
 use xtask::sandbox::{nats::EphemeralNats, prelude::*};
 
 async fn setup_dlq_stream(
     client: &async_nats::Client,
-    env: &sinex_core::environment::SinexEnvironment,
+    env: &sinex_primitives::environment::SinexEnvironment,
 ) -> color_eyre::Result<jetstream::stream::Stream> {
     let js = jetstream::new(client.clone());
     let stream_name = env.nats_stream_name("EVENTS_DLQ");
@@ -34,7 +34,7 @@ async fn setup_dlq_stream(
 
 async fn publish_dlq_message(
     client: &async_nats::Client,
-    env: &sinex_core::environment::SinexEnvironment,
+    env: &sinex_primitives::environment::SinexEnvironment,
     event_id: &str,
     payload: &str,
     retry_count: u32,
