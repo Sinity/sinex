@@ -3,11 +3,12 @@
 //! Tests event generation patterns using TestContext's event publishing capabilities.
 //! These tests verify that events can be generated correctly through various mechanisms.
 
-use sinex_node_sdk::db::models::{Event, JsonValue};
-use sinex_node_sdk::DynamicPayload;
+use sinex_primitives::{Event, DynamicPayload};
+use serde_json::Value as JsonValue;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use xtask::sandbox::prelude::*;
+use time::OffsetDateTime;
 
 // =============================================================================
 // Event Generation Test Structures

@@ -13,6 +13,9 @@
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::Timeouts;
 use std::fs;
+use std::time::Instant;
+use tempfile::TempDir;
+use tokio::time::timeout;
 
 /// Test configuration validation and hot reload scenarios
 #[sinex_test]

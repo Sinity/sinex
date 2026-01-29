@@ -47,11 +47,11 @@ pub async fn handle_nodes_list(
     let mut entries = kv
         .keys()
         .await
-        .map_err(|e| SinexError::service(format!("Failed to list node keys: {}", e)))?;
+        .map_err(|e| SinexError::kv("Failed to list node keys").with_source(e))?;
 
     use futures::StreamExt;
     while let Some(key) = entries.next().await {
-        let key = key.map_err(|e| SinexError::service(format!("Failed to read key: {}", e)))?;
+        let key = key.map_err(|e| SinexError::kv("Failed to read key").with_source(e))?;
 
         // Get the value for this key
         if let Ok(Some(entry)) = kv.get(&key).await {
@@ -92,13 +92,13 @@ pub async fn handle_nodes_drain(
 
     nats_client
         .publish(
-            subject,
+            subject.clone(),
             serde_json::to_vec(&payload)
                 .map_err(|e| SinexError::serialization(e.to_string()))?
                 .into(),
         )
         .await
-        .map_err(|e| SinexError::service(format!("Failed to publish drain command: {}", e)))?;
+        .map_err(|e| SinexError::nats_publish("drain command").with_context("subject", &subject).with_source(e))?;
 
     Ok(json!({
         "status": "drain_requested",
@@ -129,13 +129,13 @@ pub async fn handle_nodes_resume(
 
     nats_client
         .publish(
-            subject,
+            subject.clone(),
             serde_json::to_vec(&payload)
                 .map_err(|e| SinexError::serialization(e.to_string()))?
                 .into(),
         )
         .await
-        .map_err(|e| SinexError::service(format!("Failed to publish resume command: {}", e)))?;
+        .map_err(|e| SinexError::nats_publish("resume command").with_context("subject", &subject).with_source(e))?;
 
     Ok(json!({
         "status": "resume_requested",
@@ -167,14 +167,14 @@ pub async fn handle_nodes_set_horizon(
 
     nats_client
         .publish(
-            subject,
+            subject.clone(),
             serde_json::to_vec(&payload)
                 .map_err(|e| SinexError::serialization(e.to_string()))?
                 .into(),
         )
         .await
         .map_err(|e| {
-            SinexError::service(format!("Failed to publish set-horizon command: {}", e))
+            SinexError::nats_publish("set-horizon command").with_context("subject", &subject).with_source(e)
         })?;
 
     Ok(json!({

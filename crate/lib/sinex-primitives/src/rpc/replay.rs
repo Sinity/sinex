@@ -1,7 +1,7 @@
 //! Replay control types
 //!
 //! These types mirror `sinex_db::replay::state_machine` for RPC serialization.
-//! The gateway uses sinex-core types internally; these are wire-compatible equivalents.
+//! The gateway uses sinex-db types internally; these are wire-compatible equivalents.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

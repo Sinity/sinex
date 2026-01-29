@@ -8,6 +8,7 @@
 
 use sinex_db::validation::EventValidator;
 use sinex_primitives::{Event, EventSource, EventType, HostName, Id, JsonValue, Ulid};
+use time::{Duration, OffsetDateTime};
 use xtask::sandbox::prelude::*;
 type RawEvent = Event<JsonValue>;
 // =============================================================================
@@ -56,8 +57,8 @@ fn arbitrary_event() -> impl Strategy<Value = RawEvent> {
                     .id
                     .as_ref()
                     .map(|id| id.as_ulid().timestamp())
-                    .unwrap_or_else(Utc::now);
-                event.ts_orig = Some(ingest_ts - ChronoDuration::seconds(60));
+                    .unwrap_or_else(OffsetDateTime::now_utc);
+                event.ts_orig = Some(ingest_ts - Duration::seconds(60));
             }
 
             event
@@ -273,14 +274,14 @@ sinex_proptest! {
         if let (Some(id), Some(ts_orig)) = (event.id.clone(), event.ts_orig) {
             let ingest_ts = id.timestamp();
             prop_assert!(
-                ingest_ts + ChronoDuration::hours(1) >= ts_orig,
+                ingest_ts + Duration::hours(1) >= ts_orig,
                 "ULID timestamp should not significantly precede origin time"
             );
         }
 
         if let Some(ts_orig) = event.ts_orig {
             let now = OffsetDateTime::now_utc();
-            let diff = (now - ts_orig).num_days().abs();
+            let diff = (now - ts_orig).whole_days().abs();
             prop_assert!(diff < 365 * 100,
                 "Timestamp should be within 100 years of now");
         }
@@ -390,7 +391,7 @@ sinex_proptest! {
         if let (Some(id), Some(ts_orig)) = (event.id.clone(), event.ts_orig) {
             let ingest_ts = id.timestamp();
             prop_assert!(
-                ingest_ts + ChronoDuration::hours(1) >= ts_orig,
+                ingest_ts + Duration::hours(1) >= ts_orig,
                 "ULID timestamp should not significantly precede origin time"
             );
         }
@@ -398,7 +399,7 @@ sinex_proptest! {
         // If ts_orig exists, it should be reasonable
         if let Some(ts_orig) = event.ts_orig {
             let now = OffsetDateTime::now_utc();
-            let diff = (now - ts_orig).num_days().abs();
+            let diff = (now - ts_orig).whole_days().abs();
             prop_assert!(diff < 365 * 100, "Timestamp should be within 100 years of now");
         }
         Ok(())

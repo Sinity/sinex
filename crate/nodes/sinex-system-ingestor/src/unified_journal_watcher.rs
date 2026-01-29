@@ -11,7 +11,8 @@
 //! and systemd-specific events, reducing process overhead by 50%.
 
 use sinex_primitives::fs::atomic_write;
-use sinex_primitives::{Event, JsonValue};
+use sinex_db::models::Event;
+use sinex_primitives::JsonValue;
 use time::OffsetDateTime;
 
 use crate::payloads::*;

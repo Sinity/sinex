@@ -11,7 +11,7 @@ use base64::Engine;
 use color_eyre::eyre::{eyre, Context, ContextCompat, Result};
 use serde_json::{json, Value};
 use sinex_primitives::{
-    coordination::CoordinationKvClient, domain::Entity, temporal, temporal::OffsetDateTime, Event,
+    coordination::CoordinationKvClient, domain::Entity, temporal, temporal::Timestamp, Event,
     Id, JsonValue, Ulid,
 };
 use sinex_services::{AnalyticsService, ContentService, PkmService, SearchQuery, SearchService};
@@ -220,14 +220,14 @@ pub async fn handle_event_count_by_source(
     service: &AnalyticsService,
     params: Value,
 ) -> Result<Value> {
-    use time::{Duration, OffsetDateTime};
+    use time::Duration;
 
     let params = RpcParams::new(&params);
     let days_back = params
         .optional_i64("days_back")
         .unwrap_or(DEFAULT_ANALYTICS_DAYS_BACK);
 
-    let end_time = OffsetDateTime::now_utc();
+    let end_time = Timestamp::now();
     let start_time = end_time - Duration::days(days_back);
 
     let counts = service
@@ -237,7 +237,7 @@ pub async fn handle_event_count_by_source(
 }
 
 pub async fn handle_activity_heatmap(service: &AnalyticsService, params: Value) -> Result<Value> {
-    use time::{Duration, OffsetDateTime};
+    use time::Duration;
 
     let params = RpcParams::new(&params);
     let bucket_size_minutes_raw = params
@@ -253,7 +253,7 @@ pub async fn handle_activity_heatmap(service: &AnalyticsService, params: Value) 
         .optional_i64("days_back")
         .unwrap_or(DEFAULT_ANALYTICS_DAYS_BACK);
 
-    let end_time = OffsetDateTime::now_utc();
+    let end_time = Timestamp::now();
     let start_time = end_time - Duration::days(days_back);
 
     let heatmap = service
@@ -263,7 +263,7 @@ pub async fn handle_activity_heatmap(service: &AnalyticsService, params: Value) 
 }
 
 pub async fn handle_sources_statistics(service: &AnalyticsService, params: Value) -> Result<Value> {
-    use time::{Duration, OffsetDateTime};
+    use time::Duration;
 
     let params = RpcParams::new(&params);
     let limit = params.optional_i64("limit").unwrap_or(100);
@@ -272,7 +272,7 @@ pub async fn handle_sources_statistics(service: &AnalyticsService, params: Value
         .optional_i64("days_back")
         .unwrap_or(DEFAULT_ANALYTICS_DAYS_BACK);
 
-    let end_time = OffsetDateTime::now_utc();
+    let end_time = Timestamp::now();
     let start_time = end_time - Duration::days(days_back);
 
     let stats = service
@@ -515,8 +515,8 @@ fn metadata_to_instance_info(
         node_type: NodeType::Service, // InstanceMetadata doesn't have node_type, assume Service
         hostname: Some(HostName::new(&meta.hostname)),
         last_heartbeat: Some(
-            OffsetDateTime::from_unix_timestamp(meta.last_heartbeat)
-                .unwrap_or(OffsetDateTime::UNIX_EPOCH),
+            *Timestamp::from_unix_timestamp(meta.last_heartbeat)
+                .unwrap_or(time::OffsetDateTime::UNIX_EPOCH.into())
         ),
         is_leader,
     }

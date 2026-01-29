@@ -11,7 +11,7 @@ use sinex_node_sdk::stream_processor::{EventEmitter, NodeRuntimeState};
 use serde_json::json;
 use sinex_db::models::Event;
 use sinex_primitives::events::SystemMonitoringStartedPayload;
-use sinex_primitives::Seconds;
+use sinex_primitives::{JsonValue, Seconds};
 
 use crate::{DbusWatcher, UdevWatcher, UnifiedJournalWatcher, WatcherMaterialContext};
 use serde::{Deserialize, Serialize};

@@ -501,7 +501,7 @@ license = "MIT"
 async-trait = "0.1"
 serde = {{ version = "1", features = ["derive"] }}
 serde_json = "1"
-sinex-core = {{ path = "../../lib/sinex-core" }}
+sinex-primitives = {{ path = "../../lib/sinex-primitives" }}
 sinex-node-sdk = {{ path = "../../lib/sinex-node-sdk" }}
 tokio = {{ version = "1", features = ["full"] }}
 tracing = "0.1"

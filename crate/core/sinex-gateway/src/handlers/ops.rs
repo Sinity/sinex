@@ -45,8 +45,7 @@ impl From<OperationRow> for Operation {
 
 /// Handle POST /ops/start - start a new operation
 pub async fn handle_ops_start(pool: &PgPool, params: Value) -> Result<Value> {
-    let request: OpsStartRequest =
-        serde_json::from_value(params).map_err(|e| SinexError::serialization(e.to_string()))?;
+    let request: OpsStartRequest = serde_json::from_value(params)?;
 
     // Parse scope as JSONB if provided
     let scope_jsonb = request.scope.unwrap_or(serde_json::json!({}));
@@ -92,7 +91,7 @@ pub async fn handle_ops_start(pool: &PgPool, params: Value) -> Result<Value> {
         operation: row.into(),
     };
 
-    Ok(serde_json::to_value(response).map_err(|e| SinexError::serialization(e.to_string()))?)
+    Ok(serde_json::to_value(response)?)
 }
 
 /// Handle GET /ops - list operations with optional filtering
@@ -205,13 +204,12 @@ pub async fn handle_ops_list(pool: &PgPool, params: Value) -> Result<Value> {
         operations: rows.into_iter().map(Into::into).collect(),
     };
 
-    Ok(serde_json::to_value(response).map_err(|e| SinexError::serialization(e.to_string()))?)
+    Ok(serde_json::to_value(response)?)
 }
 
 /// Handle GET /ops/{id} - get operation details
 pub async fn handle_ops_get(pool: &PgPool, params: Value) -> Result<Value> {
-    let request: OpsGetRequest =
-        serde_json::from_value(params).map_err(|e| SinexError::serialization(e.to_string()))?;
+    let request: OpsGetRequest = serde_json::from_value(params)?;
 
     let operation_id = request
         .operation_id
@@ -244,8 +242,7 @@ pub async fn handle_ops_get(pool: &PgPool, params: Value) -> Result<Value> {
             let response = OpsGetResponse {
                 operation: row.into(),
             };
-            Ok(serde_json::to_value(response)
-                .map_err(|e| SinexError::serialization(e.to_string()))?)
+            Ok(serde_json::to_value(response)?)
         }
         None => Err(SinexError::not_found(format!(
             "Operation not found: {}",
@@ -267,8 +264,7 @@ pub async fn handle_ops_cancel(
 ) -> Result<Value> {
     use tracing::info;
 
-    let request: OpsCancelRequest =
-        serde_json::from_value(params).map_err(|e| SinexError::serialization(e.to_string()))?;
+    let request: OpsCancelRequest = serde_json::from_value(params)?;
 
     let operation_id = request
         .operation_id
@@ -355,7 +351,7 @@ pub async fn handle_ops_cancel(
         cancelled: true,
     };
 
-    Ok(serde_json::to_value(response).map_err(|e| SinexError::serialization(e.to_string()))?)
+    Ok(serde_json::to_value(response)?)
 }
 
 #[cfg(test)]

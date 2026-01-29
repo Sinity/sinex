@@ -22,7 +22,8 @@ use sinex_node_sdk::stream_processor::SchemaBroadcastEntry;
 use sinex_primitives::temporal::{now, Duration as SinexDuration};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
-use tokio::time::{timeout, Duration};
+use tokio::time::timeout;
+use time::Duration;
 use xtask::sandbox::nats::ensure_coordination_buckets;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
@@ -65,7 +66,7 @@ async fn ensure_raw_event_streams(
 async fn wait_for_schema_broadcast(
     subscription: &mut async_nats::Subscriber,
 ) -> Result<Vec<SchemaBroadcastEntry>> {
-    let message = timeout(Duration::from_secs(Timeouts::SHORT), subscription.next())
+    let message = timeout(time::Duration::from_secs(Timeouts::SHORT), subscription.next())
         .await
         .map_err(|_| eyre!("Timed out waiting for schema broadcast"))?
         .ok_or_else(|| eyre!("Schema broadcast subscription closed"))?;
@@ -140,11 +141,11 @@ async fn test_pool_recovery_after_connection_invalidation(ctx: TestContext) -> R
                 {
                     Ok(event) => {
                         assert!(event.id.is_some());
-                        Ok::<bool, sinex_test_utils::SinexError>(true)
+                        Ok::<bool, xtask::sandbox::SinexError>(true)
                     }
                     Err(e) => {
                         tracing::warn!("Recovery attempt {} failed: {}", attempt, e);
-                        Ok::<bool, sinex_test_utils::SinexError>(false)
+                        Ok::<bool, xtask::sandbox::SinexError>(false)
                     }
                 }
             }
@@ -707,11 +708,11 @@ async fn test_jetstream_consumer_durable_recovery(ctx: TestContext) -> Result<()
     // "No Messages" status even when messages exist, so tolerate a short warm-up.
     let mut acked_count: usize = 0;
     let start = std::time::Instant::now();
-    while acked_count < 3 && start.elapsed() < std::time::Duration::from_secs(Timeouts::QUICK) {
+    while acked_count < 3 && start.elapsed() < time::Duration::from_secs(Timeouts::QUICK).to_std()? {
         let fetch_result = consumer
             .fetch()
             .max_messages(3 - acked_count)
-            .expires(std::time::Duration::from_millis(1000))
+            .expires(time::Duration::from_millis(1000).to_std()?)
             .messages()
             .await;
 
@@ -774,11 +775,11 @@ async fn test_jetstream_consumer_durable_recovery(ctx: TestContext) -> Result<()
     // in-flight, so we tolerate a few empty polls and retry briefly.
     let mut remaining_count: usize = 0;
     let start = std::time::Instant::now();
-    while remaining_count < 7 && start.elapsed() < std::time::Duration::from_secs(Timeouts::QUICK) {
+    while remaining_count < 7 && start.elapsed() < time::Duration::from_secs(Timeouts::QUICK).to_std()? {
         let fetch_result = consumer
             .fetch()
             .max_messages(10)
-            .expires(std::time::Duration::from_millis(1000))
+            .expires(time::Duration::from_millis(1000).to_std()?)
             .messages()
             .await;
         match fetch_result {

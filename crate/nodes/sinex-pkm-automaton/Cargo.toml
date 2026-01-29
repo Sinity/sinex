@@ -64,6 +64,9 @@ features = [ "derive",]
 version = "0.3"
 features = [ "env-filter",]
 
+[dependencies.sinex-primitives]
+path = "../../lib/sinex-primitives"
+
 [dev-dependencies.xtask]
 path = "../../../xtask"
 default-features = false

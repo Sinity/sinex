@@ -275,7 +275,7 @@ fn parse_preset_time(preset: &str) -> Timestamp {
 /// - Relative: "1h", "2d", "30m", "1w"
 /// - Absolute: "2025-01-15", "2025-01-15T10:00:00Z"
 fn parse_time(s: &str) -> Result<Timestamp> {
-    // Try relative time first using sinex-core's parse_relative_duration
+    // Try relative time first using sinex-primitives's parse_relative_duration
     if let Some(time_duration) = parse_relative_duration(s) {
         return Ok(Timestamp::now() - time_duration);
     }
@@ -360,7 +360,7 @@ mod tests {
 
     #[test]
     fn test_parse_relative_duration() {
-        // Tests for sinex-core's parse_relative_duration integrated via parse_time
+        // Tests for sinex-primitives's parse_relative_duration integrated via parse_time
         assert_eq!(parse_relative_duration("1h"), Some(Duration::hours(1)));
         assert_eq!(parse_relative_duration("2d"), Some(Duration::days(2)));
         assert_eq!(parse_relative_duration("30m"), Some(Duration::minutes(30)));

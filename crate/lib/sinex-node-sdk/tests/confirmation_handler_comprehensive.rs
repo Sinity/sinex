@@ -2,7 +2,7 @@
 //!
 //! Tests concurrent access, edge cases, and error handling scenarios.
 
-use sinex_node_sdk::types::Ulid;
+use sinex_primitives::ids::Ulid;
 use sinex_node_sdk::confirmation_handler::{ConfirmationBuffer, ProvisionalEvent};
 use sinex_node_sdk::prelude::*;
 use xtask::sandbox::sinex_test;

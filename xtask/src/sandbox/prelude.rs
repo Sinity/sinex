@@ -5,7 +5,7 @@ pub use serde_json::{json, Value as JsonValue};
 pub use sinex_db::{DbPool, DbPoolExt};
 pub use sinex_primitives::prelude::*;
 pub use sinex_primitives::{
-    Event, EventSource, EventType, Id, OffsetDateTime, SinexError, Timestamp, Ulid,
+    DynamicPayload, Event, EventSource, EventType, Id, OffsetDateTime, SinexError, Timestamp, Ulid,
 };
 
 pub type EventId = Id<Event>;

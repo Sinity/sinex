@@ -1,4 +1,4 @@
-//! Event validation utilities shared by ingestd and the sinex-core test suites.
+//! Event validation utilities shared by ingestd and the sinex-db test suites.
 //!
 //! The real-time ingestion path relies on the same validator that powers the
 //! integration and adversarial tests, ensuring that schema enforcement,

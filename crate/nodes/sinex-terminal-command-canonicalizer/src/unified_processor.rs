@@ -3,12 +3,12 @@
 //! Modernized `SimpleNode` implementation for the terminal command canonicalizer.
 
 use async_trait::async_trait;
-use sinex_primitives::events::CanonicalCommandPayload;
+use sinex_primitives::events::payloads::CanonicalCommandPayload;
 use sinex_primitives::JsonValue;
 use sinex_node_sdk::simple_node::{
     SimpleNode, SimpleNodeContext, SimpleNodeError, SimpleNodeWrapper,
 };
-use time::OffsetDateTime;
+use sinex_primitives::temporal::{now, Timestamp};
 use tracing::info;
 
 #[derive(Default)]
@@ -74,16 +74,12 @@ impl SimpleNode for TerminalCommandCanonicalizer {
                 .get("duration_ms")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0),
-            start_time: sinex_primitives::temporal::Timestamp::from(
-                context.ts_orig.unwrap_or_else(OffsetDateTime::now_utc),
-            ),
+            start_time: context.ts_orig.unwrap_or_else(now),
             end_time: input
                 .get("end_time")
                 .and_then(|v| v.as_str())
                 .and_then(|s| sinex_primitives::temporal::parse_rfc3339(s).ok())
-                .unwrap_or(sinex_primitives::temporal::Timestamp::from(
-                    context.ts_orig.unwrap_or_else(OffsetDateTime::now_utc),
-                )),
+                .unwrap_or_else(|| context.ts_orig.unwrap_or_else(now)),
             user: input
                 .get("user")
                 .and_then(|v| v.as_str())

@@ -45,7 +45,7 @@ pub struct TestCommand {
     pub retries: Option<usize>,
 
     /// Test timeout (nextest)
-    #[arg(short, long)]
+    #[arg(long)]
     pub timeout: Option<String>,
 
     /// Run only on affected packages
@@ -870,13 +870,22 @@ mod tests {
     #[test]
     fn test_command_name() {
         let cmd = TestCommand {
-            profile: "default".to_string(),
+            debug: false,
+            fail_fast: true,
+            no_fail_fast: false,
+            threads: None,
+            retries: None,
+            timeout: None,
+            affected: false,
             prime: false,
             list: false,
             dry_run: false,
             preflight: false,
-            affected: false,
             include_ignored: false,
+            fuzz: false,
+            mutants: false,
+            heavy: false,
+            all: false,
             args: vec![],
         };
         assert_eq!(cmd.name(), "test");
@@ -885,13 +894,22 @@ mod tests {
     #[test]
     fn test_command_metadata() {
         let cmd = TestCommand {
-            profile: "default".to_string(),
+            debug: false,
+            fail_fast: true,
+            no_fail_fast: false,
+            threads: None,
+            retries: None,
+            timeout: None,
+            affected: false,
             prime: false,
             list: false,
             dry_run: false,
             preflight: false,
-            affected: false,
             include_ignored: false,
+            fuzz: false,
+            mutants: false,
+            heavy: false,
+            all: false,
             args: vec![],
         };
         let metadata = cmd.metadata();

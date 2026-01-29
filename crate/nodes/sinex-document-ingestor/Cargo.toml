@@ -46,6 +46,8 @@ path = "../../lib/sinex-node-sdk"
 [dependencies.sinex-processor-runtime]
 path = "../../lib/sinex-processor-runtime"
 
+[dependencies.sinex-primitives]
+path = "../../lib/sinex-primitives"
 
 [dependencies.camino]
 workspace = true

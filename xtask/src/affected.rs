@@ -215,8 +215,8 @@ mod tests {
     #[test]
     fn test_path_to_package() {
         assert_eq!(
-            path_to_package("crate/lib/sinex-core/src/lib.rs"),
-            Some("sinex-core".to_string())
+            path_to_package("crate/lib/sinex-db/src/lib.rs"),
+            Some("sinex-db".to_string())
         );
         assert_eq!(
             path_to_package("crate/core/sinex-gateway/src/main.rs"),
@@ -232,9 +232,9 @@ mod tests {
 
     #[test]
     fn test_build_nextest_filter() {
-        let packages = vec!["sinex-core".to_string(), "sinex-gateway".to_string()];
+        let packages = vec!["sinex-db".to_string(), "sinex-gateway".to_string()];
         let filter = build_nextest_filter(&packages);
-        assert!(filter.contains("package(sinex-core)"));
+        assert!(filter.contains("package(sinex-db)"));
         assert!(filter.contains("package(sinex-gateway)"));
     }
 

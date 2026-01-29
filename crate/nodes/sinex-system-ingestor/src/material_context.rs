@@ -1,5 +1,4 @@
-use sinex_db::models::event::OffsetKind;
-use sinex_db::models::{Event, Provenance, SourceMaterial};
+use sinex_db::models::{Event, OffsetKind, Provenance, SourceMaterial};
 use sinex_node_sdk::acquisition_manager::{AcquisitionManager, SourceMaterialHandle};
 use sinex_node_sdk::{NodeResult, SinexError};
 use sinex_primitives::{Id, JsonValue};

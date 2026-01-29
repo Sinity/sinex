@@ -13,7 +13,7 @@ use sinex_node_sdk::DbPool;
 use sinex_node_sdk::checkpoint::parse_checkpoint_key;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
 use std::str::FromStr;
-use time::{Duration, OffsetDateTime};
+use time::Duration;
 use xtask::sandbox::prelude::*;
 
 /// Types of checkpoint inconsistencies that can be detected
@@ -134,7 +134,7 @@ pub async fn analyze_checkpoint(
     }
 
     let hours_since_last_activity =
-        (OffsetDateTime::now_utc() - snapshot.last_activity).num_hours();
+        (Timestamp::now() - Timestamp::new(snapshot.last_activity)).num_hours();
     if hours_since_last_activity >= stale_after.num_hours() {
         issues.push(CheckpointInconsistency {
             processor_name: processor_name.to_string(),

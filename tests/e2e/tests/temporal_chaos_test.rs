@@ -216,9 +216,7 @@ async fn test_thundering_herd_1000_events_100ms(ctx: TestContext) -> TestResult<
     println!("Burst completed in {:?}", burst_duration);
 
     // Phase 3: Verify all events were captured
-    ctx.wait_for_processing().await?;
-
-    let final_event_count = ctx.event_count().await?;
+    let final_event_count = ctx.pool.events().count_all().await?;
     let events_sent = metrics.events_sent.load(Ordering::Relaxed);
     let events_lost = metrics.events_lost.load(Ordering::Relaxed);
 
@@ -352,9 +350,7 @@ async fn test_collector_backpressure_extreme_load(
     println!("Sustained load completed in {:?}", load_duration);
 
     // Verify system stability after load
-    ctx.wait_for_processing().await?;
-
-    let final_event_count = ctx.event_count().await?;
+    let final_event_count = ctx.pool.events().count_all().await?;
     let events_sent = metrics.events_sent.load(Ordering::Relaxed);
     let events_lost = metrics.events_lost.load(Ordering::Relaxed);
     let contentions = metrics.database_contentions.load(Ordering::Relaxed);
@@ -453,7 +449,6 @@ async fn test_causality_violation_handling(ctx: TestContext) -> TestResult<()> {
     }
 
     // Phase 3: Verify events were stored with correct ULID ordering
-    ctx.wait_for_processing().await?;
 
     let stored_events = ctx
         .pool
@@ -607,7 +602,6 @@ async fn test_ulid_ordering_under_extreme_timing(ctx: TestContext) -> TestResult
     }
 
     // Phase 4: Verify database ordering matches ULID ordering
-    ctx.wait_for_processing().await?;
 
     let stored_events = ctx
         .pool
@@ -730,9 +724,7 @@ async fn test_comprehensive_temporal_chaos_scenario(
     }
 
     // Phase 3: System stability verification
-    ctx.wait_for_processing().await?;
-
-    let final_event_count = ctx.event_count().await?;
+    let final_event_count = ctx.pool.events().count_all().await?;
     let events_sent = metrics.events_sent.load(Ordering::Relaxed);
     let events_processed = metrics.events_processed.load(Ordering::Relaxed);
     let events_lost = metrics.events_lost.load(Ordering::Relaxed);

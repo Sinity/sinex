@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-// TODO: These will need sinex-core when fully integrated
+// TODO: These will need sinex-db when fully integrated
 // For now, comment out dependencies on Sandbox and other test-utils types
 
 /// Standard timeout policy for tests.
@@ -87,9 +87,9 @@ impl TestSynchronizer {
     }
 }
 
-// EventCounter is now imported from sinex-core-utils production module
+// EventCounter is now imported from sinex-db-utils production module
 
-// ProgressTracker is now imported from sinex-core-utils production module
+// ProgressTracker is now imported from sinex-db-utils production module
 
 /// Barrier for coordinating multiple test tasks
 pub struct TestBarrier {

@@ -11,7 +11,7 @@
 //! for unified database access patterns.
 
 use serde_json::json;
-// Using shorter imports from sinex-core's re-exports
+// Using shorter imports from sinex-db's re-exports
 use sinex_db::{
     payloads::filesystem::{FileCreatedPayload, FileModifiedPayload},
     DbPoolExt, DynamicPayload, EventSource, Ulid,

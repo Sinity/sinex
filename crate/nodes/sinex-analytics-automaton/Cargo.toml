@@ -41,6 +41,8 @@ path = "../../lib/sinex-processor-runtime"
 [dependencies.sinex-services]
 path = "../../lib/sinex-services"
 
+[dependencies.sinex-primitives]
+path = "../../lib/sinex-primitives"
 
 [dependencies.tokio]
 version = "1.0"

@@ -2,7 +2,7 @@
 
 // Use local facade for common types
 use crate::common::*;
-use sinex_primitives::payloads::{ClipboardCopiedPayload, ClipboardSelectedPayload};
+use sinex_primitives::events::payloads::{ClipboardCopiedPayload, ClipboardSelectedPayload};
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::Seconds;
 use sinex_primitives::{Id, Ulid};

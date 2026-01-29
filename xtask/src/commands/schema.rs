@@ -365,7 +365,7 @@ fn sinex_schema_cmd() -> Command {
     cmd.arg("run")
         .arg("--quiet")
         .arg("--package")
-        .arg("sinex-core")
+        .arg("sinex-schema")
         .arg("--bin")
         .arg("sinex-schema")
         .arg("--features")

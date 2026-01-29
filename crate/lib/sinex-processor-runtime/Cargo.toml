@@ -16,6 +16,16 @@ workspace = true
 [dependencies.sinex-node-sdk]
 path = "../../lib/sinex-node-sdk"
 
+[dependencies.sinex-primitives]
+path = "../sinex-primitives"
+features = ["nats"]
+
+[dependencies.sinex-db]
+path = "../sinex-db"
+
+[dependencies.uuid]
+workspace = true
+
 
 [dependencies.time]
 workspace = true

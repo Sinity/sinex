@@ -8,8 +8,8 @@ use sinex_primitives::JsonValue;
 use sinex_node_sdk::simple_node::{
     SimpleNode, SimpleNodeContext, SimpleNodeError, SimpleNodeWrapper,
 };
+use sinex_primitives::temporal::{now, Timestamp};
 use std::collections::{HashMap, VecDeque};
-use time::OffsetDateTime;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AnalyticsState {
@@ -20,7 +20,7 @@ pub struct AnalyticsState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventSummary {
     pub event_type: String,
-    pub timestamp: OffsetDateTime,
+    pub timestamp: Timestamp,
 }
 
 #[derive(Default)]
@@ -57,7 +57,7 @@ impl SimpleNode for AnalyticsAutomaton {
         // Add to window
         state.recent_events.push_back(EventSummary {
             event_type: context.event_type.clone(),
-            timestamp: context.ts_orig.unwrap_or_else(OffsetDateTime::now_utc),
+            timestamp: context.ts_orig.unwrap_or_else(now),
         });
 
         // Prune window (keep last 1000)

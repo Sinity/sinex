@@ -46,7 +46,7 @@ async fn test_advisory_lock_acquire_release(ctx: TestContext) -> Result<()> {
             let pool = ctx.pool.clone();
             let key = lock_key.clone();
             async move {
-                Ok::<bool, sinex_test_utils::SinexError>(
+                Ok::<bool, xtask::sandbox::SinexError>(
                     !AdvisoryLock::is_locked(&pool, &key).await?,
                 )
             }

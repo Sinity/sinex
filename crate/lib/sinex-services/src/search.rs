@@ -221,7 +221,7 @@ mod tests {
     #[sinex_test]
     fn prepared_search_validates_time_range() -> TestResult<()> {
         let start = Timestamp::now();
-        let end = start - Duration::hours(1);
+        let end = start - time::Duration::hours(1);
 
         let query = SearchQuery {
             text: None,

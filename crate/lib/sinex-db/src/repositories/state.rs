@@ -11,15 +11,13 @@ use crate::{Id, JsonValue};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::domain::ProcessorName;
 use sinex_primitives::error::SinexError;
-use sinex_primitives::Timestamp;
-use sinex_primitives::Seconds;
+use sinex_primitives::{Timestamp, Ulid, Seconds};
 
 use sinex_schema::ulid_conversions::uuid_to_ulid;
 use sqlx::postgres::types::PgRange;
 use sqlx::types::{BigDecimal, Uuid};
 use sqlx::{Error, FromRow, PgPool};
 use std::ops::Bound;
-
 use std::time::Duration;
 
 /// Database record for operations_log table

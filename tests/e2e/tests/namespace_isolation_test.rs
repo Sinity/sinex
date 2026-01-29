@@ -1,5 +1,5 @@
 use serde_json::json;
-use sinex_test_utils::PipelineNamespace;
+use xtask::sandbox::PipelineNamespace;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::WaitHelpers;
 

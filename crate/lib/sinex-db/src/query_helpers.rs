@@ -6,7 +6,7 @@ use std::time::Duration;
 use tokio::time::sleep;
 use tracing::warn;
 
-// Local constants replacing sinex-core types dependencies
+// Local constants replacing sinex-primitives types dependencies
 pub const MAX_RETRY_ATTEMPTS: u32 = 3;
 pub const DEFAULT_INITIAL_DELAY: Duration = Duration::from_millis(100);
 pub const MAX_DELAY: Duration = Duration::from_secs(5);
@@ -112,7 +112,7 @@ where
 
 /// Check if a database error is retryable
 pub fn is_retryable_db_error(err: &SinexError) -> bool {
-    // Basic string checking implementation similar to sinex-core
+    // Basic string checking implementation similar to sinex-db
     let msg = err.to_string();
     msg.contains("deadlock detected")
         || msg.contains("could not serialize access")

@@ -3,7 +3,8 @@
 use async_nats::jetstream;
 use serde_json::json;
 use sinex_ingestd::{validator::EventValidator, JetStreamConsumer, JetStreamTopology};
-use sinex_primitives::{db::query_helpers::ulid_to_uuid, DbPoolExt};
+use sinex_db::DbPoolExt;
+use sinex_primitives::db::query_helpers::ulid_to_uuid;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;

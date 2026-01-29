@@ -2,7 +2,7 @@
 //!
 //! The original suite depended on an embedded NATS/JetStream harness that no
 //! longer exists. These properties focus on the shared behaviour between
-//! `sinex-core` (event insertion) and the queue-facing checkpoint utilities in
+//! `sinex-db` (event insertion) and the queue-facing checkpoint utilities in
 //! `sinex-node-sdk`.
 
 use async_nats::jetstream::{

@@ -1,4 +1,5 @@
-use sinex_primitives::{DbPoolExt, Id};
+use sinex_db::DbPoolExt;
+use sinex_primitives::Id;
 use sinex_document_ingestor::{DocumentIngestorConfig, DocumentProcessor};
 use sinex_node_sdk::stream_processor::{Checkpoint, NodeInitContext, ScanArgs, TimeHorizon};
 use sinex_node_sdk::{Node, SimpleIngestorWrapper};

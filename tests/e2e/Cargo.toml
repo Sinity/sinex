@@ -82,3 +82,9 @@ workspace = true
 [dev-dependencies.sinex-primitives]
 path = "../../crate/lib/sinex-primitives"
 features = [ "testing",]
+
+[dev-dependencies.toml]
+version = "0.8"
+
+[dev-dependencies.pretty_assertions]
+version = "1.4"

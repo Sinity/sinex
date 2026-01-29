@@ -8,8 +8,8 @@
 //! - Graceful shutdown and cleanup
 
 use camino::Utf8PathBuf;
-use sinex_node_sdk::types::Seconds;
-use sinex_node_sdk::SinexError;
+use sinex_primitives::Seconds;
+use sinex_primitives::SinexError;
 use sinex_node_sdk::{
     checkpoint::{CheckpointManager, CheckpointState},
     config::{EventSourceConfig, NodeConfig},
@@ -24,6 +24,7 @@ use std::sync::{
 use tokio::time::{sleep, timeout, Duration, Instant};
 use tracing::{debug, info, warn};
 use xtask::sandbox::{sinex_test, TestContext};
+use time::OffsetDateTime;
 
 #[path = "../support/mod.rs"]
 mod support;
@@ -537,7 +538,7 @@ fn create_minimal_config(service_name: &str) -> EventSourceConfig {
         base: NodeConfig {
             service_name: service_name.to_string(),
             log_level: "info".to_string(),
-            nats: sinex_node_sdk::nats::NatsConnectionConfig {
+            nats: sinex_primitives::nats::NatsConnectionConfig {
                 url: "nats://localhost:4222".to_string(),
                 ..Default::default()
             },
@@ -562,7 +563,7 @@ fn create_standard_config(service_name: &str) -> EventSourceConfig {
         base: NodeConfig {
             service_name: service_name.to_string(),
             log_level: "debug".to_string(),
-            nats: sinex_node_sdk::nats::NatsConnectionConfig {
+            nats: sinex_primitives::nats::NatsConnectionConfig {
                 url: "nats://localhost:4222".to_string(),
                 ..Default::default()
             },
@@ -591,7 +592,7 @@ fn create_enhanced_config(service_name: &str) -> EventSourceConfig {
         base: NodeConfig {
             service_name: service_name.to_string(),
             log_level: "trace".to_string(),
-            nats: sinex_node_sdk::nats::NatsConnectionConfig {
+            nats: sinex_primitives::nats::NatsConnectionConfig {
                 url: "nats://localhost:4222".to_string(),
                 ..Default::default()
             },

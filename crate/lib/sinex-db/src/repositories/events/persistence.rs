@@ -1,13 +1,13 @@
 use super::conversions::{extract_provenance, EventRecordExt};
 use crate::models::{Event, JsonValue};
+use crate::query_helpers::ulid_to_uuid;
 use crate::repositories::common::{db_error, DbResult, EnhancedRepository, Repository};
 use crate::schema::Events;
-use crate::SinexError;
+use crate::{EventRecord, SinexError};
 use sinex_primitives::domain::{EventSource, EventType, SchemaVersion};
-use sinex_primitives::{Id, Ulid};
+use sinex_primitives::{Id, Timestamp, Ulid};
 
 use serde::{Deserialize, Serialize};
-use sinex_primitives::Timestamp;
 use sqlx::{Executor, FromRow, PgPool, Postgres, QueryBuilder, Transaction};
 use tracing::instrument;
 use uuid::Uuid;
@@ -935,7 +935,7 @@ impl<'a> EventRepository<'a> {
         // Warning: This batch method bypasses `ensure_no_synthesis_cycles`.
         // While efficient, it risks introducing circular synthesis dependencies.
         // Consider implementing a batched cycle check or ensuring upstream validation.
-        // See: crate::lib::sinex-core::docs::event_persistence.md
+        // See: crate::lib::sinex-db::docs::event_persistence.md
 
         if batch.is_empty() {
             return Ok(StreamBatchInsertResult::default());

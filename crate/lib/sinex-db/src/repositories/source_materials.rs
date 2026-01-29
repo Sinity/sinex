@@ -7,8 +7,7 @@ use crate::query_helpers::ulid_to_uuid;
 use crate::schema::SourceMaterialRegistry;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map as JsonMap, Value as JsonValue};
-use sinex_primitives::Id;
-use sinex_primitives::Timestamp;
+use sinex_primitives::{Id, Timestamp, Ulid};
 use sinex_schema::schema::records::SourceMaterialRecord;
 use sqlx::PgPool;
 use time::format_description;
@@ -692,7 +691,7 @@ impl<'a> SourceMaterialRepository<'a> {
                         .or(material.start_time)
                         .unwrap_or_else(Timestamp::now);
                     material.start_time = Some(start_time);
-                    material.staged_by = Some("sinex-core".to_string());
+                    material.staged_by = Some("sinex-db".to_string());
                     material.staged_on_host = Some(gethostname::gethostname().to_string_lossy().to_string());
                     // 1. Try to update existing record first.
                     let update_sql = r#"

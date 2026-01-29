@@ -243,7 +243,7 @@ fn execute_run(
             message: format!("Invalid target format: {}", target),
             location: None,
             suggestion: Some(
-                "Use format 'crate::target_name' (e.g., sinex-core::fuzz_input_validation)"
+                "Use format 'crate::target_name' (e.g., sinex-db::fuzz_input_validation)"
                     .to_string(),
             ),
         }));

@@ -5,7 +5,7 @@ use sinex_primitives::events::payloads::{FileCreatedPayload, KittyCommandExecute
 use sinex_primitives::Id;
 use sinex_db::{Event, Provenance};
 use time::OffsetDateTime;
-use xtask::sandbox::{sinex_test, TestContext};
+use xtask::sandbox::sinex_test;
 
 #[sinex_test]
 async fn events_repository_inserts_typed_events(ctx: TestContext) -> TestResult<()> {

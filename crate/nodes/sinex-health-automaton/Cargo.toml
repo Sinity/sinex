@@ -27,6 +27,8 @@ workspace = true
 [dependencies.mimalloc]
 workspace = true
 
+[dependencies.sinex-primitives]
+path = "../../lib/sinex-primitives"
 
 [dependencies.sinex-node-sdk]
 path = "../../lib/sinex-node-sdk"

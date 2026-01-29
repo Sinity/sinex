@@ -6,7 +6,8 @@
 //! implementing the service/scan/explore subcommand pattern.
 
 use clap::{Parser, Subcommand};
-use sinex_primitives::{db::SqlxPgPool, SanitizedPath};
+use sinex_db::SqlxPgPool;
+use sinex_primitives::SanitizedPath;
 use sinex_node_sdk::config::ReplayConfig;
 use sinex_node_sdk::event_node::EventTransport;
 pub use sinex_node_sdk::exploration::{

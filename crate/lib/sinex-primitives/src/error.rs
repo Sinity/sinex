@@ -74,6 +74,14 @@ pub enum SinexError {
     NatsAckFailed(ErrorDetails),
     /// Database Persistence Failed: {0}
     DbPersistenceFailed(ErrorDetails),
+    /// NATS publish operation failed: {0}
+    NatsPublish(ErrorDetails),
+    /// NATS subscribe operation failed: {0}
+    NatsSubscribe(ErrorDetails),
+    /// Blob storage operation failed: {0}
+    BlobStorage(ErrorDetails),
+    /// Coordination operation failed: {0}
+    Coordination(ErrorDetails),
 }
 
 /// Detailed error information including message, context, and sources.
@@ -290,6 +298,22 @@ impl SinexError {
         SinexError::DbPersistenceFailed(ErrorDetails::new(msg.to_string()))
     }
 
+    pub fn nats_publish(msg: impl std::fmt::Display) -> Self {
+        SinexError::NatsPublish(ErrorDetails::new(msg.to_string()))
+    }
+
+    pub fn nats_subscribe(msg: impl std::fmt::Display) -> Self {
+        SinexError::NatsSubscribe(ErrorDetails::new(msg.to_string()))
+    }
+
+    pub fn blob_storage(msg: impl std::fmt::Display) -> Self {
+        SinexError::BlobStorage(ErrorDetails::new(msg.to_string()))
+    }
+
+    pub fn coordination(msg: impl std::fmt::Display) -> Self {
+        SinexError::Coordination(ErrorDetails::new(msg.to_string()))
+    }
+
     pub fn with_context(mut self, key: impl Into<String>, value: impl ToString) -> Self {
         use SinexError::*;
         let details = match &mut self {
@@ -317,7 +341,11 @@ impl SinexError {
             | Automaton(d)
             | Checkpoint(d)
             | Lifecycle(d)
-            | Processing(d) => d,
+            | Processing(d)
+            | NatsPublish(d)
+            | NatsSubscribe(d)
+            | BlobStorage(d)
+            | Coordination(d) => d,
             #[cfg(feature = "nats")]
             Nats(d) | NatsAckFailed(d) => d,
         };
@@ -352,7 +380,11 @@ impl SinexError {
             | Automaton(d)
             | Checkpoint(d)
             | Lifecycle(d)
-            | Processing(d) => d,
+            | Processing(d)
+            | NatsPublish(d)
+            | NatsSubscribe(d)
+            | BlobStorage(d)
+            | Coordination(d) => d,
             #[cfg(feature = "nats")]
             Nats(d) | NatsAckFailed(d) => d,
         };
@@ -418,7 +450,11 @@ impl SinexError {
             | Automaton(d)
             | Checkpoint(d)
             | Lifecycle(d)
-            | Processing(d) => d,
+            | Processing(d)
+            | NatsPublish(d)
+            | NatsSubscribe(d)
+            | BlobStorage(d)
+            | Coordination(d) => d,
             #[cfg(feature = "nats")]
             Nats(d) | NatsAckFailed(d) => d,
         }
@@ -464,6 +500,10 @@ impl SinexError {
             Checkpoint(_) => "Checkpoint",
             Lifecycle(_) => "Lifecycle",
             Processing(_) => "Processing",
+            NatsPublish(_) => "NatsPublish",
+            NatsSubscribe(_) => "NatsSubscribe",
+            BlobStorage(_) => "BlobStorage",
+            Coordination(_) => "Coordination",
             #[cfg(feature = "nats")]
             Nats(_) => "Nats",
             #[cfg(feature = "nats")]

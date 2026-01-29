@@ -50,7 +50,7 @@ use serde::{Deserialize, Serialize};
 /// use xtask::graph::WorkspaceGraph;
 ///
 /// let graph = WorkspaceGraph::new()?;
-/// let metrics = graph.compute_impact_metrics("sinex-core")?;
+/// let metrics = graph.compute_impact_metrics("sinex-db")?;
 ///
 /// // Check if this is a critical package
 /// match metrics.criticality_level() {

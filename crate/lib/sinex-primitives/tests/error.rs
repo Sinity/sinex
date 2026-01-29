@@ -137,7 +137,7 @@ fn convenience_context_helpers_work() -> TestResult<()> {
     let error = SinexError::io("File operation failed")
         .with_path(Utf8Path::new("/tmp/test.txt"))
         .with_duration(Duration::from_millis(1500))
-        .with_count("retry_count", 3)
+        .with_context("retry_count", 3)
         .with_id("request_id", "abc123");
 
     let context = error.context_map();

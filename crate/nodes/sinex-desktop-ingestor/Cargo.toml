@@ -82,6 +82,12 @@ path = "../../lib/sinex-processor-runtime"
 features = [
 ]
 
+[dependencies.sinex-primitives]
+path = "../../lib/sinex-primitives"
+
+[dependencies.sinex-db]
+path = "../../lib/sinex-db"
+
 [dev-dependencies.xtask]
 path = "../../../xtask"
 default-features = false

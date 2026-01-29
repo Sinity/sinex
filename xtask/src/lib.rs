@@ -1,4 +1,7 @@
-use anyhow::{Context, Result};
+// Allow xtask to reference itself as ::xtask for macro-generated code
+extern crate self as xtask;
+
+use anyhow::Result;
 pub const DEFAULT_TEST_MATERIAL_ID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 use clap::{Parser, Subcommand};
 

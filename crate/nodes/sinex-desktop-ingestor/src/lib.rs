@@ -14,7 +14,8 @@ pub mod unified_processor;
 // Local facade module to reduce import verbosity
 mod common {
     // Core types facade
-    pub use sinex_primitives::{db::models::Event, types::Timestamp, JsonValue};
+    pub use sinex_db::models::Event;
+    pub use sinex_primitives::{temporal::Timestamp, JsonValue};
 
     pub use sinex_processor_runtime::{
         ActivityEntry, CoverageAnalysis, IngestionHistoryEntry, SourceState,

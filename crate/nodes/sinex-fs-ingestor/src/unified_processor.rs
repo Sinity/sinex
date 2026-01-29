@@ -24,9 +24,8 @@ use sinex_node_sdk::{
     NodeResult, SinexError,
 };
 use sinex_primitives::{
-    domain::HostName,
+    domain::{HostName, SanitizedPath},
     events::{enums::FileModificationType, EventPayload},
-    types::SanitizedPath,
     units::Bytes,
     validation::{validate_watch_path, FileWatchingSecurityPolicy},
     Ulid,

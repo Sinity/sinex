@@ -10,12 +10,12 @@
 // - **Resource usage**: Moderate database load
 // - **Dependencies**: PostgreSQL
 
-use sinex_node_sdk::db::models::EventFactory;
+use sinex_db::models::EventFactory;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::{acquire_test_database, wait_for_filtered_event_count};
 use xtask::sandbox::timing::Timeouts;
 
-use sinex_node_sdk::types::ulid::Ulid;
+use sinex_primitives::ids::Ulid;
 
 /// Test startup sequence robustness and error handling
 #[sinex_test(timeout = 60)]
@@ -113,7 +113,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult<()> {
             event.host = "localhost".to_string();
             event.ingestor_version = Some("1.0.0".to_string());
 
-            sinex_node_sdk::db::insert_event_with_validator(&pool, &event, None).await?;
+            sinex_db::insert_event_with_validator(&pool, &event, None).await?;
         }
 
         // Simulate restart by running migrations again
@@ -185,7 +185,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult<()> {
 
             // Try to run migrations with corrupted state
             // Note: Using sinex_db's migration system now
-            let migration_result = sinex_node_sdk::db::run_migrations(pool).await;
+            let migration_result = sinex_db::run_migrations(pool).await;
 
             match migration_result {
                 Ok(()) => {
@@ -388,7 +388,7 @@ async fn test_shutdown_sequence_graceful_termination(
                 event.host = "localhost".to_string();
                 event.ingestor_version = Some("1.0.0".to_string());
 
-                sinex_node_sdk::db::insert_event_with_validator(&pool, &event, None).await?;
+                sinex_db::insert_event_with_validator(&pool, &event, None).await?;
 
                 // Simulate work with small delays
                 if i % 100 == 0 {

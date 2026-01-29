@@ -7,7 +7,7 @@
 
 use crate::WatcherMaterialContext;
 use notify::{Event as NotifyEvent, EventKind, RecursiveMode, Watcher as NotifyWatcher};
-use sinex_db::models::event::Event;
+use sinex_db::models::Event;
 use sinex_node_sdk::NodeResult;
 use sinex_primitives::events::{
     UdevDeviceChangedPayload, UdevDeviceConnectedPayload, UdevDeviceDisconnectedPayload,

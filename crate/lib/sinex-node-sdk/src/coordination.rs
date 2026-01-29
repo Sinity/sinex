@@ -380,7 +380,7 @@ impl NodeCoordination {
     fn current_metadata(&self) -> InstanceMetadata {
         let mut meta: InstanceMetadata = (&self.instance).into();
         meta.last_heartbeat =
-            sinex_primitives::temporal::OffsetDateTime::now_utc().unix_timestamp();
+            sinex_primitives::temporal::Timestamp::now().unix_timestamp();
         meta
     }
 

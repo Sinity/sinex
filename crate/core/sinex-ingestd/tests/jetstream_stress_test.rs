@@ -3,7 +3,8 @@
 use async_nats::{jetstream, HeaderMap};
 use chrono::Utc;
 use serde_json::json;
-use sinex_primitives::{DbPoolExt, EventSource, SinexError, Ulid};
+use sinex_db::DbPoolExt;
+use sinex_primitives::{EventSource, SinexError, Ulid};
 use xtask::sandbox::timing::WaitHelpers;
 use xtask::sandbox::{sinex_test, TestContext, TestNodePublisher};
 

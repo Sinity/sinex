@@ -2,9 +2,7 @@ use crate::repositories::{common::*, Repository};
 use crate::schema::Entities;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::error::SinexError;
-use sinex_primitives::Timestamp;
-use sinex_primitives::Id;
-// use sinex_schema::ulid::Ulid;
+use sinex_primitives::{Id, Timestamp, Ulid};
 use sqlx::PgPool;
 use std::collections::HashSet;
 

@@ -14,7 +14,8 @@ use xtask::sandbox::timing::Timeouts;
 use sinex_primitives::db::validation::EventValidator;
 use time::Duration;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration as StdDuration, Instant};
+use std::time::Instant;
+use std::time::Duration as StdDuration;
 use std::collections::HashSet;
 
 // =============================================================================
@@ -32,11 +33,11 @@ async fn test_event_processing_during_dst_change(ctx: TestContext) -> TestResult
 
     // Create events around DST transition
     let events_around_dst = vec![
-        (utc_base - Duration::minutes(30), "before_dst"), // 1:30 AM
-        (utc_base - Duration::minutes(1), "just_before"), // 1:59 AM
-        (utc_base, "at_transition"),                      // 2:00 AM (doesn't exist!)
-        (utc_base + Duration::minutes(1), "during_gap"),  // 2:01 AM (doesn't exist!)
-        (utc_base + Duration::hours(1), "after_dst"),     // 3:00 AM
+        (utc_base - time::Duration::minutes(30), "before_dst"), // 1:30 AM
+        (utc_base - time::Duration::minutes(1), "just_before"), // 1:59 AM
+        (utc_base, "at_transition"),                            // 2:00 AM (doesn't exist!)
+        (utc_base + time::Duration::minutes(1), "during_gap"),  // 2:01 AM (doesn't exist!)
+        (utc_base + time::Duration::hours(1), "after_dst"),     // 3:00 AM
     ];
 
     for (timestamp, label) in events_around_dst {
@@ -63,11 +64,11 @@ async fn test_event_processing_during_dst_change(ctx: TestContext) -> TestResult
     ); // 2 AM EST
 
     let fall_events = vec![
-        (fall_base - Duration::minutes(30), "before_fall"),
+        (fall_base - time::Duration::minutes(30), "before_fall"),
         (fall_base, "first_2am"),
-        (fall_base + Duration::minutes(30), "ambiguous_time"),
-        (fall_base + Duration::hours(1), "second_2am"),
-        (fall_base + Duration::hours(2), "after_fall"),
+        (fall_base + time::Duration::minutes(30), "ambiguous_time"),
+        (fall_base + time::Duration::hours(1), "second_2am"),
+        (fall_base + time::Duration::hours(2), "after_fall"),
     ];
 
     for (timestamp, label) in fall_events {
@@ -91,7 +92,7 @@ async fn test_ulid_generation_with_system_clock_regression(ctx: TestContext) -> 
     println!("ULID1 at base time: {}", ulid1);
 
     // Simulate clock regression - generate ULID "in the past"
-    let past_time = base_time - Duration::hours(2);
+    let past_time = base_time - time::Duration::hours(2);
     let ulid2 = Ulid::from_datetime(past_time);
     println!("ULID2 at past time: {}", ulid2);
 
@@ -103,7 +104,7 @@ async fn test_ulid_generation_with_system_clock_regression(ctx: TestContext) -> 
     // newer events to appear older than they actually are
 
     // Test with very small regression (common in NTP adjustments)
-    let micro_regression = base_time - Duration::microseconds(100);
+    let micro_regression = base_time - time::Duration::microseconds(100);
     let ulid3 = Ulid::from_datetime(micro_regression);
 
     println!("Micro regression test:");

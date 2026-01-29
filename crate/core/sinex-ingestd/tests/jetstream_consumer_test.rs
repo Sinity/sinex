@@ -3,7 +3,8 @@
 use async_nats::jetstream;
 use futures::StreamExt;
 use serde_json::json;
-use sinex_primitives::{db::query_helpers::ulid_to_uuid, types::Ulid, DbPoolExt, SinexError};
+use sinex_db::DbPoolExt;
+use sinex_primitives::{db::query_helpers::ulid_to_uuid, types::Ulid, SinexError};
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
 use sqlx::Row;

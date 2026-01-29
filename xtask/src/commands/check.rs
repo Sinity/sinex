@@ -126,7 +126,10 @@ mod tests {
     fn test_check_command_metadata() {
         let cmd = CheckCommand {
             skip_fmt: false,
-            skip_check: false,
+            lint: true,
+            forbidden: true,
+            heavy: false,
+            affected: false,
         };
 
         let metadata = cmd.metadata();
@@ -138,7 +141,10 @@ mod tests {
     fn test_check_command_name() {
         let cmd = CheckCommand {
             skip_fmt: true,
-            skip_check: true,
+            lint: false,
+            forbidden: false,
+            heavy: false,
+            affected: false,
         };
 
         assert_eq!(cmd.name(), "check");

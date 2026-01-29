@@ -3130,7 +3130,7 @@ async fn ensure_template_database(
                 }
             }
 
-            // Run migrations against the template database. The sinex-core migration helper
+            // Run migrations against the template database. The sinex-db migration helper
             // reads DATABASE_URL, so temporarily point it at the template DB with superuser credentials.
             let prev_db_url = std::env::var("DATABASE_URL").ok();
             std::env::set_var("DATABASE_URL", &template_migration_url);

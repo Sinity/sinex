@@ -1,6 +1,6 @@
 #![doc = include_str!("../docs/validator.md")]
 
-//! Event validation wrapper that reuses sinex-core's shared validator logic while
+//! Event validation wrapper that reuses sinex-db's shared validator logic while
 //! keeping ingestd-specific ergonomics (stats, enum result, etc.).
 
 use crate::IngestdResult;
@@ -78,7 +78,7 @@ impl ValidationStatsSnapshot {
     }
 }
 
-/// Event validator that wraps the shared sinex-core validator.
+/// Event validator that wraps the shared sinex-db validator.
 #[derive(Clone)]
 pub struct EventValidator {
     inner: CoreEventValidator,

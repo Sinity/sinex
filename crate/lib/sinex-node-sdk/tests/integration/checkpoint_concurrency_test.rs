@@ -2,12 +2,13 @@
 //!
 //! Exercises NATS KV checkpoint persistence under concurrent updates.
 
-use sinex_node_sdk::types::ulid::Ulid;
+use sinex_primitives::Ulid;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
 use xtask::sandbox::prelude::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use time::OffsetDateTime;
 
 const DEFAULT_GROUP: &str = "concurrency";
 const DEFAULT_CONSUMER: &str = "worker";

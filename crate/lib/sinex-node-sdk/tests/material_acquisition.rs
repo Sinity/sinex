@@ -1,9 +1,9 @@
 use futures::future::try_join_all;
-use sinex_node_sdk::types::error::SinexError;
-use sinex_node_sdk::types::ulid::Ulid;
-use sinex_node_sdk::types::{Bytes, Seconds};
-use sinex_node_sdk::Id;
-use sinex_node_sdk::{db::query_helpers::ulid_to_uuid, db::DbPoolExt};
+use sinex_primitives::error::SinexError;
+use sinex_primitives::ids::Ulid;
+use sinex_primitives::units::{Bytes, Seconds};
+use sinex_primitives::ids::Id;
+use sinex_db::{query_helpers::ulid_to_uuid, repositories::DbPoolExt};
 use sinex_node_sdk::{AcquisitionManager, RotationPolicy};
 use std::io::ErrorKind;
 use std::sync::Arc;
@@ -56,14 +56,14 @@ async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
                         .source_materials()
                         .get_by_id(sinex_node_sdk::Id::from_ulid(material_id))
                         .await?
-                        .ok_or_else(|| sinex_node_sdk::types::error::SinexError::database("missing"))?;
+                        .ok_or_else(|| sinex_primitives::error::SinexError::database("missing"))?;
                     let ledger_count: Option<i64> = sqlx::query_scalar!(
                         "SELECT COUNT(*) FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid",
                         material_id as Ulid
                     )
                     .fetch_one(&pool)
                     .await?;
-                    Ok::<bool, sinex_node_sdk::types::error::SinexError>(
+                    Ok::<bool, sinex_primitives::error::SinexError>(
                         material.status.as_str() == "completed"
                             && ledger_count.unwrap_or(0) >= 1
                     )
@@ -126,7 +126,7 @@ async fn material_acquisition_cancel_mid_slice(ctx: TestContext) -> Result<()> {
         .wait_for_condition(
             || {
                 let temp_path = temp_path.clone();
-                async move { Ok::<bool, sinex_node_sdk::types::error::SinexError>(!temp_path.exists()) }
+                async move { Ok::<bool, sinex_primitives::error::SinexError>(!temp_path.exists()) }
             },
             DEFAULT_WAIT_SECS,
         )
@@ -280,7 +280,7 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
                     )
                     .fetch_optional(&pool)
                     .await?;
-                    return Ok::<bool, sinex_node_sdk::types::error::SinexError>(
+                    return Ok::<bool, sinex_primitives::error::SinexError>(
                         material.status.as_str() == "completed"
                             && ledger_bytes.unwrap_or_default() >= expected_size,
                     );

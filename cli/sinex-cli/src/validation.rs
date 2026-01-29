@@ -1,7 +1,7 @@
 //! CLI-specific validation utilities
 //!
 //! This module provides validators for CLI arguments. Most validation is now delegated
-//! to sinex-core's query_validation module, using unified `SinexError` types with
+//! to sinex-primitives's query_validation module, using unified `SinexError` types with
 //! CLI-specific field name context.
 
 use color_eyre::eyre::{eyre, Result};
@@ -11,14 +11,14 @@ use sinex_primitives::validation::query_validation;
 
 /// Validate a ULID or generic ID string
 ///
-/// Delegates to sinex-core's validate_id with CLI-specific field context.
+/// Delegates to sinex-primitives's validate_id with CLI-specific field context.
 pub fn validate_id(id: &str, field_name: &str) -> Result<()> {
     query_validation::validate_id(id).map_err(|e| eyre!("{}: {}", field_name, e))
 }
 
 /// Validate a limit parameter
 ///
-/// Delegates to sinex-core's validate_limit with CLI-specific field context.
+/// Delegates to sinex-primitives's validate_limit with CLI-specific field context.
 pub fn validate_limit(limit: i32, field_name: &str) -> Result<()> {
     if limit < 0 {
         return Err(eyre!("{} must be positive, got {}", field_name, limit));
@@ -29,7 +29,7 @@ pub fn validate_limit(limit: i32, field_name: &str) -> Result<()> {
 
 /// Validate an offset parameter
 ///
-/// Delegates to sinex-core's validate_offset with CLI-specific field context.
+/// Delegates to sinex-primitives's validate_offset with CLI-specific field context.
 pub fn validate_offset(offset: i32, field_name: &str) -> Result<()> {
     query_validation::validate_offset(offset as i64).map_err(|e| eyre!("{}: {}", field_name, e))
 }
@@ -43,8 +43,8 @@ pub fn validate_url(url: &str, field_name: &str) -> Result<()> {
 /// A time range filter
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TimeRange {
-    since: Option<Timestamp>,
-    until: Option<Timestamp>,
+    pub since: Option<Timestamp>,
+    pub until: Option<Timestamp>,
 }
 
 impl TimeRange {
@@ -59,7 +59,7 @@ impl TimeRange {
 
 /// Validate a time range (since must be before until)
 ///
-/// Delegates to sinex-core's validate_time_range with CLI-specific context.
+/// Delegates to sinex-primitives's validate_time_range with CLI-specific context.
 pub fn validate_time_range(
     since: Option<Timestamp>,
     until: Option<Timestamp>,

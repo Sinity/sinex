@@ -3,7 +3,7 @@
 //! # Sinex Services Layer
 //!
 //! The `sinex-services` crate provides a high-level business logic layer that orchestrates
-//! operations between `sinex-core` repositories and the `sinex-gateway` handlers.
+//! operations between `sinex-db` repositories and the `sinex-gateway` handlers.
 //!
 //! ## Architecture & Design
 //!

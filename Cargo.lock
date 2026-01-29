@@ -5532,6 +5532,7 @@ dependencies = [
  "mimalloc",
  "serde",
  "serde_json",
+ "sinex-db",
  "sinex-node-sdk",
  "sinex-primitives",
  "sinex-processor-runtime",
@@ -5580,6 +5581,7 @@ dependencies = [
  "color-eyre",
  "futures",
  "parking_lot",
+ "pretty_assertions",
  "serde_json",
  "sinex-gateway",
  "sinex-ingestd",
@@ -5590,6 +5592,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-stream",
+ "toml",
  "tracing",
  "uuid",
  "validator",
@@ -5878,6 +5881,7 @@ dependencies = [
  "color-eyre",
  "serde",
  "serde_json",
+ "sinex-db",
  "sinex-macros",
  "sinex-node-sdk",
  "sinex-primitives",
@@ -5885,6 +5889,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
  "xtask",
 ]
 
@@ -5983,6 +5988,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "sinex-db",
  "sinex-node-sdk",
  "sinex-primitives",
  "sinex-processor-runtime",
@@ -6087,6 +6093,7 @@ dependencies = [
  "tracing-test",
  "uuid",
  "which 5.0.0",
+ "xtask",
 ]
 
 [[package]]

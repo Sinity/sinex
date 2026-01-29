@@ -9,9 +9,8 @@ use crate::{DbResult, Event, JsonValue};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::domain::SchemaVersion;
 use sinex_primitives::error::SinexError;
-use sinex_primitives::{Id, Ulid};
+use sinex_primitives::{Id, Timestamp, Ulid};
 use sqlx::PgPool;
-use std::collections::HashMap;
 
 /// Input for registering a new schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -771,7 +770,7 @@ impl<'a> SchemaManagementRepository<'a> {
 
     async fn load_active_schema_map(
         &self,
-    ) -> DbResult<HashMap<(String, String, String), SchemaRecord>> {
+    ) -> DbResult<std::collections::HashMap<(String, String, String), SchemaRecord>> {
         let rows = sqlx::query!(
             r#"
             SELECT 
@@ -788,7 +787,7 @@ impl<'a> SchemaManagementRepository<'a> {
         .await
         .map_err(|e| db_error(e, "load active schemas for sync"))?;
 
-        let mut map = HashMap::with_capacity(rows.len());
+        let mut map = std::collections::HashMap::with_capacity(rows.len());
         for row in rows {
             map.insert(
                 (row.source, row.event_type, row.schema_version),

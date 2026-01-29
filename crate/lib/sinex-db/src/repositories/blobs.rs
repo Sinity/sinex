@@ -11,7 +11,7 @@ use tracing::instrument;
 
 use crate::models::Blob;
 use crate::repositories::common::{db_error, DbResult};
-use crate::{BlobRecord, SinexError};
+use crate::{BlobRecord, SinexError, Timestamp};
 use sinex_primitives::Id;
 
 /// Repository for blob operations

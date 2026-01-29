@@ -174,7 +174,7 @@ impl ConfirmationBuffer {
     #[tracing::instrument(skip(self), fields(checked_count, timed_out_count))]
     pub async fn check_timeouts(&self) -> Vec<EventId> {
         let mut timed_out = Vec::new();
-        let now = sinex_primitives::temporal::OffsetDateTime::now_utc();
+        let now = sinex_primitives::temporal::now();
         let acquire_start = std::time::Instant::now();
         let pending = self.pending.read().await;
         let acquire_ms = acquire_start.elapsed().as_millis() as u64;
@@ -185,8 +185,9 @@ impl ConfirmationBuffer {
 
         for (event_id, event) in pending.iter() {
             let received_at: sinex_primitives::temporal::OffsetDateTime =
-                (*event.received_at).into();
-            let age = now - received_at;
+                event.received_at.into();
+            let now_odt: sinex_primitives::temporal::OffsetDateTime = now.into();
+            let age = now_odt - received_at;
             // Issue 2 fix: Explicit handling of clock skew with logging
             match std::time::Duration::try_from(age) {
                 Ok(age_std) if age_std > self.timeout => {
@@ -262,8 +263,8 @@ mod tests {
             source: EventSource::new("test"),
             event_type: EventType::new("test.event"),
             payload: serde_json::json!({"data": "test"}),
-            ts_orig: sinex_primitives::temporal::OffsetDateTime::now_utc(),
-            received_at: sinex_primitives::temporal::OffsetDateTime::now_utc(),
+            ts_orig: sinex_primitives::temporal::now(),
+            received_at: sinex_primitives::temporal::now(),
         };
 
         assert!(buffer.add_provisional(event.clone()).await);
@@ -285,8 +286,8 @@ mod tests {
             source: EventSource::new("test"),
             event_type: EventType::new("test.event"),
             payload: serde_json::json!({"data": "test"}),
-            ts_orig: sinex_primitives::temporal::OffsetDateTime::now_utc(),
-            received_at: sinex_primitives::temporal::OffsetDateTime::now_utc(),
+            ts_orig: sinex_primitives::temporal::now(),
+            received_at: sinex_primitives::temporal::now(),
         };
 
         event.received_at -= time::time::Duration::seconds(1);
@@ -316,8 +317,8 @@ mod tests {
                 source: EventSource::new(format!("test-{}", i)),
                 event_type: EventType::new("test.event"),
                 payload: serde_json::json!({"index": i}),
-                ts_orig: sinex_primitives::temporal::OffsetDateTime::now_utc(),
-                received_at: sinex_primitives::temporal::OffsetDateTime::now_utc(),
+                ts_orig: sinex_primitives::temporal::now(),
+                received_at: sinex_primitives::temporal::now(),
             };
             assert!(
                 buffer.add_provisional(event).await,
@@ -335,8 +336,8 @@ mod tests {
             source: EventSource::new("overflow"),
             event_type: EventType::new("test.event"),
             payload: serde_json::json!({"overflow": true}),
-            ts_orig: sinex_primitives::temporal::OffsetDateTime::now_utc(),
-            received_at: sinex_primitives::temporal::OffsetDateTime::now_utc(),
+            ts_orig: sinex_primitives::temporal::now(),
+            received_at: sinex_primitives::temporal::now(),
         };
         assert!(
             !buffer.add_provisional(overflow_event).await,

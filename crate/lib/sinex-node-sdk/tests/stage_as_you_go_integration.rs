@@ -38,7 +38,7 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
             let js = jetstream.clone();
             let stream_name = ingest_handle.stream_name.clone();
             async move {
-                Ok::<bool, sinex_test_utils::SinexError>(js.get_stream(&stream_name).await.is_ok())
+                Ok::<bool, xtask::sandbox::SinexError>(js.get_stream(&stream_name).await.is_ok())
             }
         },
         5,
@@ -96,7 +96,7 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
                 )
                 .fetch_one(&pool)
                 .await?;
-                Ok::<bool, sinex_test_utils::SinexError>(row.status == "completed")
+                Ok::<bool, xtask::sandbox::SinexError>(row.status == "completed")
             }
         },
         5,
@@ -133,7 +133,7 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
                 )
                 .fetch_one(&pool)
                 .await?;
-                Ok::<bool, sinex_test_utils::SinexError>(count.unwrap_or(0) == expected)
+                Ok::<bool, xtask::sandbox::SinexError>(count.unwrap_or(0) == expected)
             }
         },
         5,

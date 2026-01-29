@@ -153,22 +153,25 @@ async fn test_timestamp_precision(ctx: TestContext) -> color_eyre::Result<()> {
     // Test various precision levels
     let precision_cases = vec![
         // Second precision
-        Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap(),
+        OffsetDateTime::new_in_utc(
+            time::Date::from_calendar_date(2024, time::Month::January, 1).unwrap(),
+            time::Time::from_hms(12, 0, 0).unwrap(),
+        ),
         // Millisecond precision
-        Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0)
-            .unwrap()
-            .with_nanosecond(123_000_000)
-            .unwrap(),
+        OffsetDateTime::new_in_utc(
+            time::Date::from_calendar_date(2024, time::Month::January, 1).unwrap(),
+            time::Time::from_hms_nano(12, 0, 0, 123_000_000).unwrap(),
+        ),
         // Microsecond precision
-        Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0)
-            .unwrap()
-            .with_nanosecond(123_456_000)
-            .unwrap(),
+        OffsetDateTime::new_in_utc(
+            time::Date::from_calendar_date(2024, time::Month::January, 1).unwrap(),
+            time::Time::from_hms_nano(12, 0, 0, 123_456_000).unwrap(),
+        ),
         // Nanosecond precision
-        Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0)
-            .unwrap()
-            .with_nanosecond(123_456_789)
-            .unwrap(),
+        OffsetDateTime::new_in_utc(
+            time::Date::from_calendar_date(2024, time::Month::January, 1).unwrap(),
+            time::Time::from_hms_nano(12, 0, 0, 123_456_789).unwrap(),
+        ),
     ];
 
     for (i, &ts) in precision_cases.iter().enumerate() {
@@ -178,7 +181,7 @@ async fn test_timestamp_precision(ctx: TestContext) -> color_eyre::Result<()> {
             json!({
                 "precision_level": i,
                 "nanosecond": ts.nanosecond(),
-                "original_timestamp": ts.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)
+                "original_timestamp": ts.format(&time::format_description::well_known::Rfc3339).unwrap()
             }),
         )
         .at_time(ts);
@@ -198,7 +201,7 @@ async fn test_timestamp_precision(ctx: TestContext) -> color_eyre::Result<()> {
 
     assert_eq!(events.len(), precision_cases.len());
 
-    let mut stored_by_level: Vec<(usize, DateTime<Utc>)> = events
+    let mut stored_by_level: Vec<(usize, OffsetDateTime)> = events
         .iter()
         .map(|event| {
             let level = event.payload["precision_level"]
@@ -213,8 +216,8 @@ async fn test_timestamp_precision(ctx: TestContext) -> color_eyre::Result<()> {
     for (level, stored_ts) in stored_by_level {
         let original_ts = precision_cases[level];
         assert_eq!(
-            original_ts.timestamp_nanos_opt(),
-            stored_ts.timestamp_nanos_opt(),
+            original_ts.unix_timestamp_nanos(),
+            stored_ts.unix_timestamp_nanos(),
             "Nanosecond precision should be preserved for event {}",
             level
         );
@@ -234,17 +237,16 @@ async fn test_timezone_handling(ctx: TestContext) -> color_eyre::Result<()> {
         ("utc_explicit", utc_time),
         (
             "utc_parsed",
-            DateTime::parse_from_rfc3339(
+            OffsetDateTime::parse(
                 &utc_time
                     .format(&time::format_description::well_known::Rfc3339)
                     .unwrap(),
-            )?
-            .with_timezone(&Utc),
+                &time::format_description::well_known::Rfc3339,
+            )?,
         ),
         (
             "utc_timestamp",
-            Utc.timestamp_opt(utc_time.timestamp(), utc_time.timestamp_subsec_nanos())
-                .unwrap(),
+            OffsetDateTime::from_unix_timestamp_nanos(utc_time.unix_timestamp_nanos())?,
         ),
     ];
 
@@ -305,7 +307,10 @@ async fn test_timestamp_validation(ctx: TestContext) -> color_eyre::Result<()> {
     assert!(result.is_ok(), "Valid timestamp should be accepted");
 
     // Test edge case: distant future (should work but might be logged)
-    let far_future = Utc.with_ymd_and_hms(2999, 12, 31, 23, 59, 59).unwrap();
+    let far_future = OffsetDateTime::new_in_utc(
+        time::Date::from_calendar_date(2999, time::Month::December, 31).unwrap(),
+        time::Time::from_hms(23, 59, 59).unwrap(),
+    );
     let future_event = test_event(
         EventSource::from("validation_test"),
         EventType::from("future_event"),
@@ -360,7 +365,7 @@ async fn test_timestamp_query_ordering(ctx: TestContext) -> color_eyre::Result<(
 
     // Events should be ordered by ULID (ingestion time) by default
     // but we can verify logical timestamps are preserved
-    let mut ordered_events: Vec<(usize, DateTime<Utc>)> = events
+    let mut ordered_events: Vec<(usize, OffsetDateTime)> = events
         .iter()
         .map(|event| {
             let sequence = event.payload["sequence"]

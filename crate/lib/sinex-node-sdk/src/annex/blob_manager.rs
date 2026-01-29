@@ -51,8 +51,8 @@ impl BlobManager {
         db_pool: DbPool,
         event_sender: Option<mpsc::Sender<Event<JsonValue>>>,
     ) -> NodeResult<Self> {
-        let annex =
-            GitAnnex::new(annex_config).map_err(|e| SinexError::processing(e.to_string()))?;
+        let annex = GitAnnex::new(annex_config)
+            .map_err(|e| SinexError::blob_storage(e).with_operation("initialize"))?;
         Ok(BlobManager {
             annex,
             db_pool,
@@ -176,7 +176,7 @@ impl BlobManager {
     ) -> NodeResult<BlobMetadata> {
         // Validate file path before processing to prevent path traversal attacks
         validate_path_exists(file_path.as_path())
-            .map_err(|e| SinexError::validation(e.to_string()))?;
+            .map_err(|e| SinexError::blob_storage(e).with_operation("validate_path"))?;
         let validated_path = file_path.as_path();
 
         info!("Ingesting file: {:?}", validated_path);
@@ -185,7 +185,7 @@ impl BlobManager {
         // Compute BLAKE3 hash for deduplication
         let blake3_hash = GitAnnex::compute_blake3_hash(&validated_path)
             .await
-            .map_err(|e| SinexError::processing(e.to_string()))?;
+            .map_err(|e| SinexError::blob_storage(e).with_operation("compute_hash"))?;
         debug!("Computed BLAKE3 hash: {}", blake3_hash);
 
         // Check if blob already exists
@@ -236,7 +236,7 @@ impl BlobManager {
 
         // Detect MIME type
         let mime_type = Self::detect_mime_type(&validated_path)
-            .map_err(|e| SinexError::processing(e.to_string()))?;
+            .map_err(|e| SinexError::blob_storage(e).with_operation("detect_mime_type"))?;
 
         // Add to git-annex
         let annex_key = self.annex.add_file(&validated_path).await.map_err(|e| {
@@ -415,7 +415,7 @@ impl BlobManager {
         self.annex
             .get_content(annex_key)
             .await
-            .map_err(|e| SinexError::processing(e.to_string()))?;
+            .map_err(|e| SinexError::blob_storage(e).with_operation("retrieve"))?;
 
         // Find the actual file path
         let path = self.find_symlink_path(annex_key).await?;
