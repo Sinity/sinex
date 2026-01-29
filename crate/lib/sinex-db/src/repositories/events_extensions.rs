@@ -5,8 +5,8 @@ use crate::repositories::common::{db_error, DbResult, Repository};
 use crate::repositories::events::queries::extract_plan_rows;
 use crate::repositories::events::{event_select_columns, EventRecordExt, EventRepository};
 
-use crate::EventRecord;
-use crate::Ulid;
+use crate::query_helpers::ulid_to_uuid;
+use crate::{EventRecord, Ulid};
 use sinex_primitives::domain::EventSource;
 use sinex_primitives::Pagination;
 use sinex_primitives::Timestamp;
