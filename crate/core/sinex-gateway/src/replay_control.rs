@@ -8,7 +8,7 @@ use color_eyre::eyre::{eyre, Context, Result};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::environment::{environment, SinexEnvironment};
-use sinex_primitives::temporal::OffsetDateTime;
+use sinex_primitives::Timestamp;
 use sinex_primitives::Ulid;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -32,14 +32,14 @@ fn env_var_duration_secs(name: &str, default: u64) -> Duration {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayControlError {
     pub message: String,
-    pub occurred_at: OffsetDateTime,
+    pub occurred_at: Timestamp,
 }
 
 impl ReplayControlError {
     pub(crate) fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
-            occurred_at: OffsetDateTime::now_utc(),
+            occurred_at: Timestamp::now(),
         }
     }
 }
@@ -810,10 +810,10 @@ mod tests {
         let client = spawn_replay_control(replay, nats_client).await?;
 
         let mut scope = sample_scope();
-        let end = OffsetDateTime::now_utc();
+        let end = Timestamp::now();
         scope.time_window = Some((
-            end - time::Duration::hours(1),
-            end + time::Duration::minutes(1),
+            *end - time::Duration::hours(1),
+            *end + time::Duration::minutes(1),
         ));
 
         let planned = client.plan("tester".into(), scope.clone()).await?;

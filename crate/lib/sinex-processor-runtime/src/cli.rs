@@ -7,7 +7,7 @@
 
 use clap::{Parser, Subcommand};
 use sinex_db::SqlxPgPool;
-use sinex_primitives::SanitizedPath;
+use sinex_primitives::{SanitizedPath, Timestamp};
 use sinex_node_sdk::config::ReplayConfig;
 use sinex_node_sdk::event_node::EventTransport;
 pub use sinex_node_sdk::exploration::{
@@ -225,7 +225,7 @@ fn parse_checkpoint_timestamp(checkpoint_str: &str) -> NodeResult<Checkpoint> {
         checkpoint_str,
         &time::format_description::well_known::Rfc3339,
     )
-    .map(|ts| Checkpoint::timestamp(ts, None))
+    .map(|ts| Checkpoint::timestamp(Timestamp::from(ts), None))
     .map_err(|e| SinexError::general(format!("Invalid timestamp format: {e}")))
 }
 
@@ -342,7 +342,7 @@ pub fn parse_time_horizon(horizon_str: &str) -> NodeResult<TimeHorizon> {
     } else {
         // Try to parse as ISO timestamp for historical scan
         OffsetDateTime::parse(horizon_str, &time::format_description::well_known::Rfc3339)
-            .map(|dt| TimeHorizon::Historical { end_time: dt })
+            .map(|dt| TimeHorizon::Historical { end_time: Timestamp::from(dt) })
             .map_err(|e| {
                 SinexError::general(format!(
                     "Invalid time horizon '{}': {}. Use 'continuous', 'snapshot', or ISO timestamp",
@@ -1007,7 +1007,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
 
             Ok(Some(ReplayMode::Custom { filters }))
         } else {
-            let start = start_time.unwrap_or_else(|| OffsetDateTime::UNIX_EPOCH);
+            let start = start_time.unwrap_or(Timestamp::UNIX_EPOCH);
             Ok(Some(ReplayMode::TimeRange {
                 start_time: start,
                 end_time,
@@ -1015,7 +1015,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
         }
     }
 
-    fn parse_timestamp(value: Option<&str>) -> NodeResult<Option<OffsetDateTime>> {
+    fn parse_timestamp(value: Option<&str>) -> NodeResult<Option<Timestamp>> {
         if let Some(raw) = value {
             let parsed = OffsetDateTime::parse(raw, &time::format_description::well_known::Rfc3339)
                 .map_err(|e| {
@@ -1023,7 +1023,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
                         "Invalid RFC3339 timestamp in replay configuration: {e}"
                     ))
                 })?;
-            Ok(Some(parsed))
+            Ok(Some(Timestamp::from(parsed)))
         } else {
             Ok(None)
         }

@@ -12,6 +12,7 @@
 //! final processing, ensuring data integrity and correct processing semantics.
 
 use chrono::{Duration, Utc};
+use sinex_primitives::Timestamp;
 use color_eyre::eyre::ensure;
 use futures::{future::join_all, StreamExt};
 use serde_json::json;
@@ -72,7 +73,7 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> 
                 "size": 1024,
                 "permissions": "644",
                 "owner": "user",
-                "created_at": OffsetDateTime::now_utc()
+                "created_at": sinex_primitives::temporal::format_rfc3339(Timestamp::now())
             }),
         ),
         (
@@ -265,7 +266,7 @@ async fn test_concurrent_pipeline_processing(ctx: TestContext) -> Result<()> {
                     "stream_id": stream_id,
                     "event_index": event_idx,
                     "data": format!("concurrent_data_{}_{}", stream_id, event_idx),
-                    "timestamp": OffsetDateTime::now_utc(),
+                    "timestamp": sinex_primitives::temporal::format_rfc3339(Timestamp::now()),
                     "sequence": stream_id * events_per_stream + event_idx
                 });
 
@@ -392,7 +393,7 @@ async fn test_pipeline_data_transformation(ctx: TestContext) -> Result<()> {
             json!({
                 "command_line": "git commit -m 'initial commit'",
                 "working_directory": "/home/user/project",
-                "timestamp": OffsetDateTime::now_utc()
+                "timestamp": sinex_primitives::temporal::format_rfc3339(Timestamp::now())
             }),
         ),
         (
@@ -446,7 +447,7 @@ async fn test_pipeline_data_transformation(ctx: TestContext) -> Result<()> {
                     "arguments": ["-m", "initial commit"],
                     "is_git_operation": true,
                     "working_directory": raw_event.payload["working_directory"],
-                    "parsed_at": OffsetDateTime::now_utc(),
+                    "parsed_at": sinex_primitives::temporal::format_rfc3339(Timestamp::now()),
                     "source_event_id": raw_event.id
                 })
             }
@@ -458,7 +459,7 @@ async fn test_pipeline_data_transformation(ctx: TestContext) -> Result<()> {
                     "file_extension": "rs",
                     "language": "rust",
                     "is_source_code": true,
-                    "analyzed_at": OffsetDateTime::now_utc(),
+                    "analyzed_at": sinex_primitives::temporal::format_rfc3339(Timestamp::now()),
                     "source_event_id": raw_event.id
                 })
             }
@@ -584,7 +585,7 @@ async fn test_pipeline_error_handling(ctx: TestContext) -> Result<()> {
             "test.event",
             json!({
                 "data": "valid_test_data",
-                "timestamp": OffsetDateTime::now_utc()
+                "timestamp": sinex_primitives::temporal::format_rfc3339(Timestamp::now())
             }),
             true, // should_succeed
         ),
@@ -602,7 +603,7 @@ async fn test_pipeline_error_handling(ctx: TestContext) -> Result<()> {
                         }
                     }
                 },
-                "timestamp": OffsetDateTime::now_utc()
+                "timestamp": sinex_primitives::temporal::format_rfc3339(Timestamp::now())
             }),
             true, // should_succeed
         ),
@@ -693,7 +694,7 @@ async fn test_pipeline_error_handling(ctx: TestContext) -> Result<()> {
             json!({
                 "message": "pipeline recovery verification",
                 "processed_after_errors": true,
-                "timestamp": OffsetDateTime::now_utc()
+                "timestamp": sinex_primitives::temporal::format_rfc3339(Timestamp::now())
             }),
         ))
         .await?;

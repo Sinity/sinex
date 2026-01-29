@@ -13,7 +13,7 @@ use std::collections::{HashSet, VecDeque};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use time::OffsetDateTime;
+use sinex_primitives::Timestamp;
 use tokio::time::{timeout, Duration};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -881,7 +881,7 @@ impl JetStreamConsumer {
             event_id: event_id_str.clone(),
             persisted: true,
             ts_ingest: sinex_primitives::temporal::format_rfc3339(
-                sinex_primitives::Timestamp::from(OffsetDateTime::now_utc()),
+                Timestamp::now(),
             ),
         };
 
@@ -959,7 +959,7 @@ impl JetStreamConsumer {
             error,
             original_payload,
             failed_at: sinex_primitives::temporal::format_rfc3339(
-                sinex_primitives::Timestamp::from(OffsetDateTime::now_utc()),
+                Timestamp::now(),
             ),
         };
 

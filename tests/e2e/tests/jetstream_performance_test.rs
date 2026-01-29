@@ -17,7 +17,7 @@ use async_nats::jetstream::{
 use color_eyre::eyre::eyre;
 use futures::StreamExt;
 use serde_json::json;
-use sinex_primitives::ulid::Ulid;
+use sinex_primitives::{ulid::Ulid, Timestamp};
 use xtask::sandbox::{prelude::*, timing_utils::Timeouts, EphemeralNats};
 use std::collections::HashMap;
 use std::sync::{
@@ -43,7 +43,7 @@ async fn publish_batch(
             "id": Ulid::new().to_string(),
             "batch": batch_id,
             "payload_index": idx,
-            "timestamp": OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap(),
+            "timestamp": Timestamp::now().to_string(),
         }))?;
 
         let ack = js.publish(subject, payload.into()).await?;

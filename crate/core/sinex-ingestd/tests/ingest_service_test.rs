@@ -12,6 +12,7 @@
 use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::ulid::Ulid;
 use sinex_primitives::DynamicPayload;
+use sinex_primitives::Timestamp;
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
 use xtask::sandbox::prelude::*;
@@ -67,7 +68,7 @@ async fn test_event_ingestion_flow(ctx: TestContext) -> Result<()> {
             serde_json::json!({
                 "path": "/tmp/test_file.txt",
                 "size": 1024,
-                "timestamp": OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap(),
+                "timestamp": sinex_primitives::temporal::format_rfc3339(Timestamp::now()),
                 "permissions": "0644"
             }),
         ))
@@ -193,7 +194,7 @@ async fn test_ingestion_validation(ctx: TestContext) -> Result<()> {
             serde_json::json!({
                 "path": "/tmp/valid_file.txt",
                 "size": 1024,
-                "timestamp": OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap(),
+                "timestamp": sinex_primitives::temporal::format_rfc3339(Timestamp::now()),
                 "permissions": "0644",
                 "inode": 12345
             }),
@@ -372,7 +373,7 @@ async fn test_ingestion_performance(ctx: TestContext) -> Result<()> {
                 serde_json::json!({
                     "sequence": sequence,
                     "batch_size": target_events,
-                    "timestamp": OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap(),
+                    "timestamp": sinex_primitives::temporal::format_rfc3339(Timestamp::now()),
                     "payload_data": format!("Performance test event {}", sequence)
                 }),
             ))
@@ -794,7 +795,7 @@ async fn test_service_health_monitoring(ctx: TestContext) -> Result<()> {
             source.as_str(),
             "health.check",
             serde_json::json!({
-                "timestamp": OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap(),
+                "timestamp": sinex_primitives::temporal::format_rfc3339(Timestamp::now()),
                 "status": "healthy"
             }),
         ))

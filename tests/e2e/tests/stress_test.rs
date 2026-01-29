@@ -5,6 +5,7 @@
 
 use sinex_primitives::db::models::EventFactory;
 use sinex_primitives::ulid::Ulid;
+use sinex_primitives::Timestamp;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
 use xtask::sandbox::prelude::*;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -40,7 +41,7 @@ async fn test_checkpoint_kv_stress_load(ctx: TestContext) -> TestResult<()> {
                 let mut state = CheckpointState::default();
                 state.checkpoint = Checkpoint::internal(Ulid::new(), update + 1);
                 state.processed_count = update + 1;
-                state.last_activity = OffsetDateTime::now_utc();
+                state.last_activity = Timestamp::now();
                 if manager.save_checkpoint(&state).await.is_ok() {
                     successes.fetch_add(1, Ordering::Relaxed);
                 }

@@ -11,7 +11,7 @@ use sinex_db::types::events::{event_types, services, EventFactory};
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::{events, generators};
 use sinex_db::types::ulid::Ulid;
-use time::Duration;
+use sinex_primitives::Timestamp;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration as StdDuration, Instant};
@@ -221,11 +221,11 @@ async fn test_query_performance_patterns(ctx: TestContext) -> TestResult<()> {
                     sqlx::query(query).bind(test_type).fetch_all(&pool).await
                 }
                 "Time Range Query" => {
-                    let end_time = OffsetDateTime::now_utc();
-                    let start_time = end_time - Duration::hours(1);
+                    let end_time = Timestamp::now();
+                    let start_time = end_time - time::Duration::hours(1);
                     sqlx::query(query)
-                        .bind(start_time)
-                        .bind(end_time)
+                        .bind(*end_time)
+                        .bind(*start_time)
                         .fetch_all(&pool)
                         .await
                 }
@@ -239,11 +239,11 @@ async fn test_query_performance_patterns(ctx: TestContext) -> TestResult<()> {
                 "JSON Path Query" => sqlx::query(query).fetch_all(&pool).await,
                 "Complex Filter" => {
                     let test_event = &test_events[iteration % test_events.len()];
-                    let time_threshold = OffsetDateTime::now_utc() - Duration::hours(1);
+                    let time_threshold = Timestamp::now() - time::Duration::hours(1);
                     sqlx::query(query)
                         .bind(&test_event.source)
                         .bind(&test_event.event_type)
-                        .bind(time_threshold)
+                        .bind(*time_threshold)
                         .fetch_all(&pool)
                         .await
                 }
@@ -343,11 +343,11 @@ async fn test_concurrent_database_performance(ctx: TestContext) -> TestResult<()
                                 json!({
                                     "worker_id": worker_id,
                                     "operation_id": op_id,
-                                    "timestamp": OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap()
+                                    "timestamp": Timestamp::now().to_string()
                                 })
                             );
 
-                            let result = sinex_db::db::insert_event_with_validator(&pool_clone, &event, None).await;
+                let result = sinex_db::db::insert_event_with_validator(&pool_clone, &event, None).await;
                             let duration = start.elapsed();
 
                             let mut metrics_lock = metrics.lock().await;
@@ -643,7 +643,7 @@ async fn test_transaction_performance(ctx: TestContext) -> TestResult<()> {
                     json!({
                         "transaction_id": tx_id,
                         "operation_id": op,
-                        "timestamp": OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap()
+                        "timestamp": Timestamp::now().to_string()
                     }),
                 );
 

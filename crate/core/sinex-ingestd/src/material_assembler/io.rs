@@ -14,7 +14,7 @@ use sinex_primitives::Ulid;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::str::FromStr;
-use time::OffsetDateTime;
+use sinex_primitives::Timestamp;
 use tokio::{fs, fs::File, io::AsyncReadExt, io::AsyncWriteExt};
 use tracing::{debug, info, warn};
 
@@ -164,11 +164,11 @@ async fn restore_state_params(
         slice_count: state_snapshot.slice_count,
         buffered_slices,
         state_dir: state_dir.clone(),
-        started_at: OffsetDateTime::parse(
+        started_at: Timestamp::parse(
             &state_snapshot.started_at,
             &time::format_description::well_known::Rfc3339,
         )
-        .unwrap_or_else(|_| OffsetDateTime::now_utc()),
+        .unwrap_or_else(|_| Timestamp::now()),
         material_kind: state_snapshot.material_kind,
         source_identifier: state_snapshot.source_identifier,
         metadata: state_snapshot.metadata,
@@ -177,7 +177,7 @@ async fn restore_state_params(
         pending_write: None, // pending writes are ephemeral optimizations, not persisted directly in WAL unless as Slices
         pending_end: state_snapshot.pending_end,
         finalizing: state_snapshot.finalizing,
-        last_slice_received: OffsetDateTime::now_utc(), // Reset on restore
+        last_slice_received: Timestamp::now(), // Reset on restore
         _permit: None,
     }))
 }
@@ -431,7 +431,7 @@ pub(super) async fn handle_slice(
     }
 
     // Update last slice received timestamp
-    state.last_slice_received = OffsetDateTime::now_utc();
+    state.last_slice_received = Timestamp::now();
 
     if offset == state.expected_offset {
         append_slice_data(assembler, &mut state, material_id, &data).await?;

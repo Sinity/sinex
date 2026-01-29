@@ -3,7 +3,7 @@
 // Tests for automaton registration, heartbeat, and lifecycle operations under chaos conditions.
 // Simulates concurrent registrations, network failures, and lifecycle state conflicts.
 
-use time::OffsetDateTime;
+use sinex_primitives::Timestamp;
 use futures::future::join_all;
 use serde_json::json;
 use sinex_primitives::db::models::AutomatonManifest;
@@ -140,8 +140,8 @@ async fn test_agent_heartbeat_chaos_with_network_failures(ctx: TestContext) -> T
                 "UPDATE core.processor_manifests
                  SET last_heartbeat_ts = $1, updated_at = $2
                  WHERE processor_name = $3 AND node_type = 'automaton'",
-                OffsetDateTime::now_utc(),
-                OffsetDateTime::now_utc(),
+                Timestamp::now(),
+                Timestamp::now(),
                 processor_name
             )
             .execute(&pool_clone)
@@ -231,8 +231,8 @@ async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> 
                     "UPDATE core.processor_manifests
                      SET last_heartbeat_ts = $1, updated_at = $2
                      WHERE processor_name = $3 AND node_type = 'automaton'",
-                    OffsetDateTime::now_utc(),
-                    OffsetDateTime::now_utc(),
+                    Timestamp::now(),
+                    Timestamp::now(),
                     processor_name
                 )
                 .execute(&pool_clone)

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use sinex_primitives::Ulid;
 use std::{collections::BTreeMap, path::PathBuf, str::FromStr};
-use time::OffsetDateTime;
+use sinex_primitives::Timestamp;
 use tokio::fs::File;
 use tracing::{debug, info, warn};
 
@@ -95,7 +95,7 @@ pub(super) struct AssemblerState {
     pub slice_count: usize,
     pub buffered_slices: BTreeMap<i64, PathBuf>,
     pub state_dir: PathBuf,
-    pub started_at: OffsetDateTime,
+    pub started_at: Timestamp,
     pub material_kind: String,
     pub source_identifier: String,
     pub metadata: JsonValue,
@@ -104,7 +104,7 @@ pub(super) struct AssemblerState {
     pub pending_write: Option<PendingWrite>,
     pub pending_end: Option<MaterialEndMessage>,
     pub finalizing: bool,
-    pub last_slice_received: OffsetDateTime,
+    pub last_slice_received: Timestamp,
     /// Semaphore permit held for the duration of the assembly
     pub _permit: Option<tokio::sync::OwnedSemaphorePermit>,
 }
@@ -126,7 +126,7 @@ pub(super) struct FinalizationState {
     pub metadata: JsonValue,
     pub material_kind: String,
     pub source_identifier: String,
-    pub started_at: OffsetDateTime,
+    pub started_at: Timestamp,
 }
 
 impl AssemblerState {
@@ -207,7 +207,7 @@ pub(super) fn is_terminal_status(status: &str) -> bool {
 pub(super) fn build_finalize_metadata(
     state: &FinalizationState,
     end_metadata: &JsonValue,
-    ended_at: OffsetDateTime,
+    ended_at: Timestamp,
     total_bytes: i64,
     content_hash: &str,
 ) -> Result<JsonValue, SinexError> {
@@ -223,9 +223,7 @@ pub(super) fn build_finalize_metadata(
     );
     map.insert(
         "finalized_at".to_string(),
-        JsonValue::String(sinex_primitives::temporal::format_rfc3339(
-            sinex_primitives::Timestamp::from(ended_at),
-        )),
+        JsonValue::String(sinex_primitives::temporal::format_rfc3339(ended_at)),
     );
     map.insert(
         "content_hash".to_string(),
@@ -276,7 +274,7 @@ pub(super) async fn handle_begin(
     };
     tracing::Span::current().record("material_id", tracing::field::display(&material_id));
 
-    let started_at = OffsetDateTime::parse(
+    let started_at = Timestamp::parse(
         &begin.started_at,
         &time::format_description::well_known::Rfc3339,
     )
@@ -286,7 +284,7 @@ pub(super) async fn handle_begin(
             started_at = %begin.started_at,
             "Invalid started_at on begin message, defaulting to now"
         );
-        OffsetDateTime::now_utc()
+        Timestamp::now()
     });
 
     if assembler.pool.is_closed() {
@@ -362,9 +360,7 @@ pub(super) async fn handle_begin(
                 material_kind: material_kind.clone(),
                 source_identifier: source_identifier.clone(),
                 metadata: metadata_clone,
-                started_at: sinex_primitives::temporal::format_rfc3339(
-                    sinex_primitives::Timestamp::from(started_at),
-                ),
+                started_at: sinex_primitives::temporal::format_rfc3339(started_at),
             }),
         )
         .await?;
@@ -410,7 +406,6 @@ mod tests {
     use blake3::Hasher;
     use std::{collections::BTreeMap, str::FromStr};
     use tempfile::tempdir;
-    use time::OffsetDateTime;
 
     fn test_state(material_id: Ulid) -> AssemblerState {
         let temp_dir = tempdir().expect("temp dir should be creatable");
@@ -423,7 +418,7 @@ mod tests {
             slice_count: 0,
             buffered_slices: BTreeMap::new(),
             state_dir: temp_dir.path().to_path_buf(),
-            started_at: OffsetDateTime::now_utc(),
+            started_at: Timestamp::now(),
             material_kind: "test".to_string(),
             source_identifier: "test".to_string(),
             metadata: JsonValue::Null,
@@ -432,7 +427,7 @@ mod tests {
             pending_write: None,
             pending_end: None,
             finalizing: false,
-            last_slice_received: OffsetDateTime::now_utc(),
+            last_slice_received: Timestamp::now(),
             _permit: None,
         }
     }

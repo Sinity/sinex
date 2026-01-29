@@ -5,7 +5,7 @@
 
 use futures::future::join_all;
 use serde_json::json;
-use sinex_primitives::DynamicPayload;
+use sinex_primitives::{DynamicPayload, Timestamp};
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::Timeouts;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -160,7 +160,7 @@ async fn test_stream_failure_resilience(ctx: TestContext) -> TestResult<()> {
                 let event_data = json!({
                     "worker": worker_id,
                     "stream": stream_id,
-                    "timestamp": OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap(),
+                    "timestamp": Timestamp::now().to_string(),
                     "data": format!("chaos-event-{}-{}", worker_id, stream_id)
                 });
 

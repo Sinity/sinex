@@ -3,7 +3,7 @@
 // Tests for state machine violations including shutdown during initialization,
 // concurrent shutdown signals, and state corruption under load.
 
-use time::OffsetDateTime;
+use sinex_primitives::Timestamp;
 use futures::future::join_all;
 use serde_json::json;
 use xtask::sandbox::prelude::*;
@@ -182,8 +182,8 @@ async fn test_state_machine_corruption_under_load(ctx: TestContext) -> TestResul
                     "#,
                     processor_name,
                     new_status,
-                    OffsetDateTime::now_utc(),
-                    OffsetDateTime::now_utc()
+                    Timestamp::now(),
+                    Timestamp::now()
                 )
                 .execute(&pool_clone)
                 .await

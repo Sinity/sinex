@@ -11,7 +11,7 @@ use sinex_db::{
 use sinex_node_sdk::annex::AnnexKey;
 use sinex_primitives::{Id, JsonValue, Ulid};
 use sinex_schema::schema::records::SourceMaterialRecord;
-use time::OffsetDateTime;
+use sinex_primitives::Timestamp;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
@@ -33,7 +33,7 @@ struct MaterialDlqPayload {
     material_id: String,
     error: String,
     context: JsonValue,
-    failed_at: OffsetDateTime,
+    failed_at: Timestamp,
 }
 
 impl MaterialAssembler {
@@ -180,7 +180,7 @@ impl MaterialAssembler {
             material_id: material_id.to_string(),
             error: error.into(),
             context,
-            failed_at: OffsetDateTime::now_utc(),
+            failed_at: Timestamp::now(),
         };
 
         match serde_json::to_vec(&payload) {
@@ -262,11 +262,11 @@ impl MaterialAssembler {
                 return Ok(());
             }
 
-            let ended_at = OffsetDateTime::parse(
+            let ended_at = Timestamp::parse(
                 &end_preview.ended_at,
                 &time::format_description::well_known::Rfc3339,
             )
-            .unwrap_or_else(|_| OffsetDateTime::now_utc());
+            .unwrap_or_else(|_| Timestamp::now());
 
             let view = state.finalization_view();
             let assembled_bytes = view.expected_offset;

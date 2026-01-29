@@ -15,6 +15,7 @@ use sinex_db::{
     acquire_with_timeout, create_pool_with_config, DynamicPayload, Id, PoolConfig, Provenance,
     SinexError, Ulid,
 };
+use sinex_primitives::Timestamp;
 use xtask::sandbox::prelude::*;
 
 // Additional specific imports
@@ -191,7 +192,7 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> TestResult<()> {
                         json!({
                             "task_id": task_id,
                             "event_num": event_num,
-                            "timestamp": OffsetDateTime::now_utc()
+                            "timestamp": Timestamp::now()
                         }),
                     ))
                     .await
@@ -524,7 +525,7 @@ async fn test_ulid_persistence(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_test]
 async fn test_timestamp_handling(ctx: TestContext) -> TestResult<()> {
-    let before_insert = OffsetDateTime::now_utc();
+    let before_insert = Timestamp::now();
     let inserted_event = ctx
         .publish(DynamicPayload::new(
             "timestamp-test",
@@ -532,7 +533,7 @@ async fn test_timestamp_handling(ctx: TestContext) -> TestResult<()> {
             json!({"test": "timestamp"}),
         ))
         .await?;
-    let after_insert = OffsetDateTime::now_utc();
+    let after_insert = Timestamp::now();
 
     // Verify ingestion timestamp is recent
     let ingest_ts = inserted_event.id.as_ref().unwrap().as_ulid().timestamp();

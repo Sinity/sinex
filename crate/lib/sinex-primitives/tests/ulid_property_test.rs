@@ -4,14 +4,13 @@ use proptest::test_runner::TestCaseError;
 use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_primitives::{
-    DynamicPayload, EventSource, Id, JsonValue, Provenance, SourceMaterial, Ulid,
+    DynamicPayload, EventSource, Id, JsonValue, Provenance, SourceMaterial, Timestamp, Ulid,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::Instant;
 use time::Duration;
-use xtask::sandbox::OffsetDateTime;
 use xtask::sandbox::{sinex_prop, sinex_proptest, sinex_test, TestContext};
 
 // Property tests for ULID functionality.
@@ -48,11 +47,11 @@ sinex_proptest! {
     fn test_ulid_uniqueness_under_rapid_generation(
         count in 2usize..1000
     ) -> TestResult<()> {
-        let base_time = OffsetDateTime::now_utc();
+        let base_time = Timestamp::now();
         let mut ulids = Vec::new();
         for i in 0..count {
-            let timestamp = base_time + Duration::milliseconds(i as i64);
-            ulids.push(Ulid::from_datetime(timestamp));
+            let timestamp = *base_time + Duration::milliseconds(i as i64);
+            ulids.push(Ulid::from_datetime(timestamp.into()));
         }
         let mut sorted_ulids = ulids.clone();
         sorted_ulids.sort();
@@ -70,8 +69,8 @@ sinex_proptest! {
     fn test_ulid_timestamp_extraction(
         timestamp in 1577836800u64..1893456000u64
     ) -> TestResult<()> {
-        let dt = OffsetDateTime::from_unix_timestamp(timestamp as i64).unwrap_or(OffsetDateTime::now_utc());
-        let ulid = Ulid::from_datetime(dt);
+        let dt = Timestamp::from_unix_timestamp(timestamp as i64).unwrap_or(Timestamp::now());
+        let ulid = Ulid::from_datetime(*dt);
         let extracted_timestamp = ulid.timestamp();
         let time_diff = (timestamp * 1000) as i64 - (extracted_timestamp.unix_timestamp_nanos() / 1_000_000) as i64;
         prop_assert!(
@@ -89,8 +88,8 @@ sinex_proptest! {
         time_offset_minutes in 0..60i64,
         time_offset_seconds in 0..60i64,
     ) -> TestResult<()> {
-        let base_time = OffsetDateTime::now_utc();
-        let target_time = base_time
+        let base_time = Timestamp::now();
+        let target_time = *base_time
             + Duration::hours(time_offset_hours)
             + Duration::minutes(time_offset_minutes)
             + Duration::seconds(time_offset_seconds);
@@ -222,13 +221,13 @@ sinex_proptest! {
         let (num_threads, ulids_per_thread, _) = params;
         let ulids = generate_ulids_concurrently(num_threads, ulids_per_thread, 0);
 
-        let test_start = OffsetDateTime::now_utc();
-        let test_end = OffsetDateTime::now_utc();
+        let test_start = Timestamp::now();
+        let test_end = Timestamp::now();
 
         for (_, ulid, _) in ulids {
             let ulid_timestamp = ulid.timestamp();
-            prop_assert!(ulid_timestamp >= test_start - Duration::seconds(1));
-            prop_assert!(ulid_timestamp <= test_end + Duration::seconds(1));
+            prop_assert!(ulid_timestamp >= *test_start - Duration::seconds(1));
+            prop_assert!(ulid_timestamp <= *test_end + Duration::seconds(1));
         }
         Ok(())
     }
@@ -342,7 +341,7 @@ fn arb_ulid_sequence(min_size: usize, max_size: usize) -> impl Strategy<Value = 
         prop::collection::vec(any::<u64>().prop_map(|delay_ms| delay_ms % 1000), size).prop_map(
             move |delays| {
                 let mut ulids = Vec::new();
-                let base_time = OffsetDateTime::now_utc() - Duration::hours(1); // Start an hour ago
+                let base_time = *Timestamp::now() - Duration::hours(1); // Start an hour ago
                 let mut current_time = base_time;
 
                 for delay_ms in delays {
@@ -357,16 +356,16 @@ fn arb_ulid_sequence(min_size: usize, max_size: usize) -> impl Strategy<Value = 
 
 /// Generate ULIDs from specific time ranges
 fn arb_ulid_from_time_range(
-    start: OffsetDateTime,
-    end: OffsetDateTime,
+    start: Timestamp,
+    end: Timestamp,
 ) -> impl Strategy<Value = Ulid> {
-    let start_ms = (start.unix_timestamp_nanos() / 1_000_000) as i64;
-    let end_ms = (end.unix_timestamp_nanos() / 1_000_000) as i64;
+    let start_ms = ((*start).unix_timestamp_nanos() / 1_000_000) as i64;
+    let end_ms = ((*end).unix_timestamp_nanos() / 1_000_000) as i64;
 
     (start_ms..=end_ms).prop_map(|ts_ms| {
-        let datetime = OffsetDateTime::from_unix_timestamp_nanos(ts_ms as i128 * 1_000_000)
-            .unwrap_or(OffsetDateTime::now_utc());
-        Ulid::from_datetime(datetime)
+        let datetime = Timestamp::from_unix_timestamp_nanos(ts_ms as i128 * 1_000_000)
+            .unwrap_or(Timestamp::now());
+        Ulid::from_datetime(*datetime)
     })
 }
 
@@ -376,7 +375,7 @@ async fn insert_event_with_ulid(
     event_type: &str,
     payload: JsonValue,
     event_id: Ulid,
-    ts: OffsetDateTime,
+    ts: Timestamp,
 ) -> Result<Ulid, TestCaseError> {
     let material_id = Id::<SourceMaterial>::new();
     let provenance = Provenance::from_material(material_id, 0, None, None);
@@ -416,7 +415,7 @@ async fn test_ulid_range_query_property(
     let mut batch1_ulids = Vec::with_capacity(batch1_size);
     let mut batch2_ulids = Vec::with_capacity(batch2_size);
 
-    let mut current_time = OffsetDateTime::now_utc() - Duration::minutes(5);
+    let mut current_time = *Timestamp::now() - Duration::minutes(5);
     for i in 0..batch1_size {
         current_time += Duration::milliseconds(1);
         let event_id = Ulid::from_datetime(current_time);
@@ -434,7 +433,7 @@ async fn test_ulid_range_query_property(
     }
 
     let cutoff_time = current_time + Duration::milliseconds(gap_millis);
-    let cutoff_ulid = Ulid::from_datetime(cutoff_time);
+    let cutoff_ulid = Ulid::from_datetime(cutoff_time.into());
 
     current_time = cutoff_time;
     for i in 0..batch2_size {
@@ -679,8 +678,8 @@ mod unit_tests {
 
     #[sinex_test]
     fn test_time_range_ulid_generator() -> TestResult<()> {
-        let start = OffsetDateTime::now_utc() - Duration::hours(1);
-        let end = OffsetDateTime::now_utc();
+        let start = Timestamp::now() - Duration::hours(1);
+        let end = Timestamp::now();
 
         let mut runner = proptest::test_runner::TestRunner::deterministic();
         let ulid = arb_ulid_from_time_range(start, end)
@@ -688,8 +687,8 @@ mod unit_tests {
             .unwrap()
             .current();
 
-        let timestamp = *ulid.timestamp();
-        assert!((start..=end).contains(&timestamp));
+        let timestamp = ulid.timestamp();
+        assert!((*start..=*end).contains(&timestamp));
         Ok(())
     }
 

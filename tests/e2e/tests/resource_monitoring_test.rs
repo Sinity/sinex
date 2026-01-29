@@ -12,10 +12,9 @@
 // - **Dependencies**: PostgreSQL
 
 use sinex_primitives::db::models::EventFactory;
+use sinex_primitives::{Timestamp, ulid::Ulid};
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::Timeouts;
-
-use sinex_primitives::ulid::Ulid;
 
 /// Test resource limits and monitoring under load
 #[sinex_test]
@@ -63,7 +62,7 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult<()> {
             let event_data = json!({
                 "sequence": i,
                 "large_data": "x".repeat(1000), // 1KB per event
-                "timestamp": OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap(),
+                "timestamp": Timestamp::now().to_string(),
                 "memory_test": true
             });
 

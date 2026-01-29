@@ -3,6 +3,7 @@
 // Tests system behavior at boundaries, limits, and edge cases
 
 use xtask::sandbox::{prelude::*, sinex_prop, DynamicPayload};
+use sinex_primitives::Timestamp;
 use proptest::prelude::*;
 use std::sync::Arc;
 use tokio::time::{Duration, timeout};
@@ -127,24 +128,24 @@ async fn test_unicode_boundary_cases(ctx: TestContext) -> Result<()> {
 async fn test_timestamp_boundaries(ctx: TestContext) -> Result<()> {
     let timestamp_cases = vec![
         // Unix epoch
-        OffsetDateTime::from_unix_timestamp(0).unwrap(),
+        Timestamp::from_unix_timestamp(0).unwrap(),
         // Far future (year 9999)
-        OffsetDateTime::new_in_utc(
-            time::Date::from_calendar_date(9999, time::Month::December, 31).unwrap(),
-            time::Time::from_hms(23, 59, 59).unwrap(),
-        ),
+        Timestamp::from_unix_timestamp(253402300799).unwrap(),
         // Near boundaries
-        OffsetDateTime::from_unix_timestamp(i32::MAX as i64).unwrap(),
+        Timestamp::from_unix_timestamp(i32::MAX as i64).unwrap(),
         // Current time
-        OffsetDateTime::now_utc(),
+        Timestamp::now(),
     ];
 
     for (i, ts) in timestamp_cases.iter().enumerate() {
+        let ts_str = ts
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_else(|_| "unknown".to_string());
         ctx.publish(DynamicPayload::new(
             "timestamp_test",
             format!("boundary_{}", i),
             serde_json::json!({
-                "timestamp": ts.format(&time::format_description::well_known::Rfc3339).unwrap(),
+                "timestamp": ts_str,
                 "epoch": ts.unix_timestamp()
             }),
         ))

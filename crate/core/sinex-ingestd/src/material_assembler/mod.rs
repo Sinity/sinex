@@ -24,7 +24,7 @@ use sinex_db::{DbPool, DbPoolExt};
 use sinex_node_sdk::annex::GitAnnex;
 use sinex_primitives::{environment::SinexEnvironment, Id, JsonValue, Ulid};
 use std::{collections::BTreeMap, path::PathBuf, str::FromStr, sync::Arc};
-use time::OffsetDateTime;
+use sinex_primitives::Timestamp;
 use tokio::{fs, fs::File, sync::Mutex};
 use tracing::{info, warn};
 
@@ -184,7 +184,7 @@ impl MaterialAssembler {
             slice_count: 0,
             buffered_slices: BTreeMap::new(),
             state_dir,
-            started_at: OffsetDateTime::now_utc(),
+            started_at: Timestamp::now(),
             material_kind: String::new(),
             source_identifier: String::new(),
             metadata: serde_json::json!({}),
@@ -193,7 +193,7 @@ impl MaterialAssembler {
             pending_write: None,
             pending_end: None,
             finalizing: false,
-            last_slice_received: OffsetDateTime::now_utc(),
+            last_slice_received: Timestamp::now(),
             _permit: Some(permit),
         })
     }
@@ -232,7 +232,7 @@ impl MaterialAssembler {
         material_kind: &str,
         source_identifier: &str,
         metadata: JsonValue,
-        started_at: OffsetDateTime,
+        started_at: Timestamp,
     ) -> IngestdResult<()> {
         self.pool
             .source_materials()
@@ -241,7 +241,7 @@ impl MaterialAssembler {
                 material_kind,
                 Some(source_identifier),
                 metadata,
-                sinex_primitives::Timestamp::from(started_at),
+                started_at,
             )
             .await
             .map(|_| ())
@@ -363,7 +363,7 @@ impl MaterialAssembler {
 
             interval.tick().await;
 
-            let now = OffsetDateTime::now_utc();
+            let now = Timestamp::now();
             let mut stale_materials = Vec::new();
 
             // Collect stale materials

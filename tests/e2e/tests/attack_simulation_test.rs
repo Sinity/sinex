@@ -12,6 +12,7 @@
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::Timeouts;
 use sinex_primitives::db::validation::EventValidator;
+use sinex_primitives::Timestamp;
 use time::Duration;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
@@ -26,18 +27,15 @@ use std::collections::HashSet;
 #[sinex_test]
 async fn test_event_processing_during_dst_change(ctx: TestContext) -> TestResult<()> {
     // Simulate DST transition (spring forward: 2:00 AM becomes 3:00 AM)
-    let utc_base = OffsetDateTime::new_in_utc(
-        time::Date::from_calendar_date(2024, time::Month::March, 10).unwrap(),
-        time::Time::from_hms(7, 0, 0).unwrap(),
-    ); // 2 AM EST
+    let utc_base = Timestamp::from_unix_timestamp(1710086400).unwrap(); // 2024-03-10 07:00:00 UTC
 
     // Create events around DST transition
     let events_around_dst = vec![
-        (utc_base - time::Duration::minutes(30), "before_dst"), // 1:30 AM
-        (utc_base - time::Duration::minutes(1), "just_before"), // 1:59 AM
+        (utc_base - Duration::minutes(30), "before_dst"), // 1:30 AM
+        (utc_base - Duration::minutes(1), "just_before"), // 1:59 AM
         (utc_base, "at_transition"),                            // 2:00 AM (doesn't exist!)
-        (utc_base + time::Duration::minutes(1), "during_gap"),  // 2:01 AM (doesn't exist!)
-        (utc_base + time::Duration::hours(1), "after_dst"),     // 3:00 AM
+        (utc_base + Duration::minutes(1), "during_gap"),  // 2:01 AM (doesn't exist!)
+        (utc_base + Duration::hours(1), "after_dst"),     // 3:00 AM
     ];
 
     for (timestamp, label) in events_around_dst {
@@ -58,17 +56,14 @@ async fn test_event_processing_during_dst_change(ctx: TestContext) -> TestResult
     }
 
     // Test fall back transition (3:00 AM becomes 2:00 AM)
-    let fall_base = OffsetDateTime::new_in_utc(
-        time::Date::from_calendar_date(2024, time::Month::November, 3).unwrap(),
-        time::Time::from_hms(6, 0, 0).unwrap(),
-    ); // 2 AM EST
+    let fall_base = Timestamp::from_unix_timestamp(1730624400).unwrap(); // 2024-11-03 06:00:00 UTC
 
     let fall_events = vec![
-        (fall_base - time::Duration::minutes(30), "before_fall"),
+        (fall_base - Duration::minutes(30), "before_fall"),
         (fall_base, "first_2am"),
-        (fall_base + time::Duration::minutes(30), "ambiguous_time"),
-        (fall_base + time::Duration::hours(1), "second_2am"),
-        (fall_base + time::Duration::hours(2), "after_fall"),
+        (fall_base + Duration::minutes(30), "ambiguous_time"),
+        (fall_base + Duration::hours(1), "second_2am"),
+        (fall_base + Duration::hours(2), "after_fall"),
     ];
 
     for (timestamp, label) in fall_events {
@@ -87,12 +82,12 @@ async fn test_ulid_generation_with_system_clock_regression(ctx: TestContext) -> 
     // This test simulates what happens when system clock goes backwards
 
     // Generate ULID at "current" time
-    let base_time = OffsetDateTime::now_utc();
+    let base_time = Timestamp::now();
     let ulid1 = Ulid::from_datetime(base_time);
     println!("ULID1 at base time: {}", ulid1);
 
     // Simulate clock regression - generate ULID "in the past"
-    let past_time = base_time - time::Duration::hours(2);
+    let past_time = base_time - Duration::hours(2);
     let ulid2 = Ulid::from_datetime(past_time);
     println!("ULID2 at past time: {}", ulid2);
 
@@ -104,14 +99,14 @@ async fn test_ulid_generation_with_system_clock_regression(ctx: TestContext) -> 
     // newer events to appear older than they actually are
 
     // Test with very small regression (common in NTP adjustments)
-    let micro_regression = base_time - time::Duration::microseconds(100);
+    let micro_regression = base_time - Duration::microseconds(100);
     let ulid3 = Ulid::from_datetime(micro_regression);
 
     println!("Micro regression test:");
-    println!("  Base:  {} -> {}", base_time.timestamp_millis(), ulid1);
+    println!("  Base:  {} -> {}", base_time.unix_timestamp_nanos() / 1_000_000, ulid1);
     println!(
         "  -100μs: {} -> {}",
-        micro_regression.timestamp_millis(),
+        micro_regression.unix_timestamp_nanos() / 1_000_000,
         ulid3
     );
 
@@ -376,10 +371,7 @@ async fn test_json_depth_bomb_attack(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 async fn test_ulid_extreme_future_date(ctx: TestContext) -> TestResult<()> {
     // Test that Sinex can handle extreme future dates for event timestamps
-    let far_future = OffsetDateTime::new_in_utc(
-        time::Date::from_calendar_date(9999, time::Month::December, 31).unwrap(),
-        time::Time::from_hms(23, 59, 59).unwrap(),
-    );
+    let far_future = Timestamp::from_unix_timestamp(253402300799).unwrap(); // 9999-12-31 23:59:59 UTC
 
     // Verify ULID generation doesn't panic with extreme dates
     let ulid_result = std::panic::catch_unwind(|| Ulid::from_datetime(far_future));
@@ -465,7 +457,7 @@ async fn test_ulid_generation_same_nanosecond(ctx: TestContext) -> TestResult<()
 #[sinex_test]
 async fn test_ulid_zero_timestamp(ctx: TestContext) -> TestResult<()> {
     // Create ULID with zero timestamp (Unix epoch)
-    let epoch = OffsetDateTime::from_unix_timestamp(0).unwrap();
+    let epoch = Timestamp::from_unix_timestamp(0).unwrap();
     let ulid = Ulid::from_datetime(epoch);
 
     println!("Epoch ULID: {}", ulid);
@@ -498,7 +490,7 @@ async fn test_ulid_collision_resistance(ctx: TestContext) -> TestResult<()> {
     );
 
     // Test with same timestamp
-    let fixed_time = OffsetDateTime::now_utc();
+    let fixed_time = Timestamp::now();
     let mut timestamp_ulids = HashSet::new();
 
     for _ in 0..10_000 {

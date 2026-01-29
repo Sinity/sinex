@@ -16,23 +16,23 @@ use xtask::sandbox::prelude::*;
 async fn test_timestamp_boundaries(ctx: TestContext) -> TestResult<()> {
     let timestamp_cases = vec![
         // Unix epoch
-        OffsetDateTime::from_unix_timestamp(0).unwrap().into(),
+        Timestamp::from_unix_timestamp(0).unwrap(),
         // Far future (year 9999)
-        OffsetDateTime::new_in_utc(
-            time::Date::from_calendar_date(9999, time::Month::December, 31).unwrap(),
-            time::Time::from_hms(23, 59, 59).unwrap(),
-        )
-        .into(),
+        Timestamp::from_inner(
+            time::OffsetDateTime::new_in_utc(
+                time::Date::from_calendar_date(9999, time::Month::December, 31).unwrap(),
+                time::Time::from_hms(23, 59, 59).unwrap(),
+            )
+        ),
         // Near boundaries
-        OffsetDateTime::from_unix_timestamp(i32::MAX as i64)
-            .unwrap()
-            .into(),
+        Timestamp::from_unix_timestamp(i32::MAX as i64)
+            .unwrap(),
         // Current time
         now(),
     ];
 
     for (i, ts) in timestamp_cases.iter().enumerate() {
-        let ts: Timestamp = *ts;
+        let ts = *ts;
         let event = test_event(
             EventSource::from("timestamp_test"),
             EventType::from(format!("boundary_{i}")),

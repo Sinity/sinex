@@ -3,6 +3,7 @@ use sinex_db::sanitization::EventSanitizer;
 use sinex_db::payloads::filesystem::FileCreatedPayload;
 use sinex_primitives::domain::SanitizedPath;
 use sinex_db::{DynamicPayload, Event, EventSource, EventType, Id, Provenance};
+use sinex_primitives::Timestamp;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
@@ -69,7 +70,7 @@ async fn generic_sanitizer_with_typed_event() -> TestResult<()> {
     let payload = FileCreatedPayload {
         path: SanitizedPath::new_unchecked("../../../malicious/file.txt".to_string()),
         size: 1024,
-        created_at: OffsetDateTime::now_utc(),
+        created_at: Timestamp::now(),
         permissions: Some(0o644),
     };
 

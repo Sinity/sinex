@@ -12,7 +12,7 @@
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::Timeouts;
 
-use time::OffsetDateTime;
+use sinex_primitives::Timestamp;
 use xtask::sandbox::events;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Barrier};
@@ -222,7 +222,7 @@ async fn test_concurrent_event_insertion_race(ctx: TestContext) -> TestResult<()
                     json!({
                         "worker_id": worker_id,
                         "insertion_id": insertion_id,
-                        "timestamp": OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap()
+                        "timestamp": Timestamp::now().to_string()
                     }),
                     None,
                 );
@@ -427,7 +427,7 @@ async fn test_worker_coordination_microsecond_sync(ctx: TestContext) -> TestResu
                     "#,
                     event_id.to_uuid(),
                     worker_id.to_string(),
-                    OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap()
+                    Timestamp::now().to_string()
                 ).execute(&pool_clone).await;
 
                 let claim_duration = claim_start.elapsed();
@@ -660,7 +660,7 @@ async fn test_worker_load_balancing_concurrent(ctx: TestContext) -> TestResult<(
                     )
                     "#,
                     worker_id.to_string(),
-                    OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap()
+                    Timestamp::now().to_string()
                 )
                 .execute(&pool_clone)
                 .await;

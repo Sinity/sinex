@@ -26,7 +26,7 @@ use proptest::{strategy::ValueTree, test_runner::TestCaseResult};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use sinex_primitives::{
     domain::{EventSource, EventType, HostName},
-    Ulid,
+    Timestamp, Ulid,
 };
 use sinex_primitives::{Event, Id}; // Modern Event API helpers
 
@@ -101,20 +101,20 @@ fn edge_case_u64() -> impl Strategy<Value = u64> {
 }
 
 /// Strategy for generating problematic timestamps
-fn problematic_timestamps() -> impl Strategy<Value = OffsetDateTime> {
+fn problematic_timestamps() -> impl Strategy<Value = Timestamp> {
     prop_oneof![
         // Unix epoch
-        Just(OffsetDateTime::from_unix_timestamp(0).unwrap()),
+        Just(Timestamp::from_unix_timestamp(0).unwrap()),
         // Very early dates
-        Just(OffsetDateTime::from_unix_timestamp(-2208988800).unwrap()), // 1900-01-01
+        Just(Timestamp::from_unix_timestamp(-2208988800).unwrap()), // 1900-01-01
         // Very far future dates
-        Just(OffsetDateTime::from_unix_timestamp(4102444800).unwrap()), // 2100-01-01
+        Just(Timestamp::from_unix_timestamp(4102444800).unwrap()), // 2100-01-01
         // Edge of 32-bit time_t
-        Just(OffsetDateTime::from_unix_timestamp(2147483647).unwrap()), // 2038-01-19
-        Just(OffsetDateTime::from_unix_timestamp(-2147483648).unwrap()), // 1901-12-13
+        Just(Timestamp::from_unix_timestamp(2147483647).unwrap()), // 2038-01-19
+        Just(Timestamp::from_unix_timestamp(-2147483648).unwrap()), // 1901-12-13
         // Random timestamps
         (-2208988800i64..4102444800i64).prop_map(|ts| {
-            OffsetDateTime::from_unix_timestamp(ts).unwrap_or(OffsetDateTime::now_utc())
+            Timestamp::from_unix_timestamp(ts).unwrap_or(Timestamp::now())
         }),
     ]
 }

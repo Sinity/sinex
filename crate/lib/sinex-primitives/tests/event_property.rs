@@ -12,7 +12,7 @@ use proptest::strategy::Strategy;
 use proptest::strategy::ValueTree;
 use serde_json::{json, Value as JsonValue};
 use sinex_primitives::events::{OffsetKind, Provenance};
-use sinex_primitives::{Event, EventSource, EventType, HostName, Id, OffsetDateTime, Result, Ulid};
+use sinex_primitives::{Event, EventSource, EventType, HostName, Id, Timestamp, Result, Ulid};
 use time::Duration as TimeDuration;
 use xtask::sandbox::prelude::*;
 type RawEvent = Event<JsonValue>;
@@ -22,7 +22,7 @@ fn test_event(source: EventSource, event_type: EventType, payload: JsonValue) ->
         id: None,
         source,
         event_type,
-        ts_orig: Some(OffsetDateTime::now_utc()),
+        ts_orig: Some(Timestamp::now()),
         host: HostName::new("localhost"),
         payload,
         ingestor_version: Some("test".to_string()),
@@ -143,14 +143,14 @@ fn arb_version() -> impl Strategy<Value = String> {
 }
 
 /// Generate arbitrary timestamps within a reasonable range
-fn arb_timestamp() -> impl Strategy<Value = OffsetDateTime> {
+fn arb_timestamp() -> impl Strategy<Value = Timestamp> {
     // Generate timestamps from 1 year ago to 1 hour in the future
-    let now = OffsetDateTime::now_utc();
-    let start = now - TimeDuration::days(365);
-    let end = now + TimeDuration::hours(1);
+    let now = Timestamp::now();
+    let start = *now - TimeDuration::days(365);
+    let end = *now + TimeDuration::hours(1);
 
     (start.timestamp_millis()..=end.timestamp_millis())
-        .prop_map(move |ts| OffsetDateTime::from_unix_timestamp_millis(ts).unwrap_or(now))
+        .prop_map(move |ts| Timestamp::from_unix_timestamp_millis(ts).unwrap_or(now))
 }
 
 /// Strategy for generating complete Event instances
@@ -229,13 +229,13 @@ proptest! {
             event2.id.as_ref().unwrap()
         );
 
-        let now = OffsetDateTime::now_utc();
+        let now = Timestamp::now();
         let t1 = event1.id.as_ref().unwrap().as_ulid().timestamp();
         let t2 = event2.id.as_ref().unwrap().as_ulid().timestamp();
-        prop_assert!(t1 <= now);
-        prop_assert!(t2 <= now);
-        prop_assert!(now - t1 < TimeDuration::seconds(10));
-        prop_assert!(now - t2 < TimeDuration::seconds(10));
+        prop_assert!(t1 <= *now);
+        prop_assert!(t2 <= *now);
+        prop_assert!(*now - t1 < TimeDuration::seconds(10));
+        prop_assert!(*now - t2 < TimeDuration::seconds(10));
         Ok(())
     }
 
@@ -246,14 +246,14 @@ proptest! {
         prop_assert!(event.event_type.len() <= 255);
         prop_assert!(!event.host.is_empty());
 
-        let now = OffsetDateTime::now_utc();
+        let now = Timestamp::now();
         let t = event.id.as_ref().unwrap().as_ulid().timestamp();
-        prop_assert!(t <= now);
-        prop_assert!(now - t < TimeDuration::hours(1));
+        prop_assert!(t <= *now);
+        prop_assert!(*now - t < TimeDuration::hours(1));
 
         if let Some(ts_orig) = event.ts_orig {
-            prop_assert!(ts_orig <= now + TimeDuration::hours(1));
-            prop_assert!(ts_orig >= now - TimeDuration::days(365));
+            prop_assert!(ts_orig <= *now + TimeDuration::hours(1));
+            prop_assert!(ts_orig >= *now - TimeDuration::days(365));
         }
 
         prop_assert!(serde_json::to_string(&event.payload).is_ok());
@@ -264,7 +264,7 @@ proptest! {
         source: String in arb_source_name(),
         event_type: String in arb_event_type_name(),
         payload: Value in arb_json_value(),
-        ts_orig: OffsetDateTime in arb_timestamp(),
+        ts_orig: Timestamp in arb_timestamp(),
         host: String in arb_hostname()
     ) {
         let mut event = test_event(
@@ -471,9 +471,9 @@ mod unit_tests {
         let ts_orig = event
             .ts_orig
             .expect("test_event should stamp an original timestamp");
-        let now = OffsetDateTime::now_utc();
-        assert!(ts_orig <= now);
-        assert!(now - ts_orig < TimeDuration::seconds(5));
+        let now = Timestamp::now();
+        assert!(ts_orig <= *now);
+        assert!(*now - ts_orig < TimeDuration::seconds(5));
         assert!(!event.host.is_empty()); // Should get hostname
         assert_eq!(event.ingestor_version.as_deref(), Some("test"));
         assert!(event.payload_schema_id.is_none());
@@ -531,9 +531,9 @@ mod unit_tests {
 
         // Test timestamp generator
         let timestamp = arb_timestamp().new_tree(&mut runner).unwrap().current();
-        let now = OffsetDateTime::now_utc();
-        assert!(timestamp >= now - TimeDuration::days(366));
-        assert!(timestamp <= now + TimeDuration::hours(2));
+        let now = Timestamp::now();
+        assert!(timestamp >= *now - TimeDuration::days(366));
+        assert!(timestamp <= *now + TimeDuration::hours(2));
 
         Ok(())
     }

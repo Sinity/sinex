@@ -1,7 +1,7 @@
 //! Coordination types
 
 use crate::domain::{HostName, InstanceId, NodeType};
-use crate::temporal::OffsetDateTime;
+use crate::temporal::Timestamp;
 use serde::{Deserialize, Serialize};
 
 /// Instance info
@@ -12,7 +12,7 @@ pub struct InstanceInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hostname: Option<HostName>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_heartbeat: Option<OffsetDateTime>,
+    pub last_heartbeat: Option<Timestamp>,
     pub is_leader: bool,
 }
 
@@ -68,7 +68,7 @@ pub struct ErrorInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timestamp: Option<OffsetDateTime>,
+    pub timestamp: Option<Timestamp>,
 }
 
 impl std::fmt::Display for ErrorInfo {

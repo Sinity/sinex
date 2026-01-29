@@ -10,7 +10,6 @@ use sinex_db::repositories::common::{db_error, TimeBucketResult};
 use sinex_db::DbPool;
 use sinex_primitives::Timestamp;
 use sinex_primitives::Pagination;
-use time::OffsetDateTime;
 use sqlx::postgres::types::PgInterval;
 use sqlx::{pool::PoolConnection, Postgres, Row};
 use std::collections::HashMap;
@@ -22,7 +21,7 @@ static EPOCH_START: OnceCell<Timestamp> = OnceCell::new();
 
 fn epoch_start() -> Timestamp {
     EPOCH_START
-        .get_or_init(|| OffsetDateTime::UNIX_EPOCH.into())
+        .get_or_init(|| Timestamp::UNIX_EPOCH)
         .clone()
 }
 
@@ -249,9 +248,7 @@ impl AnalyticsService {
             .into_iter()
             .map(|r| {
                 (
-                    OffsetDateTime::from_unix_timestamp_nanos(r.bucket.unix_timestamp_nanos())
-                        .unwrap_or(OffsetDateTime::UNIX_EPOCH)
-                        .into(),
+                    Timestamp::from_unix_nanos(r.bucket.unix_timestamp_nanos()),
                     r.count,
                 )
             })
@@ -370,9 +367,7 @@ impl AnalyticsService {
             .into_iter()
             .map(|r| {
                 (
-                    OffsetDateTime::from_unix_timestamp_nanos(r.bucket.unix_timestamp_nanos())
-                        .unwrap_or(OffsetDateTime::UNIX_EPOCH)
-                        .into(),
+                    Timestamp::from_unix_nanos(r.bucket.unix_timestamp_nanos()),
                     r.count,
                 )
             })

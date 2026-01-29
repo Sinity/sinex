@@ -14,6 +14,7 @@
 use xtask::sandbox::prelude::*;
 use sinex_primitives::db::validation::EventValidator;
 use sinex_primitives::db::models::{EventFactory, services, event_types};
+use sinex_primitives::Timestamp;
 use std::fs;
 use std::collections::HashMap;
 
@@ -418,9 +419,12 @@ async fn test_resource_exhaustion_protection(ctx: TestContext) -> TestResult<()>
     let mut insert_count = 0;
 
     for i in 0..1000 {
+        let ts_str = Timestamp::now()
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_else(|_| "unknown".to_string());
         let event = json!({
             "index": i,
-            "timestamp": OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap()
+            "timestamp": ts_str
         });
 
         let factory = EventFactory::new(sources::TEST);

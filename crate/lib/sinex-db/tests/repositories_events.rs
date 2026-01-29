@@ -4,7 +4,7 @@ use sinex_primitives::domain::SanitizedPath;
 use sinex_primitives::events::payloads::{FileCreatedPayload, KittyCommandExecutedPayload};
 use sinex_primitives::Id;
 use sinex_db::{Event, Provenance};
-use time::OffsetDateTime;
+use sinex_primitives::Timestamp;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
@@ -95,7 +95,7 @@ async fn register_external_in_flight_uses_provided_id(ctx: TestContext) -> TestR
             sinex_db::repositories::source_materials::material_types::FILE,
             Some(&identifier),
             json!({"note": "external registration"}),
-            OffsetDateTime::now_utc(),
+            Timestamp::now(),
         )
         .await?;
 

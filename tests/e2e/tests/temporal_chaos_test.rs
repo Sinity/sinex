@@ -36,6 +36,7 @@
 // 3. **Concurrency Safety**: No race conditions under maximum contention
 
 use time::Duration;
+use sinex_primitives::Timestamp;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::events;
 use xtask::sandbox::timing::Timeouts;
@@ -283,7 +284,7 @@ async fn test_collector_backpressure_extreme_load(
         "metadata": {
             "test_type": "backpressure",
             "sender_count": config.concurrent_senders,
-            "timestamp": OffsetDateTime::now_utc()
+            "timestamp": Timestamp::now()
         }
     });
 
@@ -391,7 +392,7 @@ async fn test_causality_violation_handling(ctx: TestContext) -> TestResult<()> {
     println!("=== Causality Violation Test: Impossible Event Sequences ===");
 
     // Phase 1: Create causally impossible filesystem events
-    let base_time = OffsetDateTime::now_utc();
+    let base_time = Timestamp::now();
     let file_path = "/test/causality/test_file.txt";
 
     // Create events in impossible order: deleted -> modified -> created
@@ -679,7 +680,7 @@ async fn test_comprehensive_temporal_chaos_scenario(
 
         let handle = tokio::spawn(async move {
             let events_per_sender = herd_config.total_events / herd_config.concurrent_senders;
-            let base_time = OffsetDateTime::now_utc();
+            let base_time = Timestamp::now();
 
             for event_idx in 0..events_per_sender {
                 // Randomly create events with impossible timestamps

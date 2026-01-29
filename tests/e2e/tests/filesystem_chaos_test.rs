@@ -8,7 +8,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use time::OffsetDateTime;
+use sinex_primitives::Timestamp;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::Timeouts;
 
@@ -204,7 +204,7 @@ async fn test_filesystem_chaos_concurrent_operations(_ctx: TestContext) -> TestR
                     "file_{}_{}_{}.txt",
                     task_id,
                     op_id,
-                    OffsetDateTime::now_utc().timestamp_millis()
+                    Timestamp::now().timestamp_millis()
                 ));
 
                 // Perform random file operation
