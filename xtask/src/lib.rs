@@ -76,11 +76,13 @@ enum Commands {
     /// Build packages
     Build(BuildCommand),
     /// Manage local stack (database, NATS)
+    #[cfg(feature = "sandbox")]
     Stack {
         #[command(subcommand)]
         cmd: commands::stack::StackSubcommand,
     },
     /// Database operations (migrate, seed, setup)
+    #[cfg(feature = "sandbox")]
     Db {
         #[command(subcommand)]
         cmd: commands::db::DbSubcommand,
@@ -118,7 +120,9 @@ pub fn run_cli() -> Result<()> {
         Commands::Test(_) => ("test", None, None),
         Commands::Bench(_) => ("bench", None, None),
         Commands::Build(_) => ("build", None, None),
+        #[cfg(feature = "sandbox")]
         Commands::Stack { .. } => ("stack", None, None),
+        #[cfg(feature = "sandbox")]
         Commands::Db { .. } => ("db", None, None),
         Commands::Vm(_) => ("vm", None, None),
         Commands::Infra(_) => ("infra", None, None),
@@ -147,7 +151,9 @@ pub fn run_cli() -> Result<()> {
         Commands::Test(cmd) => cmd.execute(&ctx),
         Commands::Bench(cmd) => cmd.execute(&ctx),
         Commands::Build(cmd) => cmd.execute(&ctx),
+        #[cfg(feature = "sandbox")]
         Commands::Stack { cmd } => commands::StackCommand { subcommand: cmd }.execute(&ctx),
+        #[cfg(feature = "sandbox")]
         Commands::Db { cmd } => commands::DbCommand { subcommand: cmd }.execute(&ctx),
         Commands::Vm(cmd) => cmd.execute(&ctx),
         Commands::Infra(cmd) => cmd.execute(&ctx),

@@ -201,7 +201,7 @@ async fn test_timestamp_precision(ctx: TestContext) -> color_eyre::Result<()> {
 
     assert_eq!(events.len(), precision_cases.len());
 
-    let mut stored_by_level: Vec<(usize, OffsetDateTime)> = events
+    let mut stored_by_level: Vec<(usize, Timestamp)> = events
         .iter()
         .map(|event| {
             let level = event.payload["precision_level"]
@@ -217,7 +217,7 @@ async fn test_timestamp_precision(ctx: TestContext) -> color_eyre::Result<()> {
         let original_ts = precision_cases[level];
         assert_eq!(
             original_ts.unix_timestamp_nanos(),
-            stored_ts.unix_timestamp_nanos(),
+            (*stored_ts).unix_timestamp_nanos(),
             "Nanosecond precision should be preserved for event {}",
             level
         );
@@ -365,7 +365,7 @@ async fn test_timestamp_query_ordering(ctx: TestContext) -> color_eyre::Result<(
 
     // Events should be ordered by ULID (ingestion time) by default
     // but we can verify logical timestamps are preserved
-    let mut ordered_events: Vec<(usize, OffsetDateTime)> = events
+    let mut ordered_events: Vec<(usize, Timestamp)> = events
         .iter()
         .map(|event| {
             let sequence = event.payload["sequence"]
@@ -380,7 +380,7 @@ async fn test_timestamp_query_ordering(ctx: TestContext) -> color_eyre::Result<(
     for (sequence, stored_ts) in ordered_events {
         let expected_ts = expected_order[sequence];
         assert_eq!(
-            stored_ts, expected_ts,
+            *stored_ts, expected_ts,
             "Logical timestamp should be preserved for event {}",
             sequence
         );

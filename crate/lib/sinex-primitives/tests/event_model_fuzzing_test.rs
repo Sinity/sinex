@@ -175,7 +175,7 @@ fn fuzzed_events() -> impl Strategy<Value = Event<JsonValue>> {
             // Set required timestamp fields
             event.host = HostName::new(host);
             event.id = Some(Id::from_ulid(Ulid::new()));
-            event.ts_orig = Some(ts_orig);
+            event.ts_orig = Some(ts_orig.into());
 
             event
         })

@@ -5,6 +5,7 @@ pub mod check;
 pub mod ci;
 pub mod completions;
 pub mod coverage;
+#[cfg(feature = "sandbox")]
 pub mod db;
 pub mod dev;
 pub mod fix;
@@ -17,6 +18,7 @@ pub mod lint_forbidden;
 pub mod mutants;
 pub mod qa;
 pub mod schema;
+#[cfg(feature = "sandbox")]
 pub mod stack;
 pub mod status;
 pub mod test;
@@ -29,12 +31,14 @@ pub use build::BuildCommand;
 pub use check::CheckCommand;
 pub use ci::CiCommand;
 pub use completions::CompletionsCommand;
+#[cfg(feature = "sandbox")]
 pub use db::DbCommand;
 pub use dev::DevCommand;
 pub use fix::FixCommand;
 pub use infra::InfraCommand;
 pub use jobs::JobsCommand;
 pub use qa::QaCommand;
+#[cfg(feature = "sandbox")]
 pub use stack::StackCommand;
 pub use status::StatusCommand;
 pub use test::TestCommand;

@@ -102,7 +102,6 @@ human_bytes = "0.4.3"
 [features]
 default = [
     "cli",
-    "sandbox",
 ]
 cli = [
 ]

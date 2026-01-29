@@ -9,10 +9,10 @@
 
 use serde_json::json;
 use sinex_db::models::Event;
+use sinex_db::repositories::common::EventSearchFilters;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::{Id, Ulid};
-use sinex_primitives::EventSearchFilters;
 use std::collections::HashSet;
 use xtask::sandbox::prelude::*;
 
