@@ -3380,7 +3380,7 @@ async fn apply_test_session_optimizations(pool: &DbPool) -> TestResult<()> {
     eprintln!("⚡ Applying test session optimizations...");
     crate::sandbox::db::common::apply_test_optimizations(pool)
         .await
-        .map_err(|e| color_eyre::eyre::eyre!("Failed to apply test optimizations: {e}"))?;
+        .map_err(|e| SinexError::database(format!("Failed to apply test optimizations: {e}")))?;
     Ok(())
 }
 
