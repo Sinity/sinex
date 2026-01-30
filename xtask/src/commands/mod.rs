@@ -18,7 +18,6 @@ pub mod lint_forbidden;
 pub mod mutants;
 pub mod qa;
 pub mod schema;
-#[cfg(feature = "sandbox")]
 pub mod stack;
 pub mod status;
 pub mod test;
@@ -38,7 +37,6 @@ pub use fix::FixCommand;
 pub use infra::InfraCommand;
 pub use jobs::JobsCommand;
 pub use qa::QaCommand;
-#[cfg(feature = "sandbox")]
 pub use stack::StackCommand;
 pub use status::StatusCommand;
 pub use test::TestCommand;

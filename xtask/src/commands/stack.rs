@@ -7,9 +7,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
+use crate::infra::stack::{self, StackConfig, StackStatus};
+use crate::infra::state::CheckoutState;
 use crate::process::ProcessBuilder;
-use crate::sandbox::stack::{self, StackConfig, StackStatus};
-use crate::sandbox::state::CheckoutState;
 
 /// Stack command - manages the isolated development environment.
 pub struct StackCommand {

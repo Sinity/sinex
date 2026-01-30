@@ -16,6 +16,7 @@ pub mod history;
 pub mod jobs;
 pub mod output;
 pub mod process;
+pub mod infra;
 pub mod resources;
 #[cfg(feature = "sandbox")]
 pub mod sandbox;
@@ -76,7 +77,6 @@ enum Commands {
     /// Build packages
     Build(BuildCommand),
     /// Manage local stack (database, NATS)
-    #[cfg(feature = "sandbox")]
     Stack {
         #[command(subcommand)]
         cmd: commands::stack::StackSubcommand,
@@ -120,7 +120,6 @@ pub fn run_cli() -> Result<()> {
         Commands::Test(_) => ("test", None, None),
         Commands::Bench(_) => ("bench", None, None),
         Commands::Build(_) => ("build", None, None),
-        #[cfg(feature = "sandbox")]
         Commands::Stack { .. } => ("stack", None, None),
         #[cfg(feature = "sandbox")]
         Commands::Db { .. } => ("db", None, None),
@@ -151,7 +150,6 @@ pub fn run_cli() -> Result<()> {
         Commands::Test(cmd) => cmd.execute(&ctx),
         Commands::Bench(cmd) => cmd.execute(&ctx),
         Commands::Build(cmd) => cmd.execute(&ctx),
-        #[cfg(feature = "sandbox")]
         Commands::Stack { cmd } => commands::StackCommand { subcommand: cmd }.execute(&ctx),
         #[cfg(feature = "sandbox")]
         Commands::Db { cmd } => commands::DbCommand { subcommand: cmd }.execute(&ctx),
