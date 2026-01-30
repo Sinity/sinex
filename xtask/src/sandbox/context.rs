@@ -1,13 +1,12 @@
 //! Test Context - Database Isolation and Test Utilities
 //!
-//! The `TestContext` provides isolated database access and test-specific utilities
+//! The `Sandbox` provides isolated database access and test-specific utilities
 //! without wrapping production APIs. Tests use production `test_event()`
-use crate::sandbox::prelude::*;
 //! and repository methods directly through the exposed pool.
 //!
 //! # Architecture
 //!
-//! TestContext manages:
+//! Sandbox manages:
 //! - **Database Isolation**: Each test gets its own database from the pool
 //! - **Test Coordination**: Timing and synchronization
 //! - **Assertions**: Rich error messages with context
@@ -17,7 +16,7 @@ use crate::sandbox::prelude::*;
 //!
 //! ```rust
 //! #[sinex_test]
-//! async fn test_example(ctx: TestContext) -> TestResult<()> {
+//! async fn test_example(ctx: Sandbox) -> TestResult<()> {
 //!     // Direct production API - no wrapper
 //!     let event = test_event(
 //!         "fs-watcher",
@@ -39,20 +38,22 @@ use crate::sandbox::prelude::*;
 //! }
 //! ```
 
-use crate::database_pool::{acquire_test_database, TestDatabase};
-use crate::db_common::{self, verify_clean_state};
-use crate::event_assertion::EventAssert;
-use crate::ingestd_test_utils::{
+use crate::sandbox::prelude::*;
+
+use crate::sandbox::assertions::EventAssert;
+use crate::sandbox::coordination::PipelineNamespace;
+use crate::sandbox::coordination::PipelineScope;
+use crate::sandbox::db::pool::{acquire_test_database, TestDatabase};
+use crate::sandbox::db::{reset_database, verify_clean_state};
+use crate::sandbox::nats::shared_nats_handle;
+use crate::sandbox::nats::EphemeralNats;
+use crate::sandbox::nats::NatsSetup;
+use crate::sandbox::orchestrator::{
     start_test_ingestd_with_config, TestIngestdConfig, TestIngestdHandle,
 };
-use crate::nats::EphemeralNats;
-use crate::nats_setup::NatsSetup;
-use crate::pipeline::shared_nats_handle;
-use crate::pipeline_namespace::PipelineNamespace;
-use crate::pipeline_scope::PipelineScope;
-use crate::snapshot_helper::{self, FailureContext};
-use crate::timing_utils::{TimingUtils, WaitHelpers, DEFAULT_WAIT_SECS};
-use crate::TestResult;
+use crate::sandbox::prelude::TestResult;
+use crate::sandbox::snapshot_helper::{self, FailureContext};
+use crate::sandbox::timing::{TimingUtils, WaitHelpers, DEFAULT_WAIT_SECS};
 use async_nats::{jetstream, Client as NatsClient};
 use color_eyre::eyre::{eyre, WrapErr};
 use futures::future::BoxFuture;
@@ -61,13 +62,14 @@ use futures::StreamExt;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use serde_json::Value as JsonValue;
-use sinex_core::db::models::event::{Event, OffsetKind, Provenance, SourceMaterial};
-use sinex_core::db::query_helpers::ulid_to_uuid;
-use sinex_core::environment::SinexEnvironment;
-use sinex_core::types::{DbPool, Id, Timestamp, Ulid};
+use sinex_db::DbPool;
+use sinex_db::DbPoolExt;
+use sinex_primitives::{Event, OffsetKind, Provenance, SourceMaterial};
+use sinex_primitives::{Id, Timestamp, Ulid};
 use std::result::Result as StdResult;
 
-use sinex_core::{DbPoolExt, EventSource, EventType, Publishable};
+use sinex_primitives::events::Publishable;
+use sinex_primitives::{EventSource, EventType};
 use std::collections::HashSet;
 use std::mem;
 use std::sync::mpsc;
@@ -86,7 +88,7 @@ use std::str::FromStr;
 fn format_cleanup_failure_context(
     message: &str,
     namespace: &str,
-    diagnostics: &crate::database_pool::CleanupDiagnostics,
+    diagnostics: &crate::sandbox::db::pool::CleanupDiagnostics,
     snapshot: Option<BackgroundSnapshot>,
 ) -> String {
     let (pending, labels) = match snapshot {
@@ -151,7 +153,7 @@ async fn await_pending_cleanups() {
     }
 }
 
-pub struct TestContext {
+pub struct Sandbox {
     /// Direct access to the database pool - use this for repositories
     pub pool: DbPool,
     db: TestDatabase,
@@ -217,7 +219,7 @@ pub struct BackgroundSnapshot {
 }
 
 #[derive(Clone)]
-pub struct TestContextFailureSnapshot {
+pub struct SandboxFailureSnapshot {
     test_name: String,
     baseline_events: i64,
     start_time: Instant,
@@ -225,7 +227,7 @@ pub struct TestContextFailureSnapshot {
     background: Arc<AsyncMutex<BackgroundRegistry>>,
 }
 
-impl TestContextFailureSnapshot {
+impl SandboxFailureSnapshot {
     pub fn test_name(&self) -> &str {
         &self.test_name
     }
@@ -258,26 +260,26 @@ impl TestContextFailureSnapshot {
 
 /// Lightweight handle exposing pool and background registry for global hooks.
 #[derive(Clone)]
-pub struct TestContextHandle {
+pub struct SandboxHandle {
     pub pool: DbPool,
     pub(crate) background: Arc<AsyncMutex<BackgroundRegistry>>,
 }
 
-impl TestContextHandle {
+impl SandboxHandle {
     pub async fn quiesce_background_tasks(&self) {
         let mut guard = self.background.lock().await;
         guard.quiesce_tasks_only().await;
     }
 }
 
-impl TestContext {
+impl Sandbox {
     thread_local! {
-        static CURRENT_CTX: std::cell::RefCell<Option<TestContextHandle>> = const { std::cell::RefCell::new(None) };
+        static CURRENT_CTX: std::cell::RefCell<Option<SandboxHandle>> = const { std::cell::RefCell::new(None) };
     }
 
     /// Attach this context to the current thread for retrieval by helpers.
     pub(crate) fn install_current(&self) {
-        let handle = TestContextHandle {
+        let handle = SandboxHandle {
             pool: self.pool.clone(),
             background: self.background.clone(),
         };
@@ -293,8 +295,8 @@ impl TestContext {
         });
     }
 
-    /// Best-effort access to the current TestContext handle (pool + background).
-    pub fn try_current() -> Option<TestContextHandle> {
+    /// Best-effort access to the current Sandbox handle (pool + background).
+    pub fn try_current() -> Option<SandboxHandle> {
         Self::CURRENT_CTX.with(|cell| cell.borrow().clone())
     }
     /// Accessor for the shared database pool.
@@ -409,7 +411,7 @@ impl TestContext {
             nats: None,
             nats_client: None,
             nats_mode: NatsMode::None,
-            env: sinex_core::environment().clone(),
+            env: sinex_primitives::environment().clone(),
             pipeline_namespace: pipeline_namespace.clone(),
             pipeline_ingestd: Arc::new(AsyncMutex::new(None)),
             _reaper: Arc::new(NamespaceReaper {
@@ -422,8 +424,11 @@ impl TestContext {
         // Register the default test material ID so test_event() works out of the box
         let material_id =
             Ulid::from_str(crate::DEFAULT_TEST_MATERIAL_ID).expect("valid constant ULID");
-        ctx.ensure_source_material(Id::<SourceMaterial>::from_ulid(material_id), Some("test-material"))
-            .await?;
+        ctx.ensure_source_material(
+            Id::<SourceMaterial>::from_ulid(material_id),
+            Some("test-material"),
+        )
+        .await?;
 
         Ok(ctx)
     }
@@ -491,7 +496,7 @@ impl TestContext {
 
     /// Lazily initialize shared NATS without consuming self.
     ///
-    /// This is designed for property tests where `&TestContext` is passed and
+    /// This is designed for property tests where `&Sandbox` is passed and
     /// ownership-consuming methods like `with_nats(self)` cannot be used.
     ///
     /// If NATS was already initialized via `with_nats()` or `with_shared_nats()`,
@@ -502,7 +507,7 @@ impl TestContext {
     /// ```ignore
     /// #[sinex_prop(cases = 50)]
     /// async fn property_nats_delivery(
-    ///     ctx: &TestContext,
+    ///     ctx: &Sandbox,
     ///     #[strategy(message_sequence_strategy())] messages: Vec<TestMessage>,
     /// ) -> TestResult<()> {
     ///     let nats = ctx.ensure_nats().await?;
@@ -634,7 +639,7 @@ impl TestContext {
             ..Default::default()
         };
         config.batch_size = 32;
-        config.batch_timeout_secs = sinex_core::types::units::Seconds::from_secs(1);
+        config.batch_timeout_secs = sinex_primitives::Seconds::from_secs(1);
         config.consumer_fetch_max_messages = 32;
         config.consumer_fetch_timeout_ms = 200;
         let handle = start_test_ingestd_with_config(config, Some(self)).await?;
@@ -673,14 +678,17 @@ impl TestContext {
     /// Reset the underlying database slot and verify it is clean.
     pub async fn reset_database_slot(&self) -> TestResult<()> {
         self.quiesce_background_tasks().await?;
-        db_common::reset_database(&self.pool).await?;
-        db_common::verify_clean_state(&self.pool).await?;
+        reset_database(&self.pool).await?;
+        verify_clean_state(&self.pool).await?;
 
         // Re-register the default test material ID so test_event() continues to work
         let material_id =
             Ulid::from_str(crate::DEFAULT_TEST_MATERIAL_ID).expect("valid constant ULID");
-        self.ensure_source_material(Id::<SourceMaterial>::from_ulid(material_id), Some("test-material"))
-            .await?;
+        self.ensure_source_material(
+            Id::<SourceMaterial>::from_ulid(material_id),
+            Some("test-material"),
+        )
+        .await?;
 
         Ok(())
     }
@@ -755,8 +763,8 @@ impl TestContext {
     }
 
     /// Capture snapshot metadata that survives if the context is moved.
-    pub fn failure_snapshot(&self) -> TestContextFailureSnapshot {
-        TestContextFailureSnapshot {
+    pub fn failure_snapshot(&self) -> SandboxFailureSnapshot {
+        SandboxFailureSnapshot {
             test_name: self.test_name.clone(),
             baseline_events: self.baseline_events,
             start_time: self.start_time,
@@ -794,7 +802,7 @@ impl TestContext {
     /// If not clean, returns an error with diagnostics.
     pub async fn ensure_clean(&self) -> TestResult<()> {
         self.quiesce_background_tasks().await?;
-        match crate::db_common::verify_clean_state(&self.pool).await {
+        match verify_clean_state(&self.pool).await {
             Ok(_) => Ok(()),
             Err(err) => {
                 let diagnostics = self.db.cleanup_diagnostics();
@@ -917,7 +925,7 @@ impl TestContext {
         self.publish_event_internal(
             payload.source(),
             payload.event_type(),
-            payload.to_json_value(),
+            payload.to_json_value()?,
             None,
         )
         .await
@@ -926,7 +934,7 @@ impl TestContext {
     /// Internal implementation for event publishing (used by EventPublisher).
     ///
     /// This method uses `ensure_nats()` to lazily initialize NATS if not already
-    /// configured, enabling property tests (which receive `&TestContext`) to
+    /// configured, enabling property tests (which receive `&Sandbox`) to
     /// publish events without requiring ownership-consuming `with_nats(self)`.
     pub(crate) async fn publish_event_internal(
         &self,
@@ -935,14 +943,13 @@ impl TestContext {
         payload: JsonValue,
         timestamp_override: Option<Timestamp>,
     ) -> TestResult<Event<JsonValue>> {
-        use chrono::Utc;
-        use sinex_core::types::domain::HostName;
+        use sinex_primitives::HostName;
 
         // Ensure NATS is available (lazy initialization for property tests)
         let _client = self.ensure_nats().await?;
 
         let mut sanitized_payload = payload;
-        TestContext::sanitize_payload(&mut sanitized_payload);
+        Sandbox::sanitize_payload(&mut sanitized_payload);
 
         // Create real source material first
         let material_id = Id::<SourceMaterial>::new();
@@ -956,7 +963,7 @@ impl TestContext {
             source,
             event_type,
             payload: sanitized_payload,
-            ts_orig: Some(timestamp_override.unwrap_or_else(Utc::now)),
+            ts_orig: Some(timestamp_override.unwrap_or_else(sinex_primitives::Timestamp::now)),
             host: HostName::new(gethostname::gethostname().to_string_lossy().to_string()),
             ingestor_version: Some("test-ingestor".to_string()),
             payload_schema_id: None,
@@ -1046,7 +1053,7 @@ impl TestContext {
     /// Ensure a specific source material exists, returning its ID handle.
     pub async fn ensure_specific_material(
         &self,
-        material_id: sinex_core::Ulid,
+        material_id: sinex_primitives::Ulid,
         source_identifier: Option<&str>,
     ) -> TestResult<Id<SourceMaterial>> {
         let id = Id::<SourceMaterial>::from_ulid(material_id);
@@ -1229,7 +1236,7 @@ impl TestContext {
     }
 }
 
-impl TestContext {
+impl Sandbox {
     /// Publish a pre-built event to the ingestion pipeline via NATS.
     ///
     /// **For most tests, use `ctx.publish(DynamicPayload::new(...))` instead.**
@@ -1279,10 +1286,7 @@ async fn cleanup_created_records(pool: DbPool, records: Vec<CreatedEventInfo>) -
         return Ok(());
     }
 
-    let event_ids: Vec<Uuid> = records
-        .iter()
-        .map(|info| ulid_to_uuid(info.event_id))
-        .collect();
+    let event_ids: Vec<Uuid> = records.iter().map(|info| info.event_id.to_uuid()).collect();
 
     if !event_ids.is_empty() {
         sqlx::query!(
@@ -1295,7 +1299,7 @@ async fn cleanup_created_records(pool: DbPool, records: Vec<CreatedEventInfo>) -
 
     let material_set: HashSet<Uuid> = records
         .iter()
-        .filter_map(|info| info.material_id.map(ulid_to_uuid))
+        .filter_map(|info| info.material_id.map(|id| id.to_uuid()))
         .collect();
     let material_ids: Vec<Uuid> = material_set.into_iter().collect();
 
@@ -1388,15 +1392,15 @@ impl BackgroundRegistry {
     }
 }
 
-/// Cleanup implementation for TestContext
-impl Drop for TestContext {
+/// Cleanup implementation for Sandbox
+impl Drop for Sandbox {
     fn drop(&mut self) {
         self.clear_current();
         if std::thread::panicking() {
             let snapshot = self.failure_snapshot();
             snapshot_helper::persist_failure(
                 self.test_name(),
-                "TestContext dropped during panic",
+                "Sandbox dropped during panic",
                 FailureContext::Snapshot(snapshot),
             );
         }
@@ -1467,7 +1471,7 @@ impl Drop for TestContext {
                 let cleanup_records = records.clone();
                 let mut join_handle = Some(handle.spawn(async move {
                     if let Err(err) = cleanup_created_records(cleanup_pool, cleanup_records).await {
-                        warn!("TestContext cleanup failed: {}", err);
+                        warn!("Sandbox cleanup failed: {}", err);
                     }
                 }));
 
@@ -1493,7 +1497,7 @@ impl Drop for TestContext {
                         .build()
                     {
                         if let Err(err) = rt.block_on(cleanup_created_records(pool, records)) {
-                            warn!("TestContext cleanup failed: {}", err);
+                            warn!("Sandbox cleanup failed: {}", err);
                         }
                     } else {
                         // Last resort: try futures executor, but catch any panic
@@ -1501,7 +1505,7 @@ impl Drop for TestContext {
                             if let Err(err) =
                                 futures::executor::block_on(cleanup_created_records(pool, records))
                             {
-                                warn!("TestContext cleanup failed without runtime: {}", err);
+                                warn!("Sandbox cleanup failed without runtime: {}", err);
                             }
                         }));
                     }

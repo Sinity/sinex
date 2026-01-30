@@ -5,13 +5,13 @@
 // - Single-writer pattern through ingestd
 // - Schema contract enforcement
 
-use sinex_core::db::repositories::DbPoolExt;
-use sinex_core::DynamicPayload;
+use sinex_db::DbPoolExt;
+use sinex_primitives::DynamicPayload;
 use sinex_node_sdk::stream_processor::{Checkpoint, TimeHorizon};
-use xtask::sandbox::prelude::*;
-use xtask::sandbox::sinex_test;
-use sinex_test_utils::TestResult;
+use xtask::sandbox::TestResult;
 use tracing::info;
+use xtask::sandbox::prelude::*;
+use time::OffsetDateTime;
 
 #[sinex_test]
 async fn test_phase1_unified_stream_processor_trait(ctx: TestContext) -> TestResult<()> {
@@ -43,7 +43,7 @@ async fn test_phase1_unified_stream_processor_trait(ctx: TestContext) -> TestRes
     // Test 2: Verify TimeHorizon modes (replacing sensor/scanner split)
     let snapshot = TimeHorizon::Snapshot;
     let historical = TimeHorizon::Historical {
-        end_time: chrono::Utc::now(),
+        end_time: OffsetDateTime::now_utc(),
     };
     let continuous = TimeHorizon::Continuous;
 
@@ -235,7 +235,7 @@ async fn test_node_event_flow_simulation(ctx: TestContext) -> TestResult<()> {
                 "command": "ls -la",
                 "working_directory": "/home/user",
                 "source_events": [raw_event.id.unwrap().to_string()],
-                "synthesis_timestamp": chrono::Utc::now().to_rfc3339(),
+                "synthesis_timestamp": OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap(),
                 "enrichment_history": []
             }),
         ))
@@ -370,7 +370,7 @@ async fn test_checkpoint_functionality(ctx: &TestContext) -> TestResult<()> {
             event_id: None,
         },
         processed_count: 100,
-        last_activity: chrono::Utc::now(),
+        last_activity: OffsetDateTime::now_utc(),
         data: Some(serde_json::json!({"test": "checkpoint"})),
         version: 2,
         revision: 0,

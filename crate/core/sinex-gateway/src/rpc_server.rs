@@ -19,7 +19,6 @@ use axum::{
     routing::{get, post},
     BoxError, Json, Router,
 };
-use chrono::Utc;
 use color_eyre::eyre::{eyre, WrapErr};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder as HyperBuilder;
@@ -27,8 +26,9 @@ use hyper_util::service::TowerToHyperService;
 use rustls_pemfile::{certs, pkcs8_private_keys, rsa_private_keys};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sinex_core::coordination::CoordinationKvClient;
-use sinex_core::types::{Bytes, Ulid};
+use sinex_primitives::coordination::CoordinationKvClient;
+use sinex_primitives::Timestamp;
+use sinex_primitives::{Bytes, Ulid};
 use std::convert::TryFrom;
 use std::fs::File;
 use std::io::BufReader;
@@ -111,8 +111,8 @@ struct UnknownMethodError {
 /// - -32700 to -32600: Protocol errors (parse, invalid request, etc.)
 /// - -32099 to -32000: Server errors (reserved)
 /// - -32899 to -32800: Application errors (custom)
-fn sinex_error_to_rpc_code(err: &sinex_core::types::error::SinexError) -> (i32, String) {
-    use sinex_core::types::error::SinexError;
+fn sinex_error_to_rpc_code(err: &sinex_primitives::error::SinexError) -> (i32, String) {
+    use sinex_primitives::error::SinexError;
 
     match err {
         // Client errors (4xx equivalent)
@@ -487,7 +487,7 @@ pub struct RpcAuthContext {
     /// First 8 characters of the token for audit logging
     pub token_prefix: String,
     /// Timestamp when authentication occurred
-    pub authenticated_at: chrono::DateTime<Utc>,
+    pub authenticated_at: Timestamp,
 }
 
 impl RpcAuthContext {
@@ -495,7 +495,7 @@ impl RpcAuthContext {
     fn from_token(token: &str) -> Self {
         Self {
             token_prefix: token.chars().take(8).collect::<String>().to_string(),
-            authenticated_at: Utc::now(),
+            authenticated_at: Timestamp::now(),
         }
     }
 
@@ -506,7 +506,7 @@ impl RpcAuthContext {
     pub fn system() -> Self {
         Self {
             token_prefix: "system".to_string(),
-            authenticated_at: Utc::now(),
+            authenticated_at: Timestamp::now(),
         }
     }
 }
@@ -669,46 +669,56 @@ pub async fn dispatch_rpc_method(
         "nodes.list" => {
             let nats = nats_client_required(services)?;
             let env = services.environment();
-            handle_nodes_list(nats, env, params).await
+            handle_nodes_list(nats, env, params)
+                .await
+                .map_err(Into::into)
         }
         "nodes.drain" => {
             let nats = nats_client_required(services)?;
             let env = services.environment();
-            handle_nodes_drain(nats, env, params).await
+            handle_nodes_drain(nats, env, params)
+                .await
+                .map_err(Into::into)
         }
         "nodes.resume" => {
             let nats = nats_client_required(services)?;
             let env = services.environment();
-            handle_nodes_resume(nats, env, params).await
+            handle_nodes_resume(nats, env, params)
+                .await
+                .map_err(Into::into)
         }
         "nodes.set_horizon" => {
             let nats = nats_client_required(services)?;
             let env = services.environment();
-            handle_nodes_set_horizon(nats, env, params).await
+            handle_nodes_set_horizon(nats, env, params)
+                .await
+                .map_err(Into::into)
         }
 
         // Operations log methods
         "ops.start" => {
             let pool = services.pool();
-            handle_ops_start(pool, params).await
+            handle_ops_start(pool, params).await.map_err(Into::into)
         }
         "ops.list" => {
             let pool = services.pool();
-            handle_ops_list(pool, params).await
+            handle_ops_list(pool, params).await.map_err(Into::into)
         }
         "ops.get" => {
             let pool = services.pool();
-            handle_ops_get(pool, params).await
+            handle_ops_get(pool, params).await.map_err(Into::into)
         }
         "ops.cancel" => {
             let pool = services.pool();
-            handle_ops_cancel(pool, params, auth).await
+            handle_ops_cancel(pool, params, auth)
+                .await
+                .map_err(Into::into)
         }
 
         // Audit trail methods
         "audit.get" => {
             let pool = services.pool();
-            handle_audit_get(pool, params).await
+            handle_audit_get(pool, params).await.map_err(Into::into)
         }
 
         // Shadow consumer methods (The Tether)
@@ -917,7 +927,7 @@ async fn handle_rpc(
             );
 
             // Try to extract structured error info from SinexError
-            if let Some(sinex_err) = err.downcast_ref::<sinex_core::types::error::SinexError>() {
+            if let Some(sinex_err) = err.downcast_ref::<sinex_primitives::error::SinexError>() {
                 let (code, message) = sinex_error_to_rpc_code(sinex_err);
                 // TODO: Implement production error sanitization (analysis/rpc_server.md OPP-002)
                 let data = serde_json::json!({
@@ -1238,10 +1248,10 @@ mod tests {
     };
     use reqwest::Client;
     use serde_json::json;
-    use xtask::sandbox::{sinex_test, TestResult};
     use std::net::SocketAddr;
     use tokio::sync::Mutex;
     use tokio::task::JoinHandle;
+    use xtask::sandbox::{sinex_test, TestResult};
     static ENV_LOCK: once_cell::sync::Lazy<Mutex<()>> =
         once_cell::sync::Lazy::new(|| Mutex::new(()));
 

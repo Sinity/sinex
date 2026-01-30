@@ -242,7 +242,7 @@ mod tests {
         let json = r#"{
             "unused": [
                 {
-                    "package": "sinex-core",
+                    "package": "sinex-db",
                     "dependencies": ["serde", "tokio"]
                 }
             ]
@@ -252,9 +252,9 @@ mod tests {
 
         assert_eq!(report.unused.len(), 2);
         assert_eq!(report.tool, "cargo-machete");
-        assert_eq!(report.unused[0].package, "sinex-core");
+        assert_eq!(report.unused[0].package, "sinex-db");
         assert_eq!(report.unused[0].dependency, "serde");
-        assert_eq!(report.unused[1].package, "sinex-core");
+        assert_eq!(report.unused[1].package, "sinex-db");
         assert_eq!(report.unused[1].dependency, "tokio");
     }
 
@@ -263,7 +263,7 @@ mod tests {
         let json = r#"{
             "unused": [
                 {
-                    "package": "sinex-core",
+                    "package": "sinex-db",
                     "dependencies": ["serde"]
                 },
                 {
@@ -276,7 +276,7 @@ mod tests {
         let report = UnusedDetector::parse_machete_output(json).unwrap();
 
         assert_eq!(report.unused.len(), 3);
-        assert_eq!(report.unused[0].package, "sinex-core");
+        assert_eq!(report.unused[0].package, "sinex-db");
         assert_eq!(report.unused[1].package, "sinex-gateway");
         assert_eq!(report.unused[2].package, "sinex-gateway");
     }
@@ -302,7 +302,7 @@ mod tests {
     fn test_parse_udeps_output_single_package() {
         let json = r#"{
             "unused_deps": {
-                "sinex-core": ["serde", "tokio"]
+                "sinex-db": ["serde", "tokio"]
             }
         }"#;
 

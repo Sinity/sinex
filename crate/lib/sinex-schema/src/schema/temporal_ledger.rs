@@ -7,9 +7,9 @@
 
 use crate::schema::{SourceMaterialRegistry, TableDef};
 use crate::ulid::Ulid;
-use chrono::{DateTime, Utc};
 use sea_orm_migration::prelude::*;
 use sqlx::FromRow;
+use time::OffsetDateTime;
 
 // =============================================================================
 // The `raw.temporal_ledger` Table
@@ -57,7 +57,7 @@ pub struct TemporalLedgerRecord {
     pub offset_start: i64,
     pub offset_end: i64,
     pub offset_kind: String,
-    pub ts_capture: DateTime<Utc>,
+    pub ts_capture: OffsetDateTime,
     pub precision: String,
     pub clock: String,
     pub source_type: String,

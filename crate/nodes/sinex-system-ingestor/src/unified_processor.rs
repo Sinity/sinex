@@ -9,14 +9,15 @@ use sinex_node_sdk::stream_processor::{EventEmitter, NodeRuntimeState};
 
 // System-specific event payloads
 use serde_json::json;
-use sinex_core::db::models::Event;
-use sinex_core::types::events::SystemMonitoringStartedPayload;
-use sinex_core::types::Seconds;
+use sinex_db::models::Event;
+use sinex_primitives::events::SystemMonitoringStartedPayload;
+use sinex_primitives::{JsonValue, Seconds};
 
 use crate::{DbusWatcher, UdevWatcher, UnifiedJournalWatcher, WatcherMaterialContext};
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::acquisition_manager::{AcquisitionManager, RotationPolicy};
-use sinex_node_sdk::NodeError;
+use sinex_node_sdk::prelude::OffsetDateTime;
+use sinex_node_sdk::SinexError;
 use sinex_node_sdk::{
     nats_publisher::NatsPublisher, simple_ingestor::SimpleIngestor, watcher_handle::WatcherHandle,
     EventTransport,
@@ -33,7 +34,7 @@ pub use crate::SystemConfig;
 #[derive(Debug, Clone, Serialize, Deserialize, bon::Builder)]
 pub struct SystemState {
     /// When the snapshot was taken
-    pub captured_at: DateTime<Utc>,
+    pub captured_at: OffsetDateTime,
 
     /// Enabled source types
     pub enabled_sources: Vec<String>,
@@ -176,7 +177,7 @@ impl SystemProcessor {
     fn runtime(&self) -> NodeResult<&NodeRuntimeState> {
         self.runtime
             .as_ref()
-            .ok_or_else(|| NodeError::Lifecycle("Processor runtime not initialized".to_string()))
+            .ok_or_else(|| SinexError::lifecycle("Processor runtime not initialized".to_string()))
     }
 
     fn emitter(&self) -> NodeResult<&EventEmitter> {
@@ -189,13 +190,13 @@ impl SystemProcessor {
 
     fn acquisition(&self) -> NodeResult<Arc<AcquisitionManager>> {
         self.acquisition.clone().ok_or_else(|| {
-            NodeError::Lifecycle("System processor acquisition not initialized".to_string())
+            SinexError::lifecycle("System processor acquisition not initialized".to_string())
         })
     }
 
     fn processor_material(&self) -> NodeResult<&WatcherMaterialContext> {
         self.processor_material.as_ref().ok_or_else(|| {
-            NodeError::Lifecycle("System processor material not initialized".to_string())
+            SinexError::lifecycle("System processor material not initialized".to_string())
         })
     }
 
@@ -296,7 +297,7 @@ impl SystemProcessor {
         }
 
         let snapshot = SystemState {
-            captured_at: Utc::now(),
+            captured_at: OffsetDateTime::now_utc(),
             enabled_sources,
             dbus_status,
             journal_status,
@@ -412,7 +413,9 @@ impl SystemProcessor {
                 journal_enabled: self.config.journal_enabled,
                 udev_enabled: self.config.udev_enabled,
                 systemd_enabled: self.config.systemd_enabled,
-                start_time: Utc::now(),
+                start_time: sinex_primitives::temporal::Timestamp::from(
+                    OffsetDateTime::now_utc(),
+                ),
             },
             material.initial_provenance(),
         )
@@ -685,7 +688,7 @@ impl SimpleIngestor for SystemProcessor {
         };
         AcquisitionManager::bootstrap_streams(publisher.nats_client())
             .await
-            .map_err(NodeError::from)?;
+            .map_err(SinexError::from)?;
         let acquisition = Arc::new(runtime.acquisition_manager(
             RotationPolicy::default(),
             "system",
@@ -765,8 +768,8 @@ impl SimpleIngestor for SystemProcessor {
         Ok(ScanReport {
             events_processed: 0,
             duration: start_time.elapsed(),
-            final_checkpoint: Checkpoint::timestamp(Utc::now(), None),
-            time_range: Some((Utc::now(), Utc::now())),
+            final_checkpoint: Checkpoint::timestamp(OffsetDateTime::now_utc(), None),
+            time_range: Some((OffsetDateTime::now_utc(), OffsetDateTime::now_utc())),
             processor_stats: HashMap::new(),
             successful_targets: vec!["system_snapshot".to_string()],
             failed_targets: vec![],
@@ -793,13 +796,13 @@ impl SimpleIngestor for SystemProcessor {
         Ok(ScanReport {
             events_processed,
             duration: start_time.elapsed(),
-            final_checkpoint: Checkpoint::timestamp(Utc::now(), None),
+            final_checkpoint: Checkpoint::timestamp(OffsetDateTime::now_utc(), None),
             time_range: Some((
                 match &from {
                     Checkpoint::Timestamp { timestamp, .. } => *timestamp,
-                    _ => Utc::now() - chrono::Duration::hours(1), // estimate
+                    _ => OffsetDateTime::now_utc() - time::Duration::hours(1), // estimate
                 },
-                Utc::now(),
+                OffsetDateTime::now_utc(),
             )),
             processor_stats: HashMap::new(),
             successful_targets: vec!["system_historical".to_string()],
@@ -852,8 +855,8 @@ impl SimpleIngestor for SystemProcessor {
         Ok(ScanReport {
             events_processed: 0,
             duration: start_time.elapsed(),
-            final_checkpoint: Checkpoint::timestamp(Utc::now(), None),
-            time_range: Some((Utc::now(), Utc::now())),
+            final_checkpoint: Checkpoint::timestamp(OffsetDateTime::now_utc(), None),
+            time_range: Some((OffsetDateTime::now_utc(), OffsetDateTime::now_utc())),
             processor_stats: HashMap::new(),
             successful_targets: vec!["system_continuous".to_string()],
             failed_targets: vec![],
@@ -888,7 +891,7 @@ impl SimpleIngestor for SystemProcessor {
                 .iter()
                 .enumerate()
                 .map(|(i, desc)| sinex_node_sdk::automaton_base::ActivityEntry {
-                    timestamp: s.captured_at - chrono::Duration::minutes(i as i64),
+                    timestamp: s.captured_at - std::time::Duration::from_secs(i as u64 * 60),
                     description: desc.clone(),
                     data: None,
                 })
@@ -913,7 +916,7 @@ impl SimpleIngestor for SystemProcessor {
                 .last_state
                 .as_ref()
                 .map(|s| s.captured_at)
-                .unwrap_or_else(Utc::now),
+                .unwrap_or_else(OffsetDateTime::now_utc),
             total_items: None,
             healthy: state.health.dbus_active
                 || state.health.journal_active
@@ -938,10 +941,10 @@ impl SimpleIngestor for SystemProcessor {
     fn get_coverage_analysis(
         &self,
         _state: &Self::State,
-        _time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
+        _time_range: Option<(OffsetDateTime, OffsetDateTime)>,
     ) -> NodeResult<sinex_node_sdk::exploration::CoverageAnalysis> {
         Ok(sinex_node_sdk::exploration::CoverageAnalysis {
-            time_range: (Utc::now(), Utc::now()),
+            time_range: (OffsetDateTime::now_utc(), OffsetDateTime::now_utc()),
             source_total: 0,
             sinex_total: 0,
             coverage_percentage: 100.0,

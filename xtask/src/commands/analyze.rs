@@ -6,11 +6,13 @@ use clap::Subcommand;
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 
 /// Analyze command - codebase insight.
+#[derive(Debug, Clone, clap::Args)]
 pub struct AnalyzeCommand {
+    #[command(subcommand)]
     pub subcommand: AnalyzeSubcommand,
 }
 
-#[derive(Subcommand)]
+#[derive(Debug, Clone, Subcommand)]
 pub enum AnalyzeSubcommand {
     /// Check dependencies
     Deps {

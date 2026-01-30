@@ -1,5 +1,5 @@
-use chrono::Utc;
-use sinex_core::coordination::kv_client::{CoordinationKvClient, InstanceMetadata};
+use sinex_primitives::coordination::kv_client::{CoordinationKvClient, InstanceMetadata};
+use sinex_primitives::temporal::now;
 use xtask::sandbox::nats::ensure_coordination_buckets;
 use xtask::sandbox::prelude::*;
 
@@ -15,12 +15,13 @@ async fn kv_leadership_handoff(ctx: TestContext) -> TestResult<()> {
     let leader_id = "leader-1";
     let standby_id = "standby-1";
 
+    let now_ts = now();
     let leader_meta = InstanceMetadata {
         instance_id: leader_id.to_string(),
         hostname: "leader-host".to_string(),
         version: "0.1.0".to_string(),
-        started_at: Utc::now().timestamp(),
-        last_heartbeat: Utc::now().timestamp(),
+        started_at: now_ts.unix_timestamp(),
+        last_heartbeat: now_ts.unix_timestamp(),
     };
     kv_client.register_instance(&leader_meta).await?;
     assert!(
@@ -34,8 +35,8 @@ async fn kv_leadership_handoff(ctx: TestContext) -> TestResult<()> {
         instance_id: standby_id.to_string(),
         hostname: "standby-host".to_string(),
         version: "0.1.0".to_string(),
-        started_at: Utc::now().timestamp(),
-        last_heartbeat: Utc::now().timestamp(),
+        started_at: now_ts.unix_timestamp(),
+        last_heartbeat: now_ts.unix_timestamp(),
     };
     kv_client.register_instance(&standby_meta).await?;
     assert!(

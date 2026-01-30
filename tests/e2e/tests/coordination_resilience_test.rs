@@ -8,15 +8,15 @@
 //! - Concurrent coordination under stress
 //! - Node instance registration and heartbeat tracking
 
-use sinex_core::coordination::kv_client::{CoordinationKvClient, InstanceMetadata};
-use sinex_core::environment::environment;
-use xtask::sandbox::nats::ensure_coordination_buckets;
+use sinex_primitives::coordination::kv_client::{CoordinationKvClient, InstanceMetadata};
+use sinex_primitives::environment::environment;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
+use xtask::sandbox::nats::ensure_coordination_buckets;
 
-use sinex_core::db::advisory_lock::AdvisoryLock;
+use sinex_primitives::db::advisory_lock::AdvisoryLock;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::WaitHelpers;
 
@@ -46,7 +46,7 @@ async fn test_advisory_lock_acquire_release(ctx: TestContext) -> Result<()> {
             let pool = ctx.pool.clone();
             let key = lock_key.clone();
             async move {
-                Ok::<bool, sinex_test_utils::SinexError>(
+                Ok::<bool, xtask::sandbox::SinexError>(
                     !AdvisoryLock::is_locked(&pool, &key).await?,
                 )
             }
@@ -169,8 +169,8 @@ async fn test_node_instance_registration(ctx: TestContext) -> Result<()> {
         instance_id: instance_id.clone(),
         hostname: "test-host".to_string(),
         version: "1.0.0".to_string(),
-        started_at: chrono::Utc::now().timestamp(),
-        last_heartbeat: chrono::Utc::now().timestamp(),
+        started_at: crate::temporal::now().timestamp(),
+        last_heartbeat: crate::temporal::now().timestamp(),
     };
 
     // Register instance
@@ -228,8 +228,8 @@ async fn test_multiple_node_instances(ctx: TestContext) -> Result<()> {
             instance_id: instance_id.clone(),
             hostname: format!("host-{}", i),
             version: format!("1.0.{}", i),
-            started_at: chrono::Utc::now().timestamp(),
-            last_heartbeat: chrono::Utc::now().timestamp(),
+            started_at: crate::temporal::now().timestamp(),
+            last_heartbeat: crate::temporal::now().timestamp(),
         };
 
         kv_client.register_instance(&metadata).await?;
@@ -284,15 +284,15 @@ async fn test_heartbeat_revision_update(ctx: TestContext) -> Result<()> {
         instance_id: fresh_id.clone(),
         hostname: "fresh".to_string(),
         version: "1.0.0".to_string(),
-        started_at: chrono::Utc::now().timestamp(),
-        last_heartbeat: chrono::Utc::now().timestamp(),
+        started_at: crate::temporal::now().timestamp(),
+        last_heartbeat: crate::temporal::now().timestamp(),
     };
     let meta_stale = InstanceMetadata {
         instance_id: stale_id.clone(),
         hostname: "stale".to_string(),
         version: "1.0.0".to_string(),
-        started_at: chrono::Utc::now().timestamp(),
-        last_heartbeat: chrono::Utc::now().timestamp(),
+        started_at: crate::temporal::now().timestamp(),
+        last_heartbeat: crate::temporal::now().timestamp(),
     };
 
     kv_client.register_instance(&meta_fresh).await?;
@@ -447,8 +447,8 @@ async fn test_concurrent_coordination_stress(ctx: TestContext) -> Result<()> {
                 instance_id: instance_id.clone(),
                 hostname: format!("host-{}", task_id),
                 version: "1.0.0".to_string(),
-                started_at: chrono::Utc::now().timestamp(),
-                last_heartbeat: chrono::Utc::now().timestamp(),
+                started_at: crate::temporal::now().timestamp(),
+                last_heartbeat: crate::temporal::now().timestamp(),
             };
 
             // Register
@@ -520,8 +520,8 @@ async fn test_kv_functionality_with_mtls(_ctx: TestContext) -> Result<()> {
         instance_id: instance_id.to_string(),
         hostname: "secure-host".to_string(),
         version: "0.0.0".to_string(),
-        started_at: chrono::Utc::now().timestamp(),
-        last_heartbeat: chrono::Utc::now().timestamp(),
+        started_at: crate::temporal::now().timestamp(),
+        last_heartbeat: crate::temporal::now().timestamp(),
     };
 
     kv_client.register_instance(&meta).await?;

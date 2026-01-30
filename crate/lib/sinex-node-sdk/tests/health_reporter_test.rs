@@ -1,13 +1,13 @@
 //! Comprehensive tests for HealthReporter
 
-use sinex_core::SinexError;
+use sinex_node_sdk::SinexError;
 use sinex_node_sdk::health_reporter::{HealthReporter, HealthThresholds};
 use sinex_node_sdk::prelude::ProcessStatus;
 use sinex_node_sdk::self_observation::{SelfObserver, SelfObserverConfig};
-use xtask::sandbox::prelude::*;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
+use xtask::sandbox::prelude::*;
 
 /// Create a test health reporter with NATS connection
 async fn create_test_reporter(ctx: TestContext) -> TestResult<(TestContext, Arc<HealthReporter>)> {

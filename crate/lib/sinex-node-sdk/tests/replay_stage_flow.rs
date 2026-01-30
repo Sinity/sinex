@@ -3,19 +3,19 @@ mod support;
 
 use chrono::{Duration, Utc};
 use serde_json::{json, Value as JsonValue};
-use sinex_core::types::events::DynamicPayload;
-use sinex_core::types::ulid::Ulid;
+use sinex_node_sdk::types::events::DynamicPayload;
+use sinex_node_sdk::types::ulid::Ulid;
 use sinex_node_sdk::replay::{ReplayFilters, ReplayMode, ReplayProgress, ReplayService};
-use xtask::sandbox::prelude::*;
 use std::{collections::HashMap, time::Duration as StdDuration};
 use support::runtime::TestRuntimeBuilder;
 use tokio::time::timeout;
+use xtask::sandbox::prelude::*;
 
 #[sinex_serial_test]
 async fn replay_emits_events_through_emitter(ctx: TestContext) -> color_eyre::Result<()> {
     let ctx = ctx.with_nats().await?;
     ctx.ensure_clean().await?;
-    let start_time = Utc::now();
+    let start_time = OffsetDateTime::now_utc();
     let source = format!("terminal-history-{}", Ulid::new());
 
     publish_event(
@@ -54,8 +54,8 @@ async fn replay_emits_events_through_emitter(ctx: TestContext) -> color_eyre::Re
     let mut replay_service = ReplayService::from_runtime(
         &runtime,
         ReplayMode::TimeRange {
-            start_time: start_time - Duration::minutes(1),
-            end_time: Some(start_time + Duration::minutes(1)),
+            start_time: start_time - time::Duration::minutes(1),
+            end_time: Some(start_time + time::Duration::minutes(1)),
         },
     )
     .with_batch_size(10);
@@ -84,7 +84,7 @@ async fn replay_emits_events_through_emitter(ctx: TestContext) -> color_eyre::Re
 async fn custom_filters_emit_only_matching_events(ctx: TestContext) -> color_eyre::Result<()> {
     let ctx = ctx.with_nats().await?;
     ctx.ensure_clean().await?;
-    let start_time = Utc::now();
+    let start_time = OffsetDateTime::now_utc();
     let run_id = Ulid::new();
 
     publish_event(
@@ -146,8 +146,8 @@ async fn custom_filters_emit_only_matching_events(ctx: TestContext) -> color_eyr
         sources: Some(vec![format!("terminal-history-{run_id}")]),
         event_types: Some(vec!["command.imported".to_string()]),
         hosts: None,
-        start_time: Some(start_time - Duration::minutes(1)),
-        end_time: Some(start_time + Duration::minutes(1)),
+        start_time: Some(start_time - time::Duration::minutes(1)),
+        end_time: Some(start_time + time::Duration::minutes(1)),
         limit: None,
         payload_filters: None,
     };

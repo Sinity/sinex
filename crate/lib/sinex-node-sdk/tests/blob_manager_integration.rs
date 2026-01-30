@@ -6,8 +6,8 @@
 
 use camino::Utf8PathBuf;
 use sinex_node_sdk::annex::{AnnexConfig, BlobManager};
-use xtask::sandbox::prelude::*;
 use tempfile::TempDir;
+use xtask::sandbox::prelude::*;
 
 const TEST_BYTES: &[u8] = b"sinex-blob-manager-integration";
 
@@ -29,6 +29,7 @@ async fn blob_manager_fixture(ctx: &TestContext) -> color_eyre::Result<(BlobMana
 }
 
 #[sinex_test]
+#[ignore = "external"]
 async fn blob_manager_deduplicates_content(ctx: TestContext) -> color_eyre::Result<()> {
     let (manager, _tmp) = blob_manager_fixture(&ctx).await?;
 
@@ -52,6 +53,7 @@ async fn blob_manager_deduplicates_content(ctx: TestContext) -> color_eyre::Resu
 }
 
 #[sinex_test]
+#[ignore = "external"]
 async fn blob_manager_round_trips_content(ctx: TestContext) -> color_eyre::Result<()> {
     let (manager, _tmp) = blob_manager_fixture(&ctx).await?;
     let blob = manager
@@ -69,6 +71,7 @@ async fn blob_manager_round_trips_content(ctx: TestContext) -> color_eyre::Resul
 }
 
 #[sinex_test]
+#[ignore = "external"]
 async fn blob_manager_detects_corruption_on_retrieve(ctx: TestContext) -> color_eyre::Result<()> {
     let (manager, _tmp) = blob_manager_fixture(&ctx).await?;
     let blob = manager

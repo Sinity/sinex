@@ -1,9 +1,9 @@
 use serde_json::json;
-use sinex_core::{db::query_helpers::ulid_to_uuid, DynamicPayload, EventId, Ulid};
-use xtask::sandbox::prelude::*;
-use xtask::sandbox::timing::{Timeouts, WaitHelpers, DEFAULT_WAIT_SECS};
+use sinex_primitives::{db::query_helpers::ulid_to_uuid, DynamicPayload, EventId, Ulid};
 use tokio::time::{timeout, Duration};
 use tokio_stream::StreamExt;
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::{Timeouts, WaitHelpers, DEFAULT_WAIT_SECS};
 
 async fn wait_for_single_row(ctx: &TestContext, event_ulid: Ulid) -> TestResult<()> {
     WaitHelpers::wait_for_condition(

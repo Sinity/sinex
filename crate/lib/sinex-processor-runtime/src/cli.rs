@@ -5,16 +5,17 @@
 //! This module provides the standardized CLI interface for all node binaries
 //! implementing the service/scan/explore subcommand pattern.
 
-use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
-use color_eyre::eyre::{self, Context};
-use sinex_core::{db::SqlxPgPool, SanitizedPath};
+use sinex_db::SqlxPgPool;
+use sinex_primitives::{SanitizedPath, Timestamp};
 use sinex_node_sdk::config::ReplayConfig;
 use sinex_node_sdk::event_node::EventTransport;
 pub use sinex_node_sdk::exploration::{
     CoverageAnalysis, ExplorationProvider, ExportFormat, MissingItem, SourceState,
 };
 use sinex_node_sdk::stream_processor::{Checkpoint, NodeRunner, TimeHorizon};
+use sinex_node_sdk::{SinexError, NodeResult};
+use time::OffsetDateTime;
 
 // Re-export common types from sinex_node_sdk::automaton_base
 // These are the canonical definitions used by all automatons
@@ -107,8 +108,8 @@ pub struct NatsArgs {
 }
 
 impl NatsArgs {
-    fn to_config(&self) -> sinex_core::nats::NatsConnectionConfig {
-        let mut config = sinex_core::nats::NatsConnectionConfig::from_env();
+    fn to_config(&self) -> sinex_primitives::nats::NatsConnectionConfig {
+        let mut config = sinex_primitives::nats::NatsConnectionConfig::from_env();
 
         config.url = self.url.clone();
         config.name = self.name.clone();
@@ -211,19 +212,21 @@ pub enum NodeCommand {
 }
 
 /// Parse checkpoint as JSON
-fn parse_checkpoint_json(checkpoint_str: &str) -> eyre::Result<Checkpoint> {
+fn parse_checkpoint_json(checkpoint_str: &str) -> NodeResult<Checkpoint> {
     // TODO: Add size limit to prevent DoS via massive JSON checkpoint strings
-    serde_json::from_str::<serde_json::Value>(checkpoint_str)
-        .and_then(serde_json::from_value::<Checkpoint>)
-        .context("Invalid checkpoint JSON")
+    let val: serde_json::Value =
+        serde_json::from_str(checkpoint_str).map_err(|e| SinexError::serialization(e))?;
+    serde_json::from_value(val).map_err(|e| SinexError::serialization(e))
 }
 
 /// Parse checkpoint as timestamp
-fn parse_checkpoint_timestamp(checkpoint_str: &str) -> eyre::Result<Checkpoint> {
-    checkpoint_str
-        .parse::<DateTime<Utc>>()
-        .map(|ts| Checkpoint::timestamp(ts, None))
-        .context("Invalid timestamp format")
+fn parse_checkpoint_timestamp(checkpoint_str: &str) -> NodeResult<Checkpoint> {
+    OffsetDateTime::parse(
+        checkpoint_str,
+        &time::format_description::well_known::Rfc3339,
+    )
+    .map(|ts| Checkpoint::timestamp(Timestamp::from(ts), None))
+    .map_err(|e| SinexError::general(format!("Invalid timestamp format: {e}")))
 }
 
 /// Parse checkpoint as stream ID
@@ -232,7 +235,7 @@ fn parse_checkpoint_stream(checkpoint_str: &str) -> Checkpoint {
 }
 
 /// Parse checkpoint from string representation
-pub fn parse_checkpoint(checkpoint_str: &str) -> eyre::Result<Checkpoint> {
+pub fn parse_checkpoint(checkpoint_str: &str) -> NodeResult<Checkpoint> {
     if matches!(
         checkpoint_str,
         "none" | "start" | "None" | "Start" | "NONE" | "START"
@@ -309,7 +312,7 @@ pub fn validate_export_path(s: &str) -> Result<SanitizedPath, String> {
 }
 
 /// Parse time horizon from string representation
-pub fn parse_time_horizon(horizon_str: &str) -> eyre::Result<TimeHorizon> {
+pub fn parse_time_horizon(horizon_str: &str) -> NodeResult<TimeHorizon> {
     if matches!(
         horizon_str,
         "continuous"
@@ -338,14 +341,13 @@ pub fn parse_time_horizon(horizon_str: &str) -> eyre::Result<TimeHorizon> {
         Ok(TimeHorizon::Snapshot)
     } else {
         // Try to parse as ISO timestamp for historical scan
-        horizon_str
-            .parse::<DateTime<Utc>>()
-            .map(|dt| TimeHorizon::Historical { end_time: dt })
-            .with_context(|| {
-                format!(
-                    "Invalid time horizon '{}'. Use 'continuous', 'snapshot', or ISO timestamp",
-                    horizon_str
-                )
+        OffsetDateTime::parse(horizon_str, &time::format_description::well_known::Rfc3339)
+            .map(|dt| TimeHorizon::Historical { end_time: Timestamp::from(dt) })
+            .map_err(|e| {
+                SinexError::general(format!(
+                    "Invalid time horizon '{}': {}. Use 'continuous', 'snapshot', or ISO timestamp",
+                    horizon_str, e
+                ))
             })
     }
 }
@@ -366,7 +368,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
     }
 
     /// Run the CLI with parsed arguments
-    pub async fn run(&mut self, args: NodeCli) -> color_eyre::eyre::Result<()> {
+    pub async fn run(&mut self, args: NodeCli) -> NodeResult<()> {
         use sinex_node_sdk::stream_processor::{NodeRunner, ScanArgs};
 
         // Initialize logging based on verbosity
@@ -385,13 +387,17 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
         }
 
         // Parse processor configuration
-        let mut node_config: HashMap<String, serde_json::Value> = if let Some(config_str) =
-            args.node_config.clone()
-        {
-            serde_json::from_str(&config_str).context("Failed to parse node configuration JSON")?
-        } else {
-            HashMap::new()
-        };
+        let mut node_config: HashMap<String, serde_json::Value> =
+            if let Some(config_str) = args.node_config.clone() {
+                serde_json::from_str(&config_str).map_err(|e| {
+                    SinexError::general(format!(
+                        "{}: {}",
+                        "Failed to parse node configuration JSON", e
+                    ))
+                })?
+            } else {
+                HashMap::new()
+            };
 
         if let NodeCommand::Service { consumer_group, .. } = &args.command {
             if let Some(group) = consumer_group {
@@ -407,7 +413,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
         let node = self
             .node
             .take()
-            .ok_or_else(|| eyre::eyre!("Node already consumed"))?;
+            .ok_or_else(|| SinexError::general("Node already consumed"))?;
 
         match args.command {
             NodeCommand::Service { dry_run, .. } => {
@@ -476,9 +482,9 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
                     use tokio::sync::Mutex;
                     use uuid::Uuid;
 
-                    let runtime_snapshot = runner
-                        .runtime_state()
-                        .ok_or_else(|| eyre::eyre!("Runtime state unavailable for coordination"))?;
+                    let runtime_snapshot = runner.runtime_state().ok_or_else(|| {
+                        SinexError::general("Runtime state unavailable for coordination")
+                    })?;
 
                     // Create coordination with generated instance ID
                     let instance_id = Uuid::new_v4().to_string();
@@ -498,7 +504,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
                                 // Only leader processes events
                                 let mut runner = runner.lock().await;
                                 runner.run_service().await.map_err(|e| {
-                                    sinex_core::SinexError::service(format!("Node error: {}", e))
+                                    sinex_primitives::SinexError::service(format!("Node error: {}", e))
                                 })
                             }
                         })
@@ -518,9 +524,12 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
             } => {
                 info!("Running scan operation");
 
-                let checkpoint = parse_checkpoint(from).context("Failed to parse checkpoint")?;
-                let time_horizon =
-                    parse_time_horizon(until).context("Failed to parse time horizon")?;
+                let checkpoint = parse_checkpoint(from).map_err(|e| {
+                    SinexError::general(format!("{}: {}", "Failed to parse checkpoint", e))
+                })?;
+                let time_horizon = parse_time_horizon(until).map_err(|e| {
+                    SinexError::general(format!("{}: {}", "Failed to parse time horizon", e))
+                })?;
 
                 // Create stream processor runner
                 let mut runner = NodeRunner::new(node);
@@ -617,8 +626,21 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
                 if let Some((start, end)) = report.time_range {
                     println!(
                         "  Time range: {} to {}",
-                        start.format("%Y-%m-%d %H:%M:%S"),
-                        end.format("%Y-%m-%d %H:%M:%S")
+                        start
+                            .format(
+                                &time::format_description::parse(
+                                    "[year]-[month]-[day] [hour]:[minute]:[second]"
+                                )
+                                .unwrap()
+                            )
+                            .unwrap_or_default(),
+                        end.format(
+                            &time::format_description::parse(
+                                "[year]-[month]-[day] [hour]:[minute]:[second]"
+                            )
+                            .unwrap()
+                        )
+                        .unwrap_or_default()
                     );
                 }
 
@@ -668,7 +690,15 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
                             println!("  Description: {}", state.description);
                             println!(
                                 "  Last updated: {}",
-                                state.last_updated.format("%Y-%m-%d %H:%M:%S")
+                                state
+                                    .last_updated
+                                    .format(
+                                        &time::format_description::parse(
+                                            "[year]-[month]-[day] [hour]:[minute]:[second]"
+                                        )
+                                        .unwrap()
+                                    )
+                                    .unwrap_or_default()
                             );
                             if let Some(total) = state.total_items {
                                 println!("  Total items: {}", total);
@@ -680,7 +710,15 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
                                 for activity in &state.recent_activity {
                                     println!(
                                         "    - {}: {}",
-                                        activity.timestamp.format("%H:%M:%S"),
+                                        activity
+                                            .timestamp
+                                            .format(
+                                                &time::format_description::parse(
+                                                    "[hour]:[minute]:[second]"
+                                                )
+                                                .unwrap()
+                                            )
+                                            .unwrap_or_default(),
                                         activity.description
                                     );
                                 }
@@ -708,12 +746,27 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
                                 println!("  ID: {}", entry.id);
                                 println!(
                                     "    Started: {}",
-                                    entry.started_at.format("%Y-%m-%d %H:%M:%S")
+                                    entry
+                                        .started_at
+                                        .format(
+                                            &time::format_description::parse(
+                                                "[year]-[month]-[day] [hour]:[minute]:[second]"
+                                            )
+                                            .unwrap()
+                                        )
+                                        .unwrap_or_default()
                                 );
                                 if let Some(completed) = entry.completed_at {
                                     println!(
                                         "    Completed: {}",
-                                        completed.format("%Y-%m-%d %H:%M:%S")
+                                        completed
+                                            .format(
+                                                &time::format_description::parse(
+                                                    "[year]-[month]-[day] [hour]:[minute]:[second]"
+                                                )
+                                                .unwrap()
+                                            )
+                                            .unwrap_or_default()
                                     );
                                 }
                                 println!("    Events: {}", entry.events_generated);
@@ -735,8 +788,26 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
                             println!("Coverage Analysis:");
                             println!(
                                 "  Time range: {} to {}",
-                                analysis.time_range.0.format("%Y-%m-%d %H:%M:%S"),
-                                analysis.time_range.1.format("%Y-%m-%d %H:%M:%S")
+                                analysis
+                                    .time_range
+                                    .0
+                                    .format(
+                                        &time::format_description::parse(
+                                            "[year]-[month]-[day] [hour]:[minute]:[second]"
+                                        )
+                                        .unwrap()
+                                    )
+                                    .unwrap_or_default(),
+                                analysis
+                                    .time_range
+                                    .1
+                                    .format(
+                                        &time::format_description::parse(
+                                            "[year]-[month]-[day] [hour]:[minute]:[second]"
+                                        )
+                                        .unwrap()
+                                    )
+                                    .unwrap_or_default()
                             );
                             println!("  Source total: {}", analysis.source_total);
                             println!("  Sinex total: {}", analysis.sinex_total);
@@ -801,7 +872,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
 
     fn resolve_work_dir(args: &NodeCli) -> SanitizedPath {
         args.work_dir.clone().unwrap_or_else(|| {
-            let env = sinex_core::environment();
+            let env = sinex_primitives::environment();
             let namespaced = env.work_directory("/tmp/sinex/node");
             let namespaced = namespaced.to_string_lossy();
             SanitizedPath::from_str(namespaced.as_ref())
@@ -810,24 +881,29 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
         })
     }
 
-    async fn connect_primary_db(args: &NodeCli) -> eyre::Result<SqlxPgPool> {
+    async fn connect_primary_db(args: &NodeCli) -> NodeResult<SqlxPgPool> {
         let base_url = if let Some(db_url) = &args.database_url {
             db_url.clone()
         } else {
-            std::env::var("DATABASE_URL").context("DATABASE_URL environment variable not set")?
+            std::env::var("DATABASE_URL").map_err(|e| {
+                SinexError::general(format!(
+                    "{}: {}",
+                    "DATABASE_URL environment variable not set", e
+                ))
+            })?
         };
-        let env = sinex_core::environment();
+        let env = sinex_primitives::environment();
         let namespaced_url = env
             .database_url(&base_url)
             .unwrap_or_else(|_| base_url.clone());
         SqlxPgPool::connect(&namespaced_url)
             .await
-            .context("Failed to connect to database")
+            .map_err(|e| SinexError::general(format!("Failed to connect to database: {}", e)))
     }
 
     async fn connect_nats_transport(
-        config: &sinex_core::nats::NatsConnectionConfig,
-    ) -> eyre::Result<EventTransport> {
+        config: &sinex_primitives::nats::NatsConnectionConfig,
+    ) -> NodeResult<EventTransport> {
         info!(url = %config.url, "Using NATS for event publishing");
 
         // Create NATS publisher
@@ -835,7 +911,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
             config
                 .connect()
                 .await
-                .context("Failed to connect to NATS")?,
+                .map_err(|e| SinexError::general(format!("Failed to connect to NATS: {e}")))?,
         );
 
         Ok(EventTransport::Nats(std::sync::Arc::new(nats_publisher)))
@@ -843,14 +919,14 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
 
     fn extract_replay_config(
         config: &mut HashMap<String, serde_json::Value>,
-    ) -> eyre::Result<Option<ReplayConfig>> {
+    ) -> NodeResult<Option<ReplayConfig>> {
         if let Some(raw) = config.remove("replay") {
             if raw.is_null() {
                 return Ok(None);
             }
 
-            let cfg: ReplayConfig = serde_json::from_value(raw)
-                .context("Failed to parse replay configuration block")?;
+            let cfg: ReplayConfig =
+                serde_json::from_value(raw).map_err(|e| SinexError::serialization(e))?;
 
             if cfg.enabled {
                 Ok(Some(cfg))
@@ -862,10 +938,10 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
         }
     }
 
-    async fn execute_replay(runner: &mut NodeRunner<T>, config: ReplayConfig) -> eyre::Result<()> {
+    async fn execute_replay(runner: &mut NodeRunner<T>, config: ReplayConfig) -> NodeResult<()> {
         let runtime = runner
             .runtime_state()
-            .ok_or_else(|| eyre::eyre!("Runtime state not initialized before replay"))?;
+            .ok_or_else(|| SinexError::lifecycle("Runtime state not initialized before replay"))?;
 
         let Some(mode) = Self::derive_replay_mode(&config)? else {
             return Ok(());
@@ -887,7 +963,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
         let replay_result: ReplayResult = service
             .replay_into_emitter(runtime.event_emitter(), Some(progress_logger))
             .await
-            .map_err(|err| eyre::eyre!("Replay execution failed: {err}"))?;
+            .map_err(|err| SinexError::general(format!("Replay execution failed: {err}")))?;
 
         info!(
             processed = replay_result.total_processed,
@@ -902,7 +978,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
         Ok(())
     }
 
-    fn derive_replay_mode(config: &ReplayConfig) -> eyre::Result<Option<ReplayMode>> {
+    fn derive_replay_mode(config: &ReplayConfig) -> NodeResult<Option<ReplayMode>> {
         if !config.enabled {
             return Ok(None);
         }
@@ -931,8 +1007,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
 
             Ok(Some(ReplayMode::Custom { filters }))
         } else {
-            let start =
-                start_time.unwrap_or_else(|| DateTime::<Utc>::from_timestamp(0, 0).unwrap());
+            let start = start_time.unwrap_or(Timestamp::UNIX_EPOCH);
             Ok(Some(ReplayMode::TimeRange {
                 start_time: start,
                 end_time,
@@ -940,11 +1015,15 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
         }
     }
 
-    fn parse_timestamp(value: Option<&str>) -> eyre::Result<Option<DateTime<Utc>>> {
+    fn parse_timestamp(value: Option<&str>) -> NodeResult<Option<Timestamp>> {
         if let Some(raw) = value {
-            let parsed = DateTime::parse_from_rfc3339(raw)
-                .context("Invalid RFC3339 timestamp in replay configuration")?;
-            Ok(Some(parsed.with_timezone(&Utc)))
+            let parsed = OffsetDateTime::parse(raw, &time::format_description::well_known::Rfc3339)
+                .map_err(|e| {
+                    SinexError::general(format!(
+                        "Invalid RFC3339 timestamp in replay configuration: {e}"
+                    ))
+                })?;
+            Ok(Some(Timestamp::from(parsed)))
         } else {
             Ok(None)
         }
@@ -956,8 +1035,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
 macro_rules! processor_main {
     ($processor_type:ty) => {
         #[tokio::main]
-        async fn main() -> color_eyre::eyre::Result<()> {
-            color_eyre::install()?;
+        async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             use clap::Parser;
             use sinex_node_sdk::heartbeat::HeartbeatEmitter;
             use $crate::cli::{NodeCli, NodeCliRunner, NodeCommand};
@@ -975,7 +1053,7 @@ macro_rules! processor_main {
 
                 let heartbeat_emitter = HeartbeatEmitter::new(
                     service_name.clone(),
-                    sinex_core::types::Seconds::from_secs(30),
+                    sinex_primitives::Seconds::from_secs(30),
                 );
 
                 // Spawn heartbeat task concurrently
@@ -986,14 +1064,13 @@ macro_rules! processor_main {
                 // NodeCoordination integrated below in service mode
             }
 
-            runner.run(args).await
+            runner.run(args).await.map_err(|e| e.into())
         }
     };
 
     ($processor_type:ty, $processor_expr:expr) => {
         #[tokio::main]
-        async fn main() -> color_eyre::eyre::Result<()> {
-            color_eyre::install()?;
+        async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             use clap::Parser;
             use sinex_node_sdk::heartbeat::HeartbeatEmitter;
             use $crate::cli::{NodeCli, NodeCliRunner, NodeCommand};
@@ -1002,7 +1079,7 @@ macro_rules! processor_main {
             let processor = $processor_expr;
             let mut runner = NodeCliRunner::new(processor);
 
-            runner.run(args).await
+            runner.run(args).await.map_err(|e| e.into())
         }
     };
 }

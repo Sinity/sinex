@@ -64,8 +64,9 @@ pub enum VmSnapshotSubcommand {
 }
 
 /// VM command
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, clap::Args)]
 pub struct VmCommand {
+    #[command(subcommand)]
     pub subcommand: VmSubcommand,
 }
 

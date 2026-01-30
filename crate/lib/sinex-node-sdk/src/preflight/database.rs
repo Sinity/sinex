@@ -8,10 +8,10 @@
  * - Connection pool validation
  */
 
+use crate::{NodeResult, SinexError};
 use camino::{Utf8Path, Utf8PathBuf};
-use color_eyre::eyre::{bail, Context, Result};
 use serde_json::{json, Value};
-use sinex_core::types::timeouts;
+use sinex_primitives::constants::timeouts;
 // VerificationQueries removed - using direct SQL queries instead
 use sqlx::PgPool;
 use std::collections::HashMap;
@@ -21,7 +21,7 @@ use tracing::{debug, error, info};
 use super::{resolve_database_url, VerificationStatus};
 
 /// Check if a table exists in the specified schema
-async fn table_exists(pool: &PgPool, schema: &str, table: &str) -> Result<bool> {
+async fn table_exists(pool: &PgPool, schema: &str, table: &str) -> NodeResult<bool> {
     let exists: (bool,) = sqlx::query_as(
         "SELECT EXISTS(
             SELECT 1 FROM information_schema.tables 
@@ -31,13 +31,15 @@ async fn table_exists(pool: &PgPool, schema: &str, table: &str) -> Result<bool> 
     .bind(schema)
     .bind(table)
     .fetch_one(pool)
-    .await?;
+    .await
+    .map_err(|e| SinexError::from(e))?;
 
     Ok(exists.0)
 }
 
 /// Verify database connectivity and basic operations
-pub async fn verify_database_connectivity() -> Result<(VerificationStatus, Value, Vec<String>)> {
+pub async fn verify_database_connectivity() -> NodeResult<(VerificationStatus, Value, Vec<String>)>
+{
     let mut messages = Vec::new();
     let mut details = HashMap::new();
 
@@ -88,7 +90,8 @@ pub async fn verify_database_connectivity() -> Result<(VerificationStatus, Value
 }
 
 /// Verify PostgreSQL extensions are available and can be loaded
-pub async fn verify_postgresql_extensions() -> Result<(VerificationStatus, Value, Vec<String>)> {
+pub async fn verify_postgresql_extensions() -> NodeResult<(VerificationStatus, Value, Vec<String>)>
+{
     let mut messages = Vec::new();
     let mut details = HashMap::new();
     let mut has_failures = false;
@@ -99,7 +102,7 @@ pub async fn verify_postgresql_extensions() -> Result<(VerificationStatus, Value
 
     let pool = PgPool::connect(&database_url)
         .await
-        .wrap_err("Failed to connect to database")?;
+        .map_err(|e| SinexError::from(e))?;
 
     // Required extensions for Sinex
     let required_extensions = vec![
@@ -167,7 +170,7 @@ pub async fn verify_postgresql_extensions() -> Result<(VerificationStatus, Value
 }
 
 /// Verify migration readiness with comprehensive dry-run
-pub async fn verify_migration_readiness() -> Result<(VerificationStatus, Value, Vec<String>)> {
+pub async fn verify_migration_readiness() -> NodeResult<(VerificationStatus, Value, Vec<String>)> {
     let mut messages = Vec::new();
     let mut details = HashMap::new();
 
@@ -177,7 +180,7 @@ pub async fn verify_migration_readiness() -> Result<(VerificationStatus, Value, 
 
     let pool = PgPool::connect(&database_url)
         .await
-        .wrap_err("Failed to connect to database")?;
+        .map_err(|e| SinexError::from(e))?;
 
     // Check current migration status
     let migration_info = check_migration_status(&pool, &mut messages).await?;
@@ -211,28 +214,26 @@ async fn test_basic_operations(
     pool: &PgPool,
     messages: &mut Vec<String>,
     details: &mut HashMap<&str, Value>,
-) -> Result<()> {
+) -> NodeResult<()> {
     // Test basic connectivity - keep as raw SQL for system function
     let version_result = sqlx::query!("SELECT version() as version")
         .fetch_one(pool)
         .await
-        .wrap_err("Failed to query PostgreSQL version")?;
+        .map_err(|e| SinexError::from(e))?;
 
     details.insert("postgresql_version", json!(version_result.version));
     messages.push("✓ PostgreSQL version query successful".to_string());
 
     // Test transaction handling
-    let mut tx = pool.begin().await.wrap_err("Failed to begin transaction")?;
+    let mut tx = pool.begin().await.map_err(|e| SinexError::from(e))?;
 
     // Direct query for transaction test
     sqlx::query("SELECT 1 as test")
         .fetch_one(&mut *tx)
         .await
-        .wrap_err("Failed to execute test query in transaction")?;
+        .map_err(|e| SinexError::from(e))?;
 
-    tx.rollback()
-        .await
-        .wrap_err("Failed to rollback test transaction")?;
+    tx.rollback().await.map_err(|e| SinexError::from(e))?;
 
     messages.push("✓ Transaction handling verified".to_string());
 
@@ -248,7 +249,7 @@ async fn verify_single_extension(
     pool: &PgPool,
     extension_name: &str,
     description: &str,
-) -> Result<Value> {
+) -> NodeResult<Value> {
     debug!("Verifying extension: {} ({})", extension_name, description);
 
     // Check if extension is available in the system
@@ -258,7 +259,7 @@ async fn verify_single_extension(
     )
     .fetch_optional(pool)
     .await
-    .wrap_err("Failed to query available extensions")?;
+    .map_err(|e| SinexError::from(e))?;
 
     let available = available_result.is_some();
 
@@ -278,7 +279,7 @@ async fn verify_single_extension(
     )
     .fetch_optional(pool)
     .await
-    .wrap_err("Failed to query installed extensions")?;
+    .map_err(|e| SinexError::from(e))?;
 
     let installed = installed_result.is_some();
 
@@ -299,9 +300,9 @@ async fn verify_single_extension(
     }))
 }
 
-async fn test_extension_installability(pool: &PgPool, extension_name: &str) -> Result<bool> {
+async fn test_extension_installability(pool: &PgPool, extension_name: &str) -> NodeResult<bool> {
     // Test installation in a transaction that we'll rollback
-    let mut tx = pool.begin().await?;
+    let mut tx = pool.begin().await.map_err(|e| SinexError::from(e))?;
 
     let result = sqlx::query(&format!(
         "CREATE EXTENSION IF NOT EXISTS \"{}\"",
@@ -311,17 +312,14 @@ async fn test_extension_installability(pool: &PgPool, extension_name: &str) -> R
     .await;
 
     // Always rollback to avoid side effects
-    tx.rollback().await?;
+    tx.rollback().await.map_err(|e| SinexError::from(e))?;
 
     Ok(result.is_ok())
 }
 
-async fn test_extension_loading(pool: &PgPool, messages: &mut Vec<String>) -> Result<()> {
+async fn test_extension_loading(pool: &PgPool, messages: &mut Vec<String>) -> NodeResult<()> {
     // Test loading all extensions in a transaction that we'll rollback
-    let mut tx = pool
-        .begin()
-        .await
-        .wrap_err("Failed to begin extension test transaction")?;
+    let mut tx = pool.begin().await.map_err(|e| SinexError::from(e))?;
 
     let extensions = vec![
         "uuid-ossp",
@@ -341,8 +339,8 @@ async fn test_extension_loading(pool: &PgPool, messages: &mut Vec<String>) -> Re
             }
             Err(e) => {
                 // Rollback and return error
-                tx.rollback().await.ok();
-                bail!("Failed to load extension {}: {}", extension, e);
+                let _ = tx.rollback().await;
+                return Err(SinexError::from(e));
             }
         }
     }
@@ -351,9 +349,7 @@ async fn test_extension_loading(pool: &PgPool, messages: &mut Vec<String>) -> Re
     test_extension_functionality(&mut tx, messages).await?;
 
     // Rollback to clean up
-    tx.rollback()
-        .await
-        .wrap_err("Failed to rollback extension test transaction")?;
+    tx.rollback().await.map_err(|e| SinexError::from(e))?;
 
     Ok(())
 }
@@ -361,12 +357,12 @@ async fn test_extension_loading(pool: &PgPool, messages: &mut Vec<String>) -> Re
 async fn test_extension_functionality(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     messages: &mut Vec<String>,
-) -> Result<()> {
+) -> NodeResult<()> {
     // Test UUID generation - using transaction directly
     let uuid_result = sqlx::query!("SELECT gen_random_uuid() as uuid")
         .fetch_one(&mut **tx)
         .await
-        .wrap_err("Failed to test UUID generation functionality")?;
+        .map_err(|e| SinexError::from(e))?;
     messages.push(format!(
         "✓ UUID generation: {}",
         uuid_result
@@ -380,7 +376,7 @@ async fn test_extension_functionality(
     let ulid_result = sqlx::query!("SELECT gen_ulid()::text as ulid")
         .fetch_one(&mut **tx)
         .await
-        .wrap_err("Failed to test ULID generation functionality (gen_ulid() function missing?)")?;
+        .map_err(|e| SinexError::from(e))?;
     messages.push(format!(
         "✓ ULID generation: {}",
         ulid_result.ulid.as_deref().unwrap_or("OK")
@@ -391,7 +387,7 @@ async fn test_extension_functionality(
         sqlx::query!("SELECT extversion FROM pg_extension WHERE extname = 'timescaledb'")
             .fetch_optional(&mut **tx)
             .await
-            .wrap_err("Failed to query TimescaleDB version")?;
+            .map_err(|e| SinexError::from(e))?;
 
     if let Some(version) = timescale_version {
         messages.push(format!("✓ TimescaleDB version: {}", version.extversion));
@@ -412,21 +408,16 @@ async fn test_extension_functionality(
             messages.push("✓ JSON schema validation tested".to_string());
         }
         Err(e) => {
-            bail!(
-                "JSON schema validation test failed (pg_jsonschema extension broken?): {}",
-                e
-            );
+            return Err(SinexError::from(e));
         }
     }
 
     Ok(())
 }
 
-async fn check_migration_status(pool: &PgPool, messages: &mut Vec<String>) -> Result<Value> {
+async fn check_migration_status(pool: &PgPool, messages: &mut Vec<String>) -> NodeResult<Value> {
     // Check if migration table exists (sea-orm uses seaql_migrations)
-    let migration_table_exists = table_exists(pool, "public", "seaql_migrations")
-        .await
-        .wrap_err("Failed to check migration table existence")?;
+    let migration_table_exists = table_exists(pool, "public", "seaql_migrations").await?;
 
     if !migration_table_exists {
         messages.push(
@@ -444,7 +435,7 @@ async fn check_migration_status(pool: &PgPool, messages: &mut Vec<String>) -> Re
         sqlx::query!("SELECT version, applied_at FROM seaql_migrations ORDER BY version")
             .fetch_all(pool)
             .await
-            .wrap_err("Failed to query applied migrations")?;
+            .map_err(|e| SinexError::from(e))?;
 
     let applied_count = applied_migrations.len();
     messages.push(format!("ℹ Found {} applied migrations", applied_count));
@@ -463,7 +454,7 @@ async fn perform_migration_dry_run(
     pool: &PgPool,
     messages: &mut Vec<String>,
     details: &mut HashMap<&str, Value>,
-) -> Result<()> {
+) -> NodeResult<()> {
     info!("Performing migration dry-run");
 
     // Create a separate database connection for the dry-run
@@ -482,21 +473,17 @@ async fn perform_migration_dry_run(
     // Validate migration file syntax
     for migration_file in &migration_files {
         if let Err(e) = validate_migration_syntax(migration_file).await {
-            bail!(
+            return Err(SinexError::processing(format!(
                 "Migration {} has syntax errors: {}",
-                migration_file.version,
-                e
-            );
+                migration_file.version, e
+            )));
         }
     }
 
     messages.push("✓ All migration files have valid syntax".to_string());
 
     // Test migrations in a transaction (rollback to avoid applying them)
-    let mut tx = pool
-        .begin()
-        .await
-        .wrap_err("Failed to begin migration dry-run transaction")?;
+    let mut tx = pool.begin().await.map_err(|e| SinexError::from(e))?;
 
     // This would run the actual sqlx::migrate! but we'll simulate it
     // In a real implementation, we'd need to parse and execute migration files
@@ -505,14 +492,15 @@ async fn perform_migration_dry_run(
             messages.push("✓ Migration compatibility test passed".to_string());
         }
         Err(e) => {
-            tx.rollback().await.ok();
-            bail!("Migration compatibility test failed: {}", e);
+            let _ = tx.rollback().await;
+            return Err(SinexError::processing(format!(
+                "Migration compatibility test failed: {}",
+                e
+            )));
         }
     }
 
-    tx.rollback()
-        .await
-        .wrap_err("Failed to rollback migration dry-run transaction")?;
+    tx.rollback().await.map_err(|e| SinexError::from(e))?;
 
     Ok(())
 }
@@ -524,27 +512,27 @@ struct MigrationFile {
     path: String,
 }
 
-async fn discover_migration_files() -> Result<Vec<MigrationFile>> {
+async fn discover_migration_files() -> NodeResult<Vec<MigrationFile>> {
     let migrations_root =
         Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../sinex-schema/src/migrations");
 
     if !migrations_root.exists() {
-        bail!(
+        return Err(SinexError::processing(format!(
             "Migrations directory not found at {}",
-            migrations_root.to_string()
-        );
+            migrations_root
+        )));
     }
 
     let mut discovered = Vec::new();
 
-    for entry in fs::read_dir(migrations_root.as_std_path())? {
-        let entry = entry?;
+    for entry in fs::read_dir(migrations_root.as_std_path()).map_err(|e| SinexError::io(e))? {
+        let entry = entry.map_err(|e| SinexError::io(e))?;
         let path = entry.path();
 
         if path.is_dir() {
             let dir_name = entry.file_name();
             let dir_name = dir_name.to_str().ok_or_else(|| {
-                color_eyre::eyre::eyre!("Invalid migration directory name: {:?}", path)
+                SinexError::processing(format!("Invalid migration directory name: {:?}", path))
             })?;
 
             let module_path = path.join("mod.rs");
@@ -553,7 +541,10 @@ async fn discover_migration_files() -> Result<Vec<MigrationFile>> {
             }
 
             let utf8_path = Utf8PathBuf::from_path_buf(module_path.clone()).map_err(|_| {
-                color_eyre::eyre::eyre!("Migration path is not valid UTF-8: {:?}", module_path)
+                SinexError::processing(format!(
+                    "Migration path is not valid UTF-8: {:?}",
+                    module_path
+                ))
             })?;
 
             let (version, description) = parse_migration_metadata(dir_name);
@@ -567,7 +558,7 @@ async fn discover_migration_files() -> Result<Vec<MigrationFile>> {
         }
 
         let utf8_path = Utf8PathBuf::from_path_buf(path.clone()).map_err(|_| {
-            color_eyre::eyre::eyre!("Migration path is not valid UTF-8: {:?}", path)
+            SinexError::processing(format!("Migration path is not valid UTF-8: {:?}", path))
         })?;
 
         if utf8_path
@@ -618,14 +609,17 @@ fn parse_migration_metadata(name: &str) -> (i64, String) {
     (version, description)
 }
 
-async fn validate_migration_syntax(migration: &MigrationFile) -> Result<()> {
+async fn validate_migration_syntax(migration: &MigrationFile) -> NodeResult<()> {
     // Sea-orm migrations are Rust files that get compiled
     // So we just check that the file exists
     debug!("Validating migration syntax for: {}", migration.description);
 
     // Basic validation - check that file exists and is readable
     if !Utf8Path::new(&migration.path).exists() {
-        bail!("Migration file not found: {}", migration.path);
+        return Err(SinexError::processing(format!(
+            "Migration file not found: {}",
+            migration.path
+        )));
     }
 
     Ok(())
@@ -633,14 +627,14 @@ async fn validate_migration_syntax(migration: &MigrationFile) -> Result<()> {
 
 async fn test_migration_compatibility(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-) -> Result<()> {
+) -> NodeResult<()> {
     // Test that the database schema is compatible with expected operations
 
     // Test basic table operations
     sqlx::query!("SELECT 1 as compatibility_test")
         .fetch_one(&mut **tx)
         .await
-        .wrap_err("Basic compatibility test failed")?;
+        .map_err(|e| SinexError::from(e))?;
 
     // Additional compatibility tests would go here
 
@@ -651,7 +645,7 @@ async fn verify_schema_compatibility(
     pool: &PgPool,
     messages: &mut Vec<String>,
     details: &mut HashMap<&str, Value>,
-) -> Result<()> {
+) -> NodeResult<()> {
     info!("Verifying schema compatibility");
 
     // Check for existence of critical tables
@@ -685,7 +679,7 @@ async fn verify_schema_compatibility(
     Ok(())
 }
 
-async fn check_table_exists(pool: &PgPool, table_name: &str) -> Result<bool> {
+async fn check_table_exists(pool: &PgPool, table_name: &str) -> NodeResult<bool> {
     let parts: Vec<&str> = table_name.split('.').collect();
     let (schema, table) = if parts.len() == 2 {
         (parts[0], parts[1])
@@ -693,12 +687,10 @@ async fn check_table_exists(pool: &PgPool, table_name: &str) -> Result<bool> {
         ("public", table_name)
     };
 
-    table_exists(pool, schema, table)
-        .await
-        .wrap_err("Failed to check table existence")
+    table_exists(pool, schema, table).await
 }
 
-async fn test_connection_pool_health(pool: &PgPool) -> Result<Value> {
+async fn test_connection_pool_health(pool: &PgPool) -> NodeResult<Value> {
     // Test connection pool metrics
     let pool_options = pool.options();
 

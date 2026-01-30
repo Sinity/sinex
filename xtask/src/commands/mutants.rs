@@ -113,7 +113,7 @@ mod tests {
     #[test]
     fn test_mutants_command_name() {
         let cmd = MutantsCommand {
-            package: Some("sinex-core".to_string()),
+            package: Some("sinex-db".to_string()),
             file: None,
             timeout: 300,
             jobs: 4,
@@ -126,7 +126,7 @@ mod tests {
     #[test]
     fn test_mutants_command_with_filters() {
         let cmd = MutantsCommand {
-            package: Some("sinex-core".to_string()),
+            package: Some("sinex-db".to_string()),
             file: Some("src/lib.rs".to_string()),
             timeout: 600,
             jobs: 8,
@@ -134,7 +134,7 @@ mod tests {
         };
 
         assert_eq!(cmd.name(), "mutants");
-        assert_eq!(cmd.package.as_deref(), Some("sinex-core"));
+        assert_eq!(cmd.package.as_deref(), Some("sinex-db"));
         assert_eq!(cmd.file.as_deref(), Some("src/lib.rs"));
         assert_eq!(cmd.timeout, 600);
         assert_eq!(cmd.jobs, 8);

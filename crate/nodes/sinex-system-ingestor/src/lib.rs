@@ -17,7 +17,7 @@ pub mod systemd_integration;
 // New unified processor module
 pub mod unified_processor;
 
-use sinex_core::types::Seconds;
+use sinex_primitives::Seconds;
 
 // Local facade module to reduce import verbosity
 mod common {
@@ -30,9 +30,9 @@ mod common {
     };
 
     // External dependencies
+
     pub use {
         async_trait::async_trait,
-        chrono::{DateTime, Utc},
         tracing::{info, instrument},
     };
 }

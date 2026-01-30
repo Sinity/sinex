@@ -23,7 +23,8 @@ pub fn event_fixture(
     event_type: impl Into<crate::EventType>,
     payload: crate::JsonValue,
 ) -> crate::Event<crate::JsonValue> {
-    use crate::{Event, HostName, Id, OffsetKind, Provenance, SourceMaterial, Ulid};
+    use crate::events::SourceMaterial;
+    use crate::{Event, HostName, Id, OffsetKind, Provenance, Timestamp, Ulid};
     use std::str::FromStr;
 
     // Use a constant test material ID
@@ -34,7 +35,7 @@ pub fn event_fixture(
         source: source.into(),
         event_type: event_type.into(),
         payload,
-        ts_orig: Some(chrono::Utc::now()),
+        ts_orig: Some(Timestamp::now()),
         host: HostName::new(gethostname::gethostname().to_string_lossy().to_string()),
         ingestor_version: Some("test".to_string()),
         payload_schema_id: None,
@@ -68,6 +69,6 @@ pub mod strategies {
 
     /// Generate random ULIDs.
     pub fn ulid_strategy() -> impl Strategy<Value = Ulid> {
-        any::<u128>().prop_map(Ulid::from)
+        any::<u128>().prop_map(|bits| Ulid::from_bytes(bits.to_be_bytes()).unwrap())
     }
 }

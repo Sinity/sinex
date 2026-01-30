@@ -1,4 +1,4 @@
-use sinex_core::types::Bytes;
+use sinex_primitives::Bytes;
 use sinex_fs_ingestor::FilesystemConfig;
 use xtask::sandbox::sinex_test;
 

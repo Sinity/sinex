@@ -5,8 +5,7 @@
 //! high-performance index and metadata cache for the content-addressed store.
 
 use crate::schema::{SourceMaterialRegistry, TableDef};
-use crate::ulid::Ulid;
-use chrono::{DateTime, Utc};
+use crate::ulid::{Timestamp, Ulid};
 use sea_orm_migration::prelude::*;
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;
@@ -86,8 +85,8 @@ pub struct BlobRecord {
     pub original_filename: String,
     pub mime_type: Option<String>,
     pub metadata: JsonValue,
-    pub created_at: DateTime<Utc>,
-    pub last_verified_at: Option<DateTime<Utc>>,
+    pub created_at: Timestamp,
+    pub last_verified_at: Option<Timestamp>,
     pub verification_status: Option<String>,
 }
 

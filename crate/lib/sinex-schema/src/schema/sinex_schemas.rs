@@ -8,8 +8,7 @@
 //! - Caching for validation results (`validation_cache`).
 
 use crate::schema::{Events, TableDef};
-use crate::ulid::Ulid;
-use chrono::{DateTime, Utc};
+use crate::ulid::{Timestamp, Ulid};
 use sea_orm_migration::prelude::*;
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;
@@ -59,7 +58,7 @@ pub struct EventPayloadSchemaRecord {
     pub schema_content: JsonValue,
     pub content_hash: String,
     pub is_active: bool,
-    pub updated_at: DateTime<Utc>,
+    pub updated_at: Timestamp,
 }
 
 impl EventPayloadSchemas {
@@ -193,7 +192,7 @@ pub struct ProcessorManifestRecord {
     pub anchor_rule_version: i32,
     pub config_schema: Option<JsonValue>,
     pub consumes_event_types: Option<JsonValue>,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
 }
 
 impl ProcessorManifests {

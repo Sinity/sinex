@@ -1,9 +1,9 @@
 //! Test-only helpers for handler validation logic.
 
 use color_eyre::eyre::{Result, WrapErr};
-use sinex_core::db::models::Entity;
-use sinex_core::types::ulid::Ulid;
-use sinex_core::Id;
+use sinex_db::models::Entity;
+use sinex_primitives::Id;
+use sinex_primitives::Ulid;
 
 use crate::handlers::{
     decode_blob_content as decode_blob_content_inner,

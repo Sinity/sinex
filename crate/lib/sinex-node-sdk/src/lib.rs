@@ -4,6 +4,12 @@
 #![doc = include_str!("../docs/coordination.md")]
 #![doc = include_str!("../docs/stage_as_you_go.md")]
 #![doc = include_str!("../docs/stream_runtime.md")]
+#![doc = include_str!("../docs/README.md")]
+#![doc = include_str!("../docs/overview.md")]
+#![doc = include_str!("../../../../docs/current/architecture/SystemOperations_And_Integrity_Architecture.md")]
+#![doc = include_str!("../docs/coordination.md")]
+#![doc = include_str!("../docs/stage_as_you_go.md")]
+#![doc = include_str!("../docs/stream_runtime.md")]
 
 //! # Sinex Node SDK
 //!
@@ -64,8 +70,10 @@ pub mod config;
 pub mod confirmation_handler;
 #[cfg(feature = "messaging")]
 pub mod coordination;
+pub mod diagnostics;
 #[cfg(feature = "messaging")]
 pub mod dlq_retry;
+
 #[cfg(feature = "messaging")]
 pub mod error_helpers;
 #[cfg(feature = "messaging")]
@@ -297,163 +305,9 @@ pub struct NodeArgs {
 }
 
 // Re-export commonly used types from dependencies
-pub use sinex_core::types::error::SinexError;
-pub use sinex_core::types::ulid::Ulid;
-// Just use the actual Event type from sinex_core directly - no confusing aliases!
+pub use sinex_primitives::error::{ErrorDetails, SinexError};
+pub use sinex_primitives::temporal::Timestamp;
+pub use sinex_primitives::Ulid;
 
 /// Result type for node operations
-pub type NodeResult<T> = std::result::Result<T, NodeError>;
-
-/// Common error types for node services.
-///
-/// This enum provides a unified error handling system for all node services.
-/// Error types are categorized by their source and expected handling:
-///
-/// # Error Categories
-///
-/// ## Configuration Errors
-/// - `Config`: Invalid configuration values, missing required fields
-/// - **Recovery**: Fix configuration and restart service
-/// - **Typical causes**: Missing environment variables, invalid file paths, malformed TOML
-///
-/// ## Communication Errors
-/// - `Grpc`: gRPC communication failures with ingestd
-/// - `GrpcTransport`: Lower-level transport issues (connection refused, timeout)
-/// - **Recovery**: Retry with backoff, check service health
-/// - **Typical causes**: ingestd not running, socket permission issues, network problems
-///
-/// ## Data Storage Errors
-/// - `Redis`: Redis connection or operation failures
-/// - `Database`: PostgreSQL connection or query failures
-/// - **Recovery**: Retry with backoff, implement circuit breaker
-/// - **Typical causes**: Service unavailable, connection pool exhausted, query timeouts
-///
-/// ## Processing Errors
-/// - `Processing`: Recoverable processing failures (bad input, temporary resource issues)
-/// - `Automaton`: Automaton-specific processing failures
-/// - **Recovery**: Skip/retry individual items, log for investigation
-/// - **Typical causes**: Malformed events, resource exhaustion, business rule violations
-///
-/// ## System Errors
-/// - `Serialization`: JSON/TOML serialization failures
-/// - `Io`: Filesystem and general I/O failures
-/// - `General`: Catch-all for unexpected errors
-/// - **Recovery**: Varies by context, often requires manual intervention
-///
-/// ## Lifecycle Errors
-/// - `Checkpoint`: Checkpoint loading/saving failures
-/// - `Lifecycle`: Service startup/shutdown failures
-/// - **Recovery**: Restart service, investigate system state
-///
-/// # Error Handling Patterns
-///
-/// ```rust
-/// use sinex_node_sdk::{NodeError, NodeResult};
-///
-/// // Recoverable processing error
-/// fn process_event(event: &Event<JsonValue>) -> NodeResult<()> {
-///     if event.payload.is_null() {
-///         return Err(NodeError::Processing(
-///             "Event payload cannot be null".to_string()
-///         ));
-///     }
-///     // ... process event
-///     Ok(())
-/// }
-///
-/// // Non-recoverable configuration error
-/// fn validate_config(config: &Config) -> NodeResult<()> {
-///     if config.service_name.is_empty() {
-///         return Err(NodeError::Config(
-///             config::ConfigError::MissingField("service_name".to_string())
-///         ));
-///     }
-///     Ok(())
-/// }
-/// ```
-#[derive(thiserror::Error, Debug)]
-pub enum NodeError {
-    #[error("Configuration error: {0}")]
-    Config(#[from] config::ConfigError),
-
-    #[error("Configuration parsing error: {0}")]
-    Configuration(String),
-
-    #[cfg(feature = "db")]
-    #[error("Database error: {0}")]
-    Database(#[from] sqlx::Error),
-
-    #[error("Serialization error: {0}")]
-    Serialization(#[from] serde_json::Error),
-
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
-
-    #[error("General error: {0}")]
-    General(#[from] color_eyre::eyre::Error),
-
-    #[error("Processing error: {0}")]
-    Processing(String),
-
-    #[error("Automaton error: {0}")]
-    Automaton(String),
-
-    #[error("Checkpoint error: {0}")]
-    Checkpoint(String),
-
-    #[error("Lifecycle error: {0}")]
-    Lifecycle(String),
-
-    #[error("Operation cancelled: {0}")]
-    OperationCancelled(String),
-
-    #[error("Validation error: {0}")]
-    Validation(String),
-
-    #[error("Operation not supported: {0}")]
-    NotSupported(String),
-}
-
-impl From<NodeError> for sinex_core::error::SinexError {
-    fn from(e: NodeError) -> Self {
-        use sinex_core::error::SinexError;
-        match e {
-            NodeError::Config(_) => SinexError::configuration(e.to_string()),
-            NodeError::Configuration(_) => SinexError::configuration(e.to_string()),
-            #[cfg(feature = "db")]
-            NodeError::Database(_) => SinexError::database(e.to_string()),
-            NodeError::Serialization(_) => SinexError::serialization(e.to_string()),
-            NodeError::Io(_) => SinexError::io(e.to_string()),
-            NodeError::General(_) => SinexError::unknown(e.to_string()),
-            NodeError::Processing(_) => SinexError::processing(e.to_string()),
-            NodeError::Automaton(_) => SinexError::automaton(e.to_string()),
-            NodeError::Checkpoint(_) => SinexError::checkpoint(e.to_string()),
-            NodeError::Lifecycle(_) => SinexError::lifecycle(e.to_string()),
-            NodeError::OperationCancelled(_) => SinexError::cancelled(e.to_string()),
-
-            NodeError::Validation(_) => SinexError::validation(e.to_string()),
-            NodeError::NotSupported(_) => SinexError::configuration(e.to_string()),
-        }
-    }
-}
-
-impl From<sinex_core::error::SinexError> for NodeError {
-    fn from(e: sinex_core::error::SinexError) -> Self {
-        use sinex_core::error::SinexError;
-        match e {
-            SinexError::Configuration(_) => NodeError::Configuration(e.to_string()),
-            #[cfg(feature = "db")]
-            SinexError::Database(_) => NodeError::Database(sqlx::Error::Protocol(e.to_string())),
-            SinexError::Serialization(_) => NodeError::Processing(e.to_string()),
-            SinexError::Io(_) => NodeError::Io(std::io::Error::other(e.to_string())),
-            SinexError::Unknown(_) => NodeError::Processing(e.to_string()),
-            SinexError::Validation(_) => NodeError::Validation(e.to_string()),
-            SinexError::Processing(_) => NodeError::Processing(e.to_string()),
-            SinexError::Automaton(_) => NodeError::Automaton(e.to_string()),
-            SinexError::Checkpoint(_) => NodeError::Checkpoint(e.to_string()),
-            SinexError::Lifecycle(_) => NodeError::Lifecycle(e.to_string()),
-            SinexError::Cancelled(_) => NodeError::OperationCancelled(e.to_string()),
-            _ => NodeError::Processing(e.to_string()),
-        }
-    }
-}
+pub type NodeResult<T> = std::result::Result<T, SinexError>;

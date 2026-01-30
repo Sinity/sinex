@@ -2,8 +2,8 @@
 //! usable inside node checkpoint state structures.
 
 use proptest::prelude::*;
-use sinex_core::db::sanitization::EventSanitizer;
-use sinex_core::types::domain::{EventSource, EventType};
+use sinex_node_sdk::db::sanitization::EventSanitizer;
+use sinex_node_sdk::types::domain::{EventSource, EventType};
 use sinex_node_sdk::CheckpointState;
 use xtask::sandbox::prelude::*;
 
@@ -32,7 +32,7 @@ sinex_proptest! {
         let state = CheckpointState {
             checkpoint: sinex_node_sdk::Checkpoint::None,
             processed_count: 0,
-            last_activity: chrono::Utc::now(),
+            last_activity: OffsetDateTime::now_utc(),
             data: Some(event.payload.clone()),
             version: 1,
             revision: 0,

@@ -1,10 +1,10 @@
 use chrono::Utc;
 use serde_json::json;
-use sinex_core::types::ulid::Ulid as CoreUlid;
 use sinex_gateway::cascade_analyzer::{CascadeAnalyzerConfig, StreamingCascadeAnalyzer};
-use xtask::sandbox::{sinex_test, TestContext};
+use sinex_primitives::Ulid as CoreUlid;
 use sqlx::PgPool;
 use uuid::Uuid;
+use xtask::sandbox::{sinex_test, TestContext};
 
 async fn cascade_prereqs_available(pool: &PgPool) -> color_eyre::Result<bool> {
     let exists: bool = sqlx::query_scalar!(

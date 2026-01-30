@@ -8,15 +8,14 @@
 //! - Graceful shutdown and cleanup
 
 use camino::Utf8PathBuf;
-use sinex_core::types::Seconds;
-use sinex_core::SinexError;
+use sinex_primitives::Seconds;
+use sinex_primitives::SinexError;
 use sinex_node_sdk::{
     checkpoint::{CheckpointManager, CheckpointState},
     config::{EventSourceConfig, NodeConfig},
     coordination::{InstanceMode, NodeCoordination},
     stream_processor::Checkpoint,
 };
-use xtask::sandbox::{sinex_test, TestContext};
 use std::collections::HashMap;
 use std::sync::{
     atomic::{AtomicBool, AtomicU32, Ordering},
@@ -24,6 +23,8 @@ use std::sync::{
 };
 use tokio::time::{sleep, timeout, Duration, Instant};
 use tracing::{debug, info, warn};
+use xtask::sandbox::{sinex_test, TestContext};
+use time::OffsetDateTime;
 
 #[path = "../support/mod.rs"]
 mod support;
@@ -39,7 +40,7 @@ async fn test_node_complete_lifecycle(ctx: TestContext) -> color_eyre::Result<()
         .await?;
     let mut coordination = NodeCoordination::from_runtime(
         &runtime.runtime,
-        format!("lifecycle-{}", sinex_core::Ulid::new()),
+        format!("lifecycle-{}", sinex_node_sdk::Ulid::new()),
     )
     .await?;
 
@@ -112,7 +113,7 @@ async fn test_node_health_monitoring(ctx: TestContext) -> color_eyre::Result<()>
     );
 
     // Test checkpoint-based health tracking
-    let start_time = chrono::Utc::now();
+    let start_time = OffsetDateTime::now_utc();
     let mut checkpoint = CheckpointState {
         checkpoint: Checkpoint::Stream {
             message_id: "health-check-001".to_string(),
@@ -137,11 +138,11 @@ async fn test_node_health_monitoring(ctx: TestContext) -> color_eyre::Result<()>
         sleep(Duration::from_millis(50)).await;
 
         checkpoint.processed_count += 1;
-        checkpoint.last_activity = chrono::Utc::now();
+        checkpoint.last_activity = OffsetDateTime::now_utc();
         checkpoint.data = Some(serde_json::json!({
             "health_status": "healthy",
             "uptime_seconds": i,
-            "last_heartbeat": checkpoint.last_activity.to_rfc3339()
+            "last_heartbeat": checkpoint.last_activity.format(&time::format_description::well_known::Rfc3339).unwrap()
         }));
         checkpoint.version += 1;
 
@@ -172,7 +173,7 @@ async fn test_node_error_recovery(ctx: TestContext) -> color_eyre::Result<()> {
         .await?;
     let mut coordination = NodeCoordination::from_runtime(
         &runtime.runtime,
-        format!("recovery-{}", sinex_core::Ulid::new()),
+        format!("recovery-{}", sinex_node_sdk::Ulid::new()),
     )
     .await?;
 
@@ -253,7 +254,7 @@ async fn test_node_state_transitions(ctx: TestContext) -> color_eyre::Result<()>
         .await?;
     let mut coordination = NodeCoordination::from_runtime(
         &runtime.runtime,
-        format!("states-{}", sinex_core::Ulid::new()),
+        format!("states-{}", sinex_node_sdk::Ulid::new()),
     )
     .await?;
 
@@ -345,7 +346,7 @@ async fn test_node_configuration_lifecycle(ctx: TestContext) -> color_eyre::Resu
 
         let coordination = NodeCoordination::from_runtime(
             &runtime.runtime,
-            format!("config-{i}-{}", sinex_core::Ulid::new()),
+            format!("config-{i}-{}", sinex_node_sdk::Ulid::new()),
         )
         .await?;
 
@@ -377,7 +378,7 @@ async fn test_node_graceful_shutdown(ctx: TestContext) -> color_eyre::Result<()>
         .await?;
     let mut coordination = NodeCoordination::from_runtime(
         &runtime.runtime,
-        format!("shutdown-{}", sinex_core::Ulid::new()),
+        format!("shutdown-{}", sinex_node_sdk::Ulid::new()),
     )
     .await?;
 
@@ -438,7 +439,7 @@ async fn test_node_graceful_shutdown(ctx: TestContext) -> color_eyre::Result<()>
             event_id: None,
         },
         processed_count: operations_completed.load(Ordering::SeqCst) as u64,
-        last_activity: chrono::Utc::now(),
+        last_activity: OffsetDateTime::now_utc(),
         data: Some(serde_json::json!({
             "shutdown_reason": "graceful",
             "operations_completed": operations_completed.load(Ordering::SeqCst)
@@ -483,7 +484,7 @@ async fn test_node_concurrent_lifecycle(_ctx: TestContext) -> color_eyre::Result
 
             let mut coordination = NodeCoordination::from_runtime(
                 &runtime.runtime,
-                format!("concurrent-{i}-{}", sinex_core::Ulid::new()),
+                format!("concurrent-{i}-{}", sinex_node_sdk::Ulid::new()),
             )
             .await?;
 
@@ -537,7 +538,7 @@ fn create_minimal_config(service_name: &str) -> EventSourceConfig {
         base: NodeConfig {
             service_name: service_name.to_string(),
             log_level: "info".to_string(),
-            nats: sinex_core::nats::NatsConnectionConfig {
+            nats: sinex_primitives::nats::NatsConnectionConfig {
                 url: "nats://localhost:4222".to_string(),
                 ..Default::default()
             },
@@ -562,7 +563,7 @@ fn create_standard_config(service_name: &str) -> EventSourceConfig {
         base: NodeConfig {
             service_name: service_name.to_string(),
             log_level: "debug".to_string(),
-            nats: sinex_core::nats::NatsConnectionConfig {
+            nats: sinex_primitives::nats::NatsConnectionConfig {
                 url: "nats://localhost:4222".to_string(),
                 ..Default::default()
             },
@@ -591,7 +592,7 @@ fn create_enhanced_config(service_name: &str) -> EventSourceConfig {
         base: NodeConfig {
             service_name: service_name.to_string(),
             log_level: "trace".to_string(),
-            nats: sinex_core::nats::NatsConnectionConfig {
+            nats: sinex_primitives::nats::NatsConnectionConfig {
                 url: "nats://localhost:4222".to_string(),
                 ..Default::default()
             },

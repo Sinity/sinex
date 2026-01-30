@@ -1,17 +1,17 @@
 #![doc = include_str!("../docs/validator.md")]
 
-//! Event validation wrapper that reuses sinex-core's shared validator logic while
+//! Event validation wrapper that reuses sinex-db's shared validator logic while
 //! keeping ingestd-specific ergonomics (stats, enum result, etc.).
 
 use crate::IngestdResult;
-use sinex_core::db::validation::{
+use sinex_db::validation::{
     EventValidator as CoreEventValidator, SchemaInfo, SchemaValidationOutcome,
 };
-use sinex_core::db::SqlxPgPool as PgPool;
-use sinex_core::types::domain::{EventSource, EventType};
-use sinex_core::types::error::SinexError;
-use sinex_core::types::ulid::Ulid;
-use sinex_core::JsonValue;
+use sinex_db::SqlxPgPool as PgPool;
+use sinex_primitives::domain::{EventSource, EventType};
+use sinex_primitives::error::SinexError;
+use sinex_primitives::JsonValue;
+use sinex_primitives::Ulid;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -78,7 +78,7 @@ impl ValidationStatsSnapshot {
     }
 }
 
-/// Event validator that wraps the shared sinex-core validator.
+/// Event validator that wraps the shared sinex-db validator.
 #[derive(Clone)]
 pub struct EventValidator {
     inner: CoreEventValidator,
@@ -184,7 +184,7 @@ impl EventValidator {
     /// Validate a full event structure (used in tests and pipelines).
     pub fn validate_event(
         &self,
-        event: &sinex_core::db::models::event::Event<JsonValue>,
+        event: &sinex_db::models::event::Event<JsonValue>,
     ) -> ValidationResult {
         let result = if !self.validation_enabled {
             ValidationResult::Skipped

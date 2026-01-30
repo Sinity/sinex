@@ -1,26 +1,71 @@
 [package]
 name = "sinex-processor-runtime"
-version.workspace = true
-edition.workspace = true
-authors.workspace = true
-
-[dependencies]
-# Core runtime dependencies
-sinex-node-sdk = { path = "../../lib/sinex-node-sdk" }
-sinex-core = { path = "../sinex-core" }
-
-# CLI & runtime utilities
-clap = { workspace = true, features = ["derive"] }
-color-eyre.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-chrono.workspace = true
-tracing.workspace = true
-tracing-subscriber.workspace = true
-tokio = { workspace = true, features = ["full"] }
-
-# ID generation
-uuid.workspace = true
 
 [dev-dependencies]
 async-trait = "0.1"
+
+[package.version]
+workspace = true
+
+[package.edition]
+workspace = true
+
+[package.authors]
+workspace = true
+
+[dependencies.sinex-node-sdk]
+path = "../../lib/sinex-node-sdk"
+
+[dependencies.sinex-primitives]
+path = "../sinex-primitives"
+features = ["nats"]
+
+[dependencies.sinex-db]
+path = "../sinex-db"
+
+[dependencies.uuid]
+workspace = true
+
+
+[dependencies.time]
+workspace = true
+
+[dependencies.clap]
+workspace = true
+features = [ "derive",]
+
+[dependencies.color-eyre]
+workspace = true
+
+[dependencies.serde]
+workspace = true
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.tracing]
+workspace = true
+
+[dependencies.tracing-subscriber]
+workspace = true
+
+[dependencies.tokio]
+workspace = true
+features = [ "full",]
+
+[dependencies.sinex-macros]
+path = "../sinex-macros"
+optional = true
+
+[features]
+default = []
+macros = ["dep:sinex-macros"]
+
+[dev-dependencies.xtask]
+path = "../../../xtask"
+default-features = false
+features = [ "sandbox",]
+
+[dev-dependencies.sinex-primitives]
+path = "../sinex-primitives"
+features = [ "testing",]

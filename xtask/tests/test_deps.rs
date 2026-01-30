@@ -43,7 +43,11 @@ fn test_deps_list_human() {
     // a known issue with the format argument conflicting with the global format flag.
     // Testing help output which works correctly.
     let mut help_cmd = Command::cargo_bin("xtask").unwrap();
-    help_cmd.arg("analyze").arg("deps").arg("list").arg("--help");
+    help_cmd
+        .arg("analyze")
+        .arg("deps")
+        .arg("list")
+        .arg("--help");
 
     help_cmd
         .assert()
@@ -92,7 +96,11 @@ fn test_deps_tree_no_package() {
 fn test_deps_tree_with_valid_package() {
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze").arg("deps").arg("tree").arg("--package").arg("xtask");
+    cmd.arg("analyze")
+        .arg("deps")
+        .arg("tree")
+        .arg("--package")
+        .arg("xtask");
 
     cmd.assert()
         .success()
@@ -103,7 +111,8 @@ fn test_deps_tree_with_valid_package() {
 fn test_deps_tree_with_invalid_package() {
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze").arg("deps")
+    cmd.arg("analyze")
+        .arg("deps")
         .arg("tree")
         .arg("--package")
         .arg("nonexistent-package-xyz");
@@ -118,7 +127,10 @@ fn test_deps_tree_with_invalid_package() {
 fn test_deps_duplicates_help() {
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze").arg("deps").arg("duplicates").arg("--help");
+    cmd.arg("analyze")
+        .arg("deps")
+        .arg("duplicates")
+        .arg("--help");
 
     cmd.assert()
         .success()
@@ -140,7 +152,8 @@ fn test_deps_duplicates_default() {
 fn test_deps_duplicates_custom_threshold() {
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze").arg("deps")
+    cmd.arg("analyze")
+        .arg("deps")
         .arg("duplicates")
         .arg("--threshold")
         .arg("5");

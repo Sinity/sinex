@@ -2,11 +2,13 @@
 //!
 //! This module provides utilities for manually retrying messages from the DLQ.
 
-use crate::{NodeError, NodeResult};
+use crate::{SinexError, NodeResult};
 use async_nats::jetstream;
 use futures::StreamExt;
-use sinex_core::environment::SinexEnvironment;
-use sinex_core::types::Seconds;
+use sinex_primitives::{
+    environment::SinexEnvironment,
+    units::Seconds,
+};
 use std::time::Duration;
 use tracing::{error, info, warn};
 
@@ -72,7 +74,7 @@ impl DlqRetryHandler {
         let stream = js
             .get_stream(&dlq_stream)
             .await
-            .map_err(|e| NodeError::Processing(format!("Failed to get DLQ stream: {}", e)))?;
+            .map_err(|e| SinexError::processing(format!("Failed to get DLQ stream: {}", e)))?;
 
         let consumer = stream
             .create_consumer(jetstream::consumer::pull::Config {
@@ -85,12 +87,12 @@ impl DlqRetryHandler {
                 ..Default::default()
             })
             .await
-            .map_err(|e| NodeError::Processing(format!("Failed to create DLQ consumer: {}", e)))?;
+            .map_err(|e| SinexError::processing(format!("Failed to create DLQ consumer: {}", e)))?;
 
         let mut messages = consumer
             .messages()
             .await
-            .map_err(|e| NodeError::Processing(format!("Failed to get DLQ messages: {}", e)))?;
+            .map_err(|e| SinexError::processing(format!("Failed to get DLQ messages: {}", e)))?;
 
         let mut retried = 0;
 
@@ -147,7 +149,7 @@ impl DlqRetryHandler {
         let stream = js
             .get_stream(&dlq_stream)
             .await
-            .map_err(|e| NodeError::Processing(format!("Failed to get DLQ stream: {}", e)))?;
+            .map_err(|e| SinexError::processing(format!("Failed to get DLQ stream: {}", e)))?;
 
         let consumer = stream
             .create_consumer(jetstream::consumer::pull::Config {
@@ -160,13 +162,13 @@ impl DlqRetryHandler {
             })
             .await
             .map_err(|e| {
-                NodeError::Processing(format!("Failed to create specific DLQ consumer: {}", e))
+                SinexError::processing(format!("Failed to create specific DLQ consumer: {}", e))
             })?;
 
         let mut messages = consumer
             .messages()
             .await
-            .map_err(|e| NodeError::Processing(format!("Failed to get messages: {}", e)))?;
+            .map_err(|e| SinexError::processing(format!("Failed to get messages: {}", e)))?;
 
         // Use timeout to avoid blocking forever when event doesn't exist
         let next_msg = tokio::time::timeout(Duration::from_secs(5), messages.next()).await;
@@ -180,12 +182,12 @@ impl DlqRetryHandler {
 
             self.retry_message(&js, &msg, retry_count).await?;
             msg.ack().await.map_err(|e| {
-                NodeError::Processing(format!("Failed to ack retried message: {}", e))
+                SinexError::processing(format!("Failed to ack retried message: {}", e))
             })?;
 
             info!("Successfully retried event: {}", event_id);
         } else {
-            return Err(NodeError::Processing(format!(
+            return Err(SinexError::processing(format!(
                 "Event not found in DLQ: {}",
                 event_id
             )));
@@ -204,11 +206,12 @@ impl DlqRetryHandler {
             .headers
             .as_ref()
             .and_then(|h| h.get("Original-Subject"))
-            .ok_or_else(|| NodeError::Processing("Missing Original-Subject header".to_string()))?;
+            .ok_or_else(|| SinexError::processing("Missing Original-Subject header".to_string()))?;
 
         let mut headers = async_nats::HeaderMap::new();
         let retry_count_str = (retry_count + 1).to_string();
-        let retried_at_str = chrono::Utc::now().to_rfc3339();
+        let retried_at_str =
+            sinex_primitives::temporal::format_rfc3339(sinex_primitives::temporal::now());
         headers.insert("Retry-Count", retry_count_str.as_str());
         headers.insert("Retried-At", retried_at_str.as_str());
 
@@ -220,9 +223,9 @@ impl DlqRetryHandler {
 
         js.publish_with_headers(original_subject.to_string(), headers, msg.payload.clone())
             .await
-            .map_err(|e| NodeError::Processing(format!("Failed to republish message: {}", e)))?
+            .map_err(|e| SinexError::processing(format!("Failed to republish message: {}", e)))?
             .await
-            .map_err(|e| NodeError::Processing(format!("Failed to await publish ack: {}", e)))?;
+            .map_err(|e| SinexError::processing(format!("Failed to await publish ack: {}", e)))?;
 
         Ok(())
     }
@@ -235,12 +238,12 @@ impl DlqRetryHandler {
         let mut stream = js
             .get_stream(&dlq_stream_name)
             .await
-            .map_err(|e| NodeError::Processing(format!("Failed to get DLQ stream: {}", e)))?;
+            .map_err(|e| SinexError::processing(format!("Failed to get DLQ stream: {}", e)))?;
 
         let info = stream
             .info()
             .await
-            .map_err(|e| NodeError::Processing(format!("Failed to get stream info: {}", e)))?;
+            .map_err(|e| SinexError::processing(format!("Failed to get stream info: {}", e)))?;
 
         Ok(DlqStats {
             total_messages: info.state.messages,
@@ -264,7 +267,7 @@ pub struct DlqStats {
 mod tests {
     use super::*;
     use async_nats::jetstream;
-    use sinex_core::environment;
+    use sinex_primitives::environment::environment;
     use xtask::sandbox::{sinex_test, EphemeralNats};
 
     #[sinex_test]
@@ -281,7 +284,7 @@ mod tests {
     async fn dlq_retry_errors_without_stream() -> TestResult<()> {
         let nats = EphemeralNats::start().await?;
         let client = nats.connect().await?;
-        let env = environment();
+        let env = environment().clone();
         let handler = DlqRetryHandler::new(client, env, DlqRetryConfig::default());
 
         let err = handler.get_stats().await.unwrap_err();
@@ -299,7 +302,7 @@ mod tests {
     async fn dlq_retry_by_id_reports_missing_event() -> TestResult<()> {
         let nats = EphemeralNats::start().await?;
         let client = nats.connect().await?;
-        let env = environment();
+        let env = environment().clone();
         let js = jetstream::new(client.clone());
 
         let stream_name = env.nats_stream_name("EVENTS_DLQ");

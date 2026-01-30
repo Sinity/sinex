@@ -1,15 +1,15 @@
 //! End-to-end JetStream integration tests using PipelineScope.
 
 use serde_json::json;
-use sinex_core::DbPoolExt;
+use sinex_db::DbPoolExt;
 use sinex_node_sdk::{
     AutomatonEventHandler, JetStreamEventConsumer, JetStreamEventConsumerConfig, ProcessingModel,
 };
-use xtask::sandbox::prelude::*;
-use xtask::sandbox::timing::{WaitHelpers, DEFAULT_WAIT_SECS};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::info;
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::{WaitHelpers, DEFAULT_WAIT_SECS};
 
 #[sinex_test(timeout = 60)]
 async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
@@ -51,7 +51,7 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
             "test.event",
             json!({
                 "message": "E2E JetStream test event",
-                "timestamp": chrono::Utc::now().to_rfc3339(),
+                "timestamp": crate::temporal::now().to_rfc3339(),
             }),
         )
         .await?;

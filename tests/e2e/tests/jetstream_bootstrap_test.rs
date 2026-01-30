@@ -16,9 +16,9 @@ use std::time::Duration;
 
 use async_nats::jetstream::{self, consumer, stream};
 use color_eyre::eyre::eyre;
+use tokio::sync::OnceCell;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
-use tokio::sync::OnceCell;
 
 fn is_jetstream_no_messages_error(msg: &str) -> bool {
     msg.contains("No Messages")

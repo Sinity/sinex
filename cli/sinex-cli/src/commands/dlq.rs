@@ -161,7 +161,7 @@ impl DlqCommands {
     }
 }
 
-use sinex_core::rpc::dlq::{DlqListResponse, DlqMessagePeek};
+use sinex_primitives::rpc::dlq::{DlqListResponse, DlqMessagePeek};
 
 /// Format DLQ statistics as table
 fn format_dlq_stats_table(stats: &DlqListResponse) -> String {

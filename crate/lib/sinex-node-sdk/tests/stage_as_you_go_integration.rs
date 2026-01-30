@@ -3,20 +3,20 @@ use std::time::Duration;
 
 use async_nats::jetstream;
 use serde_json::json;
-use sinex_core::types::buffers::DEFAULT_EVENT_CHANNEL_SIZE;
-use sinex_core::{db::models::Event, JsonValue};
+use sinex_node_sdk::types::buffers::DEFAULT_EVENT_CHANNEL_SIZE;
+use sinex_node_sdk::{db::models::Event, JsonValue};
 use sinex_node_sdk::acquisition_manager::AcquisitionManager;
 use sinex_node_sdk::nats_publisher::NatsPublisher;
 use sinex_node_sdk::stage_as_you_go::{
     LogFileStageProcessor, StageAsYouGoContext, StageAsYouGoProcessor,
 };
 use sinex_node_sdk::{spawn_event_processor, EventBatcherConfig, EventTransport};
-use xtask::sandbox::prelude::*;
-use xtask::sandbox::timing::WaitHelpers;
-use xtask::sandbox::{start_test_ingestd_with_config, TestIngestdConfig};
 use tokio::sync::{mpsc, oneshot};
 use tracing::info;
 use uuid::Uuid;
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::WaitHelpers;
+use xtask::sandbox::{start_test_ingestd_with_config, TestIngestdConfig};
 
 #[sinex_test]
 async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
@@ -38,7 +38,7 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
             let js = jetstream.clone();
             let stream_name = ingest_handle.stream_name.clone();
             async move {
-                Ok::<bool, sinex_test_utils::SinexError>(js.get_stream(&stream_name).await.is_ok())
+                Ok::<bool, xtask::sandbox::SinexError>(js.get_stream(&stream_name).await.is_ok())
             }
         },
         5,
@@ -96,7 +96,7 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
                 )
                 .fetch_one(&pool)
                 .await?;
-                Ok::<bool, sinex_test_utils::SinexError>(row.status == "completed")
+                Ok::<bool, xtask::sandbox::SinexError>(row.status == "completed")
             }
         },
         5,
@@ -133,7 +133,7 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
                 )
                 .fetch_one(&pool)
                 .await?;
-                Ok::<bool, sinex_test_utils::SinexError>(count.unwrap_or(0) == expected)
+                Ok::<bool, xtask::sandbox::SinexError>(count.unwrap_or(0) == expected)
             }
         },
         5,

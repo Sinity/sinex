@@ -4,7 +4,7 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use sinex_core::JsonValue;
+use sinex_primitives::JsonValue;
 use sinex_node_sdk::simple_node::{
     SimpleNode, SimpleNodeContext, SimpleNodeError, SimpleNodeWrapper,
 };
@@ -47,7 +47,7 @@ impl SimpleNode for SearchAutomaton {
         if let Some(c) = content {
             state.index_entries.push_back(serde_json::json!({
                 "content": c,
-                "timestamp": chrono::Utc::now(),
+                "timestamp": sinex_primitives::temporal::now(),
             }));
             if state.index_entries.len() > 1000 {
                 state.index_entries.pop_front();

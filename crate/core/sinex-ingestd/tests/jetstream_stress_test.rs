@@ -3,7 +3,8 @@
 use async_nats::{jetstream, HeaderMap};
 use chrono::Utc;
 use serde_json::json;
-use sinex_core::{DbPoolExt, EventSource, SinexError, Ulid};
+use sinex_db::DbPoolExt;
+use sinex_primitives::{EventSource, SinexError, Ulid};
 use xtask::sandbox::timing::WaitHelpers;
 use xtask::sandbox::{sinex_test, TestContext, TestNodePublisher};
 
@@ -30,7 +31,7 @@ async fn dlq_message_count(
 }
 
 #[sinex_test]
-async fn jetstream_pipeline_handles_burst_without_timeouts() -> sinex_test_utils::TestResult<()> {
+async fn jetstream_pipeline_handles_burst_without_timeouts() -> TestResult<()> {
     let ctx = TestContext::new().await?;
     let ctx = ctx.with_nats().shared().await?;
     let pipeline = ctx.pipeline().await?;
@@ -59,7 +60,7 @@ async fn jetstream_pipeline_handles_burst_without_timeouts() -> sinex_test_utils
 }
 
 #[sinex_test]
-async fn jetstream_pipeline_restart_keeps_dlq_flowing() -> sinex_test_utils::TestResult<()> {
+async fn jetstream_pipeline_restart_keeps_dlq_flowing() -> TestResult<()> {
     let ctx = TestContext::new().await?;
     let ctx = ctx.with_nats().shared().await?;
     let namespace = ctx.pipeline_namespace().prefix().to_string();
@@ -110,7 +111,7 @@ async fn jetstream_pipeline_restart_keeps_dlq_flowing() -> sinex_test_utils::Tes
 }
 
 #[sinex_test]
-async fn jetstream_pipeline_dedupes_duplicate_event_ids() -> sinex_test_utils::TestResult<()> {
+async fn jetstream_pipeline_dedupes_duplicate_event_ids() -> TestResult<()> {
     let ctx = TestContext::new().await?;
     let ctx = ctx.with_nats().shared().await?;
     let pipeline = ctx.pipeline().await?;
@@ -169,7 +170,7 @@ async fn jetstream_pipeline_dedupes_duplicate_event_ids() -> sinex_test_utils::T
 }
 
 #[sinex_test]
-async fn jetstream_pipeline_routes_invalid_burst_to_dlq() -> sinex_test_utils::TestResult<()> {
+async fn jetstream_pipeline_routes_invalid_burst_to_dlq() -> TestResult<()> {
     let ctx = TestContext::new().await?;
     let ctx = ctx.with_nats().shared().await?;
     let namespace = ctx.pipeline_namespace().prefix().to_string();
@@ -215,8 +216,7 @@ async fn jetstream_pipeline_routes_invalid_burst_to_dlq() -> sinex_test_utils::T
 }
 
 #[sinex_test]
-async fn jetstream_pipeline_handles_mixed_valid_and_invalid_bursts(
-) -> sinex_test_utils::TestResult<()> {
+async fn jetstream_pipeline_handles_mixed_valid_and_invalid_bursts() -> TestResult<()> {
     let ctx = TestContext::new().await?;
     let ctx = ctx.with_nats().shared().await?;
     let pipeline = ctx.pipeline().await?;

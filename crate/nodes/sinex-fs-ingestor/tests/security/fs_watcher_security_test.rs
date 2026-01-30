@@ -6,7 +6,7 @@
 use xtask::sandbox::prelude::*;
 
 // Additional specific imports
-use sinex_core::types::validation::FileWatchingSecurityPolicy;
+use sinex_primitives::validation::FileWatchingSecurityPolicy;
 use sinex_fs_ingestor::unified_processor::{FilesystemConfig, FilesystemProcessor};
 use tempfile::TempDir;
 

@@ -4,19 +4,19 @@
 //! and migration code, ensuring protection against path traversal attacks.
 
 use camino::Utf8PathBuf;
-use sinex_core::db::security::{SecurityError, SecurityValidator};
-use sinex_core::types::validate_path;
-use sinex_core::{Event, JsonValue};
+use sinex_node_sdk::db::security::{SecurityError, SecurityValidator};
+use sinex_node_sdk::types::validate_path;
+use sinex_node_sdk::{Event, JsonValue};
 use sinex_node_sdk::annex::{
     blob_manager::BLOB_EVENT_CHANNEL_CAPACITY, AnnexConfig, BlobManager, VerifiedPath,
 };
-use xtask::sandbox::prelude::*;
-use sinex_test_utils::TestResult;
+use xtask::sandbox::TestResult;
 use std::path::Path;
 use tempfile::TempDir;
 use tokio::fs;
 use tokio::process::Command;
 use tokio::sync::mpsc;
+use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn test_path_validation_rejects_traversal_attacks(ctx: TestContext) -> TestResult<()> {

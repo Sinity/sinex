@@ -39,7 +39,6 @@
 //! handle.shutdown().await;
 //! ```
 
-use chrono::{DateTime, Utc};
 use std::sync::{Arc, RwLock};
 use tokio::task::JoinHandle;
 
@@ -67,7 +66,7 @@ pub struct WatcherHealth {
     /// Last error encountered by the watcher
     pub last_error: Option<String>,
     /// Timestamp of last successful operation
-    pub last_success: Option<DateTime<Utc>>,
+    pub last_success: Option<sinex_primitives::Timestamp>,
     /// Total number of events processed
     pub events_processed: u64,
 }
@@ -210,7 +209,8 @@ impl<M> WatcherHandle<M> {
     /// Record a successful operation in the health tracker.
     pub fn record_success(&self) {
         if let Ok(mut health) = self.health.write() {
-            health.last_success = Some(Utc::now());
+            health.last_success =
+                Some(sinex_primitives::temporal::OffsetDateTime::now_utc().into());
             health.events_processed = health.events_processed.saturating_add(1);
         }
     }
@@ -284,9 +284,10 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
     use tokio::time::{sleep, Duration};
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
-    async fn test_watcher_state_transitions() {
+    async fn test_watcher_state_transitions() -> Result<(), Box<dyn std::error::Error>> {
         let mut handle = WatcherHandle::<()>::initialized("test");
         assert!(!handle.is_active());
 
@@ -301,10 +302,11 @@ mod tests {
         assert!(was_active);
         handle.shutdown().await;
         // handle is consumed, can't check after
+        Ok(())
     }
 
     #[sinex_test]
-    async fn test_watcher_running_constructor() {
+    async fn test_watcher_running_constructor() -> Result<(), Box<dyn std::error::Error>> {
         let task = tokio::spawn(async {
             sleep(Duration::from_secs(10)).await;
         });
@@ -312,10 +314,11 @@ mod tests {
         assert!(handle.is_active());
         let health = handle.health();
         assert!(health.active);
+        Ok(())
     }
 
     #[sinex_test]
-    async fn test_watcher_health_tracking() {
+    async fn test_watcher_health_tracking() -> Result<(), Box<dyn std::error::Error>> {
         let handle = WatcherHandle::<()>::initialized("test");
 
         let health = handle.health();
@@ -330,10 +333,11 @@ mod tests {
         handle.record_error("test error".to_string());
         let health = handle.health();
         assert_eq!(health.last_error, Some("test error".to_string()));
+        Ok(())
     }
 
     #[sinex_test]
-    async fn test_watcher_shutdown_aborts_task() {
+    async fn test_watcher_shutdown_aborts_task() -> Result<(), Box<dyn std::error::Error>> {
         let flag = Arc::new(AtomicBool::new(false));
         let flag_clone = Arc::clone(&flag);
 
@@ -350,10 +354,11 @@ mod tests {
 
         // Task should have been aborted, flag should still be false
         assert!(!flag.load(Ordering::SeqCst));
+        Ok(())
     }
 
     #[sinex_test]
-    async fn test_watcher_with_material() {
+    async fn test_watcher_with_material() -> Result<(), Box<dyn std::error::Error>> {
         let material = "test_context";
         let mut handle = WatcherHandle::initialized("test").with_material(material);
 
@@ -363,10 +368,11 @@ mod tests {
         let extracted = handle.take_material();
         assert_eq!(extracted, Some("test_context"));
         assert!(handle.take_material().is_none());
+        Ok(())
     }
 
     #[sinex_test]
-    async fn test_watcher_with_forwarder() {
+    async fn test_watcher_with_forwarder() -> Result<(), Box<dyn std::error::Error>> {
         let main_task = tokio::spawn(async {
             sleep(Duration::from_secs(10)).await;
         });
@@ -380,5 +386,6 @@ mod tests {
 
         handle.shutdown().await;
         // Both tasks should be aborted
+        Ok(())
     }
 }

@@ -4,12 +4,10 @@
 //! via consuming `restore()` method. Drop is not implemented because guards are
 //! consumed by restore() calls.
 
-use once_cell::sync::Lazy;
-use sqlx::{pool::PoolConnection, Postgres};
+use crate::sandbox::prelude::*;
+use sqlx::pool::PoolConnection;
 use std::ffi::OsStr;
 use std::sync::{Mutex, MutexGuard};
-
-use crate::Result;
 
 static ENV_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
@@ -101,7 +99,7 @@ impl ReplicationRoleGuard {
         sqlx::query("SET session_replication_role = 'replica'")
             .execute(conn.as_mut())
             .await
-            .map_err(|e| crate::SinexError::database(e.to_string()))?;
+            .map_err(|e| SinexError::database(e.to_string()))?;
 
         Ok(Self { was_set: true })
     }
@@ -138,7 +136,7 @@ impl RowSecurityGuard {
         sqlx::query("SET row_security = off")
             .execute(conn.as_mut())
             .await
-            .map_err(|e| crate::SinexError::database(e.to_string()))?;
+            .map_err(|e| SinexError::database(e.to_string()))?;
 
         Ok(Self { was_disabled: true })
     }
@@ -187,7 +185,7 @@ impl TriggersGuard {
                     );
                 }
                 Err(err) => {
-                    return Err(crate::SinexError::database(err.to_string()));
+                    return Err(SinexError::database(err.to_string()).into());
                 }
             }
         }

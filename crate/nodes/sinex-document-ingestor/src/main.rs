@@ -3,10 +3,10 @@
 //! This uses the new Node architecture with service/scan/explore subcommands.
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 #[cfg(not(target_env = "msvc"))]
 use mimalloc::MiMalloc;
-use sinex_core::types::domain::SanitizedPath;
+use sinex_primitives::domain::SanitizedPath;
+use sinex_primitives::temporal::OffsetDateTime;
 use sinex_document_ingestor::{DocumentIngestorConfig, DocumentProcessor};
 use sinex_node_sdk::{
     stream_processor::{
@@ -86,29 +86,22 @@ impl Node for UnifiedDocumentNode {
 }
 
 impl ExplorationProvider for UnifiedDocumentNode {
-    fn get_source_state(&self) -> color_eyre::eyre::Result<SourceState> {
+    fn get_source_state(&self) -> NodeResult<SourceState> {
         self.0.ingestor().get_source_state()
     }
 
-    fn get_ingestion_history(
-        &self,
-        limit: u64,
-    ) -> color_eyre::eyre::Result<Vec<IngestionHistoryEntry>> {
+    fn get_ingestion_history(&self, limit: u64) -> NodeResult<Vec<IngestionHistoryEntry>> {
         self.0.ingestor().get_ingestion_history(limit)
     }
 
     fn get_coverage_analysis(
         &self,
-        time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
-    ) -> color_eyre::eyre::Result<CoverageAnalysis> {
+        time_range: Option<(OffsetDateTime, OffsetDateTime)>,
+    ) -> NodeResult<CoverageAnalysis> {
         self.0.ingestor().get_coverage_analysis(time_range)
     }
 
-    fn export_data(
-        &self,
-        path: &SanitizedPath,
-        format: ExportFormat,
-    ) -> color_eyre::eyre::Result<()> {
+    fn export_data(&self, path: &SanitizedPath, format: ExportFormat) -> NodeResult<()> {
         self.0.ingestor().export_data(path, format)
     }
 }

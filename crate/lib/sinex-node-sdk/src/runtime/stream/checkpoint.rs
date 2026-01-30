@@ -1,6 +1,6 @@
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sinex_core::types::Ulid;
+use sinex_primitives::Ulid;
+use time::OffsetDateTime;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Checkpoint {
@@ -18,7 +18,7 @@ pub enum Checkpoint {
         event_id: Option<Ulid>,
     },
     Timestamp {
-        timestamp: DateTime<Utc>,
+        timestamp: OffsetDateTime,
         metadata: Option<serde_json::Value>,
     },
 }
@@ -45,7 +45,7 @@ impl Checkpoint {
         }
     }
 
-    pub fn timestamp(timestamp: DateTime<Utc>, metadata: Option<serde_json::Value>) -> Self {
+    pub fn timestamp(timestamp: OffsetDateTime, metadata: Option<serde_json::Value>) -> Self {
         Self::Timestamp {
             timestamp,
             metadata,
@@ -71,7 +71,10 @@ impl Checkpoint {
                 }
             }
             Checkpoint::Timestamp { timestamp, .. } => {
-                format!("timestamp {}", timestamp.format("%Y-%m-%d %H:%M:%S UTC"))
+                format!(
+                    "timestamp {}",
+                    sinex_primitives::temporal::format_rfc3339((*timestamp).into())
+                )
             }
         }
     }

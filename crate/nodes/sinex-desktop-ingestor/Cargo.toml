@@ -1,56 +1,105 @@
-[package]
-name = "sinex-desktop-ingestor"
-version.workspace = true
-edition.workspace = true
-authors.workspace = true
-
 [[bin]]
 name = "sinex-desktop-ingestor"
 path = "src/main.rs"
 
+[package]
+name = "sinex-desktop-ingestor"
+
 [dependencies]
-mimalloc = { workspace = true }
-# Core dependencies
-thiserror.workspace = true
-async-trait.workspace = true
-color-eyre.workspace = true
-tokio = { workspace = true, features = ["full"] }
-futures = "0.3"
-tracing.workspace = true
-tracing-subscriber.workspace = true
-camino = { workspace = true }
-clap = { workspace = true }
-
-# Configuration
-serde.workspace = true
-serde_json.workspace = true
-
-# Time handling
-chrono.workspace = true
-
-# System integration
-dirs.workspace = true
-
-# Clipboard handling
-copypasta = "0.10"
-arboard = "3.4"
-
-# Hash computation
-blake3 = "1.5"
-
-# URL parsing for clipboard files
+futures     = "0.3"
+copypasta   = "0.10"
+arboard     = "3.4"
+blake3      = "1.5"
 urlencoding = "2.1"
-
-# Host identification
 gethostname = "0.4"
 
-# Database integration (for blob storage)
-sqlx = { workspace = true }
-tokio-retry.workspace = true
+[package.version]
+workspace = true
 
-# Local dependencies
-sinex-node-sdk = { path = "../../lib/sinex-node-sdk", features = ["macros"] }
-sinex-processor-runtime = { path = "../../lib/sinex-processor-runtime" }
-sinex-core = { path = "../../lib/sinex-core", features = [] }
+[package.edition]
+workspace = true
 
-[dev-dependencies]
+[package.authors]
+workspace = true
+
+[dependencies.mimalloc]
+workspace = true
+
+[dependencies.thiserror]
+workspace = true
+
+[dependencies.async-trait]
+workspace = true
+
+[dependencies.color-eyre]
+workspace = true
+
+[dependencies.tokio]
+workspace = true
+features = [
+    "full",
+]
+
+[dependencies.time]
+workspace = true
+
+[dependencies.tracing]
+workspace = true
+
+[dependencies.tracing-subscriber]
+workspace = true
+
+[dependencies.camino]
+workspace = true
+
+[dependencies.clap]
+workspace = true
+
+[dependencies.serde]
+workspace = true
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.dirs]
+workspace = true
+
+[dependencies.sqlx]
+workspace = true
+
+[dependencies.tokio-retry]
+workspace = true
+
+[dependencies.sinex-node-sdk]
+path = "../../lib/sinex-node-sdk"
+features = [
+    "macros",
+]
+
+[dependencies.sinex-processor-runtime]
+path = "../../lib/sinex-processor-runtime"
+
+features = [
+]
+
+[dependencies.sinex-primitives]
+path = "../../lib/sinex-primitives"
+
+[dependencies.sinex-db]
+path = "../../lib/sinex-db"
+
+[dev-dependencies.xtask]
+path = "../../../xtask"
+default-features = false
+features = [
+    "sandbox",
+]
+
+[dev-dependencies.xtask-macros]
+path = "../../../xtask-macros"
+
+[dev-dependencies.sinex-primitives]
+path = "../../lib/sinex-primitives"
+features = [
+    "testing",
+]

@@ -137,7 +137,14 @@ fn execute_list(
                     profile,
                     status,
                     duration,
-                    inv.started_at.format("%Y-%m-%d %H:%M")
+                    inv.started_at
+                        .format(
+                            &time::format_description::parse(
+                                "[year]-[month]-[day] [hour]:[minute]"
+                            )
+                            .unwrap()
+                        )
+                        .unwrap_or_else(|_| "-".into())
                 );
             }
         }

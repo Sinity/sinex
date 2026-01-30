@@ -1,7 +1,7 @@
 use camino::Utf8Path;
 use sinex_node_sdk::annex::{AnnexKey, GitAnnex};
-use xtask::sandbox::sinex_test;
 use tempfile::TempDir;
+use xtask::sandbox::sinex_test;
 
 #[sinex_test]
 fn annex_key_parse_extracts_components() -> TestResult<()> {

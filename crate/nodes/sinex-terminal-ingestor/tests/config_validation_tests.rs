@@ -1,5 +1,5 @@
 use camino::Utf8PathBuf;
-use sinex_core::types::{Bytes, Seconds};
+use sinex_primitives::{Bytes, Seconds};
 use sinex_terminal_ingestor::unified_processor::{HistorySourceConfig, TerminalConfig};
 use xtask::sandbox::sinex_test;
 

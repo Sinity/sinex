@@ -1,21 +1,54 @@
 [package]
-name = "sinex-macros"
+name    = "sinex-macros"
 version = "0.1.0"
 edition = "2021"
-authors.workspace = true
-repository.workspace = true
-license.workspace = true
 
 [lib]
 proc-macro = true
-doctest = false
+doctest    = false
 
 [dependencies]
-syn = { version = "2.0", features = ["full", "extra-traits"] }
-quote = "1.0"
+quote       = "1.0"
 proc-macro2 = "1.0"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde_json  = "1.0"
 
-[dev-dependencies]
-color-eyre = { workspace = true }
+[package.authors]
+workspace = true
+
+[package.repository]
+workspace = true
+
+[package.license]
+workspace = true
+
+[dependencies.syn]
+version = "2.0"
+features = [
+    "full",
+    "extra-traits",
+]
+
+[dependencies.serde]
+version = "1.0"
+features = [
+    "derive",
+]
+
+[dev-dependencies.color-eyre]
+workspace = true
+
+[dev-dependencies.xtask]
+path = "../../../xtask"
+default-features = false
+features = [
+    "sandbox",
+]
+
+[dev-dependencies.xtask-macros]
+path = "../../../xtask-macros"
+
+[dev-dependencies.sinex-primitives]
+path = "../sinex-primitives"
+features = [
+    "testing",
+]

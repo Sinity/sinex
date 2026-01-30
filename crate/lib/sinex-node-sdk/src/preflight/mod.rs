@@ -7,7 +7,7 @@ pub mod services;
 pub mod verification;
 
 // validate_toml_file is now private to the configuration module
-use color_eyre::eyre::{self, Result};
+use crate::{SinexError, NodeResult};
 pub use services::verify_service_dependencies;
 pub use verification::run_preflight_checks;
 
@@ -26,13 +26,19 @@ fn env_string_with_fallback(names: &[&str]) -> Option<String> {
     None
 }
 
-pub fn resolve_database_url() -> Result<String> {
+pub fn resolve_database_url() -> NodeResult<String> {
     env_string_with_fallback(&["SINEX_DATABASE_URL", "DATABASE_URL"]).ok_or_else(|| {
-        eyre::eyre!("Database URL environment variable not set (SINEX_DATABASE_URL/DATABASE_URL)")
+        SinexError::configuration(
+            "Database URL environment variable not set (SINEX_DATABASE_URL/DATABASE_URL)"
+                .to_string(),
+        )
     })
 }
 
-pub fn resolve_nats_url() -> Result<String> {
-    env_string_with_fallback(&["SINEX_NATS_URL"])
-        .ok_or_else(|| eyre::eyre!("NATS URL environment variable not set (SINEX_NATS_URL)"))
+pub fn resolve_nats_url() -> NodeResult<String> {
+    env_string_with_fallback(&["SINEX_NATS_URL"]).ok_or_else(|| {
+        SinexError::configuration(
+            "NATS URL environment variable not set (SINEX_NATS_URL)".to_string(),
+        )
+    })
 }

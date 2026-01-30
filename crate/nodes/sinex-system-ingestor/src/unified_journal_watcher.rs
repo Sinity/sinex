@@ -10,23 +10,26 @@
 //! events based on the presence of `_SYSTEMD_UNIT` field to emit both journal
 //! and systemd-specific events, reducing process overhead by 50%.
 
-use chrono::{DateTime, TimeZone, Utc};
-use sinex_core::fs::atomic_write;
-use sinex_core::{Event, JsonValue};
+use sinex_primitives::fs::atomic_write;
+use sinex_db::models::Event;
+use sinex_primitives::JsonValue;
+use time::OffsetDateTime;
 
 use crate::payloads::*;
 use crate::WatcherMaterialContext;
 use sha2::{Digest, Sha256};
-use sinex_core::types::events::{
+use sinex_primitives::events::{
     JournalEntryWrittenPayload as EventJournalEntryWrittenPayload,
     JournalSyncCompletedPayload as EventJournalSyncCompletedPayload, SystemdTimerTriggeredPayload,
     SystemdUnitFailedPayload, SystemdUnitReloadedPayload, SystemdUnitStartedPayload,
     SystemdUnitStoppedPayload,
 };
-use sinex_core::{
-    JournalSyncType, Microseconds, ProcessId, SyslogPriority,
-    SystemdActiveState as CoreSystemdActiveState, SystemdUnitType as CoreSystemdUnitType, UnixGid,
-    UnixUid,
+use sinex_primitives::{
+    events::enums::{
+        JournalSyncType, SystemdActiveState as CoreSystemdActiveState,
+        SystemdUnitType as CoreSystemdUnitType,
+    },
+    units::{Microseconds, ProcessId, SyslogPriority, UnixGid, UnixUid},
 };
 use sinex_node_sdk::NodeResult;
 use std::collections::{HashMap, HashSet};
@@ -104,11 +107,11 @@ impl UnifiedJournalWatcher {
             .output()
             .await
             .map_err(|e| {
-                sinex_node_sdk::NodeError::Processing(format!("journalctl not found: {}", e))
+                sinex_node_sdk::SinexError::processing(format!("journalctl not found: {}", e))
             })?;
 
         if !check.status.success() {
-            return Err(sinex_node_sdk::NodeError::Processing(
+            return Err(sinex_node_sdk::SinexError::processing(
                 "journalctl command failed".to_string(),
             ));
         }
@@ -231,11 +234,11 @@ impl UnifiedJournalWatcher {
             .output()
             .await
             .map_err(|e| {
-                sinex_node_sdk::NodeError::Processing(format!("Failed to run journalctl: {}", e))
+                sinex_node_sdk::SinexError::processing(format!("Failed to run journalctl: {}", e))
             })?;
 
         if !output.status.success() {
-            return Err(sinex_node_sdk::NodeError::Processing(format!(
+            return Err(sinex_node_sdk::SinexError::processing(format!(
                 "journalctl failed: {}",
                 String::from_utf8_lossy(&output.stderr)
             )));
@@ -325,8 +328,8 @@ impl UnifiedJournalWatcher {
                     start_cursor: sync_payload.start_cursor,
                     end_cursor: sync_payload.end_cursor,
                     entries_count: sync_payload.entries_count,
-                    time_start: sync_payload.time_start,
-                    time_end: sync_payload.time_end,
+                    time_start: sync_payload.time_start.map(Into::into),
+                    time_end: sync_payload.time_end.map(Into::into),
                     duration_ms: sync_payload.duration_ms,
                 },
                 material.initial_provenance(),
@@ -412,7 +415,7 @@ impl UnifiedJournalWatcher {
             .stderr(std::process::Stdio::piped())
             .spawn()
             .map_err(|e| {
-                sinex_node_sdk::NodeError::Processing(format!("Failed to spawn journalctl: {}", e))
+                sinex_node_sdk::SinexError::processing(format!("Failed to spawn journalctl: {}", e))
             })?;
 
         // Store child process for lifecycle management
@@ -424,7 +427,7 @@ impl UnifiedJournalWatcher {
         let stdout = child_ref
             .stdout
             .take()
-            .ok_or_else(|| sinex_node_sdk::NodeError::Processing("No stdout".to_string()))?;
+            .ok_or_else(|| sinex_node_sdk::SinexError::processing("No stdout".to_string()))?;
 
         let mut reader = BufReader::new(stdout);
         let mut line = String::new();
@@ -505,21 +508,21 @@ impl UnifiedJournalWatcher {
         material: &WatcherMaterialContext,
     ) -> NodeResult<Option<Event<JsonValue>>> {
         let obj = entry.as_object().ok_or_else(|| {
-            sinex_node_sdk::NodeError::Processing("Invalid journal entry".to_string())
+            sinex_node_sdk::SinexError::processing("Invalid journal entry".to_string())
         })?;
 
         // Extract required fields
         let cursor = obj
             .get("__CURSOR")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| sinex_node_sdk::NodeError::Processing("Missing cursor".to_string()))?;
+            .ok_or_else(|| sinex_node_sdk::SinexError::processing("Missing cursor".to_string()))?;
 
         let timestamp_us = obj
             .get("__REALTIME_TIMESTAMP")
             .and_then(|v| v.as_str())
             .and_then(|s| s.parse::<i64>().ok())
             .ok_or_else(|| {
-                sinex_node_sdk::NodeError::Processing("Missing timestamp".to_string())
+                sinex_node_sdk::SinexError::processing("Missing timestamp".to_string())
             })?;
 
         let message = obj
@@ -529,10 +532,11 @@ impl UnifiedJournalWatcher {
             .to_string();
 
         // Parse timestamp
-        let timestamp: DateTime<Utc> = if timestamp_us > 0 {
-            chrono::DateTime::from_timestamp_micros(timestamp_us).unwrap_or_else(chrono::Utc::now)
+        let timestamp: OffsetDateTime = if timestamp_us > 0 {
+            OffsetDateTime::from_unix_timestamp_nanos(timestamp_us as i128 * 1000)
+                .unwrap_or_else(|_| OffsetDateTime::now_utc())
         } else {
-            chrono::Utc::now()
+            *sinex_primitives::temporal::now()
         };
 
         // Extract optional fields
@@ -651,7 +655,7 @@ impl UnifiedJournalWatcher {
             EventJournalEntryWrittenPayload {
                 cursor: payload.cursor,
                 timestamp_us: Microseconds::from_micros(payload.timestamp_us),
-                timestamp: payload.timestamp,
+                timestamp: payload.timestamp.into(),
                 hostname: payload.hostname,
                 unit: payload.unit,
                 syslog_identifier: payload.syslog_identifier,
@@ -673,17 +677,17 @@ impl UnifiedJournalWatcher {
         let id_entropy = Self::calculate_entropy(cursor_str.as_str(), 0);
         let timestamp_ms = payload.timestamp_us / 1000;
         let id_val = (timestamp_ms as u128) << 80 | (id_entropy & 0xFFFF_FFFF_FFFF_FFFF_FFFF);
-        let ulid = sinex_core::types::Ulid::from_bytes(id_val.to_be_bytes())
-            .unwrap_or_else(|_| sinex_core::types::Ulid::new());
+        let ulid = sinex_primitives::Ulid::from_bytes(id_val.to_be_bytes())
+            .unwrap_or_else(|_| sinex_primitives::Ulid::new());
 
-        let id = sinex_core::types::Id::from_ulid(ulid);
+        let id = sinex_primitives::Id::from_ulid(ulid);
         event.id = Some(id);
 
         // Ensure ts_orig matches journal timestamp
-        event.ts_orig = Some(timestamp_dt);
+        event.ts_orig = Some(timestamp_dt.into());
 
         let json_event = event.to_json_event().map_err(|e| {
-            sinex_node_sdk::NodeError::Processing(format!(
+            sinex_node_sdk::SinexError::processing(format!(
                 "Failed to serialize journal entry: {}",
                 e
             ))
@@ -711,19 +715,21 @@ impl UnifiedJournalWatcher {
         let timestamp_us = entry["__REALTIME_TIMESTAMP"]
             .as_str()
             .and_then(|t| t.parse::<u64>().ok())
-            .unwrap_or_else(|| Utc::now().timestamp_micros() as u64);
+            .unwrap_or_else(|| {
+                (sinex_primitives::temporal::now().unix_timestamp_nanos() / 1000) as u64
+            });
 
         // Helper to construct deterministic ID
         // timestamp (48 bits) | entropy (80 bits)
         let id_entropy = Self::calculate_entropy(cursor, 1);
         let timestamp_ms = timestamp_us / 1000;
         let id_val = (timestamp_ms as u128) << 80 | (id_entropy & 0xFFFF_FFFF_FFFF_FFFF_FFFF);
-        let ulid = sinex_core::types::Ulid::from_bytes(id_val.to_be_bytes())
-            .unwrap_or_else(|_| sinex_core::types::Ulid::new());
+        let ulid = sinex_primitives::Ulid::from_bytes(id_val.to_be_bytes())
+            .unwrap_or_else(|_| sinex_primitives::Ulid::new());
 
         // Note: We create typed IDs inside each branch to satisfy type inference
 
-        let ts_orig = Some(Utc::now());
+        let ts_orig = Some(sinex_primitives::temporal::now());
 
         // Construct payload based on message type
         let event = if message.contains("Started ") {
@@ -742,7 +748,7 @@ impl UnifiedJournalWatcher {
                 },
                 material.initial_provenance(),
             );
-            e.id = Some(sinex_core::types::Id::from_ulid(ulid));
+            e.id = Some(sinex_primitives::Id::from_ulid(ulid));
             e.ts_orig = ts_orig;
             e.to_json_event().ok()?
         } else if message.contains("Stopped ") {
@@ -757,7 +763,7 @@ impl UnifiedJournalWatcher {
                 },
                 material.initial_provenance(),
             );
-            e.id = Some(sinex_core::types::Id::from_ulid(ulid));
+            e.id = Some(sinex_primitives::Id::from_ulid(ulid));
             e.ts_orig = ts_orig;
             e.to_json_event().ok()?
         } else if message.contains("Failed ") {
@@ -768,15 +774,19 @@ impl UnifiedJournalWatcher {
                     cursor: cursor.to_string(),
                     pid: entry["_PID"].as_str().map(String::from),
                     uid: entry["_UID"].as_str().map(String::from),
-                    timestamp: Utc::now(),
+                    timestamp: sinex_primitives::temporal::now(),
                     journal_timestamp: entry["__REALTIME_TIMESTAMP"]
                         .as_str()
                         .and_then(|s| s.parse::<i64>().ok())
-                        .and_then(|us| Utc.timestamp_micros(us).single()),
+                        .map(|us| {
+                            OffsetDateTime::from_unix_timestamp_nanos(us as i128 * 1000)
+                                .unwrap_or_else(|_| OffsetDateTime::now_utc())
+                                .into()
+                        }),
                 },
                 material.initial_provenance(),
             );
-            e.id = Some(sinex_core::types::Id::from_ulid(ulid));
+            e.id = Some(sinex_primitives::Id::from_ulid(ulid));
             e.ts_orig = ts_orig;
             e.to_json_event().ok()?
         } else if message.contains("Reloaded ") {
@@ -787,15 +797,19 @@ impl UnifiedJournalWatcher {
                     cursor: cursor.to_string(),
                     pid: entry["_PID"].as_str().map(String::from),
                     uid: entry["_UID"].as_str().map(String::from),
-                    timestamp: Utc::now(),
+                    timestamp: sinex_primitives::temporal::now(),
                     journal_timestamp: entry["__REALTIME_TIMESTAMP"]
                         .as_str()
                         .and_then(|s| s.parse::<i64>().ok())
-                        .and_then(|us| Utc.timestamp_micros(us).single()),
+                        .map(|us| {
+                            OffsetDateTime::from_unix_timestamp_nanos(us as i128 * 1000)
+                                .unwrap_or_else(|_| OffsetDateTime::now_utc())
+                                .into()
+                        }),
                 },
                 material.initial_provenance(),
             );
-            e.id = Some(sinex_core::types::Id::from_ulid(ulid));
+            e.id = Some(sinex_primitives::Id::from_ulid(ulid));
             e.ts_orig = ts_orig;
             e.to_json_event().ok()?
         } else if message.contains("Triggered ") {
@@ -806,15 +820,19 @@ impl UnifiedJournalWatcher {
                     cursor: cursor.to_string(),
                     pid: entry["_PID"].as_str().map(String::from),
                     uid: entry["_UID"].as_str().map(String::from),
-                    timestamp: Utc::now(),
+                    timestamp: sinex_primitives::temporal::now(),
                     journal_timestamp: entry["__REALTIME_TIMESTAMP"]
                         .as_str()
                         .and_then(|s| s.parse::<i64>().ok())
-                        .and_then(|us| Utc.timestamp_micros(us).single()),
+                        .map(|us| {
+                            OffsetDateTime::from_unix_timestamp_nanos(us as i128 * 1000)
+                                .unwrap_or_else(|_| OffsetDateTime::now_utc())
+                                .into()
+                        }),
                 },
                 material.initial_provenance(),
             );
-            e.id = Some(sinex_core::types::Id::from_ulid(ulid));
+            e.id = Some(sinex_primitives::Id::from_ulid(ulid));
             e.ts_orig = ts_orig;
             e.to_json_event().ok()?
         } else {
@@ -890,7 +908,7 @@ impl UnifiedJournalWatcher {
                 atomic_write(std::path::Path::new(cursor_file), cursor.as_bytes())
                     .await
                     .map_err(|e| {
-                        sinex_node_sdk::NodeError::Processing(format!(
+                        sinex_node_sdk::SinexError::processing(format!(
                             "Failed to save cursor: {}",
                             e
                         ))

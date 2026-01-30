@@ -15,21 +15,24 @@
 
 - [ ] I have added tests that prove my fix is effective or that my feature works
 - [ ] All new and existing tests pass locally
-- [ ] I have run `cargo xtask test --profile fast` to verify basic functionality
+- [ ] I have run `cargo xtask test --profile default` to verify basic functionality
 
 ## Abstraction Compliance Checklist
 
 ### Database Operations
+
 - [ ] Database access flows through `sinex-core` repositories/query helpers (no ad-hoc `PgPool` usage).
 - [ ] SQL uses `sqlx::query!`/`query_as!` (compile-time checked) or `sqlx::QueryBuilder` for dynamic clauses—never raw string concatenation.
 - [ ] ULIDs/UUIDs rely on the conversion helpers in `sinex-core::db` (no manual `.to_uuid()` / `.parse()` chains).
 
 ### Error Handling
+
 - [ ] Workspace crates return typed errors (`sinex_core::CoreError` or component-specific enums) rather than `anyhow!` in production paths.
 - [ ] `.context()` (or equivalent) is used to enrich fallible operations.
 - [ ] No `.unwrap()` / `.expect()` outside tests and intentional crash points.
 
 ### Validation & Constants
+
 - [ ] Inputs go through the shared validation / sanitization helpers (`sinex_core::validation`, path sanitizers, etc.) instead of bespoke logic.
 - [ ] Event/source/service identifiers reuse existing constants when available—avoid sprinkling string literals such as `"process.heartbeat"` throughout the codebase.
 

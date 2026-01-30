@@ -7,9 +7,9 @@ use chrono::Utc;
 use sea_orm_migration::prelude::PostgresQueryBuilder;
 use sinex_schema::schema::*;
 use sinex_schema::ulid::Ulid;
-use xtask::sandbox::prelude::*;
 use sqlx::{Executor, PgPool};
 use std::str::FromStr;
+use xtask::sandbox::prelude::*;
 
 #[derive(Debug)]
 struct MaterialFixture {
@@ -822,6 +822,7 @@ mod performance_constraint_tests {
     use super::*;
 
     #[sinex_serial_test]
+    #[ignore = "long"]
     async fn test_constraint_check_performance() -> TestResult<()> {
         let ctx = prepare_constraint_context().await?;
         let pool = &ctx.pool;

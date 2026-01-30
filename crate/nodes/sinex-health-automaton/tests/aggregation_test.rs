@@ -22,7 +22,7 @@ async fn health_aggregator_tracks_component_status(ctx: TestContext) -> TestResu
         source: "test".to_string(),
         event_type: "health.status".to_string(),
         ts_orig: Some(Utc::now()),
-        event_id: sinex_core::EventId::new().into(),
+        event_id: sinex_primitives::EventId::new().into(),
     };
 
     let output = aggregator.process(&mut state, input, &context).await;
@@ -58,9 +58,11 @@ async fn health_aggregator_emits_alert_on_failed_transition(ctx: TestContext) ->
         source: "test".to_string(),
         event_type: "health.status".to_string(),
         ts_orig: Some(Utc::now() - Duration::seconds(10)),
-        event_id: sinex_core::EventId::new().into(),
+        event_id: sinex_primitives::EventId::new().into(),
     };
-    aggregator.process(&mut state, baseline, &context_baseline).await?;
+    aggregator
+        .process(&mut state, baseline, &context_baseline)
+        .await?;
 
     // Transition to failed status
     let input = json!({
@@ -73,7 +75,7 @@ async fn health_aggregator_emits_alert_on_failed_transition(ctx: TestContext) ->
         source: "test".to_string(),
         event_type: "health.status".to_string(),
         ts_orig: Some(Utc::now()),
-        event_id: sinex_core::EventId::new().into(),
+        event_id: sinex_primitives::EventId::new().into(),
     };
 
     let output = aggregator.process(&mut state, input, &context).await?;
@@ -118,9 +120,11 @@ async fn health_aggregator_tracks_transition_count(ctx: TestContext) -> TestResu
         source: "test".to_string(),
         event_type: "health.status".to_string(),
         ts_orig: Some(base_time),
-        event_id: sinex_core::EventId::new().into(),
+        event_id: sinex_primitives::EventId::new().into(),
     };
-    aggregator.process(&mut state, baseline, &context_baseline).await?;
+    aggregator
+        .process(&mut state, baseline, &context_baseline)
+        .await?;
 
     // Simulate multiple transitions for the same component
     for (i, status) in ["degraded", "failed", "degraded", "healthy"]
@@ -137,7 +141,7 @@ async fn health_aggregator_tracks_transition_count(ctx: TestContext) -> TestResu
             source: "test".to_string(),
             event_type: "health.status".to_string(),
             ts_orig: Some(base_time + Duration::seconds(i as i64 + 1)),
-            event_id: sinex_core::EventId::new().into(),
+            event_id: sinex_primitives::EventId::new().into(),
         };
 
         aggregator.process(&mut state, input, &context).await?;
@@ -181,7 +185,7 @@ async fn health_aggregator_prunes_old_events_outside_window(ctx: TestContext) ->
             source: "test".to_string(),
             event_type: "health.status".to_string(),
             ts_orig: Some(base_time + Duration::minutes(i)),
-            event_id: sinex_core::EventId::new().into(),
+            event_id: sinex_primitives::EventId::new().into(),
         };
 
         aggregator.process(&mut state, input, &context).await?;
@@ -199,7 +203,7 @@ async fn health_aggregator_prunes_old_events_outside_window(ctx: TestContext) ->
         source: "test".to_string(),
         event_type: "health.status".to_string(),
         ts_orig: Some(future_time),
-        event_id: sinex_core::EventId::new().into(),
+        event_id: sinex_primitives::EventId::new().into(),
     };
 
     aggregator.process(&mut state, input, &context).await?;
@@ -249,7 +253,7 @@ async fn health_aggregator_emits_system_status_periodically(ctx: TestContext) ->
         source: "test".to_string(),
         event_type: "health.status".to_string(),
         ts_orig: Some(base_time),
-        event_id: sinex_core::EventId::new().into(),
+        event_id: sinex_primitives::EventId::new().into(),
     };
 
     let output1 = aggregator.process(&mut state, input1, &context1).await?;
@@ -266,7 +270,7 @@ async fn health_aggregator_emits_system_status_periodically(ctx: TestContext) ->
         source: "test".to_string(),
         event_type: "health.status".to_string(),
         ts_orig: Some(base_time + Duration::seconds(2)),
-        event_id: sinex_core::EventId::new().into(),
+        event_id: sinex_primitives::EventId::new().into(),
     };
 
     let _output2 = aggregator.process(&mut state, input2, &context2).await?;
@@ -283,7 +287,7 @@ async fn health_aggregator_emits_system_status_periodically(ctx: TestContext) ->
         source: "test".to_string(),
         event_type: "health.status".to_string(),
         ts_orig: Some(base_time + Duration::seconds(6)),
-        event_id: sinex_core::EventId::new().into(),
+        event_id: sinex_primitives::EventId::new().into(),
     };
 
     let output3 = aggregator.process(&mut state, input3, &context3).await?;
@@ -321,7 +325,7 @@ async fn health_aggregator_calculates_overall_system_status(ctx: TestContext) ->
             source: "test".to_string(),
             event_type: "health.status".to_string(),
             ts_orig: Some(base_time + Duration::seconds(i as i64)),
-            event_id: sinex_core::EventId::new().into(),
+            event_id: sinex_primitives::EventId::new().into(),
         };
 
         aggregator.process(&mut state, input, &context).await?;
@@ -339,7 +343,7 @@ async fn health_aggregator_calculates_overall_system_status(ctx: TestContext) ->
         source: "test".to_string(),
         event_type: "health.status".to_string(),
         ts_orig: Some(base_time + Duration::seconds(10)),
-        event_id: sinex_core::EventId::new().into(),
+        event_id: sinex_primitives::EventId::new().into(),
     };
 
     let output = aggregator.process(&mut state, input, &context).await?;
@@ -404,7 +408,7 @@ async fn health_aggregator_respects_component_check_intervals(ctx: TestContext) 
         source: "test".to_string(),
         event_type: "health.status".to_string(),
         ts_orig: Some(base_time),
-        event_id: sinex_core::EventId::new().into(),
+        event_id: sinex_primitives::EventId::new().into(),
     };
 
     let _output1 = aggregator.process(&mut state, input1, &context1).await?;
@@ -421,7 +425,7 @@ async fn health_aggregator_respects_component_check_intervals(ctx: TestContext) 
         source: "test".to_string(),
         event_type: "health.status".to_string(),
         ts_orig: Some(base_time + Duration::milliseconds(500)),
-        event_id: sinex_core::EventId::new().into(),
+        event_id: sinex_primitives::EventId::new().into(),
     };
 
     let _output2 = aggregator.process(&mut state, input2, &context2).await?;
@@ -438,7 +442,7 @@ async fn health_aggregator_respects_component_check_intervals(ctx: TestContext) 
         source: "test".to_string(),
         event_type: "health.status".to_string(),
         ts_orig: Some(base_time + Duration::milliseconds(1500)),
-        event_id: sinex_core::EventId::new().into(),
+        event_id: sinex_primitives::EventId::new().into(),
     };
 
     let _output3 = aggregator.process(&mut state, input3, &context3).await?;

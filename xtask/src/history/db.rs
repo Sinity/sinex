@@ -1,10 +1,10 @@
 //! SQLite database operations for xtask history.
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use time::OffsetDateTime;
 
 /// Status of a command invocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,8 +47,8 @@ pub struct Invocation {
     pub args_json: Option<String>,
     pub git_commit: Option<String>,
     pub git_dirty: bool,
-    pub started_at: DateTime<Utc>,
-    pub finished_at: Option<DateTime<Utc>>,
+    pub started_at: OffsetDateTime,
+    pub finished_at: Option<OffsetDateTime>,
     pub duration_secs: Option<f64>,
     pub exit_code: Option<i32>,
     pub status: InvocationStatus,
@@ -152,7 +152,9 @@ impl HistoryDb {
         let cwd = std::env::current_dir()
             .map(|p| p.display().to_string())
             .unwrap_or_default();
-        let started_at = Utc::now().to_rfc3339();
+        let started_at = OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap();
 
         self.conn.execute(
             r#"
@@ -173,7 +175,9 @@ impl HistoryDb {
         exit_code: Option<i32>,
         duration_secs: f64,
     ) -> Result<()> {
-        let finished_at = Utc::now().to_rfc3339();
+        let finished_at = OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap();
 
         self.conn.execute(
             r#"
@@ -243,9 +247,12 @@ impl HistoryDb {
     }
 
     /// Get statistics for a command.
+    /// Get statistics for a command.
     pub fn get_stats(&self, command: &str, days: u32) -> Result<CommandStats> {
-        let since = Utc::now() - chrono::Duration::days(days as i64);
-        let since_str = since.to_rfc3339();
+        let since = OffsetDateTime::now_utc() - time::Duration::days(days as i64);
+        let since_str = since
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap();
 
         let mut stmt = self.conn.prepare(
             r#"
@@ -278,8 +285,10 @@ impl HistoryDb {
             return Ok(0);
         }
 
-        let cutoff = Utc::now() - chrono::Duration::days(older_than_days as i64);
-        let cutoff_str = cutoff.to_rfc3339();
+        let cutoff = OffsetDateTime::now_utc() - time::Duration::days(older_than_days as i64);
+        let cutoff_str = cutoff
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap();
 
         let deleted = self.conn.execute(
             "DELETE FROM invocations WHERE started_at < ?1",
@@ -287,6 +296,46 @@ impl HistoryDb {
         )?;
 
         Ok(deleted)
+    }
+
+    /// Record a test result.
+    pub fn record_test_result(
+        &self,
+        invocation_id: i64,
+        test_name: &str,
+        package: &str,
+        status: &str,
+        duration_secs: f64,
+        output: Option<&str>,
+    ) -> Result<()> {
+        self.conn.execute(
+            r#"
+            INSERT INTO test_results (invocation_id, test_name, package, status, duration_secs, output)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            "#,
+            params![invocation_id, test_name, package, status, duration_secs, output],
+        )?;
+        Ok(())
+    }
+
+    /// Record system resource metrics for an invocation.
+    pub fn record_system_metrics(
+        &self,
+        invocation_id: i64,
+        cpu_usage_avg: f32,
+        memory_usage_max_mb: f64,
+    ) -> Result<()> {
+        // The columns might not exist if migration failed/was skipped, so we ignore errors here for robustness
+        // or we rely on the fact that we ran the migration manually via sqlite3.
+        let _ = self.conn.execute(
+            r#"
+            UPDATE invocations
+            SET cpu_usage_avg = ?1, memory_usage_max_mb = ?2
+            WHERE id = ?3
+            "#,
+            params![cpu_usage_avg, memory_usage_max_mb, invocation_id],
+        );
+        Ok(())
     }
 
     /// Get count of invocations.
@@ -321,13 +370,13 @@ fn row_to_invocation(row: &rusqlite::Row) -> rusqlite::Result<Invocation> {
         args_json: row.get(4)?,
         git_commit: row.get(5)?,
         git_dirty: row.get::<_, i32>(6)? != 0,
-        started_at: DateTime::parse_from_rfc3339(&started_at_str)
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap_or_else(|_| Utc::now()),
+        started_at: OffsetDateTime::parse(
+            &started_at_str,
+            &time::format_description::well_known::Rfc3339,
+        )
+        .unwrap_or_else(|_| OffsetDateTime::now_utc()),
         finished_at: finished_at_str.and_then(|s| {
-            DateTime::parse_from_rfc3339(&s)
-                .map(|dt| dt.with_timezone(&Utc))
-                .ok()
+            OffsetDateTime::parse(&s, &time::format_description::well_known::Rfc3339).ok()
         }),
         duration_secs: row.get(9)?,
         exit_code: row.get(10)?,

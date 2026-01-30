@@ -5,6 +5,7 @@
 
 # Rust
 target/
+**/target/
 **/*.rs.bk
 *.pdb
 # Incremental compilation cache (if not in target/)

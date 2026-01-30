@@ -4,10 +4,9 @@ use async_nats::{jetstream, Client};
 use chrono::{SecondsFormat, Timelike, Utc};
 use color_eyre::eyre::eyre;
 use serde_json::json;
-use sinex_core::{db::query_helpers::ulid_to_uuid, types::ulid::Ulid, DbPoolExt};
+use sinex_db::DbPoolExt;
+use sinex_primitives::{db::query_helpers::ulid_to_uuid, types::ulid::Ulid};
 use sinex_ingestd::{validator::EventValidator, JetStreamConsumer, JetStreamTopology};
-use xtask::sandbox::timing::{Timeouts, WaitHelpers};
-use xtask::sandbox::{prelude::*, TestNodePublisher};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
@@ -15,6 +14,8 @@ use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
 use tokio_stream::StreamExt;
+use xtask::sandbox::timing::{Timeouts, WaitHelpers};
+use xtask::sandbox::{prelude::*, TestNodePublisher};
 
 /// Consumer setup result with all components needed for testing.
 struct ConsumerSetup {
@@ -179,7 +180,7 @@ async fn jetstream_consumer_survives_transient_db_failure(ctx: TestContext) -> T
             let event_id = event_id.clone();
             async move {
                 let exists = pool.events().get_by_id(event_id.into()).await?.is_some();
-                Ok::<bool, sinex_test_utils::SinexError>(exists)
+                Ok::<bool, SinexError>(exists)
             }
         },
         Timeouts::STANDARD,
@@ -330,7 +331,7 @@ async fn jetstream_consumer_redelivers_when_confirmation_publish_fails(
         || {
             let deliveries = counters.deliveries.clone();
             async move {
-                Ok::<bool, sinex_test_utils::SinexError>(
+                Ok::<bool, SinexError>(
                     deliveries
                         .as_ref()
                         .map(|d| d.load(Ordering::Relaxed) >= 2)
@@ -621,7 +622,7 @@ async fn jetstream_consumer_routes_db_failures_to_dlq(ctx: TestContext) -> TestR
             || {
                 let fail_once = counters.fail_once.clone();
                 async move {
-                    Ok::<bool, sinex_test_utils::SinexError>(
+                    Ok::<bool, SinexError>(
                         fail_once
                             .as_ref()
                             .map(|f| !f.load(Ordering::SeqCst))

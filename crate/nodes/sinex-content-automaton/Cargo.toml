@@ -1,32 +1,73 @@
-[package]
-name = "sinex-content-automaton"
-version.workspace = true
-edition.workspace = true
-authors.workspace = true
-repository.workspace = true
-license.workspace = true
-
 [[bin]]
 name = "sinex-content-automaton"
 path = "src/main.rs"
 
-[dependencies]
-mimalloc = { workspace = true }
-sinex-node-sdk = { path = "../../lib/sinex-node-sdk" }
-sinex-services = { path = "../../lib/sinex-services" }
-sinex-core = { path = "../../lib/sinex-core" }
-sinex-processor-runtime = { path = "../../lib/sinex-processor-runtime" }
-sqlx = { workspace = true }
-# sinex-annex folded into sinex-node-sdk
+[package]
+name = "sinex-content-automaton"
 
-tokio = { version = "1.0", features = ["full"] }
-serde = { version = "1.0", features = ["derive"] }
+[dependencies]
 serde_json = "1.0"
 async-trait = "0.1"
-color-eyre = { workspace = true }
 tracing = "0.1"
-chrono = { version = "0.4", features = ["serde"] }
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-clap = { version = "4.0", features = ["derive"] }
 
-[dev-dependencies]
+[dependencies.sinex-primitives]
+path = "../../lib/sinex-primitives"
+
+[package.version]
+workspace = true
+
+[package.edition]
+workspace = true
+
+[package.authors]
+workspace = true
+
+[package.repository]
+workspace = true
+
+[package.license]
+workspace = true
+
+[dependencies.mimalloc]
+workspace = true
+
+[dependencies.sinex-node-sdk]
+path = "../../lib/sinex-node-sdk"
+
+[dependencies.sinex-services]
+path = "../../lib/sinex-services"
+
+
+[dependencies.sinex-processor-runtime]
+path = "../../lib/sinex-processor-runtime"
+
+[dependencies.sqlx]
+workspace = true
+
+[dependencies.tokio]
+version = "1.0"
+features = [ "full",]
+
+[dependencies.serde]
+version = "1.0"
+features = [ "derive",]
+
+[dependencies.color-eyre]
+workspace = true
+
+[dependencies.tracing-subscriber]
+version = "0.3"
+features = [ "env-filter",]
+
+[dependencies.clap]
+version = "4.0"
+features = [ "derive",]
+
+[dev-dependencies.xtask]
+path = "../../../xtask"
+default-features = false
+features = [ "sandbox",]
+
+[dev-dependencies.sinex-primitives]
+path = "../../lib/sinex-primitives"
+features = [ "testing",]

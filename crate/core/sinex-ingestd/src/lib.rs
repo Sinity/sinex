@@ -19,12 +19,12 @@ pub use config::IngestdConfig;
 pub use jetstream_consumer::{JetStreamConsumer, JetStreamTopology};
 pub use material_assembler::MaterialAssembler;
 pub use service::IngestService;
-pub use sinex_core::db::repositories::schema_management::SchemaSyncResult;
-pub use sinex_core::db::validation::SchemaInfo;
+pub use sinex_db::repositories::schema_management::SchemaSyncResult;
+pub use sinex_db::validation::SchemaInfo;
 pub use validator::{EventValidator, ValidationResult};
 
 // Re-export SinexError for unified error handling
-pub use sinex_core::types::error::{Result, SinexError};
+pub use sinex_primitives::error::{Result, SinexError};
 
 /// Result type for ingestd operations
 pub type IngestdResult<T> = Result<T>;

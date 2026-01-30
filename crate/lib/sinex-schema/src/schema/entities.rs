@@ -8,8 +8,7 @@
 //_ implementation of the "Structure is Emergent" principle.
 
 use crate::schema::TableDef;
-use crate::ulid::Ulid;
-use chrono::{DateTime, Utc};
+use crate::ulid::{Timestamp, Ulid};
 use sea_orm_migration::prelude::*;
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;
@@ -72,8 +71,8 @@ pub struct EntityRecord {
     pub confidence_score: f64,
     pub is_merged: bool,
     pub merged_into_id: Option<Ulid>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
 }
 
 impl Entities {

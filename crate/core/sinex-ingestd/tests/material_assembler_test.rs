@@ -4,10 +4,10 @@ use async_nats::jetstream;
 use serde_json::json;
 use sinex_ingestd::{IngestdResult, MaterialAssembler};
 use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
-use xtask::sandbox::prelude::*;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
+use xtask::sandbox::prelude::*;
 
 async fn fake_annex() -> TestResult<(Arc<GitAnnex>, tempfile::TempDir)> {
     let dir = tempfile::tempdir()?;
@@ -66,7 +66,7 @@ async fn assembler_rejects_corrupted_slice_and_records_dlq(ctx: TestContext) -> 
     let namespace = ctx.pipeline_namespace().prefix().to_string();
     let (handle, js, _annex_guard, _state_guard, _) = start_assembler(&ctx, None).await?;
 
-    let material_id = sinex_core::types::ulid::Ulid::new();
+    let material_id = sinex_primitives::Ulid::new();
     let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.ingestd");
     let mut dlq_sub = nats_client.subscribe(dlq_subject.clone()).await?;
 
@@ -84,7 +84,7 @@ async fn assembler_rejects_corrupted_slice_and_records_dlq(ctx: TestContext) -> 
             "material_kind": "test",
             "source_identifier": "test://corrupt",
             "metadata": {"kind": "corrupt"},
-            "started_at": chrono::Utc::now().to_rfc3339(),
+            "started_at": crate::temporal::now().to_rfc3339(),
         })
         .to_string()
         .into(),
@@ -113,7 +113,7 @@ async fn assembler_rejects_corrupted_slice_and_records_dlq(ctx: TestContext) -> 
         ctx.pipeline_namespace().subject("source_material.end"),
         json!({
             "material_id": material_id.to_string(),
-            "ended_at": chrono::Utc::now().to_rfc3339(),
+            "ended_at": crate::temporal::now().to_rfc3339(),
             "content_hash": "cafebabe",
             "total_slices": 1,
             "total_size_bytes": 7,
@@ -172,7 +172,7 @@ async fn assembler_handles_early_slices_before_begin(ctx: TestContext) -> TestRe
     )
     .await?;
 
-    let material_id = sinex_core::types::ulid::Ulid::new();
+    let material_id = sinex_primitives::Ulid::new();
 
     // 1. Publish Slice BEFORE Begin
     let data = b"early slice data";
@@ -195,7 +195,7 @@ async fn assembler_handles_early_slices_before_begin(ctx: TestContext) -> TestRe
         || {
             let material_state_dir = material_state_dir.clone();
             async move {
-                Ok::<bool, sinex_core::types::error::SinexError>(
+                Ok::<bool, sinex_primitives::error::SinexError>(
                     material_state_dir.exists(),
                 )
             }
@@ -212,7 +212,7 @@ async fn assembler_handles_early_slices_before_begin(ctx: TestContext) -> TestRe
             "material_kind": "test",
             "source_identifier": "test://early",
             "metadata": {"source": "early-test"},
-            "started_at": chrono::Utc::now().to_rfc3339(),
+            "started_at": crate::temporal::now().to_rfc3339(),
         })
         .to_string()
         .into(),
@@ -225,7 +225,7 @@ async fn assembler_handles_early_slices_before_begin(ctx: TestContext) -> TestRe
         ctx.pipeline_namespace().subject("source_material.end"),
         json!({
             "material_id": material_id.to_string(),
-            "ended_at": chrono::Utc::now().to_rfc3339(),
+            "ended_at": crate::temporal::now().to_rfc3339(),
             "content_hash": chunk_hash.to_string(),
             "total_slices": 1,
             "total_size_bytes": data.len() as i64,
@@ -244,10 +244,10 @@ async fn assembler_handles_early_slices_before_begin(ctx: TestContext) -> TestRe
             async move {
                 let material = pool
                     .source_materials()
-                    .get_by_id(sinex_core::Id::from_ulid(material_id))
+                    .get_by_id(sinex_primitives::Id::from_ulid(material_id))
                     .await?
-                    .ok_or_else(|| sinex_core::types::error::SinexError::database("missing"))?;
-                Ok::<bool, sinex_core::types::error::SinexError>(
+                    .ok_or_else(|| sinex_primitives::error::SinexError::database("missing"))?;
+                Ok::<bool, sinex_primitives::error::SinexError>(
                     material.status.as_str() == "completed",
                 )
             }
@@ -260,7 +260,7 @@ async fn assembler_handles_early_slices_before_begin(ctx: TestContext) -> TestRe
         || {
             let material_state_dir = material_state_dir.clone();
             async move {
-                Ok::<bool, sinex_core::types::error::SinexError>(
+                Ok::<bool, sinex_primitives::error::SinexError>(
                     !material_state_dir.exists(),
                 )
             }
@@ -282,7 +282,7 @@ async fn assembler_routes_empty_material_to_dlq(ctx: TestContext) -> TestResult<
     let namespace = ctx.pipeline_namespace().prefix().to_string();
     let (handle, js, _annex_guard, _state_guard, _) = start_assembler(&ctx, None).await?;
 
-    let material_id = sinex_core::types::ulid::Ulid::new();
+    let material_id = sinex_primitives::Ulid::new();
     let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.ingestd");
     let mut dlq_sub = nats_client.subscribe(dlq_subject.clone()).await?;
 
@@ -301,7 +301,7 @@ async fn assembler_routes_empty_material_to_dlq(ctx: TestContext) -> TestResult<
             "material_kind": "test",
             "source_identifier": "test://empty",
             "metadata": {"kind": "empty"},
-            "started_at": chrono::Utc::now().to_rfc3339(),
+            "started_at": crate::temporal::now().to_rfc3339(),
         })
         .to_string()
         .into(),
@@ -314,7 +314,7 @@ async fn assembler_routes_empty_material_to_dlq(ctx: TestContext) -> TestResult<
         ctx.pipeline_namespace().subject("source_material.end"),
         json!({
             "material_id": material_id.to_string(),
-            "ended_at": chrono::Utc::now().to_rfc3339(),
+            "ended_at": crate::temporal::now().to_rfc3339(),
             "content_hash": blake3::hash(b"").to_hex().to_string(),
             "total_slices": 0,
             "total_size_bytes": 0,
@@ -353,7 +353,7 @@ async fn assembler_cleans_up_state_on_corruption(ctx: TestContext) -> TestResult
     let namespace = ctx.pipeline_namespace().prefix().to_string();
     let (handle, js, _annex_guard, state_guard, state_path) = start_assembler(&ctx, None).await?;
 
-    let material_id = sinex_core::types::ulid::Ulid::new();
+    let material_id = sinex_primitives::Ulid::new();
     let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.ingestd");
     let mut dlq_sub = nats_client.subscribe(dlq_subject.clone()).await?;
 
@@ -371,7 +371,7 @@ async fn assembler_cleans_up_state_on_corruption(ctx: TestContext) -> TestResult
             "material_kind": "test",
             "source_identifier": "test://corrupt-cleanup",
             "metadata": {},
-            "started_at": chrono::Utc::now().to_rfc3339(),
+            "started_at": crate::temporal::now().to_rfc3339(),
         })
         .to_string()
         .into(),
@@ -393,7 +393,7 @@ async fn assembler_cleans_up_state_on_corruption(ctx: TestContext) -> TestResult
         ctx.pipeline_namespace().subject("source_material.end"),
         json!({
             "material_id": material_id.to_string(),
-            "ended_at": chrono::Utc::now().to_rfc3339(),
+            "ended_at": crate::temporal::now().to_rfc3339(),
             "content_hash": "wrong-hash",
             "total_slices": 1,
             "total_size_bytes": 4,
@@ -427,7 +427,7 @@ async fn assembler_cleans_up_state_on_corruption(ctx: TestContext) -> TestResult
         || {
             let material_state_dir = material_state_dir.clone();
             async move {
-                Ok::<bool, sinex_core::types::error::SinexError>(
+                Ok::<bool, sinex_primitives::error::SinexError>(
                     !material_state_dir.exists(),
                 )
             }
@@ -448,7 +448,7 @@ async fn assembler_handles_end_before_begin(ctx: TestContext) -> TestResult<()> 
     let namespace = ctx.pipeline_namespace().prefix().to_string();
     let (handle, js, _annex_guard, _state_guard, state_path) = start_assembler(&ctx, None).await?;
 
-    let material_id = sinex_core::types::ulid::Ulid::new();
+    let material_id = sinex_primitives::Ulid::new();
     sinex_node_sdk::AcquisitionManager::bootstrap_streams_with_namespace(
         &nats_client,
         Some(&namespace),
@@ -471,7 +471,7 @@ async fn assembler_handles_end_before_begin(ctx: TestContext) -> TestResult<()> 
         ctx.pipeline_namespace().subject("source_material.end"),
         json!({
             "material_id": material_id.to_string(),
-            "ended_at": chrono::Utc::now().to_rfc3339(),
+            "ended_at": crate::temporal::now().to_rfc3339(),
             "content_hash": hash,
             "total_slices": 1,
             "total_size_bytes": data.len() as i64,
@@ -487,7 +487,7 @@ async fn assembler_handles_end_before_begin(ctx: TestContext) -> TestResult<()> 
         || {
             let material_state_dir = material_state_dir.clone();
             async move {
-                Ok::<bool, sinex_core::types::error::SinexError>(
+                Ok::<bool, sinex_primitives::error::SinexError>(
                     material_state_dir.exists(),
                 )
             }
@@ -504,7 +504,7 @@ async fn assembler_handles_end_before_begin(ctx: TestContext) -> TestResult<()> 
             "material_kind": "test",
             "source_identifier": "test://late-begin",
             "metadata": {},
-            "started_at": chrono::Utc::now().to_rfc3339(),
+            "started_at": crate::temporal::now().to_rfc3339(),
         })
         .to_string()
         .into(),
@@ -531,7 +531,7 @@ async fn assembler_is_idempotent_for_duplicate_slices(ctx: TestContext) -> TestR
     )
     .await?;
 
-    let material_id = sinex_core::types::ulid::Ulid::new();
+    let material_id = sinex_primitives::Ulid::new();
 
     js.publish(
         ctx.pipeline_namespace().subject("source_material.begin"),
@@ -545,7 +545,7 @@ async fn assembler_is_idempotent_for_duplicate_slices(ctx: TestContext) -> TestR
 
             "metadata": {},
 
-            "started_at": chrono::Utc::now().to_rfc3339(),
+            "started_at": crate::temporal::now().to_rfc3339(),
 
         })
         .to_string()
@@ -596,7 +596,7 @@ async fn assembler_is_idempotent_for_duplicate_slices(ctx: TestContext) -> TestR
 
             "material_id": material_id.to_string(),
 
-            "ended_at": chrono::Utc::now().to_rfc3339(),
+            "ended_at": crate::temporal::now().to_rfc3339(),
 
             "content_hash": hash,
 
@@ -622,11 +622,11 @@ async fn assembler_is_idempotent_for_duplicate_slices(ctx: TestContext) -> TestR
             async move {
                 let material = pool
                     .source_materials()
-                    .get_by_id(sinex_core::Id::from_ulid(material_id))
+                    .get_by_id(sinex_primitives::Id::from_ulid(material_id))
                     .await?
-                    .ok_or_else(|| sinex_core::types::error::SinexError::database("missing"))?;
+                    .ok_or_else(|| sinex_primitives::error::SinexError::database("missing"))?;
 
-                Ok::<bool, sinex_core::types::error::SinexError>(
+                Ok::<bool, sinex_primitives::error::SinexError>(
                     material.status.as_str() == "completed",
                 )
             }

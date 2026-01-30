@@ -3,17 +3,15 @@
 //! This module contains database finalization, blob management, error routing,
 //! and cleanup logic that executes when a material assembly completes (or fails).
 
-use chrono::{DateTime, Utc};
 use serde::Serialize;
-use sinex_core::{
-    db::{
-        models::blob::Blob,
-        repositories::{DbPoolExt, TemporalLedgerEntry},
-    },
-    types::Ulid,
-    Id, JsonValue, SourceMaterialRecord,
+use sinex_db::{
+    models::blob::Blob,
+    repositories::{DbPoolExt, TemporalLedgerEntry},
 };
 use sinex_node_sdk::annex::AnnexKey;
+use sinex_primitives::{Id, JsonValue, Ulid};
+use sinex_schema::schema::records::SourceMaterialRecord;
+use sinex_primitives::Timestamp;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
@@ -35,7 +33,7 @@ struct MaterialDlqPayload {
     material_id: String,
     error: String,
     context: JsonValue,
-    failed_at: DateTime<Utc>,
+    failed_at: Timestamp,
 }
 
 impl MaterialAssembler {
@@ -157,7 +155,7 @@ impl MaterialAssembler {
         let entry = TemporalLedgerEntry::realtime_capture(
             state.material_id,
             state.expected_offset,
-            state.started_at,
+            state.started_at.into(),
         );
 
         self.pool
@@ -182,7 +180,7 @@ impl MaterialAssembler {
             material_id: material_id.to_string(),
             error: error.into(),
             context,
-            failed_at: Utc::now(),
+            failed_at: Timestamp::now(),
         };
 
         match serde_json::to_vec(&payload) {
@@ -264,9 +262,11 @@ impl MaterialAssembler {
                 return Ok(());
             }
 
-            let ended_at = DateTime::parse_from_rfc3339(&end_preview.ended_at)
-                .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now());
+            let ended_at = Timestamp::parse(
+                &end_preview.ended_at,
+                &time::format_description::well_known::Rfc3339,
+            )
+            .unwrap_or_else(|_| Timestamp::now());
 
             let view = state.finalization_view();
             let assembled_bytes = view.expected_offset;

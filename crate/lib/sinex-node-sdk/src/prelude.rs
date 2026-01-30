@@ -45,29 +45,25 @@ pub use crate::{
 pub use crate::NodeArgs;
 
 // Error types
-pub use crate::{NodeError, NodeResult};
+pub use crate::{NodeResult, SinexError};
 
-// Core sinex types - now using flattened imports from sinex-core
-pub use sinex_core::{
-    // Event payloads - using the new facade
-    payloads::*,
-    // Database models
-    Event,
-    EventSource,
-    EventType,
-    Id,
+// Core sinex types - using direct dependencies
+pub use sinex_primitives::Ulid;
+pub use sinex_primitives::{
+    domain::{EventSource, EventType},
+    // error::SinexError,
+    events::{payloads::*, Event},
+    ids::Id,
+    temporal::Timestamp,
     JsonValue,
-    // Error handling
-    SinexError,
-    Ulid,
 };
 
 #[cfg(feature = "db")]
-pub use sinex_core::{DbPool, DbPoolExt};
+pub use sinex_db::{DbPool, DbPoolExt};
 
 // Additional commonly used external types
 pub use async_trait::async_trait;
-pub use color_eyre::eyre::{eyre, Result as EyreResult};
 pub use serde_json::json;
+pub use time::OffsetDateTime;
 pub use tokio::{sync::mpsc, time::Duration};
 pub use tracing::{debug, error, info, instrument, trace, warn};

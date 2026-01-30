@@ -9,9 +9,16 @@
 
 pub use sea_orm_migration::prelude::*;
 
-// Core type definitions
-pub mod ulid;
-pub mod ulid_conversions;
+// Core primitive types (ULID, Timestamp, conversions)
+pub mod primitives;
+
+// Backwards compatibility re-exports
+pub mod ulid {
+    pub use super::primitives::{Timestamp, Ulid, UlidError};
+}
+pub mod ulid_conversions {
+    pub use super::primitives::conversions::*;
+}
 
 // The single source of truth for all schema definitions.
 pub mod schema;

@@ -3,16 +3,15 @@
 //! Modernized `SimpleNode` implementation for the Health Aggregator.
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use figment::{
     providers::{Env, Format, Toml},
     Figment,
 };
 use serde::{Deserialize, Serialize};
-use sinex_core::JsonValue;
-use sinex_node_sdk::simple_node::{
-    SimpleNode, SimpleNodeContext, SimpleNodeError, SimpleNodeWrapper,
-};
+use sinex_primitives::temporal::{Duration, Timestamp};
+use sinex_primitives::JsonValue;
+use sinex_node_sdk::simple_node::SimpleNodeContext;
+use sinex_node_sdk::{SimpleNode, SimpleNodeError, SimpleNodeWrapper};
 use std::collections::HashMap;
 
 /// Configuration for the health aggregator
@@ -82,7 +81,7 @@ impl HealthAggregatorConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct HealthState {
     pub component_health: HashMap<String, ComponentHealth>,
-    pub last_window_emission: Option<DateTime<Utc>>,
+    pub last_window_emission: Option<Timestamp>,
     pub config: HealthAggregatorConfig,
 }
 
@@ -90,16 +89,16 @@ pub struct HealthState {
 pub struct ComponentHealth {
     pub component_name: String,
     pub current_status: String,
-    pub status_since: DateTime<Utc>,
-    pub last_seen: DateTime<Utc>,
-    pub last_check_emission: Option<DateTime<Utc>>,
+    pub status_since: Timestamp,
+    pub last_seen: Timestamp,
+    pub last_check_emission: Option<Timestamp>,
     pub transition_count: u64,
     pub events: Vec<HealthEvent>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthEvent {
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
     pub previous_status: String,
     pub current_status: String,
     pub event_id: String,
@@ -147,7 +146,7 @@ impl SimpleNode for HealthAggregator {
         input: Self::Input,
         context: &SimpleNodeContext,
     ) -> Result<Option<Self::Output>, SimpleNodeError> {
-        let now = context.ts_orig.unwrap_or_else(Utc::now);
+        let now = context.ts_orig.unwrap_or_else(Timestamp::now);
 
         // Ensure state has config
         if state.config.aggregation_window_seconds == 0 {
@@ -180,8 +179,8 @@ impl SimpleNode for HealthAggregator {
         let should_emit_window = state
             .last_window_emission
             .map(|last| {
-                let elapsed = now.signed_duration_since(last);
-                elapsed >= chrono::Duration::seconds(state.config.aggregation_window_seconds as i64)
+                let elapsed = now - last;
+                elapsed >= Duration::seconds(state.config.aggregation_window_seconds as i64)
             })
             .unwrap_or(true);
 
@@ -223,8 +222,7 @@ impl SimpleNode for HealthAggregator {
         });
 
         // Prune events outside aggregation window
-        let window_start =
-            now - chrono::Duration::seconds(state.config.aggregation_window_seconds as i64);
+        let window_start = now - Duration::seconds(state.config.aggregation_window_seconds as i64);
 
         component_health
             .events
@@ -253,8 +251,8 @@ impl SimpleNode for HealthAggregator {
         let should_emit_component = component_health
             .last_check_emission
             .map(|last| {
-                let elapsed = now.signed_duration_since(last);
-                elapsed >= chrono::Duration::seconds(check_interval as i64)
+                let elapsed = now - last;
+                elapsed >= Duration::seconds(check_interval as i64)
             })
             .unwrap_or(true);
 
@@ -280,21 +278,21 @@ impl HealthAggregator {
         &self,
         component: &str,
         status: &str,
-        timestamp: DateTime<Utc>,
+        timestamp: Timestamp,
         reason: &str,
     ) -> JsonValue {
         serde_json::json!({
             "alert_type": "component_status_change",
             "component": component,
             "status": status,
-            "timestamp": timestamp.to_rfc3339(),
+            "timestamp": timestamp.format_rfc3339(),
             "reason": reason,
             "severity": if status == "failed" { "critical" } else { "warning" },
         })
     }
 
     /// Create system-wide health status report
-    fn create_system_status(&self, state: &HealthState, timestamp: DateTime<Utc>) -> JsonValue {
+    fn create_system_status(&self, state: &HealthState, timestamp: Timestamp) -> JsonValue {
         let total_components = state.component_health.len();
         let healthy = state
             .component_health
@@ -322,7 +320,7 @@ impl HealthAggregator {
 
         serde_json::json!({
             "report_type": "system_health_status",
-            "timestamp": timestamp.to_rfc3339(),
+            "timestamp": timestamp.format_rfc3339(),
             "overall_status": overall_status,
             "total_components": total_components,
             "healthy_count": healthy,
@@ -335,8 +333,8 @@ impl HealthAggregator {
                     serde_json::json!({
                         "name": name,
                         "status": health.current_status,
-                        "status_since": health.status_since.to_rfc3339(),
-                        "last_seen": health.last_seen.to_rfc3339(),
+                        "status_since": health.status_since.format_rfc3339(),
+                        "last_seen": health.last_seen.format_rfc3339(),
                     })
                 })
                 .collect::<Vec<_>>(),
@@ -347,10 +345,10 @@ impl HealthAggregator {
     fn create_component_report(
         &self,
         component_health: &ComponentHealth,
-        timestamp: DateTime<Utc>,
+        timestamp: Timestamp,
     ) -> JsonValue {
         let window_start =
-            timestamp - chrono::Duration::seconds(self.config.aggregation_window_seconds as i64);
+            timestamp - Duration::seconds(self.config.aggregation_window_seconds as i64);
 
         let events_in_window = component_health
             .events
@@ -366,11 +364,11 @@ impl HealthAggregator {
 
         serde_json::json!({
             "report_type": "component_health_report",
-            "timestamp": timestamp.to_rfc3339(),
+            "timestamp": timestamp.format_rfc3339(),
             "component": component_health.component_name,
             "current_status": component_health.current_status,
-            "status_since": component_health.status_since.to_rfc3339(),
-            "last_seen": component_health.last_seen.to_rfc3339(),
+            "status_since": component_health.status_since.format_rfc3339(),
+            "last_seen": component_health.last_seen.format_rfc3339(),
             "total_transitions": component_health.transition_count,
             "events_in_window": events_in_window,
             "transitions_in_window": transitions_in_window,

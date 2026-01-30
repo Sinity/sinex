@@ -7,21 +7,24 @@
 
 use crate::payloads::DbusConfig; // Only import what we need
 use crate::WatcherMaterialContext;
-use chrono::{DateTime, Utc};
 use dbus::channel::MatchingReceiver;
 use dbus::message::{MatchRule, MessageType};
 use dbus_tokio::connection;
 use serde_json::json;
-use sinex_core::db::models::event::Event;
-use sinex_core::types::events::{
+use sinex_db::models::Event;
+use sinex_primitives::events::{
     DbusBluetoothDeviceChangedPayload, DbusDeviceConnectedPayload, DbusMediaStateChangedPayload,
     DbusMethodCalledPayload, DbusMountEventPayload, DbusNetworkStateChangedPayload,
     DbusNotificationSentPayload, DbusPowerStateChangedPayload, DbusSignalPayload,
 };
-use sinex_core::{
-    BluetoothEventType, DBusBus, DeviceType, JsonValue, MountEventType, NetworkConnectionType,
-    NetworkEventType, NetworkState, PlaybackStatus, PowerEventType,
+use sinex_primitives::{
+    events::enums::{
+        BluetoothEventType, DBusBus, DeviceType, MountEventType, NetworkConnectionType,
+        NetworkEventType, NetworkState, PlaybackStatus, PowerEventType,
+    },
+    JsonValue,
 };
+use time::OffsetDateTime;
 
 use sinex_node_sdk::NodeResult;
 use std::sync::Arc;
@@ -132,9 +135,8 @@ struct MonitorConfig {
 }
 
 /// Helper to create processing errors with consistent formatting
-fn dbus_error(message: &str, source: impl std::fmt::Display) -> sinex_node_sdk::NodeError {
-    use sinex_node_sdk::NodeError::Processing;
-    Processing(format!("{}: {}", message, source))
+fn dbus_error(message: &str, source: impl std::fmt::Display) -> sinex_node_sdk::SinexError {
+    sinex_node_sdk::SinexError::processing(format!("{}: {}", message, source))
 }
 
 /// D-Bus watcher with real-time signal subscription
@@ -415,7 +417,7 @@ impl DbusWatcher {
                         config.inactivity_timeout_secs.as_secs()
                     );
                     // Return error to trigger reconnection via retry mechanism
-                    return Err(sinex_node_sdk::NodeError::Processing(format!(
+                    return Err(sinex_node_sdk::SinexError::processing(format!(
                         "D-Bus {} bus inactive for {}s",
                         bus_type,
                         config.inactivity_timeout_secs.as_secs()
@@ -449,12 +451,12 @@ impl DbusWatcher {
             return Ok(());
         }
 
-        let timestamp = chrono::Utc::now();
+        let timestamp = sinex_primitives::temporal::now();
 
         match msg_type {
             MessageType::Signal => {
                 Self::process_signal(
-                    bus_type, &interface, &path, &member, &sender, &args, timestamp, &tx, config,
+                    bus_type, &interface, &path, &member, &sender, &args, *timestamp, &tx, config,
                     material,
                 )
                 .await?;
@@ -468,7 +470,7 @@ impl DbusWatcher {
                     &sender,
                     &destination,
                     &args,
-                    timestamp,
+                    *timestamp,
                     &tx,
                     config,
                     material,
@@ -490,7 +492,7 @@ impl DbusWatcher {
         member: &str,
         sender: &Option<String>,
         args: &serde_json::Value,
-        timestamp: DateTime<Utc>,
+        timestamp: OffsetDateTime,
         tx: &mpsc::Sender<Event<JsonValue>>,
         config: &DbusConfig,
         material: &WatcherMaterialContext,
@@ -534,7 +536,7 @@ impl DbusWatcher {
                         "interface": interface,
                         "path": path,
                     }),
-                    timestamp: timestamp.clone(),
+                    timestamp: timestamp.into(),
                 },
                 material.initial_provenance(),
             )
@@ -562,7 +564,7 @@ impl DbusWatcher {
                     model: None,
                     serial: None,
                     properties: HashMap::new(),
-                    timestamp: timestamp.clone(),
+                    timestamp: timestamp.into(),
                 },
                 material.initial_provenance(),
             )
@@ -581,7 +583,7 @@ impl DbusWatcher {
                     connected: false,
                     paired: false,
                     trusted: false,
-                    timestamp: timestamp.clone(),
+                    timestamp: timestamp.into(),
                 },
                 material.initial_provenance(),
             )
@@ -598,7 +600,7 @@ impl DbusWatcher {
                     ssid: None,
                     ip_address: None,
                     state: NetworkState::Unknown,
-                    timestamp: timestamp.clone(),
+                    timestamp: timestamp.into(),
                 },
                 material.initial_provenance(),
             )
@@ -622,7 +624,7 @@ impl DbusWatcher {
                     label: None,
                     uuid: None,
                     size_bytes: None,
-                    timestamp: timestamp.clone(),
+                    timestamp: timestamp.into(),
                 },
                 material.initial_provenance(),
             )
@@ -639,7 +641,7 @@ impl DbusWatcher {
                 interface: interface.to_string(),
                 signal: member.to_string(),
                 args: args.clone(),
-                timestamp,
+                timestamp: timestamp.into(),
             },
             material.initial_provenance(),
         )
@@ -659,7 +661,7 @@ impl DbusWatcher {
         sender: &Option<String>,
         destination: &Option<String>,
         args: &serde_json::Value,
-        timestamp: DateTime<Utc>,
+        timestamp: OffsetDateTime,
         tx: &mpsc::Sender<Event<JsonValue>>,
         _config: &DbusConfig,
         material: &WatcherMaterialContext,
@@ -673,7 +675,7 @@ impl DbusWatcher {
                 interface: interface.to_string(),
                 method: member.to_string(),
                 args: args.clone(),
-                timestamp,
+                timestamp: timestamp.into(),
             },
             material.initial_provenance(),
         )
@@ -815,7 +817,7 @@ impl DbusWatcher {
     /// Parse notification arguments into structured payload
     fn parse_notification_args(
         args: &serde_json::Value,
-        timestamp: DateTime<Utc>,
+        timestamp: OffsetDateTime,
     ) -> DbusNotificationSentPayload {
         if let serde_json::Value::Array(arg_array) = args {
             let app_name = arg_array
@@ -864,7 +866,7 @@ impl DbusWatcher {
                 timeout,
                 actions,
                 hints,
-                timestamp,
+                timestamp: timestamp.into(),
             }
         } else {
             DbusNotificationSentPayload {
@@ -875,7 +877,7 @@ impl DbusWatcher {
                 timeout: -1,
                 actions: vec![],
                 hints: HashMap::with_capacity(4), // Typical notification hints: urgency, category, desktop-entry, etc.
-                timestamp,
+                timestamp: timestamp.into(),
             }
         }
     }
@@ -903,7 +905,7 @@ impl DbusWatcher {
         args: &serde_json::Value,
         player: &str,
         sender: &Option<String>,
-        timestamp: DateTime<Utc>,
+        timestamp: OffsetDateTime,
     ) -> Option<DbusMediaStateChangedPayload> {
         if let serde_json::Value::Array(arg_array) = args {
             if let Some(changed_props) = arg_array.get(1) {
@@ -960,7 +962,7 @@ impl DbusWatcher {
     fn default_media_payload(
         player: &str,
         sender: &Option<String>,
-        timestamp: DateTime<Utc>,
+        timestamp: OffsetDateTime,
     ) -> DbusMediaStateChangedPayload {
         DbusMediaStateChangedPayload {
             player: player.to_string(),
@@ -983,7 +985,7 @@ impl DbusWatcher {
             can_pause: false,
             can_seek: false,
             art_url: None,
-            timestamp,
+            timestamp: timestamp.into(),
         }
     }
 

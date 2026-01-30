@@ -31,7 +31,11 @@ async fn test_process_heartbeat_emitter_basic_functionality(ctx: TestContext) ->
     });
 
     let _heartbeat_event = ctx
-        .publish(DynamicPayload::new("sinex.process", "process.heartbeat", heartbeat_payload))
+        .publish(DynamicPayload::new(
+            "sinex.process",
+            "process.heartbeat",
+            heartbeat_payload,
+        ))
         .await?;
 
     // Verify heartbeat event was created using repository pattern
@@ -40,7 +44,7 @@ async fn test_process_heartbeat_emitter_basic_functionality(ctx: TestContext) ->
         .events()
         .get_by_source(
             &EventSource::from("sinex.process"),
-            sinex_core::types::Pagination::new(Some(10), None),
+            sinex_primitives::Pagination::new(Some(10), None),
         )
         .await?;
 
@@ -82,7 +86,11 @@ async fn test_process_lifecycle_events(ctx: TestContext) -> TestResult<()> {
         "config_hash": "ghi789"
     });
     let _started_event = ctx
-        .publish(DynamicPayload::new("sinex.process", "process.started", started_payload))
+        .publish(DynamicPayload::new(
+            "sinex.process",
+            "process.started",
+            started_payload,
+        ))
         .await?;
 
     // Emit heartbeat
@@ -98,7 +106,11 @@ async fn test_process_lifecycle_events(ctx: TestContext) -> TestResult<()> {
         "custom_metrics": {}
     });
     let _heartbeat1_event = ctx
-        .publish(DynamicPayload::new("sinex.process", "process.heartbeat", heartbeat1_payload))
+        .publish(DynamicPayload::new(
+            "sinex.process",
+            "process.heartbeat",
+            heartbeat1_payload,
+        ))
         .await?;
 
     // Update metrics again
@@ -115,7 +127,11 @@ async fn test_process_lifecycle_events(ctx: TestContext) -> TestResult<()> {
         "custom_metrics": {}
     });
     let _heartbeat2_event = ctx
-        .publish(DynamicPayload::new("sinex.process", "process.heartbeat", heartbeat2_payload))
+        .publish(DynamicPayload::new(
+            "sinex.process",
+            "process.heartbeat",
+            heartbeat2_payload,
+        ))
         .await?;
 
     // Emit process shutdown event
@@ -127,7 +143,11 @@ async fn test_process_lifecycle_events(ctx: TestContext) -> TestResult<()> {
         "shutdown_reason": "Graceful shutdown requested"
     });
     let _shutdown_event = ctx
-        .publish(DynamicPayload::new("sinex.process", "process.shutdown", shutdown_payload))
+        .publish(DynamicPayload::new(
+            "sinex.process",
+            "process.shutdown",
+            shutdown_payload,
+        ))
         .await?;
 
     // Verify all events were created in correct order using repository pattern
@@ -136,7 +156,7 @@ async fn test_process_lifecycle_events(ctx: TestContext) -> TestResult<()> {
         .events()
         .get_by_source(
             &EventSource::from("sinex.process"),
-            sinex_core::types::Pagination::new(Some(10), None),
+            sinex_primitives::Pagination::new(Some(10), None),
         )
         .await?;
 
@@ -219,7 +239,11 @@ async fn test_process_heartbeat_with_custom_metrics(ctx: TestContext) -> TestRes
     });
 
     let _heartbeat_event = ctx
-        .publish(DynamicPayload::new("sinex.process", "process.heartbeat", heartbeat_payload))
+        .publish(DynamicPayload::new(
+            "sinex.process",
+            "process.heartbeat",
+            heartbeat_payload,
+        ))
         .await?;
 
     // Verify custom metrics are included using repository pattern
@@ -228,7 +252,7 @@ async fn test_process_heartbeat_with_custom_metrics(ctx: TestContext) -> TestRes
         .events()
         .get_by_source(
             &EventSource::from("sinex.process"),
-            sinex_core::types::Pagination::new(Some(10), None),
+            sinex_primitives::Pagination::new(Some(10), None),
         )
         .await?;
 
@@ -277,7 +301,11 @@ async fn test_health_aggregator_process_discovery(ctx: TestContext) -> TestResul
         });
 
         let _started_event = ctx
-            .publish(DynamicPayload::new("sinex.process", "process.started", started_payload))
+            .publish(DynamicPayload::new(
+                "sinex.process",
+                "process.started",
+                started_payload,
+            ))
             .await?;
 
         // Emit heartbeat with health status
@@ -294,7 +322,11 @@ async fn test_health_aggregator_process_discovery(ctx: TestContext) -> TestResul
         });
 
         let _heartbeat_event = ctx
-            .publish(DynamicPayload::new("sinex.process", "process.heartbeat", heartbeat_payload))
+            .publish(DynamicPayload::new(
+                "sinex.process",
+                "process.heartbeat",
+                heartbeat_payload,
+            ))
             .await?;
     }
 
@@ -377,7 +409,11 @@ async fn test_process_failure_detection(ctx: TestContext) -> TestResult<()> {
         "config_hash": "ghi789"
     });
     let _started_event = ctx
-        .publish(DynamicPayload::new("sinex.process", "process.started", started_payload))
+        .publish(DynamicPayload::new(
+            "sinex.process",
+            "process.started",
+            started_payload,
+        ))
         .await?;
 
     // First heartbeat - healthy
@@ -393,7 +429,11 @@ async fn test_process_failure_detection(ctx: TestContext) -> TestResult<()> {
         "custom_metrics": {}
     });
     let _heartbeat1_event = ctx
-        .publish(DynamicPayload::new("sinex.process", "process.heartbeat", heartbeat1_payload))
+        .publish(DynamicPayload::new(
+            "sinex.process",
+            "process.heartbeat",
+            heartbeat1_payload,
+        ))
         .await?;
 
     // Simulate degraded state
@@ -416,7 +456,11 @@ async fn test_process_failure_detection(ctx: TestContext) -> TestResult<()> {
         "custom_metrics": degraded_custom_metrics
     });
     let _heartbeat2_event = ctx
-        .publish(DynamicPayload::new("sinex.process", "process.heartbeat", heartbeat2_payload))
+        .publish(DynamicPayload::new(
+            "sinex.process",
+            "process.heartbeat",
+            heartbeat2_payload,
+        ))
         .await?;
 
     // Simulate critical state
@@ -443,7 +487,11 @@ async fn test_process_failure_detection(ctx: TestContext) -> TestResult<()> {
         "custom_metrics": critical_custom_metrics
     });
     let _heartbeat3_event = ctx
-        .publish(DynamicPayload::new("sinex.process", "process.heartbeat", heartbeat3_payload))
+        .publish(DynamicPayload::new(
+            "sinex.process",
+            "process.heartbeat",
+            heartbeat3_payload,
+        ))
         .await?;
 
     // Simulate shutdown due to errors
@@ -455,7 +503,11 @@ async fn test_process_failure_detection(ctx: TestContext) -> TestResult<()> {
         "shutdown_reason": "Process terminated due to critical errors"
     });
     let _shutdown_event = ctx
-        .publish(DynamicPayload::new("sinex.process", "process.shutdown", shutdown_payload))
+        .publish(DynamicPayload::new(
+            "sinex.process",
+            "process.shutdown",
+            shutdown_payload,
+        ))
         .await?;
 
     // Verify the failure progression is recorded using repository pattern
@@ -464,7 +516,7 @@ async fn test_process_failure_detection(ctx: TestContext) -> TestResult<()> {
         .events()
         .get_by_source(
             &EventSource::from("sinex.process"),
-            sinex_core::types::Pagination::new(Some(10), None),
+            sinex_primitives::Pagination::new(Some(10), None),
         )
         .await?;
 
@@ -542,7 +594,11 @@ async fn test_high_frequency_heartbeats(ctx: TestContext) -> TestResult<()> {
         });
 
         let _heartbeat_event = ctx
-            .publish(DynamicPayload::new("sinex.process", "process.heartbeat", heartbeat_payload))
+            .publish(DynamicPayload::new(
+                "sinex.process",
+                "process.heartbeat",
+                heartbeat_payload,
+            ))
             .await?;
 
         tokio::task::yield_now().await;
@@ -555,7 +611,7 @@ async fn test_high_frequency_heartbeats(ctx: TestContext) -> TestResult<()> {
         .events()
         .get_by_source(
             &EventSource::from("sinex.process"),
-            sinex_core::types::Pagination::new(Some(30), None),
+            sinex_primitives::Pagination::new(Some(30), None),
         )
         .await?;
 

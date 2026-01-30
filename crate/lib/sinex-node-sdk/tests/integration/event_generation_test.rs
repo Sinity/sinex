@@ -3,11 +3,12 @@
 //! Tests event generation patterns using TestContext's event publishing capabilities.
 //! These tests verify that events can be generated correctly through various mechanisms.
 
-use sinex_core::db::models::{Event, JsonValue};
-use sinex_core::DynamicPayload;
-use xtask::sandbox::prelude::*;
+use sinex_primitives::{Event, DynamicPayload};
+use serde_json::Value as JsonValue;
 use std::time::Duration;
 use tokio::sync::mpsc;
+use xtask::sandbox::prelude::*;
+use time::OffsetDateTime;
 
 // =============================================================================
 // Event Generation Test Structures
@@ -28,7 +29,7 @@ impl TestEventData {
             payload: serde_json::json!({
                 "path": format!("/test/file_{}.txt", index),
                 "size": 1024 + index * 100,
-                "timestamp": chrono::Utc::now().to_rfc3339(),
+                "timestamp": OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap(),
                 "event_index": index,
             }),
         }
@@ -43,7 +44,7 @@ impl TestEventData {
                 "exit_code": 0,
                 "duration_ms": 50 + (index * 10),
                 "working_directory": "/tmp",
-                "timestamp": chrono::Utc::now().to_rfc3339(),
+                "timestamp": OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap(),
             }),
         }
     }
@@ -69,7 +70,7 @@ async fn test_event_basic_generation(ctx: TestContext) -> TestResult<()> {
                 serde_json::json!({
                     "event_id": i,
                     "data": format!("test data {}", i),
-                    "timestamp": chrono::Utc::now().to_rfc3339(),
+                    "timestamp": OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap(),
                 }),
             ))
             .await?;
@@ -145,7 +146,7 @@ async fn test_event_generation_payload_varieties(ctx: TestContext) -> TestResult
                     ],
                     "statistics": {
                         "total_count": 2,
-                        "last_updated": chrono::Utc::now().to_rfc3339()
+                        "last_updated": OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap()
                     }
                 }
             }),
@@ -391,7 +392,7 @@ async fn test_event_generation_performance(ctx: TestContext) -> TestResult<()> {
                     "payload_size": "medium",
                     "data": format!("performance test data for event {}", i),
                     "metadata": {
-                        "generated_at": chrono::Utc::now().to_rfc3339(),
+                        "generated_at": OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap(),
                         "total_events": event_count
                     }
                 }),

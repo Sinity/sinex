@@ -12,10 +12,6 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     flake-utils.url = "github:numtide/flake-utils";
-    devenv = {
-      url = "github:cachix/devenv";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
   };
 
   outputs =
@@ -25,7 +21,6 @@
       fenix,
       agenix,
       flake-utils,
-      devenv,
     }:
     let
       # System-specific outputs
@@ -373,10 +368,118 @@
             pkgs.lib.filterAttrs (_: value: pkgs.lib.isDerivation value) limitedVmTests
           );
 
-          devShells.default = devenv.lib.mkShell {
-            inherit inputs pkgs;
-            modules = [ ./devenv.nix ];
-          };
+          # Plain devShell - no devenv dependency
+          devShells.default =
+            let
+              # Compute per-checkout NATS port offset (0-99) from path hash
+              # This MUST be in Nix so it works even when xtask doesn't compile
+              pathHash = builtins.hashString "sha256" (toString ./.);
+              hexPair = builtins.substring 0 2 pathHash;
+              offsetRaw = builtins.fromTOML "v = 0x${hexPair}";
+              natsOffset = offsetRaw.v - (offsetRaw.v / 100 * 100);
+              natsPort = 4222 + natsOffset;
+
+              # Per-checkout state directory
+              stateDir = ".devenv/sinex-dev";
+              pgPort = 5432;
+            in
+            pkgs.mkShell {
+              packages = with pkgs; [
+                # Rust toolchain (Fenix - pinned, coherent versions)
+                fenixPkgs.toolchain
+                fenixPkgs.rust-analyzer
+                fenixPkgs.clippy
+                fenixPkgs.rustfmt
+                fenixPkgs.llvm-tools
+                fenixPkgs.rust-src
+
+                # Cargo development tools
+                cargo-nextest     # Fast parallel test runner (used by xtask)
+                cargo-llvm-cov    # Coverage reporting (used by xtask)
+                cargo-audit       # Security vulnerability scanner
+                cargo-machete     # Unused dependency detection
+                cargo-modules     # Module tree visualization
+                tokei             # Line counter (user uses this)
+                mold              # Ultra-fast linker (configured in .cargo/config.toml)
+                binutils          # nm, objdump, strip for debugging
+
+                # Infrastructure services (managed by xtask stack)
+                nats-server       # Event transport
+                postgresForSqlx   # Custom postgres with timescaledb, pgvector, pg_jsonschema, pgx_ulid
+
+                # Build/runtime dependencies
+                jq                # JSON processing (scripts, xtask output)
+                openssl           # TLS (native-tls dependency, could migrate to rustls eventually)
+                pkg-config        # Native library linking
+                dbus dbus.dev     # Used by sinex-system-ingestor (D-Bus watcher)
+                git-annex         # Blob storage backend
+                nsc               # NATS credential management
+
+                # VM testing infrastructure
+                qemu qemu_kvm     # Used by xtask vm test
+
+                # Shell/Nix tooling
+                direnv            # Automatic environment loading
+                zstd              # Snapshot compression (xtask stack snapshot)
+                git               # Version control (explicit for hermeticity)
+              ];
+
+              # PostgreSQL connection
+              PGUSER = "sinity";
+              PGDATABASE = "sinex_dev";
+
+              # Binary paths (point to Nix store versions with correct extensions/features)
+              SINEX_PG_BIN = "${postgresForSqlx}/bin";
+              NATS_SERVER_BIN = "${pkgs.nats-server}/bin/nats-server";
+
+              shellHook = ''
+                # Add project scripts and built binaries to PATH
+                export PATH="$PWD/scripts:$PWD/target/debug:$PATH"
+
+                # D-Bus library for system-ingestor
+                export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [ pkgs.dbus ]}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+                # XDG-compliant directories (read by xtask/config.rs)
+                export SINEX_STATE_DIR="''${XDG_STATE_HOME:-$HOME/.local/state}/sinex"
+                export SINEX_CACHE_DIR="''${XDG_CACHE_HOME:-$HOME/.cache}/sinex"
+                export SINEX_TEST_RESULTS_DIR="$SINEX_CACHE_DIR/test-results"
+
+                # Per-checkout isolated stack (computed in Nix - works even if xtask not built)
+                export SINEX_DEV_STATE_DIR="$PWD/${stateDir}"
+                export SINEX_DEV_PG_PORT="${toString pgPort}"
+                export SINEX_DEV_NATS_PORT="${toString natsPort}"
+                export SINEX_DEV_GATEWAY_PORT="9998"
+
+                # PostgreSQL connection via Unix socket (no TCP conflicts)
+                export DATABASE_URL="postgresql:///sinex_dev?host=$SINEX_DEV_STATE_DIR/run&port=${toString pgPort}"
+                export PGHOST="$SINEX_DEV_STATE_DIR/run"
+                export PGPORT="${toString pgPort}"
+
+                # NATS connection
+                export SINEX_NATS_URL="nats://localhost:${toString natsPort}"
+
+                # Gateway RPC
+                export SINEX_RPC_URL="https://127.0.0.1:9998"
+
+                # Shell shortcuts
+                sx() { cargo xtask "$@"; }
+                xt() { cargo xtask "$@"; }
+
+                # Show status in interactive shells (once per session)
+                if [ -n "''${PS1:-}" ] && [ -t 1 ] && [ -z "''${SINEX_DEVENV_MOTD_ONCE:-}" ]; then
+                  export SINEX_DEVENV_MOTD_ONCE=1
+                  if [ -x "$PWD/target/debug/xtask" ]; then
+                    "$PWD/target/debug/xtask" status 2>/dev/null || echo "Status unavailable"
+                  else
+                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                    echo "  sinex devshell (xtask not built yet)"
+                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                    echo "Build: cargo build -p xtask"
+                    echo "Start: cargo build -p xtask --features sandbox && cargo xtask stack start"
+                  fi
+                fi
+              '';
+            };
 
         }
       );

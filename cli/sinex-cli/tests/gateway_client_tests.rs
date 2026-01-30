@@ -14,8 +14,8 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use common::{MockGatewayClient, MockResponse, TestDir, TokenFixture};
 use sinex_cli::client::{ClientConfig, GatewayClient, RetryConfig};
-use sinex_core::rpc::dlq::DlqListResponse;
-use sinex_core::rpc::system::{
+use sinex_primitives::rpc::dlq::DlqListResponse;
+use sinex_primitives::rpc::system::{
     ComponentHealth, ComponentsHealth, ReplayControlHealth, SystemHealthResponse,
 };
 

@@ -24,11 +24,11 @@ pub trait Renderer {
 /// ```json
 /// {
 ///   "nodes": [
-///     { "id": "sinex-core", "label": "sinex-core" },
+///     { "id": "sinex-db", "label": "sinex-db" },
 ///     { "id": "sinex-gateway", "label": "sinex-gateway" }
 ///   ],
 ///   "edges": [
-///     { "source": "sinex-gateway", "target": "sinex-core" }
+///     { "source": "sinex-gateway", "target": "sinex-db" }
 ///   ]
 /// }
 /// ```
@@ -92,11 +92,11 @@ pub struct NodeJson {
 ///
 /// # Example
 ///
-/// In a workspace where `sinex-gateway` imports from `sinex-core`:
+/// In a workspace where `sinex-gateway` imports from `sinex-db`:
 /// ```text
 /// EdgeJson {
 ///     source: "sinex-gateway",  // depends on
-///     target: "sinex-core"      // this package
+///     target: "sinex-db"        // this package
 /// }
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]

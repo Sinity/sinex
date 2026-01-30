@@ -1,4 +1,4 @@
-//! NatsSetup builder for TestContext NATS initialization.
+//! NatsSetup builder for Sandbox NATS initialization.
 //!
 //! This module provides a unified builder pattern for configuring NATS in tests,
 //! replacing the previous proliferation of `with_nats*` methods.
@@ -19,21 +19,21 @@
 //! let ctx = ctx.with_nats().config(builder).await?;
 //! ```
 
-use crate::nats::{
+use crate::sandbox::context::{NatsMode, Sandbox};
+use crate::sandbox::nats::{
     shared_ephemeral_nats_with_key, EphemeralNats, EphemeralNatsBuilder, SharedNatsProfile,
 };
-use crate::pipeline::{shared_nats_handle, shared_secure_nats_handle};
-use crate::test_context::{NatsMode, TestContext};
-use crate::TestResult;
+use crate::sandbox::nats::{shared_nats_handle, shared_secure_nats_handle};
+use crate::sandbox::prelude::TestResult;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// Builder for NATS configuration in TestContext.
+/// Builder for NATS configuration in Sandbox.
 ///
-/// Created via `TestContext::with_nats()`. Use method chaining to configure
+/// Created via `Sandbox::with_nats()`. Use method chaining to configure
 /// the desired NATS setup, then call `.await` to apply.
 pub struct NatsSetup {
-    ctx: TestContext,
+    ctx: Sandbox,
     mode: NatsSetupMode,
     secure: bool,
     custom_key: Option<String>,
@@ -48,7 +48,7 @@ enum NatsSetupMode {
 }
 
 impl NatsSetup {
-    pub(crate) fn new(ctx: TestContext) -> Self {
+    pub(crate) fn new(ctx: Sandbox) -> Self {
         Self {
             ctx,
             mode: NatsSetupMode::Shared,
@@ -103,15 +103,15 @@ impl NatsSetup {
         self
     }
 
-    /// Finalize the NATS setup and return the configured TestContext.
-    pub async fn build(self) -> TestResult<TestContext> {
+    /// Finalize the NATS setup and return the configured Sandbox.
+    pub async fn build(self) -> TestResult<Sandbox> {
         match self.mode {
             NatsSetupMode::Dedicated => self.build_dedicated().await,
             NatsSetupMode::Shared => self.build_shared().await,
         }
     }
 
-    async fn build_dedicated(mut self) -> TestResult<TestContext> {
+    async fn build_dedicated(mut self) -> TestResult<Sandbox> {
         let builder = self.custom_builder.take().unwrap_or_else(|| {
             let mut b = EphemeralNats::builder();
             if self.secure {
@@ -156,7 +156,7 @@ impl NatsSetup {
         Ok(self.ctx)
     }
 
-    async fn build_shared(mut self) -> TestResult<TestContext> {
+    async fn build_shared(mut self) -> TestResult<Sandbox> {
         let token = Self::env_auth_token();
         let config_file = Self::env_config_file();
 
@@ -268,7 +268,7 @@ impl NatsSetup {
 
 // Implement IntoFuture so `.await` works directly on the builder
 impl std::future::IntoFuture for NatsSetup {
-    type Output = TestResult<TestContext>;
+    type Output = TestResult<Sandbox>;
     type IntoFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Self::Output> + Send>>;
 
     fn into_future(self) -> Self::IntoFuture {

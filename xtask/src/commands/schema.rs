@@ -36,6 +36,20 @@ pub enum SchemaSubcommand {
         #[arg(long)]
         superuser: Option<String>,
     },
+    Info {
+        #[arg(value_enum)]
+        query: SchemaInfoQuery,
+    },
+}
+
+#[derive(Debug, Clone, clap::ValueEnum)]
+pub enum SchemaInfoQuery {
+    /// List all schema names
+    ListSchemas,
+    /// List schemas requiring grants
+    ListGrantableSchemas,
+    /// Show detailed schema information
+    DescribeSchemas,
 }
 
 /// Schema management command
@@ -60,6 +74,7 @@ impl XtaskCommand for SchemaCommand {
                 database,
                 superuser,
             } => execute_check_ready(database.clone(), superuser.clone(), ctx),
+            SchemaSubcommand::Info { query } => execute_info(query, ctx),
         }
     }
 
@@ -259,7 +274,6 @@ fn execute_check_ready(
     ensure_psql()?;
 
     let db = database
-        .or_else(|| std::env::var("DATABASE_NAME").ok())
         .or_else(|| std::env::var("PGDATABASE").ok())
         .unwrap_or_else(|| "sinex_dev".to_string());
 
@@ -312,6 +326,37 @@ fn execute_check_ready(
         .with_duration(ctx.elapsed()))
 }
 
+fn execute_info(query: &SchemaInfoQuery, ctx: &CommandContext) -> Result<CommandResult> {
+    use sinex_schema::schema_registry::{schema_names, schemas_requiring_grants, SINEX_SCHEMAS};
+
+    match query {
+        SchemaInfoQuery::ListSchemas => {
+            for name in schema_names() {
+                println!("{}", name);
+            }
+            Ok(CommandResult::success()
+                .with_message("Listed all schema names")
+                .with_duration(ctx.elapsed()))
+        }
+        SchemaInfoQuery::ListGrantableSchemas => {
+            for schema in schemas_requiring_grants() {
+                println!("{}", schema.name);
+            }
+            Ok(CommandResult::success()
+                .with_message("Listed grantable schemas")
+                .with_duration(ctx.elapsed()))
+        }
+        SchemaInfoQuery::DescribeSchemas => {
+            for schema in SINEX_SCHEMAS {
+                println!("{:20} - {}", schema.name, schema.description);
+            }
+            Ok(CommandResult::success()
+                .with_message("Described all schemas")
+                .with_duration(ctx.elapsed()))
+        }
+    }
+}
+
 // Helper functions
 
 fn sinex_schema_cmd() -> Command {
@@ -319,7 +364,7 @@ fn sinex_schema_cmd() -> Command {
     cmd.arg("run")
         .arg("--quiet")
         .arg("--package")
-        .arg("sinex-core")
+        .arg("sinex-schema")
         .arg("--bin")
         .arg("sinex-schema")
         .arg("--features")

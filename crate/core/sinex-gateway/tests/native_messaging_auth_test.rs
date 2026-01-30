@@ -10,8 +10,8 @@ use sinex_gateway::{
     },
     ServiceContainer,
 };
-use xtask::sandbox::{sinex_test, EnvGuard, TestContext};
 use tokio::sync::Mutex;
+use xtask::sandbox::{sinex_test, EnvGuard, TestContext};
 
 struct ReplayBypassGuard {
     previous: Option<String>,

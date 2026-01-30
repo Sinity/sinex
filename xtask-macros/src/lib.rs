@@ -155,13 +155,12 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     }
 
-    fn is_test_context(ty: &Type) -> bool {
+    fn is_context(ty: &Type) -> bool {
         match ty {
-            Type::Reference(r) => is_test_context(&r.elem),
-            Type::Path(TypePath { path, .. }) => path
-                .segments
-                .last()
-                .map_or(false, |seg| seg.ident == "Sandbox"),
+            Type::Reference(r) => is_context(&r.elem),
+            Type::Path(TypePath { path, .. }) => path.segments.last().map_or(false, |seg| {
+                seg.ident == "Sandbox" || seg.ident == "TestContext"
+            }),
             _ => false,
         }
     }
@@ -234,7 +233,7 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
                 .into();
         };
 
-        if is_test_context(ty.as_ref()) {
+        if is_context(ty.as_ref()) {
             if idx != 0 {
                 return Error::new_spanned(arg, "Sandbox must appear first")
                     .to_compile_error()
@@ -298,7 +297,7 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
     let timeout_secs = opts.timeout_secs.unwrap_or(if is_async { 60 } else { 20 }); // Increased from 30/10
     let cases = opts.cases.unwrap_or(256);
     let trace_stmt = if opts.trace {
-        quote!( xtask::sandbox::Sandbox::init_tracing("debug"); )
+        quote!( ::xtask::sandbox::Sandbox::init_tracing("debug"); )
     } else {
         quote!()
     };
@@ -379,7 +378,7 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let runner_setup = quote! {
         use ::proptest::prelude::*;
-        let mut cfg = xtask::sandbox::sinex_prop_runner_config(#cases, module_path!(), test_name);
+        let mut cfg = ::xtask::sandbox::sinex_prop_runner_config(#cases, module_path!(), test_name);
         #seed_stmt
         #shrink_stmt
         let mut runner = ::proptest::test_runner::TestRunner::new(cfg);
@@ -393,7 +392,7 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
             let start = std::time::Instant::now();
             eprintln!("🔄 {} [prop, timeout: {}s, cases: {}]", test_name.replace('_', " "), #timeout_secs, #cases);
             let ctx_holder = if #expects_ctx {
-                Some(xtask::sandbox::Sandbox::with_name(test_name).await?)
+                Some(::xtask::sandbox::Sandbox::with_name(test_name).await?)
             } else {
                 None
             };
@@ -452,9 +451,9 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
                 Err(err) => {
                     eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
                     let failure_ctx = ctx_snapshot_ref
-                        .map(|ctx| xtask::sandbox::snapshot_helper::FailureContext::Borrowed(ctx))
-                        .unwrap_or(xtask::sandbox::snapshot_helper::FailureContext::None);
-                    xtask::sandbox::snapshot_helper::persist_failure(
+                        .map(|ctx| ::xtask::sandbox::snapshot_helper::FailureContext::Borrowed(ctx))
+                        .unwrap_or(::xtask::sandbox::snapshot_helper::FailureContext::None);
+                    ::xtask::sandbox::snapshot_helper::persist_failure(
                         test_name,
                         format!("{err:?}"),
                         failure_ctx,
@@ -491,10 +490,10 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
                 }
                 Err(err) => {
                     eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
-                    xtask::sandbox::snapshot_helper::persist_failure(
+                    ::xtask::sandbox::snapshot_helper::persist_failure(
                         test_name,
                         format!("{err:?}"),
-                        xtask::sandbox::snapshot_helper::FailureContext::None,
+                        ::xtask::sandbox::snapshot_helper::FailureContext::None,
                     );
                     Err(color_eyre::eyre::eyre!("{err}"))
                 }
@@ -705,8 +704,8 @@ pub fn sinex_proptest(input: TokenStream) -> TokenStream {
 
         out.push(quote! {
             #(#passthrough_attrs)*
-            #[xtask::sandbox::sinex_prop #meta_tokens]
-            fn #name( #ctx_tokens #( #param_defs ),* ) -> xtask::sandbox::TestResult<()> {
+            #[::xtask::sandbox::sinex_prop #meta_tokens]
+            fn #name( #ctx_tokens #( #param_defs ),* ) -> ::xtask::sandbox::TestResult<()> {
                 #( #destructures )*
                 #body
             }
@@ -845,14 +844,12 @@ fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
     }
 
     // Helper to check if a type is Sandbox (handles both Type::Path and Type::Reference)
-    fn is_test_context_type(ty: &syn::Type) -> bool {
+    fn is_context_type(ty: &syn::Type) -> bool {
         match ty {
-            syn::Type::Reference(r) => is_test_context_type(&r.elem),
-            syn::Type::Path(type_path) => type_path
-                .path
-                .segments
-                .last()
-                .map_or(false, |seg| seg.ident == "Sandbox"),
+            syn::Type::Reference(r) => is_context_type(&r.elem),
+            syn::Type::Path(type_path) => type_path.path.segments.last().map_or(false, |seg| {
+                seg.ident == "Sandbox" || seg.ident == "TestContext"
+            }),
             _ => false,
         }
     }
@@ -860,7 +857,7 @@ fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
     // Check if function takes Sandbox parameter
     let takes_context = input.sig.inputs.iter().any(|arg| {
         if let syn::FnArg::Typed(pat_type) = arg {
-            return is_test_context_type(pat_type.ty.as_ref());
+            return is_context_type(pat_type.ty.as_ref());
         }
         false
     });
@@ -908,7 +905,7 @@ fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
 
         let serial_guard = if enable_serial {
             quote! {
-                let _serial_guard = xtask::sandbox::acquire_pool_test_guard().await;
+                let _serial_guard = ::xtask::sandbox::acquire_pool_test_guard().await;
             }
         } else {
             quote! {}
@@ -968,10 +965,10 @@ fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
                     }
                     Err(err) => {
                         eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
-                        xtask::sandbox::snapshot_helper::persist_failure(
+                        ::xtask::sandbox::snapshot_helper::persist_failure(
                             test_name,
                             format!("{err:?}"),
-                            xtask::sandbox::snapshot_helper::FailureContext::None,
+                            ::xtask::sandbox::snapshot_helper::FailureContext::None,
                         );
                     }
                 }
@@ -1031,10 +1028,10 @@ fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
                     }
                     Err(err) => {
                         eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
-                        xtask::sandbox::snapshot_helper::persist_failure(
+                        ::xtask::sandbox::snapshot_helper::persist_failure(
                             test_name,
                             format!("{err:?}"),
-                            xtask::sandbox::snapshot_helper::FailureContext::None,
+                            ::xtask::sandbox::snapshot_helper::FailureContext::None,
                         );
                     }
                 }
@@ -1051,7 +1048,7 @@ fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
         // Regular database test using universal pool system with proper cleanup
         let serial_guard = if enable_serial {
             quote! {
-                let _serial_guard = xtask::sandbox::acquire_pool_test_guard().await;
+                let _serial_guard = ::xtask::sandbox::acquire_pool_test_guard().await;
             }
         } else {
             quote! {}
@@ -1101,10 +1098,10 @@ fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
                         }
                         Err(err) => {
                             eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
-                            xtask::sandbox::snapshot_helper::persist_failure(
+                            ::xtask::sandbox::snapshot_helper::persist_failure(
                                 test_name,
                                 format!("{err:?}"),
-                                xtask::sandbox::snapshot_helper::FailureContext::Snapshot(
+                                ::xtask::sandbox::snapshot_helper::FailureContext::Snapshot(
                                     ctx_failure_snapshot.clone(),
                                 ),
                             );
@@ -1125,7 +1122,7 @@ fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
         // Simple test - just timeout wrapper
         let serial_guard = if enable_serial {
             quote! {
-                let _serial_guard = xtask::sandbox::acquire_pool_test_guard().await;
+                let _serial_guard = ::xtask::sandbox::acquire_pool_test_guard().await;
             }
         } else {
             quote! {}
@@ -1154,10 +1151,10 @@ fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
                     }
                     Err(err) => {
                         eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
-                        xtask::sandbox::snapshot_helper::persist_failure(
+                        ::xtask::sandbox::snapshot_helper::persist_failure(
                             test_name,
                             format!("{err:?}"),
-                            xtask::sandbox::snapshot_helper::FailureContext::None,
+                            ::xtask::sandbox::snapshot_helper::FailureContext::None,
                         );
                     }
                 }
@@ -1309,7 +1306,7 @@ pub fn sinex_bench(attr: TokenStream, item: TokenStream) -> TokenStream {
                     #[cfg(feature = "bench")]
                     #[divan::bench(args = #args_tokens)]
                     #fn_vis fn #fn_name(bencher: divan::Bencher, arg: #arg_type) {
-                        use xtask::sandbox::bench::BENCH_CONTEXT;
+                        use ::xtask::sandbox::bench::BENCH_CONTEXT;
                         let ctx = &*BENCH_CONTEXT;
 
                         bencher.bench_local(|| {
@@ -1329,7 +1326,7 @@ pub fn sinex_bench(attr: TokenStream, item: TokenStream) -> TokenStream {
                     #[cfg(feature = "bench")]
                     #[divan::bench]
                     #fn_vis fn #fn_name(bencher: divan::Bencher) {
-                        use xtask::sandbox::bench::BENCH_CONTEXT;
+                        use ::xtask::sandbox::bench::BENCH_CONTEXT;
                         let ctx = &*BENCH_CONTEXT;
 
                         bencher.bench_local(|| {

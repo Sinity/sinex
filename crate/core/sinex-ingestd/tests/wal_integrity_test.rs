@@ -1,8 +1,8 @@
 use serde_json::json;
 use sinex_ingestd::MaterialAssembler;
 use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
-use xtask::sandbox::prelude::*;
 use std::sync::Arc;
+use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 #[ignore]
@@ -32,7 +32,7 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
     )
     .await?;
 
-    let material_id = sinex_core::types::ulid::Ulid::new();
+    let material_id = sinex_primitives::Ulid::new();
     let js = ctx
         .nats_handle()?
         .jetstream_with_client(nats_client.clone());
@@ -57,7 +57,7 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
                 "material_kind": "test-wal",
                 "source_identifier": "test://wal-resume",
                 "metadata": {"run": 1},
-                "started_at": chrono::Utc::now().to_rfc3339(),
+                "started_at": crate::temporal::now().to_rfc3339(),
             })
             .to_string()
             .into(),
@@ -88,7 +88,7 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
                     }
                     let content = tokio::fs::read_to_string(&p)
                         .await
-                        .map_err(|e| sinex_core::types::error::SinexError::io(e.to_string()))?;
+                        .map_err(|e| sinex_primitives::error::SinexError::io(e.to_string()))?;
                     Ok(content.contains("\"Slice\""))
                 }
             },
@@ -130,7 +130,7 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
             ctx.pipeline_namespace().subject("source_material.end"),
             json!({
                 "material_id": material_id.to_string(),
-                "ended_at": chrono::Utc::now().to_rfc3339(),
+                "ended_at": crate::temporal::now().to_rfc3339(),
                 "content_hash": hash,
                 "total_slices": 2,
                 "total_size_bytes": 8,
@@ -149,17 +149,17 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
                 let pool = pool.clone();
                 async move {
                     let repo = pool.source_materials();
-                    let id = sinex_core::Id::from_ulid(material_id);
+                    let id = sinex_primitives::Id::from_ulid(material_id);
                     let rec = repo
                         .get_by_id(id)
                         .await
-                        .map_err(sinex_core::types::error::SinexError::from)?;
+                        .map_err(sinex_primitives::error::SinexError::from)?;
                     if let Some(r) = rec {
-                        if r.status == sinex_core::db::repositories::material_status::COMPLETED {
+                        if r.status == sinex_db::repositories::material_status::COMPLETED {
                             return Ok(true);
                         }
-                        if r.status == sinex_core::db::repositories::material_status::FAILED {
-                            return Err(sinex_core::types::error::SinexError::service(format!(
+                        if r.status == sinex_db::repositories::material_status::FAILED {
+                            return Err(sinex_primitives::error::SinexError::service(format!(
                                 "Material failed: metadata={:?}",
                                 r.metadata
                             )));

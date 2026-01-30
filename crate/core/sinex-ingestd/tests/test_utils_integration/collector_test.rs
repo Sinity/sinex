@@ -87,7 +87,7 @@ async fn test_modern_event_ingestion_flow(ctx: TestContext) -> TestResult<()> {
         "test.collector",
         serde_json::json!({
             "test_type": "ingestion_flow",
-            "timestamp": chrono::Utc::now().to_rfc3339(),
+            "timestamp": crate::temporal::now().to_rfc3339(),
             "data": "Modern ingestion test"
         })
     ).await?;
@@ -180,7 +180,7 @@ async fn test_modern_database_output_config(ctx: TestContext) -> TestResult<()> 
             serde_json::json!({
                 "sequence": i,
                 "test_data": format!("Database output test {}", i),
-                "timestamp": chrono::Utc::now().to_rfc3339()
+                "timestamp": crate::temporal::now().to_rfc3339()
             })
         ).await?;
 
@@ -240,13 +240,13 @@ async fn test_node_integration_patterns(ctx: TestContext) -> TestResult<()> {
         ("fs.file_created", serde_json::json!({
             "path": "/tmp/created_file.txt",
             "size": 512,
-            "timestamp": chrono::Utc::now().to_rfc3339()
+            "timestamp": crate::temporal::now().to_rfc3339()
         })),
         ("fs.file_modified", serde_json::json!({
             "path": "/tmp/modified_file.txt",
             "old_size": 256,
             "new_size": 512,
-            "timestamp": chrono::Utc::now().to_rfc3339()
+            "timestamp": crate::temporal::now().to_rfc3339()
         })),
         ("terminal.command_executed", serde_json::json!({
             "command": "cat /tmp/test.txt",
@@ -257,7 +257,7 @@ async fn test_node_integration_patterns(ctx: TestContext) -> TestResult<()> {
         ("desktop.window_focus_changed", serde_json::json!({
             "previous_window": "Terminal",
             "current_window": "Browser",
-            "timestamp": chrono::Utc::now().to_rfc3339()
+            "timestamp": crate::temporal::now().to_rfc3339()
         })),
     ];
 

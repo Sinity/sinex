@@ -180,7 +180,11 @@ pub fn write_unused_report_to_buffer<W: Write>(
         }
         "human" | _ => {
             if report.unused.is_empty() {
-                writeln!(writer, "✓ No unused dependencies found (tool: {})", report.tool)?;
+                writeln!(
+                    writer,
+                    "✓ No unused dependencies found (tool: {})",
+                    report.tool
+                )?;
             } else {
                 writeln!(
                     writer,

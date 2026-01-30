@@ -235,7 +235,7 @@ fn generate_event_envelope_impl(events: &[EventCategory]) -> proc_macro2::TokenS
 
     quote! {
         impl EventEnvelope {
-            pub fn to_json_event(self) -> std::result::Result<sinex_core::Event<sinex_core::JsonValue>, sinex_core::SinexError> {
+            pub fn to_json_event(self) -> std::result::Result<sinex_primitives::Event<sinex_primitives::JsonValue>, sinex_primitives::SinexError> {
                 match self {
                     #(#match_arms)*
                     EventEnvelope::Unknown(event) => Ok(event),

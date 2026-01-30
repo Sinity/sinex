@@ -7,7 +7,6 @@
 //! - `result.json` - Final result (when complete)
 
 use anyhow::{bail, Context, Result};
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
@@ -15,6 +14,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
+use time::OffsetDateTime;
 
 /// Counter for generating unique job IDs within a session.
 #[allow(dead_code)]
@@ -42,8 +42,8 @@ pub struct JobMeta {
     pub id: u64,
     pub command: String,
     pub args: Vec<String>,
-    pub started_at: DateTime<Utc>,
-    pub finished_at: Option<DateTime<Utc>>,
+    pub started_at: OffsetDateTime,
+    pub finished_at: Option<OffsetDateTime>,
     pub status: JobStatus,
     pub cwd: String,
 }
@@ -159,7 +159,7 @@ impl JobManager {
             id,
             command: command.to_string(),
             args: args.to_vec(),
-            started_at: Utc::now(),
+            started_at: OffsetDateTime::now_utc(),
             finished_at: None,
             status: JobStatus::Running { pid: child.id() },
             cwd: std::env::current_dir()
@@ -240,7 +240,7 @@ impl JobManager {
             // Update status
             let mut job = job;
             job.meta.status = JobStatus::Cancelled;
-            job.meta.finished_at = Some(Utc::now());
+            job.meta.finished_at = Some(OffsetDateTime::now_utc());
             job.update_meta()?;
 
             Ok(true)
@@ -274,7 +274,7 @@ impl JobManager {
 
     /// Clean up old completed jobs.
     pub fn prune(&self, older_than_days: u32) -> Result<usize> {
-        let cutoff = Utc::now() - chrono::Duration::days(older_than_days as i64);
+        let cutoff = OffsetDateTime::now_utc() - time::Duration::days(older_than_days as i64);
         let mut removed = 0;
 
         for job in self.list()? {
@@ -319,7 +319,7 @@ fn wait_for_child(mut child: Child, job_dir: &Path) -> Result<()> {
     let mut meta: JobMeta = serde_json::from_str(&json)?;
 
     // Update status
-    meta.finished_at = Some(Utc::now());
+    meta.finished_at = Some(OffsetDateTime::now_utc());
     meta.status = if result.success() {
         JobStatus::Completed {
             exit_code: 0,

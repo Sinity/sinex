@@ -12,12 +12,12 @@
 use async_nats::jetstream;
 use color_eyre::eyre::{eyre, Context, Result};
 use serde_json::Value;
-use sinex_core::environment::SinexEnvironment;
+use sinex_primitives::environment::SinexEnvironment;
 use std::time::Duration;
 use tracing::{info, warn};
 
 // Re-export shared types
-pub use sinex_core::rpc::shadow::{
+pub use sinex_primitives::rpc::shadow::{
     ShadowConsumerInfo, ShadowCreateRequest, ShadowCreateResponse, ShadowDeleteRequest,
     ShadowDeleteResponse, ShadowListRequest, ShadowListResponse,
 };
@@ -252,7 +252,7 @@ pub async fn handle_shadow_delete(
 mod tests {
     use super::*;
     use serde_json::json;
-    use sinex_core::environment;
+    use sinex_primitives::environment;
     use xtask::sandbox::{sinex_test, EphemeralNats};
 
     #[sinex_test]
@@ -320,7 +320,7 @@ mod tests {
         // Delete the consumer
         let test_auth = crate::rpc_server::RpcAuthContext {
             token_prefix: "test****".to_string(),
-            authenticated_at: chrono::Utc::now(),
+            authenticated_at: temporal::now(),
         };
         let delete_result = handle_shadow_delete(
             &client,
@@ -386,7 +386,7 @@ mod tests {
 
         let test_auth = crate::rpc_server::RpcAuthContext {
             token_prefix: "test****".to_string(),
-            authenticated_at: chrono::Utc::now(),
+            authenticated_at: temporal::now(),
         };
 
         // Should fail without dev- prefix

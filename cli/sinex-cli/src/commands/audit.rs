@@ -1,5 +1,5 @@
 use clap::Args;
-use sinex_core::rpc::audit::AuditGetResponse;
+use sinex_primitives::rpc::audit::AuditGetResponse;
 
 use crate::client::GatewayClient;
 use crate::error::is_not_found_error;

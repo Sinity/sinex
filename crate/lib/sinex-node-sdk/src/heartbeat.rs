@@ -8,10 +8,11 @@
 use crate::stream_processor::NodeRuntimeState;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_core::types::events::payloads::process::{
+use sinex_primitives::events::payloads::process::{
     ProcessDegradedPayload, ProcessFailedPayload, ProcessStatus,
 };
-use sinex_core::types::{utils::CoordinationPrimitive, Seconds};
+use sinex_primitives::utils::CoordinationPrimitive;
+use sinex_primitives::Seconds;
 use std::mem::MaybeUninit;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
@@ -309,7 +310,7 @@ impl HeartbeatEmitter {
             last_error_message: last_error,
             version: self.version.clone(),
             git_hash: self.git_hash.clone(),
-            timestamp: chrono::Utc::now().to_rfc3339(),
+            timestamp: sinex_primitives::temporal::format_rfc3339(sinex_primitives::temporal::now()),
             metadata,
         }
     }
@@ -532,7 +533,7 @@ macro_rules! emit_heartbeat {
             "fields": {
                 "service_name": $service_name,
                 "status": "healthy",
-                "timestamp": chrono::Utc::now().to_rfc3339()
+                "timestamp": sinex_primitives::temporal::format_rfc3339(sinex_primitives::temporal::now())
             }
         });
         println!("{}", log_entry);
@@ -541,7 +542,7 @@ macro_rules! emit_heartbeat {
     ($service_name:expr, $($field:ident = $value:expr),+) => {
         let mut fields = serde_json::json!({
             "service_name": $service_name,
-            "timestamp": chrono::Utc::now().to_rfc3339()
+            "timestamp": sinex_primitives::temporal::format_rfc3339(sinex_primitives::temporal::now())
         });
 
         $(

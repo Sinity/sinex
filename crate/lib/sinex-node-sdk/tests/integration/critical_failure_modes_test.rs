@@ -3,11 +3,11 @@
 //! This module tests critical failure scenarios that could break the system
 //! in production, focusing on system resilience and error handling.
 
-use sinex_core::DynamicPayload;
+use sinex_primitives::DynamicPayload;
 use sinex_node_sdk::VersionInfo;
-use xtask::sandbox::prelude::*;
 use std::fs;
 use tempfile::TempDir;
+use xtask::sandbox::prelude::*;
 
 // ============================================================================
 // Version Tracking Failure Tests

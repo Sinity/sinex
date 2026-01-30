@@ -13,14 +13,14 @@
 
 use color_eyre::eyre::Result;
 use serde_json::json;
-use sinex_core::db::models::Event;
-use sinex_core::types::events::LogLinePayload;
-use sinex_core::types::ulid::Ulid;
+use sinex_db::models::Event;
 use sinex_node_sdk::acquisition_manager::AcquisitionManager;
 use sinex_node_sdk::stage_as_you_go::{
     StageAsYouGoContext, StageAsYouGoProcessor, StageAsYouGoResult,
 };
 use sinex_node_sdk::NodeResult;
+use sinex_primitives::events::LogLinePayload;
+use sinex_primitives::ulid::Ulid;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
@@ -75,9 +75,9 @@ impl StageAsYouGoProcessor for DemoLogProcessor {
             let event = Event::new(
                 payload,
                 // Provenance will be overwritten/augmented by context
-                sinex_core::Provenance::Synthesis {
-                    source_event_ids: sinex_core::types::non_empty::NonEmptyVec::single(
-                        sinex_core::EventId::from_ulid(Ulid::new()),
+                sinex_primitives::Provenance::Synthesis {
+                    source_event_ids: sinex_primitives::non_empty::NonEmptyVec::single(
+                        sinex_primitives::EventId::from_ulid(Ulid::new()),
                     ),
                     operation_id: None,
                 },

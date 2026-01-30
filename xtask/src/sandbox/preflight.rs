@@ -1,6 +1,6 @@
 //! Preflight diagnostics for system tests that rely on external tools.
 
-use crate::TestResult;
+use crate::sandbox::prelude::TestResult;
 use color_eyre::eyre::eyre;
 use std::fs;
 

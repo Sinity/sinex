@@ -4,13 +4,12 @@ use crate::replay_control::{spawn_replay_control, ReplayControlClient, ReplayCon
 use crate::replay_state_machine::ReplayStateMachine;
 use camino::Utf8PathBuf;
 use color_eyre::eyre::Result;
-use sinex_core::{
-    coordination::CoordinationKvClient,
-    db::{create_pool_with_config, PoolConfig},
-    environment as sinex_environment,
-    types::{domain::SanitizedPath, error::SinexError},
-};
+use sinex_db::{create_pool_with_config, PoolConfig};
 use sinex_node_sdk::annex::BlobManager;
+use sinex_primitives::domain::SanitizedPath;
+use sinex_primitives::{
+    coordination::CoordinationKvClient, environment as sinex_environment, error::SinexError,
+};
 use sinex_services::{AnalyticsService, ContentService, PkmService, SearchService};
 use std::sync::Arc;
 use std::time::Duration;
@@ -27,7 +26,7 @@ pub struct ServiceContainer {
     pub replay_control: Option<ReplayControlClient>,
     pub coordination: Option<Arc<CoordinationKvClient>>,
     nats_client: Option<async_nats::Client>,
-    env: sinex_core::environment::SinexEnvironment,
+    env: sinex_primitives::environment::SinexEnvironment,
     replay_control_bypass: bool,
     replay_control_init_error: Option<ReplayControlError>,
 }
@@ -197,7 +196,7 @@ impl ServiceContainer {
             });
 
         let replay = Arc::new(ReplayStateMachine::new(content_pool.clone()));
-        let nats_config = sinex_core::nats::NatsConnectionConfig::from_env();
+        let nats_config = sinex_primitives::nats::NatsConnectionConfig::from_env();
         let mut replay_control_init_error = None;
 
         // Connect to NATS for replay control and coordination
@@ -266,7 +265,7 @@ impl ServiceContainer {
     }
 
     /// Get Sinex environment
-    pub fn environment(&self) -> &sinex_core::environment::SinexEnvironment {
+    pub fn environment(&self) -> &sinex_primitives::environment::SinexEnvironment {
         &self.env
     }
 
@@ -307,7 +306,7 @@ impl ServiceContainer {
 }
 
 async fn connect_replay_control_with_backoff(
-    nats_config: &sinex_core::nats::NatsConnectionConfig,
+    nats_config: &sinex_primitives::nats::NatsConnectionConfig,
     replay: Arc<ReplayStateMachine>,
 ) -> Result<ReplayControlClient> {
     let mut attempt = 0usize;

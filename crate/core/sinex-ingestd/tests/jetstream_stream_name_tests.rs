@@ -1,6 +1,6 @@
 use async_nats::jetstream;
-use xtask::sandbox::{sinex_test, EphemeralNats, PipelineNamespace};
 use std::time::Duration;
+use xtask::sandbox::{sinex_test, EphemeralNats, PipelineNamespace};
 
 #[sinex_test]
 async fn subject_lookup_should_resolve_existing_stream() -> color_eyre::Result<()> {

@@ -5,27 +5,23 @@
 use crate::error::{Result as ServiceResult, SinexError};
 use once_cell::sync::OnceCell;
 use serde::Serialize;
-use sinex_core::db::replay::state_machine::{ReplayOperation, ReplayState, ReplayStateMachine};
-use sinex_core::db::repositories::common::db_error;
-use sinex_core::db::DbPool;
-use sinex_core::repositories::common::TimeBucketResult;
-use sinex_core::types::query::Pagination;
+use sinex_db::replay::state_machine::{ReplayOperation, ReplayState, ReplayStateMachine};
+use sinex_db::repositories::common::{db_error, TimeBucketResult};
+use sinex_db::DbPool;
+use sinex_primitives::Timestamp;
+use sinex_primitives::Pagination;
 use sqlx::postgres::types::PgInterval;
-use sqlx::types::chrono::{DateTime, Utc};
 use sqlx::{pool::PoolConnection, Postgres, Row};
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::time::timeout;
 
 /// Unix epoch start time cached at runtime
-static EPOCH_START: OnceCell<DateTime<Utc>> = OnceCell::new();
+static EPOCH_START: OnceCell<Timestamp> = OnceCell::new();
 
-fn epoch_start() -> DateTime<Utc> {
+fn epoch_start() -> Timestamp {
     EPOCH_START
-        .get_or_init(|| {
-            DateTime::from_timestamp(0, 0)
-                .expect("Unix epoch (0) should be a valid DateTime for chrono::Utc")
-        })
+        .get_or_init(|| Timestamp::UNIX_EPOCH)
         .clone()
 }
 
@@ -39,8 +35,8 @@ pub struct SourceStatistics {
     pub event_count: i64,
     pub event_type_count: i64,
     pub host_count: i64,
-    pub first_event: Option<DateTime<Utc>>,
-    pub last_event: Option<DateTime<Utc>>,
+    pub first_event: Option<Timestamp>,
+    pub last_event: Option<Timestamp>,
     pub avg_ingest_delay: Option<f64>,
 }
 
@@ -66,8 +62,8 @@ impl AnalyticsService {
     /// Get event count by source for a time range
     pub async fn get_event_count_by_source(
         &self,
-        start_time: Option<DateTime<Utc>>,
-        end_time: Option<DateTime<Utc>>,
+        start_time: Option<Timestamp>,
+        end_time: Option<Timestamp>,
     ) -> ServiceResult<HashMap<String, i64>> {
         let mut conn = self.acquire_connection().await?;
         let start = start_time.unwrap_or_else(epoch_start);
@@ -83,8 +79,8 @@ impl AnalyticsService {
             ORDER BY COUNT(*) DESC
             LIMIT $3
             "#,
-            start,
-            end_time,
+            *start,
+            end_time.map(|t| *t),
             Pagination::DEFAULT_LIMIT
         )
         .fetch_all(&mut *conn)
@@ -102,8 +98,8 @@ impl AnalyticsService {
     /// Get detailed statistics for each source.
     pub async fn get_source_statistics(
         &self,
-        start_time: Option<DateTime<Utc>>,
-        end_time: Option<DateTime<Utc>>,
+        start_time: Option<Timestamp>,
+        end_time: Option<Timestamp>,
         limit: i64,
     ) -> ServiceResult<Vec<SourceStatistics>> {
         let limit = limit.clamp(1, Pagination::MAX_LIMIT);
@@ -126,8 +122,8 @@ impl AnalyticsService {
             LIMIT $1
             "#,
             limit,
-            start_time,
-            end_time
+            start_time.map(|t| *t),
+            end_time.map(|t| *t)
         )
         .fetch_all(&mut *conn)
         .await
@@ -140,8 +136,8 @@ impl AnalyticsService {
                 event_count: row.event_count,
                 event_type_count: row.event_type_count,
                 host_count: row.host_count,
-                first_event: row.first_event,
-                last_event: row.last_event,
+                first_event: row.first_event.map(|t| t.into()),
+                last_event: row.last_event.map(|t| t.into()),
                 avg_ingest_delay: row.avg_ingest_delay,
             })
             .collect();
@@ -152,8 +148,8 @@ impl AnalyticsService {
     /// Get event count by event type for a time range
     pub async fn get_event_count_by_type(
         &self,
-        start_time: Option<DateTime<Utc>>,
-        end_time: Option<DateTime<Utc>>,
+        start_time: Option<Timestamp>,
+        end_time: Option<Timestamp>,
     ) -> ServiceResult<HashMap<String, i64>> {
         let mut conn = self.acquire_connection().await?;
         let result = match (start_time, end_time) {
@@ -169,8 +165,8 @@ impl AnalyticsService {
                                         ORDER BY COUNT(*) DESC
                                         LIMIT $3
                                     "#,
-                    start,
-                    end,
+                    *start,
+                    *end,
                     Pagination::DEFAULT_LIMIT
                 )
                 .fetch_all(&mut *conn)
@@ -210,16 +206,16 @@ impl AnalyticsService {
     /// Get time series data with configurable intervals
     pub async fn get_events_over_time(
         &self,
-        start_time: DateTime<Utc>,
-        end_time: DateTime<Utc>,
+        start_time: Timestamp,
+        end_time: Timestamp,
         interval_minutes: i32,
-    ) -> ServiceResult<Vec<(DateTime<Utc>, i64)>> {
+    ) -> ServiceResult<Vec<(Timestamp, i64)>> {
         if interval_minutes <= 0 {
             return Err(SinexError::validation("Interval must be positive")
                 .with_context("interval_minutes", interval_minutes));
         }
 
-        let expected_buckets = (end_time - start_time).num_minutes() / interval_minutes as i64;
+        let expected_buckets = (end_time - start_time).whole_minutes() / interval_minutes as i64;
         if expected_buckets > Pagination::MAX_LIMIT {
             return Err(SinexError::validation("Time range too large for interval")
                 .with_context("expected_buckets", expected_buckets)
@@ -242,22 +238,28 @@ impl AnalyticsService {
             LIMIT $4
             "#,
             interval,
-            start_time,
-            end_time,
+            *start_time,
+            *end_time,
             Pagination::MAX_LIMIT
         )
         .fetch_all(&mut *conn)
-        .await
-        .map_err(|e| db_error(e, "get events over time"))?;
-
-        Ok(rows.into_iter().map(|r| (r.bucket, r.count)).collect())
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                (
+                    Timestamp::from_unix_nanos(r.bucket.unix_timestamp_nanos()),
+                    r.count,
+                )
+            })
+            .collect())
     }
 
     /// Get most frequent commands from terminal events
     pub async fn get_top_commands(
         &self,
-        start_time: Option<DateTime<Utc>>,
-        end_time: Option<DateTime<Utc>>,
+        start_time: Option<Timestamp>,
+        end_time: Option<Timestamp>,
         limit: i32,
     ) -> ServiceResult<Vec<(String, i64)>> {
         let limit = (limit as i64).clamp(1, Pagination::MAX_LIMIT);
@@ -278,8 +280,8 @@ impl AnalyticsService {
                 LIMIT $3
                 "#,
             )
-            .bind(start)
-            .bind(end)
+            .bind(*start)
+            .bind(*end)
             .bind(limit)
             .fetch_all(&mut *conn)
             .await
@@ -330,11 +332,11 @@ impl AnalyticsService {
     /// Get most active time periods
     pub async fn activity_heatmap(
         &self,
-        start_time: Option<DateTime<Utc>>,
-        end_time: Option<DateTime<Utc>>,
+        start_time: Option<Timestamp>,
+        end_time: Option<Timestamp>,
         bucket_size_minutes: i32,
         limit: i32,
-    ) -> ServiceResult<Vec<(DateTime<Utc>, i64)>> {
+    ) -> ServiceResult<Vec<(Timestamp, i64)>> {
         let limit = (limit as i64).clamp(1, Pagination::MAX_LIMIT);
         let mut conn = self.acquire_connection().await?;
         let interval = minutes_to_interval(bucket_size_minutes);
@@ -354,14 +356,22 @@ impl AnalyticsService {
             "#,
             interval,
             limit,
-            start_time,
-            end_time
+            start_time.map(|t| *t),
+            end_time.map(|t| *t)
         )
         .fetch_all(&mut *conn)
         .await
         .map_err(|e| db_error(e, "get activity heatmap"))?;
 
-        Ok(rows.into_iter().map(|r| (r.bucket, r.count)).collect())
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                (
+                    Timestamp::from_unix_nanos(r.bucket.unix_timestamp_nanos()),
+                    r.count,
+                )
+            })
+            .collect())
     }
 
     /// List replay operations for automation reporting.

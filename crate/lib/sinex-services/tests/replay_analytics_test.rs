@@ -1,10 +1,10 @@
 use chrono::{Duration as ChronoDuration, Utc};
 use serde_json::json;
-use sinex_core::db::replay::state_machine::{ReplayScope, ReplayState, ReplayStateMachine};
-use sinex_core::DynamicPayload;
+use sinex_db::replay::state_machine::{ReplayScope, ReplayState, ReplayStateMachine};
+use sinex_primitives::DynamicPayload;
 use sinex_services::AnalyticsService;
-use xtask::sandbox::prelude::*;
 use std::collections::HashMap;
+use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn replay_outcomes_surface_in_analytics(ctx: TestContext) -> TestResult<()> {

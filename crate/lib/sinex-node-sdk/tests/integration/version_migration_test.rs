@@ -4,10 +4,10 @@
 // Tests version info creation, consistency, and performance across different scenarios.
 
 use sinex_node_sdk::VersionInfo;
-use xtask::sandbox::sinex_test;
 use std::collections::HashMap;
 use std::fs;
 use tempfile::TempDir;
+use xtask::sandbox::sinex_test;
 
 // ============================================================================
 // Version Info Serialization and Storage Tests
@@ -52,6 +52,7 @@ async fn test_version_info_component_names() -> TestResult<()> {
 
 /// Test VersionInfo size and performance
 #[sinex_test]
+#[ignore = "long"]
 async fn test_version_info_performance() -> TestResult<()> {
     let start_time = std::time::Instant::now();
 

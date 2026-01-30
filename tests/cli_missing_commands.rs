@@ -1,7 +1,7 @@
 use sinex_gateway::{rpc_server, ServiceContainer};
-use xtask::sandbox::{sinex_test, TestContext};
 use std::net::TcpListener;
 use std::path::PathBuf;
+use xtask::sandbox::{sinex_test, TestContext};
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

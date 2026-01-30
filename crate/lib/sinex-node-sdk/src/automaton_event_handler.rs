@@ -9,7 +9,7 @@
 use crate::confirmation_handler::{ConfirmedEventHandler, ProvisionalEvent};
 use crate::NodeResult;
 use async_trait::async_trait;
-use sinex_core::EventId;
+use sinex_primitives::events::builder::EventId;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
@@ -86,7 +86,7 @@ impl ConfirmedEventHandler for AutomatonEventHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_core::types::domain::{EventSource, EventType};
+    use sinex_primitives::domain::{EventSource, EventType};
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
@@ -99,8 +99,8 @@ mod tests {
             source: EventSource::new("test"),
             event_type: EventType::new("test.event"),
             payload: serde_json::json!({"data": "test"}),
-            ts_orig: chrono::Utc::now(),
-            received_at: chrono::Utc::now(),
+            ts_orig: sinex_primitives::temporal::now(),
+            received_at: sinex_primitives::temporal::now(),
         };
 
         handler.handle_confirmed(&provisional).await.unwrap();
@@ -129,8 +129,8 @@ mod tests {
                 source: EventSource::new(format!("test{}", i)),
                 event_type: EventType::new("test.event"),
                 payload: serde_json::json!({"index": i}),
-                ts_orig: chrono::Utc::now(),
-                received_at: chrono::Utc::now(),
+                ts_orig: sinex_primitives::temporal::now(),
+                received_at: sinex_primitives::temporal::now(),
             };
 
             handler.handle_confirmed(&provisional).await.unwrap();

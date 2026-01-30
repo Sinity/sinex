@@ -18,7 +18,12 @@ pub struct BenchContext {
 
 impl BenchContext {
     pub fn new(config: BenchConfig) -> Result<Self> {
-        let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+        let timestamp = time::OffsetDateTime::now_utc()
+            .format(
+                &time::format_description::parse("[year][month][day]-[hour][minute][second]")
+                    .unwrap(),
+            )
+            .unwrap();
         let output_dir = config
             .output
             .clone()

@@ -1,7 +1,7 @@
-use chrono::{Duration, Utc};
 use clap::Args;
 use color_eyre::Result;
 use console::style;
+use sinex_primitives::temporal::{Duration, Timestamp};
 use std::collections::HashSet;
 
 use crate::client::GatewayClient;
@@ -122,7 +122,7 @@ impl StatusCommand {
             text: None,
             sources: vec![],
             event_types: vec![],
-            start_time: Some(Utc::now() - Duration::hours(1)),
+            start_time: Some(Timestamp::now() - Duration::hours(1)),
             end_time: None,
             limit: 1000,
             offset: 0,
@@ -182,7 +182,7 @@ impl RecentCommand {
             text: None,
             sources: self.source.clone().map(|s| vec![s]).unwrap_or_default(),
             event_types: vec![],
-            start_time: Some(Utc::now() - since),
+            start_time: Some(Timestamp::now() - since),
             end_time: None,
             limit: self.limit,
             offset: 0,
@@ -203,7 +203,10 @@ impl RecentCommand {
         println!("{}", style("─".repeat(80)).dim());
 
         for event in &events {
-            let timestamp = event.timestamp.format("%H:%M:%S");
+            let timestamp = event
+                .timestamp
+                .format(&time::format_description::parse("[hour]:[minute]:[second]").unwrap())
+                .unwrap_or_else(|_| "invalid".to_string());
             let source = style(&event.source).cyan();
             let event_type = style(&event.event_type).yellow();
             let snippet = if event.snippet.len() > 60 {
@@ -254,7 +257,7 @@ impl ErrorsCommand {
             text: Some("error OR failed OR exception OR panic".to_string()),
             sources: vec![],
             event_types: vec![],
-            start_time: Some(Utc::now() - since),
+            start_time: Some(Timestamp::now() - since),
             end_time: None,
             limit: self.limit,
             offset: 0,
@@ -280,7 +283,15 @@ impl ErrorsCommand {
         println!("{}", style("─".repeat(80)).dim());
 
         for event in &events {
-            let timestamp = event.timestamp.format("%Y-%m-%d %H:%M:%S");
+            let timestamp = event
+                .timestamp
+                .format(
+                    &time::format_description::parse(
+                        "[year]-[month]-[day] [hour]:[minute]:[second]",
+                    )
+                    .unwrap(),
+                )
+                .unwrap_or_else(|_| "invalid".to_string());
             let source = style(&event.source).cyan();
             let event_type = style(&event.event_type).red();
             let snippet = if event.snippet.len() > 60 {
@@ -332,7 +343,7 @@ pub struct WatchCommand {
 impl WatchCommand {
     pub async fn execute(&self, client: &GatewayClient) -> Result<()> {
         let mut seen_ids: HashSet<String> = HashSet::new();
-        let mut last_check = Utc::now() - Duration::minutes(1);
+        let mut last_check = Timestamp::now() - Duration::minutes(1);
 
         println!("{}", style("Watching for events... (Ctrl+C to stop)").dim());
         println!("{}", style("─".repeat(80)).dim());
@@ -352,7 +363,13 @@ impl WatchCommand {
                 Ok(events) => {
                     for event in events {
                         if seen_ids.insert(event.event_id.to_string()) {
-                            let timestamp = event.timestamp.format("%H:%M:%S");
+                            let timestamp = event
+                                .timestamp
+                                .format(
+                                    &time::format_description::parse("[hour]:[minute]:[second]")
+                                        .unwrap(),
+                                )
+                                .unwrap_or_else(|_| "invalid".to_string());
                             let source = style(&event.source).cyan();
                             let event_type = style(&event.event_type).yellow();
                             let snippet = if event.snippet.len() > 60 {
@@ -376,7 +393,7 @@ impl WatchCommand {
                 }
             }
 
-            last_check = Utc::now();
+            last_check = Timestamp::now();
             tokio::time::sleep(std::time::Duration::from_secs(self.interval)).await;
         }
     }

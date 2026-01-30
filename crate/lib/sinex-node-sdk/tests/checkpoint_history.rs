@@ -1,4 +1,4 @@
-use sinex_core::types::ulid::Ulid;
+use sinex_node_sdk::types::ulid::Ulid;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
 use xtask::sandbox::prelude::*;
 

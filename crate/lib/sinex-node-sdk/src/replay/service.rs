@@ -3,14 +3,15 @@ use super::{
 };
 use crate::event_node::{spawn_event_processor, EventBatcherConfig};
 use crate::stream_processor::{EventEmitter, NodeHandles, NodeRuntimeState};
-use crate::{NodeError, NodeResult};
-use chrono::{DateTime, Utc};
+use crate::{NodeResult, SinexError};
 use serde::{Deserialize, Serialize};
-use sinex_core::db::models::Event;
-use sinex_core::db::{repositories::DbPoolExt, DbPool as PgPool};
-use sinex_core::types::buffers::DEFAULT_EVENT_CHANNEL_SIZE;
-use sinex_core::JsonValue;
-use sinex_core::{EventSource, EventType};
+use sinex_db::{repositories::DbPoolExt, DbPool as PgPool};
+use sinex_primitives::events::Event;
+const DEFAULT_EVENT_CHANNEL_SIZE: usize = 1024;
+use sinex_primitives::domain::{EventSource, EventType};
+use sinex_primitives::temporal::OffsetDateTime;
+use sinex_primitives::JsonValue;
+
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
@@ -18,8 +19,8 @@ use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
 /// Get epoch timestamp as a safe fallback
-fn epoch_timestamp() -> DateTime<Utc> {
-    DateTime::from_timestamp(0, 0).unwrap_or(DateTime::<Utc>::MIN_UTC)
+fn epoch_timestamp() -> OffsetDateTime {
+    OffsetDateTime::UNIX_EPOCH
 }
 
 /// Replay mode configuration
@@ -29,20 +30,20 @@ pub enum ReplayMode {
     Live,
     /// Replay all events from start_time to end_time
     TimeRange {
-        start_time: DateTime<Utc>,
-        end_time: Option<DateTime<Utc>>,
+        start_time: OffsetDateTime,
+        end_time: Option<OffsetDateTime>,
     },
     /// Replay events from a specific source
     Source {
         source: String,
-        start_time: Option<DateTime<Utc>>,
-        end_time: Option<DateTime<Utc>>,
+        start_time: Option<OffsetDateTime>,
+        end_time: Option<OffsetDateTime>,
     },
     /// Replay specific event types
     EventTypes {
         event_types: Vec<String>,
-        start_time: Option<DateTime<Utc>>,
-        end_time: Option<DateTime<Utc>>,
+        start_time: Option<OffsetDateTime>,
+        end_time: Option<OffsetDateTime>,
     },
     /// Custom replay with flexible filters
     Custom { filters: ReplayFilters },
@@ -61,8 +62,8 @@ pub struct ReplayFilters {
     pub hosts: Option<Vec<String>>,
 
     /// Time range
-    pub start_time: Option<DateTime<Utc>>,
-    pub end_time: Option<DateTime<Utc>>,
+    pub start_time: Option<OffsetDateTime>,
+    pub end_time: Option<OffsetDateTime>,
 
     /// Limit number of events
     pub limit: Option<u64>,
@@ -196,11 +197,11 @@ impl ReplayService {
                 start_time,
                 end_time,
             } => {
-                let end_time = end_time.unwrap_or_else(Utc::now);
+                let end_time = end_time.unwrap_or_else(OffsetDateTime::now_utc);
 
                 self.db_pool()
                     .events()
-                    .estimate_count_by_time_range(*start_time, end_time)
+                    .estimate_count_by_time_range((*start_time).into(), end_time.into())
                     .await? as u64
             }
             ReplayMode::Source {
@@ -217,15 +218,15 @@ impl ReplayService {
                 } else {
                     // Use a complex query for source with time range
                     let start_time = start_time.unwrap_or_else(epoch_timestamp);
-                    let end_time = end_time.unwrap_or_else(Utc::now);
+                    let end_time = end_time.unwrap_or_else(OffsetDateTime::now_utc);
 
                     let event_source = EventSource::new(source);
                     self.db_pool()
                         .events()
                         .estimate_count_by_source_and_time_range(
                             &event_source,
-                            start_time,
-                            end_time,
+                            start_time.into(),
+                            end_time.into(),
                         )
                         .await? as u64
                 }
@@ -314,14 +315,14 @@ impl ReplayService {
                     start_time,
                     end_time,
                 } => {
-                    let end_time = end_time.unwrap_or_else(Utc::now);
+                    let end_time = end_time.unwrap_or_else(OffsetDateTime::now_utc);
 
                     self.db_pool()
                         .events()
                         .get_by_time_range(
-                            *start_time,
-                            end_time,
-                            sinex_core::types::Pagination::new(
+                            (*start_time).into(),
+                            end_time.into(),
+                            sinex_primitives::Pagination::new(
                                 Some(self.batch_size as i64),
                                 Some(offset as i64),
                             ),
@@ -339,7 +340,7 @@ impl ReplayService {
                             .events()
                             .get_by_source(
                                 &event_source,
-                                sinex_core::types::Pagination::new(
+                                sinex_primitives::Pagination::new(
                                     Some(self.batch_size as i64),
                                     Some(offset as i64),
                                 ),
@@ -347,16 +348,16 @@ impl ReplayService {
                             .await?
                     } else {
                         let start_time = start_time.unwrap_or_else(epoch_timestamp);
-                        let end_time = end_time.unwrap_or_else(Utc::now);
+                        let end_time = end_time.unwrap_or_else(OffsetDateTime::now_utc);
 
                         let event_source = EventSource::new(source);
                         self.db_pool()
                             .events()
                             .get_by_source_and_time_range(
                                 &event_source,
-                                start_time,
-                                end_time,
-                                sinex_core::types::Pagination::new(
+                                start_time.into(),
+                                end_time.into(),
+                                sinex_primitives::Pagination::new(
                                     Some(self.batch_size as i64),
                                     Some(offset as i64),
                                 ),
@@ -375,7 +376,7 @@ impl ReplayService {
                             .events()
                             .get_by_event_type(
                                 &event_type,
-                                sinex_core::types::Pagination::new(
+                                sinex_primitives::Pagination::new(
                                     Some(self.batch_size as i64),
                                     Some(offset as i64),
                                 ),
@@ -383,15 +384,15 @@ impl ReplayService {
                             .await?
                     } else {
                         let start = start_time.unwrap_or_else(epoch_timestamp);
-                        let end = end_time.unwrap_or_else(Utc::now);
+                        let end = end_time.unwrap_or_else(OffsetDateTime::now_utc);
                         let limit = (offset + self.batch_size) as i64;
                         let events = self
                             .db_pool()
                             .events()
                             .get_by_time_range(
-                                start,
-                                end,
-                                sinex_core::types::Pagination::new(Some(limit), None),
+                                start.into(),
+                                end.into(),
+                                sinex_primitives::Pagination::new(Some(limit), None),
                             )
                             .await?;
                         let allowed: HashSet<&str> =
@@ -406,15 +407,15 @@ impl ReplayService {
                 }
                 ReplayMode::Custom { filters } => {
                     let start = filters.start_time.unwrap_or_else(epoch_timestamp);
-                    let end = filters.end_time.unwrap_or_else(Utc::now);
+                    let end = filters.end_time.unwrap_or_else(OffsetDateTime::now_utc);
                     let limit = (offset + self.batch_size) as i64;
                     let events = self
                         .db_pool()
                         .events()
                         .get_by_time_range(
-                            start,
-                            end,
-                            sinex_core::types::Pagination::new(Some(limit), None),
+                            start.into(),
+                            end.into(),
+                            sinex_primitives::Pagination::new(Some(limit), None),
                         )
                         .await?;
 
@@ -525,7 +526,7 @@ impl ReplayEmitterHandle {
         }
         match self.join.await {
             Ok(result) => result,
-            Err(err) => Err(NodeError::Processing(format!(
+            Err(err) => Err(SinexError::processing(format!(
                 "Replay event processor join failed: {err}"
             ))),
         }

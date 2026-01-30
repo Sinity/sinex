@@ -8,8 +8,7 @@
 use crate::schema::{Events, TableDef};
 use sea_orm_migration::prelude::*;
 
-use crate::ulid::Ulid;
-use chrono::{DateTime, Utc};
+use crate::ulid::{Timestamp, Ulid};
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;
 
@@ -64,8 +63,8 @@ pub struct TagRecord {
     pub color: Option<String>,
     pub icon: Option<String>,
     pub usage_count: i64,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
 }
 
 impl Tags {
@@ -231,8 +230,8 @@ pub struct EventAnnotationRecord {
     pub content: String,
     pub metadata: JsonValue,
     pub created_by: String,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
 }
 
 impl EventAnnotations {
