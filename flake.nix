@@ -12,10 +12,6 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     flake-utils.url = "github:numtide/flake-utils";
-    devenv = {
-      url = "github:cachix/devenv";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
   };
 
   outputs =
@@ -25,7 +21,6 @@
       fenix,
       agenix,
       flake-utils,
-      devenv,
     }:
     let
       # System-specific outputs
@@ -373,9 +368,54 @@
             pkgs.lib.filterAttrs (_: value: pkgs.lib.isDerivation value) limitedVmTests
           );
 
-          devShells.default = devenv.lib.mkShell {
-            inherit inputs pkgs;
-            modules = [ ./devenv.nix ];
+          # Plain devShell - no devenv dependency
+          devShells.default = pkgs.mkShell {
+            packages = with pkgs; [
+              # Rust toolchain from Fenix
+              fenixPkgs.toolchain
+              fenixPkgs.rust-analyzer
+              fenixPkgs.clippy
+              fenixPkgs.rustfmt
+              fenixPkgs.llvm-tools
+              fenixPkgs.rust-src
+
+              # Cargo tools
+              cargo-watch cargo-nextest cargo-llvm-cov cargo-tarpaulin
+              cargo-modules bacon tokei cargo-audit cargo-machete
+              mold binutils
+
+              # Services (managed by xtask stack)
+              nats-server postgresForSqlx
+
+              # Development utilities
+              mprocs btop jq coreutils protobuf openssl pkg-config
+              dbus dbus.dev git-annex fd fzf bat ripgrep nsc qemu qemu_kvm
+            ];
+
+            # Static environment variables
+            DATABASE_NAME = "sinex_dev";
+            PGUSER = "sinity";
+            PGDATABASE = "sinex_dev";
+            SINEX_TEST_OPTIMIZATIONS = "true";
+            SINEX_PG_BIN = "${postgresForSqlx}/bin";
+            NATS_SERVER_BIN = "${pkgs.nats-server}/bin/nats-server";
+            SINEX_DEVENV_SYSTEM = system;
+            SINEX_DEVENV_TOOLCHAIN = "fenix (${system})";
+
+            shellHook = ''
+              export PATH="$PWD/scripts:$PWD/target/debug:$PATH"
+              export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [ pkgs.dbus ]}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+              export SINEX_STATE_DIR="''${XDG_STATE_HOME:-$HOME/.local/state}/sinex"
+              export SINEX_CACHE_DIR="''${XDG_CACHE_HOME:-$HOME/.cache}/sinex"
+              export SINEX_TEST_RESULTS_DIR="$SINEX_CACHE_DIR/test-results"
+
+              # Delegate to xtask for dynamic config
+              [ -x "$PWD/target/debug/xtask" ] && eval $("$PWD/target/debug/xtask" stack env --export 2>/dev/null || echo "")
+
+              # Shell shortcuts and banner
+              [ -f "$PWD/.zshrc.local" ] && source "$PWD/.zshrc.local"
+              [ -x "$PWD/scripts/dev-env-banner.sh" ] && [ -z "''${SINEX_DEVENV_MOTD_ONCE:-}" ] && "$PWD/scripts/dev-env-banner.sh" || true && export SINEX_DEVENV_MOTD_ONCE=1
+            '';
           };
 
         }
