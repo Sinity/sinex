@@ -274,7 +274,6 @@ fn execute_check_ready(
     ensure_psql()?;
 
     let db = database
-        .or_else(|| std::env::var("DATABASE_NAME").ok())
         .or_else(|| std::env::var("PGDATABASE").ok())
         .unwrap_or_else(|| "sinex_dev".to_string());
 

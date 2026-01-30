@@ -50,7 +50,16 @@ impl StackConfig {
         // Use fixed ports - no conflicts between checkouts because each has isolated
         // Unix socket directory. TCP is disabled (listen_addresses='') so port is
         // only used in socket filename (.s.PGSQL.5432)
-        let offset = Self::port_offset_for_checkout(state.checkout_root());
+
+        // Prefer NATS port from Nix (flake.nix computes it), fallback to hash computation
+        // This ensures port is available even when xtask doesn't compile
+        let nats_port = std::env::var("SINEX_DEV_NATS_PORT")
+            .ok()
+            .and_then(|s| s.parse::<u16>().ok())
+            .unwrap_or_else(|| {
+                let offset = Self::port_offset_for_checkout(state.checkout_root());
+                4222 + offset
+            });
 
         Self {
             state_dir: state.state_dir().to_path_buf(),
@@ -61,7 +70,7 @@ impl StackConfig {
                 superuser: "postgres".to_string(),
             },
             nats: NatsConfig {
-                port: 4222 + offset, // NATS with offset to avoid TCP conflicts
+                port: nats_port,
                 jetstream: true,
             },
             annex: AnnexConfig {

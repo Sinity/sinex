@@ -3376,12 +3376,11 @@ async fn ensure_extension_installed(pool: &DbPool, extension: &str) -> TestResul
 
 /// Apply test-specific PostgreSQL optimizations (session-level only)
 async fn apply_test_session_optimizations(pool: &DbPool) -> TestResult<()> {
-    if std::env::var("SINEX_TEST_OPTIMIZATIONS").is_ok() {
-        eprintln!("⚡ Applying test session optimizations...");
-        crate::sandbox::db::common::apply_test_optimizations(pool)
-            .await
-            .map_err(|e| eyre!(format!("Failed to apply test optimizations: {e}")))?;
-    }
+    // Always enable test optimizations (disables synchronous_commit for speed)
+    eprintln!("⚡ Applying test session optimizations...");
+    crate::sandbox::db::common::apply_test_optimizations(pool)
+        .await
+        .map_err(|e| eyre!(format!("Failed to apply test optimizations: {e}")))?;
     Ok(())
 }
 
