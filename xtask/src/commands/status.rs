@@ -44,8 +44,12 @@ impl XtaskCommand for StatusCommand {
             }
         );
 
-        // NATS
-        let nats_ready = std::net::TcpStream::connect("127.0.0.1:4222").is_ok();
+        // NATS (check computed port from env)
+        let nats_port = std::env::var("SINEX_DEV_NATS_PORT")
+            .ok()
+            .and_then(|s| s.parse::<u16>().ok())
+            .unwrap_or(4222);
+        let nats_ready = std::net::TcpStream::connect(format!("127.0.0.1:{}", nats_port)).is_ok();
         println!(
             "  {:<12} {}",
             "NATS",

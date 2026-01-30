@@ -398,6 +398,7 @@
                 cargo-llvm-cov    # Coverage reporting (used by xtask)
                 cargo-audit       # Security vulnerability scanner
                 cargo-machete     # Unused dependency detection
+                cargo-modules     # Module tree visualization
                 tokei             # Line counter (user uses this)
                 mold              # Ultra-fast linker (configured in .cargo/config.toml)
                 binutils          # nm, objdump, strip for debugging
@@ -468,13 +469,13 @@
                 if [ -n "''${PS1:-}" ] && [ -t 1 ] && [ -z "''${SINEX_DEVENV_MOTD_ONCE:-}" ]; then
                   export SINEX_DEVENV_MOTD_ONCE=1
                   if [ -x "$PWD/target/debug/xtask" ]; then
-                    "$PWD/target/debug/xtask" stack status 2>/dev/null || echo "Stack status unavailable"
+                    "$PWD/target/debug/xtask" status 2>/dev/null || echo "Status unavailable"
                   else
                     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
                     echo "  sinex devshell (xtask not built yet)"
                     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
                     echo "Build: cargo build -p xtask"
-                    echo "Start: cargo xtask stack start"
+                    echo "Start: cargo build -p xtask --features sandbox && cargo xtask stack start"
                   fi
                 fi
               '';
