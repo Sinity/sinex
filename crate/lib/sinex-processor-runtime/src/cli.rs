@@ -7,14 +7,14 @@
 
 use clap::{Parser, Subcommand};
 use sinex_db::SqlxPgPool;
-use sinex_primitives::{SanitizedPath, Timestamp};
 use sinex_node_sdk::config::ReplayConfig;
 use sinex_node_sdk::event_node::EventTransport;
 pub use sinex_node_sdk::exploration::{
     CoverageAnalysis, ExplorationProvider, ExportFormat, MissingItem, SourceState,
 };
 use sinex_node_sdk::stream_processor::{Checkpoint, NodeRunner, TimeHorizon};
-use sinex_node_sdk::{SinexError, NodeResult};
+use sinex_node_sdk::{NodeResult, SinexError};
+use sinex_primitives::{SanitizedPath, Timestamp};
 use time::OffsetDateTime;
 
 // Re-export common types from sinex_node_sdk::automaton_base
@@ -77,10 +77,9 @@ pub struct NatsArgs {
     #[arg(long, env = "SINEX_NATS_NAME")]
     pub name: Option<String>,
 
-    /// Require TLS for the connection
-    // TODO: CRITICAL - TLS disabled by default. Production must explicitly enable it.
-    #[arg(long, env = "SINEX_NATS_REQUIRE_TLS", default_value_t = false)]
-    pub require_tls: bool,
+    /// Require TLS for the connection (auto-detected from URL if not explicitly set)
+    #[arg(long, env = "SINEX_NATS_REQUIRE_TLS")]
+    pub require_tls: Option<bool>,
 
     /// Root CA certificate path (PEM)
     #[arg(long, env = "SINEX_NATS_CA_CERT")]
@@ -113,7 +112,24 @@ impl NatsArgs {
 
         config.url = self.url.clone();
         config.name = self.name.clone();
-        config.require_tls = self.require_tls;
+
+        // Auto-detect TLS from URL scheme if not explicitly set
+        let url_requires_tls =
+            self.url.starts_with("tls://") || self.url.starts_with("nats+tls://");
+        let require_tls = self.require_tls.unwrap_or(url_requires_tls);
+
+        // Warn if TLS is disabled in production environment
+        if !require_tls {
+            let env = sinex_primitives::environment();
+            if env.is_prod() {
+                warn!(
+                    url = %self.url,
+                    "TLS is disabled in production environment. This is a security risk!"
+                );
+            }
+        }
+
+        config.require_tls = require_tls;
 
         if let Some(path) = &self.ca_cert {
             config.ca_cert = Some(path.clone());
@@ -225,7 +241,7 @@ fn parse_checkpoint_timestamp(checkpoint_str: &str) -> NodeResult<Checkpoint> {
         checkpoint_str,
         &time::format_description::well_known::Rfc3339,
     )
-    .map(|ts| Checkpoint::timestamp(Timestamp::from(ts), None))
+    .map(|ts| Checkpoint::timestamp(ts, None))
     .map_err(|e| SinexError::general(format!("Invalid timestamp format: {e}")))
 }
 
@@ -342,7 +358,7 @@ pub fn parse_time_horizon(horizon_str: &str) -> NodeResult<TimeHorizon> {
     } else {
         // Try to parse as ISO timestamp for historical scan
         OffsetDateTime::parse(horizon_str, &time::format_description::well_known::Rfc3339)
-            .map(|dt| TimeHorizon::Historical { end_time: Timestamp::from(dt) })
+            .map(|dt| TimeHorizon::Historical { end_time: dt })
             .map_err(|e| {
                 SinexError::general(format!(
                     "Invalid time horizon '{}': {}. Use 'continuous', 'snapshot', or ISO timestamp",
@@ -504,7 +520,10 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
                                 // Only leader processes events
                                 let mut runner = runner.lock().await;
                                 runner.run_service().await.map_err(|e| {
-                                    sinex_primitives::SinexError::service(format!("Node error: {}", e))
+                                    sinex_primitives::SinexError::service(format!(
+                                        "Node error: {}",
+                                        e
+                                    ))
                                 })
                             }
                         })
@@ -874,10 +893,17 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
         args.work_dir.clone().unwrap_or_else(|| {
             let env = sinex_primitives::environment();
             let namespaced = env.work_directory("/tmp/sinex/node");
-            let namespaced = namespaced.to_string_lossy();
-            SanitizedPath::from_str(namespaced.as_ref())
-                // TODO: CRITICAL - Validation bypass! new_unchecked defeats the purpose of SanitizedPath.
-                .unwrap_or_else(|_| SanitizedPath::new_unchecked(namespaced.as_ref()))
+            let namespaced_str = namespaced.to_string_lossy();
+
+            // Environment-generated paths should always be valid. If validation fails,
+            // this indicates a bug in environment namespacing logic, not user input.
+            SanitizedPath::from_str(namespaced_str.as_ref()).unwrap_or_else(|err| {
+                panic!(
+                    "Environment-generated work directory '{}' failed validation: {}. \
+                     This is a bug in environment namespacing logic.",
+                    namespaced_str, err
+                )
+            })
         })
     }
 
@@ -1007,7 +1033,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
 
             Ok(Some(ReplayMode::Custom { filters }))
         } else {
-            let start = start_time.unwrap_or(Timestamp::UNIX_EPOCH);
+            let start = start_time.unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
             Ok(Some(ReplayMode::TimeRange {
                 start_time: start,
                 end_time,
@@ -1015,7 +1041,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
         }
     }
 
-    fn parse_timestamp(value: Option<&str>) -> NodeResult<Option<Timestamp>> {
+    fn parse_timestamp(value: Option<&str>) -> NodeResult<Option<OffsetDateTime>> {
         if let Some(raw) = value {
             let parsed = OffsetDateTime::parse(raw, &time::format_description::well_known::Rfc3339)
                 .map_err(|e| {
@@ -1023,7 +1049,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
                         "Invalid RFC3339 timestamp in replay configuration: {e}"
                     ))
                 })?;
-            Ok(Some(Timestamp::from(parsed)))
+            Ok(Some(parsed))
         } else {
             Ok(None)
         }
@@ -1036,6 +1062,8 @@ macro_rules! processor_main {
     ($processor_type:ty) => {
         #[tokio::main]
         async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
+            human_panic::setup_panic!();
+
             use clap::Parser;
             use sinex_node_sdk::heartbeat::HeartbeatEmitter;
             use $crate::cli::{NodeCli, NodeCliRunner, NodeCommand};
@@ -1071,6 +1099,8 @@ macro_rules! processor_main {
     ($processor_type:ty, $processor_expr:expr) => {
         #[tokio::main]
         async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
+            human_panic::setup_panic!();
+
             use clap::Parser;
             use sinex_node_sdk::heartbeat::HeartbeatEmitter;
             use $crate::cli::{NodeCli, NodeCliRunner, NodeCommand};
