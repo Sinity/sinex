@@ -376,11 +376,7 @@ fn execute_snapshot(
             execute_start(config, false, &[], ctx)
         }
         SnapshotSubcommand::List => {
-            let snaps = stack::list_snapshots(&config.snapshots_dir()); // crate::utils::list_snapshots is not public yet?
-                                                                        // stack::list_snapshots? I didn't export it in sandbox/stack.rs?
-                                                                        // I did re-export it.
-                                                                        // But wait, `crate::sandbox::stack::list_snapshots` needs to be pub.
-                                                                        // Assuming it is.
+            let snaps = stack::list_snapshots(&config.snapshots_dir());
             println!("Snapshots: {:?}", snaps);
             Ok(CommandResult::success())
         }

@@ -100,11 +100,8 @@ sysinfo = "0.38.0"
 human_bytes = "0.4.3"
 
 [features]
-default = [
-    "cli",
-]
-cli = [
-]
+default = []
+
 sandbox = [
     "async-nats",
     "proptest",

@@ -5,7 +5,6 @@ pub mod check;
 pub mod ci;
 pub mod completions;
 pub mod coverage;
-#[cfg(feature = "sandbox")]
 pub mod db;
 pub mod dev;
 pub mod fix;
@@ -30,7 +29,6 @@ pub use build::BuildCommand;
 pub use check::CheckCommand;
 pub use ci::CiCommand;
 pub use completions::CompletionsCommand;
-#[cfg(feature = "sandbox")]
 pub use db::DbCommand;
 pub use dev::DevCommand;
 pub use fix::FixCommand;

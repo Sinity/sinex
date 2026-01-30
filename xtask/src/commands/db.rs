@@ -60,7 +60,7 @@ fn execute_status(ctx: &CommandContext) -> Result<CommandResult> {
         println!("========== psql status ==========");
     }
 
-    let config = crate::sandbox::stack::StackConfig::for_current_checkout().ok();
+    let config = crate::infra::stack::StackConfig::for_current_checkout().ok();
 
     let mut cmd = ProcessBuilder::psql();
     cmd = cmd.args(&["-c", "select current_database(), current_user"]);
@@ -102,7 +102,7 @@ fn execute_migrate(ctx: &CommandContext) -> Result<CommandResult> {
 }
 
 fn execute_setup(ctx: &CommandContext) -> Result<CommandResult> {
-    let config = crate::sandbox::stack::StackConfig::for_current_checkout().ok();
+    let config = crate::infra::stack::StackConfig::for_current_checkout().ok();
 
     let db = if let Some(cfg) = &config {
         cfg.postgres.database.clone()
@@ -136,7 +136,7 @@ fn execute_reset(yes: bool, ctx: &CommandContext) -> Result<CommandResult> {
         bail!("Refusing to drop DB without --yes");
     }
 
-    let config = crate::sandbox::stack::StackConfig::for_current_checkout().ok();
+    let config = crate::infra::stack::StackConfig::for_current_checkout().ok();
     let db = if let Some(cfg) = &config {
         cfg.postgres.database.clone()
     } else {
@@ -187,7 +187,7 @@ fn run_db_migrate(ctx: &CommandContext) -> Result<()> {
         println!("========== migrate ==========");
     }
 
-    let config = crate::sandbox::stack::StackConfig::for_current_checkout().ok();
+    let config = crate::infra::stack::StackConfig::for_current_checkout().ok();
 
     let mut cmd = ProcessBuilder::cargo();
     cmd = cmd.args(&[
