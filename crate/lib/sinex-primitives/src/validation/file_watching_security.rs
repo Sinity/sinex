@@ -3,7 +3,8 @@
 //! This module provides specialized security validation for file watching operations,
 //! including path validation, security policies, and symlink protection.
 
-use super::{validate_path, validate_path_within_root, Result, ValidationError};
+use super::{validate_path, validate_path_within_root};
+use crate::error::{Result, SinexError};
 use camino::{Utf8Path as Path, Utf8PathBuf as PathBuf};
 use std::collections::HashSet;
 
@@ -91,7 +92,7 @@ pub fn validate_watch_path(path: &str, policy: &FileWatchingSecurityPolicy) -> R
     // Check against forbidden exact paths
     for forbidden in &policy.forbidden_paths {
         if cleaned_path == *forbidden {
-            return Err(ValidationError::Path(format!(
+            return Err(SinexError::validation(format!(
                 "Path '{path}' is explicitly forbidden for watching"
             )));
         }
@@ -100,7 +101,7 @@ pub fn validate_watch_path(path: &str, policy: &FileWatchingSecurityPolicy) -> R
     // Check against forbidden prefixes
     for prefix in &policy.forbidden_prefixes {
         if cleaned_path.starts_with(prefix) {
-            return Err(ValidationError::Path(format!(
+            return Err(SinexError::validation(format!(
                 "Path '{path}' is under forbidden prefix '{prefix}'"
             )));
         }
@@ -115,7 +116,7 @@ pub fn validate_watch_path(path: &str, policy: &FileWatchingSecurityPolicy) -> R
         for sys_prefix in &system_prefixes {
             let sys_path = PathBuf::from(sys_prefix);
             if cleaned_path.starts_with(&sys_path) {
-                return Err(ValidationError::Path(format!(
+                return Err(SinexError::validation(format!(
                     "System directory '{sys_prefix}' is not allowed for watching"
                 )));
             }
@@ -126,7 +127,7 @@ pub fn validate_watch_path(path: &str, policy: &FileWatchingSecurityPolicy) -> R
     if cleaned_path.exists() && !policy.follow_symlinks {
         if let Ok(metadata) = std::fs::symlink_metadata(&cleaned_path) {
             if metadata.is_symlink() {
-                return Err(ValidationError::Path(format!(
+                return Err(SinexError::validation(format!(
                     "Symlink '{path}' detected but policy forbids following symlinks"
                 )));
             }
@@ -158,7 +159,7 @@ pub fn validate_watch_paths(
                 total_estimated_files += estimate_file_count(path, policy.max_watch_depth)?;
 
                 if total_estimated_files > max_files {
-                    return Err(ValidationError::Path(format!(
+                    return Err(SinexError::validation(format!(
                         "Estimated file count {total_estimated_files} exceeds policy limit {max_files}"
                     )));
                 }
@@ -224,7 +225,7 @@ pub fn validate_discovered_file(
     if !policy.follow_symlinks && validated_within_root.exists() {
         if let Ok(metadata) = std::fs::symlink_metadata(&validated_within_root) {
             if metadata.is_symlink() {
-                return Err(ValidationError::Path(format!(
+                return Err(SinexError::validation(format!(
                     "Discovered symlink '{file_path}' but policy forbids following symlinks"
                 )));
             }
@@ -239,7 +240,7 @@ pub fn check_path_depth(path: &Path, max_depth: Option<usize>) -> Result<()> {
     if let Some(max) = max_depth {
         let depth = path.components().count();
         if depth > max {
-            return Err(ValidationError::Path(format!(
+            return Err(SinexError::validation(format!(
                 "Path depth {depth} exceeds maximum allowed depth {max}"
             )));
         }
