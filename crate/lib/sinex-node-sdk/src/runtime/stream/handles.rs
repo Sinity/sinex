@@ -1,13 +1,13 @@
 use super::runtime_state::NodeRuntimeState;
 use crate::{
     checkpoint::CheckpointManager, confirmation_handler::ConfirmationBuffer, EventTransport,
-    NodeError,
+    SinexError,
 };
 use camino::Utf8PathBuf;
-use sinex_core::db::models::Event;
 #[cfg(feature = "db")]
-use sinex_core::db::SqlxPgPool as PgPool;
-use sinex_core::JsonValue;
+use sinex_db::DbPool as PgPool;
+use sinex_primitives::events::Event;
+use sinex_primitives::JsonValue;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -93,7 +93,7 @@ impl EventEmitter {
         Arc::clone(&self.sender)
     }
 
-    pub async fn emit(&self, event: Event<JsonValue>) -> Result<(), NodeError> {
+    pub async fn emit(&self, event: Event<JsonValue>) -> Result<(), SinexError> {
         // Validate before emitting (if validator present)
         if let Some(validator) = &self.validator {
             validator
@@ -103,7 +103,7 @@ impl EventEmitter {
                     &event.payload,
                 )
                 .await
-                .map_err(|e| NodeError::Validation(e.to_string()))?;
+                .map_err(|e| SinexError::validation(e.to_string()))?;
         }
 
         let event_type = event.event_type.clone();
@@ -119,7 +119,7 @@ impl EventEmitter {
         self.sender
             .send(event)
             .await
-            .map_err(|_| NodeError::Processing("Event channel closed".to_string()))
+            .map_err(|_| SinexError::processing("Event channel closed".to_string()))
     }
 }
 

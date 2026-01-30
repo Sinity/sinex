@@ -1,4 +1,4 @@
-use sinex_core::types::Seconds;
+use sinex_primitives::Seconds;
 use sinex_node_sdk::{AutomatonConfig, EventSourceConfig, NodeConfig};
 use xtask::sandbox::sinex_test;
 

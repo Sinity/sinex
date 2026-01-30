@@ -12,9 +12,9 @@ use rcgen::{
 use reqwest::{Certificate as ReqwestCert, Client};
 use serde_json::json;
 use sinex_gateway::{rpc_server, ServiceContainer};
-use xtask::sandbox::{sinex_test, timing_utils::Timeouts, TestContext};
 use tempfile::TempDir;
 use tokio::time::{sleep, Duration, Instant};
+use xtask::sandbox::{sinex_test, timing_utils::Timeouts, TestContext};
 
 static ENV_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 

@@ -1,7 +1,7 @@
 use serde_json::json;
+use xtask::sandbox::PipelineNamespace;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::WaitHelpers;
-use sinex_test_utils::PipelineNamespace;
 
 #[sinex_test]
 async fn pipeline_namespace_subjects_are_isolated(ctx: TestContext) -> TestResult<()> {

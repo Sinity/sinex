@@ -1,4 +1,3 @@
-use chrono::{Duration, Utc};
 use clap::Args;
 use color_eyre::Result;
 use crossterm::{
@@ -14,14 +13,16 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph},
     Frame, Terminal,
 };
+use sinex_primitives::temporal::Timestamp;
 use std::io;
 use std::time::Instant;
+use time::Duration;
 
 use crate::client::GatewayClient;
 use crate::fmt::format_heartbeat_age;
 use crate::model::search::{SearchQuery, SearchResult};
-use sinex_core::rpc::coordination::InstanceInfo;
-use sinex_core::rpc::dlq::DlqListResponse;
+use sinex_primitives::rpc::coordination::InstanceInfo;
+use sinex_primitives::rpc::dlq::DlqListResponse;
 
 /// Launch interactive TUI dashboard
 #[derive(Debug, Args)]
@@ -198,7 +199,7 @@ impl App {
             text: None,
             sources: vec![],
             event_types: vec![],
-            start_time: Some(Utc::now() - Duration::hours(1)),
+            start_time: Some(Timestamp::now() - Duration::hours(1)),
             end_time: None,
             limit: 50,
             offset: 0,
@@ -488,7 +489,7 @@ fn render_nodes(f: &mut Frame, area: Rect, app: &App) {
             let heartbeat_str = n
                 .last_heartbeat
                 .as_ref()
-                .map(|hb| format_heartbeat_age(hb))
+                .map(|hb| format_heartbeat_age(&(*hb).into()))
                 .unwrap_or_else(|| "none".to_string());
             ListItem::new(format!(
                 "{} {} | Type: {} | Heartbeat: {}{}",
@@ -522,7 +523,10 @@ fn render_events(f: &mut Frame, area: Rect, app: &App) {
             } else {
                 Style::default()
             };
-            let timestamp = e.timestamp.format("%H:%M:%S");
+            let timestamp = e
+                .timestamp
+                .format(&time::format_description::parse("[hour]:[minute]:[second]").unwrap())
+                .unwrap_or_else(|_| "invalid".to_string());
             let snippet = if e.snippet.len() > 60 {
                 format!("{}...", &e.snippet[..57])
             } else {

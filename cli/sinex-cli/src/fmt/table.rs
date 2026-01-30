@@ -1,10 +1,10 @@
-use chrono::{DateTime, Utc};
 use comfy_table::presets::UTF8_FULL;
 use comfy_table::{Cell, CellAlignment, ContentArrangement, Table};
 use console::style;
+use sinex_primitives::temporal::Timestamp;
 
-use sinex_core::rpc::coordination::InstanceInfo;
-use sinex_core::rpc::replay::{ReplayOperation, ReplayState};
+use sinex_primitives::rpc::coordination::InstanceInfo;
+use sinex_primitives::rpc::replay::{ReplayOperation, ReplayState};
 
 /// Format nodes as a table
 pub fn format_table_nodes(nodes: &[InstanceInfo]) -> String {
@@ -25,7 +25,7 @@ pub fn format_table_nodes(nodes: &[InstanceInfo]) -> String {
         let heartbeat = node
             .last_heartbeat
             .as_ref()
-            .map(|hb| format_heartbeat_age(hb))
+            .map(|hb| format_heartbeat_age(&(*hb).into()))
             .unwrap_or_else(|| style("none").dim().to_string());
 
         table.add_row(vec![
@@ -91,37 +91,37 @@ fn format_replay_status(state: &ReplayState) -> String {
 }
 
 /// Format heartbeat timestamp as "X ago"
-pub fn format_heartbeat_age(timestamp: &DateTime<Utc>) -> String {
+pub fn format_heartbeat_age(timestamp: &Timestamp) -> String {
     format_age(timestamp)
 }
 
 /// Format timestamp as "X ago" or "X from now"
-fn format_age(timestamp: &DateTime<Utc>) -> String {
-    let now = Utc::now();
-    let duration = now.signed_duration_since(*timestamp);
+fn format_age(timestamp: &Timestamp) -> String {
+    let now = Timestamp::now();
+    let duration = *now - **timestamp;
 
-    if duration.num_seconds() < 0 {
+    if duration.whole_seconds() < 0 {
         // Future timestamp
         let abs_duration = -duration;
-        if abs_duration.num_seconds() < 60 {
-            format!("in {}s", abs_duration.num_seconds())
-        } else if abs_duration.num_minutes() < 60 {
-            format!("in {}m", abs_duration.num_minutes())
-        } else if abs_duration.num_hours() < 24 {
-            format!("in {}h", abs_duration.num_hours())
+        if abs_duration.whole_seconds() < 60 {
+            format!("in {}s", abs_duration.whole_seconds())
+        } else if abs_duration.whole_minutes() < 60 {
+            format!("in {}m", abs_duration.whole_minutes())
+        } else if abs_duration.whole_hours() < 24 {
+            format!("in {}h", abs_duration.whole_hours())
         } else {
-            format!("in {}d", abs_duration.num_days())
+            format!("in {}d", abs_duration.whole_days())
         }
     } else {
         // Past timestamp
-        if duration.num_seconds() < 60 {
-            format!("{}s ago", duration.num_seconds())
-        } else if duration.num_minutes() < 60 {
-            format!("{}m ago", duration.num_minutes())
-        } else if duration.num_hours() < 24 {
-            format!("{}h ago", duration.num_hours())
+        if duration.whole_seconds() < 60 {
+            format!("{}s ago", duration.whole_seconds())
+        } else if duration.whole_minutes() < 60 {
+            format!("{}m ago", duration.whole_minutes())
+        } else if duration.whole_hours() < 24 {
+            format!("{}h ago", duration.whole_hours())
         } else {
-            format!("{}d ago", duration.num_days())
+            format!("{}d ago", duration.whole_days())
         }
     }
 }

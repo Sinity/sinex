@@ -79,8 +79,7 @@ fn test_generate_dev_certs_with_custom_san() {
         force: false,
     };
 
-    generate_dev_certs(&config)
-        .expect("Certificate generation with custom SANs should succeed");
+    generate_dev_certs(&config).expect("Certificate generation with custom SANs should succeed");
 
     // Verify server certificate exists
     let server_cert = fs::read_to_string(output_path.join("server.pem")).unwrap();
@@ -104,8 +103,7 @@ fn test_generate_dev_certs_json_output() {
     };
 
     // JSON output goes to stdout, just ensure it doesn't panic
-    generate_dev_certs(&config)
-        .expect("Certificate generation with JSON output should succeed");
+    generate_dev_certs(&config).expect("Certificate generation with JSON output should succeed");
 }
 
 #[test]
@@ -423,7 +421,10 @@ fn test_tls_command_help() {
 fn test_tls_generate_dev_certs_help() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("stack").arg("tls").arg("generate-dev-certs").arg("--help");
+    cmd.arg("stack")
+        .arg("tls")
+        .arg("generate-dev-certs")
+        .arg("--help");
 
     cmd.assert()
         .success()
@@ -441,7 +442,8 @@ fn test_tls_generate_dev_certs_via_cli() {
 
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("stack").arg("tls")
+    cmd.arg("stack")
+        .arg("tls")
         .arg("generate-dev-certs")
         .arg("--output")
         .arg(output_path)
@@ -514,7 +516,8 @@ fn test_tls_check_with_generated_certs() {
     // Now check the certificates
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("stack").arg("tls")
+    cmd.arg("stack")
+        .arg("tls")
         .arg("check")
         .arg("--cert")
         .arg(output_path.join("server.pem"))
@@ -547,7 +550,8 @@ fn test_tls_check_with_chain_verification() {
     // Check with chain verification
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("stack").arg("tls")
+    cmd.arg("stack")
+        .arg("tls")
         .arg("check")
         .arg("--cert")
         .arg(output_path.join("server.pem"))
@@ -618,7 +622,8 @@ fn test_tls_generate_client_cert_via_cli() {
     // Generate client cert via CLI
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("stack").arg("tls")
+    cmd.arg("stack")
+        .arg("tls")
         .arg("generate-client-cert")
         .arg("--output")
         .arg(output_path)
@@ -656,7 +661,8 @@ fn test_tls_setup_env_creates_env_file() {
     let env_file = output_path.join(".env.tls");
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("stack").arg("tls")
+    cmd.arg("stack")
+        .arg("tls")
         .arg("setup-env")
         .arg("--tls-dir")
         .arg(output_path)
@@ -699,7 +705,8 @@ fn test_tls_setup_env_with_mtls() {
     let env_file = output_path.join(".env.mtls");
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("stack").arg("tls")
+    cmd.arg("stack")
+        .arg("tls")
         .arg("setup-env")
         .arg("--tls-dir")
         .arg(output_path)
@@ -728,7 +735,8 @@ fn test_tls_setup_env_with_mtls() {
 fn test_tls_check_nonexistent_cert() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("stack").arg("tls")
+    cmd.arg("stack")
+        .arg("tls")
         .arg("check")
         .arg("--cert")
         .arg("/nonexistent/path/cert.pem")
@@ -750,7 +758,8 @@ fn test_tls_check_invalid_cert_content() {
 
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("stack").arg("tls")
+    cmd.arg("stack")
+        .arg("tls")
         .arg("check")
         .arg("--cert")
         .arg(&invalid_cert)
@@ -768,7 +777,8 @@ fn test_tls_setup_env_missing_certs() {
 
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("stack").arg("tls")
+    cmd.arg("stack")
+        .arg("tls")
         .arg("setup-env")
         .arg("--tls-dir")
         .arg(empty_dir)

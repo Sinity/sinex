@@ -14,7 +14,8 @@ pub mod unified_processor;
 // Local facade module to reduce import verbosity
 mod common {
     // Core types facade
-    pub use sinex_core::{db::models::Event, types::Timestamp, JsonValue};
+    pub use sinex_db::models::Event;
+    pub use sinex_primitives::{temporal::Timestamp, JsonValue};
 
     pub use sinex_processor_runtime::{
         ActivityEntry, CoverageAnalysis, IngestionHistoryEntry, SourceState,
@@ -25,13 +26,14 @@ mod common {
         stream_processor::{
             Checkpoint, Node, NodeCapabilities, NodeRuntimeState, ScanArgs, ScanReport, TimeHorizon,
         },
-        NodeError, NodeResult,
+        SinexError, NodeResult,
     };
+
+    pub use time::OffsetDateTime;
 
     // External dependencies
     pub use {
         async_trait::async_trait,
-        chrono::{DateTime, Utc},
         serde::{Deserialize, Serialize},
         std::{
             collections::{HashMap, VecDeque},

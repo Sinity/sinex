@@ -223,6 +223,7 @@ impl ShutdownConfig {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+    use xtask::sandbox::sinex_test;
 
     #[test]
     fn test_shutdown_handler_creation() {
@@ -241,7 +242,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_state_save_load() {
+    async fn test_state_save_load() -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = TempDir::new().unwrap();
         let checkpoint_path = temp_dir.path().join("test.checkpoint.json");
 
@@ -255,6 +256,7 @@ mod tests {
 
         handler.clear_state().await.unwrap();
         assert!(handler.load_state().await.is_none());
+        Ok(())
     }
 
     #[test]

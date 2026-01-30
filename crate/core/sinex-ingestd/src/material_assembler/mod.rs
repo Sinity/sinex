@@ -18,17 +18,13 @@ const ORPHANED_FILE_AGE_THRESHOLD: std::time::Duration = std::time::Duration::fr
 
 use async_nats::{jetstream, Client as NatsClient};
 use blake3::Hasher;
-use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use pipeline::MaterialConsumerHandles;
-use sinex_core::{
-    db::{DbPool, DbPoolExt},
-    environment::SinexEnvironment,
-    types::Ulid,
-    Id, JsonValue,
-};
+use sinex_db::{DbPool, DbPoolExt};
 use sinex_node_sdk::annex::GitAnnex;
+use sinex_primitives::{environment::SinexEnvironment, Id, JsonValue, Ulid};
 use std::{collections::BTreeMap, path::PathBuf, str::FromStr, sync::Arc};
+use sinex_primitives::Timestamp;
 use tokio::{fs, fs::File, sync::Mutex};
 use tracing::{info, warn};
 
@@ -88,7 +84,7 @@ impl MaterialAssembler {
         }
 
         let js = jetstream::new(nats_client.clone());
-        let env = sinex_core::environment().clone();
+        let env = sinex_primitives::environment().clone();
 
         let dlq_subject = env.nats_subject_with_namespace(
             namespace.as_deref(),
@@ -188,7 +184,7 @@ impl MaterialAssembler {
             slice_count: 0,
             buffered_slices: BTreeMap::new(),
             state_dir,
-            started_at: Utc::now(),
+            started_at: Timestamp::now(),
             material_kind: String::new(),
             source_identifier: String::new(),
             metadata: serde_json::json!({}),
@@ -197,7 +193,7 @@ impl MaterialAssembler {
             pending_write: None,
             pending_end: None,
             finalizing: false,
-            last_slice_received: Utc::now(),
+            last_slice_received: Timestamp::now(),
             _permit: Some(permit),
         })
     }
@@ -236,7 +232,7 @@ impl MaterialAssembler {
         material_kind: &str,
         source_identifier: &str,
         metadata: JsonValue,
-        started_at: DateTime<Utc>,
+        started_at: Timestamp,
     ) -> IngestdResult<()> {
         self.pool
             .source_materials()
@@ -367,7 +363,7 @@ impl MaterialAssembler {
 
             interval.tick().await;
 
-            let now = Utc::now();
+            let now = Timestamp::now();
             let mut stale_materials = Vec::new();
 
             // Collect stale materials
@@ -386,11 +382,11 @@ impl MaterialAssembler {
                 }
 
                 // Check if last slice arrival was too long ago
-                let elapsed = now.signed_duration_since(state.last_slice_received);
-                if elapsed.num_seconds() > SLICE_ARRIVAL_TIMEOUT.as_secs() as i64 {
+                let elapsed = now - state.last_slice_received;
+                if elapsed.whole_seconds() > SLICE_ARRIVAL_TIMEOUT.as_secs() as i64 {
                     // Also check if we have pending end or buffered slices (incomplete assembly)
                     if state.pending_end.is_none() || !state.buffered_slices.is_empty() {
-                        stale_materials.push((material_id, elapsed.num_seconds()));
+                        stale_materials.push((material_id, elapsed.whole_seconds()));
                     }
                 }
             }

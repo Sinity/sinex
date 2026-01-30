@@ -2,8 +2,8 @@
 
 use crate::{nats_publisher::NatsPublisher, NodeResult};
 use serde::{Deserialize, Serialize};
-use sinex_core::db::models::Event;
-use sinex_core::{environment, JsonValue, Ulid};
+use sinex_primitives::events::Event;
+use sinex_primitives::{environment, JsonValue, Ulid};
 use std::path::Path;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
@@ -45,7 +45,9 @@ impl EventTransport {
             EventTransport::Nats(publisher) => publisher
                 .publish_to_dlq(event, error, processor_name)
                 .await
-                .map_err(|e| crate::NodeError::Processing(format!("Failed to send to DLQ: {}", e))),
+                .map_err(|e| {
+                    crate::SinexError::processing(format!("Failed to send to DLQ: {}", e))
+                }),
         }
     }
 }
@@ -354,10 +356,10 @@ pub fn spawn_event_processor(
 #[cfg(test)]
 mod tests {
     use super::EventBatcher;
-    use sinex_core::{DynamicPayload, EventId, Provenance, Ulid};
-    use xtask::sandbox::sinex_test;
+    use sinex_primitives::{DynamicPayload, EventId, Provenance, Ulid};
     use std::fs;
     use tempfile::tempdir;
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     async fn dead_letter_write_failure_is_propagated() -> TestResult<()> {

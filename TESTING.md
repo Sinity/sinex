@@ -6,8 +6,10 @@ For detailed API documentation, see the `sinex-test-utils` crate documentation.
 ## Quick Start
 
 ```bash
-# Fast feedback (no retries)
-cargo xtask test --profile fast
+# Quick feedback (no retries)
+# Note: the `fast` profile was removed. Use the `default` profile for typical
+# local runs or `debug` for single-threaded debugging.
+cargo xtask test --profile default
 
 # Full workspace matrix (recommended before PR)
 cargo xtask test --profile default --prime
@@ -70,10 +72,25 @@ Defined in `.config/nextest.toml`:
 | Profile | Use case |
 |---------|----------|
 | `default` | Standard runs with retries (CI + pre-commit), perf/stress/external excluded |
-| `fast` | Quick local iteration, no retries |
 | `debug` | Single-threaded with full stdout/stderr |
-| `perf` | Performance/stress/soak tests |
-| `external` | External integration tests (git-annex, security binaries) |
+| `perf` | Performance/stress/soak tests — includes external integration targets (git-annex / security binaries) |
+
+## Running heavy / ignored tests
+
+Some tests are intentionally marked `#[ignore = "long"]` or `#[ignore = "external"]` and are skipped by default to keep quick developer feedback fast. To run those tests locally you can:
+
+```bash
+# Run only tests annotated with #[ignore = "long"|"external"] (recommended)
+direnv exec /realm/project/sinex cargo xtask test:heavy --prime
+
+# To run *all* ignored tests (including flaky/platform-specific skips):
+direnv exec /realm/project/sinex cargo xtask test --include-ignored --prime
+
+# or use the helper script
+./scripts/run-heavy-tests.sh
+```
+
+There is also a VS Code task named "Run heavy tests (include ignored)" that runs the same command.
 
 ## Property Testing Conventions
 
@@ -135,6 +152,5 @@ cargo xtask test --profile default -- --test property_tests
 
 1. Put new tests in the crate that owns the behavior.
 2. Use `#[sinex_test]` and `TestContext` utilities — avoid bespoke scaffolding.
-3. Keep quick-start commands in muscle memory: `cargo xtask test --profile fast` or
-   `cargo xtask test --profile default --prime`.
+3. Keep quick-start commands in muscle memory: `cargo xtask test --profile default --prime`.
 4. Link back to this handbook when opening PRs.

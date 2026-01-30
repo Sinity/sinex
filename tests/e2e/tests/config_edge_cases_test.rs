@@ -10,12 +10,12 @@
 //! - Path validation edge cases
 //! - Connection test failure handling
 
-use sinex_core::nats::NatsConnectionConfig;
-use sinex_core::types::{Bytes, Seconds};
+use sinex_primitives::nats::NatsConnectionConfig;
+use sinex_primitives::{Bytes, Seconds};
 use sinex_ingestd::config::IngestdConfig;
-use xtask::sandbox::prelude::*;
 use std::env;
 use tempfile::TempDir;
+use xtask::sandbox::prelude::*;
 
 // =============================================================================
 // Config Boundary Value Tests

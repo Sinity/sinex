@@ -1,10 +1,11 @@
-use sinex_core::{DbPoolExt, Id};
+use sinex_db::DbPoolExt;
+use sinex_primitives::Id;
 use sinex_document_ingestor::{DocumentIngestorConfig, DocumentProcessor};
 use sinex_node_sdk::stream_processor::{Checkpoint, NodeInitContext, ScanArgs, TimeHorizon};
 use sinex_node_sdk::{Node, SimpleIngestorWrapper};
-use xtask::sandbox::{node_runtime::TestRuntimeBuilder, sinex_test, TestContext};
 use tempfile::NamedTempFile;
 use tokio::time::{timeout, Duration};
+use xtask::sandbox::{node_runtime::TestRuntimeBuilder, sinex_test, TestContext};
 
 #[sinex_test]
 async fn document_processor_emits_events_for_targets(ctx: TestContext) -> TestResult<()> {
@@ -58,7 +59,7 @@ async fn document_processor_emits_events_for_targets(ctx: TestContext) -> TestRe
     // `raw.source_material_registry`. This test runs the processor directly (no ingestd), so the
     // material should not appear in the database.
     let material_id = match event.provenance() {
-        sinex_core::Provenance::Material { id, .. } => *id.as_ulid(),
+        sinex_primitives::Provenance::Material { id, .. } => *id.as_ulid(),
         _ => panic!("expected material provenance"),
     };
 

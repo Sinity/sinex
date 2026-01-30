@@ -7,16 +7,15 @@
 
 use async_trait::async_trait;
 use camino::{Utf8Path, Utf8PathBuf};
-use chrono::{DateTime, Utc};
 use mime_guess::MimeGuess;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_core::types::{
+use sinex_primitives::{
     domain::SanitizedPath,
     events::{payloads::document::DocumentIngestedPayload, EventPayload},
     ulid::Ulid,
 };
-use sinex_core::validation::validate_path_within_root;
+use sinex_primitives::validation::validate_path_within_root;
 use sinex_node_sdk::{
     acquisition_manager::{AcquisitionManager, RotationPolicy},
     simple_ingestor::SimpleIngestor,
@@ -24,12 +23,13 @@ use sinex_node_sdk::{
     stream_processor::{
         Checkpoint, NodeCapabilities, NodeRuntimeState, ScanArgs, ScanReport, TimeHorizon,
     },
-    EventTransport, NodeError, NodeResult,
+    EventTransport, SinexError, NodeResult,
 };
 use sinex_processor_runtime::{
     CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
 };
 use std::{collections::HashMap, sync::Arc, time::Instant};
+use time::OffsetDateTime;
 use tokio::{fs, io::AsyncReadExt};
 use tracing::{error, info, warn};
 
@@ -88,7 +88,7 @@ impl DocumentIngestorConfig {
             if root.trim().is_empty() {
                 return Err("Allowed roots cannot contain empty entries".to_string());
             }
-            sinex_core::validation::validate_path(root)
+            sinex_primitives::validation::validate_path(root)
                 .map_err(|e| format!("Invalid allowed root '{root}': {e}"))?;
         }
 
@@ -153,7 +153,7 @@ impl DocumentProcessor {
         Ok(ScanReport {
             events_processed,
             duration: start.elapsed(),
-            final_checkpoint: Checkpoint::timestamp(Utc::now(), None),
+            final_checkpoint: Checkpoint::timestamp(OffsetDateTime::now_utc(), None),
             time_range: None,
             processor_stats: HashMap::new(),
             successful_targets,
@@ -166,28 +166,28 @@ impl DocumentProcessor {
         let stage_context = self
             .stage_context
             .as_ref()
-            .ok_or_else(|| NodeError::Lifecycle("Stage context not initialized".into()))?;
+            .ok_or_else(|| SinexError::lifecycle("Stage context not initialized"))?;
         let acquisition = self
             .acquisition
             .as_ref()
-            .ok_or_else(|| NodeError::Lifecycle("Acquisition manager not initialized".into()))?;
+            .ok_or_else(|| SinexError::lifecycle("Acquisition manager not initialized"))?;
 
         let path_buf = std::path::PathBuf::from(target);
         let utf8_path = Utf8PathBuf::from_path_buf(path_buf.clone()).map_err(|_| {
-            NodeError::Processing(format!("Document path must be valid UTF-8: {target}"))
+            SinexError::processing(format!("Document path must be valid UTF-8: {target}"))
         })?;
         let sanitized_path = SanitizedPath::from_str_validated(utf8_path.as_str())
-            .map_err(|e| NodeError::Processing(format!("Invalid document path: {e}")))?;
+            .map_err(|e| SinexError::processing(format!("Invalid document path: {e}")))?;
 
         if !self.is_allowed_path(utf8_path.as_str())? {
-            return Err(NodeError::Processing(format!(
+            return Err(SinexError::processing(format!(
                 "Document path is outside allowed roots: {target}"
             )));
         }
 
         let metadata = fs::metadata(&utf8_path).await?;
         if !metadata.is_file() {
-            return Err(NodeError::Processing(format!(
+            return Err(SinexError::processing(format!(
                 "Document path is not a file: {target}"
             )));
         }
@@ -234,7 +234,7 @@ impl DocumentProcessor {
         let mut handle = acquisition
             .begin_material_with_metadata(utf8_path.as_str(), metadata_json.clone())
             .await
-            .map_err(NodeError::from)?;
+            .map_err(SinexError::from)?;
         let mut file = fs::File::open(&utf8_path).await?;
         let mut total_bytes: i64 = 0;
         let mut buf = vec![0u8; MAX_CHUNK_BYTES];
@@ -248,7 +248,7 @@ impl DocumentProcessor {
             acquisition
                 .append_slice(&mut handle, &buf[..read])
                 .await
-                .map_err(NodeError::from)?;
+                .map_err(SinexError::from)?;
             total_bytes += read as i64;
         }
 
@@ -257,7 +257,7 @@ impl DocumentProcessor {
         acquisition
             .finalize(handle, MATERIAL_REASON_INGEST)
             .await
-            .map_err(NodeError::from)?;
+            .map_err(SinexError::from)?;
 
         let payload = DocumentIngestedPayload {
             file_path: sanitized_path.as_str().to_string(),
@@ -272,11 +272,11 @@ impl DocumentProcessor {
             .with_offset_start(0)?
             .with_offset_end(total_bytes)?
             .build()
-            .map_err(|e| NodeError::Processing(format!("Failed to build event: {e}")))?;
+            .map_err(|e| SinexError::processing(format!("Failed to build event: {e}")))?;
 
         let json_event = event
             .to_json_event()
-            .map_err(|e| NodeError::Processing(format!("Failed to serialize event: {e}")))?;
+            .map_err(|e| SinexError::processing(format!("Failed to serialize event: {e}")))?;
 
         stage_context
             .emit_event_with_provenance(json_event, material_id, Some(0), Some(total_bytes))
@@ -343,7 +343,7 @@ impl SimpleIngestor for DocumentProcessor {
         runtime: &NodeRuntimeState,
         _state: &mut Self::State,
     ) -> NodeResult<()> {
-        config.validate().map_err(NodeError::Configuration)?;
+        config.validate().map_err(|e| SinexError::configuration(e))?;
 
         let publisher = match runtime.transport() {
             EventTransport::Nats(publisher) => Arc::clone(publisher),
@@ -351,7 +351,7 @@ impl SimpleIngestor for DocumentProcessor {
 
         AcquisitionManager::bootstrap_streams(publisher.nats_client())
             .await
-            .map_err(NodeError::from)?;
+            .map_err(SinexError::from)?;
 
         let acquisition = Arc::new(runtime.acquisition_manager(
             RotationPolicy::default(),
@@ -404,8 +404,8 @@ impl SimpleIngestor for DocumentProcessor {
         _from: Checkpoint,
         _shutdown_rx: tokio::sync::watch::Receiver<bool>,
     ) -> NodeResult<ScanReport> {
-        Err(NodeError::Processing(
-            "Continuous document ingestion is no longer supported".into(),
+        Err(SinexError::processing(
+            "Continuous document ingestion is no longer supported",
         ))
     }
 
@@ -415,12 +415,12 @@ impl SimpleIngestor for DocumentProcessor {
 }
 
 impl ExplorationProvider for DocumentProcessor {
-    fn get_source_state(&self) -> color_eyre::eyre::Result<SourceState> {
+    fn get_source_state(&self) -> NodeResult<SourceState> {
         Ok(SourceState {
             is_connected: true,
             healthy: true,
-            description: "Document ingestion active".to_string(),
-            last_updated: Utc::now(),
+            description: "Document Ingestor".to_string(),
+            last_updated: OffsetDateTime::now_utc(),
             lag_seconds: None,
             recent_activity: Vec::new(),
             total_items: None,
@@ -428,36 +428,32 @@ impl ExplorationProvider for DocumentProcessor {
         })
     }
 
-    fn get_ingestion_history(
-        &self,
-        _limit: u64,
-    ) -> color_eyre::eyre::Result<Vec<IngestionHistoryEntry>> {
+    fn get_ingestion_history(&self, _limit: u64) -> NodeResult<Vec<IngestionHistoryEntry>> {
         Ok(Vec::new())
     }
 
     fn get_coverage_analysis(
         &self,
-        _time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
-    ) -> color_eyre::eyre::Result<CoverageAnalysis> {
+        _time_range: Option<(OffsetDateTime, OffsetDateTime)>,
+    ) -> NodeResult<CoverageAnalysis> {
         Ok(CoverageAnalysis {
-            coverage_percentage: 100.0,
-            missing_count: 0,
-            missing_samples: Vec::new(),
-            duplicate_count: 0,
-            sinex_total: 0,
+            time_range: (
+                OffsetDateTime::now_utc() - std::time::Duration::from_secs(7 * 24 * 3600),
+                OffsetDateTime::now_utc(),
+            ),
             source_total: 0,
-            time_range: (Utc::now() - chrono::Duration::days(7), Utc::now()),
+            sinex_total: 0,
+            coverage_percentage: 0.0,
+            missing_count: 0,
+            duplicate_count: 0,
+            missing_samples: Vec::new(),
             recommendations: Vec::new(),
         })
     }
 
-    fn export_data(
-        &self,
-        _output_path: &sinex_core::SanitizedPath,
-        _format: ExportFormat,
-    ) -> color_eyre::eyre::Result<()> {
-        Err(color_eyre::eyre::eyre!(
-            "Document ingestor does not support data export"
+    fn export_data(&self, _path: &SanitizedPath, _format: ExportFormat) -> NodeResult<()> {
+        Err(SinexError::general(
+            "Document ingestor does not support data export",
         ))
     }
 }

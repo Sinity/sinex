@@ -8,8 +8,8 @@ use proptest::strategy::ValueTree;
 use proptest::test_runner::TestCaseError;
 use sinex_node_sdk::Checkpoint;
 use sinex_node_sdk::{CheckpointManager, CheckpointState};
-use xtask::sandbox::{prelude::*, sinex_prop};
 use std::sync::Arc;
+use xtask::sandbox::{prelude::*, sinex_prop};
 
 /// Helper to convert color_eyre::Report errors to TestCaseError for property tests
 fn report_to_test_error<E: std::fmt::Display>(e: E) -> TestCaseError {
@@ -59,8 +59,8 @@ async fn checkpoint_updates_are_idempotent(
         .ensure_checkpoint_kv()
         .await
         .map_err(report_to_test_error)?;
-    
-    let case_id = sinex_core::Ulid::new().to_string();
+
+    let case_id = sinex_node_sdk::Ulid::new().to_string();
     let unique_processor_name = format!("{processor_name}-{case_id}");
 
     let checkpoint_manager = CheckpointManager::new(
@@ -83,7 +83,7 @@ async fn checkpoint_updates_are_idempotent(
     let initial_state = CheckpointState {
         checkpoint,
         processed_count,
-        last_activity: chrono::Utc::now(),
+        last_activity: OffsetDateTime::now_utc(),
         data: Some(checkpoint_data.clone()),
         version: 2,
         revision: 0,
@@ -120,8 +120,8 @@ async fn checkpoint_recovery_is_robust(
         .ensure_checkpoint_kv()
         .await
         .map_err(report_to_test_error)?;
-    
-    let case_id = sinex_core::Ulid::new().to_string();
+
+    let case_id = sinex_node_sdk::Ulid::new().to_string();
     let unique_processor_name = format!("{processor_name}-{case_id}");
 
     let checkpoint_manager = CheckpointManager::new(
@@ -142,7 +142,7 @@ async fn checkpoint_recovery_is_robust(
                 event_id: None,
             },
             processed_count: *processed_count,
-            last_activity: chrono::Utc::now(),
+            last_activity: OffsetDateTime::now_utc(),
             data: Some(data.clone()),
             version: 2,
             revision: 0,
@@ -173,8 +173,8 @@ async fn concurrent_checkpoint_access_is_safe(
         .ensure_checkpoint_kv()
         .await
         .map_err(report_to_test_error)?;
-    
-    let case_id = sinex_core::Ulid::new().to_string();
+
+    let case_id = sinex_node_sdk::Ulid::new().to_string();
     let unique_processor_name = format!("{processor_name}-{case_id}");
 
     let checkpoint_manager = Arc::new(CheckpointManager::new(
@@ -196,7 +196,7 @@ async fn concurrent_checkpoint_access_is_safe(
                     event_id: None,
                 },
                 processed_count: count,
-                last_activity: chrono::Utc::now(),
+                last_activity: OffsetDateTime::now_utc(),
                 data: Some(serde_json::json!({ "task": i })),
                 version: 2,
                 revision: 0,
@@ -237,8 +237,8 @@ async fn checkpoint_state_transitions_are_valid(
         .ensure_checkpoint_kv()
         .await
         .map_err(report_to_test_error)?;
-    
-    let case_id = sinex_core::Ulid::new().to_string();
+
+    let case_id = sinex_node_sdk::Ulid::new().to_string();
     let unique_processor_name = format!("{processor_name}-{case_id}");
 
     let checkpoint_manager = CheckpointManager::new(
@@ -256,7 +256,7 @@ async fn checkpoint_state_transitions_are_valid(
             event_id: None,
         },
         processed_count: current_count,
-        last_activity: chrono::Utc::now(),
+        last_activity: OffsetDateTime::now_utc(),
         data: Some(serde_json::json!({ "sequence": 0 })),
         version: 2,
         revision: 0,
@@ -313,8 +313,8 @@ async fn checkpoint_data_integrity_is_preserved(
         .ensure_checkpoint_kv()
         .await
         .map_err(report_to_test_error)?;
-    
-    let case_id = sinex_core::Ulid::new().to_string();
+
+    let case_id = sinex_node_sdk::Ulid::new().to_string();
     let unique_processor_name = format!("{processor_name}-{case_id}");
 
     let checkpoint_manager = CheckpointManager::new(
@@ -337,7 +337,7 @@ async fn checkpoint_data_integrity_is_preserved(
                         event_id: None,
                     },
                     processed_count,
-                    last_activity: chrono::Utc::now(),
+                    last_activity: OffsetDateTime::now_utc(),
                     data: Some(expected_data.clone()),
                     version: 2,
                     revision: 0,
@@ -366,7 +366,7 @@ async fn checkpoint_data_integrity_is_preserved(
                         event_id: None,
                     },
                     processed_count,
-                    last_activity: chrono::Utc::now(),
+                    last_activity: OffsetDateTime::now_utc(),
                     data: Some(expected_data.clone()),
                     version: 2,
                     revision: 0,
@@ -403,7 +403,7 @@ async fn checkpoint_cleanup_maintains_consistency(
         .map_err(report_to_test_error)?; // Shared KV for this test run
 
     // Create multiple automata with checkpoints
-    let case_id = sinex_core::Ulid::new().to_string();
+    let case_id = sinex_node_sdk::Ulid::new().to_string();
     let mut managers = Vec::new();
     let mut unique_names = Vec::new();
 
@@ -425,7 +425,7 @@ async fn checkpoint_cleanup_maintains_consistency(
                 event_id: None,
             },
             processed_count: cleanup_threshold,
-            last_activity: chrono::Utc::now(),
+            last_activity: OffsetDateTime::now_utc(),
             data: Some(serde_json::json!({ "automaton": processor_name })),
             version: 2,
             revision: 0,
@@ -477,6 +477,7 @@ mod stress_tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[sinex_test]
+    #[ignore = "long"]
     async fn stress_test_massive_concurrent_checkpoint_updates(ctx: TestContext) -> Result<()> {
         const NUM_THREADS: usize = 10;
         const UPDATES_PER_THREAD: usize = 100;
@@ -506,7 +507,7 @@ mod stress_tests {
                             event_id: None,
                         },
                         processed_count: i as u64,
-                        last_activity: chrono::Utc::now(),
+                        last_activity: OffsetDateTime::now_utc(),
                         data: Some(serde_json::json!({"thread": thread_id, "iteration": i})),
                         version: 2,
                         revision: 0,
@@ -587,7 +588,7 @@ mod unit_tests {
         assert_eq!(state.last_processed_id(), Some("stream-123".to_string()));
 
         // Test setting ULID
-        let ulid = sinex_core::types::Ulid::new();
+        let ulid = sinex_node_sdk::types::Ulid::new();
         state.checkpoint = Checkpoint::Internal {
             event_id: ulid,
             message_count: 0,

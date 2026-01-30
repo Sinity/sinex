@@ -8,8 +8,8 @@
  * - Filesystem permissions
  */
 
+use crate::{SinexError, NodeResult};
 use camino::Utf8Path;
-use color_eyre::eyre::{bail, Context, ContextCompat, Result};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::net::ToSocketAddrs;
@@ -18,7 +18,7 @@ use tracing::info;
 use super::VerificationStatus;
 
 /// Verify system resource availability for Sinex deployment
-pub async fn verify_system_resources() -> Result<(VerificationStatus, Value, Vec<String>)> {
+pub async fn verify_system_resources() -> NodeResult<(VerificationStatus, Value, Vec<String>)> {
     let mut messages = Vec::new();
     let mut details = HashMap::new();
     let mut has_warnings = false;
@@ -112,7 +112,7 @@ pub async fn verify_system_resources() -> Result<(VerificationStatus, Value, Vec
     Ok((status, json!(details), messages))
 }
 
-async fn verify_memory_availability(messages: &mut Vec<String>) -> Result<Value> {
+async fn verify_memory_availability(messages: &mut Vec<String>) -> NodeResult<Value> {
     use sysinfo::System;
 
     let mut sys = System::new_all();
@@ -128,11 +128,10 @@ async fn verify_memory_availability(messages: &mut Vec<String>) -> Result<Value>
     let recommended_gb = 4.0;
 
     if available_memory_gb < min_required_gb {
-        bail!(
+        return Err(SinexError::processing(format!(
             "Insufficient memory: {:.2}GB available, {:.2}GB required",
-            available_memory_gb,
-            min_required_gb
-        );
+            available_memory_gb, min_required_gb
+        )));
     } else if available_memory_gb < recommended_gb {
         messages.push(format!(
             "⚠ Low memory: {:.2}GB available, {:.2}GB recommended",
@@ -155,7 +154,7 @@ async fn verify_memory_availability(messages: &mut Vec<String>) -> Result<Value>
     }))
 }
 
-async fn verify_disk_space(messages: &mut Vec<String>) -> Result<Value> {
+async fn verify_disk_space(messages: &mut Vec<String>) -> NodeResult<Value> {
     let paths_to_check = vec![
         ("/var/lib/sinex", "Sinex data directory", 10.0), // 10GB minimum
         ("/tmp", "Temporary directory", 5.0),             // 5GB minimum
@@ -218,7 +217,9 @@ async fn verify_disk_space(messages: &mut Vec<String>) -> Result<Value> {
     }
 
     if has_issues {
-        bail!("Insufficient disk space on one or more required paths");
+        return Err(SinexError::processing(
+            "Insufficient disk space on one or more required paths".to_string(),
+        ));
     }
 
     Ok(json!({
@@ -227,10 +228,10 @@ async fn verify_disk_space(messages: &mut Vec<String>) -> Result<Value> {
     }))
 }
 
-fn get_disk_space(path: &str) -> Result<(f64, f64)> {
+fn get_disk_space(path: &str) -> NodeResult<(f64, f64)> {
     use nix::sys::statvfs::statvfs;
 
-    let stat = statvfs(path).wrap_err_with(|| format!("Failed to get disk stats for {}", path))?;
+    let stat = statvfs(path).map_err(|e| SinexError::processing(format!("{}: {}", "Error", e)))?;
 
     let block_size = stat.block_size();
     let total_blocks = stat.blocks();
@@ -245,7 +246,7 @@ fn get_disk_space(path: &str) -> Result<(f64, f64)> {
     Ok((total_gb, available_gb))
 }
 
-async fn verify_cpu_capacity(messages: &mut Vec<String>) -> Result<Value> {
+async fn verify_cpu_capacity(messages: &mut Vec<String>) -> NodeResult<Value> {
     use sysinfo::System;
 
     let mut sys = System::new_all();
@@ -259,11 +260,10 @@ async fn verify_cpu_capacity(messages: &mut Vec<String>) -> Result<Value> {
     let max_recommended_load = cpu_count as f64 * 0.8; // 80% of CPU capacity
 
     if cpu_count < min_cpu_count {
-        bail!(
+        return Err(SinexError::processing(format!(
             "Insufficient CPU cores: {} available, {} required",
-            cpu_count,
-            min_cpu_count
-        );
+            cpu_count, min_cpu_count
+        )));
     }
 
     if load_avg.one > max_recommended_load {
@@ -289,7 +289,7 @@ async fn verify_cpu_capacity(messages: &mut Vec<String>) -> Result<Value> {
     }))
 }
 
-async fn verify_filesystem_permissions(messages: &mut Vec<String>) -> Result<Value> {
+async fn verify_filesystem_permissions(messages: &mut Vec<String>) -> NodeResult<Value> {
     let directories_to_check = vec!["/var/lib/sinex", "/var/log/sinex", "/tmp"];
 
     let mut permissions_info = HashMap::new();
@@ -325,7 +325,9 @@ async fn verify_filesystem_permissions(messages: &mut Vec<String>) -> Result<Val
     }
 
     if has_issues {
-        bail!("Insufficient filesystem permissions for required directories");
+        return Err(SinexError::processing(
+            "Insufficient filesystem permissions for required directories".to_string(),
+        ));
     }
 
     Ok(json!({
@@ -333,14 +335,14 @@ async fn verify_filesystem_permissions(messages: &mut Vec<String>) -> Result<Val
     }))
 }
 
-async fn check_directory_permissions(dir_path: &str) -> Result<Value> {
+async fn check_directory_permissions(dir_path: &str) -> NodeResult<Value> {
     let path = Utf8Path::new(dir_path);
 
     // Create directory if it doesn't exist
     if !path.exists() {
         tokio::fs::create_dir_all(path)
             .await
-            .wrap_err_with(|| format!("Failed to create directory {}", dir_path))?;
+            .map_err(|e| SinexError::processing(format!("{}: {}", "Error", e)))?;
     }
 
     // Test write permissions by creating a temporary file
@@ -366,7 +368,7 @@ async fn check_directory_permissions(dir_path: &str) -> Result<Value> {
     }
 }
 
-async fn verify_network_connectivity(messages: &mut Vec<String>) -> Result<Value> {
+async fn verify_network_connectivity(messages: &mut Vec<String>) -> NodeResult<Value> {
     // Basic network connectivity tests
     let mut network_info = HashMap::new();
 
@@ -397,25 +399,25 @@ async fn verify_network_connectivity(messages: &mut Vec<String>) -> Result<Value
     Ok(json!(network_info))
 }
 
-async fn test_dns_resolution() -> Result<()> {
+async fn test_dns_resolution() -> NodeResult<()> {
     // Try to resolve a well-known hostname
     "google.com:80"
         .to_socket_addrs()
-        .wrap_err("Failed to resolve DNS")?
+        .map_err(|e| SinexError::processing(format!("Failed to resolve DNS: {}", e)))?
         .next()
-        .wrap_err("No DNS resolution results")?;
+        .ok_or_else(|| SinexError::processing("No DNS resolution results".to_string()))?;
 
     Ok(())
 }
 
-async fn test_localhost_connectivity() -> Result<()> {
+async fn test_localhost_connectivity() -> NodeResult<()> {
     use std::net::SocketAddr;
     use std::time::Duration;
 
     // Test localhost connectivity by attempting to connect to a common port
     let addr: SocketAddr = "127.0.0.1:22"
         .parse()
-        .wrap_err("Failed to parse localhost address")?;
+        .map_err(|e| SinexError::processing(format!("Failed to parse localhost address: {}", e)))?;
 
     // Try to connect with a short timeout
     match tokio::time::timeout(
@@ -430,15 +432,15 @@ async fn test_localhost_connectivity() -> Result<()> {
         Err(_) => {
             // SSH not running is normal, just test that localhost is reachable
             // Try a different approach - just verify localhost resolves
-            "localhost:80"
-                .to_socket_addrs()
-                .wrap_err("Localhost name resolution failed")?;
+            "localhost:80".to_socket_addrs().map_err(|e| {
+                SinexError::processing(format!("Localhost name resolution failed: {}", e))
+            })?;
             Ok(())
         }
     }
 }
 
-async fn verify_process_limits(messages: &mut Vec<String>) -> Result<Value> {
+async fn verify_process_limits(messages: &mut Vec<String>) -> NodeResult<Value> {
     let mut limits_info = HashMap::new();
 
     // Check file descriptor limits
@@ -466,11 +468,12 @@ async fn verify_process_limits(messages: &mut Vec<String>) -> Result<Value> {
     Ok(json!(limits_info))
 }
 
-fn check_file_descriptor_limits() -> Result<Value> {
+fn check_file_descriptor_limits() -> NodeResult<Value> {
     use nix::sys::resource::{getrlimit, Resource};
 
-    let (soft, hard) =
-        getrlimit(Resource::RLIMIT_NOFILE).wrap_err("Failed to get file descriptor limits")?;
+    let (soft, hard) = getrlimit(Resource::RLIMIT_NOFILE).map_err(|e| {
+        SinexError::processing(format!("Failed to get file descriptor limits: {}", e))
+    })?;
 
     let min_recommended = 1024;
     let meets_requirements = soft >= min_recommended;
@@ -483,11 +486,11 @@ fn check_file_descriptor_limits() -> Result<Value> {
     }))
 }
 
-fn check_process_limits_info() -> Result<Value> {
+fn check_process_limits_info() -> NodeResult<Value> {
     use nix::sys::resource::{getrlimit, Resource};
 
-    let (soft, hard) =
-        getrlimit(Resource::RLIMIT_NPROC).wrap_err("Failed to get process limits")?;
+    let (soft, hard) = getrlimit(Resource::RLIMIT_NPROC)
+        .map_err(|e| SinexError::processing(format!("Failed to get process limits: {}", e)))?;
 
     Ok(json!({
         "max_processes_soft": soft,

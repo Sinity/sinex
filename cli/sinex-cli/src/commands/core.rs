@@ -1,5 +1,5 @@
 use clap::Subcommand;
-use sinex_core::rpc::system::SystemHealthResponse;
+use sinex_primitives::rpc::system::SystemHealthResponse;
 
 use crate::client::GatewayClient;
 use crate::fmt::CommandOutput;

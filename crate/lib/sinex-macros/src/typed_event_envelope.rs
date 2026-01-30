@@ -102,7 +102,7 @@ fn generate_to_json_event_impl(
                         #enum_name::#variant_name => {
                             // Generate a placeholder event for unit variants
                             // NOTE: Uses test provenance - only suitable for testing
-                            Err(sinex_core::SinexError::invalid_state(
+                            Err(sinex_primitives::SinexError::invalid_state(
                                 "Unit variants require explicit event construction with provenance"
                             ))
                         },
@@ -114,7 +114,7 @@ fn generate_to_json_event_impl(
                         #enum_name::#variant_name(..) => {
                             // Default conversion for complex variants
                             // NOTE: Requires explicit event construction with provenance
-                            Err(sinex_core::SinexError::invalid_state(
+                            Err(sinex_primitives::SinexError::invalid_state(
                                 "Complex variants require explicit event construction with provenance"
                             ))
                         },
@@ -134,7 +134,7 @@ fn generate_to_json_event_impl(
     quote! {
         impl #enum_name {
             /// Convert this event envelope to a JSON event
-            pub fn to_json_event(self) -> std::result::Result<sinex_core::Event<sinex_core::JsonValue>, sinex_core::SinexError> {
+            pub fn to_json_event(self) -> std::result::Result<sinex_primitives::Event<sinex_primitives::JsonValue>, sinex_primitives::SinexError> {
                 match self {
                     #(#match_arms)*
                 }
@@ -272,8 +272,8 @@ fn is_event_type(ty: &Type) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::sinex_test;
     use syn::parse_quote;
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     fn test_typed_event_envelope_parsing() -> TestResult<()> {

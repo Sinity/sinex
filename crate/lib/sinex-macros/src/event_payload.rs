@@ -50,9 +50,8 @@ fn derive_event_payload_inner(input: DeriveInput) -> syn::Result<TokenStream> {
     // The schema_registry code is conditionally compiled only when sqlx feature is enabled
     let expanded = quote! {
         const _: () = {
-            // Import types we need - these should work from within events module
-            use crate::domain::{EventSource, EventType};
-            use crate::events::EventPayload;
+            use ::sinex_primitives::domain::{EventSource, EventType};
+            use ::sinex_primitives::events::EventPayload;
 
             impl EventPayload for #name {
                 const SOURCE: EventSource = EventSource::from_static(#source);
@@ -60,10 +59,9 @@ fn derive_event_payload_inner(input: DeriveInput) -> syn::Result<TokenStream> {
                 const VERSION: &'static str = #version;
             }
 
-            // Register this payload type with inventory (only when sqlx feature enables schema_registry)
-            #[cfg(feature = "sqlx")]
+            // Register this payload type with inventory
             const _: () = {
-                use crate::events::schema_registry;
+                use ::sinex_primitives::events::schema_registry;
 
                 ::inventory::submit! {
                     schema_registry::PayloadInfo {

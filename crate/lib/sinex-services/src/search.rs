@@ -4,24 +4,19 @@
 
 use crate::error::ServiceResult;
 use serde::{Deserialize, Serialize};
-use sinex_core::db::{
+use sinex_db::{
     repositories::{DbPoolExt, EventSearchFilters},
     DbPool,
 };
-use sinex_core::types::{
-    domain::{EventSource, EventType},
-    ulid::Ulid,
-    Pagination, TimeRange,
-};
-use sqlx::types::chrono::{DateTime, Utc};
+use sinex_primitives::{EventSource, EventType, Pagination, TimeRange, Timestamp, Ulid};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchQuery {
     pub text: Option<String>,
     pub sources: Vec<String>,
     pub event_types: Vec<String>,
-    pub start_time: Option<DateTime<Utc>>,
-    pub end_time: Option<DateTime<Utc>>,
+    pub start_time: Option<Timestamp>,
+    pub end_time: Option<Timestamp>,
     pub limit: i32,
     pub offset: i32,
 }
@@ -32,7 +27,7 @@ pub struct SearchResult {
     pub source: String,
     pub event_type: String,
     pub host: String,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
     pub snippet: String,
     pub score: f64,
 }
@@ -186,6 +181,7 @@ impl PreparedSearch {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_primitives::temporal::Duration;
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
@@ -224,8 +220,8 @@ mod tests {
 
     #[sinex_test]
     fn prepared_search_validates_time_range() -> TestResult<()> {
-        let start = Utc::now();
-        let end = start - chrono::Duration::hours(1);
+        let start = Timestamp::now();
+        let end = start - time::Duration::hours(1);
 
         let query = SearchQuery {
             text: None,

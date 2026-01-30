@@ -1,4 +1,4 @@
-use sinex_core::types::Seconds;
+use sinex_node_sdk::types::Seconds;
 use sinex_node_sdk::emit_heartbeat;
 use sinex_node_sdk::heartbeat::HeartbeatEmitter;
 use xtask::sandbox::sinex_test;

@@ -2,9 +2,9 @@
 
 use color_eyre::eyre::{eyre, Result};
 use serde::{Deserialize, Serialize};
-use sinex_core::db::query_helpers::{db_error, UlidArrayExt};
-use sinex_core::db::repositories::EventRepositoryTx;
-use sinex_core::types::ulid::Ulid;
+use sinex_db::query_helpers::{db_error, UlidArrayExt};
+use sinex_db::repositories::EventRepositoryTx;
+use sinex_primitives::Ulid;
 use sqlx::PgPool;
 use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
@@ -206,7 +206,7 @@ impl StreamingCascadeAnalyzer {
         );
 
         // Generate unique session ID for this analysis
-        let session_id = sinex_core::types::ulid::Ulid::new().to_string();
+        let session_id = sinex_primitives::Ulid::new().to_string();
 
         // Wrap the entire transaction in a timeout to prevent indefinite holds
         let timeout_duration = self.config.timeout;
@@ -605,8 +605,8 @@ fn record_dependency(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
     use serde_json::json;
+    use sinex_primitives::temporal::now;
     use xtask::sandbox::{sinex_test, TestContext};
 
     #[sinex_test]
@@ -640,7 +640,7 @@ mod tests {
     #[sinex_test]
     async fn cascade_order_detects_cycles(ctx: TestContext) -> TestResult<()> {
         let analyzer = StreamingCascadeAnalyzer::new(ctx.pool.clone());
-        let now = Utc::now();
+        let current_time = now();
         let payload = json!({});
 
         let a = Ulid::new();
@@ -659,7 +659,7 @@ mod tests {
             .bind("cascade.test")
             .bind("test-host")
             .bind(payload.clone())
-            .bind(now)
+            .bind(current_time)
             .bind(parents_uuid)
             .execute(&ctx.pool)
             .await?;

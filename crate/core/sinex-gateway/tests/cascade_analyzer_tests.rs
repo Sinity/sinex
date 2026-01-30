@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use sinex_core::types::ulid::Ulid;
 use sinex_gateway::{CascadeAnalysis, IntegrityViolation, Severity, ViolationType};
+use sinex_primitives::Ulid;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]

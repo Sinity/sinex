@@ -2,7 +2,7 @@
 //!
 //! The original suite depended on an embedded NATS/JetStream harness that no
 //! longer exists. These properties focus on the shared behaviour between
-//! `sinex-core` (event insertion) and the queue-facing checkpoint utilities in
+//! `sinex-db` (event insertion) and the queue-facing checkpoint utilities in
 //! `sinex-node-sdk`.
 
 use async_nats::jetstream::{
@@ -13,11 +13,11 @@ use futures::StreamExt;
 use proptest::prelude::*;
 use proptest::test_runner::TestCaseError;
 use serde_json::{json, Value};
-use sinex_core::types::ulid::Ulid;
-use sinex_core::DynamicPayload;
+use sinex_node_sdk::types::ulid::Ulid;
+use sinex_node_sdk::DynamicPayload;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
-use xtask::sandbox::prelude::*;
 use std::sync::LazyLock;
+use xtask::sandbox::prelude::*;
 
 /// Helper to convert color_eyre::Report errors to TestCaseError for property tests
 fn report_to_test_error<E: std::fmt::Display>(e: E) -> TestCaseError {
@@ -68,7 +68,7 @@ fn checkpoint_progress_is_monotonic() -> TestResult<()> {
                         event_id: None,
                     },
                     processed_count,
-                    last_activity: chrono::Utc::now(),
+                    last_activity: OffsetDateTime::now_utc(),
                     data: Some(serde_json::json!({"batch": idx})),
                     version: 2,
                     revision: 0,
@@ -111,7 +111,7 @@ sinex_proptest! {
         let state = CheckpointState {
             checkpoint: Checkpoint::None,
             processed_count: 0,
-            last_activity: chrono::Utc::now(),
+            last_activity: OffsetDateTime::now_utc(),
             data: Some(json_payload.clone()),
             version: 1,
             revision: 0,

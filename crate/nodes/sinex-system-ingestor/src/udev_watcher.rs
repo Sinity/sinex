@@ -7,13 +7,16 @@
 
 use crate::WatcherMaterialContext;
 use notify::{Event as NotifyEvent, EventKind, RecursiveMode, Watcher as NotifyWatcher};
-use sinex_core::db::models::event::Event;
-use sinex_core::types::events::{
+use sinex_db::models::Event;
+use sinex_node_sdk::NodeResult;
+use sinex_primitives::events::{
     UdevDeviceChangedPayload, UdevDeviceConnectedPayload, UdevDeviceDisconnectedPayload,
     UdevDeviceDriverChangedPayload, UdevDeviceOtherPayload,
 };
-use sinex_core::{DeviceType, JsonValue, UdevAction};
-use sinex_node_sdk::NodeResult;
+use sinex_primitives::{
+    events::enums::{DeviceType, UdevAction},
+    JsonValue,
+};
 use std::path::Path;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
@@ -111,7 +114,7 @@ impl UdevWatcher {
             .get("ID_SERIAL_SHORT")
             .or_else(|| properties.get("ID_SERIAL"))
             .cloned();
-        let timestamp = chrono::Utc::now();
+        let timestamp = sinex_primitives::temporal::now();
 
         // Parse string types to enums
         let action_enum = parse_udev_action(action);
@@ -226,7 +229,7 @@ impl UdevWatcher {
                 }
             })
             .map_err(|e| {
-                sinex_node_sdk::NodeError::Processing(format!(
+                sinex_node_sdk::SinexError::processing(format!(
                     "Failed to create inotify watcher: {}",
                     e
                 ))

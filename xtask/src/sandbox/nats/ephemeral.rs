@@ -15,7 +15,7 @@ use async_nats::{
 };
 use color_eyre::eyre::{eyre, Result};
 use rand::Rng;
-use sinex_core::nats::NatsConnectionConfig;
+use sinex_primitives::nats::NatsConnectionConfig;
 use tempfile::TempDir;
 use tokio::{
     process::{Child, Command},
@@ -649,7 +649,7 @@ pub async fn reset_shared_ephemeral_nats() -> Result<()> {
 pub async fn ensure_coordination_buckets(js: &jetstream::Context) -> Result<()> {
     const LEADERSHIP_TTL_SECS: u64 = 15;
 
-    let env = sinex_core::environment::environment();
+    let env = sinex_primitives::environment::environment();
     let _ = js
         .create_key_value(jetstream::kv::Config {
             bucket: format!("KV_{}", env.nats_kv_bucket_name("sinex_instances")),

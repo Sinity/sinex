@@ -3,9 +3,9 @@
 //! Verifies that nodes can run without DATABASE_URL (ingestors) while
 //! automata that need it get clear error messages. Checkpoints always use NATS KV.
 
-use sinex_core::db::models::Event;
-use sinex_core::types::buffers::DEFAULT_EVENT_CHANNEL_SIZE;
-use sinex_core::JsonValue;
+use sinex_node_sdk::db::models::Event;
+use sinex_node_sdk::types::buffers::DEFAULT_EVENT_CHANNEL_SIZE;
+use sinex_node_sdk::JsonValue;
 use sinex_node_sdk::{
     checkpoint::CheckpointManager,
     nats_publisher::NatsPublisher,
@@ -15,10 +15,10 @@ use sinex_node_sdk::{
     },
     EventTransport, NodeResult,
 };
-use xtask::sandbox::timing::{WaitHelpers, DEFAULT_WAIT_SECS};
-use xtask::sandbox::{sinex_serial_test, TestContext};
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use xtask::sandbox::timing::{WaitHelpers, DEFAULT_WAIT_SECS};
+use xtask::sandbox::{sinex_serial_test, TestContext};
 
 /// Minimal test processor that doesn't require database access
 struct EdgeTestProcessor {
@@ -181,7 +181,7 @@ async fn test_schema_broadcast_cache_updates(ctx: TestContext) -> TestResult<()>
     let js = async_nats::jetstream::new(nats_client.clone());
 
     // Create the schema KV bucket that the runner expects
-    let env = sinex_core::environment();
+    let env = sinex_node_sdk::environment();
     let schema_bucket = format!("KV_{}", env.nats_kv_bucket_name("sinex_schemas"));
     js.create_key_value(async_nats::jetstream::kv::Config {
         bucket: schema_bucket,
@@ -209,11 +209,11 @@ async fn test_schema_broadcast_cache_updates(ctx: TestContext) -> TestResult<()>
         .schema_cache()
         .expect("schema cache should be initialized automatically");
 
-    let subject = sinex_core::environment().nats_subject("system.schemas.active");
+    let subject = sinex_node_sdk::environment().nats_subject("system.schemas.active");
     let entries = vec![SchemaBroadcastEntry {
         name: "schema.test".to_string(),
         version: "1.0.0".to_string(),
-        schema_id: sinex_core::Ulid::new().to_string(),
+        schema_id: sinex_node_sdk::Ulid::new().to_string(),
     }];
 
     nats_client

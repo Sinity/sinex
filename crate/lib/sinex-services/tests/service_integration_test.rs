@@ -2,16 +2,16 @@
 
 use chrono::Duration;
 use serde_json::json;
-use sinex_core::db::repositories::DbPoolExt;
-use sinex_core::types::domain::EventSource;
+use sinex_db::repositories::DbPoolExt;
+use sinex_primitives::EventSource;
 use sinex_services::AnalyticsService;
+use std::sync::Arc;
+use std::time::Instant;
 use xtask::sandbox::dataset_seeds::{
     seed_events_via_scope, seed_service_integration_dataset_semantic_min_via_scope, EventSpec,
     SeedClock,
 };
 use xtask::sandbox::prelude::*;
-use std::sync::Arc;
-use std::time::Instant;
 
 /// Test cross-service data flow: Event creation -> Analytics -> Repository queries
 #[sinex_test]
@@ -40,7 +40,7 @@ async fn test_cross_service_data_flow(ctx: TestContext) -> TestResult<()> {
         .events()
         .get_by_source(
             &EventSource::from("fs-watcher"),
-            sinex_core::types::Pagination::new(Some(10), None),
+            sinex_primitives::Pagination::new(Some(10), None),
         )
         .await?;
     assert_eq!(events_by_source.len(), 1, "Should find fs-watcher event");
@@ -136,6 +136,7 @@ async fn test_service_error_handling(ctx: TestContext) -> TestResult<()> {
 
 /// Test service performance under load
 #[sinex_test]
+#[ignore = "long"]
 async fn test_service_performance_integration(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing service performance under load");
     let ctx = ctx.with_nats().shared().await?;
@@ -195,7 +196,7 @@ async fn test_service_performance_integration(ctx: TestContext) -> TestResult<()
         .events()
         .get_by_source(
             &EventSource::from("perf-source-1"),
-            sinex_core::types::Pagination::new(Some(20), None),
+            sinex_primitives::Pagination::new(Some(20), None),
         )
         .await?;
     let query_duration = query_start.elapsed();
@@ -352,7 +353,7 @@ async fn test_service_configuration(ctx: TestContext) -> TestResult<()> {
         .events()
         .get_by_source(
             &EventSource::from("config-test"),
-            sinex_core::types::Pagination::new(Some(10), None),
+            sinex_primitives::Pagination::new(Some(10), None),
         )
         .await?;
     assert_eq!(events.len(), 1);

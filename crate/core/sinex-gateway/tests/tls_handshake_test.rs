@@ -1,7 +1,7 @@
 use sinex_gateway::{rpc_server, ServiceContainer};
-use xtask::sandbox::prelude::*;
 use std::time::Duration;
 use tokio::time::sleep;
+use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn test_gateway_tcp_tls_handshake(ctx: TestContext) -> color_eyre::Result<()> {

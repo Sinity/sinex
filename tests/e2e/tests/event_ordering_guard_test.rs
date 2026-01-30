@@ -1,6 +1,6 @@
-use chrono::{Duration, Utc};
 use serde_json::json;
-use sinex_core::DynamicPayload;
+use sinex_primitives::DynamicPayload;
+use sinex_primitives::temporal::{now, Duration, Rfc3339};
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
@@ -10,15 +10,15 @@ async fn pipeline_preserves_ingest_order_over_ts_orig(ctx: TestContext) -> TestR
 
     let source = "ordering-guard";
     let event_type = "ordering.event";
-    let now = Utc::now();
-    let earlier = now - Duration::seconds(30);
-    let later = now + Duration::seconds(30);
+    let now_ts = now();
+    let earlier = now_ts - Duration::seconds(30);
+    let later = now_ts + Duration::seconds(30);
 
     let first = scope
         .publish_with_overrides(
             DynamicPayload::new(source, event_type, json!({"seq": 1})),
             EventOverrides {
-                ts_orig: Some(later.to_rfc3339()),
+                ts_orig: Some(later.format_rfc3339()),
                 ..Default::default()
             },
         )
@@ -27,7 +27,7 @@ async fn pipeline_preserves_ingest_order_over_ts_orig(ctx: TestContext) -> TestR
         .publish_with_overrides(
             DynamicPayload::new(source, event_type, json!({"seq": 2})),
             EventOverrides {
-                ts_orig: Some(earlier.to_rfc3339()),
+                ts_orig: Some(earlier.format_rfc3339()),
                 ..Default::default()
             },
         )

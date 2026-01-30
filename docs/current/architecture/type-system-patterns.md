@@ -70,6 +70,47 @@ impl SanitizedPath {
 
 ---
 
+## Temporal Patterns: Timestamp Wrapper
+
+**Pattern:** Use `Timestamp` wrapper instead of raw library types (`time` or `chrono`) for consistency, built-in serialization, and database integration.
+
+```rust
+use sinex_primitives::temporal::Timestamp;
+
+// Preferred: Use the system wrapper
+let ts = Timestamp::now();
+
+// Built-in RFC3339 serialization and database integration
+let json = serde_json::to_string(&ts)?;
+```
+
+**Anti-Pattern:** Using raw `time::OffsetDateTime` or `chrono::DateTime` in public library APIs. This creates inconsistent serialization formats and requires manual database mapping.
+
+**Impact:** Consistent time representation across the entire ecosystem, from database to CLI.
+
+---
+
+## Error Patterns: Structured SinexError
+
+**Pattern:** Use `SinexError` for all domain-specific errors in library code. Use `eyre!` only at application boundaries (CLI, main daemons) or tests.
+
+```rust
+use sinex_primitives::error::{SinexError, Result};
+
+fn process() -> Result<()> {
+    // Specific variant with context enrichment
+    Err(SinexError::validation("Invalid input")
+        .with_context("field", "id")
+        .with_context("value", input))
+}
+```
+
+**Anti-Pattern:** Using generic `color_eyre::eyre::eyre!` or `anyhow!` in library code. This erodes the ability to programmatically handle errors and categories them in monitoring.
+
+**Impact:** Highly diagnosable system with structured logs and error reporting.
+
+---
+
 ## Making Illegal States Unrepresentable
 
 ### NonEmptyVec

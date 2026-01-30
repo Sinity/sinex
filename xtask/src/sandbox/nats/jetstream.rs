@@ -10,7 +10,7 @@
 //! use sinex_test_utils::JetStreamTestHelper;
 //!
 //! #[sinex_test]
-//! async fn test_consumer(ctx: TestContext) -> TestResult<()> {
+//! async fn test_consumer(ctx: Sandbox) -> TestResult<()> {
 //!     let ctx = ctx.with_nats().shared().await?;
 //!     let helper = JetStreamTestHelper::new(&ctx, "my-test").await?;
 //!
@@ -23,12 +23,9 @@
 //! }
 //! ```
 
-use crate::nats::EphemeralNats;
-use crate::timing_utils::Timeouts;
-use crate::{TestContext, TestResult};
+use crate::sandbox::prelude::*;
 use async_nats::jetstream::{self, stream::State as StreamState};
-use color_eyre::eyre::{eyre, WrapErr};
-use sinex_ingestd::JetStreamTopology;
+use sinex_primitives::nats::JetStreamTopology;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -55,13 +52,13 @@ impl JetStreamTestHelper {
     /// # Arguments
     /// * `ctx` - Test context (must have NATS enabled via `with_nats()`)
     /// * `suffix` - Unique suffix for stream names (e.g., test name or UUID)
-    pub async fn new(ctx: &TestContext, suffix: &str) -> TestResult<Self> {
+    pub async fn new(ctx: &Sandbox, suffix: &str) -> TestResult<Self> {
         Self::with_timeout(ctx, suffix, Duration::from_secs(Timeouts::SHORT)).await
     }
 
     /// Create a new JetStreamTestHelper with a custom stream wait timeout.
     pub async fn with_timeout(
-        ctx: &TestContext,
+        ctx: &Sandbox,
         suffix: &str,
         stream_timeout: Duration,
     ) -> TestResult<Self> {
@@ -278,10 +275,11 @@ impl JetStreamTestHelper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sinex_test;
+
+    use xtask_macros::*;
 
     #[sinex_test]
-    async fn jetstream_test_helper_creates_topology(ctx: TestContext) -> TestResult<()> {
+    async fn jetstream_test_helper_creates_topology(ctx: Sandbox) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
         let helper = JetStreamTestHelper::new(&ctx, "helper-test").await?;
 

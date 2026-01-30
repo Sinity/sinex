@@ -72,7 +72,9 @@ impl HistoryDb {
         rustc_version: &str,
         results: &[ScenarioResult],
     ) -> Result<i64> {
-        let timestamp = chrono::Utc::now().to_rfc3339();
+        let timestamp = time::OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_else(|_| "unknown".to_string());
 
         let run_id = self.conn.query_row(
             "INSERT INTO runs (timestamp, git_sha, git_branch, git_dirty, mode, profile, rustc_version)

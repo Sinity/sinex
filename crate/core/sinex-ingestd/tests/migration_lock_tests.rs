@@ -3,7 +3,7 @@ use xtask::sandbox::timing::WaitHelpers;
 use xtask::sandbox::{sinex_test, TestContext};
 
 #[sinex_test]
-async fn migration_lock_blocks_second_holder(ctx: TestContext) -> sinex_test_utils::TestResult<()> {
+async fn migration_lock_blocks_second_holder(ctx: TestContext) -> TestResult<()> {
     let first = try_acquire_migration_lock(ctx.pool()).await?;
 
     let second: Result<_, _> = try_acquire_migration_lock(ctx.pool()).await;
@@ -22,10 +22,10 @@ async fn migration_lock_blocks_second_holder(ctx: TestContext) -> sinex_test_uti
                 match try_acquire_migration_lock(&pool).await {
                     Ok(third) => {
                         drop(third);
-                        Ok::<bool, sinex_test_utils::SinexError>(true)
+                        Ok::<bool, SinexError>(true)
                     }
                     Err(err) if err.to_string().contains("already applying migrations") => {
-                        Ok::<bool, sinex_test_utils::SinexError>(false)
+                        Ok::<bool, SinexError>(false)
                     }
                     Err(err) => Err(err.into()),
                 }

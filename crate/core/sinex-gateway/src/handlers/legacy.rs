@@ -10,11 +10,9 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
 use color_eyre::eyre::{eyre, Context, ContextCompat, Result};
 use serde_json::{json, Value};
-use sinex_core::{
-    coordination::CoordinationKvClient,
-    db::models::{Entity, Event},
-    types::{ulid::Ulid, Id},
-    JsonValue,
+use sinex_primitives::{
+    coordination::CoordinationKvClient, domain::Entity, temporal, temporal::Timestamp, Event,
+    Id, JsonValue, Ulid,
 };
 use sinex_services::{AnalyticsService, ContentService, PkmService, SearchQuery, SearchService};
 use std::sync::OnceLock;
@@ -222,14 +220,14 @@ pub async fn handle_event_count_by_source(
     service: &AnalyticsService,
     params: Value,
 ) -> Result<Value> {
-    use chrono::{Duration, Utc};
+    use time::Duration;
 
     let params = RpcParams::new(&params);
     let days_back = params
         .optional_i64("days_back")
         .unwrap_or(DEFAULT_ANALYTICS_DAYS_BACK);
 
-    let end_time = Utc::now();
+    let end_time = Timestamp::now();
     let start_time = end_time - Duration::days(days_back);
 
     let counts = service
@@ -239,7 +237,7 @@ pub async fn handle_event_count_by_source(
 }
 
 pub async fn handle_activity_heatmap(service: &AnalyticsService, params: Value) -> Result<Value> {
-    use chrono::{Duration, Utc};
+    use time::Duration;
 
     let params = RpcParams::new(&params);
     let bucket_size_minutes_raw = params
@@ -255,7 +253,7 @@ pub async fn handle_activity_heatmap(service: &AnalyticsService, params: Value) 
         .optional_i64("days_back")
         .unwrap_or(DEFAULT_ANALYTICS_DAYS_BACK);
 
-    let end_time = Utc::now();
+    let end_time = Timestamp::now();
     let start_time = end_time - Duration::days(days_back);
 
     let heatmap = service
@@ -265,7 +263,7 @@ pub async fn handle_activity_heatmap(service: &AnalyticsService, params: Value) 
 }
 
 pub async fn handle_sources_statistics(service: &AnalyticsService, params: Value) -> Result<Value> {
-    use chrono::{Duration, Utc};
+    use time::Duration;
 
     let params = RpcParams::new(&params);
     let limit = params.optional_i64("limit").unwrap_or(100);
@@ -274,7 +272,7 @@ pub async fn handle_sources_statistics(service: &AnalyticsService, params: Value
         .optional_i64("days_back")
         .unwrap_or(DEFAULT_ANALYTICS_DAYS_BACK);
 
-    let end_time = Utc::now();
+    let end_time = Timestamp::now();
     let start_time = end_time - Duration::days(days_back);
 
     let stats = service
@@ -501,20 +499,25 @@ pub async fn handle_replay_list_operations(
 
 // Coordination handlers
 
-use sinex_core::rpc::coordination::{InstanceHealthResponse, InstanceInfo, ListInstancesResponse};
+use sinex_primitives::rpc::coordination::{
+    InstanceHealthResponse, InstanceInfo, ListInstancesResponse,
+};
 
 /// Convert InstanceMetadata to InstanceInfo for RPC response
 fn metadata_to_instance_info(
-    meta: &sinex_core::coordination::InstanceMetadata,
+    meta: &sinex_primitives::coordination::InstanceMetadata,
     is_leader: bool,
 ) -> InstanceInfo {
-    use sinex_core::types::domain::{HostName, InstanceId, NodeType};
+    use sinex_primitives::domain::{HostName, InstanceId, NodeType};
 
     InstanceInfo {
         instance_id: InstanceId::new(&meta.instance_id),
         node_type: NodeType::Service, // InstanceMetadata doesn't have node_type, assume Service
         hostname: Some(HostName::new(&meta.hostname)),
-        last_heartbeat: chrono::DateTime::from_timestamp(meta.last_heartbeat, 0),
+        last_heartbeat: Some(
+            *Timestamp::from_unix_timestamp(meta.last_heartbeat)
+                .unwrap_or(time::OffsetDateTime::UNIX_EPOCH.into())
+        ),
         is_leader,
     }
 }
@@ -560,7 +563,7 @@ pub async fn handle_coordination_instance_health(
 
     match metadata {
         Some(meta) => {
-            let now = chrono::Utc::now().timestamp();
+            let now = temporal::now().unix_timestamp();
             let heartbeat_age_secs = now - meta.last_heartbeat;
             let is_healthy = heartbeat_age_secs < 60; // Consider healthy if heartbeat within 60s
             let is_leader = meta.instance_id == leader;
@@ -613,7 +616,7 @@ fn blob_response_payload(content: &[u8], metadata: &sinex_node_sdk::annex::BlobM
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_core::Blob;
+    use sinex_db::models::blob::Blob;
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]

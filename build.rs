@@ -35,7 +35,9 @@ fn main() {
     println!("cargo:rustc-env=SINEX_GIT_BRANCH={}", git_branch);
 
     // Get build timestamp
-    let build_time = chrono::Utc::now().to_rfc3339();
+    let build_time = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
     println!("cargo:rustc-env=SINEX_BUILD_TIME={}", build_time);
 
     // Rerun if .git/HEAD or .git/refs change

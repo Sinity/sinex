@@ -16,7 +16,7 @@ pub mod replay {
         MetricsSnapshot, ProgressTracker, ReplayController, ReplayFilters, ReplayMetrics,
         ReplayMode, ReplayProgress, ReplayResult, ReplayService, ReplayStats,
     };
-    pub use sinex_node_sdk::NodeError;
+    pub use sinex_node_sdk::SinexError;
 
     use sinex_node_sdk::stream_processor::NodeRuntimeState;
 

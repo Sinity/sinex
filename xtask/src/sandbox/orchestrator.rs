@@ -3,8 +3,8 @@
 //! This module implements the hot reload loop for running sinex binaries
 //! in development mode with automatic rebuilding on source changes.
 
+use crate::sandbox::prelude::*;
 use crate::sandbox::watcher::{FileWatcher, WatchEvent};
-use anyhow::{bail, Result};
 use camino::Utf8PathBuf;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -332,7 +332,8 @@ impl DevOrchestrator {
 
         // Set up file watcher
         let (tx, mut rx) = mpsc::channel(32);
-        let _watcher = FileWatcher::for_workspace(self.workspace_root.as_std_path(), tx)?;
+        let _watcher = FileWatcher::for_workspace(self.workspace_root.as_std_path(), tx)
+            .map_err(|e| eyre!(e.to_string()))?;
 
         // Set up signal handler
         let shutdown = self.shutdown_requested.clone();
@@ -406,4 +407,102 @@ impl DevOrchestrator {
 pub async fn run_binary(args: RunArgs, workspace_root: Utf8PathBuf) -> Result<()> {
     let mut orchestrator = DevOrchestrator::new(args, workspace_root);
     orchestrator.run().await
+}
+
+/// Configuration for test ingestd instance
+#[derive(Debug, Clone)]
+pub struct TestIngestdConfig {
+    pub nats: sinex_primitives::nats::NatsConnectionConfig,
+    pub database_url: String,
+    pub work_dir: Option<std::path::PathBuf>,
+    pub namespace: Option<String>,
+    pub batch_size: usize,
+    pub batch_timeout_secs: sinex_primitives::Seconds,
+    pub consumer_fetch_max_messages: usize,
+    pub consumer_fetch_timeout_ms: u64,
+}
+
+impl Default for TestIngestdConfig {
+    fn default() -> Self {
+        Self {
+            nats: sinex_primitives::nats::NatsConnectionConfig::default(),
+            database_url: "postgresql:///sinex_test?host=/run/postgresql".to_string(),
+            work_dir: None,
+            namespace: None,
+            batch_size: 1,
+            batch_timeout_secs: sinex_primitives::Seconds::from_secs(1),
+            consumer_fetch_max_messages: 100,
+            consumer_fetch_timeout_ms: 1000,
+        }
+    }
+}
+
+pub struct TestIngestdHandle {
+    child: tokio::process::Child,
+    pub stream_name: String,
+}
+
+impl TestIngestdHandle {
+    pub async fn stop(&mut self) -> Result<()> {
+        let _ = self.child.kill().await;
+        let _ = self.child.wait().await;
+        Ok(())
+    }
+}
+
+impl Drop for TestIngestdHandle {
+    fn drop(&mut self) {
+        let _ = self.child.start_kill();
+    }
+}
+
+pub async fn start_test_ingestd_with_config(
+    config: TestIngestdConfig,
+    _ctx: Option<&crate::sandbox::context::Sandbox>,
+) -> Result<TestIngestdHandle> {
+    let workspace_root = std::env::current_dir()?;
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
+    let binary_path = workspace_root
+        .join("target")
+        .join(profile)
+        .join("sinex-ingestd");
+
+    if !binary_path.exists() {
+        bail!(
+            "sinex-ingestd binary not found at {:?}. Please build it first.",
+            binary_path
+        );
+    }
+
+    let mut cmd = Command::new(binary_path);
+    cmd.stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+
+    // Set environment variables based on config
+    cmd.env("DATABASE_URL", &config.database_url);
+    cmd.env("NATS_URL", &config.nats.url);
+    if let Some(ns) = &config.namespace {
+        cmd.env("SINEX_NAMESPACE", ns);
+    }
+    cmd.env("BATCH_SIZE", config.batch_size.to_string());
+    cmd.env(
+        "BATCH_TIMEOUT_SECS",
+        config.batch_timeout_secs.as_secs().to_string(),
+    );
+
+    let child = cmd.spawn()?;
+
+    // In a real implementation we'd wait for readiness here.
+    // For now we assume it starts fast enough or tests will wait.
+    let stream_name = format!(
+        "{}_RAW_EVENTS",
+        config.namespace.as_deref().unwrap_or("SINEX")
+    );
+
+    Ok(TestIngestdHandle { child, stream_name })
 }

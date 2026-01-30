@@ -2,18 +2,68 @@
 name = "sinex-primitives"
 version = "0.1.0"
 edition = "2021"
-
-[dependencies]
-serde = { workspace = true }
-serde_json = { workspace = true }
-chrono = { workspace = true }
-gethostname = { workspace = true }
-
-# For Event types
-sinex-core = { path = "../sinex-core", default-features = false, features = ["types-only"] }
-proptest = { workspace = true, optional = true }
+description = "Core domain primitives for Sinex (Events, IDs, Provenance, Environment)"
 
 [features]
 default = []
 testing = []
 proptest = ["dep:proptest"]
+sqlx = ["dep:sqlx"]
+nats = ["dep:async-nats", "dep:nkeys", "dep:futures"]
+
+[dependencies]
+# Core dependencies
+async-nats = { workspace = true, optional = true }
+nkeys = { version = "0.3", optional = true }
+blake3 = { version = "1.5", features = ["std"] }
+urlencoding = "2.1"
+percent-encoding = "2.3"
+parking_lot = "0.12"
+bytes = "1.5"
+futures = { workspace = true, optional = true }
+time = { workspace = true }
+
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+gethostname = { workspace = true }
+schemars = { workspace = true }
+thiserror = { workspace = true }
+camino = { workspace = true, features = ["serde1"] }
+url = { workspace = true, features = ["serde"] }
+tokio = { workspace = true, features = ["sync", "time"] }
+indexmap = { version = "2.1", features = ["serde"] }
+displaydoc = "0.2"
+serde_path_to_error = "0.1"
+color-eyre = { workspace = true }
+tracing = { workspace = true }
+async-trait = "0.1"
+lazy_static = "1.5"
+regex = { workspace = true }
+validator = { workspace = true, features = ["derive"] }
+unicode-normalization = "0.1"
+inventory = { workspace = true }
+
+# Macros
+sinex-macros = { path = "../sinex-macros" }
+
+# Domain dependencies
+sinex-schema = { path = "../sinex-schema" }
+uuid = { workspace = true, features = ["serde", "v4"] }
+bon = { workspace = true }
+notify = { workspace = true }
+rusqlite = { workspace = true }
+tokio-retry = { workspace = true }
+
+# Optional DB support
+sqlx = { workspace = true, optional = true }
+
+[dependencies.proptest]
+workspace = true
+optional = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+sinex-primitives = { path = ".", features = ["testing", "sqlx"] }
+proptest = { workspace = true }
+sinex-db = { path = "../sinex-db" }
+xtask = { path = "../../../xtask", default-features = false, features = ["sandbox"] }

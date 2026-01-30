@@ -20,7 +20,7 @@
 
 use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
 use xtask::sandbox::prelude::*;
-use sinex_test_utils::TestResult;
+use xtask::sandbox::TestResult;
 use sqlx::Row;
 use tempfile::TempDir;
 use tokio::fs;

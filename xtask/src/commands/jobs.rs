@@ -8,14 +8,15 @@ use crate::config::config;
 use crate::jobs::{JobManager, JobStatus};
 
 /// Jobs command configuration
+#[derive(Debug, Clone, clap::Args)]
 pub struct JobsCommand {
+    #[command(subcommand)]
     pub subcommand: JobsSubcommand,
 }
 
 /// Jobs subcommands
 #[derive(Debug, Clone, clap::Subcommand)]
 pub enum JobsSubcommand {
-    /// List recent jobs
     /// List recent jobs
     List {
         #[arg(long, default_value = "20")]
@@ -108,7 +109,15 @@ fn execute_list(manager: &JobManager, limit: usize, ctx: &CommandContext) -> Res
                     job.meta.command,
                     status_str,
                     duration,
-                    job.meta.started_at.format("%Y-%m-%d %H:%M")
+                    job.meta
+                        .started_at
+                        .format(
+                            &time::format_description::parse(
+                                "[year]-[month]-[day] [hour]:[minute]"
+                            )
+                            .unwrap()
+                        )
+                        .unwrap_or_else(|_| "-".into())
                 );
             }
         }

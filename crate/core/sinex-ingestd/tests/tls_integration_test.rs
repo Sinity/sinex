@@ -4,6 +4,7 @@
 //! through all components: EphemeralNats → TestIngestdConfig → IngestService.
 
 use serde_json::json;
+use tokio_stream::StreamExt;
 use xtask::sandbox::{
     nats::{shared_ephemeral_nats, SharedNatsProfile},
     prelude::*,
@@ -11,7 +12,6 @@ use xtask::sandbox::{
     timing_utils::WaitHelpers,
     TestContext, TestIngestdConfig, TestNodePublisher,
 };
-use tokio_stream::StreamExt;
 
 /// Verify that TLS configuration is properly propagated from EphemeralNats through
 /// the ingestd pipeline. This test exercises the full TLS path:

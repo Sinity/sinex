@@ -1,7 +1,7 @@
-use chrono::{DateTime, Utc};
 use std::env;
 use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use time::OffsetDateTime;
 
 fn main() {
     emit_rerun_directives();
@@ -118,9 +118,15 @@ fn build_timestamp_from_env() -> Option<String> {
         return None;
     }
     let when = UNIX_EPOCH + Duration::from_secs(seconds as u64);
-    Some(DateTime::<Utc>::from(when).to_rfc3339())
+    Some(
+        OffsetDateTime::from(when)
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap(),
+    )
 }
 
 fn current_timestamp() -> String {
-    DateTime::<Utc>::from(SystemTime::now()).to_rfc3339()
+    OffsetDateTime::from(SystemTime::now())
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap()
 }

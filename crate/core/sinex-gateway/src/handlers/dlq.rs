@@ -8,12 +8,12 @@
 
 use color_eyre::eyre::{eyre, Context, Result};
 use serde_json::Value;
-use sinex_core::environment::SinexEnvironment;
+use sinex_primitives::environment::SinexEnvironment;
 use sinex_node_sdk::dlq_retry::{DlqRetryConfig, DlqRetryHandler};
 use std::time::Duration;
 
 // Re-export RPC types for consistency
-pub use sinex_core::rpc::dlq::{
+pub use sinex_primitives::rpc::dlq::{
     DlqListResponse, DlqMessagePeek, DlqPeekRequest, DlqPeekResponse, DlqPurgeRequest,
     DlqPurgeResponse, DlqRequeueRequest, DlqRequeueResponse,
 };
@@ -244,7 +244,7 @@ pub async fn handle_dlq_purge(
 mod tests {
     use super::*;
     use serde_json::json;
-    use sinex_core::environment;
+    use sinex_primitives::environment;
     use xtask::sandbox::{sinex_test, EphemeralNats};
 
     #[sinex_test]
@@ -283,7 +283,7 @@ mod tests {
 
         let test_auth = crate::rpc_server::RpcAuthContext {
             token_prefix: "test****".to_string(),
-            authenticated_at: chrono::Utc::now(),
+            authenticated_at: temporal::now(),
         };
 
         // Should fail without event_id or all flag

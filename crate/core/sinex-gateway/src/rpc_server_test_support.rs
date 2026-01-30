@@ -3,7 +3,7 @@
 use axum::http::HeaderMap;
 use color_eyre::eyre::{self, eyre, WrapErr};
 use serde_json::Value;
-use sinex_core::types::{Bytes, Seconds};
+use sinex_primitives::{Bytes, Seconds};
 
 use crate::rpc_server::{
     constant_time_eq as constant_time_eq_inner, extract_token as extract_token_inner,

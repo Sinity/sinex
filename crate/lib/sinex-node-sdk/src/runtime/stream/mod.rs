@@ -19,20 +19,23 @@ use crate::{
     confirmation_handler::{ConfirmedEventHandler, ProcessingModel, ProvisionalEvent},
     event_node::{spawn_event_processor, EventBatcherConfig, EventTransport},
     jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig},
-    NodeError, NodeResult,
+    NodeResult, SinexError,
 };
 use async_nats::jetstream::kv;
 use async_trait::async_trait;
 use camino::Utf8PathBuf;
-use chrono::{DateTime, Utc};
-use color_eyre::eyre::eyre;
+
 use serde::{Deserialize, Serialize};
-use sinex_core::db::models::{Event, EventId, SourceMaterial};
-use sinex_core::db::repositories::DbPoolExt;
+use sinex_db::models::SourceMaterial;
+use sinex_db::repositories::DbPoolExt;
 #[cfg(feature = "db")]
-use sinex_core::db::SqlxPgPool as PgPool;
-use sinex_core::types::buffers::DEFAULT_EVENT_CHANNEL_SIZE;
-use sinex_core::{EventSource, EventType, HostName, JsonValue, OffsetKind, Ulid};
+use sinex_db::DbPool as PgPool;
+use sinex_primitives::events::builder::{EventId, Provenance};
+use sinex_primitives::events::Event;
+const DEFAULT_EVENT_CHANNEL_SIZE: usize = 1024;
+use sinex_primitives::{
+    non_empty::NonEmptyVec, EventSource, EventType, HostName, Id, JsonValue, OffsetKind, Ulid,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -78,7 +81,7 @@ impl RunnerConfirmedEventHandler {
 impl ConfirmedEventHandler for RunnerConfirmedEventHandler {
     async fn handle_confirmed(&self, event: &ProvisionalEvent) -> NodeResult<()> {
         self.sender.send(event.clone()).await.map_err(|err| {
-            NodeError::Processing(format!(
+            SinexError::processing(format!(
                 "Failed to forward confirmed event to automaton: {}",
                 err
             ))
@@ -128,7 +131,7 @@ async fn create_checkpoint_kv(transport: &EventTransport) -> NodeResult<kv::Stor
     };
 
     let js = async_nats::jetstream::new(client);
-    let env = sinex_core::environment();
+    let env = sinex_primitives::environment::environment();
     // nats_kv_bucket_name() returns base_name (e.g. "dev_sinex_checkpoints")
     // We need to prepend "KV_" prefix for NATS bucket naming
     let bucket = format!("KV_{}", env.nats_kv_bucket_name("sinex_checkpoints"));
@@ -141,7 +144,7 @@ async fn create_checkpoint_kv(transport: &EventTransport) -> NodeResult<kv::Stor
     {
         Ok(store) => store,
         Err(create_err) => js.get_key_value(&bucket).await.map_err(|e| {
-            NodeError::General(eyre!(
+            SinexError::lifecycle(format!(
                 "Failed to create/open checkpoint KV bucket (create: {create_err}, open: {e})"
             ))
         })?,
@@ -164,7 +167,7 @@ async fn maybe_start_schema_listener(
     let client = match transport {
         EventTransport::Nats(publisher) => publisher.nats_client().clone(),
     };
-    let env = sinex_core::environment();
+    let env = sinex_primitives::environment::environment();
     let subject = env.nats_subject("system.schemas.active");
     let sub = match client.subscribe(subject.clone()).await {
         Ok(sub) => sub,
@@ -177,7 +180,7 @@ async fn maybe_start_schema_listener(
 
     // Get KV bucket for fetching full schemas - if unavailable, skip schema validation
     let js = async_nats::jetstream::new(client);
-    let env = sinex_core::environment();
+    let env = sinex_primitives::environment::environment();
     let schema_bucket = format!("KV_{}", env.nats_kv_bucket_name("sinex_schemas"));
     let kv = match js.get_key_value(&schema_bucket).await {
         Ok(kv) => kv,
@@ -240,7 +243,10 @@ pub struct ScanReport {
     pub final_checkpoint: Checkpoint,
 
     /// Time range covered by the scan
-    pub time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
+    pub time_range: Option<(
+        sinex_primitives::temporal::OffsetDateTime,
+        sinex_primitives::temporal::OffsetDateTime,
+    )>,
 
     /// Processor-specific statistics
     pub processor_stats: HashMap<String, u64>,
@@ -286,9 +292,9 @@ pub trait Node: Send + Sync {
         &mut self,
         _events: Vec<Event<JsonValue>>,
     ) -> NodeResult<ProcessingStats> {
-        Err(NodeError::General(eyre!(
-            "This processor does not support event batch processing. Only automata should implement this method."
-        )))
+        Err(SinexError::processing(
+            "This processor does not support event batch processing. Only automata should implement this method.".to_string()
+        ))
     }
 
     async fn shutdown(&mut self) -> NodeResult<()> {
@@ -418,7 +424,7 @@ pub struct NodeRunner<T: Node> {
 }
 
 struct LeaderState {
-    kv_client: sinex_core::coordination::kv_client::CoordinationKvClient,
+    kv_client: sinex_primitives::coordination::CoordinationKvClient,
     instance_id: String,
     heartbeat_handle: tokio::task::JoinHandle<()>,
 }
@@ -599,7 +605,7 @@ impl<T: Node + 'static> NodeRunner<T> {
             dry_run,
         );
         let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir).unwrap_or_else(|_| {
-            Utf8PathBuf::from_path_buf(sinex_core::environment().temp_dir())
+            Utf8PathBuf::from_path_buf(sinex_primitives::environment::environment().temp_dir())
                 .unwrap_or_else(|_| Utf8PathBuf::from("/tmp/sinex"))
         });
 
@@ -607,10 +613,10 @@ impl<T: Node + 'static> NodeRunner<T> {
             T::Config::default()
         } else {
             let config_value = serde_json::to_value(&raw_config).map_err(|e| {
-                NodeError::Configuration(format!("Failed to serialize processor config: {e}"))
+                SinexError::configuration(format!("Failed to serialize processor config: {e}"))
             })?;
             serde_json::from_value(config_value).map_err(|e| {
-                NodeError::Configuration(format!("Failed to parse processor config: {e}"))
+                SinexError::configuration(format!("Failed to parse processor config: {e}"))
             })?
         };
 
@@ -656,7 +662,7 @@ impl<T: Node + 'static> NodeRunner<T> {
         args: ScanArgs,
     ) -> NodeResult<ScanReport> {
         if self.handles.is_none() {
-            return Err(NodeError::Lifecycle("Node not initialized".to_string()));
+            return Err(SinexError::lifecycle("Node not initialized".to_string()));
         }
 
         info!(
@@ -695,7 +701,7 @@ impl<T: Node + 'static> NodeRunner<T> {
     /// Run in service mode with startup sequence
     pub async fn run_service(&mut self) -> NodeResult<()> {
         if self.handles.is_none() {
-            return Err(NodeError::Lifecycle("Node not initialized".to_string()));
+            return Err(SinexError::lifecycle("Node not initialized".to_string()));
         }
 
         let node_type = self.node.node_type();
@@ -718,7 +724,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                 }
                 #[cfg(not(feature = "messaging"))]
                 {
-                    Err(NodeError::Configuration(
+                    Err(SinexError::configuration(
                         "Messaging feature required for Automaton mode".to_string(),
                     ))
                 }
@@ -754,7 +760,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                     .scan(
                         current_checkpoint,
                         TimeHorizon::Historical {
-                            end_time: Utc::now(),
+                            end_time: sinex_primitives::temporal::OffsetDateTime::now_utc(),
                         },
                         ScanArgs::default(),
                     )
@@ -805,20 +811,20 @@ impl<T: Node + 'static> NodeRunner<T> {
                 // Use CoordinationKvClient to check leadership
                 let rs = self
                     .runtime_state()
-                    .ok_or_else(|| NodeError::General(eyre!("Runtime state missing")))?;
+                    .ok_or_else(|| SinexError::lifecycle("Runtime state missing".to_string()))?;
 
                 #[cfg(feature = "messaging")]
                 {
                     let nc = rs
                         .nats_client()
-                        .ok_or_else(|| NodeError::General(eyre!("NATS client missing")))?;
+                        .ok_or_else(|| SinexError::lifecycle("NATS client missing".to_string()))?;
                     let service = rs.service_info().service_name().to_string();
                     let host = rs.service_info().host().to_string();
                     let pid = std::process::id();
                     let instance_id = format!("{}-{}", host, pid);
 
                     let js = async_nats::jetstream::new(nc);
-                    let kv_client = sinex_core::coordination::kv_client::CoordinationKvClient::new(
+                    let kv_client = sinex_primitives::coordination::CoordinationKvClient::new(
                         js,
                         service.clone(),
                     );
@@ -829,7 +835,10 @@ impl<T: Node + 'static> NodeRunner<T> {
                             .acquire_leadership(&instance_id)
                             .await
                             .map_err(|e| {
-                                NodeError::General(eyre!("Failed to acquire leadership: {}", e))
+                                SinexError::processing(format!(
+                                    "Failed to acquire leadership: {}",
+                                    e
+                                ))
                             })?;
 
                     if !is_leader {
@@ -888,7 +897,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                     .scan(
                         current_checkpoint,
                         TimeHorizon::Historical {
-                            end_time: Utc::now(),
+                            end_time: sinex_primitives::temporal::OffsetDateTime::now_utc(),
                         },
                         ScanArgs::default(),
                     )
@@ -908,7 +917,7 @@ impl<T: Node + 'static> NodeRunner<T> {
         let handles = self
             .handles
             .as_ref()
-            .ok_or_else(|| NodeError::Lifecycle("Runner handles not initialized".to_string()))?;
+            .ok_or_else(|| SinexError::lifecycle("Runner handles not initialized".to_string()))?;
 
         #[cfg(feature = "db")]
         let db_pool = handles.db_pool().cloned();
@@ -925,7 +934,7 @@ impl<T: Node + 'static> NodeRunner<T> {
             mpsc::channel::<ProvisionalEvent>(CONFIRMED_EVENT_CHANNEL_CAPACITY);
         let handler = Arc::new(RunnerConfirmedEventHandler::new(sender));
 
-        let env = sinex_core::environment().clone();
+        let env = sinex_primitives::environment::environment().clone();
 
         let nats_client = match &transport {
             EventTransport::Nats(publisher) => publisher.nats_client().clone(),
@@ -962,7 +971,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                 .scan(
                     from,
                     TimeHorizon::Historical {
-                        end_time: Utc::now(),
+                        end_time: sinex_primitives::temporal::OffsetDateTime::now_utc(),
                     },
                     ScanArgs::default(),
                 )
@@ -1040,7 +1049,7 @@ impl<T: Node + 'static> NodeRunner<T> {
             .get_by_id(event_id.clone())
             .await
             .map_err(|err| {
-                NodeError::Processing(format!(
+                SinexError::processing(format!(
                     "Failed to load confirmed event {} from database: {}",
                     event_id_str, err
                 ))
@@ -1049,7 +1058,7 @@ impl<T: Node + 'static> NodeRunner<T> {
 
     fn parse_ulid(value: &str, field: &str) -> NodeResult<Ulid> {
         value.parse::<Ulid>().map_err(|err| {
-            NodeError::Processing(format!("Invalid ULID for {}: {} ({})", field, value, err))
+            SinexError::processing(format!("Invalid ULID for {}: {} ({})", field, value, err))
         })
     }
 
@@ -1086,7 +1095,7 @@ impl<T: Node + 'static> NodeRunner<T> {
 
         let published: PublishedEventPayload = serde_json::from_value(provisional.payload.clone())
             .map_err(|err| {
-                NodeError::Processing(format!(
+                SinexError::processing(format!(
                     "Failed to parse provisional event payload: {}",
                     err
                 ))
@@ -1096,11 +1105,11 @@ impl<T: Node + 'static> NodeRunner<T> {
         let provenance = match (published.source_material_id, published.source_event_ids) {
             (Some(material_id), None) => {
                 let anchor_byte = published.anchor_byte.ok_or_else(|| {
-                    NodeError::Processing("Material provenance missing anchor_byte".to_string())
+                    SinexError::processing("Material provenance missing anchor_byte".to_string())
                 })?;
                 let material_ulid = Self::parse_ulid(&material_id, "source_material_id")?;
-                sinex_core::Provenance::Material {
-                    id: sinex_core::Id::<SourceMaterial>::from_ulid(material_ulid),
+                Provenance::Material {
+                    id: Id::<SourceMaterial>::from_ulid(material_ulid),
                     anchor_byte,
                     offset_start: published.offset_start,
                     offset_end: published.offset_end,
@@ -1113,24 +1122,23 @@ impl<T: Node + 'static> NodeRunner<T> {
                     let ulid = Self::parse_ulid(&raw_id, "source_event_ids")?;
                     ids.push(EventId::from_ulid(ulid));
                 }
-                let source_event_ids = sinex_core::types::non_empty::NonEmptyVec::from_vec(ids)
-                    .ok_or_else(|| {
-                        NodeError::Processing(
-                            "Synthesis provenance missing source_event_ids".to_string(),
-                        )
-                    })?;
-                sinex_core::Provenance::Synthesis {
+                let source_event_ids = NonEmptyVec::from_vec(ids).ok_or_else(|| {
+                    SinexError::processing(
+                        "Synthesis provenance missing source_event_ids".to_string(),
+                    )
+                })?;
+                Provenance::Synthesis {
                     source_event_ids,
                     operation_id: None,
                 }
             }
             (Some(_), Some(_)) => {
-                return Err(NodeError::Processing(
+                return Err(SinexError::processing(
                     "Provisional event contains both material and synthesis provenance".to_string(),
                 ))
             }
             (None, None) => {
-                return Err(NodeError::Processing(
+                return Err(SinexError::processing(
                     "Provisional event missing provenance".to_string(),
                 ))
             }

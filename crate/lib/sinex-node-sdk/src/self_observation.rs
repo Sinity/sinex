@@ -28,13 +28,13 @@
 //! ```
 
 use async_nats::Client as NatsClient;
-use sinex_core::db::models::Event;
-use sinex_core::types::events::payloads::{
+use sinex_primitives::events::payloads::{
     AssemblyStatsPayload, GatewayRequestStatsPayload, HealthStatusPayload, MetricCounterPayload,
     MetricGaugePayload, MetricHistogramPayload, NodeProcessingStatsPayload, PoolStatsPayload,
     RateLimitExceededPayload, ReplayStatsPayload, StreamStatsPayload,
 };
-use sinex_core::{EventId, Provenance, Ulid};
+use sinex_primitives::events::{Event, EventId, Provenance};
+use sinex_primitives::Ulid;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -145,7 +145,7 @@ impl SelfObserver {
     }
 
     /// Publish a self-observation event to NATS (internal method)
-    async fn publish<P: sinex_core::EventPayload>(
+    async fn publish<P: sinex_primitives::events::EventPayload>(
         &self,
         payload: P,
     ) -> Result<(), SelfObservationError> {

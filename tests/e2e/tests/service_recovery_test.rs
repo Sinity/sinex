@@ -12,21 +12,22 @@
 //! - JetStream consumer recovery
 
 use async_nats::jetstream;
-use chrono::{Duration as ChronoDuration, Utc};
 use color_eyre::eyre::eyre;
 use futures::StreamExt;
 use serde_json::json;
-use sinex_core::coordination::kv_client::{CoordinationKvClient, InstanceMetadata};
-use sinex_core::environment::environment;
-use sinex_core::DynamicPayload;
+use sinex_primitives::coordination::kv_client::{CoordinationKvClient, InstanceMetadata};
+use sinex_primitives::environment::environment;
+use sinex_primitives::DynamicPayload;
 use sinex_node_sdk::stream_processor::SchemaBroadcastEntry;
+use sinex_primitives::temporal::{now, Duration as SinexDuration};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
+use tokio::time::timeout;
+use time::Duration;
 use xtask::sandbox::nats::ensure_coordination_buckets;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 use xtask::sandbox::{start_test_ingestd_with_config, TestIngestdConfig};
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
-use tokio::time::{timeout, Duration};
 
 fn is_jetstream_no_messages_error(msg: &str) -> bool {
     msg.contains("No Messages")
@@ -36,7 +37,7 @@ fn is_jetstream_no_messages_error(msg: &str) -> bool {
 
 async fn ensure_raw_event_streams(
     nats_client: &async_nats::Client,
-    env: &sinex_core::environment::SinexEnvironment,
+    env: &sinex_primitives::environment::SinexEnvironment,
 ) -> Result<()> {
     let js = jetstream::new(nats_client.clone());
     let events_stream = "sinex_test_events".to_string();
@@ -65,7 +66,7 @@ async fn ensure_raw_event_streams(
 async fn wait_for_schema_broadcast(
     subscription: &mut async_nats::Subscriber,
 ) -> Result<Vec<SchemaBroadcastEntry>> {
-    let message = timeout(Duration::from_secs(Timeouts::SHORT), subscription.next())
+    let message = timeout(time::Duration::from_secs(Timeouts::SHORT), subscription.next())
         .await
         .map_err(|_| eyre!("Timed out waiting for schema broadcast"))?
         .ok_or_else(|| eyre!("Schema broadcast subscription closed"))?;
@@ -140,11 +141,11 @@ async fn test_pool_recovery_after_connection_invalidation(ctx: TestContext) -> R
                 {
                     Ok(event) => {
                         assert!(event.id.is_some());
-                        Ok::<bool, sinex_test_utils::SinexError>(true)
+                        Ok::<bool, xtask::sandbox::SinexError>(true)
                     }
                     Err(e) => {
                         tracing::warn!("Recovery attempt {} failed: {}", attempt, e);
-                        Ok::<bool, sinex_test_utils::SinexError>(false)
+                        Ok::<bool, xtask::sandbox::SinexError>(false)
                     }
                 }
             }
@@ -192,7 +193,7 @@ async fn test_pool_concurrent_stress_recovery(ctx: TestContext) -> Result<()> {
                             json!({
                                 "task_id": task_id,
                                 "iteration": iteration,
-                                "timestamp": chrono::Utc::now().to_rfc3339()
+                                "timestamp": crate::temporal::now().to_rfc3339()
                             }),
                         ))
                         .await
@@ -382,7 +383,7 @@ async fn test_ingestd_restart_event_continuity(ctx: TestContext) -> Result<()> {
         .events()
         .get_by_event_type(
             &EventType::from("after.restart"),
-            sinex_core::types::Pagination::new(Some(10), None),
+            sinex_primitives::Pagination::new(Some(10), None),
         )
         .await?;
 
@@ -501,7 +502,7 @@ async fn test_multi_source_concurrent_ingestion(ctx: TestContext) -> Result<()> 
             .events()
             .get_by_source(
                 &EventSource::from(*source),
-                sinex_core::types::Pagination::new(Some(100), None),
+                sinex_primitives::Pagination::new(Some(100), None),
             )
             .await?;
         source_counts.insert(*source, events.len());
@@ -547,13 +548,14 @@ async fn test_leadership_heartbeat_timeout_detection(ctx: TestContext) -> Result
 
     let kv_client = CoordinationKvClient::new(js.clone(), service_name.clone());
 
+    let now_ts = now();
     // Register leader with a stale heartbeat (60 seconds old)
     let metadata = InstanceMetadata {
         instance_id: stale_instance.clone(),
         hostname: "stale-host".to_string(),
         version: "1.0.0".to_string(),
-        started_at: (Utc::now() - ChronoDuration::seconds(120)).timestamp(),
-        last_heartbeat: (Utc::now() - ChronoDuration::seconds(60)).timestamp(),
+        started_at: (now_ts - SinexDuration::seconds(120)).unix_timestamp(),
+        last_heartbeat: (now_ts - SinexDuration::seconds(60)).unix_timestamp(),
     };
     kv_client.register_instance(&metadata).await?;
     assert!(kv_client.acquire_leadership(&stale_instance).await?);
@@ -569,15 +571,15 @@ async fn test_leadership_heartbeat_timeout_detection(ctx: TestContext) -> Result
     let key = format!("{}.{}", service_name, stale_instance);
     let entry = bucket.entry(&key).await?.expect("metadata present");
     let stored: InstanceMetadata = serde_json::from_slice(&entry.value)?;
-    assert!(stored.last_heartbeat < (Utc::now() - ChronoDuration::seconds(30)).timestamp());
+    assert!(stored.last_heartbeat < (now_ts - SinexDuration::seconds(30)).unix_timestamp());
 
     // Standby registers and attempts takeover (should initially fail)
     let standby_meta = InstanceMetadata {
         instance_id: standby_instance.clone(),
         hostname: "standby-host".to_string(),
         version: "1.0.1".to_string(),
-        started_at: Utc::now().timestamp(),
-        last_heartbeat: Utc::now().timestamp(),
+        started_at: now_ts.unix_timestamp(),
+        last_heartbeat: now_ts.unix_timestamp(),
     };
     kv_client.register_instance(&standby_meta).await?;
     assert!(
@@ -622,12 +624,13 @@ async fn test_concurrent_leadership_acquisition(ctx: TestContext) -> Result<()> 
             let kv_client = CoordinationKvClient::new(js, service);
             let instance_id = uuid::Uuid::new_v4().to_string();
 
+            let now_ts = now();
             let metadata = InstanceMetadata {
                 instance_id: instance_id.clone(),
                 hostname: format!("instance-{idx}"),
                 version: "1.0.0".to_string(),
-                started_at: Utc::now().timestamp(),
-                last_heartbeat: Utc::now().timestamp(),
+                started_at: now_ts.unix_timestamp(),
+                last_heartbeat: now_ts.unix_timestamp(),
             };
             kv_client.register_instance(&metadata).await.unwrap();
 
@@ -705,11 +708,11 @@ async fn test_jetstream_consumer_durable_recovery(ctx: TestContext) -> Result<()
     // "No Messages" status even when messages exist, so tolerate a short warm-up.
     let mut acked_count: usize = 0;
     let start = std::time::Instant::now();
-    while acked_count < 3 && start.elapsed() < std::time::Duration::from_secs(Timeouts::QUICK) {
+    while acked_count < 3 && start.elapsed() < time::Duration::from_secs(Timeouts::QUICK).to_std()? {
         let fetch_result = consumer
             .fetch()
             .max_messages(3 - acked_count)
-            .expires(std::time::Duration::from_millis(1000))
+            .expires(time::Duration::from_millis(1000).to_std()?)
             .messages()
             .await;
 
@@ -772,11 +775,11 @@ async fn test_jetstream_consumer_durable_recovery(ctx: TestContext) -> Result<()
     // in-flight, so we tolerate a few empty polls and retry briefly.
     let mut remaining_count: usize = 0;
     let start = std::time::Instant::now();
-    while remaining_count < 7 && start.elapsed() < std::time::Duration::from_secs(Timeouts::QUICK) {
+    while remaining_count < 7 && start.elapsed() < time::Duration::from_secs(Timeouts::QUICK).to_std()? {
         let fetch_result = consumer
             .fetch()
             .max_messages(10)
-            .expires(std::time::Duration::from_millis(1000))
+            .expires(time::Duration::from_millis(1000).to_std()?)
             .messages()
             .await;
         match fetch_result {

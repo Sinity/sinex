@@ -3,14 +3,14 @@
 //! Tests that verify automaton processing, state management, and event handling properties
 //! for the modern NATS-based Node implementations.
 
-use chrono::Utc;
 use proptest::prelude::*;
 use serde_json::json;
-use sinex_core::types::domain::{EventSource, EventType};
-use sinex_core::{Event, JsonValue};
+use sinex_node_sdk::types::domain::{EventSource, EventType};
+use sinex_node_sdk::{Event, JsonValue};
 use sinex_node_sdk::{Checkpoint, NodeType, ScanArgs, TimeHorizon};
-use xtask::sandbox::{prelude::*, sinex_proptest, test_event};
 use std::collections::HashMap;
+use time::OffsetDateTime;
+use xtask::sandbox::{prelude::*, sinex_proptest, test_event};
 
 /// Create property test strategies for events
 fn arb_event_data() -> impl Strategy<Value = (String, String, serde_json::Value)> {
@@ -90,11 +90,11 @@ sinex_proptest! {
         let checkpoints = vec![
             Checkpoint::None,
             Checkpoint::Internal {
-                event_id: sinex_core::types::ulid::Ulid::new(),
+                event_id: sinex_node_sdk::types::ulid::Ulid::new(),
                 message_count,
             },
             Checkpoint::Timestamp {
-                timestamp: Utc::now() + chrono::Duration::seconds(timestamp_offset),
+                timestamp: OffsetDateTime::now_utc() + time::time::Duration::seconds(timestamp_offset),
                 metadata: Some(json!({"test": true})),
             },
         ];
@@ -226,14 +226,14 @@ sinex_proptest! {
         message_count in 0u64..1000u64,
     ) -> TestResult<()> {
         let checkpoint1 = Checkpoint::Internal {
-            event_id: sinex_core::types::ulid::Ulid::new(),
+            event_id: sinex_node_sdk::types::ulid::Ulid::new(),
             message_count,
         };
 
         let checkpoint2 = Checkpoint::None;
 
         let checkpoint3 = Checkpoint::Timestamp {
-            timestamp: Utc::now(),
+            timestamp: OffsetDateTime::now_utc(),
             metadata: Some(json!({"test": "data"})),
         };
 
@@ -244,7 +244,7 @@ sinex_proptest! {
 
         // Property: Same type checkpoints should have similar description format
         let checkpoint4 = Checkpoint::Internal {
-            event_id: sinex_core::types::ulid::Ulid::new(),
+            event_id: sinex_node_sdk::types::ulid::Ulid::new(),
             message_count,
         };
 
@@ -261,7 +261,7 @@ sinex_proptest! {
     fn test_time_horizon_behavior_properties(
         hours_forward in 1u32..24u32, // 1 hour to 1 day
     ) -> TestResult<()> {
-        let end_time = Utc::now() + chrono::Duration::hours(hours_forward as i64);
+        let end_time = OffsetDateTime::now_utc() + time::time::Duration::hours(hours_forward as i64);
 
         let horizons = vec![
             TimeHorizon::Snapshot,

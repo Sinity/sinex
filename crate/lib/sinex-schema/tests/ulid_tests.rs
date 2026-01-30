@@ -13,11 +13,11 @@ use proptest::prelude::*;
 use proptest::strategy::{BoxedStrategy, Strategy};
 use sinex_schema::ulid::{Ulid, UlidError};
 use sinex_schema::ulid_conversions::ulid_to_uuid;
-use xtask::sandbox::sinex_test;
 use std::collections::HashSet;
 use std::sync::{Arc, Barrier};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
+use xtask::sandbox::sinex_test;
 
 fn _spin_for(duration: Duration) {
     if duration.is_zero() {
@@ -352,7 +352,7 @@ mod conversion_tests {
 #[cfg(test)]
 mod property_tests {
     use super::*;
-    use sinex_test_utils::sinex_proptest;
+    use xtask::sandbox::sinex_proptest;
 
     sinex_proptest! {
         fn test_ulid_string_roundtrip(ulid: Ulid in ulid_strategy()) -> TestResult<()> {

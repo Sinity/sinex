@@ -44,17 +44,17 @@ async fn test_basic_stream_processing(ctx: TestContext) -> TestResult<()> {
         json!({
             "event_type": "test.basic.event_1",
             "payload": "First test event",
-            "timestamp": chrono::Utc::now().to_rfc3339(),
+            "timestamp": crate::temporal::now().to_rfc3339(),
         }),
         json!({
             "event_type": "test.basic.event_2", 
             "payload": "Second test event",
-            "timestamp": chrono::Utc::now().to_rfc3339(),
+            "timestamp": crate::temporal::now().to_rfc3339(),
         }),
         json!({
             "event_type": "test.basic.event_3",
             "payload": "Third test event",
-            "timestamp": chrono::Utc::now().to_rfc3339(),
+            "timestamp": crate::temporal::now().to_rfc3339(),
         }),
     ];
 
@@ -425,7 +425,7 @@ async fn test_ordered_stream_processing(ctx: TestContext) -> TestResult<()> {
         let event = json!({
             "event_type": "ordered_event",
             "sequence_number": i,
-            "timestamp": chrono::Utc::now().to_rfc3339(),
+            "timestamp": crate::temporal::now().to_rfc3339(),
             "payload": format!("Event in sequence: {}", i),
         });
         

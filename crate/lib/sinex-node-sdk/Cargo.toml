@@ -1,93 +1,106 @@
 [package]
 name = "sinex-node-sdk"
-version.workspace = true
-edition.workspace = true
-authors.workspace = true
+version = "0.4.2"
+edition = "2021"
 
 [dependencies]
-camino = { workspace = true }
-# Core dependencies
-thiserror.workspace = true
-color-eyre.workspace = true
-bon.workspace = true
-async-trait.workspace = true
-tokio = { workspace = true, features = ["full"] }
-tokio-stream = { workspace = true }
 futures = "0.3"
-tracing.workspace = true
-tracing-subscriber.workspace = true
-tempfile.workspace = true
-
-# Serialization
-serde.workspace = true
-serde_json.workspace = true
-jsonschema.workspace = true
-
-# Database
-# Database
-sqlx = { workspace = true, optional = true }
-
-# NATS for message bus (replaces Redis)
-async-nats = { workspace = true, optional = true }
-
-# Time and IDs
-chrono.workspace = true
-uuid.workspace = true
-semver = { version = "1.0", features = ["serde"] }
-
-# Configuration
-clap = { workspace = true, features = ["derive"] }
-dirs.workspace = true
 toml = "0.8"
-validator = { workspace = true }
-figment = { workspace = true }
-uncased = { workspace = true }
-
-# System
 sd-notify = "0.4"
-gethostname.workspace = true
 parking_lot = "0.12"
-ahash.workspace = true
 blake3 = "1.5"
-sha2 = { version = "0.10", default-features = false, features = ["std"] }
 sysinfo = "0.31"
-nix = { version = "0.28", features = ["fs", "resource"] }
 url = "2.5"
 which = "6.0"
 urlencoding = "2.1"
-notify = { workspace = true }
 libc = "0.2"
+semver = { version = "1.0", features = ["serde"] }
 
-# Local dependencies
-# Local dependencies
-sinex-core = { path = "../sinex-core", default-features = false, features = ["types-only"] }
-sinex-macros = { path = "../sinex-macros", optional = true }
-# Removed sinex-preflight - now part of this crate
-# Removed sinex-nats - now part of this crate
+# Sinex crates
+sinex-primitives = { path = "../sinex-primitives", features = ["sqlx", "nats"] }
 
-[build-dependencies]
-chrono = { workspace = true }
+sinex-db = { path = "../sinex-db", optional = true }
 
 [features]
-default = ["db", "messaging"]
-db = ["dep:sqlx", "sinex-core/sqlx"]
-messaging = ["dep:async-nats", "sinex-core/nats"]
+default = ["db", "messaging", "preflight"]
+db = ["dep:sinex-db", "sinex-db/sqlx", "dep:sqlx"]
+messaging = ["async-nats"]
 event-source = []
 automaton = []
 macros = ["dep:sinex-macros"]
 preflight = []
 external-tests = []
 
+[dependencies.camino]
+workspace = true
+[dependencies.thiserror]
+workspace = true
+[dependencies.color-eyre]
+workspace = true
+[dependencies.bon]
+workspace = true
+[dependencies.async-trait]
+workspace = true
+[dependencies.tokio]
+workspace = true
+features = ["full"]
+[dependencies.tokio-stream]
+workspace = true
+[dependencies.tracing]
+workspace = true
+[dependencies.tracing-subscriber]
+workspace = true
+[dependencies.tempfile]
+workspace = true
+[dependencies.serde]
+workspace = true
+[dependencies.serde_json]
+workspace = true
+[dependencies.jsonschema]
+workspace = true
+[dependencies.sqlx]
+workspace = true
+optional = true
+[dependencies.async-nats]
+workspace = true
+optional = true
+[dependencies.time]
+workspace = true
+[dependencies.uuid]
+workspace = true
+[dependencies.clap]
+workspace = true
+features = ["derive"]
+[dependencies.dirs]
+workspace = true
+[dependencies.validator]
+workspace = true
+[dependencies.figment]
+workspace = true
+[dependencies.uncased]
+workspace = true
+[dependencies.gethostname]
+workspace = true
+[dependencies.ahash]
+workspace = true
+[dependencies.sha2]
+version = "0.10"
+default-features = false
+features = ["std"]
+[dependencies.nix]
+version = "0.28"
+features = ["fs", "resource"]
+[dependencies.notify]
+workspace = true
+[dependencies.sinex-macros]
+path = "../sinex-macros"
+optional = true
+
+[build-dependencies.time]
+workspace = true
+
 [dev-dependencies]
 tempfile = "3.13"
+proptest = "1"
 xtask = { path = "../../../xtask", default-features = false, features = ["sandbox"] }
-proptest = { workspace = true }
-
-[[bin]]
-name = "sinex-preflight"
-path = "src/bin/sinex-preflight.rs"
-required-features = ["preflight"]
-
-[[example]]
-name = "git_activity_detector"
-path = "examples/git_activity_detector.rs"
+sinex-primitives = { path = "../sinex-primitives", features = ["testing"] }

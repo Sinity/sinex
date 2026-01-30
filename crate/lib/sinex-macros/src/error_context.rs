@@ -400,8 +400,8 @@ fn is_result_type(ty: &Type) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::sinex_test;
     use syn::parse_quote;
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     fn test_result_type_detection() -> TestResult<()> {

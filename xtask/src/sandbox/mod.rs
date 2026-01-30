@@ -1,5 +1,4 @@
 //! Development sandbox and infrastructure modules.
-pub mod prelude;
 //!
 //! Comprehensive isolated development environment including:
 //! - Ephemeral NATS servers and JetStream
@@ -10,21 +9,23 @@ pub mod prelude;
 //! - Hot reload and file watching
 //! - Stack orchestration
 
+pub mod prelude;
+
 pub mod assertions;
 pub mod chaos;
 pub mod context;
 pub mod coordination;
+pub mod dataset_seeds;
 pub mod db;
 pub mod fs;
 pub mod generate;
 pub mod hooks;
 pub mod nats;
+pub mod node_runtime;
 pub mod orchestrator;
 pub mod preflight;
 pub mod snapshot;
 pub mod snapshot_helper;
-pub mod stack;
-pub mod state;
 pub mod tether;
 pub mod timing;
 pub mod watcher;
@@ -38,10 +39,29 @@ pub use db::*;
 pub use fs::*;
 pub use hooks::*;
 pub use nats::*;
+pub use node_runtime::*;
 pub use preflight::*;
+pub use prelude::*;
 pub use snapshot::*;
 pub use snapshot_helper::*;
 // pub use timing::*;  // TODO: Enable after fixing dependencies
 
-// Re-export test macro
-pub use xtask_macros::sinex_test;
+// Re-export test macros
+pub use xtask_macros::{sinex_bench, sinex_prop, sinex_proptest, sinex_serial_test, sinex_test};
+
+// Re-export test event helper
+pub use sinex_primitives::testing::event_fixture as test_event;
+
+/// Configures proptest runner with sandbox defaults
+pub fn sinex_prop_runner_config(
+    cases: u32,
+    _module: &str,
+    _name: &str,
+) -> proptest::test_runner::Config {
+    let mut config = proptest::test_runner::Config::with_cases(cases);
+    // Use default failure persistence for now to avoid compilation issues with version mismatches
+    config.failure_persistence = Some(Box::new(
+        proptest::test_runner::FileFailurePersistence::default(),
+    ));
+    config
+}

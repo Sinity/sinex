@@ -1,6 +1,6 @@
 use serde_json::json;
-use sinex_core::db::query_helpers::ulid_to_uuid;
-use sinex_core::{DynamicPayload, Ulid};
+use sinex_primitives::db::query_helpers::ulid_to_uuid;
+use sinex_primitives::{DynamicPayload, Ulid};
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{WaitHelpers, DEFAULT_WAIT_SECS};
 

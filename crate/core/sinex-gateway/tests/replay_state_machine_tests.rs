@@ -1,6 +1,6 @@
 use chrono::{TimeZone, Utc};
-use sinex_core::types::ulid::Ulid;
 use sinex_gateway::{ReplayCheckpoint, ReplayOperation, ReplayScope, ReplayState};
+use sinex_primitives::Ulid;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]

@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 use serde_json::Value;
-use sinex_core::types::events::payloads::process::ProcessStatus;
-use sinex_core::types::Seconds;
+use sinex_node_sdk::types::events::payloads::process::ProcessStatus;
+use sinex_node_sdk::types::Seconds;
 use sinex_node_sdk::heartbeat::{HeartbeatEmitter, HeartbeatLogSink};
 use xtask::sandbox::sinex_test;
 

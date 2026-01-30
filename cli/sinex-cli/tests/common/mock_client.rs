@@ -3,7 +3,7 @@
 #![allow(dead_code)]
 
 use serde_json::Value;
-use sinex_core::rpc::{
+use sinex_primitives::rpc::{
     coordination::InstanceInfo, dlq::*, nodes::*, replay::*, system::SystemHealthResponse,
 };
 use std::collections::HashMap;
@@ -107,7 +107,7 @@ impl MockGatewayClient {
     }
 
     pub async fn health(&self) -> Result<SystemHealthResponse> {
-        use sinex_core::rpc::system::{ComponentHealth, ComponentsHealth, ReplayControlHealth};
+        use sinex_primitives::rpc::system::{ComponentHealth, ComponentsHealth, ReplayControlHealth};
 
         self.record_call("health", vec![]);
         Ok(self
@@ -151,7 +151,7 @@ impl MockGatewayClient {
     }
 
     pub async fn node_status(&self, node_id: &str) -> Result<NodeStatus> {
-        use sinex_core::types::domain::{NodeId, NodeState};
+        use sinex_primitives::domain::{NodeId, NodeState};
 
         self.record_call("node_status", vec![node_id.to_string()]);
         Ok(self
@@ -201,7 +201,7 @@ impl MockGatewayClient {
     }
 
     pub async fn replay_status(&self, operation_id: &str) -> Result<ReplayOperation> {
-        use sinex_core::rpc::replay::{ReplayCheckpoint, ReplayScope, ReplayState};
+        use sinex_primitives::rpc::replay::{ReplayCheckpoint, ReplayScope, ReplayState};
         use std::collections::HashMap;
 
         self.record_call("replay_status", vec![operation_id.to_string()]);
@@ -227,10 +227,10 @@ impl MockGatewayClient {
                     last_event_id: None,
                     batch_number: 0,
                     savepoint_id: None,
-                    updated_at: chrono::Utc::now().to_rfc3339(),
+                    updated_at: crate::temporal::now().to_rfc3339(),
                 },
                 actor: "test-actor".to_string(),
-                created_at: chrono::Utc::now().to_rfc3339(),
+                created_at: crate::temporal::now().to_rfc3339(),
                 approved_by: None,
                 approved_at: None,
                 executor_node: None,

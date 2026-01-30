@@ -1,6 +1,6 @@
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sinex_schema::ulid::Ulid;
+use sinex_primitives::temporal::Timestamp;
+use sinex_primitives::Ulid;
 
 /// Search query parameters
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -8,8 +8,8 @@ pub struct SearchQuery {
     pub text: Option<String>,
     pub sources: Vec<String>,
     pub event_types: Vec<String>,
-    pub start_time: Option<DateTime<Utc>>,
-    pub end_time: Option<DateTime<Utc>>,
+    pub start_time: Option<Timestamp>,
+    pub end_time: Option<Timestamp>,
     pub limit: i32,
     pub offset: i32,
 }
@@ -35,7 +35,7 @@ pub struct SearchResult {
     pub source: String,
     pub event_type: String,
     pub host: String,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
     pub snippet: String,
     pub score: f64,
 }

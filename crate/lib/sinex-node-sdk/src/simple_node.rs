@@ -51,10 +51,15 @@
 //! ```
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use sinex_core::db::models::{Event, EventId};
-use sinex_core::{EventSource, EventType, HostName, JsonValue, Ulid};
+use sinex_primitives::{
+    domain::{EventSource, EventType, HostName},
+    events::builder::EventId,
+    events::{Event, Provenance},
+    ids::Id,
+    JsonValue, Ulid,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -68,7 +73,7 @@ use crate::stream_processor::{
     Checkpoint, EventSender, NodeCapabilities, NodeInitContext, NodeRuntimeState, NodeType,
     ScanArgs, ScanEstimate, ScanReport, TimeHorizon,
 };
-use crate::{NodeError, NodeResult};
+use crate::{NodeResult, SinexError};
 
 /// Errors specific to SimpleNode
 #[derive(Debug, Error)]
@@ -86,9 +91,9 @@ pub enum SimpleNodeError {
     OutputSerialization(String),
 }
 
-impl From<SimpleNodeError> for NodeError {
+impl From<SimpleNodeError> for SinexError {
     fn from(err: SimpleNodeError) -> Self {
-        NodeError::Processing(err.to_string())
+        SinexError::processing(err.to_string())
     }
 }
 
@@ -97,7 +102,7 @@ impl From<SimpleNodeError> for NodeError {
 pub struct SimpleNodeContext {
     pub source: String,
     pub event_type: String,
-    pub ts_orig: Option<DateTime<Utc>>,
+    pub ts_orig: Option<sinex_primitives::temporal::Timestamp>,
     pub event_id: Ulid,
 }
 
@@ -168,7 +173,7 @@ pub struct PersistedState<S> {
     /// Number of events processed
     pub events_processed: u64,
     /// Last checkpoint time
-    pub last_checkpoint: DateTime<Utc>,
+    pub last_checkpoint: sinex_primitives::temporal::Timestamp,
     /// State version for migration support
     pub version: u32,
 }
@@ -178,7 +183,7 @@ impl<S: Default> Default for PersistedState<S> {
         Self {
             state: S::default(),
             events_processed: 0,
-            last_checkpoint: Utc::now(),
+            last_checkpoint: sinex_primitives::temporal::now(),
             version: 1,
         }
     }
@@ -444,7 +449,7 @@ where
                 format!("simple_processor_{}", self.processor.name()),
             ),
             processed_count: self.persisted_state.events_processed,
-            last_activity: chrono::Utc::now(),
+            last_activity: sinex_primitives::temporal::now_utc(),
             data: Some(state_json),
             version: 2,
             revision: self.last_revision,
@@ -459,9 +464,9 @@ where
             return Ok(());
         };
 
-        self.persisted_state.last_checkpoint = Utc::now();
+        self.persisted_state.last_checkpoint = sinex_primitives::temporal::now();
         let state_json = serde_json::to_value(&self.persisted_state)
-            .map_err(|e| NodeError::Processing(format!("Failed to serialize state: {}", e)))?;
+            .map_err(|e| SinexError::processing(format!("Failed to serialize state: {}", e)))?;
 
         let checkpoint_state = CheckpointState {
             checkpoint: Checkpoint::external(
@@ -469,7 +474,7 @@ where
                 format!("simple_processor_{}", self.processor.name()),
             ),
             processed_count: self.persisted_state.events_processed,
-            last_activity: Utc::now(),
+            last_activity: sinex_primitives::temporal::now_utc(),
             data: Some(state_json),
             version: 2,
             revision: self.last_revision,
@@ -505,7 +510,7 @@ where
     ) -> NodeResult<Option<Event<JsonValue>>> {
         // Parse input
         let input: P::Input = serde_json::from_value(event.payload.clone()).map_err(|e| {
-            NodeError::Processing(format!(
+            SinexError::processing(format!(
                 "Failed to parse input event {}: {}",
                 event.event_type, e
             ))
@@ -518,7 +523,7 @@ where
         let context = SimpleNodeContext {
             source: event.source.to_string(),
             event_type: event.event_type.to_string(),
-            ts_orig: event.ts_orig,
+            ts_orig: event.ts_orig.map(|t| t.into()),
             event_id: source_event_id.into(),
         };
 
@@ -535,7 +540,7 @@ where
                 Ok(_) => reporter.record_success(),
                 Err(e) => {
                     // Convert SimpleNodeError to SinexError for health tracking
-                    let sinex_error = sinex_core::SinexError::processing(e.to_string());
+                    let sinex_error = SinexError::processing(e.to_string());
                     reporter.record_error(&sinex_error);
                 }
             }
@@ -556,20 +561,20 @@ where
             Ok(Some(output)) => {
                 // Build output event
                 let output_payload = serde_json::to_value(&output).map_err(|e| {
-                    NodeError::Processing(format!("Failed to serialize output: {}", e))
+                    SinexError::processing(format!("Failed to serialize output: {}", e))
                 })?;
 
                 let output_event = Event {
-                    id: Some(EventId::new()),
+                    id: Some(Id::new()),
                     source: EventSource::new(self.processor.output_event_source()),
                     event_type: EventType::new(self.processor.output_event_type()),
                     payload: output_payload,
-                    ts_orig: Some(Utc::now()),
+                    ts_orig: Some(sinex_primitives::temporal::now()),
                     host: HostName::new(&self.host),
                     ingestor_version: None,
                     payload_schema_id: None,
-                    provenance: sinex_core::Provenance::Synthesis {
-                        source_event_ids: sinex_core::types::non_empty::NonEmptyVec::from_head_tail(
+                    provenance: Provenance::Synthesis {
+                        source_event_ids: sinex_primitives::non_empty::NonEmptyVec::from_head_tail(
                             source_event_id,
                             vec![],
                         ),
@@ -840,7 +845,7 @@ where
         self.processor
             .on_initialize(&self.persisted_state.state)
             .await
-            .map_err(|e| NodeError::Processing(format!("Initialize hook failed: {}", e)))?;
+            .map_err(|e| SinexError::processing(format!("Initialize hook failed: {}", e)))?;
 
         info!(
             processor = %self.processor.name(),
@@ -861,9 +866,9 @@ where
             TimeHorizon::Continuous => self.run_continuous(from).await,
             TimeHorizon::Snapshot | TimeHorizon::Historical { .. } => {
                 // SimpleNode only supports continuous mode
-                Err(NodeError::General(color_eyre::eyre::eyre!(
-                    "SimpleNode only supports continuous mode"
-                )))
+                Err(SinexError::general(
+                    "SimpleNode only supports continuous mode",
+                ))
             }
         }
     }
@@ -938,7 +943,7 @@ where
         }
 
         if !file_save_success && !nats_save_success {
-            return Err(NodeError::Checkpoint(
+            return Err(SinexError::checkpoint(
                 "Failed to save final state to both file and NATS KV on shutdown".to_string(),
             ));
         }
@@ -964,12 +969,12 @@ impl<P> crate::exploration::ExplorationProvider for SimpleNodeWrapper<P>
 where
     P: SimpleNode,
 {
-    fn get_source_state(&self) -> color_eyre::eyre::Result<crate::exploration::SourceState> {
+    fn get_source_state(&self) -> NodeResult<crate::exploration::SourceState> {
         Ok(crate::exploration::SourceState {
             is_connected: true,
             healthy: true,
             description: format!("{} automaton", self.processor.name()),
-            last_updated: chrono::Utc::now(),
+            last_updated: sinex_primitives::temporal::now_utc(),
             lag_seconds: None,
             recent_activity: Vec::new(),
             total_items: None,
@@ -980,18 +985,23 @@ where
     fn get_ingestion_history(
         &self,
         _limit: u64,
-    ) -> color_eyre::eyre::Result<Vec<crate::exploration::IngestionHistoryEntry>> {
+    ) -> NodeResult<Vec<crate::exploration::IngestionHistoryEntry>> {
         // Automatons process events rather than ingest from sources
         Ok(Vec::new())
     }
 
     fn get_coverage_analysis(
         &self,
-        _time_range: Option<(chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)>,
-    ) -> color_eyre::eyre::Result<crate::exploration::CoverageAnalysis> {
-        let now = chrono::Utc::now();
+        _time_range: Option<(
+            sinex_primitives::temporal::OffsetDateTime,
+            sinex_primitives::temporal::OffsetDateTime,
+        )>,
+    ) -> NodeResult<crate::exploration::CoverageAnalysis> {
         Ok(crate::exploration::CoverageAnalysis {
-            time_range: (now, now),
+            time_range: (
+                sinex_primitives::temporal::now_utc(),
+                sinex_primitives::temporal::now_utc(),
+            ),
             source_total: 0,
             sinex_total: 0,
             coverage_percentage: 100.0,
@@ -1004,9 +1014,9 @@ where
 
     fn export_data(
         &self,
-        _path: &sinex_core::SanitizedPath,
+        _path: &sinex_primitives::domain::SanitizedPath,
         _format: crate::exploration::ExportFormat,
-    ) -> color_eyre::eyre::Result<()> {
+    ) -> NodeResult<()> {
         // Automatons don't have data to export in the traditional sense
         Ok(())
     }

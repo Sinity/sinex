@@ -6,8 +6,7 @@
 //! core architectural invariants related to events and their provenance.
 
 use crate::schema::{EventPayloadSchemas, SourceMaterialRegistry, TableDef};
-use crate::ulid::Ulid;
-use chrono::{DateTime, Utc};
+use crate::ulid::{Timestamp, Ulid};
 use sea_orm_migration::prelude::*;
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;
@@ -141,9 +140,9 @@ pub struct EventRecord {
     pub event_type: String,
     pub host: String,
     pub payload: JsonValue,
-    pub ts_orig: DateTime<Utc>,
+    pub ts_orig: Timestamp,
     pub ts_orig_subnano: Option<i32>,
-    pub ts_ingest: DateTime<Utc>,
+    pub ts_ingest: Timestamp,
 
     // Provenance fields
     pub source_material_id: Option<Ulid>,

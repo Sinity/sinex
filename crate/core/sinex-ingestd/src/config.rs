@@ -9,9 +9,10 @@ use figment::{
     Figment,
 };
 use serde::{Deserialize, Serialize};
-use sinex_core::{
+use sinex_primitives::{
     environment::environment,
-    types::{deserialize_validated_utf8_path, validate_path, Bytes, Milliseconds, Seconds},
+    units::{Bytes, Milliseconds, Seconds},
+    validation::{deserialize_validated_utf8_path, validate_path},
 };
 use tracing::{debug, error, info, warn};
 use validator::{Validate, ValidationError};
@@ -37,7 +38,7 @@ pub struct IngestdConfig {
     /// NATS connection configuration
     #[validate(custom(function = "validate_nats_config"))]
     #[builder(default)]
-    pub nats: sinex_core::nats::NatsConnectionConfig,
+    pub nats: sinex_primitives::nats::NatsConnectionConfig,
 
     /// Batch size for database writes
     #[validate(range(min = 1, message = "Batch size must be greater than 0"))]
@@ -197,7 +198,7 @@ impl IngestdConfig {
         // Construct NatsConnectionConfig from args
         // Note: CLI args for certs are not yet exposed in this helper, users should use env vars or config file for full TLS.
         // We only map the basic URL and require_tls flag here as they are common CLI args.
-        let mut nats_config = sinex_core::nats::NatsConnectionConfig::from_env();
+        let mut nats_config = sinex_primitives::nats::NatsConnectionConfig::from_env();
         nats_config.url = nats_url.clone();
         nats_config.require_tls = nats_require_tls;
         let nats_config_clone = nats_config.clone();
@@ -405,7 +406,7 @@ impl Default for IngestdConfig {
         Self {
             database_url: default_database_url(),
             database_pool_size: 50,
-            nats: sinex_core::nats::NatsConnectionConfig::from_env(),
+            nats: sinex_primitives::nats::NatsConnectionConfig::from_env(),
             batch_size: default_batch_size(),
             batch_timeout_secs: default_batch_timeout_secs(),
             consumer_fetch_max_messages: default_consumer_fetch_max_messages(),
@@ -511,7 +512,7 @@ fn validate_postgres_url(url: &str) -> Result<(), validator::ValidationError> {
 }
 
 fn validate_nats_config(
-    config: &sinex_core::nats::NatsConnectionConfig,
+    config: &sinex_primitives::nats::NatsConnectionConfig,
 ) -> Result<(), ValidationError> {
     if config.url.trim().is_empty() {
         return Err(ValidationError::new("nats_url_empty"));
@@ -524,7 +525,7 @@ fn validate_nats_config(
 }
 
 fn validate_work_dir(path: &Utf8PathBuf) -> Result<(), validator::ValidationError> {
-    use sinex_core::types::validate_path;
+    use sinex_primitives::validation::validate_path;
 
     validate_path(path.as_str())
         .map(|_| ())
@@ -532,7 +533,7 @@ fn validate_work_dir(path: &Utf8PathBuf) -> Result<(), validator::ValidationErro
 }
 
 fn default_annex_repo_path() -> Utf8PathBuf {
-    use sinex_core::types::validate_path;
+    use sinex_primitives::validation::validate_path;
 
     if let Ok(path) = std::env::var("SINEX_ANNEX_PATH") {
         if let Ok(validated) = validate_path(&path) {
@@ -545,21 +546,21 @@ fn default_annex_repo_path() -> Utf8PathBuf {
 }
 
 fn default_assembler_state_dir() -> Utf8PathBuf {
-    use sinex_core::types::validate_path;
+    use sinex_primitives::validation::validate_path;
 
     let state_dir = default_work_dir().join("assembler_state");
     validate_path(state_dir.as_str()).unwrap_or(state_dir)
 }
 
 fn validate_annex_path(path: &Utf8PathBuf) -> Result<(), validator::ValidationError> {
-    use sinex_core::types::validate_path;
+    use sinex_primitives::validation::validate_path;
     validate_path(path.as_str())
         .map(|_| ())
         .map_err(|_| validator::ValidationError::new("invalid_annex_path"))
 }
 
 fn validate_state_dir(path: &Utf8PathBuf) -> Result<(), validator::ValidationError> {
-    use sinex_core::types::validate_path;
+    use sinex_primitives::validation::validate_path;
     validate_path(path.as_str())
         .map(|_| ())
         .map_err(|_| validator::ValidationError::new("invalid_state_dir"))

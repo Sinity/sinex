@@ -1,53 +1,119 @@
-[package]
-name = "sinex-fs-ingestor"
-version.workspace = true
-edition.workspace = true
-authors.workspace = true
-
 [[bin]]
 name = "sinex-fs-ingestor"
 path = "src/main.rs"
 
+[package]
+name = "sinex-fs-ingestor"
+
 [dependencies]
-camino = { workspace = true }
-mimalloc = { workspace = true }
-# Core dependencies
-color-eyre = { workspace = true }
-thiserror.workspace = true
-async-trait.workspace = true
-tokio = { workspace = true, features = ["full"] }
-tracing.workspace = true
-tracing-subscriber.workspace = true
-
-# Configuration
-clap = { workspace = true, features = ["derive"] }
-serde.workspace = true
-serde_json.workspace = true
-chrono = { workspace = true, features = ["serde"] }
-
-# Directory discovery for default paths
-dirs.workspace = true
-
-# Database
-sqlx = { workspace = true }
-
-# Streaming
-tokio-stream = { workspace = true, features = ["net"] }
 async-stream = "0.3"
-futures = { workspace = true }
-notify = { workspace = true }
-
-# Validation
-validator = { workspace = true }
-
-# Local dependencies
-sinex-node-sdk = { path = "../../lib/sinex-node-sdk", features = ["macros"] }
-sinex-processor-runtime = { path = "../../lib/sinex-processor-runtime" }
-sinex-core = { path = "../../lib/sinex-core", features = ["macros"] }
 
 [features]
-default = []
-metrics = []
+default = [
+]
+metrics = [
+]
 
 [dev-dependencies]
 tempfile = "3.8"
+
+[package.version]
+workspace = true
+
+[package.edition]
+workspace = true
+
+[package.authors]
+workspace = true
+
+[dependencies.camino]
+workspace = true
+
+[dependencies.mimalloc]
+workspace = true
+
+[dependencies.color-eyre]
+workspace = true
+
+[dependencies.thiserror]
+workspace = true
+
+[dependencies.async-trait]
+workspace = true
+
+[dependencies.tokio]
+workspace = true
+features = [
+    "full",
+]
+
+[dependencies.tracing]
+workspace = true
+
+[dependencies.tracing-subscriber]
+workspace = true
+
+[dependencies.clap]
+workspace = true
+features = [
+    "derive",
+]
+
+[dependencies.serde]
+workspace = true
+
+[dependencies.serde_json]
+workspace = true
+
+[dependencies.dirs]
+workspace = true
+
+[dependencies.sqlx]
+workspace = true
+
+[dependencies.tokio-stream]
+workspace = true
+features = [
+    "net",
+]
+
+[dependencies.time]
+workspace = true
+
+[dependencies.futures]
+workspace = true
+
+[dependencies.notify]
+workspace = true
+
+[dependencies.validator]
+workspace = true
+
+[dependencies.sinex-node-sdk]
+path = "../../lib/sinex-node-sdk"
+features = [
+    "macros",
+]
+
+[dependencies.sinex-processor-runtime]
+path = "../../lib/sinex-processor-runtime"
+
+features = [
+    "macros",
+]
+
+[dependencies.sinex-primitives]
+path = "../../lib/sinex-primitives"
+
+[dev-dependencies.xtask]
+path = "../../../xtask"
+default-features = false
+features = [
+    "sandbox",
+]
+
+[dev-dependencies.sinex-primitives]
+path = "../../lib/sinex-primitives"
+features = [
+    "testing",
+]

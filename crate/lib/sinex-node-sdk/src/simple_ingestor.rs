@@ -10,7 +10,7 @@
 //! - Standardized `scan` dispatching (Snapshot, Historical, Continuous)
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::checkpoint::{CheckpointManager, CheckpointState};
@@ -23,9 +23,9 @@ use crate::{
     exploration::{
         CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
     },
-    NodeError, NodeResult, SimpleNodeConfig,
+    NodeResult, SimpleNodeConfig, SinexError,
 };
-use sinex_core::SanitizedPath;
+use sinex_primitives::SanitizedPath;
 use std::sync::Arc;
 use tokio::sync::watch;
 use tracing::info;
@@ -41,7 +41,7 @@ use tracing::info;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IngestorState<S> {
     pub user_state: S,
-    pub last_checkpoint: DateTime<Utc>,
+    pub last_checkpoint: sinex_primitives::temporal::OffsetDateTime,
     pub revision: u64,
 }
 
@@ -49,7 +49,7 @@ impl<S: Default> Default for IngestorState<S> {
     fn default() -> Self {
         Self {
             user_state: S::default(),
-            last_checkpoint: Utc::now(),
+            last_checkpoint: sinex_primitives::temporal::OffsetDateTime::now_utc(),
             revision: 0,
         }
     }
@@ -116,8 +116,8 @@ pub trait SimpleIngestor: Send + Sync + 'static {
 
     // Exploration provider methods
     fn get_source_state(&self, _state: &Self::State) -> NodeResult<SourceState> {
-        Err(NodeError::NotSupported(
-            "Source state exploration not implemented".into(),
+        Err(SinexError::processing(
+            "Source state exploration not implemented",
         ))
     }
 
@@ -126,19 +126,18 @@ pub trait SimpleIngestor: Send + Sync + 'static {
         _state: &Self::State,
         _limit: u64,
     ) -> NodeResult<Vec<IngestionHistoryEntry>> {
-        Err(NodeError::NotSupported(
-            "Ingestion history not implemented".into(),
-        ))
+        Err(SinexError::processing("Ingestion history not implemented"))
     }
 
     fn get_coverage_analysis(
         &self,
         _state: &Self::State,
-        _time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
+        _time_range: Option<(
+            sinex_primitives::temporal::OffsetDateTime,
+            sinex_primitives::temporal::OffsetDateTime,
+        )>,
     ) -> NodeResult<CoverageAnalysis> {
-        Err(NodeError::NotSupported(
-            "Coverage analysis not implemented".into(),
-        ))
+        Err(SinexError::processing("Coverage analysis not implemented"))
     }
 
     fn export_data(
@@ -147,9 +146,7 @@ pub trait SimpleIngestor: Send + Sync + 'static {
         _path: &SanitizedPath,
         _format: ExportFormat,
     ) -> NodeResult<()> {
-        Err(NodeError::NotSupported(
-            "Data export not implemented".into(),
-        ))
+        Err(SinexError::processing("Data export not implemented"))
     }
 }
 
@@ -231,9 +228,9 @@ impl<I: SimpleIngestor> SimpleIngestorWrapper<I> {
     }
 
     async fn save_state(&mut self, is_shutdown: bool) -> NodeResult<()> {
-        self.state.last_checkpoint = Utc::now();
+        self.state.last_checkpoint = sinex_primitives::temporal::OffsetDateTime::now_utc();
         let json_state =
-            serde_json::to_value(&self.state).map_err(|e| NodeError::Serialization(e))?;
+            serde_json::to_value(&self.state).map_err(|e| SinexError::serialization(e))?;
 
         let ckpt_state = CheckpointState {
             checkpoint: Checkpoint::external(
@@ -241,7 +238,7 @@ impl<I: SimpleIngestor> SimpleIngestorWrapper<I> {
                 format!("ingestor_{}", self.ingestor.name()),
             ),
             processed_count: 0, // Ingestors might track this in user state if needed
-            last_activity: Utc::now(),
+            last_activity: sinex_primitives::temporal::OffsetDateTime::now_utc(),
             data: Some(json_state),
             version: 1,
             revision: self.state.revision,
@@ -252,7 +249,7 @@ impl<I: SimpleIngestor> SimpleIngestorWrapper<I> {
             ckpt_state
                 .save_to_file(&path)
                 .await
-                .map_err(NodeError::Io)?;
+                .map_err(|e| SinexError::io(e))?;
         }
 
         if let Some(cm) = &self.checkpoint_manager {
@@ -340,35 +337,28 @@ impl<I: SimpleIngestor> Node for SimpleIngestorWrapper<I> {
 }
 
 impl<I: SimpleIngestor> ExplorationProvider for SimpleIngestorWrapper<I> {
-    fn get_source_state(&self) -> color_eyre::eyre::Result<SourceState> {
-        Ok(self.ingestor.get_source_state(&self.state.user_state)?)
+    fn get_source_state(&self) -> NodeResult<SourceState> {
+        self.ingestor.get_source_state(&self.state.user_state)
     }
 
-    fn get_ingestion_history(
-        &self,
-        limit: u64,
-    ) -> color_eyre::eyre::Result<Vec<IngestionHistoryEntry>> {
-        Ok(self
-            .ingestor
-            .get_ingestion_history(&self.state.user_state, limit)?)
+    fn get_ingestion_history(&self, limit: u64) -> NodeResult<Vec<IngestionHistoryEntry>> {
+        self.ingestor
+            .get_ingestion_history(&self.state.user_state, limit)
     }
 
     fn get_coverage_analysis(
         &self,
-        time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
-    ) -> color_eyre::eyre::Result<CoverageAnalysis> {
-        Ok(self
-            .ingestor
-            .get_coverage_analysis(&self.state.user_state, time_range)?)
+        time_range: Option<(
+            sinex_primitives::temporal::OffsetDateTime,
+            sinex_primitives::temporal::OffsetDateTime,
+        )>,
+    ) -> NodeResult<CoverageAnalysis> {
+        self.ingestor
+            .get_coverage_analysis(&self.state.user_state, time_range)
     }
 
-    fn export_data(
-        &self,
-        path: &SanitizedPath,
-        format: ExportFormat,
-    ) -> color_eyre::eyre::Result<()> {
-        Ok(self
-            .ingestor
-            .export_data(&self.state.user_state, path, format)?)
+    fn export_data(&self, path: &SanitizedPath, format: ExportFormat) -> NodeResult<()> {
+        self.ingestor
+            .export_data(&self.state.user_state, path, format)
     }
 }

@@ -4,15 +4,16 @@ pub use crate::replay_state_machine::ReplayScope;
 use crate::replay_state_machine::{ReplayOperation, ReplayState, ReplayStateMachine};
 use async_nats::connection::State as NatsState;
 use async_nats::{Client, Message};
-use chrono::{DateTime, Utc};
 use color_eyre::eyre::{eyre, Context, Result};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
-use sinex_core::environment::{environment, SinexEnvironment};
-use sinex_core::types::ulid::Ulid;
+use sinex_primitives::environment::{environment, SinexEnvironment};
+use sinex_primitives::Timestamp;
+use sinex_primitives::Ulid;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
-use tokio::time::{interval, Duration};
+use std::time::Duration;
+use tokio::time::interval;
 use tracing::{error, info, warn};
 
 const REPLAY_CONTROL_SUBSCRIBE_ATTEMPTS: usize = 5;
@@ -31,14 +32,14 @@ fn env_var_duration_secs(name: &str, default: u64) -> Duration {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayControlError {
     pub message: String,
-    pub occurred_at: DateTime<Utc>,
+    pub occurred_at: Timestamp,
 }
 
 impl ReplayControlError {
     pub(crate) fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
-            occurred_at: Utc::now(),
+            occurred_at: Timestamp::now(),
         }
     }
 }
@@ -530,7 +531,7 @@ impl ReplayExecutionEngine {
         checkpoint.total_events = total_events;
         checkpoint.processed_events = total_events;
         checkpoint.batch_number = checkpoint.batch_number.saturating_add(1);
-        checkpoint.updated_at = Utc::now();
+        checkpoint.updated_at = sinex_primitives::temporal::now();
 
         self.replay
             .update_checkpoint(operation_id, &checkpoint)
@@ -636,12 +637,11 @@ impl ReplayTelemetry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Duration as ChronoDuration;
     use serde_json::json;
-    use sinex_core::db::repositories::DbPoolExt;
-    use sinex_core::{types::ulid::Ulid, DbPool, DynamicPayload, Id};
-    use xtask::sandbox::{sinex_test, EphemeralNats, TestContext};
+    use sinex_db::repositories::DbPoolExt;
+    use sinex_primitives::{types::ulid::Ulid, DbPool, DynamicPayload, Id};
     use tokio::time::sleep;
+    use xtask::sandbox::{sinex_test, EphemeralNats, TestContext};
 
     fn sample_scope() -> ReplayScope {
         ReplayScope {
@@ -665,7 +665,7 @@ mod tests {
             "operation record missing; inserting fallback for test context"
         );
         // Fallback: insert a minimal test operation if polling times out via repository
-        use sinex_core::db::repositories::state::Operation;
+        use sinex_db::repositories::state::Operation;
         let fallback_operation = Operation {
             id: Some(Id::from_ulid(operation_id)),
             operation_type: "replay".to_string(),
@@ -810,10 +810,10 @@ mod tests {
         let client = spawn_replay_control(replay, nats_client).await?;
 
         let mut scope = sample_scope();
-        let end = Utc::now();
+        let end = Timestamp::now();
         scope.time_window = Some((
-            end - ChronoDuration::hours(1),
-            end + ChronoDuration::minutes(1),
+            *end - time::Duration::hours(1),
+            *end + time::Duration::minutes(1),
         ));
 
         let planned = client.plan("tester".into(), scope.clone()).await?;

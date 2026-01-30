@@ -16,7 +16,7 @@ pub use crate::{IngestService, IngestdConfig};
 
 // Validation
 pub use crate::{EventValidator, ValidationResult};
-pub use sinex_core::db::validation::SchemaInfo;
+pub use sinex_db::validation::SchemaInfo;
 
 // Schema synchronization
 pub use crate::SchemaSyncResult;

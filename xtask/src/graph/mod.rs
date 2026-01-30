@@ -39,9 +39,12 @@ pub enum GraphCommand {
 
 impl GraphCommand {
     /// Execute the graph command
-    pub fn run(&self, ctx: &crate::command::CommandContext) -> Result<crate::command::CommandResult> {
-        use crate::graph::render::Renderer;
+    pub fn run(
+        &self,
+        ctx: &crate::command::CommandContext,
+    ) -> Result<crate::command::CommandResult> {
         use crate::command::CommandResult;
+        use crate::graph::render::Renderer;
 
         match self {
             Self::Deps {
@@ -77,7 +80,7 @@ impl GraphCommand {
                 if let Some(output_path) = output {
                     std::fs::write(output_path, &rendered)
                         .with_context(|| format!("Failed to write to {}", output_path))?;
-                    
+
                     Ok(CommandResult::success()
                         .with_message(format!("Graph written to {}", output_path))
                         .with_duration(ctx.elapsed()))

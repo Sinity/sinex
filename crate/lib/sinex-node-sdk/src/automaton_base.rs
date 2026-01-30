@@ -28,9 +28,9 @@
 use crate::confirmation_handler::ProvisionalEvent;
 use crate::jetstream_consumer::JetStreamEventConsumer;
 use crate::stream_processor::{EventSender, NodeRuntimeState, ScanReport};
-use crate::{NodeError, NodeResult};
-use chrono::{DateTime, Utc};
+use crate::{NodeResult, SinexError};
 use serde::{Deserialize, Serialize};
+use sinex_primitives::temporal::{now_utc, OffsetDateTime};
 #[cfg(feature = "db")]
 use sqlx::PgPool;
 use std::collections::VecDeque;
@@ -49,7 +49,7 @@ pub const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActivityEntry {
     /// Timestamp of activity
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: OffsetDateTime,
     /// Activity description
     pub description: String,
     /// Optional associated data
@@ -62,9 +62,9 @@ pub struct IngestionHistoryEntry {
     /// Scan/ingestion ID
     pub id: String,
     /// Start time
-    pub started_at: DateTime<Utc>,
+    pub started_at: OffsetDateTime,
     /// End time (if completed)
-    pub completed_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<OffsetDateTime>,
     /// Number of events generated
     pub events_generated: u64,
     /// Scan report summary
@@ -84,7 +84,7 @@ pub struct AutomatonStats {
     /// Total number of output events emitted
     pub outputs_emitted: u64,
     /// Timestamp of last activity
-    pub last_activity: Option<DateTime<Utc>>,
+    pub last_activity: Option<OffsetDateTime>,
 }
 
 impl AutomatonStats {
@@ -99,7 +99,7 @@ impl AutomatonStats {
             return;
         }
         self.inputs_seen = self.inputs_seen.saturating_add(count as u64);
-        self.last_activity = Some(Utc::now());
+        self.last_activity = Some(now_utc());
     }
 
     /// Record output events being emitted
@@ -108,7 +108,7 @@ impl AutomatonStats {
             return;
         }
         self.outputs_emitted = self.outputs_emitted.saturating_add(count);
-        self.last_activity = Some(Utc::now());
+        self.last_activity = Some(now_utc());
     }
 }
 
@@ -184,7 +184,7 @@ impl<C: Default> AutomatonFields<C> {
     pub fn runtime(&self) -> NodeResult<&NodeRuntimeState> {
         self.runtime
             .as_ref()
-            .ok_or_else(|| NodeError::Lifecycle("Automaton runtime not initialized".into()))
+            .ok_or_else(|| SinexError::lifecycle("Automaton runtime not initialized"))
     }
 
     /// Get database pool, preferring runtime's pool
@@ -195,9 +195,7 @@ impl<C: Default> AutomatonFields<C> {
         } else if let Some(pool) = self.db_pool.as_ref() {
             Ok(pool)
         } else {
-            Err(NodeError::Processing(
-                "Database pool not initialized".into(),
-            ))
+            Err(SinexError::processing("Database pool not initialized"))
         }
     }
 
@@ -208,7 +206,7 @@ impl<C: Default> AutomatonFields<C> {
         } else if let Some(sender) = self.event_sender.as_ref() {
             Ok(sender.clone())
         } else {
-            Err(NodeError::Processing("Event sender not initialized".into()))
+            Err(SinexError::processing("Event sender not initialized"))
         }
     }
 
@@ -303,8 +301,8 @@ impl crate::confirmation_handler::ConfirmedEventHandler for ChannelConfirmedEven
                 tracing::warn!("Confirmed event channel full; dropping event");
                 Ok(())
             }
-            Err(mpsc::error::TrySendError::Closed(_)) => Err(NodeError::Processing(
-                "Failed to forward confirmed event: channel closed".into(),
+            Err(mpsc::error::TrySendError::Closed(_)) => Err(SinexError::processing(
+                "Failed to forward confirmed event: channel closed",
             )),
         }
     }
@@ -315,8 +313,12 @@ impl crate::confirmation_handler::ConfirmedEventHandler for ChannelConfirmedEven
 // ============================================================================
 
 use serde_json::Value as JsonValue;
-use sinex_core::db::models::{Event, EventId, Provenance};
-use sinex_core::Ulid;
+use sinex_primitives::events::{Event, Provenance};
+use sinex_primitives::Id;
+use sinex_primitives::Ulid;
+
+// Use Id<Event> instead of EventId alias
+pub type EventId = Id<Event>;
 
 /// Maximum number of parent IDs to include in provenance.
 /// Keeps provenance data bounded while maintaining meaningful lineage.

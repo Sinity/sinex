@@ -1,5 +1,5 @@
-use sinex_core::types::Seconds;
 use sinex_ingestd::config::IngestdConfig;
+use sinex_primitives::Seconds;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]

@@ -1,9 +1,9 @@
 //! Integration tests for RPC token hot-reload functionality
 
-use xtask::sandbox::sinex_test;
 use std::fs;
 use std::time::Duration;
 use tempfile::TempDir;
+use xtask::sandbox::sinex_test;
 
 #[sinex_test]
 async fn test_token_rotation_file_modification() -> TestResult<()> {

@@ -17,8 +17,8 @@ use ahash::AHashMap;
 use async_nats::jetstream::kv::Store;
 use jsonschema::JSONSchema;
 use parking_lot::RwLock;
-use sinex_core::types::ulid::Ulid;
-use sinex_core::JsonValue;
+use sinex_primitives::JsonValue;
+use sinex_primitives::Ulid;
 use sqlx::PgPool;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
@@ -52,7 +52,7 @@ struct CompiledSchema {
 ///
 /// **Edge Mode** (`db_pool` is None):
 /// - Validates only against cached schemas from NATS broadcasts
-/// - Returns `NodeError::Validation` with "Schema not available" when schema missing
+/// - Returns `SinexError::validation` with "Schema not available" when schema missing
 /// - No database dependency - can run on edge devices
 ///
 /// **Full Mode** (`db_pool` is Some):
@@ -115,7 +115,7 @@ impl NodeSchemaValidator {
             let schema_id = entry
                 .schema_id
                 .parse::<Ulid>()
-                .map_err(|e| crate::NodeError::Validation(format!("Invalid schema ID: {e}")))?;
+                .map_err(|e| crate::SinexError::validation(format!("Invalid schema ID: {e}")))?;
 
             // Fetch full schema JSON from NATS KV
             let key = format!("schema:{}", entry.schema_id);
@@ -232,7 +232,7 @@ impl NodeSchemaValidator {
                 // Cache miss - try DB fallback or error in edge mode
                 if self.is_edge_mode() {
                     // Edge mode: strict validation - must have schema in cache
-                    return Err(crate::NodeError::Validation(format!(
+                    return Err(crate::SinexError::validation(format!(
                         "Schema not available in cache for {}.{} (edge mode - no DB fallback)",
                         source, event_type
                     )));
@@ -285,7 +285,7 @@ impl NodeSchemaValidator {
         if let Err(errors) = validator.validate(payload) {
             let error_messages: Vec<String> = errors.map(|e| e.to_string()).collect();
 
-            return Err(crate::NodeError::Validation(format!(
+            return Err(crate::SinexError::validation(format!(
                 "Schema validation failed for {}.{}: {}",
                 source,
                 event_type,
@@ -305,13 +305,13 @@ impl NodeSchemaValidator {
         event_type: &str,
     ) -> NodeResult<Option<Ulid>> {
         let db_pool = self.db_pool.as_ref().ok_or_else(|| {
-            crate::NodeError::Configuration(
+            crate::SinexError::configuration(
                 "DB fallback requested but no database pool configured".to_string(),
             )
         })?;
 
         let kv_store = self.kv_store.as_ref().ok_or_else(|| {
-            crate::NodeError::Configuration(
+            crate::SinexError::configuration(
                 "DB fallback requested but no KV store configured".to_string(),
             )
         })?;
@@ -330,7 +330,7 @@ impl NodeSchemaValidator {
         )
         .fetch_optional(db_pool)
         .await
-        .map_err(|e| crate::NodeError::Database(e))?;
+        .map_err(|e| crate::SinexError::from(e))?;
 
         let Some(row) = result else {
             debug!(
@@ -342,11 +342,11 @@ impl NodeSchemaValidator {
         };
 
         let schema_id_str = row.schema_id.as_ref().ok_or_else(|| {
-            crate::NodeError::Processing("schema_id is NULL in database".to_string())
+            crate::SinexError::processing("schema_id is NULL in database".to_string())
         })?;
 
         let schema_id: Ulid = schema_id_str.parse().map_err(|e| {
-            crate::NodeError::Processing(format!("Invalid schema_id from DB: {}", e))
+            crate::SinexError::processing(format!("Invalid schema_id from DB: {}", e))
         })?;
 
         // Fetch full schema JSON from NATS KV
@@ -442,9 +442,10 @@ mod tests {
     use serde_json::json;
 
     use tokio;
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
-    async fn test_edge_mode_validator_strict() {
+    async fn test_edge_mode_validator_strict() -> Result<(), Box<dyn std::error::Error>> {
         let validator = NodeSchemaValidator::new();
 
         // Edge mode validator should be strict
@@ -458,6 +459,7 @@ mod tests {
             .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not available"));
+        Ok(())
     }
 
     #[test]

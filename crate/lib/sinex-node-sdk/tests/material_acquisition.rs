@@ -1,16 +1,16 @@
 use futures::future::try_join_all;
-use sinex_core::types::error::SinexError;
-use sinex_core::types::ulid::Ulid;
-use sinex_core::types::{Bytes, Seconds};
-use sinex_core::Id;
-use sinex_core::{db::query_helpers::ulid_to_uuid, db::DbPoolExt};
+use sinex_primitives::error::SinexError;
+use sinex_primitives::ids::Ulid;
+use sinex_primitives::units::{Bytes, Seconds};
+use sinex_primitives::ids::Id;
+use sinex_db::{query_helpers::ulid_to_uuid, repositories::DbPoolExt};
 use sinex_node_sdk::{AcquisitionManager, RotationPolicy};
-use xtask::sandbox::prelude::*;
-use xtask::sandbox::timing::{WaitHelpers, DEFAULT_WAIT_SECS, INTEGRATION_WAIT_SECS};
-use xtask::sandbox::{start_test_ingestd_with_config, EphemeralNats, TestIngestdConfig};
 use std::io::ErrorKind;
 use std::sync::Arc;
 use std::time::Duration;
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::{WaitHelpers, DEFAULT_WAIT_SECS, INTEGRATION_WAIT_SECS};
+use xtask::sandbox::{start_test_ingestd_with_config, EphemeralNats, TestIngestdConfig};
 
 /// Test basic material acquisition flow: begin → append slices → finalize
 #[sinex_test]
@@ -54,16 +54,16 @@ async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
                 async move {
                     let material = pool
                         .source_materials()
-                        .get_by_id(sinex_core::Id::from_ulid(material_id))
+                        .get_by_id(sinex_node_sdk::Id::from_ulid(material_id))
                         .await?
-                        .ok_or_else(|| sinex_core::types::error::SinexError::database("missing"))?;
+                        .ok_or_else(|| sinex_primitives::error::SinexError::database("missing"))?;
                     let ledger_count: Option<i64> = sqlx::query_scalar!(
                         "SELECT COUNT(*) FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid",
                         material_id as Ulid
                     )
                     .fetch_one(&pool)
                     .await?;
-                    Ok::<bool, sinex_core::types::error::SinexError>(
+                    Ok::<bool, sinex_primitives::error::SinexError>(
                         material.status.as_str() == "completed"
                             && ledger_count.unwrap_or(0) >= 1
                     )
@@ -77,7 +77,7 @@ async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
     let material = ctx
         .pool
         .source_materials()
-        .get_by_id(sinex_core::Id::from_ulid(material_id))
+        .get_by_id(sinex_node_sdk::Id::from_ulid(material_id))
         .await?
         .expect("Material should exist");
 
@@ -126,7 +126,7 @@ async fn material_acquisition_cancel_mid_slice(ctx: TestContext) -> Result<()> {
         .wait_for_condition(
             || {
                 let temp_path = temp_path.clone();
-                async move { Ok::<bool, sinex_core::types::error::SinexError>(!temp_path.exists()) }
+                async move { Ok::<bool, sinex_primitives::error::SinexError>(!temp_path.exists()) }
             },
             DEFAULT_WAIT_SECS,
         )
@@ -180,7 +180,7 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
 
     // Manually publish slices out of order to test MaterialAssembler's buffering
     let material_id = Ulid::new();
-    let env = sinex_core::environment();
+    let env = sinex_node_sdk::environment();
     let js = nats.jetstream_with_client(nats_client.clone());
 
     // Ensure the registry already contains the material id we are about to stream so the assembler
@@ -205,7 +205,7 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
         "material_kind": "annex",
         "source_identifier": "test-ooo",
         "metadata": {},
-        "started_at": chrono::Utc::now().to_rfc3339(),
+        "started_at": OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap(),
     });
     js.publish(
         env.nats_subject("source_material.begin"),
@@ -249,7 +249,7 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
     // Publish end message
     let end_msg = serde_json::json!({
         "material_id": material_id.to_string(),
-        "ended_at": chrono::Utc::now().to_rfc3339(),
+        "ended_at": OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap(),
         "content_hash": content_hash.to_string(),
         "total_slices": 3,
         "total_size_bytes": expected_size,
@@ -271,7 +271,7 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
             async move {
                 if let Some(material) = pool
                     .source_materials()
-                    .get_by_id(sinex_core::Id::from_ulid(material_id))
+                    .get_by_id(sinex_node_sdk::Id::from_ulid(material_id))
                     .await?
                 {
                     let ledger_bytes: Option<i64> = sqlx::query_scalar!(
@@ -280,7 +280,7 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
                     )
                     .fetch_optional(&pool)
                     .await?;
-                    return Ok::<bool, sinex_core::types::error::SinexError>(
+                    return Ok::<bool, sinex_primitives::error::SinexError>(
                         material.status.as_str() == "completed"
                             && ledger_bytes.unwrap_or_default() >= expected_size,
                     );
@@ -296,7 +296,7 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
     let material = ctx
         .pool
         .source_materials()
-        .get_by_id(sinex_core::Id::from_ulid(material_id))
+        .get_by_id(sinex_node_sdk::Id::from_ulid(material_id))
         .await?;
 
     if let Some(material) = material {
@@ -335,7 +335,7 @@ async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
     AcquisitionManager::bootstrap_streams(&nats_client).await?;
 
     let material_id = Ulid::new();
-    let env = sinex_core::environment();
+    let env = sinex_node_sdk::environment();
     let js = nats.jetstream_with_client(nats_client.clone());
 
     let slices = vec![
@@ -354,7 +354,7 @@ async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
 
     let end_msg = serde_json::json!({
         "material_id": material_id.to_string(),
-        "ended_at": chrono::Utc::now().to_rfc3339(),
+        "ended_at": OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap(),
         "content_hash": content_hash.to_string(),
         "total_slices": slices.len(),
         "total_size_bytes": expected_size,
@@ -374,7 +374,7 @@ async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
         "material_kind": "annex",
         "source_identifier": "end-before-begin",
         "metadata": {},
-        "started_at": chrono::Utc::now().to_rfc3339(),
+        "started_at": OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap(),
     });
     js.publish(
         env.nats_subject("source_material.begin"),

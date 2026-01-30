@@ -17,7 +17,7 @@ pub use timing::{TimingAnalyzer, TimingReport};
 pub use unused::UnusedReport;
 
 /// Dependency analysis commands
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Clone, Subcommand)]
 pub enum DepsCommand {
     /// List all workspace packages
     List {

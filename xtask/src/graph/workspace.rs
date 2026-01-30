@@ -17,7 +17,7 @@
 //! println!("Workspace has {} packages", packages.len());
 //!
 //! // Analyze a specific package
-//! let metrics = graph.compute_impact_metrics("sinex-core")?;
+//! let metrics = graph.compute_impact_metrics("sinex-db")?;
 //! println!("Package depends on {} packages", metrics.dependency_count);
 //! println!("Package is depended on by {} packages", metrics.dependent_count);
 //! println!("Criticality: {:.2}", metrics.criticality);
@@ -244,9 +244,9 @@ impl WorkspaceGraph {
     /// use xtask::graph::WorkspaceGraph;
     ///
     /// let graph = WorkspaceGraph::new()?;
-    /// let dependents = graph.transitive_dependents("sinex-core")?;
+    /// let dependents = graph.transitive_dependents("sinex-db")?;
     ///
-    /// println!("Packages affected by changes to sinex-core:");
+    /// println!("Packages affected by changes to sinex-db:");
     /// for pkg in dependents {
     ///     println!("  - {}", pkg);
     /// }
@@ -300,7 +300,7 @@ impl WorkspaceGraph {
     ///
     /// let graph = WorkspaceGraph::new()?;
     ///
-    /// match graph.shortest_path("sinex-gateway", "sinex-core")? {
+    /// match graph.shortest_path("sinex-gateway", "sinex-db")? {
     ///     Some(path) => {
     ///         println!("Dependency path: {}", path.join(" -> "));
     ///     }
@@ -476,7 +476,7 @@ impl WorkspaceGraph {
     /// use xtask::graph::WorkspaceGraph;
     ///
     /// let graph = WorkspaceGraph::new()?;
-    /// let metrics = graph.compute_impact_metrics("sinex-core")?;
+    /// let metrics = graph.compute_impact_metrics("sinex-db")?;
     ///
     /// println!("Package: {}", metrics.package);
     /// println!("Packages affected by changes: {}", metrics.dependent_count);

@@ -114,7 +114,7 @@ pub struct ShellCapabilities {
 }
 
 /// Detect the current shell environment
-pub fn detect_current_shell() -> Result<ShellInfo, sinex_node_sdk::NodeError> {
+pub fn detect_current_shell() -> Result<ShellInfo, sinex_node_sdk::SinexError> {
     // Get shell from environment
     let shell_env = env::var("SHELL").unwrap_or_default();
     let shell_type = detect_shell_type(&shell_env);

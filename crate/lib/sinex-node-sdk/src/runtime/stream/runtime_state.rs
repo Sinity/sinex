@@ -10,10 +10,10 @@ use crate::{
 };
 use camino::Utf8PathBuf;
 use serde_json::Value;
-use sinex_core::db::models::Event;
 #[cfg(feature = "db")]
-use sinex_core::db::SqlxPgPool as PgPool;
-use sinex_core::{types::Seconds, JsonValue};
+use sinex_db::DbPool as PgPool;
+use sinex_primitives::events::Event;
+use sinex_primitives::{JsonValue, Seconds};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;

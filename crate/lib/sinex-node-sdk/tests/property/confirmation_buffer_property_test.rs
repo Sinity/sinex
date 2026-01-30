@@ -6,9 +6,9 @@
 //! - Out-of-order confirmations eventually match
 //! - Capacity warnings work correctly
 
-use chrono::Utc;
+use time::OffsetDateTime;
 use proptest::prelude::*;
-use sinex_core::{EventId, EventSource, EventType, Ulid};
+use sinex_node_sdk::{EventId, EventSource, EventType, Ulid};
 use sinex_node_sdk::{ConfirmationBuffer, EventConfirmation, ProvisionalEvent};
 use xtask::sandbox::{sinex_prop, TestContext, TestResult};
 use std::time::Duration;
@@ -25,8 +25,8 @@ fn arb_provisional_event() -> impl Strategy<Value = ProvisionalEvent> {
             source: EventSource::new(source),
             event_type: EventType::new(event_type),
             payload: serde_json::json!({"test": "data"}),
-            ts_orig: Utc::now(),
-            received_at: Utc::now(),
+            ts_orig: OffsetDateTime::now_utc(),
+            received_at: OffsetDateTime::now_utc(),
         })
 }
 
@@ -228,8 +228,8 @@ async fn property_capacity_limit_prevents_unbounded_growth(
             source: EventSource::new("test"),
             event_type: EventType::new("test.event"),
             payload: serde_json::json!({"index": i}),
-            ts_orig: Utc::now(),
-            received_at: Utc::now(),
+            ts_orig: OffsetDateTime::now_utc(),
+            received_at: OffsetDateTime::now_utc(),
         };
         buffer.add_provisional(event).await;
     }
@@ -262,8 +262,8 @@ async fn property_rejected_count_tracks_capacity_rejections(
             source: EventSource::new("test"),
             event_type: EventType::new("test.event"),
             payload: serde_json::json!({"index": i}),
-            ts_orig: Utc::now(),
-            received_at: Utc::now(),
+            ts_orig: OffsetDateTime::now_utc(),
+            received_at: OffsetDateTime::now_utc(),
         };
 
         if !buffer.add_provisional(event).await {
@@ -340,8 +340,8 @@ mod unit_tests {
             source: EventSource::new("test"),
             event_type: EventType::new("test.event"),
             payload: serde_json::json!({"data": "test"}),
-            ts_orig: Utc::now(),
-            received_at: Utc::now(),
+            ts_orig: OffsetDateTime::now_utc(),
+            received_at: OffsetDateTime::now_utc(),
         };
 
         // Add event
@@ -370,8 +370,8 @@ mod unit_tests {
                 source: EventSource::new("test"),
                 event_type: EventType::new("test.event"),
                 payload: serde_json::json!({"index": i}),
-                ts_orig: Utc::now(),
-                received_at: Utc::now(),
+                ts_orig: OffsetDateTime::now_utc(),
+                received_at: OffsetDateTime::now_utc(),
             };
 
             if buffer.add_provisional(event).await {

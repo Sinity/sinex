@@ -4,7 +4,7 @@
 //! and emits health.status events via SelfObserver when status changes.
 
 use crate::self_observation::SelfObserver;
-use sinex_core::types::{error::SinexError, events::payloads::process::ProcessStatus, Result};
+use sinex_primitives::{events::payloads::process::ProcessStatus, Result, SinexError};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc, RwLock,

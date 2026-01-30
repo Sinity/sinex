@@ -7,12 +7,14 @@ use crate::confirmation_handler::{
     ConfirmationBuffer, ConfirmedEventHandler, EventConfirmation, ProcessingModel,
     ProvisionalEvent, ProvisionalEventHandler,
 };
-use crate::{NodeError, NodeResult};
+use crate::{SinexError, NodeResult};
 use async_nats::jetstream;
 use async_nats::jetstream::consumer::PullConsumer;
 use futures::StreamExt;
-use sinex_core::environment::SinexEnvironment;
-use sinex_core::types::domain::{EventSource, EventType};
+use sinex_primitives::{
+    domain::{EventSource, EventType},
+    environment::SinexEnvironment,
+};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -107,7 +109,7 @@ impl JetStreamEventConsumer {
         {
             let mut running = self.running.write().await;
             if *running {
-                return Err(NodeError::Lifecycle("Consumer already running".to_string()));
+                return Err(SinexError::lifecycle("Consumer already running".to_string()));
             }
             *running = true;
         }
@@ -228,7 +230,7 @@ impl JetStreamEventConsumer {
         filter: &str,
     ) -> NodeResult<PullConsumer> {
         let stream = js.get_stream(stream_name).await.map_err(|e| {
-            NodeError::Processing(format!("Failed to get stream {}: {}", stream_name, e))
+            SinexError::processing(format!("Failed to get stream {}: {}", stream_name, e))
         })?;
 
         // Use the filter subject as provided; it already contains environment and namespace prefixes.
@@ -251,13 +253,13 @@ impl JetStreamEventConsumer {
             )
             .await
             .map_err(|e| {
-                NodeError::Processing(format!("Failed to get or create consumer: {}", e))
+                SinexError::processing(format!("Failed to get or create consumer: {}", e))
             })?;
 
         let info = consumer
             .info()
             .await
-            .map_err(|e| NodeError::Processing(format!("Failed to read consumer info: {}", e)))?;
+            .map_err(|e| SinexError::processing(format!("Failed to read consumer info: {}", e)))?;
         self.validate_consumer_config(
             stream_name,
             &filter_subject,
@@ -324,7 +326,7 @@ impl JetStreamEventConsumer {
             return Ok(());
         }
 
-        Err(NodeError::Processing(format!(
+        Err(SinexError::processing(format!(
             "Consumer config mismatch for stream {} ({}): {}",
             stream_name,
             expected_name,
@@ -342,7 +344,7 @@ impl JetStreamEventConsumer {
         let mut messages = consumer
             .messages()
             .await
-            .map_err(|e| NodeError::Processing(format!("Failed to get messages: {}", e)))?;
+            .map_err(|e| SinexError::processing(format!("Failed to get messages: {}", e)))?;
 
         while *running.read().await {
             match messages.next().await {
@@ -417,7 +419,7 @@ impl JetStreamEventConsumer {
         let mut messages = consumer
             .messages()
             .await
-            .map_err(|e| NodeError::Processing(format!("Failed to get messages: {}", e)))?;
+            .map_err(|e| SinexError::processing(format!("Failed to get messages: {}", e)))?;
 
         while *running.read().await {
             match messages.next().await {
@@ -503,25 +505,26 @@ impl JetStreamEventConsumer {
 
         let event_id = payload["id"]
             .as_str()
-            .ok_or_else(|| NodeError::Processing("Missing event id".to_string()))?
+            .ok_or_else(|| SinexError::processing("Missing event id".to_string()))?
             .parse()
-            .map_err(|_| NodeError::Processing("Invalid event id".to_string()))?;
+            .map_err(|_| SinexError::processing("Invalid event id".to_string()))?;
 
         let source = payload["source"]
             .as_str()
-            .ok_or_else(|| NodeError::Processing("Missing source".to_string()))?;
+            .ok_or_else(|| SinexError::processing("Missing source".to_string()))?;
         let source = EventSource::new(source);
 
         let event_type = payload["event_type"]
             .as_str()
-            .ok_or_else(|| NodeError::Processing("Missing event_type".to_string()))?;
+            .ok_or_else(|| SinexError::processing("Missing event_type".to_string()))?;
         let event_type = EventType::new(event_type);
 
-        let ts_orig = payload["ts_orig"]
-            .as_str()
-            .ok_or_else(|| NodeError::Processing("Missing ts_orig".to_string()))?
-            .parse()
-            .map_err(|_| NodeError::Processing("Invalid ts_orig".to_string()))?;
+        let ts_orig = sinex_primitives::temporal::parse_rfc3339(
+            payload["ts_orig"]
+                .as_str()
+                .ok_or_else(|| SinexError::processing("Missing ts_orig".to_string()))?,
+        )
+        .map_err(|_| SinexError::processing("Invalid ts_orig".to_string()))?;
 
         Ok(ProvisionalEvent {
             event_id,
@@ -529,7 +532,7 @@ impl JetStreamEventConsumer {
             event_type,
             payload,
             ts_orig,
-            received_at: chrono::Utc::now(),
+            received_at: sinex_primitives::temporal::now(),
         })
     }
 
@@ -538,19 +541,20 @@ impl JetStreamEventConsumer {
 
         let event_id = payload["event_id"]
             .as_str()
-            .ok_or_else(|| NodeError::Processing("Missing event_id".to_string()))?
+            .ok_or_else(|| SinexError::processing("Missing event_id".to_string()))?
             .parse()
-            .map_err(|_| NodeError::Processing("Invalid event_id".to_string()))?;
+            .map_err(|_| SinexError::processing("Invalid event_id".to_string()))?;
 
         let persisted = payload["persisted"]
             .as_bool()
-            .ok_or_else(|| NodeError::Processing("Missing persisted".to_string()))?;
+            .ok_or_else(|| SinexError::processing("Missing persisted".to_string()))?;
 
-        let ts_ingest = payload["ts_ingest"]
-            .as_str()
-            .ok_or_else(|| NodeError::Processing("Missing ts_ingest".to_string()))?
-            .parse()
-            .map_err(|_| NodeError::Processing("Invalid ts_ingest".to_string()))?;
+        let ts_ingest = sinex_primitives::temporal::parse_rfc3339(
+            payload["ts_ingest"]
+                .as_str()
+                .ok_or_else(|| SinexError::processing("Missing ts_ingest".to_string()))?,
+        )
+        .map_err(|_| SinexError::processing("Invalid ts_ingest".to_string()))?;
 
         Ok(EventConfirmation {
             event_id,
@@ -574,7 +578,7 @@ mod tests {
             Ok(())
         }
 
-        async fn rollback_provisional(&self, _event_id: sinex_core::EventId) -> NodeResult<()> {
+        async fn rollback_provisional(&self, _event_id: sinex_primitives::ids::Id<sinex_primitives::events::Event>) -> NodeResult<()> {
             Ok(())
         }
     }
@@ -599,7 +603,7 @@ mod tests {
     async fn running_flag_clears_after_startup_failure() -> TestResult<()> {
         let nats = EphemeralNats::start().await?;
         let client = nats.connect().await?;
-        let env = sinex_core::environment().clone();
+        let env = sinex_primitives::environment::environment().clone();
         let handler = Arc::new(NoopHandler);
         let consumer = JetStreamEventConsumer::new(
             client,
@@ -614,7 +618,7 @@ mod tests {
 
         let second = tokio::time::timeout(Duration::from_secs(5), consumer.run()).await?;
         match second {
-            Err(NodeError::Lifecycle(msg)) => {
+            Err(SinexError::lifecycle(msg)) => {
                 assert_ne!(msg, "Consumer already running");
             }
             _ => {}

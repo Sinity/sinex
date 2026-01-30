@@ -35,7 +35,7 @@ use sinex_macros::SatelliteProcessor;
 pub struct FilesystemProcessor {
     config: FilesystemConfig,
     #[checkpoint_state]
-    last_scan_time: Option<DateTime<Utc>>,
+    last_scan_time: Option<Timestamp>,
 }
 
 // Generated methods available:
@@ -291,7 +291,7 @@ use sinex_macros::stream_processor;
 pub struct FilesystemWatcher {
     config: FilesystemConfig,
     #[state]
-    last_scan_time: Option<DateTime<Utc>>,
+    last_scan_time: Option<Timestamp>,
 }
 ```
 
@@ -452,7 +452,7 @@ The macros are designed to be extensible. To add new functionality:
 - `proc-macro2 1.0`: For procedural macro utilities
 - `serde 1.0`: For serialization support
 - `tokio 1.0`: For async runtime support
-- `chrono 0.4`: For timestamp handling
+- `time 0.3`: For timestamp handling
 - `toml 0.8`: For configuration file support
 
 ## License

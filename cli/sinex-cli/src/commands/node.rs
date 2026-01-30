@@ -1,5 +1,5 @@
 use clap::Subcommand;
-use sinex_core::rpc::coordination::InstanceHealthResponse;
+use sinex_primitives::rpc::coordination::InstanceHealthResponse;
 
 use crate::client::GatewayClient;
 use crate::fmt::{format_table_nodes, with_spinner_result, CommandOutput};

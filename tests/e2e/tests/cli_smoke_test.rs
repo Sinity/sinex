@@ -2,7 +2,8 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use color_eyre::eyre::eyre;
-use sinex_test_utils::sinex_test;
+use xtask::sandbox::sinex_test;
+use xtask::sandbox::prelude::TestResult;
 
 #[sinex_test]
 fn exo_cli_stays_parseable() -> TestResult<()> {

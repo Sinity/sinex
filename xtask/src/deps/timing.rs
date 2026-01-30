@@ -170,7 +170,7 @@ mod tests {
     fn test_parse_timing_json_valid() {
         let json_content = r#"{
             "targets": [
-                {"name": "sinex-core", "duration": 45.5},
+                {"name": "sinex-db", "duration": 45.5},
                 {"name": "sinex-gateway", "duration": 12.3},
                 {"name": "xtask", "duration": 5.1}
             ]
@@ -186,7 +186,7 @@ mod tests {
         assert_eq!(report.total_time_secs, 45.5 + 12.3 + 5.1);
 
         // Should be sorted slowest first
-        assert_eq!(report.crate_times[0].name, "sinex-core");
+        assert_eq!(report.crate_times[0].name, "sinex-db");
         assert_eq!(report.crate_times[0].duration_secs, 45.5);
         assert_eq!(report.crate_times[1].name, "sinex-gateway");
         assert_eq!(report.crate_times[1].duration_secs, 12.3);

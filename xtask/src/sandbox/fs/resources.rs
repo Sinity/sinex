@@ -6,12 +6,10 @@
 
 #![allow(clippy::result_large_err)]
 
-use crate::{
-    path_validation::{create_test_temp_dir, validate_test_path},
-    Result,
-};
+use super::path_validation::{create_test_temp_dir, validate_test_path};
+use crate::sandbox::prelude::*;
 use camino::{Utf8Path, Utf8PathBuf};
-use sinex_core::types::error::SinexError;
+
 use std::path::Path;
 use tempfile::TempDir;
 
@@ -19,19 +17,22 @@ use tempfile::TempDir;
 ///
 /// This function creates a temporary directory using the system's temporary
 /// directory with proper validation and cleanup.
-pub fn temp_dir() -> Result<TempDir> {
-    tempfile::tempdir()
-        .map_err(|e| SinexError::io(format!("Failed to create temporary directory: {e}")))
+pub fn temp_dir() -> TestResult<TempDir> {
+    tempfile::tempdir().map_err(|e| eyre!(format!("Failed to create temporary directory: {e}")))
 }
 
 /// Create a test file with validated path and content
 ///
 /// This function creates a file within a validated directory structure.
 /// The parent directory must exist and be validated.
-pub fn create_test_file(parent_dir: &Path, filename: &str, content: &str) -> Result<Utf8PathBuf> {
+pub fn create_test_file(
+    parent_dir: &Path,
+    filename: &str,
+    content: &str,
+) -> TestResult<Utf8PathBuf> {
     // Convert std::path::Path to camino::Utf8Path
     let utf8_parent = Utf8Path::from_path(parent_dir)
-        .ok_or_else(|| SinexError::validation("Parent directory path is not valid UTF-8"))?;
+        .ok_or_else(|| eyre!("Parent directory path is not valid UTF-8"))?;
 
     // Validate the parent directory path
     validate_test_path(utf8_parent.as_str())?;
@@ -44,7 +45,7 @@ pub fn create_test_file(parent_dir: &Path, filename: &str, content: &str) -> Res
 
     // Write the content to the file
     std::fs::write(&file_path, content)
-        .map_err(|e| SinexError::io(format!("Failed to write test file: {e}")))?;
+        .map_err(|e| eyre!(format!("Failed to write test file: {e}")))?;
 
     Ok(file_path)
 }
@@ -53,22 +54,22 @@ pub fn create_test_file(parent_dir: &Path, filename: &str, content: &str) -> Res
 ///
 /// This creates a subdirectory within the system temporary directory
 /// with proper validation and security checks.
-pub fn create_secure_test_dir(test_name: &str) -> Result<Utf8PathBuf> {
-    create_test_temp_dir(test_name)
+pub fn create_secure_test_dir(test_name: &str) -> TestResult<Utf8PathBuf> {
+    create_test_temp_dir(test_name).map_err(Error::from)
 }
 
 /// Create a test file with auto-generated safe filename
 ///
 /// This function creates a test file with a filename that's automatically
 /// sanitized and placed in a secure temporary directory.
-pub fn create_temp_test_file(test_name: &str, content: &str) -> Result<Utf8PathBuf> {
+pub fn create_temp_test_file(test_name: &str, content: &str) -> TestResult<Utf8PathBuf> {
     let temp_dir = create_test_temp_dir(test_name)?;
     let filename = format!("{test_name}.txt");
     let file_path = temp_dir.join(filename);
 
     // Write the content
     std::fs::write(&file_path, content)
-        .map_err(|e| SinexError::io(format!("Failed to write temporary test file: {e}")))?;
+        .map_err(|e| eyre!(format!("Failed to write temporary test file: {e}")))?;
 
     Ok(file_path)
 }
@@ -80,10 +81,10 @@ pub fn create_test_binary_file(
     parent_dir: &Path,
     filename: &str,
     content: &[u8],
-) -> Result<Utf8PathBuf> {
+) -> TestResult<Utf8PathBuf> {
     // Convert std::path::Path to camino::Utf8Path
     let utf8_parent = Utf8Path::from_path(parent_dir)
-        .ok_or_else(|| SinexError::validation("Parent directory path is not valid UTF-8"))?;
+        .ok_or_else(|| eyre!("Parent directory path is not valid UTF-8"))?;
 
     // Validate the parent directory path
     validate_test_path(utf8_parent.as_str())?;
@@ -96,7 +97,7 @@ pub fn create_test_binary_file(
 
     // Write the binary content to the file
     std::fs::write(&file_path, content)
-        .map_err(|e| SinexError::io(format!("Failed to write test binary file: {e}")))?;
+        .map_err(|e| eyre!(format!("Failed to write test binary file: {e}")))?;
 
     Ok(file_path)
 }
@@ -105,16 +106,15 @@ pub fn create_test_binary_file(
 ///
 /// This is a convenience function that wraps the path validation
 /// for use in test resource management.
-pub fn verify_test_path_safety(path: &str) -> Result<()> {
-    validate_test_path(path).map(|_| ())
+pub fn verify_test_path_safety(path: &str) -> TestResult<()> {
+    validate_test_path(path).map(|_| ()).map_err(Error::from)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sinex_test;
 
-    #[sinex_test]
+    #[tokio::test]
     async fn test_temp_dir_creation() -> TestResult<()> {
         let temp_dir = temp_dir()?;
 
@@ -130,13 +130,10 @@ mod tests {
         let _temp_path = temp_dir.path().to_path_buf();
         drop(temp_dir);
 
-        // Note: Cleanup happens when temp_dir is dropped
-        // In some systems, it might take a moment to clean up
-
         Ok(())
     }
 
-    #[sinex_test]
+    #[tokio::test]
     async fn test_create_test_file() -> TestResult<()> {
         let temp_dir = temp_dir()?;
         let content = "Test file content for validation";
@@ -156,7 +153,7 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
+    #[tokio::test]
     async fn test_create_secure_test_dir() -> TestResult<()> {
         let test_dir = create_secure_test_dir("resources_test")?;
 
@@ -173,7 +170,7 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
+    #[tokio::test]
     async fn test_create_temp_test_file() -> TestResult<()> {
         let content = "Temporary test file content";
         let file_path = create_temp_test_file("temp_file_test", content)?;
@@ -191,7 +188,7 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
+    #[tokio::test]
     async fn test_create_test_binary_file() -> TestResult<()> {
         let temp_dir = temp_dir()?;
         let binary_content = b"Binary test content\x00\x01\x02\xFF";
@@ -209,7 +206,7 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
+    #[tokio::test]
     async fn test_path_validation_rejection() -> TestResult<()> {
         // These should be rejected by the validation
         let dangerous_paths = ["/etc/passwd", "../../../etc/shadow", "/bin/sh", ""];

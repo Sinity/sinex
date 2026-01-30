@@ -2,10 +2,10 @@ use camino::Utf8PathBuf;
 use color_eyre::eyre::WrapErr;
 use sinex_gateway::ServiceContainer;
 use sinex_node_sdk::annex::GitAnnex;
-use xtask::sandbox::timing::WaitHelpers;
-use xtask::sandbox::{sinex_test, TestContext, TestResult};
 use tempfile::TempDir;
 use which::which;
+use xtask::sandbox::timing::WaitHelpers;
+use xtask::sandbox::{sinex_test, TestContext, TestResult};
 
 struct ReplayBypassGuard {
     previous: Option<String>,
@@ -97,7 +97,7 @@ async fn blob_routes_do_not_persist_events(ctx: TestContext) -> TestResult<()> {
                 .fetch_one(&pool)
                 .await?
                 .unwrap_or(0);
-                Ok::<bool, sinex_test_utils::SinexError>(count == initial_count)
+                Ok::<bool, SinexError>(count == initial_count)
             }
         },
         5,
