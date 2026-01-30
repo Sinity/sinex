@@ -1,47 +1,8 @@
 use camino::{Utf8Component as Component, Utf8Path as Path, Utf8PathBuf as PathBuf};
 use percent_encoding::percent_decode_str;
 use serde_json::Value;
-use thiserror::Error;
 
-// Error types for validation
-#[derive(Error, Debug)]
-pub enum ValidationError {
-    #[error("Validation error: {0}")]
-    General(String),
-
-    #[error("Path validation failed: {0}")]
-    Path(String),
-
-    #[error("JSON validation failed: {0}")]
-    Json(String),
-
-    #[error("Unicode validation failed: {0}")]
-    Unicode(String),
-
-    #[error("IO error: {0}")]
-    Io(String),
-}
-
-impl From<std::io::Error> for ValidationError {
-    fn from(e: std::io::Error) -> Self {
-        ValidationError::Io(e.to_string())
-    }
-}
-
-#[cfg(feature = "sqlx")]
-impl From<sqlx::Error> for ValidationError {
-    fn from(e: sqlx::Error) -> Self {
-        ValidationError::General(format!("Database error: {e}"))
-    }
-}
-
-impl From<crate::error::SinexError> for ValidationError {
-    fn from(e: crate::error::SinexError) -> Self {
-        ValidationError::General(format!("System error: {e}"))
-    }
-}
-
-pub type Result<T> = std::result::Result<T, ValidationError>;
+use crate::error::{Result, SinexError};
 
 const MAX_JSON_SIZE: usize = 10 * 1024 * 1024; // 10MB
 const MAX_JSON_DEPTH: usize = 32;
@@ -51,20 +12,20 @@ const MAX_JSON_KEYS: usize = 1000;
 pub fn validate_path(path: &str) -> Result<camino::Utf8PathBuf> {
     // Check for null bytes
     if path.contains('\0') {
-        return Err(ValidationError::Path("Path contains null bytes".into()));
+        return Err(SinexError::validation("Path contains null bytes")
+            .with_context("validation_type", "path"));
     }
 
     // On Unix, backslashes are valid filename characters. Rewriting them into `/` changes
     // semantics and violates filename-preservation invariants relied on by tests.
     if path.contains('\\') {
-        return Err(ValidationError::Path(
-            "Path contains backslashes (\\)".into(),
-        ));
+        return Err(SinexError::validation("Path contains backslashes (\\)")
+            .with_context("validation_type", "path"));
     }
 
     // Check length
     if path.len() > 4096 {
-        return Err(ValidationError::Path("Path too long".into()));
+        return Err(SinexError::validation("Path too long").with_context("validation_type", "path"));
     }
 
     // Create PathBuf and clean it to normalize .. and . components
@@ -116,7 +77,8 @@ fn ensure_path_does_not_traverse(path: &Path) -> Result<()> {
             Component::ParentDir => {
                 depth -= 1;
                 if depth < 0 {
-                    return Err(ValidationError::Path("Path traversal detected".into()));
+                    return Err(SinexError::validation("Path traversal detected")
+                        .with_context("validation_type", "path"));
                 }
             }
             Component::Normal(_) => depth += 1,
@@ -143,7 +105,10 @@ fn decode_percent_encoded_path(path: &str) -> Result<Option<PathBuf>> {
         decoded_any = true;
         current = percent_decode_str(&current)
             .decode_utf8()
-            .map_err(|_| ValidationError::Path("Path contains invalid percent-encoding".into()))?
+            .map_err(|_| {
+                SinexError::validation("Path contains invalid percent-encoding")
+                    .with_context("validation_type", "path")
+            })?
             .into_owned();
     }
 
@@ -152,18 +117,18 @@ fn decode_percent_encoded_path(path: &str) -> Result<Option<PathBuf>> {
     }
 
     if current.contains('\\') {
-        return Err(ValidationError::Path(
-            "Path contains backslashes (\\)".into(),
-        ));
+        return Err(SinexError::validation("Path contains backslashes (\\)")
+            .with_context("validation_type", "path"));
     }
 
     Ok(Some(PathBuf::from(current)))
 }
 
-/// Sanitize a filename component for safe storage and display  
+/// Sanitize a filename component for safe storage and display
 pub fn sanitize_filename_component(filename: &str) -> Result<String> {
     if filename.is_empty() {
-        return Err(ValidationError::General("Filename cannot be empty".into()));
+        return Err(SinexError::validation("Filename cannot be empty")
+            .with_context("validation_type", "filename"));
     }
 
     // Basic sanitization - remove dangerous characters
@@ -182,9 +147,10 @@ pub fn sanitize_filename_component(filename: &str) -> Result<String> {
     let sanitized = sanitized.trim_matches(|c| c == '.' || c == ' ').to_string();
 
     if sanitized.is_empty() {
-        return Err(ValidationError::General(
-            "Filename becomes empty after sanitization".into(),
-        ));
+        return Err(
+            SinexError::validation("Filename becomes empty after sanitization")
+                .with_context("validation_type", "filename"),
+        );
     }
 
     Ok(sanitized)
@@ -197,13 +163,15 @@ pub fn validate_path_within_root(path: &str, root: &str) -> Result<PathBuf> {
 
     // Convert to absolute paths for comparison
     let abs_path = if path_buf.is_absolute() {
-        path_buf.clone()
+        path_buf
     } else {
-        camino::Utf8PathBuf::from_path_buf(
-            std::env::current_dir()
-                .map_err(|e| ValidationError::Io(format!("Failed to get current dir: {e}")))?,
-        )
-        .map_err(|_| ValidationError::Io("Path contains invalid UTF-8".to_string()))?
+        camino::Utf8PathBuf::from_path_buf(std::env::current_dir().map_err(|e| {
+            SinexError::io(format!("Failed to get current dir: {e}"))
+                .with_context("validation_type", "path")
+        })?)
+        .map_err(|_| {
+            SinexError::io("Path contains invalid UTF-8").with_context("validation_type", "path")
+        })?
         .join(&path_buf)
     };
 
@@ -212,11 +180,13 @@ pub fn validate_path_within_root(path: &str, root: &str) -> Result<PathBuf> {
     let abs_root = if root_path.is_absolute() {
         root_path
     } else {
-        camino::Utf8PathBuf::from_path_buf(
-            std::env::current_dir()
-                .map_err(|e| ValidationError::Io(format!("Failed to get current dir: {e}")))?,
-        )
-        .map_err(|_| ValidationError::Io("Path contains invalid UTF-8".to_string()))?
+        camino::Utf8PathBuf::from_path_buf(std::env::current_dir().map_err(|e| {
+            SinexError::io(format!("Failed to get current dir: {e}"))
+                .with_context("validation_type", "path")
+        })?)
+        .map_err(|_| {
+            SinexError::io("Path contains invalid UTF-8").with_context("validation_type", "path")
+        })?
         .join(&root_path)
     };
 
@@ -234,37 +204,44 @@ pub fn validate_path_within_root(path: &str, root: &str) -> Result<PathBuf> {
                 .and_then(|parent| parent.as_std_path().canonicalize())
                 .map(|parent| parent.join(abs_path.file_name().unwrap_or_default()))
         })
-        .map_err(|e| ValidationError::Path(format!("Path canonicalization failed: {e}")))?;
+        .map_err(|e| {
+            SinexError::validation(format!("Path canonicalization failed: {e}"))
+                .with_context("validation_type", "path")
+        })?;
 
-    let canonical_root = abs_root
-        .as_std_path()
-        .canonicalize()
-        .map_err(|e| ValidationError::Path(format!("Root canonicalization failed: {e}")))?;
+    let canonical_root = abs_root.as_std_path().canonicalize().map_err(|e| {
+        SinexError::validation(format!("Root canonicalization failed: {e}"))
+            .with_context("validation_type", "path")
+    })?;
 
     // Check if the canonical path starts with the canonical root
     if !canonical_path.starts_with(&canonical_root) {
-        return Err(ValidationError::Path(format!(
-            "Path '{path}' escapes watch root '{root}'"
-        )));
+        return Err(
+            SinexError::validation(format!("Path '{path}' escapes watch root '{root}'"))
+                .with_context("validation_type", "path"),
+        );
     }
 
-    camino::Utf8PathBuf::from_path_buf(canonical_path)
-        .map_err(|_| ValidationError::Io("Canonical path contains invalid UTF-8".to_string()))
+    camino::Utf8PathBuf::from_path_buf(canonical_path).map_err(|_| {
+        SinexError::io("Canonical path contains invalid UTF-8")
+            .with_context("validation_type", "path")
+    })
 }
 
 /// Validate JSON with size and depth limits
 pub fn validate_json(json_str: &str) -> Result<Value> {
     // Size check
     if json_str.len() > MAX_JSON_SIZE {
-        return Err(ValidationError::Json(format!(
-            "JSON too large: {} bytes",
-            json_str.len()
-        )));
+        return Err(
+            SinexError::validation(format!("JSON too large: {} bytes", json_str.len()))
+                .with_context("validation_type", "json"),
+        );
     }
 
     // Parse
-    let value: Value = serde_json::from_str(json_str)
-        .map_err(|e| ValidationError::Json(format!("Invalid JSON: {e}")))?;
+    let value: Value = serde_json::from_str(json_str).map_err(|e| {
+        SinexError::validation(format!("Invalid JSON: {e}")).with_context("validation_type", "json")
+    })?;
 
     // Validate structure
     validate_json_structure(&value, 0)?;
@@ -290,23 +267,27 @@ where
     // Then deserialize with path-to-error tracking
     let deserializer = serde_json::from_value::<T>(value);
 
-    deserializer.map_err(|e| ValidationError::Json(format!("Deserialization failed: {e}")))
+    deserializer.map_err(|e| {
+        SinexError::validation(format!("Deserialization failed: {e}"))
+            .with_context("validation_type", "json")
+    })
 }
 
 fn validate_json_structure(value: &Value, depth: usize) -> Result<()> {
     if depth > MAX_JSON_DEPTH {
-        return Err(ValidationError::Json(format!(
-            "JSON too deep: {depth} levels"
-        )));
+        return Err(
+            SinexError::validation(format!("JSON too deep: {depth} levels"))
+                .with_context("validation_type", "json"),
+        );
     }
 
     match value {
         Value::Object(map) => {
             if map.len() > MAX_JSON_KEYS {
-                return Err(ValidationError::Json(format!(
-                    "Too many keys: {}",
-                    map.len()
-                )));
+                return Err(
+                    SinexError::validation(format!("Too many keys: {}", map.len()))
+                        .with_context("validation_type", "json"),
+                );
             }
 
             for (_, v) in map {
@@ -334,15 +315,15 @@ pub fn normalize_unicode(input: &str) -> Result<String> {
         match ch {
             // Zero-width characters
             '\u{200B}'..='\u{200D}' | '\u{FEFF}' | '\u{2060}' => {
-                return Err(ValidationError::Unicode(
-                    "Zero-width characters not allowed".into(),
-                ));
+                return Err(SinexError::validation("Zero-width characters not allowed")
+                    .with_context("validation_type", "unicode"));
             }
             // Direction overrides
             '\u{202A}'..='\u{202E}' | '\u{200E}' | '\u{200F}' => {
-                return Err(ValidationError::Unicode(
-                    "Direction control characters not allowed".into(),
-                ));
+                return Err(
+                    SinexError::validation("Direction control characters not allowed")
+                        .with_context("validation_type", "unicode"),
+                );
             }
             _ => {}
         }
@@ -352,6 +333,7 @@ pub fn normalize_unicode(input: &str) -> Result<String> {
 }
 
 /// Check if a string contains shell metacharacters
+#[must_use]
 pub fn contains_shell_metacharacters(s: &str) -> bool {
     const DANGEROUS_CHARS: &[char] = &[
         ';', '|', '&', '$', '`', '(', ')', '{', '}', '<', '>', '\\', '\n', '\r', '\0', '*', '?',
@@ -365,9 +347,10 @@ pub fn contains_shell_metacharacters(s: &str) -> bool {
 pub fn check_json_expansion(value: &Value) -> Result<()> {
     fn estimate_expanded_size(value: &Value, depth: usize) -> Result<usize> {
         if depth > 10 {
-            return Err(ValidationError::Json(
-                "Potential billion laughs attack detected".into(),
-            ));
+            return Err(
+                SinexError::validation("Potential billion laughs attack detected")
+                    .with_context("validation_type", "json"),
+            );
         }
 
         match value {
@@ -386,9 +369,10 @@ pub fn check_json_expansion(value: &Value) -> Result<()> {
                 }
                 // Check for exponential expansion
                 if depth > 3 && arr.len() > 100 {
-                    return Err(ValidationError::Json(
-                        "Suspicious array expansion detected".into(),
-                    ));
+                    return Err(
+                        SinexError::validation("Suspicious array expansion detected")
+                            .with_context("validation_type", "json"),
+                    );
                 }
                 Ok(size)
             }
@@ -401,9 +385,8 @@ pub fn check_json_expansion(value: &Value) -> Result<()> {
 
     // If expanded size is more than 100x the original, reject
     if estimated_size > value.to_string().len() * 100 {
-        return Err(ValidationError::Json(
-            "JSON expansion ratio too high".into(),
-        ));
+        return Err(SinexError::validation("JSON expansion ratio too high")
+            .with_context("validation_type", "json"));
     }
 
     Ok(())

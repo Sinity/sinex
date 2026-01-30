@@ -53,6 +53,9 @@ workspace = true
 workspace = true
 features = [ "full",]
 
+[dependencies.human-panic]
+version = "2.0"
+
 [dependencies.sinex-macros]
 path = "../sinex-macros"
 optional = true

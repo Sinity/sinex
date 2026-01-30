@@ -14,7 +14,7 @@ use crate::{
 use axum::{
     error_handling::HandleErrorLayer,
     extract::State,
-    http::{HeaderMap, HeaderName, Request, StatusCode},
+    http::{header, HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode},
     response::IntoResponse,
     routing::{get, post},
     BoxError, Json, Router,
@@ -42,7 +42,7 @@ use tower::{
     timeout::TimeoutLayer,
     ServiceBuilder,
 };
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 use tower_http::trace::TraceLayer;
@@ -402,7 +402,7 @@ fn read_token_and_path_from_env() -> color_eyre::eyre::Result<(Option<String>, O
 }
 
 pub(crate) fn extract_token(headers: &HeaderMap) -> Option<String> {
-    if let Some(value) = headers.get(axum::http::header::AUTHORIZATION) {
+    if let Some(value) = headers.get(header::AUTHORIZATION) {
         if let Ok(as_str) = value.to_str() {
             let trimmed = as_str.trim();
             if let Some(rest) = trimmed.strip_prefix("Bearer ") {
@@ -1173,11 +1173,39 @@ fn warn_if_remote_bind(bind_address: &BindAddress) {
     }
 }
 
-fn apply_rpc_layers<S>(router: Router<S>, limits: &RpcServerLimits) -> Router<S>
+fn apply_rpc_layers<S>(
+    router: Router<S>,
+    limits: &RpcServerLimits,
+    cors_origins: &[String],
+) -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
 {
     let request_id_header = HeaderName::from_static("x-request-id");
+
+    // Configure CORS: if no origins specified, allow localhost only
+    let cors = if cors_origins.is_empty() {
+        CorsLayer::new()
+            .allow_origin(AllowOrigin::predicate(|origin, _| {
+                origin
+                    .to_str()
+                    .map(|s| {
+                        s.starts_with("http://localhost:") || s.starts_with("http://127.0.0.1:")
+                    })
+                    .unwrap_or(false)
+            }))
+            .allow_methods([Method::POST, Method::GET, Method::OPTIONS])
+            .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION])
+    } else {
+        let origins: Vec<HeaderValue> = cors_origins
+            .iter()
+            .filter_map(|o| HeaderValue::from_str(o).ok())
+            .collect();
+        CorsLayer::new()
+            .allow_origin(origins)
+            .allow_methods([Method::POST, Method::GET, Method::OPTIONS])
+            .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION])
+    };
 
     router
         .layer(
@@ -1187,8 +1215,7 @@ where
                 .layer(ConcurrencyLimitLayer::new(limits.concurrency_limit))
                 .layer(TimeoutLayer::new(limits.request_timeout))
                 .layer(RequestBodyLimitLayer::new(limits.max_body_bytes.as_usize()))
-                // TODO: Review CORS policy for production (analysis/rpc_server.md Q-003)
-                .layer(CorsLayer::permissive())
+                .layer(cors)
                 .into_inner(),
         )
         .layer(
@@ -1533,7 +1560,7 @@ mod tests {
         let auth = GatewayAuth::with_test_token("secret");
         let mut headers = HeaderMap::new();
         headers.insert(
-            axum::http::header::AUTHORIZATION,
+            header::AUTHORIZATION,
             HeaderValue::from_static("Bearer secret"),
         );
         assert!(auth.verify(&headers).await.is_ok());
@@ -1544,9 +1571,15 @@ mod tests {
 /// Run the RPC server with configurable binding
 ///
 /// Accepts a shutdown signal receiver that will trigger graceful shutdown when signaled.
+///
+/// # CORS Configuration
+/// The `cors_origins` parameter controls allowed origins:
+/// - Empty: Only localhost origins allowed (http://localhost:*, http://127.0.0.1:*)
+/// - Non-empty: Only the specified origins allowed
 pub async fn run(
     tcp_listen: Option<&str>,
     services: ServiceContainer,
+    cors_origins: Vec<String>,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> color_eyre::eyre::Result<()> {
     let bind_address = BindAddress::from_env_or_default(tcp_listen)?;
@@ -1612,7 +1645,7 @@ pub async fn run(
         .route("/", post(handle_rpc))
         .route("/health", get(health_check));
 
-    let app = apply_rpc_layers(base_router, &limits).with_state(state);
+    let app = apply_rpc_layers(base_router, &limits, &cors_origins).with_state(state);
 
     let (cert_path, key_path, client_ca) = tls_paths_from_env()?;
     require_mtls_for_remote(&bind_address, client_ca.as_deref())?;

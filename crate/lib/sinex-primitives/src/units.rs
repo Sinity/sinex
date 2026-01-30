@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::str::FromStr;
 
-use crate::validation::ValidationError;
+use crate::error::{Result, SinexError};
 
 /// Byte-count newtype that prevents unit mixups.
 #[derive(
@@ -48,10 +48,12 @@ impl Bytes {
 
     /// Validate that value is within acceptable range.
     ///
+    /// # Errors
+    ///
     /// Returns an error if the value exceeds the maximum of 1 GiB.
-    pub fn validate(&self) -> Result<(), ValidationError> {
+    pub fn validate(&self) -> Result<()> {
         if self.0 > Self::MAX.0 {
-            return Err(ValidationError::General(format!(
+            return Err(SinexError::validation(format!(
                 "Bytes value {} exceeds maximum of {} (1 GiB)",
                 self.0,
                 Self::MAX.0
@@ -62,8 +64,10 @@ impl Bytes {
 
     /// Create from bytes with validation.
     ///
+    /// # Errors
+    ///
     /// Returns an error if the value exceeds the maximum of 1 GiB.
-    pub fn from_bytes_validated(bytes: u64) -> Result<Self, ValidationError> {
+    pub fn from_bytes_validated(bytes: u64) -> Result<Self> {
         let b = Self::from_bytes(bytes);
         b.validate()?;
         Ok(b)
@@ -97,7 +101,7 @@ impl From<Bytes> for usize {
 impl FromStr for Bytes {
     type Err = std::num::ParseIntError;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         s.parse::<u64>().map(Bytes::from_bytes)
     }
 }
@@ -145,10 +149,12 @@ impl Seconds {
 
     /// Validate that value is within acceptable range.
     ///
+    /// # Errors
+    ///
     /// Returns an error if the value exceeds the maximum of 86400 seconds (24 hours).
-    pub fn validate(&self) -> Result<(), ValidationError> {
+    pub fn validate(&self) -> Result<()> {
         if self.0 > Self::MAX.0 {
-            return Err(ValidationError::General(format!(
+            return Err(SinexError::validation(format!(
                 "Seconds value {} exceeds maximum of {} (24 hours)",
                 self.0,
                 Self::MAX.0
@@ -159,8 +165,10 @@ impl Seconds {
 
     /// Create from seconds with validation.
     ///
+    /// # Errors
+    ///
     /// Returns an error if the value exceeds the maximum of 86400 seconds (24 hours).
-    pub fn from_secs_validated(secs: u64) -> Result<Self, ValidationError> {
+    pub fn from_secs_validated(secs: u64) -> Result<Self> {
         let s = Self::from_secs(secs);
         s.validate()?;
         Ok(s)
@@ -188,7 +196,7 @@ impl From<Seconds> for u64 {
 impl FromStr for Seconds {
     type Err = std::num::ParseIntError;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         s.parse::<u64>().map(Seconds::from_secs)
     }
 }
@@ -238,7 +246,7 @@ impl From<Milliseconds> for u64 {
 impl FromStr for Milliseconds {
     type Err = std::num::ParseIntError;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         s.parse::<u64>().map(Milliseconds::from_millis)
     }
 }
