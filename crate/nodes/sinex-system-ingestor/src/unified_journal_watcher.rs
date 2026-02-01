@@ -10,14 +10,15 @@
 //! events based on the presence of `_SYSTEMD_UNIT` field to emit both journal
 //! and systemd-specific events, reducing process overhead by 50%.
 
-use sinex_primitives::fs::atomic_write;
 use sinex_db::models::Event;
+use sinex_primitives::fs::atomic_write;
 use sinex_primitives::JsonValue;
 use time::OffsetDateTime;
 
 use crate::payloads::*;
 use crate::WatcherMaterialContext;
 use sha2::{Digest, Sha256};
+use sinex_node_sdk::NodeResult;
 use sinex_primitives::events::{
     JournalEntryWrittenPayload as EventJournalEntryWrittenPayload,
     JournalSyncCompletedPayload as EventJournalSyncCompletedPayload, SystemdTimerTriggeredPayload,
@@ -31,7 +32,6 @@ use sinex_primitives::{
     },
     units::{Microseconds, ProcessId, SyslogPriority, UnixGid, UnixUid},
 };
-use sinex_node_sdk::NodeResult;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -846,7 +846,7 @@ impl UnifiedJournalWatcher {
     fn calculate_entropy(cursor: &str, discriminator: u8) -> u128 {
         let mut hasher = Sha256::new();
         hasher.update(cursor.as_bytes());
-        hasher.update(&[discriminator]);
+        hasher.update([discriminator]);
         let hash = hasher.finalize();
 
         // Use first 16 bytes for 128-bit entropy

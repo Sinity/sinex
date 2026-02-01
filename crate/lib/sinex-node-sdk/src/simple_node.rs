@@ -55,7 +55,6 @@ use async_trait::async_trait;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sinex_primitives::{
     domain::{EventSource, EventType, HostName},
-    events::builder::EventId,
     events::{Event, Provenance},
     ids::Id,
     JsonValue, Ulid,
@@ -449,7 +448,7 @@ where
                 format!("simple_processor_{}", self.processor.name()),
             ),
             processed_count: self.persisted_state.events_processed,
-            last_activity: sinex_primitives::temporal::now_utc(),
+            last_activity: sinex_primitives::temporal::now(),
             data: Some(state_json),
             version: 2,
             revision: self.last_revision,
@@ -474,7 +473,7 @@ where
                 format!("simple_processor_{}", self.processor.name()),
             ),
             processed_count: self.persisted_state.events_processed,
-            last_activity: sinex_primitives::temporal::now_utc(),
+            last_activity: sinex_primitives::temporal::now(),
             data: Some(state_json),
             version: 2,
             revision: self.last_revision,
@@ -517,13 +516,13 @@ where
         })?;
 
         // Get source event ID for provenance (clone to avoid partial move)
-        let source_event_id = event.id.clone().unwrap_or_else(EventId::new);
+        let source_event_id = event.id.unwrap_or_default();
 
         // Build context
         let context = SimpleNodeContext {
             source: event.source.to_string(),
             event_type: event.event_type.to_string(),
-            ts_orig: event.ts_orig.map(|t| t.into()),
+            ts_orig: event.ts_orig.map(|t| t),
             event_id: source_event_id.into(),
         };
 
@@ -546,7 +545,7 @@ where
             }
 
             // Periodic health check (every 100 events)
-            if self.persisted_state.events_processed % 100 == 0 {
+            if self.persisted_state.events_processed.is_multiple_of(100) {
                 if let Err(e) = reporter.check_and_emit().await {
                     warn!(
                         processor = %self.processor.name(),
@@ -974,7 +973,7 @@ where
             is_connected: true,
             healthy: true,
             description: format!("{} automaton", self.processor.name()),
-            last_updated: sinex_primitives::temporal::now_utc(),
+            last_updated: sinex_primitives::temporal::now(),
             lag_seconds: None,
             recent_activity: Vec::new(),
             total_items: None,
@@ -993,14 +992,14 @@ where
     fn get_coverage_analysis(
         &self,
         _time_range: Option<(
-            sinex_primitives::temporal::OffsetDateTime,
-            sinex_primitives::temporal::OffsetDateTime,
+            sinex_primitives::temporal::Timestamp,
+            sinex_primitives::temporal::Timestamp,
         )>,
     ) -> NodeResult<crate::exploration::CoverageAnalysis> {
         Ok(crate::exploration::CoverageAnalysis {
             time_range: (
-                sinex_primitives::temporal::now_utc(),
-                sinex_primitives::temporal::now_utc(),
+                sinex_primitives::temporal::now(),
+                sinex_primitives::temporal::now(),
             ),
             source_total: 0,
             sinex_total: 0,

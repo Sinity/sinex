@@ -1,11 +1,11 @@
 use serde_json::json;
-use sinex_primitives::db::models::SourceMaterial;
-use sinex_primitives::db::repositories::SourceMaterialRepository;
-use xtask::sandbox::prelude::*;
-use xtask::sandbox::{sinex_test, TestContext, TestResult};
+use sinex_db::models::SourceMaterial;
+use sinex_db::repositories::SourceMaterialRepository;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::Barrier;
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::{sinex_test, TestContext, TestResult};
 
 #[sinex_test]
 async fn test_metadata_update_race_condition(ctx: TestContext) -> TestResult<()> {

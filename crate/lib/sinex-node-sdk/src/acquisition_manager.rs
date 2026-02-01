@@ -5,7 +5,7 @@
 //! with rotation, hashing, and NATS publishing.
 
 use crate::stream_processor::NodeHandles;
-use crate::{SinexError, NodeResult};
+use crate::{NodeResult, SinexError};
 use async_nats::{jetstream, Client as NatsClient};
 use serde::Serialize;
 use serde_json::{json, Value as JsonValue};
@@ -182,7 +182,10 @@ impl AcquisitionManager {
             ..Default::default()
         })
         .await
-        .map_err(|e| SinexError::messaging(e.to_string()))?;
+        .map_err(|e| {
+            SinexError::messaging("failed to create SOURCE_MATERIAL_BEGIN stream")
+                .with_std_error(&e)
+        })?;
 
         js.get_or_create_stream(jetstream::stream::Config {
             name: env.nats_stream_name_with_namespace(namespace, "SOURCE_MATERIAL_SLICES"),
@@ -193,7 +196,10 @@ impl AcquisitionManager {
             ..Default::default()
         })
         .await
-        .map_err(|e| SinexError::messaging(e.to_string()))?;
+        .map_err(|e| {
+            SinexError::messaging("failed to create SOURCE_MATERIAL_SLICES stream")
+                .with_std_error(&e)
+        })?;
 
         js.get_or_create_stream(jetstream::stream::Config {
             name: env.nats_stream_name_with_namespace(namespace, "SOURCE_MATERIAL_END"),
@@ -202,7 +208,9 @@ impl AcquisitionManager {
             ..Default::default()
         })
         .await
-        .map_err(|e| SinexError::messaging(e.to_string()))?;
+        .map_err(|e| {
+            SinexError::messaging("failed to create SOURCE_MATERIAL_END stream").with_std_error(&e)
+        })?;
 
         Ok(())
     }
@@ -531,10 +539,7 @@ impl AcquisitionManager {
 
     /// Check if rotation is needed (ported from MaterialRotationManager)
     pub async fn should_rotate(&self, handle: &SourceMaterialHandle) -> bool {
-        let age_seconds = (now_utc()
-            - handle.started_at)
-            .whole_seconds()
-            .max(0) as u64;
+        let age_seconds = (now_utc() - handle.started_at).whole_seconds().max(0) as u64;
 
         handle.bytes_written >= self.rotation_policy.max_bytes.as_u64() as i64
             || age_seconds >= self.rotation_policy.max_age_seconds.as_secs()
@@ -592,7 +597,7 @@ impl<'a> MaterialBuilder<'a> {
             .write(true)
             .open(&temp_path)
             .await
-            .map_err(|e| SinexError::io(e))?;
+            .map_err(SinexError::io)?;
 
         info!(
             material_id = %material_id,

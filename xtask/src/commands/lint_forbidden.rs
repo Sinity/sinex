@@ -45,23 +45,31 @@ impl XtaskCommand for LintForbiddenCommand {
             "crate/lib/sinex-node-sdk/src/schema_validator.rs",
             "crate/lib/sinex-node-sdk/examples/git_activity_detector.rs",
             "cli/sinex-cli/tests/retry_tests.rs",
+            "cli/sinex-cli/tests/gateway_client_tests.rs",
+            "cli/sinex-cli/tests/mock_client_tests.rs",
+            "cli/sinex-cli/tests/common/mock_client.rs",
             "cli/sinex-cli/src/fmt/progress.rs",
             "xtask/src/main.rs",
             "xtask/src/commands/lint_forbidden.rs",
+            "xtask/src/sandbox/fs/resources.rs",
+            "xtask-macros/src/lib.rs",
         ];
         // Sync #[test] allowed for unit tests that don't need async/DB
         let rust_test_allow = [
             "crate/lib/sinex-test-utils/macros/src/lib.rs",
             "crate/nodes/sinex-desktop-node/src/window_manager.rs",
             "crate/nodes/sinex-desktop-ingestor/src/window_manager.rs",
-            "crate/lib/sinex-db/src/db/sanitization.rs",
-            "crate/lib/sinex-db/src/db/models/event.rs",
-            "crate/lib/sinex-db/src/db/query_helpers.rs",
-            "crate/lib/sinex-primitives/src/types/units.rs",
-            "crate/lib/sinex-primitives/src/types/error.rs",
-            "crate/lib/sinex-primitives/src/types/validation/query_validation.rs",
-            "crate/lib/sinex-primitives/src/types/utils/json_helpers.rs",
-            "crate/lib/sinex-primitives/src/types/utils/timestamp_helpers.rs",
+            // sinex-db paths (after crate reorganization)
+            "crate/lib/sinex-db/src/sanitization.rs",
+            "crate/lib/sinex-db/src/models/event.rs",
+            "crate/lib/sinex-db/src/query_helpers.rs",
+            // sinex-primitives paths (after crate reorganization - no /types/ subdir)
+            "crate/lib/sinex-primitives/src/units.rs",
+            "crate/lib/sinex-primitives/src/error.rs",
+            "crate/lib/sinex-primitives/src/validation/query_validation.rs",
+            "crate/lib/sinex-primitives/src/utils/json_helpers.rs",
+            "crate/lib/sinex-primitives/src/utils/timestamp_helpers.rs",
+            "crate/lib/sinex-node-sdk/src/version.rs",
             "crate/lib/sinex-test-utils/src/property_testing.rs",
             "crate/lib/sinex-test-utils/src/static_fixtures.rs",
             "crate/lib/sinex-test-utils/src/test_hooks.rs",
@@ -97,6 +105,7 @@ impl XtaskCommand for LintForbiddenCommand {
             "xtask/src/output.rs",
             "xtask/src/process.rs",
             "xtask/src/tools.rs",
+            "xtask-macros/src/lib.rs",
         ];
         // Runtime sqlx::query() is allowed for:
         // - Session control (SET, ROLLBACK, RESET)
@@ -108,15 +117,18 @@ impl XtaskCommand for LintForbiddenCommand {
             "crate/core/sinex-gateway/src/rpc_server.rs",
             "crate/core/sinex-gateway/src/handlers/legacy.rs",
             "crate/core/sinex-ingestd/src/config.rs",
-            "crate/lib/sinex-db/src/db/mod.rs",
-            "crate/lib/sinex-db/src/db/query_helpers.rs",
-            "crate/lib/sinex-db/src/db/repositories/events.rs",
-            "crate/lib/sinex-db/src/db/repositories/events/persistence.rs",
-            "crate/lib/sinex-db/src/db/repositories/events/queries.rs",
-            "crate/lib/sinex-db/src/db/repositories/common.rs",
-            "crate/lib/sinex-db/src/db/repositories/schema_management.rs",
-            "crate/lib/sinex-db/src/db/repositories/knowledge_graph.rs",
-            "crate/lib/sinex-db/src/db/replay/state_machine.rs",
+            // sinex-db paths (after crate reorganization - no /db/ subdir)
+            "crate/lib/sinex-db/src/lib.rs",
+            "crate/lib/sinex-db/src/pool.rs",
+            "crate/lib/sinex-db/src/query_helpers.rs",
+            "crate/lib/sinex-db/src/repositories/events/mod.rs",
+            "crate/lib/sinex-db/src/repositories/events/persistence.rs",
+            "crate/lib/sinex-db/src/repositories/events/queries.rs",
+            "crate/lib/sinex-db/src/repositories/common.rs",
+            "crate/lib/sinex-db/src/repositories/schema_management.rs",
+            "crate/lib/sinex-db/src/repositories/knowledge_graph.rs",
+            "crate/lib/sinex-db/src/repositories/state.rs",
+            "crate/lib/sinex-db/src/replay/state_machine.rs",
             "crate/lib/sinex-node-sdk/src/preflight/database.rs",
             "crate/lib/sinex-node-sdk/src/preflight/verification.rs",
             "crate/lib/sinex-services/src/analytics.rs",
@@ -129,7 +141,7 @@ impl XtaskCommand for LintForbiddenCommand {
             "xtask/src/main.rs",
         ];
         let sqlx_query_as_allow = [
-            "crate/lib/sinex-db/src/db/repositories/common.rs",
+            "crate/lib/sinex-db/src/repositories/common.rs",
             "crate/lib/sinex-node-sdk/src/preflight/database.rs",
             "xtask/src/main.rs",
         ];
@@ -165,6 +177,10 @@ impl XtaskCommand for LintForbiddenCommand {
 
         // Check for test-utils usage in production code (layering violation)
         check_test_utils_layering(&mut violations)?;
+
+        // Note: Error handling and type system anti-patterns are now checked
+        // by ast-grep rules in .config/ast-grep/rules/
+        // Run: ast-grep scan crate
 
         if violations.is_empty() {
             println!("✅ No forbidden patterns found");
@@ -329,6 +345,10 @@ fn report_sqlx_query_stats() -> Result<()> {
     }
     Ok(())
 }
+
+// Error handling and type system anti-patterns are now checked by ast-grep.
+// See .config/ast-grep/rules/ for the rules.
+// Run: ast-grep scan crate
 
 /// Count occurrences of a pattern outside test directories
 fn count_pattern_outside_tests(pattern: &str) -> Result<usize> {

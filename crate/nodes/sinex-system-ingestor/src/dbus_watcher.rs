@@ -502,7 +502,7 @@ impl DbusWatcher {
             && interface == "org.freedesktop.Notifications"
             && member == "Notify"
         {
-            let payload = Self::parse_notification_args(args, timestamp.clone());
+            let payload = Self::parse_notification_args(args, timestamp);
             let event = Event::new(payload, material.initial_provenance()).to_json_event()?;
             Self::send_event(tx, event, "dbus_notification", material).await?;
         }
@@ -516,8 +516,8 @@ impl DbusWatcher {
                 .and_then(|s| s.split('.').next_back())
                 .unwrap_or("unknown");
 
-            let payload = Self::parse_mpris_properties(args, player, sender, timestamp.clone())
-                .unwrap_or_else(|| Self::default_media_payload(player, sender, timestamp.clone()));
+            let payload = Self::parse_mpris_properties(args, player, sender, timestamp)
+                .unwrap_or_else(|| Self::default_media_payload(player, sender, timestamp));
 
             let event = Event::new(payload, material.initial_provenance()).to_json_event()?;
             Self::send_event(tx, event, "dbus_media_playback", material).await?;

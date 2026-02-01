@@ -4,11 +4,11 @@
 // and concurrent file operations under adverse conditions.
 
 use futures::future::join_all;
+use sinex_primitives::Timestamp;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use sinex_primitives::Timestamp;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::Timeouts;
 

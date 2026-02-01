@@ -7,12 +7,11 @@
 use async_nats::jetstream::kv::Operation;
 use color_eyre::eyre::eyre;
 use futures::TryStreamExt;
-use sinex_primitives::ids::Ulid;
-use sinex_primitives::Timestamp;
-use sinex_node_sdk::DbPool;
+use sinex_db::DbPool;
 use sinex_node_sdk::checkpoint::parse_checkpoint_key;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
-use std::str::FromStr;
+use sinex_primitives::ids::Ulid;
+use sinex_primitives::Timestamp;
 use time::Duration;
 use xtask::sandbox::prelude::*;
 
@@ -71,8 +70,8 @@ pub async fn analyze_checkpoint(
     };
 
     let last_processed_id = match &snapshot.checkpoint {
-        Checkpoint::Internal { event_id, .. } => Some(event_id.clone()),
-        Checkpoint::Stream { event_id, .. } => event_id.clone(),
+        Checkpoint::Internal { event_id, .. } => Some(*event_id),
+        Checkpoint::Stream { event_id, .. } => *event_id,
         Checkpoint::None | Checkpoint::External { .. } | Checkpoint::Timestamp { .. } => None,
     };
 
@@ -133,9 +132,8 @@ pub async fn analyze_checkpoint(
         });
     }
 
-    let hours_since_last_activity =
-        (Timestamp::now() - Timestamp::new(snapshot.last_activity)).num_hours();
-    if hours_since_last_activity >= stale_after.num_hours() {
+    let hours_since_last_activity = (Timestamp::now() - snapshot.last_activity).whole_hours();
+    if hours_since_last_activity >= stale_after.whole_hours() {
         issues.push(CheckpointInconsistency {
             processor_name: processor_name.to_string(),
             details: format!(
@@ -170,7 +168,7 @@ pub async fn save_checkpoint_state(
     let state = CheckpointState {
         checkpoint,
         processed_count,
-        last_activity: last_activity.inner(),
+        last_activity,
         data,
         version: 2,
         revision: 0,
@@ -219,7 +217,7 @@ pub async fn purge_checkpoint_state(
             continue;
         };
         if proc == processor_name && group == consumer_group && consumer == consumer_name {
-            let _ = kv.purge(&key).await?;
+            kv.purge(&key).await?;
             break;
         }
     }

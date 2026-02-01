@@ -211,6 +211,6 @@ fn convert_notify_event_secure(
     Some(FileChangeEvent {
         path: path_buf,
         kind,
-        timestamp: crate::temporal::now().into(),
+        timestamp: crate::temporal::now(),
     })
 }

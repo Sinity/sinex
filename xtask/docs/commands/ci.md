@@ -59,8 +59,8 @@ cargo xtask ci workspace --json
 
 **When NOT to use:**
 - **Quick local iteration** - Use `cargo xtask check` instead (much faster)
-- **Debugging tests** - Use `cargo xtask test --profile debug` for single-threaded execution
-- **Incremental testing** - Use `cargo xtask test --profile fast` for quick feedback
+- **Debugging tests** - Use `cargo xtask test --debug` for single-threaded execution
+- **Incremental testing** - Use `cargo xtask test` for quick feedback
 
 ## CI Integration Examples
 
@@ -133,9 +133,9 @@ test:
 | Command | Purpose | Duration | Use Case |
 |---------|---------|----------|----------|
 | `cargo xtask check` | Fast format + compile check | ~10s | Local iteration |
-| `cargo xtask test --profile fast` | Quick test run | ~30-60s | Pre-commit check |
+| `cargo xtask test` | Quick test run | ~30-60s | Pre-commit check |
 | `cargo xtask ci workspace` | Full CI validation | ~2-5min | Pre-merge/CI pipeline |
-| `cargo xtask ci-preflight` | Comprehensive validation | ~3-8min | Release validation |
+| `cargo xtask status --doctor` | Environment diagnostics | ~5s | Troubleshooting |
 
 ## Troubleshooting
 

@@ -16,7 +16,8 @@ use std::time::Duration;
 use tokio::time::sleep;
 use xtask::sandbox::nats::ensure_coordination_buckets;
 
-use sinex_primitives::db::advisory_lock::AdvisoryLock;
+use sinex_db::advisory_lock::AdvisoryLock;
+use sinex_primitives::utils::ResourceGuard;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::WaitHelpers;
 
@@ -30,12 +31,12 @@ async fn test_advisory_lock_acquire_release(ctx: TestContext) -> Result<()> {
     let lock_key = format!("test-lock-{}", uuid::Uuid::new_v4());
 
     // Acquire lock
-    let lock_guard = AdvisoryLock::try_acquire(&ctx.pool, &lock_key)
+    let lock_guard = AdvisoryLock::try_acquire(&ctx.pool(), &lock_key)
         .await?
         .expect("Should acquire lock");
 
     // Verify lock is held
-    let is_locked = AdvisoryLock::is_locked(&ctx.pool, &lock_key).await?;
+    let is_locked = AdvisoryLock::is_locked(&ctx.pool(), &lock_key).await?;
     assert!(is_locked, "Lock should be held after acquisition");
 
     // Release lock
@@ -43,12 +44,10 @@ async fn test_advisory_lock_acquire_release(ctx: TestContext) -> Result<()> {
 
     WaitHelpers::wait_for_condition(
         || {
-            let pool = ctx.pool.clone();
+            let pool = ctx.pool().clone();
             let key = lock_key.clone();
             async move {
-                Ok::<bool, xtask::sandbox::SinexError>(
-                    !AdvisoryLock::is_locked(&pool, &key).await?,
-                )
+                Ok::<bool, xtask::sandbox::SinexError>(!AdvisoryLock::is_locked(&pool, &key).await?)
             }
         },
         5,
@@ -56,7 +55,8 @@ async fn test_advisory_lock_acquire_release(ctx: TestContext) -> Result<()> {
     .await?;
 
     // Verify lock is released (should be able to acquire again)
-    let lock_guard2 = AdvisoryLock::try_acquire(&ctx.pool, &lock_key).await?;
+    let lock_guard2: Option<ResourceGuard<AdvisoryLock>> =
+        AdvisoryLock::try_acquire(&ctx.pool(), &lock_key).await?;
     assert!(
         lock_guard2.is_some(),
         "Should be able to acquire lock after release"
@@ -75,7 +75,7 @@ async fn test_advisory_lock_concurrent_acquisition(ctx: TestContext) -> Result<(
 
     // Spawn multiple tasks trying to acquire the same lock
     for task_id in 0..10 {
-        let pool = ctx.pool.clone();
+        let pool = ctx.pool().clone();
         let key = lock_key.clone();
         let count = acquired_count.clone();
 
@@ -125,15 +125,16 @@ async fn test_advisory_lock_timeout(ctx: TestContext) -> Result<()> {
     let lock_key = format!("timeout-lock-{}", uuid::Uuid::new_v4());
 
     // Acquire lock first
-    let _lock_guard = AdvisoryLock::try_acquire(&ctx.pool, &lock_key)
-        .await?
-        .expect("Should acquire lock");
+    let _lock_guard: ResourceGuard<AdvisoryLock> =
+        AdvisoryLock::try_acquire(&ctx.pool(), &lock_key)
+            .await?
+            .expect("Should acquire lock");
 
     // Try to acquire with timeout from another task
-    let pool = ctx.pool.clone();
+    let pool = ctx.pool().clone();
     let key = lock_key.clone();
 
-    let timeout_result = tokio::spawn(async move {
+    let timeout_result: Result<ResourceGuard<AdvisoryLock>, _> = tokio::spawn(async move {
         AdvisoryLock::acquire_or_wait(&pool, &key, Duration::from_millis(100)).await
     })
     .await?;
@@ -169,8 +170,8 @@ async fn test_node_instance_registration(ctx: TestContext) -> Result<()> {
         instance_id: instance_id.clone(),
         hostname: "test-host".to_string(),
         version: "1.0.0".to_string(),
-        started_at: crate::temporal::now().timestamp(),
-        last_heartbeat: crate::temporal::now().timestamp(),
+        started_at: sinex_primitives::Timestamp::now().unix_timestamp(),
+        last_heartbeat: sinex_primitives::Timestamp::now().unix_timestamp(),
     };
 
     // Register instance
@@ -228,8 +229,8 @@ async fn test_multiple_node_instances(ctx: TestContext) -> Result<()> {
             instance_id: instance_id.clone(),
             hostname: format!("host-{}", i),
             version: format!("1.0.{}", i),
-            started_at: crate::temporal::now().timestamp(),
-            last_heartbeat: crate::temporal::now().timestamp(),
+            started_at: sinex_primitives::Timestamp::now().unix_timestamp(),
+            last_heartbeat: sinex_primitives::Timestamp::now().unix_timestamp(),
         };
 
         kv_client.register_instance(&metadata).await?;
@@ -284,15 +285,15 @@ async fn test_heartbeat_revision_update(ctx: TestContext) -> Result<()> {
         instance_id: fresh_id.clone(),
         hostname: "fresh".to_string(),
         version: "1.0.0".to_string(),
-        started_at: crate::temporal::now().timestamp(),
-        last_heartbeat: crate::temporal::now().timestamp(),
+        started_at: sinex_primitives::Timestamp::now().unix_timestamp(),
+        last_heartbeat: sinex_primitives::Timestamp::now().unix_timestamp(),
     };
     let meta_stale = InstanceMetadata {
         instance_id: stale_id.clone(),
         hostname: "stale".to_string(),
         version: "1.0.0".to_string(),
-        started_at: crate::temporal::now().timestamp(),
-        last_heartbeat: crate::temporal::now().timestamp(),
+        started_at: sinex_primitives::Timestamp::now().unix_timestamp(),
+        last_heartbeat: sinex_primitives::Timestamp::now().unix_timestamp(),
     };
 
     kv_client.register_instance(&meta_fresh).await?;
@@ -447,8 +448,8 @@ async fn test_concurrent_coordination_stress(ctx: TestContext) -> Result<()> {
                 instance_id: instance_id.clone(),
                 hostname: format!("host-{}", task_id),
                 version: "1.0.0".to_string(),
-                started_at: crate::temporal::now().timestamp(),
-                last_heartbeat: crate::temporal::now().timestamp(),
+                started_at: sinex_primitives::Timestamp::now().unix_timestamp(),
+                last_heartbeat: sinex_primitives::Timestamp::now().unix_timestamp(),
             };
 
             // Register
@@ -520,8 +521,8 @@ async fn test_kv_functionality_with_mtls(_ctx: TestContext) -> Result<()> {
         instance_id: instance_id.to_string(),
         hostname: "secure-host".to_string(),
         version: "0.0.0".to_string(),
-        started_at: crate::temporal::now().timestamp(),
-        last_heartbeat: crate::temporal::now().timestamp(),
+        started_at: sinex_primitives::Timestamp::now().unix_timestamp(),
+        last_heartbeat: sinex_primitives::Timestamp::now().unix_timestamp(),
     };
 
     kv_client.register_instance(&meta).await?;

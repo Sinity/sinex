@@ -30,7 +30,7 @@ For full ecosystem context, see `exploration/ecosystem-context.md`.
 - `current/architecture/` — Core architecture, security architecture, operations, user interaction, event taxonomy.
 - `current/configuration/` — Shared environment variables (per-service config in crate docs).
 - `current/security.md` — Current security posture and guardrails.
-- `current/testing/` — Testing overview and pipeline guides (detailed patterns in `sinex-test-utils/docs/`).
+- `current/testing/` — Testing overview and pipeline guides (detailed patterns in `xtask/docs/sandbox/`).
 
 ## Planning (what's next)
 
@@ -74,13 +74,13 @@ Implementation details are documented close to the code:
 
 | Crate | Key Documentation |
 |-------|-------------------|
-| `sinex-core` | Type system, newtypes, repositories, error handling |
+| `sinex-primitives` | Type system, newtypes, validation, error handling |
 | `sinex-node-sdk` | Node patterns, provenance, stage-as-you-go, SDK vision |
-| `sinex-test-utils` | Test patterns, pipeline testing, database pool |
+| `sinex-db` | Database pools, repositories, query helpers |
 | `sinex-gateway` | RPC server, transport security, environment |
 | `sinex-ingestd` | Event validation, pipeline design, NATS security |
 | `sinex-schema` | Database schema, migrations, ULID handling |
-| `sinex-desktop-ingestor` | Hyprland plugin development, environment |
+| `xtask` | Test patterns (sandbox), build automation, CI pipelines |
 
 Each crate's `docs/README.md` serves as the entry point.
 

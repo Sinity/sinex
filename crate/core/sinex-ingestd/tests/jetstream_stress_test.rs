@@ -1,12 +1,11 @@
 //! JetStream stress/regression tests for ingestd pipeline throughput.
 
 use async_nats::{jetstream, HeaderMap};
-use chrono::Utc;
 use serde_json::json;
 use sinex_db::DbPoolExt;
-use sinex_primitives::{EventSource, SinexError, Ulid};
+use sinex_primitives::{error::SinexError, temporal, EventSource, Ulid};
+use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::WaitHelpers;
-use xtask::sandbox::{sinex_test, TestContext, TestNodePublisher};
 
 fn is_stream_not_found<E: std::fmt::Display>(err: &E) -> bool {
     let message = err.to_string();
@@ -30,6 +29,28 @@ async fn dlq_message_count(
     }
 }
 
+/// Helper to publish raw bytes directly to JetStream (for DLQ testing)
+async fn publish_raw_bytes(
+    nats_client: &async_nats::Client,
+    namespace: &str,
+    source: &str,
+    event_type: &str,
+    bytes: &[u8],
+) -> TestResult<()> {
+    let env = sinex_primitives::environment();
+    let subject = env.nats_subject_with_namespace(
+        Some(namespace),
+        &format!(
+            "events.raw.{}.{}",
+            source.replace('.', "_"),
+            event_type.replace('.', "_")
+        ),
+    );
+    nats_client.publish(subject, bytes.to_vec().into()).await?;
+    nats_client.flush().await?;
+    Ok(())
+}
+
 #[sinex_test]
 async fn jetstream_pipeline_handles_burst_without_timeouts() -> TestResult<()> {
     let ctx = TestContext::new().await?;
@@ -38,9 +59,6 @@ async fn jetstream_pipeline_handles_burst_without_timeouts() -> TestResult<()> {
 
     let source = "stress.pipeline";
     let event_type = "burst.event";
-    let namespace = ctx.pipeline_namespace().prefix().to_string();
-    let publisher =
-        TestNodePublisher::with_namespace(ctx.nats_client(), source.to_string(), Some(namespace));
 
     let start_count = ctx
         .pool
@@ -50,7 +68,9 @@ async fn jetstream_pipeline_handles_burst_without_timeouts() -> TestResult<()> {
 
     let total = 200usize;
     for idx in 0..total {
-        publisher.publish(event_type, json!({"seq": idx})).await?;
+        pipeline
+            .publish(DynamicPayload::new(source, event_type, json!({"seq": idx})))
+            .await?;
     }
 
     WaitHelpers::wait_for_source_events(&ctx.pool, source, start_count + total, 20).await?;
@@ -69,16 +89,16 @@ async fn jetstream_pipeline_restart_keeps_dlq_flowing() -> TestResult<()> {
 
     let nats = ctx.nats_handle()?;
     let js = nats.jetstream_with_client(ctx.nats_client());
-    let publisher = TestNodePublisher::with_namespace(
-        ctx.nats_client(),
-        "restart.dlq".to_string(),
-        Some(namespace.clone()),
-    );
 
     let pipeline = ctx.pipeline().await?;
-    publisher
-        .publish_raw_event_bytes("restart.bad", b"{not-json", None)
-        .await?;
+    publish_raw_bytes(
+        &ctx.nats_client(),
+        &namespace,
+        "restart.dlq",
+        "restart.bad",
+        b"{not-json",
+    )
+    .await?;
 
     WaitHelpers::wait_for_condition(
         || {
@@ -86,8 +106,8 @@ async fn jetstream_pipeline_restart_keeps_dlq_flowing() -> TestResult<()> {
             let dlq_stream = dlq_stream.clone();
             async move {
                 match dlq_message_count(&js, &dlq_stream).await? {
-                    Some(count) => Ok(count >= 1),
-                    None => Ok(false),
+                    Some(count) => Ok::<bool, SinexError>(count >= 1),
+                    None => Ok::<bool, SinexError>(false),
                 }
             }
         },
@@ -102,7 +122,13 @@ async fn jetstream_pipeline_restart_keeps_dlq_flowing() -> TestResult<()> {
         .events()
         .count_by_source(&EventSource::new("restart.dlq"))
         .await? as usize;
-    publisher.publish("restart.ok", json!({"seq": 1})).await?;
+    pipeline
+        .publish(DynamicPayload::new(
+            "restart.dlq",
+            "restart.ok",
+            json!({"seq": 1}),
+        ))
+        .await?;
     WaitHelpers::wait_for_source_events(&ctx.pool, "restart.dlq", start_count + 1, 20).await?;
     pipeline.shutdown().await?;
 
@@ -136,7 +162,7 @@ async fn jetstream_pipeline_dedupes_duplicate_event_ids() -> TestResult<()> {
             "id": event_id.to_string(),
             "source": source,
             "event_type": event_type,
-            "ts_orig": Utc::now().to_rfc3339(),
+            "ts_orig": temporal::now().format_rfc3339(),
             "host": "test-host",
             "payload": { "seq": idx },
             "ingestor_version": "test-node"
@@ -179,11 +205,6 @@ async fn jetstream_pipeline_routes_invalid_burst_to_dlq() -> TestResult<()> {
 
     let nats = ctx.nats_handle()?;
     let js = nats.jetstream_with_client(ctx.nats_client());
-    let publisher = TestNodePublisher::with_namespace(
-        ctx.nats_client(),
-        "stress.dlq".to_string(),
-        Some(namespace),
-    );
 
     let pipeline = ctx.pipeline().await?;
     let start_count = dlq_message_count(&js, &dlq_stream).await?.unwrap_or(0);
@@ -191,9 +212,14 @@ async fn jetstream_pipeline_routes_invalid_burst_to_dlq() -> TestResult<()> {
     let total = 25u64;
     for idx in 0..total {
         let payload = format!("{{bad:{idx}}}");
-        publisher
-            .publish_raw_event_bytes("burst.bad", payload.as_bytes(), None)
-            .await?;
+        publish_raw_bytes(
+            &ctx.nats_client(),
+            &namespace,
+            "stress.dlq",
+            "burst.bad",
+            payload.as_bytes(),
+        )
+        .await?;
     }
 
     WaitHelpers::wait_for_condition(
@@ -202,8 +228,8 @@ async fn jetstream_pipeline_routes_invalid_burst_to_dlq() -> TestResult<()> {
             let dlq_stream = dlq_stream.clone();
             async move {
                 match dlq_message_count(&js, &dlq_stream).await? {
-                    Some(count) => Ok(count >= start_count + total),
-                    None => Ok(false),
+                    Some(count) => Ok::<bool, SinexError>(count >= start_count + total),
+                    None => Ok::<bool, SinexError>(false),
                 }
             }
         },
@@ -229,8 +255,6 @@ async fn jetstream_pipeline_handles_mixed_valid_and_invalid_bursts() -> TestResu
 
     let nats = ctx.nats_handle()?;
     let js = nats.jetstream_with_client(ctx.nats_client());
-    let publisher =
-        TestNodePublisher::with_namespace(ctx.nats_client(), source.to_string(), Some(namespace));
 
     let start_count = ctx
         .pool
@@ -243,13 +267,20 @@ async fn jetstream_pipeline_handles_mixed_valid_and_invalid_bursts() -> TestResu
     let invalid_total = 20u64;
 
     for idx in 0..valid_total {
-        publisher.publish(event_type, json!({"seq": idx})).await?;
+        pipeline
+            .publish(DynamicPayload::new(source, event_type, json!({"seq": idx})))
+            .await?;
     }
     for idx in 0..invalid_total {
         let payload = format!("{{bad:{idx}}}");
-        publisher
-            .publish_raw_event_bytes("mixed.bad", payload.as_bytes(), None)
-            .await?;
+        publish_raw_bytes(
+            &ctx.nats_client(),
+            &namespace,
+            source,
+            "mixed.bad",
+            payload.as_bytes(),
+        )
+        .await?;
     }
 
     WaitHelpers::wait_for_source_events(&ctx.pool, source, start_count + valid_total, 20).await?;
@@ -259,8 +290,8 @@ async fn jetstream_pipeline_handles_mixed_valid_and_invalid_bursts() -> TestResu
             let dlq_stream = dlq_stream.clone();
             async move {
                 match dlq_message_count(&js, &dlq_stream).await? {
-                    Some(count) => Ok(count >= dlq_start + invalid_total),
-                    None => Ok(false),
+                    Some(count) => Ok::<bool, SinexError>(count >= dlq_start + invalid_total),
+                    None => Ok::<bool, SinexError>(false),
                 }
             }
         },

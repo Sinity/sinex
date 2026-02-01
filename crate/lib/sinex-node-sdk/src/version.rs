@@ -1,7 +1,7 @@
 //! Node version information and utilities
 //!
 //! This module provides access to compile-time version information generated
-//! by the build script, including semantic versioning, git metadata, and
+//! by shadow-rs, including semantic versioning, git metadata, and
 //! build information for node coordination and handoff.
 
 use semver::Version;
@@ -10,6 +10,9 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::str::FromStr;
 use std::time::SystemTime;
+
+// Import shadow-rs generated build information
+shadow_rs::shadow!(build);
 
 /// Complete node version information
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,7 +23,7 @@ pub struct NodeVersion {
     pub full_version: String,
     /// Git commit hash (8 characters)
     pub commit_hash: String,
-    /// Git commit count (used as patch version)
+    /// Git commit count (used for ordering when versions match)
     pub commit_count: u32,
     /// Git branch name
     pub branch: String,
@@ -40,10 +43,10 @@ impl NodeVersion {
             version: node_version()?,
             full_version: node_full_version(),
             commit_hash: node_commit_hash(),
-            commit_count: node_commit_count()?,
+            commit_count: node_commit_count(),
             branch: node_branch(),
             build_timestamp: node_build_timestamp(),
-            is_dirty: node_is_dirty()?,
+            is_dirty: node_is_dirty(),
         })
     }
 
@@ -83,8 +86,8 @@ impl NodeVersion {
             &sinex_primitives::temporal::Rfc3339,
         )
         .ok()?;
-        let now = sinex_primitives::temporal::OffsetDateTime::now_utc();
-        let duration = now - build_time;
+        let now = sinex_primitives::temporal::Timestamp::now();
+        let duration = *now - build_time;
         Some(duration.whole_seconds().max(0) as u64)
     }
 
@@ -237,63 +240,69 @@ impl NodeInstance {
     }
 }
 
-// Version accessor functions using compile-time environment variables
+// Version accessor functions using shadow-rs compile-time constants
 
 /// Get semantic version of the node
 ///
 /// # Errors
 /// Returns `SinexError::configuration` if the node version is invalid
 pub fn node_version() -> crate::NodeResult<Version> {
-    Version::from_str(option_env!("NODE_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")))
+    Version::from_str(build::PKG_VERSION)
         .map_err(|e| crate::SinexError::configuration(format!("Invalid node version: {}", e)))
 }
 
 /// Get full version string with build metadata
 pub fn node_full_version() -> String {
-    option_env!("NODE_FULL_VERSION")
-        .unwrap_or(env!("CARGO_PKG_VERSION"))
-        .to_string()
+    let commit = build::SHORT_COMMIT;
+    if commit.is_empty() || commit == "unknown" {
+        build::PKG_VERSION.to_string()
+    } else {
+        format!("{}+{}", build::PKG_VERSION, commit)
+    }
 }
 
 /// Get git commit hash (8 characters)
 pub fn node_commit_hash() -> String {
-    option_env!("NODE_COMMIT_HASH")
-        .unwrap_or("unknown")
-        .to_string()
+    let commit = build::SHORT_COMMIT;
+    if commit.is_empty() {
+        "unknown".to_string()
+    } else {
+        commit.to_string()
+    }
 }
 
-/// Get git commit count (used as patch version)
+/// Get git commit count
 ///
-/// # Errors
-/// Returns `SinexError::configuration` if the commit count is invalid
-pub fn node_commit_count() -> crate::NodeResult<u32> {
-    option_env!("NODE_COMMIT_COUNT")
-        .unwrap_or("0")
-        .parse()
-        .map_err(|e| crate::SinexError::configuration(format!("Invalid commit count: {}", e)))
+/// Note: shadow-rs doesn't provide commit count directly.
+/// We use a placeholder of 0 since the ordering logic primarily uses
+/// semver and build timestamp for tiebreaking anyway.
+pub fn node_commit_count() -> u32 {
+    // shadow-rs doesn't provide total commit count
+    // The ordering logic uses build timestamp as final tiebreaker,
+    // so this is only used for initial ordering of same-semver builds
+    0
 }
 
 /// Get git branch name
 pub fn node_branch() -> String {
-    option_env!("NODE_BRANCH").unwrap_or("unknown").to_string()
+    let branch = build::BRANCH;
+    if branch.is_empty() {
+        "unknown".to_string()
+    } else {
+        branch.to_string()
+    }
 }
 
-/// Get build timestamp
+/// Get build timestamp (RFC3339 format)
 pub fn node_build_timestamp() -> String {
-    option_env!("NODE_BUILD_TIMESTAMP")
-        .unwrap_or("unknown")
-        .to_string()
+    // shadow-rs provides BUILD_TIME_3339 in RFC3339 format
+    build::BUILD_TIME_3339.to_string()
 }
 
 /// Check if working directory was dirty during build
-///
-/// # Errors
-/// Returns `SinexError::configuration` if the dirty flag is invalid
-pub fn node_is_dirty() -> crate::NodeResult<bool> {
-    option_env!("NODE_IS_DIRTY")
-        .unwrap_or("false")
-        .parse()
-        .map_err(|e| crate::SinexError::configuration(format!("Invalid dirty flag: {}", e)))
+pub fn node_is_dirty() -> bool {
+    // shadow-rs GIT_CLEAN is a bool: true when clean, false when dirty
+    !build::GIT_CLEAN
 }
 
 /// Print version information to stdout (for --version flags)
@@ -319,11 +328,10 @@ pub fn print_version_info() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_primitives::temporal::OffsetDateTime;
 
     #[test]
     fn test_build_age_seconds() {
-        let now = OffsetDateTime::now_utc();
+        let now = sinex_primitives::temporal::OffsetDateTime::now_utc();
         let one_hour_ago = now - std::time::Duration::from_secs(3600);
         let timestamp_str = one_hour_ago
             .format(&sinex_primitives::temporal::Rfc3339)
@@ -342,7 +350,7 @@ mod tests {
         let age = version.build_age_seconds().expect("Should return age");
         // Allow for some small delta due to execution time
         assert!(
-            age >= 3599 && age <= 3605,
+            (3599..=3605).contains(&age),
             "Age {} should be close to 3600",
             age
         );
@@ -350,7 +358,7 @@ mod tests {
 
     #[test]
     fn test_build_age_future() {
-        let now = OffsetDateTime::now_utc();
+        let now = sinex_primitives::temporal::OffsetDateTime::now_utc();
         let one_hour_future = now + std::time::Duration::from_secs(3600);
         let timestamp_str = one_hour_future
             .format(&sinex_primitives::temporal::Rfc3339)

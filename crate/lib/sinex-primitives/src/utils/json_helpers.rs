@@ -234,7 +234,7 @@ mod tests {
         let obj = json!({
             "count": 42,
             "string": "not a number",
-            "float": 3.14
+            "float": 1.23
         });
 
         assert_eq!(get_i64(&obj, "count"), 42);

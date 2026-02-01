@@ -72,7 +72,7 @@ impl UnusedDetector {
 
     /// Detect using cargo-machete
     ///
-    /// Runs `cargo machete --format json` and parses output.
+    /// Runs `cargo-machete` directly and parses text output.
     ///
     /// # Returns
     /// UnusedReport with unused dependencies found by cargo-machete
@@ -80,23 +80,21 @@ impl UnusedDetector {
     /// # Errors
     /// Returns error if cargo-machete execution fails or output parsing fails
     fn detect_with_machete() -> Result<UnusedReport> {
-        // Run cargo machete with JSON output
-        let output = Command::new("cargo")
-            .arg("machete")
-            .arg("--format")
-            .arg("json")
+        // Run cargo-machete directly (not via "cargo machete" which has issues)
+        let output = Command::new("cargo-machete")
             .output()
             .context("Failed to execute cargo-machete")?;
 
-        // Check if command succeeded
-        if !output.status.success() {
+        // Parse text output (exit code 1 = found unused deps, 0 = none found, 2 = error)
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        // Exit code 2 is an error
+        if output.status.code() == Some(2) {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("cargo-machete failed: {}", stderr);
+            anyhow::bail!("cargo-machete failed: {}{}", stdout, stderr);
         }
 
-        // Parse JSON output
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Self::parse_machete_output(&stdout)
+        Self::parse_machete_text_output(&stdout)
     }
 
     /// Detect using cargo-udeps
@@ -136,22 +134,58 @@ impl UnusedDetector {
         Self::parse_udeps_output(&stdout)
     }
 
-    /// Parse cargo-machete JSON output
+    /// Parse cargo-machete text output
     ///
-    /// Expects JSON format with structure:
-    /// ```json
-    /// {
-    ///   "unused": [
-    ///     {
-    ///       "package": "crate-name",
-    ///       "dependencies": ["dep1", "dep2", ...]
-    ///     }
-    ///   ]
-    /// }
+    /// Parses text format:
+    /// ```text
+    /// package-name -- ./path/to/Cargo.toml:
+    ///     dep1
+    ///     dep2
     /// ```
     ///
     /// # Errors
-    /// Returns error if JSON parsing fails
+    /// Returns error if output format is unexpected
+    fn parse_machete_text_output(text: &str) -> Result<UnusedReport> {
+        let mut unused_deps = Vec::new();
+        let mut current_package: Option<String> = None;
+
+        for line in text.lines() {
+            let line = line.trim();
+
+            // Skip empty lines and info messages
+            if line.is_empty()
+                || line.starts_with("Analyzing")
+                || line.starts_with("cargo-machete found")
+                || line.starts_with("Done")
+            {
+                continue;
+            }
+
+            // Package line: "package-name -- ./path/to/Cargo.toml:"
+            if line.contains(" -- ") && line.ends_with(':') {
+                let package_name = line.split(" -- ").next().unwrap_or("").trim();
+                current_package = Some(package_name.to_string());
+            }
+            // Dependency line (indented): "    dep-name"
+            else if let Some(ref package) = current_package {
+                let dep_name = line.trim();
+                if !dep_name.is_empty() {
+                    unused_deps.push(UnusedDependency {
+                        package: package.clone(),
+                        dependency: dep_name.to_string(),
+                    });
+                }
+            }
+        }
+
+        Ok(UnusedReport {
+            unused: unused_deps,
+            tool: "cargo-machete".to_string(),
+        })
+    }
+
+    #[allow(dead_code)]
+    /// Parse cargo-machete JSON output (for future use if JSON format is added)
     fn parse_machete_output(json_str: &str) -> Result<UnusedReport> {
         #[derive(Deserialize)]
         struct MacheteOutput {

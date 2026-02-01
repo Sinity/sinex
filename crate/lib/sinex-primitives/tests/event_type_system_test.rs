@@ -22,7 +22,7 @@ use sinex_primitives::events::payloads::{
     FileModifiedPayload, KittyCommandExecutedPayload,
 };
 use sinex_primitives::events::EventPayload;
-use sinex_primitives::{DynamicPayload, Event, ExitCode, Id, JsonValue, Provenance, Ulid};
+use sinex_primitives::{units::ExitCode, DynamicPayload, Event, Id, JsonValue, Provenance, Ulid};
 use std::collections::HashSet;
 
 async fn ensure_material(ctx: &TestContext, label: &str) -> TestResult<Id<SourceMaterial>> {

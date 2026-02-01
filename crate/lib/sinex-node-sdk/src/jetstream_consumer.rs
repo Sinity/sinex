@@ -7,7 +7,7 @@ use crate::confirmation_handler::{
     ConfirmationBuffer, ConfirmedEventHandler, EventConfirmation, ProcessingModel,
     ProvisionalEvent, ProvisionalEventHandler,
 };
-use crate::{SinexError, NodeResult};
+use crate::{NodeResult, SinexError};
 use async_nats::jetstream;
 use async_nats::jetstream::consumer::PullConsumer;
 use futures::StreamExt;
@@ -109,7 +109,9 @@ impl JetStreamEventConsumer {
         {
             let mut running = self.running.write().await;
             if *running {
-                return Err(SinexError::lifecycle("Consumer already running".to_string()));
+                return Err(SinexError::lifecycle(
+                    "Consumer already running".to_string(),
+                ));
             }
             *running = true;
         }
@@ -578,7 +580,10 @@ mod tests {
             Ok(())
         }
 
-        async fn rollback_provisional(&self, _event_id: sinex_primitives::ids::Id<sinex_primitives::events::Event>) -> NodeResult<()> {
+        async fn rollback_provisional(
+            &self,
+            _event_id: sinex_primitives::ids::Id<sinex_primitives::events::Event>,
+        ) -> NodeResult<()> {
             Ok(())
         }
     }
@@ -617,11 +622,8 @@ mod tests {
         assert!(first.is_err());
 
         let second = tokio::time::timeout(Duration::from_secs(5), consumer.run()).await?;
-        match second {
-            Err(SinexError::lifecycle(msg)) => {
-                assert_ne!(msg, "Consumer already running");
-            }
-            _ => {}
+        if let Err(SinexError::Lifecycle(details)) = second {
+            assert_ne!(details.message(), "Consumer already running");
         }
 
         Ok(())

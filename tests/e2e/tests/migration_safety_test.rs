@@ -12,10 +12,10 @@
 // - **Resource usage**: Significant database load
 // - **Dependencies**: PostgreSQL
 
-use sinex_primitives::db::models::EventFactory;
+use sinex_db::models::EventFactory;
 use xtask::sandbox::prelude::*;
-use xtask::sandbox::{acquire_test_database, wait_for_filtered_event_count};
 use xtask::sandbox::timing::Timeouts;
+use xtask::sandbox::{acquire_test_database, wait_for_filtered_event_count};
 
 use sinex_primitives::ulid::Ulid;
 
@@ -283,10 +283,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult<()> {
             event_data,
         ))) => {
             println!("  ✓ Data preservation test completed");
-            println!(
-                "    Manifests: {} -> {}",
-                init_manifests, final_manifests
-            );
+            println!("    Manifests: {} -> {}", init_manifests, final_manifests);
             println!("    Events: {} -> {}", init_events, final_events);
 
             pretty_assertions::assert_eq!(

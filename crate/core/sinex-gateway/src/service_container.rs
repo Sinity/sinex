@@ -188,7 +188,7 @@ impl ServiceContainer {
 
         // Initialize all services
         let allow_replay_bypass =
-            std::env::var("SINEX_ALLOW_REPLAY_CONTROL_BYPASS").map_or(false, |value| {
+            std::env::var("SINEX_ALLOW_REPLAY_CONTROL_BYPASS").is_ok_and(|value| {
                 matches!(
                     value.trim().to_ascii_lowercase().as_str(),
                     "1" | "true" | "yes"

@@ -4,6 +4,10 @@
 //! - RPC Server: JSON-RPC over TLS for CLI
 //! - Native Messaging: stdin/stdout protocol for browser extensions
 
+mod build {
+    include!(concat!(env!("OUT_DIR"), "/shadow.rs"));
+}
+
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::Result;
 use tracing::info;
@@ -22,6 +26,7 @@ use sinex_gateway::{native_messaging, rpc_server};
 #[derive(Parser)]
 #[command(name = "sinex-gateway")]
 #[command(about = "Unified API gateway for Sinex")]
+#[command(version = build::CLAP_LONG_VERSION)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -38,6 +43,10 @@ enum Commands {
         /// Database URL
         #[arg(long, env = "DATABASE_URL")]
         database_url: Option<String>,
+
+        /// Allowed CORS origins (comma-separated). If not set, only localhost is allowed.
+        #[arg(long, env = "SINEX_GATEWAY_CORS_ORIGINS")]
+        cors_origins: Option<String>,
     },
 
     /// Start native messaging mode for browser extension
@@ -61,6 +70,7 @@ fn setup_tracing() -> Result<()> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    human_panic::setup_panic!();
     color_eyre::install()?;
     setup_tracing()?;
 
@@ -106,6 +116,7 @@ async fn main() -> Result<()> {
         Commands::RpcServer {
             tcp_listen,
             database_url,
+            cors_origins,
         } => {
             info!("Starting RPC server on {}", tcp_listen);
 
@@ -114,8 +125,13 @@ async fn main() -> Result<()> {
                 color_eyre::eyre::eyre!("Failed to initialize services").wrap_err(e)
             })?;
 
+            // Parse CORS origins
+            let origins: Vec<String> = cors_origins
+                .map(|s| s.split(',').map(|o| o.trim().to_string()).collect())
+                .unwrap_or_default();
+
             // Start RPC server with shutdown signal
-            let result = rpc_server::run(Some(tcp_listen.as_str()), services, shutdown_rx)
+            let result = rpc_server::run(Some(tcp_listen.as_str()), services, origins, shutdown_rx)
                 .await
                 .map_err(|e| color_eyre::eyre::eyre!("RPC server failed").wrap_err(e));
 

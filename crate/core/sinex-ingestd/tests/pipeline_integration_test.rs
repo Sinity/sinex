@@ -11,17 +11,18 @@
 //! This test suite verifies complete data flows from event capture through
 //! final processing, ensuring data integrity and correct processing semantics.
 
-use chrono::{Duration, Utc};
-use sinex_primitives::Timestamp;
 use color_eyre::eyre::ensure;
 use futures::{future::join_all, StreamExt};
 use serde_json::json;
 use sinex_primitives::DynamicPayload;
 use sinex_primitives::EventSource;
+use sinex_primitives::SinexError;
+use sinex_primitives::Timestamp;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration as StdDuration;
 use std::time::Instant;
+use time::Duration;
 use tokio::sync::Mutex;
 use tokio::task::yield_now;
 use xtask::sandbox::prelude::*;
@@ -42,7 +43,7 @@ async fn test_pipeline_smoke(ctx: TestContext) -> Result<()> {
             json!({"step": "smoke", "note": "pipeline"}),
         ))
         .await?;
-    scope.wait_for_event_id(event_id.clone()).await?;
+    scope.wait_for_event_id(event_id).await?;
     let stored = scope
         .ctx()
         .pool
@@ -122,8 +123,8 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> 
             ))
             .await?;
 
-        let event_id = event.id.clone();
-        created_event_ids.push(event_id.clone());
+        let event_id = event.id;
+        created_event_ids.push(event_id);
 
         let event_id_display = event_id
             .as_ref()
@@ -197,7 +198,7 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> 
         assert!(stored_event
             .ingestor_version
             .as_ref()
-            .map_or(false, |s| !s.is_empty()));
+            .is_some_and(|s| !s.is_empty()));
 
         let event_id_display = stored_event
             .id
@@ -279,7 +280,7 @@ async fn test_concurrent_pipeline_processing(ctx: TestContext) -> Result<()> {
                     .await
                 {
                     Ok(event) => {
-                        let event_id = event.id.clone();
+                        let event_id = event.id;
                         let event_id_display = event_id
                             .as_ref()
                             .map(|id| id.to_string())
@@ -386,7 +387,7 @@ async fn test_pipeline_data_transformation(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().shared().await?;
 
     // Create raw events that should be processed and enriched
-    let raw_events = vec![
+    let raw_events = [
         (
             "terminal",
             "command.raw",
@@ -419,7 +420,7 @@ async fn test_pipeline_data_transformation(ctx: TestContext) -> Result<()> {
 
     // Wait for raw events to persist before processing
     for (source, _, _) in raw_events.iter() {
-        ctx.timing().wait_for_source_events(*source, 1).await?;
+        ctx.timing().wait_for_source_events(source, 1).await?;
     }
 
     // Phase 2: Simulate processing pipeline transformations
@@ -430,11 +431,7 @@ async fn test_pipeline_data_transformation(ctx: TestContext) -> Result<()> {
         let raw_event = ctx
             .pool
             .events()
-            .get_by_id(
-                raw_event_id
-                    .clone()
-                    .expect("raw_event_id should be present"),
-            )
+            .get_by_id((*raw_event_id).expect("raw_event_id should be present"))
             .await?
             .expect("Raw event should exist");
 
@@ -473,11 +470,11 @@ async fn test_pipeline_data_transformation(ctx: TestContext) -> Result<()> {
                 transformed_payload,
             ))
             .await?;
-        let transformed_event_id = transformed_event.id.clone();
+        let transformed_event_id = transformed_event.id;
         if let Some(ref id) = transformed_event_id {
             xtask::sandbox::timing::WaitHelpers::wait_for_event_id(
                 &ctx.pool,
-                id.clone(),
+                *id,
                 xtask::sandbox::timing::DEFAULT_WAIT_SECS,
             )
             .await?;
@@ -488,11 +485,9 @@ async fn test_pipeline_data_transformation(ctx: TestContext) -> Result<()> {
 
     // Phase 3: Verify transformation results
     let mut transformed_events = Vec::new();
-    for event_id in &transformed_event_ids {
-        if let Some(id) = event_id {
-            if let Some(event) = ctx.pool.events().get_by_id(id.clone()).await? {
-                transformed_events.push(event);
-            }
+    for id in transformed_event_ids.iter().flatten() {
+        if let Some(event) = ctx.pool.events().get_by_id(*id).await? {
+            transformed_events.push(event);
         }
     }
 
@@ -626,7 +621,7 @@ async fn test_pipeline_error_handling(ctx: TestContext) -> Result<()> {
         {
             Ok(event) => {
                 if should_succeed {
-                    let event_id = event.id.clone();
+                    let event_id = event.id;
                     let event_id_display = event_id
                         .as_ref()
                         .map(|id| id.to_string())
@@ -673,11 +668,9 @@ async fn test_pipeline_error_handling(ctx: TestContext) -> Result<()> {
     ctx.timing().wait_for_event_count(expected_total).await?;
 
     let mut stored_events = Vec::new();
-    for event_id in &successful_events {
-        if let Some(id) = event_id {
-            if let Some(event) = ctx.pool.events().get_by_id(id.clone()).await? {
-                stored_events.push(event);
-            }
+    for id in successful_events.iter().flatten() {
+        if let Some(event) = ctx.pool.events().get_by_id(*id).await? {
+            stored_events.push(event);
         }
     }
 
@@ -698,11 +691,11 @@ async fn test_pipeline_error_handling(ctx: TestContext) -> Result<()> {
             }),
         ))
         .await?;
-    let recovery_event_id = recovery_event.id.clone();
+    let recovery_event_id = recovery_event.id;
     if let Some(ref id) = recovery_event_id {
         xtask::sandbox::timing::WaitHelpers::wait_for_event_id(
             &ctx.pool,
-            id.clone(),
+            *id,
             xtask::sandbox::timing::DEFAULT_WAIT_SECS,
         )
         .await?;
@@ -712,11 +705,7 @@ async fn test_pipeline_error_handling(ctx: TestContext) -> Result<()> {
     let recovery_stored = ctx
         .pool
         .events()
-        .get_by_id(
-            recovery_event_id
-                .clone()
-                .expect("recovery event should have id"),
-        )
+        .get_by_id(recovery_event_id.expect("recovery event should have id"))
         .await?
         .expect("Recovery event should exist");
 
@@ -744,7 +733,6 @@ async fn test_confirmation_emitted_after_persistence_pipeline(
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
     let source = format!("confirm-order-{}", Ulid::new());
-    let publisher = scope.publisher(source.clone());
     let confirmation_prefix = scope.subject("events.confirmations");
     let mut sub = scope
         .ctx()
@@ -754,11 +742,12 @@ async fn test_confirmation_emitted_after_persistence_pipeline(
 
     let mut event_ids = Vec::new();
     for idx in 0..5 {
-        let event_id = publisher
-            .publish(
+        let event_id = scope
+            .publish(DynamicPayload::new(
+                source.as_str(),
                 "confirmation.order",
                 json!({"source": source, "seq": idx, "check": "persisted-before-confirmation"}),
-            )
+            ))
             .await?;
         event_ids.push(event_id);
     }
@@ -804,7 +793,6 @@ async fn test_mixed_validity_batch_semantics(ctx: TestContext) -> color_eyre::Re
     let scope = ctx.pipeline().await?;
     let source = format!("mixed-validity-{}", Ulid::new());
     let event_type = "batch.mixed";
-    let publisher = scope.publisher(source.clone());
 
     let raw_subject = scope.subject(&format!(
         "events.raw.{}.{}",
@@ -817,13 +805,17 @@ async fn test_mixed_validity_batch_semantics(ctx: TestContext) -> color_eyre::Re
         .publish(raw_subject, "{not-json".into())
         .await?;
 
-    let valid_id = publisher
-        .publish(event_type, json!({"kind": "valid", "batch": "mixed"}))
+    let valid_id = scope
+        .publish(DynamicPayload::new(
+            source.as_str(),
+            event_type,
+            json!({"kind": "valid", "batch": "mixed"}),
+        ))
         .await?;
 
-    scope.wait_for_event_id(valid_id.into()).await?;
+    scope.wait_for_event_id(valid_id).await?;
 
-    let persisted = scope.ctx().pool.events().get_by_id(valid_id.into()).await?;
+    let persisted = scope.ctx().pool.events().get_by_id(valid_id).await?;
     ensure!(persisted.is_some(), "valid event should persist");
 
     let js = scope.ctx().jetstream().await?;
@@ -840,16 +832,20 @@ async fn test_mixed_validity_batch_semantics(ctx: TestContext) -> color_eyre::Re
                 let js = js.clone();
                 let dlq_stream = dlq_stream.clone();
                 async move {
-                    let mut info = js
-                        .get_stream(&dlq_stream)
-                        .await
-                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                    let mut info = js.get_stream(&dlq_stream).await.map_err(|e| {
+                        SinexError::network(e.to_string())
+                            .with_context("operation", "get_stream")
+                            .with_context("stream", dlq_stream.clone())
+                    })?;
                     let state = info
                         .info()
                         .await
-                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?
+                        .map_err(|e| {
+                            SinexError::network(e.to_string())
+                                .with_context("operation", "stream_info")
+                        })?
                         .state;
-                    Ok(state.messages >= 1)
+                    Ok::<bool, SinexError>(state.messages >= 1)
                 }
             },
             10,

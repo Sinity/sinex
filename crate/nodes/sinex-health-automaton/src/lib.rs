@@ -8,10 +8,10 @@ use figment::{
     Figment,
 };
 use serde::{Deserialize, Serialize};
-use sinex_primitives::temporal::{Duration, Timestamp};
-use sinex_primitives::JsonValue;
 use sinex_node_sdk::simple_node::SimpleNodeContext;
 use sinex_node_sdk::{SimpleNode, SimpleNodeError, SimpleNodeWrapper};
+use sinex_primitives::temporal::{Duration, Timestamp};
+use sinex_primitives::JsonValue;
 use std::collections::HashMap;
 
 /// Configuration for the health aggregator
@@ -112,16 +112,9 @@ pub enum HealthStatus {
     Unknown,
 }
 
+#[derive(Default)]
 pub struct HealthAggregator {
     pub config: HealthAggregatorConfig,
-}
-
-impl Default for HealthAggregator {
-    fn default() -> Self {
-        Self {
-            config: HealthAggregatorConfig::default(),
-        }
-    }
 }
 
 #[async_trait]

@@ -181,7 +181,7 @@ impl PreparedSearch {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_primitives::temporal::Duration;
+
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]

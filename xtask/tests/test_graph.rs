@@ -23,7 +23,7 @@ use tempfile::tempdir;
 fn test_graph_help() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("analyze").arg("graph").arg("--help");
+    cmd.arg("graph").arg("--help");
 
     cmd.assert()
         .success()
@@ -38,7 +38,7 @@ fn test_graph_help() {
 fn test_graph_deps_help() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("analyze").arg("graph").arg("deps").arg("--help");
+    cmd.arg("graph").arg("deps").arg("--help");
 
     cmd.assert()
         .success()
@@ -57,8 +57,7 @@ fn test_graph_deps_help() {
 fn test_graph_deps_ascii_format() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("analyze")
-        .arg("graph")
+    cmd.arg("graph")
         .arg("deps")
         .arg("--render-format")
         .arg("ascii");
@@ -74,7 +73,7 @@ fn test_graph_deps_ascii_format_default() {
     // ASCII should be the default format
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("analyze").arg("graph").arg("deps");
+    cmd.arg("graph").arg("deps");
 
     cmd.assert()
         .success()
@@ -85,8 +84,7 @@ fn test_graph_deps_ascii_format_default() {
 fn test_graph_deps_ascii_contains_tree_chars() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("analyze")
-        .arg("graph")
+    cmd.arg("graph")
         .arg("deps")
         .arg("--render-format")
         .arg("ascii");
@@ -107,8 +105,7 @@ fn test_graph_deps_ascii_contains_tree_chars() {
 fn test_graph_deps_dot_format() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("analyze")
-        .arg("graph")
+    cmd.arg("graph")
         .arg("deps")
         .arg("--render-format")
         .arg("dot");
@@ -124,8 +121,7 @@ fn test_graph_deps_dot_format() {
 fn test_graph_deps_dot_has_closing_brace() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("analyze")
-        .arg("graph")
+    cmd.arg("graph")
         .arg("deps")
         .arg("--render-format")
         .arg("dot");
@@ -148,8 +144,7 @@ fn test_graph_deps_dot_has_closing_brace() {
 fn test_graph_deps_dot_contains_nodes() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("analyze")
-        .arg("graph")
+    cmd.arg("graph")
         .arg("deps")
         .arg("--render-format")
         .arg("dot");
@@ -172,8 +167,7 @@ fn test_graph_deps_dot_contains_nodes() {
 fn test_graph_deps_dot_contains_edges() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("analyze")
-        .arg("graph")
+    cmd.arg("graph")
         .arg("deps")
         .arg("--render-format")
         .arg("dot");
@@ -198,8 +192,7 @@ fn test_graph_deps_dot_contains_edges() {
 fn test_graph_deps_json_format() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("analyze")
-        .arg("graph")
+    cmd.arg("graph")
         .arg("deps")
         .arg("--render-format")
         .arg("json");
@@ -214,8 +207,7 @@ fn test_graph_deps_json_format() {
 fn test_graph_deps_json_valid_structure() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("analyze")
-        .arg("graph")
+    cmd.arg("graph")
         .arg("deps")
         .arg("--render-format")
         .arg("json");
@@ -248,8 +240,7 @@ fn test_graph_deps_json_valid_structure() {
 fn test_graph_deps_json_node_structure() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("analyze")
-        .arg("graph")
+    cmd.arg("graph")
         .arg("deps")
         .arg("--render-format")
         .arg("json");
@@ -276,8 +267,7 @@ fn test_graph_deps_json_node_structure() {
 fn test_graph_deps_json_edge_structure() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("analyze")
-        .arg("graph")
+    cmd.arg("graph")
         .arg("deps")
         .arg("--render-format")
         .arg("json");
@@ -311,8 +301,7 @@ fn test_graph_deps_json_edge_structure() {
 fn test_graph_deps_with_focus_ascii() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("analyze")
-        .arg("graph")
+    cmd.arg("graph")
         .arg("deps")
         .arg("--render-format")
         .arg("ascii")
@@ -328,8 +317,7 @@ fn test_graph_deps_with_focus_ascii() {
 fn test_graph_deps_with_focus_dot() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("analyze")
-        .arg("graph")
+    cmd.arg("graph")
         .arg("deps")
         .arg("--render-format")
         .arg("dot")
@@ -346,8 +334,7 @@ fn test_graph_deps_with_focus_dot() {
 fn test_graph_deps_with_focus_json() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("analyze")
-        .arg("graph")
+    cmd.arg("graph")
         .arg("deps")
         .arg("--render-format")
         .arg("json")
@@ -365,8 +352,7 @@ fn test_graph_deps_focus_forward_mode() {
     // Forward mode is the default: show focus package and its dependencies
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("analyze")
-        .arg("graph")
+    cmd.arg("graph")
         .arg("deps")
         .arg("--render-format")
         .arg("dot")
@@ -383,8 +369,7 @@ fn test_graph_deps_focus_reverse_mode() {
     // Reverse mode: show packages that depend on the focus package
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("analyze")
-        .arg("graph")
+    cmd.arg("graph")
         .arg("deps")
         .arg("--render-format")
         .arg("dot")
@@ -405,8 +390,7 @@ fn test_graph_deps_focus_reverse_mode() {
 fn test_graph_deps_with_depth_limit() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("analyze")
-        .arg("graph")
+    cmd.arg("graph")
         .arg("deps")
         .arg("--render-format")
         .arg("ascii")
@@ -420,8 +404,7 @@ fn test_graph_deps_with_depth_limit() {
 fn test_graph_deps_with_zero_depth() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("analyze")
-        .arg("graph")
+    cmd.arg("graph")
         .arg("deps")
         .arg("--render-format")
         .arg("ascii")
@@ -435,8 +418,7 @@ fn test_graph_deps_with_zero_depth() {
 fn test_graph_deps_with_large_depth() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("analyze")
-        .arg("graph")
+    cmd.arg("graph")
         .arg("deps")
         .arg("--render-format")
         .arg("ascii")
@@ -457,8 +439,7 @@ fn test_graph_deps_output_to_file_ascii() {
 
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("analyze")
-        .arg("graph")
+    cmd.arg("graph")
         .arg("deps")
         .arg("--render-format")
         .arg("ascii")
@@ -492,8 +473,7 @@ fn test_graph_deps_output_to_file_dot() {
 
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("analyze")
-        .arg("graph")
+    cmd.arg("graph")
         .arg("deps")
         .arg("--render-format")
         .arg("dot")
@@ -527,8 +507,7 @@ fn test_graph_deps_output_to_file_json() {
 
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("analyze")
-        .arg("graph")
+    cmd.arg("graph")
         .arg("deps")
         .arg("--render-format")
         .arg("json")
@@ -560,8 +539,7 @@ fn test_graph_deps_output_to_nested_directory() {
 
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("analyze")
-        .arg("graph")
+    cmd.arg("graph")
         .arg("deps")
         .arg("--render-format")
         .arg("dot")
@@ -585,8 +563,7 @@ fn test_graph_deps_output_to_nested_directory() {
 fn test_graph_deps_focus_and_depth() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("analyze")
-        .arg("graph")
+    cmd.arg("graph")
         .arg("deps")
         .arg("--render-format")
         .arg("ascii")
@@ -607,8 +584,7 @@ fn test_graph_deps_focus_reverse_and_output() {
 
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("analyze")
-        .arg("graph")
+    cmd.arg("graph")
         .arg("deps")
         .arg("--render-format")
         .arg("dot")
@@ -637,8 +613,7 @@ fn test_graph_deps_all_formats_with_focus() {
     for format in formats {
         let mut cmd = cargo_bin_cmd!("xtask");
 
-        cmd.arg("analyze")
-            .arg("graph")
+        cmd.arg("graph")
             .arg("deps")
             .arg("--render-format")
             .arg(format)
@@ -657,7 +632,7 @@ fn test_graph_deps_all_formats_with_focus() {
 fn test_deps_impact_help() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("analyze").arg("deps").arg("impact").arg("--help");
+    cmd.arg("deps").arg("impact").arg("--help");
 
     cmd.assert()
         .success()
@@ -668,7 +643,7 @@ fn test_deps_impact_help() {
 fn test_deps_impact_all_packages() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("analyze").arg("deps").arg("impact");
+    cmd.arg("deps").arg("impact");
 
     // Note: deps impact command has a known issue with global --format conflict
     // Testing that the command can be invoked, actual output validation deferred
@@ -687,14 +662,14 @@ fn test_deps_impact_all_packages() {
 fn test_deps_impact_single_package() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("analyze").arg("deps").arg("impact").arg("xtask");
+    cmd.arg("deps").arg("impact").arg("xtask");
 
     // Note: deps impact command has a known issue with global --format conflict
     let output = cmd.output().expect("Failed to run command");
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
-            stdout.contains("xtask") || stdout.len() > 0,
+            stdout.contains("xtask") || !stdout.is_empty(),
             "Should have some output"
         );
     }
@@ -708,8 +683,7 @@ fn test_deps_impact_single_package() {
 fn test_graph_deps_invalid_format() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("analyze")
-        .arg("graph")
+    cmd.arg("graph")
         .arg("deps")
         .arg("--render-format")
         .arg("invalid-format");
@@ -728,8 +702,7 @@ fn test_graph_deps_invalid_format() {
 fn test_graph_deps_invalid_focus_package() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("analyze")
-        .arg("graph")
+    cmd.arg("graph")
         .arg("deps")
         .arg("--render-format")
         .arg("ascii")
@@ -752,7 +725,6 @@ fn test_graph_output_stdout_vs_file() {
     // Get stdout output
     let mut cmd_stdout = cargo_bin_cmd!("xtask");
     cmd_stdout
-        .arg("analyze")
         .arg("graph")
         .arg("deps")
         .arg("--render-format")
@@ -763,7 +735,6 @@ fn test_graph_output_stdout_vs_file() {
     // Get file output
     let mut cmd_file = cargo_bin_cmd!("xtask");
     cmd_file
-        .arg("analyze")
         .arg("graph")
         .arg("deps")
         .arg("--render-format")
@@ -786,8 +757,7 @@ fn test_graph_output_stdout_vs_file() {
 fn test_graph_deps_ascii_contains_xtask() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("analyze")
-        .arg("graph")
+    cmd.arg("graph")
         .arg("deps")
         .arg("--render-format")
         .arg("ascii");
@@ -802,8 +772,7 @@ fn test_graph_deps_ascii_contains_xtask() {
 fn test_graph_deps_json_contains_xtask_node() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("analyze")
-        .arg("graph")
+    cmd.arg("graph")
         .arg("deps")
         .arg("--render-format")
         .arg("json");

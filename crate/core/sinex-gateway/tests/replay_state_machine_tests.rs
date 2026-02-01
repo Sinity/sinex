@@ -1,6 +1,6 @@
-use chrono::{TimeZone, Utc};
 use sinex_gateway::{ReplayCheckpoint, ReplayOperation, ReplayScope, ReplayState};
 use sinex_primitives::Ulid;
+use time::{Date, Month, OffsetDateTime, Time};
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
@@ -31,7 +31,7 @@ async fn checkpoint_serialization_round_trips() -> Result<()> {
         last_event_id: Some(Ulid::new()),
         batch_number: 42,
         savepoint_id: Some("sp_12345".to_string()),
-        updated_at: Utc::now(),
+        updated_at: sinex_primitives::temporal::now(),
     };
 
     let json = serde_json::to_string(&checkpoint)?;
@@ -54,7 +54,7 @@ async fn checkpoint_serialization_handles_none() -> Result<()> {
         last_event_id: None,
         batch_number: 1,
         savepoint_id: None,
-        updated_at: Utc::now(),
+        updated_at: sinex_primitives::temporal::now(),
     };
 
     let json = serde_json::to_string(&checkpoint)?;
@@ -78,8 +78,16 @@ async fn scope_serialization_round_trips() -> Result<()> {
     let scope = ReplayScope {
         processor_id: "test-processor".to_string(),
         time_window: Some((
-            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
-            Utc.with_ymd_and_hms(2024, 12, 31, 23, 59, 59).unwrap(),
+            OffsetDateTime::new_utc(
+                Date::from_calendar_date(2024, Month::January, 1).unwrap(),
+                Time::MIDNIGHT,
+            )
+            .into(),
+            OffsetDateTime::new_utc(
+                Date::from_calendar_date(2024, Month::December, 31).unwrap(),
+                Time::from_hms(23, 59, 59).unwrap(),
+            )
+            .into(),
         )),
         material_filter: Some(vec![Ulid::new(), Ulid::new()]),
         filters,
@@ -117,7 +125,7 @@ async fn operations_default_to_planning() -> Result<()> {
         preview_summary: None,
         checkpoint: ReplayCheckpoint::default(),
         actor: "test-actor".to_string(),
-        created_at: Utc::now(),
+        created_at: sinex_primitives::temporal::now(),
         approved_by: None,
         approved_at: None,
         executor_node: None,

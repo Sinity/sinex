@@ -88,8 +88,8 @@ async fn test_event_ingestion_flow(ctx: TestContext) -> Result<()> {
     );
 
     // Wait for persistence
-    let event_id = node_event.id.as_ref().unwrap().clone();
-    xtask::sandbox::timing::WaitHelpers::wait_for_event_id(&ctx.pool, event_id.clone(), 10).await?;
+    let event_id = *node_event.id.as_ref().unwrap();
+    xtask::sandbox::timing::WaitHelpers::wait_for_event_id(&ctx.pool, event_id, 10).await?;
 
     // Verify event can be retrieved
     let retrieved_event = ctx.pool.events().get_by_id(event_id).await?;
@@ -147,7 +147,7 @@ async fn test_batch_ingestion(ctx: TestContext) -> Result<()> {
     // Events are automatically stored, extract their IDs
     let mut stored_ids = Vec::new();
     for event in &batch_events {
-        stored_ids.push(event.id.as_ref().unwrap().clone());
+        stored_ids.push(*event.id.as_ref().unwrap());
     }
 
     assert_eq!(stored_ids.len(), 3, "All batch events should be stored");
@@ -155,17 +155,16 @@ async fn test_batch_ingestion(ctx: TestContext) -> Result<()> {
     // Verify all events were persisted
     xtask::sandbox::timing::WaitHelpers::wait_for_event_count(&ctx.pool, 3, 30).await?;
     for (idx, event_id) in stored_ids.iter().enumerate() {
-        xtask::sandbox::timing::WaitHelpers::wait_for_event_id(&ctx.pool, event_id.clone(), 10)
-            .await?;
+        xtask::sandbox::timing::WaitHelpers::wait_for_event_id(&ctx.pool, *event_id, 10).await?;
         let retrieved = ctx
             .pool
             .events()
-            .get_by_id(event_id.clone())
+            .get_by_id(*event_id)
             .await?
             .expect("Batch event should be retrievable after wait");
         assert_eq!(
             retrieved.id,
-            Some(event_id.clone()),
+            Some(*event_id),
             "Batch event {} should match stored ID",
             idx
         );
@@ -725,7 +724,7 @@ async fn test_payload_validation_patterns(ctx: TestContext) -> Result<()> {
             "with_numbers",
             serde_json::json!({
                 "integer": 42,
-                "float": 3.14159,
+                "float": 1.23456,
                 "negative": -123
             }),
         ),

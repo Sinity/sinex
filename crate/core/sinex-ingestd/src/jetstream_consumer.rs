@@ -4,19 +4,17 @@
 
 use async_nats::{jetstream, Client as NatsClient};
 use futures::StreamExt;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sinex_db::repositories::StreamBatchRow;
 use sinex_db::{repositories::DbPoolExt, DbPool};
+use sinex_primitives::Timestamp;
 use sinex_primitives::{environment::SinexEnvironment, ulid::Ulid, JsonValue};
 use sqlx::postgres::PgPoolCopyExt;
 use std::collections::{HashSet, VecDeque};
-use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use sinex_primitives::Timestamp;
 use tokio::time::{timeout, Duration};
 use tracing::{debug, error, info, warn};
-use uuid::Uuid;
 
 use crate::{
     validator::{EventValidator, ValidationResult},
@@ -162,19 +160,6 @@ struct PreparedEvent {
     event: Event<JsonValue>,
     parsed_id: Ulid,
     message: jetstream::Message,
-}
-
-enum PreparedProvenance {
-    Material {
-        source_material_id: Uuid,
-        anchor_byte: i64,
-        offset_start: Option<i64>,
-        offset_end: Option<i64>,
-        offset_kind: String,
-    },
-    Synthesis {
-        source_event_ids: Vec<Uuid>,
-    },
 }
 
 #[derive(Debug, Default)]
@@ -880,9 +865,7 @@ impl JetStreamConsumer {
         let confirmation = Confirmation {
             event_id: event_id_str.clone(),
             persisted: true,
-            ts_ingest: sinex_primitives::temporal::format_rfc3339(
-                Timestamp::now(),
-            ),
+            ts_ingest: sinex_primitives::temporal::format_rfc3339(Timestamp::now()),
         };
 
         let subject = format!("{}{}", self.topology.confirmations_prefix, event_id_str);
@@ -958,9 +941,7 @@ impl JetStreamConsumer {
                 .unwrap_or_else(|| "unknown".to_string()),
             error,
             original_payload,
-            failed_at: sinex_primitives::temporal::format_rfc3339(
-                Timestamp::now(),
-            ),
+            failed_at: sinex_primitives::temporal::format_rfc3339(Timestamp::now()),
         };
 
         let payload = match serde_json::to_vec(&dlq_entry) {
@@ -1033,7 +1014,7 @@ impl JetStreamConsumer {
         match self.js.get_stream(stream_name).await {
             Ok(mut stream) => {
                 if let Ok(info) = stream.info().await {
-                    let state = info.state.clone();
+                    let state = info.state;
                     let config = info.config.clone();
 
                     // Check message count capacity

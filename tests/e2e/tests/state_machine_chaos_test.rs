@@ -3,13 +3,13 @@
 // Tests for state machine violations including shutdown during initialization,
 // concurrent shutdown signals, and state corruption under load.
 
-use sinex_primitives::Timestamp;
 use futures::future::join_all;
 use serde_json::json;
-use xtask::sandbox::prelude::*;
-use xtask::sandbox::timing::Timeouts;
+use sinex_primitives::Timestamp;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::Timeouts;
 
 /// Test shutdown signal during initialization
 #[sinex_test]
@@ -65,12 +65,11 @@ async fn test_shutdown_signal_during_initialization(ctx: TestContext) -> TestRes
     }
 
     // Check database state - might be partially initialized
-    let event_count = sqlx::query!(
-        r#"SELECT COUNT(*) as "count!" FROM core.events WHERE source = 'init'"#
-    )
-    .fetch_one(ctx.pool())
-    .await
-    .unwrap();
+    let event_count =
+        sqlx::query!(r#"SELECT COUNT(*) as "count!" FROM core.events WHERE source = 'init'"#)
+            .fetch_one(ctx.pool())
+            .await
+            .unwrap();
 
     println!(
         "Events created during interrupted init: {}",
@@ -132,10 +131,7 @@ async fn test_multiple_concurrent_shutdown_signals(_ctx: TestContext) -> TestRes
     println!("- Handlers that ran: {}", handlers_run);
 
     // All signals should be received
-    assert_eq!(
-        total_signals, 5,
-        "All shutdown signals should be received"
-    );
+    assert_eq!(total_signals, 5, "All shutdown signals should be received");
 
     // All handlers should attempt to run (in this simple simulation)
     assert_eq!(handlers_run, 5, "All handlers should run");

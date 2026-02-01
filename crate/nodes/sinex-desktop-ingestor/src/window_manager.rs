@@ -4,15 +4,15 @@
 use crate::common::*;
 
 // Window manager specific imports
+use sinex_node_sdk::stage_as_you_go::StageAsYouGoContext;
+use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::payloads::{
     HyprlandMonitorFocusedPayload, HyprlandStateCapturedPayload, HyprlandWindowClosedPayload,
     HyprlandWindowFocusedPayload, HyprlandWindowMovedPayload, HyprlandWindowOpenedPayload,
     HyprlandWorkspaceSwitchedPayload, WindowGeometry,
 };
-use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::{DynamicPayload, Id, OffsetKind, Provenance, Ulid};
-use sinex_node_sdk::stage_as_you_go::StageAsYouGoContext;
 use std::{fmt, str::FromStr, time::SystemTime};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::UnixStream;
@@ -51,7 +51,7 @@ const HYPRLAND_MAX_BACKOFF: Duration = Duration::from_secs(60);
 /// Windows that haven't been seen in this duration will be removed from the internal
 /// tracking map to prevent unbounded memory growth. This cleanup happens during the
 /// periodic state snapshot.
-const WINDOW_STATE_TTL: Duration = Duration::from_secs(48 * 60 * 60); // 48 hours
+const WINDOW_STATE_TTL: Duration = Duration::from_hours(48);
 
 /// Socket read timeout for Hyprland event stream
 ///
@@ -378,7 +378,9 @@ impl WindowManagerWatcher {
                     .with_provenance(provenance)
                     .build()
                     .map_err(|e| {
-                        sinex_node_sdk::SinexError::processing(format!("Failed to build event: {e}"))
+                        sinex_node_sdk::SinexError::processing(format!(
+                            "Failed to build event: {e}"
+                        ))
                     })?;
                     self.emit_material_event(material_id, payload_bytes, event)
                         .await?;
@@ -638,7 +640,7 @@ impl WindowManagerWatcher {
             let payload = HyprlandWindowMovedPayload {
                 window_address: address.to_string(),
                 new_workspace_id: self.parse_id(workspace, "workspace_id"),
-                moved_at: OffsetDateTime::now_utc().to_string(),
+                moved_at: Timestamp::now().to_string(),
             };
             let event = payload
                 .from_material(material_id)
@@ -761,7 +763,7 @@ impl WindowManagerWatcher {
                     .current_monitor
                     .as_ref()
                     .map(|m| self.parse_id(m, "monitor_id")),
-                focused_at: OffsetDateTime::now_utc().to_string(),
+                focused_at: Timestamp::now().to_string(),
             };
             let event = payload
                 .from_material(material_id)
@@ -989,7 +991,7 @@ impl WindowManagerWatcher {
                 .as_ref()
                 .map(|m| self.parse_id(m, "monitor_id"))
                 .unwrap_or(0),
-            captured_at: OffsetDateTime::now_utc().to_string(),
+            captured_at: Timestamp::now().to_string(),
         };
         let material_payload = self.build_material_payload(
             "state_snapshot",

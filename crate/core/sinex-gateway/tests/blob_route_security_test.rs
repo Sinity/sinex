@@ -12,7 +12,7 @@ use sinex_services::ContentService;
 use tempfile::TempDir;
 use tokio::sync::mpsc;
 use which::which;
-use xtask::sandbox::{sinex_serial_test, sinex_test, TestContext, TestResult};
+use xtask::sandbox::{sinex_serial_test, sinex_test, TestResult};
 
 struct EnvVarGuard {
     key: &'static str,

@@ -1,10 +1,10 @@
 //! Security- and chaos-focused validation regressions.
 
-use sinex_primitives::db::models::event::{Event, Provenance, SourceMaterial};
-use sinex_primitives::db::validation::{EventValidator, ValidationError};
+use sinex_db::models::event::{Event, Provenance, SourceMaterial};
+use sinex_db::validation::{EventValidator, ValidationError};
 use sinex_primitives::domain::{EventSource, EventType, HostName};
 use sinex_primitives::Id;
-use time::Duration;
+use std::time::Duration;
 use xtask::sandbox::{sinex_test, TestResult};
 
 fn base_event() -> Event<serde_json::Value> {

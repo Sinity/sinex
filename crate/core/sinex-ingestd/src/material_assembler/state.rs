@@ -7,9 +7,9 @@ use async_nats::jetstream;
 use blake3::Hasher;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
+use sinex_primitives::Timestamp;
 use sinex_primitives::Ulid;
 use std::{collections::BTreeMap, path::PathBuf, str::FromStr};
-use sinex_primitives::Timestamp;
 use tokio::fs::File;
 use tracing::{debug, info, warn};
 
@@ -274,10 +274,11 @@ pub(super) async fn handle_begin(
     };
     tracing::Span::current().record("material_id", tracing::field::display(&material_id));
 
-    let started_at = Timestamp::parse(
+    let started_at = time::OffsetDateTime::parse(
         &begin.started_at,
         &time::format_description::well_known::Rfc3339,
     )
+    .map(Timestamp::new)
     .unwrap_or_else(|_| {
         warn!(
             material_id = %material_id,

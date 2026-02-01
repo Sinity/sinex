@@ -8,8 +8,8 @@
 
 use color_eyre::eyre::{eyre, Context, Result};
 use serde_json::Value;
-use sinex_primitives::environment::SinexEnvironment;
 use sinex_node_sdk::dlq_retry::{DlqRetryConfig, DlqRetryHandler};
+use sinex_primitives::environment::SinexEnvironment;
 use std::time::Duration;
 
 // Re-export RPC types for consistency
@@ -244,7 +244,7 @@ pub async fn handle_dlq_purge(
 mod tests {
     use super::*;
     use serde_json::json;
-    use sinex_primitives::environment;
+    use sinex_primitives::{environment, temporal};
     use xtask::sandbox::{sinex_test, EphemeralNats};
 
     #[sinex_test]

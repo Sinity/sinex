@@ -14,8 +14,8 @@ use xtask::sandbox::timing::Timeouts;
 
 // Additional specific imports
 use sinex_primitives::events::{event_types, services, EventFactory};
-use xtask::sandbox::events;
 use std::sync::atomic::{AtomicU64, Ordering};
+use xtask::sandbox::events;
 
 // =============================================================================
 // Database Boundary Tests
@@ -237,7 +237,12 @@ async fn test_database_query_complexity_limits(ctx: TestContext) -> TestResult<(
         println!("Testing query complexity: {}", description);
 
         let start = Instant::now();
-        match timeout(Duration::from_secs(Timeouts::SHORT), sqlx::query(query).fetch_all(&pool)).await {
+        match timeout(
+            Duration::from_secs(Timeouts::SHORT),
+            sqlx::query(query).fetch_all(&pool),
+        )
+        .await
+        {
             Ok(Ok(rows)) => {
                 let elapsed = start.elapsed();
                 println!("  SUCCESS: {} rows in {:?}", rows.len(), elapsed);
@@ -278,7 +283,11 @@ async fn test_database_dns_timeout(ctx: TestContext) -> TestResult<()> {
         let start = std::time::Instant::now();
 
         // Test connection with timeout
-        let result = timeout(Duration::from_secs(Timeouts::QUICK), DbPool::connect(&fake_url)).await;
+        let result = timeout(
+            Duration::from_secs(Timeouts::QUICK),
+            DbPool::connect(&fake_url),
+        )
+        .await;
 
         let elapsed = start.elapsed();
 
@@ -783,7 +792,12 @@ async fn test_concurrent_resource_exhaustion(ctx: TestContext) -> TestResult<()>
                 let factory = EventFactory::new("resource_test");
                 let event = factory.create_event("exhaustion.test", large_payload);
 
-                match timeout(Duration::from_secs(Timeouts::QUICK), insert_event(&pool_clone, &event)).await {
+                match timeout(
+                    Duration::from_secs(Timeouts::QUICK),
+                    insert_event(&pool_clone, &event),
+                )
+                .await
+                {
                     Ok(Ok(_)) => {
                         success_count.fetch_add(1, Ordering::SeqCst);
                     }

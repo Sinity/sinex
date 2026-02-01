@@ -11,8 +11,8 @@ use base64::Engine;
 use color_eyre::eyre::{eyre, Context, ContextCompat, Result};
 use serde_json::{json, Value};
 use sinex_primitives::{
-    coordination::CoordinationKvClient, domain::Entity, temporal, temporal::Timestamp, Event,
-    Id, JsonValue, Ulid,
+    coordination::CoordinationKvClient, domain::Entity, temporal, temporal::Timestamp, Event, Id,
+    JsonValue, Ulid,
 };
 use sinex_services::{AnalyticsService, ContentService, PkmService, SearchQuery, SearchService};
 use std::sync::OnceLock;
@@ -514,10 +514,7 @@ fn metadata_to_instance_info(
         instance_id: InstanceId::new(&meta.instance_id),
         node_type: NodeType::Service, // InstanceMetadata doesn't have node_type, assume Service
         hostname: Some(HostName::new(&meta.hostname)),
-        last_heartbeat: Some(
-            *Timestamp::from_unix_timestamp(meta.last_heartbeat)
-                .unwrap_or(time::OffsetDateTime::UNIX_EPOCH.into())
-        ),
+        last_heartbeat: Timestamp::from_unix_timestamp(meta.last_heartbeat),
         is_leader,
     }
 }
@@ -612,6 +609,20 @@ fn blob_response_payload(content: &[u8], metadata: &sinex_node_sdk::annex::BlobM
         "size_bytes": metadata.size_bytes,
     })
 }
+fn blob_size_limit_bytes() -> usize {
+    static LIMIT: OnceLock<usize> = OnceLock::new();
+    *LIMIT.get_or_init(|| {
+        std::env::var("SINEX_GATEWAY_MAX_BLOB_BYTES")
+            .ok()
+            .and_then(|raw| raw.parse::<usize>().ok())
+            .unwrap_or(DEFAULT_BLOB_SIZE_BYTES)
+    })
+}
+
+fn max_base64_length(limit_bytes: usize) -> usize {
+    // Each 3 bytes become 4 base64 chars. Round up to ensure we account for padding.
+    limit_bytes.div_ceil(3) * 4
+}
 
 #[cfg(test)]
 mod tests {
@@ -662,18 +673,4 @@ mod tests {
         assert!(rpc_params.require_ulid("operation_id").is_err());
         Ok(())
     }
-}
-fn blob_size_limit_bytes() -> usize {
-    static LIMIT: OnceLock<usize> = OnceLock::new();
-    *LIMIT.get_or_init(|| {
-        std::env::var("SINEX_GATEWAY_MAX_BLOB_BYTES")
-            .ok()
-            .and_then(|raw| raw.parse::<usize>().ok())
-            .unwrap_or(DEFAULT_BLOB_SIZE_BYTES)
-    })
-}
-
-fn max_base64_length(limit_bytes: usize) -> usize {
-    // Each 3 bytes become 4 base64 chars. Round up to ensure we account for padding.
-    ((limit_bytes + 2) / 3) * 4
 }

@@ -8,7 +8,7 @@
  * - Filesystem permissions
  */
 
-use crate::{SinexError, NodeResult};
+use crate::{NodeResult, SinexError};
 use camino::Utf8Path;
 use serde_json::{json, Value};
 use std::collections::HashMap;

@@ -1,0 +1,9 @@
+id: unimplemented-macro
+message: "unimplemented! macro found in production code"
+severity: error
+language: rust
+rule:
+  pattern: unimplemented!($$$ARGS)
+note: |
+  unimplemented!() macros should not be in production code.
+  Implement the functionality or return an appropriate error.

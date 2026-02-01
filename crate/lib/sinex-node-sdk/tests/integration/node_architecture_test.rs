@@ -6,12 +6,12 @@
 // - Schema contract enforcement
 
 use sinex_db::DbPoolExt;
-use sinex_primitives::DynamicPayload;
 use sinex_node_sdk::stream_processor::{Checkpoint, TimeHorizon};
-use xtask::sandbox::TestResult;
+use sinex_primitives::DynamicPayload;
+use time::OffsetDateTime;
 use tracing::info;
 use xtask::sandbox::prelude::*;
-use time::OffsetDateTime;
+use xtask::sandbox::TestResult;
 
 #[sinex_test]
 async fn test_phase1_unified_stream_processor_trait(ctx: TestContext) -> TestResult<()> {
@@ -31,10 +31,7 @@ async fn test_phase1_unified_stream_processor_trait(ctx: TestContext) -> TestRes
     let stream_checkpoint = Checkpoint::stream("1234567890-0", Some(Ulid::new()));
 
     // Verify all checkpoint types serialize properly
-    assert_eq!(
-        external_checkpoint.description().contains("File position"),
-        true
-    );
+    assert!(external_checkpoint.description().contains("File position"));
     assert!(internal_checkpoint.description().contains("event"));
     assert!(stream_checkpoint.description().contains("stream"));
 
@@ -43,7 +40,7 @@ async fn test_phase1_unified_stream_processor_trait(ctx: TestContext) -> TestRes
     // Test 2: Verify TimeHorizon modes (replacing sensor/scanner split)
     let snapshot = TimeHorizon::Snapshot;
     let historical = TimeHorizon::Historical {
-        end_time: OffsetDateTime::now_utc(),
+        end_time: Timestamp::now(),
     };
     let continuous = TimeHorizon::Continuous;
 
@@ -56,7 +53,7 @@ async fn test_phase1_unified_stream_processor_trait(ctx: TestContext) -> TestRes
 
     // Test 3: Test checkpoint persistence for state recovery
     // Use NATS context for KV
-    let ctx_nats = ctx.with_nats().await?;
+    let ctx_nats = ctx.with_nats().shared().await?;
     let checkpoint_test_result = test_checkpoint_functionality(&ctx_nats).await;
     assert!(
         checkpoint_test_result.is_ok(),
@@ -158,7 +155,7 @@ async fn test_node_sdk_components(ctx: TestContext) -> TestResult<()> {
     // Test checkpoint manager
     use sinex_node_sdk::CheckpointManager;
 
-    let ctx = ctx.with_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let kv = ctx.checkpoint_kv().await?;
     let checkpoint_manager = CheckpointManager::new(
         kv,
@@ -370,7 +367,7 @@ async fn test_checkpoint_functionality(ctx: &TestContext) -> TestResult<()> {
             event_id: None,
         },
         processed_count: 100,
-        last_activity: OffsetDateTime::now_utc(),
+        last_activity: Timestamp::now(),
         data: Some(serde_json::json!({"test": "checkpoint"})),
         version: 2,
         revision: 0,

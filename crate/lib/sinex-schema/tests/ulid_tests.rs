@@ -8,14 +8,14 @@
 //! - Database integration via UUID conversion
 //! - Property-based testing for edge cases
 
-use chrono::{DateTime, Utc};
 use proptest::prelude::*;
 use proptest::strategy::{BoxedStrategy, Strategy};
-use sinex_schema::ulid::{Ulid, UlidError};
+use sinex_schema::ulid::{Timestamp, Ulid, UlidError};
 use sinex_schema::ulid_conversions::ulid_to_uuid;
 use std::collections::HashSet;
 use std::sync::{Arc, Barrier};
 use std::time::{Duration, Instant};
+use time::OffsetDateTime;
 use uuid::Uuid;
 use xtask::sandbox::sinex_test;
 
@@ -61,16 +61,16 @@ mod basic_tests {
 
     #[sinex_test]
     fn test_ulid_timestamp_extraction() -> TestResult<()> {
-        let before = Utc::now();
+        let before = Timestamp::now();
         let ulid = Ulid::new();
-        let after = Utc::now();
+        let after = Timestamp::now();
 
         let extracted_timestamp = ulid.timestamp();
 
         // ULIDs have millisecond precision; compare on that boundary to avoid sub-ms flakiness.
-        let extracted_ms = extracted_timestamp.timestamp_millis();
-        let before_ms = before.timestamp_millis();
-        let after_ms = after.timestamp_millis();
+        let extracted_ms = extracted_timestamp.unix_timestamp_nanos() / 1_000_000;
+        let before_ms = before.unix_timestamp_nanos() / 1_000_000;
+        let after_ms = after.unix_timestamp_nanos() / 1_000_000;
 
         // Timestamp should be within reasonable bounds
         assert!(extracted_ms >= before_ms);
@@ -80,13 +80,16 @@ mod basic_tests {
 
     #[sinex_test]
     fn test_ulid_from_datetime() -> TestResult<()> {
-        let datetime = DateTime::from_timestamp(1640995200, 0).unwrap(); // 2022-01-01 00:00:00 UTC
+        // 2022-01-01 00:00:00 UTC
+        let datetime = Timestamp::new(
+            OffsetDateTime::from_unix_timestamp(1640995200).expect("valid timestamp"),
+        );
         let ulid = Ulid::from_datetime(datetime);
 
         let extracted = ulid.timestamp();
 
         // Should be very close (within a few seconds due to precision)
-        let diff = (extracted.timestamp() - datetime.timestamp()).abs();
+        let diff = (extracted.unix_timestamp() - datetime.unix_timestamp()).abs();
         assert!(diff <= 1);
         Ok(())
     }
@@ -398,8 +401,8 @@ mod property_tests {
             let timestamp = ulid.timestamp();
 
             // Should be within reasonable range (1970 to far future)
-            let unix_epoch = DateTime::from_timestamp(0, 0).unwrap();
-            let far_future = DateTime::from_timestamp(253402300799, 0).unwrap(); // Year 9999
+            let unix_epoch = Timestamp::new(OffsetDateTime::from_unix_timestamp(0).unwrap());
+            let far_future = Timestamp::new(OffsetDateTime::from_unix_timestamp(253402300799).unwrap()); // Year 9999
 
             prop_assert!(timestamp >= unix_epoch);
             prop_assert!(timestamp <= far_future);

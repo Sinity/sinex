@@ -32,6 +32,12 @@ pub struct BaselineTracker {
     start_time: Instant,
 }
 
+impl Default for BaselineTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BaselineTracker {
     pub fn new() -> Self {
         Self {
@@ -46,7 +52,7 @@ impl BaselineTracker {
     pub fn record_measurement(&mut self, operation: &str, duration: StdDuration, success: bool) {
         self.measurements
             .entry(operation.to_string())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(duration);
 
         if success {
@@ -194,6 +200,12 @@ impl Default for RegressionThresholds {
     }
 }
 
+impl Default for RegressionDetector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RegressionDetector {
     pub fn new() -> Self {
         Self {
@@ -225,7 +237,7 @@ impl RegressionDetector {
     pub fn record_measurement(&mut self, operation: &str, duration: StdDuration, success: bool) {
         self.measurements
             .entry(operation.to_string())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(duration);
 
         if success {
@@ -341,7 +353,7 @@ impl RegressionDetector {
         }
 
         // Calculate confidence level based on sample sizes
-        let confidence_level = self.calculate_confidence_level(&baseline, &current);
+        let confidence_level = self.calculate_confidence_level(baseline, &current);
 
         let regression_detected = regression_severity != RegressionSeverity::None
             && confidence_level >= self.thresholds.minimum_confidence;

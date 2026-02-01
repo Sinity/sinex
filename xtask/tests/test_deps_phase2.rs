@@ -20,7 +20,7 @@ use predicates::prelude::*;
 fn test_deps_unused_help() {
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze").arg("deps").arg("unused").arg("--help");
+    cmd.arg("deps").arg("unused").arg("--help");
 
     cmd.assert()
         .success()
@@ -32,7 +32,7 @@ fn test_deps_unused_help() {
 fn test_deps_timings_help() {
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze").arg("deps").arg("timings").arg("--help");
+    cmd.arg("deps").arg("timings").arg("--help");
 
     cmd.assert()
         .success()
@@ -45,7 +45,7 @@ fn test_deps_timings_help() {
 fn test_deps_subcommands_in_main_help() {
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze").arg("deps").arg("--help");
+    cmd.arg("deps").arg("--help");
 
     cmd.assert()
         .success()
@@ -63,7 +63,7 @@ fn test_deps_unused_is_recognized_command() {
     // This test verifies that unused is a recognized subcommand
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze").arg("deps").arg("unused").arg("--help");
+    cmd.arg("deps").arg("unused").arg("--help");
 
     let output = cmd.output().unwrap();
 
@@ -80,7 +80,7 @@ fn test_deps_unused_human_format_default() {
     // Test that the default output format is human-readable
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze").arg("deps").arg("unused");
+    cmd.arg("deps").arg("unused");
 
     let output = cmd.output().unwrap();
 
@@ -105,7 +105,7 @@ fn test_deps_unused_execution_graceful() {
     // (Either succeeds if tool available, or provides helpful error)
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze").arg("deps").arg("unused");
+    cmd.arg("deps").arg("unused");
 
     let output = cmd.output().unwrap();
 
@@ -122,7 +122,7 @@ fn test_deps_unused_ci_mode_flag() {
     // Test that CI mode accepts the flag
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze").arg("deps").arg("unused").arg("--ci");
+    cmd.arg("deps").arg("unused").arg("--ci");
 
     let output = cmd.output().unwrap();
 
@@ -139,7 +139,7 @@ fn test_deps_unused_ci_mode_graceful() {
     // Test CI mode executes gracefully
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze").arg("deps").arg("unused").arg("--ci");
+    cmd.arg("deps").arg("unused").arg("--ci");
 
     let output = cmd.output().unwrap();
 
@@ -155,7 +155,7 @@ fn test_deps_unused_has_expected_subcommand() {
     // Test that unused is a recognized subcommand
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze").arg("deps").arg("unused").arg("--help");
+    cmd.arg("deps").arg("unused").arg("--help");
 
     cmd.assert().success();
 }
@@ -167,7 +167,7 @@ fn test_deps_timings_default_top() {
     // Test timings command with default top parameter (10)
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze").arg("deps").arg("timings");
+    cmd.arg("deps").arg("timings");
 
     let output = cmd.output().unwrap();
 
@@ -194,11 +194,7 @@ fn test_deps_timings_custom_top_parameter() {
     // Test timings command with custom top value
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze")
-        .arg("deps")
-        .arg("timings")
-        .arg("--top")
-        .arg("5");
+    cmd.arg("deps").arg("timings").arg("--top").arg("5");
 
     let output = cmd.output().unwrap();
 
@@ -222,11 +218,7 @@ fn test_deps_timings_top_with_large_number() {
     // Test timings with a large top value
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze")
-        .arg("deps")
-        .arg("timings")
-        .arg("--top")
-        .arg("50");
+    cmd.arg("deps").arg("timings").arg("--top").arg("50");
 
     let output = cmd.output().unwrap();
 
@@ -247,11 +239,7 @@ fn test_deps_timings_top_with_zero() {
     // Test timings with zero (edge case)
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze")
-        .arg("deps")
-        .arg("timings")
-        .arg("--top")
-        .arg("0");
+    cmd.arg("deps").arg("timings").arg("--top").arg("0");
 
     let output = cmd.output().unwrap();
 
@@ -269,8 +257,7 @@ fn test_deps_timings_compare_parameter() {
     // Test timings command with compare option
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze")
-        .arg("deps")
+    cmd.arg("deps")
         .arg("timings")
         .arg("--compare")
         .arg("previous");
@@ -292,7 +279,7 @@ fn test_deps_list_basic() {
     // Test basic list command execution
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze").arg("deps").arg("list");
+    cmd.arg("deps").arg("list");
 
     let output = cmd.output().unwrap();
 
@@ -309,7 +296,7 @@ fn test_deps_list_execution() {
     // Test list command executes successfully
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze").arg("deps").arg("list");
+    cmd.arg("deps").arg("list");
 
     let output = cmd.output().unwrap();
 
@@ -325,11 +312,7 @@ fn test_deps_tree_with_depth_parameter() {
     // Test tree with explicit depth
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze")
-        .arg("deps")
-        .arg("tree")
-        .arg("--depth")
-        .arg("3");
+    cmd.arg("deps").arg("tree").arg("--depth").arg("3");
 
     cmd.assert().success();
 }
@@ -339,11 +322,7 @@ fn test_deps_tree_with_max_depth() {
     // Test tree with maximum depth
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze")
-        .arg("deps")
-        .arg("tree")
-        .arg("--depth")
-        .arg("20");
+    cmd.arg("deps").arg("tree").arg("--depth").arg("20");
 
     cmd.assert().success();
 }
@@ -353,11 +332,7 @@ fn test_deps_tree_with_zero_depth() {
     // Test tree with zero depth (edge case)
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze")
-        .arg("deps")
-        .arg("tree")
-        .arg("--depth")
-        .arg("0");
+    cmd.arg("deps").arg("tree").arg("--depth").arg("0");
 
     let output = cmd.output().unwrap();
 
@@ -374,10 +349,7 @@ fn test_deps_duplicates_recognized_command() {
     // Test duplicates command is recognized
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze")
-        .arg("deps")
-        .arg("duplicates")
-        .arg("--help");
+    cmd.arg("deps").arg("duplicates").arg("--help");
 
     cmd.assert().success();
 }
@@ -387,8 +359,7 @@ fn test_deps_duplicates_threshold_parameter() {
     // Test duplicates with threshold parameter
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze")
-        .arg("deps")
+    cmd.arg("deps")
         .arg("duplicates")
         .arg("--threshold")
         .arg("5");
@@ -407,10 +378,7 @@ fn test_deps_duplicates_help_shows_threshold_param() {
     // Verify that the threshold parameter is documented in help
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze")
-        .arg("deps")
-        .arg("duplicates")
-        .arg("--help");
+    cmd.arg("deps").arg("duplicates").arg("--help");
 
     cmd.assert()
         .success()
@@ -426,13 +394,13 @@ fn test_deps_all_phase2_subcommands_recognized() {
 
     // First: unused
     let mut cmd1 = Command::cargo_bin("xtask").unwrap();
-    cmd1.arg("analyze").arg("deps").arg("unused").arg("--help");
+    cmd1.arg("deps").arg("unused").arg("--help");
     let output1 = cmd1.output().unwrap();
     assert!(output1.status.success());
 
     // Second: timings
     let mut cmd2 = Command::cargo_bin("xtask").unwrap();
-    cmd2.arg("analyze").arg("deps").arg("timings").arg("--help");
+    cmd2.arg("deps").arg("timings").arg("--help");
     let output2 = cmd2.output().unwrap();
     assert!(output2.status.success());
 }
@@ -444,7 +412,7 @@ fn test_deps_all_phase2_subcommands_help() {
 
     for subcmd in subcommands {
         let mut cmd = Command::cargo_bin("xtask").unwrap();
-        cmd.arg("analyze").arg("deps").arg(subcmd).arg("--help");
+        cmd.arg("deps").arg(subcmd).arg("--help");
 
         cmd.assert()
             .success()
@@ -459,11 +427,7 @@ fn test_deps_timings_top_parameter_parsing() {
     // Test that top parameter is parsed correctly
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze")
-        .arg("deps")
-        .arg("timings")
-        .arg("--top")
-        .arg("15");
+    cmd.arg("deps").arg("timings").arg("--top").arg("15");
 
     let output = cmd.output().unwrap();
 
@@ -479,11 +443,7 @@ fn test_deps_timings_invalid_top() {
     // Test with invalid top value (non-numeric)
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze")
-        .arg("deps")
-        .arg("timings")
-        .arg("--top")
-        .arg("invalid");
+    cmd.arg("deps").arg("timings").arg("--top").arg("invalid");
 
     let output = cmd.output().unwrap();
 
@@ -498,8 +458,7 @@ fn test_deps_duplicates_invalid_threshold() {
     // Test with invalid threshold value
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze")
-        .arg("deps")
+    cmd.arg("deps")
         .arg("duplicates")
         .arg("--threshold")
         .arg("not-a-number");
@@ -518,7 +477,7 @@ fn test_deps_list_produces_output() {
     // Verify that list command produces output
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze").arg("deps").arg("list");
+    cmd.arg("deps").arg("list");
 
     let output = cmd.output().unwrap();
 
@@ -534,7 +493,7 @@ fn test_deps_tree_produces_output() {
     // Verify that tree command produces output
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze").arg("deps").arg("tree");
+    cmd.arg("deps").arg("tree");
 
     let output = cmd.output().unwrap();
 
@@ -550,7 +509,7 @@ fn test_deps_duplicates_produces_output() {
     // Verify that duplicates command produces output
     let mut cmd = Command::cargo_bin("xtask").unwrap();
 
-    cmd.arg("analyze").arg("deps").arg("duplicates");
+    cmd.arg("deps").arg("duplicates");
 
     let output = cmd.output().unwrap();
 

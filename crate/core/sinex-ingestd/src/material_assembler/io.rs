@@ -10,11 +10,11 @@ use blake3::Hasher;
 use camino::Utf8PathBuf;
 use libc;
 use sinex_node_sdk::annex::AnnexKey;
+use sinex_primitives::Timestamp;
 use sinex_primitives::Ulid;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::str::FromStr;
-use sinex_primitives::Timestamp;
 use tokio::{fs, fs::File, io::AsyncReadExt, io::AsyncWriteExt};
 use tracing::{debug, info, warn};
 
@@ -78,7 +78,7 @@ pub(super) async fn restore_state(assembler: &MaterialAssembler) -> IngestdResul
 async fn restore_state_params(
     assembler: &MaterialAssembler,
     material_id: Ulid,
-    state_dir: &PathBuf,
+    state_dir: &std::path::Path,
 ) -> IngestdResult<Option<AssemblerState>> {
     let wal_path = state_dir.join(WAL_FILE_NAME);
     let temp_path = state_dir.join(TEMP_FILE_NAME);
@@ -103,9 +103,9 @@ async fn restore_state_params(
 
     let cursor = std::io::Cursor::new(content_buffer);
     let deserializer = serde_json::Deserializer::from_reader(cursor);
-    let mut iterator = deserializer.into_iter::<WalEntry>();
+    let iterator = deserializer.into_iter::<WalEntry>();
 
-    while let Some(item) = iterator.next() {
+    for item in iterator {
         match item {
             Ok(entry) => state_snapshot.apply(entry),
             Err(e) => {
@@ -163,11 +163,12 @@ async fn restore_state_params(
         expected_offset: state_snapshot.expected_offset,
         slice_count: state_snapshot.slice_count,
         buffered_slices,
-        state_dir: state_dir.clone(),
-        started_at: Timestamp::parse(
+        state_dir: state_dir.to_path_buf(),
+        started_at: time::OffsetDateTime::parse(
             &state_snapshot.started_at,
             &time::format_description::well_known::Rfc3339,
         )
+        .map(Timestamp::new)
         .unwrap_or_else(|_| Timestamp::now()),
         material_kind: state_snapshot.material_kind,
         source_identifier: state_snapshot.source_identifier,
@@ -321,8 +322,9 @@ pub(super) async fn append_wal_entry(
         state.wal_file = Some(file);
     }
 
-    let serialized =
-        serde_json::to_string(&entry).map_err(|e| SinexError::serialization(e.to_string()))?;
+    let serialized = serde_json::to_string(&entry).map_err(|e| {
+        SinexError::serialization("failed to serialize WAL entry").with_std_error(&e)
+    })?;
 
     if let Some(file) = state.wal_file.as_mut() {
         file.write_all(serialized.as_bytes())
@@ -557,12 +559,7 @@ async fn flush_buffered_slices(
     state: &mut AssemblerState,
     material_id: Ulid,
 ) -> IngestdResult<()> {
-    loop {
-        let next_offset = match state.buffered_slices.keys().next() {
-            Some(&offset) => offset,
-            None => break,
-        };
-
+    while let Some(&next_offset) = state.buffered_slices.keys().next() {
         if next_offset != state.expected_offset {
             break;
         }

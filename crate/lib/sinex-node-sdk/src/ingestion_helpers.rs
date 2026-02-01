@@ -8,7 +8,7 @@
 
 use crate::NodeResult;
 use serde_json;
-use sinex_primitives::temporal::OffsetDateTime;
+use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{
     domain::{EventSource, EventType},
     ulid::Ulid,
@@ -137,7 +137,7 @@ pub struct LedgerReader {
 pub struct LedgerEntry {
     pub offset_start: i64,
     pub offset_end: i64,
-    pub ts_capture: OffsetDateTime,
+    pub ts_capture: Timestamp,
     pub precision: String,   // "exact" or "bounded"
     pub source_type: String, // realtime_capture, intrinsic_content, etc.
 }
@@ -166,8 +166,8 @@ impl LedgerReader {
     pub fn derive_ts_orig(
         &self,
         offset: i64,
-        intrinsic_timestamp: Option<OffsetDateTime>,
-    ) -> (OffsetDateTime, TimeQuality) {
+        intrinsic_timestamp: Option<Timestamp>,
+    ) -> (Timestamp, TimeQuality) {
         // First check ledger entry
         if let Some(entry) = self.find_entry_for_offset(offset) {
             match entry.source_type.as_str() {
@@ -199,7 +199,7 @@ impl LedgerReader {
 
         // Ultimate fallback to current time (staged_at)
         (
-            sinex_primitives::temporal::OffsetDateTime::now_utc(),
+            sinex_primitives::temporal::Timestamp::now(),
             TimeQuality::StagedAt,
         )
     }
@@ -323,7 +323,7 @@ pub struct SnapshotRow {
     /// The full row data
     pub data: serde_json::Value,
     /// Optional version/timestamp for this row
-    pub version: Option<OffsetDateTime>,
+    pub version: Option<Timestamp>,
 }
 
 /// Types of changes detected in snapshot diffs

@@ -8,7 +8,7 @@
  * - Service configuration validation
  */
 
-use crate::{SinexError, NodeResult};
+use crate::{NodeResult, SinexError};
 use serde_json::{json, Value};
 use std::{collections::HashMap, fmt, process::Command, str::FromStr};
 use tracing::{debug, info};
@@ -534,10 +534,10 @@ async fn test_postgresql_connectivity() -> NodeResult<Value> {
         }))
     } else {
         let error_output = String::from_utf8_lossy(&test_output.stderr);
-        return Err(SinexError::processing(format!(
+        Err(SinexError::processing(format!(
             "PostgreSQL connection test failed: {}",
             error_output.trim()
-        )));
+        )))
     }
 }
 

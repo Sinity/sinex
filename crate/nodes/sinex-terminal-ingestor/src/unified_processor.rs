@@ -18,15 +18,14 @@ use sinex_node_sdk::{
     },
     NodeResult, SinexError,
 };
+use sinex_primitives::Ulid;
 use sinex_primitives::{
     domain::SanitizedPath, events::EventPayload, temporal::Timestamp, validate_path, Bytes, Seconds,
 };
-use sinex_primitives::Ulid;
 use sinex_processor_runtime::{
     CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
 };
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
-use time::OffsetDateTime;
 use tokio::{
     fs,
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
@@ -132,7 +131,7 @@ impl TerminalConfig {
         }
 
         let max_bytes = self.max_capture_bytes.as_u64();
-        if !(64..=1 * 1024 * 1024).contains(&max_bytes) {
+        if !(64..=1024 * 1024).contains(&max_bytes) {
             return Err("Max capture bytes must be between 64B and 1MB".to_string());
         }
 
@@ -142,7 +141,7 @@ impl TerminalConfig {
 
 #[derive(Debug, Clone)]
 pub struct TerminalState {
-    pub captured_at: OffsetDateTime,
+    pub captured_at: Timestamp,
     pub monitored_sources: Vec<Utf8PathBuf>,
     pub host: String,
 }
@@ -635,9 +634,9 @@ impl TerminalProcessor {
 
     fn runtime(&self) -> NodeResult<&NodeRuntimeState> {
         self.runtime.as_ref().ok_or_else(|| {
-            SinexError::general(format!(
-                "Terminal processor runtime not initialized prior to scan"
-            ))
+            SinexError::general(
+                "Terminal processor runtime not initialized prior to scan".to_string(),
+            )
         })
     }
 
@@ -667,9 +666,7 @@ impl TerminalProcessor {
             sinex_node_sdk::EventTransport::Nats(publisher) => publisher.clone(),
         };
 
-        AcquisitionManager::bootstrap_streams(publisher.nats_client())
-            .await
-            .map_err(SinexError::from)?;
+        AcquisitionManager::bootstrap_streams(publisher.nats_client()).await?;
 
         let mut state_dir = service_info.work_dir().clone();
         state_dir.push("terminal-history");
@@ -701,7 +698,7 @@ impl TerminalProcessor {
         let stage = self
             .stage_context
             .clone()
-            .ok_or_else(|| SinexError::general(format!("Stage context not initialized")))?;
+            .ok_or_else(|| SinexError::general("Stage context not initialized".to_string()))?;
 
         let state_dir = self.state_dir.clone();
         let mut contexts = Vec::new();
@@ -906,7 +903,7 @@ impl ExplorationProvider for TerminalProcessor {
                 "Monitoring {} history sources",
                 self.config.history_sources.len()
             ),
-            last_updated: OffsetDateTime::now_utc(),
+            last_updated: Timestamp::now(),
             lag_seconds: None,
             recent_activity: vec![],
             total_items: Some(self.config.history_sources.len() as u64),
@@ -920,11 +917,12 @@ impl ExplorationProvider for TerminalProcessor {
 
     fn get_coverage_analysis(
         &self,
-        time_range: Option<(OffsetDateTime, OffsetDateTime)>,
+        time_range: Option<(Timestamp, Timestamp)>,
     ) -> NodeResult<CoverageAnalysis> {
         let time_range = time_range.unwrap_or_else(|| {
-            let now = OffsetDateTime::now_utc();
-            (now - time::Duration::hours(1), now)
+            let now = Timestamp::now();
+            let one_hour_ago = Timestamp::now() - time::Duration::hours(1);
+            (one_hour_ago, now)
         });
 
         Ok(CoverageAnalysis {
@@ -951,10 +949,10 @@ impl ExplorationProvider for TerminalProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_db::models::Provenance;
-    use sinex_db::query_helpers::ulid_to_uuid;
     use sinex_node_sdk::{acquisition_manager::RotationPolicy, AcquisitionManager};
+    use sinex_primitives::events::Provenance;
     use sinex_primitives::Id;
+    use sinex_schema::primitives::ulid_to_uuid;
     use std::sync::Arc;
     use tokio::{
         io::AsyncWriteExt,
@@ -1060,7 +1058,7 @@ mod tests {
             }
         };
 
-        let expected_bytes = command.as_bytes().len() as i64;
+        let expected_bytes = command.len() as i64;
         xtask::sandbox::timing::WaitHelpers::wait_for_condition(
             || {
                 let pool = ctx.pool.clone();
@@ -1070,13 +1068,14 @@ mod tests {
                     if let Some(material) = pool
                         .source_materials()
                         .get_by_id(Id::from_ulid(material_ulid))
-                        .await?
+                        .await
+                        .map_err(|e| anyhow::anyhow!("{}", e))?
                     {
                         if material.status.as_str() != "completed" {
-                            return Ok::<bool, sinex_test_utils::SinexError>(false);
+                            return Ok::<bool, anyhow::Error>(false);
                         }
                     } else {
-                        return Ok::<bool, sinex_test_utils::SinexError>(false);
+                        return Ok::<bool, anyhow::Error>(false);
                     }
 
                     let ledger_bytes: Option<i64> = sqlx::query_scalar(
@@ -1085,8 +1084,8 @@ mod tests {
                     .bind(ulid_to_uuid(material_ulid))
                     .fetch_optional(&pool)
                     .await
-                    .map_err(|e| sinex_test_utils::SinexError::database(e.to_string()))?;
-                    Ok::<bool, sinex_test_utils::SinexError>(
+                    .map_err(|e| anyhow::anyhow!("database error: {}", e))?;
+                    Ok::<bool, anyhow::Error>(
                         ledger_bytes.unwrap_or_default() == expected
                     )
                 }

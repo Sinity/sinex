@@ -207,20 +207,20 @@ Override the artifact directory with `SINEX_TEST_FAIL_DIR`.
 ## Running Tests
 
 ```bash
-# Fast feedback (no retries)
-cargo xtask test --profile fast
+# Fast feedback
+cargo xtask test
 
-# Full workspace (recommended before PR)
-cargo xtask test --profile default --prime
+# Debug mode (single-threaded, full output)
+cargo xtask test --debug
 
-# CI selection
-cargo xtask test --profile default --prime
+# Full workspace with priming (recommended before PR)
+cargo xtask test --prime
 
 # Single crate
-cargo xtask test --profile default -- -p xtask sandbox
+cargo xtask test -- -p xtask
 
 # Update snapshots
-INSTA_UPDATE=always cargo xtask test --profile default --prime
+INSTA_UPDATE=always cargo xtask test --prime
 ```
 
 ## Documentation Index

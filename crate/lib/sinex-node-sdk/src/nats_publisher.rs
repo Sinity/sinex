@@ -136,10 +136,7 @@ impl NatsPublisher {
         let sem = PUBLISH_SEMAPHORE.get_or_init(|| tokio::sync::Semaphore::new(100));
 
         let _permit = sem.acquire().await.map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to acquire publish semaphore: {}", e),
-            )
+            std::io::Error::other(format!("Failed to acquire publish semaphore: {}", e))
         })?;
 
         let js = async_nats::jetstream::new(self.nats_client.clone());
@@ -283,6 +280,17 @@ where
     }
 }
 
+fn offset_kind_label(kind: OffsetKind) -> &'static str {
+    match kind {
+        OffsetKind::Byte => "byte",
+        OffsetKind::Line => "line",
+        OffsetKind::Record => "rowid",
+        OffsetKind::Character => "logical",
+        // OffsetKind is #[non_exhaustive] for forward compatibility
+        _ => "unknown",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{build_publish_payload, wait_for_publish_ack};
@@ -322,16 +330,5 @@ mod tests {
         assert!(value["payload"].is_object());
         assert_eq!(value["payload"]["nested"]["a"], 1);
         Ok(())
-    }
-}
-
-fn offset_kind_label(kind: OffsetKind) -> &'static str {
-    match kind {
-        OffsetKind::Byte => "byte",
-        OffsetKind::Line => "line",
-        OffsetKind::Record => "rowid",
-        OffsetKind::Character => "logical",
-        // OffsetKind is #[non_exhaustive] for forward compatibility
-        _ => "unknown",
     }
 }

@@ -741,6 +741,7 @@ impl IngestService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::sinex_test;
 
     fn test_service() -> IngestService {
         IngestService {
@@ -757,7 +758,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn wait_for_tasks_aborts_hung_tasks_before_shutdown() {
+    async fn wait_for_tasks_aborts_hung_tasks_before_shutdown() -> xtask::sandbox::TestResult<()> {
         struct CancelFlag(Arc<AtomicBool>);
 
         impl Drop for CancelFlag {
@@ -780,5 +781,6 @@ mod tests {
         service.wait_for_tasks(Duration::from_millis(10)).await;
 
         assert!(cancelled.load(Ordering::SeqCst));
+        Ok(())
     }
 }

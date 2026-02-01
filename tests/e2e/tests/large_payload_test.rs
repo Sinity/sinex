@@ -11,8 +11,8 @@ use async_nats::jetstream::{
 use futures::StreamExt;
 use serde_json::json;
 use sinex_primitives::ulid::Ulid;
-use xtask::sandbox::{prelude::*, timing_utils::Timeouts, EphemeralNats};
 use std::time::Duration as StdDuration;
+use xtask::sandbox::{prelude::*, timing::Timeouts, EphemeralNats};
 
 async fn provision(js: &JetStream, stream: &str, subject: &str) -> TestResult<()> {
     let config = StreamConfig {

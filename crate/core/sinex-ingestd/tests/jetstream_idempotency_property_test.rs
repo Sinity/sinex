@@ -2,14 +2,56 @@
 
 use async_nats::jetstream;
 use serde_json::json;
-use sinex_ingestd::{validator::EventValidator, JetStreamConsumer, JetStreamTopology};
+use sinex_db::query_helpers::ulid_to_uuid;
 use sinex_db::DbPoolExt;
-use sinex_primitives::db::query_helpers::ulid_to_uuid;
+use sinex_ingestd::{validator::EventValidator, JetStreamConsumer, JetStreamTopology};
+use sinex_primitives::temporal;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
+use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{WaitHelpers, DEFAULT_WAIT_SECS};
-use xtask::sandbox::{prelude::*, EventOverrides, TestNodePublisher};
+
+/// Helper to publish a test event directly to JetStream.
+async fn publish_event(
+    nats_client: &async_nats::Client,
+    namespace: &str,
+    source: &str,
+    event_type: &str,
+    payload: serde_json::Value,
+    overrides: EventOverrides,
+) -> TestResult<Ulid> {
+    let env = sinex_primitives::environment();
+    let event_id = overrides.id.unwrap_or_default();
+    let ts_orig = overrides
+        .ts_orig
+        .unwrap_or_else(|| temporal::now().format_rfc3339());
+
+    let event = json!({
+        "id": event_id.to_string(),
+        "source": source,
+        "event_type": event_type,
+        "payload": payload,
+        "ts_orig": ts_orig,
+        "host": "test-host",
+        "ingestor_version": "test",
+    });
+
+    let subject = env.nats_subject_with_namespace(
+        Some(namespace),
+        &format!(
+            "events.raw.{}.{}",
+            source.replace('.', "_"),
+            event_type.replace('.', "_")
+        ),
+    );
+    nats_client
+        .publish(subject, serde_json::to_vec(&event)?.into())
+        .await?;
+    nats_client.flush().await?;
+
+    Ok(event_id)
+}
 
 async fn start_consumer(
     ctx: &TestContext,
@@ -39,7 +81,7 @@ async fn start_consumer(
     .await?;
 
     let topology = JetStreamTopology::new(
-        &env,
+        env,
         base_stream.clone(),
         ctx.pipeline_namespace().consumer_name("ingestd"),
         Some(&namespace),
@@ -67,7 +109,7 @@ async fn start_consumer(
                     .info()
                     .await
                     .map_err(|e| sinex_primitives::error::SinexError::network(e.to_string()))?;
-                Ok(info.state.consumer_count > 0)
+                Ok::<bool, sinex_primitives::error::SinexError>(info.state.consumer_count > 0)
             }
         },
         DEFAULT_WAIT_SECS,
@@ -87,8 +129,6 @@ async fn run_duplicate_event_rejection(event_count: usize) -> color_eyre::Result
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
     let namespace = ctx.pipeline_namespace().prefix().to_string();
-    let publisher =
-        TestNodePublisher::with_namespace(nats_client.clone(), "test", Some(namespace.clone()));
 
     let (_js, _topology, consumer_handle) = start_consumer(&ctx, false).await?;
 
@@ -99,30 +139,38 @@ async fn run_duplicate_event_rejection(event_count: usize) -> color_eyre::Result
             ..Default::default()
         };
 
-        publisher
-            .publish_with_overrides(
-                "test.idempotency",
-                json!({"iteration": "first"}),
-                overrides.clone(),
-            )
-            .await?;
+        publish_event(
+            &nats_client,
+            &namespace,
+            "test",
+            "test.idempotency",
+            json!({"iteration": "first"}),
+            overrides.clone(),
+        )
+        .await?;
 
         WaitHelpers::wait_for_condition(
             || {
                 let pool = pool.clone();
-                async move { Ok(pool.events().get_by_id(event_id.into()).await?.is_some()) }
+                async move {
+                    Ok::<bool, color_eyre::eyre::Error>(
+                        pool.events().get_by_id(event_id.into()).await?.is_some(),
+                    )
+                }
             },
             DEFAULT_WAIT_SECS,
         )
         .await?;
 
-        publisher
-            .publish_with_overrides(
-                "test.idempotency",
-                json!({"iteration": "duplicate"}),
-                overrides,
-            )
-            .await?;
+        publish_event(
+            &nats_client,
+            &namespace,
+            "test",
+            "test.idempotency",
+            json!({"iteration": "duplicate"}),
+            overrides,
+        )
+        .await?;
 
         WaitHelpers::wait_for_condition(
             || {
@@ -136,7 +184,7 @@ async fn run_duplicate_event_rejection(event_count: usize) -> color_eyre::Result
                     .await?
                     .count
                     .unwrap_or(0);
-                    Ok(rows == 1)
+                    Ok::<bool, color_eyre::eyre::Error>(rows == 1)
                 }
             },
             DEFAULT_WAIT_SECS,
@@ -168,8 +216,6 @@ async fn test_concurrent_duplicate_submission() -> color_eyre::Result<()> {
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
     let namespace = ctx.pipeline_namespace().prefix().to_string();
-    let publisher =
-        TestNodePublisher::with_namespace(nats_client.clone(), "test", Some(namespace.clone()));
 
     let (_js, _topology, consumer_handle) = start_consumer(&ctx, false).await?;
 
@@ -181,14 +227,21 @@ async fn test_concurrent_duplicate_submission() -> color_eyre::Result<()> {
 
     let mut handles = vec![];
     for i in 0..5 {
-        let publisher = publisher.clone();
+        let nats_client = nats_client.clone();
+        let namespace = namespace.clone();
         let overrides = overrides.clone();
 
         let handle = tokio::spawn(async move {
-            publisher
-                .publish_with_overrides("test.concurrent", json!({"attempt": i}), overrides)
-                .await
-                .unwrap();
+            publish_event(
+                &nats_client,
+                &namespace,
+                "test",
+                "test.concurrent",
+                json!({"attempt": i}),
+                overrides,
+            )
+            .await
+            .unwrap();
         });
 
         handles.push(handle);

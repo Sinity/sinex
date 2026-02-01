@@ -38,8 +38,8 @@ async fn test_generic_id_type_isolation(ctx: TestContext) -> Result<()> {
     assert_ne!(event_id.to_string(), checkpoint_id.to_string());
 
     // Both should convert to/from ULID correctly
-    let event_ulid: Ulid = event_id.clone().into();
-    let checkpoint_ulid: Ulid = checkpoint_id.clone().into();
+    let event_ulid: Ulid = event_id.into();
+    let checkpoint_ulid: Ulid = checkpoint_id.into();
 
     let recovered_event_id = Id::<Event>::from(event_ulid);
     let recovered_checkpoint_id = Id::<TestCheckpoint>::from(checkpoint_ulid);
@@ -65,7 +65,7 @@ async fn test_id_database_integration_type_safety(ctx: TestContext) -> Result<()
         .await?;
 
     // Extract the ID (should be Id<Event>)
-    let event_id = event.id.clone().expect("Event should have ID");
+    let event_id = event.id.expect("Event should have ID");
 
     // Wait for ingestion
     ctx.timing()
@@ -76,7 +76,7 @@ async fn test_id_database_integration_type_safety(ctx: TestContext) -> Result<()
     let retrieved = ctx
         .pool
         .events()
-        .get_by_id(event_id.clone())
+        .get_by_id(event_id)
         .await?
         .expect("Event should exist");
 
@@ -111,7 +111,7 @@ async fn test_id_collection_type_safety(ctx: TestContext) -> Result<()> {
                 json!({ "index": i }),
             ))
             .await?;
-        let id = event.id.clone().expect("Event should have ID");
+        let id = event.id.expect("Event should have ID");
 
         event_ids.push(id);
     }
@@ -128,7 +128,7 @@ async fn test_id_collection_type_safety(ctx: TestContext) -> Result<()> {
         let retrieved = ctx
             .pool
             .events()
-            .get_by_id(event_id.clone())
+            .get_by_id(*event_id)
             .await?
             .expect("Event should exist");
 
@@ -262,19 +262,13 @@ async fn test_event_type_safety(ctx: TestContext) -> Result<()> {
     let static_events = ctx
         .pool
         .events()
-        .get_by_event_type(
-            &static_type,
-            sinex_primitives::Pagination::new(None, None),
-        )
+        .get_by_event_type(&static_type, sinex_primitives::Pagination::new(None, None))
         .await?;
 
     let dynamic_events = ctx
         .pool
         .events()
-        .get_by_event_type(
-            &dynamic_type,
-            sinex_primitives::Pagination::new(None, None),
-        )
+        .get_by_event_type(&dynamic_type, sinex_primitives::Pagination::new(None, None))
         .await?;
 
     assert_eq!(static_events.len(), 1);
@@ -472,10 +466,7 @@ async fn test_repository_query_type_safety(ctx: TestContext) -> Result<()> {
     let repo_events = ctx
         .pool
         .events()
-        .get_by_source(
-            &repo_source,
-            sinex_primitives::Pagination::new(None, None),
-        )
+        .get_by_source(&repo_source, sinex_primitives::Pagination::new(None, None))
         .await?;
 
     assert!(repo_events.len() >= 2);
@@ -531,7 +522,7 @@ async fn test_repository_id_query_type_safety(ctx: TestContext) -> Result<()> {
         .await?;
 
     // Extract the ID (should be Id<Event>)
-    let event_id = event.id.clone().expect("Event should have ID");
+    let event_id = event.id.expect("Event should have ID");
 
     ctx.timing()
         .wait_for_source_events("id-query-test", 1)
@@ -541,7 +532,7 @@ async fn test_repository_id_query_type_safety(ctx: TestContext) -> Result<()> {
     let retrieved = ctx
         .pool
         .events()
-        .get_by_id(event_id.clone())
+        .get_by_id(event_id)
         .await?
         .expect("Event should exist");
 
@@ -585,20 +576,17 @@ async fn test_event_creation_pipeline_type_safety(ctx: TestContext) -> Result<()
     assert_eq!(inserted.source, source);
     assert_eq!(inserted.event_type, event_type);
 
-    let inserted_id = inserted
-        .id
-        .clone()
-        .expect("Inserted event should have an ID");
+    let inserted_id = inserted.id.expect("Inserted event should have an ID");
 
     // 4. Verify ID type preservation happens in storage
-    let inserted_ulid: Ulid = inserted_id.clone().into();
+    let inserted_ulid: Ulid = inserted_id.into();
     assert_ne!(inserted_ulid.to_uuid(), uuid::Uuid::nil());
 
     // 5. Query back using repository pattern
     let retrieved = ctx
         .pool
         .events()
-        .get_by_id(inserted_id.clone())
+        .get_by_id(inserted_id)
         .await?
         .expect("Event should exist");
 
@@ -633,7 +621,7 @@ async fn test_concurrent_type_safety(ctx: TestContext) -> Result<()> {
             let event = ctx_clone
                 .publish(DynamicPayload::new(source, event_type, payload))
                 .await?;
-            let id = event.id.clone().unwrap();
+            let id = event.id.unwrap();
 
             Ok::<_, color_eyre::eyre::Error>((
                 event.source.as_str().to_string(),
@@ -672,7 +660,7 @@ async fn test_concurrent_type_safety(ctx: TestContext) -> Result<()> {
         let retrieved = ctx
             .pool
             .events()
-            .get_by_id(id.clone())
+            .get_by_id(id)
             .await?
             .expect("Event should exist");
 

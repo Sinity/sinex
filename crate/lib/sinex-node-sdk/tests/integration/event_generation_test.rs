@@ -3,12 +3,11 @@
 //! Tests event generation patterns using TestContext's event publishing capabilities.
 //! These tests verify that events can be generated correctly through various mechanisms.
 
-use sinex_primitives::{Event, DynamicPayload};
 use serde_json::Value as JsonValue;
+use sinex_primitives::{DynamicPayload, Event, Id, SourceMaterial};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use xtask::sandbox::prelude::*;
-use time::OffsetDateTime;
 
 // =============================================================================
 // Event Generation Test Structures
@@ -284,10 +283,12 @@ async fn test_concurrent_event_generation(ctx: TestContext) -> TestResult<()> {
 
         for i in 0..5 {
             let data = TestEventData::filesystem_event(i, "concurrent-fs");
-            let event_res = DynamicPayload::new(data.source, data.event_type, data.payload).build();
+            let event_res = DynamicPayload::new(data.source, data.event_type, data.payload)
+                .from_material_at(Id::<SourceMaterial>::new(), 0)
+                .build();
 
             if let Ok(event) = event_res {
-                if let Ok(_) = repo.insert(event.clone()).await {
+                if repo.insert(event.clone()).await.is_ok() {
                     let _ = fs_tx.send(event).await;
                 }
             }
@@ -304,10 +305,12 @@ async fn test_concurrent_event_generation(ctx: TestContext) -> TestResult<()> {
         let commands = ["ls", "pwd", "date", "whoami", "uname"];
         for i in 0..5 {
             let data = TestEventData::command_event(i, commands[i]);
-            let event_res = DynamicPayload::new(data.source, data.event_type, data.payload).build();
+            let event_res = DynamicPayload::new(data.source, data.event_type, data.payload)
+                .from_material_at(Id::<SourceMaterial>::new(), 0)
+                .build();
 
             if let Ok(event) = event_res {
-                if let Ok(_) = repo.insert(event.clone()).await {
+                if repo.insert(event.clone()).await.is_ok() {
                     let _ = cmd_tx.send(event).await;
                 } else {
                     eprintln!("Failed to insert command event {i}");

@@ -2,11 +2,11 @@
 
 // Use local facade for common types
 use crate::common::*;
+use sinex_node_sdk::stage_as_you_go::StageAsYouGoContext;
 use sinex_primitives::events::payloads::{ClipboardCopiedPayload, ClipboardSelectedPayload};
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::Seconds;
 use sinex_primitives::{Id, Ulid};
-use sinex_node_sdk::stage_as_you_go::StageAsYouGoContext;
 use tokio::sync::watch;
 
 // Clipboard-specific imports
@@ -199,7 +199,7 @@ impl ClipboardWatcher {
     /// Get active window application name
     async fn get_active_window_app(&self) -> Option<String> {
         // Try Hyprland first with timeout
-        if let Ok(output) = tokio::time::timeout(
+        if let Ok(Ok(output)) = tokio::time::timeout(
             CLIPBOARD_COMMAND_TIMEOUT,
             Command::new("hyprctl")
                 .args(["activewindow", "-j"])
@@ -207,20 +207,18 @@ impl ClipboardWatcher {
         )
         .await
         {
-            if let Ok(output) = output {
-                if output.status.success() {
-                    if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
-                        return json
-                            .get("class")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
-                    }
+            if output.status.success() {
+                if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+                    return json
+                        .get("class")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
                 }
             }
         }
 
         // Try xdotool for X11 with timeout
-        if let Ok(output) = tokio::time::timeout(
+        if let Ok(Ok(output)) = tokio::time::timeout(
             CLIPBOARD_COMMAND_TIMEOUT,
             Command::new("xdotool")
                 .args(["getactivewindow", "getwindowclassname"])
@@ -228,10 +226,8 @@ impl ClipboardWatcher {
         )
         .await
         {
-            if let Ok(output) = output {
-                if output.status.success() {
-                    return Some(String::from_utf8_lossy(&output.stdout).trim().to_string());
-                }
+            if output.status.success() {
+                return Some(String::from_utf8_lossy(&output.stdout).trim().to_string());
             }
         }
 
@@ -241,7 +237,7 @@ impl ClipboardWatcher {
     /// Get active window title
     async fn get_active_window_title(&self) -> Option<String> {
         // Try Hyprland first with timeout
-        if let Ok(output) = tokio::time::timeout(
+        if let Ok(Ok(output)) = tokio::time::timeout(
             CLIPBOARD_COMMAND_TIMEOUT,
             Command::new("hyprctl")
                 .args(["activewindow", "-j"])
@@ -249,20 +245,18 @@ impl ClipboardWatcher {
         )
         .await
         {
-            if let Ok(output) = output {
-                if output.status.success() {
-                    if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
-                        return json
-                            .get("title")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
-                    }
+            if output.status.success() {
+                if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+                    return json
+                        .get("title")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
                 }
             }
         }
 
         // Try xdotool for X11 with timeout
-        if let Ok(output) = tokio::time::timeout(
+        if let Ok(Ok(output)) = tokio::time::timeout(
             CLIPBOARD_COMMAND_TIMEOUT,
             Command::new("xdotool")
                 .args(["getactivewindow", "getwindowname"])
@@ -270,10 +264,8 @@ impl ClipboardWatcher {
         )
         .await
         {
-            if let Ok(output) = output {
-                if output.status.success() {
-                    return Some(String::from_utf8_lossy(&output.stdout).trim().to_string());
-                }
+            if output.status.success() {
+                return Some(String::from_utf8_lossy(&output.stdout).trim().to_string());
             }
         }
 
@@ -476,7 +468,7 @@ impl ClipboardWatcher {
             let (content_type, text_preview, file_paths) = self.analyze_content(&validated_text);
             let source_app = self.get_active_window_app().await;
             let window_title = self.get_active_window_title().await;
-            let timestamp = OffsetDateTime::now_utc().into();
+            let timestamp = Timestamp::now();
 
             Some(ClipboardContent {
                 text: validated_text,
@@ -734,9 +726,8 @@ mod tests {
     use super::*;
     use sinex_node_sdk::acquisition_manager::AcquisitionManager;
     use std::sync::Arc;
-    use time::OffsetDateTime;
     use tokio::sync::mpsc;
-    use xtask::sandbox::{sinex_test, EphemeralNats, TestContext, TestResult};
+    use xtask::sandbox::{sinex_test, EphemeralNats, TestResult};
 
     fn sample_clipboard_content(text: &str, watcher: &ClipboardWatcher) -> ClipboardContent {
         ClipboardContent {

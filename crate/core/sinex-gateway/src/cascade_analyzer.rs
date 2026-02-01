@@ -607,7 +607,7 @@ mod tests {
     use super::*;
     use serde_json::json;
     use sinex_primitives::temporal::now;
-    use xtask::sandbox::{sinex_test, TestContext};
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     fn session_id_validation_enforces_length() -> TestResult<()> {

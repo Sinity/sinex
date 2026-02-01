@@ -1,7 +1,7 @@
 use proptest::prelude::*;
-use sinex_node_sdk::types::ulid::Ulid;
 use sinex_node_sdk::checkpoint::CheckpointState;
 use sinex_node_sdk::stream_processor::Checkpoint;
+use sinex_primitives::Ulid;
 use xtask::sandbox::prelude::*;
 
 fn arb_ulid() -> impl Strategy<Value = Ulid> {

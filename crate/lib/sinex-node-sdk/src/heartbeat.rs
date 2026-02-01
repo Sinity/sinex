@@ -133,7 +133,7 @@ impl HeartbeatEmitter {
             git_hash,
             cpu_sample: Arc::new(parking_lot::Mutex::new(initial_cpu_sample)),
             cpu_cores,
-            log_sink: Arc::new(StdoutHeartbeatSink::default()),
+            log_sink: Arc::new(StdoutHeartbeatSink),
             last_emitted_status: Arc::new(parking_lot::Mutex::new(ProcessStatus::Healthy)),
             error_window: Arc::new(parking_lot::Mutex::new(Vec::new())),
         }

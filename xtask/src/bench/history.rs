@@ -62,6 +62,7 @@ impl HistoryDb {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn save_run(
         &self,
         mode: &str,

@@ -6,7 +6,7 @@ mod reports;
 mod runner;
 mod stats;
 
-pub use config::BenchConfig;
+pub use config::{BenchConfig, BenchMode};
 
 use anyhow::Result;
 use console::style;

@@ -7,22 +7,21 @@
 //! - Transaction semantics
 //! - Performance characteristics
 
-use sinex_db::db::models::{Event, JsonValue};
-use sinex_db::types::domain::{EventSource, EventType, SanitizedPath};
-use sinex_db::types::events::payloads::{FileCreatedPayload, KittyCommandExecutedPayload};
-use sinex_db::types::Seconds;
 use sinex_db::{
-    acquire_with_timeout, create_pool_with_config, DynamicPayload, Id, PoolConfig, Provenance,
-    SinexError, Ulid,
+    acquire_with_timeout, create_pool_with_config, DynamicPayload, Event, Id, JsonValue,
+    PoolConfig, Provenance, SinexError, Timestamp, Ulid,
 };
-use sinex_primitives::Timestamp;
+use sinex_primitives::domain::{EventSource, EventType, SanitizedPath};
+use sinex_primitives::events::payloads::{FileCreatedPayload, KittyCommandExecutedPayload};
+use sinex_primitives::{Pagination, Seconds};
 use xtask::sandbox::prelude::*;
 
 // Additional specific imports
 use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::Arc;
-use tokio::time::{sleep, Duration};
+use time::Duration;
+use tokio::time::sleep;
 
 // =============================================================================
 // CORE DATABASE OPERATIONS
@@ -53,7 +52,7 @@ async fn test_event_persistence_basics(ctx: TestContext) -> TestResult<()> {
     assert_eq!(inserted.event_type.as_str(), "file.created");
     assert_eq!(inserted.payload["path"], json!("/tmp/test.txt"));
     assert_eq!(inserted.payload["size"], json!(1024));
-    let retrieved = ctx.pool.events().get_by_id(event_id.clone()).await?;
+    let retrieved = ctx.pool.events().get_by_id(event_id).await?;
     let retrieved = retrieved.expect("event should be retrievable by id");
     assert_eq!(
         retrieved.id.expect("retrieved event should have id"),
@@ -95,24 +94,22 @@ async fn test_event_queries(ctx: TestContext) -> TestResult<()> {
         .events()
         .get_by_source(
             &EventSource::from("fs-watcher"),
-            sinex_db::types::Pagination::new(Some(10), None),
+            Pagination::new(Some(10), None),
         )
         .await?;
-    assert!(fs_events
-        .iter()
-        .any(|event| event.id == Some(fs_id.clone())));
+    assert!(fs_events.iter().any(|event| event.id == Some(fs_id)));
 
     let command_events = ctx
         .pool
         .events()
         .get_by_event_type(
             &EventType::from("command.executed"),
-            sinex_db::types::Pagination::new(Some(10), None),
+            Pagination::new(Some(10), None),
         )
         .await?;
     assert!(command_events
         .iter()
-        .any(|event| event.id == Some(terminal_id.clone())));
+        .any(|event| event.id == Some(terminal_id)));
 
     Ok(())
 }
@@ -202,20 +199,20 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> TestResult<()> {
             }
 
             // Verify all events for this task
-            tokio::time::timeout(Duration::from_secs(12), async {
+            tokio::time::timeout(std::time::Duration::from_secs(12), async {
                 loop {
                     let events = ctx_clone
                         .pool
                         .events()
                         .get_by_source(
                             &EventSource::from(format!("task-{task_id}-{run_suffix}")),
-                            sinex_db::types::Pagination::new(Some(100), None),
+                            Pagination::new(Some(100), None),
                         )
                         .await?;
                     if events.len() >= events_per_task {
                         break Ok::<_, SinexError>(());
                     }
-                    sleep(Duration::from_millis(10)).await;
+                    sleep(std::time::Duration::from_millis(10)).await;
                 }
             })
             .await
@@ -276,7 +273,7 @@ async fn test_transaction_rollback(ctx: TestContext) -> TestResult<()> {
         .await?;
 
     let after_success = ctx.pool.events().count_all().await?;
-    assert!(after_success >= initial_count + 1);
+    assert!(after_success > initial_count);
 
     // Note: Complex transaction rollback testing requires low-level database access
     // For now, we test that invalid events are properly rejected
@@ -300,7 +297,7 @@ async fn test_transaction_rollback(ctx: TestContext) -> TestResult<()> {
         .events()
         .get_by_event_type(
             &EventType::from("rollback"),
-            sinex_db::types::Pagination::new(Some(10), None),
+            Pagination::new(Some(10), None),
         )
         .await?;
     assert_eq!(rollback_events.len(), 0);
@@ -389,7 +386,7 @@ async fn test_bulk_insert_performance(ctx: TestContext) -> TestResult<()> {
         .events()
         .get_by_source(
             &EventSource::from("performance-test"),
-            sinex_db::types::Pagination::new(Some(200), None),
+            Pagination::new(Some(200), None),
         )
         .await?;
     assert_eq!(stored_events.len(), batch_size);
@@ -419,7 +416,7 @@ async fn pool_acquire_timeout_is_reported(ctx: TestContext) -> TestResult<()> {
     let pool = create_pool_with_config(ctx.database_url(), &config).await?;
 
     let _conn = pool.acquire().await?;
-    let result = acquire_with_timeout(&pool, Duration::from_millis(50)).await;
+    let result = acquire_with_timeout(&pool, Duration::milliseconds(50)).await;
     assert!(matches!(result, Err(SinexError::Timeout(_))));
 
     Ok(())
@@ -456,7 +453,7 @@ async fn test_query_performance(ctx: TestContext) -> TestResult<()> {
         .events()
         .get_by_source(
             &EventSource::from("query-perf-0"),
-            sinex_db::types::Pagination::new(Some(200), None),
+            Pagination::new(Some(200), None),
         )
         .await?;
     assert!(!source_events.is_empty());
@@ -467,7 +464,7 @@ async fn test_query_performance(ctx: TestContext) -> TestResult<()> {
         .events()
         .get_by_event_type(
             &EventType::from("query.test"),
-            sinex_db::types::Pagination::new(Some(200), None),
+            Pagination::new(Some(200), None),
         )
         .await?;
     assert!(!type_events.is_empty());
@@ -510,12 +507,7 @@ async fn test_ulid_persistence(ctx: TestContext) -> TestResult<()> {
 
     // Retrieve by the generated ID and verify
     let event_id = inserted_event.id.unwrap();
-    let retrieved = ctx
-        .pool
-        .events()
-        .get_by_id(event_id.clone())
-        .await?
-        .unwrap();
+    let retrieved = ctx.pool.events().get_by_id(event_id).await?.unwrap();
 
     assert_eq!(retrieved.id.unwrap(), event_id);
     assert_eq!(retrieved.payload["ulid"], json!(test_ulid.to_string()));
@@ -537,23 +529,25 @@ async fn test_timestamp_handling(ctx: TestContext) -> TestResult<()> {
 
     // Verify ingestion timestamp is recent
     let ingest_ts = inserted_event.id.as_ref().unwrap().as_ulid().timestamp();
-    let tolerance = Duration::from_millis(50); // Increased for CI
+    let tolerance = Duration::milliseconds(50); // Increased for CI
+    let before_ts: Timestamp = (*before_insert - tolerance).into();
+    let after_ts: Timestamp = (*after_insert + tolerance).into();
     assert!(
-        ingest_ts >= before_insert - tolerance,
+        ingest_ts >= before_ts,
         "ingest timestamp {ingest_ts:?} precedes lower bound {lower:?}",
-        lower = before_insert - tolerance
+        lower = before_ts
     );
     assert!(
-        ingest_ts <= after_insert + tolerance,
+        ingest_ts <= after_ts,
         "ingest timestamp {ingest_ts:?} exceeds upper bound {upper:?}",
-        upper = after_insert + tolerance
+        upper = after_ts
     );
 
     // Retrieve and verify timestamps persist
     let retrieved = ctx
         .pool
         .events()
-        .get_by_id(inserted_event.id.clone().unwrap())
+        .get_by_id(inserted_event.id.unwrap())
         .await?
         .unwrap();
 

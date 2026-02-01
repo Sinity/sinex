@@ -9,9 +9,9 @@ use sinex_db::{
     repositories::{DbPoolExt, TemporalLedgerEntry},
 };
 use sinex_node_sdk::annex::AnnexKey;
+use sinex_primitives::Timestamp;
 use sinex_primitives::{Id, JsonValue, Ulid};
 use sinex_schema::schema::records::SourceMaterialRecord;
-use sinex_primitives::Timestamp;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
@@ -76,7 +76,7 @@ impl MaterialAssembler {
                 SinexError::database(format!("Failed to query blob store: {}", e))
             })?
         {
-            return Ok(Id::from_ulid(existing.id.as_ulid().clone()));
+            return Ok(Id::from_ulid(*existing.id.as_ulid()));
         }
 
         let metadata = serde_json::json!({
@@ -108,7 +108,7 @@ impl MaterialAssembler {
             SinexError::database(format!("Failed to insert blob metadata: {}", e))
         })?;
 
-        Ok(Id::from_ulid(stored.id.as_ulid().clone()))
+        Ok(Id::from_ulid(*stored.id.as_ulid()))
     }
 
     /// Finalize source material registry and ledger
@@ -155,7 +155,7 @@ impl MaterialAssembler {
         let entry = TemporalLedgerEntry::realtime_capture(
             state.material_id,
             state.expected_offset,
-            state.started_at.into(),
+            state.started_at,
         );
 
         self.pool
@@ -262,10 +262,11 @@ impl MaterialAssembler {
                 return Ok(());
             }
 
-            let ended_at = Timestamp::parse(
+            let ended_at = time::OffsetDateTime::parse(
                 &end_preview.ended_at,
                 &time::format_description::well_known::Rfc3339,
             )
+            .map(Timestamp::new)
             .unwrap_or_else(|_| Timestamp::now());
 
             let view = state.finalization_view();

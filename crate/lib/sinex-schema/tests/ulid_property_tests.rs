@@ -5,10 +5,11 @@
 
 use proptest::prelude::*;
 use proptest::strategy::{BoxedStrategy, Strategy};
-use sinex_schema::ulid::Ulid;
+use sinex_schema::ulid::{Timestamp, Ulid};
 use std::collections::HashSet;
 use std::thread;
 use std::time::{Duration, Instant};
+use time::OffsetDateTime;
 
 fn spin_for(duration: Duration) {
     if duration.is_zero() {
@@ -74,9 +75,9 @@ mod ulid_property_tests {
             let timestamp = ulid.timestamp();
 
             // Should be within the representable ULID timestamp range (48-bit ms)
-            let min_time = chrono::DateTime::from_timestamp(0, 0).unwrap();
+            let min_time = Timestamp::from_unix_timestamp(0).unwrap();
             let max_ms = ((1u64 << 48) - 1) as i64;
-            let max_time = chrono::DateTime::from_timestamp_millis(max_ms).unwrap();
+            let max_time = Timestamp::from_unix_timestamp_millis(max_ms).unwrap();
 
             prop_assert!(timestamp >= min_time);
             prop_assert!(timestamp <= max_time);
@@ -144,14 +145,14 @@ mod ulid_property_tests {
         fn prop_ulid_with_specific_timestamp_behavior(
             timestamp_ms in 1577836800000u64..1893456000000u64 // 2020-2030
         ) -> TestResult<()> {
-            let datetime = chrono::DateTime::from_timestamp_millis(timestamp_ms as i64).unwrap();
-            let ulid = Ulid::from_datetime(datetime);
+            let datetime = OffsetDateTime::from_unix_timestamp_nanos(timestamp_ms as i128 * 1_000_000).unwrap();
+            let ulid = Ulid::from_datetime(Timestamp::new(datetime));
 
             let extracted = ulid.timestamp();
 
             // Should be very close (within a few seconds due to precision)
-            let diff = (extracted.timestamp_millis() - timestamp_ms as i64).abs();
-            prop_assert!(diff <= 1000); // Within 1 second
+            let diff = (extracted.inner().unix_timestamp_nanos() - (timestamp_ms as i128 * 1_000_000)).abs();
+            prop_assert!(diff <= 1_000_000_000); // Within 1 second
             Ok(())
         }
 
@@ -188,7 +189,6 @@ mod ulid_property_tests {
 mod stress_tests {
     use super::*;
     use xtask::sandbox::sinex_proptest;
-    #[ignore = "long"]
 
     sinex_proptest! {
         fn prop_high_frequency_generation_stress_test(
@@ -290,7 +290,7 @@ mod edge_case_properties {
 
             // Test symmetry: if a < b, then !(b < a)
             if ulid1 < ulid2 {
-                prop_assert!(!(ulid2 < ulid1));
+                prop_assert!((ulid2 >= ulid1));
             }
 
             // Test reflexivity: a == a
@@ -311,7 +311,7 @@ mod edge_case_properties {
         }
 
         fn prop_ulid_clone_and_copy_semantics(ulid in ulid_strategy()) -> TestResult<()> {
-            let cloned = ulid.clone();
+            let cloned = ulid;
             let copied = ulid;
 
             prop_assert_eq!(ulid, cloned);
@@ -339,12 +339,12 @@ mod edge_case_properties {
             timestamp_secs in 1577836800i64..1893456000i64, // 2020-2030
             nanos in 0u32..1_000_000_000u32
         ) -> TestResult<()> {
-            let datetime = chrono::DateTime::from_timestamp(timestamp_secs, nanos).unwrap();
-            let ulid = Ulid::from_datetime(datetime);
+            let datetime = OffsetDateTime::from_unix_timestamp_nanos((timestamp_secs as i128) * 1_000_000_000 + (nanos as i128)).unwrap();
+            let ulid = Ulid::from_datetime(Timestamp::new(datetime));
             let extracted = ulid.timestamp();
 
             // Should be within reasonable precision (millisecond level)
-            let diff_ms = (extracted.timestamp_millis() - datetime.timestamp_millis()).abs();
+            let diff_ms = (extracted.inner().unix_timestamp_nanos() / 1_000_000 - datetime.unix_timestamp_nanos() / 1_000_000).abs();
             prop_assert!(diff_ms <= 1); // Within 1 millisecond
             Ok(())
         }
@@ -431,11 +431,11 @@ mod concurrent_property_tests {
         fn prop_timestamp_consistency_under_load(
             generation_count in 100usize..=1000
         ) -> TestResult<()> {
-            let start_time = crate::temporal::now() - chrono::Duration::seconds(2);
+            let start_time = Timestamp::now() - time::Duration::seconds(2);
 
             let ulids: Vec<_> = (0..generation_count).map(|_| Ulid::new()).collect();
 
-            let end_time = crate::temporal::now() + chrono::Duration::seconds(2);
+            let end_time = Timestamp::now() + time::Duration::seconds(2);
 
             // All ULIDs should have timestamps within the generation window
             for ulid in &ulids {

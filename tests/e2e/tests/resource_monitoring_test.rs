@@ -11,8 +11,8 @@
 // - **Resource usage**: High CPU/memory, significant database load
 // - **Dependencies**: PostgreSQL
 
-use sinex_primitives::db::models::EventFactory;
-use sinex_primitives::{Timestamp, ulid::Ulid};
+use sinex_db::models::EventFactory;
+use sinex_primitives::{ulid::Ulid, Timestamp};
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::Timeouts;
 
@@ -89,7 +89,8 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult<()> {
                 event.host = "localhost".to_string();
                 event.ingestor_version = Some("1.0.0".to_string());
 
-                let result = sinex_primitives::db::insert_event_with_validator(&pool, &event, None).await;
+                let result =
+                    sinex_primitives::db::insert_event_with_validator(&pool, &event, None).await;
 
                 if result.is_ok() {
                     processed += 1;

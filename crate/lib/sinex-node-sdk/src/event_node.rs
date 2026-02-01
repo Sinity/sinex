@@ -356,7 +356,7 @@ pub fn spawn_event_processor(
 #[cfg(test)]
 mod tests {
     use super::EventBatcher;
-    use sinex_primitives::{DynamicPayload, EventId, Provenance, Ulid};
+    use sinex_primitives::{events::EventId, DynamicPayload, Provenance, Ulid};
     use std::fs;
     use tempfile::tempdir;
     use xtask::sandbox::sinex_test;

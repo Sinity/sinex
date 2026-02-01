@@ -206,22 +206,21 @@ pub struct VersionInfo {
 
 impl VersionInfo {
     /// Create version info for the current component
+    ///
+    /// Uses shadow-rs build constants for git revision and version information.
     pub fn current(component_name: &str) -> Self {
-        let version = option_env!("NODE_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"));
-        let git_revision = option_env!("NODE_COMMIT_HASH")
-            .or_else(|| option_env!("GIT_HASH"))
-            .unwrap_or("unknown");
-        let mut binary_hash = option_env!("NODE_BINARY_HASH")
-            .or_else(|| option_env!("BINARY_HASH"))
-            .or_else(|| option_env!("GIT_HASH"))
-            .unwrap_or("unknown");
-        if binary_hash == "unknown" {
-            binary_hash = git_revision;
-        }
+        use version::{node_commit_hash, node_version};
+
+        let version = node_version()
+            .map(|v| v.to_string())
+            .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
+        let git_revision = node_commit_hash();
+        // For binary_hash, use commit hash as a proxy (same as git revision)
+        let binary_hash = git_revision.clone();
 
         Self {
-            git_revision: git_revision.to_string(),
-            binary_hash: binary_hash.to_string(),
+            git_revision,
+            binary_hash,
             component_version: format!("{}-v{}", component_name, version),
         }
     }

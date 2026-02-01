@@ -6,15 +6,15 @@
 #[cfg(feature = "serde")]
 #[cfg(test)]
 mod serde_tests {
-    use chrono::{Timelike, Utc};
-    use serde_json;
+
+    use sinex_primitives::temporal;
     use sinex_schema::schema::records::*;
     use sinex_schema::ulid::Ulid;
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     fn test_event_record_serialization() -> color_eyre::eyre::Result<()> {
-        let ts_orig = Utc::now();
+        let ts_orig = temporal::now();
         let event = EventRecord {
             id: Ulid::new(),
             source: "test-source".to_string(),
@@ -22,8 +22,8 @@ mod serde_tests {
             host: "test-host".to_string(),
             payload: serde_json::json!({"test": "data"}),
             ts_orig,
-            ts_orig_subnano: Some(ts_orig.nanosecond() as i32),
-            ts_ingest: Utc::now(),
+            ts_orig_subnano: Some((*ts_orig).nanosecond() as i32),
+            ts_ingest: temporal::now(),
             source_material_id: Some(Ulid::new()),
             anchor_byte: Some(42),
             offset_start: Some(0),
@@ -62,8 +62,8 @@ mod serde_tests {
             original_filename: "test.txt".to_string(),
             mime_type: Some("text/plain".to_string()),
             metadata: serde_json::json!({"encoding": "utf-8"}),
-            created_at: Utc::now(),
-            last_verified_at: Some(Utc::now()),
+            created_at: temporal::now(),
+            last_verified_at: Some(temporal::now()),
             verification_status: Some("verified".to_string()),
         };
 
@@ -90,8 +90,8 @@ mod serde_tests {
             confidence_score: 0.95,
             is_merged: false,
             merged_into_id: None,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            created_at: temporal::now(),
+            updated_at: temporal::now(),
         };
 
         let json = serde_json::to_string(&entity).expect("Should serialize to JSON");
@@ -113,7 +113,7 @@ mod serde_tests {
             status: "sensing".to_string(),
             timing_info_type: "realtime".to_string(),
             metadata: serde_json::json!({"description": "test file"}),
-            staged_at: Utc::now(),
+            staged_at: temporal::now(),
             start_time: None,
             end_time: None,
             staged_by: Some("tester".to_string()),
@@ -134,7 +134,7 @@ mod serde_tests {
     #[sinex_test]
     fn test_optional_fields_serialization() -> color_eyre::eyre::Result<()> {
         // Test that optional fields serialize correctly as null
-        let ts_orig = Utc::now();
+        let ts_orig = temporal::now();
         let event = EventRecord {
             id: Ulid::new(),
             source: "test".to_string(),
@@ -142,8 +142,8 @@ mod serde_tests {
             host: "test".to_string(),
             payload: serde_json::json!({}),
             ts_orig,
-            ts_orig_subnano: Some(ts_orig.nanosecond() as i32),
-            ts_ingest: Utc::now(),
+            ts_orig_subnano: Some((*ts_orig).nanosecond() as i32),
+            ts_ingest: temporal::now(),
             source_material_id: None,
             anchor_byte: None,
             offset_start: None,
@@ -168,7 +168,7 @@ mod serde_tests {
     #[sinex_test]
     fn test_ulid_serialization_in_records() -> color_eyre::eyre::Result<()> {
         // Test that ULIDs serialize as strings in records
-        let ts_orig = Utc::now();
+        let ts_orig = temporal::now();
         let event = EventRecord {
             id: Ulid::new(),
             source: "test".to_string(),
@@ -176,8 +176,8 @@ mod serde_tests {
             host: "test".to_string(),
             payload: serde_json::json!({}),
             ts_orig,
-            ts_orig_subnano: Some(ts_orig.nanosecond() as i32),
-            ts_ingest: Utc::now(),
+            ts_orig_subnano: Some((*ts_orig).nanosecond() as i32),
+            ts_ingest: temporal::now(),
             source_material_id: Some(Ulid::new()),
             anchor_byte: None,
             offset_start: None,
@@ -208,7 +208,7 @@ mod serde_tests {
 
     #[sinex_test]
     fn test_datetime_serialization_in_records() -> color_eyre::eyre::Result<()> {
-        let ts_orig = Utc::now();
+        let ts_orig = temporal::now();
         let event = EventRecord {
             id: Ulid::new(),
             source: "test".to_string(),
@@ -216,8 +216,8 @@ mod serde_tests {
             host: "test".to_string(),
             payload: serde_json::json!({}),
             ts_orig,
-            ts_orig_subnano: Some(ts_orig.nanosecond() as i32),
-            ts_ingest: Utc::now(),
+            ts_orig_subnano: Some((*ts_orig).nanosecond() as i32),
+            ts_ingest: temporal::now(),
             source_material_id: None,
             anchor_byte: None,
             offset_start: None,
@@ -232,12 +232,12 @@ mod serde_tests {
         let json = serde_json::to_string(&event).expect("Should serialize");
         let deserialized: EventRecord = serde_json::from_str(&json).expect("Should deserialize");
 
-        // DateTime should round-trip accurately (within microsecond precision)
-        let orig_ms = event.ts_orig.timestamp_millis();
-        let deser_ms = deserialized.ts_orig.timestamp_millis();
+        // DateTime should round-trip accurately (within millisecond precision)
+        let diff = (*event.ts_orig - *deserialized.ts_orig).whole_milliseconds();
         assert!(
-            (orig_ms - deser_ms).abs() <= 1,
-            "DateTime should round-trip accurately"
+            diff.abs() <= 1,
+            "DateTime should round-trip accurately, got {}ms difference",
+            diff
         );
         Ok(())
     }
@@ -256,7 +256,7 @@ mod serde_tests {
             "special_chars": "\"quoted\" and \\backslash\\"
         });
 
-        let ts_orig = Utc::now();
+        let ts_orig = temporal::now();
         let event = EventRecord {
             id: Ulid::new(),
             source: "test".to_string(),
@@ -264,8 +264,8 @@ mod serde_tests {
             host: "test".to_string(),
             payload: complex_payload.clone(),
             ts_orig,
-            ts_orig_subnano: Some(ts_orig.nanosecond() as i32),
-            ts_ingest: Utc::now(),
+            ts_orig_subnano: Some((*ts_orig).nanosecond() as i32),
+            ts_ingest: temporal::now(),
             source_material_id: None,
             anchor_byte: None,
             offset_start: None,
@@ -288,7 +288,7 @@ mod serde_tests {
 
     #[sinex_test]
     fn test_pretty_print_formatting() -> color_eyre::eyre::Result<()> {
-        let ts_orig = Utc::now();
+        let ts_orig = temporal::now();
         let event = EventRecord {
             id: Ulid::new(),
             source: "test-source".to_string(),
@@ -296,8 +296,8 @@ mod serde_tests {
             host: "test-host".to_string(),
             payload: serde_json::json!({"simple": "payload"}),
             ts_orig,
-            ts_orig_subnano: Some(ts_orig.nanosecond() as i32),
-            ts_ingest: Utc::now(),
+            ts_orig_subnano: Some((*ts_orig).nanosecond() as i32),
+            ts_ingest: temporal::now(),
             source_material_id: Some(Ulid::new()),
             anchor_byte: Some(42),
             offset_start: Some(0),

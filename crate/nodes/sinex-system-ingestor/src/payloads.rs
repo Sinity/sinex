@@ -384,7 +384,7 @@ pub enum SystemdUnitState {
 
 impl SystemdUnitState {
     /// Parse unit state from systemctl output
-    pub fn from_str(s: &str) -> Self {
+    pub fn from_status_string(s: &str) -> Self {
         match s {
             "active" => Self::Active,
             "inactive" => Self::Inactive,

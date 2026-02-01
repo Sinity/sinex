@@ -1,0 +1,14 @@
+# Clippy configuration for sinex
+# See: https://doc.rust-lang.org/clippy/lint_configuration.html
+
+# Allow unwrap/expect/dbg/print in test code
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-dbg-in-tests = true
+allow-print-in-tests = true
+
+# Cognitive complexity threshold (default is 25)
+cognitive-complexity-threshold = 30
+
+# Type complexity threshold (default is 250)
+type-complexity-threshold = 300

@@ -18,6 +18,19 @@ impl XtaskCommand for FixCommand {
     }
 
     fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
+        // Handle background execution
+        if ctx.is_background() {
+            let mut args = Vec::new();
+            for p in &self.package {
+                args.push("-p".to_string());
+                args.push(p.clone());
+            }
+            if self.affected {
+                args.push("--affected".to_string());
+            }
+            return ctx.spawn_background("fix", &args);
+        }
+
         if ctx.is_human() {
             println!("Applying automatic fixes...");
         }

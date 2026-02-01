@@ -24,7 +24,7 @@ const CONTENT_PREVIEW_BYTES: usize = 500;
 const MATERIAL_FINALIZE_REASON: &str = "stage-as-you-go";
 const ORPHAN_CLEANUP_REASON: &str = "stage-as-you-go stale cleanup";
 const DEFAULT_RECONCILIATION_INTERVAL: Duration = Duration::from_secs(60);
-const DEFAULT_STALE_TTL: Duration = Duration::from_secs(5 * 60);
+const DEFAULT_STALE_TTL: Duration = Duration::from_mins(5);
 
 /// Stage-as-You-Go context for managing in-flight source materials
 #[derive(Clone)]
@@ -40,8 +40,8 @@ pub struct StageAsYouGoContext {
 #[derive(Debug, Clone)]
 struct StageMaterialInfo {
     metadata: JsonValue,
-    _registered_at: sinex_primitives::temporal::OffsetDateTime,
-    last_activity: sinex_primitives::temporal::OffsetDateTime,
+    _registered_at: sinex_primitives::temporal::Timestamp,
+    last_activity: sinex_primitives::temporal::Timestamp,
 }
 
 #[derive(Clone, Copy)]
@@ -63,8 +63,8 @@ impl StageCleanupConfig {
 mod tests {
     use super::StageAsYouGoContext;
     use crate::stream_processor::EventEmitter;
+    use sinex_primitives::Ulid;
     use sinex_primitives::{events::Provenance, DynamicPayload, Id};
-    use sinex_schema::ulid::Ulid;
     use tokio::sync::mpsc;
     use tokio::time::{timeout, Duration};
     use xtask::sandbox::sinex_test;
@@ -354,7 +354,7 @@ impl StageAsYouGoContext {
             "Registered in-flight source material via JetStream"
         );
 
-        let now = sinex_primitives::temporal::OffsetDateTime::now_utc();
+        let now = sinex_primitives::temporal::Timestamp::now();
         let info = StageMaterialInfo {
             metadata,
             _registered_at: now,
@@ -420,7 +420,7 @@ impl StageAsYouGoContext {
         {
             let mut registry = self.material_registry.lock().await;
             if let Some(health) = registry.get_mut(&source_material_id) {
-                health.last_activity = sinex_primitives::temporal::OffsetDateTime::now_utc();
+                health.last_activity = sinex_primitives::temporal::Timestamp::now();
             }
         }
 
@@ -627,7 +627,7 @@ async fn reconcile_shared(
     stale_ttl: Duration,
 ) -> NodeResult<StageReconciliationSummary> {
     let ttl = time::Duration::try_from(stale_ttl).unwrap_or_else(|_| time::Duration::seconds(0));
-    let now = sinex_primitives::temporal::OffsetDateTime::now_utc();
+    let now = sinex_primitives::temporal::Timestamp::now();
     let stale_ids = {
         let registry_guard = registry.lock().await;
         registry_guard
@@ -833,9 +833,9 @@ impl StageAsYouGoProcessor for LogFileStageProcessor {
             // Convert to JsonValue event for emission
             let mut event = typed_event.to_json_event()?;
             event.id = Some(Id::from_ulid(Ulid::new()));
-            let now = sinex_primitives::temporal::OffsetDateTime::now_utc();
+            let now = sinex_primitives::temporal::Timestamp::now();
             if event.ts_orig.is_none() {
-                event.ts_orig = Some(now.into());
+                event.ts_orig = Some(now);
             }
 
             // Emit with provenance

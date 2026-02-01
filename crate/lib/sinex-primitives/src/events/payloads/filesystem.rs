@@ -77,7 +77,7 @@ impl FileCreatedPayload {
         Self {
             path: path.into(),
             size: 0,
-            created_at: crate::temporal::now().into(),
+            created_at: crate::temporal::now(),
             permissions: None,
         }
     }
@@ -89,7 +89,7 @@ impl FileModifiedPayload {
         Self {
             path: path.into(),
             size: 0,
-            modified_at: crate::temporal::now().into(),
+            modified_at: crate::temporal::now(),
             modification_type: FileModificationType::Content,
         }
     }
@@ -100,7 +100,7 @@ impl FileDeletedPayload {
     pub fn test_default(path: impl Into<SanitizedPath>) -> Self {
         Self {
             path: path.into(),
-            deleted_at: crate::temporal::now().into(),
+            deleted_at: crate::temporal::now(),
         }
     }
 }

@@ -1,21 +1,168 @@
 //! Integration coverage for the JetStream consumer covering batching, DLQ, and retry paths.
 
 use async_nats::{jetstream, Client};
-use chrono::{SecondsFormat, Timelike, Utc};
 use color_eyre::eyre::eyre;
 use serde_json::json;
+use sinex_db::query_helpers::ulid_to_uuid;
 use sinex_db::DbPoolExt;
-use sinex_primitives::{db::query_helpers::ulid_to_uuid, types::ulid::Ulid};
 use sinex_ingestd::{validator::EventValidator, JetStreamConsumer, JetStreamTopology};
+use sinex_primitives::{environment, temporal, OffsetDateTime, Ulid};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
+use time::format_description::well_known::Rfc3339;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
 use tokio_stream::StreamExt;
+use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
-use xtask::sandbox::{prelude::*, TestNodePublisher};
+use xtask::sandbox::{ChaosInjector, TestHooks, TestSnapshot};
+
+/// Helper for publishing test events with a specific source to NATS.
+struct TestNodePublisher {
+    nats_client: async_nats::Client,
+    source: String,
+    namespace: Option<String>,
+}
+
+impl TestNodePublisher {
+    fn with_namespace(
+        nats_client: async_nats::Client,
+        source: impl Into<String>,
+        namespace: Option<String>,
+    ) -> Self {
+        Self {
+            nats_client,
+            source: source.into(),
+            namespace,
+        }
+    }
+
+    async fn publish(&self, event_type: &str, payload: serde_json::Value) -> TestResult<Ulid> {
+        self.publish_with_overrides(event_type, payload, EventOverrides::default())
+            .await
+    }
+
+    async fn publish_with_overrides(
+        &self,
+        event_type: &str,
+        payload: serde_json::Value,
+        overrides: EventOverrides,
+    ) -> TestResult<Ulid> {
+        let env = environment();
+        let event_id = overrides.id.unwrap_or_default();
+        let ts_orig = overrides
+            .ts_orig
+            .unwrap_or_else(|| sinex_primitives::temporal::now().format_rfc3339());
+
+        let event = serde_json::json!({
+            "id": event_id.to_string(),
+            "source": self.source,
+            "event_type": event_type,
+            "payload": payload,
+            "ts_orig": ts_orig,
+            "host": "test-host",
+            "ingestor_version": "test",
+        });
+
+        let subject = env.nats_subject_with_namespace(
+            self.namespace.as_deref(),
+            &format!(
+                "events.raw.{}.{}",
+                self.source.replace('.', "_"),
+                event_type.replace('.', "_")
+            ),
+        );
+        self.nats_client
+            .publish(subject, serde_json::to_vec(&event)?.into())
+            .await?;
+        self.nats_client.flush().await?;
+
+        Ok(event_id)
+    }
+
+    /// Publish raw bytes directly to the events subject (for testing malformed payloads)
+    async fn publish_raw_event_bytes(&self, event_type: &str, raw_bytes: &[u8]) -> TestResult<()> {
+        let env = environment();
+        let subject = env.nats_subject_with_namespace(
+            self.namespace.as_deref(),
+            &format!(
+                "events.raw.{}.{}",
+                self.source.replace('.', "_"),
+                event_type.replace('.', "_")
+            ),
+        );
+        self.nats_client
+            .publish(subject, raw_bytes.to_vec().into())
+            .await?;
+        self.nats_client.flush().await?;
+        Ok(())
+    }
+}
+
+/// Helper to publish a test event directly to JetStream.
+async fn publish_event(
+    nats_client: &async_nats::Client,
+    namespace: &str,
+    source: &str,
+    event_type: &str,
+    payload: serde_json::Value,
+    overrides: EventOverrides,
+) -> TestResult<Ulid> {
+    let env = sinex_primitives::environment();
+    let event_id = overrides.id.unwrap_or_default();
+    let ts_orig = overrides
+        .ts_orig
+        .unwrap_or_else(|| temporal::now().format_rfc3339());
+
+    let event = json!({
+        "id": event_id.to_string(),
+        "source": source,
+        "event_type": event_type,
+        "payload": payload,
+        "ts_orig": ts_orig,
+        "host": "test-host",
+        "ingestor_version": "test",
+    });
+
+    let subject = env.nats_subject_with_namespace(
+        Some(namespace),
+        &format!(
+            "events.raw.{}.{}",
+            source.replace('.', "_"),
+            event_type.replace('.', "_")
+        ),
+    );
+    nats_client
+        .publish(subject, serde_json::to_vec(&event)?.into())
+        .await?;
+    nats_client.flush().await?;
+
+    Ok(event_id)
+}
+
+/// Helper to publish raw bytes directly (for malformed event testing).
+async fn publish_raw_bytes(
+    nats_client: &async_nats::Client,
+    namespace: &str,
+    source: &str,
+    event_type: &str,
+    bytes: &[u8],
+) -> TestResult<()> {
+    let env = sinex_primitives::environment();
+    let subject = env.nats_subject_with_namespace(
+        Some(namespace),
+        &format!(
+            "events.raw.{}.{}",
+            source.replace('.', "_"),
+            event_type.replace('.', "_")
+        ),
+    );
+    nats_client.publish(subject, bytes.to_vec().into()).await?;
+    nats_client.flush().await?;
+    Ok(())
+}
 
 /// Consumer setup result with all components needed for testing.
 struct ConsumerSetup {
@@ -47,7 +194,7 @@ async fn start_consumer_with_hooks(
         .pipeline_namespace()
         .stream(&format!("SINEX_RAW_EVENTS_{suffix}"));
     let topology = JetStreamTopology::new(
-        &env,
+        env,
         stream,
         ctx.pipeline_namespace()
             .consumer_name(&format!("ingestd-{suffix}")),
@@ -98,19 +245,18 @@ async fn jetstream_consumer_processes_batches_without_dlq(ctx: TestContext) -> T
     )
     .await?;
 
-    let publisher = TestNodePublisher::with_namespace(
-        setup.nats_client.clone(),
-        format!("integration.{suffix}"),
-        Some(setup.namespace.clone()),
-    );
+    let source = format!("integration.{suffix}");
 
     for idx in 0..100u32 {
-        publisher
-            .publish(
-                "batch.event",
-                json!({"idx": idx, "emitted_at": Utc::now().to_rfc3339()}),
-            )
-            .await?;
+        publish_event(
+            &setup.nats_client,
+            &setup.namespace,
+            &source,
+            "batch.event",
+            json!({"idx": idx, "emitted_at": temporal::now().format_rfc3339()}),
+            EventOverrides::default(),
+        )
+        .await?;
     }
 
     // All events should land in the database with the expected source.
@@ -157,27 +303,24 @@ async fn jetstream_consumer_survives_transient_db_failure(ctx: TestContext) -> T
         .subscribe(confirmation_subject.clone())
         .await?;
 
-    let publisher = TestNodePublisher::with_namespace(
-        setup.nats_client.clone(),
-        format!("retry.{suffix}"),
-        Some(setup.namespace.clone()),
-    );
-    publisher
-        .publish_with_overrides(
-            "transient.failure",
-            json!({"kind": "force-retry"}),
-            EventOverrides {
-                id: Some(event_id),
-                ..Default::default()
-            },
-        )
-        .await?;
+    publish_event(
+        &setup.nats_client,
+        &setup.namespace,
+        &format!("retry.{suffix}"),
+        "transient.failure",
+        json!({"kind": "force-retry"}),
+        EventOverrides {
+            id: Some(event_id),
+            ..Default::default()
+        },
+    )
+    .await?;
 
     // The event should eventually be persisted after redelivery.
     let _ = WaitHelpers::wait_for_condition(
         || {
             let pool = ctx.pool.clone();
-            let event_id = event_id.clone();
+            let event_id = event_id;
             async move {
                 let exists = pool.events().get_by_id(event_id.into()).await?.is_some();
                 Ok::<bool, SinexError>(exists)
@@ -377,9 +520,9 @@ async fn jetstream_consumer_preserves_ts_orig_subnano(ctx: TestContext) -> TestR
     )
     .await?;
 
-    let ts_orig = chrono::DateTime::<Utc>::from_timestamp(1_700_000_000, 123_456_789)
-        .ok_or_else(|| eyre!("failed to build test timestamp"))?;
-    let ts_orig_str = ts_orig.to_rfc3339_opts(SecondsFormat::Nanos, true);
+    // Build timestamp with sub-nanosecond precision (789 nanoseconds, 789 % 1000 = 789 sub-nanos)
+    let ts_orig = OffsetDateTime::from_unix_timestamp_nanos(1_700_000_000_123_456_789i128)?;
+    let ts_orig_str = ts_orig.format(&Rfc3339)?;
     let expected_subnano = (ts_orig.nanosecond() % 1_000) as i32;
 
     let publisher = TestNodePublisher::with_namespace(
@@ -390,7 +533,7 @@ async fn jetstream_consumer_preserves_ts_orig_subnano(ctx: TestContext) -> TestR
     let event_id = publisher
         .publish_with_overrides(
             "timestamp.subnano",
-            json!({"ts": ts_orig_str}),
+            json!({"ts": ts_orig_str.clone()}),
             EventOverrides {
                 ts_orig: Some(ts_orig_str),
                 ..Default::default()
@@ -556,7 +699,7 @@ async fn jetstream_consumer_routes_malformed_json_to_dlq(ctx: TestContext) -> Te
     // Malformed JSON bytes (not parseable).
     let malformed = br#"{ bad json"#;
     publisher
-        .publish_raw_event_bytes("malformed", malformed, None)
+        .publish_raw_event_bytes("malformed", malformed)
         .await?;
 
     // Expect DLQ to have at least one message; no event persisted.
@@ -574,7 +717,7 @@ async fn jetstream_consumer_routes_malformed_json_to_dlq(ctx: TestContext) -> Te
                     .await
                     .map_err(|e| SinexError::network(e.to_string()))?
                     .state;
-                Ok(state.messages >= 1)
+                Ok::<bool, SinexError>(state.messages >= 1)
             }
         },
         Timeouts::MEDIUM,
@@ -649,14 +792,14 @@ async fn jetstream_consumer_routes_db_failures_to_dlq(ctx: TestContext) -> TestR
                         .await
                         .map_err(|e| SinexError::network(e.to_string()))?
                         .state;
-                    Ok(state.messages >= 1)
+                    Ok::<bool, SinexError>(state.messages >= 1)
                 }
             },
             Timeouts::QUICK,
         )
         .await?;
 
-        let _stream_ready = WaitHelpers::wait_for_condition(
+        WaitHelpers::wait_for_condition(
             || {
                 let js = setup.js.clone();
                 let dlq_stream = setup.topology.dlq_stream.clone();
@@ -670,7 +813,7 @@ async fn jetstream_consumer_routes_db_failures_to_dlq(ctx: TestContext) -> TestR
                         .await
                         .map_err(|e| SinexError::network(e.to_string()))?
                         .state;
-                    Ok(state.messages >= 1)
+                    Ok::<bool, SinexError>(state.messages >= 1)
                 }
             },
             Timeouts::SHORT,
@@ -733,7 +876,7 @@ async fn jetstream_consumer_dlq_reason_classification(ctx: TestContext) -> TestR
         .await?;
 
     publisher
-        .publish_raw_event_bytes("dlq.parse", b"{not-json", None)
+        .publish_raw_event_bytes("dlq.parse", b"{not-json")
         .await?;
 
     publisher
@@ -792,7 +935,7 @@ async fn chaos_injector_produces_clean_snapshot(ctx: TestContext) -> TestResult<
     )
     .await?;
 
-    let chaos = ChaosInjestor::new(Duration::from_millis(5), 0.0);
+    let chaos = ChaosInjector::new(Duration::from_millis(5), 0.0);
     let publisher = TestNodePublisher::with_namespace(
         setup.nats_client.clone(),
         format!("chaos.{suffix}"),
@@ -839,7 +982,7 @@ async fn chaos_injector_produces_clean_snapshot(ctx: TestContext) -> TestResult<
                     .map_err(|e| SinexError::network(e.to_string()))?
                     .state
                     .messages;
-                Ok(msgs >= 20)
+                Ok::<bool, SinexError>(msgs >= 20)
             }
         },
         Timeouts::SHORT,

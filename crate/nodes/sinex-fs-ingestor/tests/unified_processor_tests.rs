@@ -1,5 +1,5 @@
-use sinex_primitives::Bytes;
 use sinex_fs_ingestor::{FilesystemConfig, FilesystemProcessor};
+use sinex_primitives::Bytes;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]

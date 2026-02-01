@@ -3,12 +3,12 @@
 //! Modernized `SimpleNode` implementation for the terminal command canonicalizer.
 
 use async_trait::async_trait;
-use sinex_primitives::events::payloads::CanonicalCommandPayload;
-use sinex_primitives::JsonValue;
 use sinex_node_sdk::simple_node::{
     SimpleNode, SimpleNodeContext, SimpleNodeError, SimpleNodeWrapper,
 };
-use sinex_primitives::temporal::{now, Timestamp};
+use sinex_primitives::events::payloads::CanonicalCommandPayload;
+use sinex_primitives::temporal::now;
+use sinex_primitives::JsonValue;
 use tracing::info;
 
 #[derive(Default)]

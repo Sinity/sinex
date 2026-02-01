@@ -70,7 +70,7 @@ impl GraphCommand {
                         let renderer = render::JsonRenderer::new(graph);
                         renderer.render()?
                     }
-                    "ascii" | _ => {
+                    _ => {
                         let renderer = render::AsciiRenderer::new(&graph, focus.clone(), *depth);
                         renderer.render()?
                     }

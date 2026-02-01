@@ -8,8 +8,8 @@ use sinex_primitives::{error::SinexError, Ulid};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
+use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
-use xtask::sandbox::{sinex_test, EventOverrides, TestContext, TestNodePublisher, TestResult};
 
 async fn wait_for_consumer(js: &jetstream::Context, base_stream: &str) -> TestResult<()> {
     WaitHelpers::wait_for_condition(
@@ -25,12 +25,75 @@ async fn wait_for_consumer(js: &jetstream::Context, base_stream: &str) -> TestRe
                     .info()
                     .await
                     .map_err(|e| SinexError::network(e.to_string()))?;
-                Ok(info.state.consumer_count > 0)
+                Ok::<bool, SinexError>(info.state.consumer_count > 0)
             }
         },
         Timeouts::STANDARD,
     )
     .await?;
+    Ok(())
+}
+
+/// Helper to publish a raw event with optional overrides directly to JetStream.
+async fn publish_raw_event(
+    nats_client: &async_nats::Client,
+    namespace: &str,
+    source: &str,
+    event_type: &str,
+    payload: serde_json::Value,
+    overrides: EventOverrides,
+) -> TestResult<Ulid> {
+    let env = sinex_primitives::environment();
+    let event_id = overrides.id.unwrap_or_default();
+    let ts_orig = overrides
+        .ts_orig
+        .unwrap_or_else(|| sinex_primitives::temporal::now().format_rfc3339());
+
+    let event = json!({
+        "id": event_id.to_string(),
+        "source": source,
+        "event_type": event_type,
+        "payload": payload,
+        "ts_orig": ts_orig,
+        "host": gethostname::gethostname().to_string_lossy(),
+        "ingestor_version": "test",
+    });
+
+    let subject = env.nats_subject_with_namespace(
+        Some(namespace),
+        &format!(
+            "events.raw.{}.{}",
+            source.replace('.', "_"),
+            event_type.replace('.', "_")
+        ),
+    );
+    nats_client
+        .publish(subject, serde_json::to_vec(&event)?.into())
+        .await?;
+    nats_client.flush().await?;
+
+    Ok(event_id)
+}
+
+/// Helper to publish raw bytes directly (for malformed event testing).
+async fn publish_raw_bytes(
+    nats_client: &async_nats::Client,
+    namespace: &str,
+    source: &str,
+    event_type: &str,
+    bytes: &[u8],
+) -> TestResult<()> {
+    let env = sinex_primitives::environment();
+    let subject = env.nats_subject_with_namespace(
+        Some(namespace),
+        &format!(
+            "events.raw.{}.{}",
+            source.replace('.', "_"),
+            event_type.replace('.', "_")
+        ),
+    );
+    nats_client.publish(subject, bytes.to_vec().into()).await?;
+    nats_client.flush().await?;
     Ok(())
 }
 
@@ -69,7 +132,7 @@ async fn test_dlq_cases_table() -> TestResult<()> {
     .await?;
 
     let topology = JetStreamTopology::new(
-        &env,
+        env,
         base_stream.clone(),
         ctx.pipeline_namespace().consumer_name("ingestd"),
         Some(&namespace),
@@ -85,9 +148,6 @@ async fn test_dlq_cases_table() -> TestResult<()> {
     let _consumer_handle = tokio::spawn(async move { consumer.run().await });
 
     wait_for_consumer(&js, &base_stream).await?;
-
-    let publisher =
-        TestNodePublisher::with_namespace(nats_client.clone(), "test", Some(namespace.clone()));
 
     let mut expected_messages = 0u64;
     let wait_for_dlq = |expected_messages: u64| {
@@ -107,7 +167,7 @@ async fn test_dlq_cases_table() -> TestResult<()> {
                             .info()
                             .await
                             .map_err(|e| SinexError::network(e.to_string()))?;
-                        Ok(info.state.messages >= expected_messages)
+                        Ok::<bool, SinexError>(info.state.messages >= expected_messages)
                     }
                 },
                 Timeouts::STANDARD,
@@ -116,36 +176,47 @@ async fn test_dlq_cases_table() -> TestResult<()> {
         }
     };
 
-    publisher
-        .publish_with_overrides(
-            "test.invalid",
-            json!({"data": "test"}),
-            EventOverrides {
-                ts_orig: Some("invalid-timestamp-format".to_string()),
-                ..Default::default()
-            },
-        )
-        .await?;
+    // Test 1: Invalid timestamp format
+    publish_raw_event(
+        &nats_client,
+        &namespace,
+        "test",
+        "test.invalid",
+        json!({"data": "test"}),
+        EventOverrides {
+            ts_orig: Some("invalid-timestamp-format".to_string()),
+            ..Default::default()
+        },
+    )
+    .await?;
     expected_messages += 1;
     wait_for_dlq(expected_messages).await?;
 
-    publisher
-        .publish_raw_event_bytes("test.malformed", b"{\"id\": \"not-closed\"", None)
-        .await?;
+    // Test 2: Malformed JSON
+    publish_raw_bytes(
+        &nats_client,
+        &namespace,
+        "test",
+        "test.malformed",
+        b"{\"id\": \"not-closed\"",
+    )
+    .await?;
     expected_messages += 1;
     wait_for_dlq(expected_messages).await?;
 
+    // Test 3: Missing required fields
     let incomplete_payload = json!({
         "id": Ulid::new().to_string(),
         "source": "test"
     });
-    publisher
-        .publish_raw_event_bytes(
-            "test.missing_fields",
-            serde_json::to_vec(&incomplete_payload)?,
-            None,
-        )
-        .await?;
+    publish_raw_bytes(
+        &nats_client,
+        &namespace,
+        "test",
+        "test.missing_fields",
+        &serde_json::to_vec(&incomplete_payload)?,
+    )
+    .await?;
     expected_messages += 1;
     wait_for_dlq(expected_messages).await?;
 

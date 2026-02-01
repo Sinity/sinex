@@ -11,7 +11,7 @@ use crate::{Id, JsonValue};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::domain::ProcessorName;
 use sinex_primitives::error::SinexError;
-use sinex_primitives::{Timestamp, Ulid, Seconds};
+use sinex_primitives::{Seconds, Timestamp, Ulid};
 
 use sinex_schema::ulid_conversions::uuid_to_ulid;
 use sqlx::postgres::types::PgRange;

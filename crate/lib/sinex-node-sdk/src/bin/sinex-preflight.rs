@@ -271,7 +271,7 @@ async fn run_complete_verification(
         }
     }
 
-    report.overall_status = overall_status.clone();
+    report.overall_status = overall_status;
     report.completed_at = Some(sinex_primitives::temporal::now());
     report.duration_ms = Some(start_time.elapsed().as_millis().min(u64::MAX as u128) as u64);
 
@@ -334,8 +334,7 @@ fn get_available_disk_space() -> NodeResult<f64> {
         .or_else(|_| env::var("XDG_DATA_HOME").map(|d| format!("{}/sinex", d)))
         .unwrap_or_else(|_| "/var/lib/sinex".to_string());
 
-    let stat = statvfs(data_dir.as_str())
-        .map_err(|e| SinexError::io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+    let stat = statvfs(data_dir.as_str()).map_err(|e| SinexError::io(std::io::Error::other(e)))?;
     let available_bytes = stat.blocks_available() * stat.block_size();
     Ok(available_bytes as f64 / 1024.0 / 1024.0 / 1024.0)
 }
@@ -345,7 +344,7 @@ async fn output_report(report: &VerificationReport, format: OutputFormat) -> Nod
         OutputFormat::Json => {
             println!(
                 "{}",
-                serde_json::to_string_pretty(report).map_err(|e| SinexError::serialization(e))?
+                serde_json::to_string_pretty(report).map_err(SinexError::serialization)?
             );
         }
         OutputFormat::Text => {
@@ -477,7 +476,7 @@ async fn run_migration_dry_run(output_format: OutputFormat) -> NodeResult<Verifi
     match output_format {
         OutputFormat::Json => println!(
             "{}",
-            serde_json::to_string_pretty(&report).map_err(|e| SinexError::serialization(e))?
+            serde_json::to_string_pretty(&report).map_err(SinexError::serialization)?
         ),
         OutputFormat::Text => {
             println!("Migration Dry-Run: {:?}", status);
@@ -505,7 +504,7 @@ async fn run_extension_check(output_format: OutputFormat) -> NodeResult<Verifica
     match output_format {
         OutputFormat::Json => println!(
             "{}",
-            serde_json::to_string_pretty(&report).map_err(|e| SinexError::serialization(e))?
+            serde_json::to_string_pretty(&report).map_err(SinexError::serialization)?
         ),
         OutputFormat::Text => {
             println!("Extension Check: {:?}", status);
@@ -533,7 +532,7 @@ async fn run_resource_check(output_format: OutputFormat) -> NodeResult<Verificat
     match output_format {
         OutputFormat::Json => println!(
             "{}",
-            serde_json::to_string_pretty(&report).map_err(|e| SinexError::serialization(e))?
+            serde_json::to_string_pretty(&report).map_err(SinexError::serialization)?
         ),
         OutputFormat::Text => {
             println!("Resource Check: {:?}", status);
@@ -566,10 +565,10 @@ async fn generate_verification_report(
         .events()
         .get_process_heartbeats(&EventSource::new("sinex-preflight"), start_time, end_time)
         .await
-        .map_err(|e| SinexError::database(sinex_db::SinexError::from(e)))?;
+        .map_err(SinexError::database)?;
 
     info!("Verifying environment...");
-    let env = sinex_primitives::environment::environment();
+    let _env = sinex_primitives::environment::environment();
     let report = if detailed {
         serde_json::json!({
             "verification_count": recent_verifications.len(),
@@ -586,7 +585,7 @@ async fn generate_verification_report(
     match output_format {
         OutputFormat::Json => println!(
             "{}",
-            serde_json::to_string_pretty(&report).map_err(|e| SinexError::serialization(e))?
+            serde_json::to_string_pretty(&report).map_err(SinexError::serialization)?
         ),
         OutputFormat::Text => {
             println!("Recent Verification History:");

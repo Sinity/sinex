@@ -1,10 +1,10 @@
-use chrono::Utc;
 use serde_json::json;
 use sinex_gateway::cascade_analyzer::{CascadeAnalyzerConfig, StreamingCascadeAnalyzer};
+use sinex_primitives::temporal;
 use sinex_primitives::Ulid as CoreUlid;
 use sqlx::PgPool;
 use uuid::Uuid;
-use xtask::sandbox::{sinex_test, TestContext};
+use xtask::sandbox::sinex_test;
 
 async fn cascade_prereqs_available(pool: &PgPool) -> color_eyre::Result<bool> {
     let exists: bool = sqlx::query_scalar!(
@@ -75,7 +75,7 @@ async fn detects_cycles_beyond_default_depth(ctx: TestContext) -> color_eyre::Re
             "cycle.event",
             "localhost",
             json!({"idx": idx }),
-            Utc::now(),
+            *temporal::now(),
             &parent_array
         )
         .execute(&pool)
@@ -138,7 +138,7 @@ async fn handles_mixed_uuid_arrays(ctx: TestContext) -> color_eyre::Result<()> {
         "mixed.anchor",
         "localhost",
         json!({"kind": "anchor"}),
-        Utc::now()
+        *temporal::now()
     )
     .execute(&pool)
     .await?;
@@ -168,7 +168,7 @@ async fn handles_mixed_uuid_arrays(ctx: TestContext) -> color_eyre::Result<()> {
         "mixed.child",
         "localhost",
         json!({"kind": "dependent"}),
-        Utc::now(),
+        *temporal::now(),
         parent.to_uuid(),
         stray_uuid
     )
@@ -234,7 +234,7 @@ async fn timeout_prevents_indefinite_transaction_hold(ctx: TestContext) -> color
         "timeout.test",
         "localhost",
         json!({"test": "timeout"}),
-        Utc::now(),
+        *temporal::now(),
         &empty_parents
     )
     .execute(&pool)

@@ -167,7 +167,7 @@ mod tests {
 
     #[test]
     fn test_validate_time_range() {
-        let now = crate::temporal::now().into();
+        let now = crate::temporal::now();
         let earlier = now - Duration::hours(1);
         let later = now + Duration::hours(1);
 

@@ -1,0 +1,9 @@
+id: double-clone
+message: "Double clone detected - likely unnecessary"
+severity: warning
+language: rust
+rule:
+  pattern: $X.clone().clone()
+note: |
+  Cloning twice in succession is usually unnecessary.
+  If you need a clone, one .clone() should suffice.

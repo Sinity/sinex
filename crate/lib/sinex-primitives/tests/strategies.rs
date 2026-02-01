@@ -51,8 +51,8 @@ pub fn arb_ulid() -> impl Strategy<Value = Ulid> {
     // Generate ULIDs from random timestamps within reasonable range
     // (2020-01-01 to 2030-01-01)
     (1577836800i64..1893456000i64).prop_map(|ts| {
-        let dt = Timestamp::from_unix_timestamp(ts).unwrap_or_else(|_| Timestamp::now());
-        Ulid::from_datetime(*dt)
+        let dt = Timestamp::from_unix_timestamp(ts).unwrap_or_else(Timestamp::now);
+        Ulid::from_datetime(dt)
     })
 }
 
@@ -125,7 +125,7 @@ pub fn arb_processor_name() -> impl Strategy<Value = String> {
 /// Generates timestamps within a reasonable range (2020-2030).
 pub fn arb_timestamp() -> impl Strategy<Value = Timestamp> {
     (1577836800i64..1893456000i64)
-        .prop_map(|ts| Timestamp::from_unix_timestamp(ts).unwrap_or_else(|_| Timestamp::now()))
+        .prop_map(|ts| Timestamp::from_unix_timestamp(ts).unwrap_or_else(Timestamp::now))
 }
 
 /// Strategy for generating timestamp ranges

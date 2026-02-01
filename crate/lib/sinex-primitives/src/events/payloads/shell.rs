@@ -108,8 +108,8 @@ impl AtuinCommandExecutedPayload {
             atuin_history_id: "h1".to_string(),
             atuin_session_id: "s1".to_string(),
             timestamp: 0,
-            ts_start_orig: crate::temporal::now().into(),
-            ts_end_orig: crate::temporal::now().into(),
+            ts_start_orig: crate::temporal::now(),
+            ts_end_orig: crate::temporal::now(),
             hostname: HostName::new("test-host".to_string()),
             terminal_session_ulid: None,
         }

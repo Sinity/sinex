@@ -12,8 +12,8 @@
 use async_nats::jetstream;
 use camino::Utf8PathBuf;
 use serde_json::json;
-use sinex_primitives::nats::NatsConnectionConfig;
 use sinex_ingestd::{config::IngestdConfig, service::IngestService, JetStreamTopology};
+use sinex_primitives::nats::NatsConnectionConfig;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -73,14 +73,15 @@ async fn test_ingestd_graceful_shutdown_completes_inflight(ctx: TestContext) -> 
     )
     .await?;
 
-    // Publish events before shutdown
-    let publisher = TestNodePublisher::new(ctx.nats_client(), "graceful-source");
-    let mut event_ids = Vec::new();
+    // Publish events before shutdown directly to JetStream
+    let subject = format!("{}.graceful.event", topology.events_stream);
     for idx in 0..5 {
-        let event_id = publisher
-            .publish("graceful.event", json!({ "seq": idx }))
-            .await?;
-        event_ids.push(event_id);
+        let payload = serde_json::to_vec(&json!({
+            "source": "graceful-source",
+            "type": "graceful.event",
+            "seq": idx
+        }))?;
+        js.publish(subject.clone(), payload.into()).await?.await?;
     }
 
     // Small delay to allow some processing
@@ -164,13 +165,21 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
     let published_count = Arc::new(AtomicU32::new(0));
     let shutdown_flag_clone = shutdown_flag.clone();
     let published_count_clone = published_count.clone();
-    let nats_client = ctx.nats_client();
+    let js_clone = ctx.jetstream().await?;
+    let events_stream = topology.events_stream.clone();
 
     let publisher_handle = tokio::spawn(async move {
-        let publisher = TestNodePublisher::new(nats_client, "load-source");
+        let subject = format!("{}.load.event", events_stream);
         let mut idx = 0;
         while !shutdown_flag_clone.load(Ordering::SeqCst) {
-            let _ = publisher.publish("load.event", json!({ "seq": idx })).await;
+            let payload = serde_json::to_vec(&json!({
+                "source": "load-source",
+                "type": "load.event",
+                "seq": idx
+            }));
+            if let Ok(p) = payload {
+                let _ = js_clone.publish(subject.clone(), p.into()).await;
+            }
             published_count_clone.fetch_add(1, Ordering::SeqCst);
             idx += 1;
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -365,19 +374,17 @@ async fn test_shutdown_data_consistency(ctx: TestContext) -> TestResult<()> {
     )
     .await?;
 
-    // Publish events with structured data
-    let publisher = TestNodePublisher::new(ctx.nats_client(), "consistency-source");
+    // Publish events with structured data directly to JetStream
+    let subject = format!("{}.consistency.event", topology.events_stream);
     for idx in 0..10 {
-        publisher
-            .publish(
-                "consistency.event",
-                json!({
-                    "index": idx,
-                    "checksum": format!("check-{}", idx),
-                    "data": format!("data-{}", idx)
-                }),
-            )
-            .await?;
+        let payload = serde_json::to_vec(&json!({
+            "source": "consistency-source",
+            "type": "consistency.event",
+            "index": idx,
+            "checksum": format!("check-{}", idx),
+            "data": format!("data-{}", idx)
+        }))?;
+        js.publish(subject.clone(), payload.into()).await?.await?;
     }
 
     // Allow some processing

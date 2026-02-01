@@ -21,6 +21,7 @@
 //! - Focus on the modern RawEvent::schemaless() API and database insertion paths
 
 use xtask::sandbox::prelude::*;
+use xtask::sandbox::test_event;
 
 use proptest::{strategy::ValueTree, test_runner::TestCaseResult};
 use serde_json::{Map as JsonMap, Value as JsonValue};
@@ -113,9 +114,8 @@ fn problematic_timestamps() -> impl Strategy<Value = Timestamp> {
         Just(Timestamp::from_unix_timestamp(2147483647).unwrap()), // 2038-01-19
         Just(Timestamp::from_unix_timestamp(-2147483648).unwrap()), // 1901-12-13
         // Random timestamps
-        (-2208988800i64..4102444800i64).prop_map(|ts| {
-            Timestamp::from_unix_timestamp(ts).unwrap_or(Timestamp::now())
-        }),
+        (-2208988800i64..4102444800i64)
+            .prop_map(|ts| { Timestamp::from_unix_timestamp(ts).unwrap_or(Timestamp::now()) }),
     ]
 }
 
@@ -175,7 +175,7 @@ fn fuzzed_events() -> impl Strategy<Value = Event<JsonValue>> {
             // Set required timestamp fields
             event.host = HostName::new(host);
             event.id = Some(Id::from_ulid(Ulid::new()));
-            event.ts_orig = Some(ts_orig.into());
+            event.ts_orig = Some(ts_orig);
 
             event
         })
@@ -563,10 +563,7 @@ sinex_proptest! {
         event.id = Some(Id::from_ulid(Ulid::new()));
 
         let json_result = serde_json::to_string(&event);
-        match json_result {
-            Ok(_) => {}
-            Err(_) => {}
-        }
+        if json_result.is_ok() {}
 
         let _ = serde_json::to_string_pretty(&event);
         TestCaseResult::Ok(())
@@ -594,7 +591,7 @@ sinex_proptest! {
             serde_json::json!({}),
         );
         event.id = Some(Id::from_ulid(Ulid::new()));
-        event.ts_orig = Some(timestamp.into());
+        event.ts_orig = Some(timestamp);
 
         // Verify the event can be serialized
         let _json = serde_json::to_string(&event);

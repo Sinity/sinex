@@ -1,7 +1,12 @@
 //! Check command - fast correctness checks (fmt check + cargo check)
+//!
+//! This command runs fmt, cargo check, clippy, and forbidden pattern scans.
+//! Compiler diagnostics are captured and stored in the history database for
+//! later analysis via `cargo xtask history diagnostics`.
 
 use anyhow::Result;
 
+use crate::cargo_diagnostics::{run_cargo_check, run_cargo_clippy, DiagnosticSummary};
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::process::ProcessBuilder;
 use crate::resources;
@@ -19,11 +24,80 @@ pub struct CheckCommand {
     #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
     pub forbidden: bool,
     /// Also run slow lints
-    #[arg(short, long)]
+    #[arg(long)]
     pub heavy: bool,
     /// Only check affected packages
-    #[arg(short, long)]
+    #[arg(short = 'A', long)]
     pub affected: bool,
+    /// Check specific package(s) only
+    #[arg(short = 'p', long = "package")]
+    pub packages: Vec<String>,
+    /// Skip test compilation check (faster, but may miss test errors)
+    #[arg(long)]
+    pub skip_tests: bool,
+}
+
+impl CheckCommand {
+    /// Build cargo args based on package scope
+    fn build_package_args(&self, include_tests: bool) -> Result<Vec<String>> {
+        let mut args = vec!["--all-features".to_string()];
+
+        // Include tests by default (unless skip_tests is set)
+        if include_tests && !self.skip_tests {
+            args.push("--tests".to_string());
+            args.push("--benches".to_string());
+            args.push("--examples".to_string());
+        }
+
+        if !self.packages.is_empty() {
+            for p in &self.packages {
+                args.push("-p".to_string());
+                args.push(p.clone());
+            }
+        } else if self.affected {
+            let affected_pkgs = crate::affected::affected_packages()?;
+            if !affected_pkgs.is_empty() {
+                for p in affected_pkgs {
+                    args.push("-p".to_string());
+                    args.push(p);
+                }
+            } else {
+                args.push("--workspace".to_string());
+            }
+        } else {
+            args.push("--workspace".to_string());
+        }
+
+        Ok(args)
+    }
+
+    /// Record diagnostics to history and add to result
+    fn process_diagnostics(
+        &self,
+        ctx: &CommandContext,
+        summary: &DiagnosticSummary,
+        result: &mut CommandResult,
+        step_name: &str,
+    ) {
+        // Record diagnostics to history database
+        if let Err(e) = ctx.record_diagnostics(&summary.diagnostics) {
+            if ctx.is_human() {
+                eprintln!("Warning: failed to record diagnostics: {}", e);
+            }
+        }
+
+        // Add summary to result
+        if summary.errors > 0 {
+            result.warnings.push(format!(
+                "{}: {} error(s), {} warning(s)",
+                step_name, summary.errors, summary.warnings
+            ));
+        } else if summary.warnings > 0 {
+            result
+                .warnings
+                .push(format!("{}: {} warning(s)", step_name, summary.warnings));
+        }
+    }
 }
 
 impl XtaskCommand for CheckCommand {
@@ -32,6 +106,34 @@ impl XtaskCommand for CheckCommand {
     }
 
     fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
+        // Handle background execution
+        if ctx.is_background() {
+            let mut args = Vec::new();
+            if self.skip_fmt {
+                args.push("--skip-fmt".to_string());
+            }
+            if !self.lint {
+                args.push("--lint=false".to_string());
+            }
+            if !self.forbidden {
+                args.push("--forbidden=false".to_string());
+            }
+            if self.heavy {
+                args.push("--heavy".to_string());
+            }
+            if self.affected {
+                args.push("--affected".to_string());
+            }
+            if self.skip_tests {
+                args.push("--skip-tests".to_string());
+            }
+            for p in &self.packages {
+                args.push("-p".to_string());
+                args.push(p.clone());
+            }
+            return ctx.spawn_background("check", &args);
+        }
+
         // Resource warning before heavy operation
         if ctx.is_human() {
             if let Ok(status) = resources::ResourceStatus::capture() {
@@ -42,6 +144,7 @@ impl XtaskCommand for CheckCommand {
         }
 
         let mut result = CommandResult::success();
+        let package_args = self.build_package_args(true)?;
 
         // 1. Formatting
         if !self.skip_fmt {
@@ -49,55 +152,61 @@ impl XtaskCommand for CheckCommand {
                 println!("Checking formatting...");
             }
             ProcessBuilder::cargo()
-                .args(&["fmt", "--all", "--", "--check"])
+                .args(["fmt", "--all", "--", "--check"])
                 .with_description("cargo fmt --check")
                 .inherit_output()
                 .run_ok()?;
             result = result.with_detail("fmt check passed");
         }
 
-        // 2. Cargo Check
+        // 2. Cargo Check (with diagnostics capture)
         if ctx.is_human() {
             println!("Checking compilation...");
         }
-        let mut check = ProcessBuilder::cargo();
-        check = check.arg("check").arg("--workspace").arg("--all-features");
 
-        if self.affected {
-            let affected_pkgs = crate::affected::affected_packages()?;
-            if !affected_pkgs.is_empty() {
-                check = ProcessBuilder::cargo().arg("check").arg("--all-features");
-                for p in affected_pkgs {
-                    check = check.arg("-p").arg(p);
+        let check_args: Vec<&str> = package_args.iter().map(|s| s.as_str()).collect();
+        let check_summary = run_cargo_check(&check_args)?;
+
+        // Show rendered output for humans
+        if ctx.is_human() {
+            for diag in &check_summary.diagnostics {
+                if let Some(rendered) = &diag.rendered {
+                    eprint!("{}", rendered);
                 }
             }
         }
 
-        check
-            .with_description("cargo check")
-            .inherit_output()
-            .run_ok()?;
+        self.process_diagnostics(ctx, &check_summary, &mut result, "cargo check");
+
+        if !check_summary.success {
+            return Ok(result.with_detail("cargo check failed"));
+        }
         result = result.with_detail("cargo check passed");
 
-        // 3. Clippy
+        // 3. Clippy (with diagnostics capture)
         if self.lint {
             if ctx.is_human() {
                 println!("Running clippy...");
             }
-            let mut clippy = ProcessBuilder::cargo();
-            clippy = clippy.args(&[
-                "clippy",
-                "--workspace",
-                "--all-targets",
-                "--all-features",
-                "--",
-                "-D",
-                "warnings",
-            ]);
-            clippy
-                .with_description("cargo clippy -D warnings")
-                .inherit_output()
-                .run_ok()?;
+
+            // Include tests in clippy unless skip_tests is set
+            let clippy_args: Vec<&str> = package_args.iter().map(|s| s.as_str()).collect();
+            let clippy_summary = run_cargo_clippy(&clippy_args)?;
+
+            // Show rendered output for humans
+            if ctx.is_human() {
+                for diag in &clippy_summary.diagnostics {
+                    if let Some(rendered) = &diag.rendered {
+                        eprint!("{}", rendered);
+                    }
+                }
+            }
+
+            self.process_diagnostics(ctx, &clippy_summary, &mut result, "clippy");
+
+            if !clippy_summary.success {
+                return Ok(result.with_detail("clippy failed"));
+            }
             result = result.with_detail("clippy passed");
         }
 
@@ -109,6 +218,12 @@ impl XtaskCommand for CheckCommand {
             crate::commands::lint_forbidden::LintForbiddenCommand.execute(ctx)?;
             result = result.with_detail("forbidden pattern scan passed");
         }
+
+        // Add diagnostic counts to result data
+        let diagnostics_data = serde_json::json!({
+            "diagnostics_recorded": ctx.invocation_id().is_some()
+        });
+        result = result.with_data(diagnostics_data);
 
         Ok(result.with_duration(ctx.elapsed()))
     }
@@ -130,6 +245,8 @@ mod tests {
             forbidden: true,
             heavy: false,
             affected: false,
+            packages: vec![],
+            skip_tests: false,
         };
 
         let metadata = cmd.metadata();
@@ -145,6 +262,8 @@ mod tests {
             forbidden: false,
             heavy: false,
             affected: false,
+            packages: vec![],
+            skip_tests: false,
         };
 
         assert_eq!(cmd.name(), "check");

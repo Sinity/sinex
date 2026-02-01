@@ -6,9 +6,9 @@
 
 use async_nats::jetstream;
 use serde_json::json;
+use sinex_gateway::handlers::dlq::{handle_dlq_list, handle_dlq_purge};
 use sinex_primitives::environment;
 use sinex_primitives::rpc::dlq::{DlqListResponse, DlqPurgeResponse};
-use sinex_gateway::handlers::dlq::{handle_dlq_list, handle_dlq_purge};
 use xtask::sandbox::{nats::EphemeralNats, prelude::*};
 
 async fn setup_dlq_stream(

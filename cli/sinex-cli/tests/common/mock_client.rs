@@ -6,6 +6,7 @@ use serde_json::Value;
 use sinex_primitives::rpc::{
     coordination::InstanceInfo, dlq::*, nodes::*, replay::*, system::SystemHealthResponse,
 };
+use sinex_primitives::temporal;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -107,7 +108,9 @@ impl MockGatewayClient {
     }
 
     pub async fn health(&self) -> Result<SystemHealthResponse> {
-        use sinex_primitives::rpc::system::{ComponentHealth, ComponentsHealth, ReplayControlHealth};
+        use sinex_primitives::rpc::system::{
+            ComponentHealth, ComponentsHealth, ReplayControlHealth,
+        };
 
         self.record_call("health", vec![]);
         Ok(self
@@ -227,10 +230,10 @@ impl MockGatewayClient {
                     last_event_id: None,
                     batch_number: 0,
                     savepoint_id: None,
-                    updated_at: crate::temporal::now().to_rfc3339(),
+                    updated_at: temporal::now().format_rfc3339(),
                 },
                 actor: "test-actor".to_string(),
-                created_at: crate::temporal::now().to_rfc3339(),
+                created_at: temporal::now().format_rfc3339(),
                 approved_by: None,
                 approved_at: None,
                 executor_node: None,
@@ -249,7 +252,7 @@ impl MockGatewayClient {
                 MockResponse::DlqList(resp) => Some(resp),
                 _ => None,
             })
-            .unwrap_or_else(|| DlqListResponse {
+            .unwrap_or(DlqListResponse {
                 total_messages: 0,
                 total_bytes: 0,
                 first_seq: 0,

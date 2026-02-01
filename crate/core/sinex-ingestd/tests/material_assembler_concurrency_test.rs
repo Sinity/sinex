@@ -6,7 +6,7 @@ use futures::future::join_all;
 use serde_json::json;
 use sinex_ingestd::{IngestdResult, MaterialAssembler};
 use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
-use sinex_primitives::Ulid;
+use sinex_primitives::{temporal, Ulid};
 use sqlx::Row;
 use std::sync::Arc;
 use std::time::Duration;
@@ -159,7 +159,7 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
                 "material_kind": "annex",
                 "source_identifier": format!("test://concurrent/{}", material_id),
                 "metadata": {"idx": material_id.to_string()},
-                "started_at": crate::temporal::now().to_rfc3339(),
+                "started_at": temporal::now().format_rfc3339(),
             })
             .to_string()
             .into(),
@@ -199,7 +199,7 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
             ctx.pipeline_namespace().subject("source_material.end"),
             json!({
                 "material_id": material_id.to_string(),
-                "ended_at": crate::temporal::now().to_rfc3339(),
+                "ended_at": temporal::now().format_rfc3339(),
                 "content_hash": hash,
                 "total_slices": slices.len(),
                 "total_size_bytes": total_size,

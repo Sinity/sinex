@@ -207,10 +207,7 @@ impl WorkspaceAnalyzer {
             let name = package.name().to_string();
             let version = package.version().to_string();
 
-            version_map
-                .entry(name)
-                .or_insert_with(HashSet::new)
-                .insert(version);
+            version_map.entry(name).or_default().insert(version);
         }
 
         // Find packages with multiple versions

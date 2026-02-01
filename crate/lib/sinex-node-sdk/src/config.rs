@@ -41,11 +41,7 @@ use figment::{
     Figment,
 };
 use serde::{Deserialize, Serialize};
-use sinex_primitives::{
-    environment::environment,
-    units::Seconds,
-    validation::validate_path,
-};
+use sinex_primitives::{environment::environment, units::Seconds, validation::validate_path};
 use std::collections::HashMap;
 use uncased::{Uncased, UncasedStr};
 use validator::Validate;
@@ -565,11 +561,9 @@ fn validate_work_dir(path: &Utf8PathBuf) -> Result<(), validator::ValidationErro
 }
 
 fn validate_rfc3339(timestamp: &str) -> Result<(), validator::ValidationError> {
-    sinex_primitives::temporal::Timestamp::parse_rfc3339(
-        timestamp,
-    )
-    .map(|_| ())
-    .map_err(|_| validator::ValidationError::new("invalid_rfc3339"))
+    sinex_primitives::temporal::Timestamp::parse_rfc3339(timestamp)
+        .map(|_| ())
+        .map_err(|_| validator::ValidationError::new("invalid_rfc3339"))
 }
 
 fn validate_seconds_nonzero(value: &Seconds) -> Result<(), validator::ValidationError> {

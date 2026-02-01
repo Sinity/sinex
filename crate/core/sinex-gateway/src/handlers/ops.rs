@@ -1,6 +1,6 @@
 use serde_json::Value;
-use sinex_primitives::SinexError;
 use sinex_primitives::Id;
+use sinex_primitives::SinexError;
 use sqlx::PgPool;
 
 // Re-export shared types
@@ -358,7 +358,7 @@ pub async fn handle_ops_cancel(
 mod tests {
     use super::*;
     use serde_json::json;
-    use xtask::sandbox::{sinex_test, TestContext};
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     async fn ops_start_creates_operation(ctx: &TestContext) -> TestResult<()> {

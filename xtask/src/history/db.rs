@@ -126,6 +126,9 @@ impl HistoryDb {
                 rendered TEXT
             );
 
+            -- Background job tracking columns (added for jobs unification)
+            -- Note: These columns may not exist in older DBs, so we use ALTER TABLE conditionally
+
             -- Indices for common queries
             CREATE INDEX IF NOT EXISTS idx_invocations_command ON invocations(command);
             CREATE INDEX IF NOT EXISTS idx_invocations_started ON invocations(started_at);
@@ -345,6 +348,397 @@ impl HistoryDb {
             .conn
             .query_row("SELECT COUNT(*) FROM invocations", [], |row| row.get(0))?;
         Ok(count)
+    }
+
+    // ============ Background Job Methods (Phase 3: Jobs Unification) ============
+
+    /// Ensure the background job columns exist (for schema migration).
+    pub fn ensure_job_columns(&self) -> Result<()> {
+        // Add columns if they don't exist (SQLite doesn't support IF NOT EXISTS for columns)
+        let columns_to_add = [
+            ("pid", "INTEGER"),
+            ("is_background", "INTEGER DEFAULT 0"),
+            ("stdout_path", "TEXT"),
+            ("stderr_path", "TEXT"),
+        ];
+
+        for (col_name, col_type) in columns_to_add {
+            let _ = self.conn.execute(
+                &format!(
+                    "ALTER TABLE invocations ADD COLUMN {} {}",
+                    col_name, col_type
+                ),
+                [],
+            );
+            // Ignore errors (column likely already exists)
+        }
+
+        // Create index for background job queries
+        let _ = self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_invocations_background ON invocations(is_background, status) WHERE is_background = 1",
+            [],
+        );
+
+        Ok(())
+    }
+
+    /// Start a background job invocation. Returns the invocation ID.
+    pub fn start_background_job(
+        &self,
+        command: &str,
+        args: &[String],
+        pid: u32,
+        stdout_path: &Path,
+        stderr_path: &Path,
+    ) -> Result<i64> {
+        self.ensure_job_columns()?;
+
+        let args_json = serde_json::to_string(args)?;
+        let git_commit = get_git_commit();
+        let git_dirty = is_git_dirty();
+        let host = gethostname::gethostname().to_string_lossy().into_owned();
+        let cwd = std::env::current_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+        let started_at = OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap();
+
+        self.conn.execute(
+            r#"
+            INSERT INTO invocations (command, args_json, git_commit, git_dirty, started_at, host, cwd, status, pid, is_background, stdout_path, stderr_path)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'running', ?8, 1, ?9, ?10)
+            "#,
+            params![
+                command,
+                args_json,
+                git_commit,
+                git_dirty,
+                started_at,
+                host,
+                cwd,
+                pid,
+                stdout_path.display().to_string(),
+                stderr_path.display().to_string()
+            ],
+        )?;
+
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Get all active (running) background jobs.
+    pub fn get_active_background_jobs(&self) -> Result<Vec<BackgroundJob>> {
+        self.ensure_job_columns()?;
+
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT id, command, args_json, started_at, pid, stdout_path, stderr_path, status
+            FROM invocations
+            WHERE is_background = 1 AND status = 'running'
+            ORDER BY started_at DESC
+            "#,
+        )?;
+
+        let rows = stmt.query_map([], |row| {
+            let args_json: Option<String> = row.get(2)?;
+            let started_at_str: String = row.get(3)?;
+            let pid: Option<u32> = row.get(4)?;
+
+            Ok(BackgroundJob {
+                id: row.get(0)?,
+                command: row.get(1)?,
+                args: args_json
+                    .and_then(|s| serde_json::from_str(&s).ok())
+                    .unwrap_or_default(),
+                started_at: OffsetDateTime::parse(
+                    &started_at_str,
+                    &time::format_description::well_known::Rfc3339,
+                )
+                .unwrap_or_else(|_| OffsetDateTime::now_utc()),
+                pid: pid.unwrap_or(0),
+                stdout_path: row.get(5)?,
+                stderr_path: row.get(6)?,
+                status: InvocationStatus::from_str(&row.get::<_, String>(7)?),
+            })
+        })?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .context("failed to collect background jobs")
+    }
+
+    /// Get recent background jobs (including completed ones).
+    pub fn get_recent_background_jobs(&self, limit: usize) -> Result<Vec<BackgroundJob>> {
+        self.ensure_job_columns()?;
+
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT id, command, args_json, started_at, pid, stdout_path, stderr_path, status
+            FROM invocations
+            WHERE is_background = 1
+            ORDER BY started_at DESC
+            LIMIT ?1
+            "#,
+        )?;
+
+        let rows = stmt.query_map(params![limit], |row| {
+            let args_json: Option<String> = row.get(2)?;
+            let started_at_str: String = row.get(3)?;
+            let pid: Option<u32> = row.get(4)?;
+
+            Ok(BackgroundJob {
+                id: row.get(0)?,
+                command: row.get(1)?,
+                args: args_json
+                    .and_then(|s| serde_json::from_str(&s).ok())
+                    .unwrap_or_default(),
+                started_at: OffsetDateTime::parse(
+                    &started_at_str,
+                    &time::format_description::well_known::Rfc3339,
+                )
+                .unwrap_or_else(|_| OffsetDateTime::now_utc()),
+                pid: pid.unwrap_or(0),
+                stdout_path: row.get(5)?,
+                stderr_path: row.get(6)?,
+                status: InvocationStatus::from_str(&row.get::<_, String>(7)?),
+            })
+        })?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .context("failed to collect background jobs")
+    }
+
+    /// Update a background job's PID (used when process is spawned).
+    pub fn update_job_pid(&self, id: i64, pid: u32) -> Result<()> {
+        self.conn.execute(
+            "UPDATE invocations SET pid = ?1 WHERE id = ?2",
+            params![pid, id],
+        )?;
+        Ok(())
+    }
+
+    /// Check if a background job's process is still running.
+    pub fn is_job_running(&self, id: i64) -> Result<bool> {
+        let pid: Option<u32> = self.conn.query_row(
+            "SELECT pid FROM invocations WHERE id = ?1 AND is_background = 1",
+            params![id],
+            |row| row.get(0),
+        )?;
+
+        if let Some(pid) = pid {
+            // Check if process is still running
+            Ok(is_process_running(pid))
+        } else {
+            Ok(false)
+        }
+    }
+
+    // ============ Diagnostics Methods (Phase 4: Build Diagnostics Capture) ============
+
+    /// Record a build diagnostic (warning/error).
+    pub fn record_diagnostic(
+        &self,
+        invocation_id: i64,
+        level: &str,
+        code: Option<&str>,
+        message: &str,
+        file_path: Option<&str>,
+        line: Option<u32>,
+        col: Option<u32>,
+        rendered: Option<&str>,
+    ) -> Result<()> {
+        self.conn.execute(
+            r#"
+            INSERT INTO build_diagnostics (invocation_id, level, code, message, file_path, line, col, rendered)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            "#,
+            params![invocation_id, level, code, message, file_path, line, col, rendered],
+        )?;
+        Ok(())
+    }
+
+    /// Get diagnostics for an invocation.
+    pub fn get_diagnostics(&self, invocation_id: i64) -> Result<Vec<StoredDiagnostic>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT id, level, code, message, file_path, line, col, rendered
+            FROM build_diagnostics
+            WHERE invocation_id = ?1
+            ORDER BY id
+            "#,
+        )?;
+
+        let rows = stmt.query_map(params![invocation_id], |row| {
+            Ok(StoredDiagnostic {
+                id: row.get(0)?,
+                level: row.get(1)?,
+                code: row.get(2)?,
+                message: row.get(3)?,
+                file_path: row.get(4)?,
+                line: row.get(5)?,
+                col: row.get(6)?,
+                rendered: row.get(7)?,
+            })
+        })?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .context("failed to collect diagnostics")
+    }
+
+    /// Get recent diagnostics across all invocations.
+    pub fn get_recent_diagnostics(
+        &self,
+        limit: usize,
+        level_filter: Option<&str>,
+    ) -> Result<Vec<StoredDiagnostic>> {
+        let mut results = Vec::new();
+
+        if let Some(level) = level_filter {
+            let mut stmt = self.conn.prepare(
+                r#"
+                SELECT d.id, d.level, d.code, d.message, d.file_path, d.line, d.col, d.rendered
+                FROM build_diagnostics d
+                JOIN invocations i ON d.invocation_id = i.id
+                WHERE d.level = ?1
+                ORDER BY i.started_at DESC, d.id DESC
+                LIMIT ?2
+                "#,
+            )?;
+
+            let rows = stmt.query_map(params![level, limit], row_to_diagnostic)?;
+            for row in rows {
+                results.push(row?);
+            }
+        } else {
+            let mut stmt = self.conn.prepare(
+                r#"
+                SELECT d.id, d.level, d.code, d.message, d.file_path, d.line, d.col, d.rendered
+                FROM build_diagnostics d
+                JOIN invocations i ON d.invocation_id = i.id
+                ORDER BY i.started_at DESC, d.id DESC
+                LIMIT ?1
+                "#,
+            )?;
+
+            let rows = stmt.query_map(params![limit], row_to_diagnostic)?;
+            for row in rows {
+                results.push(row?);
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Get recent diagnostics with optional level and file pattern filters.
+    pub fn get_recent_diagnostics_filtered(
+        &self,
+        limit: usize,
+        level_filter: Option<&str>,
+        file_pattern: Option<&str>,
+    ) -> Result<Vec<StoredDiagnostic>> {
+        let mut results = Vec::new();
+
+        // Build query dynamically based on filters
+        let mut conditions = Vec::new();
+        let mut query = String::from(
+            r#"
+            SELECT d.id, d.level, d.code, d.message, d.file_path, d.line, d.col, d.rendered
+            FROM build_diagnostics d
+            JOIN invocations i ON d.invocation_id = i.id
+            "#,
+        );
+
+        if level_filter.is_some() {
+            conditions.push("d.level = ?");
+        }
+        if file_pattern.is_some() {
+            conditions.push("d.file_path LIKE ?");
+        }
+
+        if !conditions.is_empty() {
+            query.push_str("WHERE ");
+            query.push_str(&conditions.join(" AND "));
+        }
+
+        query.push_str(" ORDER BY i.started_at DESC, d.id DESC LIMIT ?");
+
+        let mut stmt = self.conn.prepare(&query)?;
+
+        // Bind parameters in order
+        let mut bound_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(level) = level_filter {
+            bound_params.push(Box::new(level.to_string()));
+        }
+        if let Some(pattern) = file_pattern {
+            // Convert glob pattern to SQL LIKE pattern
+            let like_pattern = format!("%{}%", pattern);
+            bound_params.push(Box::new(like_pattern));
+        }
+        bound_params.push(Box::new(limit as i64));
+
+        // Use rusqlite's params_from_iter for dynamic binding
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            bound_params.iter().map(|b| b.as_ref()).collect();
+
+        let rows = stmt.query_map(rusqlite::params_from_iter(params_refs), row_to_diagnostic)?;
+        for row in rows {
+            results.push(row?);
+        }
+
+        Ok(results)
+    }
+}
+
+fn row_to_diagnostic(row: &rusqlite::Row) -> rusqlite::Result<StoredDiagnostic> {
+    Ok(StoredDiagnostic {
+        id: row.get(0)?,
+        level: row.get(1)?,
+        code: row.get(2)?,
+        message: row.get(3)?,
+        file_path: row.get(4)?,
+        line: row.get(5)?,
+        col: row.get(6)?,
+        rendered: row.get(7)?,
+    })
+}
+
+/// A background job record from the history database.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackgroundJob {
+    pub id: i64,
+    pub command: String,
+    pub args: Vec<String>,
+    pub started_at: OffsetDateTime,
+    pub pid: u32,
+    pub stdout_path: Option<String>,
+    pub stderr_path: Option<String>,
+    pub status: InvocationStatus,
+}
+
+/// A stored build diagnostic.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredDiagnostic {
+    pub id: i64,
+    pub level: String,
+    pub code: Option<String>,
+    pub message: String,
+    pub file_path: Option<String>,
+    pub line: Option<u32>,
+    pub col: Option<u32>,
+    pub rendered: Option<String>,
+}
+
+/// Check if a process with the given PID is still running.
+fn is_process_running(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        // On Unix, sending signal 0 checks if process exists
+        unsafe { libc::kill(pid as i32, 0) == 0 }
+    }
+    #[cfg(not(unix))]
+    {
+        // On other platforms, assume running (best effort)
+        true
     }
 }
 

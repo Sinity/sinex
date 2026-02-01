@@ -30,6 +30,7 @@ pub trait EventPayload: Serialize + DeserializeOwned + Send + Sync + 'static {
     }
 
     /// Start building an event from this payload with material provenance.
+    #[allow(clippy::wrong_self_convention)] // Intentional: consumes self to build event
     fn from_material(
         self,
         material_id: impl Into<Id<SourceMaterial>>,
@@ -41,6 +42,7 @@ pub trait EventPayload: Serialize + DeserializeOwned + Send + Sync + 'static {
     }
 
     /// Start building an event from this payload with synthesis provenance.
+    #[allow(clippy::wrong_self_convention)] // Intentional: consumes self to build event
     fn from_parents<I>(self, parents: I) -> Result<EventBuilder<Self, HasProvenance>>
     where
         Self: Sized,
@@ -85,7 +87,9 @@ where
     }
 
     fn to_json_value(&self) -> Result<JsonValue> {
-        serde_json::to_value(self).map_err(|e| SinexError::serialization(e.to_string()))
+        serde_json::to_value(self).map_err(|e| {
+            SinexError::serialization("failed to serialize event payload").with_std_error(&e)
+        })
     }
 }
 

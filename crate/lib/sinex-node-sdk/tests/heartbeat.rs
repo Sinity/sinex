@@ -1,7 +1,7 @@
-use sinex_node_sdk::types::Seconds;
 use sinex_node_sdk::emit_heartbeat;
 use sinex_node_sdk::heartbeat::HeartbeatEmitter;
-use xtask::sandbox::sinex_test;
+use sinex_primitives::Seconds;
+use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn heartbeat_emitter_tracks_metadata() -> TestResult<()> {

@@ -9,15 +9,15 @@
 // - **JSON Attacks**: Circular references, billion laughs, expansion attacks
 // - **ULID Attacks**: Extreme dates, collision attempts, timestamp manipulation
 
+use sinex_db::validation::EventValidator;
+use sinex_primitives::Timestamp;
+use std::collections::HashSet;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration as StdDuration;
+use std::time::Duration;
+use std::time::Instant;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::Timeouts;
-use sinex_primitives::db::validation::EventValidator;
-use sinex_primitives::Timestamp;
-use time::Duration;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
-use std::time::Duration as StdDuration;
-use std::collections::HashSet;
 
 // =============================================================================
 // Time-based Attack Tests
@@ -33,7 +33,7 @@ async fn test_event_processing_during_dst_change(ctx: TestContext) -> TestResult
     let events_around_dst = vec![
         (utc_base - Duration::minutes(30), "before_dst"), // 1:30 AM
         (utc_base - Duration::minutes(1), "just_before"), // 1:59 AM
-        (utc_base, "at_transition"),                            // 2:00 AM (doesn't exist!)
+        (utc_base, "at_transition"),                      // 2:00 AM (doesn't exist!)
         (utc_base + Duration::minutes(1), "during_gap"),  // 2:01 AM (doesn't exist!)
         (utc_base + Duration::hours(1), "after_dst"),     // 3:00 AM
     ];
@@ -103,7 +103,11 @@ async fn test_ulid_generation_with_system_clock_regression(ctx: TestContext) -> 
     let ulid3 = Ulid::from_datetime(micro_regression);
 
     println!("Micro regression test:");
-    println!("  Base:  {} -> {}", base_time.unix_timestamp_nanos() / 1_000_000, ulid1);
+    println!(
+        "  Base:  {} -> {}",
+        base_time.unix_timestamp_nanos() / 1_000_000,
+        ulid1
+    );
     println!(
         "  -100μs: {} -> {}",
         micro_regression.unix_timestamp_nanos() / 1_000_000,
@@ -323,9 +327,7 @@ async fn test_json_depth_bomb_attack(ctx: TestContext) -> TestResult<()> {
 
     // Test serialization time and memory usage
     let start = Instant::now();
-    let serialization_result = std::panic::catch_unwind(|| {
-        serde_json::to_string(&deep_json)
-    });
+    let serialization_result = std::panic::catch_unwind(|| serde_json::to_string(&deep_json));
     let elapsed = start.elapsed();
 
     match serialization_result {
@@ -464,7 +466,11 @@ async fn test_ulid_zero_timestamp(ctx: TestContext) -> TestResult<()> {
     println!("Recovered timestamp: {:?}", ulid.timestamp());
 
     // This might fail if implementation assumes positive timestamps
-    assert_eq!(ulid.timestamp().unix_timestamp(), 0, "Epoch timestamp corrupted");
+    assert_eq!(
+        ulid.timestamp().unix_timestamp(),
+        0,
+        "Epoch timestamp corrupted"
+    );
 
     Ok(())
 }
@@ -484,10 +490,7 @@ async fn test_ulid_collision_resistance(ctx: TestContext) -> TestResult<()> {
         }
     }
 
-    println!(
-        "Generated {} ULIDs with no collisions",
-        collision_attempts
-    );
+    println!("Generated {} ULIDs with no collisions", collision_attempts);
 
     // Test with same timestamp
     let fixed_time = Timestamp::now();
@@ -497,7 +500,10 @@ async fn test_ulid_collision_resistance(ctx: TestContext) -> TestResult<()> {
         let ulid = Ulid::from_datetime(fixed_time);
 
         if !timestamp_ulids.insert(ulid) {
-            panic!("ULID collision with fixed timestamp after {} attempts!", timestamp_ulids.len());
+            panic!(
+                "ULID collision with fixed timestamp after {} attempts!",
+                timestamp_ulids.len()
+            );
         }
     }
 

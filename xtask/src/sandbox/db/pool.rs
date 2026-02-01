@@ -155,7 +155,7 @@ pub fn get_pool_stats() -> PoolStats {
             for slot in &pool.slots {
                 if let Some(p) = slot.pool.lock().clone() {
                     totals.0 += p.size() as usize;
-                    totals.1 += p.num_idle() as usize;
+                    totals.1 += p.num_idle();
                 }
             }
         }
@@ -174,7 +174,7 @@ pub async fn get_pool_stats_async() -> PoolStats {
         for slot in &pool.slots {
             if let Some(p) = slot.pool.lock().clone() {
                 totals.0 += p.size() as usize;
-                totals.1 += p.num_idle() as usize;
+                totals.1 += p.num_idle();
             }
         }
     }
@@ -198,7 +198,7 @@ pub fn get_slot_stats() -> Vec<SlotStats> {
                         SlotStats {
                             name: slot.name.clone(),
                             total_connections: p.size() as usize,
-                            idle_connections: p.num_idle() as usize,
+                            idle_connections: p.num_idle(),
                             last_clean_time: time.map(|t| {
                                 t.format(&time::format_description::well_known::Rfc3339)
                                     .unwrap()
@@ -760,8 +760,7 @@ impl CleanupManager {
                     {
                         rt.block_on(CleanupManager::process_cleanup_task(task));
                     } else {
-                        let _ =
-                            futures::executor::block_on(CleanupManager::process_cleanup_task(task));
+                        futures::executor::block_on(CleanupManager::process_cleanup_task(task));
                     }
                 });
             }
@@ -948,7 +947,7 @@ impl DatabaseSlot {
         Option<String>,
         Option<Vec<(String, i64)>>,
     ) {
-        let time = self.last_clean_time.lock().clone();
+        let time = *self.last_clean_time.lock();
         let result = self.last_clean_result.lock().clone();
         let residuals = self.last_residuals.lock().clone();
         (time, result, residuals)
@@ -1382,7 +1381,7 @@ impl DatabasePool {
             }
             Err(err) => {
                 let _ = template_guard.release().await;
-                Err(err.into())
+                Err(err)
             }
         }
     }
@@ -1747,7 +1746,7 @@ impl DatabasePool {
                 // Clean it before use (default behavior, and also the fallback when the slot is
                 // not known-clean under clean-after-use).
                 let clean_start = std::time::Instant::now();
-                match clean_database(&slot, &pool, &slot.name, &slot.url).await {
+                match clean_database(slot, &pool, &slot.name, &slot.url).await {
                     Ok(_) => {
                         let clean_time = clean_start.elapsed();
                         if clean_time.as_millis() > 100 {
@@ -1934,7 +1933,7 @@ async fn ensure_pool_database_exists(db_name: &str, slot_url: &str) -> TestResul
         }
         Err(e) => {
             let _ = release_result;
-            Err(e.into())
+            Err(e)
         }
     }
 }
@@ -2172,7 +2171,7 @@ async fn clean_database(
                 ));
                 slot.record_clean_result(Err(err.to_string()), residuals.clone());
                 slot.quarantined.store(true, Ordering::SeqCst);
-                return Err(err.into());
+                return Err(err);
             }
 
             eprintln!("  ♻️  Database {db_name} schema mismatch ({reason}); recreating");
@@ -2204,7 +2203,7 @@ async fn clean_database(
                         let err = eyre!(format!("Database {db_name} cleanup failed: {verify_err}"));
                         slot.record_clean_result(Err(err.to_string()), residuals.clone());
                         slot.quarantined.store(true, Ordering::SeqCst);
-                        return Err(err.into());
+                        return Err(err);
                     }
                     eprintln!(
                         "  ⚠️ Database {db_name} failed clean-state verification: {verify_err}. Retrying cleanup once."
@@ -2257,7 +2256,7 @@ async fn clean_database(
                     ));
                     slot.record_clean_result(Err(err.to_string()), residuals.clone());
                     slot.quarantined.store(true, Ordering::SeqCst);
-                    return Err(err.into());
+                    return Err(err);
                 }
 
                 if let Err(verify_err) =
@@ -2268,7 +2267,7 @@ async fn clean_database(
                     ));
                     slot.record_clean_result(Err(err.to_string()), residuals.clone());
                     slot.quarantined.store(true, Ordering::SeqCst);
-                    return Err(err.into());
+                    return Err(err);
                 }
 
                 eprintln!("  ✅ Database cleanup recovered after forced truncation");
@@ -2540,7 +2539,7 @@ async fn recreate_pool_database(db_name: &str, slot_url: &str) -> TestResult<()>
         }
         Err(e) => {
             let _ = release_result;
-            Err(e.into())
+            Err(e)
         }
     }
 }
@@ -2681,8 +2680,7 @@ async fn force_event_material_cleanup(pool: &DbPool) -> TestResult<()> {
             if last_events != 0 || last_materials > 1 {
                 return Err(eyre!(format!(
                     "Force cleanup left {last_events} events and {last_materials} materials"
-                ))
-                .into());
+                )));
             }
 
             Ok(())
@@ -3126,7 +3124,7 @@ async fn ensure_template_database(
                 Err(e) => {
                     eprintln!("❌ Missing required PostgreSQL extensions: {e}");
                     eprintln!("   Check NixOS PostgreSQL configuration and required extensions.");
-                    return Err(e.into());
+                    return Err(e);
                 }
             }
 

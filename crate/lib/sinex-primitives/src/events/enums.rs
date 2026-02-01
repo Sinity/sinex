@@ -14,8 +14,10 @@ use std::fmt;
 /// Type of file modification detected
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum FileModificationType {
     /// File content was modified
+    #[default]
     Content,
     /// File metadata (timestamps, etc.) changed
     Metadata,
@@ -42,12 +44,6 @@ impl fmt::Display for FileModificationType {
     }
 }
 
-impl Default for FileModificationType {
-    fn default() -> Self {
-        Self::Content
-    }
-}
-
 // ─────────────────────────────────────────────────────────────
 // Process Enums
 // ─────────────────────────────────────────────────────────────
@@ -55,6 +51,7 @@ impl Default for FileModificationType {
 /// Reason for process shutdown
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ShutdownReason {
     /// Graceful shutdown requested
     Requested,
@@ -71,6 +68,7 @@ pub enum ShutdownReason {
     /// Configuration error
     ConfigError,
     /// Unknown reason
+    #[default]
     Unknown,
 }
 
@@ -86,12 +84,6 @@ impl fmt::Display for ShutdownReason {
             Self::ConfigError => write!(f, "config_error"),
             Self::Unknown => write!(f, "unknown"),
         }
-    }
-}
-
-impl Default for ShutdownReason {
-    fn default() -> Self {
-        Self::Unknown
     }
 }
 
@@ -130,10 +122,12 @@ impl fmt::Display for DeactivationReason {
 /// Type of system scan
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ScanType {
     /// Full system scan
     Full,
     /// Incremental scan (only changes)
+    #[default]
     Incremental,
     /// Targeted scan of specific paths/resources
     Targeted,
@@ -152,12 +146,6 @@ impl fmt::Display for ScanType {
             Self::Discovery => write!(f, "discovery"),
             Self::Quick => write!(f, "quick"),
         }
-    }
-}
-
-impl Default for ScanType {
-    fn default() -> Self {
-        Self::Incremental
     }
 }
 
@@ -444,8 +432,10 @@ impl fmt::Display for NetworkConnectionType {
 /// Network interface state
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum NetworkState {
     /// Unknown state
+    #[default]
     Unknown,
     /// Interface is down
     Down,
@@ -469,12 +459,6 @@ impl fmt::Display for NetworkState {
             Self::Connected => write!(f, "connected"),
             Self::Disconnecting => write!(f, "disconnecting"),
         }
-    }
-}
-
-impl Default for NetworkState {
-    fn default() -> Self {
-        Self::Unknown
     }
 }
 

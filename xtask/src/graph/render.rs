@@ -167,7 +167,7 @@ impl Renderer for DotRenderer {
     /// and dependencies as edges. Supports focus mode to show:
     /// - Forward mode: a package and its direct dependencies
     /// - Reverse mode: a package and its direct dependents
-    /// Uses left-to-right ranking for readability.
+    /// - Uses left-to-right ranking for readability.
     fn render(&self) -> Result<String> {
         let mut dot = String::from("digraph dependencies {\n");
         dot.push_str("  rankdir=LR;\n");
@@ -212,7 +212,7 @@ impl Renderer for DotRenderer {
             dot.push_str(&format!("  \"{}\";\n", escaped_name));
         }
 
-        dot.push_str("\n");
+        dot.push('\n');
 
         // Build a set of visible package names for edge filtering
         let visible_packages: HashSet<String> =
@@ -470,7 +470,7 @@ mod tests {
             .collect();
 
         // Should have at least some nodes
-        assert!(node_lines.len() > 0, "No nodes found in output");
+        assert!(!node_lines.is_empty(), "No nodes found in output");
 
         Ok(())
     }

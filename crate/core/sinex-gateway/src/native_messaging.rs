@@ -491,13 +491,7 @@ pub async fn run(
     shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
     let config = NativeMessagingConfig::from_env();
-    run_with_transport(
-        services,
-        config,
-        StdioNativeMessagingTransport::default(),
-        shutdown,
-    )
-    .await
+    run_with_transport(services, config, StdioNativeMessagingTransport, shutdown).await
 }
 
 /// Run the native messaging loop with a custom transport and configuration.

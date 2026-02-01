@@ -220,13 +220,13 @@ impl StackStatus {
 
 pub fn ensure_directories(config: &StackConfig) -> Result<()> {
     fs::create_dir_all(config.config_dir().join("nats"))?;
-    fs::create_dir_all(&config.pg_data())?;
-    fs::create_dir_all(&config.nats_data())?;
+    fs::create_dir_all(config.pg_data())?;
+    fs::create_dir_all(config.nats_data())?;
     fs::create_dir_all(config.nats_data().join("jetstream"))?;
-    fs::create_dir_all(&config.annex_data())?;
-    fs::create_dir_all(&config.run_dir())?;
-    fs::create_dir_all(&config.logs_dir())?;
-    fs::create_dir_all(&config.snapshots_dir())?;
+    fs::create_dir_all(config.annex_data())?;
+    fs::create_dir_all(config.run_dir())?;
+    fs::create_dir_all(config.logs_dir())?;
+    fs::create_dir_all(config.snapshots_dir())?;
     Ok(())
 }
 
@@ -249,30 +249,30 @@ pub fn annex_init(config: &StackConfig, verbose: bool) -> Result<()> {
         println!("Initializing git-annex repository...");
     }
 
-    fs::create_dir_all(&config.annex_data())?;
+    fs::create_dir_all(config.annex_data())?;
 
     let _ = Command::new("git")
         .args(["init"])
-        .current_dir(&config.annex_data())
+        .current_dir(config.annex_data())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
 
     let _ = Command::new("git-annex")
         .args(["init", "sinex-dev-isolated"])
-        .current_dir(&config.annex_data())
+        .current_dir(config.annex_data())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
 
     let _ = Command::new("git")
         .args(["config", "annex.thin", "true"])
-        .current_dir(&config.annex_data())
+        .current_dir(config.annex_data())
         .status();
 
     let _ = Command::new("git")
         .args(["config", "annex.backend", &config.annex.backend])
-        .current_dir(&config.annex_data())
+        .current_dir(config.annex_data())
         .status();
 
     if verbose {
@@ -304,7 +304,7 @@ pub fn pg_init(config: &StackConfig, verbose: bool) -> Result<()> {
 
     let status = Command::new(pg_bin("initdb"))
         .args(["--auth=trust", "--no-locale", "--encoding=UTF8", "-D"])
-        .arg(&config.pg_data())
+        .arg(config.pg_data())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
@@ -317,7 +317,7 @@ pub fn pg_init(config: &StackConfig, verbose: bool) -> Result<()> {
     let conf_path = config.pg_data().join("postgresql.conf");
     let mut conf = fs::OpenOptions::new()
         .append(true)
-        .open(&conf_path)
+        .open(conf_path)
         .context("Failed to open postgresql.conf")?;
 
     writeln!(conf, "\n# sinex-dev isolated configuration")?;
@@ -359,7 +359,7 @@ pub fn pg_start(config: &StackConfig, verbose: bool) -> Result<()> {
     let status = Command::new(pg_bin("pg_ctl"))
         .args(["-D", config.pg_data().to_str().unwrap(), "start", "-w"])
         .arg("-l")
-        .arg(&log_path)
+        .arg(log_path)
         .arg("-o")
         .arg(format!(
             "-k {} -p {}",
@@ -375,14 +375,14 @@ pub fn pg_start(config: &StackConfig, verbose: bool) -> Result<()> {
 
     if let Ok(content) = fs::read_to_string(config.pg_data().join("postmaster.pid")) {
         if let Some(first_line) = content.lines().next() {
-            fs::write(&config.pg_pid_file(), first_line)?;
+            fs::write(config.pg_pid_file(), first_line)?;
         }
     }
 
     for _ in 0..60 {
         let check = Command::new(pg_bin("pg_isready"))
             .args(["-h", config.run_dir().to_str().unwrap()])
-            .args(["-p", &config.postgres.port.to_string()])
+            .args(["-p", config.postgres.port.to_string().as_str()])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
@@ -404,7 +404,7 @@ pub fn pg_stop(config: &StackConfig, verbose: bool) -> Result<()> {
         if verbose {
             println!("PostgreSQL not running");
         }
-        let _ = fs::remove_file(&config.pg_pid_file());
+        let _ = fs::remove_file(config.pg_pid_file());
         return Ok(());
     }
 
@@ -422,7 +422,7 @@ pub fn pg_stop(config: &StackConfig, verbose: bool) -> Result<()> {
         ])
         .status();
 
-    let _ = fs::remove_file(&config.pg_pid_file());
+    let _ = fs::remove_file(config.pg_pid_file());
 
     if verbose {
         println!("PostgreSQL stopped");
@@ -437,7 +437,7 @@ pub fn pg_setup_database(config: &StackConfig, verbose: bool) -> Result<()> {
     let psql = |user: &str, db: &str, sql: &str| -> Result<String> {
         let output = Command::new(pg_bin("psql"))
             .args(["-h", config.run_dir().to_str().unwrap()])
-            .args(["-p", &config.postgres.port.to_string()])
+            .args(["-p", config.postgres.port.to_string().as_str()])
             .args(["-U", user])
             .args(["-d", db])
             .args(["-tAc", sql])
@@ -451,7 +451,7 @@ pub fn pg_setup_database(config: &StackConfig, verbose: bool) -> Result<()> {
     };
 
     let exists = psql(
-        &initial_user,
+        initial_user.as_str(),
         "postgres",
         &format!(
             "SELECT 1 FROM pg_roles WHERE rolname = '{}'",
@@ -463,7 +463,7 @@ pub fn pg_setup_database(config: &StackConfig, verbose: bool) -> Result<()> {
             println!("Creating superuser role: {}", config.postgres.superuser);
         }
         psql(
-            &initial_user,
+            initial_user.as_str(),
             "postgres",
             &format!(
                 "CREATE ROLE {} LOGIN SUPERUSER CREATEDB",
@@ -473,7 +473,7 @@ pub fn pg_setup_database(config: &StackConfig, verbose: bool) -> Result<()> {
     }
 
     let exists = psql(
-        &config.postgres.superuser,
+        config.postgres.superuser.as_str(),
         "postgres",
         &format!(
             "SELECT 1 FROM pg_roles WHERE rolname = '{}'",
@@ -485,7 +485,7 @@ pub fn pg_setup_database(config: &StackConfig, verbose: bool) -> Result<()> {
             println!("Creating application role: {}", config.postgres.user);
         }
         psql(
-            &config.postgres.superuser,
+            config.postgres.superuser.as_str(),
             "postgres",
             &format!(
                 "CREATE ROLE {} LOGIN SUPERUSER CREATEDB",
@@ -495,7 +495,7 @@ pub fn pg_setup_database(config: &StackConfig, verbose: bool) -> Result<()> {
     }
 
     let exists = psql(
-        &config.postgres.superuser,
+        config.postgres.superuser.as_str(),
         "postgres",
         &format!(
             "SELECT 1 FROM pg_database WHERE datname = '{}'",
@@ -507,7 +507,7 @@ pub fn pg_setup_database(config: &StackConfig, verbose: bool) -> Result<()> {
             println!("Creating database: {}", config.postgres.database);
         }
         psql(
-            &config.postgres.superuser,
+            config.postgres.superuser.as_str(),
             "postgres",
             &format!(
                 "CREATE DATABASE {} OWNER {}",
@@ -611,7 +611,7 @@ jetstream {{
         config.nats_data().join("jetstream").display()
     );
 
-    fs::write(&config.nats_config(), nats_conf)?;
+    fs::write(config.nats_config(), nats_conf)?;
 
     if verbose {
         println!("NATS configuration generated");
@@ -642,7 +642,7 @@ pub fn nats_start(config: &StackConfig, verbose: bool) -> Result<()> {
         .spawn()
         .context("Failed to start NATS")?;
 
-    fs::write(&config.nats_pid_file(), child.id().to_string())?;
+    fs::write(config.nats_pid_file(), child.id().to_string())?;
 
     for _ in 0..30 {
         let check = std::net::TcpStream::connect(format!("127.0.0.1:{}", config.nats.port));
@@ -663,7 +663,7 @@ pub fn nats_stop(config: &StackConfig, verbose: bool) -> Result<()> {
         if verbose {
             println!("NATS not running");
         }
-        let _ = fs::remove_file(&config.nats_pid_file());
+        let _ = fs::remove_file(config.nats_pid_file());
         return Ok(());
     }
 
@@ -683,7 +683,7 @@ pub fn nats_stop(config: &StackConfig, verbose: bool) -> Result<()> {
         }
     }
 
-    let _ = fs::remove_file(&config.nats_pid_file());
+    let _ = fs::remove_file(config.nats_pid_file());
 
     if verbose {
         println!("NATS stopped");
@@ -697,7 +697,7 @@ pub fn nats_stop(config: &StackConfig, verbose: bool) -> Result<()> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub fn is_process_running(pid_file: &Path) -> bool {
-    read_pid(pid_file).map_or(false, |pid| unsafe { libc::kill(pid as i32, 0) == 0 })
+    read_pid(pid_file).is_some_and(|pid| unsafe { libc::kill(pid as i32, 0) == 0 })
 }
 
 pub fn read_pid(pid_file: &Path) -> Option<u32> {

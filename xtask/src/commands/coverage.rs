@@ -409,7 +409,7 @@ mod tests {
         let metadata = cmd.metadata();
         assert_eq!(metadata.category, Some("test".to_string()));
         assert!(metadata.timeout.is_some());
-        assert_eq!(metadata.modifies_state, false);
+        assert!(!metadata.modifies_state);
     }
 
     #[test]

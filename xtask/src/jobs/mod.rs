@@ -135,8 +135,29 @@ impl JobManager {
         self.jobs_dir.join(id.to_string())
     }
 
+    /// Spawn an xtask command in background.
+    ///
+    /// Re-invokes cargo xtask with the provided subcommand and args,
+    /// but with --fg to ensure it runs in foreground (within the job).
+    pub fn spawn_xtask(&self, subcommand: &str, args: &[String]) -> Result<Job> {
+        let mut full_args = vec![
+            "xtask".to_string(),
+            "--fg".to_string(), // Force foreground since we're in a job
+            subcommand.to_string(),
+        ];
+        full_args.extend(args.iter().cloned());
+        self.spawn("cargo", &full_args)
+    }
+
+    /// Spawn a cargo command as a background job.
+    ///
+    /// This is a convenience wrapper that sets up the working directory
+    /// and handles cargo-specific environment.
+    pub fn spawn_cargo(&self, args: &[String]) -> Result<Job> {
+        self.spawn("cargo", args)
+    }
+
     /// Start a new background job.
-    #[allow(dead_code)]
     pub fn spawn(&self, command: &str, args: &[String]) -> Result<Job> {
         // Generate unique job ID
         let id = generate_job_id();
@@ -213,7 +234,7 @@ impl JobManager {
         }
 
         // Sort by started_at descending
-        jobs.sort_by(|a, b| b.meta.started_at.cmp(&a.meta.started_at));
+        jobs.sort_by_key(|j| std::cmp::Reverse(j.meta.started_at));
 
         Ok(jobs)
     }
@@ -222,6 +243,15 @@ impl JobManager {
     pub fn list_recent(&self, limit: usize) -> Result<Vec<Job>> {
         let jobs = self.list()?;
         Ok(jobs.into_iter().take(limit).collect())
+    }
+
+    /// List only active (running) jobs.
+    pub fn list_active(&self) -> Result<Vec<Job>> {
+        let jobs = self.list()?;
+        Ok(jobs
+            .into_iter()
+            .filter(|j| matches!(j.meta.status, JobStatus::Running { .. }))
+            .collect())
     }
 
     /// Cancel a running job.
@@ -345,7 +375,7 @@ fn tail_file(path: &Path, lines: usize) -> Result<String> {
     let file = File::open(path).context("failed to open file")?;
     let reader = BufReader::new(file);
 
-    let all_lines: Vec<_> = reader.lines().filter_map(|l| l.ok()).collect();
+    let all_lines: Vec<_> = reader.lines().map_while(Result::ok).collect();
     let start = all_lines.len().saturating_sub(lines);
 
     Ok(all_lines[start..].join("\n"))

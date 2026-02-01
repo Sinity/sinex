@@ -178,7 +178,7 @@ pub async fn create_pool(database_url: &str) -> Result<DbPool> {
 pub async fn create_pool_with_config(database_url: &str, config: &PoolConfig) -> Result<DbPool> {
     config
         .validate()
-        .map_err(|e| SinexError::validation(e.to_string()))?;
+        .map_err(|e| SinexError::validation("pool config validation failed").with_std_error(&e))?;
 
     let statement_timeout_secs = config.statement_timeout_secs.as_secs();
     let pool = PgPoolOptions::new()
@@ -217,9 +217,9 @@ pub fn get_database_url() -> Result<String> {
     let base_url = env::var("DATABASE_URL")
         .map_err(|_| SinexError::configuration("DATABASE_URL environment variable is required"))?;
 
-    Ok(environment()
-        .database_url(&base_url)
-        .map_err(|e| SinexError::configuration(e.to_string()))?)
+    Ok(environment().database_url(&base_url).map_err(|e| {
+        SinexError::configuration("failed to construct database URL").with_std_error(&e)
+    })?)
 }
 
 pub async fn create_pool_strict() -> Result<DbPool> {

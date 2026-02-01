@@ -63,7 +63,7 @@ async fn health_check_interval_can_be_configured() -> TestResult<()> {
 
 #[sinex_test]
 async fn heartbeat_interval_can_be_configured() -> TestResult<()> {
-    use sinex_node_sdk::types::Seconds;
+    use sinex_primitives::Seconds;
 
     let manager =
         LifecycleManager::new("test-service".to_string()).with_heartbeat(Seconds::from_secs(10));

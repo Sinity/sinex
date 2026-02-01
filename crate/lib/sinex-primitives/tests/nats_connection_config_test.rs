@@ -1,7 +1,7 @@
 use nkeys::KeyPair;
 use sinex_primitives::nats::NatsConnectionConfig;
-use xtask::sandbox::{sinex_test, TestContext, TestResult};
 use std::io::Write;
+use xtask::sandbox::sinex_test;
 
 #[sinex_test]
 fn nats_config_requires_tls_scheme_when_enabled() -> TestResult<()> {

@@ -3,14 +3,14 @@
 // Focused stress tests that exercise production checkpoint persistence and
 // event ingestion under concurrent load.
 
-use sinex_primitives::db::models::EventFactory;
+use sinex_db::models::EventFactory;
+use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
 use sinex_primitives::ulid::Ulid;
 use sinex_primitives::Timestamp;
-use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
-use xtask::sandbox::prelude::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
+use xtask::sandbox::prelude::*;
 
 const STRESS_GROUP: &str = "stress";
 
@@ -114,10 +114,13 @@ async fn test_event_ingestion_stress(ctx: TestContext) -> TestResult<()> {
         "expected at least {total_events} events, got {inserted}"
     );
 
-    sqlx::query!("DELETE FROM core.events WHERE source = $1", "stress.ingestion")
-        .execute(&pool)
-        .await
-        .ok();
+    sqlx::query!(
+        "DELETE FROM core.events WHERE source = $1",
+        "stress.ingestion"
+    )
+    .execute(&pool)
+    .await
+    .ok();
 
     Ok(())
 }

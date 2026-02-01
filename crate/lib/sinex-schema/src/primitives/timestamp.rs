@@ -37,6 +37,11 @@ impl Timestamp {
             .map(Self)
     }
 
+    /// Create from Unix timestamp in nanoseconds.
+    pub fn from_unix_timestamp_nanos(ns: i128) -> Option<Self> {
+        OffsetDateTime::from_unix_timestamp_nanos(ns).ok().map(Self)
+    }
+
     /// Parse from an RFC3339 string.
     pub fn parse_rfc3339(s: &str) -> Result<Self, time::error::Parse> {
         use time::format_description::well_known::Rfc3339;
@@ -91,6 +96,15 @@ impl Timestamp {
 impl From<OffsetDateTime> for Timestamp {
     fn from(dt: OffsetDateTime) -> Self {
         Self(dt)
+    }
+}
+
+impl From<std::time::SystemTime> for Timestamp {
+    fn from(st: std::time::SystemTime) -> Self {
+        // Convert SystemTime to OffsetDateTime (fallible, but we use a fallback)
+        match OffsetDateTime::from(st) {
+            dt => Self(dt),
+        }
     }
 }
 

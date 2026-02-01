@@ -867,8 +867,8 @@ impl Sandbox {
     }
 
     /// Register a background task or handle by name and optional join handle.
+    ///
     /// Useful for process handles or runtime-managed resources.
-
     /// Wait for background tasks and shutdown hooks to finish. Called automatically on drop,
     /// but available for tests that want deterministic cleanup points.
     pub async fn quiesce_background_tasks(&self) -> TestResult<()> {
@@ -955,7 +955,7 @@ impl Sandbox {
         let material_id = Id::<SourceMaterial>::new();
         self.ensure_source_material(material_id, Some(source.as_str()))
             .await?;
-        let material_ulid = material_id.as_ulid().clone();
+        let material_ulid = *material_id.as_ulid();
 
         // Build event with real provenance from the start
         let event = Event::<JsonValue> {
@@ -979,13 +979,12 @@ impl Sandbox {
 
         let persisted_id = self.publish_prebuilt_event(&event).await?;
         let published_event_id = Id::<Event<JsonValue>>::from_ulid(persisted_id);
-        WaitHelpers::wait_for_event_id(&self.pool, published_event_id.clone(), DEFAULT_WAIT_SECS)
-            .await?;
+        WaitHelpers::wait_for_event_id(&self.pool, published_event_id, DEFAULT_WAIT_SECS).await?;
 
         let stored = self
             .pool
             .events()
-            .get_by_id(published_event_id.clone())
+            .get_by_id(published_event_id)
             .await?
             .ok_or_else(|| {
                 eyre!(
@@ -995,10 +994,10 @@ impl Sandbox {
             })?;
 
         let cleanup_material = match &stored.provenance() {
-            Provenance::Material { id, .. } => Some(id.as_ulid().clone()),
+            Provenance::Material { id, .. } => Some(*id.as_ulid()),
             _ => Some(material_ulid),
         };
-        self.record_created_event(published_event_id.as_ulid().clone(), cleanup_material);
+        self.record_created_event(*published_event_id.as_ulid(), cleanup_material);
 
         Ok(stored)
     }
@@ -1067,7 +1066,7 @@ impl Sandbox {
         source_identifier: Option<&str>,
     ) -> TestResult<Ulid> {
         let id = self.create_source_material(source_identifier).await?;
-        Ok(id.as_ulid().clone())
+        Ok(*id.as_ulid())
     }
 
     /// Connection URL for the underlying test database.
@@ -1258,10 +1257,10 @@ impl Sandbox {
 
         // Assign an ID if the event doesn't have one
         let event_id = match &envelope.id {
-            Some(id) => id.as_ulid().clone(),
+            Some(id) => *id.as_ulid(),
             None => {
                 let new_id = Id::new();
-                let ulid = new_id.as_ulid().clone();
+                let ulid = *new_id.as_ulid();
                 envelope.id = Some(new_id);
                 ulid
             }

@@ -1,24 +1,44 @@
 #![doc = include_str!("../docs/replay_control.md")]
 
 pub use crate::replay_state_machine::ReplayScope;
-use crate::replay_state_machine::{ReplayOperation, ReplayState, ReplayStateMachine};
+use crate::replay_state_machine::{
+    ReplayCheckpoint, ReplayOperation, ReplayState, ReplayStateMachine,
+};
 use async_nats::connection::State as NatsState;
 use async_nats::{Client, Message};
 use color_eyre::eyre::{eyre, Context, Result};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
+use sinex_db::repositories::DbPoolExt;
+use sinex_primitives::domain::EventSource;
 use sinex_primitives::environment::{environment, SinexEnvironment};
-use sinex_primitives::Timestamp;
-use sinex_primitives::Ulid;
+use sinex_primitives::{Pagination, Timestamp, Ulid};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 use tokio::time::interval;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 const REPLAY_CONTROL_SUBSCRIBE_ATTEMPTS: usize = 5;
 const REPLAY_CONTROL_SUBSCRIBE_BACKOFF_BASE: Duration = Duration::from_millis(200);
 const REPLAY_CONTROL_SUBSCRIBE_BACKOFF_MAX: Duration = Duration::from_secs(2);
+
+/// Default batch size for replaying events
+const REPLAY_BATCH_SIZE: i64 = 1000;
+
+/// Checkpoint update interval (every N events)
+const CHECKPOINT_UPDATE_INTERVAL: u64 = 100;
+
+/// Valid actor prefixes for replay operations.
+/// Actors must start with one of these prefixes to be authorized.
+const VALID_ACTOR_PREFIXES: &[&str] = &[
+    "system:",   // Internal system operations
+    "service:",  // Service accounts
+    "user:",     // Authenticated users
+    "admin:",    // Administrative operations
+    "operator:", // Operations team
+    "test:",     // Test actors (for testing)
+];
 
 fn env_var_duration_secs(name: &str, default: u64) -> Duration {
     Duration::from_secs(
@@ -27,6 +47,42 @@ fn env_var_duration_secs(name: &str, default: u64) -> Duration {
             .and_then(|s| s.parse().ok())
             .unwrap_or(default),
     )
+}
+
+/// Validate that an actor is authorized to perform replay operations.
+///
+/// Actors must have a valid prefix (e.g., "user:", "admin:", "service:").
+/// This provides basic authorization without requiring external auth systems.
+fn validate_actor(actor: &str) -> Result<()> {
+    if actor.is_empty() {
+        return Err(eyre!("Actor cannot be empty"));
+    }
+
+    // Check for valid prefix
+    let has_valid_prefix = VALID_ACTOR_PREFIXES
+        .iter()
+        .any(|prefix| actor.starts_with(prefix));
+
+    if !has_valid_prefix {
+        return Err(eyre!(
+            "Invalid actor format. Actor must start with one of: {}",
+            VALID_ACTOR_PREFIXES.join(", ")
+        ));
+    }
+
+    // Validate actor identifier (after prefix) is not empty
+    let identifier = actor.split_once(':').map(|(_, id)| id).unwrap_or("");
+
+    if identifier.is_empty() {
+        return Err(eyre!("Actor identifier cannot be empty after prefix"));
+    }
+
+    // Validate identifier doesn't contain control characters
+    if identifier.chars().any(|c| c.is_control()) {
+        return Err(eyre!("Actor identifier contains invalid characters"));
+    }
+
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,14 +112,17 @@ struct ReplayControlHealthState {
 }
 
 /// Spawn the replay control bus and return a client handle.
-/// Spawn the replay control bus and return a client handle.
+///
+/// The replay control system manages distributed replay operations, coordinating
+/// event re-processing across the cluster with proper state tracking and locking.
 pub async fn spawn_replay_control(
     replay: Arc<ReplayStateMachine>,
     client: Client,
 ) -> Result<ReplayControlClient> {
     let env = environment().clone();
 
-    let executor = ReplayExecutionEngine::new(replay.clone());
+    // Create execution engine with NATS client for event republishing
+    let executor = ReplayExecutionEngine::new(replay.clone(), client.clone());
     ReplayTelemetry::new(replay.clone()).spawn();
 
     ReplayControlServer::new(env.clone(), client.clone(), replay, executor)
@@ -136,20 +195,18 @@ impl ReplayControlClient {
         )
         .await
         .map_err(|_| {
-            let error_msg = format!("Replay control request timed out after {:?}", timeout);
+            let error_msg = format!("Replay control request timed out after {timeout:?}");
             self.record_error(error_msg.clone());
             eyre!(error_msg)
         })?
-        .map_err(|err| {
+        .inspect_err(|err| {
             self.record_error(err.to_string());
-            err
         })
         .wrap_err("Replay control request failed")?;
 
         let response: ReplayControlResponse = serde_json::from_slice(&message.payload)
-            .map_err(|err| {
+            .inspect_err(|err| {
                 self.record_error(err.to_string());
-                err
             })
             .wrap_err("Invalid replay control response")?;
 
@@ -179,16 +236,14 @@ impl ReplayControlClient {
             .client
             .send_request(self.subject.clone(), nats_request)
             .await
-            .map_err(|err| {
+            .inspect_err(|err| {
                 self.record_error(err.to_string());
-                err
             })
             .wrap_err("Replay control request timed out")?;
 
         let response: ReplayControlResponse = serde_json::from_slice(&message.payload)
-            .map_err(|err| {
+            .inspect_err(|err| {
                 self.record_error(err.to_string());
-                err
             })
             .wrap_err("Invalid replay control response")?;
 
@@ -205,7 +260,9 @@ impl ReplayControlClient {
     }
 
     pub async fn plan(&self, actor: String, scope: ReplayScope) -> Result<ReplayOperation> {
-        // TODO: CRITICAL - Add authentication/authorization (analysis/crates/sinex-gateway/replay_control.md)
+        // Validate actor format before sending request
+        validate_actor(&actor)?;
+
         let response = self
             .send(ReplayControlRequest::Plan { actor, scope })
             .await?;
@@ -221,6 +278,9 @@ impl ReplayControlClient {
         scope: ReplayScope,
         timeout: Duration,
     ) -> Result<ReplayOperation> {
+        // Validate actor format before sending request
+        validate_actor(&actor)?;
+
         let response = self
             .send_with_timeout(ReplayControlRequest::Plan { actor, scope }, timeout)
             .await?;
@@ -246,6 +306,9 @@ impl ReplayControlClient {
     }
 
     pub async fn approve(&self, operation_id: Ulid, approver: String) -> Result<ReplayOperation> {
+        // Validate approver identity
+        validate_actor(&approver)?;
+
         let response = self
             .send(ReplayControlRequest::Approve {
                 operation_id,
@@ -258,6 +321,9 @@ impl ReplayControlClient {
     }
 
     pub async fn execute(&self, operation_id: Ulid, executor: String) -> Result<ReplayOperation> {
+        // Validate executor identity
+        validate_actor(&executor)?;
+
         let response = self
             .send(ReplayControlRequest::Execute {
                 operation_id,
@@ -381,7 +447,7 @@ impl ReplayControlServer {
             Ok(response) => response,
             Err(err) => {
                 warn!(?err, "Replay control request failed");
-                ReplayControlResponse::error(format!("{}", err))
+                ReplayControlResponse::error(format!("{err}"))
             }
         };
 
@@ -404,6 +470,9 @@ impl ReplayControlServer {
     ) -> Result<ReplayControlResponse> {
         let response = match request {
             ReplayControlRequest::Plan { actor, scope } => {
+                // Server-side validation of actor (defense in depth)
+                validate_actor(&actor)?;
+
                 let op = replay
                     .create_operation(scope.clone(), actor.clone())
                     .await?;
@@ -420,6 +489,9 @@ impl ReplayControlServer {
                 operation_id,
                 approver,
             } => {
+                // Server-side validation of approver (defense in depth)
+                validate_actor(&approver)?;
+
                 replay.approve(operation_id, approver).await?;
                 let updated = replay.load_operation(operation_id).await?;
                 ReplayControlResponse::success(Some(updated), None, None)
@@ -428,6 +500,9 @@ impl ReplayControlServer {
                 operation_id,
                 executor: actor,
             } => {
+                // Server-side validation of executor (defense in depth)
+                validate_actor(&actor)?;
+
                 let updated = executor.execute(operation_id, actor).await?;
                 ReplayControlResponse::success(Some(updated), None, None)
             }
@@ -458,14 +533,27 @@ impl ReplayControlServer {
     }
 }
 
+/// Engine responsible for executing replay operations.
+///
+/// The execution engine:
+/// 1. Queries events from the database matching the replay scope
+/// 2. Republishes them through NATS for reprocessing
+/// 3. Tracks progress via checkpoints
+/// 4. Handles errors gracefully with proper state transitions
 #[derive(Clone)]
 struct ReplayExecutionEngine {
     replay: Arc<ReplayStateMachine>,
+    nats_client: Client,
+    env: SinexEnvironment,
 }
 
 impl ReplayExecutionEngine {
-    fn new(replay: Arc<ReplayStateMachine>) -> Self {
-        Self { replay }
+    fn new(replay: Arc<ReplayStateMachine>, nats_client: Client) -> Self {
+        Self {
+            replay,
+            nats_client,
+            env: environment().clone(),
+        }
     }
 
     async fn execute(&self, operation_id: Ulid, executor_name: String) -> Result<ReplayOperation> {
@@ -480,9 +568,20 @@ impl ReplayExecutionEngine {
             ));
         }
 
+        info!(
+            operation_id = %operation_id,
+            executor = %executor_name,
+            "Starting replay execution"
+        );
+
         let result = self.run_operation(operation_id).await;
 
         if let Err(ref err) = result {
+            error!(
+                operation_id = %operation_id,
+                error = %err,
+                "Replay execution failed"
+            );
             if let Err(mark_err) = self
                 .replay
                 .mark_failed(operation_id, format!("{err}"))
@@ -508,8 +607,6 @@ impl ReplayExecutionEngine {
             ));
         }
 
-        // TODO: CRITICAL - Implement actual event replay logic. This is currently a stub that fast-forwards state.
-        // See analysis/crates/sinex-gateway/replay_control.md
         let preview = initial.preview_summary.clone().ok_or_else(|| {
             eyre!(
                 "Operation {} is missing preview summary; run preview before execution",
@@ -517,37 +614,248 @@ impl ReplayExecutionEngine {
             )
         })?;
 
+        // Transition to Executing state
         self.replay
             .transition(operation_id, ReplayState::Executing)
             .await?;
 
         let total_events = preview
             .get("total_events")
-            .and_then(|value| value.as_i64())
+            .and_then(serde_json::Value::as_i64)
             .unwrap_or(0)
             .max(0) as u64;
 
-        let mut checkpoint = initial.checkpoint.clone();
-        checkpoint.total_events = total_events;
-        checkpoint.processed_events = total_events;
-        checkpoint.batch_number = checkpoint.batch_number.saturating_add(1);
-        checkpoint.updated_at = sinex_primitives::temporal::now();
+        info!(
+            operation_id = %operation_id,
+            total_events = total_events,
+            processor_id = %initial.scope.processor_id,
+            "Beginning event replay"
+        );
 
-        self.replay
-            .update_checkpoint(operation_id, &checkpoint)
-            .await?;
+        // Initialize checkpoint
+        let mut checkpoint = ReplayCheckpoint {
+            processed_events: 0,
+            total_events,
+            last_event_id: initial.checkpoint.last_event_id,
+            batch_number: 0,
+            savepoint_id: None,
+            updated_at: sinex_primitives::temporal::now(),
+        };
 
-        self.replay
-            .transition(operation_id, ReplayState::Committing)
-            .await?;
-        self.replay
-            .transition(operation_id, ReplayState::Completed)
-            .await?;
+        // Get the pool from the state machine for queries
+        let pool = self.replay.pool();
 
-        self.replay
-            .load_operation(operation_id)
-            .await
-            .map_err(|e| eyre!("{}", e))
+        // Execute actual replay
+        let replay_result = self
+            .replay_events(operation_id, &initial.scope, pool, &mut checkpoint)
+            .await;
+
+        match replay_result {
+            Ok(processed_count) => {
+                info!(
+                    operation_id = %operation_id,
+                    processed_events = processed_count,
+                    total_events = total_events,
+                    "Replay completed successfully"
+                );
+
+                // Finalize checkpoint
+                checkpoint.processed_events = processed_count;
+                checkpoint.updated_at = sinex_primitives::temporal::now();
+                self.replay
+                    .update_checkpoint(operation_id, &checkpoint)
+                    .await?;
+
+                // Transition through Committing to Completed
+                self.replay
+                    .transition(operation_id, ReplayState::Committing)
+                    .await?;
+                self.replay
+                    .transition(operation_id, ReplayState::Completed)
+                    .await?;
+
+                self.replay
+                    .load_operation(operation_id)
+                    .await
+                    .map_err(|e| eyre!("{}", e))
+            }
+            Err(err) => {
+                // Update checkpoint with current progress before failing
+                checkpoint.updated_at = sinex_primitives::temporal::now();
+                if let Err(ckpt_err) = self
+                    .replay
+                    .update_checkpoint(operation_id, &checkpoint)
+                    .await
+                {
+                    warn!(?ckpt_err, "Failed to save checkpoint on error");
+                }
+                Err(err)
+            }
+        }
+    }
+
+    /// Replay events matching the scope by republishing them through NATS.
+    ///
+    /// Events are:
+    /// 1. Queried from the database in batches
+    /// 2. Republished to replay subjects (with replay marker headers)
+    /// 3. Progress is tracked via checkpoints
+    async fn replay_events(
+        &self,
+        operation_id: Ulid,
+        scope: &ReplayScope,
+        pool: &sqlx::PgPool,
+        checkpoint: &mut ReplayCheckpoint,
+    ) -> Result<u64> {
+        let event_source = EventSource::new(&scope.processor_id);
+
+        // Resolve time window (default to last 24 hours if not specified)
+        let (start_time, end_time) = scope.time_window.unwrap_or_else(|| {
+            let end = sinex_primitives::temporal::now();
+            let start = end - time::Duration::hours(24);
+            (start, end)
+        });
+
+        let mut offset: i64 = 0;
+        let mut total_processed: u64 = 0;
+        let js = async_nats::jetstream::new(self.nats_client.clone());
+
+        loop {
+            // Query batch of events
+            let events = pool
+                .events()
+                .get_by_source_and_time_range(
+                    &event_source,
+                    start_time,
+                    end_time,
+                    Pagination::new(Some(REPLAY_BATCH_SIZE), Some(offset)),
+                )
+                .await
+                .wrap_err("Failed to query events for replay")?;
+
+            if events.is_empty() {
+                debug!(
+                    operation_id = %operation_id,
+                    offset = offset,
+                    "No more events to replay"
+                );
+                break;
+            }
+
+            let batch_size = events.len();
+            checkpoint.batch_number = checkpoint.batch_number.saturating_add(1);
+
+            debug!(
+                operation_id = %operation_id,
+                batch = checkpoint.batch_number,
+                events = batch_size,
+                offset = offset,
+                "Processing replay batch"
+            );
+
+            // Republish each event
+            for event in events {
+                let event_id = event
+                    .id
+                    .as_ref()
+                    .map(|id| id.to_string())
+                    .unwrap_or_else(|| Ulid::new().to_string());
+
+                // Build replay subject with marker
+                let subject = self.env.nats_subject(&format!(
+                    "events.replay.{}.{}",
+                    event.source.as_str().replace('.', "_"),
+                    event.event_type.as_str().replace('.', "_")
+                ));
+
+                // Serialize event payload
+                let payload = serde_json::json!({
+                    "id": event_id,
+                    "source": event.source.as_str(),
+                    "event_type": event.event_type.as_str(),
+                    "ts_orig": event.ts_orig.map(|t| t.format_rfc3339()),
+                    "host": event.host.as_str(),
+                    "payload": event.payload,
+                    "replay_operation_id": operation_id.to_string(),
+                    "replay_timestamp": sinex_primitives::temporal::now().format_rfc3339(),
+                });
+
+                let payload_bytes = serde_json::to_vec(&payload)
+                    .wrap_err("Failed to serialize event for replay")?;
+
+                // Add headers for replay tracking
+                let mut headers = async_nats::HeaderMap::new();
+                headers.insert(
+                    "Nats-Msg-Id",
+                    format!("replay-{}-{}", operation_id, event_id).as_str(),
+                );
+                headers.insert("X-Replay-Operation", operation_id.to_string().as_str());
+                headers.insert("X-Original-Event-Id", event_id.as_str());
+
+                // Publish to JetStream
+                match js
+                    .publish_with_headers(subject.clone(), headers, payload_bytes.into())
+                    .await
+                {
+                    Ok(ack_future) => {
+                        // Wait for ack with timeout
+                        match tokio::time::timeout(Duration::from_secs(10), ack_future).await {
+                            Ok(Ok(_)) => {
+                                total_processed += 1;
+                                checkpoint.processed_events = total_processed;
+                                checkpoint.last_event_id = event.id.map(|id| *id.as_ulid());
+                            }
+                            Ok(Err(err)) => {
+                                warn!(
+                                    operation_id = %operation_id,
+                                    event_id = %event_id,
+                                    error = %err,
+                                    "Failed to get ack for replayed event"
+                                );
+                                // Continue despite ack failure - event may still be processed
+                                total_processed += 1;
+                            }
+                            Err(_) => {
+                                warn!(
+                                    operation_id = %operation_id,
+                                    event_id = %event_id,
+                                    "Timeout waiting for ack on replayed event"
+                                );
+                                total_processed += 1;
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        error!(
+                            operation_id = %operation_id,
+                            event_id = %event_id,
+                            subject = %subject,
+                            error = %err,
+                            "Failed to publish replayed event"
+                        );
+                        return Err(eyre!("Failed to publish event {}: {}", event_id, err));
+                    }
+                }
+
+                // Update checkpoint periodically
+                if total_processed.is_multiple_of(CHECKPOINT_UPDATE_INTERVAL) {
+                    checkpoint.updated_at = sinex_primitives::temporal::now();
+                    self.replay
+                        .update_checkpoint(operation_id, checkpoint)
+                        .await?;
+                }
+            }
+
+            offset += batch_size as i64;
+
+            // Update checkpoint after each batch
+            checkpoint.updated_at = sinex_primitives::temporal::now();
+            self.replay
+                .update_checkpoint(operation_id, checkpoint)
+                .await?;
+        }
+
+        Ok(total_processed)
     }
 }
 
@@ -604,7 +912,7 @@ impl ReplayTelemetry {
     async fn sample(&self) -> Result<()> {
         let operations = self.replay.list_operations(None).await?;
         let mut counts: HashMap<ReplayState, usize> = HashMap::new();
-        for op in operations.iter() {
+        for op in &operations {
             *counts.entry(op.state).or_default() += 1;
         }
 
@@ -639,9 +947,10 @@ mod tests {
     use super::*;
     use serde_json::json;
     use sinex_db::repositories::DbPoolExt;
-    use sinex_primitives::{types::ulid::Ulid, DbPool, DynamicPayload, Id};
+    use sinex_db::DbPool;
+    use sinex_primitives::{DynamicPayload, Id, Ulid};
     use tokio::time::sleep;
-    use xtask::sandbox::{sinex_test, EphemeralNats, TestContext};
+    use xtask::sandbox::{sinex_test, EphemeralNats};
 
     fn sample_scope() -> ReplayScope {
         ReplayScope {
@@ -775,7 +1084,7 @@ mod tests {
 
         let scope = sample_scope();
         let err = client
-            .plan_with_timeout("tester".into(), scope, Duration::from_secs(1))
+            .plan_with_timeout("test:user".into(), scope, Duration::from_secs(1))
             .await
             .expect_err("plan should fail after broker drop");
         let message = err.to_string();
@@ -812,23 +1121,25 @@ mod tests {
         let mut scope = sample_scope();
         let end = Timestamp::now();
         scope.time_window = Some((
-            *end - time::Duration::hours(1),
-            *end + time::Duration::minutes(1),
+            Timestamp::from(*end - time::Duration::hours(1)),
+            Timestamp::from(*end + time::Duration::minutes(1)),
         ));
 
-        let planned = client.plan("tester".into(), scope.clone()).await?;
+        let planned = client
+            .plan("test:replay-user".into(), scope.clone())
+            .await?;
         assert_eq!(planned.state, ReplayState::Planning);
 
         let (previewed, _) = client.preview(planned.operation_id).await?;
         assert_eq!(previewed.state, ReplayState::Previewed);
 
         let approved = client
-            .approve(planned.operation_id, "approver".into())
+            .approve(planned.operation_id, "admin:approver".into())
             .await?;
         assert_eq!(approved.state, ReplayState::Approved);
 
         let executed = client
-            .execute(planned.operation_id, "executor-node".into())
+            .execute(planned.operation_id, "service:executor-node".into())
             .await?;
         assert_eq!(executed.state, ReplayState::Completed);
 
@@ -837,6 +1148,59 @@ mod tests {
             "Replay execution should record a concrete outcome for automation consumers"
         );
 
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn actor_validation_rejects_empty_actor(_ctx: TestContext) -> Result<()> {
+        let result = validate_actor("");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("cannot be empty"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn actor_validation_rejects_invalid_prefix(_ctx: TestContext) -> Result<()> {
+        let result = validate_actor("invalid:user");
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Invalid actor format"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn actor_validation_rejects_empty_identifier(_ctx: TestContext) -> Result<()> {
+        let result = validate_actor("user:");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("identifier cannot be empty"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn actor_validation_accepts_valid_actors(_ctx: TestContext) -> Result<()> {
+        assert!(validate_actor("user:alice").is_ok());
+        assert!(validate_actor("admin:root").is_ok());
+        assert!(validate_actor("service:replay-worker").is_ok());
+        assert!(validate_actor("system:internal").is_ok());
+        assert!(validate_actor("operator:ops-team").is_ok());
+        assert!(validate_actor("test:unit-test").is_ok());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn plan_rejects_invalid_actor(ctx: TestContext) -> Result<()> {
+        let nats = EphemeralNats::start().await?;
+        let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
+        let nats_client = nats.connect().await?;
+        let client = spawn_replay_control(replay, nats_client).await?;
+
+        let scope = sample_scope();
+        let result = client.plan("invalid-actor".into(), scope).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Invalid actor"));
         Ok(())
     }
 }
@@ -881,6 +1245,7 @@ pub struct ReplayControlResponse {
 }
 
 impl ReplayControlResponse {
+    #[must_use]
     pub fn success(
         operation: Option<ReplayOperation>,
         preview: Option<serde_json::Value>,

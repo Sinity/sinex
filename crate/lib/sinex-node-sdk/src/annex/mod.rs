@@ -182,7 +182,7 @@ impl BatchAddState {
             SinexError::processing("git-annex batch process unavailable".to_string())
         })?;
 
-        if let Some(status) = process.child.try_wait().map_err(|e| SinexError::io(e))? {
+        if let Some(status) = process.child.try_wait().map_err(SinexError::io)? {
             let reason = format!("git-annex batch add exited with {status}");
             self.disable(reason).await;
             return Err(SinexError::processing(
@@ -195,8 +195,8 @@ impl BatchAddState {
             .stdin
             .write_all(line.as_bytes())
             .await
-            .map_err(|e| SinexError::io(e))?;
-        process.stdin.flush().await.map_err(|e| SinexError::io(e))?;
+            .map_err(SinexError::io)?;
+        process.stdin.flush().await.map_err(SinexError::io)?;
 
         let mut output_line = String::new();
         loop {
@@ -205,7 +205,7 @@ impl BatchAddState {
                 .stdout
                 .read_line(&mut output_line)
                 .await
-                .map_err(|e| SinexError::io(e))?;
+                .map_err(SinexError::io)?;
             if bytes == 0 {
                 let reason = "git-annex batch add closed stdout".to_string();
                 self.disable(reason).await;
@@ -298,7 +298,7 @@ impl GitAnnex {
 
         // Ensure repository exists; initialize git + git-annex even when the
         // directory already exists (e.g., tempdirs created by tests).
-        std::fs::create_dir_all(&config.repo_path).map_err(|e| SinexError::io(e))?;
+        std::fs::create_dir_all(&config.repo_path).map_err(SinexError::io)?;
 
         let git_dir = config.repo_path.join(".git");
         if !git_dir.exists() {
@@ -358,7 +358,7 @@ impl GitAnnex {
         // Ensure directory exists
         tokio::fs::create_dir_all(repo_path)
             .await
-            .map_err(|e| SinexError::io(e))?;
+            .map_err(SinexError::io)?;
 
         // Initialize git repository if needed
         let git_dir = repo_path.join(".git");
@@ -424,7 +424,7 @@ impl GitAnnex {
             let target = self.config.repo_path.join(temp_name);
             tokio::fs::copy(&resolved_path, &target)
                 .await
-                .map_err(|e| SinexError::io(e))?;
+                .map_err(SinexError::io)?;
             (target, true)
         };
 
@@ -654,9 +654,7 @@ impl GitAnnex {
 
     /// Compute BLAKE3 hash for deduplication
     pub async fn compute_blake3_hash(file_path: &Utf8Path) -> NodeResult<String> {
-        let content = tokio::fs::read(file_path)
-            .await
-            .map_err(|e| SinexError::io(e))?;
+        let content = tokio::fs::read(file_path).await.map_err(SinexError::io)?;
 
         let hash = blake3::hash(&content);
         Ok(hash.to_hex().to_string())

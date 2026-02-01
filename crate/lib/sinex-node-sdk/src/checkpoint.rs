@@ -41,8 +41,8 @@ use crate::{stream_processor::Checkpoint, NodeResult, SinexError};
 use async_nats::jetstream::kv::Operation;
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
+use sinex_primitives::temporal::Timestamp;
 use std::convert::TryInto;
-use time::OffsetDateTime;
 use tracing::{debug, info, warn};
 
 /// Unified checkpoint state for both ingestors and automata.
@@ -68,7 +68,7 @@ pub struct CheckpointState {
     pub processed_count: u64,
 
     /// Last activity timestamp
-    pub last_activity: OffsetDateTime,
+    pub last_activity: Timestamp,
 
     /// Processor-specific state data
     pub data: Option<serde_json::Value>,
@@ -98,7 +98,7 @@ impl Default for CheckpointState {
         Self {
             checkpoint: Checkpoint::None,
             processed_count: 0,
-            last_activity: sinex_primitives::temporal::OffsetDateTime::now_utc(),
+            last_activity: Timestamp::now(),
             data: None,
             version: 2, // Version 2 for unified checkpoint format
             revision: 0,
@@ -517,7 +517,7 @@ impl CheckpointManager {
         })?;
 
         // Save to NATS KV only
-        let encoded = serde_json::to_vec(state).map_err(|e| SinexError::serialization(e))?;
+        let encoded = serde_json::to_vec(state).map_err(SinexError::serialization)?;
 
         let revision = if state.revision > 0 {
             self.kv
@@ -592,16 +592,16 @@ impl CheckpointManager {
         };
 
         let state: CheckpointState =
-            serde_json::from_slice(&entry).map_err(|e| SinexError::serialization(e))?;
+            serde_json::from_slice(&entry).map_err(SinexError::serialization)?;
         let timestamp = state.last_activity;
         let history_entry = CheckpointHistoryEntry {
             id: self.kv_key(),
             last_processed_id: state.last_processed_id(),
             processed_count: state.processed_count,
-            last_activity: state.last_activity.into(),
+            last_activity: state.last_activity,
             checkpoint_version: state.version,
-            created_at: timestamp.into(),
-            updated_at: timestamp.into(),
+            created_at: timestamp,
+            updated_at: timestamp,
         };
 
         Ok(vec![history_entry])
@@ -652,7 +652,7 @@ impl CheckpointManager {
         Ok(CheckpointStats {
             total_checkpoints: 1, // KV stores one version
             max_processed: processed_count,
-            last_update: last_update.map(|t| t.into()),
+            last_update: last_update.map(|t| t),
             first_checkpoint: None,
         })
     }
@@ -694,7 +694,7 @@ impl Default for CheckpointCleanupConfig {
     fn default() -> Self {
         Self {
             max_age: std::time::Duration::from_secs(30 * 24 * 60 * 60), // 30 days
-            interval: std::time::Duration::from_secs(24 * 60 * 60),     // 24 hours
+            interval: std::time::Duration::from_hours(24),
             enabled: false,
         }
     }
@@ -756,7 +756,7 @@ pub async fn cleanup_stale_checkpoints(
     kv: &async_nats::jetstream::kv::Store,
     max_age: std::time::Duration,
 ) -> NodeResult<CheckpointCleanupResult> {
-    let now = sinex_primitives::temporal::OffsetDateTime::now_utc();
+    let now = Timestamp::now();
     let cutoff = now - time::Duration::try_from(max_age).unwrap_or(time::Duration::days(30));
 
     let mut result = CheckpointCleanupResult {
@@ -882,7 +882,7 @@ pub fn spawn_checkpoint_cleanup_task(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::{sinex_test, TestContext};
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     async fn save_checkpoint_rejects_processed_count_overflow(
@@ -900,7 +900,7 @@ mod tests {
         state.processed_count = u64::MAX;
 
         let err = manager.save_checkpoint(&state).await.unwrap_err();
-        assert!(matches!(err, SinexError::checkpoint(_)));
+        assert!(matches!(err, SinexError::Checkpoint(_)));
         Ok(())
     }
 

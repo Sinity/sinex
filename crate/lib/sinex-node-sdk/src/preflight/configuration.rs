@@ -604,7 +604,7 @@ pub async fn validate_toml_file(path: &Utf8Path) -> NodeResult<Value> {
 
     let content = tokio::fs::read_to_string(&validated_path)
         .await
-        .map_err(|e| SinexError::io(e))?;
+        .map_err(SinexError::io)?;
 
     validate_toml_content(&content)
 }

@@ -903,18 +903,16 @@ mod tests {
     fn test_validation_error_messages() {
         // Verify error messages are descriptive
         let err = Seconds::from_secs(100000).validate().unwrap_err();
-        assert!(matches!(err, ValidationError::General(_)));
-        if let ValidationError::General(msg) = err {
-            assert!(msg.contains("100000"));
-            assert!(msg.contains("86400"));
-            assert!(msg.contains("24 hours"));
-        }
+        assert!(matches!(err, SinexError::Validation(_)));
+        let msg = err.message();
+        assert!(msg.contains("100000"));
+        assert!(msg.contains("86400"));
+        assert!(msg.contains("24 hours"));
 
         let err = Bytes::from_mebibytes(2000).validate().unwrap_err();
-        assert!(matches!(err, ValidationError::General(_)));
-        if let ValidationError::General(msg) = err {
-            assert!(msg.contains("1 GiB"));
-        }
+        assert!(matches!(err, SinexError::Validation(_)));
+        let msg = err.message();
+        assert!(msg.contains("1 GiB"));
     }
 
     #[test]

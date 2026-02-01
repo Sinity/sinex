@@ -156,16 +156,15 @@ async fn test_build_timestamp_parsing() -> TestResult<()> {
         "2024-08-06T15:30:45.123Z",
     ];
 
-    for timestamp in timestamp_examples {
-        let parsed = chrono::DateTime::parse_from_rfc3339(timestamp);
-        assert!(parsed.is_ok(), "Failed to parse timestamp: {timestamp}");
+    for timestamp_str in timestamp_examples {
+        let parsed = Timestamp::parse_rfc3339(timestamp_str);
+        assert!(parsed.is_ok(), "Failed to parse timestamp: {timestamp_str}");
 
-        if let Ok(dt) = parsed {
-            let now = OffsetDateTime::now_utc();
-            let age_seconds = now
-                .signed_duration_since(dt.with_timezone(&chrono::Utc))
-                .num_seconds()
-                .max(0) as u64;
+        if let Ok(ts) = parsed {
+            let now = Timestamp::now();
+            // Calculate age by subtracting (Timestamp - Timestamp = Duration)
+            let age = now - ts;
+            let age_seconds = age.whole_seconds().max(0) as u64;
 
             // Should be a reasonable age (not negative, not in far future)
             assert!(age_seconds < 365 * 24 * 3600 * 10); // Less than 10 years old

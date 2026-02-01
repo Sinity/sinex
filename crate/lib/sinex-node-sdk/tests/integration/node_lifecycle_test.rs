@@ -8,14 +8,15 @@
 //! - Graceful shutdown and cleanup
 
 use camino::Utf8PathBuf;
-use sinex_primitives::Seconds;
-use sinex_primitives::SinexError;
 use sinex_node_sdk::{
     checkpoint::{CheckpointManager, CheckpointState},
     config::{EventSourceConfig, NodeConfig},
     coordination::{InstanceMode, NodeCoordination},
     stream_processor::Checkpoint,
 };
+use sinex_primitives::temporal::Timestamp;
+use sinex_primitives::Seconds;
+use sinex_primitives::SinexError;
 use std::collections::HashMap;
 use std::sync::{
     atomic::{AtomicBool, AtomicU32, Ordering},
@@ -24,7 +25,6 @@ use std::sync::{
 use tokio::time::{sleep, timeout, Duration, Instant};
 use tracing::{debug, info, warn};
 use xtask::sandbox::{sinex_test, TestContext};
-use time::OffsetDateTime;
 
 #[path = "../support/mod.rs"]
 mod support;
@@ -103,7 +103,7 @@ async fn test_node_complete_lifecycle(ctx: TestContext) -> color_eyre::Result<()
 async fn test_node_health_monitoring(ctx: TestContext) -> color_eyre::Result<()> {
     info!("Testing node health monitoring");
 
-    let ctx = ctx.with_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let kv = ctx.checkpoint_kv().await?;
     let checkpoint_manager = CheckpointManager::new(
         kv,
@@ -113,7 +113,7 @@ async fn test_node_health_monitoring(ctx: TestContext) -> color_eyre::Result<()>
     );
 
     // Test checkpoint-based health tracking
-    let start_time = OffsetDateTime::now_utc();
+    let start_time = Timestamp::now();
     let mut checkpoint = CheckpointState {
         checkpoint: Checkpoint::Stream {
             message_id: "health-check-001".to_string(),
@@ -138,7 +138,7 @@ async fn test_node_health_monitoring(ctx: TestContext) -> color_eyre::Result<()>
         sleep(Duration::from_millis(50)).await;
 
         checkpoint.processed_count += 1;
-        checkpoint.last_activity = OffsetDateTime::now_utc();
+        checkpoint.last_activity = Timestamp::now();
         checkpoint.data = Some(serde_json::json!({
             "health_status": "healthy",
             "uptime_seconds": i,
@@ -315,7 +315,7 @@ async fn test_node_configuration_lifecycle(ctx: TestContext) -> color_eyre::Resu
     info!("Testing node configuration lifecycle");
 
     // Test configuration creation and validation
-    let test_configs = vec![
+    let test_configs = [
         create_minimal_config("config_test_minimal"),
         create_standard_config("config_test_standard"),
         create_enhanced_config("config_test_enhanced"),
@@ -364,7 +364,7 @@ async fn test_node_configuration_lifecycle(ctx: TestContext) -> color_eyre::Resu
 async fn test_node_graceful_shutdown(ctx: TestContext) -> color_eyre::Result<()> {
     info!("Testing node graceful shutdown");
 
-    let ctx = ctx.with_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let kv = ctx.checkpoint_kv().await?;
     let checkpoint_manager = CheckpointManager::new(
         kv,
@@ -439,7 +439,7 @@ async fn test_node_graceful_shutdown(ctx: TestContext) -> color_eyre::Result<()>
             event_id: None,
         },
         processed_count: operations_completed.load(Ordering::SeqCst) as u64,
-        last_activity: OffsetDateTime::now_utc(),
+        last_activity: Timestamp::now(),
         data: Some(serde_json::json!({
             "shutdown_reason": "graceful",
             "operations_completed": operations_completed.load(Ordering::SeqCst)
@@ -478,7 +478,7 @@ async fn test_node_concurrent_lifecycle(_ctx: TestContext) -> color_eyre::Result
             // Each task creates its own context
             let task_ctx = TestContext::new().await?;
 
-            let runtime = TestRuntimeBuilder::new(&task_ctx, &format!("concurrent_test_{i}"))
+            let runtime = TestRuntimeBuilder::new(&task_ctx, format!("concurrent_test_{i}"))
                 .build()
                 .await?;
 

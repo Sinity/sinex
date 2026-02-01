@@ -160,7 +160,7 @@ pub fn detect_current_shell() -> Result<ShellInfo, sinex_node_sdk::SinexError> {
 pub fn detect_shell_type(shell_path: &str) -> ShellType {
     let shell_name = shell_path
         .split('/')
-        .last()
+        .next_back()
         .unwrap_or(shell_path)
         .to_lowercase();
 

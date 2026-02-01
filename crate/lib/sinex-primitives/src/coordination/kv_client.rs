@@ -222,15 +222,10 @@ impl CoordinationKvClient {
         while let Some(key_result) = keys.next().await {
             if let Ok(key) = key_result {
                 if key.starts_with(&prefix) {
-                    let entry_res: Result<Option<bytes::Bytes>, _> = bucket.get(&key).await;
-                    match entry_res {
-                        Ok(Some(entry)) => {
-                            if let Ok(metadata) = serde_json::from_slice::<InstanceMetadata>(&entry)
-                            {
-                                instances.push(metadata);
-                            }
+                    if let Ok(Some(entry)) = bucket.get(&key).await {
+                        if let Ok(metadata) = serde_json::from_slice::<InstanceMetadata>(&entry) {
+                            instances.push(metadata);
                         }
-                        _ => {}
                     }
                 }
             }

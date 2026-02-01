@@ -171,7 +171,7 @@ impl SinexEnvironment {
             .map(|segments| segments.map(|s| s.to_string()).collect())
             .unwrap_or_default();
 
-        if segments.is_empty() || segments.last().map_or(true, |s| s.is_empty()) {
+        if segments.is_empty() || segments.last().is_none_or(|s| s.is_empty()) {
             return Err(SinexError::configuration(format!(
                 "Database name missing from URL and no dbname query parameter provided: {}",
                 base_url

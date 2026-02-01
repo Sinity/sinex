@@ -4,8 +4,13 @@
 //! - CommandResult serialization roundtrips preserve data
 //! - ProcessBuilder argument handling is consistent
 //! - JSON output conforms to expected schema
+//!
+//! Requires the `sandbox` feature to be enabled (provides proptest).
+
+#![cfg(feature = "sandbox")]
 
 use proptest::prelude::*;
+use sinex_primitives::temporal;
 use xtask::command::CommandResult;
 use xtask::output::{OutputFormat, Status, StructuredError};
 
@@ -89,7 +94,7 @@ fn output_command_result_strategy() -> impl Strategy<Value = xtask::output::Comm
                     status,
                     duration_secs,
 
-                    timestamp: crate::temporal::now(),
+                    timestamp: temporal::now(),
                     details: None,
                     data: None, // Simplified for now, could use a json strategy
                     is_silent: false,
@@ -121,7 +126,7 @@ fn command_result_strategy() -> impl Strategy<Value = CommandResult> {
                 errors,
                 warnings,
                 duration_secs,
-                timestamp: Some(crate::temporal::now()),
+                timestamp: Some(temporal::now()),
             },
         )
 }
@@ -225,7 +230,7 @@ proptest! {
     #[test]
     fn arguments_preserve_content(args in prop::collection::vec(argument_strategy(), 0..=10)) {
         // Simulate argument collection (like ProcessBuilder.args())
-        let collected: Vec<String> = args.iter().cloned().collect();
+        let collected: Vec<String> = args.to_vec();
 
         prop_assert_eq!(args.len(), collected.len());
         for (original, collected) in args.iter().zip(collected.iter()) {

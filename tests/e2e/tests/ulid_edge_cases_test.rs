@@ -6,14 +6,14 @@
 //! - Wraparound behavior
 //! - Concurrent generation safety
 
-use xtask::sandbox::prelude::*;
+use parking_lot::Mutex;
 use sinex_primitives::ulid::Ulid;
 use sinex_primitives::{DynamicPayload, Id};
 use std::collections::{HashMap, HashSet};
-use parking_lot::Mutex;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::task::JoinSet;
+use xtask::sandbox::prelude::*;
 
 // =============================================================================
 // ULID Timestamp Boundary Tests
@@ -50,21 +50,26 @@ async fn test_ulid_max_timestamp_representation(ctx: TestContext) -> TestResult<
     println!("Max ULID: {}", max_ulid);
 
     // Test database storage using TestContext publish
-    let event = ctx.publish(DynamicPayload::new(
-        "ulid_boundary_test",
-        "max.timestamp",
-        json!({
-            "timestamp_ms": max_timestamp_ms,
-            "ulid": max_ulid.to_string()
-        }),
-    )).await?;
+    let event = ctx
+        .publish(DynamicPayload::new(
+            "ulid_boundary_test",
+            "max.timestamp",
+            json!({
+                "timestamp_ms": max_timestamp_ms,
+                "ulid": max_ulid.to_string()
+            }),
+        ))
+        .await?;
 
     let event_id = event.id.expect("Event should have ID");
     println!("Inserted event with ID: {}", event_id);
 
     // Verify retrieval
     let pool = ctx.pool();
-    let retrieved = pool.events().get_by_id(event_id.clone()).await?
+    let retrieved = pool
+        .events()
+        .get_by_id(event_id.clone())
+        .await?
         .expect("Event should be retrievable");
 
     println!("Retrieved event ID: {:?}", retrieved.id);
@@ -198,7 +203,8 @@ async fn test_ulid_generation_same_millisecond_ordering(ctx: TestContext) -> Tes
     let start_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
-        .as_millis().min(u64::MAX as u128) as u64;
+        .as_millis()
+        .min(u64::MAX as u128) as u64;
 
     // Generate ULIDs until we get a different millisecond
     while std::time::SystemTime::now()
@@ -315,7 +321,10 @@ async fn test_ulid_concurrent_generation_safety(ctx: TestContext) -> TestResult<
 
     // Assertions
     assert_eq!(duplicate_count, 0, "No duplicate ULIDs should be generated");
-    assert_eq!(total_ulids, expected_total, "All tasks should generate ULIDs");
+    assert_eq!(
+        total_ulids, expected_total,
+        "All tasks should generate ULIDs"
+    );
 
     Ok(())
 }

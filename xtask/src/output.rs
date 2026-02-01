@@ -356,10 +356,9 @@ impl OutputWriter {
 
         if self.is_tty {
             println!(
-                "{}{}{} {}: {:.1}s{}",
+                "{}{}\x1b[0m {}: {:.1}s{}",
                 result.status.color_code(),
                 result.status.symbol(),
-                "\x1b[0m",
                 cmd_name,
                 result.duration_secs,
                 detail
@@ -399,11 +398,7 @@ impl OutputWriter {
             }
             OutputFormat::Human if self.is_tty => {
                 // Overwrite current line with progress bar
-                let pct = if total > 0 {
-                    (current * 100) / total
-                } else {
-                    0
-                };
+                let pct = (current * 100).checked_div(total).unwrap_or(0);
                 let bar_width = 30;
                 let filled = (pct * bar_width) / 100;
                 let empty = bar_width - filled;

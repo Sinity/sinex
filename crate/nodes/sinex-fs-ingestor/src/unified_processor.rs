@@ -26,6 +26,7 @@ use sinex_node_sdk::{
 use sinex_primitives::{
     domain::{HostName, SanitizedPath},
     events::{enums::FileModificationType, EventPayload},
+    temporal::Timestamp,
     units::Bytes,
     validation::{validate_watch_path, FileWatchingSecurityPolicy},
     Ulid,
@@ -405,9 +406,7 @@ impl SimpleIngestor for FilesystemProcessor {
                 sinex_node_sdk::EventTransport::Nats(publisher) => Arc::clone(publisher),
             };
 
-        AcquisitionManager::bootstrap_streams(publisher.nats_client())
-            .await
-            .map_err(SinexError::from)?;
+        AcquisitionManager::bootstrap_streams(publisher.nats_client()).await?;
 
         let stage_context = StageAsYouGoContext::from_runtime(runtime);
 
@@ -505,7 +504,7 @@ impl ExplorationProvider for FilesystemProcessor {
             is_connected: true,
             healthy: true,
             description: format!("Monitoring {} paths", self.config.watch_paths.len()),
-            last_updated: OffsetDateTime::now_utc(),
+            last_updated: Timestamp::now(),
             lag_seconds: None,
             recent_activity: self.metrics.recent_activity(),
             total_items: None,
@@ -519,10 +518,10 @@ impl ExplorationProvider for FilesystemProcessor {
 
     fn get_coverage_analysis(
         &self,
-        time_range: Option<(OffsetDateTime, OffsetDateTime)>,
+        time_range: Option<(Timestamp, Timestamp)>,
     ) -> NodeResult<CoverageAnalysis> {
         let time_range = time_range.unwrap_or_else(|| {
-            let now = OffsetDateTime::now_utc();
+            let now = Timestamp::now();
             (now - time::Duration::hours(1), now)
         });
 
@@ -559,7 +558,7 @@ async fn watch_path(root: String, ctx: WatchContext) -> NodeResult<()> {
                 Ok(_) => {}
                 Err(TrySendError::Full(_)) => {
                     let dropped = drop_counter.fetch_add(1, Ordering::Relaxed) + 1;
-                    if dropped == 1 || dropped % 100 == 0 {
+                    if dropped == 1 || dropped.is_multiple_of(100) {
                         warn!(
                             dropped_events = dropped,
                             "Filesystem watcher channel full; dropping events"
@@ -900,9 +899,9 @@ async fn capture_material_from_file_inner(
     // 2. Metadata retrieved from open file descriptor (no path lookup)
     // 3. Size checked before any read
     // 4. Cumulative tracking during streaming prevents growing file issues
-    let mut file = fs::File::open(path).await.map_err(|e| SinexError::io(e))?;
+    let mut file = fs::File::open(path).await.map_err(SinexError::io)?;
 
-    let metadata = file.metadata().await.map_err(|e| SinexError::io(e))?;
+    let metadata = file.metadata().await.map_err(SinexError::io)?;
 
     let file_size = metadata.len();
 
@@ -918,10 +917,7 @@ async fn capture_material_from_file_inner(
     let mut buffer = vec![0u8; FS_CAPTURE_CHUNK_SIZE];
 
     loop {
-        let read = file
-            .read(&mut buffer)
-            .await
-            .map_err(|e| SinexError::io(e))?;
+        let read = file.read(&mut buffer).await.map_err(SinexError::io)?;
 
         if read == 0 {
             break;
@@ -973,7 +969,7 @@ fn file_created_at(metadata: &StdMetadata) -> sinex_primitives::temporal::Timest
     metadata
         .created()
         .or_else(|_| metadata.modified())
-        .map(|st| OffsetDateTime::from(st))
+        .map(OffsetDateTime::from)
         .map(|ts| ts.into())
         .unwrap_or_else(|_| sinex_primitives::temporal::now())
 }
@@ -981,7 +977,7 @@ fn file_created_at(metadata: &StdMetadata) -> sinex_primitives::temporal::Timest
 fn file_modified_at(metadata: &StdMetadata) -> sinex_primitives::temporal::Timestamp {
     metadata
         .modified()
-        .map(|st| OffsetDateTime::from(st))
+        .map(OffsetDateTime::from)
         .map(|ts| ts.into())
         .unwrap_or_else(|_| sinex_primitives::temporal::now())
 }
@@ -1032,9 +1028,8 @@ mod tests {
             "/tmp",
         ));
 
-        let (event_tx, mut event_rx) = mpsc::channel::<SinexEvent>(
-            sinex_primitives::buffers::DEFAULT_EVENT_CHANNEL_SIZE,
-        );
+        let (event_tx, mut event_rx) =
+            mpsc::channel::<SinexEvent>(sinex_primitives::buffers::DEFAULT_EVENT_CHANNEL_SIZE);
         let stage_context =
             StageAsYouGoContext::from_sender(Arc::clone(&acquisition), event_tx, false);
 

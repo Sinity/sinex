@@ -1,24 +1,14 @@
-use comfy_table::presets::UTF8_FULL;
-use comfy_table::{Cell, CellAlignment, ContentArrangement, Table};
 use console::style;
 use sinex_primitives::temporal::Timestamp;
+use tabled::{builder::Builder, settings::Style};
 
 use sinex_primitives::rpc::coordination::InstanceInfo;
 use sinex_primitives::rpc::replay::{ReplayOperation, ReplayState};
 
 /// Format nodes as a table
 pub fn format_table_nodes(nodes: &[InstanceInfo]) -> String {
-    let mut table = Table::new();
-    table
-        .load_preset(UTF8_FULL)
-        .set_content_arrangement(ContentArrangement::Dynamic)
-        .set_header(vec![
-            Cell::new("TYPE").set_alignment(CellAlignment::Left),
-            Cell::new("ID").set_alignment(CellAlignment::Left),
-            Cell::new("HOSTNAME").set_alignment(CellAlignment::Left),
-            Cell::new("LEADER").set_alignment(CellAlignment::Center),
-            Cell::new("LAST HEARTBEAT").set_alignment(CellAlignment::Right),
-        ]);
+    let mut builder = Builder::new();
+    builder.push_record(["TYPE", "ID", "HOSTNAME", "LEADER", "LAST HEARTBEAT"]);
 
     for node in nodes {
         let leader_icon = if node.is_leader { "★" } else { "" };
@@ -28,40 +18,36 @@ pub fn format_table_nodes(nodes: &[InstanceInfo]) -> String {
             .map(|hb| format_heartbeat_age(&(*hb).into()))
             .unwrap_or_else(|| style("none").dim().to_string());
 
-        table.add_row(vec![
-            Cell::new(&node.node_type),
-            Cell::new(short_id(&node.instance_id)),
-            Cell::new(node.hostname.as_deref().unwrap_or("-")),
-            Cell::new(leader_icon),
-            Cell::new(heartbeat),
+        builder.push_record([
+            node.node_type.to_string(),
+            short_id(&node.instance_id),
+            node.hostname.as_deref().unwrap_or("-").to_string(),
+            leader_icon.to_string(),
+            heartbeat,
         ]);
     }
 
+    let mut table = builder.build();
+    table.with(Style::rounded());
     table.to_string()
 }
 
 /// Format replay operations as a table
 pub fn format_table_replay(operations: &[ReplayOperation]) -> String {
-    let mut table = Table::new();
-    table
-        .load_preset(UTF8_FULL)
-        .set_content_arrangement(ContentArrangement::Dynamic)
-        .set_header(vec![
-            Cell::new("ID").set_alignment(CellAlignment::Left),
-            Cell::new("STATUS").set_alignment(CellAlignment::Left),
-            Cell::new("PROCESSOR").set_alignment(CellAlignment::Left),
-            Cell::new("CREATED").set_alignment(CellAlignment::Right),
-        ]);
+    let mut builder = Builder::new();
+    builder.push_record(["ID", "STATUS", "PROCESSOR", "CREATED"]);
 
     for op in operations {
-        table.add_row(vec![
-            Cell::new(short_id(&op.operation_id)),
-            Cell::new(format_replay_status(&op.state)),
-            Cell::new(&op.scope.processor_id),
-            Cell::new(&op.created_at),
+        builder.push_record([
+            short_id(&op.operation_id),
+            format_replay_status(&op.state),
+            op.scope.processor_id.clone(),
+            op.created_at.clone(),
         ]);
     }
 
+    let mut table = builder.build();
+    table.with(Style::rounded());
     table.to_string()
 }
 

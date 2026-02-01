@@ -3,7 +3,9 @@
 //! Tests UTF-8 handling, filter combinations, and pagination.
 
 use serde_json::json;
+use sinex_primitives::temporal;
 use sinex_services::{SearchQuery, SearchService};
+use time::Duration;
 use xtask::sandbox::dataset_seeds::{seed_events_via_scope, EventSpec, SeedClock};
 use xtask::sandbox::prelude::*;
 
@@ -38,16 +40,16 @@ async fn search_with_empty_results_returns_empty_vec(ctx: TestContext) -> TestRe
 async fn search_with_source_filter(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
-    let clock = SeedClock::fixed();
+    let clock = SeedClock::new();
     let service = SearchService::new(ctx.pool().clone());
 
     // Create events with different sources
     let events = vec![
-        EventSpec::new("source-a", "test.event", json!({"key": "value1"})),
-        EventSpec::new("source-a", "test.event", json!({"key": "value2"})),
-        EventSpec::new("source-b", "test.event", json!({"key": "value3"})),
+        EventSpec::new("source-a", "test.event").with_payload(json!({"key": "value1"})),
+        EventSpec::new("source-a", "test.event").with_payload(json!({"key": "value2"})),
+        EventSpec::new("source-b", "test.event").with_payload(json!({"key": "value3"})),
     ];
-    seed_events_via_scope(&scope, &clock, &events).await?;
+    seed_events_via_scope(scope.ctx(), &clock, events).await?;
 
     // Search for only source-a
     let query = SearchQuery {
@@ -69,16 +71,16 @@ async fn search_with_source_filter(ctx: TestContext) -> TestResult<()> {
 async fn search_with_event_type_filter(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
-    let clock = SeedClock::fixed();
+    let clock = SeedClock::new();
     let service = SearchService::new(ctx.pool().clone());
 
     // Create events with different types
     let events = vec![
-        EventSpec::new("test-source", "type.alpha", json!({"key": "value1"})),
-        EventSpec::new("test-source", "type.alpha", json!({"key": "value2"})),
-        EventSpec::new("test-source", "type.beta", json!({"key": "value3"})),
+        EventSpec::new("test-source", "type.alpha").with_payload(json!({"key": "value1"})),
+        EventSpec::new("test-source", "type.alpha").with_payload(json!({"key": "value2"})),
+        EventSpec::new("test-source", "type.beta").with_payload(json!({"key": "value3"})),
     ];
-    seed_events_via_scope(&scope, &clock, &events).await?;
+    seed_events_via_scope(scope.ctx(), &clock, events).await?;
 
     // Search for only type.alpha
     let query = SearchQuery {
@@ -100,16 +102,16 @@ async fn search_with_event_type_filter(ctx: TestContext) -> TestResult<()> {
 async fn search_with_multiple_filters_combined(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
-    let clock = SeedClock::fixed();
+    let clock = SeedClock::new();
     let service = SearchService::new(ctx.pool().clone());
 
     // Create various events
     let events = vec![
-        EventSpec::new("source-x", "type.one", json!({"key": "target_value"})),
-        EventSpec::new("source-x", "type.two", json!({"key": "target_value"})),
-        EventSpec::new("source-y", "type.one", json!({"key": "target_value"})),
+        EventSpec::new("source-x", "type.one").with_payload(json!({"key": "target_value"})),
+        EventSpec::new("source-x", "type.two").with_payload(json!({"key": "target_value"})),
+        EventSpec::new("source-y", "type.one").with_payload(json!({"key": "target_value"})),
     ];
-    seed_events_via_scope(&scope, &clock, &events).await?;
+    seed_events_via_scope(scope.ctx(), &clock, events).await?;
 
     // Search with combined filters
     let query = SearchQuery {
@@ -134,14 +136,14 @@ async fn search_with_multiple_filters_combined(ctx: TestContext) -> TestResult<(
 async fn search_respects_limit_parameter(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
-    let clock = SeedClock::fixed();
+    let clock = SeedClock::new();
     let service = SearchService::new(ctx.pool().clone());
 
     // Create 10 events
     let events: Vec<EventSpec> = (0..10)
-        .map(|i| EventSpec::new("test-source", "test.event", json!({"index": i})))
+        .map(|i| EventSpec::new("test-source", "test.event").with_payload(json!({"index": i})))
         .collect();
-    seed_events_via_scope(&scope, &clock, &events).await?;
+    seed_events_via_scope(scope.ctx(), &clock, events).await?;
 
     // Search with limit of 3
     let query = SearchQuery {
@@ -161,16 +163,13 @@ async fn search_respects_limit_parameter(ctx: TestContext) -> TestResult<()> {
 async fn search_handles_unicode_in_payload(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
-    let clock = SeedClock::fixed();
+    let clock = SeedClock::new();
     let service = SearchService::new(ctx.pool().clone());
 
     // Create event with unicode payload
-    let events = vec![EventSpec::new(
-        "test-source",
-        "test.event",
-        json!({"content": "日本語テスト with 中文 and emoji 🎉"}),
-    )];
-    seed_events_via_scope(&scope, &clock, &events).await?;
+    let events = vec![EventSpec::new("test-source", "test.event")
+        .with_payload(json!({"content": "日本語テスト with 中文 and emoji 🎉"}))];
+    seed_events_via_scope(scope.ctx(), &clock, events).await?;
 
     // Search for all events (no text filter to avoid fulltext search issues)
     let query = SearchQuery {
@@ -190,36 +189,30 @@ async fn search_handles_unicode_in_payload(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_test]
 async fn search_with_time_range_filter(ctx: TestContext) -> TestResult<()> {
-    use chrono::{Duration, Utc};
-
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
-    let clock = SeedClock::fixed();
+    let clock = SeedClock::new();
     let service = SearchService::new(ctx.pool().clone());
 
     // Create events
-    let events = vec![EventSpec::new(
-        "test-source",
-        "test.event",
-        json!({"when": "recent"}),
-    )];
-    seed_events_via_scope(&scope, &clock, &events).await?;
+    let events =
+        vec![EventSpec::new("test-source", "test.event").with_payload(json!({"when": "recent"}))];
+    seed_events_via_scope(scope.ctx(), &clock, events).await?;
 
-    let now = Utc::now();
+    let now = temporal::now();
+    let one_hour = Duration::hours(1);
 
     // Search with time range covering recent events
     let query = SearchQuery {
-        start_time: Some(now - Duration::hours(1)),
-        end_time: Some(now + Duration::hours(1)),
+        start_time: Some(now - one_hour),
+        end_time: Some(now + one_hour),
         ..make_search_query()
     };
 
     let results = service.search_events(query).await?;
 
     // Should find recent events within the time window
-    assert!(results
-        .iter()
-        .all(|r| r.timestamp >= now - Duration::hours(1)));
+    assert!(results.iter().all(|r| r.timestamp >= (now - one_hour)));
 
     scope.shutdown().await?;
     Ok(())
@@ -229,16 +222,13 @@ async fn search_with_time_range_filter(ctx: TestContext) -> TestResult<()> {
 async fn search_results_have_required_fields(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
-    let clock = SeedClock::fixed();
+    let clock = SeedClock::new();
     let service = SearchService::new(ctx.pool().clone());
 
     // Create an event
-    let events = vec![EventSpec::new(
-        "result-test-source",
-        "result.test.type",
-        json!({"content": "test content for field verification"}),
-    )];
-    seed_events_via_scope(&scope, &clock, &events).await?;
+    let events = vec![EventSpec::new("result-test-source", "result.test.type")
+        .with_payload(json!({"content": "test content for field verification"}))];
+    seed_events_via_scope(scope.ctx(), &clock, events).await?;
 
     let query = SearchQuery {
         sources: vec!["result-test-source".to_string()],
@@ -269,16 +259,16 @@ async fn search_results_have_required_fields(ctx: TestContext) -> TestResult<()>
 async fn search_with_multiple_event_types(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
-    let clock = SeedClock::fixed();
+    let clock = SeedClock::new();
     let service = SearchService::new(ctx.pool().clone());
 
     // Create events with various types
     let events = vec![
-        EventSpec::new("test-source", "type.alpha", json!({"key": "a"})),
-        EventSpec::new("test-source", "type.beta", json!({"key": "b"})),
-        EventSpec::new("test-source", "type.gamma", json!({"key": "c"})),
+        EventSpec::new("test-source", "type.alpha").with_payload(json!({"key": "a"})),
+        EventSpec::new("test-source", "type.beta").with_payload(json!({"key": "b"})),
+        EventSpec::new("test-source", "type.gamma").with_payload(json!({"key": "c"})),
     ];
-    seed_events_via_scope(&scope, &clock, &events).await?;
+    seed_events_via_scope(scope.ctx(), &clock, events).await?;
 
     // Search for multiple types
     let query = SearchQuery {

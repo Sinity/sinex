@@ -5,9 +5,9 @@
 //! - Follow provenance links from operation to affected events
 
 use serde_json::Value;
-use sinex_primitives::SinexError;
 use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::Id;
+use sinex_primitives::SinexError;
 use sqlx::PgPool;
 
 // Re-export shared types
@@ -32,8 +32,8 @@ struct OperationRow {
 
 /// Handle GET /audit/{operation_id} - get audit trail for an operation
 pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
-    let request: AuditGetRequest =
-        serde_json::from_value(params).map_err(|e| SinexError::serialization(e.to_string()))?;
+    let request: AuditGetRequest = serde_json::from_value(params)
+        .map_err(|e| SinexError::serialization("invalid audit request").with_std_error(&e))?;
 
     let operation_id = request.operation_id;
 
@@ -57,7 +57,7 @@ pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
     )
     .fetch_optional(pool)
     .await
-    .map_err(|e| SinexError::service(format!("Failed to fetch operation: {}", e)))?;
+    .map_err(|e| SinexError::service("failed to fetch operation").with_std_error(&e))?;
 
     let Some(row) = row else {
         return Err(SinexError::not_found(format!(
@@ -91,14 +91,16 @@ pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
         event_count,
     };
 
-    Ok(serde_json::to_value(response).map_err(|e| SinexError::serialization(e.to_string()))?)
+    serde_json::to_value(response).map_err(|e| {
+        SinexError::serialization("failed to serialize audit response").with_std_error(&e)
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
-    use xtask::sandbox::{sinex_test, TestContext};
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     async fn audit_get_returns_operation(ctx: &TestContext) -> TestResult<()> {

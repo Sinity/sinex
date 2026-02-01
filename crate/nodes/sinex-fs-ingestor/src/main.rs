@@ -5,8 +5,6 @@
 use async_trait::async_trait;
 #[cfg(not(target_env = "msvc"))]
 use mimalloc::MiMalloc;
-use sinex_primitives::domain::SanitizedPath;
-use sinex_primitives::temporal::OffsetDateTime;
 use sinex_fs_ingestor::{FilesystemConfig, FilesystemProcessor};
 use sinex_node_sdk::{
     stream_processor::{
@@ -15,6 +13,8 @@ use sinex_node_sdk::{
     },
     NodeResult, SimpleIngestorWrapper,
 };
+use sinex_primitives::domain::SanitizedPath;
+use sinex_primitives::temporal::Timestamp;
 use sinex_processor_runtime::{
     CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
 };
@@ -23,18 +23,13 @@ use sinex_processor_runtime::{
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
+#[derive(Default)]
 struct UnifiedFilesystemNode(SimpleIngestorWrapper<FilesystemProcessor>);
 
 impl UnifiedFilesystemNode {
     #[allow(dead_code)] // Convenience constructor
     pub fn new() -> Self {
         Self::default()
-    }
-}
-
-impl Default for UnifiedFilesystemNode {
-    fn default() -> Self {
-        Self(SimpleIngestorWrapper::default())
     }
 }
 
@@ -96,7 +91,7 @@ impl ExplorationProvider for UnifiedFilesystemNode {
 
     fn get_coverage_analysis(
         &self,
-        time_range: Option<(OffsetDateTime, OffsetDateTime)>,
+        time_range: Option<(Timestamp, Timestamp)>,
     ) -> NodeResult<CoverageAnalysis> {
         self.0.ingestor().get_coverage_analysis(time_range)
     }

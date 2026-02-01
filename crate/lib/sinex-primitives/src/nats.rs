@@ -99,12 +99,10 @@ impl NatsConnectionConfig {
                 "NATS URL cannot be empty".to_string(),
             ));
         }
-        if self.require_tls {
-            if !self.url.starts_with("tls://") && !self.url.starts_with("wss://") {
-                return Err(SinexError::configuration(
-                    "NATS URL must use tls:// or wss:// when require_tls is enabled".to_string(),
-                ));
-            }
+        if self.require_tls && !self.url.starts_with("tls://") && !self.url.starts_with("wss://") {
+            return Err(SinexError::configuration(
+                "NATS URL must use tls:// or wss:// when require_tls is enabled".to_string(),
+            ));
         }
         Ok(())
     }

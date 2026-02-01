@@ -77,7 +77,7 @@ impl StageAsYouGoProcessor for DemoLogProcessor {
                 // Provenance will be overwritten/augmented by context
                 sinex_primitives::Provenance::Synthesis {
                     source_event_ids: sinex_primitives::non_empty::NonEmptyVec::single(
-                        sinex_primitives::EventId::from_ulid(Ulid::new()),
+                        sinex_primitives::events::EventId::from_ulid(Ulid::new()),
                     ),
                     operation_id: None,
                 },

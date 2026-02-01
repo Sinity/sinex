@@ -59,7 +59,7 @@ pub enum WatcherState {
 }
 
 /// Health tracking for a watcher
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct WatcherHealth {
     /// Whether the watcher is currently active
     pub active: bool,
@@ -69,17 +69,6 @@ pub struct WatcherHealth {
     pub last_success: Option<sinex_primitives::Timestamp>,
     /// Total number of events processed
     pub events_processed: u64,
-}
-
-impl Default for WatcherHealth {
-    fn default() -> Self {
-        Self {
-            active: false,
-            last_error: None,
-            last_success: None,
-            events_processed: 0,
-        }
-    }
 }
 
 /// Handle to a watcher task with lifecycle and health tracking.
@@ -209,8 +198,7 @@ impl<M> WatcherHandle<M> {
     /// Record a successful operation in the health tracker.
     pub fn record_success(&self) {
         if let Ok(mut health) = self.health.write() {
-            health.last_success =
-                Some(sinex_primitives::temporal::OffsetDateTime::now_utc().into());
+            health.last_success = Some(sinex_primitives::temporal::Timestamp::now());
             health.events_processed = health.events_processed.saturating_add(1);
         }
     }

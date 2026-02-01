@@ -6,10 +6,12 @@
 //! This module contains property-based tests for event validation using the modern
 //! RawEvent::schemaless() builder pattern and updated validation architecture.
 
+use serde_json::Value;
 use sinex_db::validation::EventValidator;
 use sinex_primitives::{Event, EventSource, EventType, HostName, Id, JsonValue, Timestamp, Ulid};
 use time::Duration;
 use xtask::sandbox::prelude::*;
+use xtask::sandbox::test_event;
 type RawEvent = Event<JsonValue>;
 // =============================================================================
 // Property Test Helpers
@@ -57,8 +59,8 @@ fn arbitrary_event() -> impl Strategy<Value = RawEvent> {
                     .id
                     .as_ref()
                     .map(|id| id.as_ulid().timestamp())
-                    .unwrap_or_else(|| *Timestamp::now());
-                event.ts_orig = Some(Timestamp::from_inner(ingest_ts - Duration::seconds(60)));
+                    .unwrap_or_else(Timestamp::now);
+                event.ts_orig = Some(ingest_ts - Duration::seconds(60));
             }
 
             event
@@ -271,10 +273,10 @@ sinex_proptest! {
     fn test_event_timestamp_consistency(
         event in arbitrary_event()
     ) -> TestResult<()> {
-        if let (Some(id), Some(ts_orig)) = (event.id.clone(), event.ts_orig) {
+        if let (Some(id), Some(ts_orig)) = (event.id, event.ts_orig) {
             let ingest_ts = id.timestamp();
             prop_assert!(
-                ingest_ts + Duration::hours(1) >= *ts_orig,
+                ingest_ts + Duration::hours(1) >= Timestamp::from(*ts_orig),
                 "ULID timestamp should not significantly precede origin time"
             );
         }
@@ -293,7 +295,7 @@ sinex_proptest! {
     ) -> TestResult<()> {
         let mut ids: Vec<Ulid> = events
             .iter()
-            .filter_map(|e| e.id.clone().map(|id| id.into()))
+            .filter_map(|e| e.id.map(|id| id.into()))
             .collect();
 
         let unique_ids: std::collections::HashSet<_> = ids.iter().cloned().collect();
@@ -388,10 +390,10 @@ sinex_proptest! {
         event in arbitrary_event()
     ) -> TestResult<()> {
         // Property: ULID timestamp (ingest) should be close to ts_orig when both exist
-        if let (Some(id), Some(ts_orig)) = (event.id.clone(), event.ts_orig) {
+        if let (Some(id), Some(ts_orig)) = (event.id, event.ts_orig) {
             let ingest_ts = id.timestamp();
             prop_assert!(
-                ingest_ts + Duration::hours(1) >= *ts_orig,
+                ingest_ts + Duration::hours(1) >= Timestamp::from(*ts_orig),
                 "ULID timestamp should not significantly precede origin time"
             );
         }
@@ -411,7 +413,7 @@ sinex_proptest! {
         // Property: Events should have unique IDs and maintain ordering
         let mut ids: Vec<Ulid> = events
             .iter()
-            .filter_map(|e| e.id.clone().map(|id| id.into()))
+            .filter_map(|e| e.id.map(|id| id.into()))
             .collect();
 
         // Check uniqueness (though IDs are generated and should be unique)

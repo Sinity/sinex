@@ -5,17 +5,16 @@
 //! and that checkpoint managers can persist and recover state correctly.
 
 use serde_json::json;
-use sinex_primitives::EventSource;
-use sinex_primitives::DynamicPayload;
 use sinex_node_sdk::CheckpointManager;
+use sinex_primitives::DynamicPayload;
+use sinex_primitives::EventSource;
 use tracing::info;
 use xtask::sandbox::prelude::*;
-use time::OffsetDateTime;
 
 #[sinex_test]
 async fn test_checkpoint_recovery_from_empty_state(ctx: TestContext) -> TestResult<()> {
     // Test that checkpoint recovery works when starting from empty state
-    let ctx = ctx.with_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let service_name = "empty-state-test".to_string();
     let consumer_group = "empty-state-group".to_string();
 
@@ -48,7 +47,7 @@ async fn test_checkpoint_recovery_from_empty_state(ctx: TestContext) -> TestResu
 #[sinex_test]
 async fn test_checkpoint_manager_basic_functionality(ctx: TestContext) -> TestResult<()> {
     // Test basic checkpoint manager functionality
-    let ctx = ctx.with_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let service_name = "basic-functionality-test".to_string();
     let consumer_group = "basic-functionality-group".to_string();
 
@@ -63,7 +62,7 @@ async fn test_checkpoint_manager_basic_functionality(ctx: TestContext) -> TestRe
     );
 
     // Create test events to simulate processed events
-    let test_events = vec![
+    let test_events = [
         ctx.publish(DynamicPayload::new(
             "checkpoint-test",
             "test.event",
@@ -118,7 +117,7 @@ async fn test_checkpoint_manager_basic_functionality(ctx: TestContext) -> TestRe
 #[sinex_test]
 async fn test_checkpoint_manager_isolation(ctx: TestContext) -> TestResult<()> {
     // Test that different checkpoint managers are properly isolated
-    let ctx = ctx.with_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let service_name_1 = "isolation-test-1".to_string();
     let service_name_2 = "isolation-test-2".to_string();
     let consumer_group = "isolation-test-group".to_string();
@@ -164,7 +163,7 @@ async fn test_checkpoint_manager_isolation(ctx: TestContext) -> TestResult<()> {
 #[allow(unused_comparisons)]
 async fn test_checkpoint_database_integration(ctx: TestContext) -> TestResult<()> {
     // Test that checkpoint manager properly integrates with NATS KV
-    let ctx = ctx.with_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let service_name = "database-integration-test".to_string();
     let consumer_group = "database-integration-group".to_string();
 
@@ -181,10 +180,9 @@ async fn test_checkpoint_database_integration(ctx: TestContext) -> TestResult<()
     // Test that we can load checkpoints without errors
     let loaded_checkpoint = checkpoint_manager.load_checkpoint().await?;
 
-    // Verify the checkpoint has the expected structure
-    #[allow(unused_comparisons)]
+    // Verify the checkpoint has valid processed count (this assertion is for documentation)
     ctx.assert("checkpoint structure").that(
-        loaded_checkpoint.processed_count >= 0,
+        true, // processed_count is always valid as it's a usize
         "Processed count should be non-negative",
     )?;
 
@@ -209,7 +207,7 @@ async fn test_checkpoint_database_integration(ctx: TestContext) -> TestResult<()
 #[allow(unused_comparisons)]
 async fn test_checkpoint_with_events_context(ctx: TestContext) -> TestResult<()> {
     // Test checkpoint functionality in the context of actual events
-    let ctx = ctx.with_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let service_name = "events-context-test".to_string();
     let consumer_group = "events-context-group".to_string();
 
@@ -251,12 +249,11 @@ async fn test_checkpoint_with_events_context(ctx: TestContext) -> TestResult<()>
     );
 
     // Load checkpoint and verify it works in the context of these events
-    let checkpoint = checkpoint_manager.load_checkpoint().await?;
+    let _checkpoint = checkpoint_manager.load_checkpoint().await?;
 
-    // Verify checkpoint state
-    #[allow(unused_comparisons)]
+    // Verify checkpoint state (processed_count is usize, always >= 0)
     ctx.assert("checkpoint with events context").that(
-        checkpoint.processed_count >= 0,
+        true, // processed_count is valid as usize
         "Checkpoint processed count should be valid",
     )?;
 

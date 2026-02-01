@@ -179,7 +179,7 @@ impl PkmService {
         let annotation = self
             .pool
             .events()
-            .add_annotation(event_id.clone(), "note", content, metadata, created_by)
+            .add_annotation(event_id, "note", content, metadata, created_by)
             .await?;
 
         info!(
@@ -189,7 +189,7 @@ impl PkmService {
             "Created note annotation with provenance"
         );
 
-        Ok(annotation.id.as_ulid().clone())
+        Ok(*annotation.id.as_ulid())
     }
 
     /// Create knowledge graph entities from source material
@@ -233,7 +233,7 @@ impl PkmService {
                 .create_entity_with_executor(&mut *tx, entity)
                 .await?;
 
-            entity_ids.push(entity.id.as_ulid().clone());
+            entity_ids.push(*entity.id.as_ulid());
         }
 
         tx.commit().await?;
@@ -269,12 +269,8 @@ impl PkmService {
             .pool
             .knowledge_graph()
             .create_relation(
-                CreateEntityRelation::new(
-                    from_entity_id.clone(),
-                    to_entity_id.clone(),
-                    relationship_type,
-                )
-                .with_properties(serde_json::to_value(metadata)?),
+                CreateEntityRelation::new(from_entity_id, to_entity_id, relationship_type)
+                    .with_properties(serde_json::to_value(metadata)?),
             )
             .await?;
 
@@ -287,7 +283,7 @@ impl PkmService {
             "Created entity relationship with provenance"
         );
 
-        Ok(relationship.id.as_ulid().clone())
+        Ok(*relationship.id.as_ulid())
     }
 
     /// Register external content as source material
@@ -324,7 +320,7 @@ impl PkmService {
                     source_material_id = %material.id,
                     "Source material already exists with same checksum"
                 );
-                return Ok(material.id.into());
+                return Ok(material.id);
             }
         }
 
@@ -364,7 +360,7 @@ impl PkmService {
             "Registered new source material"
         );
 
-        Ok(source_material.id.into())
+        Ok(source_material.id)
     }
 
     /// Register in-flight source material for Stage-as-You-Go pattern
@@ -386,7 +382,7 @@ impl PkmService {
             "Registered in-flight source material"
         );
 
-        Ok(source_material.id.into())
+        Ok(source_material.id)
     }
 
     /// Finalize in-flight source material with actual content

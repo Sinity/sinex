@@ -3,17 +3,81 @@
 use async_nats::jetstream;
 use futures::StreamExt;
 use serde_json::json;
+use sinex_db::query_helpers::ulid_to_uuid;
 use sinex_db::DbPoolExt;
-use sinex_primitives::{db::query_helpers::ulid_to_uuid, types::Ulid, SinexError};
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
+use sinex_primitives::{error::SinexError, temporal, Ulid};
 use sqlx::Row;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio::time::timeout;
+use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
-use xtask::sandbox::{sinex_test, EventOverrides, TestContext, TestNodePublisher, TestResult};
+
+/// Helper to publish a test event directly to JetStream.
+async fn publish_event(
+    nats_client: &async_nats::Client,
+    namespace: &str,
+    source: &str,
+    event_type: &str,
+    payload: serde_json::Value,
+    overrides: EventOverrides,
+) -> TestResult<Ulid> {
+    let env = sinex_primitives::environment();
+    let event_id = overrides.id.unwrap_or_default();
+    let ts_orig = overrides
+        .ts_orig
+        .unwrap_or_else(|| temporal::now().format_rfc3339());
+
+    let event = json!({
+        "id": event_id.to_string(),
+        "source": source,
+        "event_type": event_type,
+        "payload": payload,
+        "ts_orig": ts_orig,
+        "host": "test-host",
+        "ingestor_version": "test",
+    });
+
+    let subject = env.nats_subject_with_namespace(
+        Some(namespace),
+        &format!(
+            "events.raw.{}.{}",
+            source.replace('.', "_"),
+            event_type.replace('.', "_")
+        ),
+    );
+    nats_client
+        .publish(subject, serde_json::to_vec(&event)?.into())
+        .await?;
+    nats_client.flush().await?;
+
+    Ok(event_id)
+}
+
+/// Helper to publish raw bytes directly (for malformed event testing).
+async fn publish_raw_bytes(
+    nats_client: &async_nats::Client,
+    namespace: &str,
+    source: &str,
+    event_type: &str,
+    bytes: &[u8],
+) -> TestResult<()> {
+    let env = sinex_primitives::environment();
+    let subject = env.nats_subject_with_namespace(
+        Some(namespace),
+        &format!(
+            "events.raw.{}.{}",
+            source.replace('.', "_"),
+            event_type.replace('.', "_")
+        ),
+    );
+    nats_client.publish(subject, bytes.to_vec().into()).await?;
+    nats_client.flush().await?;
+    Ok(())
+}
 
 /// Isolated consumer setup for tests.
 struct ConsumerSetup {
@@ -79,7 +143,7 @@ async fn consume_event_from_jetstream() -> color_eyre::Result<()> {
     let env = ctx.env();
     let namespace = ctx.pipeline_namespace().prefix().to_string();
     let topology = JetStreamTopology::new(
-        &env,
+        env,
         ctx.pipeline_namespace().stream("SINEX_RAW_EVENTS"),
         ctx.pipeline_namespace().consumer_name("ingestd"),
         Some(&namespace),
@@ -97,19 +161,19 @@ async fn consume_event_from_jetstream() -> color_eyre::Result<()> {
     nats.wait_for_stream(&js, &events_stream, Duration::from_secs(Timeouts::QUICK))
         .await?;
 
-    let publisher =
-        TestNodePublisher::with_namespace(nats_client.clone(), "test", Some(namespace.clone()));
     let event_id = Ulid::new();
-    publisher
-        .publish_with_overrides(
-            "test.event",
-            json!({"data": "test"}),
-            EventOverrides {
-                id: Some(event_id),
-                ..Default::default()
-            },
-        )
-        .await?;
+    publish_event(
+        &nats_client,
+        &namespace,
+        "test",
+        "test.event",
+        json!({"data": "test"}),
+        EventOverrides {
+            id: Some(event_id),
+            ..Default::default()
+        },
+    )
+    .await?;
 
     WaitHelpers::wait_for_source_events(&ctx.pool, "test", 1, 10).await?;
 
@@ -141,7 +205,7 @@ async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
     let env = ctx.env();
     let namespace = ctx.pipeline_namespace().prefix().to_string();
     let topology = JetStreamTopology::new(
-        &env,
+        env,
         ctx.pipeline_namespace().stream("SINEX_RAW_EVENTS"),
         ctx.pipeline_namespace().consumer_name("ingestd-confirm"),
         Some(&namespace),
@@ -163,26 +227,26 @@ async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
     nats.wait_for_stream(&js, &confirmations_stream, stream_timeout)
         .await?;
 
-    let publisher =
-        TestNodePublisher::with_namespace(nats_client.clone(), "test", Some(namespace.clone()));
     let event_id = Ulid::new();
     let confirmation_subject = format!(
         "{}.{}",
         ctx.pipeline_namespace().subject("events.confirmations"),
         event_id
     );
-    let mut confirmation_sub = publisher.client().subscribe(confirmation_subject).await?;
+    let mut confirmation_sub = nats_client.subscribe(confirmation_subject).await?;
 
-    publisher
-        .publish_with_overrides(
-            "test.event",
-            json!({"data": "test"}),
-            EventOverrides {
-                id: Some(event_id),
-                ..Default::default()
-            },
-        )
-        .await?;
+    publish_event(
+        &nats_client,
+        &namespace,
+        "test",
+        "test.event",
+        json!({"data": "test"}),
+        EventOverrides {
+            id: Some(event_id),
+            ..Default::default()
+        },
+    )
+    .await?;
 
     let confirmation = timeout(
         Duration::from_secs(Timeouts::SHORT),
@@ -197,10 +261,15 @@ async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
     Ok(())
 }
 
+/// Tests that offset_kind provenance field is correctly persisted through the pipeline.
+/// Uses the Event provenance API (DynamicPayload with `.from_material_at()`, `.with_offset_kind()`)
+/// to set offset fields which should be preserved when ingested.
 #[sinex_test]
 async fn consumer_persists_offset_kind(ctx: TestContext) -> color_eyre::Result<()> {
-    let ctx = ctx.with_nats().shared().await?;
+    use sinex_db::query_helpers::ulid_to_uuid;
+    use sinex_primitives::{DynamicPayload, Id, OffsetKind};
 
+    let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
     let validator = EventValidator::new(false);
@@ -210,7 +279,7 @@ async fn consumer_persists_offset_kind(ctx: TestContext) -> color_eyre::Result<(
     let env = ctx.env();
     let namespace = ctx.pipeline_namespace().prefix().to_string();
     let topology = JetStreamTopology::new(
-        &env,
+        env,
         ctx.pipeline_namespace().stream("SINEX_RAW_EVENTS"),
         ctx.pipeline_namespace().consumer_name("ingestd"),
         Some(&namespace),
@@ -228,6 +297,7 @@ async fn consumer_persists_offset_kind(ctx: TestContext) -> color_eyre::Result<(
     nats.wait_for_stream(&js, &events_stream, Duration::from_secs(Timeouts::QUICK))
         .await?;
 
+    // Register a source material to link provenance to
     let material_record = ctx
         .pool
         .source_materials()
@@ -237,30 +307,33 @@ async fn consumer_persists_offset_kind(ctx: TestContext) -> color_eyre::Result<(
             json!({"test": true}),
         )
         .await?;
-
     let material_id = material_record.id;
-    let publisher = TestNodePublisher::with_namespace(
-        nats_client.clone(),
-        "offset-test",
-        Some(namespace.clone()),
-    );
-    let event_id = publisher
-        .publish_with_overrides(
-            "offset.check",
-            json!({"data": "value"}),
-            EventOverrides {
-                source_material_id: Some(material_id),
-                anchor_byte: Some(0),
-                offset_start: Some(0),
-                offset_end: Some(5),
-                offset_kind: Some("byte".to_string()),
-                ..Default::default()
-            },
-        )
-        .await?;
 
-    WaitHelpers::wait_for_event_id(&ctx.pool, event_id.into(), 10).await?;
+    // Generate event ID upfront for tracking
+    let event_ulid = Ulid::new();
 
+    // Build an event with full provenance including offset_kind
+    let mut event = DynamicPayload::new("offset-test", "offset.check", json!({"data": "value"}))
+        .from_material_at(material_id, 0)
+        .with_offset_start(0)?
+        .with_offset_end(5)?
+        .with_offset_kind(OffsetKind::Byte)?
+        .build()?;
+
+    // Set explicit ID for tracking through the pipeline
+    event.id = Some(Id::from_ulid(event_ulid));
+
+    // Serialize and publish through NATS
+    let subject =
+        env.nats_subject_with_namespace(Some(&namespace), "events.raw.offset_test.offset_check");
+    let event_json = serde_json::to_vec(&event)?;
+    nats_client.publish(subject, event_json.into()).await?;
+    nats_client.flush().await?;
+
+    // Wait for the event to be consumed and persisted
+    WaitHelpers::wait_for_event_id(&ctx.pool, event_ulid.into(), 10).await?;
+
+    // Verify offset_kind was persisted correctly
     let row = sqlx::query(
         r#"
             SELECT offset_kind
@@ -268,7 +341,7 @@ async fn consumer_persists_offset_kind(ctx: TestContext) -> color_eyre::Result<(
             WHERE id = $1::uuid::ulid
         "#,
     )
-    .bind(ulid_to_uuid(event_id))
+    .bind(ulid_to_uuid(event_ulid))
     .fetch_one(&ctx.pool)
     .await?;
 
@@ -297,7 +370,7 @@ async fn invalid_timestamp_routes_to_dlq_and_allows_progress() -> color_eyre::Re
     let env = ctx.env();
     let namespace = ctx.pipeline_namespace().prefix().to_string();
     let topology = JetStreamTopology::new(
-        &env,
+        env,
         ctx.pipeline_namespace().stream("SINEX_RAW_EVENTS"),
         ctx.pipeline_namespace().consumer_name("ingestd"),
         Some(&namespace),
@@ -319,22 +392,28 @@ async fn invalid_timestamp_routes_to_dlq_and_allows_progress() -> color_eyre::Re
     nats.wait_for_stream(&js, &dlq_stream, stream_timeout)
         .await?;
 
-    let publisher =
-        TestNodePublisher::with_namespace(nats_client.clone(), "test", Some(namespace.clone()));
-    let bad_event_id = publisher
-        .publish_with_overrides(
-            "test.bad_timestamp",
-            json!({"data": "invalid"}),
-            EventOverrides {
-                ts_orig: Some("not-a-timestamp".to_string()),
-                ..Default::default()
-            },
-        )
-        .await?;
+    let bad_event_id = publish_event(
+        &nats_client,
+        &namespace,
+        "test",
+        "test.bad_timestamp",
+        json!({"data": "invalid"}),
+        EventOverrides {
+            ts_orig: Some("not-a-timestamp".to_string()),
+            ..Default::default()
+        },
+    )
+    .await?;
 
-    let good_event_id = publisher
-        .publish("test.good", json!({"data": "ok"}))
-        .await?;
+    let good_event_id = publish_event(
+        &nats_client,
+        &namespace,
+        "test",
+        "test.good",
+        json!({"data": "ok"}),
+        EventOverrides::default(),
+    )
+    .await?;
 
     WaitHelpers::wait_for_event_id(&ctx.pool, good_event_id.into(), Timeouts::SHORT).await?;
 
@@ -352,7 +431,7 @@ async fn invalid_timestamp_routes_to_dlq_and_allows_progress() -> color_eyre::Re
                     .await
                     .map_err(|e| SinexError::network(e.to_string()))?
                     .state;
-                Ok(state.messages > 0)
+                Ok::<bool, SinexError>(state.messages > 0)
             }
         },
         Timeouts::SHORT,
@@ -377,11 +456,6 @@ async fn duplicate_events_are_idempotent(ctx: TestContext) -> TestResult<()> {
 
     let setup = start_isolated_consumer(&ctx, "idempotency").await?;
     let nats_client = ctx.nats_client();
-    let publisher = TestNodePublisher::with_namespace(
-        nats_client,
-        "idempotency",
-        Some(setup.namespace.clone()),
-    );
 
     let event_id = Ulid::new();
     let overrides = EventOverrides {
@@ -389,22 +463,34 @@ async fn duplicate_events_are_idempotent(ctx: TestContext) -> TestResult<()> {
         ..Default::default()
     };
 
-    publisher
-        .publish_with_overrides("pipeline.event", json!({"sequence": 1}), overrides.clone())
-        .await?;
+    publish_event(
+        &nats_client,
+        &setup.namespace,
+        "idempotency",
+        "pipeline.event",
+        json!({"sequence": 1}),
+        overrides.clone(),
+    )
+    .await?;
 
     WaitHelpers::wait_for_event_id(&ctx.pool, event_id.into(), Timeouts::SHORT).await?;
 
     // Publish the exact same payload again to simulate replay / duplicate delivery.
-    publisher
-        .publish_with_overrides("pipeline.event", json!({"sequence": 1}), overrides)
-        .await?;
+    publish_event(
+        &nats_client,
+        &setup.namespace,
+        "idempotency",
+        "pipeline.event",
+        json!({"sequence": 1}),
+        overrides,
+    )
+    .await?;
 
     // Wait deterministically for the single persisted row to remain stable.
     WaitHelpers::wait_for_condition(
         || {
             let pool = ctx.pool.clone();
-            let event_id = event_id.clone();
+            let event_id = event_id;
             async move {
                 let duplicate_count: Option<i64> = sqlx::query_scalar(
                     "SELECT COUNT(*) FROM core.events WHERE id = $1::uuid::ulid",
@@ -433,28 +519,34 @@ async fn dlq_captures_multiple_validation_failures(ctx: TestContext) -> TestResu
     let mut dlq_stream_handle = setup.js.get_stream(&dlq_stream).await?;
     let initial_messages = dlq_stream_handle.info().await?.state.messages;
     let nats_client = ctx.nats_client();
-    let publisher =
-        TestNodePublisher::with_namespace(nats_client, "validation", Some(setup.namespace.clone()));
 
     // Publish a handful of invalid events (missing payload field) to exercise DLQ throughput.
     let invalid_total = 5;
     for idx in 0..invalid_total {
-        publisher
-            .publish_with_overrides(
-                &format!("validation.bad.{}", idx),
-                json!({"data": "bad"}),
-                EventOverrides {
-                    ts_orig: Some("not-a-timestamp".to_string()),
-                    ..Default::default()
-                },
-            )
-            .await?;
+        publish_event(
+            &nats_client,
+            &setup.namespace,
+            "validation",
+            &format!("validation.bad.{}", idx),
+            json!({"data": "bad"}),
+            EventOverrides {
+                ts_orig: Some("not-a-timestamp".to_string()),
+                ..Default::default()
+            },
+        )
+        .await?;
     }
 
     // Follow the invalid batch with a valid event to prove the consumer keeps making progress.
-    let good_id = publisher
-        .publish("validation.good", json!({"ok": true}))
-        .await?;
+    let good_id = publish_event(
+        &nats_client,
+        &setup.namespace,
+        "validation",
+        "validation.good",
+        json!({"ok": true}),
+        EventOverrides::default(),
+    )
+    .await?;
 
     WaitHelpers::wait_for_event_id(&ctx.pool, good_id.into(), Timeouts::SHORT).await?;
 
@@ -474,7 +566,7 @@ async fn dlq_captures_multiple_validation_failures(ctx: TestContext) -> TestResu
                     .await
                     .map_err(|e| SinexError::network(e.to_string()))?
                     .state;
-                Ok(state.messages >= expected_messages)
+                Ok::<bool, SinexError>(state.messages >= expected_messages)
             }
         },
         Timeouts::SHORT,

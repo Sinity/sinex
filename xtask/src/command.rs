@@ -29,7 +29,7 @@
 //!         "my-command"
 //!     }
 //!
-//!     fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
+//!     fn execute(&self, ctx: &CommandContext) -> Result<ExecutionResult> {
 //!         // Command logic here
 //!         Ok(CommandResult::success())
 //!     }
@@ -132,8 +132,12 @@ impl CommandMetadata {
 }
 
 /// Result of command execution.
+///
+/// Note: This was renamed from `CommandResult` to `ExecutionResult` to avoid confusion
+/// with `output::CommandResult`. The `CommandResult` name is preserved as a type alias
+/// for backwards compatibility.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CommandResult {
+pub struct ExecutionResult {
     /// Execution status
     pub status: Status,
     /// Optional success/summary message
@@ -154,7 +158,12 @@ pub struct CommandResult {
     pub timestamp: Option<Timestamp>,
 }
 
-impl CommandResult {
+/// Backwards compatibility alias for `ExecutionResult`.
+///
+/// Prefer using `ExecutionResult` in new code to avoid confusion with `output::CommandResult`.
+pub type CommandResult = ExecutionResult;
+
+impl ExecutionResult {
     /// Create a successful result.
     pub fn success() -> Self {
         Self {
@@ -308,6 +317,10 @@ pub struct CommandContext {
     writer: OutputWriter,
     /// Start time for duration tracking
     start_time: std::time::Instant,
+    /// History invocation ID (for diagnostics recording)
+    invocation_id: Option<i64>,
+    /// Whether to run in background mode
+    background: bool,
 }
 
 impl CommandContext {
@@ -316,7 +329,35 @@ impl CommandContext {
         Self {
             writer,
             start_time: std::time::Instant::now(),
+            invocation_id: None,
+            background: false,
         }
+    }
+
+    /// Create a new command context with an invocation ID for history tracking.
+    pub fn with_invocation_id(writer: OutputWriter, invocation_id: Option<i64>) -> Self {
+        Self {
+            writer,
+            start_time: std::time::Instant::now(),
+            invocation_id,
+            background: false,
+        }
+    }
+
+    /// Create a context configured for background execution.
+    pub fn with_background(mut self, background: bool) -> Self {
+        self.background = background;
+        self
+    }
+
+    /// Check if background execution is enabled.
+    pub fn is_background(&self) -> bool {
+        self.background
+    }
+
+    /// Get the history invocation ID.
+    pub fn invocation_id(&self) -> Option<i64> {
+        self.invocation_id
     }
 
     /// Get the output writer.
@@ -347,6 +388,81 @@ impl CommandContext {
             println!("========== {} ==========", title);
         }
     }
+
+    /// Record a diagnostic to the history database.
+    ///
+    /// This is used by check/build commands to capture compiler warnings/errors.
+    pub fn record_diagnostic(
+        &self,
+        diag: &crate::cargo_diagnostics::CompilerDiagnostic,
+    ) -> Result<()> {
+        use crate::config::config;
+        use crate::history::HistoryDb;
+
+        if let Some(inv_id) = self.invocation_id {
+            let cfg = config();
+            if let Ok(db) = HistoryDb::open(&cfg.history_db_path()) {
+                db.record_diagnostic(
+                    inv_id,
+                    &diag.level,
+                    diag.code.as_deref(),
+                    &diag.message,
+                    diag.file_path.as_deref(),
+                    diag.line,
+                    diag.column,
+                    diag.rendered.as_deref(),
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Record multiple diagnostics to the history database.
+    pub fn record_diagnostics(
+        &self,
+        diagnostics: &[crate::cargo_diagnostics::CompilerDiagnostic],
+    ) -> Result<()> {
+        for diag in diagnostics {
+            self.record_diagnostic(diag)?;
+        }
+        Ok(())
+    }
+
+    /// Spawn a command as a background job.
+    ///
+    /// Returns a CommandResult with the job ID and log paths. The actual command
+    /// execution happens in a separate process.
+    pub fn spawn_background(&self, subcommand: &str, args: &[String]) -> Result<ExecutionResult> {
+        use crate::config::config;
+        use crate::jobs::JobManager;
+
+        let cfg = config();
+        let manager = JobManager::new(cfg.jobs_dir())?;
+        let job = manager.spawn_xtask(subcommand, args)?;
+
+        let result = ExecutionResult::success()
+            .with_message(format!("Started background job {}", job.meta.id))
+            .with_data(serde_json::json!({
+                "job_id": job.meta.id,
+                "stdout": job.stdout_path().display().to_string(),
+                "stderr": job.stderr_path().display().to_string(),
+                "command": subcommand,
+                "args": args,
+                "hint": format!("Monitor with: cargo xtask jobs status {}", job.meta.id),
+            }));
+
+        if self.is_human() {
+            println!("🚀 Started background job {}", job.meta.id);
+            println!("   Command: cargo xtask {} {}", subcommand, args.join(" "));
+            println!("   Logs: {}", job.stdout_path().display());
+            println!();
+            println!("   Monitor: cargo xtask jobs status {}", job.meta.id);
+            println!("   Output:  cargo xtask jobs output {}", job.meta.id);
+            println!("   Cancel:  cargo xtask jobs cancel {}", job.meta.id);
+        }
+
+        Ok(result.with_duration(self.elapsed()))
+    }
 }
 
 /// Trait for xtask commands.
@@ -363,7 +479,7 @@ pub trait XtaskCommand {
     /// - Use `ctx.writer()` for output formatting
     /// - Use `ProcessBuilder` for spawning processes
     /// - Return `CommandResult` with appropriate status and details
-    fn execute(&self, ctx: &CommandContext) -> Result<CommandResult>;
+    fn execute(&self, ctx: &CommandContext) -> Result<ExecutionResult>;
 
     /// Get command metadata (optional, defaults to basic metadata).
     #[allow(dead_code)]
@@ -385,7 +501,7 @@ mod tests {
             "test-command"
         }
 
-        fn execute(&self, _ctx: &CommandContext) -> Result<CommandResult> {
+        fn execute(&self, _ctx: &CommandContext) -> Result<ExecutionResult> {
             if self.should_fail {
                 Ok(CommandResult::failure(StructuredError {
                     code: "TEST_ERROR".to_string(),

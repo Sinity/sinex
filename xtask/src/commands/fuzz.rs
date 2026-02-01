@@ -259,9 +259,10 @@ fn execute_run(
                 code: "CRATE_NOT_FOUND".to_string(),
                 message: format!("Could not find crate: {}", crate_name),
                 location: None,
-                suggestion: Some(format!(
+                suggestion: Some(
                     "Available locations checked: crate/lib, crate/core, crate/nodes, cli"
-                )),
+                        .to_string(),
+                ),
             }));
         }
     };
@@ -442,7 +443,7 @@ mod tests {
         let metadata = cmd.metadata();
         assert_eq!(metadata.category, Some("security".to_string()));
         assert!(metadata.timeout.is_some());
-        assert_eq!(metadata.modifies_state, false);
+        assert!(!metadata.modifies_state);
     }
 
     #[test]
@@ -453,7 +454,7 @@ mod tests {
             },
         };
         let metadata = cmd.metadata();
-        assert_eq!(metadata.modifies_state, true);
+        assert!(metadata.modifies_state);
     }
 
     #[test]

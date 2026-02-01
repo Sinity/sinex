@@ -3,14 +3,16 @@ use std::time::Duration;
 
 use async_nats::jetstream;
 use serde_json::json;
-use sinex_node_sdk::types::buffers::DEFAULT_EVENT_CHANNEL_SIZE;
-use sinex_node_sdk::{db::models::Event, JsonValue};
+use sinex_db::models::Event;
 use sinex_node_sdk::acquisition_manager::AcquisitionManager;
 use sinex_node_sdk::nats_publisher::NatsPublisher;
 use sinex_node_sdk::stage_as_you_go::{
     LogFileStageProcessor, StageAsYouGoContext, StageAsYouGoProcessor,
 };
 use sinex_node_sdk::{spawn_event_processor, EventBatcherConfig, EventTransport};
+// Channel size constant - not in sinex_primitives::constants, use local
+const DEFAULT_EVENT_CHANNEL_SIZE: usize = 1000;
+use sinex_primitives::JsonValue;
 use tokio::sync::{mpsc, oneshot};
 use tracing::info;
 use uuid::Uuid;
@@ -20,7 +22,7 @@ use xtask::sandbox::{start_test_ingestd_with_config, TestIngestdConfig};
 
 #[sinex_test]
 async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     let jetstream: jetstream::Context = ctx.jetstream().await?;
     AcquisitionManager::bootstrap_streams(&nats_client).await?;
@@ -163,7 +165,7 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
                     .info()
                     .await
                     .map_err(|e| SinexError::network(e.to_string()))?;
-                Ok(info.state.messages >= expected)
+                Ok::<bool, SinexError>(info.state.messages >= expected)
             }
         },
         5,
@@ -178,7 +180,7 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
 
 #[sinex_test]
 async fn stage_as_you_go_reconciliation_cancels_stale_materials(ctx: TestContext) -> Result<()> {
-    let ctx = ctx.with_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
     AcquisitionManager::bootstrap_streams(&nats_client).await?;
 

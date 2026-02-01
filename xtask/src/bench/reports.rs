@@ -32,7 +32,7 @@ pub fn generate_markdown(
             .join(", ")
     ));
     md.push_str(&format!("| Git SHA | {} |\n", env.git_sha_short));
-    md.push_str("\n");
+    md.push('\n');
 
     md.push_str("## Environment\n\n");
     md.push_str("```\n");
@@ -103,7 +103,7 @@ pub fn generate_markdown(
         }
     }
 
-    md.push_str("\n");
+    md.push('\n');
 
     std::fs::write(output_path, md).with_context(|| {
         format!(
@@ -123,9 +123,7 @@ pub fn generate_html(
     output_path: &Path,
 ) -> Result<()> {
     let chart_data = generate_chart_data(results);
-    let history_section = history
-        .map(|report| build_history_section(report))
-        .unwrap_or_else(|| "".to_string());
+    let history_section = history.map(build_history_section).unwrap_or_default();
 
     let html = format!(
         r#"<!DOCTYPE html>

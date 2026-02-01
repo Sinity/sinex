@@ -157,7 +157,7 @@ async fn test_schema_access(pool: &PgPool, _messages: &mut Vec<String>) -> NodeR
     )
     .fetch_one(pool)
     .await
-    .map_err(|e| SinexError::from(e))?;
+    .map_err(SinexError::from)?;
 
     if !events_table_exists {
         return Err(SinexError::processing(
@@ -175,7 +175,7 @@ async fn test_schema_access(pool: &PgPool, _messages: &mut Vec<String>) -> NodeR
     let count_result = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM core.events")
         .fetch_one(pool)
         .await
-        .map_err(|e| SinexError::from(e))?;
+        .map_err(SinexError::from)?;
 
     // Check core.source_materials table exists
     let source_materials_exists = sqlx::query_scalar::<_, bool>(
@@ -189,7 +189,7 @@ async fn test_schema_access(pool: &PgPool, _messages: &mut Vec<String>) -> NodeR
     )
     .fetch_one(pool)
     .await
-    .map_err(|e| SinexError::from(e))?;
+    .map_err(SinexError::from)?;
 
     // Check core.blobs table exists
     let blobs_exists = sqlx::query_scalar::<_, bool>(
@@ -203,7 +203,7 @@ async fn test_schema_access(pool: &PgPool, _messages: &mut Vec<String>) -> NodeR
     )
     .fetch_one(pool)
     .await
-    .map_err(|e| SinexError::from(e))?;
+    .map_err(SinexError::from)?;
 
     Ok(json!({
         "events_table_exists": events_table_exists,
@@ -219,37 +219,34 @@ async fn test_schema_access(pool: &PgPool, _messages: &mut Vec<String>) -> NodeR
 /// Test transaction support using SELECT queries only
 async fn test_transactions(pool: &PgPool, _messages: &mut [String]) -> NodeResult<Value> {
     // Test committed transaction with SELECT
-    let mut tx = pool.begin().await.map_err(|e| SinexError::from(e))?;
+    let mut tx = pool.begin().await.map_err(SinexError::from)?;
 
     // Run a simple SELECT inside the transaction
     let select_in_tx = sqlx::query_scalar::<_, i32>("SELECT 1")
         .fetch_one(&mut *tx)
         .await
-        .map_err(|e| SinexError::from(e))?;
+        .map_err(SinexError::from)?;
 
-    tx.commit().await.map_err(|e| SinexError::from(e))?;
+    tx.commit().await.map_err(SinexError::from)?;
 
     let commit_works = select_in_tx == 1;
 
     // Test rollback with SELECT
-    let mut tx_rollback = pool.begin().await.map_err(|e| SinexError::from(e))?;
+    let mut tx_rollback = pool.begin().await.map_err(SinexError::from)?;
 
     // Run a simple SELECT inside the transaction
     let _select_in_rollback = sqlx::query_scalar::<_, i32>("SELECT 1")
         .fetch_one(&mut *tx_rollback)
         .await
-        .map_err(|e| SinexError::from(e))?;
+        .map_err(SinexError::from)?;
 
-    tx_rollback
-        .rollback()
-        .await
-        .map_err(|e| SinexError::from(e))?;
+    tx_rollback.rollback().await.map_err(SinexError::from)?;
 
     // Verify no side effects by checking we can still query
     let after_rollback = sqlx::query_scalar::<_, i32>("SELECT 1")
         .fetch_one(pool)
         .await
-        .map_err(|e| SinexError::from(e))?;
+        .map_err(SinexError::from)?;
 
     let rollback_works = after_rollback == 1;
 
@@ -458,7 +455,7 @@ async fn verify_service_integration(_messages: &mut [String]) -> NodeResult<Valu
     let state = CheckpointState {
         checkpoint: Checkpoint::None,
         processed_count: 1,
-        last_activity: sinex_primitives::temporal::OffsetDateTime::now_utc(),
+        last_activity: sinex_primitives::temporal::Timestamp::now(),
         data: Some(json!({ "preflight": true })),
         version: 2,
         revision: 0,
@@ -483,7 +480,7 @@ async fn get_test_pool() -> NodeResult<PgPool> {
 
     let pool = PgPool::connect(&database_url)
         .await
-        .map_err(|e| SinexError::from(e))?;
+        .map_err(SinexError::from)?;
 
     Ok(pool)
 }
@@ -569,7 +566,7 @@ pub async fn verify_performance_baseline() -> NodeResult<(VerificationStatus, Va
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM core.events")
             .fetch_one(&pool)
             .await
-            .map_err(|e| SinexError::from(e))?;
+            .map_err(SinexError::from)?;
 
         let query_duration = query_start.elapsed();
         query_times.push(query_duration.as_millis());

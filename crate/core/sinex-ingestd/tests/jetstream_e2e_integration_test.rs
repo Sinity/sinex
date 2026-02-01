@@ -5,6 +5,7 @@ use sinex_db::DbPoolExt;
 use sinex_node_sdk::{
     AutomatonEventHandler, JetStreamEventConsumer, JetStreamEventConsumerConfig, ProcessingModel,
 };
+use sinex_primitives::{error::SinexError, temporal};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::info;
@@ -17,10 +18,10 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
     let scope = ctx.pipeline().await?;
     info!("🚀 Starting E2E JetStream test");
 
-    let ctx = scope.ctx();
-    let env = ctx.env().clone();
+    let sandbox = scope.ctx();
+    let env = sandbox.env().clone();
     let namespace = scope.namespace().prefix().to_string();
-    let nats_client = ctx.nats_client();
+    let nats_client = sandbox.nats_client();
 
     let automaton_handler = Arc::new(AutomatonEventHandler::new());
     let automaton_config = JetStreamEventConsumerConfig {
@@ -41,23 +42,18 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
     );
     let automaton_handle = tokio::spawn(async move { automaton_consumer.run().await });
 
-    let publisher = TestNodePublisher::with_namespace(
-        nats_client.clone(),
-        "test-node",
-        Some(namespace.clone()),
-    );
-    let event_id = publisher
-        .publish(
+    // Use PipelineScope's publish method instead of TestNodePublisher
+    let event_id = scope
+        .publish(DynamicPayload::new(
+            "test-node",
             "test.event",
             json!({
                 "message": "E2E JetStream test event",
-                "timestamp": crate::temporal::now().to_rfc3339(),
+                "timestamp": temporal::now().format_rfc3339(),
             }),
-        )
+        ))
         .await?;
-    info!(event_id = %event_id, "✅ Event published to JetStream via TestNodePublisher");
-
-    scope.wait_for_event_id(event_id.into()).await?;
+    info!(event_id = %event_id, "✅ Event published to JetStream via PipelineScope");
 
     WaitHelpers::wait_for_condition(
         || {
@@ -65,17 +61,17 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
             let event_id = event_id;
             async move {
                 let processed_ids = handler.processed_event_ids().await;
-                Ok(processed_ids.contains(&event_id.into()))
+                Ok::<bool, SinexError>(processed_ids.contains(&event_id))
             }
         },
         DEFAULT_WAIT_SECS,
     )
     .await?;
 
-    let event_from_db = ctx
+    let event_from_db = sandbox
         .pool
         .events()
-        .get_by_id(event_id.into())
+        .get_by_id(event_id)
         .await?
         .expect("event should be persisted");
     assert_eq!(event_from_db.source.as_str(), "test-node");
@@ -99,15 +95,9 @@ async fn test_jetstream_idempotency(ctx: TestContext) -> Result<()> {
     let scope = ctx.pipeline().await?;
     info!("🚀 Starting JetStream idempotency test");
 
-    let ctx = scope.ctx();
-    let namespace = scope.namespace().prefix().to_string();
-    let nats_client = ctx.nats_client();
+    let sandbox = scope.ctx();
 
-    let publisher = TestNodePublisher::with_namespace(
-        nats_client.clone(),
-        "idempotency-test",
-        Some(namespace.clone()),
-    );
+    // Publish twice with the same ID using overrides
     let event_id = Ulid::new();
     let overrides = EventOverrides {
         id: Some(event_id),
@@ -115,10 +105,13 @@ async fn test_jetstream_idempotency(ctx: TestContext) -> Result<()> {
     };
 
     for i in 1..=2 {
-        publisher
+        scope
             .publish_with_overrides(
-                "test.duplicate",
-                json!({"test": "idempotency"}),
+                DynamicPayload::new(
+                    "idempotency-test",
+                    "test.duplicate",
+                    json!({"test": "idempotency"}),
+                ),
                 overrides.clone(),
             )
             .await?;
@@ -131,7 +124,7 @@ async fn test_jetstream_idempotency(ctx: TestContext) -> Result<()> {
         "SELECT COUNT(*) as count FROM core.events WHERE id = $1::uuid::ulid",
         event_id.as_uuid()
     )
-    .fetch_one(&ctx.pool)
+    .fetch_one(&sandbox.pool)
     .await?;
     assert_eq!(
         event_count.count.unwrap_or(0),

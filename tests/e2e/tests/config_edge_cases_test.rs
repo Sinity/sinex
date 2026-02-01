@@ -10,9 +10,9 @@
 //! - Path validation edge cases
 //! - Connection test failure handling
 
+use sinex_ingestd::config::IngestdConfig;
 use sinex_primitives::nats::NatsConnectionConfig;
 use sinex_primitives::{Bytes, Seconds};
-use sinex_ingestd::config::IngestdConfig;
 use std::env;
 use tempfile::TempDir;
 use xtask::sandbox::prelude::*;

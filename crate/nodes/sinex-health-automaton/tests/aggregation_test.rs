@@ -1,9 +1,11 @@
 //! Tests for health aggregator windowed aggregation logic
 
-use chrono::{Duration, Utc};
 use serde_json::json;
 use sinex_health_automaton::{HealthAggregator, HealthAggregatorConfig, HealthState};
 use sinex_node_sdk::simple_node::{SimpleNode, SimpleNodeContext};
+use sinex_primitives::events::EventId;
+use sinex_primitives::Timestamp;
+use time::Duration;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
@@ -21,8 +23,8 @@ async fn health_aggregator_tracks_component_status(ctx: TestContext) -> TestResu
     let context = SimpleNodeContext {
         source: "test".to_string(),
         event_type: "health.status".to_string(),
-        ts_orig: Some(Utc::now()),
-        event_id: sinex_primitives::EventId::new().into(),
+        ts_orig: Some(Timestamp::now()),
+        event_id: EventId::new().into(),
     };
 
     let output = aggregator.process(&mut state, input, &context).await;
@@ -57,8 +59,8 @@ async fn health_aggregator_emits_alert_on_failed_transition(ctx: TestContext) ->
     let context_baseline = SimpleNodeContext {
         source: "test".to_string(),
         event_type: "health.status".to_string(),
-        ts_orig: Some(Utc::now() - Duration::seconds(10)),
-        event_id: sinex_primitives::EventId::new().into(),
+        ts_orig: Some(Timestamp::now() - Duration::seconds(10)),
+        event_id: EventId::new().into(),
     };
     aggregator
         .process(&mut state, baseline, &context_baseline)
@@ -74,8 +76,8 @@ async fn health_aggregator_emits_alert_on_failed_transition(ctx: TestContext) ->
     let context = SimpleNodeContext {
         source: "test".to_string(),
         event_type: "health.status".to_string(),
-        ts_orig: Some(Utc::now()),
-        event_id: sinex_primitives::EventId::new().into(),
+        ts_orig: Some(Timestamp::now()),
+        event_id: EventId::new().into(),
     };
 
     let output = aggregator.process(&mut state, input, &context).await?;
@@ -108,7 +110,7 @@ async fn health_aggregator_tracks_transition_count(ctx: TestContext) -> TestResu
     let mut aggregator = HealthAggregator::default();
     let mut state = HealthState::default();
 
-    let base_time = Utc::now() - Duration::seconds(10);
+    let base_time = Timestamp::now() - Duration::seconds(10);
 
     // Establish baseline status
     let baseline = json!({
@@ -120,7 +122,7 @@ async fn health_aggregator_tracks_transition_count(ctx: TestContext) -> TestResu
         source: "test".to_string(),
         event_type: "health.status".to_string(),
         ts_orig: Some(base_time),
-        event_id: sinex_primitives::EventId::new().into(),
+        event_id: EventId::new().into(),
     };
     aggregator
         .process(&mut state, baseline, &context_baseline)
@@ -141,7 +143,7 @@ async fn health_aggregator_tracks_transition_count(ctx: TestContext) -> TestResu
             source: "test".to_string(),
             event_type: "health.status".to_string(),
             ts_orig: Some(base_time + Duration::seconds(i as i64 + 1)),
-            event_id: sinex_primitives::EventId::new().into(),
+            event_id: EventId::new().into(),
         };
 
         aggregator.process(&mut state, input, &context).await?;
@@ -171,7 +173,7 @@ async fn health_aggregator_prunes_old_events_outside_window(ctx: TestContext) ->
         ..Default::default()
     };
 
-    let base_time = Utc::now();
+    let base_time = Timestamp::now();
 
     // Add events across a 10-minute span
     for i in 0..10 {
@@ -185,7 +187,7 @@ async fn health_aggregator_prunes_old_events_outside_window(ctx: TestContext) ->
             source: "test".to_string(),
             event_type: "health.status".to_string(),
             ts_orig: Some(base_time + Duration::minutes(i)),
-            event_id: sinex_primitives::EventId::new().into(),
+            event_id: EventId::new().into(),
         };
 
         aggregator.process(&mut state, input, &context).await?;
@@ -203,7 +205,7 @@ async fn health_aggregator_prunes_old_events_outside_window(ctx: TestContext) ->
         source: "test".to_string(),
         event_type: "health.status".to_string(),
         ts_orig: Some(future_time),
-        event_id: sinex_primitives::EventId::new().into(),
+        event_id: EventId::new().into(),
     };
 
     aggregator.process(&mut state, input, &context).await?;
@@ -213,7 +215,7 @@ async fn health_aggregator_prunes_old_events_outside_window(ctx: TestContext) ->
     let events_in_window = component
         .events
         .iter()
-        .filter(|e| future_time.signed_duration_since(e.timestamp).num_seconds() <= 300)
+        .filter(|e| (future_time - e.timestamp).whole_seconds() <= 300)
         .count();
 
     assert!(
@@ -240,7 +242,7 @@ async fn health_aggregator_emits_system_status_periodically(ctx: TestContext) ->
         ..Default::default()
     };
 
-    let base_time = Utc::now();
+    let base_time = Timestamp::now();
 
     // Process first event (should emit system status)
     let input1 = json!({
@@ -253,7 +255,7 @@ async fn health_aggregator_emits_system_status_periodically(ctx: TestContext) ->
         source: "test".to_string(),
         event_type: "health.status".to_string(),
         ts_orig: Some(base_time),
-        event_id: sinex_primitives::EventId::new().into(),
+        event_id: EventId::new().into(),
     };
 
     let output1 = aggregator.process(&mut state, input1, &context1).await?;
@@ -270,7 +272,7 @@ async fn health_aggregator_emits_system_status_periodically(ctx: TestContext) ->
         source: "test".to_string(),
         event_type: "health.status".to_string(),
         ts_orig: Some(base_time + Duration::seconds(2)),
-        event_id: sinex_primitives::EventId::new().into(),
+        event_id: EventId::new().into(),
     };
 
     let _output2 = aggregator.process(&mut state, input2, &context2).await?;
@@ -287,7 +289,7 @@ async fn health_aggregator_emits_system_status_periodically(ctx: TestContext) ->
         source: "test".to_string(),
         event_type: "health.status".to_string(),
         ts_orig: Some(base_time + Duration::seconds(6)),
-        event_id: sinex_primitives::EventId::new().into(),
+        event_id: EventId::new().into(),
     };
 
     let output3 = aggregator.process(&mut state, input3, &context3).await?;
@@ -304,10 +306,10 @@ async fn health_aggregator_calculates_overall_system_status(ctx: TestContext) ->
     let mut aggregator = HealthAggregator::default();
     let mut state = HealthState::default();
 
-    let base_time = Utc::now();
+    let base_time = Timestamp::now();
 
     // Add mix of healthy, degraded, and failed components
-    let statuses = vec![
+    let statuses = [
         ("service-1", "healthy"),
         ("service-2", "healthy"),
         ("service-3", "degraded"),
@@ -325,7 +327,7 @@ async fn health_aggregator_calculates_overall_system_status(ctx: TestContext) ->
             source: "test".to_string(),
             event_type: "health.status".to_string(),
             ts_orig: Some(base_time + Duration::seconds(i as i64)),
-            event_id: sinex_primitives::EventId::new().into(),
+            event_id: EventId::new().into(),
         };
 
         aggregator.process(&mut state, input, &context).await?;
@@ -343,7 +345,7 @@ async fn health_aggregator_calculates_overall_system_status(ctx: TestContext) ->
         source: "test".to_string(),
         event_type: "health.status".to_string(),
         ts_orig: Some(base_time + Duration::seconds(10)),
-        event_id: sinex_primitives::EventId::new().into(),
+        event_id: EventId::new().into(),
     };
 
     let output = aggregator.process(&mut state, input, &context).await?;
@@ -395,7 +397,7 @@ async fn health_aggregator_respects_component_check_intervals(ctx: TestContext) 
         ..Default::default()
     };
 
-    let base_time = Utc::now();
+    let base_time = Timestamp::now();
 
     // First event for fast-check component (should emit report)
     let input1 = json!({
@@ -408,7 +410,7 @@ async fn health_aggregator_respects_component_check_intervals(ctx: TestContext) 
         source: "test".to_string(),
         event_type: "health.status".to_string(),
         ts_orig: Some(base_time),
-        event_id: sinex_primitives::EventId::new().into(),
+        event_id: EventId::new().into(),
     };
 
     let _output1 = aggregator.process(&mut state, input1, &context1).await?;
@@ -425,7 +427,7 @@ async fn health_aggregator_respects_component_check_intervals(ctx: TestContext) 
         source: "test".to_string(),
         event_type: "health.status".to_string(),
         ts_orig: Some(base_time + Duration::milliseconds(500)),
-        event_id: sinex_primitives::EventId::new().into(),
+        event_id: EventId::new().into(),
     };
 
     let _output2 = aggregator.process(&mut state, input2, &context2).await?;
@@ -442,7 +444,7 @@ async fn health_aggregator_respects_component_check_intervals(ctx: TestContext) 
         source: "test".to_string(),
         event_type: "health.status".to_string(),
         ts_orig: Some(base_time + Duration::milliseconds(1500)),
-        event_id: sinex_primitives::EventId::new().into(),
+        event_id: EventId::new().into(),
     };
 
     let _output3 = aggregator.process(&mut state, input3, &context3).await?;

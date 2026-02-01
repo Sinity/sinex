@@ -238,10 +238,15 @@ async fn test_high_volume_ingestion(ctx: TestContext) -> AnyhowResult<(), color_
     println!("Inserted 1000 events in {:?}", elapsed);
 
     // Verify count using timing utility
-    let count =
-        wait_for_filtered_event_count(ctx.pool(), "source LIKE $1", &["perf_test_%"], 1000, Timeouts::LONG as i64)
-            .await
-            .map_err(|e| eyre!("Failed to verify event count: {}", e))?;
+    let count = wait_for_filtered_event_count(
+        ctx.pool(),
+        "source LIKE $1",
+        &["perf_test_%"],
+        1000,
+        Timeouts::LONG as i64,
+    )
+    .await
+    .map_err(|e| eyre!("Failed to verify event count: {}", e))?;
 
     pretty_assertions::assert_eq!(count, 1000);
     assert!(

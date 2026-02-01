@@ -11,11 +11,10 @@
 //! for unified database access patterns.
 
 use serde_json::json;
-// Using shorter imports from sinex-db's re-exports
-use sinex_db::{
-    payloads::filesystem::{FileCreatedPayload, FileModifiedPayload},
-    DbPoolExt, DynamicPayload, EventSource, Ulid,
-};
+use sinex_db::{DbPoolExt, DynamicPayload, Ulid};
+use sinex_primitives::events::payloads::{FileCreatedPayload, FileModifiedPayload};
+use sinex_primitives::events::EventPayload;
+use sinex_primitives::EventSource;
 use std::time::Duration as StdDuration;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::WaitHelpers;

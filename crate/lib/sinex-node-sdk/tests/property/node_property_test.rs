@@ -6,9 +6,9 @@
 use proptest::prelude::*;
 use proptest::test_runner::TestCaseError;
 use serde_json::json;
-use sinex_node_sdk::db::repositories::DbPoolExt;
-use sinex_node_sdk::types::domain::{EventSource, EventType};
-use sinex_node_sdk::{Event, JsonValue};
+use sinex_db::repositories::DbPoolExt;
+use sinex_primitives::domain::{EventSource, EventType};
+use sinex_primitives::{Event, JsonValue};
 use std::time::Duration;
 use xtask::sandbox::{prelude::*, sinex_prop, sinex_proptest, test_event};
 
@@ -483,7 +483,7 @@ async fn node_maintains_event_ordering_under_load(
                     json!({
                         "source_id": source_id,
                         "event_id": event_id,
-                        "timestamp": OffsetDateTime::now_utc().timestamp_millis()
+                        "timestamp": OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000
                     }),
                 );
 

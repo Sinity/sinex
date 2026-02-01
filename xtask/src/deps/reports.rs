@@ -3,25 +3,28 @@
 use anyhow::Result;
 use serde_json::json;
 use std::io::Write;
+use std::str::FromStr;
 
 use super::analyzer::{DependencyInfo, DuplicateDependency, PackageInfo};
 
 /// Output format
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub enum OutputFormat {
     /// Human-readable output
+    #[default]
     Human,
     /// JSON output
     Json,
 }
 
-impl OutputFormat {
-    /// Parse from string
-    pub fn from_str(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
+impl FromStr for OutputFormat {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s.to_lowercase().as_str() {
             "json" => Self::Json,
             _ => Self::Human,
-        }
+        })
     }
 }
 
@@ -178,7 +181,7 @@ pub fn write_unused_report_to_buffer<W: Write>(
             let json = serde_json::to_string_pretty(report)?;
             writeln!(writer, "{}", json)?;
         }
-        "human" | _ => {
+        _ => {
             if report.unused.is_empty() {
                 writeln!(
                     writer,
@@ -198,7 +201,7 @@ pub fn write_unused_report_to_buffer<W: Write>(
                 for dep in &report.unused {
                     by_package
                         .entry(&dep.package)
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(&dep.dependency);
                 }
 

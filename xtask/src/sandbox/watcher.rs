@@ -35,13 +35,12 @@ impl FileWatcher {
             move |res: Result<Vec<DebouncedEvent>, notify::Error>| match res {
                 Ok(events) => {
                     for event in events {
-                        if should_trigger_rebuild(&event.path) {
-                            if tx
+                        if should_trigger_rebuild(&event.path)
+                            && tx
                                 .blocking_send(WatchEvent::FileChanged(event.path.clone()))
                                 .is_err()
-                            {
-                                break;
-                            }
+                        {
+                            break;
                         }
                     }
                 }
@@ -80,13 +79,12 @@ impl FileWatcher {
             move |res: Result<Vec<DebouncedEvent>, notify::Error>| match res {
                 Ok(events) => {
                     for event in events {
-                        if should_trigger_rebuild(&event.path) {
-                            if tx
+                        if should_trigger_rebuild(&event.path)
+                            && tx
                                 .blocking_send(WatchEvent::FileChanged(event.path.clone()))
                                 .is_err()
-                            {
-                                break;
-                            }
+                        {
+                            break;
                         }
                     }
                 }

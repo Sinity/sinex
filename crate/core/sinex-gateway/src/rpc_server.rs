@@ -744,18 +744,18 @@ pub async fn dispatch_rpc_method(
     }
 }
 
-fn replay_control_client<'a>(
-    services: &'a ServiceContainer,
-) -> color_eyre::eyre::Result<&'a ReplayControlClient> {
+fn replay_control_client(
+    services: &ServiceContainer,
+) -> color_eyre::eyre::Result<&ReplayControlClient> {
     services
         .replay_control
         .as_ref()
         .ok_or_else(|| eyre!("Replay control bus is not initialized"))
 }
 
-fn coordination_client<'a>(
-    services: &'a ServiceContainer,
-) -> color_eyre::eyre::Result<&'a CoordinationKvClient> {
+fn coordination_client(
+    services: &ServiceContainer,
+) -> color_eyre::eyre::Result<&CoordinationKvClient> {
     services
         .coordination
         .as_ref()
@@ -763,9 +763,9 @@ fn coordination_client<'a>(
         .ok_or_else(|| eyre!("Coordination client is not initialized (NATS connection required)"))
 }
 
-fn nats_client_required<'a>(
-    services: &'a ServiceContainer,
-) -> color_eyre::eyre::Result<&'a async_nats::Client> {
+fn nats_client_required(
+    services: &ServiceContainer,
+) -> color_eyre::eyre::Result<&async_nats::Client> {
     services
         .nats_client()
         .ok_or_else(|| eyre!("NATS client is not available"))
@@ -1234,10 +1234,7 @@ where
             }),
         )
         .layer(PropagateRequestIdLayer::new(request_id_header.clone()))
-        .layer(SetRequestIdLayer::new(
-            request_id_header,
-            MakeRequestUuid::default(),
-        ))
+        .layer(SetRequestIdLayer::new(request_id_header, MakeRequestUuid))
 }
 
 async fn handle_layer_error(err: BoxError) -> impl IntoResponse {
@@ -1263,6 +1260,169 @@ async fn handle_layer_error(err: BoxError) -> impl IntoResponse {
 
 fn rpc_layer_error_response(status: StatusCode, code: i32, message: String) -> impl IntoResponse {
     (status, Json(JsonRpcResponse::error(None, code, message)))
+}
+
+/// Run the RPC server with configurable binding
+///
+/// Accepts a shutdown signal receiver that will trigger graceful shutdown when signaled.
+///
+/// # CORS Configuration
+/// The `cors_origins` parameter controls allowed origins:
+/// - Empty: Only localhost origins allowed (http://localhost:*, http://127.0.0.1:*)
+/// - Non-empty: Only the specified origins allowed
+pub async fn run(
+    tcp_listen: Option<&str>,
+    services: ServiceContainer,
+    cors_origins: Vec<String>,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) -> color_eyre::eyre::Result<()> {
+    let bind_address = BindAddress::from_env_or_default(tcp_listen)?;
+
+    // Create shutdown channels for background tasks
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+
+    let auth = GatewayAuth::from_env()?.start_file_watcher(shutdown_rx.clone())?;
+    let limits = RpcServerLimits::from_env().apply_pool_limit(services.pool_max_connections());
+
+    // Issue 143: Per-token rate limiting
+    // Use distributed rate limiting via NATS KV when available, fall back to in-memory
+    let (rate_limiter, cleanup_task) = match services.nats_client() {
+        Some(nats) => {
+            let jetstream = async_nats::jetstream::new(nats.clone());
+            let config = DistributedRateLimitConfig::from_env();
+            match DistributedRateLimiter::new(jetstream, config).await {
+                Ok(limiter) => {
+                    info!("Using distributed rate limiting via NATS KV (shared across instances, survives restarts)");
+                    (RateLimiter::Distributed(Arc::new(limiter)), None)
+                }
+                Err(e) => {
+                    warn!(error = %e, "Failed to create distributed rate limiter, falling back to in-memory");
+                    let in_memory = Arc::new(TokenRateLimiter::from_env());
+                    let task = Arc::clone(&in_memory).spawn_cleanup_task(shutdown_rx.clone());
+                    (RateLimiter::InMemory(in_memory), Some(task))
+                }
+            }
+        }
+        None => {
+            info!("NATS not available - using in-memory rate limiting (state lost on restart)");
+            let in_memory = Arc::new(TokenRateLimiter::from_env());
+            let task = Arc::clone(&in_memory).spawn_cleanup_task(shutdown_rx.clone());
+            (RateLimiter::InMemory(in_memory), Some(task))
+        }
+    };
+
+    // Self-observation metrics
+    let metrics = Arc::new(match services.nats_client() {
+        Some(nats) => GatewayMetrics::new(nats.clone()),
+        None => {
+            info!("NATS not available - gateway metrics emission disabled");
+            GatewayMetrics::disabled()
+        }
+    });
+
+    // Spawn metrics emission background task
+    let metrics_task = if metrics.is_enabled() {
+        Some(Arc::clone(&metrics).spawn_emission_task(shutdown_rx.clone()))
+    } else {
+        None
+    };
+
+    let state = AppState {
+        services,
+        auth,
+        rate_limiter,
+        metrics,
+    };
+
+    let base_router = Router::new()
+        .route("/rpc", post(handle_rpc))
+        .route("/", post(handle_rpc))
+        .route("/health", get(health_check));
+
+    let app = apply_rpc_layers(base_router, &limits, &cors_origins).with_state(state);
+
+    let (cert_path, key_path, client_ca) = tls_paths_from_env()?;
+    require_mtls_for_remote(&bind_address, client_ca.as_deref())?;
+    warn_if_remote_bind(&bind_address);
+
+    let BindAddress::Tcp { host, port } = bind_address;
+    let addr = format!("{}:{}", host, port);
+    let listener = bind_with_reuseport(&addr)
+        .await
+        .wrap_err_with(|| format!("Failed to bind TCP listener to {}", addr))?;
+    let tls_config = load_rustls_config(&cert_path, &key_path, client_ca.as_deref())?;
+    let acceptor = TlsAcceptor::from(Arc::new(tls_config));
+    info!("RPC server listening on TLS {}", addr);
+
+    // Main accept loop with shutdown signal handling
+    loop {
+        tokio::select! {
+            accept_result = listener.accept() => {
+                let (stream, peer) = accept_result
+                    .wrap_err("Failed to accept incoming TCP connection")?;
+                let app_clone = app.clone();
+                let acceptor = acceptor.clone();
+
+                tokio::spawn(async move {
+                    match acceptor.accept(stream).await {
+                        Ok(tls_stream) => {
+                            let builder = HyperBuilder::new(TokioExecutor::new());
+                            let service = TowerToHyperService::new(app_clone);
+                            let io = TokioIo::new(tls_stream);
+                            if let Err(err) = builder.serve_connection(io, service).await {
+                                error!(?err, "TLS RPC connection from {:?} closed with error", peer);
+                            }
+                        }
+                        Err(err) => {
+                            error!(?err, "TLS handshake failed for {:?}", peer);
+                        }
+                    }
+                });
+            }
+            _ = shutdown.changed() => {
+                if *shutdown.borrow() {
+                    info!("Shutdown signal received, stopping RPC server");
+                    break;
+                }
+            }
+        }
+    }
+
+    // Signal all background tasks to shut down
+    info!("Shutting down background tasks...");
+    let _ = shutdown_tx.send(true);
+
+    // Wait for background tasks to complete with timeout
+    let shutdown_timeout = std::time::Duration::from_secs(30);
+
+    if let Some(task) = metrics_task {
+        info!("Awaiting metrics emission task shutdown...");
+        match tokio::time::timeout(shutdown_timeout, task).await {
+            Ok(Ok(())) => info!("Metrics emission task shut down successfully"),
+            Ok(Err(e)) => warn!(?e, "Metrics emission task exited with error"),
+            Err(_) => warn!(
+                "Metrics emission task did not shut down within {:?}",
+                shutdown_timeout
+            ),
+        }
+    }
+
+    if let Some(task) = cleanup_task {
+        info!("Awaiting rate limiter cleanup task shutdown...");
+        match tokio::time::timeout(shutdown_timeout, task).await {
+            Ok(Ok(())) => info!("Rate limiter cleanup task shut down successfully"),
+            Ok(Err(e)) => warn!(?e, "Rate limiter cleanup task exited with error"),
+            Err(_) => warn!(
+                "Rate limiter cleanup task did not shut down within {:?}",
+                shutdown_timeout
+            ),
+        }
+    } else {
+        info!("No rate limiter cleanup task (using distributed rate limiting)");
+    }
+
+    info!("RPC server shutdown complete");
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1294,7 +1454,7 @@ mod tests {
                 Json(json!({"status": "ok"}))
             }),
         );
-        apply_rpc_layers(base, &limits)
+        apply_rpc_layers(base, &limits, &[])
     }
 
     async fn spawn_router(router: Router) -> (SocketAddr, JoinHandle<()>) {
@@ -1566,167 +1726,4 @@ mod tests {
         assert!(auth.verify(&headers).await.is_ok());
         Ok(())
     }
-}
-
-/// Run the RPC server with configurable binding
-///
-/// Accepts a shutdown signal receiver that will trigger graceful shutdown when signaled.
-///
-/// # CORS Configuration
-/// The `cors_origins` parameter controls allowed origins:
-/// - Empty: Only localhost origins allowed (http://localhost:*, http://127.0.0.1:*)
-/// - Non-empty: Only the specified origins allowed
-pub async fn run(
-    tcp_listen: Option<&str>,
-    services: ServiceContainer,
-    cors_origins: Vec<String>,
-    mut shutdown: tokio::sync::watch::Receiver<bool>,
-) -> color_eyre::eyre::Result<()> {
-    let bind_address = BindAddress::from_env_or_default(tcp_listen)?;
-
-    // Create shutdown channels for background tasks
-    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-
-    let auth = GatewayAuth::from_env()?.start_file_watcher(shutdown_rx.clone())?;
-    let limits = RpcServerLimits::from_env().apply_pool_limit(services.pool_max_connections());
-
-    // Issue 143: Per-token rate limiting
-    // Use distributed rate limiting via NATS KV when available, fall back to in-memory
-    let (rate_limiter, cleanup_task) = match services.nats_client() {
-        Some(nats) => {
-            let jetstream = async_nats::jetstream::new(nats.clone());
-            let config = DistributedRateLimitConfig::from_env();
-            match DistributedRateLimiter::new(jetstream, config).await {
-                Ok(limiter) => {
-                    info!("Using distributed rate limiting via NATS KV (shared across instances, survives restarts)");
-                    (RateLimiter::Distributed(Arc::new(limiter)), None)
-                }
-                Err(e) => {
-                    warn!(error = %e, "Failed to create distributed rate limiter, falling back to in-memory");
-                    let in_memory = Arc::new(TokenRateLimiter::from_env());
-                    let task = Arc::clone(&in_memory).spawn_cleanup_task(shutdown_rx.clone());
-                    (RateLimiter::InMemory(in_memory), Some(task))
-                }
-            }
-        }
-        None => {
-            info!("NATS not available - using in-memory rate limiting (state lost on restart)");
-            let in_memory = Arc::new(TokenRateLimiter::from_env());
-            let task = Arc::clone(&in_memory).spawn_cleanup_task(shutdown_rx.clone());
-            (RateLimiter::InMemory(in_memory), Some(task))
-        }
-    };
-
-    // Self-observation metrics
-    let metrics = Arc::new(match services.nats_client() {
-        Some(nats) => GatewayMetrics::new(nats.clone()),
-        None => {
-            info!("NATS not available - gateway metrics emission disabled");
-            GatewayMetrics::disabled()
-        }
-    });
-
-    // Spawn metrics emission background task
-    let metrics_task = if metrics.is_enabled() {
-        Some(Arc::clone(&metrics).spawn_emission_task(shutdown_rx.clone()))
-    } else {
-        None
-    };
-
-    let state = AppState {
-        services,
-        auth,
-        rate_limiter,
-        metrics,
-    };
-
-    let base_router = Router::new()
-        .route("/rpc", post(handle_rpc))
-        .route("/", post(handle_rpc))
-        .route("/health", get(health_check));
-
-    let app = apply_rpc_layers(base_router, &limits, &cors_origins).with_state(state);
-
-    let (cert_path, key_path, client_ca) = tls_paths_from_env()?;
-    require_mtls_for_remote(&bind_address, client_ca.as_deref())?;
-    warn_if_remote_bind(&bind_address);
-
-    let BindAddress::Tcp { host, port } = bind_address;
-    let addr = format!("{}:{}", host, port);
-    let listener = bind_with_reuseport(&addr)
-        .await
-        .wrap_err_with(|| format!("Failed to bind TCP listener to {}", addr))?;
-    let tls_config = load_rustls_config(&cert_path, &key_path, client_ca.as_deref())?;
-    let acceptor = TlsAcceptor::from(Arc::new(tls_config));
-    info!("RPC server listening on TLS {}", addr);
-
-    // Main accept loop with shutdown signal handling
-    loop {
-        tokio::select! {
-            accept_result = listener.accept() => {
-                let (stream, peer) = accept_result
-                    .wrap_err("Failed to accept incoming TCP connection")?;
-                let app_clone = app.clone();
-                let acceptor = acceptor.clone();
-
-                tokio::spawn(async move {
-                    match acceptor.accept(stream).await {
-                        Ok(tls_stream) => {
-                            let builder = HyperBuilder::new(TokioExecutor::new());
-                            let service = TowerToHyperService::new(app_clone);
-                            let io = TokioIo::new(tls_stream);
-                            if let Err(err) = builder.serve_connection(io, service).await {
-                                error!(?err, "TLS RPC connection from {:?} closed with error", peer);
-                            }
-                        }
-                        Err(err) => {
-                            error!(?err, "TLS handshake failed for {:?}", peer);
-                        }
-                    }
-                });
-            }
-            _ = shutdown.changed() => {
-                if *shutdown.borrow() {
-                    info!("Shutdown signal received, stopping RPC server");
-                    break;
-                }
-            }
-        }
-    }
-
-    // Signal all background tasks to shut down
-    info!("Shutting down background tasks...");
-    let _ = shutdown_tx.send(true);
-
-    // Wait for background tasks to complete with timeout
-    let shutdown_timeout = std::time::Duration::from_secs(30);
-
-    if let Some(task) = metrics_task {
-        info!("Awaiting metrics emission task shutdown...");
-        match tokio::time::timeout(shutdown_timeout, task).await {
-            Ok(Ok(())) => info!("Metrics emission task shut down successfully"),
-            Ok(Err(e)) => warn!(?e, "Metrics emission task exited with error"),
-            Err(_) => warn!(
-                "Metrics emission task did not shut down within {:?}",
-                shutdown_timeout
-            ),
-        }
-    }
-
-    if let Some(task) = cleanup_task {
-        info!("Awaiting rate limiter cleanup task shutdown...");
-        match tokio::time::timeout(shutdown_timeout, task).await {
-            Ok(Ok(())) => info!("Rate limiter cleanup task shut down successfully"),
-            Ok(Err(e)) => warn!(?e, "Rate limiter cleanup task exited with error"),
-            Err(_) => warn!(
-                "Rate limiter cleanup task did not shut down within {:?}",
-                shutdown_timeout
-            ),
-        }
-    } else {
-        info!("No rate limiter cleanup task (using distributed rate limiting)");
-    }
-
-    info!("RPC server shutdown complete");
-    Ok(())
 }

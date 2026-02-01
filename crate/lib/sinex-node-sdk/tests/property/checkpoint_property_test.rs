@@ -83,7 +83,7 @@ async fn checkpoint_updates_are_idempotent(
     let initial_state = CheckpointState {
         checkpoint,
         processed_count,
-        last_activity: OffsetDateTime::now_utc(),
+        last_activity: Timestamp::now(),
         data: Some(checkpoint_data.clone()),
         version: 2,
         revision: 0,
@@ -142,7 +142,7 @@ async fn checkpoint_recovery_is_robust(
                 event_id: None,
             },
             processed_count: *processed_count,
-            last_activity: OffsetDateTime::now_utc(),
+            last_activity: Timestamp::now(),
             data: Some(data.clone()),
             version: 2,
             revision: 0,
@@ -196,7 +196,7 @@ async fn concurrent_checkpoint_access_is_safe(
                     event_id: None,
                 },
                 processed_count: count,
-                last_activity: OffsetDateTime::now_utc(),
+                last_activity: Timestamp::now(),
                 data: Some(serde_json::json!({ "task": i })),
                 version: 2,
                 revision: 0,
@@ -256,7 +256,7 @@ async fn checkpoint_state_transitions_are_valid(
             event_id: None,
         },
         processed_count: current_count,
-        last_activity: OffsetDateTime::now_utc(),
+        last_activity: Timestamp::now(),
         data: Some(serde_json::json!({ "sequence": 0 })),
         version: 2,
         revision: 0,
@@ -337,7 +337,7 @@ async fn checkpoint_data_integrity_is_preserved(
                         event_id: None,
                     },
                     processed_count,
-                    last_activity: OffsetDateTime::now_utc(),
+                    last_activity: Timestamp::now(),
                     data: Some(expected_data.clone()),
                     version: 2,
                     revision: 0,
@@ -366,7 +366,7 @@ async fn checkpoint_data_integrity_is_preserved(
                         event_id: None,
                     },
                     processed_count,
-                    last_activity: OffsetDateTime::now_utc(),
+                    last_activity: Timestamp::now(),
                     data: Some(expected_data.clone()),
                     version: 2,
                     revision: 0,
@@ -425,7 +425,7 @@ async fn checkpoint_cleanup_maintains_consistency(
                 event_id: None,
             },
             processed_count: cleanup_threshold,
-            last_activity: OffsetDateTime::now_utc(),
+            last_activity: Timestamp::now(),
             data: Some(serde_json::json!({ "automaton": processor_name })),
             version: 2,
             revision: 0,
@@ -507,7 +507,7 @@ mod stress_tests {
                             event_id: None,
                         },
                         processed_count: i as u64,
-                        last_activity: OffsetDateTime::now_utc(),
+                        last_activity: Timestamp::now(),
                         data: Some(serde_json::json!({"thread": thread_id, "iteration": i})),
                         version: 2,
                         revision: 0,
@@ -588,7 +588,7 @@ mod unit_tests {
         assert_eq!(state.last_processed_id(), Some("stream-123".to_string()));
 
         // Test setting ULID
-        let ulid = sinex_node_sdk::types::Ulid::new();
+        let ulid = sinex_primitives::Ulid::new();
         state.checkpoint = Checkpoint::Internal {
             event_id: ulid,
             message_count: 0,

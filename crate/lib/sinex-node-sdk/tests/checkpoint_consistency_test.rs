@@ -9,17 +9,18 @@
 
 use serde_json::json;
 use sinex_db::integrity::checkpoint_verification;
-use sinex_primitives::ids::Ulid;
-use sinex_primitives::Timestamp;
-use sinex_node_sdk::{DbPool, DynamicPayload};
+use sinex_db::DbPool;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
+use sinex_primitives::ids::Ulid;
+use sinex_primitives::{DynamicPayload, EventSource, Timestamp};
 use std::collections::{HashMap, HashSet};
-use time::{Duration, OffsetDateTime};
+use time::Duration;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::WaitHelpers;
 
-// Import helpers from the extracted module
-use super::checkpoint_test_helpers::{
+// Import helpers from the test helpers module
+mod checkpoint_test_helpers;
+use checkpoint_test_helpers::{
     analyze_checkpoint, fetch_checkpoint_state, fetch_event_ulid_at, purge_checkpoint_state,
     save_checkpoint_state, CheckpointInconsistency, CheckpointInconsistencyType,
 };
@@ -53,7 +54,7 @@ async fn ensure_processor_manifest(pool: &DbPool, processor_name: &str) -> TestR
 #[sinex_serial_test]
 async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
-    let ctx = ctx.with_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let pool = ctx.pool().clone();
     let kv = ctx.checkpoint_kv().await?;
 
@@ -81,7 +82,7 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult<
     WaitHelpers::wait_for_source_events(ctx.pool(), "test.checkpoint", 10, 20).await?;
 
     // Create initial checkpoint pointing to the 5th event
-    let checkpoint_ulid = event_ids[4].as_ulid().clone();
+    let checkpoint_ulid = *event_ids[4].as_ulid();
     save_checkpoint_state(
         &kv,
         &processor_name,
@@ -89,7 +90,7 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult<
         DEFAULT_CONSUMER,
         Checkpoint::internal(checkpoint_ulid, 5),
         5,
-        Timestamp::new(OffsetDateTime::now_utc()),
+        Timestamp::now(),
         Some(json!({"processed": 5})),
     )
     .await?;
@@ -131,7 +132,7 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult<
 #[sinex_serial_test]
 async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
-    let ctx = ctx.with_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let pool = ctx.pool().clone();
     let kv = ctx.checkpoint_kv().await?;
 
@@ -155,7 +156,7 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult<()> {
     }
 
     // Create checkpoint at end of batch1
-    let last_batch1_ulid = batch1_events.last().unwrap().as_ulid().clone();
+    let last_batch1_ulid = *batch1_events.last().unwrap().as_ulid();
     save_checkpoint_state(
         &kv,
         &processor_name,
@@ -163,7 +164,7 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult<()> {
         DEFAULT_CONSUMER,
         Checkpoint::internal(last_batch1_ulid, 5),
         5,
-        Timestamp::new(OffsetDateTime::now_utc() - Duration::hours(2)),
+        Timestamp::now() - Duration::hours(2),
         Some(json!({"batch1_complete": true})),
     )
     .await?;
@@ -190,7 +191,7 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult<()> {
         .pool()
         .events()
         .get_by_source(
-            &sinex_node_sdk::EventSource::from_static("test.gap_detection"),
+            &EventSource::from_static("test.gap_detection"),
             sinex_primitives::query::Pagination::new(Some(128), None),
         )
         .await?
@@ -250,7 +251,7 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult<()> {
             .publish(DynamicPayload::new(
                 "test.gap_detection",
                 "batch2",
-                json!({"batch": 2, "sequence": 20_000 + attempt as i32}),
+                json!({"batch": 2, "sequence": 20_000 + attempt}),
             ))
             .await?;
         batch2_events.push(event.id.expect("event id"));
@@ -289,7 +290,7 @@ async fn test_checkpoint_failover_propagates_state(ctx: TestContext) -> TestResu
     let service_name = format!("failover_service_{}", Ulid::new());
     let consumer_group = format!("failover_group_{}", Ulid::new());
 
-    let ctx = ctx.with_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let kv = ctx.checkpoint_kv().await?;
     let leader = CheckpointManager::new(
         kv.clone(),
@@ -305,7 +306,7 @@ async fn test_checkpoint_failover_propagates_state(ctx: TestContext) -> TestResu
                 event_id: None,
             },
             processed_count: index + 1,
-            last_activity: OffsetDateTime::now_utc(),
+            last_activity: Timestamp::now(),
             data: Some(serde_json::json!({ "worker": "primary" })),
             version: 2,
             revision: 0,
@@ -330,7 +331,7 @@ async fn test_checkpoint_failover_propagates_state(ctx: TestContext) -> TestResu
                 event_id: None,
             },
             processed_count: index + 1,
-            last_activity: OffsetDateTime::now_utc(),
+            last_activity: Timestamp::now(),
             data: Some(serde_json::json!({ "worker": "standby" })),
             version: 2,
             revision: 0,
@@ -361,7 +362,7 @@ async fn test_checkpoint_failover_propagates_state(ctx: TestContext) -> TestResu
 
 #[sinex_test]
 async fn test_stale_checkpoint_detection(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let pool = ctx.pool().clone();
     let kv = ctx.checkpoint_kv().await?;
 
@@ -385,9 +386,9 @@ async fn test_stale_checkpoint_detection(ctx: TestContext) -> TestResult<()> {
         &processor_name,
         DEFAULT_GROUP,
         DEFAULT_CONSUMER,
-        Checkpoint::internal(event_id.as_ulid().clone(), 1),
+        Checkpoint::internal(*event_id.as_ulid(), 1),
         1,
-        Timestamp::new(OffsetDateTime::now_utc() - Duration::hours(3)),
+        Timestamp::now() - Duration::hours(3),
         Some(json!({"stale": true})),
     )
     .await?;
@@ -425,7 +426,7 @@ async fn test_stale_checkpoint_detection(ctx: TestContext) -> TestResult<()> {
 #[sinex_serial_test]
 async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
-    let ctx = ctx.with_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let pool = ctx.pool().clone();
     let kv = ctx.checkpoint_kv().await?;
 
@@ -459,7 +460,7 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
     .await?;
 
     // Create checkpoints for automatons at different points
-    let now = OffsetDateTime::now_utc();
+    let now = Timestamp::now();
     let checkpoint_configs = [
         (&processor_names[0], 5usize, Duration::minutes(0)), // Up to date
         (&processor_names[1], 10usize, Duration::hours(1)),  // Behind but recent
@@ -468,9 +469,7 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
 
     let current_events = pool
         .events()
-        .count_by_source(&sinex_node_sdk::EventSource::from_static(
-            "test.cross_validation",
-        ))
+        .count_by_source(&EventSource::from_static("test.cross_validation"))
         .await?;
 
     assert!(
@@ -490,7 +489,7 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
             DEFAULT_CONSUMER,
             Checkpoint::internal(checkpoint_ulid, processed_count as u64),
             processed_count as u64,
-            Timestamp::new(now - lag),
+            now - lag,
             Some(json!({"checkpoint_test": true})),
         )
         .await?;
@@ -610,7 +609,7 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
 #[sinex_serial_test]
 async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
-    let ctx = ctx.with_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let pool = ctx.pool().clone();
     let kv = ctx.checkpoint_kv().await?;
 
@@ -629,7 +628,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult<()> 
         DEFAULT_CONSUMER,
         Checkpoint::internal(non_existent_ulid, 100),
         100,
-        Timestamp::new(OffsetDateTime::now_utc()),
+        Timestamp::now(),
         Some(json!({"scenario": "non_existent_event"})),
     )
     .await?;
@@ -641,7 +640,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult<()> 
         DEFAULT_GROUP,
         DEFAULT_CONSUMER,
         "test.recovery",
-        ChronoDuration::hours(24),
+        Duration::hours(24),
     )
     .await?;
     assert!(
@@ -662,7 +661,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult<()> 
         DEFAULT_CONSUMER,
         Checkpoint::None,
         50,
-        Timestamp::new(OffsetDateTime::now_utc()),
+        Timestamp::now(),
         Some(json!({"scenario": "invalid_ulid"})),
     )
     .await?;
@@ -674,7 +673,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult<()> 
         DEFAULT_GROUP,
         DEFAULT_CONSUMER,
         "test.recovery",
-        ChronoDuration::hours(24),
+        Duration::hours(24),
     )
     .await?;
     assert!(
@@ -705,7 +704,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult<()> 
         DEFAULT_GROUP,
         DEFAULT_CONSUMER,
         "test.recovery",
-        ChronoDuration::hours(24),
+        Duration::hours(24),
     )
     .await?;
     assert!(
@@ -716,7 +715,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult<()> 
     );
 
     // Test Scenario 4: Checkpoint ahead of events (future ULID)
-    let future_timestamp = OffsetDateTime::now_utc() + Duration::hours(1);
+    let future_timestamp = Timestamp::now() + Duration::hours(1);
     let future_ulid = Ulid::from_datetime(future_timestamp);
 
     save_checkpoint_state(
@@ -726,7 +725,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult<()> 
         DEFAULT_CONSUMER,
         Checkpoint::internal(future_ulid, 999),
         999,
-        Timestamp::new(OffsetDateTime::now_utc()),
+        Timestamp::now(),
         Some(json!({"scenario": "future_checkpoint"})),
     )
     .await?;
@@ -738,7 +737,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult<()> 
         DEFAULT_GROUP,
         DEFAULT_CONSUMER,
         "test.recovery",
-        ChronoDuration::hours(24),
+        Duration::hours(24),
     )
     .await?;
     assert!(
@@ -760,7 +759,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult<()> 
 
 #[sinex_test]
 async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let pool = ctx.pool().clone();
     let kv = ctx.checkpoint_kv().await?;
 
@@ -798,7 +797,7 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult<()>
         DEFAULT_CONSUMER,
         Checkpoint::internal(checkpoint_ulid, 15),
         15,
-        Timestamp::new(OffsetDateTime::now_utc() - Duration::minutes(30)),
+        Timestamp::now() - Duration::minutes(30),
         Some(json!({"simulated_jump": true})),
     )
     .await?;

@@ -7,7 +7,6 @@
 use crate::common::*;
 
 use crate::{window_manager::WindowManagerType, ClipboardWatcher, WindowManagerWatcher};
-use sinex_primitives::Seconds;
 use sinex_node_sdk::prelude::OffsetDateTime;
 use sinex_node_sdk::{
     acquisition_manager::{AcquisitionManager, RotationPolicy},
@@ -17,6 +16,7 @@ use sinex_node_sdk::{
     watcher_handle::WatcherHandle,
     EventTransport,
 };
+use sinex_primitives::{Seconds, Timestamp};
 use std::sync::Arc;
 use tokio::sync::watch;
 
@@ -54,7 +54,7 @@ impl Default for DesktopConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DesktopState {
     /// When the snapshot was taken
-    pub captured_at: OffsetDateTime,
+    pub captured_at: Timestamp,
 
     /// Enabled source types
     pub enabled_sources: Vec<String>,
@@ -177,8 +177,7 @@ impl DesktopProcessor {
                 last_clipboard_change: health.clipboard_last_success,
                 clipboard_content_hash: None, // Would need to hash current clipboard
                 last_error: health.clipboard_last_error.clone(),
-            })
-            .into();
+            });
         }
 
         if self.config.window_manager_enabled {
@@ -196,12 +195,11 @@ impl DesktopProcessor {
                 active_window: None,     // Would need to query WM
                 total_windows: 0,        // Would need to query WM
                 last_error: health.window_manager_last_error.clone(),
-            })
-            .into();
+            });
         }
 
         let state = DesktopState {
-            captured_at: OffsetDateTime::now_utc(),
+            captured_at: Timestamp::now(),
             enabled_sources,
             clipboard_status,
             window_manager_status,
@@ -310,9 +308,7 @@ impl SimpleIngestor for DesktopProcessor {
         let publisher: Arc<NatsPublisher> = match runtime.transport() {
             EventTransport::Nats(publisher) => Arc::clone(publisher),
         };
-        AcquisitionManager::bootstrap_streams(publisher.nats_client())
-            .await
-            .map_err(SinexError::from)?;
+        AcquisitionManager::bootstrap_streams(publisher.nats_client()).await?;
 
         let acquisition = Arc::new(runtime.acquisition_manager(
             RotationPolicy::default(),
@@ -349,8 +345,8 @@ impl SimpleIngestor for DesktopProcessor {
         let report = ScanReport {
             events_processed: snapshot.enabled_sources.len() as u64,
             duration: start_time.elapsed(),
-            final_checkpoint: Checkpoint::timestamp(OffsetDateTime::now_utc(), None),
-            time_range: Some((OffsetDateTime::now_utc(), OffsetDateTime::now_utc())),
+            final_checkpoint: Checkpoint::timestamp(Timestamp::now(), None),
+            time_range: Some((Timestamp::now(), Timestamp::now())),
             processor_stats: HashMap::new(),
             successful_targets: vec!["desktop_snapshot".to_string()],
             failed_targets: vec![],
@@ -487,8 +483,8 @@ impl SimpleIngestor for DesktopProcessor {
         Ok(ScanReport {
             events_processed: 0,
             duration: start_time.elapsed(),
-            final_checkpoint: Checkpoint::timestamp(OffsetDateTime::now_utc(), None),
-            time_range: Some((OffsetDateTime::now_utc(), OffsetDateTime::now_utc())),
+            final_checkpoint: Checkpoint::timestamp(Timestamp::now(), None),
+            time_range: Some((Timestamp::now(), Timestamp::now())),
             processor_stats: HashMap::new(),
             successful_targets: vec!["desktop_continuous".to_string()],
             failed_targets: vec![],
@@ -536,7 +532,7 @@ impl SimpleIngestor for DesktopProcessor {
                 .last_state
                 .as_ref()
                 .map(|s| s.captured_at)
-                .unwrap_or_else(OffsetDateTime::now_utc),
+                .unwrap_or_else(Timestamp::now),
             total_items: None,
             healthy: state.health.clipboard_active
                 || state.health.window_manager_active
@@ -560,10 +556,13 @@ impl SimpleIngestor for DesktopProcessor {
     fn get_coverage_analysis(
         &self,
         _state: &Self::State,
-        _time_range: Option<(OffsetDateTime, OffsetDateTime)>,
+        _time_range: Option<(sinex_primitives::Timestamp, sinex_primitives::Timestamp)>,
     ) -> NodeResult<CoverageAnalysis> {
         Ok(CoverageAnalysis {
-            time_range: (OffsetDateTime::now_utc(), OffsetDateTime::now_utc()),
+            time_range: (
+                sinex_primitives::Timestamp::now(),
+                sinex_primitives::Timestamp::now(),
+            ),
             source_total: 0,
             sinex_total: 0,
             coverage_percentage: 100.0,

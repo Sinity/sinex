@@ -31,8 +31,7 @@ async fn table_exists(pool: &PgPool, schema: &str, table: &str) -> NodeResult<bo
     .bind(schema)
     .bind(table)
     .fetch_one(pool)
-    .await
-    .map_err(|e| SinexError::from(e))?;
+    .await?;
 
     Ok(exists.0)
 }
@@ -102,7 +101,7 @@ pub async fn verify_postgresql_extensions() -> NodeResult<(VerificationStatus, V
 
     let pool = PgPool::connect(&database_url)
         .await
-        .map_err(|e| SinexError::from(e))?;
+        .map_err(SinexError::from)?;
 
     // Required extensions for Sinex
     let required_extensions = vec![
@@ -180,7 +179,7 @@ pub async fn verify_migration_readiness() -> NodeResult<(VerificationStatus, Val
 
     let pool = PgPool::connect(&database_url)
         .await
-        .map_err(|e| SinexError::from(e))?;
+        .map_err(SinexError::from)?;
 
     // Check current migration status
     let migration_info = check_migration_status(&pool, &mut messages).await?;
@@ -219,21 +218,21 @@ async fn test_basic_operations(
     let version_result = sqlx::query!("SELECT version() as version")
         .fetch_one(pool)
         .await
-        .map_err(|e| SinexError::from(e))?;
+        .map_err(SinexError::from)?;
 
     details.insert("postgresql_version", json!(version_result.version));
     messages.push("✓ PostgreSQL version query successful".to_string());
 
     // Test transaction handling
-    let mut tx = pool.begin().await.map_err(|e| SinexError::from(e))?;
+    let mut tx = pool.begin().await.map_err(SinexError::from)?;
 
     // Direct query for transaction test
     sqlx::query("SELECT 1 as test")
         .fetch_one(&mut *tx)
         .await
-        .map_err(|e| SinexError::from(e))?;
+        .map_err(SinexError::from)?;
 
-    tx.rollback().await.map_err(|e| SinexError::from(e))?;
+    tx.rollback().await.map_err(SinexError::from)?;
 
     messages.push("✓ Transaction handling verified".to_string());
 
@@ -259,7 +258,7 @@ async fn verify_single_extension(
     )
     .fetch_optional(pool)
     .await
-    .map_err(|e| SinexError::from(e))?;
+    .map_err(SinexError::from)?;
 
     let available = available_result.is_some();
 
@@ -279,7 +278,7 @@ async fn verify_single_extension(
     )
     .fetch_optional(pool)
     .await
-    .map_err(|e| SinexError::from(e))?;
+    .map_err(SinexError::from)?;
 
     let installed = installed_result.is_some();
 
@@ -302,7 +301,7 @@ async fn verify_single_extension(
 
 async fn test_extension_installability(pool: &PgPool, extension_name: &str) -> NodeResult<bool> {
     // Test installation in a transaction that we'll rollback
-    let mut tx = pool.begin().await.map_err(|e| SinexError::from(e))?;
+    let mut tx = pool.begin().await.map_err(SinexError::from)?;
 
     let result = sqlx::query(&format!(
         "CREATE EXTENSION IF NOT EXISTS \"{}\"",
@@ -312,14 +311,14 @@ async fn test_extension_installability(pool: &PgPool, extension_name: &str) -> N
     .await;
 
     // Always rollback to avoid side effects
-    tx.rollback().await.map_err(|e| SinexError::from(e))?;
+    tx.rollback().await.map_err(SinexError::from)?;
 
     Ok(result.is_ok())
 }
 
 async fn test_extension_loading(pool: &PgPool, messages: &mut Vec<String>) -> NodeResult<()> {
     // Test loading all extensions in a transaction that we'll rollback
-    let mut tx = pool.begin().await.map_err(|e| SinexError::from(e))?;
+    let mut tx = pool.begin().await.map_err(SinexError::from)?;
 
     let extensions = vec![
         "uuid-ossp",
@@ -349,7 +348,7 @@ async fn test_extension_loading(pool: &PgPool, messages: &mut Vec<String>) -> No
     test_extension_functionality(&mut tx, messages).await?;
 
     // Rollback to clean up
-    tx.rollback().await.map_err(|e| SinexError::from(e))?;
+    tx.rollback().await.map_err(SinexError::from)?;
 
     Ok(())
 }
@@ -362,7 +361,7 @@ async fn test_extension_functionality(
     let uuid_result = sqlx::query!("SELECT gen_random_uuid() as uuid")
         .fetch_one(&mut **tx)
         .await
-        .map_err(|e| SinexError::from(e))?;
+        .map_err(SinexError::from)?;
     messages.push(format!(
         "✓ UUID generation: {}",
         uuid_result
@@ -376,7 +375,7 @@ async fn test_extension_functionality(
     let ulid_result = sqlx::query!("SELECT gen_ulid()::text as ulid")
         .fetch_one(&mut **tx)
         .await
-        .map_err(|e| SinexError::from(e))?;
+        .map_err(SinexError::from)?;
     messages.push(format!(
         "✓ ULID generation: {}",
         ulid_result.ulid.as_deref().unwrap_or("OK")
@@ -387,7 +386,7 @@ async fn test_extension_functionality(
         sqlx::query!("SELECT extversion FROM pg_extension WHERE extname = 'timescaledb'")
             .fetch_optional(&mut **tx)
             .await
-            .map_err(|e| SinexError::from(e))?;
+            .map_err(SinexError::from)?;
 
     if let Some(version) = timescale_version {
         messages.push(format!("✓ TimescaleDB version: {}", version.extversion));
@@ -435,7 +434,7 @@ async fn check_migration_status(pool: &PgPool, messages: &mut Vec<String>) -> No
         sqlx::query!("SELECT version, applied_at FROM seaql_migrations ORDER BY version")
             .fetch_all(pool)
             .await
-            .map_err(|e| SinexError::from(e))?;
+            .map_err(SinexError::from)?;
 
     let applied_count = applied_migrations.len();
     messages.push(format!("ℹ Found {} applied migrations", applied_count));
@@ -483,7 +482,7 @@ async fn perform_migration_dry_run(
     messages.push("✓ All migration files have valid syntax".to_string());
 
     // Test migrations in a transaction (rollback to avoid applying them)
-    let mut tx = pool.begin().await.map_err(|e| SinexError::from(e))?;
+    let mut tx = pool.begin().await.map_err(SinexError::from)?;
 
     // This would run the actual sqlx::migrate! but we'll simulate it
     // In a real implementation, we'd need to parse and execute migration files
@@ -500,7 +499,7 @@ async fn perform_migration_dry_run(
         }
     }
 
-    tx.rollback().await.map_err(|e| SinexError::from(e))?;
+    tx.rollback().await.map_err(SinexError::from)?;
 
     Ok(())
 }
@@ -525,8 +524,8 @@ async fn discover_migration_files() -> NodeResult<Vec<MigrationFile>> {
 
     let mut discovered = Vec::new();
 
-    for entry in fs::read_dir(migrations_root.as_std_path()).map_err(|e| SinexError::io(e))? {
-        let entry = entry.map_err(|e| SinexError::io(e))?;
+    for entry in fs::read_dir(migrations_root.as_std_path()).map_err(SinexError::io)? {
+        let entry = entry.map_err(SinexError::io)?;
         let path = entry.path();
 
         if path.is_dir() {
@@ -634,7 +633,7 @@ async fn test_migration_compatibility(
     sqlx::query!("SELECT 1 as compatibility_test")
         .fetch_one(&mut **tx)
         .await
-        .map_err(|e| SinexError::from(e))?;
+        .map_err(SinexError::from)?;
 
     // Additional compatibility tests would go here
 

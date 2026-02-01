@@ -8,8 +8,8 @@ use serde::Serialize;
 use sinex_db::replay::state_machine::{ReplayOperation, ReplayState, ReplayStateMachine};
 use sinex_db::repositories::common::{db_error, TimeBucketResult};
 use sinex_db::DbPool;
-use sinex_primitives::Timestamp;
 use sinex_primitives::Pagination;
+use sinex_primitives::Timestamp;
 use sqlx::postgres::types::PgInterval;
 use sqlx::{pool::PoolConnection, Postgres, Row};
 use std::collections::HashMap;
@@ -20,9 +20,7 @@ use tokio::time::timeout;
 static EPOCH_START: OnceCell<Timestamp> = OnceCell::new();
 
 fn epoch_start() -> Timestamp {
-    EPOCH_START
-        .get_or_init(|| Timestamp::UNIX_EPOCH)
-        .clone()
+    *EPOCH_START.get_or_init(|| Timestamp::new(time::OffsetDateTime::UNIX_EPOCH))
 }
 
 pub struct AnalyticsService {
@@ -244,15 +242,7 @@ impl AnalyticsService {
         )
         .fetch_all(&mut *conn)
         .await?;
-        Ok(rows
-            .into_iter()
-            .map(|r| {
-                (
-                    Timestamp::from_unix_nanos(r.bucket.unix_timestamp_nanos()),
-                    r.count,
-                )
-            })
-            .collect())
+        Ok(rows.into_iter().map(|r| (r.bucket, r.count)).collect())
     }
 
     /// Get most frequent commands from terminal events
@@ -363,15 +353,7 @@ impl AnalyticsService {
         .await
         .map_err(|e| db_error(e, "get activity heatmap"))?;
 
-        Ok(rows
-            .into_iter()
-            .map(|r| {
-                (
-                    Timestamp::from_unix_nanos(r.bucket.unix_timestamp_nanos()),
-                    r.count,
-                )
-            })
-            .collect())
+        Ok(rows.into_iter().map(|r| (r.bucket, r.count)).collect())
     }
 
     /// List replay operations for automation reporting.

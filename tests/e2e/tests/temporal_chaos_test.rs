@@ -35,14 +35,14 @@
 // 2. **Ordering Resilience**: System must cope with impossible event sequences
 // 3. **Concurrency Safety**: No race conditions under maximum contention
 
-use time::Duration;
 use sinex_primitives::Timestamp;
-use xtask::sandbox::prelude::*;
-use xtask::sandbox::events;
-use xtask::sandbox::timing::Timeouts;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::{Barrier, RwLock, Semaphore};
+use xtask::sandbox::events;
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::Timeouts;
 
 // ==================== TEMPORAL CHAOS INFRASTRUCTURE ====================
 
@@ -261,9 +261,7 @@ async fn test_thundering_herd_1000_events_100ms(ctx: TestContext) -> TestResult<
 
 /// Test collector backpressure handling under sustained high load
 #[sinex_test]
-async fn test_collector_backpressure_extreme_load(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn test_collector_backpressure_extreme_load(ctx: TestContext) -> TestResult<()> {
     let metrics = Arc::new(TemporalChaosMetrics::new());
     let config = ThunderingHerdConfig {
         total_events: 5000,
@@ -652,9 +650,7 @@ async fn test_ulid_ordering_under_extreme_timing(ctx: TestContext) -> TestResult
 
 /// Comprehensive test combining all temporal chaos scenarios
 #[sinex_test]
-async fn test_comprehensive_temporal_chaos_scenario(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn test_comprehensive_temporal_chaos_scenario(ctx: TestContext) -> TestResult<()> {
     let metrics = Arc::new(TemporalChaosMetrics::new());
 
     println!("=== Comprehensive Temporal Chaos Scenario ===");

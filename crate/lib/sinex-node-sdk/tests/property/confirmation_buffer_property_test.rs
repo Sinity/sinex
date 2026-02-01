@@ -25,8 +25,8 @@ fn arb_provisional_event() -> impl Strategy<Value = ProvisionalEvent> {
             source: EventSource::new(source),
             event_type: EventType::new(event_type),
             payload: serde_json::json!({"test": "data"}),
-            ts_orig: OffsetDateTime::now_utc(),
-            received_at: OffsetDateTime::now_utc(),
+            ts_orig: Timestamp::now(),
+            received_at: Timestamp::now(),
         })
 }
 
@@ -228,8 +228,8 @@ async fn property_capacity_limit_prevents_unbounded_growth(
             source: EventSource::new("test"),
             event_type: EventType::new("test.event"),
             payload: serde_json::json!({"index": i}),
-            ts_orig: OffsetDateTime::now_utc(),
-            received_at: OffsetDateTime::now_utc(),
+            ts_orig: Timestamp::now(),
+            received_at: Timestamp::now(),
         };
         buffer.add_provisional(event).await;
     }
@@ -262,8 +262,8 @@ async fn property_rejected_count_tracks_capacity_rejections(
             source: EventSource::new("test"),
             event_type: EventType::new("test.event"),
             payload: serde_json::json!({"index": i}),
-            ts_orig: OffsetDateTime::now_utc(),
-            received_at: OffsetDateTime::now_utc(),
+            ts_orig: Timestamp::now(),
+            received_at: Timestamp::now(),
         };
 
         if !buffer.add_provisional(event).await {
@@ -340,8 +340,8 @@ mod unit_tests {
             source: EventSource::new("test"),
             event_type: EventType::new("test.event"),
             payload: serde_json::json!({"data": "test"}),
-            ts_orig: OffsetDateTime::now_utc(),
-            received_at: OffsetDateTime::now_utc(),
+            ts_orig: Timestamp::now(),
+            received_at: Timestamp::now(),
         };
 
         // Add event
@@ -370,8 +370,8 @@ mod unit_tests {
                 source: EventSource::new("test"),
                 event_type: EventType::new("test.event"),
                 payload: serde_json::json!({"index": i}),
-                ts_orig: OffsetDateTime::now_utc(),
-                received_at: OffsetDateTime::now_utc(),
+                ts_orig: Timestamp::now(),
+                received_at: Timestamp::now(),
             };
 
             if buffer.add_provisional(event).await {

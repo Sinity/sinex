@@ -13,6 +13,7 @@ use crate::affected;
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config::config;
 use crate::history::HistoryDb;
+use crate::jobs::JobManager;
 use crate::process::ProcessBuilder;
 use crate::resources;
 
@@ -24,19 +25,15 @@ use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 /// Test command configuration
 #[derive(Debug, Clone, clap::Args)]
 pub struct TestCommand {
-    /// Use debug profile
+    /// Use debug profile (single-threaded, extended timeout)
     #[arg(long)]
     pub debug: bool,
 
-    /// Fast fail mode (default: true)
-    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    /// Stop on first failure (default: false, run all tests)
+    #[arg(long)]
     pub fail_fast: bool,
 
-    /// Disable fast fail
-    #[arg(long)]
-    pub no_fail_fast: bool,
-
-    /// Number of threads
+    /// Number of threads (default: 24, debug: 1)
     #[arg(short, long)]
     pub threads: Option<usize>,
 
@@ -59,6 +56,14 @@ pub struct TestCommand {
     /// List tests instead of running
     #[arg(long, short)]
     pub list: bool,
+
+    /// Filter tests by name pattern (nextest -E filter)
+    #[arg(long, short = 'E')]
+    pub filter: Option<String>,
+
+    /// Run tests for specific package(s)
+    #[arg(long, short = 'p')]
+    pub package: Option<Vec<String>>,
 
     /// Print what would happen
     #[arg(long)]
@@ -88,22 +93,26 @@ pub struct TestCommand {
     #[arg(short, long)]
     pub all: bool,
 
+    /// Run in background (returns job ID immediately)
+    #[arg(long, visible_alias = "background")]
+    pub bg: bool,
+
+    /// Run benchmarks (replaces 'cargo xtask bench')
+    #[arg(long)]
+    pub bench: bool,
+
+    /// Run tests with code coverage (delegates to coverage command)
+    #[arg(long)]
+    pub coverage: bool,
+
     /// Arguments passed to test binary
     pub args: Vec<String>,
 }
 
+#[derive(Default)]
 struct SystemMetrics {
     cpu_samples: Vec<f32>,
     mem_samples: Vec<u64>,
-}
-
-impl Default for SystemMetrics {
-    fn default() -> Self {
-        Self {
-            cpu_samples: Vec::new(),
-            mem_samples: Vec::new(),
-        }
-    }
 }
 
 impl XtaskCommand for TestCommand {
@@ -112,14 +121,120 @@ impl XtaskCommand for TestCommand {
     }
 
     fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
+        // Handle --bench flag - delegate to bench infrastructure
+        if self.bench {
+            use crate::bench::{self, BenchConfig};
+
+            let config = BenchConfig {
+                mode: crate::bench::BenchMode::Sweeps,
+                profile: "fast".to_string(),
+                runs: 3,
+                threads: vec![12, 24],
+                baseline: None,
+                regression_threshold_pct: 10.0,
+                history_db: None,
+                history_trend_limit: 5,
+                report_md: false,
+                report_html: false,
+                git_tag: false,
+                dry_run: self.dry_run,
+                gha: false,
+                bisect_good: None,
+                bisect_bad: None,
+                stress_limit: 100,
+                soak_duration: 3600,
+                output: None,
+                verbose: false,
+                refine_top_threads: 3,
+                refine_threshold_pct: 10.0,
+                refine_sweep_runs: 1,
+                target: "workspace".to_string(),
+                continue_on_fail: false,
+                fail_fast: self.fail_fast,
+            };
+
+            bench::run(config)?;
+            return Ok(CommandResult::success()
+                .with_message("Benchmark complete")
+                .with_duration(ctx.elapsed()));
+        }
+
         let profile = if self.debug { "debug" } else { "default" };
-        let fail_fast = if self.no_fail_fast {
-            false
-        } else {
-            self.fail_fast
-        };
+        let use_fail_fast = self.fail_fast;
+
+        // Handle background mode - spawn cargo nextest in background
+        if self.bg || ctx.is_background() {
+            let mut args = vec![
+                "nextest".to_string(),
+                "run".to_string(),
+                "--config-file".to_string(),
+                ".config/nextest.toml".to_string(),
+                "--workspace".to_string(),
+                "--profile".to_string(),
+                profile.to_string(),
+            ];
+
+            if use_fail_fast {
+                args.push("--fail-fast".to_string());
+            } else {
+                args.push("--no-fail-fast".to_string());
+            }
+
+            if let Some(threads) = self.threads {
+                args.push("--test-threads".to_string());
+                args.push(threads.to_string());
+            }
+
+            if self.include_ignored || self.all || self.heavy {
+                args.push("--ignored".to_string());
+            }
+
+            // Add filter if specified
+            if let Some(ref filter) = self.filter {
+                args.push("-E".to_string());
+                args.push(filter.clone());
+            }
+
+            // Add package filters if specified
+            if let Some(ref packages) = self.package {
+                for pkg in packages {
+                    args.push("-p".to_string());
+                    args.push(pkg.clone());
+                }
+            }
+
+            args.extend(self.args.clone());
+
+            // Use --bg flag with JobManager, or ctx.is_background() with spawn_background
+            if self.bg {
+                let cfg = config();
+                let manager = JobManager::new(cfg.jobs_dir())?;
+                let job = manager.spawn_cargo(&args)?;
+
+                return Ok(CommandResult::success()
+                    .with_message(format!("Backgrounded as job {}", job.meta.id))
+                    .with_data(serde_json::json!({
+                        "job_id": job.meta.id,
+                        "command": "cargo",
+                        "args": args,
+                    })));
+            } else {
+                return ctx.spawn_background("test", &args);
+            }
+        }
 
         // Handle specialized test modes
+        if self.coverage {
+            // Delegate to coverage command with summary
+            let coverage_cmd = crate::commands::coverage::CoverageCommand {
+                subcommand: crate::commands::coverage::CoverageSubcommand::Summary {
+                    package: None,
+                    files: false,
+                },
+            };
+            return coverage_cmd.execute(ctx);
+        }
+
         if self.heavy {
             return run_heavy_tests(profile, ctx);
         }
@@ -194,7 +309,13 @@ impl XtaskCommand for TestCommand {
 
         // List: show tests without running
         if self.list {
-            test_list(profile, &self.args, ctx)?;
+            test_list(
+                profile,
+                &self.args,
+                self.filter.as_deref(),
+                self.package.as_ref(),
+                ctx,
+            )?;
             return Ok(CommandResult::success()
                 .with_detail("tests listed")
                 .with_duration(ctx.elapsed()));
@@ -216,7 +337,7 @@ impl XtaskCommand for TestCommand {
         // Prime database pool
         if self.prime {
             ProcessBuilder::cargo()
-                .args(&["run", "-p", "sinex-test-utils", "--bin", "db_prime"])
+                .args(["run", "-p", "sinex-test-utils", "--bin", "db_prime"])
                 .with_description("prime test pool")
                 .run_ok()?;
         }
@@ -278,9 +399,9 @@ impl XtaskCommand for TestCommand {
             "--workspace".to_string(),
             "--profile".to_string(),
             profile.to_string(),
-            // Capture output as JSON
+            // Capture output as libtest-json for parsing
             "--message-format".to_string(),
-            "json".to_string(),
+            "libtest-json".to_string(),
             // We want to capture stdout/stderr of tests
             "--failure-output".to_string(),
             "immediate-final".to_string(),
@@ -290,7 +411,7 @@ impl XtaskCommand for TestCommand {
             "all".to_string(),
         ];
 
-        if fail_fast {
+        if use_fail_fast {
             cmd_args.push("--fail-fast".to_string());
         } else {
             cmd_args.push("--no-fail-fast".to_string());
@@ -315,6 +436,21 @@ impl XtaskCommand for TestCommand {
             cmd_args.push("-E".to_string());
             cmd_args.push(filter.clone());
         }
+
+        // Add explicit filter if specified
+        if let Some(ref filter) = self.filter {
+            cmd_args.push("-E".to_string());
+            cmd_args.push(filter.clone());
+        }
+
+        // Add package filters if specified
+        if let Some(ref packages) = self.package {
+            for pkg in packages {
+                cmd_args.push("-p".to_string());
+                cmd_args.push(pkg.clone());
+            }
+        }
+
         cmd_args.extend(self.args.clone());
         if self.include_ignored || self.all || self.heavy {
             cmd_args.push("--ignored".to_string());
@@ -351,12 +487,10 @@ impl XtaskCommand for TestCommand {
         std::thread::spawn(move || {
             use std::io::{BufRead, BufReader};
             let reader = BufReader::new(stderr);
-            for line in reader.lines() {
-                if let Ok(l) = line {
-                    // Print stderr lines above the progress bar
-                    // Using dim yellow for build output/errors
-                    pb_clone.println(style(l).yellow().dim().to_string());
-                }
+            for l in reader.lines().map_while(Result::ok) {
+                // Print stderr lines above the progress bar
+                // Using dim yellow for build output/errors
+                pb_clone.println(style(l).yellow().dim().to_string());
             }
         });
 
@@ -412,7 +546,7 @@ impl XtaskCommand for TestCommand {
                                             if !stdout.is_empty() {
                                                 output.push_str("STDOUT:\n");
                                                 output.push_str(stdout);
-                                                output.push_str("\n");
+                                                output.push('\n');
                                             }
                                         }
                                         if let Some(stderr) =
@@ -421,7 +555,7 @@ impl XtaskCommand for TestCommand {
                                             if !stderr.is_empty() {
                                                 output.push_str("STDERR:\n");
                                                 output.push_str(stderr);
-                                                output.push_str("\n");
+                                                output.push('\n');
                                             }
                                         }
 
@@ -588,13 +722,13 @@ fn collect_tests_by_ignore_reason(
 
         // We are looking for:
         // {"extension-type":"test-case", "id":"...", "status":"ignored", "ignore-message":"..."}
-        if json.get("extension-type").and_then(|v| v.as_str()) == Some("test-case") {
-            if json.get("status").and_then(|v| v.as_str()) == Some("ignored") {
-                if let Some(msg) = json.get("ignore-message").and_then(|v| v.as_str()) {
-                    if reasons.iter().any(|&r| msg.contains(r)) {
-                        if let Some(id) = json.get("id").and_then(|v| v.as_str()) {
-                            test_ids.push(id.to_string());
-                        }
+        if json.get("extension-type").and_then(|v| v.as_str()) == Some("test-case")
+            && json.get("status").and_then(|v| v.as_str()) == Some("ignored")
+        {
+            if let Some(msg) = json.get("ignore-message").and_then(|v| v.as_str()) {
+                if reasons.iter().any(|&r| msg.contains(r)) {
+                    if let Some(id) = json.get("id").and_then(|v| v.as_str()) {
+                        test_ids.push(id.to_string());
                     }
                 }
             }
@@ -742,7 +876,13 @@ fn test_preflight(ctx: &CommandContext) -> Result<()> {
 }
 
 /// List tests without running
-fn test_list(profile: &str, args: &[String], ctx: &CommandContext) -> Result<()> {
+fn test_list(
+    profile: &str,
+    args: &[String],
+    filter: Option<&str>,
+    packages: Option<&Vec<String>>,
+    ctx: &CommandContext,
+) -> Result<()> {
     let mut cmd_args = vec![
         "nextest",
         "list",
@@ -757,6 +897,23 @@ fn test_list(profile: &str, args: &[String], ctx: &CommandContext) -> Result<()>
     if !ctx.is_human() {
         json_args = vec!["--message-format", "json"];
         cmd_args.extend(&json_args);
+    }
+
+    // Add filter if specified
+    if let Some(f) = filter {
+        cmd_args.push("-E");
+        cmd_args.push(f);
+    }
+
+    // Add package filters if specified
+    let pkg_args: Vec<String>;
+    if let Some(pkgs) = packages {
+        pkg_args = pkgs
+            .iter()
+            .flat_map(|p| vec!["-p".to_string(), p.clone()])
+            .collect();
+        let pkg_refs: Vec<&str> = pkg_args.iter().map(|s| s.as_str()).collect();
+        cmd_args.extend(pkg_refs);
     }
 
     let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
@@ -867,18 +1024,18 @@ fn open_history_db() -> Result<HistoryDb> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_command_name() {
-        let cmd = TestCommand {
+    fn test_command() -> TestCommand {
+        TestCommand {
             debug: false,
-            fail_fast: true,
-            no_fail_fast: false,
+            fail_fast: false,
             threads: None,
             retries: None,
             timeout: None,
             affected: false,
             prime: false,
             list: false,
+            filter: None,
+            package: None,
             dry_run: false,
             preflight: false,
             include_ignored: false,
@@ -886,32 +1043,22 @@ mod tests {
             mutants: false,
             heavy: false,
             all: false,
+            bg: false,
+            bench: false,
+            coverage: false,
             args: vec![],
-        };
+        }
+    }
+
+    #[test]
+    fn test_command_name() {
+        let cmd = test_command();
         assert_eq!(cmd.name(), "test");
     }
 
     #[test]
     fn test_command_metadata() {
-        let cmd = TestCommand {
-            debug: false,
-            fail_fast: true,
-            no_fail_fast: false,
-            threads: None,
-            retries: None,
-            timeout: None,
-            affected: false,
-            prime: false,
-            list: false,
-            dry_run: false,
-            preflight: false,
-            include_ignored: false,
-            fuzz: false,
-            mutants: false,
-            heavy: false,
-            all: false,
-            args: vec![],
-        };
+        let cmd = test_command();
         let metadata = cmd.metadata();
         assert_eq!(metadata.category, Some("test".to_string()));
     }

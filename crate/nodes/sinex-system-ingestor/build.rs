@@ -13,7 +13,7 @@ fn main() {
     {
         if output.status.success() {
             if let Ok(mut libdir) = String::from_utf8(output.stdout) {
-                libdir.truncate(libdir.trim_end_matches(|c| c == '\n' || c == '\r').len());
+                libdir.truncate(libdir.trim_end_matches(['\n', '\r']).len());
                 if !libdir.is_empty() {
                     // Add rpath so test binaries can locate libdbus at runtime (e.g., in Nix builds).
                     println!("cargo:rustc-link-arg=-Wl,-rpath,{}", libdir);

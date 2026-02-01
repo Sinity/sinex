@@ -139,7 +139,7 @@ Implementation Guides
 **Crate-Specific Diagrams:**
 - Ingestd: `crate/core/sinex-ingestd/docs/diagrams.md` — Event sourcing & NATS topology
 - Database: `crate/lib/sinex-db/docs/diagrams.md` — Schema & repository architecture
-- Testing: `crate/lib/sinex-test-utils/docs/diagrams.md` — Parallel test pool
-- Core: `crate/lib/sinex-core/docs/diagrams.md` — Leader/standby coordination
+- Testing: `xtask/docs/sandbox/diagrams.md` — Parallel test pool
+- Primitives: `crate/lib/sinex-primitives/docs/diagrams.md` — Type system & validation
 
 See also: [Ingestion & Provenance Patterns](provenance.md) for sensor layering, Stage-as-you-go guidance, and timestamp taxonomy.

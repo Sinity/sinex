@@ -13,9 +13,8 @@ use futures::StreamExt;
 use proptest::prelude::*;
 use proptest::test_runner::TestCaseError;
 use serde_json::{json, Value};
-use sinex_node_sdk::types::ulid::Ulid;
-use sinex_node_sdk::DynamicPayload;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
+use sinex_primitives::{DynamicPayload, Ulid};
 use std::sync::LazyLock;
 use xtask::sandbox::prelude::*;
 
@@ -50,7 +49,7 @@ fn checkpoint_progress_is_monotonic() -> TestResult<()> {
     for processed in scenarios {
         run_async(async {
             let ctx = TestContext::new().await?;
-            let ctx = ctx.with_nats().await?;
+            let ctx = ctx.with_nats().shared().await?;
             let kv = ctx.checkpoint_kv().await?;
 
             let manager = CheckpointManager::new(
@@ -68,7 +67,7 @@ fn checkpoint_progress_is_monotonic() -> TestResult<()> {
                         event_id: None,
                     },
                     processed_count,
-                    last_activity: OffsetDateTime::now_utc(),
+                    last_activity: Timestamp::now(),
                     data: Some(serde_json::json!({"batch": idx})),
                     version: 2,
                     revision: 0,
@@ -111,7 +110,7 @@ sinex_proptest! {
         let state = CheckpointState {
             checkpoint: Checkpoint::None,
             processed_count: 0,
-            last_activity: OffsetDateTime::now_utc(),
+            last_activity: OffsetDateTime::now_utc().into(),
             data: Some(json_payload.clone()),
             version: 1,
             revision: 0,

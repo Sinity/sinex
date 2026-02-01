@@ -244,8 +244,8 @@ pub struct ScanReport {
 
     /// Time range covered by the scan
     pub time_range: Option<(
-        sinex_primitives::temporal::OffsetDateTime,
-        sinex_primitives::temporal::OffsetDateTime,
+        sinex_primitives::temporal::Timestamp,
+        sinex_primitives::temporal::Timestamp,
     )>,
 
     /// Processor-specific statistics
@@ -760,7 +760,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                     .scan(
                         current_checkpoint,
                         TimeHorizon::Historical {
-                            end_time: sinex_primitives::temporal::OffsetDateTime::now_utc(),
+                            end_time: sinex_primitives::temporal::Timestamp::now(),
                         },
                         ScanArgs::default(),
                     )
@@ -897,7 +897,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                     .scan(
                         current_checkpoint,
                         TimeHorizon::Historical {
-                            end_time: sinex_primitives::temporal::OffsetDateTime::now_utc(),
+                            end_time: sinex_primitives::temporal::Timestamp::now(),
                         },
                         ScanArgs::default(),
                     )
@@ -971,7 +971,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                 .scan(
                     from,
                     TimeHorizon::Historical {
-                        end_time: sinex_primitives::temporal::OffsetDateTime::now_utc(),
+                        end_time: sinex_primitives::temporal::Timestamp::now(),
                     },
                     ScanArgs::default(),
                 )
@@ -1045,15 +1045,12 @@ impl<T: Node + 'static> NodeRunner<T> {
         event_id: &EventId,
     ) -> NodeResult<Option<Event<JsonValue>>> {
         let event_id_str = event_id.to_string();
-        pool.events()
-            .get_by_id(event_id.clone())
-            .await
-            .map_err(|err| {
-                SinexError::processing(format!(
-                    "Failed to load confirmed event {} from database: {}",
-                    event_id_str, err
-                ))
-            })
+        pool.events().get_by_id(*event_id).await.map_err(|err| {
+            SinexError::processing(format!(
+                "Failed to load confirmed event {} from database: {}",
+                event_id_str, err
+            ))
+        })
     }
 
     fn parse_ulid(value: &str, field: &str) -> NodeResult<Ulid> {

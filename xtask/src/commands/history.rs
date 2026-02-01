@@ -1,6 +1,7 @@
 //! History command - query build/test execution history
 
 use anyhow::Result;
+use tabled::{builder::Builder, settings::Style};
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config::config;
@@ -9,33 +10,51 @@ use crate::history::HistoryDb;
 /// History command variants
 #[derive(Debug, Clone, clap::Subcommand)]
 pub enum HistorySubcommand {
+    /// List recent invocations
     List {
         #[arg(long, default_value = "20")]
         limit: usize,
         #[arg(long)]
         command: Option<String>,
     },
+    /// Show the last invocation for a command
     Last {
         #[arg(long)]
         command: String,
     },
+    /// Show statistics for a command
     Stats {
         #[arg(long)]
         command: String,
         #[arg(long, default_value = "30")]
         days: u32,
     },
+    /// Prune old history entries
     Prune {
         #[arg(long, default_value = "90")]
         older_than: u32,
     },
+    /// Export history as JSON
     Export {
         #[arg(long)]
         limit: usize,
     },
+    /// Query test result history
     Tests {
         #[command(subcommand)]
         tests_cmd: HistoryTestsSubcommand,
+    },
+    /// Query build diagnostics (warnings/errors)
+    Diagnostics {
+        /// Maximum number of diagnostics to show
+        #[arg(long, default_value = "20")]
+        limit: usize,
+        /// Filter by level (error, warning)
+        #[arg(long)]
+        level: Option<String>,
+        /// Filter by file path pattern
+        #[arg(long)]
+        file: Option<String>,
     },
 }
 
@@ -93,6 +112,9 @@ impl XtaskCommand for HistoryCommand {
             HistorySubcommand::Prune { older_than } => execute_prune(&db, *older_than, ctx),
             HistorySubcommand::Export { limit } => execute_export(&db, *limit, ctx),
             HistorySubcommand::Tests { tests_cmd } => execute_tests(tests_cmd, &db, ctx),
+            HistorySubcommand::Diagnostics { limit, level, file } => {
+                execute_diagnostics(&db, *limit, level.as_deref(), file.as_deref(), ctx)
+            }
         }
     }
 
@@ -120,8 +142,8 @@ fn execute_list(
             println!("No history entries found.");
         } else {
             println!(
-                "{:<6} {:<12} {:<10} {:<10} {:>8}  {}",
-                "ID", "COMMAND", "PROFILE", "STATUS", "DURATION", "STARTED"
+                "{:<6} {:<12} {:<10} {:<10} {:>8}  STARTED",
+                "ID", "COMMAND", "PROFILE", "STATUS", "DURATION"
             );
             for inv in &invocations {
                 let profile = inv.profile.as_deref().unwrap_or("-");
@@ -324,15 +346,19 @@ fn execute_tests_flaky(
         if tests.is_empty() {
             println!("No flaky tests found.");
         } else {
-            println!("{:<50} {:<20} {:>10}", "TEST", "PACKAGE", "INVOCATION");
+            let mut builder = Builder::new();
+            builder.push_record(["TEST", "PACKAGE", "INVOCATION"]);
             for (name, package, inv_id) in &tests {
                 let display_name = if name.len() > 48 {
                     format!("...{}", &name[name.len() - 45..])
                 } else {
                     name.clone()
                 };
-                println!("{:<50} {:<20} {:>10}", display_name, package, inv_id);
+                builder.push_record([display_name, package.clone(), inv_id.to_string()]);
             }
+            let mut table = builder.build();
+            table.with(Style::rounded());
+            println!("{table}");
         }
     } else {
         let json = serde_json::to_string_pretty(&tests)?;
@@ -360,25 +386,25 @@ fn execute_tests_getting_slower(
                 threshold_pct, window
             );
         } else {
-            println!(
-                "{:<45} {:<15} {:>10} {:>10} {:>8}",
-                "TEST", "PACKAGE", "OLD (s)", "NEW (s)", "CHANGE"
-            );
+            let mut builder = Builder::new();
+            builder.push_record(["TEST", "PACKAGE", "OLD (s)", "NEW (s)", "CHANGE"]);
             for test in &tests {
                 let display_name = if test.test_name.len() > 43 {
                     format!("...{}", &test.test_name[test.test_name.len() - 40..])
                 } else {
                     test.test_name.clone()
                 };
-                println!(
-                    "{:<45} {:<15} {:>10.3} {:>10.3} {:>+7.1}%",
+                builder.push_record([
                     display_name,
-                    test.package,
-                    test.older_avg_secs,
-                    test.recent_avg_secs,
-                    test.pct_change
-                );
+                    test.package.clone(),
+                    format!("{:.3}", test.older_avg_secs),
+                    format!("{:.3}", test.recent_avg_secs),
+                    format!("{:+.1}%", test.pct_change),
+                ]);
             }
+            let mut table = builder.build();
+            table.with(Style::rounded());
+            println!("{table}");
         }
     } else {
         let json = serde_json::to_string_pretty(&tests)?;
@@ -422,6 +448,62 @@ fn execute_tests_trends(
 
     Ok(CommandResult::success()
         .with_message(format!("Found {} test trends", tests.len()))
+        .with_duration(ctx.elapsed()))
+}
+
+fn execute_diagnostics(
+    db: &HistoryDb,
+    limit: usize,
+    level: Option<&str>,
+    file_pattern: Option<&str>,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let diagnostics = db.get_recent_diagnostics_filtered(limit, level, file_pattern)?;
+
+    if ctx.is_human() {
+        if diagnostics.is_empty() {
+            println!("No diagnostics found.");
+        } else {
+            let mut builder = Builder::new();
+            builder.push_record(["LEVEL", "CODE", "FILE", "MESSAGE"]);
+            for diag in &diagnostics {
+                let code = diag.code.as_deref().unwrap_or("-");
+                let file_loc = match (&diag.file_path, diag.line) {
+                    (Some(path), Some(line)) => {
+                        let short_path = if path.len() > 45 {
+                            format!("...{}", &path[path.len() - 42..])
+                        } else {
+                            path.clone()
+                        };
+                        format!("{}:{}", short_path, line)
+                    }
+                    (Some(path), None) => {
+                        if path.len() > 48 {
+                            format!("...{}", &path[path.len() - 45..])
+                        } else {
+                            path.clone()
+                        }
+                    }
+                    _ => "-".to_string(),
+                };
+                let message = if diag.message.len() > 60 {
+                    format!("{}...", &diag.message[..57])
+                } else {
+                    diag.message.clone()
+                };
+                builder.push_record([diag.level.clone(), code.to_string(), file_loc, message]);
+            }
+            let mut table = builder.build();
+            table.with(Style::rounded());
+            println!("{table}");
+        }
+    } else {
+        let json = serde_json::to_string_pretty(&diagnostics)?;
+        println!("{json}");
+    }
+
+    Ok(CommandResult::success()
+        .with_message(format!("Found {} diagnostics", diagnostics.len()))
         .with_duration(ctx.elapsed()))
 }
 

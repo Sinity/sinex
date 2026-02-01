@@ -52,3 +52,6 @@ path = "../sinex-primitives"
 features = [
     "testing",
 ]
+
+[lints]
+workspace = true

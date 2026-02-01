@@ -22,9 +22,9 @@ use dashmap::DashMap;
 use pipeline::MaterialConsumerHandles;
 use sinex_db::{DbPool, DbPoolExt};
 use sinex_node_sdk::annex::GitAnnex;
+use sinex_primitives::Timestamp;
 use sinex_primitives::{environment::SinexEnvironment, Id, JsonValue, Ulid};
 use std::{collections::BTreeMap, path::PathBuf, str::FromStr, sync::Arc};
-use sinex_primitives::Timestamp;
 use tokio::{fs, fs::File, sync::Mutex};
 use tracing::{info, warn};
 
@@ -123,7 +123,7 @@ impl MaterialAssembler {
                 ))
             })?;
 
-        Ok(record.map_or(false, |record| is_terminal_status(record.status.as_str())))
+        Ok(record.is_some_and(|record| is_terminal_status(record.status.as_str())))
     }
 
     /// Fetch a handle to an existing assembler state for a material.
@@ -321,9 +321,9 @@ impl MaterialAssembler {
             }
             result = cleanup_task => {
                 match result {
-                    Ok(Ok(())) => return Ok(()),
-                    Ok(Err(e)) => return Err(e),
-                    Err(e) => return Err(SinexError::service(format!("Cleanup task panicked: {}", e))),
+                    Ok(Ok(())) => Ok(()),
+                    Ok(Err(e)) => Err(e),
+                    Err(e) => Err(SinexError::service(format!("Cleanup task panicked: {}", e))),
                 }
             }
         }

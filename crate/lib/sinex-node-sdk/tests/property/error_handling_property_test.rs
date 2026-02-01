@@ -2,6 +2,7 @@
 
 use proptest::prelude::*;
 use sinex_node_sdk::error_helpers::*;
+use sinex_primitives::error::SinexError;
 use std::io::ErrorKind;
 use xtask::sandbox::sinex_proptest;
 
@@ -43,7 +44,8 @@ sinex_proptest! {
         let io_error = std::io::Error::new(kind, msg.clone());
         let node_error = io_error_with_context(io_error, &ctx);
 
-        if let sinex_node_sdk::SinexError::processing(rendered) = node_error {
+        if let SinexError::Processing(details) = node_error {
+            let rendered = details.message();
             // Should at least contain the separator if both are empty,
             // or the content of whichever is non-empty.
             prop_assert!(!rendered.is_empty());
@@ -71,7 +73,8 @@ sinex_proptest! {
                 String::from_utf8(bytes).unwrap_err(),
                 &ctx
             );
-            if let sinex_node_sdk::SinexError::processing(rendered) = node_error {
+            if let SinexError::Processing(details) = node_error {
+                let rendered = details.message();
                 if !ctx.is_empty() {
                     prop_assert!(rendered.contains(&ctx));
                 }
@@ -89,7 +92,8 @@ sinex_proptest! {
         let malformed = "{\"key\":}";
         let err = serde_json::from_str::<serde_json::Value>(malformed).unwrap_err();
         let node_error = json_error_with_context(err, &ctx);
-        if let sinex_node_sdk::SinexError::processing(rendered) = node_error {
+        if let SinexError::Processing(details) = node_error {
+            let rendered = details.message();
             if !ctx.is_empty() {
                 prop_assert!(rendered.contains(&ctx));
             }

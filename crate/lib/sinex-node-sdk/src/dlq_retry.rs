@@ -2,13 +2,10 @@
 //!
 //! This module provides utilities for manually retrying messages from the DLQ.
 
-use crate::{SinexError, NodeResult};
+use crate::{NodeResult, SinexError};
 use async_nats::jetstream;
 use futures::StreamExt;
-use sinex_primitives::{
-    environment::SinexEnvironment,
-    units::Seconds,
-};
+use sinex_primitives::{environment::SinexEnvironment, units::Seconds};
 use std::time::Duration;
 use tracing::{error, info, warn};
 

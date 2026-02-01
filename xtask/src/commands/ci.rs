@@ -125,6 +125,7 @@ struct PgEnv {
     operation_id: String,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn execute_postgres(
     port: u16,
     data_dir: Option<PathBuf>,
@@ -244,7 +245,7 @@ fn execute_postgres(
     }
 
     Ok(CommandResult::success()
-        .with_message(format!("Successfully ran command with ephemeral Postgres"))
+        .with_message("Successfully ran command with ephemeral Postgres".to_string())
         .with_detail(format!("Port: {}", port))
         .with_detail(format!("Database: {}", database))
         .with_duration(ctx.elapsed()))
@@ -266,19 +267,15 @@ fn execute_workspace(target_dir: &str, ctx: &CommandContext) -> Result<CommandRe
         forbidden: true,
         heavy: false,
         affected: false,
+        packages: vec![],
+        skip_tests: false, // CI should always check tests
     }
     .execute(ctx)?;
     if !check_result.is_success() {
         return Ok(check_result);
     }
 
-    if ctx.is_human() {
-        println!("Running lint...");
-    }
-    let lint_result = crate::commands::lint::LintCommand {}.execute(ctx)?;
-    if !lint_result.is_success() {
-        return Ok(lint_result);
-    }
+    // Lint is now part of check command, skip the separate lint step
 
     if ctx.is_human() {
         println!("Running lint-forbidden...");

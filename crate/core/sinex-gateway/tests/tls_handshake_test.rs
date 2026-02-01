@@ -5,7 +5,7 @@ use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn test_gateway_tcp_tls_handshake(ctx: TestContext) -> color_eyre::Result<()> {
-    let ctx = ctx.with_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     // 1. Generate self-signed certs for testing
     let subject_alt_names = vec!["localhost".to_string(), "127.0.0.1".to_string()];
     let cert = rcgen::generate_simple_self_signed(subject_alt_names)?;
@@ -57,7 +57,7 @@ async fn test_gateway_tcp_tls_handshake(ctx: TestContext) -> color_eyre::Result<
     let gateway_handle = tokio::spawn(async move {
         // Pass the explicit TCP listen address override
         let tcp_listen = format!("127.0.0.1:{}", port);
-        rpc_server::run(Some(&tcp_listen), services, shutdown_rx)
+        rpc_server::run(Some(&tcp_listen), services, vec![], shutdown_rx)
             .await
             .expect("Gateway failed");
     });

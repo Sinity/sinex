@@ -330,7 +330,7 @@ impl NodeSchemaValidator {
         )
         .fetch_optional(db_pool)
         .await
-        .map_err(|e| crate::SinexError::from(e))?;
+        .map_err(crate::SinexError::from)?;
 
         let Some(row) = result else {
             debug!(

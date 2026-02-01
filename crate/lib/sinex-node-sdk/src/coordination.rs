@@ -379,8 +379,7 @@ pub struct NodeCoordination {
 impl NodeCoordination {
     fn current_metadata(&self) -> InstanceMetadata {
         let mut meta: InstanceMetadata = (&self.instance).into();
-        meta.last_heartbeat =
-            sinex_primitives::temporal::Timestamp::now().unix_timestamp();
+        meta.last_heartbeat = sinex_primitives::temporal::Timestamp::now().unix_timestamp();
         meta
     }
 
@@ -899,13 +898,16 @@ impl NodeCoordination {
                 "error": error
         });
 
-        let bytes =
-            serde_json::to_vec(&payload).map_err(|e| SinexError::validation(e.to_string()))?;
+        let bytes = serde_json::to_vec(&payload).map_err(|e| {
+            SinexError::validation("failed to serialize failure signal").with_std_error(&e)
+        })?;
 
         self.nats_client
             .publish(subject, bytes.into())
             .await
-            .map_err(|e| SinexError::network(format!("Failed to publish failure signal: {}", e)))?;
+            .map_err(|e| {
+                SinexError::network("failed to publish failure signal").with_std_error(&e)
+            })?;
 
         error!("Signaled critical failure to standbys: {}", error);
 

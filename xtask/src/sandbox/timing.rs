@@ -10,9 +10,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-// TODO: These will need sinex-db when fully integrated
-// For now, comment out dependencies on Sandbox and other test-utils types
-
 /// Standard timeout policy for tests.
 pub const DEFAULT_WAIT_SECS: u64 = 60;
 pub const INTEGRATION_WAIT_SECS: u64 = 120;
@@ -249,7 +246,7 @@ impl WaitHelpers {
         .await
         .map_err(|e| {
             SinexError::timeout("Wait for source events failed")
-                .with_context("source", &source)
+                .with_context("source", source)
                 .with_context("expected_count", expected_count)
                 .with_context("timeout_duration", format!("{timeout_secs}s"))
                 .with_source(e)
@@ -301,10 +298,9 @@ impl WaitHelpers {
         timeout_secs: u64,
     ) -> TestResult<()> {
         let pool = pool.clone();
-        let event_id = event_id.clone();
 
         sinex_primitives::utils::wait_for_condition_adaptive(
-            || async { Ok(pool.events().get_by_id(event_id.clone()).await?.is_some()) },
+            || async { Ok(pool.events().get_by_id(event_id).await?.is_some()) },
             timeout_secs,
             &format!("event id {event_id} persisted"),
         )
@@ -512,10 +508,11 @@ impl WaitHelpers {
     }
 
     /// Wait for condition with timeout using production adaptive wait helpers
-    pub async fn wait_for_condition<F, Fut>(condition: F, timeout_secs: u64) -> TestResult<()>
+    pub async fn wait_for_condition<F, Fut, E>(condition: F, timeout_secs: u64) -> TestResult<()>
     where
         F: Fn() -> Fut,
-        Fut: std::future::Future<Output = Result<bool>>,
+        Fut: std::future::Future<Output = Result<bool, E>>,
+        E: std::fmt::Display,
     {
         sinex_primitives::utils::wait_for_condition_adaptive(
             || async {
@@ -537,13 +534,14 @@ impl WaitHelpers {
     }
 
     /// Wait for multiple conditions to be met simultaneously using production wait helpers
-    pub async fn wait_for_multiple_conditions<F, Fut>(
+    pub async fn wait_for_multiple_conditions<F, Fut, E>(
         conditions: Vec<(&str, F)>,
         timeout_secs: u64,
     ) -> TestResult<()>
     where
         F: Fn() -> Fut + Clone,
-        Fut: std::future::Future<Output = Result<bool>>,
+        Fut: std::future::Future<Output = Result<bool, E>>,
+        E: std::fmt::Display,
     {
         // Store condition count before consuming the vector
         let condition_count = conditions.len();
@@ -715,14 +713,15 @@ impl<'ctx> TimingUtils<'ctx> {
     }
 
     /// Wait for condition with timeout
-    pub async fn wait_for_condition<F, Fut>(
+    pub async fn wait_for_condition<F, Fut, E>(
         &self,
         condition: F,
         timeout_secs: u64,
     ) -> TestResult<()>
     where
         F: Fn() -> Fut,
-        Fut: std::future::Future<Output = Result<bool>>,
+        Fut: std::future::Future<Output = Result<bool, E>>,
+        E: std::fmt::Display,
     {
         WaitHelpers::wait_for_condition(condition, timeout_secs).await
     }
@@ -739,7 +738,6 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
-    use xtask_macros::*;
 
     #[sinex_serial_test]
     async fn test_synchronizer_basic() -> TestResult<()> {
@@ -1012,7 +1010,7 @@ mod tests {
         WaitHelpers::wait_for_condition(
             || {
                 let counter = counter.clone();
-                async move { Ok(counter.load(Ordering::SeqCst) >= 5) }
+                async move { Ok::<bool, std::fmt::Error>(counter.load(Ordering::SeqCst) >= 5) }
             },
             5,
         )

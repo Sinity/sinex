@@ -269,7 +269,7 @@ pub(super) fn spawn_slices_consumer(
                 let material_id = message
                     .subject
                     .split('.')
-                    .last()
+                    .next_back()
                     .and_then(|part| Ulid::from_str(part).ok());
 
                 let Some(material_id) = material_id else {

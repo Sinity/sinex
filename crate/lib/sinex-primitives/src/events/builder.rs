@@ -185,7 +185,7 @@ impl<T> EventBuilder<T, HasProvenance> {
             payload: self.payload,
             ts_orig: self.timestamp.or_else(|| Some(Timestamp::now())),
             host: self.hostname.unwrap_or_else(get_hostname),
-            ingestor_version: self.ingestor_version.or_else(|| get_ingestor_version()),
+            ingestor_version: self.ingestor_version.or_else(get_ingestor_version),
             payload_schema_id: self.payload_schema_id,
             provenance,
             associated_blob_ids: self.associated_blob_ids,

@@ -66,8 +66,7 @@ impl BlobManager {
         payload: T,
         material_id: Id<SourceMaterial>,
     ) -> NodeResult<Event<JsonValue>> {
-        let payload_value =
-            serde_json::to_value(payload).map_err(|e| SinexError::serialization(e))?;
+        let payload_value = serde_json::to_value(payload).map_err(SinexError::serialization)?;
         DynamicPayload::new("blob-manager", event_type, payload_value)
             .from_material(material_id)
             .build()
@@ -82,11 +81,7 @@ impl BlobManager {
     async fn ensure_material_for_blob(&self, blob: &Blob) -> NodeResult<Id<SourceMaterial>> {
         let repo = self.db_pool.source_materials();
 
-        if let Some(existing) = repo
-            .find_by_blob_id(blob.id.clone())
-            .await
-            .map_err(SinexError::from)?
-        {
+        if let Some(existing) = repo.find_by_blob_id(blob.id).await? {
             return Ok(Id::<SourceMaterial>::from_ulid(existing.id));
         }
 
@@ -118,7 +113,7 @@ impl BlobManager {
             material = material.with_metadata(json!({ "checksum_blake3": checksum }));
         }
 
-        material = material.with_blob_id(blob.id.clone()).with_metadata(json!({
+        material = material.with_blob_id(blob.id).with_metadata(json!({
             "annex_backend": blob.annex_backend,
             "content_hash": blob.content_hash,
             "annex_key": blob.annex_key(),
@@ -183,7 +178,7 @@ impl BlobManager {
         let _start = Instant::now();
 
         // Compute BLAKE3 hash for deduplication
-        let blake3_hash = GitAnnex::compute_blake3_hash(&validated_path)
+        let blake3_hash = GitAnnex::compute_blake3_hash(validated_path)
             .await
             .map_err(|e| SinexError::blob_storage(e).with_operation("compute_hash"))?;
         debug!("Computed BLAKE3 hash: {}", blake3_hash);
@@ -229,17 +224,17 @@ impl BlobManager {
         }
 
         // Get file metadata
-        let file_metadata = tokio::fs::metadata(&validated_path)
+        let file_metadata = tokio::fs::metadata(validated_path)
             .await
-            .map_err(|e| SinexError::io(e))?;
+            .map_err(SinexError::io)?;
         let size_bytes = file_metadata.len() as i64;
 
         // Detect MIME type
-        let mime_type = Self::detect_mime_type(&validated_path)
+        let mime_type = Self::detect_mime_type(validated_path)
             .map_err(|e| SinexError::blob_storage(e).with_operation("detect_mime_type"))?;
 
         // Add to git-annex
-        let annex_key = self.annex.add_file(&validated_path).await.map_err(|e| {
+        let annex_key = self.annex.add_file(validated_path).await.map_err(|e| {
             SinexError::processing(format!("Failed to add file to git-annex: {}", e))
         })?;
         info!("Added to git-annex with key: {}", annex_key.key);
@@ -333,16 +328,13 @@ impl BlobManager {
 
         // Create a unique temporary file without predictable naming to avoid symlink attacks
         let temp_file_path = create_secure_temp_path("sinex_blob", "tmp")
-            .map_err(|e| SinexError::io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+            .map_err(|e| SinexError::io(std::io::Error::other(e)))?;
 
         let mut temp_file = tokio::fs::File::create(&temp_file_path)
             .await
-            .map_err(|e| SinexError::io(e))?;
-        temp_file
-            .write_all(content)
-            .await
-            .map_err(|e| SinexError::io(e))?;
-        temp_file.sync_all().await.map_err(|e| SinexError::io(e))?;
+            .map_err(SinexError::io)?;
+        temp_file.write_all(content).await.map_err(SinexError::io)?;
+        temp_file.sync_all().await.map_err(SinexError::io)?;
         drop(temp_file);
 
         // Add to git-annex
@@ -421,9 +413,7 @@ impl BlobManager {
         let path = self.find_symlink_path(annex_key).await?;
 
         // Read the content
-        let content = tokio::fs::read(&path)
-            .await
-            .map_err(|e| SinexError::io(e))?;
+        let content = tokio::fs::read(&path).await.map_err(SinexError::io)?;
 
         let blob = self.get_blob_metadata(annex_key).await?;
 
@@ -547,20 +537,12 @@ impl BlobManager {
 
     /// Find blob by BLAKE3 hash for deduplication
     async fn find_blob_by_blake3(&self, blake3_hash: &str) -> NodeResult<Option<Blob>> {
-        self.db_pool
-            .blobs()
-            .find_by_blake3(blake3_hash)
-            .await
-            .map_err(SinexError::from)
+        self.db_pool.blobs().find_by_blake3(blake3_hash).await
     }
 
     /// Insert new blob metadata into database
     pub async fn insert_blob(&self, blob: &Blob) -> NodeResult<Blob> {
-        self.db_pool
-            .blobs()
-            .insert(blob.clone())
-            .await
-            .map_err(SinexError::from)
+        self.db_pool.blobs().insert(blob.clone()).await
     }
 
     /// Get blob metadata by annex key
@@ -573,8 +555,7 @@ impl BlobManager {
             &backend,
             &hash_fragment,
             size,
-        ))
-        .map_err(SinexError::from)?
+        ))?
         .ok_or_else(|| {
             SinexError::processing(format!("Blob not found in database for key: {}", annex_key))
         })
@@ -589,8 +570,7 @@ impl BlobManager {
         self.db_pool
             .blobs()
             .get_by_content(&backend, &hash_fragment, size)
-            .await
-            .map_err(SinexError::from)?
+            .await?
             .ok_or_else(|| {
                 SinexError::processing(format!("Blob not found in database for key: {}", annex_key))
             })
@@ -604,7 +584,6 @@ impl BlobManager {
             .blobs()
             .update_verification_status(blob.id, status)
             .await
-            .map_err(SinexError::from)
     }
 
     /// Add original filename to existing blob
@@ -615,7 +594,6 @@ impl BlobManager {
             .blobs()
             .add_original_filename(blob.id, filename)
             .await
-            .map_err(SinexError::from)
     }
 
     /// Find content path in repository for annex key
@@ -627,7 +605,7 @@ impl BlobManager {
             .current_dir(self.annex.repo_path())
             .output()
             .await
-            .map_err(|e| SinexError::io(e))?;
+            .map_err(SinexError::io)?;
 
         if !output.status.success() {
             return Err(SinexError::processing(format!(
@@ -676,12 +654,7 @@ impl BlobManager {
     /// Emit storage statistics (called periodically by background task)
     pub async fn emit_storage_stats(&self) -> NodeResult<()> {
         // Get storage statistics from blob repository
-        let stats = self
-            .db_pool
-            .blobs()
-            .get_storage_stats()
-            .await
-            .map_err(SinexError::from)?;
+        let stats = self.db_pool.blobs().get_storage_stats().await?;
 
         let blob_count = stats.total_blobs;
         let total_size = stats.total_size_bytes;
@@ -694,8 +667,7 @@ impl BlobManager {
                 "component": "blob-manager",
                 "purpose": "storage_statistics",
             })))
-            .await
-            .map_err(SinexError::from)?;
+            .await?;
 
         let material_id = Id::<SourceMaterial>::from_ulid(metrics_material.id);
 

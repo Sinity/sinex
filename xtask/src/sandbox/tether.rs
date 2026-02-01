@@ -236,7 +236,7 @@ impl TetherClient {
 }
 
 /// Event received via The Tether
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 #[allow(dead_code)]
 pub struct TetheredEvent {
     /// The event subject
@@ -294,6 +294,45 @@ impl TetherSession {
                 }
             }
         }
+    }
+
+    /// Stream events to a channel (stub - not yet implemented)
+    #[allow(dead_code)]
+    pub async fn stream_events(&self, _tx: tokio::sync::mpsc::Sender<TetheredEvent>) -> Result<()> {
+        // TODO: Implement actual event streaming via NATS
+        anyhow::bail!("Tether event streaming not yet implemented")
+    }
+
+    /// Get session statistics (stub)
+    #[allow(dead_code)]
+    pub fn stats(&self) -> TetherStats {
+        TetherStats::default()
+    }
+}
+
+/// Statistics for a tether session
+#[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
+pub struct TetherStats {
+    events_received: u64,
+    events_forwarded: u64,
+    errors: u64,
+}
+
+impl TetherStats {
+    /// Number of events received
+    pub fn events_received(&self) -> u64 {
+        self.events_received
+    }
+
+    /// Number of events forwarded
+    pub fn events_forwarded(&self) -> u64 {
+        self.events_forwarded
+    }
+
+    /// Number of errors
+    pub fn errors(&self) -> u64 {
+        self.errors
     }
 }
 
