@@ -155,7 +155,7 @@ struct TlsCheck {
 }
 
 impl XtaskCommand for StatusCommand {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "status"
     }
 
@@ -238,8 +238,7 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
         .args(["status", "--porcelain"])
         .output()
         .ok()
-        .map(|o| !o.stdout.is_empty())
-        .unwrap_or(false);
+        .is_some_and(|o| !o.stdout.is_empty());
 
     // Get ahead/behind counts
     let (ahead, behind) = std::process::Command::new("git")
@@ -247,7 +246,7 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
         .output()
         .ok()
         .filter(|o| o.status.success())
-        .map(|o| {
+        .map_or((0, 0), |o| {
             let s = String::from_utf8_lossy(&o.stdout);
             let parts: Vec<&str> = s.trim().split('\t').collect();
             if parts.len() == 2 {
@@ -255,8 +254,7 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
             } else {
                 (0, 0)
             }
-        })
-        .unwrap_or((0, 0));
+        });
 
     // Build warnings
     let mut warnings = Vec::new();
@@ -313,8 +311,7 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
         active_jobs,
         last_test
             .as_ref()
-            .map(|t| if t.status == "success" { "ok" } else { "x" })
-            .unwrap_or("?"),
+            .map_or("?", |t| if t.status == "success" { "ok" } else { "x" }),
         if git_dirty { "dirty" } else { "clean" }
     );
 
@@ -409,12 +406,11 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
     let mut tool_checks = Vec::new();
     for tool in tools_to_check {
         let check_result = ToolManager::check_tool(tool);
-        let (available, version) = match check_result {
-            Ok(info) => (true, Some(info.version)),
-            Err(_) => {
-                all_ok = false;
-                (false, None)
-            }
+        let (available, version) = if let Ok(info) = check_result {
+            (true, Some(info.version))
+        } else {
+            all_ok = false;
+            (false, None)
         };
         tool_checks.push(ToolCheck {
             name: tool.to_string(),
@@ -576,7 +572,7 @@ fn execute_full_status(watch: bool, ctx: &CommandContext) -> Result<CommandResul
         let all_jobs = job_manager.list_recent(20).unwrap_or_default();
         let recent_failures = all_jobs
             .iter()
-            .filter(|j| matches!(j.meta.status, crate::jobs::JobStatus::Failed { .. }))
+            .filter(|j| matches!(j.status, crate::history::InvocationStatus::Failed))
             .count();
 
         // Check history

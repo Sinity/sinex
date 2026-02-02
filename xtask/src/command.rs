@@ -74,7 +74,7 @@ impl CommandMetadata {
     pub fn build() -> Self {
         Self {
             category: Some("build".to_string()),
-            timeout: Some(Duration::from_secs(300)), // 5 minutes
+            timeout: Some(Duration::from_mins(5)), // 5 minutes
             modifies_state: true,
             track_in_history: true,
         }
@@ -84,7 +84,7 @@ impl CommandMetadata {
     pub fn test() -> Self {
         Self {
             category: Some("test".to_string()),
-            timeout: Some(Duration::from_secs(600)), // 10 minutes
+            timeout: Some(Duration::from_mins(10)), // 10 minutes
             modifies_state: false,
             track_in_history: true,
         }
@@ -94,7 +94,7 @@ impl CommandMetadata {
     pub fn database() -> Self {
         Self {
             category: Some("database".to_string()),
-            timeout: Some(Duration::from_secs(120)), // 2 minutes
+            timeout: Some(Duration::from_mins(2)), // 2 minutes
             modifies_state: true,
             track_in_history: true,
         }
@@ -104,7 +104,7 @@ impl CommandMetadata {
     pub fn check() -> Self {
         Self {
             category: Some("check".to_string()),
-            timeout: Some(Duration::from_secs(60)), // 1 minute
+            timeout: Some(Duration::from_mins(1)), // 1 minute
             modifies_state: false,
             track_in_history: true,
         }
@@ -124,7 +124,7 @@ impl CommandMetadata {
     pub fn diagnostics() -> Self {
         Self {
             category: Some("diagnostics".to_string()),
-            timeout: Some(Duration::from_secs(120)), // 2 minutes
+            timeout: Some(Duration::from_mins(2)), // 2 minutes
             modifies_state: false,
             track_in_history: true,
         }
@@ -441,24 +441,24 @@ impl CommandContext {
         let job = manager.spawn_xtask(subcommand, args)?;
 
         let result = ExecutionResult::success()
-            .with_message(format!("Started background job {}", job.meta.id))
+            .with_message(format!("Started background job {}", job.id))
             .with_data(serde_json::json!({
-                "job_id": job.meta.id,
-                "stdout": job.stdout_path().display().to_string(),
-                "stderr": job.stderr_path().display().to_string(),
+                "job_id": job.id,
+                "stdout": job.stdout_path.display().to_string(),
+                "stderr": job.stderr_path.display().to_string(),
                 "command": subcommand,
                 "args": args,
-                "hint": format!("Monitor with: cargo xtask jobs status {}", job.meta.id),
+                "hint": format!("Monitor with: cargo xtask jobs status {}", job.id),
             }));
 
         if self.is_human() {
-            println!("🚀 Started background job {}", job.meta.id);
+            println!("🚀 Started background job {}", job.id);
             println!("   Command: cargo xtask {} {}", subcommand, args.join(" "));
-            println!("   Logs: {}", job.stdout_path().display());
+            println!("   Logs: {}", job.stdout_path.display());
             println!();
-            println!("   Monitor: cargo xtask jobs status {}", job.meta.id);
-            println!("   Output:  cargo xtask jobs output {}", job.meta.id);
-            println!("   Cancel:  cargo xtask jobs cancel {}", job.meta.id);
+            println!("   Monitor: cargo xtask jobs status {}", job.id);
+            println!("   Output:  cargo xtask jobs output {}", job.id);
+            println!("   Cancel:  cargo xtask jobs cancel {}", job.id);
         }
 
         Ok(result.with_duration(self.elapsed()))
@@ -497,7 +497,7 @@ mod tests {
     }
 
     impl XtaskCommand for TestCommand {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "test-command"
         }
 

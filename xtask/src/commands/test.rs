@@ -14,6 +14,7 @@ use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskComman
 use crate::config::config;
 use crate::history::HistoryDb;
 use crate::jobs::JobManager;
+use crate::preflight;
 use crate::process::ProcessBuilder;
 use crate::resources;
 
@@ -45,8 +46,8 @@ pub struct TestCommand {
     #[arg(long)]
     pub timeout: Option<String>,
 
-    /// Run only on affected packages
-    #[arg(long)]
+    /// Run only on affected packages (DEFAULT - use --all to run all)
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
     pub affected: bool,
 
     /// Prime database before testing
@@ -89,13 +90,17 @@ pub struct TestCommand {
     #[arg(long)]
     pub heavy: bool,
 
-    /// Include all tests (including ignored)
+    /// Run ALL packages (disables --affected default)
     #[arg(short, long)]
     pub all: bool,
 
-    /// Run in background (returns job ID immediately)
-    #[arg(long, visible_alias = "background")]
+    /// Run in background (DEFAULT - use --fg to run foreground)
+    #[arg(long, visible_alias = "background", default_value_t = true, action = clap::ArgAction::Set)]
     pub bg: bool,
+
+    /// Run in foreground (disables --bg default, waits for completion)
+    #[arg(long, conflicts_with = "bg")]
+    pub fg: bool,
 
     /// Run benchmarks (replaces 'cargo xtask bench')
     #[arg(long)]
@@ -116,7 +121,7 @@ struct SystemMetrics {
 }
 
 impl XtaskCommand for TestCommand {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "test"
     }
 
@@ -159,11 +164,16 @@ impl XtaskCommand for TestCommand {
                 .with_duration(ctx.elapsed()));
         }
 
+        // Ensure infrastructure is ready (tests need DB + NATS)
+        preflight::ensure_ready(ctx)?;
+
         let profile = if self.debug { "debug" } else { "default" };
         let use_fail_fast = self.fail_fast;
 
-        // Handle background mode - spawn cargo nextest in background
-        if self.bg || ctx.is_background() {
+        // Handle background mode (default ON, --fg disables it)
+        // --fg flag takes precedence over --bg default
+        let use_bg = (self.bg && !self.fg) || ctx.is_background();
+        if use_bg {
             let mut args = vec![
                 "nextest".to_string(),
                 "run".to_string(),
@@ -212,15 +222,14 @@ impl XtaskCommand for TestCommand {
                 let job = manager.spawn_cargo(&args)?;
 
                 return Ok(CommandResult::success()
-                    .with_message(format!("Backgrounded as job {}", job.meta.id))
+                    .with_message(format!("Backgrounded as job {}", job.id))
                     .with_data(serde_json::json!({
-                        "job_id": job.meta.id,
+                        "job_id": job.id,
                         "command": "cargo",
                         "args": args,
                     })));
-            } else {
-                return ctx.spawn_background("test", &args);
             }
+            return ctx.spawn_background("test", &args);
         }
 
         // Handle specialized test modes
@@ -288,8 +297,10 @@ impl XtaskCommand for TestCommand {
             }
         }
 
-        // Compute affected packages if requested
-        let affected_filter = if self.affected {
+        // Compute affected packages (default ON, --all disables it)
+        // --all flag takes precedence over --affected default
+        let use_affected = self.affected && !self.all;
+        let affected_filter = if use_affected {
             let packages = affected::affected_packages()?;
             if packages.is_empty() {
                 if ctx.is_human() {
@@ -814,8 +825,7 @@ fn test_preflight(ctx: &CommandContext) -> Result<()> {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
+        .is_ok_and(|s| s.success());
 
     // Check NATS
     let nats_url = std::env::var("SINEX_NATS_URL").unwrap_or_else(|_| "localhost:4222".into());
@@ -1044,6 +1054,7 @@ mod tests {
             heavy: false,
             all: false,
             bg: false,
+            fg: false,
             bench: false,
             coverage: false,
             args: vec![],

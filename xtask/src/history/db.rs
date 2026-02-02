@@ -194,6 +194,77 @@ impl HistoryDb {
         Ok(())
     }
 
+    /// Finish a background job and store its log content in the DB.
+    ///
+    /// This reads the log files, stores content in DB, then deletes the files.
+    pub fn finish_background_job(
+        &self,
+        id: i64,
+        status: InvocationStatus,
+        exit_code: Option<i32>,
+        duration_secs: f64,
+        stdout_path: Option<&std::path::Path>,
+        stderr_path: Option<&std::path::Path>,
+    ) -> Result<()> {
+        let finished_at = OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap();
+
+        // Read log files
+        let stdout_content = stdout_path.and_then(|p| std::fs::read_to_string(p).ok());
+        let stderr_content = stderr_path.and_then(|p| std::fs::read_to_string(p).ok());
+
+        self.conn.execute(
+            r#"
+            UPDATE invocations
+            SET finished_at = ?1, duration_secs = ?2, exit_code = ?3, status = ?4,
+                stdout_content = ?5, stderr_content = ?6
+            WHERE id = ?7
+            "#,
+            params![
+                finished_at,
+                duration_secs,
+                exit_code,
+                status.as_str(),
+                stdout_content,
+                stderr_content,
+                id
+            ],
+        )?;
+
+        // Delete log files now that content is in DB
+        if let Some(path) = stdout_path {
+            let _ = std::fs::remove_file(path);
+        }
+        if let Some(path) = stderr_path {
+            let _ = std::fs::remove_file(path);
+        }
+        // Try to remove parent directory (job dir) if empty
+        if let Some(path) = stdout_path {
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::remove_dir(parent);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Get log content for a completed job.
+    pub fn get_job_logs(&self, id: i64) -> Result<(Option<String>, Option<String>)> {
+        self.ensure_job_columns()?;
+        let result = self.conn.query_row(
+            "SELECT stdout_content, stderr_content FROM invocations WHERE id = ?1",
+            params![id],
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                ))
+            },
+        )?;
+        Ok(result)
+    }
+
     /// Get recent invocations, optionally filtered by command.
     pub fn get_recent(
         &self,
@@ -252,7 +323,7 @@ impl HistoryDb {
     /// Get statistics for a command.
     /// Get statistics for a command.
     pub fn get_stats(&self, command: &str, days: u32) -> Result<CommandStats> {
-        let since = OffsetDateTime::now_utc() - time::Duration::days(days as i64);
+        let since = OffsetDateTime::now_utc() - time::Duration::days(i64::from(days));
         let since_str = since
             .format(&time::format_description::well_known::Rfc3339)
             .unwrap();
@@ -288,7 +359,7 @@ impl HistoryDb {
             return Ok(0);
         }
 
-        let cutoff = OffsetDateTime::now_utc() - time::Duration::days(older_than_days as i64);
+        let cutoff = OffsetDateTime::now_utc() - time::Duration::days(i64::from(older_than_days));
         let cutoff_str = cutoff
             .format(&time::format_description::well_known::Rfc3339)
             .unwrap();
@@ -299,6 +370,11 @@ impl HistoryDb {
         )?;
 
         Ok(deleted)
+    }
+
+    /// Prune old background jobs. Alias for prune() for API consistency.
+    pub fn prune_old_jobs(&self, older_than_days: u32) -> Result<usize> {
+        self.prune(older_than_days)
     }
 
     /// Record a test result.
@@ -360,6 +436,8 @@ impl HistoryDb {
             ("is_background", "INTEGER DEFAULT 0"),
             ("stdout_path", "TEXT"),
             ("stderr_path", "TEXT"),
+            ("stdout_content", "TEXT"), // Logs stored in DB after completion
+            ("stderr_content", "TEXT"),
         ];
 
         for (col_name, col_type) in columns_to_add {
@@ -512,6 +590,24 @@ impl HistoryDb {
         self.conn.execute(
             "UPDATE invocations SET pid = ?1 WHERE id = ?2",
             params![pid, id],
+        )?;
+        Ok(())
+    }
+
+    /// Update a background job's log file paths.
+    pub fn update_job_paths(
+        &self,
+        id: i64,
+        stdout_path: &std::path::Path,
+        stderr_path: &std::path::Path,
+    ) -> Result<()> {
+        self.conn.execute(
+            "UPDATE invocations SET stdout_path = ?1, stderr_path = ?2 WHERE id = ?3",
+            params![
+                stdout_path.display().to_string(),
+                stderr_path.display().to_string(),
+                id
+            ],
         )?;
         Ok(())
     }
@@ -796,8 +892,7 @@ fn is_git_dirty() -> bool {
         .args(["status", "--porcelain"])
         .output()
         .ok()
-        .map(|o| !o.stdout.is_empty())
-        .unwrap_or(false)
+        .is_some_and(|o| !o.stdout.is_empty())
 }
 
 #[cfg(test)]

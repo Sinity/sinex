@@ -16,6 +16,7 @@ use std::process::{Child, Command, Stdio};
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config::config;
 use crate::jobs::JobManager;
+use crate::preflight;
 
 /// Known binary targets and their package names
 static BINARIES: &[(&str, &str, &str)] = &[
@@ -184,7 +185,7 @@ struct RunResult {
 }
 
 impl XtaskCommand for RunCommand {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "run"
     }
 
@@ -253,6 +254,9 @@ impl RunCommand {
                 )
                 })?;
 
+        // Ensure infrastructure is ready (binaries need DB + NATS)
+        preflight::ensure_ready(ctx)?;
+
         let instance_id = instance_id.unwrap_or_else(|| format!("{}-{}", name, std::process::id()));
 
         if self.bg {
@@ -273,6 +277,9 @@ impl RunCommand {
         instance_prefix: Option<String>,
         ctx: &CommandContext,
     ) -> Result<CommandResult> {
+        // Ensure infrastructure is ready (binaries need DB + NATS)
+        preflight::ensure_ready(ctx)?;
+
         if self.bg {
             // Background mode: spawn all as separate jobs
             let cfg = config();
@@ -285,10 +292,10 @@ impl RunCommand {
                     .find(|(n, _, _)| n == name)
                     .ok_or_else(|| anyhow::anyhow!("Unknown binary: {}", name))?;
 
-                let instance_id = instance_prefix
-                    .as_ref()
-                    .map(|p| format!("{}-{}", p, name))
-                    .unwrap_or_else(|| format!("{}-{}", name, std::process::id()));
+                let instance_id = instance_prefix.as_ref().map_or_else(
+                    || format!("{}-{}", name, std::process::id()),
+                    |p| format!("{}-{}", p, name),
+                );
 
                 let mut args = vec!["run".to_string(), "-p".to_string(), package.to_string()];
 
@@ -299,7 +306,7 @@ impl RunCommand {
                 args.extend(["--".to_string(), format!("--instance-id={}", instance_id)]);
 
                 let job = manager.spawn("cargo", &args)?;
-                job_ids.push(job.meta.id);
+                job_ids.push(job.id);
             }
 
             return Ok(CommandResult::success()
@@ -347,10 +354,10 @@ impl RunCommand {
                 .find(|(n, _, _)| n == name)
                 .ok_or_else(|| anyhow::anyhow!("Unknown binary: {}", name))?;
 
-            let instance_id = instance_prefix
-                .as_ref()
-                .map(|p| format!("{}-{}", p, name))
-                .unwrap_or_else(|| format!("{}-{}", name, std::process::id()));
+            let instance_id = instance_prefix.as_ref().map_or_else(
+                || format!("{}-{}", name, std::process::id()),
+                |p| format!("{}-{}", p, name),
+            );
 
             let target_dir = if self.release { "release" } else { "debug" };
             let binary_path = PathBuf::from(format!("target/{}/{}", target_dir, binary));
@@ -379,7 +386,7 @@ impl RunCommand {
         // Wait for any child to exit, then stop all
         let mut exited_name: Option<String> = None;
         loop {
-            for (name, child) in children.iter_mut() {
+            for (name, child) in &mut children {
                 match child.try_wait() {
                     Ok(Some(status)) => {
                         if ctx.is_human() {
@@ -485,9 +492,9 @@ impl RunCommand {
         let job = manager.spawn("cargo", &args)?;
 
         Ok(CommandResult::success()
-            .with_message(format!("Backgrounded {} as job {}", package, job.meta.id))
+            .with_message(format!("Backgrounded {} as job {}", package, job.id))
             .with_data(serde_json::json!({
-                "job_id": job.meta.id,
+                "job_id": job.id,
                 "package": package,
                 "instance_id": instance_id,
             }))

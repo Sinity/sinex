@@ -1,17 +1,16 @@
 //! Background job management commands
 //!
-//! Jobs are tracked in the history database (SQLite) for unified tracking with
-//! regular invocations. Log files are stored in the filesystem.
+//! Jobs are tracked in the history database (SQLite). Log files are stored in the filesystem.
+//! JobManager is a thin wrapper - HistoryDb is the single source of truth.
 
 use anyhow::Result;
-use std::fs;
 use std::time::Duration;
 use tabled::{builder::Builder, settings::Style};
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config::config;
-use crate::history::{HistoryDb, InvocationStatus};
-use crate::jobs::{JobManager, JobStatus};
+use crate::history::InvocationStatus;
+use crate::jobs::JobManager;
 
 /// Jobs command configuration
 #[derive(Debug, Clone, clap::Args)]
@@ -64,37 +63,26 @@ pub enum JobsSubcommand {
 }
 
 impl XtaskCommand for JobsCommand {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "jobs"
     }
 
     fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         let cfg = config();
-
-        // Try to use history database first, fall back to JobManager
-        let history_db = HistoryDb::open(&cfg.history_db_path()).ok();
         let job_manager = JobManager::new(cfg.jobs_dir())?;
 
         match &self.subcommand {
-            JobsSubcommand::List { limit } => {
-                execute_list(history_db.as_ref(), &job_manager, *limit, ctx)
-            }
-            JobsSubcommand::Active => execute_active(history_db.as_ref(), &job_manager, ctx),
+            JobsSubcommand::List { limit } => execute_list(&job_manager, *limit, ctx),
+            JobsSubcommand::Active => execute_active(&job_manager, ctx),
             JobsSubcommand::Status { id, follow } => {
-                execute_status(history_db.as_ref(), &job_manager, *id, *follow, ctx)
+                execute_status(&job_manager, *id, *follow, ctx)
             }
             JobsSubcommand::Output { id, stderr } => {
-                execute_output(history_db.as_ref(), &job_manager, *id, *stderr, ctx)
+                execute_output(&job_manager, *id, *stderr, ctx)
             }
-            JobsSubcommand::Wait { id, timeout } => {
-                execute_wait(history_db.as_ref(), &job_manager, *id, *timeout, ctx)
-            }
-            JobsSubcommand::Cancel { id } => {
-                execute_cancel(history_db.as_ref(), &job_manager, *id, ctx)
-            }
-            JobsSubcommand::Prune { older_than } => {
-                execute_prune(history_db.as_ref(), &job_manager, *older_than, ctx)
-            }
+            JobsSubcommand::Wait { id, timeout } => execute_wait(&job_manager, *id, *timeout, ctx),
+            JobsSubcommand::Cancel { id } => execute_cancel(&job_manager, *id, ctx),
+            JobsSubcommand::Prune { older_than } => execute_prune(&job_manager, *older_than, ctx),
         }
     }
 
@@ -104,51 +92,10 @@ impl XtaskCommand for JobsCommand {
 }
 
 fn execute_list(
-    history_db: Option<&HistoryDb>,
     job_manager: &JobManager,
     limit: usize,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    // Try history database first
-    if let Some(db) = history_db {
-        if let Ok(jobs) = db.get_recent_background_jobs(limit) {
-            if ctx.is_human() {
-                if jobs.is_empty() {
-                    println!("No jobs found in history database.");
-                } else {
-                    let mut builder = Builder::new();
-                    builder.push_record(["ID", "COMMAND", "STATUS", "PID", "STARTED"]);
-                    for job in &jobs {
-                        let status_str = match job.status {
-                            InvocationStatus::Running => "running",
-                            InvocationStatus::Success => "completed",
-                            InvocationStatus::Failed => "failed",
-                            InvocationStatus::Cancelled => "cancelled",
-                        };
-                        builder.push_record([
-                            job.id.to_string(),
-                            truncate_str(&job.command, 16),
-                            status_str.to_string(),
-                            job.pid.to_string(),
-                            format_time(&job.started_at),
-                        ]);
-                    }
-                    let mut table = builder.build();
-                    table.with(Style::rounded());
-                    println!("{table}");
-                }
-            } else {
-                let json = serde_json::to_string_pretty(&jobs)?;
-                println!("{json}");
-            }
-
-            return Ok(CommandResult::success()
-                .with_message(format!("Listed {} jobs (from history DB)", jobs.len()))
-                .with_duration(ctx.elapsed()));
-        }
-    }
-
-    // Fall back to JobManager
     let jobs = job_manager.list_recent(limit)?;
 
     if ctx.is_human() {
@@ -156,26 +103,15 @@ fn execute_list(
             println!("No jobs found.");
         } else {
             let mut builder = Builder::new();
-            builder.push_record(["ID", "COMMAND", "STATUS", "DURATION", "STARTED"]);
+            builder.push_record(["ID", "COMMAND", "STATUS", "PID", "STARTED"]);
             for job in &jobs {
-                let status_str = match &job.meta.status {
-                    JobStatus::Running { .. } => "running",
-                    JobStatus::Completed { .. } => "completed",
-                    JobStatus::Failed { .. } => "failed",
-                    JobStatus::Cancelled => "cancelled",
-                };
-                let duration = match &job.meta.status {
-                    JobStatus::Completed { duration_secs, .. } => {
-                        format!("{:.1}s", duration_secs)
-                    }
-                    _ => "-".into(),
-                };
+                let status_str = status_to_str(job.status);
                 builder.push_record([
-                    job.meta.id.to_string(),
-                    job.meta.command.clone(),
+                    job.id.to_string(),
+                    truncate_str(&job.command, 16),
                     status_str.to_string(),
-                    duration,
-                    format_time(&job.meta.started_at),
+                    job.pid.to_string(),
+                    format_time(&job.started_at),
                 ]);
             }
             let mut table = builder.build();
@@ -183,8 +119,17 @@ fn execute_list(
             println!("{table}");
         }
     } else {
-        let json = serde_json::to_string_pretty(&jobs.iter().map(|j| &j.meta).collect::<Vec<_>>())?;
-        println!("{json}");
+        let json = serde_json::json!({
+            "jobs": jobs.iter().map(|j| serde_json::json!({
+                "id": j.id,
+                "command": j.command,
+                "args": j.args,
+                "status": status_to_str(j.status),
+                "pid": j.pid,
+                "started_at": j.started_at.to_string(),
+            })).collect::<Vec<_>>()
+        });
+        println!("{}", serde_json::to_string_pretty(&json)?);
     }
 
     Ok(CommandResult::success()
@@ -192,68 +137,24 @@ fn execute_list(
         .with_duration(ctx.elapsed()))
 }
 
-fn execute_active(
-    history_db: Option<&HistoryDb>,
-    job_manager: &JobManager,
-    ctx: &CommandContext,
-) -> Result<CommandResult> {
-    // Try history database first
-    if let Some(db) = history_db {
-        if let Ok(active) = db.get_active_background_jobs() {
-            if ctx.is_human() {
-                if active.is_empty() {
-                    println!("No active jobs.");
-                } else {
-                    let mut builder = Builder::new();
-                    builder.push_record(["ID", "COMMAND", "PID", "STARTED"]);
-                    for job in &active {
-                        builder.push_record([
-                            job.id.to_string(),
-                            truncate_str(&job.command, 16),
-                            job.pid.to_string(),
-                            format_time(&job.started_at),
-                        ]);
-                    }
-                    let mut table = builder.build();
-                    table.with(Style::rounded());
-                    println!("{table}");
-                }
-            } else {
-                let json = serde_json::to_string_pretty(&active)?;
-                println!("{json}");
-            }
-
-            return Ok(CommandResult::success()
-                .with_message(format!("{} active jobs", active.len()))
-                .with_duration(ctx.elapsed()));
-        }
-    }
-
-    // Fall back to JobManager
-    let jobs = job_manager.list_recent(100)?;
-    let active: Vec<_> = jobs
-        .iter()
-        .filter(|j| matches!(j.meta.status, JobStatus::Running { .. }))
-        .collect();
+fn execute_active(job_manager: &JobManager, ctx: &CommandContext) -> Result<CommandResult> {
+    let active = job_manager.list_active()?;
 
     if ctx.is_human() {
         if active.is_empty() {
             println!("No active jobs.");
         } else {
             let mut builder = Builder::new();
-            builder.push_record(["ID", "COMMAND", "RUNNING", "STARTED"]);
+            builder.push_record(["ID", "COMMAND", "PID", "RUNNING", "STARTED"]);
             for job in &active {
-                let running_time = if matches!(job.meta.status, JobStatus::Running { .. }) {
-                    let elapsed = time::OffsetDateTime::now_utc() - job.meta.started_at;
-                    format!("{:.0}s", elapsed.whole_seconds())
-                } else {
-                    "-".into()
-                };
+                let elapsed = time::OffsetDateTime::now_utc() - job.started_at;
+                let running_time = format!("{:.0}s", elapsed.whole_seconds());
                 builder.push_record([
-                    job.meta.id.to_string(),
-                    job.meta.command.clone(),
+                    job.id.to_string(),
+                    truncate_str(&job.command, 16),
+                    job.pid.to_string(),
                     running_time,
-                    format_time(&job.meta.started_at),
+                    format_time(&job.started_at),
                 ]);
             }
             let mut table = builder.build();
@@ -261,9 +162,15 @@ fn execute_active(
             println!("{table}");
         }
     } else {
-        let json =
-            serde_json::to_string_pretty(&active.iter().map(|j| &j.meta).collect::<Vec<_>>())?;
-        println!("{json}");
+        let json = serde_json::json!({
+            "active_jobs": active.iter().map(|j| serde_json::json!({
+                "id": j.id,
+                "command": j.command,
+                "pid": j.pid,
+                "started_at": j.started_at.to_string(),
+            })).collect::<Vec<_>>()
+        });
+        println!("{}", serde_json::to_string_pretty(&json)?);
     }
 
     Ok(CommandResult::success()
@@ -272,15 +179,13 @@ fn execute_active(
 }
 
 fn execute_status(
-    _history_db: Option<&HistoryDb>,
     job_manager: &JobManager,
     id: i64,
     follow: bool,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    // For status with follow, we need the filesystem-based Job
     let job = job_manager
-        .get(id as u64)?
+        .get(id)?
         .ok_or_else(|| anyhow::anyhow!("job {} not found", id))?;
 
     if follow {
@@ -296,8 +201,8 @@ fn execute_status(
             }
 
             // Reload and check status
-            let job = job_manager.get(id as u64)?.unwrap();
-            if job.meta.status.is_terminal() {
+            let job = job_manager.get(id)?.unwrap();
+            if job.is_terminal() {
                 break;
             }
 
@@ -310,16 +215,10 @@ fn execute_status(
     } else {
         if ctx.is_human() {
             println!("Job {}", id);
-            println!(
-                "  Command:  {} {}",
-                job.meta.command,
-                job.meta.args.join(" ")
-            );
-            println!("  Status:   {:?}", job.meta.status);
-            println!("  Started:  {}", job.meta.started_at);
-            if let Some(finished) = job.meta.finished_at {
-                println!("  Finished: {}", finished);
-            }
+            println!("  Command:  {} {}", job.command, job.args.join(" "));
+            println!("  Status:   {}", status_to_str(job.status));
+            println!("  PID:      {}", job.pid);
+            println!("  Started:  {}", job.started_at);
             // Show last few lines of output
             if let Ok(tail) = job.tail_stdout(5) {
                 if !tail.is_empty() {
@@ -327,8 +226,15 @@ fn execute_status(
                 }
             }
         } else {
-            let json = serde_json::to_string_pretty(&job.meta)?;
-            println!("{json}");
+            let json = serde_json::json!({
+                "id": job.id,
+                "command": job.command,
+                "args": job.args,
+                "status": status_to_str(job.status),
+                "pid": job.pid,
+                "started_at": job.started_at.to_string(),
+            });
+            println!("{}", serde_json::to_string_pretty(&json)?);
         }
 
         Ok(CommandResult::success()
@@ -338,41 +244,13 @@ fn execute_status(
 }
 
 fn execute_output(
-    history_db: Option<&HistoryDb>,
     job_manager: &JobManager,
     id: i64,
     stderr: bool,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    // Try to get log path from history database
-    if let Some(db) = history_db {
-        if let Ok(jobs) = db.get_recent_background_jobs(100) {
-            if let Some(job) = jobs.iter().find(|j| j.id == id) {
-                let path = if stderr {
-                    job.stderr_path.as_ref()
-                } else {
-                    job.stdout_path.as_ref()
-                };
-
-                if let Some(path) = path {
-                    if let Ok(content) = fs::read_to_string(path) {
-                        println!("{content}");
-                        return Ok(CommandResult::success()
-                            .with_message(format!(
-                                "Job {} {} output",
-                                id,
-                                if stderr { "stderr" } else { "stdout" }
-                            ))
-                            .with_duration(ctx.elapsed()));
-                    }
-                }
-            }
-        }
-    }
-
-    // Fall back to JobManager
     let job = job_manager
-        .get(id as u64)?
+        .get(id)?
         .ok_or_else(|| anyhow::anyhow!("job {} not found", id))?;
 
     let output = if stderr {
@@ -393,7 +271,6 @@ fn execute_output(
 }
 
 fn execute_wait(
-    _history_db: Option<&HistoryDb>,
     job_manager: &JobManager,
     id: i64,
     timeout_secs: u64,
@@ -405,13 +282,16 @@ fn execute_wait(
         None
     };
 
-    let job = job_manager.wait(id as u64, timeout)?;
+    let job = job_manager.wait(id, timeout)?;
 
     if ctx.is_human() {
-        println!("Job {} completed: {:?}", id, job.meta.status);
+        println!("Job {} completed: {}", id, status_to_str(job.status));
     } else {
-        let json = serde_json::to_string_pretty(&job.meta)?;
-        println!("{json}");
+        let json = serde_json::json!({
+            "id": job.id,
+            "status": status_to_str(job.status),
+        });
+        println!("{}", serde_json::to_string_pretty(&json)?);
     }
 
     Ok(CommandResult::success()
@@ -420,35 +300,11 @@ fn execute_wait(
 }
 
 fn execute_cancel(
-    history_db: Option<&HistoryDb>,
     job_manager: &JobManager,
     id: i64,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    // Try to get PID from history database
-    if let Some(db) = history_db {
-        if let Ok(jobs) = db.get_active_background_jobs() {
-            if let Some(job) = jobs.iter().find(|j| j.id == id) {
-                // Send SIGTERM
-                unsafe {
-                    libc::kill(job.pid as i32, libc::SIGTERM);
-                }
-
-                // Update status in database
-                let _ = db.finish_invocation(id, InvocationStatus::Cancelled, None, 0.0);
-
-                if ctx.is_human() {
-                    println!("Job {} cancelled (via history DB)", id);
-                }
-                return Ok(CommandResult::success()
-                    .with_message(format!("Job {} cancelled", id))
-                    .with_duration(ctx.elapsed()));
-            }
-        }
-    }
-
-    // Fall back to JobManager
-    if job_manager.cancel(id as u64)? {
+    if job_manager.cancel(id)? {
         if ctx.is_human() {
             println!("Job {} cancelled", id);
         }
@@ -469,25 +325,11 @@ fn execute_cancel(
 }
 
 fn execute_prune(
-    history_db: Option<&HistoryDb>,
     job_manager: &JobManager,
     older_than: u32,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    let mut count = 0;
-
-    // Prune from history database
-    if let Some(db) = history_db {
-        // TODO: Add prune_background_jobs method to HistoryDb
-        // For now, just prune from the general invocations table
-        if let Ok(pruned) = db.prune(older_than) {
-            count += pruned;
-        }
-    }
-
-    // Also prune from JobManager filesystem
-    let fs_pruned = job_manager.prune(older_than)?;
-    count += fs_pruned;
+    let count = job_manager.prune(older_than)?;
 
     if ctx.is_human() {
         println!("Pruned {} jobs older than {} days", count, older_than);
@@ -497,6 +339,16 @@ fn execute_prune(
         .with_message(format!("Pruned {} jobs", count))
         .with_detail(format!("older than {} days", older_than))
         .with_duration(ctx.elapsed()))
+}
+
+/// Convert InvocationStatus to display string.
+fn status_to_str(status: InvocationStatus) -> &'static str {
+    match status {
+        InvocationStatus::Running => "running",
+        InvocationStatus::Success => "completed",
+        InvocationStatus::Failed => "failed",
+        InvocationStatus::Cancelled => "cancelled",
+    }
 }
 
 /// Format a time for display
@@ -533,47 +385,7 @@ mod tests {
         };
         let metadata = cmd.metadata();
         assert!(!metadata.modifies_state);
-        assert!(!metadata.track_in_history); // Utility commands don't track history
-    }
-
-    #[test]
-    fn test_clone() {
-        let cmd = JobsCommand {
-            subcommand: JobsSubcommand::Cancel { id: 123 },
-        };
-        let cloned = cmd.subcommand.clone();
-        if let JobsSubcommand::Cancel { id } = cloned {
-            assert_eq!(id, 123);
-        } else {
-            panic!("Expected Cancel subcommand");
-        }
-    }
-
-    #[test]
-    fn test_subcommand_variants() {
-        // Test that all subcommand variants can be constructed
-        let _ = JobsSubcommand::List { limit: 5 };
-        let _ = JobsSubcommand::Status {
-            id: 1,
-            follow: false,
-        };
-        let _ = JobsSubcommand::Output {
-            id: 2,
-            stderr: true,
-        };
-        let _ = JobsSubcommand::Wait { id: 3, timeout: 30 };
-        let _ = JobsSubcommand::Cancel { id: 4 };
-        let _ = JobsSubcommand::Prune { older_than: 14 };
-    }
-
-    #[test]
-    fn test_metadata_category() {
-        let cmd = JobsCommand {
-            subcommand: JobsSubcommand::List { limit: 10 },
-        };
-        let metadata = cmd.metadata();
-        assert_eq!(metadata.category, Some("utility".to_string()));
-        assert!(metadata.timeout.is_none()); // Utility commands have no timeout
+        assert!(!metadata.track_in_history);
     }
 
     #[test]
@@ -581,5 +393,13 @@ mod tests {
         assert_eq!(truncate_str("short", 10), "short");
         assert_eq!(truncate_str("verylongstring", 10), "verylon...");
         assert_eq!(truncate_str("exactly10!", 10), "exactly10!");
+    }
+
+    #[test]
+    fn test_status_to_str() {
+        assert_eq!(status_to_str(InvocationStatus::Running), "running");
+        assert_eq!(status_to_str(InvocationStatus::Success), "completed");
+        assert_eq!(status_to_str(InvocationStatus::Failed), "failed");
+        assert_eq!(status_to_str(InvocationStatus::Cancelled), "cancelled");
     }
 }
