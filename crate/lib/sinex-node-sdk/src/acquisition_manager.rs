@@ -325,7 +325,7 @@ impl AcquisitionManager {
     ) -> NodeResult<()> {
         let started_at = now_utc()
             .format(&time::format_description::well_known::Rfc3339)
-            .map_err(|e| SinexError::messaging(format!("Failed to format timestamp: {}", e)))?;
+            .map_err(|e| SinexError::messaging(format!("Failed to format timestamp: {e}")))?;
 
         let msg = MaterialBeginMessage {
             material_id: material_id.to_string(),
@@ -343,10 +343,10 @@ impl AcquisitionManager {
         let js = async_nats::jetstream::new(self.nats_client.clone());
         js.publish(subject, payload.into())
             .await
-            .map_err(|e| SinexError::messaging(format!("Failed to publish material begin: {}", e)))?
+            .map_err(|e| SinexError::messaging(format!("Failed to publish material begin: {e}")))?
             .await
             .map_err(|e| {
-                SinexError::messaging(format!("Failed to publish material begin (ack): {}", e))
+                SinexError::messaging(format!("Failed to publish material begin (ack): {e}"))
             })?;
 
         debug!(material_id = %material_id, "Published material begin");
@@ -418,10 +418,10 @@ impl AcquisitionManager {
         let js = async_nats::jetstream::new(self.nats_client.clone());
         js.publish_with_headers(subject, headers, data.to_vec().into())
             .await
-            .map_err(|e| SinexError::messaging(format!("Failed to publish material slice: {}", e)))?
+            .map_err(|e| SinexError::messaging(format!("Failed to publish material slice: {e}")))?
             .await
             .map_err(|e| {
-                SinexError::messaging(format!("Failed to publish material slice (ack): {}", e))
+                SinexError::messaging(format!("Failed to publish material slice (ack): {e}"))
             })?;
 
         debug!(
@@ -507,7 +507,7 @@ impl AcquisitionManager {
     ) -> NodeResult<()> {
         let ended_at = now_utc()
             .format(&time::format_description::well_known::Rfc3339)
-            .map_err(|e| SinexError::messaging(format!("Failed to format timestamp: {}", e)))?;
+            .map_err(|e| SinexError::messaging(format!("Failed to format timestamp: {e}")))?;
 
         let msg = MaterialEndMessage {
             material_id: material_id.to_string(),
@@ -526,10 +526,10 @@ impl AcquisitionManager {
         let js = async_nats::jetstream::new(self.nats_client.clone());
         js.publish(subject, payload.into())
             .await
-            .map_err(|e| SinexError::messaging(format!("Failed to publish material end: {}", e)))?
+            .map_err(|e| SinexError::messaging(format!("Failed to publish material end: {e}")))?
             .await
             .map_err(|e| {
-                SinexError::messaging(format!("Failed to publish material end (ack): {}", e))
+                SinexError::messaging(format!("Failed to publish material end (ack): {e}"))
             })?;
 
         debug!(

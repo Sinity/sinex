@@ -337,8 +337,8 @@ pub const MAX_PROVENANCE_IDS: usize = 10;
 /// let provenance = provenance_from_ids(&ids);
 /// ```
 pub fn provenance_from_ids(ids: &[EventId]) -> Provenance {
-    if let Some(first) = ids.first().cloned() {
-        Provenance::from_synthesis_safe(first, ids.iter().skip(1).cloned().collect())
+    if let Some(first) = ids.first().copied() {
+        Provenance::from_synthesis_safe(first, ids.iter().skip(1).copied().collect())
     } else {
         bootstrap_provenance()
     }

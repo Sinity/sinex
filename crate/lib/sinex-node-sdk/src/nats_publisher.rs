@@ -136,7 +136,7 @@ impl NatsPublisher {
         let sem = PUBLISH_SEMAPHORE.get_or_init(|| tokio::sync::Semaphore::new(100));
 
         let _permit = sem.acquire().await.map_err(|e| {
-            std::io::Error::other(format!("Failed to acquire publish semaphore: {}", e))
+            std::io::Error::other(format!("Failed to acquire publish semaphore: {e}"))
         })?;
 
         let js = async_nats::jetstream::new(self.nats_client.clone());

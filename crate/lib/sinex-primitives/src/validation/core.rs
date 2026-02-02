@@ -49,7 +49,6 @@ fn clean_path(path: &Path) -> PathBuf {
         match component {
             Component::CurDir => {
                 // Skip current directory components
-                continue;
             }
             Component::ParentDir => {
                 // Pop the last component if possible

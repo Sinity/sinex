@@ -232,7 +232,7 @@ impl JetStreamEventConsumer {
         filter: &str,
     ) -> NodeResult<PullConsumer> {
         let stream = js.get_stream(stream_name).await.map_err(|e| {
-            SinexError::processing(format!("Failed to get stream {}: {}", stream_name, e))
+            SinexError::processing(format!("Failed to get stream {stream_name}: {e}"))
         })?;
 
         // Use the filter subject as provided; it already contains environment and namespace prefixes.
@@ -255,13 +255,13 @@ impl JetStreamEventConsumer {
             )
             .await
             .map_err(|e| {
-                SinexError::processing(format!("Failed to get or create consumer: {}", e))
+                SinexError::processing(format!("Failed to get or create consumer: {e}"))
             })?;
 
         let info = consumer
             .info()
             .await
-            .map_err(|e| SinexError::processing(format!("Failed to read consumer info: {}", e)))?;
+            .map_err(|e| SinexError::processing(format!("Failed to read consumer info: {e}")))?;
         self.validate_consumer_config(
             stream_name,
             &filter_subject,
@@ -346,7 +346,7 @@ impl JetStreamEventConsumer {
         let mut messages = consumer
             .messages()
             .await
-            .map_err(|e| SinexError::processing(format!("Failed to get messages: {}", e)))?;
+            .map_err(|e| SinexError::processing(format!("Failed to get messages: {e}")))?;
 
         while *running.read().await {
             match messages.next().await {
@@ -421,7 +421,7 @@ impl JetStreamEventConsumer {
         let mut messages = consumer
             .messages()
             .await
-            .map_err(|e| SinexError::processing(format!("Failed to get messages: {}", e)))?;
+            .map_err(|e| SinexError::processing(format!("Failed to get messages: {e}")))?;
 
         while *running.read().await {
             match messages.next().await {

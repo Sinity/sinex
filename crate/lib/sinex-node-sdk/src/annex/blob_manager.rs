@@ -72,8 +72,7 @@ impl BlobManager {
             .build()
             .map_err(|err| {
                 SinexError::processing(format!(
-                    "Failed to build blob event: {}\n  event_type: {}\n  material_id: {}",
-                    err, event_type, material_id
+                    "Failed to build blob event: {err}\n  event_type: {event_type}\n  material_id: {material_id}"
                 ))
             })
     }
@@ -121,10 +120,7 @@ impl BlobManager {
         }));
 
         let record = repo.register_material(material).await.map_err(|e| {
-            SinexError::processing(format!(
-                "Failed to register source material for blob: {}",
-                e
-            ))
+            SinexError::processing(format!("Failed to register source material for blob: {e}"))
         })?;
 
         Ok(Id::<SourceMaterial>::from_ulid(record.id))
@@ -181,7 +177,7 @@ impl BlobManager {
         let blake3_hash = GitAnnex::compute_blake3_hash(validated_path)
             .await
             .map_err(|e| SinexError::blob_storage(e).with_operation("compute_hash"))?;
-        debug!("Computed BLAKE3 hash: {}", blake3_hash);
+        debug!("Computed BLAKE3 hash: {blake3_hash}");
 
         // Check if blob already exists
         if let Some(existing) = self.find_blob_by_blake3(&blake3_hash).await? {
@@ -234,9 +230,10 @@ impl BlobManager {
             .map_err(|e| SinexError::blob_storage(e).with_operation("detect_mime_type"))?;
 
         // Add to git-annex
-        let annex_key = self.annex.add_file(validated_path).await.map_err(|e| {
-            SinexError::processing(format!("Failed to add file to git-annex: {}", e))
-        })?;
+        let annex_key =
+            self.annex.add_file(validated_path).await.map_err(|e| {
+                SinexError::processing(format!("Failed to add file to git-annex: {e}"))
+            })?;
         info!("Added to git-annex with key: {}", annex_key.key);
 
         // Create blob record in database
@@ -289,7 +286,7 @@ impl BlobManager {
 
         // Compute BLAKE3 hash for deduplication
         let blake3_hash = blake3::hash(content).to_hex().to_string();
-        debug!("Computed BLAKE3 hash: {}", blake3_hash);
+        debug!("Computed BLAKE3 hash: {blake3_hash}");
 
         // Check if blob already exists
         if let Some(existing) = self.find_blob_by_blake3(&blake3_hash).await? {
@@ -343,7 +340,7 @@ impl BlobManager {
             .add_file(temp_file_path.as_path())
             .await
             .map_err(|e| {
-                SinexError::processing(format!("Failed to add buffered upload to git-annex: {}", e))
+                SinexError::processing(format!("Failed to add buffered upload to git-annex: {e}"))
             })?;
         info!("Added to git-annex with key: {}", annex_key.key);
 
@@ -426,7 +423,7 @@ impl BlobManager {
             use sha2::{Digest, Sha256};
             let mut hasher = Sha256::new();
             hasher.update(&content);
-            let computed = format!("{:x}", hasher.finalize());
+            let computed = format!("{:x}", hasher.finalize()); // Note: hasher.finalize() is not a simple variable, keeping as is
 
             let mut expected = blob
                 .content_hash
@@ -444,8 +441,7 @@ impl BlobManager {
                     .update_verification_status(annex_key, "corrupted")
                     .await;
                 return Err(SinexError::processing(format!(
-                    "Blob content hash mismatch for {} (expected {}, got {})",
-                    annex_key, expected, computed
+                    "Blob content hash mismatch for {annex_key} (expected {expected}, got {computed})"
                 )));
             } else if !expected.is_empty() {
                 let _ = self.update_verification_status(annex_key, "verified").await;
@@ -461,8 +457,7 @@ impl BlobManager {
                         .update_verification_status(annex_key, "corrupted")
                         .await;
                     return Err(SinexError::processing(format!(
-                        "Blob BLAKE3 hash mismatch for {} (expected {}, got {})",
-                        annex_key, expected_blake3, computed
+                        "Blob BLAKE3 hash mismatch for {annex_key} (expected {expected_blake3}, got {computed})"
                     )));
                 }
                 let _ = self.update_verification_status(annex_key, "verified").await;
@@ -548,7 +543,7 @@ impl BlobManager {
     /// Get blob metadata by annex key
     pub fn get_blob_metadata_sync(&self, annex_key: &str) -> NodeResult<Blob> {
         let (backend, size, hash_fragment) = Blob::parse_annex_key(annex_key).ok_or_else(|| {
-            SinexError::processing(format!("Invalid annex key format: {}", annex_key))
+            SinexError::processing(format!("Invalid annex key format: {annex_key}"))
         })?;
 
         futures::executor::block_on(self.db_pool.blobs().get_by_content(
@@ -557,14 +552,14 @@ impl BlobManager {
             size,
         ))?
         .ok_or_else(|| {
-            SinexError::processing(format!("Blob not found in database for key: {}", annex_key))
+            SinexError::processing(format!("Blob not found in database for key: {annex_key}"))
         })
     }
 
     /// Get blob metadata by annex key
     pub async fn get_blob_metadata(&self, annex_key: &str) -> NodeResult<Blob> {
         let (backend, size, hash_fragment) = Blob::parse_annex_key(annex_key).ok_or_else(|| {
-            SinexError::processing(format!("Invalid annex key format: {}", annex_key))
+            SinexError::processing(format!("Invalid annex key format: {annex_key}"))
         })?;
 
         self.db_pool
@@ -572,7 +567,7 @@ impl BlobManager {
             .get_by_content(&backend, &hash_fragment, size)
             .await?
             .ok_or_else(|| {
-                SinexError::processing(format!("Blob not found in database for key: {}", annex_key))
+                SinexError::processing(format!("Blob not found in database for key: {annex_key}"))
             })
     }
 
@@ -615,16 +610,12 @@ impl BlobManager {
         }
 
         let relative = String::from_utf8(output.stdout).map_err(|e| {
-            SinexError::processing(format!(
-                "Invalid UTF-8 from git-annex contentlocation: {}",
-                e
-            ))
+            SinexError::processing(format!("Invalid UTF-8 from git-annex contentlocation: {e}"))
         })?;
         let trimmed = relative.trim();
         if trimmed.is_empty() {
             return Err(SinexError::processing(format!(
-                "git-annex contentlocation returned empty path for {}",
-                annex_key
+                "git-annex contentlocation returned empty path for {annex_key}"
             )));
         }
 

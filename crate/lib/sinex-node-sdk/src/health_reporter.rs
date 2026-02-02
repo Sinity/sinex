@@ -204,7 +204,7 @@ impl HealthReporter {
                     Some(&reason),
                 )
                 .await
-                .map_err(|e| SinexError::service(format!("Failed to emit health status: {}", e)))?;
+                .map_err(|e| SinexError::service(format!("Failed to emit health status: {e}")))?;
 
             *last_status_guard = new_status;
         }

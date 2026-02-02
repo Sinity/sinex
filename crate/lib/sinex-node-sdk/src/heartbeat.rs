@@ -478,8 +478,7 @@ impl HeartbeatEmitter {
             service = %metrics.service_name,
             status = %metrics.status,
             errors = metrics.errors_count,
-            "Node transitioned to {} state",
-            event_type
+            "Node transitioned to {event_type} state"
         );
     }
 }

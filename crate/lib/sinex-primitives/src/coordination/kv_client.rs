@@ -109,7 +109,11 @@ impl CoordinationKvClient {
         let key = &self.service_name;
 
         // 1. Try to create if not exists using update with revision 0
-        if let Ok(_) = bucket.update(key, candidate_id.to_string().into(), 0).await {
+        if bucket
+            .update(key, candidate_id.to_string().into(), 0)
+            .await
+            .is_ok()
+        {
             info!("Acquired leadership for {}", self.service_name);
             return Ok(true);
         }

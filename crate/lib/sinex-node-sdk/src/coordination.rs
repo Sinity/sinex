@@ -191,7 +191,7 @@ pub struct HandoffRequest {
 impl Default for HandoffRequest {
     fn default() -> Self {
         Self {
-            from_instance: "".to_string(),
+            from_instance: String::new(),
             from_version: NodeVersion::current_or_default(),
             to_version: NodeVersion::current_or_default(),
             requested_at: SystemTime::now(),
@@ -566,7 +566,7 @@ impl NodeCoordination {
                 Ok(mut sub) => {
                     while let Some(msg) = sub.next().await {
                         if let Ok(req) = serde_json::from_slice::<HandoffRequest>(&msg.payload) {
-                            if let Err(_) = handoff_sender_clone.send(req).await {
+                            if handoff_sender_clone.send(req).await.is_err() {
                                 handoff_drops_clone.add(1);
                                 warn!(
                                     handoff_drops = handoff_drops_clone.get(),

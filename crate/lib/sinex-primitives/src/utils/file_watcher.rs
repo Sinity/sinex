@@ -196,7 +196,6 @@ fn convert_notify_event_secure(
             }
             Err(_) => {
                 // Try next watch root
-                continue;
             }
         }
     }

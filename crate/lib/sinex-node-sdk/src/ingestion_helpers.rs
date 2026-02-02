@@ -450,7 +450,7 @@ impl SnapshotDiff {
             let all_keys: std::collections::HashSet<_> = old_obj
                 .keys()
                 .chain(new_obj.keys())
-                .map(|s| s.to_string())
+                .map(|s| s.clone())
                 .collect();
             &all_keys.into_iter().collect::<Vec<_>>()
         } else {

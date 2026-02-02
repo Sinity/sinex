@@ -71,7 +71,7 @@ impl DlqRetryHandler {
         let stream = js
             .get_stream(&dlq_stream)
             .await
-            .map_err(|e| SinexError::processing(format!("Failed to get DLQ stream: {}", e)))?;
+            .map_err(|e| SinexError::processing(format!("Failed to get DLQ stream: {e}")))?;
 
         let consumer = stream
             .create_consumer(jetstream::consumer::pull::Config {
@@ -84,12 +84,12 @@ impl DlqRetryHandler {
                 ..Default::default()
             })
             .await
-            .map_err(|e| SinexError::processing(format!("Failed to create DLQ consumer: {}", e)))?;
+            .map_err(|e| SinexError::processing(format!("Failed to create DLQ consumer: {e}")))?;
 
         let mut messages = consumer
             .messages()
             .await
-            .map_err(|e| SinexError::processing(format!("Failed to get DLQ messages: {}", e)))?;
+            .map_err(|e| SinexError::processing(format!("Failed to get DLQ messages: {e}")))?;
 
         let mut retried = 0;
 
@@ -104,12 +104,9 @@ impl DlqRetryHandler {
                         .unwrap_or(0);
 
                     if retry_count >= self.config.max_retries {
-                        warn!(
-                            "Message exceeded max retries ({}), permanently failing",
-                            retry_count
-                        );
+                        warn!("Message exceeded max retries ({retry_count}), permanently failing");
                         if let Err(e) = msg.ack().await {
-                            error!("Failed to ack permanently failed message: {}", e);
+                            error!("Failed to ack permanently failed message: {e}");
                         }
                         continue;
                     }
@@ -118,27 +115,27 @@ impl DlqRetryHandler {
                         Ok(()) => {
                             retried += 1;
                             if let Err(e) = msg.ack().await {
-                                error!("Failed to ack retried message: {}", e);
+                                error!("Failed to ack retried message: {e}");
                             }
                         }
                         Err(e) => {
-                            error!("Failed to retry message: {}", e);
+                            error!("Failed to retry message: {e}");
                         }
                     }
                 }
                 Err(e) => {
-                    error!("Error reading DLQ message: {}", e);
+                    error!("Error reading DLQ message: {e}");
                 }
             }
         }
 
-        info!("DLQ retry complete: {} messages retried", retried);
+        info!("DLQ retry complete: {retried} messages retried");
         Ok(retried)
     }
 
     /// Retry a specific message by ID
     pub async fn retry_by_id(&self, event_id: &str) -> NodeResult<()> {
-        info!("Retrying specific event: {}", event_id);
+        info!("Retrying specific event: {event_id}");
 
         let js = jetstream::new(self.nats_client.clone());
         let dlq_stream = self.env.nats_stream_name("EVENTS_DLQ");
@@ -146,7 +143,7 @@ impl DlqRetryHandler {
         let stream = js
             .get_stream(&dlq_stream)
             .await
-            .map_err(|e| SinexError::processing(format!("Failed to get DLQ stream: {}", e)))?;
+            .map_err(|e| SinexError::processing(format!("Failed to get DLQ stream: {e}")))?;
 
         let consumer = stream
             .create_consumer(jetstream::consumer::pull::Config {
@@ -179,14 +176,13 @@ impl DlqRetryHandler {
 
             self.retry_message(&js, &msg, retry_count).await?;
             msg.ack().await.map_err(|e| {
-                SinexError::processing(format!("Failed to ack retried message: {}", e))
+                SinexError::processing(format!("Failed to ack retried message: {e}"))
             })?;
 
-            info!("Successfully retried event: {}", event_id);
+            info!("Successfully retried event: {event_id}");
         } else {
             return Err(SinexError::processing(format!(
-                "Event not found in DLQ: {}",
-                event_id
+                "Event not found in DLQ: {event_id}"
             )));
         }
 
@@ -220,9 +216,9 @@ impl DlqRetryHandler {
 
         js.publish_with_headers(original_subject.to_string(), headers, msg.payload.clone())
             .await
-            .map_err(|e| SinexError::processing(format!("Failed to republish message: {}", e)))?
+            .map_err(|e| SinexError::processing(format!("Failed to republish message: {e}")))?
             .await
-            .map_err(|e| SinexError::processing(format!("Failed to await publish ack: {}", e)))?;
+            .map_err(|e| SinexError::processing(format!("Failed to await publish ack: {e}")))?;
 
         Ok(())
     }
@@ -235,12 +231,12 @@ impl DlqRetryHandler {
         let mut stream = js
             .get_stream(&dlq_stream_name)
             .await
-            .map_err(|e| SinexError::processing(format!("Failed to get DLQ stream: {}", e)))?;
+            .map_err(|e| SinexError::processing(format!("Failed to get DLQ stream: {e}")))?;
 
         let info = stream
             .info()
             .await
-            .map_err(|e| SinexError::processing(format!("Failed to get stream info: {}", e)))?;
+            .map_err(|e| SinexError::processing(format!("Failed to get stream info: {e}")))?;
 
         Ok(DlqStats {
             total_messages: info.state.messages,

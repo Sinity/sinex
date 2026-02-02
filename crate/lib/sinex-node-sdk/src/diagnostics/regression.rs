@@ -425,18 +425,14 @@ impl RegressionDetector {
         }
 
         if affected_metrics.contains(&"latency".to_string()) {
-            recommendations.push(format!(
-                "Latency increased by {:.1}%",
-                (latency_ratio - 1.0) * 100.0
-            ));
+            let latency_increase = (latency_ratio - 1.0) * 100.0;
+            recommendations.push(format!("Latency increased by {latency_increase:.1}%"));
             recommendations.push("Check database query performance and indexing".to_string());
         }
 
         if affected_metrics.contains(&"throughput".to_string()) {
-            recommendations.push(format!(
-                "Throughput decreased by {:.1}%",
-                (1.0 - throughput_ratio) * 100.0
-            ));
+            let throughput_decrease = (1.0 - throughput_ratio) * 100.0;
+            recommendations.push(format!("Throughput decreased by {throughput_decrease:.1}%"));
             recommendations.push("Check for bottlenecks in concurrent processing".to_string());
         }
 
@@ -469,17 +465,18 @@ impl RegressionDetector {
         }
 
         println!("\n📊 Summary:");
-        println!("  🚨 Critical: {}", critical_count);
-        println!("  ⚠️  Severe: {}", severe_count);
-        println!("  ⚡ Moderate: {}", moderate_count);
-        println!("  📊 Minor: {}", minor_count);
-        println!("  ✅ Clean: {}", clean_count);
+        println!("  🚨 Critical: {critical_count}");
+        println!("  ⚠️  Severe: {severe_count}");
+        println!("  ⚡ Moderate: {moderate_count}");
+        println!("  📊 Minor: {minor_count}");
+        println!("  ✅ Clean: {clean_count}");
 
         for result in results {
             if result.regression_detected {
                 println!("\n🔍 Operation: {}", result.operation_name);
                 println!("  Severity: {:?}", result.regression_severity);
-                println!("  Confidence: {:.1}%", result.confidence_level * 100.0);
+                let confidence_pct = result.confidence_level * 100.0;
+                println!("  Confidence: {confidence_pct:.1}%");
                 println!("  Affected metrics: {:?}", result.affected_metrics);
 
                 println!("  📈 Performance comparison:");
@@ -488,14 +485,15 @@ impl RegressionDetector {
                     result.baseline_performance.average_latency,
                     result.current_performance.average_latency
                 );
+                let baseline_throughput = result.baseline_performance.throughput;
+                let current_throughput = result.current_performance.throughput;
                 println!(
-                    "    Baseline throughput: {:.2} -> Current: {:.2}",
-                    result.baseline_performance.throughput, result.current_performance.throughput
+                    "    Baseline throughput: {baseline_throughput:.2} -> Current: {current_throughput:.2}",
                 );
 
                 println!("  💡 Recommendations:");
                 for recommendation in &result.recommendations {
-                    println!("    - {}", recommendation);
+                    println!("    - {recommendation}");
                 }
             }
         }

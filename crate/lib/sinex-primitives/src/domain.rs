@@ -895,7 +895,6 @@ fn normalize_path_lexically(path: &Utf8Path) -> Utf8PathBuf {
             }
             camino::Utf8Component::CurDir => {
                 // Skip current directory references
-                continue;
             }
             camino::Utf8Component::ParentDir => {
                 // Treat as ".." component
