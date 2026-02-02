@@ -269,7 +269,8 @@ fn execute_workspace(target_dir: &str, ctx: &CommandContext) -> Result<CommandRe
         affected: false,
         all: true, // CI should check all packages
         packages: vec![],
-        skip_tests: false, // CI should always check tests
+        skip_tests: false,    // CI should always check tests
+        lint_breakdown: true, // Show lint breakdown in CI
     }
     .execute(ctx)?;
     if !check_result.is_success() {

@@ -39,6 +39,9 @@ pub struct CheckCommand {
     /// Skip test compilation check (faster, but may miss test errors)
     #[arg(long)]
     pub skip_tests: bool,
+    /// Show breakdown of warning counts by lint code (top 10)
+    #[arg(long)]
+    pub lint_breakdown: bool,
 }
 
 impl CheckCommand {
@@ -132,6 +135,9 @@ impl XtaskCommand for CheckCommand {
             if self.skip_tests {
                 args.push("--skip-tests".to_string());
             }
+            if self.lint_breakdown {
+                args.push("--lint-breakdown".to_string());
+            }
             for p in &self.packages {
                 args.push("-p".to_string());
                 args.push(p.clone());
@@ -218,6 +224,24 @@ impl XtaskCommand for CheckCommand {
 
             self.process_diagnostics(ctx, &clippy_summary, &mut result, "clippy");
 
+            // Show lint breakdown if requested or if there are many warnings
+            if self.lint_breakdown || clippy_summary.warnings > 50 {
+                let top_lints = clippy_summary.top_lints(10);
+                if !top_lints.is_empty() {
+                    if ctx.is_human() {
+                        println!("\n📊 Top clippy warnings by lint:");
+                        for lint in &top_lints {
+                            println!("  {:>4}  {}", lint.count, lint.code);
+                        }
+                        println!();
+                    }
+                    // Add to JSON data
+                    result = result.with_data(serde_json::json!({
+                        "lint_breakdown": top_lints
+                    }));
+                }
+            }
+
             if !clippy_summary.success {
                 return Ok(result.with_detail("clippy failed"));
             }
@@ -262,6 +286,7 @@ mod tests {
             all: false,
             packages: vec![],
             skip_tests: false,
+            lint_breakdown: false,
         };
 
         let metadata = cmd.metadata();
@@ -280,6 +305,7 @@ mod tests {
             all: false,
             packages: vec![],
             skip_tests: false,
+            lint_breakdown: false,
         };
 
         assert_eq!(cmd.name(), "check");

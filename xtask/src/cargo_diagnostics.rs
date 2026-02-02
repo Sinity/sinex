@@ -25,6 +25,42 @@ pub struct DiagnosticSummary {
     pub success: bool,
 }
 
+/// Lint code with its count
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LintCount {
+    pub code: String,
+    pub count: usize,
+}
+
+impl DiagnosticSummary {
+    /// Get breakdown of warning counts by lint code, sorted by count descending.
+    /// Returns only warnings (not errors) with recognized lint codes.
+    pub fn lint_breakdown(&self) -> Vec<LintCount> {
+        use std::collections::HashMap;
+
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        for diag in &self.diagnostics {
+            if diag.level == "warning" {
+                if let Some(ref code) = diag.code {
+                    *counts.entry(code.clone()).or_insert(0) += 1;
+                }
+            }
+        }
+
+        let mut result: Vec<LintCount> = counts
+            .into_iter()
+            .map(|(code, count)| LintCount { code, count })
+            .collect();
+        result.sort_by(|a, b| b.count.cmp(&a.count));
+        result
+    }
+
+    /// Get the top N lints by count
+    pub fn top_lints(&self, n: usize) -> Vec<LintCount> {
+        self.lint_breakdown().into_iter().take(n).collect()
+    }
+}
+
 /// Run cargo check with JSON output and parse diagnostics
 pub fn run_cargo_check(args: &[&str]) -> anyhow::Result<DiagnosticSummary> {
     let mut cmd_args = vec!["check", "--message-format=json"];
