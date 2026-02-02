@@ -49,7 +49,7 @@ pub struct ProcessHeartbeatPayload {
     pub sequence: SequenceNumber,
     /// Status of the process
     pub status: ProcessStatus,
-    /// Optional metrics collected from MetricsProviders
+    /// Optional metrics collected from `MetricsProviders`
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metrics: Option<serde_json::Value>,
 }

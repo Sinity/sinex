@@ -59,6 +59,7 @@ pub trait TableDef: Copy + Clone {
     fn primary_key() -> &'static str;
 
     /// Returns a `sea-query` compatible identifier for the table, including its schema.
+    #[must_use]
     fn table_iden() -> (Alias, Alias) {
         (
             Alias::new(Self::schema_name()),

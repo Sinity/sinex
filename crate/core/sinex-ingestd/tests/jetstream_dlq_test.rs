@@ -1,4 +1,4 @@
-//! JetStream Dead Letter Queue integration tests
+//! `JetStream` Dead Letter Queue integration tests
 
 use async_nats::jetstream;
 use serde_json::json;
@@ -34,7 +34,7 @@ async fn wait_for_consumer(js: &jetstream::Context, base_stream: &str) -> TestRe
     Ok(())
 }
 
-/// Helper to publish a raw event with optional overrides directly to JetStream.
+/// Helper to publish a raw event with optional overrides directly to `JetStream`.
 async fn publish_raw_event(
     nats_client: &async_nats::Client,
     namespace: &str,

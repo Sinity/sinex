@@ -24,6 +24,7 @@ pub struct LockInfo {
 
 impl LockInfo {
     /// Create a new lock info for the current process
+    #[must_use]
     pub fn current(checkout_path: PathBuf, description: Option<String>) -> Self {
         Self {
             pid: std::process::id(),
@@ -34,6 +35,7 @@ impl LockInfo {
     }
 
     /// Check if the process holding this lock is still alive
+    #[must_use]
     pub fn is_alive(&self) -> bool {
         // Use kill(pid, 0) to check if process exists
         unsafe { libc::kill(self.pid as i32, 0) == 0 }
@@ -54,13 +56,13 @@ impl CheckoutState {
     /// Lock file name within state directory
     const LOCK_FILE_NAME: &'static str = ".lock";
 
-    /// Create a CheckoutState for the current working directory's checkout
+    /// Create a `CheckoutState` for the current working directory's checkout
     pub fn for_current_checkout() -> Result<Self> {
         let checkout_root = Self::find_checkout_root()?;
         Self::new(checkout_root)
     }
 
-    /// Create a CheckoutState for a specific checkout path
+    /// Create a `CheckoutState` for a specific checkout path
     pub fn new(checkout_root: PathBuf) -> Result<Self> {
         let state_dir = checkout_root.join(Self::STATE_DIR_NAME);
         Ok(Self {
@@ -87,57 +89,68 @@ impl CheckoutState {
     }
 
     /// Get the checkout root path
+    #[must_use]
     pub fn checkout_root(&self) -> &Path {
         &self.checkout_root
     }
 
     /// Get the state directory path (.sinex/)
+    #[must_use]
     pub fn state_dir(&self) -> &Path {
         &self.state_dir
     }
 
     /// Get the lock file path
+    #[must_use]
     pub fn lock_file(&self) -> PathBuf {
         self.state_dir.join(Self::LOCK_FILE_NAME)
     }
 
     /// Derived paths within the state directory
     #[allow(dead_code)]
+    #[must_use]
     pub fn data_dir(&self) -> PathBuf {
         self.state_dir.join("data")
     }
 
     #[allow(dead_code)]
+    #[must_use]
     pub fn run_dir(&self) -> PathBuf {
         self.state_dir.join("run")
     }
 
     #[allow(dead_code)]
+    #[must_use]
     pub fn logs_dir(&self) -> PathBuf {
         self.run_dir().join("logs")
     }
 
     #[allow(dead_code)]
+    #[must_use]
     pub fn snapshots_dir(&self) -> PathBuf {
         self.state_dir.join("snapshots")
     }
 
     #[allow(dead_code)]
+    #[must_use]
     pub fn config_dir(&self) -> PathBuf {
         self.state_dir.join("config")
     }
 
     #[allow(dead_code)]
+    #[must_use]
     pub fn pg_data(&self) -> PathBuf {
         self.data_dir().join("postgres")
     }
 
     #[allow(dead_code)]
+    #[must_use]
     pub fn nats_data(&self) -> PathBuf {
         self.data_dir().join("nats")
     }
 
     #[allow(dead_code)]
+    #[must_use]
     pub fn annex_data(&self) -> PathBuf {
         self.data_dir().join("annex")
     }

@@ -7,6 +7,7 @@
 use anyhow::Result;
 
 /// Check if Postgres is available.
+#[must_use]
 pub fn is_postgres_ready() -> bool {
     std::process::Command::new("pg_isready")
         .arg("-q")
@@ -15,15 +16,17 @@ pub fn is_postgres_ready() -> bool {
 }
 
 /// Check if NATS is available on the configured port.
+#[must_use]
 pub fn is_nats_ready() -> bool {
     let nats_port = std::env::var("SINEX_DEV_NATS_PORT")
         .ok()
         .and_then(|s| s.parse::<u16>().ok())
         .unwrap_or(4222);
-    std::net::TcpStream::connect(format!("127.0.0.1:{}", nats_port)).is_ok()
+    std::net::TcpStream::connect(format!("127.0.0.1:{nats_port}")).is_ok()
 }
 
 /// Check if TLS certificates exist.
+#[must_use]
 pub fn tls_certs_exist() -> bool {
     // TLS certs are in the project's certs/ directory or .tls/ directory
     let certs_dir = std::path::Path::new("certs");
@@ -90,18 +93,16 @@ fn migration_file_count() -> usize {
     let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let migrations_dir = crate_dir.join("../crate/lib/sinex-schema/src/migrations");
 
-    std::fs::read_dir(&migrations_dir)
-        .map(|entries| {
-            entries
-                .filter_map(|e| e.ok())
-                .filter(|e| {
-                    let name = e.file_name();
-                    let name = name.to_string_lossy();
-                    name.starts_with('m') && name.ends_with(".rs")
-                })
-                .count()
-        })
-        .unwrap_or(17)
+    std::fs::read_dir(&migrations_dir).map_or(17, |entries| {
+        entries
+            .filter_map(std::result::Result::ok)
+            .filter(|e| {
+                let name = e.file_name();
+                let name = name.to_string_lossy();
+                name.starts_with('m') && name.ends_with(".rs")
+            })
+            .count()
+    })
 }
 
 /// Infrastructure status for preflight checks.
@@ -115,6 +116,7 @@ pub struct InfraStatus {
 
 impl InfraStatus {
     /// Capture current infrastructure status.
+    #[must_use]
     pub fn capture() -> Self {
         Self {
             postgres: is_postgres_ready(),
@@ -125,11 +127,13 @@ impl InfraStatus {
     }
 
     /// Check if all infrastructure is ready.
+    #[must_use]
     pub fn all_ready(&self) -> bool {
         self.postgres && self.nats && !self.migrations_pending
     }
 
     /// Check if stack (Postgres + NATS) is running.
+    #[must_use]
     pub fn stack_running(&self) -> bool {
         self.postgres && self.nats
     }
@@ -183,7 +187,7 @@ pub fn auto_start_stack(verbose: bool) -> Result<bool> {
             Ok(false)
         }
         Err(e) => {
-            eprintln!("✗ Failed to start stack: {}", e);
+            eprintln!("✗ Failed to start stack: {e}");
             Ok(false)
         }
     }
@@ -261,7 +265,7 @@ fn auto_apply_migrations(verbose: bool) -> Result<bool> {
             Ok(false)
         }
         Err(e) => {
-            eprintln!("✗ Failed to apply migrations: {}", e);
+            eprintln!("✗ Failed to apply migrations: {e}");
             Ok(false)
         }
     }

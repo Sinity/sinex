@@ -216,8 +216,7 @@ async fn test_timestamp_precision(ctx: TestContext) -> color_eyre::Result<()> {
         assert_eq!(
             original_ts.unix_timestamp_nanos(),
             (*stored_ts).unix_timestamp_nanos(),
-            "Nanosecond precision should be preserved for event {}",
-            level
+            "Nanosecond precision should be preserved for event {level}"
         );
     }
 
@@ -282,8 +281,7 @@ async fn test_timezone_handling(ctx: TestContext) -> color_eyre::Result<()> {
         let diff = (event_ts - first_ts).abs();
         assert!(
             diff < time::Duration::milliseconds(10),
-            "All timezone variants should represent the same logical time, diff: {:?}",
-            diff
+            "All timezone variants should represent the same logical time, diff: {diff:?}"
         );
     }
 
@@ -320,7 +318,7 @@ async fn test_timestamp_validation(ctx: TestContext) -> color_eyre::Result<()> {
     let future_result = ctx.pool.events().insert(future_event).await;
     match future_result {
         Ok(_) => println!("Far future timestamp accepted"),
-        Err(e) => println!("Far future timestamp rejected: {}", e),
+        Err(e) => println!("Far future timestamp rejected: {e}"),
     }
 
     Ok(())
@@ -380,8 +378,7 @@ async fn test_timestamp_query_ordering(ctx: TestContext) -> color_eyre::Result<(
         let expected_ts = expected_order[sequence];
         assert_eq!(
             stored_ts, expected_ts,
-            "Logical timestamp should be preserved for event {}",
-            sequence
+            "Logical timestamp should be preserved for event {sequence}"
         );
     }
 

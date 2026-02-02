@@ -36,7 +36,7 @@ impl UnusedDetector {
     /// Returns error if neither tool is available.
     ///
     /// # Returns
-    /// UnusedReport with list of unused dependencies and tool name
+    /// `UnusedReport` with list of unused dependencies and tool name
     ///
     /// # Errors
     /// Returns error if:
@@ -75,7 +75,7 @@ impl UnusedDetector {
     /// Runs `cargo-machete` directly and parses text output.
     ///
     /// # Returns
-    /// UnusedReport with unused dependencies found by cargo-machete
+    /// `UnusedReport` with unused dependencies found by cargo-machete
     ///
     /// # Errors
     /// Returns error if cargo-machete execution fails or output parsing fails
@@ -91,7 +91,7 @@ impl UnusedDetector {
         // Exit code 2 is an error
         if output.status.code() == Some(2) {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("cargo-machete failed: {}{}", stdout, stderr);
+            anyhow::bail!("cargo-machete failed: {stdout}{stderr}");
         }
 
         Self::parse_machete_text_output(&stdout)
@@ -103,7 +103,7 @@ impl UnusedDetector {
     /// Requires nightly toolchain.
     ///
     /// # Returns
-    /// UnusedReport with unused dependencies found by cargo-udeps
+    /// `UnusedReport` with unused dependencies found by cargo-udeps
     ///
     /// # Errors
     /// Returns error if:
@@ -124,8 +124,7 @@ impl UnusedDetector {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             anyhow::bail!(
-                "cargo-udeps failed: {}\n\nNote: cargo-udeps requires nightly: rustup install nightly",
-                stderr
+                "cargo-udeps failed: {stderr}\n\nNote: cargo-udeps requires nightly: rustup install nightly"
             );
         }
 
@@ -227,7 +226,7 @@ impl UnusedDetector {
     /// * `json_str` - The JSON output from cargo-udeps
     ///
     /// # Returns
-    /// UnusedReport with flattened list of unused dependencies
+    /// `UnusedReport` with flattened list of unused dependencies
     ///
     /// # Errors
     /// Returns error if JSON parsing fails

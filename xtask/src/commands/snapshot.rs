@@ -88,7 +88,7 @@ impl XtaskCommand for SnapshotCommand {
 
         for exc in default_excludes
             .iter()
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
             .chain(self.exclude.iter().cloned())
         {
             args.push("--ignore".to_string());
@@ -100,7 +100,7 @@ impl XtaskCommand for SnapshotCommand {
             if self.compress {
                 println!("  Mode: Tree-sitter structure extraction");
             }
-            println!("  Output: {}", output_path);
+            println!("  Output: {output_path}");
         }
 
         let result = Command::new("repomix")
@@ -112,7 +112,7 @@ impl XtaskCommand for SnapshotCommand {
             let stderr = String::from_utf8_lossy(&result.stderr);
             return Ok(CommandResult::failure(crate::output::StructuredError {
                 code: "REPOMIX_FAILED".to_string(),
-                message: format!("repomix failed: {}", stderr),
+                message: format!("repomix failed: {stderr}"),
                 location: None,
                 suggestion: None,
             }));

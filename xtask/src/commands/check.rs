@@ -87,7 +87,7 @@ impl CheckCommand {
         // Record diagnostics to history database
         if let Err(e) = ctx.record_diagnostics(&summary.diagnostics) {
             if ctx.is_human() {
-                eprintln!("Warning: failed to record diagnostics: {}", e);
+                eprintln!("Warning: failed to record diagnostics: {e}");
             }
         }
 
@@ -146,7 +146,7 @@ impl XtaskCommand for CheckCommand {
         if ctx.is_human() {
             if let Ok(status) = resources::ResourceStatus::capture() {
                 if let Some(warning) = status.warning(resources::thresholds::CARGO_CHECK_GB) {
-                    eprintln!("  ⚠ {}", warning);
+                    eprintln!("  ⚠ {warning}");
                 }
             }
         }
@@ -172,14 +172,17 @@ impl XtaskCommand for CheckCommand {
             println!("Checking compilation...");
         }
 
-        let check_args: Vec<&str> = package_args.iter().map(|s| s.as_str()).collect();
+        let check_args: Vec<&str> = package_args
+            .iter()
+            .map(std::string::String::as_str)
+            .collect();
         let check_summary = run_cargo_check(&check_args)?;
 
         // Show rendered output for humans
         if ctx.is_human() {
             for diag in &check_summary.diagnostics {
                 if let Some(rendered) = &diag.rendered {
-                    eprint!("{}", rendered);
+                    eprint!("{rendered}");
                 }
             }
         }
@@ -198,14 +201,17 @@ impl XtaskCommand for CheckCommand {
             }
 
             // Include tests in clippy unless skip_tests is set
-            let clippy_args: Vec<&str> = package_args.iter().map(|s| s.as_str()).collect();
+            let clippy_args: Vec<&str> = package_args
+                .iter()
+                .map(std::string::String::as_str)
+                .collect();
             let clippy_summary = run_cargo_clippy(&clippy_args)?;
 
             // Show rendered output for humans
             if ctx.is_human() {
                 for diag in &clippy_summary.diagnostics {
                     if let Some(rendered) = &diag.rendered {
-                        eprint!("{}", rendered);
+                        eprint!("{rendered}");
                     }
                 }
             }

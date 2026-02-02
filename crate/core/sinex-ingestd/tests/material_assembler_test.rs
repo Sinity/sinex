@@ -96,14 +96,14 @@ async fn assembler_rejects_corrupted_slice_and_records_dlq(ctx: TestContext) -> 
 
     // Publish a slice with mismatched offset/length to simulate corruption.
     let mut headers = async_nats::HeaderMap::new();
-    headers.insert("Nats-Msg-Id", format!("{}-0", material_id).as_str());
+    headers.insert("Nats-Msg-Id", format!("{material_id}-0").as_str());
     headers.insert("Slice-Index", "0");
     headers.insert("Offset", "10");
     headers.insert("Chunk-Hash", "deadbeef");
 
     js.publish_with_headers(
         ctx.pipeline_namespace()
-            .subject(&format!("source_material.slices.{}", material_id)),
+            .subject(&format!("source_material.slices.{material_id}")),
         headers,
         b"payload".to_vec().into(),
     )
@@ -185,7 +185,7 @@ async fn assembler_handles_early_slices_before_begin(ctx: TestContext) -> TestRe
 
     js.publish_with_headers(
         ctx.pipeline_namespace()
-            .subject(&format!("source_material.slices.{}", material_id)),
+            .subject(&format!("source_material.slices.{material_id}")),
         headers,
         data.to_vec().into(),
     )
@@ -384,7 +384,7 @@ async fn assembler_cleans_up_state_on_corruption(ctx: TestContext) -> TestResult
     // Slice
     js.publish(
         ctx.pipeline_namespace()
-            .subject(&format!("source_material.slices.{}", material_id)),
+            .subject(&format!("source_material.slices.{material_id}")),
         b"data".to_vec().into(),
     )
     .await?
@@ -462,7 +462,7 @@ async fn assembler_handles_end_before_begin(ctx: TestContext) -> TestResult<()> 
     let hash = blake3::hash(data).to_hex().to_string();
     js.publish(
         ctx.pipeline_namespace()
-            .subject(&format!("source_material.slices.{}", material_id)),
+            .subject(&format!("source_material.slices.{material_id}")),
         data.to_vec().into(),
     )
     .await?
@@ -562,7 +562,7 @@ async fn assembler_is_idempotent_for_duplicate_slices(ctx: TestContext) -> TestR
 
     js.publish_with_headers(
         ctx.pipeline_namespace()
-            .subject(&format!("source_material.slices.{}", material_id)),
+            .subject(&format!("source_material.slices.{material_id}")),
         {
             let mut h = async_nats::HeaderMap::new();
             h.insert("Offset", "0");
@@ -577,7 +577,7 @@ async fn assembler_is_idempotent_for_duplicate_slices(ctx: TestContext) -> TestR
 
     js.publish_with_headers(
         ctx.pipeline_namespace()
-            .subject(&format!("source_material.slices.{}", material_id)),
+            .subject(&format!("source_material.slices.{material_id}")),
         {
             let mut h = async_nats::HeaderMap::new();
             h.insert("Offset", "0");

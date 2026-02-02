@@ -231,7 +231,7 @@ async fn run_complete_verification(
                 Ok(result) => result,
                 Err(e) => {
                     error!("Phase {:?} failed: {}", phase, e);
-                    report.errors.push(format!("Phase {:?}: {}", phase, e));
+                    report.errors.push(format!("Phase {phase:?}: {e}"));
                     PhaseResult {
                         status: VerificationStatus::Fail,
                         duration_ms: phase_start.elapsed().as_millis().min(u128::from(u64::MAX))
@@ -242,7 +242,7 @@ async fn run_complete_verification(
                 }
             }
         } else {
-            let timeout_message = format!("Phase {:?} timed out after {:?}", phase, remaining);
+            let timeout_message = format!("Phase {phase:?} timed out after {remaining:?}");
             error!(timeout_message);
             report.errors.push(timeout_message.clone());
             PhaseResult {
@@ -331,7 +331,7 @@ fn get_available_disk_space() -> NodeResult<f64> {
 
     // Allow configurable data directory for disk space checks
     let data_dir = env::var("SINEX_DATA_DIR")
-        .or_else(|_| env::var("XDG_DATA_HOME").map(|d| format!("{}/sinex", d)))
+        .or_else(|_| env::var("XDG_DATA_HOME").map(|d| format!("{d}/sinex")))
         .unwrap_or_else(|_| "/var/lib/sinex".to_string());
 
     let stat = statvfs(data_dir.as_str()).map_err(|e| SinexError::io(std::io::Error::other(e)))?;
@@ -353,7 +353,7 @@ async fn output_report(report: &VerificationReport, format: OutputFormat) -> Nod
             println!("Overall Status: {:?}", report.overall_status);
 
             if let Some(duration) = report.duration_ms {
-                println!("Duration: {}ms", duration);
+                println!("Duration: {duration}ms");
             }
 
             println!("\nSystem Information:");
@@ -376,21 +376,21 @@ async fn output_report(report: &VerificationReport, format: OutputFormat) -> Nod
                     phase, result.status, result.duration_ms
                 );
                 for message in &result.messages {
-                    println!("    {}", message);
+                    println!("    {message}");
                 }
             }
 
             if !report.warnings.is_empty() {
                 println!("\nWarnings:");
                 for warning in &report.warnings {
-                    println!("  ⚠ {}", warning);
+                    println!("  ⚠ {warning}");
                 }
             }
 
             if !report.errors.is_empty() {
                 println!("\nErrors:");
                 for error in &report.errors {
-                    println!("  ✗ {}", error);
+                    println!("  ✗ {error}");
                 }
             }
         }
@@ -409,8 +409,7 @@ async fn record_verification_result(report: &VerificationReport) -> NodeResult<(
     let nats_config = NatsConnectionConfig::from_env();
     let nats_client = nats_config.connect().await.map_err(|e| {
         SinexError::messaging(format!(
-            "Failed to connect to NATS for verification recording: {}",
-            e
+            "Failed to connect to NATS for verification recording: {e}"
         ))
     })?;
     let js = async_nats::jetstream::new(nats_client);
@@ -435,8 +434,7 @@ async fn record_verification_result(report: &VerificationReport) -> NodeResult<(
     {
         kv_client.register_instance(&metadata).await.map_err(|e| {
             SinexError::processing(format!(
-                "Failed to register verification metadata in KV: {}",
-                e
+                "Failed to register verification metadata in KV: {e}"
             ))
         })?;
         kv_client.heartbeat(&instance_id, &metadata).await.ok(); // heartbeat best-effort
@@ -479,9 +477,9 @@ async fn run_migration_dry_run(output_format: OutputFormat) -> NodeResult<Verifi
             serde_json::to_string_pretty(&report).map_err(SinexError::serialization)?
         ),
         OutputFormat::Text => {
-            println!("Migration Dry-Run: {:?}", status);
+            println!("Migration Dry-Run: {status:?}");
             for message in messages {
-                println!("  {}", message);
+                println!("  {message}");
             }
         }
     }
@@ -507,9 +505,9 @@ async fn run_extension_check(output_format: OutputFormat) -> NodeResult<Verifica
             serde_json::to_string_pretty(&report).map_err(SinexError::serialization)?
         ),
         OutputFormat::Text => {
-            println!("Extension Check: {:?}", status);
+            println!("Extension Check: {status:?}");
             for message in messages {
-                println!("  {}", message);
+                println!("  {message}");
             }
         }
     }
@@ -535,9 +533,9 @@ async fn run_resource_check(output_format: OutputFormat) -> NodeResult<Verificat
             serde_json::to_string_pretty(&report).map_err(SinexError::serialization)?
         ),
         OutputFormat::Text => {
-            println!("Resource Check: {:?}", status);
+            println!("Resource Check: {status:?}");
             for message in messages {
-                println!("  {}", message);
+                println!("  {message}");
             }
         }
     }
@@ -604,7 +602,7 @@ async fn generate_verification_report(
                     verification
                         .id
                         .as_ref()
-                        .map_or_else(|| "NO_ID".to_string(), |id| id.to_string())
+                        .map_or_else(|| "NO_ID".to_string(), std::string::ToString::to_string)
                 );
             }
         }

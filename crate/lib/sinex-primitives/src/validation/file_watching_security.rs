@@ -63,6 +63,7 @@ impl Default for FileWatchingSecurityPolicy {
 
 impl FileWatchingSecurityPolicy {
     /// Create a permissive policy for testing
+    #[must_use]
     pub fn permissive() -> Self {
         Self {
             max_watch_depth: None,
@@ -75,6 +76,7 @@ impl FileWatchingSecurityPolicy {
     }
 
     /// Create a restrictive policy for production
+    #[must_use]
     pub fn restrictive() -> Self {
         Self {
             max_watch_depth: Some(RESTRICTIVE_MAX_WATCH_DEPTH),

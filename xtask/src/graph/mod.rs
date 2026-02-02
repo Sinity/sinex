@@ -79,10 +79,10 @@ impl GraphCommand {
                 // Output to file or return data
                 if let Some(output_path) = output {
                     std::fs::write(output_path, &rendered)
-                        .with_context(|| format!("Failed to write to {}", output_path))?;
+                        .with_context(|| format!("Failed to write to {output_path}"))?;
 
                     Ok(CommandResult::success()
-                        .with_message(format!("Graph written to {}", output_path))
+                        .with_message(format!("Graph written to {output_path}"))
                         .with_duration(ctx.elapsed()))
                 } else if render_format == "json" {
                     // For JSON, we want the raw data if it's JSON

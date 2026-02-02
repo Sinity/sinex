@@ -25,8 +25,7 @@ async fn test_config_requires_tls_scheme_when_flag_set() -> TestResult<()> {
         let msg = e.to_string();
         assert!(
             !msg.contains("NATS URL must use tls://"),
-            "Should not raise TLS validation error when requirement is false. Got: {}",
-            msg
+            "Should not raise TLS validation error when requirement is false. Got: {msg}"
         );
         // If it's a connection error, that's expected and means validation passed.
     }

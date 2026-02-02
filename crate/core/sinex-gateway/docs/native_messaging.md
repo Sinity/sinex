@@ -22,8 +22,8 @@ Native messaging uses stdin/stdout for bidirectional communication:
 ### Threat Model
 - **Malicious Extension**: Prevented by fail-closed allowlist.
 - **Compromised Extension**: Audit logs record all dangerous operations (though attributed to "system" context).
-- **DoS (Size)**: 1MB message limit prevents memory exhaustion.
-- **DoS (Flooding)**: Currently relied on single-threaded event loop backpressure.
+- **`DoS` (Size)**: 1MB message limit prevents memory exhaustion.
+- **`DoS` (Flooding)**: Currently relied on single-threaded event loop backpressure.
 
 ### Input Validation
 - **JSON Parsing**: Strongly typed deserialization rejects malformed payloads before processing.

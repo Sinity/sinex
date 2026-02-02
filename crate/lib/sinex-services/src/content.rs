@@ -20,6 +20,7 @@ impl ContentService {
     }
 
     /// Get the database pool
+    #[must_use]
     pub fn pool(&self) -> &DbPool {
         &self.pool
     }
@@ -86,7 +87,7 @@ impl ContentService {
         {
             Ok(metadata) => metadata,
             Err(e) => {
-                let debug_error = format!("{:?}", e);
+                let debug_error = format!("{e:?}");
                 let duration_ms = elapsed_ms(started.elapsed());
                 if let Err(err) = self
                     .record_operation(
@@ -103,9 +104,9 @@ impl ContentService {
                     warn!(error = %err, "Failed to record content.store failure");
                 }
 
-                eprintln!("Blob ingestion error for {}: {}", filename, debug_error);
+                eprintln!("Blob ingestion error for {filename}: {debug_error}");
                 return Err(
-                    SinexError::service(format!("Blob storage failed: {}", debug_error))
+                    SinexError::service(format!("Blob storage failed: {debug_error}"))
                         .with_operation("blob_manager.ingest_from_bytes")
                         .with_context("filename", filename)
                         .with_context("content_type", content_type),
@@ -144,7 +145,7 @@ impl ContentService {
             .retrieve_content(annex_key)
             .await
             .map_err(|e| {
-                SinexError::service(format!("Content retrieval failed: {}", e))
+                SinexError::service(format!("Content retrieval failed: {e}"))
                     .with_operation("blob_manager.retrieve_content")
                     .with_context("annex_key", annex_key)
             })
@@ -160,7 +161,7 @@ impl ContentService {
             .get_blob_metadata(annex_key)
             .await
             .map_err(|e| {
-                SinexError::service(format!("Failed to get blob metadata: {}", e))
+                SinexError::service(format!("Failed to get blob metadata: {e}"))
                     .with_operation("blob_manager.get_blob_metadata")
                     .with_context("annex_key", annex_key)
             })?;
@@ -171,7 +172,7 @@ impl ContentService {
     /// Verify content integrity by annex key
     pub async fn verify_content(&self, annex_key: &str) -> ServiceResult<bool> {
         self.blob_manager.verify_blob(annex_key).await.map_err(|e| {
-            SinexError::service(format!("Content verification failed: {}", e))
+            SinexError::service(format!("Content verification failed: {e}"))
                 .with_operation("blob_manager.verify_blob")
                 .with_context("annex_key", annex_key)
         })

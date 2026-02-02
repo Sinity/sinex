@@ -405,7 +405,7 @@ impl fmt::Display for NetworkEventType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum NetworkConnectionType {
-    /// WiFi connection
+    /// `WiFi` connection
     Wifi,
     /// Wired ethernet
     Ethernet,
@@ -641,6 +641,7 @@ impl fmt::Display for SystemdUnitType {
 
 impl SystemdUnitType {
     /// Determine unit type from unit name suffix
+    #[must_use]
     pub fn from_unit_name(name: &str) -> Self {
         if name.ends_with(".service") {
             Self::Service
@@ -684,7 +685,7 @@ pub enum TerminalType {
     Alacritty,
     /// Foot terminal
     Foot,
-    /// WezTerm
+    /// `WezTerm`
     Wezterm,
     /// iTerm2
     Iterm2,

@@ -1,4 +1,4 @@
-//! Comprehensive tests for HealthReporter
+//! Comprehensive tests for `HealthReporter`
 
 use sinex_node_sdk::health_reporter::{HealthReporter, HealthThresholds};
 use sinex_node_sdk::prelude::ProcessStatus;

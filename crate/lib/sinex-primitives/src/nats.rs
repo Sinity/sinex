@@ -34,7 +34,7 @@ pub struct NatsConnectionConfig {
     /// Path to NATS credentials file (JWT + Key)
     pub creds_file: Option<PathBuf>,
 
-    /// Path to NKey seed file
+    /// Path to `NKey` seed file
     pub nkey_file: Option<PathBuf>,
 
     /// Auth token
@@ -64,6 +64,7 @@ impl NatsConnectionConfig {
     /// - `SINEX_NATS_CA_CERT`, `SINEX_NATS_CLIENT_CERT`, `SINEX_NATS_CLIENT_KEY`
     /// - `SINEX_NATS_CREDS`, `SINEX_NATS_NKEY_SEED`
     /// - `SINEX_NATS_TOKEN`
+    #[must_use]
     pub fn from_env() -> Self {
         let url =
             std::env::var("SINEX_NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".to_string());
@@ -174,7 +175,7 @@ impl NatsConnectionConfig {
     }
 }
 
-/// Standard JetStream topology for Sinex ingestion pipelines.
+/// Standard `JetStream` topology for Sinex ingestion pipelines.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct JetStreamTopology {
     pub events_stream: String,
@@ -189,6 +190,7 @@ pub struct JetStreamTopology {
 }
 
 impl JetStreamTopology {
+    #[must_use]
     pub fn new(
         env: &crate::environment::SinexEnvironment,
         base_stream: String,

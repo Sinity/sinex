@@ -95,12 +95,12 @@ impl XtaskCommand for PatternsCommand {
                     let line_num = range
                         .get("start")
                         .and_then(|s| s.get("line"))
-                        .and_then(|l| l.as_u64())
+                        .and_then(serde_json::Value::as_u64)
                         .unwrap_or(0) as u32;
                     let col = range
                         .get("start")
                         .and_then(|s| s.get("column"))
-                        .and_then(|c| c.as_u64())
+                        .and_then(serde_json::Value::as_u64)
                         .unwrap_or(0) as u32;
 
                     matches.push(PatternMatch {

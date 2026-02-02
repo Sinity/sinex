@@ -36,7 +36,7 @@ struct Cli {
 enum Commands {
     /// Start RPC server for CLI communication
     RpcServer {
-        /// TCP listen address in host:port form (or via SINEX_GATEWAY_TCP_LISTEN)
+        /// TCP listen address in host:port form (or via `SINEX_GATEWAY_TCP_LISTEN`)
         #[arg(long, env = "SINEX_GATEWAY_TCP_LISTEN", default_value = DEFAULT_TCP_LISTEN)]
         tcp_listen: String,
 

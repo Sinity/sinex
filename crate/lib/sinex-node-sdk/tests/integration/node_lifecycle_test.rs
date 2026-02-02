@@ -516,8 +516,7 @@ async fn test_node_concurrent_lifecycle(_ctx: TestContext) -> color_eyre::Result
         let inner = result.as_ref().expect("Task should not panic");
         assert!(
             inner.as_ref().unwrap_or(&false),
-            "Node {} should complete successfully",
-            i
+            "Node {i} should complete successfully"
         );
     }
 

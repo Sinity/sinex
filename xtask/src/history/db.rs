@@ -1,4 +1,4 @@
-//! SQLite database operations for xtask history.
+//! `SQLite` database operations for xtask history.
 
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -56,7 +56,7 @@ pub struct Invocation {
     pub cwd: String,
 }
 
-/// Handle to the history SQLite database.
+/// Handle to the history `SQLite` database.
 pub struct HistoryDb {
     pub(super) conn: Connection,
 }
@@ -81,7 +81,7 @@ impl HistoryDb {
     /// Initialize the database schema.
     fn init_schema(&self) -> Result<()> {
         self.conn.execute_batch(
-            r#"
+            r"
             -- Command invocations
             CREATE TABLE IF NOT EXISTS invocations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -136,7 +136,7 @@ impl HistoryDb {
             CREATE INDEX IF NOT EXISTS idx_test_results_name ON test_results(test_name);
             CREATE INDEX IF NOT EXISTS idx_test_results_status ON test_results(status);
             CREATE INDEX IF NOT EXISTS idx_test_results_invocation ON test_results(invocation_id);
-            "#,
+            ",
         )?;
         Ok(())
     }
@@ -160,10 +160,10 @@ impl HistoryDb {
             .unwrap();
 
         self.conn.execute(
-            r#"
+            r"
             INSERT INTO invocations (command, subcommand, profile, args_json, git_commit, git_dirty, started_at, host, cwd, status)
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'running')
-            "#,
+            ",
             params![command, subcommand, profile, args_json, git_commit, git_dirty, started_at, host, cwd],
         )?;
 
@@ -183,11 +183,11 @@ impl HistoryDb {
             .unwrap();
 
         self.conn.execute(
-            r#"
+            r"
             UPDATE invocations
             SET finished_at = ?1, duration_secs = ?2, exit_code = ?3, status = ?4
             WHERE id = ?5
-            "#,
+            ",
             params![finished_at, duration_secs, exit_code, status.as_str(), id],
         )?;
 
@@ -215,12 +215,12 @@ impl HistoryDb {
         let stderr_content = stderr_path.and_then(|p| std::fs::read_to_string(p).ok());
 
         self.conn.execute(
-            r#"
+            r"
             UPDATE invocations
             SET finished_at = ?1, duration_secs = ?2, exit_code = ?3, status = ?4,
                 stdout_content = ?5, stderr_content = ?6
             WHERE id = ?7
-            "#,
+            ",
             params![
                 finished_at,
                 duration_secs,
@@ -272,22 +272,22 @@ impl HistoryDb {
         command_filter: Option<&str>,
     ) -> Result<Vec<Invocation>> {
         let sql = if command_filter.is_some() {
-            r#"
+            r"
             SELECT id, command, subcommand, profile, args_json, git_commit, git_dirty,
                    started_at, finished_at, duration_secs, exit_code, status, host, cwd
             FROM invocations
             WHERE command = ?1
             ORDER BY started_at DESC
             LIMIT ?2
-            "#
+            "
         } else {
-            r#"
+            r"
             SELECT id, command, subcommand, profile, args_json, git_commit, git_dirty,
                    started_at, finished_at, duration_secs, exit_code, status, host, cwd
             FROM invocations
             ORDER BY started_at DESC
             LIMIT ?1
-            "#
+            "
         };
 
         let mut stmt = self.conn.prepare(sql)?;
@@ -305,14 +305,14 @@ impl HistoryDb {
     /// Get the most recent invocation for a command.
     pub fn get_last(&self, command: &str) -> Result<Option<Invocation>> {
         let mut stmt = self.conn.prepare(
-            r#"
+            r"
             SELECT id, command, subcommand, profile, args_json, git_commit, git_dirty,
                    started_at, finished_at, duration_secs, exit_code, status, host, cwd
             FROM invocations
             WHERE command = ?1
             ORDER BY started_at DESC
             LIMIT 1
-            "#,
+            ",
         )?;
 
         stmt.query_row(params![command], row_to_invocation)
@@ -329,7 +329,7 @@ impl HistoryDb {
             .unwrap();
 
         let mut stmt = self.conn.prepare(
-            r#"
+            r"
             SELECT
                 COUNT(*) as total,
                 SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as successes,
@@ -337,7 +337,7 @@ impl HistoryDb {
                 AVG(duration_secs) as avg_duration
             FROM invocations
             WHERE command = ?1 AND started_at >= ?2 AND status != 'running'
-            "#,
+            ",
         )?;
 
         let stats = stmt.query_row(params![command, since_str], |row| {
@@ -372,7 +372,7 @@ impl HistoryDb {
         Ok(deleted)
     }
 
-    /// Prune old background jobs. Alias for prune() for API consistency.
+    /// Prune old background jobs. Alias for `prune()` for API consistency.
     pub fn prune_old_jobs(&self, older_than_days: u32) -> Result<usize> {
         self.prune(older_than_days)
     }
@@ -388,10 +388,10 @@ impl HistoryDb {
         output: Option<&str>,
     ) -> Result<()> {
         self.conn.execute(
-            r#"
+            r"
             INSERT INTO test_results (invocation_id, test_name, package, status, duration_secs, output)
             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-            "#,
+            ",
             params![invocation_id, test_name, package, status, duration_secs, output],
         )?;
         Ok(())
@@ -407,11 +407,11 @@ impl HistoryDb {
         // The columns might not exist if migration failed/was skipped, so we ignore errors here for robustness
         // or we rely on the fact that we ran the migration manually via sqlite3.
         let _ = self.conn.execute(
-            r#"
+            r"
             UPDATE invocations
             SET cpu_usage_avg = ?1, memory_usage_max_mb = ?2
             WHERE id = ?3
-            "#,
+            ",
             params![cpu_usage_avg, memory_usage_max_mb, invocation_id],
         );
         Ok(())
@@ -442,10 +442,7 @@ impl HistoryDb {
 
         for (col_name, col_type) in columns_to_add {
             let _ = self.conn.execute(
-                &format!(
-                    "ALTER TABLE invocations ADD COLUMN {} {}",
-                    col_name, col_type
-                ),
+                &format!("ALTER TABLE invocations ADD COLUMN {col_name} {col_type}"),
                 [],
             );
             // Ignore errors (column likely already exists)
@@ -483,10 +480,10 @@ impl HistoryDb {
             .unwrap();
 
         self.conn.execute(
-            r#"
+            r"
             INSERT INTO invocations (command, args_json, git_commit, git_dirty, started_at, host, cwd, status, pid, is_background, stdout_path, stderr_path)
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'running', ?8, 1, ?9, ?10)
-            "#,
+            ",
             params![
                 command,
                 args_json,
@@ -509,12 +506,12 @@ impl HistoryDb {
         self.ensure_job_columns()?;
 
         let mut stmt = self.conn.prepare(
-            r#"
+            r"
             SELECT id, command, args_json, started_at, pid, stdout_path, stderr_path, status
             FROM invocations
             WHERE is_background = 1 AND status = 'running'
             ORDER BY started_at DESC
-            "#,
+            ",
         )?;
 
         let rows = stmt.query_map([], |row| {
@@ -549,13 +546,13 @@ impl HistoryDb {
         self.ensure_job_columns()?;
 
         let mut stmt = self.conn.prepare(
-            r#"
+            r"
             SELECT id, command, args_json, started_at, pid, stdout_path, stderr_path, status
             FROM invocations
             WHERE is_background = 1
             ORDER BY started_at DESC
             LIMIT ?1
-            "#,
+            ",
         )?;
 
         let rows = stmt.query_map(params![limit], |row| {
@@ -643,10 +640,10 @@ impl HistoryDb {
         rendered: Option<&str>,
     ) -> Result<()> {
         self.conn.execute(
-            r#"
+            r"
             INSERT INTO build_diagnostics (invocation_id, level, code, message, file_path, line, col, rendered)
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-            "#,
+            ",
             params![invocation_id, level, code, message, file_path, line, col, rendered],
         )?;
         Ok(())
@@ -655,12 +652,12 @@ impl HistoryDb {
     /// Get diagnostics for an invocation.
     pub fn get_diagnostics(&self, invocation_id: i64) -> Result<Vec<StoredDiagnostic>> {
         let mut stmt = self.conn.prepare(
-            r#"
+            r"
             SELECT id, level, code, message, file_path, line, col, rendered
             FROM build_diagnostics
             WHERE invocation_id = ?1
             ORDER BY id
-            "#,
+            ",
         )?;
 
         let rows = stmt.query_map(params![invocation_id], |row| {
@@ -690,14 +687,14 @@ impl HistoryDb {
 
         if let Some(level) = level_filter {
             let mut stmt = self.conn.prepare(
-                r#"
+                r"
                 SELECT d.id, d.level, d.code, d.message, d.file_path, d.line, d.col, d.rendered
                 FROM build_diagnostics d
                 JOIN invocations i ON d.invocation_id = i.id
                 WHERE d.level = ?1
                 ORDER BY i.started_at DESC, d.id DESC
                 LIMIT ?2
-                "#,
+                ",
             )?;
 
             let rows = stmt.query_map(params![level, limit], row_to_diagnostic)?;
@@ -706,13 +703,13 @@ impl HistoryDb {
             }
         } else {
             let mut stmt = self.conn.prepare(
-                r#"
+                r"
                 SELECT d.id, d.level, d.code, d.message, d.file_path, d.line, d.col, d.rendered
                 FROM build_diagnostics d
                 JOIN invocations i ON d.invocation_id = i.id
                 ORDER BY i.started_at DESC, d.id DESC
                 LIMIT ?1
-                "#,
+                ",
             )?;
 
             let rows = stmt.query_map(params![limit], row_to_diagnostic)?;
@@ -736,11 +733,11 @@ impl HistoryDb {
         // Build query dynamically based on filters
         let mut conditions = Vec::new();
         let mut query = String::from(
-            r#"
+            r"
             SELECT d.id, d.level, d.code, d.message, d.file_path, d.line, d.col, d.rendered
             FROM build_diagnostics d
             JOIN invocations i ON d.invocation_id = i.id
-            "#,
+            ",
         );
 
         if level_filter.is_some() {
@@ -767,14 +764,16 @@ impl HistoryDb {
         }
         if let Some(pattern) = file_pattern {
             // Convert glob pattern to SQL LIKE pattern
-            let like_pattern = format!("%{}%", pattern);
+            let like_pattern = format!("%{pattern}%");
             bound_params.push(Box::new(like_pattern));
         }
         bound_params.push(Box::new(limit as i64));
 
         // Use rusqlite's params_from_iter for dynamic binding
-        let params_refs: Vec<&dyn rusqlite::ToSql> =
-            bound_params.iter().map(|b| b.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> = bound_params
+            .iter()
+            .map(std::convert::AsRef::as_ref)
+            .collect();
 
         let rows = stmt.query_map(rusqlite::params_from_iter(params_refs), row_to_diagnostic)?;
         for row in rows {

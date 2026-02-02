@@ -249,8 +249,7 @@ impl RunCommand {
                 .find(|(n, _, _)| *n == name)
                 .ok_or_else(|| {
                     anyhow::anyhow!(
-                    "Unknown binary '{}'. Use 'cargo xtask run list' to see available binaries.",
-                    name
+                    "Unknown binary '{name}'. Use 'cargo xtask run list' to see available binaries."
                 )
                 })?;
 
@@ -290,11 +289,11 @@ impl RunCommand {
                 let (_, package, _binary) = BINARIES
                     .iter()
                     .find(|(n, _, _)| n == name)
-                    .ok_or_else(|| anyhow::anyhow!("Unknown binary: {}", name))?;
+                    .ok_or_else(|| anyhow::anyhow!("Unknown binary: {name}"))?;
 
                 let instance_id = instance_prefix.as_ref().map_or_else(
                     || format!("{}-{}", name, std::process::id()),
-                    |p| format!("{}-{}", p, name),
+                    |p| format!("{p}-{name}"),
                 );
 
                 let mut args = vec!["run".to_string(), "-p".to_string(), package.to_string()];
@@ -303,7 +302,7 @@ impl RunCommand {
                     args.push("--release".to_string());
                 }
 
-                args.extend(["--".to_string(), format!("--instance-id={}", instance_id)]);
+                args.extend(["--".to_string(), format!("--instance-id={instance_id}")]);
 
                 let job = manager.spawn("cargo", &args)?;
                 job_ids.push(job.id);
@@ -329,10 +328,10 @@ impl RunCommand {
             let (_, package, _) = BINARIES
                 .iter()
                 .find(|(n, _, _)| n == name)
-                .ok_or_else(|| anyhow::anyhow!("Unknown binary: {}", name))?;
+                .ok_or_else(|| anyhow::anyhow!("Unknown binary: {name}"))?;
 
             if ctx.is_human() {
-                println!("Building {}...", name);
+                println!("Building {name}...");
             }
 
             let mut build_cmd = Command::new("cargo");
@@ -343,7 +342,7 @@ impl RunCommand {
 
             let status = build_cmd.status()?;
             if !status.success() {
-                bail!("Failed to build {}", name);
+                bail!("Failed to build {name}");
             }
         }
 
@@ -352,26 +351,26 @@ impl RunCommand {
             let (_, _package, binary) = BINARIES
                 .iter()
                 .find(|(n, _, _)| n == name)
-                .ok_or_else(|| anyhow::anyhow!("Unknown binary: {}", name))?;
+                .ok_or_else(|| anyhow::anyhow!("Unknown binary: {name}"))?;
 
             let instance_id = instance_prefix.as_ref().map_or_else(
                 || format!("{}-{}", name, std::process::id()),
-                |p| format!("{}-{}", p, name),
+                |p| format!("{p}-{name}"),
             );
 
             let target_dir = if self.release { "release" } else { "debug" };
-            let binary_path = PathBuf::from(format!("target/{}/{}", target_dir, binary));
+            let binary_path = PathBuf::from(format!("target/{target_dir}/{binary}"));
 
             if ctx.is_human() {
-                println!("Starting {} (instance: {})...", name, instance_id);
+                println!("Starting {name} (instance: {instance_id})...");
             }
 
             let child = Command::new(&binary_path)
-                .arg(format!("--instance-id={}", instance_id))
+                .arg(format!("--instance-id={instance_id}"))
                 .stdout(Stdio::inherit())
                 .stderr(Stdio::inherit())
                 .spawn()
-                .with_context(|| format!("Failed to spawn {}", name))?;
+                .with_context(|| format!("Failed to spawn {name}"))?;
 
             children.insert(name.to_string(), child);
         }
@@ -390,7 +389,7 @@ impl RunCommand {
                 match child.try_wait() {
                     Ok(Some(status)) => {
                         if ctx.is_human() {
-                            println!("{} exited with status: {}", name, status);
+                            println!("{name} exited with status: {status}");
                         }
                         exited_name = Some(name.clone());
                         break;
@@ -398,7 +397,7 @@ impl RunCommand {
                     Ok(None) => {}
                     Err(e) => {
                         if ctx.is_human() {
-                            eprintln!("Error checking {}: {}", name, e);
+                            eprintln!("Error checking {name}: {e}");
                         }
                     }
                 }
@@ -417,7 +416,7 @@ impl RunCommand {
             if Some(&name) != exited_name.as_ref() {
                 if let Err(e) = child.kill() {
                     if ctx.is_human() {
-                        eprintln!("Warning: couldn't kill {}: {}", name, e);
+                        eprintln!("Warning: couldn't kill {name}: {e}");
                     }
                 }
                 let _ = child.wait();
@@ -440,7 +439,7 @@ impl RunCommand {
         ctx: &CommandContext,
     ) -> Result<CommandResult> {
         if ctx.is_human() {
-            println!("Building {}...", package);
+            println!("Building {package}...");
         }
 
         let mut args = vec!["run".to_string(), "-p".to_string(), package.to_string()];
@@ -449,21 +448,21 @@ impl RunCommand {
             args.push("--release".to_string());
         }
 
-        args.extend(["--".to_string(), format!("--instance-id={}", instance_id)]);
+        args.extend(["--".to_string(), format!("--instance-id={instance_id}")]);
 
         let status = Command::new("cargo")
             .args(&args)
             .status()
-            .with_context(|| format!("Failed to run {}", package))?;
+            .with_context(|| format!("Failed to run {package}"))?;
 
         if status.success() {
             Ok(CommandResult::success()
-                .with_message(format!("{} exited successfully", package))
+                .with_message(format!("{package} exited successfully"))
                 .with_duration(ctx.elapsed()))
         } else {
             Ok(CommandResult::failure(crate::output::StructuredError {
                 code: "RUN_FAILED".to_string(),
-                message: format!("{} exited with error", package),
+                message: format!("{package} exited with error"),
                 location: None,
                 suggestion: None,
             })
@@ -487,7 +486,7 @@ impl RunCommand {
             args.push("--release".to_string());
         }
 
-        args.extend(["--".to_string(), format!("--instance-id={}", instance_id)]);
+        args.extend(["--".to_string(), format!("--instance-id={instance_id}")]);
 
         let job = manager.spawn("cargo", &args)?;
 
@@ -509,7 +508,7 @@ impl RunCommand {
         ctx: &CommandContext,
     ) -> Result<CommandResult> {
         if ctx.is_human() {
-            println!("Watch mode: {} (instance: {})", package, instance_id);
+            println!("Watch mode: {package} (instance: {instance_id})");
             println!("Press Ctrl+C to stop.\n");
         }
 
@@ -563,17 +562,17 @@ fn execute_list(ctx: &CommandContext) -> Result<CommandResult> {
         println!("Available binaries:\n");
         println!("Core Services:");
         for (name, package, _) in BINARIES.iter().take(2) {
-            println!("  {:<25} ({})", name, package);
+            println!("  {name:<25} ({package})");
         }
 
         println!("\nIngestors:");
         for (name, package, _) in BINARIES.iter().filter(|(n, _, _)| n.contains("ingestor")) {
-            println!("  {:<25} ({})", name, package);
+            println!("  {name:<25} ({package})");
         }
 
         println!("\nAutomatons:");
         for (name, package, _) in BINARIES.iter().filter(|(n, _, _)| n.contains("automaton")) {
-            println!("  {:<25} ({})", name, package);
+            println!("  {name:<25} ({package})");
         }
 
         println!("\nProcessors:");
@@ -581,7 +580,7 @@ fn execute_list(ctx: &CommandContext) -> Result<CommandResult> {
             .iter()
             .filter(|(n, _, _)| n.contains("canonicalizer"))
         {
-            println!("  {:<25} ({})", name, package);
+            println!("  {name:<25} ({package})");
         }
 
         println!("\nBundles:");
@@ -702,7 +701,7 @@ mod tests {
         // All binaries should be findable
         for (name, package, _) in BINARIES {
             let found = BINARIES.iter().find(|(n, _, _)| n == name);
-            assert!(found.is_some(), "Binary {} not found", name);
+            assert!(found.is_some(), "Binary {name} not found");
             assert_eq!(found.unwrap().1, *package);
         }
     }

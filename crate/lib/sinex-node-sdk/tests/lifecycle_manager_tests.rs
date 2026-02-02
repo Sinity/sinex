@@ -1,4 +1,4 @@
-//! Tests for LifecycleManager status transitions and service management
+//! Tests for `LifecycleManager` status transitions and service management
 //!
 //! Tests lifecycle state transitions, shutdown handling, and health check integration.
 
@@ -125,8 +125,7 @@ async fn concurrent_status_updates_are_safe() -> TestResult<()> {
                 | ServiceStatus::Failed
                 | ServiceStatus::Stopped
         ),
-        "Final status should be a valid state: {:?}",
-        final_status
+        "Final status should be a valid state: {final_status:?}"
     );
 
     Ok(())

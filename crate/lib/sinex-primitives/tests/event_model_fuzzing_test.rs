@@ -1,6 +1,6 @@
 //! Property-based tests for event model robustness
 //!
-//! Migrated from test/property/event_model_fuzzing_test.rs to modern infrastructure.
+//! Migrated from `test/property/event_model_fuzzing_test.rs` to modern infrastructure.
 //! This module implements comprehensive property-based testing (fuzzing) for the Sinex event
 //! processing pipeline to ensure robustness against malformed, extreme, or unexpected data.
 //!
@@ -18,7 +18,7 @@
 //! - Test with extreme values: empty strings, very long strings, unicode, control chars
 //! - Test with edge case numbers: negative, zero, max values, floating point precision
 //! - Test with malformed but parseable JSON structures
-//! - Focus on the modern RawEvent::schemaless() API and database insertion paths
+//! - Focus on the modern `RawEvent::schemaless()` API and database insertion paths
 
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::test_event;

@@ -23,7 +23,7 @@ pub struct ToolInfo {
 }
 
 impl ToolInfo {
-    /// Create a new ToolInfo for an unavailable tool
+    /// Create a new `ToolInfo` for an unavailable tool
     #[allow(dead_code)]
     pub(crate) fn unavailable(name: &str) -> Self {
         Self {
@@ -55,7 +55,7 @@ impl ToolManager {
     /// ```
     pub(crate) fn check_tool(name: &str) -> Result<ToolInfo> {
         // Try to find tool in PATH using which crate
-        let path = which(name).with_context(|| format!("Tool '{}' not found in PATH", name))?;
+        let path = which(name).with_context(|| format!("Tool '{name}' not found in PATH"))?;
 
         // Get version by running --version
         let version =
@@ -80,10 +80,10 @@ impl ToolManager {
         let output = Command::new(path)
             .arg("--version")
             .output()
-            .with_context(|| format!("Failed to run '{} --version'", name))?;
+            .with_context(|| format!("Failed to run '{name} --version'"))?;
 
         if !output.status.success() {
-            anyhow::bail!("'{}' --version exited with non-zero status", name);
+            anyhow::bail!("'{name}' --version exited with non-zero status");
         }
 
         let version_output = String::from_utf8_lossy(&output.stdout);
@@ -123,22 +123,20 @@ impl ToolManager {
             "trivy" => "trivy",
             _ => {
                 return format!(
-                    "No installation guidance available for '{}'.\n\
-                     For NixOS, try: nix-shell -p {}",
-                    name, name
+                    "No installation guidance available for '{name}'.\n\
+                     For NixOS, try: nix-shell -p {name}"
                 );
             }
         };
 
         format!(
-            "Install '{}' with Nix:\n\
+            "Install '{name}' with Nix:\n\
              \n\
              Temporary shell:\n  \
-               nix-shell -p {}\n\
+               nix-shell -p {nix_package}\n\
              \n\
              Persistent (add to configuration.nix or home-manager):\n  \
-               environment.systemPackages = [ pkgs.{} ];",
-            name, nix_package, nix_package
+               environment.systemPackages = [ pkgs.{nix_package} ];"
         )
     }
 
@@ -151,7 +149,7 @@ impl ToolManager {
     /// * `tools` - Slice of tool names to check
     ///
     /// # Returns
-    /// Vector of (tool_name, installation_guidance) for missing tools.
+    /// Vector of (`tool_name`, `installation_guidance`) for missing tools.
     /// Empty vector means all tools are available.
     ///
     /// # Example

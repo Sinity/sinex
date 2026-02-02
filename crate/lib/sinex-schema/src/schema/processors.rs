@@ -43,6 +43,7 @@ impl TableDef for OperationsLog {
 }
 
 impl OperationsLog {
+    #[must_use]
     pub fn create_table_statement() -> TableCreateStatement {
         Table::create()
             .table(Self::table_iden())

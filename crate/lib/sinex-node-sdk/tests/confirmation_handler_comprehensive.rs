@@ -1,4 +1,4 @@
-//! Comprehensive tests for ConfirmationBuffer
+//! Comprehensive tests for `ConfirmationBuffer`
 //!
 //! Tests concurrent access, edge cases, and error handling scenarios.
 

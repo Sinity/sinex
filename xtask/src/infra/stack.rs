@@ -45,7 +45,8 @@ impl StackConfig {
         Ok(Self::from_checkout_state(&checkout_state))
     }
 
-    /// Create config from a CheckoutState
+    /// Create config from a `CheckoutState`
+    #[must_use]
     pub fn from_checkout_state(state: &CheckoutState) -> Self {
         // Use fixed ports - no conflicts between checkouts because each has isolated
         // Unix socket directory. TCP is disabled (listen_addresses='') so port is
@@ -91,40 +92,52 @@ impl StackConfig {
     }
 
     /// Derived paths
+    #[must_use]
     pub fn data_dir(&self) -> PathBuf {
         self.state_dir.join("data")
     }
+    #[must_use]
     pub fn run_dir(&self) -> PathBuf {
         self.state_dir.join("run")
     }
+    #[must_use]
     pub fn logs_dir(&self) -> PathBuf {
         self.run_dir().join("logs")
     }
+    #[must_use]
     pub fn snapshots_dir(&self) -> PathBuf {
         self.state_dir.join("snapshots")
     }
+    #[must_use]
     pub fn config_dir(&self) -> PathBuf {
         self.state_dir.join("config")
     }
+    #[must_use]
     pub fn pg_data(&self) -> PathBuf {
         self.data_dir().join("postgres")
     }
+    #[must_use]
     pub fn nats_data(&self) -> PathBuf {
         self.data_dir().join("nats")
     }
+    #[must_use]
     pub fn annex_data(&self) -> PathBuf {
         self.data_dir().join("annex")
     }
+    #[must_use]
     pub fn pg_pid_file(&self) -> PathBuf {
         self.run_dir().join("postgres.pid")
     }
+    #[must_use]
     pub fn nats_pid_file(&self) -> PathBuf {
         self.run_dir().join("nats.pid")
     }
+    #[must_use]
     pub fn nats_config(&self) -> PathBuf {
         self.config_dir().join("nats").join("nats.conf")
     }
 
+    #[must_use]
     pub fn database_url(&self) -> String {
         format!(
             "postgresql:///{}?host={}&port={}",
@@ -134,6 +147,7 @@ impl StackConfig {
         )
     }
 
+    #[must_use]
     pub fn nats_url(&self) -> String {
         format!("nats://localhost:{}", self.nats.port)
     }
@@ -174,6 +188,7 @@ pub struct DataSizes {
 }
 
 impl StackStatus {
+    #[must_use]
     pub fn gather(config: &StackConfig) -> Self {
         let initialized =
             config.state_dir.exists() && (config.pg_data().exists() || config.nats_data().exists());
@@ -282,6 +297,7 @@ pub fn annex_init(config: &StackConfig, verbose: bool) -> Result<()> {
     Ok(())
 }
 
+#[must_use]
 pub fn pg_bin(binary: &str) -> PathBuf {
     if let Ok(prefix) = std::env::var("SINEX_PG_BIN") {
         PathBuf::from(prefix).join(binary)
@@ -311,7 +327,7 @@ pub fn pg_init(config: &StackConfig, verbose: bool) -> Result<()> {
         .context("Failed to run initdb")?;
 
     if !status.success() {
-        bail!("initdb failed with status {}", status);
+        bail!("initdb failed with status {status}");
     }
 
     let conf_path = config.pg_data().join("postgresql.conf");
@@ -370,7 +386,7 @@ pub fn pg_start(config: &StackConfig, verbose: bool) -> Result<()> {
         .context("Failed to start PostgreSQL")?;
 
     if !status.success() {
-        bail!("pg_ctl start failed with status {}", status);
+        bail!("pg_ctl start failed with status {status}");
     }
 
     if let Ok(content) = fs::read_to_string(config.pg_data().join("postmaster.pid")) {
@@ -523,7 +539,7 @@ pub fn pg_setup_database(config: &StackConfig, verbose: bool) -> Result<()> {
         let _ = psql(
             &config.postgres.superuser,
             &config.postgres.database,
-            &format!("CREATE EXTENSION IF NOT EXISTS {}", ext),
+            &format!("CREATE EXTENSION IF NOT EXISTS {ext}"),
         );
     }
     let _ = psql(
@@ -566,7 +582,7 @@ pub fn pg_run_migrations(config: &StackConfig, verbose: bool) -> Result<()> {
         .context("Failed to run migrations")?;
 
     if !status.success() {
-        bail!("Migrations failed with status {}", status);
+        bail!("Migrations failed with status {status}");
     }
 
     if verbose {
@@ -576,6 +592,7 @@ pub fn pg_run_migrations(config: &StackConfig, verbose: bool) -> Result<()> {
     Ok(())
 }
 
+#[must_use]
 pub fn nats_bin() -> PathBuf {
     if let Ok(path) = std::env::var("NATS_SERVER_BIN") {
         PathBuf::from(path)
@@ -696,31 +713,35 @@ pub fn nats_stop(config: &StackConfig, verbose: bool) -> Result<()> {
 // Utility Functions (Local copies to avoid import cycles / shared utils)
 // ─────────────────────────────────────────────────────────────────────────────
 
+#[must_use]
 pub fn is_process_running(pid_file: &Path) -> bool {
     read_pid(pid_file).is_some_and(|pid| unsafe { libc::kill(pid as i32, 0) == 0 })
 }
 
+#[must_use]
 pub fn read_pid(pid_file: &Path) -> Option<u32> {
     fs::read_to_string(pid_file)
         .ok()
         .and_then(|s| s.trim().parse().ok())
 }
 
+#[must_use]
 pub fn dir_size(path: &Path) -> u64 {
     if !path.exists() {
         return 0;
     }
     walkdir::WalkDir::new(path)
         .into_iter()
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .filter_map(|e| e.metadata().ok())
-        .filter(|m| m.is_file())
+        .filter(std::fs::Metadata::is_file)
         .map(|m| m.len())
         .sum()
 }
 
 // Re-export list_snapshots if needed by commands (it was used in Status)
 // or move it to crate::utils if it's generic enough. It seems specific to stack layout.
+#[must_use]
 pub fn list_snapshots(dir: &Path) -> Vec<String> {
     if !dir.exists() {
         return vec![];
@@ -728,7 +749,7 @@ pub fn list_snapshots(dir: &Path) -> Vec<String> {
     fs::read_dir(dir)
         .map(|entries| {
             entries
-                .filter_map(|e| e.ok())
+                .filter_map(std::result::Result::ok)
                 .filter_map(|e| {
                     let name = e.file_name().to_string_lossy().to_string();
                     if name.ends_with(".tar.zst") {

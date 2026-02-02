@@ -111,7 +111,7 @@ pub async fn handle_dlq_peek(
                     .headers
                     .as_ref()
                     .and_then(|h| h.get("Original-Subject"))
-                    .map(|v| v.to_string());
+                    .map(std::string::ToString::to_string);
 
                 // Create safe preview of payload (limit size)
                 let payload_str = String::from_utf8_lossy(&msg.payload);

@@ -15,8 +15,8 @@ use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskComman
 ///
 /// Also reports (informational, non-blocking):
 /// - Count of unwrap/expect calls in production code
-/// - SQLx query usage statistics (runtime vs compile-time)
-/// - sinex_test_utils usage in production code
+/// - `SQLx` query usage statistics (runtime vs compile-time)
+/// - `sinex_test_utils` usage in production code
 #[derive(Debug, Clone, clap::Args)]
 pub struct LintForbiddenCommand;
 
@@ -260,7 +260,7 @@ fn is_tests_path(path: &str) -> bool {
     || path.starts_with("xtask/")
 }
 
-/// Check for sinex_test_utils usage outside expected locations.
+/// Check for `sinex_test_utils` usage outside expected locations.
 /// Reports usage for awareness but doesn't block (inline #[cfg(test)] modules are OK).
 fn check_test_utils_layering(_violations: &mut Vec<String>) -> Result<()> {
     // Allow test-utils imports in expected locations
@@ -297,8 +297,8 @@ fn check_test_utils_layering(_violations: &mut Vec<String>) -> Result<()> {
     Ok(())
 }
 
-/// Report SQLx query usage statistics (runtime vs compile-time checked).
-/// Runtime queries use sqlx::query()/query_as(), compile-time use sqlx::query!()/query_as!().
+/// Report `SQLx` query usage statistics (runtime vs compile-time checked).
+/// Runtime queries use `sqlx::query()/query_as()`, compile-time use `sqlx::query!()/query_as`!().
 fn report_sqlx_query_stats() -> Result<()> {
     // Count runtime queries (sqlx::query(, sqlx::query_as()
     let runtime_query = count_pattern_outside_tests(r"sqlx::query\(")?;
@@ -319,8 +319,7 @@ fn report_sqlx_query_stats() -> Result<()> {
             0
         };
         println!(
-            "📊 SQLx queries: {} compile-time ({}%), {} runtime ({} query, {} query_as)",
-            compile_total, compile_pct, runtime_total, runtime_query, runtime_query_as
+            "📊 SQLx queries: {compile_total} compile-time ({compile_pct}%), {runtime_total} runtime ({runtime_query} query, {runtime_query_as} query_as)"
         );
     }
     Ok(())

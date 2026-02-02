@@ -1,4 +1,4 @@
-//! Material Assembler for consuming material slices from NATS JetStream.
+//! Material Assembler for consuming material slices from NATS `JetStream`.
 //!
 //! The assembler is responsible for rebuilding source material streams from
 //! begin/slice/end messages, persisting the assembled material into git-annex,
@@ -43,7 +43,7 @@ use state::{
 /// - `assembler_state: Arc<DashMap<Ulid, Arc<Mutex<AssemblerState>>>>` provides independent
 ///   locking for each material. Materials do not block each other.
 /// - Each material's Mutex lock is held only for state snapshots (~1ms), never during slow I/O.
-/// - Lock-free reads via DashMap::get() for handle retrieval (~100ns).
+/// - Lock-free reads via `DashMap::get()` for handle retrieval (~100ns).
 /// - Semaphore limits concurrent assemblies to 50 to prevent memory exhaustion.
 ///
 /// Critical fix applied in commit c799300cd:
@@ -118,8 +118,7 @@ impl MaterialAssembler {
             .await
             .map_err(|e| {
                 SinexError::database(format!(
-                    "Failed to fetch source material {}: {}",
-                    material_id, e
+                    "Failed to fetch source material {material_id}: {e}"
                 ))
             })?;
 
@@ -155,7 +154,7 @@ impl MaterialAssembler {
         let state_dir = self.state_root.join(material_id.to_string());
         fs::create_dir_all(&state_dir)
             .await
-            .map_err(|e| SinexError::io(format!("Failed to create assembler state dir: {}", e)))?;
+            .map_err(|e| SinexError::io(format!("Failed to create assembler state dir: {e}")))?;
 
         let temp_path = state_dir.join(TEMP_FILE_NAME);
         // Important: placeholder creation can race across async tasks (e.g. slices + end arriving
@@ -166,7 +165,7 @@ impl MaterialAssembler {
             .append(true)
             .open(&temp_path)
             .await
-            .map_err(|e| SinexError::io(format!("Failed to open temp file: {}", e)))?;
+            .map_err(|e| SinexError::io(format!("Failed to open temp file: {e}")))?;
 
         // Limit concurrent assemblies
         let permit = self
@@ -247,8 +246,7 @@ impl MaterialAssembler {
             .map(|_| ())
             .map_err(|e| {
                 SinexError::database(format!(
-                    "Failed to register source material {}: {}",
-                    material_id, e
+                    "Failed to register source material {material_id}: {e}"
                 ))
             })
     }
@@ -278,7 +276,7 @@ impl MaterialAssembler {
     /// - Assembly duration histogram (time from begin to end)
     /// - Active assembly count gauge
     /// - Slice count per material histogram
-    /// - Assembly failure counter by reason (hash_mismatch, corruption, timeout, etc.)
+    /// - Assembly failure counter by reason (`hash_mismatch`, corruption, timeout, etc.)
     /// - Buffer utilization histogram (peak buffered slices per material)
     /// - WAL replay duration on startup
     pub async fn run(self) -> IngestdResult<()> {
@@ -323,7 +321,7 @@ impl MaterialAssembler {
                 match result {
                     Ok(Ok(())) => Ok(()),
                     Ok(Err(e)) => Err(e),
-                    Err(e) => Err(SinexError::service(format!("Cleanup task panicked: {}", e))),
+                    Err(e) => Err(SinexError::service(format!("Cleanup task panicked: {e}"))),
                 }
             }
         }
@@ -429,8 +427,7 @@ impl MaterialAssembler {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(err) => {
                 return Err(SinexError::io(format!(
-                    "Failed to read state root for cleanup: {}",
-                    err
+                    "Failed to read state root for cleanup: {err}"
                 )))
             }
         };
@@ -440,13 +437,13 @@ impl MaterialAssembler {
         while let Some(entry) = entries
             .next_entry()
             .await
-            .map_err(|e| SinexError::io(format!("Failed to iterate state directory: {}", e)))?
+            .map_err(|e| SinexError::io(format!("Failed to iterate state directory: {e}")))?
         {
             let path = entry.path();
             if !entry
                 .file_type()
                 .await
-                .map_err(|e| SinexError::io(format!("Failed to check file type: {}", e)))?
+                .map_err(|e| SinexError::io(format!("Failed to check file type: {e}")))?
                 .is_dir()
             {
                 continue;

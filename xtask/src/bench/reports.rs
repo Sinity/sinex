@@ -27,7 +27,7 @@ pub(super) fn generate_markdown(
         config
             .threads
             .iter()
-            .map(|t| t.to_string())
+            .map(std::string::ToString::to_string)
             .collect::<Vec<_>>()
             .join(", ")
     ));

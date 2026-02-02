@@ -275,7 +275,7 @@ impl IngestService {
                     Err(join_err) => {
                         error!(error = ?join_err, "JetStream consumer panicked");
                         self.shutdown_flag.store(true, Ordering::Relaxed);
-                        Err(SinexError::service(format!("JetStream consumer panicked: {}", join_err)))
+                        Err(SinexError::service(format!("JetStream consumer panicked: {join_err}")))
                     }
                 }
             }
@@ -305,7 +305,7 @@ impl IngestService {
                     Err(join_err) => {
                         error!(error = ?join_err, "MaterialAssembler panicked");
                         self.shutdown_flag.store(true, Ordering::Relaxed);
-                        Err(SinexError::service(format!("MaterialAssembler panicked: {}", join_err)))
+                        Err(SinexError::service(format!("MaterialAssembler panicked: {join_err}")))
                     }
                 }
             }
@@ -324,7 +324,7 @@ impl IngestService {
         monitor_result
     }
 
-    /// Start the JetStream consumer task
+    /// Start the `JetStream` consumer task
     async fn start_jetstream_consumer_task(
         &self,
         nats_client: NatsClient,
@@ -375,7 +375,7 @@ impl IngestService {
         })
     }
 
-    /// Start the MaterialAssembler task
+    /// Start the `MaterialAssembler` task
     async fn start_material_assembler_task(
         &self,
         nats_client: NatsClient,
@@ -403,8 +403,7 @@ impl IngestService {
                         "Failed to initialize git-annex repository"
                     );
                     return Err(SinexError::service(format!(
-                        "Failed to initialize git-annex at {}: {}",
-                        annex_repo_path, e
+                        "Failed to initialize git-annex at {annex_repo_path}: {e}"
                     )));
                 }
             };
@@ -653,12 +652,7 @@ impl IngestService {
         // Broadcast metadata for cache invalidation signal
         js.publish(subject.clone(), serde_json::to_vec(&entries)?.into())
             .await
-            .context(&{
-                format!(
-                    "Failed to publish schema broadcast to subject '{}'",
-                    subject
-                )
-            })
+            .context(&{ format!("Failed to publish schema broadcast to subject '{subject}'") })
             .map_err(|e| SinexError::network(format!("Failed to publish schema broadcast: {e}")))?
             .await
             .context("Failed to confirm schema broadcast acknowledgement")

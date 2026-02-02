@@ -7,8 +7,8 @@ use syn::{parse_macro_input, Ident, LitStr, Token};
 /// This macro reduces boilerplate when defining event types by automatically generating:
 /// - Event type constants
 /// - Source constants
-/// - EventEnvelope enum variants
-/// - EventEnvelope to_json_event() match arms
+/// - `EventEnvelope` enum variants
+/// - `EventEnvelope` `to_json_event()` match arms
 ///
 /// # Usage
 ///

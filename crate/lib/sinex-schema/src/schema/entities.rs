@@ -77,6 +77,7 @@ pub struct EntityRecord {
 
 impl Entities {
     /// Generates the `CREATE TABLE` statement for `core.entities`.
+    #[must_use]
     pub fn create_table_statement() -> TableCreateStatement {
         Table::create()
             .table(Self::table_iden())
@@ -150,6 +151,7 @@ impl Entities {
     }
 
     /// Generates indexes for `core.entities`.
+    #[must_use]
     pub fn create_indexes() -> Vec<IndexCreateStatement> {
         vec![
             // Unique constraint on entity type and name combination
@@ -172,6 +174,7 @@ impl Entities {
     }
 
     /// Generates raw SQL for GIN indexes (PostgreSQL-specific feature)
+    #[must_use]
     pub fn create_gin_indexes_sql() -> Vec<String> {
         vec![
             format!(
@@ -192,7 +195,8 @@ impl Entities {
         ]
     }
 
-    /// Generates raw SQL for trigram indexes (PostgreSQL pg_trgm extension).
+    /// Generates raw SQL for trigram indexes (`PostgreSQL` `pg_trgm` extension).
+    #[must_use]
     pub fn create_trigram_indexes_sql() -> Vec<String> {
         vec![
             format!(
@@ -208,15 +212,16 @@ impl Entities {
         ]
     }
 
-    /// Creates a trigger to update the updated_at column
+    /// Creates a trigger to update the `updated_at` column
+    #[must_use]
     pub fn create_updated_at_trigger_sql() -> String {
         format!(
-            r#"
+            r"
             DROP TRIGGER IF EXISTS trg_entities_updated_at ON {}.{};
             CREATE TRIGGER trg_entities_updated_at
             BEFORE UPDATE ON {}.{}
             FOR EACH ROW EXECUTE FUNCTION public.set_current_timestamp_updated_at();
-            "#,
+            ",
             Self::schema_name(),
             Self::table_name(),
             Self::schema_name(),
@@ -262,6 +267,7 @@ impl TableDef for EntityRelations {
 
 impl EntityRelations {
     /// Generates the `CREATE TABLE` statement for `core.entity_relations`.
+    #[must_use]
     pub fn create_table_statement() -> TableCreateStatement {
         Table::create()
             .table(Self::table_iden())
@@ -342,6 +348,7 @@ impl EntityRelations {
     }
 
     /// Generates indexes for `core.entity_relations`.
+    #[must_use]
     pub fn create_indexes() -> Vec<IndexCreateStatement> {
         vec![
             // Unique constraint on the relationship tuple
@@ -357,13 +364,14 @@ impl EntityRelations {
     }
 
     /// Generates the trigger to automatically update the `updated_at` timestamp.
+    #[must_use]
     pub fn create_updated_at_trigger_sql() -> String {
-        r#"
+        r"
             DROP TRIGGER IF EXISTS trg_entity_relations_updated_at ON core.entity_relations;
             CREATE TRIGGER trg_entity_relations_updated_at
             BEFORE UPDATE ON core.entity_relations
             FOR EACH ROW EXECUTE FUNCTION public.set_current_timestamp_updated_at();
-            "#
+            "
         .to_string()
     }
 }

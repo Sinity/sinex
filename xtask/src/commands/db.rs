@@ -127,7 +127,7 @@ fn execute_setup(ctx: &CommandContext) -> Result<CommandResult> {
     run_db_migrate(ctx)?;
 
     Ok(CommandResult::success()
-        .with_message(format!("Database '{}' setup complete", db))
+        .with_message(format!("Database '{db}' setup complete"))
         .with_duration(ctx.elapsed()))
 }
 
@@ -178,7 +178,7 @@ fn execute_reset(yes: bool, ctx: &CommandContext) -> Result<CommandResult> {
     run_db_migrate(ctx)?;
 
     Ok(CommandResult::success()
-        .with_message(format!("Database '{}' reset complete", db))
+        .with_message(format!("Database '{db}' reset complete"))
         .with_duration(ctx.elapsed()))
 }
 

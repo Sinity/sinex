@@ -11,7 +11,7 @@ use sinex_node_sdk::{CheckpointManager, CheckpointState};
 use std::sync::Arc;
 use xtask::sandbox::{prelude::*, sinex_prop};
 
-/// Helper to convert color_eyre::Report errors to TestCaseError for property tests
+/// Helper to convert `color_eyre::Report` errors to `TestCaseError` for property tests
 fn report_to_test_error<E: std::fmt::Display>(e: E) -> TestCaseError {
     TestCaseError::Fail(e.to_string().into())
 }

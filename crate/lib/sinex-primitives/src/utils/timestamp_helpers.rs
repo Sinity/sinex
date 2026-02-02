@@ -63,16 +63,19 @@ pub fn timestamp_nanos_to_datetime(timestamp_ns: i64) -> Result<Timestamp> {
 }
 
 /// Parse a human-friendly relative time string (e.g., "1h", "2d", "30m")
+#[must_use]
 pub fn parse_relative_duration(s: &str) -> Option<Duration> {
     crate::temporal::parse_duration(s)
 }
 
-/// Parse a human-friendly relative time string, returning std::time::Duration
+/// Parse a human-friendly relative time string, returning `std::time::Duration`
+#[must_use]
 pub fn parse_relative_std_duration(s: &str) -> Option<std::time::Duration> {
     parse_relative_duration(s).and_then(|d| d.try_into().ok())
 }
 
 /// Try to parse a timestamp from various common formats
+#[must_use]
 pub fn parse_flexible_timestamp(value: &str) -> Option<Timestamp> {
     // First try parsing as RFC3339
     let value = value.trim();

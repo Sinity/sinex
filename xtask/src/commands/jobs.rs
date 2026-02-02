@@ -1,7 +1,7 @@
 //! Background job management commands
 //!
-//! Jobs are tracked in the history database (SQLite). Log files are stored in the filesystem.
-//! JobManager is a thin wrapper - HistoryDb is the single source of truth.
+//! Jobs are tracked in the history database (`SQLite`). Log files are stored in the filesystem.
+//! `JobManager` is a thin wrapper - `HistoryDb` is the single source of truth.
 
 use anyhow::Result;
 use std::time::Duration;
@@ -186,7 +186,7 @@ fn execute_status(
 ) -> Result<CommandResult> {
     let job = job_manager
         .get(id)?
-        .ok_or_else(|| anyhow::anyhow!("job {} not found", id))?;
+        .ok_or_else(|| anyhow::anyhow!("job {id} not found"))?;
 
     if follow {
         // Follow mode: tail output until job completes
@@ -210,11 +210,11 @@ fn execute_status(
         }
 
         Ok(CommandResult::success()
-            .with_message(format!("Job {} completed", id))
+            .with_message(format!("Job {id} completed"))
             .with_duration(ctx.elapsed()))
     } else {
         if ctx.is_human() {
-            println!("Job {}", id);
+            println!("Job {id}");
             println!("  Command:  {} {}", job.command, job.args.join(" "));
             println!("  Status:   {}", status_to_str(job.status));
             println!("  PID:      {}", job.pid);
@@ -222,7 +222,7 @@ fn execute_status(
             // Show last few lines of output
             if let Ok(tail) = job.tail_stdout(5) {
                 if !tail.is_empty() {
-                    println!("\n  Last output:\n{}", tail);
+                    println!("\n  Last output:\n{tail}");
                 }
             }
         } else {
@@ -238,7 +238,7 @@ fn execute_status(
         }
 
         Ok(CommandResult::success()
-            .with_message(format!("Job {} status", id))
+            .with_message(format!("Job {id} status"))
             .with_duration(ctx.elapsed()))
     }
 }
@@ -251,7 +251,7 @@ fn execute_output(
 ) -> Result<CommandResult> {
     let job = job_manager
         .get(id)?
-        .ok_or_else(|| anyhow::anyhow!("job {} not found", id))?;
+        .ok_or_else(|| anyhow::anyhow!("job {id} not found"))?;
 
     let output = if stderr {
         job.read_stderr()?
@@ -295,7 +295,7 @@ fn execute_wait(
     }
 
     Ok(CommandResult::success()
-        .with_message(format!("Job {} wait completed", id))
+        .with_message(format!("Job {id} wait completed"))
         .with_duration(ctx.elapsed()))
 }
 
@@ -306,18 +306,18 @@ fn execute_cancel(
 ) -> Result<CommandResult> {
     if job_manager.cancel(id)? {
         if ctx.is_human() {
-            println!("Job {} cancelled", id);
+            println!("Job {id} cancelled");
         }
         Ok(CommandResult::success()
-            .with_message(format!("Job {} cancelled", id))
+            .with_message(format!("Job {id} cancelled"))
             .with_duration(ctx.elapsed()))
     } else {
         if ctx.is_human() {
-            println!("Job {} not found or not running", id);
+            println!("Job {id} not found or not running");
         }
         Ok(CommandResult::failure(crate::output::StructuredError {
             code: "JOB_NOT_FOUND".to_string(),
-            message: format!("Job {} not found or not running", id),
+            message: format!("Job {id} not found or not running"),
             location: None,
             suggestion: Some("Use 'cargo xtask jobs list' to see available jobs".to_string()),
         }))
@@ -332,16 +332,16 @@ fn execute_prune(
     let count = job_manager.prune(older_than)?;
 
     if ctx.is_human() {
-        println!("Pruned {} jobs older than {} days", count, older_than);
+        println!("Pruned {count} jobs older than {older_than} days");
     }
 
     Ok(CommandResult::success()
-        .with_message(format!("Pruned {} jobs", count))
-        .with_detail(format!("older than {} days", older_than))
+        .with_message(format!("Pruned {count} jobs"))
+        .with_detail(format!("older than {older_than} days"))
         .with_duration(ctx.elapsed()))
 }
 
-/// Convert InvocationStatus to display string.
+/// Convert `InvocationStatus` to display string.
 fn status_to_str(status: InvocationStatus) -> &'static str {
     match status {
         InvocationStatus::Running => "running",

@@ -28,7 +28,7 @@ pub struct BenchConfig {
     #[arg(long, default_value = "10.0")]
     pub regression_threshold_pct: f64,
 
-    /// SQLite history database path
+    /// `SQLite` history database path
     #[arg(long)]
     pub history_db: Option<PathBuf>,
 

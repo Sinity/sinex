@@ -12,9 +12,9 @@ use time::Duration;
 // Domain Type Strategies
 // =============================================================================
 
-/// Strategy for generating valid EventSource values
+/// Strategy for generating valid `EventSource` values
 ///
-/// EventSource must be lowercase alphanumeric with dots and underscores,
+/// `EventSource` must be lowercase alphanumeric with dots and underscores,
 /// starting with a letter, length 1-255.
 pub fn arb_event_source() -> impl Strategy<Value = EventSource> {
     prop_oneof![
@@ -28,9 +28,9 @@ pub fn arb_event_source() -> impl Strategy<Value = EventSource> {
     ]
 }
 
-/// Strategy for generating valid EventType values
+/// Strategy for generating valid `EventType` values
 ///
-/// EventType must be lowercase alphanumeric with dots and underscores,
+/// `EventType` must be lowercase alphanumeric with dots and underscores,
 /// starting with a letter, length 1-255.
 pub fn arb_event_type() -> impl Strategy<Value = EventType> {
     prop_oneof![
@@ -91,7 +91,7 @@ pub fn arb_json_payload() -> impl Strategy<Value = Value> {
 
 /// Strategy for generating compact JSON payloads
 ///
-/// Similar to arb_json_payload but with smaller depth and size,
+/// Similar to `arb_json_payload` but with smaller depth and size,
 /// suitable for tests that need many instances.
 pub fn arb_json_payload_compact() -> impl Strategy<Value = Value> {
     prop_oneof![
@@ -116,7 +116,7 @@ pub fn arb_processor_name() -> impl Strategy<Value = String> {
         Just("content-automaton".to_string()),
         Just("search-automaton".to_string()),
         Just("test-automaton".to_string()),
-        "[a-z][a-z0-9-]{4,30}".prop_map(|s| format!("{}-automaton", s)),
+        "[a-z][a-z0-9-]{4,30}".prop_map(|s| format!("{s}-automaton")),
     ]
 }
 

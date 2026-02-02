@@ -1,4 +1,4 @@
-//! JetStream consumer integration tests
+//! `JetStream` consumer integration tests
 
 use async_nats::jetstream;
 use futures::StreamExt;
@@ -16,7 +16,7 @@ use tokio::time::timeout;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 
-/// Helper to publish a test event directly to JetStream.
+/// Helper to publish a test event directly to `JetStream`.
 async fn publish_event(
     nats_client: &async_nats::Client,
     namespace: &str,
@@ -336,11 +336,11 @@ async fn consumer_persists_offset_kind(ctx: TestContext) -> color_eyre::Result<(
 
     // Verify offset_kind was persisted correctly
     let row = sqlx::query(
-        r#"
+        r"
             SELECT offset_kind
             FROM core.events
             WHERE id = $1::uuid::ulid
-        "#,
+        ",
     )
     .bind(ulid_to_uuid(event_ulid))
     .fetch_one(&ctx.pool)
@@ -528,7 +528,7 @@ async fn dlq_captures_multiple_validation_failures(ctx: TestContext) -> TestResu
             &nats_client,
             &setup.namespace,
             "validation",
-            &format!("validation.bad.{}", idx),
+            &format!("validation.bad.{idx}"),
             json!({"data": "bad"}),
             EventOverrides {
                 ts_orig: Some("not-a-timestamp".to_string()),

@@ -249,8 +249,7 @@ async fn timeout_prevents_indefinite_transaction_hold(ctx: TestContext) -> color
     let err_str = result.unwrap_err().to_string();
     assert!(
         err_str.contains("timeout") || err_str.contains("Timeout"),
-        "Expected timeout error message, got: {}",
-        err_str
+        "Expected timeout error message, got: {err_str}"
     );
 
     Ok(())

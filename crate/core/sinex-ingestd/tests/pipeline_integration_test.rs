@@ -2,7 +2,7 @@
 //!
 //! Comprehensive tests for the Sinex data processing pipeline, focusing on:
 //! - Event ingestion pipeline flows
-//! - Stream processing through NATS JetStream
+//! - Stream processing through NATS `JetStream`
 //! - Data transformation and enrichment
 //! - Multi-stage processing workflows
 //! - Pipeline error handling and recovery
@@ -128,7 +128,7 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> 
 
         let event_id_display = event_id
             .as_ref()
-            .map_or_else(|| "missing".to_string(), |id| id.to_string());
+            .map_or_else(|| "missing".to_string(), std::string::ToString::to_string);
         tracing::debug!(
             source = source,
             event_type = event_type,
@@ -202,7 +202,7 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> 
         let event_id_display = stored_event
             .id
             .as_ref()
-            .map_or_else(|| "missing".to_string(), |id| id.to_string());
+            .map_or_else(|| "missing".to_string(), std::string::ToString::to_string);
         tracing::debug!(
             event_id = %event_id_display,
             source = stored_event.source.as_ref(),
@@ -256,7 +256,7 @@ async fn test_concurrent_pipeline_processing(ctx: TestContext) -> Result<()> {
         let results = processing_results.clone();
 
         let handle = tokio::spawn(async move {
-            let stream_name = format!("stream_{}", stream_id);
+            let stream_name = format!("stream_{stream_id}");
             let mut stream_events = Vec::new();
             let stream_start = Instant::now();
 
@@ -279,9 +279,10 @@ async fn test_concurrent_pipeline_processing(ctx: TestContext) -> Result<()> {
                 {
                     Ok(event) => {
                         let event_id = event.id;
-                        let event_id_display = event_id
-                            .as_ref()
-                            .map_or_else(|| "missing".to_string(), |id| id.to_string());
+                        let event_id_display = event_id.as_ref().map_or_else(
+                            || "missing".to_string(),
+                            std::string::ToString::to_string,
+                        );
                         stream_events.push(event_id);
                         tracing::trace!(
                             stream_id = stream_id,
@@ -536,11 +537,11 @@ async fn test_pipeline_data_transformation(ctx: TestContext) -> Result<()> {
         let transformed_id_display = transformed_event
             .id
             .as_ref()
-            .map_or_else(|| "missing".to_string(), |id| id.to_string());
+            .map_or_else(|| "missing".to_string(), std::string::ToString::to_string);
         let source_id_display = source_event
             .id
             .as_ref()
-            .map_or_else(|| "missing".to_string(), |id| id.to_string());
+            .map_or_else(|| "missing".to_string(), std::string::ToString::to_string);
         tracing::debug!(
             transformed_id = %transformed_id_display,
             source_id = %source_id_display,
@@ -619,7 +620,7 @@ async fn test_pipeline_error_handling(ctx: TestContext) -> Result<()> {
                     let event_id = event.id;
                     let event_id_display = event_id
                         .as_ref()
-                        .map_or_else(|| "missing".to_string(), |id| id.to_string());
+                        .map_or_else(|| "missing".to_string(), std::string::ToString::to_string);
                     successful_events.push(event_id);
                     tracing::debug!(
                         source = source,
@@ -638,15 +639,14 @@ async fn test_pipeline_error_handling(ctx: TestContext) -> Result<()> {
             Err(e) => {
                 if should_succeed {
                     return Err(e);
-                } else {
-                    error_scenarios.push((source, event_type, e.to_string()));
-                    tracing::debug!(
-                        source = source,
-                        event_type = event_type,
-                        error = %e,
-                        "Expected error occurred"
-                    );
                 }
+                error_scenarios.push((source, event_type, e.to_string()));
+                tracing::debug!(
+                    source = source,
+                    event_type = event_type,
+                    error = %e,
+                    "Expected error occurred"
+                );
             }
         }
 

@@ -78,7 +78,7 @@ fn validate_actor(actor: &str) -> Result<()> {
     }
 
     // Validate identifier doesn't contain control characters
-    if identifier.chars().any(|c| c.is_control()) {
+    if identifier.chars().any(char::is_control) {
         return Err(eyre!("Actor identifier contains invalid characters"));
     }
 
@@ -163,10 +163,12 @@ impl ReplayControlClient {
     /// Get the underlying NATS client.
     /// Reserved for external consumers (e.g., custom replay coordination).
     #[allow(dead_code)]
+    #[must_use]
     pub fn nats_client(&self) -> &Client {
         &self.client
     }
 
+    #[must_use]
     pub fn health_snapshot(&self) -> ReplayControlHealth {
         let connected = matches!(self.client.connection_state(), NatsState::Connected);
         let last_error = {
@@ -756,7 +758,7 @@ impl ReplayExecutionEngine {
                 let event_id = event
                     .id
                     .as_ref()
-                    .map_or_else(|| Ulid::new().to_string(), |id| id.to_string());
+                    .map_or_else(|| Ulid::new().to_string(), std::string::ToString::to_string);
 
                 // Build replay subject with marker
                 let subject = self.env.nats_subject(&format!(
@@ -784,7 +786,7 @@ impl ReplayExecutionEngine {
                 let mut headers = async_nats::HeaderMap::new();
                 headers.insert(
                     "Nats-Msg-Id",
-                    format!("replay-{}-{}", operation_id, event_id).as_str(),
+                    format!("replay-{operation_id}-{event_id}").as_str(),
                 );
                 headers.insert("X-Replay-Operation", operation_id.to_string().as_str());
                 headers.insert("X-Original-Event-Id", event_id.as_str());

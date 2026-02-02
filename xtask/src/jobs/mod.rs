@@ -1,10 +1,10 @@
 //! Background job execution and tracking.
 //!
-//! Jobs are tracked in HistoryDb (SQLite) with log files in `$SINEX_STATE_DIR/jobs/<id>/`:
+//! Jobs are tracked in `HistoryDb` (`SQLite`) with log files in `$SINEX_STATE_DIR/jobs/<id>/`:
 //! - `stdout.log` - Captured stdout
 //! - `stderr.log` - Captured stderr
 //!
-//! HistoryDb is the single source of truth. JobManager is a thin wrapper for spawning.
+//! `HistoryDb` is the single source of truth. `JobManager` is a thin wrapper for spawning.
 
 use anyhow::{bail, Context, Result};
 use std::fs::{self, File};
@@ -16,9 +16,9 @@ use time::OffsetDateTime;
 use crate::config::config;
 use crate::history::{BackgroundJob, HistoryDb, InvocationStatus};
 
-/// A handle to a background job (backed by HistoryDb).
+/// A handle to a background job (backed by `HistoryDb`).
 pub struct Job {
-    /// HistoryDb invocation ID
+    /// `HistoryDb` invocation ID
     pub id: i64,
     /// Command that was run
     pub command: String,
@@ -37,16 +37,16 @@ pub struct Job {
 }
 
 impl Job {
-    /// Create Job from HistoryDb BackgroundJob.
+    /// Create Job from `HistoryDb` `BackgroundJob`.
     fn from_background_job(bg: BackgroundJob, jobs_dir: &Path) -> Self {
-        let stdout_path = bg
-            .stdout_path
-            .map(PathBuf::from)
-            .unwrap_or_else(|| jobs_dir.join(bg.id.to_string()).join("stdout.log"));
-        let stderr_path = bg
-            .stderr_path
-            .map(PathBuf::from)
-            .unwrap_or_else(|| jobs_dir.join(bg.id.to_string()).join("stderr.log"));
+        let stdout_path = bg.stdout_path.map_or_else(
+            || jobs_dir.join(bg.id.to_string()).join("stdout.log"),
+            PathBuf::from,
+        );
+        let stderr_path = bg.stderr_path.map_or_else(
+            || jobs_dir.join(bg.id.to_string()).join("stderr.log"),
+            PathBuf::from,
+        );
 
         Self {
             id: bg.id,
@@ -61,6 +61,7 @@ impl Job {
     }
 
     /// Check if the job has finished.
+    #[must_use]
     pub fn is_terminal(&self) -> bool {
         !matches!(self.status, InvocationStatus::Running)
     }
@@ -119,6 +120,7 @@ impl Job {
     }
 
     /// Check if the job process is still running.
+    #[must_use]
     pub fn is_alive(&self) -> bool {
         if matches!(self.status, InvocationStatus::Running) && self.pid > 0 {
             Path::new(&format!("/proc/{}", self.pid)).exists()
@@ -131,7 +133,7 @@ impl Job {
 /// Manager for background jobs.
 ///
 /// This is a thin wrapper that handles process spawning and log file creation.
-/// All metadata is stored in HistoryDb.
+/// All metadata is stored in `HistoryDb`.
 pub struct JobManager {
     jobs_dir: PathBuf,
     db: HistoryDb,
@@ -191,7 +193,7 @@ impl JobManager {
             .stdout(Stdio::from(stdout_file))
             .stderr(Stdio::from(stderr_file))
             .spawn()
-            .with_context(|| format!("failed to spawn: {} {:?}", command, args))?;
+            .with_context(|| format!("failed to spawn: {command} {args:?}"))?;
 
         let pid = child.id();
 
@@ -295,7 +297,7 @@ impl JobManager {
         loop {
             let job = self
                 .get(id)?
-                .ok_or_else(|| anyhow::anyhow!("job {} not found", id))?;
+                .ok_or_else(|| anyhow::anyhow!("job {id} not found"))?;
 
             if job.is_terminal() {
                 return Ok(job);
@@ -303,7 +305,7 @@ impl JobManager {
 
             if let Some(timeout) = timeout {
                 if start.elapsed() > timeout {
-                    bail!("timeout waiting for job {}", id);
+                    bail!("timeout waiting for job {id}");
                 }
             }
 
@@ -318,7 +320,7 @@ impl JobManager {
 
         // Also clean up old job directories
         if let Ok(entries) = fs::read_dir(&self.jobs_dir) {
-            for entry in entries.filter_map(|e| e.ok()) {
+            for entry in entries.filter_map(std::result::Result::ok) {
                 if let Ok(id) = entry.file_name().to_string_lossy().parse::<i64>() {
                     // If job doesn't exist in HistoryDb, remove the directory
                     if self.get(id)?.is_none() {
@@ -332,7 +334,7 @@ impl JobManager {
     }
 }
 
-/// Wait for a child process, update HistoryDb, and move logs to DB.
+/// Wait for a child process, update `HistoryDb`, and move logs to DB.
 fn wait_for_child(
     mut child: std::process::Child,
     history_id: i64,

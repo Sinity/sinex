@@ -11,7 +11,7 @@ impl MigrationTrait for Migration {
         manager
             .get_connection()
             .execute_unprepared(
-                r#"
+                r"
                 CREATE OR REPLACE FUNCTION core.jsonb_merge_deep(a jsonb, b jsonb)
                 RETURNS jsonb LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
                     SELECT CASE
@@ -34,7 +34,7 @@ impl MigrationTrait for Migration {
                         ELSE b
                     END
                 $$;
-                "#,
+                ",
             )
             .await?;
 

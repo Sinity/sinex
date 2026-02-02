@@ -31,7 +31,10 @@ pub mod tls;
 mod tools;
 
 use command::{CommandContext, XtaskCommand};
-use commands::*;
+use commands::{
+    BenchArgs, BuildCommand, CheckCommand, FixCommand, JobsCommand, StatusCommand, TestCommand,
+    VmCommand,
+};
 use config::config;
 use history::HistoryDb;
 use output::{OutputFormat, OutputWriter};
@@ -291,7 +294,7 @@ fn list_commands(format: OutputFormat) -> Result<()> {
         cmd.get_subcommands()
             .map(|sub| CommandInfo {
                 name: sub.get_name().to_string(),
-                about: sub.get_about().map(|s| s.to_string()),
+                about: sub.get_about().map(std::string::ToString::to_string),
                 subcommands: extract_commands(sub),
                 hidden: sub.is_hide_set(),
             })

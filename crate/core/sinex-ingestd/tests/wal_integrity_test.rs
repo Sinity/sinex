@@ -70,7 +70,7 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
         headers.insert("Offset", "0");
         js.publish_with_headers(
             ctx.pipeline_namespace()
-                .subject(&format!("source_material.slices.{}", material_id)),
+                .subject(&format!("source_material.slices.{material_id}")),
             headers,
             b"PART".to_vec().into(),
         )
@@ -116,7 +116,7 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
         headers.insert("Offset", "4");
         js.publish_with_headers(
             ctx.pipeline_namespace()
-                .subject(&format!("source_material.slices.{}", material_id)),
+                .subject(&format!("source_material.slices.{material_id}")),
             headers,
             b"IAL!".to_vec().into(),
         )

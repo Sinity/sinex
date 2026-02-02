@@ -101,7 +101,7 @@ fn default_bench_output_dir(timestamp: &str) -> PathBuf {
         })
         .unwrap_or_else(|| PathBuf::from("test-results"));
 
-    base_dir.join(format!("bench-nextest-{}", timestamp))
+    base_dir.join(format!("bench-nextest-{timestamp}"))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

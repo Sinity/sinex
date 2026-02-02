@@ -11,7 +11,7 @@ use tokio::time::Duration;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 
-/// Helper to publish a test event directly to JetStream.
+/// Helper to publish a test event directly to `JetStream`.
 async fn publish_event(
     nats_client: &async_nats::Client,
     namespace: &str,
@@ -133,8 +133,7 @@ async fn ingestion_handles_burst_under_latency_budget(ctx: TestContext) -> TestR
     let elapsed = start.elapsed();
     assert!(
         elapsed < Duration::from_secs(25),
-        "burst ingestion should complete well under 25s (got {:?})",
-        elapsed
+        "burst ingestion should complete well under 25s (got {elapsed:?})"
     );
 
     consumer_handle.abort();
@@ -247,8 +246,7 @@ async fn replaying_events_after_restart_does_not_duplicate(ctx: TestContext) -> 
         assert_eq!(
             occurrences.unwrap_or(0),
             1,
-            "event {} should remain unique after replay",
-            id
+            "event {id} should remain unique after replay"
         );
     }
 

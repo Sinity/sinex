@@ -1,10 +1,16 @@
-//! I/O operations for MaterialAssembler.
+//! I/O operations for `MaterialAssembler`.
 //!
 //! This module contains all file system operations, buffering logic, and git-annex
 //! interactions for the material assembler. Extracted to keep the main module
 //! focused on state management and orchestration.
 
-use super::{state::*, *};
+use super::{
+    state::{
+        AssemblerState, FinalizationState, MaterialEndMessage, WalEntry, BUFFER_DIR_NAME,
+        TEMP_FILE_NAME, WAL_FILE_NAME,
+    },
+    MaterialAssembler, MAX_BUFFERED_SLICES,
+};
 use crate::{IngestdResult, SinexError};
 use blake3::Hasher;
 use camino::Utf8PathBuf;
@@ -45,13 +51,13 @@ pub(super) async fn restore_state(assembler: &MaterialAssembler) -> IngestdResul
     while let Some(entry) = entries
         .next_entry()
         .await
-        .map_err(|e| SinexError::io(format!("Failed to iterate state directory: {}", e)))?
+        .map_err(|e| SinexError::io(format!("Failed to iterate state directory: {e}")))?
     {
         let path = entry.path();
         if !entry
             .file_type()
             .await
-            .map_err(|e| SinexError::io(format!("Failed to inspect state entry: {}", e)))?
+            .map_err(|e| SinexError::io(format!("Failed to inspect state entry: {e}")))?
             .is_dir()
         {
             continue;
@@ -91,7 +97,7 @@ async fn restore_state_params(
     // Open WAL for reading
     let mut wal_file = File::open(&wal_path)
         .await
-        .map_err(|e| SinexError::io(format!("Failed to open WAL for {}: {}", material_id, e)))?;
+        .map_err(|e| SinexError::io(format!("Failed to open WAL for {material_id}: {e}")))?;
 
     // Replay WAL
     let mut state_snapshot = ReplayedState::default();
@@ -99,7 +105,7 @@ async fn restore_state_params(
     wal_file
         .read_to_end(&mut content_buffer)
         .await
-        .map_err(|e| SinexError::io(format!("Failed to read WAL for {}: {}", material_id, e)))?;
+        .map_err(|e| SinexError::io(format!("Failed to read WAL for {material_id}: {e}")))?;
 
     let cursor = std::io::Cursor::new(content_buffer);
     let deserializer = serde_json::Deserializer::from_reader(cursor);
@@ -133,8 +139,7 @@ async fn restore_state_params(
         .await
         .map_err(|e| {
             SinexError::io(format!(
-                "Failed to open WAL for appending {}: {}",
-                material_id, e
+                "Failed to open WAL for appending {material_id}: {e}"
             ))
         })?;
 
@@ -146,7 +151,7 @@ async fn restore_state_params(
                 .append(true)
                 .open(&temp_path)
                 .await
-                .map_err(|e| SinexError::io(format!("Failed to open temp file: {}", e)))?,
+                .map_err(|e| SinexError::io(format!("Failed to open temp file: {e}")))?,
         )
     } else {
         None
@@ -264,13 +269,13 @@ async fn load_buffered_slices(buffers_dir: &PathBuf) -> IngestdResult<BTreeMap<i
     while let Some(buf_entry) = buffer_entries
         .next_entry()
         .await
-        .map_err(|e| SinexError::io(format!("Failed to iterate buffered slices: {}", e)))?
+        .map_err(|e| SinexError::io(format!("Failed to iterate buffered slices: {e}")))?
     {
         let buf_path = buf_entry.path();
         if !buf_entry
             .file_type()
             .await
-            .map_err(|e| SinexError::io(format!("Failed to inspect buffered slice: {}", e)))?
+            .map_err(|e| SinexError::io(format!("Failed to inspect buffered slice: {e}")))?
             .is_file()
         {
             continue;
@@ -307,7 +312,7 @@ pub(super) async fn append_wal_entry(
     if state.wal_file.is_none() {
         fs::create_dir_all(&state.state_dir)
             .await
-            .map_err(|e| SinexError::io(format!("Failed to ensure assembler state dir: {}", e)))?;
+            .map_err(|e| SinexError::io(format!("Failed to ensure assembler state dir: {e}")))?;
 
         let mut opts = fs::OpenOptions::new();
         opts.create(true).append(true).write(true); // .read(true) not needed for append
@@ -316,7 +321,7 @@ pub(super) async fn append_wal_entry(
         let file = opts
             .open(&state.state_dir.join(WAL_FILE_NAME))
             .await
-            .map_err(|e| SinexError::io(format!("Failed to open WAL file: {}", e)))?;
+            .map_err(|e| SinexError::io(format!("Failed to open WAL file: {e}")))?;
         state.wal_file = Some(file);
     }
 
@@ -327,14 +332,14 @@ pub(super) async fn append_wal_entry(
     if let Some(file) = state.wal_file.as_mut() {
         file.write_all(serialized.as_bytes())
             .await
-            .map_err(|e| SinexError::io(format!("WAL write failed: {}", e)))?;
+            .map_err(|e| SinexError::io(format!("WAL write failed: {e}")))?;
         file.write_all(b"\n")
             .await
-            .map_err(|e| SinexError::io(format!("WAL write newline failed: {}", e)))?;
+            .map_err(|e| SinexError::io(format!("WAL write newline failed: {e}")))?;
         // fsync for durability
         file.sync_all()
             .await
-            .map_err(|e| SinexError::io(format!("WAL sync failed: {}", e)))?;
+            .map_err(|e| SinexError::io(format!("WAL sync failed: {e}")))?;
     }
 
     Ok(())
@@ -386,10 +391,10 @@ pub(super) async fn cleanup_state(assembler: &MaterialAssembler, material_id: Ul
 /// # Edge Cases
 ///
 /// - **Early slice arrival**: Slices may arrive before the begin message due to separate
-///   JetStream subjects. A placeholder state is created to buffer slices until begin arrives.
+///   `JetStream` subjects. A placeholder state is created to buffer slices until begin arrives.
 /// - **Race condition on placeholder creation**: Multiple slices arriving concurrently for
 ///   a new material may attempt to create placeholders. `insert_state_handle` handles this
-///   via DashMap's entry API, ensuring only one placeholder wins.
+///   via `DashMap`'s entry API, ensuring only one placeholder wins.
 /// - **Dropped late slices**: If a material is already terminal (completed/failed), late-arriving
 ///   slices are silently dropped to avoid resurrection of completed assemblies.
 #[tracing::instrument(skip(assembler, data), fields(data_len = data.len(), lock_acquire_ms, lock_hold_ms))]
@@ -524,10 +529,10 @@ async fn append_slice_data(
     if state.temp_file.is_some() {
         if let Some(file) = state.temp_file.as_mut() {
             file.write_all(data).await.map_err(|e| {
-                SinexError::io(format!("Failed to write slice for {}: {}", material_id, e))
+                SinexError::io(format!("Failed to write slice for {material_id}: {e}"))
             })?;
             file.flush().await.map_err(|e| {
-                SinexError::io(format!("Failed to flush slice for {}: {}", material_id, e))
+                SinexError::io(format!("Failed to flush slice for {material_id}: {e}"))
             })?;
         }
     }
@@ -580,8 +585,7 @@ async fn flush_buffered_slices(
 
         let buffered_data = fs::read(&buf_path).await.map_err(|e| {
             SinexError::io(format!(
-                "Failed to read buffered slice {} for {}: {}",
-                next_offset, material_id, e
+                "Failed to read buffered slice {next_offset} for {material_id}: {e}"
             ))
         })?;
 
@@ -602,24 +606,24 @@ async fn persist_buffered_slice(
     let buffers_dir = state.buffers_dir();
     fs::create_dir_all(&buffers_dir)
         .await
-        .map_err(|e| SinexError::io(format!("Failed to create buffer dir: {}", e)))?;
+        .map_err(|e| SinexError::io(format!("Failed to create buffer dir: {e}")))?;
 
-    let buffer_path = buffers_dir.join(format!("{}.bin", offset));
+    let buffer_path = buffers_dir.join(format!("{offset}.bin"));
     let temp_path = buffers_dir.join(format!("{}.{}.tmp", offset, Ulid::new()));
     let mut file = fs::OpenOptions::new()
         .create_new(true)
         .write(true)
         .open(&temp_path)
         .await
-        .map_err(|e| SinexError::io(format!("Failed to persist buffered slice: {}", e)))?;
+        .map_err(|e| SinexError::io(format!("Failed to persist buffered slice: {e}")))?;
     file.write_all(data)
         .await
-        .map_err(|e| SinexError::io(format!("Failed to persist buffered slice: {}", e)))?;
+        .map_err(|e| SinexError::io(format!("Failed to persist buffered slice: {e}")))?;
     // PERF: Removed sync_all() to avoid IO saturation. Durability is handled by JS + WAL.
     // file.sync_all().await...
     fs::rename(&temp_path, &buffer_path)
         .await
-        .map_err(|e| SinexError::io(format!("Failed to persist buffered slice: {}", e)))?;
+        .map_err(|e| SinexError::io(format!("Failed to persist buffered slice: {e}")))?;
 
     Ok(buffer_path)
 }
@@ -655,22 +659,19 @@ pub(super) async fn import_into_annex(
                 .await
                 .map_err(|copy_err| {
                     SinexError::io(format!(
-                        "Failed to copy assembled file into annex: {}",
-                        copy_err
+                        "Failed to copy assembled file into annex: {copy_err}"
                     ))
                 })?;
             fs::remove_file(&state.temp_path)
                 .await
                 .map_err(|remove_err| {
                     SinexError::io(format!(
-                        "Failed to remove staging file after copy: {}",
-                        remove_err
+                        "Failed to remove staging file after copy: {remove_err}"
                     ))
                 })?;
         } else {
             return Err(SinexError::io(format!(
-                "Failed to move assembled file into annex: {}",
-                e
+                "Failed to move assembled file into annex: {e}"
             )));
         }
     }
@@ -679,7 +680,7 @@ pub(super) async fn import_into_annex(
         .annex
         .add_file(&relative_utf8)
         .await
-        .map_err(|e| SinexError::io(format!("git-annex add failed: {}", e)))?;
+        .map_err(|e| SinexError::io(format!("git-annex add failed: {e}")))?;
 
     Ok((annex_key, target_path))
 }

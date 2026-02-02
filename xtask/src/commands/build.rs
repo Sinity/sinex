@@ -43,7 +43,7 @@ impl BuildCommand {
     }
 }
 
-/// Parse cargo's JSON output format (duplicated from cargo_diagnostics to keep build.rs self-contained)
+/// Parse cargo's JSON output format (duplicated from `cargo_diagnostics` to keep build.rs self-contained)
 fn parse_cargo_json_output(output: &str, success: bool) -> Result<DiagnosticSummary> {
     let mut diagnostics = Vec::new();
     let mut errors = 0;
@@ -92,28 +92,28 @@ fn parse_diagnostic_message(
         .get("code")
         .and_then(|c| c.get("code"))
         .and_then(|c| c.as_str())
-        .map(|s| s.to_string());
+        .map(std::string::ToString::to_string);
 
     let rendered = msg
         .get("rendered")
         .and_then(|r| r.as_str())
-        .map(|s| s.to_string());
+        .map(std::string::ToString::to_string);
 
     let (file_path, line, column) = if let Some(spans) = msg.get("spans").and_then(|s| s.as_array())
     {
         spans
             .iter()
-            .find(|s| s.get("is_primary").and_then(|p| p.as_bool()) == Some(true))
+            .find(|s| s.get("is_primary").and_then(serde_json::Value::as_bool) == Some(true))
             .map_or((None, None, None), |span| {
                 (
                     span.get("file_name")
                         .and_then(|f| f.as_str())
-                        .map(|s| s.to_string()),
+                        .map(std::string::ToString::to_string),
                     span.get("line_start")
-                        .and_then(|l| l.as_u64())
+                        .and_then(serde_json::Value::as_u64)
                         .map(|l| l as u32),
                     span.get("column_start")
-                        .and_then(|c| c.as_u64())
+                        .and_then(serde_json::Value::as_u64)
                         .map(|c| c as u32),
                 )
             })
@@ -129,7 +129,7 @@ fn parse_diagnostic_message(
                 .iter()
                 .find(|child| child.get("level").and_then(|l| l.as_str()) == Some("help"))
                 .and_then(|help| help.get("message").and_then(|m| m.as_str()))
-                .map(|s| s.to_string())
+                .map(std::string::ToString::to_string)
         });
 
     Some(crate::cargo_diagnostics::CompilerDiagnostic {
@@ -205,14 +205,14 @@ impl XtaskCommand for BuildCommand {
             println!("Building packages...");
         }
 
-        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let args_refs: Vec<&str> = args.iter().map(std::string::String::as_str).collect();
         let summary = self.run_cargo_build(&args_refs)?;
 
         // Show rendered output for humans
         if ctx.is_human() {
             for diag in &summary.diagnostics {
                 if let Some(rendered) = &diag.rendered {
-                    eprint!("{}", rendered);
+                    eprint!("{rendered}");
                 }
             }
         }
@@ -220,7 +220,7 @@ impl XtaskCommand for BuildCommand {
         // Record diagnostics to history database
         if let Err(e) = ctx.record_diagnostics(&summary.diagnostics) {
             if ctx.is_human() {
-                eprintln!("Warning: failed to record diagnostics: {}", e);
+                eprintln!("Warning: failed to record diagnostics: {e}");
             }
         }
 

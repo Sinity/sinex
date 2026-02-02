@@ -66,7 +66,7 @@ impl Environment {
 
     pub(super) fn format_text(&self) -> String {
         format!(
-            r#"# Environment snapshot - {}
+            r"# Environment snapshot - {}
 
 ## System
 hostname={}
@@ -102,7 +102,7 @@ git_sha={}
 git_sha_short={}
 git_branch={}
 git_dirty={}
-"#,
+",
             self.timestamp,
             self.hostname,
             self.uname,

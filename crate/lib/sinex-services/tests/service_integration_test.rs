@@ -225,7 +225,7 @@ async fn test_service_lifecycle(ctx: TestContext) -> TestResult<()> {
 
     let specs: Vec<EventSpec> = (0..5)
         .map(|i| {
-            EventSpec::new("lifecycle-test", format!("lifecycle.event.{}", i))
+            EventSpec::new("lifecycle-test", format!("lifecycle.event.{i}"))
                 .with_payload(json!({
                     "step": i,
                     "description": format!("Lifecycle test step {}", i)

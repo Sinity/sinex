@@ -1,7 +1,7 @@
 //! Property tests for node architecture
 //!
 //! Tests that verify node communication, lifecycle, and coordination properties
-//! using modern Sinex infrastructure (NATS JetStream, TestContext, etc.)
+//! using modern Sinex infrastructure (NATS `JetStream`, `TestContext`, etc.)
 
 use proptest::prelude::*;
 use proptest::test_runner::TestCaseError;
@@ -12,7 +12,7 @@ use sinex_primitives::{Event, JsonValue};
 use std::time::Duration;
 use xtask::sandbox::{prelude::*, sinex_prop, sinex_proptest, test_event};
 
-/// Helper to convert color_eyre::Report errors to TestCaseError for property tests
+/// Helper to convert `color_eyre::Report` errors to `TestCaseError` for property tests
 fn report_to_test_error<E: std::fmt::Display>(e: E) -> TestCaseError {
     TestCaseError::Fail(e.to_string().into())
 }
@@ -538,8 +538,8 @@ async fn node_maintains_event_ordering_under_load(
         for window in source_events.windows(2) {
             let (payload1, payload2) = (&window[0].payload, &window[1].payload);
             if let (Some(id1), Some(id2)) = (
-                payload1.get("event_id").and_then(|v| v.as_u64()),
-                payload2.get("event_id").and_then(|v| v.as_u64()),
+                payload1.get("event_id").and_then(serde_json::Value::as_u64),
+                payload2.get("event_id").and_then(serde_json::Value::as_u64),
             ) {
                 // Within a source, event_ids should be sequential
                 assert!(

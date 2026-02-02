@@ -271,7 +271,7 @@ impl XtaskCommand for TestCommand {
         if ctx.is_human() {
             if let Ok(status) = resources::ResourceStatus::capture() {
                 if let Some(warning) = status.warning(resources::thresholds::CARGO_TEST_GB) {
-                    eprintln!("  ⚠ {}", warning);
+                    eprintln!("  ⚠ {warning}");
                 }
             }
         }
@@ -336,7 +336,7 @@ impl XtaskCommand for TestCommand {
         if self.dry_run {
             if let Some(ref filter) = affected_filter {
                 if ctx.is_human() {
-                    println!("Would run with filter: {}", filter);
+                    println!("Would run with filter: {filter}");
                 }
             }
             test_dry_run(profile, &self.args, ctx)?;
@@ -467,7 +467,7 @@ impl XtaskCommand for TestCommand {
             cmd_args.push("--ignored".to_string());
         }
 
-        let cmd_args_refs: Vec<&str> = cmd_args.iter().map(|s| s.as_str()).collect();
+        let cmd_args_refs: Vec<&str> = cmd_args.iter().map(std::string::String::as_str).collect();
 
         // --- EXECUTE & MONITOR ---
 
@@ -529,7 +529,7 @@ impl XtaskCommand for TestCommand {
                                             .get("name")
                                             .and_then(|s| s.as_str())
                                             .unwrap_or("?");
-                                        pb.set_message(format!("Running {}", name));
+                                        pb.set_message(format!("Running {name}"));
                                     }
                                     "test-finished" => {
                                         let result = json
@@ -546,7 +546,7 @@ impl XtaskCommand for TestCommand {
                                             .unwrap_or("unknown");
                                         let duration = json
                                             .get("exec-time")
-                                            .and_then(|v| v.as_f64())
+                                            .and_then(serde_json::Value::as_f64)
                                             .unwrap_or(0.0);
 
                                         // Capture stdout/stderr if any
@@ -616,7 +616,7 @@ impl XtaskCommand for TestCommand {
                                 if event == "started" {
                                     // This tells us the total usually
                                     if let Some(count) =
-                                        json.get("test-count").and_then(|v| v.as_u64())
+                                        json.get("test-count").and_then(serde_json::Value::as_u64)
                                     {
                                         total_tests = count;
                                         pb.set_length(count);
@@ -663,7 +663,7 @@ impl XtaskCommand for TestCommand {
                 "\n{}",
                 style("━━━━━━━━━━━━━━━━ TEST SUMMARY ━━━━━━━━━━━━━━━━").bold()
             );
-            println!("  Total:   {}", total_tests);
+            println!("  Total:   {total_tests}");
             println!("  Passed:  {}", style(tests_passed).green());
             println!(
                 "  Failed:  {}",
@@ -675,8 +675,8 @@ impl XtaskCommand for TestCommand {
             );
             println!("  Ignored: {}", style(tests_ignored).yellow());
             println!("  Duration: {:.2}s", ctx.elapsed().as_secs_f64());
-            println!("  Avg CPU:  {:.1}%", avg_cpu);
-            println!("  Max Mem:  {:.1} MB", max_mem);
+            println!("  Avg CPU:  {avg_cpu:.1}%");
+            println!("  Max Mem:  {max_mem:.1} MB");
             println!(
                 "{}",
                 style("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━").bold()
@@ -716,7 +716,7 @@ fn collect_tests_by_ignore_reason(
         "--message-format",
         "json",
     ];
-    let args_slice: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let args_slice: Vec<&str> = args.iter().map(std::string::String::as_str).collect();
     cmd_args.extend(args_slice);
 
     let output = ProcessBuilder::cargo()
@@ -755,17 +755,14 @@ pub fn run_heavy_tests(profile: &str, ctx: &CommandContext) -> Result<CommandRes
     let reasons = ["long", "external"];
 
     if ctx.is_human() {
-        println!(
-            "Analyzing workspace for heavy tests (reasons: {:?})...",
-            reasons
-        );
+        println!("Analyzing workspace for heavy tests (reasons: {reasons:?})...");
     }
 
     let test_ids = collect_tests_by_ignore_reason(profile, &[], &reasons)?;
 
     if test_ids.is_empty() {
         if ctx.is_human() {
-            println!("No heavy/ignored tests found (reasons: {:?}).", reasons);
+            println!("No heavy/ignored tests found (reasons: {reasons:?}).");
         }
         return Ok(CommandResult::success().with_detail("no heavy tests found"));
     }
@@ -775,16 +772,16 @@ pub fn run_heavy_tests(profile: &str, ctx: &CommandContext) -> Result<CommandRes
     // We escape each ID to be safe.
     let escaped: Vec<String> = test_ids.iter().map(|id| regex::escape(id)).collect();
     let id_re = format!("^({})$", escaped.join("|"));
-    let filter = format!("test({})", id_re);
+    let filter = format!("test({id_re})");
 
     if ctx.is_human() {
         println!("Running heavy tests: {} tests", test_ids.len());
         if test_ids.len() <= 10 {
             for id in &test_ids {
-                println!("  • {}", id);
+                println!("  • {id}");
             }
         }
-        println!("Filter: {}", filter);
+        println!("Filter: {filter}");
     }
 
     // Build nextest args
@@ -801,7 +798,7 @@ pub fn run_heavy_tests(profile: &str, ctx: &CommandContext) -> Result<CommandRes
         filter,
     ];
 
-    let cmd_args_refs: Vec<&str> = cmd_args.iter().map(|s| s.as_str()).collect();
+    let cmd_args_refs: Vec<&str> = cmd_args.iter().map(std::string::String::as_str).collect();
 
     ProcessBuilder::cargo()
         .args(&cmd_args_refs)
@@ -853,7 +850,7 @@ fn test_preflight(ctx: &CommandContext) -> Result<()> {
         println!(
             "  NATS:       {}",
             if nats_ok {
-                format!("✓ {}", nats_url)
+                format!("✓ {nats_url}")
             } else {
                 "✗ unavailable".into()
             }
@@ -922,11 +919,11 @@ fn test_list(
             .iter()
             .flat_map(|p| vec!["-p".to_string(), p.clone()])
             .collect();
-        let pkg_refs: Vec<&str> = pkg_args.iter().map(|s| s.as_str()).collect();
+        let pkg_refs: Vec<&str> = pkg_args.iter().map(std::string::String::as_str).collect();
         cmd_args.extend(pkg_refs);
     }
 
-    let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let args_refs: Vec<&str> = args.iter().map(std::string::String::as_str).collect();
     cmd_args.extend(&args_refs);
 
     ProcessBuilder::cargo()
@@ -960,7 +957,7 @@ fn test_dry_run(profile: &str, args: &[String], ctx: &CommandContext) -> Result<
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("nextest list failed: {}", stderr);
+        bail!("nextest list failed: {stderr}");
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -971,7 +968,7 @@ fn test_dry_run(profile: &str, args: &[String], ctx: &CommandContext) -> Result<
 
     for line in stdout.lines() {
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
-            if let Some(count) = json.get("test-count").and_then(|v| v.as_u64()) {
+            if let Some(count) = json.get("test-count").and_then(serde_json::Value::as_u64) {
                 test_count = count as usize;
             }
             if let Some(tests) = json.get("rust-suites").and_then(|v| v.as_array()) {
@@ -979,7 +976,7 @@ fn test_dry_run(profile: &str, args: &[String], ctx: &CommandContext) -> Result<
                     if let Some(pkg) = test
                         .get("package-name")
                         .and_then(|v| v.as_str())
-                        .map(|s| s.to_string())
+                        .map(std::string::ToString::to_string)
                     {
                         packages.insert(pkg);
                     }
@@ -989,9 +986,9 @@ fn test_dry_run(profile: &str, args: &[String], ctx: &CommandContext) -> Result<
     }
 
     if ctx.is_human() {
-        println!("  Test count: {}", test_count);
+        println!("  Test count: {test_count}");
         println!("  Packages:   {}", packages.len());
-        println!("  Profile:    {}", profile);
+        println!("  Profile:    {profile}");
         if !args.is_empty() {
             println!("  Args:       {}", args.join(" "));
         }

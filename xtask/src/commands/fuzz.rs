@@ -115,7 +115,7 @@ members = ["."]
     fs::write(fuzz_dir.join("Cargo.toml"), fuzz_cargo)?;
 
     // Create example fuzz target
-    let fuzz_target = r#"#![no_main]
+    let fuzz_target = r"#![no_main]
 
 use libfuzzer_sys::fuzz_target;
 use arbitrary::Arbitrary;
@@ -126,7 +126,7 @@ fuzz_target!(|data: &[u8]| {
     // Example: parse input, validate, etc.
     let _ = std::hint::black_box(data);
 });
-"#;
+";
 
     fs::write(
         fuzz_dir.join("fuzz_targets/fuzz_input_validation.rs"),
@@ -147,14 +147,11 @@ fuzz_target!(|data: &[u8]| {
             "  1. Edit {}/fuzz_targets/fuzz_input_validation.rs",
             fuzz_dir.display()
         );
-        println!(
-            "  2. Run: cargo xtask fuzz run {}::fuzz_input_validation",
-            package
-        );
+        println!("  2. Run: cargo xtask fuzz run {package}::fuzz_input_validation");
     }
 
     Ok(CommandResult::success()
-        .with_message(format!("Initialized fuzzing for {}", package))
+        .with_message(format!("Initialized fuzzing for {package}"))
         .with_detail(format!("Fuzz directory: {}", fuzz_dir.display()))
         .with_detail("Created fuzz_input_validation target".to_string())
         .with_duration(ctx.elapsed()))
@@ -212,7 +209,7 @@ fn execute_list(ctx: &CommandContext) -> Result<CommandResult> {
                 println!("Package: {pkg}");
                 current_pkg = pkg;
             }
-            println!("  - {}", target);
+            println!("  - {target}");
         }
     }
 
@@ -221,7 +218,7 @@ fn execute_list(ctx: &CommandContext) -> Result<CommandResult> {
         .with_duration(ctx.elapsed());
 
     for (pkg, target) in targets {
-        result = result.with_detail(format!("{}::{}", pkg, target));
+        result = result.with_detail(format!("{pkg}::{target}"));
     }
 
     Ok(result)
@@ -240,7 +237,7 @@ fn execute_run(
     if parts.len() != 2 {
         return Ok(CommandResult::failure(StructuredError {
             code: "INVALID_TARGET_FORMAT".to_string(),
-            message: format!("Invalid target format: {}", target),
+            message: format!("Invalid target format: {target}"),
             location: None,
             suggestion: Some(
                 "Use format 'crate::target_name' (e.g., sinex-db::fuzz_input_validation)"
@@ -257,7 +254,7 @@ fn execute_run(
         Err(_e) => {
             return Ok(CommandResult::failure(StructuredError {
                 code: "CRATE_NOT_FOUND".to_string(),
-                message: format!("Could not find crate: {}", crate_name),
+                message: format!("Could not find crate: {crate_name}"),
                 location: None,
                 suggestion: Some(
                     "Available locations checked: crate/lib, crate/core, crate/nodes, cli"
@@ -272,12 +269,9 @@ fn execute_run(
     if !fuzz_dir.exists() {
         return Ok(CommandResult::failure(StructuredError {
             code: "FUZZ_NOT_INITIALIZED".to_string(),
-            message: format!("Fuzz directory not found for {}", crate_name),
+            message: format!("Fuzz directory not found for {crate_name}"),
             location: Some(fuzz_dir.display().to_string()),
-            suggestion: Some(format!(
-                "Run: cargo xtask fuzz init --package {}",
-                crate_name
-            )),
+            suggestion: Some(format!("Run: cargo xtask fuzz init --package {crate_name}")),
         }));
     }
 
@@ -303,7 +297,7 @@ fn execute_run(
             println!("Max time: {max_time}s");
         }
         if let Some(j) = jobs {
-            println!("Jobs: {}", j);
+            println!("Jobs: {j}");
         }
         println!();
     }
@@ -316,7 +310,7 @@ fn execute_run(
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Ok(CommandResult::failure(StructuredError {
             code: "FUZZ_RUN_FAILED".to_string(),
-            message: format!("Fuzzing failed for {}", target),
+            message: format!("Fuzzing failed for {target}"),
             location: None,
             suggestion: Some(
                 "Check that cargo-fuzz and nightly toolchain are installed".to_string(),
@@ -331,9 +325,9 @@ fn execute_run(
     }
 
     Ok(CommandResult::success()
-        .with_message(format!("Completed fuzzing {}", target))
-        .with_detail(format!("Crate: {}", crate_name))
-        .with_detail(format!("Target: {}", target_name))
+        .with_message(format!("Completed fuzzing {target}"))
+        .with_detail(format!("Crate: {crate_name}"))
+        .with_detail(format!("Target: {target_name}"))
         .with_duration(ctx.elapsed()))
 }
 
@@ -344,7 +338,7 @@ fn execute_corpus(target: &str, ctx: &CommandContext) -> Result<CommandResult> {
     if parts.len() != 2 {
         return Ok(CommandResult::failure(StructuredError {
             code: "INVALID_TARGET_FORMAT".to_string(),
-            message: format!("Invalid target format: {}", target),
+            message: format!("Invalid target format: {target}"),
             location: None,
             suggestion: Some("Use format 'crate::target_name'".to_string()),
         }));

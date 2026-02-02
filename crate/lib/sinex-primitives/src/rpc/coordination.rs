@@ -20,7 +20,7 @@ pub struct InstanceInfo {
 // coordination.list_instances
 // ─────────────────────────────────────────────────────────────
 
-/// Request: coordination.list_instances
+/// Request: `coordination.list_instances`
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ListInstancesRequest {
     /// Filter by node type
@@ -28,7 +28,7 @@ pub struct ListInstancesRequest {
     pub node_type: Option<NodeType>,
 }
 
-/// Response: coordination.list_instances
+/// Response: `coordination.list_instances`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListInstancesResponse {
     pub instances: Vec<InstanceInfo>,
@@ -38,13 +38,13 @@ pub struct ListInstancesResponse {
 // coordination.get_leader
 // ─────────────────────────────────────────────────────────────
 
-/// Request: coordination.get_leader
+/// Request: `coordination.get_leader`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetLeaderRequest {
     pub node_type: NodeType,
 }
 
-/// Response: coordination.get_leader
+/// Response: `coordination.get_leader`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetLeaderResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -55,7 +55,7 @@ pub struct GetLeaderResponse {
 // coordination.instance_health
 // ─────────────────────────────────────────────────────────────
 
-/// Request: coordination.instance_health
+/// Request: `coordination.instance_health`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstanceHealthRequest {
     pub instance_id: InstanceId,
@@ -81,7 +81,7 @@ impl std::fmt::Display for ErrorInfo {
     }
 }
 
-/// Response: coordination.instance_health
+/// Response: `coordination.instance_health`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstanceHealthResponse {
     pub instance: InstanceInfo,

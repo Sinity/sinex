@@ -150,6 +150,7 @@ impl FileWatcher {
     }
 
     /// Get the current configuration
+    #[must_use]
     pub fn config(&self) -> &FileWatcherConfig {
         &self.config
     }

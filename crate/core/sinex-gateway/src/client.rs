@@ -48,7 +48,8 @@ pub struct GatewayClient {
 }
 
 impl GatewayClient {
-    /// Create a new builder for a GatewayClient.
+    /// Create a new builder for a `GatewayClient`.
+    #[must_use]
     pub fn builder() -> GatewayClientBuilder {
         GatewayClientBuilder::default()
     }
@@ -136,12 +137,14 @@ impl GatewayClientBuilder {
         self
     }
 
+    #[must_use]
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
     }
 
     /// Enable mTLS using a raw PKCS#12 or PEM identity.
+    #[must_use]
     pub fn identity(mut self, identity: Identity) -> Self {
         self.identity = Some(identity);
         self

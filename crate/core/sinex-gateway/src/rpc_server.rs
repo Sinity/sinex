@@ -4,7 +4,20 @@
 use crate::{
     distributed_rate_limit::{DistributedRateLimitConfig, DistributedRateLimiter},
     gateway_metrics::GatewayMetrics,
-    handlers::*,
+    handlers::{
+        handle_activity_heatmap, handle_audit_get, handle_coordination_get_leader,
+        handle_coordination_instance_health, handle_coordination_list_instances,
+        handle_create_entities, handle_create_note, handle_dlq_list, handle_dlq_peek,
+        handle_dlq_purge, handle_dlq_requeue, handle_event_count_by_source, handle_link_entities,
+        handle_nodes_drain, handle_nodes_list, handle_nodes_resume, handle_nodes_set_horizon,
+        handle_ops_cancel, handle_ops_get, handle_ops_list, handle_ops_start,
+        handle_replay_approve_operation, handle_replay_cancel_operation,
+        handle_replay_create_operation, handle_replay_execute_operation,
+        handle_replay_list_operations, handle_replay_operation_status,
+        handle_replay_preview_operation, handle_retrieve_blob, handle_search_events,
+        handle_shadow_create, handle_shadow_delete, handle_shadow_list, handle_sources_statistics,
+        handle_store_blob, handle_system_health,
+    },
     rate_limit::TokenRateLimiter,
     replay_control::ReplayControlClient,
     service_container::ServiceContainer,
@@ -105,7 +118,7 @@ struct UnknownMethodError {
     method: String,
 }
 
-/// Map SinexError variants to JSON-RPC error codes and messages.
+/// Map `SinexError` variants to JSON-RPC error codes and messages.
 ///
 /// Code ranges follow JSON-RPC 2.0 conventions:
 /// - -32700 to -32600: Protocol errors (parse, invalid request, etc.)
@@ -124,40 +137,40 @@ fn sinex_error_to_rpc_code(err: &sinex_primitives::error::SinexError) -> (i32, S
         SinexError::Parse(details) => (-32805, details.to_string()),
 
         // Server/infrastructure errors (5xx equivalent)
-        SinexError::Database(details) => (-32810, format!("Database error: {}", details)),
-        SinexError::Network(details) => (-32811, format!("Network error: {}", details)),
-        SinexError::Timeout(details) => (-32812, format!("Timeout: {}", details)),
+        SinexError::Database(details) => (-32810, format!("Database error: {details}")),
+        SinexError::Network(details) => (-32811, format!("Network error: {details}")),
+        SinexError::Timeout(details) => (-32812, format!("Timeout: {details}")),
         SinexError::ResourceExhausted(details) => {
-            (-32813, format!("Resource exhausted: {}", details))
+            (-32813, format!("Resource exhausted: {details}"))
         }
 
         // Service/processing errors
-        SinexError::Service(details) => (-32820, format!("Service error: {}", details)),
-        SinexError::Io(details) => (-32821, format!("IO error: {}", details)),
-        SinexError::Configuration(details) => (-32822, format!("Configuration error: {}", details)),
-        SinexError::Serialization(details) => (-32823, format!("Serialization error: {}", details)),
+        SinexError::Service(details) => (-32820, format!("Service error: {details}")),
+        SinexError::Io(details) => (-32821, format!("IO error: {details}")),
+        SinexError::Configuration(details) => (-32822, format!("Configuration error: {details}")),
+        SinexError::Serialization(details) => (-32823, format!("Serialization error: {details}")),
 
         // Cancellation and lifecycle
-        SinexError::Cancelled(details) => (-32830, format!("Cancelled: {}", details)),
+        SinexError::Cancelled(details) => (-32830, format!("Cancelled: {details}")),
         SinexError::MaxRetriesExceeded(details) => {
-            (-32831, format!("Max retries exceeded: {}", details))
+            (-32831, format!("Max retries exceeded: {details}"))
         }
 
         // Channel errors
-        SinexError::ChannelSend(details) => (-32840, format!("Channel send error: {}", details)),
+        SinexError::ChannelSend(details) => (-32840, format!("Channel send error: {details}")),
         SinexError::ChannelReceive(details) => {
-            (-32841, format!("Channel receive error: {}", details))
+            (-32841, format!("Channel receive error: {details}"))
         }
 
         // Domain-specific errors
-        SinexError::Kv(details) => (-32850, format!("KV store error: {}", details)),
-        SinexError::Automaton(details) => (-32851, format!("Automaton error: {}", details)),
-        SinexError::Checkpoint(details) => (-32852, format!("Checkpoint error: {}", details)),
-        SinexError::Lifecycle(details) => (-32853, format!("Lifecycle error: {}", details)),
-        SinexError::Processing(details) => (-32854, format!("Processing error: {}", details)),
+        SinexError::Kv(details) => (-32850, format!("KV store error: {details}")),
+        SinexError::Automaton(details) => (-32851, format!("Automaton error: {details}")),
+        SinexError::Checkpoint(details) => (-32852, format!("Checkpoint error: {details}")),
+        SinexError::Lifecycle(details) => (-32853, format!("Lifecycle error: {details}")),
+        SinexError::Processing(details) => (-32854, format!("Processing error: {details}")),
 
         // Fallback
-        SinexError::Unknown(details) => (-32899, format!("Unknown error: {}", details)),
+        SinexError::Unknown(details) => (-32899, format!("Unknown error: {details}")),
 
         // Non-exhaustive catch-all (future variants)
         _ => (-32603, "Internal server error".to_string()),
@@ -367,7 +380,7 @@ impl GatewayAuth {
 }
 
 /// Read RPC token from environment variables.
-/// Priority: SINEX_GATEWAY_ADMIN_TOKEN_FILE > SINEX_RPC_TOKEN_FILE > SINEX_RPC_TOKEN
+/// Priority: `SINEX_GATEWAY_ADMIN_TOKEN_FILE` > `SINEX_RPC_TOKEN_FILE` > `SINEX_RPC_TOKEN`
 ///
 /// Reserved for CLI tools and external consumers that need token access.
 #[allow(dead_code)]
@@ -500,6 +513,7 @@ impl RpcAuthContext {
     ///
     /// Native messaging uses stdin/stdout and doesn't go through HTTP auth,
     /// so we use a special "system" context to indicate trusted local calls.
+    #[must_use]
     pub fn system() -> Self {
         Self {
             token_prefix: "system".to_string(),
@@ -536,7 +550,7 @@ struct AppState {
     metrics: Arc<GatewayMetrics>,
 }
 
-/// Shared dispatch function for RPC methods (used by both rpc_server and native_messaging)
+/// Shared dispatch function for RPC methods (used by both `rpc_server` and `native_messaging`)
 ///
 /// # Method Dispatch Pattern
 ///
@@ -557,7 +571,7 @@ struct AppState {
 ///
 /// The `auth` parameter contains authenticated actor information for audit logging
 /// and authorization checks. Dangerous operations (dlq.requeue, ops.cancel, shadow.delete)
-/// should log the token_prefix for accountability.
+/// should log the `token_prefix` for accountability.
 pub async fn dispatch_rpc_method(
     services: &ServiceContainer,
     method: &str,
@@ -756,7 +770,7 @@ fn coordination_client(
     services
         .coordination
         .as_ref()
-        .map(|arc| arc.as_ref())
+        .map(std::convert::AsRef::as_ref)
         .ok_or_else(|| eyre!("Coordination client is not initialized (NATS connection required)"))
 }
 
@@ -931,7 +945,7 @@ async fn handle_rpc(
                 JsonRpcResponse::error(
                     request.id,
                     -32603,
-                    format!("Internal error (ref: {})", error_id),
+                    format!("Internal error (ref: {error_id})"),
                 )
             }
         }
@@ -986,7 +1000,7 @@ fn parse_tcp_listen(spec: &str) -> color_eyre::eyre::Result<(String, u16)> {
     ))
 }
 
-/// Bind a TCP listener with SO_REUSEPORT for seamless hot reload
+/// Bind a TCP listener with `SO_REUSEPORT` for seamless hot reload
 ///
 /// This allows multiple processes to bind to the same port simultaneously,
 /// enabling zero-downtime upgrades:
@@ -1129,13 +1143,13 @@ fn client_tls_required_override() -> bool {
 /// # Security Note (Issue 151 - LOW)
 ///
 /// The gateway currently requires mTLS for all TCP bindings. For deployments
-/// behind a reverse proxy (nginx, HAProxy, Envoy), the proxy should handle
+/// behind a reverse proxy (nginx, `HAProxy`, Envoy), the proxy should handle
 /// TLS termination and client authentication. In this configuration:
 ///
 /// - Bind gateway to 127.0.0.1 (loopback only)
 /// - Configure reverse proxy with TLS certificates
 /// - Set up client certificate verification in the proxy
-/// - Use SINEX_GATEWAY_REQUIRE_CLIENT_TLS=0 if proxy handles mTLS
+/// - Use `SINEX_GATEWAY_REQUIRE_CLIENT_TLS=0` if proxy handles mTLS
 ///
 /// For direct TLS support without a proxy, native rustls integration is already
 /// implemented in this file (see `load_rustls_config` and TLS acceptor logic).
@@ -1243,7 +1257,7 @@ async fn handle_layer_error(err: BoxError) -> impl IntoResponse {
         );
     }
 
-    let message = format!("Unhandled middleware error: {}", err);
+    let message = format!("Unhandled middleware error: {err}");
     rpc_layer_error_response(StatusCode::INTERNAL_SERVER_ERROR, -32099, message)
 }
 
@@ -1257,7 +1271,7 @@ fn rpc_layer_error_response(status: StatusCode, code: i32, message: String) -> i
 ///
 /// # CORS Configuration
 /// The `cors_origins` parameter controls allowed origins:
-/// - Empty: Only localhost origins allowed (http://localhost:*, http://127.0.0.1:*)
+/// - Empty: Only localhost origins allowed (<http://localhost>:*, <http://127.0.0.1>:*)
 /// - Non-empty: Only the specified origins allowed
 pub async fn run(
     tcp_listen: Option<&str>,
@@ -1331,10 +1345,10 @@ pub async fn run(
     warn_if_remote_bind(&bind_address);
 
     let BindAddress::Tcp { host, port } = bind_address;
-    let addr = format!("{}:{}", host, port);
+    let addr = format!("{host}:{port}");
     let listener = bind_with_reuseport(&addr)
         .await
-        .wrap_err_with(|| format!("Failed to bind TCP listener to {}", addr))?;
+        .wrap_err_with(|| format!("Failed to bind TCP listener to {addr}"))?;
     let tls_config = load_rustls_config(&cert_path, &key_path, client_ca.as_deref())?;
     let acceptor = TlsAcceptor::from(Arc::new(tls_config));
     info!("RPC server listening on TLS {}", addr);

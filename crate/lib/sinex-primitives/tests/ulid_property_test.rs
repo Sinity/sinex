@@ -360,7 +360,7 @@ fn arb_ulid_from_time_range(start: Timestamp, end: Timestamp) -> impl Strategy<V
     let end_ms = (end.unix_timestamp_nanos() / 1_000_000) as i64;
 
     (start_ms..=end_ms).prop_map(|ts_ms| {
-        let datetime = Timestamp::from_unix_timestamp_nanos(ts_ms as i128 * 1_000_000)
+        let datetime = Timestamp::from_unix_timestamp_nanos(i128::from(ts_ms) * 1_000_000)
             .unwrap_or(Timestamp::now());
         Ulid::from_datetime(datetime)
     })

@@ -1,7 +1,7 @@
 //! Domain-specific typed strings for the Sinex system
 //!
 //! This module provides strongly-typed string wrappers to prevent
-//! accidental mixing of different string types (e.g., EventSource vs EventType).
+//! accidental mixing of different string types (e.g., `EventSource` vs `EventType`).
 
 use camino::{Utf8Path, Utf8PathBuf};
 use schemars::JsonSchema;
@@ -89,7 +89,7 @@ macro_rules! define_string_type {
 }
 
 /// Macro to define a new string type that requires validation
-/// This version has a fallible FromStr implementation
+/// This version has a fallible `FromStr` implementation
 macro_rules! define_validated_string_type {
     ($(#[$meta:meta])* $name:ident) => {
         $(#[$meta])*
@@ -819,7 +819,13 @@ impl FromStr for Sha256Hash {
 
 #[cfg(feature = "sqlx")]
 mod sqlx_impls {
-    use super::*;
+    use super::{
+        AbsoluteUri, AnnexKey, Blake3Hash, BranchName, CommandText, CommitHash, ConsumerGroup,
+        ConsumerName, EntityTypeName, EventSource, EventType, GlobPattern, HostName, Hostname,
+        IngestorName, InstanceId, IpAddress, JobId, NatsSubject, NodeId, ProcessorName,
+        RegexPattern, RelationType, RelativePath, RemoteName, SanitizedPath, SchemaName,
+        SchemaVersion, ServiceName, Sha256Hash, ShellName, UserId,
+    };
 
     // Register string types without validation
     impl_sqlx_for_string_type!(EventSource);
@@ -990,6 +996,6 @@ impl FromStr for NatsSubject {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Entity;
 
-/// Marker type for EntityRelation IDs
+/// Marker type for `EntityRelation` IDs
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EntityRelation;

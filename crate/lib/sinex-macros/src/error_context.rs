@@ -247,8 +247,10 @@ pub fn with_context(attr: TokenStream, item: TokenStream) -> TokenStream {
                 if !suppress_warnings {
                     eprintln!(
                         "warning: unknown attribute '{}' in with_context macro",
-                        path.get_ident()
-                            .map_or_else(|| "<unknown>".to_string(), |i| i.to_string())
+                        path.get_ident().map_or_else(
+                            || "<unknown>".to_string(),
+                            std::string::ToString::to_string
+                        )
                     );
                 }
             }

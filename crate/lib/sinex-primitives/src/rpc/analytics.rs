@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 // analytics.event_count_by_source
 // ─────────────────────────────────────────────────────────────
 
-/// Request: analytics.event_count_by_source
+/// Request: `analytics.event_count_by_source`
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EventCountBySourceRequest {
     /// Number of days to look back (default: 7)
@@ -21,14 +21,14 @@ pub struct SourceCount {
     pub count: i64,
 }
 
-/// Response: analytics.event_count_by_source
+/// Response: `analytics.event_count_by_source`
 pub type EventCountBySourceResponse = Vec<SourceCount>;
 
 // ─────────────────────────────────────────────────────────────
 // analytics.activity_heatmap
 // ─────────────────────────────────────────────────────────────
 
-/// Request: analytics.activity_heatmap
+/// Request: `analytics.activity_heatmap`
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ActivityHeatmapRequest {
     /// Bucket size in minutes (default: 60, max: 1440)
@@ -46,14 +46,14 @@ pub struct HeatmapBucket {
     pub count: i64,
 }
 
-/// Response: analytics.activity_heatmap
+/// Response: `analytics.activity_heatmap`
 pub type ActivityHeatmapResponse = Vec<HeatmapBucket>;
 
 // ─────────────────────────────────────────────────────────────
 // analytics.sources_statistics
 // ─────────────────────────────────────────────────────────────
 
-/// Request: analytics.sources_statistics
+/// Request: `analytics.sources_statistics`
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SourcesStatisticsRequest {
     /// Limit number of sources (default: 100)
@@ -70,5 +70,5 @@ pub struct SourceStatistics {
     pub last_seen: Option<String>,
 }
 
-/// Response: analytics.sources_statistics
+/// Response: `analytics.sources_statistics`
 pub type SourcesStatisticsResponse = Vec<SourceStatistics>;

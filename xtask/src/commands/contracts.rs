@@ -120,11 +120,11 @@ fn execute_generate(output: &str, sync: bool, ctx: &CommandContext) -> Result<Co
         .with_context(|| "failed to spawn schema generate")?;
 
     if !status.success() {
-        bail!("contracts generate failed with status {}", status);
+        bail!("contracts generate failed with status {status}");
     }
 
     Ok(CommandResult::success()
-        .with_message(format!("Event payload schemas generated in {}", output))
+        .with_message(format!("Event payload schemas generated in {output}"))
         .with_duration(ctx.elapsed()))
 }
 
@@ -167,11 +167,11 @@ fn execute_deploy(input: &str, database_url: &str, ctx: &CommandContext) -> Resu
         .with_context(|| "failed to spawn contracts deploy")?;
 
     if !status.success() {
-        bail!("contracts deploy failed with status {}", status);
+        bail!("contracts deploy failed with status {status}");
     }
 
     Ok(CommandResult::success()
-        .with_message(format!("Event payload schemas deployed from {}", input))
+        .with_message(format!("Event payload schemas deployed from {input}"))
         .with_duration(ctx.elapsed()))
 }
 
@@ -221,7 +221,7 @@ fn execute_compat(base: Option<String>, glob: &str, ctx: &CommandContext) -> Res
             if ctx.is_human() {
                 println!("⚠️  Skipping deleted contract {file}");
             }
-            skipped.push(format!("{} (deleted)", file));
+            skipped.push(format!("{file} (deleted)"));
             continue;
         }
 
@@ -236,14 +236,14 @@ fn execute_compat(base: Option<String>, glob: &str, ctx: &CommandContext) -> Res
             if ctx.is_human() {
                 println!("➕ New contract {file} (no backward check required)");
             }
-            skipped.push(format!("{} (new)", file));
+            skipped.push(format!("{file} (new)"));
             continue;
         }
 
         let tmp = NamedTempFile::new()?;
         let old_contents = ProcessBuilder::git()
             .args(["show", &git_obj])
-            .with_description(format!("reading {}", git_obj))
+            .with_description(format!("reading {git_obj}"))
             .run()?;
 
         fs::write(tmp.path(), old_contents.stdout.as_bytes())?;
@@ -365,7 +365,7 @@ fn execute_info(query: &ContractsInfoQuery, ctx: &CommandContext) -> Result<Comm
             let names: Vec<_> = schema_names().collect();
             if ctx.is_human() {
                 for name in &names {
-                    println!("{}", name);
+                    println!("{name}");
                 }
             }
             Ok(CommandResult::success()
@@ -377,7 +377,7 @@ fn execute_info(query: &ContractsInfoQuery, ctx: &CommandContext) -> Result<Comm
             let grantable: Vec<_> = schemas_requiring_grants().map(|s| s.name).collect();
             if ctx.is_human() {
                 for name in &grantable {
-                    println!("{}", name);
+                    println!("{name}");
                 }
             }
             Ok(CommandResult::success()

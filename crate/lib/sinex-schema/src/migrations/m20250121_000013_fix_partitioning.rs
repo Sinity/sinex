@@ -20,13 +20,13 @@ impl MigrationTrait for Migration {
         manager
             .get_connection()
             .execute_unprepared(
-                r#"
+                r"
             CREATE OR REPLACE FUNCTION public.ulid_to_timestamptz(input ULID)
             RETURNS TIMESTAMPTZ
             AS 'SELECT (input::text::ulid)::timestamp AT TIME ZONE ''UTC'''
             LANGUAGE sql
             IMMUTABLE;
-            "#,
+            ",
             )
             .await?;
 
@@ -46,13 +46,13 @@ impl MigrationTrait for Migration {
         manager
             .get_connection()
             .execute_unprepared(
-                r#"
+                r"
             CREATE OR REPLACE FUNCTION public.ulid_to_timestamptz(input ULID)
             RETURNS TIMESTAMPTZ
             AS 'SELECT input::timestamp'
             LANGUAGE sql
             IMMUTABLE;
-            "#,
+            ",
             )
             .await?;
         Ok(())

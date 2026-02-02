@@ -160,6 +160,7 @@ impl EntityTypeMapper {
 }
 
 impl PkmService {
+    #[must_use]
     pub fn new(pool: DbPool) -> Self {
         Self { pool }
     }
@@ -211,8 +212,7 @@ impl PkmService {
 
         if source_material.is_none() {
             return Err(SinexError::not_found(format!(
-                "Source material {} not found",
-                source_material_id
+                "Source material {source_material_id} not found"
             ))
             .with_id("source_material_id", source_material_id));
         }
@@ -308,7 +308,7 @@ impl PkmService {
             .blobs()
             .find_by_blake3(&checksum)
             .await
-            .map_err(|e| SinexError::service(format!("blob lookup failed: {}", e)))?;
+            .map_err(|e| SinexError::service(format!("blob lookup failed: {e}")))?;
 
         if let Some(blob) = existing_blob {
             // Check if there's a source material for this blob
@@ -405,9 +405,10 @@ impl PkmService {
             .content_hash(sha256_checksum.clone())
             .original_filename("inline-content".to_string())
             .size_bytes(content.len() as i64)
-            .mime_type(
-                mime_type.map_or_else(|| "application/octet-stream".to_string(), |s| s.to_string()),
-            )
+            .mime_type(mime_type.map_or_else(
+                || "application/octet-stream".to_string(),
+                std::string::ToString::to_string,
+            ))
             .checksum_blake3(blake3_checksum)
             .build();
 
@@ -419,7 +420,7 @@ impl PkmService {
             .blobs()
             .insert_with_executor(&mut *tx, blob)
             .await
-            .map_err(|e| SinexError::service(format!("blob insert failed: {}", e)))?;
+            .map_err(|e| SinexError::service(format!("blob insert failed: {e}")))?;
 
         let content_preview = if mime_type.is_some_and(|m| m.starts_with("text/")) {
             Some(Self::create_safe_content_preview(content, mime_type))
@@ -536,7 +537,7 @@ impl PkmService {
                 content_str.into_owned()
             } else {
                 let truncated: String = content_str.chars().take(max_chars).collect();
-                format!("{}...", truncated)
+                format!("{truncated}...")
             }
         } else {
             format!("[Binary content - {} bytes]", content.len())

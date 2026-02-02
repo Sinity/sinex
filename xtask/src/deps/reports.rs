@@ -92,7 +92,7 @@ pub fn write_duplicates_report<W: Write>(
                         dup.versions.len()
                     )?;
                     for version in &dup.versions {
-                        writeln!(writer, "    - {}", version)?;
+                        writeln!(writer, "    - {version}")?;
                     }
                 }
 
@@ -179,7 +179,7 @@ pub fn write_unused_report_to_buffer<W: Write>(
     match format {
         "json" => {
             let json = serde_json::to_string_pretty(report)?;
-            writeln!(writer, "{}", json)?;
+            writeln!(writer, "{json}")?;
         }
         _ => {
             if report.unused.is_empty() {
@@ -206,9 +206,9 @@ pub fn write_unused_report_to_buffer<W: Write>(
                 }
 
                 for (package, deps) in by_package {
-                    writeln!(writer, "  {}:", package)?;
+                    writeln!(writer, "  {package}:")?;
                     for dep in deps {
-                        writeln!(writer, "    - {}", dep)?;
+                        writeln!(writer, "    - {dep}")?;
                     }
                 }
             }
@@ -231,7 +231,7 @@ pub fn write_timing_report_to_buffer<W: Write>(
     writeln!(writer, "Build Timing Analysis")?;
     writeln!(writer, "Total build time: {:.2}s\n", report.total_time_secs)?;
 
-    writeln!(writer, "Top {} slowest crates:", top)?;
+    writeln!(writer, "Top {top} slowest crates:")?;
     for (i, crate_info) in report.crate_times.iter().take(top).enumerate() {
         let percent = (crate_info.duration_secs / report.total_time_secs) * 100.0;
         writeln!(

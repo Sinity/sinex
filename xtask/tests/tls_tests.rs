@@ -265,13 +265,11 @@ fn test_generated_certificates_are_valid_pem() {
         let content = fs::read_to_string(output_path.join(cert_name)).unwrap();
         assert!(
             content.contains("-----BEGIN CERTIFICATE-----"),
-            "{} should have BEGIN CERTIFICATE header",
-            cert_name
+            "{cert_name} should have BEGIN CERTIFICATE header"
         );
         assert!(
             content.contains("-----END CERTIFICATE-----"),
-            "{} should have END CERTIFICATE footer",
-            cert_name
+            "{cert_name} should have END CERTIFICATE footer"
         );
     }
 
@@ -280,13 +278,11 @@ fn test_generated_certificates_are_valid_pem() {
         let content = fs::read_to_string(output_path.join(key_name)).unwrap();
         assert!(
             content.contains("-----BEGIN PRIVATE KEY-----"),
-            "{} should have BEGIN PRIVATE KEY header",
-            key_name
+            "{key_name} should have BEGIN PRIVATE KEY header"
         );
         assert!(
             content.contains("-----END PRIVATE KEY-----"),
-            "{} should have END PRIVATE KEY footer",
-            key_name
+            "{key_name} should have END PRIVATE KEY footer"
         );
     }
 }
@@ -833,19 +829,18 @@ fn test_generate_certs_with_various_validity_periods() {
         let config = CertConfig {
             output_dir: output_path.clone(),
             san: vec!["localhost".to_string()],
-            ca_name: format!("{} Day Test CA", days),
+            ca_name: format!("{days} Day Test CA"),
             validity_days: days,
             force: false,
         };
 
         generate_dev_certs(&config)
-            .unwrap_or_else(|_| panic!("Certificate generation should succeed for {} days", days));
+            .unwrap_or_else(|_| panic!("Certificate generation should succeed for {days} days"));
 
         // Just verify files exist
         assert!(
             output_path.join("ca.pem").exists(),
-            "CA should exist for {} day validity",
-            days
+            "CA should exist for {days} day validity"
         );
     }
 }

@@ -3,10 +3,10 @@
 //! Tests cover:
 //! - Commands with invalid arguments
 //! - Timeout handling
-//! - ProcessBuilder error cases
+//! - `ProcessBuilder` error cases
 //! - JSON output format validation
-//! - CommandContext behavior
-//! - CommandResult construction
+//! - `CommandContext` behavior
+//! - `CommandResult` construction
 
 use assert_cmd::cargo::cargo_bin_cmd;
 use predicates::prelude::*;
@@ -30,8 +30,7 @@ fn test_process_builder_nonexistent_command() {
     let err = result.unwrap_err().to_string();
     assert!(
         err.contains("failed to spawn") || err.contains("No such file"),
-        "Error should indicate spawn failure: {}",
-        err
+        "Error should indicate spawn failure: {err}"
     );
 }
 
@@ -45,8 +44,7 @@ fn test_process_builder_command_not_found_with_description() {
     let err = result.unwrap_err().to_string();
     assert!(
         err.contains("my custom operation"),
-        "Error should include description: {}",
-        err
+        "Error should include description: {err}"
     );
 }
 
@@ -58,8 +56,7 @@ fn test_process_builder_command_exits_with_error() {
     let err = result.unwrap_err().to_string();
     assert!(
         err.contains("failed") || err.contains("exit code"),
-        "Error should mention failure: {}",
-        err
+        "Error should mention failure: {err}"
     );
 }
 
@@ -74,8 +71,7 @@ fn test_process_builder_command_exits_with_error_code() {
     let err = result.unwrap_err().to_string();
     assert!(
         err.contains("exit code 42") || err.contains("failed"),
-        "Error should mention exit code: {}",
-        err
+        "Error should mention exit code: {err}"
     );
 }
 
@@ -89,8 +85,7 @@ fn test_process_builder_stderr_captured_on_error() {
     let err = result.unwrap_err().to_string();
     assert!(
         err.contains("error message"),
-        "Error should include stderr output: {}",
-        err
+        "Error should include stderr output: {err}"
     );
 }
 
@@ -571,8 +566,7 @@ fn test_cli_redundant_json_options() {
         // Should not be a cryptic error
         assert!(
             stderr.contains("fmt") || stderr.contains("check") || stderr.contains("error"),
-            "Should give a clear error, not cryptic failure: {}",
-            stderr
+            "Should give a clear error, not cryptic failure: {stderr}"
         );
     }
 }
@@ -593,7 +587,7 @@ fn test_json_output_is_valid_json() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         // Parse as JSON to validate
         let parsed: Result<serde_json::Value, _> = serde_json::from_str(&stdout);
-        assert!(parsed.is_ok(), "Output should be valid JSON: {}", stdout);
+        assert!(parsed.is_ok(), "Output should be valid JSON: {stdout}");
     }
 }
 
@@ -633,8 +627,7 @@ fn test_json_output_status_values() {
         let status = parsed.get("status").and_then(|s| s.as_str());
         assert!(
             matches!(status, Some("success" | "failed" | "partial" | "running")),
-            "status should be a valid value: {:?}",
-            status
+            "status should be a valid value: {status:?}"
         );
     }
 }
@@ -653,8 +646,7 @@ fn test_json_output_for_failing_command() {
         let parsed: Result<serde_json::Value, _> = serde_json::from_str(&stdout);
         assert!(
             parsed.is_ok(),
-            "Even failing commands should output valid JSON: {}",
-            stdout
+            "Even failing commands should output valid JSON: {stdout}"
         );
     }
 }

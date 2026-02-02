@@ -194,13 +194,13 @@ mod serde_tests {
         // ULIDs should appear as strings
         assert!(json.contains(&format!("\"{}\"", event.id)));
         if let Some(material_id) = event.source_material_id {
-            assert!(json.contains(&format!("\"{}\"", material_id)));
+            assert!(json.contains(&format!("\"{material_id}\"")));
         }
 
         // Arrays of ULIDs should serialize correctly
         if let Some(ref source_event_ids) = event.source_event_ids {
             for ulid in source_event_ids {
-                assert!(json.contains(&format!("\"{}\"", ulid)));
+                assert!(json.contains(&format!("\"{ulid}\"")));
             }
         }
         Ok(())
@@ -236,8 +236,7 @@ mod serde_tests {
         let diff = (*event.ts_orig - *deserialized.ts_orig).whole_milliseconds();
         assert!(
             diff.abs() <= 1,
-            "DateTime should round-trip accurately, got {}ms difference",
-            diff
+            "DateTime should round-trip accurately, got {diff}ms difference"
         );
         Ok(())
     }

@@ -350,7 +350,7 @@ pub(super) async fn handle_begin(
                 .append(true)
                 .open(&state.temp_path)
                 .await
-                .map_err(|e| SinexError::io(format!("Failed to open temp file: {}", e)))?;
+                .map_err(|e| SinexError::io(format!("Failed to open temp file: {e}")))?;
             state.temp_file = Some(temp_file);
         }
 

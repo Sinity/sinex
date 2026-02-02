@@ -58,15 +58,15 @@ pub enum TlsCommand {
 
     /// Verify TLS configuration and certificates
     Check {
-        /// Path to certificate file (or reads from SINEX_GATEWAY_TLS_CERT)
+        /// Path to certificate file (or reads from `SINEX_GATEWAY_TLS_CERT`)
         #[arg(long)]
         cert: Option<PathBuf>,
 
-        /// Path to private key file (or reads from SINEX_GATEWAY_TLS_KEY)
+        /// Path to private key file (or reads from `SINEX_GATEWAY_TLS_KEY`)
         #[arg(long)]
         key: Option<PathBuf>,
 
-        /// Path to CA certificate for mTLS (or reads from SINEX_GATEWAY_TLS_CLIENT_CA)
+        /// Path to CA certificate for mTLS (or reads from `SINEX_GATEWAY_TLS_CLIENT_CA`)
         #[arg(long)]
         ca: Option<PathBuf>,
 
@@ -299,7 +299,7 @@ fn setup_env(
         .open(output)?;
 
     if append {
-        content = format!("\n{}", content);
+        content = format!("\n{content}");
     }
 
     file.write_all(content.as_bytes())?;

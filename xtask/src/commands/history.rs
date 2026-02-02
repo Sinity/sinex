@@ -149,7 +149,7 @@ fn execute_list(
                 let profile = inv.profile.as_deref().unwrap_or("-");
                 let duration = inv
                     .duration_secs
-                    .map_or_else(|| "-".into(), |d| format!("{:.1}s", d));
+                    .map_or_else(|| "-".into(), |d| format!("{d:.1}s"));
                 let status = format!("{:?}", inv.status).to_lowercase();
                 println!(
                     "{:<6} {:<12} {:<10} {:<10} {:>8}  {}",
@@ -185,12 +185,12 @@ fn execute_last(db: &HistoryDb, command: &str, ctx: &CommandContext) -> Result<C
     if ctx.is_human() {
         match &inv {
             Some(inv) => {
-                println!("Last {} invocation:", command);
+                println!("Last {command} invocation:");
                 println!("  ID:       {}", inv.id);
                 println!("  Status:   {:?}", inv.status);
                 println!("  Started:  {}", inv.started_at);
                 if let Some(d) = inv.duration_secs {
-                    println!("  Duration: {:.2}s", d);
+                    println!("  Duration: {d:.2}s");
                 }
                 if let Some(c) = &inv.git_commit {
                     println!(
@@ -200,7 +200,7 @@ fn execute_last(db: &HistoryDb, command: &str, ctx: &CommandContext) -> Result<C
                     );
                 }
             }
-            None => println!("No history for command: {}", command),
+            None => println!("No history for command: {command}"),
         }
     } else {
         let json = serde_json::to_string_pretty(&inv)?;
@@ -208,9 +208,9 @@ fn execute_last(db: &HistoryDb, command: &str, ctx: &CommandContext) -> Result<C
     }
 
     let message = if inv.is_some() {
-        format!("Last invocation for '{}'", command)
+        format!("Last invocation for '{command}'")
     } else {
-        format!("No history for command '{}'", command)
+        format!("No history for command '{command}'")
     };
 
     Ok(CommandResult::success()
@@ -227,16 +227,16 @@ fn execute_stats(
     let stats = db.get_stats(command, days)?;
 
     if ctx.is_human() {
-        println!("Statistics for '{}' (last {} days):", command, days);
+        println!("Statistics for '{command}' (last {days} days):");
         println!("  Total:     {}", stats.total);
         println!("  Successes: {}", stats.successes);
         println!("  Failures:  {}", stats.failures);
         if let Some(avg) = stats.avg_duration_secs {
-            println!("  Avg time:  {:.2}s", avg);
+            println!("  Avg time:  {avg:.2}s");
         }
         if stats.total > 0 {
             let rate = (stats.successes as f64 / stats.total as f64) * 100.0;
-            println!("  Success:   {:.1}%", rate);
+            println!("  Success:   {rate:.1}%");
         }
     } else {
         let json = serde_json::to_string_pretty(&stats)?;
@@ -244,7 +244,7 @@ fn execute_stats(
     }
 
     Ok(CommandResult::success()
-        .with_message(format!("Statistics for '{}' over {} days", command, days))
+        .with_message(format!("Statistics for '{command}' over {days} days"))
         .with_duration(ctx.elapsed()))
 }
 
@@ -252,16 +252,13 @@ fn execute_prune(db: &HistoryDb, older_than: u32, ctx: &CommandContext) -> Resul
     let count = db.prune(older_than)?;
 
     if ctx.is_human() {
-        println!("Pruned {} entries older than {} days", count, older_than);
+        println!("Pruned {count} entries older than {older_than} days");
     } else {
-        println!(
-            r#"{{"pruned": {}, "older_than_days": {}}}"#,
-            count, older_than
-        );
+        println!(r#"{{"pruned": {count}, "older_than_days": {older_than}}}"#);
     }
 
     Ok(CommandResult::success()
-        .with_message(format!("Pruned {} old entries", count))
+        .with_message(format!("Pruned {count} old entries"))
         .with_duration(ctx.elapsed()))
 }
 
@@ -318,10 +315,7 @@ fn execute_tests_slowest(
                 } else {
                     name.clone()
                 };
-                println!(
-                    "{:<50} {:<20} {:>10.3} {:>6}",
-                    display_name, package, avg, runs
-                );
+                println!("{display_name:<50} {package:<20} {avg:>10.3} {runs:>6}");
             }
         }
     } else {
@@ -380,10 +374,7 @@ fn execute_tests_getting_slower(
 
     if ctx.is_human() {
         if tests.is_empty() {
-            println!(
-                "No tests found slowing >{}% over {} runs.",
-                threshold_pct, window
-            );
+            println!("No tests found slowing >{threshold_pct}% over {window} runs.");
         } else {
             let mut builder = Builder::new();
             builder.push_record(["TEST", "PACKAGE", "OLD (s)", "NEW (s)", "CHANGE"]);
@@ -435,7 +426,7 @@ fn execute_tests_trends(
                 );
                 for (i, duration) in test.durations.iter().enumerate() {
                     let timestamp = test.timestamps.get(i).map_or("-", |s| s.as_str());
-                    println!("  {}: {:.3}s", timestamp, duration);
+                    println!("  {timestamp}: {duration:.3}s");
                 }
                 println!();
             }
@@ -474,7 +465,7 @@ fn execute_diagnostics(
                         } else {
                             path.clone()
                         };
-                        format!("{}:{}", short_path, line)
+                        format!("{short_path}:{line}")
                     }
                     (Some(path), None) => {
                         if path.len() > 48 {
@@ -520,7 +511,7 @@ fn execute_tests_eta(db: &HistoryDb, ctx: &CommandContext) -> Result<CommandResu
             if !estimate.breakdown.is_empty() && estimate.breakdown.len() <= 10 {
                 println!("\nBreakdown by package:");
                 for (pkg, secs) in &estimate.breakdown {
-                    println!("  {:<30} {:>6.1}s", pkg, secs);
+                    println!("  {pkg:<30} {secs:>6.1}s");
                 }
             }
         }

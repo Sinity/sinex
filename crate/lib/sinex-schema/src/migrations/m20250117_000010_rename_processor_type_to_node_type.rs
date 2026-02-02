@@ -1,11 +1,11 @@
-//! Rename processor_type column to node_type in processor_manifests
+//! Rename `processor_type` column to `node_type` in `processor_manifests`
 //!
 //! Part of the satellite→node terminology migration. The column describes
 //! the type of node (ingestor, automaton, agent, system), aligning with
-//! the NodeType enum in the schema definition.
+//! the `NodeType` enum in the schema definition.
 //!
-//! This migration is conditional - it only renames if processor_type exists.
-//! New databases created with the updated schema already have node_type.
+//! This migration is conditional - it only renames if `processor_type` exists.
+//! New databases created with the updated schema already have `node_type`.
 
 use sea_orm_migration::prelude::*;
 
@@ -19,7 +19,7 @@ impl MigrationTrait for Migration {
         manager
             .get_connection()
             .execute_unprepared(
-                r#"
+                r"
                 DO $$
                 BEGIN
                     IF EXISTS (
@@ -31,7 +31,7 @@ impl MigrationTrait for Migration {
                         ALTER TABLE core.processor_manifests RENAME COLUMN processor_type TO node_type;
                     END IF;
                 END $$;
-                "#,
+                ",
             )
             .await?;
         Ok(())
@@ -42,7 +42,7 @@ impl MigrationTrait for Migration {
         manager
             .get_connection()
             .execute_unprepared(
-                r#"
+                r"
                 DO $$
                 BEGIN
                     IF EXISTS (
@@ -54,7 +54,7 @@ impl MigrationTrait for Migration {
                         ALTER TABLE core.processor_manifests RENAME COLUMN node_type TO processor_type;
                     END IF;
                 END $$;
-                "#,
+                ",
             )
             .await?;
         Ok(())

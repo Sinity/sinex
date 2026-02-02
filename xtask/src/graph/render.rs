@@ -125,7 +125,7 @@ impl DotRenderer {
     /// * `graph` - The workspace graph to render
     ///
     /// # Returns
-    /// A new DotRenderer instance
+    /// A new `DotRenderer` instance
     pub fn new(graph: WorkspaceGraph) -> Self {
         Self {
             graph,
@@ -209,7 +209,7 @@ impl Renderer for DotRenderer {
         // Add nodes for all packages in the filtered set
         for pkg in &packages {
             let escaped_name = Self::escape_label(pkg.name());
-            dot.push_str(&format!("  \"{}\";\n", escaped_name));
+            dot.push_str(&format!("  \"{escaped_name}\";\n"));
         }
 
         dot.push('\n');
@@ -241,7 +241,7 @@ impl Renderer for DotRenderer {
                 {
                     let escaped_from = Self::escape_label(&from_name);
                     let escaped_to = Self::escape_label(&to_name);
-                    dot.push_str(&format!("  \"{}\" -> \"{}\";\n", escaped_from, escaped_to));
+                    dot.push_str(&format!("  \"{escaped_from}\" -> \"{escaped_to}\";\n"));
                 }
             }
         }
@@ -334,7 +334,7 @@ impl AsciiRenderer {
     fn style_package(&self, name: &str, is_focus: bool) -> String {
         if is_focus {
             // Cyan + bold for focus package: \x1b[1;36m = bold cyan, \x1b[0m = reset
-            format!("\x1b[1;36m{}\x1b[0m", name)
+            format!("\x1b[1;36m{name}\x1b[0m")
         } else {
             name.to_string()
         }
@@ -349,7 +349,7 @@ impl AsciiRenderer {
     /// The styled string with ANSI gray color codes
     fn style_tree_chars(&self, chars: &str) -> String {
         // Gray (bright black) color: \x1b[90m = bright black, \x1b[0m = reset
-        format!("\x1b[90m{}\x1b[0m", chars)
+        format!("\x1b[90m{chars}\x1b[0m")
     }
 
     fn render_tree(

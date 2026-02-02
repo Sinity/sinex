@@ -138,6 +138,7 @@ impl<T: Validate> ValidateExt for T {
 }
 
 /// Format validation errors into a user-friendly message
+#[must_use]
 pub fn format_validation_errors(errors: &ValidationErrors) -> String {
     let mut messages = Vec::new();
 
@@ -181,6 +182,7 @@ pub fn format_validation_errors(errors: &ValidationErrors) -> String {
 }
 
 /// Format validation errors with additional context
+#[must_use]
 pub fn format_validation_errors_with_context(errors: &ValidationErrors, context: &str) -> String {
     let base_message = format_validation_errors(errors);
     format!("{context}: {base_message}")

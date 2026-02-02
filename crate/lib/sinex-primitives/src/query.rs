@@ -16,16 +16,19 @@ impl Pagination {
     pub const MAX_LIMIT: i64 = 1000;
 
     /// Construct pagination using standard defaults.
+    #[must_use]
     pub fn new(limit: Option<i64>, offset: Option<i64>) -> Self {
         Self::with_bounds(limit, offset, Self::DEFAULT_LIMIT, Self::MAX_LIMIT)
     }
 
     /// Construct pagination with a custom default limit but global max.
+    #[must_use]
     pub fn with_default(limit: Option<i64>, offset: Option<i64>, default_limit: i64) -> Self {
         Self::with_bounds(limit, offset, default_limit, Self::MAX_LIMIT)
     }
 
     /// Construct pagination with fully custom defaults and max limit.
+    #[must_use]
     pub fn with_bounds(
         limit: Option<i64>,
         offset: Option<i64>,
@@ -52,6 +55,7 @@ impl Pagination {
     }
 
     /// Apply a tighter max limit post-construction (useful for endpoints with stricter caps).
+    #[must_use]
     pub fn clamp_max(self, max_limit: i64) -> Self {
         assert!(max_limit > 0, "max pagination limit must be positive");
         let limit = self.limit.min(max_limit);
@@ -61,14 +65,17 @@ impl Pagination {
         }
     }
 
+    #[must_use]
     pub fn limit(&self) -> i64 {
         self.limit
     }
 
+    #[must_use]
     pub fn offset(&self) -> i64 {
         self.offset
     }
 
+    #[must_use]
     pub fn as_tuple(&self) -> (i64, i64) {
         (self.limit, self.offset)
     }
@@ -105,14 +112,17 @@ impl TimeRange {
         Ok(Self { start, end })
     }
 
+    #[must_use]
     pub fn start(&self) -> Option<Timestamp> {
         self.start
     }
 
+    #[must_use]
     pub fn end(&self) -> Option<Timestamp> {
         self.end
     }
 
+    #[must_use]
     pub fn contains(&self, ts: Timestamp) -> bool {
         if let Some(start) = self.start {
             if ts < start {

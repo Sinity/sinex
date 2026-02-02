@@ -1,4 +1,4 @@
-//! JetStream idempotency scenarios.
+//! `JetStream` idempotency scenarios.
 
 use async_nats::jetstream;
 use serde_json::json;
@@ -12,7 +12,7 @@ use tokio::sync::RwLock;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{WaitHelpers, DEFAULT_WAIT_SECS};
 
-/// Helper to publish a test event directly to JetStream.
+/// Helper to publish a test event directly to `JetStream`.
 async fn publish_event(
     nats_client: &async_nats::Client,
     namespace: &str,

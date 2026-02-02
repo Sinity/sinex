@@ -125,7 +125,7 @@ pub(super) fn parse_nextest_output(output: &str) -> Vec<TestResult> {
                 // Combine stdout/stderr for output
                 let output = match (stdout, stderr) {
                     (Some(out), Some(err)) if !out.is_empty() || !err.is_empty() => {
-                        Some(format!("stdout:\n{}\nstderr:\n{}", out, err))
+                        Some(format!("stdout:\n{out}\nstderr:\n{err}"))
                     }
                     (Some(out), _) if !out.is_empty() => Some(out),
                     (_, Some(err)) if !err.is_empty() => Some(err),
@@ -149,7 +149,7 @@ pub(super) fn parse_nextest_output(output: &str) -> Vec<TestResult> {
 }
 
 /// Parse nextest test name format to extract package and test name.
-/// Format: "crate::binary$module::path::test_name"
+/// Format: "`crate::binary$module::path::test_name`"
 #[cfg(test)]
 fn parse_test_name(full_name: &str, default_package: &str) -> (String, String) {
     // Example: "xtask::xtask$bench::stats::tests::test_mean"
@@ -175,11 +175,11 @@ impl HistoryDb {
         let mut stored = 0;
         for result in results {
             self.conn.execute(
-                r#"
+                r"
                 INSERT OR REPLACE INTO test_results
                     (invocation_id, test_name, package, status, duration_secs, attempt, output)
                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-                "#,
+                ",
                 rusqlite::params![
                     invocation_id,
                     result.test_name,
@@ -199,12 +199,12 @@ impl HistoryDb {
     #[allow(dead_code)]
     pub fn get_test_results(&self, invocation_id: i64) -> Result<Vec<TestResult>> {
         let mut stmt = self.conn.prepare(
-            r#"
+            r"
             SELECT test_name, package, status, duration_secs, attempt, output
             FROM test_results
             WHERE invocation_id = ?1
             ORDER BY package, test_name
-            "#,
+            ",
         )?;
 
         let rows = stmt.query_map([invocation_id], |row| {
@@ -226,7 +226,7 @@ impl HistoryDb {
     /// Get flaky tests (tests that failed then passed on retry).
     pub fn get_flaky_tests(&self, limit: usize) -> Result<Vec<(String, String, i64)>> {
         let mut stmt = self.conn.prepare(
-            r#"
+            r"
             SELECT DISTINCT t1.test_name, t1.package, t1.invocation_id
             FROM test_results t1
             WHERE t1.status = 'fail'
@@ -239,7 +239,7 @@ impl HistoryDb {
               )
             ORDER BY t1.invocation_id DESC
             LIMIT ?1
-            "#,
+            ",
         )?;
 
         let rows = stmt.query_map([limit], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
@@ -252,7 +252,7 @@ impl HistoryDb {
     #[allow(dead_code)]
     pub fn get_failing_tests(&self, limit: usize) -> Result<Vec<(String, String, f64)>> {
         let mut stmt = self.conn.prepare(
-            r#"
+            r"
             SELECT t.test_name, t.package, COALESCE(t.duration_secs, 0) as duration
             FROM test_results t
             INNER JOIN (
@@ -263,7 +263,7 @@ impl HistoryDb {
             WHERE t.status = 'fail'
             ORDER BY t.test_name
             LIMIT ?1
-            "#,
+            ",
         )?;
 
         let rows = stmt.query_map([limit], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
@@ -275,14 +275,14 @@ impl HistoryDb {
     /// Get slowest tests by average duration.
     pub fn get_slowest_tests(&self, limit: usize) -> Result<Vec<(String, String, f64, i64)>> {
         let mut stmt = self.conn.prepare(
-            r#"
+            r"
             SELECT test_name, package, AVG(duration_secs) as avg_duration, COUNT(*) as runs
             FROM test_results
             WHERE duration_secs IS NOT NULL
             GROUP BY test_name, package
             ORDER BY avg_duration DESC
             LIMIT ?1
-            "#,
+            ",
         )?;
 
         let rows = stmt.query_map([limit], |row| {
@@ -310,7 +310,7 @@ impl HistoryDb {
         }
 
         let mut stmt = self.conn.prepare(
-            r#"
+            r"
             WITH ranked_results AS (
                 SELECT
                     t.test_name,
@@ -350,7 +350,7 @@ impl HistoryDb {
               AND ((r.avg_duration - o.avg_duration) / o.avg_duration * 100) > ?3
             ORDER BY pct_change DESC
             LIMIT ?4
-            "#,
+            ",
         )?;
 
         let rows = stmt.query_map(
@@ -380,11 +380,11 @@ impl HistoryDb {
         package: Option<&str>,
         runs: usize,
     ) -> Result<Vec<TestTrendDetail>> {
-        let pattern_like = pattern.map(|p| format!("%{}%", p));
-        let package_like = package.map(|p| format!("%{}%", p));
+        let pattern_like = pattern.map(|p| format!("%{p}%"));
+        let package_like = package.map(|p| format!("%{p}%"));
 
         let mut stmt = self.conn.prepare(
-            r#"
+            r"
             SELECT
                 t.test_name,
                 t.package,
@@ -397,14 +397,14 @@ impl HistoryDb {
               AND (?1 IS NULL OR t.test_name LIKE ?1)
               AND (?2 IS NULL OR t.package LIKE ?2)
             ORDER BY t.test_name, t.package, i.started_at DESC
-            "#,
+            ",
         )?;
 
         let all_rows: Vec<(String, String, f64, String)> = stmt
             .query_map(rusqlite::params![pattern_like, package_like], |row| {
                 Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
             })?
-            .filter_map(|r| r.ok())
+            .filter_map(std::result::Result::ok)
             .collect();
 
         // Group by test name and take first `runs` entries per test
@@ -449,7 +449,7 @@ impl HistoryDb {
     pub fn estimate_runtime(&self) -> Result<RuntimeEstimate> {
         // Get average duration for all tests from recent runs
         let mut stmt = self.conn.prepare(
-            r#"
+            r"
             SELECT
                 t.package,
                 AVG(t.duration_secs) as avg_duration,
@@ -461,7 +461,7 @@ impl HistoryDb {
               AND i.command = 'test'
               AND i.started_at > datetime('now', '-7 days')
             GROUP BY t.package
-            "#,
+            ",
         )?;
 
         let mut total_secs = 0.0;

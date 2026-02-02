@@ -1,4 +1,4 @@
-//! JetStream stress/regression tests for ingestd pipeline throughput.
+//! `JetStream` stress/regression tests for ingestd pipeline throughput.
 
 use async_nats::{jetstream, HeaderMap};
 use serde_json::json;
@@ -29,7 +29,7 @@ async fn dlq_message_count(
     }
 }
 
-/// Helper to publish raw bytes directly to JetStream (for DLQ testing)
+/// Helper to publish raw bytes directly to `JetStream` (for DLQ testing)
 async fn publish_raw_bytes(
     nats_client: &async_nats::Client,
     namespace: &str,

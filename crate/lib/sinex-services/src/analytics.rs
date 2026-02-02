@@ -41,6 +41,7 @@ pub struct SourceStatistics {
 const ANALYTICS_POOL_ACQUIRE_TIMEOUT: Duration = Duration::from_millis(40);
 
 impl AnalyticsService {
+    #[must_use]
     pub fn new(pool: DbPool) -> Self {
         Self { pool }
     }
@@ -134,8 +135,8 @@ impl AnalyticsService {
                 event_count: row.event_count,
                 event_type_count: row.event_type_count,
                 host_count: row.host_count,
-                first_event: row.first_event.map(|t| t.into()),
-                last_event: row.last_event.map(|t| t.into()),
+                first_event: row.first_event.map(std::convert::Into::into),
+                last_event: row.last_event.map(std::convert::Into::into),
                 avg_ingest_delay: row.avg_ingest_delay,
             })
             .collect();
@@ -254,7 +255,7 @@ impl AnalyticsService {
         let mut conn = self.acquire_connection().await?;
         let rows = match (start_time, end_time) {
             (Some(start), Some(end)) => sqlx::query(
-                r#"
+                r"
                 SELECT
                     payload->>'command' as command,
                     COUNT(*) as count
@@ -266,7 +267,7 @@ impl AnalyticsService {
                 GROUP BY payload->>'command'
                 ORDER BY count DESC
                 LIMIT $3
-                "#,
+                ",
             )
             .bind(*start)
             .bind(*end)
@@ -275,7 +276,7 @@ impl AnalyticsService {
             .await
             .map_err(|e| db_error(e, "top commands"))?,
             _ => sqlx::query(
-                r#"
+                r"
                 SELECT
                     payload->>'command' as command,
                     COUNT(*) as count
@@ -285,7 +286,7 @@ impl AnalyticsService {
                 GROUP BY payload->>'command'
                 ORDER BY count DESC
                 LIMIT $1
-                "#,
+                ",
             )
             .bind(limit)
             .fetch_all(&mut *conn)
@@ -370,7 +371,7 @@ impl AnalyticsService {
     }
 }
 
-/// Helper function to create PgInterval from minutes
+/// Helper function to create `PgInterval` from minutes
 fn minutes_to_interval(minutes: i32) -> PgInterval {
     PgInterval {
         months: 0,

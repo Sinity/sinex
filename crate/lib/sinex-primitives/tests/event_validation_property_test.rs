@@ -2,9 +2,9 @@
 
 //! Event Validation Property Tests
 //!
-//! Migrated from test/property/event_validation_property_test.rs to modern infrastructure.
+//! Migrated from `test/property/event_validation_property_test.rs` to modern infrastructure.
 //! This module contains property-based tests for event validation using the modern
-//! RawEvent::schemaless() builder pattern and updated validation architecture.
+//! `RawEvent::schemaless()` builder pattern and updated validation architecture.
 
 use serde_json::Value;
 use sinex_db::validation::EventValidator;
@@ -294,7 +294,7 @@ sinex_proptest! {
     ) -> TestResult<()> {
         let mut ids: Vec<Ulid> = events
             .iter()
-            .filter_map(|e| e.id.map(|id| id.into()))
+            .filter_map(|e| e.id.map(std::convert::Into::into))
             .collect();
 
         let unique_ids: std::collections::HashSet<_> = ids.iter().copied().collect();
@@ -412,7 +412,7 @@ sinex_proptest! {
         // Property: Events should have unique IDs and maintain ordering
         let mut ids: Vec<Ulid> = events
             .iter()
-            .filter_map(|e| e.id.map(|id| id.into()))
+            .filter_map(|e| e.id.map(std::convert::Into::into))
             .collect();
 
         // Check uniqueness (though IDs are generated and should be unique)

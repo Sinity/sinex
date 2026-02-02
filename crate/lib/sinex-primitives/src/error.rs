@@ -116,14 +116,17 @@ impl ErrorDetails {
         self
     }
 
+    #[must_use]
     pub fn message(&self) -> &str {
         &self.message
     }
 
+    #[must_use]
     pub fn context_map(&self) -> &IndexMap<String, String> {
         &self.context
     }
 
+    #[must_use]
     pub fn sources(&self) -> &[String] {
         &self.sources
     }
@@ -427,10 +430,12 @@ impl SinexError {
         self.with_context(key, id.to_string())
     }
 
+    #[must_use]
     pub fn with_count(self, count: usize) -> Self {
         self.with_context("count", count)
     }
 
+    #[must_use]
     pub fn with_duration(self, duration: std::time::Duration) -> Self {
         self.with_context("duration_ms", duration.as_millis())
     }
@@ -478,18 +483,22 @@ impl SinexError {
         }
     }
 
+    #[must_use]
     pub fn message(&self) -> &str {
         self.details().message()
     }
 
+    #[must_use]
     pub fn context_map(&self) -> &IndexMap<String, String> {
         self.details().context_map()
     }
 
+    #[must_use]
     pub fn sources(&self) -> &[String] {
         self.details().sources()
     }
 
+    #[must_use]
     pub fn variant_name(&self) -> &'static str {
         use SinexError::{
             AlreadyExists, Automaton, BlobStorage, Cancelled, ChannelReceive, ChannelSend,
@@ -536,6 +545,7 @@ impl SinexError {
     }
 
     // Helper methods for error categorization (used in tests)
+    #[must_use]
     pub fn is_retryable(&self) -> bool {
         use SinexError::{ChannelReceive, ChannelSend, Network, Timeout, Unknown};
         matches!(
@@ -544,6 +554,7 @@ impl SinexError {
         )
     }
 
+    #[must_use]
     pub fn is_client_error(&self) -> bool {
         use SinexError::{AlreadyExists, NotFound, PermissionDenied, Validation};
         matches!(
@@ -552,6 +563,7 @@ impl SinexError {
         )
     }
 
+    #[must_use]
     pub fn is_permanent(&self) -> bool {
         use SinexError::{Configuration, MaxRetriesExceeded, PermissionDenied};
         matches!(
@@ -560,6 +572,7 @@ impl SinexError {
         )
     }
 
+    #[must_use]
     pub fn status_code(&self) -> u16 {
         use SinexError::{
             AlreadyExists, NotFound, PermissionDenied, ResourceExhausted, Timeout, Validation,
@@ -601,7 +614,7 @@ where
     T: std::clone::Clone + std::fmt::Debug + std::fmt::Display + std::cmp::PartialEq,
 {
     fn from(e: async_nats::error::Error<T>) -> Self {
-        SinexError::nats(format!("{}", e))
+        SinexError::nats(format!("{e}"))
     }
 }
 

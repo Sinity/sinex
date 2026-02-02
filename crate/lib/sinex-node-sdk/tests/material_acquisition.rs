@@ -148,7 +148,7 @@ async fn material_acquisition_cancel_mid_slice(ctx: TestContext) -> Result<()> {
                         material
                             .metadata
                             .get("cancelled")
-                            .and_then(|value| value.as_bool())
+                            .and_then(sinex_primitives::JsonValue::as_bool)
                             .unwrap_or(false),
                     )
                 }
@@ -231,7 +231,7 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
         headers.insert("Chunk-Hash", chunk_hash.as_str());
 
         js.publish_with_headers(
-            env.nats_subject(&format!("source_material.slices.{}", material_id)),
+            env.nats_subject(&format!("source_material.slices.{material_id}")),
             headers,
             data.into(),
         )
@@ -393,7 +393,7 @@ async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
         headers.insert("Chunk-Hash", chunk_hash.as_str());
 
         js.publish_with_headers(
-            env.nats_subject(&format!("source_material.slices.{}", material_id)),
+            env.nats_subject(&format!("source_material.slices.{material_id}")),
             headers,
             data.into(),
         )
@@ -495,7 +495,7 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
                 };
                 let expected_offset = persisted
                     .get("expected_offset")
-                    .and_then(|value| value.as_i64())
+                    .and_then(sinex_primitives::JsonValue::as_i64)
                     .unwrap_or(0);
                 Ok(expected_offset >= first_chunk.len() as i64)
             }
@@ -714,8 +714,8 @@ async fn material_acquisition_rotation_by_size(ctx: TestContext) -> Result<()> {
             let pool = ctx.pool.clone();
             async move {
                 let material_count: Option<i64> = sqlx::query_scalar(
-                    r#"SELECT COUNT(*) FROM raw.source_material_registry
-                       WHERE status = 'completed'"#,
+                    r"SELECT COUNT(*) FROM raw.source_material_registry
+                       WHERE status = 'completed'",
                 )
                 .fetch_one(&pool)
                 .await?;

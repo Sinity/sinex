@@ -84,6 +84,7 @@ pub struct TokenRateLimiter {
 
 impl TokenRateLimiter {
     /// Create a new token rate limiter with the given configuration
+    #[must_use]
     pub fn new(config: RateLimitConfig) -> Self {
         Self {
             limiters: DashMap::new(),
@@ -92,11 +93,13 @@ impl TokenRateLimiter {
     }
 
     /// Create a rate limiter from environment configuration
+    #[must_use]
     pub fn from_env() -> Self {
         Self::new(RateLimitConfig::from_env())
     }
 
     /// Check if rate limiting is enabled
+    #[must_use]
     pub fn is_enabled(&self) -> bool {
         self.config.enabled
     }
@@ -158,11 +161,13 @@ impl TokenRateLimiter {
     }
 
     /// Get the current number of tracked tokens
+    #[must_use]
     pub fn token_count(&self) -> usize {
         self.limiters.len()
     }
 
     /// Spawn a background cleanup task
+    #[must_use]
     pub fn spawn_cleanup_task(
         self: Arc<Self>,
         mut shutdown: tokio::sync::watch::Receiver<bool>,
@@ -207,8 +212,7 @@ mod tests {
         for i in 0..50 {
             assert!(
                 limiter.check("test-token").is_ok(),
-                "Request {} should succeed within burst capacity",
-                i
+                "Request {i} should succeed within burst capacity"
             );
         }
 

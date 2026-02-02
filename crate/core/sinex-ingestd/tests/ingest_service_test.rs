@@ -165,8 +165,7 @@ async fn test_batch_ingestion(ctx: TestContext) -> Result<()> {
         assert_eq!(
             retrieved.id,
             Some(*event_id),
-            "Batch event {} should match stored ID",
-            idx
+            "Batch event {idx} should match stored ID"
         );
     }
 
@@ -333,7 +332,10 @@ async fn test_source_and_type_patterns(ctx: TestContext) -> Result<()> {
     );
 
     tracing::info!(
-        total_events = events_by_source.values().map(|v| v.len()).sum::<usize>(),
+        total_events = events_by_source
+            .values()
+            .map(std::vec::Vec::len)
+            .sum::<usize>(),
         unique_sources = events_by_source.len(),
         "Source and type patterns validated"
     );
@@ -353,7 +355,7 @@ async fn test_ingestion_performance(ctx: TestContext) -> Result<()> {
 
     let start_time = std::time::Instant::now();
     let run_id = Ulid::new();
-    let source = format!("performance-test-{}", run_id);
+    let source = format!("performance-test-{run_id}");
 
     // Generate a small batch of events to test throughput without hitting test timeouts.
     let target_events = 20usize;
@@ -419,10 +421,7 @@ async fn test_ingestion_performance(ctx: TestContext) -> Result<()> {
 
     assert!(
         persisted >= processed_events,
-        "All performance test events should be persisted for source {} (saw {}, expected {})",
-        source,
-        persisted,
-        processed_events
+        "All performance test events should be persisted for source {source} (saw {persisted}, expected {processed_events})"
     );
 
     let duration = start_time.elapsed();
@@ -438,16 +437,13 @@ async fn test_ingestion_performance(ctx: TestContext) -> Result<()> {
     // Verify reasonable performance (should process at least 1 event/second to avoid flake on slow hosts)
     assert!(
         events_per_second >= 1.0,
-        "Ingestion service should maintain reasonable throughput even under load: {} events/second",
-        events_per_second
+        "Ingestion service should maintain reasonable throughput even under load: {events_per_second} events/second"
     );
 
     // Verify all events were processed
     assert!(
         processed_events >= target_events,
-        "All performance test events should be processed (processed {}, target {})",
-        processed_events,
-        target_events
+        "All performance test events should be processed (processed {processed_events}, target {target_events})"
     );
 
     Ok(())
@@ -700,9 +696,7 @@ async fn test_schema_validation_patterns(ctx: TestContext) -> Result<()> {
 
         assert!(
             event.id.is_some(),
-            "Event with source {} and type {} should be stored",
-            source,
-            event_type
+            "Event with source {source} and type {event_type} should be stored"
         );
     }
 
@@ -765,8 +759,7 @@ async fn test_payload_validation_patterns(ctx: TestContext) -> Result<()> {
 
         assert!(
             event.id.is_some(),
-            "Payload pattern '{}' should be valid",
-            pattern_name
+            "Payload pattern '{pattern_name}' should be valid"
         );
 
         tracing::debug!(pattern = %pattern_name, "Payload validation pattern passed");
@@ -903,8 +896,7 @@ async fn test_resource_management(ctx: TestContext) -> Result<()> {
 
             assert!(
                 event.id.is_some(),
-                "Event with payload size {} should be stored",
-                payload_size
+                "Event with payload size {payload_size} should be stored"
             );
         }
     }

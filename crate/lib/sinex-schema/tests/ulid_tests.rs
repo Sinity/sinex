@@ -164,7 +164,7 @@ mod monotonic_tests {
         // Generate many ULIDs and ensure no collisions
         for _ in 0..10000 {
             let ulid = Ulid::new();
-            assert!(seen.insert(ulid), "Collision detected: {}", ulid);
+            assert!(seen.insert(ulid), "Collision detected: {ulid}");
         }
 
         assert_eq!(seen.len(), 10000);
@@ -203,7 +203,7 @@ mod monotonic_tests {
         // Verify no collisions across threads
         let mut unique_ulids = HashSet::new();
         for ulid in &all_ulids {
-            assert!(unique_ulids.insert(*ulid), "Collision detected: {}", ulid);
+            assert!(unique_ulids.insert(*ulid), "Collision detected: {ulid}");
         }
 
         // Sort all ULIDs and verify monotonic property holds globally
@@ -230,7 +230,7 @@ mod parsing_tests {
 
         for case in valid_cases {
             let result = case.parse::<Ulid>();
-            assert!(result.is_ok(), "Should parse '{}' successfully", case);
+            assert!(result.is_ok(), "Should parse '{case}' successfully");
         }
         Ok(())
     }
@@ -274,9 +274,7 @@ mod parsing_tests {
             let result = case.parse::<Ulid>();
             assert!(
                 result.is_err(),
-                "Should fail to parse '{}': {}",
-                case,
-                description
+                "Should fail to parse '{case}': {description}"
             );
 
             if let Err(UlidError::InvalidFormat(msg)) = result {
@@ -470,7 +468,7 @@ mod edge_case_tests {
     #[sinex_test]
     fn test_ulid_debug_format() -> TestResult<()> {
         let ulid = Ulid::new();
-        let debug_str = format!("{:?}", ulid);
+        let debug_str = format!("{ulid:?}");
 
         // Debug format should include "Ulid(" and the string representation
         assert!(debug_str.starts_with("Ulid("));

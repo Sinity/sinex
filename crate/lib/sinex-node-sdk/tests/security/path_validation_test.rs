@@ -39,7 +39,7 @@ async fn test_path_validation_rejects_traversal_attacks(ctx: TestContext) -> Tes
         ctx.assert("path validation should reject dangerous paths")
             .that(
                 result.is_err(),
-                &format!("Path '{}' should be rejected", dangerous_path),
+                &format!("Path '{dangerous_path}' should be rejected"),
             )?;
 
         // SecurityValidator should also reject these
@@ -47,7 +47,7 @@ async fn test_path_validation_rejects_traversal_attacks(ctx: TestContext) -> Tes
         ctx.assert("security validator should reject dangerous paths")
             .that(
                 sanitize_result.is_err(),
-                &format!("SecurityValidator should reject '{}'", dangerous_path),
+                &format!("SecurityValidator should reject '{dangerous_path}'"),
             )?;
     }
 
@@ -76,7 +76,7 @@ async fn test_path_validation_allows_safe_paths(ctx: TestContext) -> TestResult<
         ctx.assert("path validation should accept safe paths")
             .that(
                 result.is_ok(),
-                &format!("Path '{}' should be accepted", safe_path),
+                &format!("Path '{safe_path}' should be accepted"),
             )?;
 
         // SecurityValidator should also accept these
@@ -84,7 +84,7 @@ async fn test_path_validation_allows_safe_paths(ctx: TestContext) -> TestResult<
         ctx.assert("security validator should accept safe paths")
             .that(
                 sanitize_result.is_ok(),
-                &format!("SecurityValidator should accept '{}'", safe_path),
+                &format!("SecurityValidator should accept '{safe_path}'"),
             )?;
     }
 
@@ -230,8 +230,7 @@ async fn test_unicode_and_null_byte_handling() -> TestResult<()> {
             // Null bytes should be rejected
             assert!(
                 result.is_err(),
-                "Path with null bytes should be rejected: '{:?}'",
-                dangerous_string
+                "Path with null bytes should be rejected: '{dangerous_string:?}'"
             );
         }
 
@@ -242,8 +241,7 @@ async fn test_unicode_and_null_byte_handling() -> TestResult<()> {
             // Null bytes should be removed
             assert!(
                 !sanitized.contains('\0'),
-                "Null bytes should be removed from: '{:?}'",
-                dangerous_string
+                "Null bytes should be removed from: '{dangerous_string:?}'"
             );
         }
     }

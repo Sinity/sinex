@@ -247,9 +247,9 @@ fn parse_trusted_entries(raw: String) -> Vec<TrustedExtension> {
 
 fn parse_csv_entries(raw: String) -> Vec<String> {
     raw.split(',')
-        .map(|entry| entry.trim())
+        .map(str::trim)
         .filter(|entry| !entry.is_empty())
-        .map(|entry| entry.to_string())
+        .map(std::string::ToString::to_string)
         .collect()
 }
 
@@ -439,7 +439,7 @@ async fn process_message(
     let _guard = span.enter();
 
     if let Err(err) = config.enforce_metadata(&message) {
-        return NativeResponse::error(message_id, format!("Native messaging rejected: {}", err));
+        return NativeResponse::error(message_id, format!("Native messaging rejected: {err}"));
     }
 
     // Handle different message types
@@ -466,7 +466,7 @@ async fn process_message(
     }
 }
 
-/// Dispatch RPC method to appropriate handler (shared with rpc_server)
+/// Dispatch RPC method to appropriate handler (shared with `rpc_server`)
 async fn dispatch_method(
     services: &ServiceContainer,
     method: &str,

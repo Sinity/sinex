@@ -49,7 +49,7 @@ impl<'a> RpcParams<'a> {
     }
 
     fn optional_i64(&self, key: &str) -> Option<i64> {
-        self.inner.get(key).and_then(|v| v.as_i64())
+        self.inner.get(key).and_then(serde_json::Value::as_i64)
     }
 
     fn require_value(&self, key: &str) -> Result<&'a Value> {
@@ -127,16 +127,16 @@ pub(crate) fn validate_entity_link_ids(from: &Id<Entity>, to: &Id<Entity>) -> Re
 /// Base64 encoding expands data by ~1.33x (4 chars per 3 bytes). When handling
 /// blob uploads via RPC, ensure:
 ///
-/// - SINEX_GATEWAY_MAX_BODY_BYTES >= SINEX_GATEWAY_MAX_BLOB_BYTES * 1.4
+/// - `SINEX_GATEWAY_MAX_BODY_BYTES` >= `SINEX_GATEWAY_MAX_BLOB_BYTES` * 1.4
 ///   (1.4 accounts for base64 overhead plus JSON envelope)
 ///
 /// Default configuration:
-/// - Body limit: 2MB (SINEX_GATEWAY_MAX_BODY_BYTES)
-/// - Blob limit: 5MB (SINEX_GATEWAY_MAX_BLOB_BYTES)
+/// - Body limit: 2MB (`SINEX_GATEWAY_MAX_BODY_BYTES`)
+/// - Blob limit: 5MB (`SINEX_GATEWAY_MAX_BLOB_BYTES`)
 ///
 /// This mismatch is intentional: the body limit applies to the raw HTTP request,
 /// while the blob limit applies to decoded content. For large blobs, clients should
-/// increase SINEX_GATEWAY_MAX_BODY_BYTES proportionally.
+/// increase `SINEX_GATEWAY_MAX_BODY_BYTES` proportionally.
 pub(crate) fn decode_blob_content(content_b64: &str, limit: usize) -> Result<Vec<u8>> {
     let max_encoded = max_base64_length(limit);
     if content_b64.len() > max_encoded {
@@ -338,7 +338,9 @@ pub async fn handle_create_entities(service: &PkmService, params: Value) -> Resu
     let entity_ids = service
         .create_entities_from_source_material(source_material_id, entities, created_by)
         .await?;
-    Ok(json!({ "entity_ids": entity_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>() }))
+    Ok(
+        json!({ "entity_ids": entity_ids.iter().map(std::string::ToString::to_string).collect::<Vec<_>>() }),
+    )
 }
 
 pub async fn handle_link_entities(service: &PkmService, params: Value) -> Result<Value> {
@@ -466,7 +468,9 @@ pub async fn handle_replay_cancel_operation(
 ) -> Result<Value> {
     let params = RpcParams::new(&params);
     let operation_id = params.require_ulid("operation_id")?;
-    let reason = params.optional_str("reason").map(|s| s.to_string());
+    let reason = params
+        .optional_str("reason")
+        .map(std::string::ToString::to_string);
     let operation = client.cancel(operation_id, reason).await?;
     Ok(json!({ "cancelled": true, "operation": operation }))
 }
@@ -500,7 +504,7 @@ use sinex_primitives::rpc::coordination::{
     InstanceHealthResponse, InstanceInfo, ListInstancesResponse,
 };
 
-/// Convert InstanceMetadata to InstanceInfo for RPC response
+/// Convert `InstanceMetadata` to `InstanceInfo` for RPC response
 fn metadata_to_instance_info(
     meta: &sinex_primitives::coordination::InstanceMetadata,
     is_leader: bool,

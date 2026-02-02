@@ -271,13 +271,11 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult<()> {
     }
 
     println!(
-        "Expected gap: {}, Detected gap: {} (total events observed: {})",
-        expected_gap, detected_gap, observed
+        "Expected gap: {expected_gap}, Detected gap: {detected_gap} (total events observed: {observed})"
     );
     assert!(
         detected_gap >= 1,
-        "Should detect at least one checkpoint gap (detected {}, expected at least 1)",
-        detected_gap
+        "Should detect at least one checkpoint gap (detected {detected_gap}, expected at least 1)"
     );
 
     // Cleanup
@@ -302,7 +300,7 @@ async fn test_checkpoint_failover_propagates_state(ctx: TestContext) -> TestResu
     for index in 0..5u64 {
         let state = CheckpointState {
             checkpoint: Checkpoint::Stream {
-                message_id: format!("message-{}", index),
+                message_id: format!("message-{index}"),
                 event_id: None,
             },
             processed_count: index + 1,
@@ -327,7 +325,7 @@ async fn test_checkpoint_failover_propagates_state(ctx: TestContext) -> TestResu
     for index in 5..10u64 {
         let state = CheckpointState {
             checkpoint: Checkpoint::Stream {
-                message_id: format!("message-{}", index),
+                message_id: format!("message-{index}"),
                 event_id: None,
             },
             processed_count: index + 1,
@@ -506,8 +504,7 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
     for name in &processor_names {
         assert!(
             expected_automatons.contains(name),
-            "Test automaton {} should be in expected list",
-            name
+            "Test automaton {name} should be in expected list"
         );
     }
 
@@ -597,7 +594,7 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
         .map(|issue| issue.inconsistency_type)
         .collect();
 
-    println!("Detected issue types: {:?}", issue_types);
+    println!("Detected issue types: {issue_types:?}");
     assert!(
         !issue_types.is_empty(),
         "Should detect various checkpoint inconsistency types"
@@ -888,10 +885,7 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult<()>
 
     // The post-checkpoint events should be detected as unprocessed
     let expected_unprocessed = 5; // Events 20-24
-    println!(
-        "Expected unprocessed: {}, Detected: {}",
-        expected_unprocessed, potentially_missed_events
-    );
+    println!("Expected unprocessed: {expected_unprocessed}, Detected: {potentially_missed_events}");
 
     // Allow some tolerance as different detection methods might count differently
     assert!(

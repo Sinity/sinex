@@ -27,7 +27,7 @@ impl HistoryDb {
         }
 
         conn.execute_batch(
-            r#"
+            r"
             CREATE TABLE IF NOT EXISTS runs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT NOT NULL,
@@ -55,7 +55,7 @@ impl HistoryDb {
 
             CREATE INDEX IF NOT EXISTS idx_results_run_id ON results(run_id);
             CREATE INDEX IF NOT EXISTS idx_results_scenario ON results(threads);
-            "#,
+            ",
         )
         .context("Failed to initialize history database schema")?;
 
@@ -237,7 +237,7 @@ fn table_has_column(conn: &Connection, table: &str, column: &str) -> Result<bool
 
 fn migrate_results_drop_clean_after_use(conn: &Connection) -> Result<()> {
     conn.execute_batch(
-        r#"
+        r"
         BEGIN;
         ALTER TABLE results RENAME TO results_old;
 
@@ -280,7 +280,7 @@ fn migrate_results_drop_clean_after_use(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_results_run_id ON results(run_id);
         CREATE INDEX IF NOT EXISTS idx_results_scenario ON results(threads);
         COMMIT;
-        "#,
+        ",
     )
     .context("Failed to migrate bench history schema")?;
     Ok(())
@@ -312,8 +312,7 @@ impl ScenarioHistorySummary {
                 pct_change,
                 threshold_pct,
             } => format!(
-                "Regression detected: median {:.1}ms vs {:.1}ms (change {:.1}% > {:.1}% threshold)",
-                current_ms, baseline_ms, pct_change, threshold_pct
+                "Regression detected: median {current_ms:.1}ms vs {baseline_ms:.1}ms (change {pct_change:.1}% > {threshold_pct:.1}% threshold)"
             ),
         }
     }

@@ -3,12 +3,12 @@
 //! Tests for the strongly-typed event system, validating event types,
 //! sources, and the modern payload system.
 //!
-//! Migrated from test/unit/event_type_system_test.rs to use modern patterns:
-//! - TestContext instead of custom fixtures
-//! - Modern Event API with Event::from_payload()
+//! Migrated from `test/unit/event_type_system_test.rs` to use modern patterns:
+//! - `TestContext` instead of custom fixtures
+//! - Modern Event API with `Event::from_payload()`
 //! - Direct repository access via ctx.pool.*()
-//! - Modern payload types from sinex_primitives::events::payloads
-//! - color_eyre for error handling
+//! - Modern payload types from `sinex_primitives::events::payloads`
+//! - `color_eyre` for error handling
 
 use xtask::sandbox::prelude::*;
 
@@ -382,7 +382,10 @@ async fn test_source_event_type_mapping(ctx: TestContext) -> TestResult<()> {
             .map(|e| e.event_type.as_str().to_string())
             .collect();
 
-        let expected_set: HashSet<String> = expected_types.iter().map(|s| s.to_string()).collect();
+        let expected_set: HashSet<String> = expected_types
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect();
 
         assert_eq!(
             actual_types, expected_set,

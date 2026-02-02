@@ -91,7 +91,7 @@ fn test_ulid_concurrent_uniqueness() -> TestResult<()> {
     for handle in handles {
         let ids = handle.join().unwrap();
         for id in ids {
-            assert!(all_ids.insert(id), "Duplicate ULID generated: {}", id);
+            assert!(all_ids.insert(id), "Duplicate ULID generated: {id}");
         }
     }
 

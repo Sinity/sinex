@@ -37,7 +37,7 @@ pub struct HasProvenance;
 
 impl<T> EventBuilder<T, NoProvenance> {
     /// Internal constructor - use `Event::builder(payload)` for typed payloads
-    /// or `DynamicPayload::new(...).into_builder()` for JsonValue.
+    /// or `DynamicPayload::new(...).into_builder()` for `JsonValue`.
     pub fn new_internal(source: EventSource, event_type: EventType, payload: T) -> Self {
         Self {
             id: None,
@@ -231,6 +231,7 @@ pub enum OffsetKind {
 
 impl OffsetKind {
     /// Convert to wire format string
+    #[must_use]
     pub fn as_wire_str(&self) -> &'static str {
         match self {
             OffsetKind::Byte => "byte",
@@ -241,6 +242,7 @@ impl OffsetKind {
     }
 
     /// Parse from wire format string
+    #[must_use]
     pub fn from_wire_str(s: &str) -> Self {
         match s {
             "byte" => OffsetKind::Byte,
@@ -385,6 +387,7 @@ impl Provenance {
         })
     }
 
+    #[must_use]
     pub fn from_synthesis_safe(first: EventId, rest: Vec<EventId>) -> Self {
         Provenance::Synthesis {
             source_event_ids: NonEmptyVec::from_head_tail(first, rest),
@@ -394,17 +397,19 @@ impl Provenance {
 }
 
 // Helper function to get hostname (needed by builder)
+#[must_use]
 pub fn get_hostname() -> crate::domain::HostName {
     crate::domain::HostName::new(gethostname::gethostname().to_string_lossy().to_string())
 }
 
 // Helper function to get ingestor version
+#[must_use]
 pub fn get_ingestor_version() -> Option<String> {
     // Priority: compile-time git revision > runtime env var > None
     match option_env!("SINEX_GIT_REV") {
         Some(git_rev) if !git_rev.is_empty() && git_rev != "unknown" => {
             // Format: git-<short-rev> (e.g., "git-a1b2c3d")
-            Some(format!("git-{}", git_rev))
+            Some(format!("git-{git_rev}"))
         }
         _ => {
             // Fallback to runtime environment variable (legacy support)

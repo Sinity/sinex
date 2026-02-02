@@ -7,7 +7,7 @@
 //! - Event creation and querying
 //! - Connection pool operations
 //!
-//! Uses #[sinex_test] for automatic transaction isolation and TestContext
+//! Uses #[`sinex_test`] for automatic transaction isolation and `TestContext`
 //! for unified database access patterns.
 
 use serde_json::json;

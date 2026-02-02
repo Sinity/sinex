@@ -1,4 +1,4 @@
-//! End-to-end JetStream integration tests using PipelineScope.
+//! End-to-end `JetStream` integration tests using `PipelineScope`.
 
 use serde_json::json;
 use sinex_db::DbPoolExt;

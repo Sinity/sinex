@@ -1,6 +1,6 @@
 //! Analytics Service Integration Tests
 //!
-//! Comprehensive tests for AnalyticsService with focus on aggregation logic,
+//! Comprehensive tests for `AnalyticsService` with focus on aggregation logic,
 //! time-based filtering, and accurate data insights using modern infrastructure.
 
 use color_eyre::eyre::ensure;
@@ -151,9 +151,7 @@ async fn test_get_event_count_by_source_no_time_filter(ctx: TestContext) -> Test
         assert_eq!(
             counts.get(&source),
             Some(&expected),
-            "Source {} should have {} events",
-            source,
-            expected
+            "Source {source} should have {expected} events"
         );
     }
     let total: i64 = counts.values().sum();
@@ -240,9 +238,7 @@ async fn test_get_event_count_by_type_no_time_filter(ctx: TestContext) -> TestRe
         assert_eq!(
             counts.get(&event_type),
             Some(&expected),
-            "Event type {} should have {}",
-            event_type,
-            expected
+            "Event type {event_type} should have {expected}"
         );
     }
 
@@ -572,18 +568,14 @@ async fn test_analytics_aggregation_accuracy(ctx: TestContext) -> TestResult<()>
         assert_eq!(
             source_counts.get(source).copied().unwrap_or_default(),
             *expected_count,
-            "Source {} should have exactly {} events",
-            source,
-            expected_count
+            "Source {source} should have exactly {expected_count} events"
         );
     }
     for (event_type, expected_count) in &expected_type_counts {
         assert_eq!(
             type_counts.get(event_type).copied().unwrap_or_default(),
             *expected_count,
-            "Event type {} should have exactly {} events",
-            event_type,
-            expected_count
+            "Event type {event_type} should have exactly {expected_count} events"
         );
     }
 

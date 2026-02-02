@@ -30,7 +30,7 @@ struct OperationRow {
     duration_ms: Option<i32>,
 }
 
-/// Handle GET /audit/{operation_id} - get audit trail for an operation
+/// Handle GET /`audit/{operation_id`} - get audit trail for an operation
 pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
     let request: AuditGetRequest = serde_json::from_value(params)
         .map_err(|e| SinexError::serialization("invalid audit request").with_std_error(&e))?;
@@ -61,8 +61,7 @@ pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
 
     let Some(row) = row else {
         return Err(SinexError::not_found(format!(
-            "Operation not found: {}",
-            operation_id
+            "Operation not found: {operation_id}"
         )));
     };
 

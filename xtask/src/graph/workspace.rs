@@ -258,7 +258,7 @@ impl WorkspaceGraph {
             .graph
             .packages()
             .find(|p| p.name() == package_name)
-            .with_context(|| format!("Package '{}' not found in workspace", package_name))?;
+            .with_context(|| format!("Package '{package_name}' not found in workspace"))?;
 
         // Get all packages that depend on this one (reverse dependencies)
         let query = self.graph.query_reverse(vec![package.id()])?;
@@ -323,13 +323,13 @@ impl WorkspaceGraph {
             .graph
             .packages()
             .find(|p| p.name() == from)
-            .with_context(|| format!("Source package '{}' not found", from))?;
+            .with_context(|| format!("Source package '{from}' not found"))?;
 
         let _to_pkg = self
             .graph
             .packages()
             .find(|p| p.name() == to)
-            .with_context(|| format!("Target package '{}' not found", to))?;
+            .with_context(|| format!("Target package '{to}' not found"))?;
 
         // Use guppy to find the path
         // This is a simplified version - full implementation would use graph traversal
@@ -421,7 +421,7 @@ impl WorkspaceGraph {
             .graph
             .packages()
             .find(|p| p.name() == package_name)
-            .with_context(|| format!("Package '{}' not found in workspace", package_name))?;
+            .with_context(|| format!("Package '{package_name}' not found in workspace"))?;
 
         // Get direct dependencies
         let deps: Vec<DependencyInfo> = package
@@ -492,7 +492,7 @@ impl WorkspaceGraph {
             .graph
             .packages()
             .find(|p| p.name() == package_name)
-            .with_context(|| format!("Package '{}' not found", package_name))?;
+            .with_context(|| format!("Package '{package_name}' not found"))?;
 
         // Count direct dependencies using forward query
         let query = self.graph.query_forward(vec![package.id()])?;

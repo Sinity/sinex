@@ -99,8 +99,11 @@ async fn scope_serialization_round_trips() -> Result<()> {
     assert_eq!(scope.processor_id, deserialized.processor_id);
     assert_eq!(scope.time_window, deserialized.time_window);
     assert_eq!(
-        scope.material_filter.as_ref().map(|v| v.len()),
-        deserialized.material_filter.as_ref().map(|v| v.len()),
+        scope.material_filter.as_ref().map(std::vec::Vec::len),
+        deserialized
+            .material_filter
+            .as_ref()
+            .map(std::vec::Vec::len),
     );
     assert_eq!(scope.filters.len(), deserialized.filters.len());
 
@@ -171,7 +174,7 @@ async fn states_serialize_to_expected_strings() -> Result<()> {
             ReplayState::Cancelled => assert_eq!(json, "\"Cancelled\""),
         }
 
-        assert_eq!(format!("{:?}", state), format!("{:?}", deserialized));
+        assert_eq!(format!("{state:?}"), format!("{:?}", deserialized));
     }
 
     Ok(())

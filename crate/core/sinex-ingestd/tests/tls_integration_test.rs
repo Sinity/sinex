@@ -1,7 +1,7 @@
 //! TLS Integration Test
 //!
 //! Verifies that the test infrastructure properly propagates TLS configuration
-//! through all components: EphemeralNats → TestIngestdConfig → IngestService.
+//! through all components: `EphemeralNats` → `TestIngestdConfig` → `IngestService`.
 
 use serde_json::json;
 use sinex_db::DbPoolExt;
@@ -14,7 +14,7 @@ use xtask::sandbox::{
     TestIngestdConfig,
 };
 
-/// Helper to publish a test event directly to JetStream.
+/// Helper to publish a test event directly to `JetStream`.
 async fn publish_test_event(
     nats_client: &async_nats::Client,
     source: &str,

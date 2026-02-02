@@ -1,6 +1,6 @@
 //! Property tests for event-related functionality
 //!
-//! Migrated from test/property/event_property_test.rs to modern infrastructure.
+//! Migrated from `test/property/event_property_test.rs` to modern infrastructure.
 //! This module consolidates property tests for:
 //! - Event serialization and validation
 //! - Event ID properties (ULID-based)

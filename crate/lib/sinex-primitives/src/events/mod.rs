@@ -3,7 +3,7 @@
 //! This module contains the unified Event<T> structure.
 //!
 //! - Event<T> is the generic structure for all events
-//! - Event<JsonValue> (aka RawEvent) for heterogeneous processing
+//! - Event<JsonValue> (aka `RawEvent`) for heterogeneous processing
 //! - ALL events MUST have provenance (Material or Synthesis)
 
 pub mod builder;

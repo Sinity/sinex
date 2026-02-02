@@ -58,6 +58,7 @@ impl RetryConfig {
     /// // Attempt 2: 100ms * 2^1 = 200ms
     /// assert_eq!(config.backoff_for_attempt(2), Duration::from_millis(200));
     /// ```
+    #[must_use]
     pub fn backoff_for_attempt(&self, attempt: u32) -> Duration {
         if attempt == 0 {
             return self.initial_delay;

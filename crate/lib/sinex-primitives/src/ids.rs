@@ -65,6 +65,7 @@ impl<T> Hash for Id<T> {
 
 impl<T> Id<T> {
     /// Create a new ID with a fresh ULID
+    #[must_use]
     pub fn new() -> Self {
         Self {
             ulid: Ulid::new(),
@@ -73,16 +74,19 @@ impl<T> Id<T> {
     }
 
     /// Get the underlying ULID
+    #[must_use]
     pub fn as_ulid(&self) -> &Ulid {
         &self.ulid
     }
 
-    /// Convert to UUID for PostgreSQL compatibility
+    /// Convert to UUID for `PostgreSQL` compatibility
+    #[must_use]
     pub fn to_uuid(&self) -> uuid::Uuid {
         self.ulid.to_uuid()
     }
 
     /// Create from a ULID
+    #[must_use]
     pub fn from_ulid(ulid: Ulid) -> Self {
         Self {
             ulid,
@@ -91,11 +95,13 @@ impl<T> Id<T> {
     }
 
     /// Create from a UUID
+    #[must_use]
     pub fn from_uuid(uuid: uuid::Uuid) -> Self {
         Self::from_ulid(Ulid::from_uuid(uuid))
     }
 
     /// Get the timestamp when this ID was created
+    #[must_use]
     pub fn timestamp(&self) -> Timestamp {
         self.ulid.timestamp()
     }
@@ -142,7 +148,7 @@ impl<T> AsRef<Ulid> for Id<T> {
 // SQLx support for all ID types (Optional Feature)
 #[cfg(feature = "sqlx")]
 mod sqlx_impl {
-    use super::*;
+    use super::Id;
     use sqlx::encode::IsNull;
     use sqlx::error::BoxDynError;
     use sqlx::postgres::{PgArgumentBuffer, PgHasArrayType, PgTypeInfo, PgValueRef};

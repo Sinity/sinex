@@ -1,8 +1,8 @@
 //! Property-based tests for xtask.
 //!
 //! Uses proptest to verify invariants that should hold for all valid inputs:
-//! - CommandResult serialization roundtrips preserve data
-//! - ProcessBuilder argument handling is consistent
+//! - `CommandResult` serialization roundtrips preserve data
+//! - `ProcessBuilder` argument handling is consistent
 //! - JSON output conforms to expected schema
 //!
 //! Requires the `sandbox` feature to be enabled (provides proptest).

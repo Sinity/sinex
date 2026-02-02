@@ -105,29 +105,29 @@ fn parse_diagnostic_message(msg: &serde_json::Value) -> Option<CompilerDiagnosti
         .get("code")
         .and_then(|c| c.get("code"))
         .and_then(|c| c.as_str())
-        .map(|s| s.to_string());
+        .map(std::string::ToString::to_string);
 
     let rendered = msg
         .get("rendered")
         .and_then(|r| r.as_str())
-        .map(|s| s.to_string());
+        .map(std::string::ToString::to_string);
 
     // Get primary span location
     let (file_path, line, column) = if let Some(spans) = msg.get("spans").and_then(|s| s.as_array())
     {
         spans
             .iter()
-            .find(|s| s.get("is_primary").and_then(|p| p.as_bool()) == Some(true))
+            .find(|s| s.get("is_primary").and_then(serde_json::Value::as_bool) == Some(true))
             .map_or((None, None, None), |span| {
                 (
                     span.get("file_name")
                         .and_then(|f| f.as_str())
-                        .map(|s| s.to_string()),
+                        .map(std::string::ToString::to_string),
                     span.get("line_start")
-                        .and_then(|l| l.as_u64())
+                        .and_then(serde_json::Value::as_u64)
                         .map(|l| l as u32),
                     span.get("column_start")
-                        .and_then(|c| c.as_u64())
+                        .and_then(serde_json::Value::as_u64)
                         .map(|c| c as u32),
                 )
             })
@@ -144,7 +144,7 @@ fn parse_diagnostic_message(msg: &serde_json::Value) -> Option<CompilerDiagnosti
                 .iter()
                 .find(|child| child.get("level").and_then(|l| l.as_str()) == Some("help"))
                 .and_then(|help| help.get("message").and_then(|m| m.as_str()))
-                .map(|s| s.to_string())
+                .map(std::string::ToString::to_string)
         });
 
     Some(CompilerDiagnostic {

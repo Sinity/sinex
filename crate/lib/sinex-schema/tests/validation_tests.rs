@@ -153,7 +153,7 @@ mod constraint_validation_tests {
                 let archived_sql = ArchivedEvents::create_table_sql();
                 tx.execute(archived_sql.as_str()).await?;
                 sqlx::query(
-                    r#"
+                    r"
                     DO $$
                     BEGIN
                         ALTER TABLE core.events DROP CONSTRAINT IF EXISTS events_source_nonblank;
@@ -167,7 +167,7 @@ mod constraint_validation_tests {
                         ALTER TABLE core.events ADD CONSTRAINT events_event_type_nonblank CHECK (length(BTRIM(event_type, E' \t\n\r\v\f')) > 0);
                     END
                     $$;
-                    "#,
+                    ",
                 )
                 .execute(&mut *tx)
                 .await?;
@@ -400,11 +400,7 @@ mod constraint_validation_tests {
                 material.id.as_uuid(),
                 *kind
             ).execute(pool).await;
-            assert!(
-                result.is_err(),
-                "Should reject invalid offset_kind: {}",
-                kind
-            );
+            assert!(result.is_err(), "Should reject invalid offset_kind: {kind}");
         }
         // Clean up before finalizing so verification does not trip on leftover rows.
         sqlx::query("TRUNCATE core.events CASCADE")
@@ -678,8 +674,7 @@ mod constraint_validation_tests {
             .await;
             assert!(
                 result.is_ok(),
-                "Should accept valid JSON payload: {:?}",
-                payload
+                "Should accept valid JSON payload: {payload:?}"
             );
         }
 
@@ -865,7 +860,7 @@ mod performance_constraint_tests {
                     Ok(_) => break,
                     Err(err) if attempts < 2 => {
                         attempts += 1;
-                        if let Some(code) = err.as_database_error().and_then(|e| e.code()) {
+                        if let Some(code) = err.as_database_error().and_then(sqlx::error::DatabaseError::code) {
                             if code.as_ref() == "57P01" {
                                 tokio::time::sleep(std::time::Duration::from_millis(20)).await;
                                 continue;
@@ -880,15 +875,13 @@ mod performance_constraint_tests {
         let duration = start.elapsed();
         let per_insert = duration / inserts as u32;
         println!(
-            "Inserted {} events with constraints in {:?} ({:?} per insert)",
-            inserts, duration, per_insert
+            "Inserted {inserts} events with constraints in {duration:?} ({per_insert:?} per insert)"
         );
 
         // Constraint checking should not significantly slow down inserts.
         assert!(
             per_insert.as_millis() < 1500,
-            "Constraint checking per insert should remain well under 1.5s (observed {:?})",
-            per_insert
+            "Constraint checking per insert should remain well under 1.5s (observed {per_insert:?})"
         );
         finalize_constraint_context(&ctx).await?;
         Ok(())
@@ -974,7 +967,10 @@ mod performance_constraint_tests {
                     break;
                 }
                 Err(err) if attempt < 2 => {
-                    if let Some(code) = err.as_database_error().and_then(|e| e.code()) {
+                    if let Some(code) = err
+                        .as_database_error()
+                        .and_then(sqlx::error::DatabaseError::code)
+                    {
                         if code.as_ref() == "40P01" {
                             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
                             continue;

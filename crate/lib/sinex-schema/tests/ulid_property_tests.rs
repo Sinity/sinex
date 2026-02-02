@@ -325,8 +325,8 @@ mod edge_case_properties {
         }
 
         fn prop_ulid_debug_format_consistency(ulid in ulid_strategy()) -> TestResult<()> {
-            let debug1 = format!("{:?}", ulid);
-            let debug2 = format!("{:?}", ulid);
+            let debug1 = format!("{ulid:?}");
+            let debug2 = format!("{ulid:?}");
 
             prop_assert_eq!(debug1.as_str(), debug2.as_str());
             prop_assert!(debug1.starts_with("Ulid("));

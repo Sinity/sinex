@@ -41,10 +41,12 @@ pub enum Status {
 
 impl Status {
     #[allow(dead_code)]
+    #[must_use]
     pub fn is_success(&self) -> bool {
         matches!(self, Status::Success)
     }
 
+    #[must_use]
     pub fn symbol(&self) -> &'static str {
         match self {
             Status::Success => "✓",
@@ -55,6 +57,7 @@ impl Status {
         }
     }
 
+    #[must_use]
     pub fn color_code(&self) -> &'static str {
         match self {
             Status::Success => "\x1b[32m",   // Green
@@ -69,7 +72,7 @@ impl Status {
 /// A structured error with optional location and suggestion.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StructuredError {
-    /// Error code (e.g., "E0308", "DB_UNREACHABLE", "SCHEMA_STALE")
+    /// Error code (e.g., "E0308", "`DB_UNREACHABLE`", "`SCHEMA_STALE`")
     pub code: String,
     /// Human-readable error message
     pub message: String,
@@ -174,6 +177,7 @@ impl CommandResult {
     }
 
     #[allow(dead_code)]
+    #[must_use]
     pub fn with_silent(mut self) -> Self {
         self.is_silent = true;
         self
@@ -186,22 +190,26 @@ impl CommandResult {
     }
 
     #[allow(dead_code)]
+    #[must_use]
     pub fn with_details(mut self, details: serde_json::Value) -> Self {
         self.details = Some(details);
         self
     }
 
+    #[must_use]
     pub fn with_data(mut self, data: serde_json::Value) -> Self {
         self.data = Some(data);
         self
     }
 
+    #[must_use]
     pub fn with_error(mut self, error: StructuredError) -> Self {
         self.errors.push(error);
         self
     }
 
     #[allow(dead_code)]
+    #[must_use]
     pub fn with_errors(mut self, errors: Vec<StructuredError>) -> Self {
         self.errors.extend(errors);
         self
@@ -222,6 +230,7 @@ pub struct OutputWriter {
 }
 
 impl OutputWriter {
+    #[must_use]
     pub fn new(format: OutputFormat) -> Self {
         Self {
             format,
@@ -230,6 +239,7 @@ impl OutputWriter {
     }
 
     /// Get the output format.
+    #[must_use]
     pub fn format(&self) -> OutputFormat {
         self.format
     }
@@ -266,7 +276,7 @@ impl OutputWriter {
                 format!("{} ", result.status.symbol())
             };
 
-            write!(out, "{}", status_str)?;
+            write!(out, "{status_str}")?;
 
             // Command name
             let cmd_name = match &result.subcommand {
@@ -276,7 +286,7 @@ impl OutputWriter {
             writeln!(out, "{} ({:.2}s)", cmd_name, result.duration_secs)?;
 
             if let Some(msg) = &result.message {
-                writeln!(out, "{}", msg)?;
+                writeln!(out, "{msg}")?;
             }
         }
 
@@ -292,12 +302,12 @@ impl OutputWriter {
         // Data (if it's a string, print it directly; if object/array, print as pretty JSON)
         if let Some(data) = &result.data {
             match data {
-                serde_json::Value::String(s) => writeln!(out, "{}", s)?,
+                serde_json::Value::String(s) => writeln!(out, "{s}")?,
                 serde_json::Value::Null => {}
                 _ => {
                     let json = serde_json::to_string_pretty(data)
                         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-                    writeln!(out, "{}", json)?;
+                    writeln!(out, "{json}")?;
                 }
             }
         }
@@ -311,10 +321,10 @@ impl OutputWriter {
             }
             writeln!(out, "{}", error.message)?;
             if let Some(loc) = &error.location {
-                writeln!(out, "    at {}", loc)?;
+                writeln!(out, "    at {loc}")?;
             }
             if let Some(sug) = &error.suggestion {
-                writeln!(out, "    suggestion: {}", sug)?;
+                writeln!(out, "    suggestion: {sug}")?;
             }
         }
 
@@ -323,7 +333,7 @@ impl OutputWriter {
             writeln!(out)?;
             writeln!(out, "Suggested fixes:")?;
             for fix in &result.suggested_fixes {
-                writeln!(out, "  - {}", fix)?;
+                writeln!(out, "  - {fix}")?;
             }
         }
 
@@ -333,7 +343,7 @@ impl OutputWriter {
     fn write_json(&self, result: &CommandResult) -> io::Result<()> {
         let json = serde_json::to_string_pretty(result)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        println!("{}", json);
+        println!("{json}");
         Ok(())
     }
 
@@ -394,7 +404,7 @@ impl OutputWriter {
                     "total": total,
                     "message": message,
                 });
-                println!("{}", progress);
+                println!("{progress}");
             }
             OutputFormat::Human if self.is_tty => {
                 // Overwrite current line with progress bar
@@ -414,7 +424,7 @@ impl OutputWriter {
             }
             OutputFormat::Human => {
                 // Non-TTY: simple line
-                eprintln!("[{}/{}] {} {}", current, total, stage, message);
+                eprintln!("[{current}/{total}] {stage} {message}");
             }
             OutputFormat::Compact | OutputFormat::Silent => {}
         }
@@ -434,6 +444,7 @@ impl OutputWriter {
 
 /// Check if we're running with a TTY (useful for deciding on colors).
 #[allow(dead_code)]
+#[must_use]
 pub fn is_tty() -> bool {
     atty::is(atty::Stream::Stdout)
 }

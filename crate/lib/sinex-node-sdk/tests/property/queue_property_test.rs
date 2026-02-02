@@ -18,7 +18,7 @@ use sinex_primitives::{DynamicPayload, Ulid};
 use std::sync::LazyLock;
 use xtask::sandbox::prelude::*;
 
-/// Helper to convert color_eyre::Report errors to TestCaseError for property tests
+/// Helper to convert `color_eyre::Report` errors to `TestCaseError` for property tests
 fn report_to_test_error<E: std::fmt::Display>(e: E) -> TestCaseError {
     TestCaseError::Fail(e.to_string().into())
 }

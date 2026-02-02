@@ -36,11 +36,11 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult<()> {
     let base_pool = base_test_db.pool();
 
     // Create test database
-    sqlx::query(&format!("CREATE DATABASE {}", test_db_name))
+    sqlx::query(&format!("CREATE DATABASE {test_db_name}"))
         .execute(base_pool)
         .await?;
 
-    let _test_db_url = base_url.replace("/sinex_dev", &format!("/{}", test_db_name));
+    let _test_db_url = base_url.replace("/sinex_dev", &format!("/{test_db_name}"));
 
     // Test fresh startup with empty database
     let fresh_startup_result = timeout(Duration::from_secs(Timeouts::QUICK), async {
@@ -73,18 +73,18 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult<()> {
 
     match fresh_startup_result {
         Ok(Ok((schema_count, table_count))) => {
-            println!("  ✓ Fresh startup completed in {:?}", startup_duration);
-            println!("    Schemas created: {}", schema_count);
-            println!("    Tables created: {}", table_count);
+            println!("  ✓ Fresh startup completed in {startup_duration:?}");
+            println!("    Schemas created: {schema_count}");
+            println!("    Tables created: {table_count}");
 
             assert!(schema_count >= 2, "Should create required schemas");
             assert!(table_count >= 4, "Should create required tables");
         }
         Ok(Err(e)) => {
-            println!("  Fresh startup failed: {}", e);
+            println!("  Fresh startup failed: {e}");
         }
         Err(_) => {
-            println!("  Fresh startup timed out after {:?}", startup_duration);
+            println!("  Fresh startup timed out after {startup_duration:?}");
         }
     }
 
@@ -149,8 +149,8 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult<()> {
     match existing_data_startup {
         Ok(Ok((manifest_count, event_count))) => {
             println!("  ✓ Startup with existing data succeeded");
-            println!("    Manifests preserved: {}", manifest_count);
-            println!("    Events preserved: {}", event_count);
+            println!("    Manifests preserved: {manifest_count}");
+            println!("    Events preserved: {event_count}");
 
             assert!(
                 manifest_count >= 1,
@@ -159,7 +159,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult<()> {
             assert!(event_count >= 10, "Existing events should be preserved");
         }
         Ok(Err(e)) => {
-            println!("  Startup with existing data failed: {}", e);
+            println!("  Startup with existing data failed: {e}");
         }
         Err(_) => {
             println!("  Startup with existing data timed out");
@@ -203,7 +203,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult<()> {
                     Ok::<bool, color_eyre::eyre::Error>(true)
                 }
                 Err(e) => {
-                    println!("    Migration failed gracefully: {}", e);
+                    println!("    Migration failed gracefully: {e}");
                     Ok::<bool, color_eyre::eyre::Error>(false)
                 }
             }
@@ -219,7 +219,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult<()> {
             }
         }
         Ok(Err(e)) => {
-            println!("  Error recovery test failed: {}", e);
+            println!("  Error recovery test failed: {e}");
         }
         Err(_) => {
             println!("  Error recovery test timed out");
@@ -227,7 +227,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult<()> {
     }
 
     // Cleanup test database
-    sqlx::query(&format!("DROP DATABASE {}", test_db_name))
+    sqlx::query(&format!("DROP DATABASE {test_db_name}"))
         .execute(base_pool)
         .await
         .ok();
@@ -285,7 +285,7 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
                 pool.events().insert_with_tx(&mut tx, event).await.ok();
 
                 transactions.push(tx);
-                println!("    Started transaction {}", i);
+                println!("    Started transaction {i}");
             }
         }
     }
@@ -298,13 +298,13 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
     for (i, tx) in transactions.into_iter().enumerate() {
         match timeout(Duration::from_secs(Timeouts::SHORT), tx.commit()).await {
             Ok(Ok(())) => {
-                println!("    ✓ Transaction {} committed gracefully", i);
+                println!("    ✓ Transaction {i} committed gracefully");
             }
             Ok(Err(e)) => {
-                println!("    Transaction {} failed to commit: {}", i, e);
+                println!("    Transaction {i} failed to commit: {e}");
             }
             Err(_) => {
-                println!("    Transaction {} commit timed out", i);
+                println!("    Transaction {i} commit timed out");
             }
         }
     }
@@ -344,13 +344,10 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
     match post_shutdown_verification {
         Ok(Ok((committed_events, db_check))) => {
             println!("\nShutdown Sequence Results:");
-            println!(
-                "  Transaction completion: {:?}",
-                transaction_completion_duration
-            );
-            println!("  Connection release: {:?}", connection_release_duration);
-            println!("  Total shutdown time: {:?}", total_shutdown_duration);
-            println!("  Committed events: {}", committed_events);
+            println!("  Transaction completion: {transaction_completion_duration:?}");
+            println!("  Connection release: {connection_release_duration:?}");
+            println!("  Total shutdown time: {total_shutdown_duration:?}");
+            println!("  Committed events: {committed_events}");
             println!(
                 "  Database integrity: {}",
                 if db_check == 1 { "OK" } else { "FAILED" }
@@ -372,7 +369,7 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
             println!("  ✓ Graceful shutdown sequence completed successfully");
         }
         Ok(Err(e)) => {
-            println!("  Post-shutdown verification failed: {}", e);
+            println!("  Post-shutdown verification failed: {e}");
         }
         Err(_) => {
             println!("  Post-shutdown verification timed out");
@@ -450,8 +447,7 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
         match stability_check {
             Ok(Ok((health, partial_count))) => {
                 println!(
-                    "    ✓ System stable after interrupt (health: {}, partial events: {})",
-                    health, partial_count
+                    "    ✓ System stable after interrupt (health: {health}, partial events: {partial_count})"
                 );
                 assert!(
                     health == 1,
@@ -465,7 +461,7 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
                 Ok(())
             }
             Ok(Err(e)) => {
-                println!("    Stability check failed: {}", e);
+                println!("    Stability check failed: {e}");
                 Err(e)
             }
             Err(_) => {
@@ -481,7 +477,7 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
             println!("  ✓ Interrupted shutdown handled gracefully");
         }
         Ok(Err(e)) => {
-            println!("  Interrupted shutdown test failed: {}", e);
+            println!("  Interrupted shutdown test failed: {e}");
         }
         Err(_) => {
             println!("  Interrupted shutdown test timed out");

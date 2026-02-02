@@ -2,7 +2,7 @@
 //!
 //! This module provides centralized environment-aware resource naming for proper isolation
 //! between development, staging, and production environments. All resources (database names,
-//! NATS subjects, socket paths, work directories) are namespaced based on SINEX_ENVIRONMENT.
+//! NATS subjects, socket paths, work directories) are namespaced based on `SINEX_ENVIRONMENT`.
 
 use crate::error::{Result, SinexError};
 use std::env;
@@ -10,7 +10,7 @@ use std::path::{Component, Path, PathBuf};
 use tracing::{debug, info, warn};
 use url::{form_urlencoded, Url};
 
-/// Default environment when SINEX_ENVIRONMENT is not set
+/// Default environment when `SINEX_ENVIRONMENT` is not set
 const DEFAULT_ENVIRONMENT: &str = "dev";
 
 /// Max environment name length.
@@ -54,7 +54,7 @@ impl SinexEnvironment {
             .any(|component| component.as_os_str().to_string_lossy().ends_with(&suffix))
     }
 
-    /// Get the current environment from SINEX_ENVIRONMENT variable
+    /// Get the current environment from `SINEX_ENVIRONMENT` variable
     pub fn current() -> Result<Self> {
         match env::var("SINEX_ENVIRONMENT") {
             Ok(name) => Self::new(&name),
@@ -83,15 +83,13 @@ impl SinexEnvironment {
 
         if name.len() > MAX_ENVIRONMENT_LEN {
             return Err(SinexError::configuration(format!(
-                "Environment name cannot exceed {} characters",
-                MAX_ENVIRONMENT_LEN
+                "Environment name cannot exceed {MAX_ENVIRONMENT_LEN} characters"
             )));
         }
 
         if !is_valid_environment_name(&name) {
             return Err(SinexError::configuration(format!(
-                "Invalid environment '{}'. Use [a-z0-9_-]+",
-                name
+                "Invalid environment '{name}'. Use [a-z0-9_-]+"
             )));
         }
 
@@ -100,21 +98,25 @@ impl SinexEnvironment {
     }
 
     /// Get the environment name
+    #[must_use]
     pub fn name(&self) -> &str {
         &self.name
     }
 
     /// Check if this is the development environment
+    #[must_use]
     pub fn is_dev(&self) -> bool {
         self.name == "dev"
     }
 
     /// Check if this is the staging environment
+    #[must_use]
     pub fn is_staging(&self) -> bool {
         self.name == "staging"
     }
 
     /// Check if this is the production environment
+    #[must_use]
     pub fn is_prod(&self) -> bool {
         self.name == "prod"
     }
@@ -122,7 +124,8 @@ impl SinexEnvironment {
     /// Get environment-namespaced database name
     ///
     /// Transforms base database name into environment-specific name:
-    /// - sinex -> sinex_dev, sinex_staging, sinex_prod
+    /// - sinex -> `sinex_dev`, `sinex_staging`, `sinex_prod`
+    #[must_use]
     pub fn database_name(&self, base_name: &str) -> String {
         format!("{}_{}", base_name, self.name)
     }
@@ -168,13 +171,12 @@ impl SinexEnvironment {
 
         let mut segments: Vec<String> = url
             .path_segments()
-            .map(|segments| segments.map(|s| s.to_string()).collect())
+            .map(|segments| segments.map(std::string::ToString::to_string).collect())
             .unwrap_or_default();
 
-        if segments.is_empty() || segments.last().is_none_or(|s| s.is_empty()) {
+        if segments.is_empty() || segments.last().is_none_or(std::string::String::is_empty) {
             return Err(SinexError::configuration(format!(
-                "Database name missing from URL and no dbname query parameter provided: {}",
-                base_url
+                "Database name missing from URL and no dbname query parameter provided: {base_url}"
             )));
         }
 
@@ -248,7 +250,7 @@ impl SinexEnvironment {
     /// Get environment-namespaced NATS stream name
     ///
     /// Prefixes stream names with environment:
-    /// - SINEX_RAW_EVENTS -> DEV_SINEX_RAW_EVENTS
+    /// - `SINEX_RAW_EVENTS` -> `DEV_SINEX_RAW_EVENTS`
     pub fn nats_stream_name(&self, base_name: &str) -> String {
         let env_prefix = self.name.to_uppercase();
         if base_name.starts_with(&format!("{env_prefix}_")) {
@@ -264,8 +266,9 @@ impl SinexEnvironment {
 
     /// Get NATS credentials file path if authentication is enabled
     ///
-    /// Reads from NATS_CREDS environment variable or falls back to
+    /// Reads from `NATS_CREDS` environment variable or falls back to
     /// namespaced path in runtime directory if not implicitly set.
+    #[must_use]
     pub fn nats_creds_path(&self) -> Option<PathBuf> {
         if let Ok(creds) = env::var("NATS_CREDS") {
             return Some(PathBuf::from(creds));
@@ -280,6 +283,7 @@ impl SinexEnvironment {
     }
 
     /// Get an environment-namespaced NATS subject with an additional test namespace.
+    #[must_use]
     pub fn nats_subject_with_namespace(
         &self,
         namespace: Option<&str>,
@@ -291,13 +295,14 @@ impl SinexEnvironment {
             if ns.is_empty() {
                 return self.nats_subject(trimmed);
             }
-            self.nats_subject(&format!("{ns}.{}", trimmed))
+            self.nats_subject(&format!("{ns}.{trimmed}"))
         } else {
             self.nats_subject(trimmed)
         }
     }
 
     /// Get an environment-namespaced stream name with an additional namespace suffix.
+    #[must_use]
     pub fn nats_stream_name_with_namespace(
         &self,
         namespace: Option<&str>,
@@ -323,7 +328,7 @@ impl SinexEnvironment {
     /// Get environment-namespaced NATS KV bucket name
     ///
     /// Prefixes KV bucket names with environment:
-    /// - sinex_checkpoints -> dev_sinex_checkpoints
+    /// - `sinex_checkpoints` -> `dev_sinex_checkpoints`
     pub fn nats_kv_bucket_name(&self, base_name: &str) -> String {
         let env_prefix = self.name.to_lowercase();
         if base_name.starts_with(&format!("{env_prefix}_")) {
@@ -338,6 +343,7 @@ impl SinexEnvironment {
     }
 
     /// Get an environment-namespaced KV bucket name with an additional namespace suffix.
+    #[must_use]
     pub fn nats_kv_bucket_with_namespace(
         &self,
         namespace: Option<&str>,
@@ -429,19 +435,22 @@ impl SinexEnvironment {
     /// Get environment-aware configuration prefix for figment
     ///
     /// Returns the environment variable prefix for configuration:
-    /// - dev: SINEX_DEV_
-    /// - staging: SINEX_STAGING_
-    /// - prod: SINEX_PROD_
+    /// - dev: `SINEX_DEV`_
+    /// - staging: `SINEX_STAGING`_
+    /// - prod: `SINEX_PROD`_
+    #[must_use]
     pub fn config_prefix(&self) -> String {
         format!("SINEX_{}_", self.name.to_uppercase())
     }
 
     /// Get environment-specific temporary directory
+    #[must_use]
     pub fn temp_dir(&self) -> PathBuf {
         self.work_directory("/tmp/sinex")
     }
 
     /// Get environment-specific runtime directory
+    #[must_use]
     pub fn runtime_dir(&self) -> PathBuf {
         Path::new("/run").join(format!("sinex-{}", self.name))
     }

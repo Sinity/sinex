@@ -129,7 +129,7 @@ pub(crate) async fn analyze_checkpoint(
     if newer_events > 0 {
         issues.push(CheckpointInconsistency {
             processor_name: processor_name.to_string(),
-            details: format!("Checkpoint behind by {} events", newer_events),
+            details: format!("Checkpoint behind by {newer_events} events"),
             inconsistency_type: CheckpointInconsistencyType::CheckpointBehindEvents,
             events_potentially_missed: newer_events.max(0) as u64,
         });
@@ -140,8 +140,7 @@ pub(crate) async fn analyze_checkpoint(
         issues.push(CheckpointInconsistency {
             processor_name: processor_name.to_string(),
             details: format!(
-                "Checkpoint stale (last activity {} hours ago)",
-                hours_since_last_activity
+                "Checkpoint stale (last activity {hours_since_last_activity} hours ago)"
             ),
             inconsistency_type: CheckpointInconsistencyType::StaleCheckpoint,
             events_potentially_missed: newer_events.max(0) as u64,

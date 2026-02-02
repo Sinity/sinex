@@ -1,9 +1,9 @@
-//! Git Activity Detector - Example SimpleProcessor Implementation
+//! Git Activity Detector - Example `SimpleProcessor` Implementation
 //!
-//! This example demonstrates how to use SimpleProcessor to create
+//! This example demonstrates how to use `SimpleProcessor` to create
 //! a node that detects git commands from terminal events.
 //!
-//! Run with: cargo run --example git_activity_detector
+//! Run with: cargo run --example `git_activity_detector`
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -77,6 +77,7 @@ pub struct GitActivityState {
 pub struct GitActivityDetector;
 
 impl GitActivityDetector {
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
@@ -88,7 +89,7 @@ impl GitActivityDetector {
         // Find "git" and get the next word
         for (i, part) in parts.iter().enumerate() {
             if *part == "git" {
-                return parts.get(i + 1).map(|s| s.to_string());
+                return parts.get(i + 1).map(std::string::ToString::to_string);
             }
         }
 

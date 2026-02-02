@@ -64,8 +64,8 @@ impl XtaskCommand for MutantsCommand {
 
         // Build description for logging
         let description = match (&self.package, &self.file) {
-            (Some(pkg), _) => format!("cargo mutants --package {}", pkg),
-            (None, Some(f)) => format!("cargo mutants --file {}", f),
+            (Some(pkg), _) => format!("cargo mutants --package {pkg}"),
+            (None, Some(f)) => format!("cargo mutants --file {f}"),
             (None, None) => "cargo mutants (full workspace)".to_string(),
         };
 

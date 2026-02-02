@@ -1,7 +1,7 @@
-//! Integration tests for ServiceContainer dependency injection
+//! Integration tests for `ServiceContainer` dependency injection
 //!
 //! Tests the initialization and dependency management of all services
-//! including AnalyticsService, ContentService, PkmService, and SearchService.
+//! including `AnalyticsService`, `ContentService`, `PkmService`, and `SearchService`.
 
 use color_eyre::Result as EyreResult;
 use sinex_gateway::ServiceContainer;
@@ -257,8 +257,7 @@ async fn test_service_container_concurrent_initialization() -> TestResult<()> {
     for (i, result) in results.iter().enumerate() {
         assert!(
             result.is_ok(),
-            "Container {} should initialize successfully",
-            i
+            "Container {i} should initialize successfully"
         );
     }
 

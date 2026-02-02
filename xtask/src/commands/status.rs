@@ -351,12 +351,12 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
             health_color,
             git_branch.as_deref().unwrap_or("-")
         );
-        println!("| {:<40} |", summary);
+        println!("| {summary:<40} |");
 
         if !warnings.is_empty() {
             println!("+--------------------------------------------+");
             for w in &warnings {
-                println!("| ! {:<38} |", w);
+                println!("| ! {w:<38} |");
             }
         }
 

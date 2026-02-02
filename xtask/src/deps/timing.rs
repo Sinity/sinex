@@ -39,7 +39,7 @@ impl TimingAnalyzer {
     /// from the build output instead.
     ///
     /// # Returns
-    /// TimingReport with per-crate compile times and total build time
+    /// `TimingReport` with per-crate compile times and total build time
     ///
     /// # Errors
     /// Returns error if:
@@ -65,7 +65,7 @@ impl TimingAnalyzer {
         // Check if build succeeded
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("cargo build failed:\n{}", stderr);
+            anyhow::bail!("cargo build failed:\n{stderr}");
         }
 
         // Parse timing from build output
@@ -125,7 +125,7 @@ impl TimingAnalyzer {
     /// * `timing_json` - Path to the cargo-timing.json file
     ///
     /// # Returns
-    /// TimingReport with sorted crate times and total duration
+    /// `TimingReport` with sorted crate times and total duration
     ///
     /// # Errors
     /// Returns error if:
@@ -135,7 +135,7 @@ impl TimingAnalyzer {
     #[allow(dead_code)]
     fn parse_timing_json(timing_json: &PathBuf) -> Result<TimingReport> {
         if !timing_json.exists() {
-            anyhow::bail!("Timing JSON file not found at {:?}", timing_json);
+            anyhow::bail!("Timing JSON file not found at {timing_json:?}");
         }
 
         let contents =

@@ -43,11 +43,13 @@ impl ResourceStatus {
     }
 
     /// Check if enough memory is available for an operation.
+    #[must_use]
     pub fn has_memory_for(&self, required_gb: u64) -> bool {
         self.memory_available_gb >= required_gb as f64
     }
 
     /// Check if system load is acceptable (not overloaded).
+    #[must_use]
     pub fn load_acceptable(&self) -> bool {
         // Consider overloaded if load > 90% of CPU count
         self.load_1min < (self.cpu_count as f64 * 0.9)
@@ -56,6 +58,7 @@ impl ResourceStatus {
     /// Get a warning message if resources are constrained.
     ///
     /// Returns `Some(warning)` if memory is low or load is high.
+    #[must_use]
     pub fn warning(&self, required_gb: u64) -> Option<String> {
         let mut warnings = Vec::new();
 
@@ -81,6 +84,7 @@ impl ResourceStatus {
     }
 
     /// Get a summary line suitable for preflight display.
+    #[must_use]
     pub fn summary(&self) -> String {
         format!(
             "Memory: {:.1}/{:.1}GB free, Load: {:.2} ({} CPUs)",
@@ -90,7 +94,7 @@ impl ResourceStatus {
 }
 
 /// Read memory information from /proc/meminfo.
-/// Returns (available_kb, total_kb).
+/// Returns (`available_kb`, `total_kb`).
 fn memory_info() -> (u64, u64) {
     let content = match std::fs::read_to_string("/proc/meminfo") {
         Ok(c) => c,

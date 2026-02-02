@@ -103,7 +103,7 @@ fn execute_build(
     if ctx.is_human() {
         println!("Building documentation...");
         if let Some(pkg) = &package {
-            println!("  Package: {}", pkg);
+            println!("  Package: {pkg}");
         } else {
             println!("  Scope: workspace");
         }
@@ -133,14 +133,14 @@ fn execute_build(
     let doc_path = if let Some(pkg) = &package {
         // Convert package name: sinex-core -> sinex_core
         let crate_name = pkg.replace('-', "_");
-        format!("target/doc/{}/index.html", crate_name)
+        format!("target/doc/{crate_name}/index.html")
     } else {
         "target/doc/index.html".to_string()
     };
 
     if ctx.is_human() {
         println!("\nDocumentation built successfully!");
-        println!("  Location: {}", doc_path);
+        println!("  Location: {doc_path}");
         if !open {
             println!("  Use --open to view in browser");
         }
@@ -175,7 +175,7 @@ fn execute_serve(port: u16, build_first: bool, ctx: &CommandContext) -> Result<C
     }
 
     if ctx.is_human() {
-        println!("Serving documentation at http://localhost:{}/", port);
+        println!("Serving documentation at http://localhost:{port}/");
         println!("Press Ctrl+C to stop.\n");
     }
 

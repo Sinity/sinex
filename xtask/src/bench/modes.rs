@@ -136,7 +136,7 @@ pub(super) fn refine_mode(ctx: &BenchContext) -> Result<()> {
     println!();
     println!("Top {} thread counts:", ctx.config.refine_top_threads);
     for (threads, score) in &top_threads {
-        println!("  {} threads: {:.1}ms", threads, score);
+        println!("  {threads} threads: {score:.1}ms");
     }
 
     // Filter scenarios: must be in top threads and within threshold

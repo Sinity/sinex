@@ -45,12 +45,14 @@ pub struct ProcessOutput {
 
 impl ProcessOutput {
     /// Check if the process succeeded (exit code 0).
+    #[must_use]
     pub fn success(&self) -> bool {
         self.exit_code == 0
     }
 
     /// Get combined output (stdout + stderr).
     #[allow(dead_code)]
+    #[must_use]
     pub fn combined(&self) -> String {
         format!("{}{}", self.stdout, self.stderr)
     }
@@ -83,22 +85,26 @@ impl ProcessBuilder {
     }
 
     /// Create a git command builder with automatic context.
+    #[must_use]
     pub fn git() -> Self {
         Self::new("git").with_description("git command")
     }
 
     /// Create a cargo command builder with automatic context.
+    #[must_use]
     pub fn cargo() -> Self {
         Self::new("cargo").with_description("cargo command")
     }
 
-    /// Create a psql (PostgreSQL) command builder.
+    /// Create a psql (`PostgreSQL`) command builder.
+    #[must_use]
     pub fn psql() -> Self {
         Self::new("psql").with_description("PostgreSQL command")
     }
 
     /// Create a nix command builder.
     #[allow(dead_code)]
+    #[must_use]
     pub fn nix() -> Self {
         Self::new("nix").with_description("nix command")
     }
@@ -143,6 +149,7 @@ impl ProcessBuilder {
     }
 
     /// Disable output capture (inherit stdio from parent).
+    #[must_use]
     pub fn inherit_output(mut self) -> Self {
         self.capture_output = false;
         self
@@ -173,7 +180,7 @@ impl ProcessBuilder {
 
         let context_msg = self
             .description
-            .unwrap_or_else(|| format!("running {}", cmd_display));
+            .unwrap_or_else(|| format!("running {cmd_display}"));
 
         // Build the xshell command (xshell 0.2.7 interpolates from local vars)
         let program = &self.program;
@@ -190,7 +197,7 @@ impl ProcessBuilder {
             let output = command
                 .ignore_status()
                 .output()
-                .with_context(|| format!("failed to spawn: {}", context_msg))?;
+                .with_context(|| format!("failed to spawn: {context_msg}"))?;
 
             let exit_code = output.status.code().unwrap_or(-1);
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -229,12 +236,12 @@ impl ProcessBuilder {
 
             let status = cmd
                 .status()
-                .with_context(|| format!("failed to spawn: {}", context_msg))?;
+                .with_context(|| format!("failed to spawn: {context_msg}"))?;
 
             let exit_code = status.code().unwrap_or(-1);
 
             if !status.success() {
-                anyhow::bail!("{} failed with exit code {}", context_msg, exit_code);
+                anyhow::bail!("{context_msg} failed with exit code {exit_code}");
             }
 
             Ok(ProcessOutput {

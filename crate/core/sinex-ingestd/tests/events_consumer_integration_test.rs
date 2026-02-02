@@ -1,4 +1,4 @@
-//! Integration coverage for the JetStream consumer covering batching, DLQ, and retry paths.
+//! Integration coverage for the `JetStream` consumer covering batching, DLQ, and retry paths.
 
 use async_nats::{jetstream, Client};
 use color_eyre::eyre::eyre;
@@ -101,7 +101,7 @@ impl TestNodePublisher {
     }
 }
 
-/// Helper to publish a test event directly to JetStream.
+/// Helper to publish a test event directly to `JetStream`.
 async fn publish_event(
     nats_client: &async_nats::Client,
     namespace: &str,
@@ -176,7 +176,7 @@ struct ConsumerSetup {
 
 /// Start a consumer with the given hooks configuration.
 ///
-/// Uses the TestHooks builder pattern for cleaner test setup.
+/// Uses the `TestHooks` builder pattern for cleaner test setup.
 async fn start_consumer_with_hooks(
     ctx: &TestContext,
     suffix: &str,
@@ -697,7 +697,7 @@ async fn jetstream_consumer_routes_malformed_json_to_dlq(ctx: TestContext) -> Te
         Some(setup.namespace.clone()),
     );
     // Malformed JSON bytes (not parseable).
-    let malformed = br#"{ bad json"#;
+    let malformed = br"{ bad json";
     publisher
         .publish_raw_event_bytes("malformed", malformed)
         .await?;
@@ -822,8 +822,7 @@ async fn jetstream_consumer_routes_db_failures_to_dlq(ctx: TestContext) -> TestR
         let stored = ctx.pool.events().get_by_id(event_id.into()).await?;
         assert!(
             stored.is_none(),
-            "DB-failing event should not be persisted (saw {:?})",
-            stored
+            "DB-failing event should not be persisted (saw {stored:?})"
         );
 
         assert!(

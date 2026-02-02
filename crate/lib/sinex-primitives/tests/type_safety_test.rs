@@ -3,7 +3,7 @@
 //! Tests for type safety guarantees across the entire system:
 //! - Generic Id<T> type safety and conversions  
 //! - Event payload type safety and validation
-//! - Domain string types (EventSource, EventType) safety
+//! - Domain string types (`EventSource`, `EventType`) safety
 //! - Cross-component type safety integration
 //! - Repository type safety guarantees
 
@@ -117,7 +117,10 @@ async fn test_id_collection_type_safety(ctx: TestContext) -> Result<()> {
     }
 
     // Verify all IDs are unique
-    let id_set: HashSet<String> = event_ids.iter().map(|id| id.to_string()).collect();
+    let id_set: HashSet<String> = event_ids
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect();
     assert_eq!(id_set.len(), 5, "All IDs should be unique");
 
     // Wait for persistence
@@ -151,9 +154,7 @@ async fn test_id_collection_type_safety(ctx: TestContext) -> Result<()> {
         .len();
     assert!(
         observed >= 5,
-        "Expected at least 5 events for {}, saw {}",
-        source,
-        observed
+        "Expected at least 5 events for {source}, saw {observed}"
     );
     Ok(())
 }

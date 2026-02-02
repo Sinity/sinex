@@ -37,11 +37,12 @@ pub struct SearchService {
 }
 
 impl SearchService {
+    #[must_use]
     pub fn new(pool: DbPool) -> Self {
         Self { pool }
     }
 
-    /// Search events based on criteria using parameterized SQLx query building
+    /// Search events based on criteria using parameterized `SQLx` query building
     pub async fn search_events(&self, query: SearchQuery) -> ServiceResult<Vec<SearchResult>> {
         let prepared = PreparedSearch::new(query)?;
         let snippet_text = prepared.search_text.as_deref();
@@ -94,7 +95,7 @@ impl SearchService {
             s.to_string()
         } else {
             let truncated: String = s.chars().take(max_chars).collect();
-            format!("{}...", truncated)
+            format!("{truncated}...")
         }
     }
 
@@ -116,7 +117,7 @@ impl SearchService {
         let end = (char_pos + match_char_len + context_chars).min(total_chars);
 
         let substring: String = chars[start..end].iter().collect();
-        format!("...{}...", substring)
+        format!("...{substring}...")
     }
 }
 

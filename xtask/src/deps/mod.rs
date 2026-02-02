@@ -170,12 +170,11 @@ impl DepsCommand {
                     }
 
                     rendered.push_str(&format!(
-                        "Dependency tree for '{}' (depth: {}):\n",
-                        pkg_name, depth
+                        "Dependency tree for '{pkg_name}' (depth: {depth}):\n"
                     ));
                     rendered.push_str("(Full tree visualization will be available in Phase 3)\n");
                 } else {
-                    rendered.push_str(&format!("Workspace dependency tree (depth: {}):\n", depth));
+                    rendered.push_str(&format!("Workspace dependency tree (depth: {depth}):\n"));
                     rendered.push_str("(Full tree visualization will be available in Phase 3)\n");
 
                     // Show workspace packages as placeholder
@@ -304,7 +303,7 @@ impl DepsCommand {
                             .with_duration(ctx.elapsed()))
                     } else {
                         let mut rendered = String::new();
-                        rendered.push_str(&format!("Impact Analysis for {}\n", pkg_name));
+                        rendered.push_str(&format!("Impact Analysis for {pkg_name}\n"));
                         rendered.push_str(&format!(
                             "  Dependent packages: {}\n",
                             metrics.dependent_count
@@ -337,7 +336,7 @@ impl DepsCommand {
                         if !report.critical_packages.is_empty() {
                             rendered.push_str("Critical Packages (>80% rebuild impact):\n");
                             for pkg in &report.critical_packages {
-                                rendered.push_str(&format!("  - {}\n", pkg));
+                                rendered.push_str(&format!("  - {pkg}\n"));
                             }
                             rendered.push('\n');
                         }
@@ -345,7 +344,7 @@ impl DepsCommand {
                         if !report.high_impact_packages.is_empty() {
                             rendered.push_str("High Impact Packages (50-80% rebuild impact):\n");
                             for pkg in &report.high_impact_packages {
-                                rendered.push_str(&format!("  - {}\n", pkg));
+                                rendered.push_str(&format!("  - {pkg}\n"));
                             }
                         }
                         Ok(CommandResult::success()
@@ -388,13 +387,13 @@ impl DepsCommand {
 
                 if let Some(output_path) = output {
                     std::fs::write(output_path, &rendered)
-                        .with_context(|| format!("Failed to write to {}", output_path))?;
+                        .with_context(|| format!("Failed to write to {output_path}"))?;
                     Ok(CommandResult::success()
-                        .with_message(format!("Graph written to {}", output_path))
+                        .with_message(format!("Graph written to {output_path}"))
                         .with_duration(ctx.elapsed()))
                 } else {
                     // Print to stdout directly
-                    print!("{}", rendered);
+                    print!("{rendered}");
                     Ok(CommandResult::success()
                         .with_silent()
                         .with_duration(ctx.elapsed()))

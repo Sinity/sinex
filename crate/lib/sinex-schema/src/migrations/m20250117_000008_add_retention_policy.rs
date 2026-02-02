@@ -1,6 +1,6 @@
 //! Add 90-day retention policy for core.events
 //!
-//! **Issue 60 (HIGH)**: No TimescaleDB Retention Policy
+//! **Issue 60 (HIGH)**: No `TimescaleDB` Retention Policy
 //!
 //! The 90-day retention period is documented in the schema but was never
 //! enforced at the database level. Without this policy, data accumulates
@@ -9,9 +9,9 @@
 //! - Degraded query performance over time
 //! - Potential disk exhaustion
 //!
-//! This migration adds a TimescaleDB retention policy that automatically
+//! This migration adds a `TimescaleDB` retention policy that automatically
 //! drops chunks older than 90 days. The policy runs as a background job
-//! and is managed by TimescaleDB's job scheduler.
+//! and is managed by `TimescaleDB`'s job scheduler.
 //!
 //! ## Rollback Safety
 //!

@@ -128,10 +128,10 @@ fn error_helpers_handle_empty_json() -> TestResult<()> {
 #[sinex_test]
 fn error_display_and_debug_include_context() -> TestResult<()> {
     let error = processing_error("Test error message");
-    let display_str = format!("{}", error);
+    let display_str = format!("{error}");
     assert!(display_str.contains("Test error message"));
 
-    let debug_str = format!("{:?}", error);
+    let debug_str = format!("{error:?}");
     assert!(debug_str.contains("Processing"));
     assert!(debug_str.contains("Test error message"));
     Ok(())

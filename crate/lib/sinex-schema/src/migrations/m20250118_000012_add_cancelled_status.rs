@@ -1,6 +1,6 @@
-//! Add 'cancelled' to operations_log result_status constraint
+//! Add 'cancelled' to `operations_log` `result_status` constraint
 //!
-//! The ops.cancel handler sets result_status = 'cancelled' but the original
+//! The ops.cancel handler sets `result_status` = 'cancelled' but the original
 //! check constraint only allowed: success, failure, partial, running.
 //!
 //! This migration adds 'cancelled' as a valid status.

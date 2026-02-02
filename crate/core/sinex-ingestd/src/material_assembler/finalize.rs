@@ -1,4 +1,4 @@
-//! Material finalization methods for MaterialAssembler.
+//! Material finalization methods for `MaterialAssembler`.
 //!
 //! This module contains database finalization, blob management, error routing,
 //! and cleanup logic that executes when a material assembly completes (or fails).
@@ -73,7 +73,7 @@ impl MaterialAssembler {
                     error_debug = ?e,
                     "Failed to query blob store"
                 );
-                SinexError::database(format!("Failed to query blob store: {}", e))
+                SinexError::database(format!("Failed to query blob store: {e}"))
             })?
         {
             return Ok(Id::from_ulid(*existing.id.as_ulid()));
@@ -105,7 +105,7 @@ impl MaterialAssembler {
                 error_debug = ?e,
                 "Failed to insert blob metadata"
             );
-            SinexError::database(format!("Failed to insert blob metadata: {}", e))
+            SinexError::database(format!("Failed to insert blob metadata: {e}"))
         })?;
 
         Ok(Id::from_ulid(*stored.id.as_ulid()))
@@ -125,19 +125,19 @@ impl MaterialAssembler {
         repo.update_metadata(id, metadata.clone())
             .await
             .map_err(|e| {
-                SinexError::database(format!("Failed to update material metadata: {}", e))
+                SinexError::database(format!("Failed to update material metadata: {e}"))
             })?;
 
         let encoding_hint = metadata
             .as_object()
             .and_then(|map| map.get("encoding"))
             .and_then(|value| value.as_str())
-            .map(|s| s.to_string());
+            .map(std::string::ToString::to_string);
         let content_preview_hint = metadata
             .as_object()
             .and_then(|map| map.get("content_preview"))
             .and_then(|value| value.as_str())
-            .map(|s| s.to_string());
+            .map(std::string::ToString::to_string);
 
         repo.finalize_in_flight(
             Id::from_ulid(state.material_id),
@@ -147,10 +147,10 @@ impl MaterialAssembler {
             Some(total_size_bytes),
         )
         .await
-        .map_err(|e| SinexError::database(format!("Failed to finalize material: {}", e)))
+        .map_err(|e| SinexError::database(format!("Failed to finalize material: {e}")))
     }
 
-    /// Append entry in raw.temporal_ledger
+    /// Append entry in `raw.temporal_ledger`
     pub(super) async fn record_ledger_entry(&self, state: &FinalizationState) -> IngestdResult<()> {
         let entry = TemporalLedgerEntry::realtime_capture(
             state.material_id,
@@ -163,7 +163,7 @@ impl MaterialAssembler {
             .append_temporal_ledger(entry)
             .await
             .map_err(|e| {
-                SinexError::database(format!("Failed to append temporal ledger entry: {}", e))
+                SinexError::database(format!("Failed to append temporal ledger entry: {e}"))
             })?;
 
         Ok(())
@@ -363,8 +363,7 @@ impl MaterialAssembler {
             state.finalizing = true;
             let end = state.pending_end.take().ok_or_else(|| {
                 SinexError::service(format!(
-                    "State corruption: pending_end missing during finalization for material {}",
-                    material_id
+                    "State corruption: pending_end missing during finalization for material {material_id}"
                 ))
             })?;
 

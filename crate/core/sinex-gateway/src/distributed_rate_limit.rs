@@ -97,7 +97,7 @@ impl DistributedRateLimiter {
             return true;
         }
 
-        let key = format!("token:{}", token);
+        let key = format!("token:{token}");
 
         // Get current count (or 0 if not exists)
         let current_count = match self.kv.get(&key).await {
@@ -132,6 +132,7 @@ impl DistributedRateLimiter {
     }
 
     /// Check if rate limiting is enabled
+    #[must_use]
     pub fn is_enabled(&self) -> bool {
         self.config.enabled
     }

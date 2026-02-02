@@ -1,6 +1,6 @@
 //! Query service integration tests focused on event querying patterns
 //!
-//! This module tests the query functionality of the SearchService with a focus on
+//! This module tests the query functionality of the `SearchService` with a focus on
 //! different query patterns, time-based queries, and filtering capabilities.
 
 use color_eyre::eyre::ensure;

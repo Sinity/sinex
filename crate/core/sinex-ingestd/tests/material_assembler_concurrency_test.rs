@@ -79,10 +79,7 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
     let slices_stream = ctx.pipeline_namespace().stream("SOURCE_MATERIAL_SLICES");
     let end_stream = ctx.pipeline_namespace().stream("SOURCE_MATERIAL_END");
 
-    println!(
-        "assembler streams: begin={}, slices={}, end={}",
-        begin_stream, slices_stream, end_stream
-    );
+    println!("assembler streams: begin={begin_stream}, slices={slices_stream}, end={end_stream}");
 
     // Prepare three materials with predictable hashes/offsets.
     let material_ids: Vec<_> = (0..3).map(|_| sinex_primitives::Ulid::new()).collect();
@@ -92,7 +89,7 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
         let mut offset = 0i64;
         let mut hasher = Hasher::new();
         for slice_idx in 0..3 {
-            let payload = format!("payload-{}-{}", idx, slice_idx).into_bytes();
+            let payload = format!("payload-{idx}-{slice_idx}").into_bytes();
             hasher.update(&payload);
             let current_offset = offset;
             offset += payload.len() as i64;
@@ -105,15 +102,15 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
     // Seed source_material_registry rows for the material IDs the assembler will finalize.
     for (material_id, _, _, _) in &material_plans {
         sqlx::query(
-            r#"
+            r"
             INSERT INTO raw.source_material_registry
                 (id, material_kind, source_identifier, status, timing_info_type, metadata, staged_at, start_time)
             VALUES (($1::uuid)::ulid, 'annex', $2, 'sensing', 'realtime', '{}'::jsonb, NOW(), NOW())
             ON CONFLICT (id) DO NOTHING
-            "#,
+            ",
         )
         .bind(sinex_db::query_helpers::ulid_to_uuid(*material_id))
-        .bind(format!("test://concurrent/{}", material_id))
+        .bind(format!("test://concurrent/{material_id}"))
         .execute(&ctx.pool)
         .await?;
     }
@@ -175,17 +172,14 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
             let (_, offset, payload) = &slices[slice_idx];
             let payload = payload.clone();
             let mut headers = async_nats::HeaderMap::new();
-            headers.insert(
-                "Nats-Msg-Id",
-                format!("{}-{}", material_id, slice_idx).as_str(),
-            );
+            headers.insert("Nats-Msg-Id", format!("{material_id}-{slice_idx}").as_str());
             headers.insert("Slice-Index", slice_idx.to_string().as_str());
             headers.insert("Offset", offset.to_string().as_str());
             headers.insert("Chunk-Hash", "deadbeefcafebabe");
 
             let subject = ctx
                 .pipeline_namespace()
-                .subject(&format!("source_material.slices.{}", material_id));
+                .subject(&format!("source_material.slices.{material_id}"));
             publish_futs.push(js.publish_with_headers(subject, headers, payload.into()));
         }
     }
@@ -288,11 +282,11 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
                     let pool = ctx.pool.clone();
                     async move {
                         let row = sqlx::query(
-                            r#"
+                            r"
                             SELECT offset_end, offset_kind
                             FROM raw.temporal_ledger
                             WHERE source_material_id = $1::uuid::ulid
-                            "#,
+                            ",
                         )
                         .bind(material_id_uuid)
                         .fetch_optional(&pool)
@@ -364,14 +358,14 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
     // Source material rows should be finalized with blobs recorded.
     for (material_id, _, total_size, _) in &material_plans {
         let row = sqlx::query(
-            r#"
+            r"
             SELECT
                 status,
                 optional_blob_id::uuid AS optional_blob_id,
                 metadata->>'file_size_bytes' AS file_size
             FROM raw.source_material_registry
             WHERE id = ($1::uuid)::ulid
-            "#,
+            ",
         )
         .bind(sinex_db::query_helpers::ulid_to_uuid(*material_id))
         .fetch_one(&ctx.pool)

@@ -114,7 +114,7 @@ pub fn workspace_root() -> PathBuf {
             },
             |p| {
                 // CARGO_MANIFEST_DIR points to xtask/, go up one level for workspace root
-                p.parent().map(|p| p.to_path_buf()).unwrap_or(p)
+                p.parent().map(std::path::Path::to_path_buf).unwrap_or(p)
             },
         )
 }

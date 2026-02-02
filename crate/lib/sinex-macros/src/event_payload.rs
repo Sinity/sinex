@@ -1,4 +1,4 @@
-//! EventPayload derive macro implementation
+//! `EventPayload` derive macro implementation
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -100,7 +100,7 @@ fn generate_builder_methods(input: &DeriveInput) -> Vec<TokenStream> {
             continue;
         };
         let method_ident = format_ident!("with_{}", field_ident);
-        let doc = format!("Builder-style method for `{}'", field_ident);
+        let doc = format!("Builder-style method for `{field_ident}'");
         let setter = build_setter(&method_ident, field_ident, &field.ty, &doc);
         methods.push(setter);
     }

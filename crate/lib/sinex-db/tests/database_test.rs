@@ -534,13 +534,11 @@ async fn test_timestamp_handling(ctx: TestContext) -> TestResult<()> {
     let after_ts: Timestamp = (*after_insert + tolerance).into();
     assert!(
         ingest_ts >= before_ts,
-        "ingest timestamp {ingest_ts:?} precedes lower bound {lower:?}",
-        lower = before_ts
+        "ingest timestamp {ingest_ts:?} precedes lower bound {before_ts:?}"
     );
     assert!(
         ingest_ts <= after_ts,
-        "ingest timestamp {ingest_ts:?} exceeds upper bound {upper:?}",
-        upper = after_ts
+        "ingest timestamp {ingest_ts:?} exceeds upper bound {after_ts:?}"
     );
 
     // Retrieve and verify timestamps persist

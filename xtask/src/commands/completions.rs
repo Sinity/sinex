@@ -15,7 +15,7 @@ pub enum Shell {
     Zsh,
     /// Fish shell
     Fish,
-    /// PowerShell
+    /// `PowerShell`
     PowerShell,
 }
 

@@ -48,7 +48,7 @@ async fn test_version_tracking_stress() -> TestResult<()> {
 
     // Generate many version infos quickly
     for i in 0..50 {
-        let version_info = VersionInfo::current(&format!("stress-{}", i));
+        let version_info = VersionInfo::current(&format!("stress-{i}"));
         assert!(!version_info.component_version.is_empty());
     }
 
@@ -57,8 +57,7 @@ async fn test_version_tracking_stress() -> TestResult<()> {
     // Should complete in reasonable time (10 seconds for 50 generations)
     assert!(
         elapsed.as_secs() < 10,
-        "Version tracking stress test too slow: {:?}",
-        elapsed
+        "Version tracking stress test too slow: {elapsed:?}"
     );
 
     Ok(())
@@ -98,8 +97,7 @@ async fn test_database_high_load_resilience(ctx: TestContext) -> TestResult<()> 
             // Should not use excessive memory (allow 50MB growth)
             assert!(
                 growth < 50 * 1024 * 1024,
-                "Excessive memory usage during load test: {} bytes",
-                growth
+                "Excessive memory usage during load test: {growth} bytes"
             );
         }
     }
@@ -113,8 +111,7 @@ async fn test_database_high_load_resilience(ctx: TestContext) -> TestResult<()> 
     // Total memory growth should be reasonable
     assert!(
         total_growth < 100 * 1024 * 1024,
-        "Total memory growth too high: {} bytes",
-        total_growth
+        "Total memory growth too high: {total_growth} bytes"
     );
 
     Ok(())
@@ -182,7 +179,7 @@ async fn test_database_connection_exhaustion_recovery(ctx: TestContext) -> TestR
             Ok(()) => {} // Success or handled error
             Err(e) => {
                 // Task panic is not acceptable
-                panic!("Task should not panic during connection exhaustion: {}", e);
+                panic!("Task should not panic during connection exhaustion: {e}");
             }
         }
     }
@@ -240,9 +237,7 @@ async fn test_event_creation_extreme_payloads(ctx: TestContext) -> TestResult<()
                         || error_msg.contains("limit")
                         || error_msg.contains("validation")
                         || error_msg.contains("error"),
-                    "Expected payload-related error for case '{}', got: {}",
-                    name,
-                    err
+                    "Expected payload-related error for case '{name}', got: {err}"
                 );
             }
         }
@@ -302,7 +297,7 @@ async fn test_concurrent_event_creation_stress(ctx: TestContext) -> TestResult<(
     for (i, result) in results.into_iter().enumerate() {
         match result {
             Ok(()) => {} // Task completed normally
-            Err(e) => panic!("Task {} panicked during stress test: {}", i, e),
+            Err(e) => panic!("Task {i} panicked during stress test: {e}"),
         }
     }
 
@@ -312,9 +307,7 @@ async fn test_concurrent_event_creation_stress(ctx: TestContext) -> TestResult<(
     let expected_operations = 5 * 10; // 5 tasks * 10 operations each
     assert!(
         total_successes >= expected_operations / 2,
-        "Too many failures under stress: {}/{} succeeded",
-        total_successes,
-        expected_operations
+        "Too many failures under stress: {total_successes}/{expected_operations} succeeded"
     );
 
     Ok(())
@@ -392,8 +385,7 @@ async fn test_error_recovery_patterns(ctx: TestContext) -> TestResult<()> {
     // Most operations should succeed
     assert!(
         successes >= 8,
-        "Expected at least 8 successes, got {}",
-        successes
+        "Expected at least 8 successes, got {successes}"
     );
 
     // System should still be able to create events after the test
@@ -447,7 +439,7 @@ fn create_deeply_nested_json(depth: usize) -> serde_json::Value {
 fn create_wide_json(key_count: usize) -> serde_json::Value {
     let mut obj = serde_json::Map::new();
     for i in 0..key_count {
-        obj.insert(format!("key_{}", i), json!(format!("value_{}", i)));
+        obj.insert(format!("key_{i}"), json!(format!("value_{}", i)));
     }
     serde_json::Value::Object(obj)
 }

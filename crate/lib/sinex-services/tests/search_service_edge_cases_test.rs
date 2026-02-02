@@ -1,4 +1,4 @@
-//! Edge case tests for SearchService
+//! Edge case tests for `SearchService`
 //!
 //! Tests UTF-8 handling, filter combinations, and pagination.
 
