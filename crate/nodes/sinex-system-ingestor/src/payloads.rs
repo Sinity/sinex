@@ -27,7 +27,7 @@ pub struct DbusSignalPayload {
     pub path: String,
     /// Interface (e.g., org.mpris.MediaPlayer2.Player)
     pub interface: String,
-    /// Signal name (e.g., PropertiesChanged)
+    /// Signal name (e.g., `PropertiesChanged`)
     pub signal: String,
     /// Signal arguments as JSON
     pub args: JsonValue,
@@ -95,7 +95,7 @@ pub struct PowerEventPayload {
     pub timestamp: String,
 }
 
-/// Hardware device event (via UDisks2, UPower, etc)
+/// Hardware device event (via `UDisks2`, `UPower`, etc)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HardwareEventPayload {
     pub device_type: String, // usb, disk, battery, bluetooth, etc
@@ -328,7 +328,7 @@ impl Default for JournalConfig {
     }
 }
 
-/// SystemD unit types
+/// `SystemD` unit types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SystemdUnitType {
     Service,
@@ -341,6 +341,7 @@ pub enum SystemdUnitType {
 
 impl SystemdUnitType {
     /// Determine unit type from unit name
+    #[must_use]
     pub fn from_unit_name(unit_name: &str) -> Self {
         if unit_name.ends_with(".service") {
             Self::Service
@@ -371,7 +372,7 @@ impl std::fmt::Display for SystemdUnitType {
     }
 }
 
-/// SystemD unit states
+/// `SystemD` unit states
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SystemdUnitState {
     Active,
@@ -384,6 +385,7 @@ pub enum SystemdUnitState {
 
 impl SystemdUnitState {
     /// Parse unit state from systemctl output
+    #[must_use]
     pub fn from_status_string(s: &str) -> Self {
         match s {
             "active" => Self::Active,

@@ -15,6 +15,7 @@ use tracing::info;
 pub struct TerminalCommandCanonicalizer;
 
 impl TerminalCommandCanonicalizer {
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
@@ -68,11 +69,14 @@ impl SimpleNode for TerminalCommandCanonicalizer {
                 .unwrap_or_default()
                 .to_string(),
             exit_code: sinex_primitives::units::ExitCode::from_raw(
-                input.get("exit_code").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+                input
+                    .get("exit_code")
+                    .and_then(sinex_primitives::JsonValue::as_i64)
+                    .unwrap_or(0) as i32,
             ),
             duration_ms: input
                 .get("duration_ms")
-                .and_then(|v| v.as_u64())
+                .and_then(sinex_primitives::JsonValue::as_u64)
                 .unwrap_or(0),
             start_time: context.ts_orig.unwrap_or_else(now),
             end_time: input

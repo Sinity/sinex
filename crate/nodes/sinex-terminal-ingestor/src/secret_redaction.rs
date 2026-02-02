@@ -46,6 +46,7 @@ lazy_static! {
 
 impl SecretRedactor {
     /// Redact sensitive information from the input string
+    #[must_use]
     pub fn redact(input: &str) -> Cow<'_, str> {
         let mut result = Cow::Borrowed(input);
 

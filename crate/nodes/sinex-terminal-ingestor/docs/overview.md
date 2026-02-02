@@ -19,7 +19,7 @@ All terminal data flows through the Stage-as-you-go material pipeline:
 ### Capture Integration
 
 - **AppendStream-style staging** for:
-  - Atuin SQLite database monitoring
+  - Atuin `SQLite` database monitoring
   - Shell history files (`.bash_history`, `.zsh_history`, `fish_history`)
   - Kitty remote control socket monitoring
 

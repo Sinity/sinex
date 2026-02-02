@@ -3,7 +3,10 @@
 //! Unified system processor implementing `SimpleIngestor`.
 
 // Use local facade for common types
-use crate::common::*;
+use crate::common::{
+    async_trait, info, instrument, Checkpoint, Node, NodeCapabilities, NodeResult, ScanArgs,
+    ScanReport, TimeHorizon,
+};
 use sinex_node_sdk::error_helpers::{parse_config_value, parse_typed_config};
 use sinex_node_sdk::stream_processor::{EventEmitter, NodeRuntimeState};
 
@@ -91,6 +94,7 @@ pub struct WatcherSnapshot {
 }
 
 impl WatcherSnapshot {
+    #[must_use]
     pub fn all_ready(&self) -> bool {
         self.dbus_ready && self.journal_ready && self.udev_ready && self.systemd_ready
     }
@@ -127,7 +131,7 @@ impl Default for SystemPersistentState {
 /// Capacity for watcher → emitter channels; we prefer bounded buffers to avoid unbounded growth.
 const WATCHER_CHANNEL_CAPACITY: usize = 1024;
 
-/// Unified system processor implementing SimpleIngestor
+/// Unified system processor implementing `SimpleIngestor`
 #[derive(Default)]
 pub struct SystemProcessor {
     /// System monitoring configuration
@@ -148,11 +152,13 @@ pub struct SystemProcessor {
 
 impl SystemProcessor {
     /// Create a new unified system processor
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Create processor with custom configuration
+    #[must_use]
     pub fn with_config(config: SystemConfig) -> Self {
         Self {
             config,
@@ -191,7 +197,7 @@ impl SystemProcessor {
         watcher: &'static str,
     ) -> NodeResult<WatcherMaterialContext> {
         let acquisition = self.acquisition()?;
-        let source_identifier = format!("system.{}", watcher);
+        let source_identifier = format!("system.{watcher}");
         let metadata = json!({
             "watcher": watcher,
             "processor": self.node_name(),
@@ -297,6 +303,7 @@ impl SystemProcessor {
     }
 
     /// Expose watcher readiness for tests and diagnostics.
+    #[must_use]
     pub fn watcher_snapshot(&self) -> WatcherSnapshot {
         let unified_ready = self.unified_journal_watcher.is_some();
         WatcherSnapshot {
@@ -418,7 +425,7 @@ impl SystemProcessor {
         if self
             .dbus_watcher
             .as_ref()
-            .is_some_and(|handle| handle.is_active())
+            .is_some_and(sinex_node_sdk::WatcherHandle::is_active)
         {
             return Ok(());
         }
@@ -442,7 +449,7 @@ impl SystemProcessor {
         if self
             .unified_journal_watcher
             .as_ref()
-            .is_some_and(|handle| handle.is_active())
+            .is_some_and(sinex_node_sdk::WatcherHandle::is_active)
         {
             return Ok(());
         }
@@ -466,7 +473,7 @@ impl SystemProcessor {
         if self
             .udev_watcher
             .as_ref()
-            .is_some_and(|handle| handle.is_active())
+            .is_some_and(sinex_node_sdk::WatcherHandle::is_active)
         {
             return Ok(());
         }

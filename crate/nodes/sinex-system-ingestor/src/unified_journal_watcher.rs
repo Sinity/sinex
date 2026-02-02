@@ -3,8 +3,8 @@
 //! Unified journal watcher that consolidates journal and systemd monitoring.
 //!
 //! Previously, the system node spawned two separate `journalctl` processes:
-//! - One for general journal entries (journal_watcher.rs)
-//! - One for systemd unit events (systemd_watcher.rs)
+//! - One for general journal entries (`journal_watcher.rs`)
+//! - One for systemd unit events (`systemd_watcher.rs`)
 //!
 //! This unified watcher uses a single `journalctl -f -o json` process and filters
 //! events based on the presence of `_SYSTEMD_UNIT` field to emit both journal
@@ -15,7 +15,7 @@ use sinex_primitives::fs::atomic_write;
 use sinex_primitives::JsonValue;
 use time::OffsetDateTime;
 
-use crate::payloads::*;
+use crate::payloads::{JournalConfig, JournalEntryPayload, JournalSyncPayload, SystemdUnitType};
 use crate::WatcherMaterialContext;
 use sha2::{Digest, Sha256};
 use sinex_node_sdk::NodeResult;
@@ -44,7 +44,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::watcher_lifecycle::{WatcherHealth, WatcherLifecycle};
 
-/// Convert local SystemdUnitType to core SystemdUnitType
+/// Convert local `SystemdUnitType` to core `SystemdUnitType`
 fn convert_unit_type(local: SystemdUnitType) -> CoreSystemdUnitType {
     match local {
         SystemdUnitType::Service => CoreSystemdUnitType::Service,
@@ -56,7 +56,7 @@ fn convert_unit_type(local: SystemdUnitType) -> CoreSystemdUnitType {
     }
 }
 
-/// Parse unit type string to core SystemdUnitType
+/// Parse unit type string to core `SystemdUnitType`
 fn parse_systemd_unit_type(s: &str) -> CoreSystemdUnitType {
     if s.ends_with(".service") {
         CoreSystemdUnitType::Service
@@ -107,7 +107,7 @@ impl UnifiedJournalWatcher {
             .output()
             .await
             .map_err(|e| {
-                sinex_node_sdk::SinexError::processing(format!("journalctl not found: {}", e))
+                sinex_node_sdk::SinexError::processing(format!("journalctl not found: {e}"))
             })?;
 
         if !check.status.success() {
@@ -200,12 +200,12 @@ impl UnifiedJournalWatcher {
 
         // Add cursor position if we have one
         if let Some(ref cursor) = self.last_cursor {
-            args.push(format!("--after-cursor={}", cursor));
+            args.push(format!("--after-cursor={cursor}"));
         }
 
         // Add unit filters
         for unit in &self.journal_config.units {
-            args.push(format!("--unit={}", unit));
+            args.push(format!("--unit={unit}"));
         }
 
         // Add priority filter
@@ -214,7 +214,7 @@ impl UnifiedJournalWatcher {
                 .journal_config
                 .priorities
                 .iter()
-                .map(|p| p.to_string())
+                .map(std::string::ToString::to_string)
                 .collect();
             args.push(format!("--priority={}", priorities.join("..")));
         }
@@ -234,7 +234,7 @@ impl UnifiedJournalWatcher {
             .output()
             .await
             .map_err(|e| {
-                sinex_node_sdk::SinexError::processing(format!("Failed to run journalctl: {}", e))
+                sinex_node_sdk::SinexError::processing(format!("Failed to run journalctl: {e}"))
             })?;
 
         if !output.status.success() {
@@ -263,13 +263,13 @@ impl UnifiedJournalWatcher {
                                 .payload
                                 .get("cursor")
                                 .and_then(|v| v.as_str())
-                                .map(|s| s.to_string());
+                                .map(std::string::ToString::to_string);
                         }
                         last_cursor = journal_event
                             .payload
                             .get("cursor")
                             .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
+                            .map(std::string::ToString::to_string);
 
                         batch.push(journal_event);
                         entries_count += 1;
@@ -372,7 +372,7 @@ impl UnifiedJournalWatcher {
         // Add cursor position if we have one
         let cursor_arg;
         if let Some(ref cursor) = self.last_cursor {
-            cursor_arg = format!("--after-cursor={}", cursor);
+            cursor_arg = format!("--after-cursor={cursor}");
             args.push(&cursor_arg);
         }
 
@@ -381,9 +381,9 @@ impl UnifiedJournalWatcher {
             .journal_config
             .units
             .iter()
-            .map(|u| format!("--unit={}", u))
+            .map(|u| format!("--unit={u}"))
             .collect();
-        let unit_refs: Vec<&str> = unit_args.iter().map(|s| s.as_str()).collect();
+        let unit_refs: Vec<&str> = unit_args.iter().map(std::string::String::as_str).collect();
         args.extend(unit_refs);
 
         // Add priority filter
@@ -393,7 +393,7 @@ impl UnifiedJournalWatcher {
                 .journal_config
                 .priorities
                 .iter()
-                .map(|p| p.to_string())
+                .map(std::string::ToString::to_string)
                 .collect();
             priority_arg = format!("--priority={}", priorities.join(".."));
             args.push(&priority_arg);
@@ -415,7 +415,7 @@ impl UnifiedJournalWatcher {
             .stderr(std::process::Stdio::piped())
             .spawn()
             .map_err(|e| {
-                sinex_node_sdk::SinexError::processing(format!("Failed to spawn journalctl: {}", e))
+                sinex_node_sdk::SinexError::processing(format!("Failed to spawn journalctl: {e}"))
             })?;
 
         // Store child process for lifecycle management
@@ -543,15 +543,15 @@ impl UnifiedJournalWatcher {
         let hostname = obj
             .get("_HOSTNAME")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .map(std::string::ToString::to_string);
         let unit = obj
             .get("_SYSTEMD_UNIT")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .map(std::string::ToString::to_string);
         let syslog_identifier = obj
             .get("SYSLOG_IDENTIFIER")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .map(std::string::ToString::to_string);
         let pid = obj
             .get("_PID")
             .and_then(|v| v.as_str())
@@ -567,11 +567,11 @@ impl UnifiedJournalWatcher {
         let cmdline = obj
             .get("_CMDLINE")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .map(std::string::ToString::to_string);
         let exe = obj
             .get("_EXE")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .map(std::string::ToString::to_string);
         let priority = obj
             .get("PRIORITY")
             .and_then(|v| v.as_str())
@@ -579,7 +579,7 @@ impl UnifiedJournalWatcher {
         let facility = obj
             .get("SYSLOG_FACILITY")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .map(std::string::ToString::to_string);
 
         // Determine unit type
         let unit_type = unit.as_ref().and_then(|u| {
@@ -688,8 +688,7 @@ impl UnifiedJournalWatcher {
 
         let json_event = event.to_json_event().map_err(|e| {
             sinex_node_sdk::SinexError::processing(format!(
-                "Failed to serialize journal entry: {}",
-                e
+                "Failed to serialize journal entry: {e}"
             ))
         })?;
 
@@ -909,8 +908,7 @@ impl UnifiedJournalWatcher {
                     .await
                     .map_err(|e| {
                         sinex_node_sdk::SinexError::processing(format!(
-                            "Failed to save cursor: {}",
-                            e
+                            "Failed to save cursor: {e}"
                         ))
                     })?;
 

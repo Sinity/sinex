@@ -367,7 +367,9 @@ async fn health_aggregator_calculates_overall_system_status(ctx: TestContext) ->
     );
 
     assert_eq!(
-        system_status.get("degraded_count").and_then(|v| v.as_u64()),
+        system_status
+            .get("degraded_count")
+            .and_then(serde_json::Value::as_u64),
         Some(1),
         "degraded count should match"
     );

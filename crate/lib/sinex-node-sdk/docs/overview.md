@@ -12,7 +12,7 @@ Every node in the system implements the unified `Node` trait. This ensures archi
 
 ## 🛰️ Distributed Service Architecture
 
-Sinex nodes communicate via a distributed event bus powered by NATS JetStream.
+Sinex nodes communicate via a distributed event bus powered by NATS `JetStream`.
 
 ```text
 ┌─────────────────────┐     ┌─────────────────────┐     ┌─────────────────────┐

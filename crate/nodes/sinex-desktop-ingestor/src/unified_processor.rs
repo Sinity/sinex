@@ -4,7 +4,12 @@
 //! continuous scanning modes for desktop events.
 
 // Use local facade for common types
-use crate::common::*;
+use crate::common::{
+    async_trait, error, info, instrument, parse_config_value, parse_typed_config, warn,
+    ActivityEntry, Checkpoint, CoverageAnalysis, Deserialize, HashMap, IngestionHistoryEntry, Node,
+    NodeCapabilities, NodeResult, NodeRuntimeState, ScanArgs, ScanReport, Serialize, SinexError,
+    SourceState, TimeHorizon,
+};
 
 use crate::{window_manager::WindowManagerType, ClipboardWatcher, WindowManagerWatcher};
 use sinex_node_sdk::prelude::OffsetDateTime;
@@ -104,7 +109,7 @@ pub struct DesktopMonitorHealth {
     pub window_manager_last_success: Option<OffsetDateTime>,
 }
 
-/// Persistent state for SimpleIngestor
+/// Persistent state for `SimpleIngestor`
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DesktopPersistentState {
     pub health: DesktopMonitorHealth,
@@ -114,7 +119,7 @@ pub struct DesktopPersistentState {
 /// Unified desktop processor implementing Node with Stage-as-You-Go
 ///
 /// This processor captures desktop activity as source material first, then generates
-/// events with proper provenance tracking via JetStream capture.
+/// events with proper provenance tracking via `JetStream` capture.
 pub struct DesktopProcessor {
     /// Runtime state captured during initialization
     runtime: Option<NodeRuntimeState>,
@@ -136,6 +141,7 @@ impl DesktopProcessor {
     const _BYTES_PER_EVENT: u64 = 256;
 
     /// Create a new unified desktop processor
+    #[must_use]
     pub fn new() -> Self {
         Self {
             runtime: None,
@@ -172,7 +178,7 @@ impl DesktopProcessor {
                 monitoring_active: self
                     .clipboard_watcher
                     .as_ref()
-                    .is_some_and(|h| h.is_active()),
+                    .is_some_and(sinex_node_sdk::WatcherHandle::is_active),
                 last_clipboard_change: health.clipboard_last_success,
                 clipboard_content_hash: None, // Would need to hash current clipboard
                 last_error: health.clipboard_last_error.clone(),
@@ -188,7 +194,7 @@ impl DesktopProcessor {
                 connection_active: self
                     .window_manager_watcher
                     .as_ref()
-                    .is_some_and(|h| h.is_active()),
+                    .is_some_and(sinex_node_sdk::WatcherHandle::is_active),
                 current_workspace: None, // Would need to query WM
                 active_window: None,     // Would need to query WM
                 total_windows: 0,        // Would need to query WM

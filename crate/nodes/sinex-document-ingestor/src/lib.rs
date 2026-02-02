@@ -2,8 +2,8 @@
 #![doc = include_str!("../../../../docs/current/architecture/Core_Architecture.md")]
 #![doc = include_str!("../../../lib/sinex-node-sdk/docs/overview.md")]
 
-//! Document ingestor that captures materials directly into JetStream via the
-//! AcquisitionManager (Stage-as-You-Go).
+//! Document ingestor that captures materials directly into `JetStream` via the
+//! `AcquisitionManager` (Stage-as-You-Go).
 
 use async_trait::async_trait;
 use camino::{Utf8Path, Utf8PathBuf};
@@ -108,6 +108,7 @@ pub struct DocumentProcessor {
 }
 
 impl DocumentProcessor {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             runtime: None,

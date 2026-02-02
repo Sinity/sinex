@@ -1,7 +1,10 @@
 #![doc = include_str!("../docs/window_manager.md")]
 
 // Use local facade for common types
-use crate::common::*;
+use crate::common::{
+    debug, error, info, warn, Duration, Event, HashMap, JsonValue, NodeResult, OffsetDateTime,
+    Timestamp,
+};
 
 // Window manager specific imports
 use sinex_node_sdk::stage_as_you_go::StageAsYouGoContext;
@@ -27,7 +30,7 @@ use tokio_retry::strategy::ExponentialBackoff;
 /// TODO: Add support for additional window managers:
 /// - Sway/i3 (i3 IPC protocol via i3ipc-rs)
 /// - GNOME (D-Bus org.gnome.Shell interface)
-/// - KDE Plasma (KWin D-Bus interface)
+/// - KDE Plasma (`KWin` D-Bus interface)
 /// - X11 WMs (EWMH/X11 protocol via x11rb)
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum WindowManagerType {
@@ -77,6 +80,7 @@ impl fmt::Display for WindowManagerType {
 
 impl WindowManagerType {
     /// Returns the string representation of the window manager type
+    #[must_use]
     pub fn as_str(&self) -> &str {
         match self {
             WindowManagerType::Hyprland => "hyprland",
@@ -90,7 +94,7 @@ impl FromStr for WindowManagerType {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "hyprland" => Ok(WindowManagerType::Hyprland),
-            _ => Err(format!("Unsupported window manager type: {}", s)),
+            _ => Err(format!("Unsupported window manager type: {s}")),
         }
     }
 }
@@ -160,8 +164,7 @@ impl WindowManagerWatcher {
             watcher.discover_hyprland_sockets().await?;
         } else {
             return Err(sinex_node_sdk::SinexError::processing(format!(
-                "Unsupported window manager: {}",
-                wm_type
+                "Unsupported window manager: {wm_type}"
             )));
         }
 
@@ -187,9 +190,9 @@ impl WindowManagerWatcher {
         })?;
 
         // Build socket paths
-        let base_path = format!("{}/hypr/{}", xdg_runtime, hyprland_instance_sig);
-        let event_socket = format!("{}.socket2.sock", base_path);
-        let command_socket = format!("{}.socket.sock", base_path);
+        let base_path = format!("{xdg_runtime}/hypr/{hyprland_instance_sig}");
+        let event_socket = format!("{base_path}.socket2.sock");
+        let command_socket = format!("{base_path}.socket.sock");
 
         // Test event socket connection
         if UnixStream::connect(&event_socket).await.is_ok() {
@@ -197,8 +200,7 @@ impl WindowManagerWatcher {
             info!("Found Hyprland event socket at: {}", event_socket);
         } else {
             return Err(sinex_node_sdk::SinexError::processing(format!(
-                "Cannot connect to Hyprland event socket: {}",
-                event_socket
+                "Cannot connect to Hyprland event socket: {event_socket}"
             )));
         }
 
@@ -283,7 +285,7 @@ impl WindowManagerWatcher {
         })?;
 
         UnixStream::connect(socket_path).await.map_err(|e| {
-            sinex_node_sdk::SinexError::processing(format!("Failed to connect to Hyprland: {}", e))
+            sinex_node_sdk::SinexError::processing(format!("Failed to connect to Hyprland: {e}"))
         })
     }
 
@@ -1028,6 +1030,7 @@ impl WindowManagerWatcher {
 
 #[cfg(test)]
 impl WindowManagerWatcher {
+    #[must_use]
     pub fn stub(wm_type: WindowManagerType) -> Self {
         Self {
             wm_type,

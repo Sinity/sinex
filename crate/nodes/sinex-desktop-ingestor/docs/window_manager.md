@@ -13,7 +13,7 @@ material for later event creation with proper provenance tracking.
 **Not Yet Supported:**
 - Sway/i3 (would require i3 IPC protocol)
 - GNOME (would require D-Bus org.gnome.Shell interface)
-- KDE Plasma (would require KWin D-Bus interface)
+- KDE Plasma (would require `KWin` D-Bus interface)
 - X11 window managers (would require EWMH/X11 protocol)
 
 **Note:** This module is currently limited to Hyprland users. Support for other window
@@ -23,9 +23,9 @@ is not running.
 ## Architecture
 
 This module follows the Stage-as-you-go pattern:
-1. **Source Material Capture**: Window manager events → raw.source_material_registry
-2. **Temporal Ledger**: Precise timing → raw.temporal_ledger
-3. **Event Generation**: Material processing → events with Provenance::Material
+1. **Source Material Capture**: Window manager events → `raw.source_material_registry`
+2. **Temporal Ledger**: Precise timing → `raw.temporal_ledger`
+3. **Event Generation**: Material processing → events with `Provenance::Material`
 
 ## Hyprland Integration
 

@@ -2,7 +2,7 @@
 
 //! Terminal processor that tails configured history files and emits structured
 //! command events. Each discovered command is captured as a source material via
-//! `AcquisitionManager` and published to JetStream, while the structured event
+//! `AcquisitionManager` and published to `JetStream`, while the structured event
 //! is emitted through the shared Stage-as-You-Go channel.
 
 use async_trait::async_trait;
@@ -149,7 +149,7 @@ pub struct TerminalState {
 struct HistoryState {
     offset_bytes: u64,
     line_number: u64,
-    /// For Fish SQLite history: last processed ROWID
+    /// For Fish `SQLite` history: last processed ROWID
     fish_row_id: Option<i64>,
 }
 
@@ -164,7 +164,7 @@ struct HistoryWatcherContext {
     state_path: Option<PathBuf>,
     shutdown_rx: watch::Receiver<bool>,
     processed_commands: Option<Arc<Mutex<Vec<String>>>>,
-    /// True if this is a Fish SQLite history database
+    /// True if this is a Fish `SQLite` history database
     is_fish_sqlite: bool,
 }
 
@@ -553,18 +553,18 @@ async fn process_command(
         .acquisition
         .begin_material(ctx.path.as_str())
         .await
-        .map_err(|e| SinexError::general(format!("Failed to begin material: {}", e)))?;
+        .map_err(|e| SinexError::general(format!("Failed to begin material: {e}")))?;
     let material_id = handle.material_id;
 
     ctx.acquisition
         .append_slice(&mut handle, bytes)
         .await
-        .map_err(|e| SinexError::general(format!("Failed to append slice: {}", e)))?;
+        .map_err(|e| SinexError::general(format!("Failed to append slice: {e}")))?;
 
     ctx.acquisition
         .finalize(handle, MATERIAL_REASON_HISTORY)
         .await
-        .map_err(|e| SinexError::general(format!("Failed to finalize material: {}", e)))?;
+        .map_err(|e| SinexError::general(format!("Failed to finalize material: {e}")))?;
 
     let payload = sinex_primitives::events::payloads::shell::HistoryCommandImportedPayload {
         command: final_command.to_string(),
@@ -577,19 +577,19 @@ async fn process_command(
     let event = payload
         .from_material(material_id)
         .with_offset_start(0)
-        .map_err(|e| SinexError::general(format!("Failed to set offset start: {}", e)))?
+        .map_err(|e| SinexError::general(format!("Failed to set offset start: {e}")))?
         .with_offset_end(bytes.len() as i64)
-        .map_err(|e| SinexError::general(format!("Failed to set offset end: {}", e)))?
+        .map_err(|e| SinexError::general(format!("Failed to set offset end: {e}")))?
         .build()
-        .map_err(|e| SinexError::general(format!("Failed to build event: {}", e)))?
+        .map_err(|e| SinexError::general(format!("Failed to build event: {e}")))?
         .to_json_event()
-        .map_err(|e| SinexError::general(format!("Failed to convert event to JSON: {}", e)))?;
+        .map_err(|e| SinexError::general(format!("Failed to convert event to JSON: {e}")))?;
 
     ctx.stage_context
         .emit_event_with_provenance(event, material_id, Some(0), Some(bytes.len() as i64))
         .await
         .map(|_| ())
-        .map_err(|e| SinexError::general(format!("Failed to emit terminal event: {}", e)))?;
+        .map_err(|e| SinexError::general(format!("Failed to emit terminal event: {e}")))?;
 
     Ok(())
 }
@@ -607,6 +607,7 @@ pub struct TerminalProcessor {
 pub struct TerminalCheckpoint {}
 
 impl TerminalProcessor {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             config: TerminalConfig::default(),
@@ -617,6 +618,7 @@ impl TerminalProcessor {
         }
     }
 
+    #[must_use]
     pub fn with_config(config: TerminalConfig) -> Self {
         Self {
             config,
@@ -627,6 +629,7 @@ impl TerminalProcessor {
         }
     }
 
+    #[must_use]
     pub fn config(&self) -> &TerminalConfig {
         &self.config
     }
@@ -658,7 +661,7 @@ impl TerminalProcessor {
         );
 
         config.validate_config().map_err(|e| {
-            SinexError::general(format!("Terminal configuration validation failed: {}", e))
+            SinexError::general(format!("Terminal configuration validation failed: {e}"))
         })?;
 
         let publisher = match runtime.transport() {
@@ -712,7 +715,7 @@ impl TerminalProcessor {
                 let hash = blake3::hash(source.path.as_str().as_bytes())
                     .to_hex()
                     .to_string();
-                dir.join(format!("{}.json", hash))
+                dir.join(format!("{hash}.json"))
             });
 
             let stage_context = stage
@@ -771,7 +774,7 @@ impl SimpleIngestor for TerminalProcessor {
     ) -> NodeResult<()> {
         let service_info = runtime.service_info();
         config.validate_config().map_err(|e| {
-            SinexError::general(format!("Terminal configuration validation failed: {}", e))
+            SinexError::general(format!("Terminal configuration validation failed: {e}"))
         })?;
 
         let publisher = match runtime.transport() {
@@ -1068,7 +1071,7 @@ mod tests {
                         .source_materials()
                         .get_by_id(Id::from_ulid(material_ulid))
                         .await
-                        .map_err(|e| anyhow::anyhow!("{}", e))?
+                        .map_err(|e| anyhow::anyhow!("{e}"))?
                     {
                         if material.status.as_str() != "completed" {
                             return Ok::<bool, anyhow::Error>(false);
@@ -1083,7 +1086,7 @@ mod tests {
                     .bind(ulid_to_uuid(material_ulid))
                     .fetch_optional(&pool)
                     .await
-                    .map_err(|e| anyhow::anyhow!("database error: {}", e))?;
+                    .map_err(|e| anyhow::anyhow!("database error: {e}"))?;
                     Ok::<bool, anyhow::Error>(
                         ledger_bytes.unwrap_or_default() == expected
                     )

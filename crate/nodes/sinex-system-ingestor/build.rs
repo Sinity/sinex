@@ -16,7 +16,7 @@ fn main() {
                 libdir.truncate(libdir.trim_end_matches(['\n', '\r']).len());
                 if !libdir.is_empty() {
                     // Add rpath so test binaries can locate libdbus at runtime (e.g., in Nix builds).
-                    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", libdir);
+                    println!("cargo:rustc-link-arg=-Wl,-rpath,{libdir}");
                 }
             }
         }

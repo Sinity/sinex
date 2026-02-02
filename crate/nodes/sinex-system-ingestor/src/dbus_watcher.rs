@@ -71,12 +71,12 @@ impl FromStr for DBusType {
         match s {
             "session" => Ok(DBusType::Session),
             "system" => Ok(DBusType::System),
-            _ => Err(format!("Unsupported DBus type: {}", s)),
+            _ => Err(format!("Unsupported DBus type: {s}")),
         }
     }
 }
 
-/// Convert D-Bus member name to PowerEventType
+/// Convert D-Bus member name to `PowerEventType`
 fn parse_power_event(member: &str) -> PowerEventType {
     match member {
         "PrepareForSleep" => PowerEventType::Sleep,
@@ -86,7 +86,7 @@ fn parse_power_event(member: &str) -> PowerEventType {
     }
 }
 
-/// Convert D-Bus member name to BluetoothEventType
+/// Convert D-Bus member name to `BluetoothEventType`
 fn parse_bluetooth_event(member: &str) -> BluetoothEventType {
     match member {
         "Connected" => BluetoothEventType::Connected,
@@ -98,7 +98,7 @@ fn parse_bluetooth_event(member: &str) -> BluetoothEventType {
     }
 }
 
-/// Convert D-Bus member name to NetworkEventType
+/// Convert D-Bus member name to `NetworkEventType`
 fn parse_network_event(member: &str) -> NetworkEventType {
     match member {
         "Connected" | "Activated" => NetworkEventType::Connected,
@@ -108,7 +108,7 @@ fn parse_network_event(member: &str) -> NetworkEventType {
     }
 }
 
-/// Parse bus type string to DBusBus enum
+/// Parse bus type string to `DBusBus` enum
 fn parse_bus_type(bus_type: &str) -> DBusBus {
     match bus_type {
         "session" => DBusBus::Session,
@@ -116,7 +116,7 @@ fn parse_bus_type(bus_type: &str) -> DBusBus {
     }
 }
 
-/// Parse playback status string to PlaybackStatus enum
+/// Parse playback status string to `PlaybackStatus` enum
 fn parse_playback_status(s: &str) -> PlaybackStatus {
     match s {
         "Playing" => PlaybackStatus::Playing,
@@ -136,7 +136,7 @@ struct MonitorConfig {
 
 /// Helper to create processing errors with consistent formatting
 fn dbus_error(message: &str, source: impl std::fmt::Display) -> sinex_node_sdk::SinexError {
-    sinex_node_sdk::SinexError::processing(format!("{}: {}", message, source))
+    sinex_node_sdk::SinexError::processing(format!("{message}: {source}"))
 }
 
 /// D-Bus watcher with real-time signal subscription
@@ -776,7 +776,7 @@ impl DbusWatcher {
 
                     let key_str = match key {
                         serde_json::Value::String(s) => s,
-                        _ => format!("{:?}", key),
+                        _ => format!("{key:?}"),
                     };
 
                     dict_obj.insert(key_str, value);
@@ -841,7 +841,7 @@ impl DbusWatcher {
                 .map(|arr| {
                     arr.iter()
                         .filter_map(|v| v.as_str())
-                        .map(|s| s.to_string())
+                        .map(std::string::ToString::to_string)
                         .collect()
                 })
                 .unwrap_or_default();
@@ -851,9 +851,15 @@ impl DbusWatcher {
                 .and_then(Self::parse_notification_hints)
                 .unwrap_or_default();
 
-            let timeout = arg_array.get(7).and_then(|v| v.as_i64()).unwrap_or(-1) as i32;
+            let timeout = arg_array
+                .get(7)
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(-1) as i32;
 
-            let urgency = hints.get("urgency").and_then(|v| v.as_u64()).unwrap_or(1) as u8;
+            let urgency = hints
+                .get("urgency")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(1) as u8;
 
             DbusNotificationSentPayload {
                 app_name,
