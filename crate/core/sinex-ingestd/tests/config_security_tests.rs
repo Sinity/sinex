@@ -65,8 +65,7 @@ async fn test_ingestd_configuration_validation_error_messages() -> TestResult<()
             let error_msg = e.to_string();
             assert!(
                 error_msg.contains("Invalid path") || error_msg.contains("traversal"),
-                "Error message should indicate path validation failure: {}",
-                error_msg
+                "Error message should indicate path validation failure: {error_msg}"
             );
         }
         Ok(_) => panic!("Expected deserialization to fail"),

@@ -4,7 +4,7 @@
 //! that are responsible for managing the system's "meta-layer". This includes:
 //! - Data contracts for event payloads (`event_payload_schemas`).
 //! - Manifests for the processors that interpret data (`processor_manifests`).
-//! - Sources for discovering schemas via GitOps (`gitops_schema_sources` - aspirational, see docs).
+//! - Sources for discovering schemas via `GitOps` (`gitops_schema_sources` - aspirational, see docs).
 //! - Caching for validation results (`validation_cache`).
 
 use crate::schema::{Events, TableDef};
@@ -63,6 +63,7 @@ pub struct EventPayloadSchemaRecord {
 
 impl EventPayloadSchemas {
     /// Generates the `CREATE TABLE` statement for `sinex_schemas.event_payload_schemas`.
+    #[must_use]
     pub fn create_table_statement() -> TableCreateStatement {
         Table::create()
             .table(Self::table_iden())
@@ -114,6 +115,7 @@ impl EventPayloadSchemas {
             .to_owned()
     }
 
+    #[must_use]
     pub fn create_indexes() -> Vec<IndexCreateStatement> {
         vec![Index::create()
             .name("uk_schema_identity")
@@ -125,15 +127,16 @@ impl EventPayloadSchemas {
             .to_owned()]
     }
 
-    /// Creates a trigger to update the updated_at column
+    /// Creates a trigger to update the `updated_at` column
+    #[must_use]
     pub fn create_updated_at_trigger_sql() -> String {
         format!(
-            r#"
+            r"
             DROP TRIGGER IF EXISTS trg_event_payload_schemas_updated_at ON {}.{};
             CREATE TRIGGER trg_event_payload_schemas_updated_at
             BEFORE UPDATE ON {}.{}
             FOR EACH ROW EXECUTE FUNCTION public.set_current_timestamp_updated_at();
-            "#,
+            ",
             Self::schema_name(),
             Self::table_name(),
             Self::schema_name(),
@@ -196,6 +199,7 @@ pub struct ProcessorManifestRecord {
 }
 
 impl ProcessorManifests {
+    #[must_use]
     pub fn create_table_statement() -> TableCreateStatement {
         Table::create()
             .table(Self::table_iden())
@@ -244,6 +248,7 @@ impl ProcessorManifests {
             .to_owned()
     }
 
+    #[must_use]
     pub fn create_indexes() -> Vec<IndexCreateStatement> {
         vec![Index::create()
             .name("uk_processor_version")
@@ -254,6 +259,7 @@ impl ProcessorManifests {
             .to_owned()]
     }
 
+    #[must_use]
     pub fn create_gin_indexes_sql() -> Vec<String> {
         vec![format!(
             "CREATE INDEX IF NOT EXISTS ix_processor_manifests_consumes_event_types \
@@ -306,6 +312,7 @@ impl TableDef for GitopsSchemaSources {
 }
 
 impl GitopsSchemaSources {
+    #[must_use]
     pub fn create_table_statement() -> TableCreateStatement {
         Table::create()
             .table(Self::table_iden())
@@ -356,6 +363,7 @@ impl GitopsSchemaSources {
             .to_owned()
     }
 
+    #[must_use]
     pub fn create_indexes() -> Vec<IndexCreateStatement> {
         vec![
             Index::create()
@@ -375,15 +383,16 @@ impl GitopsSchemaSources {
         ]
     }
 
-    /// Creates a trigger to update the updated_at column
+    /// Creates a trigger to update the `updated_at` column
+    #[must_use]
     pub fn create_updated_at_trigger_sql() -> String {
         format!(
-            r#"
+            r"
             DROP TRIGGER IF EXISTS trg_gitops_schema_sources_updated_at ON {}.{};
             CREATE TRIGGER trg_gitops_schema_sources_updated_at
             BEFORE UPDATE ON {}.{}
             FOR EACH ROW EXECUTE FUNCTION public.set_current_timestamp_updated_at();
-            "#,
+            ",
             Self::schema_name(),
             Self::table_name(),
             Self::schema_name(),
@@ -394,7 +403,7 @@ impl GitopsSchemaSources {
 
 /// **Table: `sinex_schemas.validation_cache`**
 ///
-/// A performance optimization table. The `is_payload_valid` PostgreSQL function
+/// A performance optimization table. The `is_payload_valid` `PostgreSQL` function
 /// can be computationally expensive as it involves parsing and comparing large JSON
 /// objects. This table caches the validation result for a given `(event_id, schema_id)`
 /// pair to avoid re-computation.
@@ -421,6 +430,7 @@ impl TableDef for ValidationCache {
 }
 
 impl ValidationCache {
+    #[must_use]
     pub fn create_table_statement() -> TableCreateStatement {
         Table::create()
             .table(Self::table_iden())

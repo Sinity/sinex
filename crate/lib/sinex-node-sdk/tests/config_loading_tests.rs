@@ -1,5 +1,5 @@
-use sinex_primitives::Seconds;
 use sinex_node_sdk::{AutomatonConfig, EventSourceConfig, NodeConfig};
+use sinex_primitives::Seconds;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
@@ -153,7 +153,7 @@ fn service_env_overrides_global_env() -> TestResult<()> {
         }
     }
 
-    let keys = vec!["SINEX_LOG_LEVEL", "SINEX_MERGE_TEST_LOG_LEVEL"];
+    let keys = ["SINEX_LOG_LEVEL", "SINEX_MERGE_TEST_LOG_LEVEL"];
     let previous = keys
         .iter()
         .map(|key| ((*key).to_string(), std::env::var(key).ok()))

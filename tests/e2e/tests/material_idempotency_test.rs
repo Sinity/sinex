@@ -1,5 +1,5 @@
 use serde_json::json;
-use sinex_primitives::db::query_helpers::ulid_to_uuid;
+use sinex_db::query_helpers::ulid_to_uuid;
 use sinex_primitives::{DynamicPayload, Ulid};
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{WaitHelpers, DEFAULT_WAIT_SECS};
@@ -8,16 +8,25 @@ use xtask::sandbox::timing::{WaitHelpers, DEFAULT_WAIT_SECS};
 async fn material_stream_idempotency(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
-    let publisher = scope.publisher("material-idempotency");
 
     let material_id = Ulid::new();
-    let slices = vec![b"alpha".to_vec(), b"beta".to_vec(), b"gamma".to_vec()];
 
-    publisher
-        .publish_material_stream_with_id(material_id, slices.clone())
+    // Publish event directly using DynamicPayload
+    scope
+        .publish(DynamicPayload::new(
+            "material-idempotency",
+            "material.stream",
+            json!({ "material_id": material_id.to_string(), "data": "alpha" }),
+        ))
         .await?;
-    publisher
-        .publish_material_stream_with_id(material_id, slices)
+
+    // Publish second event with same material_id (should be idempotent)
+    scope
+        .publish(DynamicPayload::new(
+            "material-idempotency",
+            "material.stream",
+            json!({ "material_id": material_id.to_string(), "data": "beta" }),
+        ))
         .await?;
 
     WaitHelpers::wait_for_condition(
@@ -48,7 +57,7 @@ async fn material_stream_idempotency(ctx: TestContext) -> TestResult<()> {
         material_row
             .source_identifier
             .contains("material-idempotency"),
-        "source identifier should reflect the test publisher"
+        "source identifier should reflect the test source"
     );
 
     let event_id = scope

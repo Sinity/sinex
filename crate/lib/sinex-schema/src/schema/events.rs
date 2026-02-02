@@ -19,7 +19,7 @@ use sqlx::FromRow;
 ///
 /// This is the single source of truth for all system knowledge. An immutable, append-only
 /// log of both raw observations and synthesized conclusions, implemented as a
-/// TimescaleDB hypertable for extreme performance and scalability.
+/// `TimescaleDB` hypertable for extreme performance and scalability.
 ///
 /// ## Design Decision: No Operation ID Column
 ///
@@ -32,7 +32,7 @@ use sqlx::FromRow;
 ///    the operation that created them. Operations are *how* events are produced, but
 ///    provenance tracks *what* they were derived from.
 ///
-/// 2. **Performance**: Adding an operation_id column and FK would:
+/// 2. **Performance**: Adding an `operation_id` column and FK would:
 ///    - Add 16 bytes per event (ULID storage)
 ///    - Require additional index maintenance
 ///    - Impact insert performance for the highest-volume table
@@ -44,13 +44,13 @@ use sqlx::FromRow;
 /// 4. **Audit Trail Separation**: Operations that *delete* events are tracked via
 ///    `audit.archived_events`, which captures the operation context at archive time.
 ///    Operations that *create* events (like replays generating new events) can be
-///    inferred from provenance chains (source_event_ids pointing to deleted events).
+///    inferred from provenance chains (`source_event_ids` pointing to deleted events).
 ///
 /// ### When Operations Affect Events:
-/// - **Event Deletion (Replays)**: The operation_id is passed via session variable
+/// - **Event Deletion (Replays)**: The `operation_id` is passed via session variable
 ///   (`sinex.operation_id`) to the archive trigger, which records it in the audit log
-///   context. The mapping is implicit: archived_events.archived_at corresponds to
-///   operations_log.id timestamp range.
+///   context. The mapping is implicit: `archived_events.archived_at` corresponds to
+///   `operations_log.id` timestamp range.
 ///
 /// - **Event Creation (Replays)**: New events created by replays have `source_event_ids`
 ///   pointing to the original (now archived) events, establishing provenance without
@@ -82,7 +82,7 @@ use sqlx::FromRow;
 /// - Adding operation context to the `payload` JSONB for events that need it
 /// - Creating a separate `core.event_operations` junction table for many-to-many
 ///   relationships without impacting the main events table schema
-/// - Using PostgreSQL triggers to populate a materialized view linking events to operations
+/// - Using `PostgreSQL` triggers to populate a materialized view linking events to operations
 #[derive(Iden, Copy, Clone)]
 pub enum Events {
     Table,
@@ -124,6 +124,7 @@ impl TableDef for Events {
 }
 
 /// The Rust struct representation of a row from `core.events`.
+///
 /// This is used by `sqlx::query_as!` for deserializing database results. Its
 /// structure is a 1-to-1 mapping of the physical table layout. The conversion
 /// to the logical `sinex_db::models::Event` domain model happens in the repository.
@@ -161,6 +162,7 @@ pub struct EventRecord {
 
 impl Events {
     /// Generates the `CREATE TABLE` statement for `core.events`.
+    #[must_use]
     pub fn create_table_statement() -> TableCreateStatement {
         Table::create()
             .table((Alias::new("core"), Events::Table))
@@ -210,15 +212,16 @@ impl Events {
             .to_owned()
     }
 
-    /// Generates the SQL statement to convert `core.events` into a TimescaleDB hypertable.
+    /// Generates the SQL statement to convert `core.events` into a `TimescaleDB` hypertable.
     ///
-    /// ## TimescaleDB Configuration
+    /// ## `TimescaleDB` Configuration
     ///
-    /// - **Chunk Interval**: 7 days (configured in migration m20250117_000007)
-    /// - **Retention Policy**: 90 days (configured in migration m20250117_000008)
+    /// - **Chunk Interval**: 7 days (configured in migration `m20250117_000007`)
+    /// - **Retention Policy**: 90 days (configured in migration `m20250117_000008`)
     ///
     /// These settings balance query performance, storage efficiency, and operational
     /// requirements. Operators can adjust them post-deployment based on actual workload.
+    #[must_use]
     pub fn create_hypertable_sql() -> &'static str {
         "SELECT create_hypertable('core.events', by_range('id', partition_func => 'public.ulid_to_timestamptz'::regproc), if_not_exists => TRUE);"
     }
@@ -234,7 +237,8 @@ impl Events {
     /// - **Payload search**: GIN indexes (see `create_gin_indexes_sql()`) enable fast
     ///   JSON path queries, text search, and full-text search
     ///
-    /// Additional index `ix_events_ts_ingest` added in migration m20250117_000006.
+    /// Additional index `ix_events_ts_ingest` added in migration `m20250117_000006`.
+    #[must_use]
     pub fn create_indexes() -> Vec<IndexCreateStatement> {
         vec![
             // The Idempotency Invariant: a specific byte in a source material can only produce one event.
@@ -269,6 +273,7 @@ impl Events {
     }
 
     /// Generates raw SQL for GIN indexes (PostgreSQL-specific feature)
+    #[must_use]
     pub fn create_gin_indexes_sql() -> Vec<String> {
         vec![
             // GIN index for source_event_ids array
@@ -299,8 +304,9 @@ impl Events {
     }
 
     /// Generates the trigger enforcing append-only semantics for `core.events`.
+    #[must_use]
     pub fn create_no_update_trigger_sql() -> &'static str {
-        r#"
+        r"
         CREATE OR REPLACE FUNCTION core.fn_events_no_update()
         RETURNS trigger LANGUAGE plpgsql AS $$
         BEGIN
@@ -311,7 +317,7 @@ impl Events {
         CREATE TRIGGER trg_events_no_update
         BEFORE UPDATE ON core.events
         FOR EACH ROW EXECUTE FUNCTION core.fn_events_no_update();
-        "#
+        "
     }
 }
 
@@ -346,11 +352,12 @@ impl TableDef for ArchivedEvents {
 }
 
 impl ArchivedEvents {
-    /// Generates the `CREATE TABLE` statement using PostgreSQL's `LIKE` to ensure
+    /// Generates the `CREATE TABLE` statement using `PostgreSQL`'s `LIKE` to ensure
     /// an exact structural match with `core.events`, plus additional audit columns.
+    #[must_use]
     pub fn create_table_sql() -> String {
         format!(
-            r#"CREATE TABLE IF NOT EXISTS audit.archived_events (
+            r"CREATE TABLE IF NOT EXISTS audit.archived_events (
                 LIKE core.events INCLUDING ALL,
                 {archived_at} TIMESTAMPTZ NOT NULL DEFAULT now(),
                 {archived_by} TEXT,
@@ -368,7 +375,7 @@ impl ArchivedEvents {
                         NULL;
                 END;
             END $$;
-            "#,
+            ",
             archived_at = ArchivedEvents::ArchivedAt.to_string(),
             archived_by = ArchivedEvents::ArchivedBy.to_string(),
             archive_reason = ArchivedEvents::ArchiveReason.to_string(),
@@ -389,10 +396,11 @@ impl ArchivedEvents {
     /// protection relies on application discipline rather than cryptographic or
     /// role-based enforcement.
     ///
-    /// Enhanced documentation added in migration m20250117_000009.
+    /// Enhanced documentation added in migration `m20250117_000009`.
     /// See that migration for TODO regarding stronger security measures (RLS, signatures, etc.).
+    #[must_use]
     pub fn create_archive_trigger_sql() -> &'static str {
-        r#"
+        r"
         CREATE OR REPLACE FUNCTION core.fn_archive_before_delete()
         RETURNS trigger LANGUAGE plpgsql AS $$
         DECLARE
@@ -416,6 +424,6 @@ impl ArchivedEvents {
         CREATE TRIGGER trg_events_archive_before_delete
         BEFORE DELETE ON core.events
         FOR EACH ROW EXECUTE FUNCTION core.fn_archive_before_delete();
-        "#
+        "
     }
 }

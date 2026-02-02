@@ -1,10 +1,10 @@
 use futures::future::try_join_all;
-use sinex_primitives::error::SinexError;
-use sinex_primitives::ids::Ulid;
-use sinex_primitives::units::{Bytes, Seconds};
-use sinex_primitives::ids::Id;
 use sinex_db::{query_helpers::ulid_to_uuid, repositories::DbPoolExt};
 use sinex_node_sdk::{AcquisitionManager, RotationPolicy};
+use sinex_primitives::error::SinexError;
+use sinex_primitives::ids::Id;
+use sinex_primitives::ids::Ulid;
+use sinex_primitives::units::{Bytes, Seconds};
 use std::io::ErrorKind;
 use std::sync::Arc;
 use std::time::Duration;
@@ -54,7 +54,7 @@ async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
                 async move {
                     let material = pool
                         .source_materials()
-                        .get_by_id(sinex_node_sdk::Id::from_ulid(material_id))
+                        .get_by_id(Id::from_ulid(material_id))
                         .await?
                         .ok_or_else(|| sinex_primitives::error::SinexError::database("missing"))?;
                     let ledger_count: Option<i64> = sqlx::query_scalar!(
@@ -77,7 +77,7 @@ async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
     let material = ctx
         .pool
         .source_materials()
-        .get_by_id(sinex_node_sdk::Id::from_ulid(material_id))
+        .get_by_id(Id::from_ulid(material_id))
         .await?
         .expect("Material should exist");
 
@@ -142,13 +142,15 @@ async fn material_acquisition_cancel_mid_slice(ctx: TestContext) -> Result<()> {
                         .get_by_id(Id::from_ulid(material_id))
                         .await?;
                     let Some(material) = material else {
-                        return Ok(false);
+                        return Ok::<bool, SinexError>(false);
                     };
-                    Ok(material
-                        .metadata
-                        .get("cancelled")
-                        .and_then(|value| value.as_bool())
-                        .unwrap_or(false))
+                    Ok::<bool, SinexError>(
+                        material
+                            .metadata
+                            .get("cancelled")
+                            .and_then(sinex_primitives::JsonValue::as_bool)
+                            .unwrap_or(false),
+                    )
                 }
             },
             DEFAULT_WAIT_SECS,
@@ -180,7 +182,7 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
 
     // Manually publish slices out of order to test MaterialAssembler's buffering
     let material_id = Ulid::new();
-    let env = sinex_node_sdk::environment();
+    let env = sinex_primitives::environment::environment();
     let js = nats.jetstream_with_client(nats_client.clone());
 
     // Ensure the registry already contains the material id we are about to stream so the assembler
@@ -229,7 +231,7 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
         headers.insert("Chunk-Hash", chunk_hash.as_str());
 
         js.publish_with_headers(
-            env.nats_subject(&format!("source_material.slices.{}", material_id)),
+            env.nats_subject(&format!("source_material.slices.{material_id}")),
             headers,
             data.into(),
         )
@@ -271,7 +273,7 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
             async move {
                 if let Some(material) = pool
                     .source_materials()
-                    .get_by_id(sinex_node_sdk::Id::from_ulid(material_id))
+                    .get_by_id(Id::from_ulid(material_id))
                     .await?
                 {
                     let ledger_bytes: Option<i64> = sqlx::query_scalar!(
@@ -280,12 +282,12 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
                     )
                     .fetch_optional(&pool)
                     .await?;
-                    return Ok::<bool, sinex_primitives::error::SinexError>(
+                    return Ok::<bool, SinexError>(
                         material.status.as_str() == "completed"
                             && ledger_bytes.unwrap_or_default() >= expected_size,
                     );
                 }
-                Ok(false)
+                Ok::<bool, SinexError>(false)
             }
         },
         DEFAULT_WAIT_SECS,
@@ -296,7 +298,7 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
     let material = ctx
         .pool
         .source_materials()
-        .get_by_id(sinex_node_sdk::Id::from_ulid(material_id))
+        .get_by_id(Id::from_ulid(material_id))
         .await?;
 
     if let Some(material) = material {
@@ -335,7 +337,7 @@ async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
     AcquisitionManager::bootstrap_streams(&nats_client).await?;
 
     let material_id = Ulid::new();
-    let env = sinex_node_sdk::environment();
+    let env = sinex_primitives::environment::environment();
     let js = nats.jetstream_with_client(nats_client.clone());
 
     let slices = vec![
@@ -391,7 +393,7 @@ async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
         headers.insert("Chunk-Hash", chunk_hash.as_str());
 
         js.publish_with_headers(
-            env.nats_subject(&format!("source_material.slices.{}", material_id)),
+            env.nats_subject(&format!("source_material.slices.{material_id}")),
             headers,
             data.into(),
         )
@@ -409,7 +411,7 @@ async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
                     .await?
                 {
                     if material.status.as_str() != "completed" {
-                        return Ok(false);
+                        return Ok::<bool, SinexError>(false);
                     }
                     let ledger_bytes: Option<i64> = sqlx::query_scalar!(
                         "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid ORDER BY ts_capture DESC LIMIT 1",
@@ -417,9 +419,9 @@ async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
                     )
                     .fetch_optional(&pool)
                     .await?;
-                    return Ok(ledger_bytes.unwrap_or_default() >= expected_size);
+                    return Ok::<bool, SinexError>(ledger_bytes.unwrap_or_default() >= expected_size);
                 }
-                Ok(false)
+                Ok::<bool, SinexError>(false)
             }
         },
         INTEGRATION_WAIT_SECS,
@@ -493,7 +495,7 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
                 };
                 let expected_offset = persisted
                     .get("expected_offset")
-                    .and_then(|value| value.as_i64())
+                    .and_then(sinex_primitives::JsonValue::as_i64)
                     .unwrap_or(0);
                 Ok(expected_offset >= first_chunk.len() as i64)
             }
@@ -538,10 +540,10 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
                             .await
                             .map_err(|e| SinexError::database(e.to_string()))?;
 
-                            return Ok(ledger_bytes.unwrap_or_default() >= expected_size);
+                            return Ok::<bool, SinexError>(ledger_bytes.unwrap_or_default() >= expected_size);
                         }
                     }
-                    Ok(false)
+                    Ok::<bool, SinexError>(false)
                 }
             },
             DEFAULT_WAIT_SECS,
@@ -549,7 +551,7 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
         .await;
 
         match wait_result {
-            Ok(_) => {
+            Ok(()) => {
                 completed = true;
                 break;
             }
@@ -557,7 +559,7 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
                 tracing::warn!(attempt, error = %err, "Material completion not observed yet; retrying");
                 tokio::task::yield_now().await;
             }
-            Err(err) => return Err(err.into()),
+            Err(err) => return Err(err),
         }
     }
 
@@ -646,9 +648,9 @@ async fn material_acquisition_concurrent_sessions_isolated(mut ctx: TestContext)
                         .get_by_id(Id::from_ulid(material_id))
                         .await?
                     {
-                        return Ok(material.status.as_str() == "completed");
+                        return Ok::<bool, SinexError>(material.status.as_str() == "completed");
                     }
-                    Ok(false)
+                    Ok::<bool, SinexError>(false)
                 }
             },
             INTEGRATION_WAIT_SECS,
@@ -712,13 +714,13 @@ async fn material_acquisition_rotation_by_size(ctx: TestContext) -> Result<()> {
             let pool = ctx.pool.clone();
             async move {
                 let material_count: Option<i64> = sqlx::query_scalar(
-                    r#"SELECT COUNT(*) FROM raw.source_material_registry
-                       WHERE status = 'completed'"#,
+                    r"SELECT COUNT(*) FROM raw.source_material_registry
+                       WHERE status = 'completed'",
                 )
                 .fetch_one(&pool)
                 .await?;
 
-                Ok(material_count.unwrap_or(0) >= 1)
+                Ok::<bool, SinexError>(material_count.unwrap_or(0) >= 1)
             }
         },
         DEFAULT_WAIT_SECS,

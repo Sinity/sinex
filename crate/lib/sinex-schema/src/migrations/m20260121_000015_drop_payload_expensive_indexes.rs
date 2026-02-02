@@ -1,14 +1,14 @@
 //! Drop expensive GIN indexes on core.events payload to reduce write amplification.
 //!
 //! Reverting migrations:
-//! - m20250115_000003_add_events_payload_trgm_index
-//! - m20250115_000004_add_events_payload_fts_index
+//! - `m20250115_000003_add_events_payload_trgm_index`
+//! - `m20250115_000004_add_events_payload_fts_index`
 
 use crate::schema::{Events, TableDef};
 use sea_orm_migration::prelude::*;
 
 #[derive(DeriveMigrationName)]
-pub struct Migration;
+pub(crate) struct Migration;
 
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {

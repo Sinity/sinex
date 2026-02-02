@@ -60,7 +60,7 @@ pub enum CiSubcommand {
 }
 
 impl XtaskCommand for CiCommand {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "ci"
     }
 
@@ -125,6 +125,7 @@ struct PgEnv {
     operation_id: String,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn execute_postgres(
     port: u16,
     data_dir: Option<PathBuf>,
@@ -162,7 +163,7 @@ fn execute_postgres(
             .open(data_dir.join("postgresql.conf"))?;
         writeln!(conf, "unix_socket_directories = '{}'", socket_dir.display())?;
         writeln!(conf, "listen_addresses = '127.0.0.1'")?;
-        writeln!(conf, "port = {}", port)?;
+        writeln!(conf, "port = {port}")?;
         // Tests assume a relatively high connection ceiling (NixOS module uses >=800). Keep the
         // ephemeral CI cluster aligned so parallel nextest runs don't wedge on connection limits.
         writeln!(conf, "max_connections = 800")?;
@@ -212,7 +213,7 @@ fn execute_postgres(
     };
 
     if ctx.is_human() {
-        println!("Running command: {:?}", command);
+        println!("Running command: {command:?}");
     }
 
     let mut cmd = Command::new(program);
@@ -229,14 +230,14 @@ fn execute_postgres(
 
     let status = cmd
         .status()
-        .with_context(|| format!("failed to run {:?}", command))?;
+        .with_context(|| format!("failed to run {command:?}"))?;
 
     drop(pg_guard);
 
     if !status.success() {
         return Ok(CommandResult::failure(crate::output::StructuredError {
             code: "COMMAND_FAILED".to_string(),
-            message: format!("Command {:?} failed with status {}", command, status),
+            message: format!("Command {command:?} failed with status {status}"),
             location: None,
             suggestion: Some("Check command output for details".to_string()),
         })
@@ -244,9 +245,9 @@ fn execute_postgres(
     }
 
     Ok(CommandResult::success()
-        .with_message(format!("Successfully ran command with ephemeral Postgres"))
-        .with_detail(format!("Port: {}", port))
-        .with_detail(format!("Database: {}", database))
+        .with_message("Successfully ran command with ephemeral Postgres".to_string())
+        .with_detail(format!("Port: {port}"))
+        .with_detail(format!("Database: {database}"))
         .with_duration(ctx.elapsed()))
 }
 
@@ -266,19 +267,18 @@ fn execute_workspace(target_dir: &str, ctx: &CommandContext) -> Result<CommandRe
         forbidden: true,
         heavy: false,
         affected: false,
+        all: true, // CI should check all packages
+        packages: vec![],
+        skip_tests: false,    // CI should always check tests
+        lint_breakdown: true, // Show lint breakdown in CI
+        by_file: false,
     }
     .execute(ctx)?;
     if !check_result.is_success() {
         return Ok(check_result);
     }
 
-    if ctx.is_human() {
-        println!("Running lint...");
-    }
-    let lint_result = crate::commands::lint::LintCommand {}.execute(ctx)?;
-    if !lint_result.is_success() {
-        return Ok(lint_result);
-    }
+    // Lint is now part of check command, skip the separate lint step
 
     if ctx.is_human() {
         println!("Running lint-forbidden...");
@@ -601,10 +601,7 @@ fn ensure_extensions(env: &PgEnv) -> Result<()> {
                 env,
                 &env.superuser,
                 &env.database,
-                &format!(
-                    "SELECT 1 FROM pg_available_extensions WHERE name = '{}'",
-                    name
-                ),
+                &format!("SELECT 1 FROM pg_available_extensions WHERE name = '{name}'"),
             )?;
             if available.is_empty() {
                 continue;
@@ -620,8 +617,7 @@ fn ensure_extensions(env: &PgEnv) -> Result<()> {
         }
         if !installed && required {
             bail!(
-                "None of the requested extensions {:?} are available in this PostgreSQL build",
-                names
+                "None of the requested extensions {names:?} are available in this PostgreSQL build"
             );
         }
     }
@@ -783,7 +779,7 @@ mod tests {
                 target_dir: "target-ci".to_string(),
             },
         };
-        let cloned = cmd.subcommand.clone();
+        let cloned = cmd.subcommand;
         match cloned {
             CiSubcommand::SchemaSync { target_dir } => {
                 assert_eq!(target_dir, "target-ci");

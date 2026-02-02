@@ -1,6 +1,6 @@
 //! Tests for the gateway client module
 //!
-//! Uses MockGatewayClient for unit tests and wiremock for integration tests.
+//! Uses `MockGatewayClient` for unit tests and wiremock for integration tests.
 
 mod common;
 
@@ -107,7 +107,7 @@ async fn test_mock_client_dlq_peek() {
     // Verify call recorded with args
     let calls = client.get_calls();
     assert_eq!(calls.last().unwrap().0, "dlq_peek");
-    assert!(calls.last().unwrap().1[0].contains("5"));
+    assert!(calls.last().unwrap().1[0].contains('5'));
 }
 
 #[tokio::test]
@@ -457,8 +457,7 @@ async fn test_gateway_client_timeout() {
             || err.contains("deadline")
             || err.contains("operation was canceled")
             || err.contains("error sending request"),
-        "Expected timeout error, got: {}",
-        err
+        "Expected timeout error, got: {err}"
     );
 }
 

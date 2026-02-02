@@ -24,7 +24,7 @@
 //! let task = tokio::spawn(async {
 //!     // Watcher logic here
 //! });
-//! handle.start(task, None);
+//! handle.start(task, None)?;
 //!
 //! // Check if active
 //! if handle.is_active() {
@@ -41,6 +41,8 @@
 
 use std::sync::{Arc, RwLock};
 use tokio::task::JoinHandle;
+
+use sinex_primitives::{Result as SinexResult, SinexError};
 
 /// State machine for watcher lifecycle
 #[derive(Debug)]
@@ -59,7 +61,7 @@ pub enum WatcherState {
 }
 
 /// Health tracking for a watcher
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct WatcherHealth {
     /// Whether the watcher is currently active
     pub active: bool,
@@ -69,17 +71,6 @@ pub struct WatcherHealth {
     pub last_success: Option<sinex_primitives::Timestamp>,
     /// Total number of events processed
     pub events_processed: u64,
-}
-
-impl Default for WatcherHealth {
-    fn default() -> Self {
-        Self {
-            active: false,
-            last_error: None,
-            last_success: None,
-            events_processed: 0,
-        }
-    }
 }
 
 /// Handle to a watcher task with lifecycle and health tracking.
@@ -162,22 +153,29 @@ impl<M> WatcherHandle<M> {
     /// * `task` - Main watcher task handle
     /// * `forwarder` - Optional forwarder task handle
     ///
-    /// # Panics
-    /// Panics if called when watcher is already in Running or Stopped state.
-    pub fn start(&mut self, task: JoinHandle<()>, forwarder: Option<JoinHandle<()>>) {
+    /// # Errors
+    /// Returns `SinexError::InvalidState` if called when watcher is already in Running or Stopped state.
+    pub fn start(
+        &mut self,
+        task: JoinHandle<()>,
+        forwarder: Option<JoinHandle<()>>,
+    ) -> SinexResult<()> {
         match &self.state {
             WatcherState::Initialized => {
                 self.state = WatcherState::Running { task, forwarder };
                 if let Ok(mut health) = self.health.write() {
                     health.active = true;
                 }
+                Ok(())
             }
-            WatcherState::Running { .. } => {
-                panic!("WatcherHandle::start called on already-running watcher");
-            }
-            WatcherState::Stopped => {
-                panic!("WatcherHandle::start called on stopped watcher");
-            }
+            WatcherState::Running { .. } => Err(SinexError::invalid_state(
+                "WatcherHandle::start called on already-running watcher",
+            )
+            .with_context("watcher_name", self.name)),
+            WatcherState::Stopped => Err(SinexError::invalid_state(
+                "WatcherHandle::start called on stopped watcher",
+            )
+            .with_context("watcher_name", self.name)),
         }
     }
 
@@ -209,8 +207,7 @@ impl<M> WatcherHandle<M> {
     /// Record a successful operation in the health tracker.
     pub fn record_success(&self) {
         if let Ok(mut health) = self.health.write() {
-            health.last_success =
-                Some(sinex_primitives::temporal::OffsetDateTime::now_utc().into());
+            health.last_success = Some(sinex_primitives::temporal::Timestamp::now());
             health.events_processed = health.events_processed.saturating_add(1);
         }
     }
@@ -294,7 +291,7 @@ mod tests {
         let task = tokio::spawn(async {
             sleep(Duration::from_secs(10)).await;
         });
-        handle.start(task, None);
+        handle.start(task, None)?;
         assert!(handle.is_active());
 
         // Shutdown consumes self, so check state before shutdown
@@ -347,7 +344,7 @@ mod tests {
         });
 
         let mut handle = WatcherHandle::<()>::initialized("test");
-        handle.start(task, None);
+        handle.start(task, None)?;
 
         handle.shutdown().await;
         sleep(Duration::from_millis(100)).await;
@@ -363,7 +360,7 @@ mod tests {
         let mut handle = WatcherHandle::initialized("test").with_material(material);
 
         let task = tokio::spawn(async {});
-        handle.start(task, None);
+        handle.start(task, None)?;
 
         let extracted = handle.take_material();
         assert_eq!(extracted, Some("test_context"));
@@ -381,7 +378,7 @@ mod tests {
         });
 
         let mut handle = WatcherHandle::<()>::initialized("test");
-        handle.start(main_task, Some(forwarder_task));
+        handle.start(main_task, Some(forwarder_task))?;
         assert!(handle.is_active());
 
         handle.shutdown().await;

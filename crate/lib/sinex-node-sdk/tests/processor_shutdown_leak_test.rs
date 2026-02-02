@@ -10,7 +10,7 @@ use sinex_node_sdk::stream_processor::{
 };
 use sinex_node_sdk::NodeResult;
 use support::runtime::TestRuntimeBuilder;
-use xtask::sandbox::{sinex_test, TestContext};
+use xtask::sandbox::sinex_test;
 
 #[derive(Default)]
 struct HangingProcessor {
@@ -47,7 +47,7 @@ impl Node for HangingProcessor {
         })
     }
 
-    fn node_name(&self) -> &str {
+    fn node_name(&self) -> &'static str {
         "hanging-processor"
     }
 

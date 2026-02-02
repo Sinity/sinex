@@ -12,9 +12,9 @@ use time::Duration;
 // Domain Type Strategies
 // =============================================================================
 
-/// Strategy for generating valid EventSource values
+/// Strategy for generating valid `EventSource` values
 ///
-/// EventSource must be lowercase alphanumeric with dots and underscores,
+/// `EventSource` must be lowercase alphanumeric with dots and underscores,
 /// starting with a letter, length 1-255.
 pub fn arb_event_source() -> impl Strategy<Value = EventSource> {
     prop_oneof![
@@ -28,9 +28,9 @@ pub fn arb_event_source() -> impl Strategy<Value = EventSource> {
     ]
 }
 
-/// Strategy for generating valid EventType values
+/// Strategy for generating valid `EventType` values
 ///
-/// EventType must be lowercase alphanumeric with dots and underscores,
+/// `EventType` must be lowercase alphanumeric with dots and underscores,
 /// starting with a letter, length 1-255.
 pub fn arb_event_type() -> impl Strategy<Value = EventType> {
     prop_oneof![
@@ -51,8 +51,8 @@ pub fn arb_ulid() -> impl Strategy<Value = Ulid> {
     // Generate ULIDs from random timestamps within reasonable range
     // (2020-01-01 to 2030-01-01)
     (1577836800i64..1893456000i64).prop_map(|ts| {
-        let dt = Timestamp::from_unix_timestamp(ts).unwrap_or_else(|_| Timestamp::now());
-        Ulid::from_datetime(*dt)
+        let dt = Timestamp::from_unix_timestamp(ts).unwrap_or_else(Timestamp::now);
+        Ulid::from_datetime(dt)
     })
 }
 
@@ -91,7 +91,7 @@ pub fn arb_json_payload() -> impl Strategy<Value = Value> {
 
 /// Strategy for generating compact JSON payloads
 ///
-/// Similar to arb_json_payload but with smaller depth and size,
+/// Similar to `arb_json_payload` but with smaller depth and size,
 /// suitable for tests that need many instances.
 pub fn arb_json_payload_compact() -> impl Strategy<Value = Value> {
     prop_oneof![
@@ -116,7 +116,7 @@ pub fn arb_processor_name() -> impl Strategy<Value = String> {
         Just("content-automaton".to_string()),
         Just("search-automaton".to_string()),
         Just("test-automaton".to_string()),
-        "[a-z][a-z0-9-]{4,30}".prop_map(|s| format!("{}-automaton", s)),
+        "[a-z][a-z0-9-]{4,30}".prop_map(|s| format!("{s}-automaton")),
     ]
 }
 
@@ -125,7 +125,7 @@ pub fn arb_processor_name() -> impl Strategy<Value = String> {
 /// Generates timestamps within a reasonable range (2020-2030).
 pub fn arb_timestamp() -> impl Strategy<Value = Timestamp> {
     (1577836800i64..1893456000i64)
-        .prop_map(|ts| Timestamp::from_unix_timestamp(ts).unwrap_or_else(|_| Timestamp::now()))
+        .prop_map(|ts| Timestamp::from_unix_timestamp(ts).unwrap_or_else(Timestamp::now))
 }
 
 /// Strategy for generating timestamp ranges
@@ -149,7 +149,7 @@ pub fn arb_file_path() -> impl Strategy<Value = String> {
         Just("/var/log/system.log".to_string()),
         Just("/.hidden".to_string()),
         Just("/tmp/file with spaces.txt".to_string()),
-        "/[a-z0-9/._-]{1,100}\\.[a-z]{1,5}".prop_map(|s| s.to_string()),
+        "/[a-z0-9/._-]{1,100}\\.[a-z]{1,5}".prop_map(|s| s),
     ]
 }
 

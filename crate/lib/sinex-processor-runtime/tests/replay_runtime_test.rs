@@ -8,7 +8,7 @@ use xtask::sandbox::{sinex_test, TestContext, TestRuntimeBuilder};
 
 #[sinex_test]
 async fn replay_runtime_service_emits_events(ctx: TestContext) -> color_eyre::Result<()> {
-    let ctx = ctx.with_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     publish_event(
         &ctx,
         "runtime-replay",

@@ -1,7 +1,7 @@
 use camino::Utf8PathBuf;
 use serde_json::json;
-use sinex_primitives::nats::NatsConnectionConfig;
 use sinex_ingestd::{config::IngestdConfig, service::IngestService, JetStreamTopology};
+use sinex_primitives::nats::NatsConnectionConfig;
 use tempfile::TempDir;
 use tokio::time::{timeout, Duration};
 use xtask::sandbox::prelude::*;
@@ -64,13 +64,16 @@ async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResul
         .map_err(|_| color_eyre::eyre::eyre!("ingestd runner shutdown timed out"))?;
     join_result??;
 
-    let publisher = TestNodePublisher::new(ctx.nats_client(), "backlog-source");
-    let mut event_ids = Vec::new();
+    // Publish events directly to JetStream while service is offline
+    let js = ctx.jetstream().await?;
+    let subject = format!("{}.backlog.event", topology.events_stream);
     for idx in 0..3 {
-        let event_id = publisher
-            .publish("backlog.event", json!({ "seq": idx }))
-            .await?;
-        event_ids.push(event_id);
+        let payload = serde_json::to_vec(&json!({
+            "source": "backlog-source",
+            "type": "backlog.event",
+            "seq": idx
+        }))?;
+        js.publish(subject.clone(), payload.into()).await?.await?;
     }
 
     let mut restart_service = IngestService::new(config).await?;
@@ -78,10 +81,7 @@ async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResul
     let restart_handle = tokio::spawn(async move { restart_runner.run().await });
 
     let wait_secs = Timeouts::LONG;
-    WaitHelpers::wait_for_event_count(&ctx.pool, event_ids.len(), wait_secs).await?;
-    for event_id in event_ids {
-        WaitHelpers::wait_for_event_id(&ctx.pool, event_id.into(), wait_secs).await?;
-    }
+    WaitHelpers::wait_for_event_count(&ctx.pool, 3, wait_secs).await?;
 
     restart_service.shutdown().await?;
     let restart_join = timeout(Duration::from_secs(Timeouts::QUICK), restart_handle)

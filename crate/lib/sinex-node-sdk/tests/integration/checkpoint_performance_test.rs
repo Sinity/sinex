@@ -73,7 +73,7 @@ async fn jetstream_checkpoint_roundtrip(ctx: TestContext) -> Result<()> {
         js.publish(&subject, payload.into()).await?.await?;
     }
 
-    let ctx = ctx.with_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let kv = ctx.checkpoint_kv().await?;
     let mut manager = CheckpointManager::new(
         kv,
@@ -109,7 +109,7 @@ async fn jetstream_checkpoint_roundtrip(ctx: TestContext) -> Result<()> {
                     event_id: None,
                 },
                 processed_count: processed as u64,
-                last_activity: OffsetDateTime::now_utc(),
+                last_activity: Timestamp::now(),
                 data: Some(json!({ "stream": stream, "subject": subject })),
                 version: 2,
             };
@@ -175,7 +175,7 @@ async fn jetstream_checkpoint_recovery_behaviour(ctx: TestContext) -> Result<()>
         js.publish(&subject, payload.into()).await?.await?;
     }
 
-    let ctx = ctx.with_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let kv = ctx.checkpoint_kv().await?;
     let mut manager = CheckpointManager::new(
         kv.clone(),
@@ -209,7 +209,7 @@ async fn jetstream_checkpoint_recovery_behaviour(ctx: TestContext) -> Result<()>
                     event_id: None,
                 },
                 processed_count: processed as u64,
-                last_activity: OffsetDateTime::now_utc(),
+                last_activity: Timestamp::now(),
                 data: Some(json!({ "phase": "initial" })),
                 version: 2,
             };
@@ -258,7 +258,7 @@ async fn jetstream_checkpoint_recovery_behaviour(ctx: TestContext) -> Result<()>
                     event_id: None,
                 },
                 processed_count: (50 + recovered) as u64,
-                last_activity: OffsetDateTime::now_utc(),
+                last_activity: Timestamp::now(),
                 data: Some(json!({ "phase": "recovery" })),
                 version: 2,
             };

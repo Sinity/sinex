@@ -18,17 +18,17 @@ use std::io;
 ///     .map_err(|e| io_error_with_context(e, "Failed to read config file"));
 /// ```
 pub fn io_error_with_context(error: io::Error, context: &str) -> SinexError {
-    SinexError::io(format!("{}: {}", context, error))
+    SinexError::io(format!("{context}: {error}"))
 }
 
 /// Convert UTF-8 conversion errors to SinexError with context
 pub fn utf8_error_with_context(error: std::string::FromUtf8Error, context: &str) -> SinexError {
-    SinexError::processing(format!("{}: {}", context, error))
+    SinexError::processing(format!("{context}: {error}"))
 }
 
 /// Convert serde_json errors to SinexError with context
 pub fn json_error_with_context(error: serde_json::Error, context: &str) -> SinexError {
-    SinexError::processing(format!("{}: {}", context, error))
+    SinexError::processing(format!("{context}: {error}"))
 }
 
 /// Create a processing error with formatted context
@@ -167,7 +167,7 @@ pub mod path_utils {
 /// let node_result = result.map_err(|e| general_error(e, "Failed to read config"));
 /// ```
 pub fn general_error<E: std::fmt::Display>(error: E, context: &str) -> crate::SinexError {
-    crate::SinexError::processing(format!("{}: {}", context, error))
+    crate::SinexError::processing(format!("{context}: {error}"))
 }
 
 /// Extension trait for Result types to simplify SinexError conversion
@@ -209,6 +209,6 @@ impl<T, E: std::fmt::Display> NodeErrorExt<T> for Result<T, E> {
     }
 
     fn processing_err(self, context: &str) -> Result<T, crate::SinexError> {
-        self.map_err(|e| crate::SinexError::processing(format!("{}: {}", context, e)))
+        self.map_err(|e| crate::SinexError::processing(format!("{context}: {e}")))
     }
 }

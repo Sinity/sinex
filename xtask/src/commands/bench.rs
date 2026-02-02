@@ -3,7 +3,7 @@ use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskComman
 use anyhow::Result;
 
 impl XtaskCommand for BenchArgs {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "bench"
     }
 

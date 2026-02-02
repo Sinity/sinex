@@ -7,8 +7,8 @@
 //! - Set processing horizon (control replay boundaries)
 
 use serde_json::{json, Value};
-use sinex_primitives::{environment::SinexEnvironment, SinexError};
 use sinex_primitives::temporal::Timestamp;
+use sinex_primitives::{environment::SinexEnvironment, SinexError};
 
 // Re-export shared types for use by other modules
 pub use sinex_primitives::rpc::nodes::{
@@ -74,8 +74,8 @@ pub async fn handle_nodes_drain(
     env: &SinexEnvironment,
     params: Value,
 ) -> Result<Value> {
-    let drain_params: NodeDrainRequest =
-        serde_json::from_value(params).map_err(|e| SinexError::serialization(e.to_string()))?;
+    let drain_params: NodeDrainRequest = serde_json::from_value(params)
+        .map_err(|e| SinexError::serialization("invalid drain request").with_std_error(&e))?;
 
     // Publish drain command to NATS control subject
     let subject = env.nats_subject(&format!(
@@ -94,11 +94,18 @@ pub async fn handle_nodes_drain(
         .publish(
             subject.clone(),
             serde_json::to_vec(&payload)
-                .map_err(|e| SinexError::serialization(e.to_string()))?
+                .map_err(|e| {
+                    SinexError::serialization("failed to serialize drain payload")
+                        .with_std_error(&e)
+                })?
                 .into(),
         )
         .await
-        .map_err(|e| SinexError::nats_publish("drain command").with_context("subject", &subject).with_source(e))?;
+        .map_err(|e| {
+            SinexError::nats_publish("drain command")
+                .with_context("subject", &subject)
+                .with_std_error(&e)
+        })?;
 
     Ok(json!({
         "status": "drain_requested",
@@ -112,8 +119,8 @@ pub async fn handle_nodes_resume(
     env: &SinexEnvironment,
     params: Value,
 ) -> Result<Value> {
-    let resume_params: NodeResumeRequest =
-        serde_json::from_value(params).map_err(|e| SinexError::serialization(e.to_string()))?;
+    let resume_params: NodeResumeRequest = serde_json::from_value(params)
+        .map_err(|e| SinexError::serialization("invalid resume request").with_std_error(&e))?;
 
     // Publish resume command to NATS control subject
     let subject = env.nats_subject(&format!(
@@ -131,11 +138,18 @@ pub async fn handle_nodes_resume(
         .publish(
             subject.clone(),
             serde_json::to_vec(&payload)
-                .map_err(|e| SinexError::serialization(e.to_string()))?
+                .map_err(|e| {
+                    SinexError::serialization("failed to serialize resume payload")
+                        .with_std_error(&e)
+                })?
                 .into(),
         )
         .await
-        .map_err(|e| SinexError::nats_publish("resume command").with_context("subject", &subject).with_source(e))?;
+        .map_err(|e| {
+            SinexError::nats_publish("resume command")
+                .with_context("subject", &subject)
+                .with_std_error(&e)
+        })?;
 
     Ok(json!({
         "status": "resume_requested",
@@ -149,8 +163,8 @@ pub async fn handle_nodes_set_horizon(
     env: &SinexEnvironment,
     params: Value,
 ) -> Result<Value> {
-    let horizon_params: NodeSetHorizonRequest =
-        serde_json::from_value(params).map_err(|e| SinexError::serialization(e.to_string()))?;
+    let horizon_params: NodeSetHorizonRequest = serde_json::from_value(params)
+        .map_err(|e| SinexError::serialization("invalid set-horizon request").with_std_error(&e))?;
 
     // Publish set-horizon command to NATS control subject
     let subject = env.nats_subject(&format!(
@@ -169,12 +183,17 @@ pub async fn handle_nodes_set_horizon(
         .publish(
             subject.clone(),
             serde_json::to_vec(&payload)
-                .map_err(|e| SinexError::serialization(e.to_string()))?
+                .map_err(|e| {
+                    SinexError::serialization("failed to serialize set-horizon payload")
+                        .with_std_error(&e)
+                })?
                 .into(),
         )
         .await
         .map_err(|e| {
-            SinexError::nats_publish("set-horizon command").with_context("subject", &subject).with_source(e)
+            SinexError::nats_publish("set-horizon command")
+                .with_context("subject", &subject)
+                .with_std_error(&e)
         })?;
 
     Ok(json!({

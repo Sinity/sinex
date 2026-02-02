@@ -88,8 +88,8 @@ async fn test_event_ingestion_flow(ctx: TestContext) -> Result<()> {
     );
 
     // Wait for persistence
-    let event_id = node_event.id.as_ref().unwrap().clone();
-    xtask::sandbox::timing::WaitHelpers::wait_for_event_id(&ctx.pool, event_id.clone(), 10).await?;
+    let event_id = *node_event.id.as_ref().unwrap();
+    xtask::sandbox::timing::WaitHelpers::wait_for_event_id(&ctx.pool, event_id, 10).await?;
 
     // Verify event can be retrieved
     let retrieved_event = ctx.pool.events().get_by_id(event_id).await?;
@@ -147,7 +147,7 @@ async fn test_batch_ingestion(ctx: TestContext) -> Result<()> {
     // Events are automatically stored, extract their IDs
     let mut stored_ids = Vec::new();
     for event in &batch_events {
-        stored_ids.push(event.id.as_ref().unwrap().clone());
+        stored_ids.push(*event.id.as_ref().unwrap());
     }
 
     assert_eq!(stored_ids.len(), 3, "All batch events should be stored");
@@ -155,19 +155,17 @@ async fn test_batch_ingestion(ctx: TestContext) -> Result<()> {
     // Verify all events were persisted
     xtask::sandbox::timing::WaitHelpers::wait_for_event_count(&ctx.pool, 3, 30).await?;
     for (idx, event_id) in stored_ids.iter().enumerate() {
-        xtask::sandbox::timing::WaitHelpers::wait_for_event_id(&ctx.pool, event_id.clone(), 10)
-            .await?;
+        xtask::sandbox::timing::WaitHelpers::wait_for_event_id(&ctx.pool, *event_id, 10).await?;
         let retrieved = ctx
             .pool
             .events()
-            .get_by_id(event_id.clone())
+            .get_by_id(*event_id)
             .await?
             .expect("Batch event should be retrievable after wait");
         assert_eq!(
             retrieved.id,
-            Some(event_id.clone()),
-            "Batch event {} should match stored ID",
-            idx
+            Some(*event_id),
+            "Batch event {idx} should match stored ID"
         );
     }
 
@@ -334,7 +332,10 @@ async fn test_source_and_type_patterns(ctx: TestContext) -> Result<()> {
     );
 
     tracing::info!(
-        total_events = events_by_source.values().map(|v| v.len()).sum::<usize>(),
+        total_events = events_by_source
+            .values()
+            .map(std::vec::Vec::len)
+            .sum::<usize>(),
         unique_sources = events_by_source.len(),
         "Source and type patterns validated"
     );
@@ -354,7 +355,7 @@ async fn test_ingestion_performance(ctx: TestContext) -> Result<()> {
 
     let start_time = std::time::Instant::now();
     let run_id = Ulid::new();
-    let source = format!("performance-test-{}", run_id);
+    let source = format!("performance-test-{run_id}");
 
     // Generate a small batch of events to test throughput without hitting test timeouts.
     let target_events = 20usize;
@@ -420,10 +421,7 @@ async fn test_ingestion_performance(ctx: TestContext) -> Result<()> {
 
     assert!(
         persisted >= processed_events,
-        "All performance test events should be persisted for source {} (saw {}, expected {})",
-        source,
-        persisted,
-        processed_events
+        "All performance test events should be persisted for source {source} (saw {persisted}, expected {processed_events})"
     );
 
     let duration = start_time.elapsed();
@@ -439,16 +437,13 @@ async fn test_ingestion_performance(ctx: TestContext) -> Result<()> {
     // Verify reasonable performance (should process at least 1 event/second to avoid flake on slow hosts)
     assert!(
         events_per_second >= 1.0,
-        "Ingestion service should maintain reasonable throughput even under load: {} events/second",
-        events_per_second
+        "Ingestion service should maintain reasonable throughput even under load: {events_per_second} events/second"
     );
 
     // Verify all events were processed
     assert!(
         processed_events >= target_events,
-        "All performance test events should be processed (processed {}, target {})",
-        processed_events,
-        target_events
+        "All performance test events should be processed (processed {processed_events}, target {target_events})"
     );
 
     Ok(())
@@ -701,9 +696,7 @@ async fn test_schema_validation_patterns(ctx: TestContext) -> Result<()> {
 
         assert!(
             event.id.is_some(),
-            "Event with source {} and type {} should be stored",
-            source,
-            event_type
+            "Event with source {source} and type {event_type} should be stored"
         );
     }
 
@@ -725,7 +718,7 @@ async fn test_payload_validation_patterns(ctx: TestContext) -> Result<()> {
             "with_numbers",
             serde_json::json!({
                 "integer": 42,
-                "float": 3.14159,
+                "float": 1.23456,
                 "negative": -123
             }),
         ),
@@ -766,8 +759,7 @@ async fn test_payload_validation_patterns(ctx: TestContext) -> Result<()> {
 
         assert!(
             event.id.is_some(),
-            "Payload pattern '{}' should be valid",
-            pattern_name
+            "Payload pattern '{pattern_name}' should be valid"
         );
 
         tracing::debug!(pattern = %pattern_name, "Payload validation pattern passed");
@@ -904,8 +896,7 @@ async fn test_resource_management(ctx: TestContext) -> Result<()> {
 
             assert!(
                 event.id.is_some(),
-                "Event with payload size {} should be stored",
-                payload_size
+                "Event with payload size {payload_size} should be stored"
             );
         }
     }

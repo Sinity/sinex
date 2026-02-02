@@ -4,19 +4,17 @@ This document describes compile-time feature flags used across Sinex crates.
 
 ## Core Feature Matrix
 
-### sinex-core
+### sinex-primitives
 
 | Feature | Default | Dependencies | Description |
 |---------|---------|--------------|-------------|
-| `full` | Yes (via default) | `macros`, `sqlx`, `nats`, `migrations` | Complete feature set |
+| `full` | Yes (via default) | `macros`, `sqlx`, `nats` | Complete feature set |
 | `types-only` | No | `macros` | Just types, validation, errors (no DB/NATS) |
 | `macros` | No | `sinex-macros` | Proc macros (`EventPayload` derive, `#[with_context]`) |
 | `sqlx` | No | `sqlx`, `jsonschema` | Database types, pools, repositories |
 | `nats` | No | `async-nats` | NATS coordination client |
-| `migrations` | No | `sea-orm-migration`, `sqlx` | Database migration support |
 | `arbitrary` | No | `proptest` | Property testing strategies |
 | `testing` | No | - | Test-only methods |
-| `slow-tests` | No | - | Long-running test gates |
 
 ### sinex-node-sdk
 
@@ -30,20 +28,18 @@ This document describes compile-time feature flags used across Sinex crates.
 | `macros` | No | `sinex-macros` | Proc macros |
 | `external-tests` | No | - | Tests requiring external services |
 
-### sinex-test-utils
+### xtask (sandbox feature)
 
 | Feature | Default | Description |
 |---------|---------|-------------|
+| `sandbox` | No | Test infrastructure (TestContext, pool, NATS helpers) |
 | `bench` | No | Benchmarking support (divan, sysinfo) |
-| `slow-tests` | No | Long-running test gates |
-| `rstest-preview` | No | rstest integration features |
-| `internal-tests` | No | Internal test utilities |
 
 ## Binary Requirements
 
 Each binary requires specific features to be enabled in its dependencies:
 
-| Binary | Required sinex-core Features | Required sinex-node-sdk Features |
+| Binary | Required sinex-primitives Features | Required sinex-node-sdk Features |
 |--------|------------------------------|----------------------------------|
 | `sinex-ingestd` | `full` | `db`, `messaging` |
 | `sinex-gateway` | `full` | N/A |
@@ -59,7 +55,7 @@ For library consumers that only need types:
 
 ```toml
 [dependencies]
-sinex-core = { version = "0.4", default-features = false, features = ["types-only"] }
+sinex-primitives = { version = "0.4", default-features = false, features = ["types-only"] }
 ```
 
 This provides:
@@ -74,21 +70,21 @@ This provides:
 The following feature combinations are tested in CI:
 
 1. **Default** - All crates with default features
-2. **Minimal** - `sinex-core` with `types-only`
+2. **Minimal** - `sinex-primitives` with `types-only`
 3. **No NATS** - `sinex-node-sdk` with `db` only
-4. **Slow tests** - With `slow-tests` feature enabled
+4. **Heavy tests** - With `--heavy` flag
 
 To test a specific feature combination locally:
 
 ```bash
 # Minimal build
-cargo build -p sinex-core --no-default-features --features types-only
+cargo build -p sinex-primitives --no-default-features --features types-only
 
 # Without NATS
 cargo build -p sinex-node-sdk --no-default-features --features db
 
-# Run slow tests
-cargo nextest run --features slow-tests
+# Run heavy/ignored tests
+cargo xtask test --heavy
 ```
 
 ## Adding New Features

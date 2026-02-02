@@ -1,28 +1,26 @@
 # Sinex Testing Handbook
 
 This handbook covers workspace-wide testing conventions, test organization, and CI configuration.
-For detailed API documentation, see the `sinex-test-utils` crate documentation.
+For detailed API documentation, see `xtask/docs/sandbox/` (test utilities are in `xtask::sandbox`).
 
 ## Quick Start
 
 ```bash
-# Quick feedback (no retries)
-# Note: the `fast` profile was removed. Use the `default` profile for typical
-# local runs or `debug` for single-threaded debugging.
-cargo xtask test --profile default
+# Quick feedback
+cargo xtask test
 
-# Full workspace matrix (recommended before PR)
-cargo xtask test --profile default --prime
+# Debug mode (single-threaded, full output)
+cargo xtask test --debug
 
-# CI selection (default profile)
-cargo xtask test --profile default --prime
+# Full workspace with priming (recommended before PR)
+cargo xtask test --prime
 
 # Targeted runs
-cargo xtask test --profile default -- -p <package>
-cargo xtask test --profile default -- --test <binary>
+cargo xtask test -- -p <package>
+cargo xtask test -- --test <binary>
 
 # Update snapshots
-INSTA_UPDATE=always cargo xtask test --profile default --prime
+INSTA_UPDATE=always cargo xtask test --prime
 ```
 
 ## Prerequisites
@@ -56,24 +54,26 @@ Override with `NATS_SERVER_BIN=/custom/path/nats-server` if needed.
 | Location | What lives here |
 |----------|-----------------|
 | `crate/*/<crate>/tests/` | Crate-owned unit, integration, and property tests |
-| `crate/lib/sinex-core/tests/` | Core data-path suites (unit, integration, performance, adversarial) |
+| `crate/lib/sinex-primitives/tests/` | Core data-path suites (unit, integration, performance, adversarial) |
 | `crate/lib/sinex-node-sdk/tests/` | Node SDK lifecycle, checkpoint, and annex coverage |
-| `crate/lib/sinex-test-utils/tests/` | Harness demonstrations and helper examples |
+| `xtask/tests/` | Test harness demonstrations and xtask command tests |
 | `tests/e2e/` | NixOS module assertions and VM harness support |
 | `tests/e2e/nixos-vm/` | Full NixOS VM suites (deployment, chaos, performance) |
 
 **Rule**: Put new tests in the crate that owns the behavior. Workspace-level tests are reserved
 for scenarios that truly span multiple crates.
 
-## Nextest Profiles
+## Test Flags
 
-Defined in `.config/nextest.toml`:
+Use xtask flags instead of nextest profiles:
 
-| Profile | Use case |
-|---------|----------|
-| `default` | Standard runs with retries (CI + pre-commit), perf/stress/external excluded |
-| `debug` | Single-threaded with full stdout/stderr |
-| `perf` | Performance/stress/soak tests — includes external integration targets (git-annex / security binaries) |
+| Flag | Use case |
+|------|----------|
+| (none) | Standard runs with retries, perf/stress/external excluded |
+| `--debug` | Single-threaded with full stdout/stderr |
+| `--heavy` | Include `#[ignore]` tests (long-running, external) |
+| `--prime` | Prime database template before testing |
+| `--affected` | Only test changed packages |
 
 ## Running heavy / ignored tests
 
@@ -94,8 +94,8 @@ There is also a VS Code task named "Run heavy tests (include ignored)" that runs
 
 ## Property Testing Conventions
 
-- **sinex-core**: Property tests for event modeling, schema validation, ULID behavior,
-  sanitization, and repository invariants live under `crate/lib/sinex-core/tests/property/`.
+- **sinex-primitives**: Property tests for event modeling, schema validation, ULID behavior,
+  sanitization, and repository invariants live under `crate/lib/sinex-primitives/tests/property/`.
 
 - **sinex-node-sdk**: Cross-node properties use NATS fixtures and live under
   `crate/lib/sinex-node-sdk/tests/property/`.
@@ -107,7 +107,7 @@ Use `#[sinex_prop]` or `sinex_proptest!` macros. Add `cases = 256` to lock runne
 Failing seeds persist to `tests/property/*.proptest-regressions`.
 
 ```bash
-cargo xtask test --profile default -- --test property_tests
+cargo xtask test -- --test property_tests
 ```
 
 ## Quality Controls
@@ -116,7 +116,7 @@ cargo xtask test --profile default -- --test property_tests
   `pedantic`/`nursery` groups. `clippy.toml` bans `std::thread::sleep` in async code.
 
 - **CI**: `.github/workflows/ci.yml` mirrors local workflow: formatting, clippy,
-  `cargo xtask test --profile default --prime` against TimescaleDB.
+  `cargo xtask test --prime` against TimescaleDB.
 
 - **Coverage**: `cargo tarpaulin` for coverage reports during larger refactors.
 
@@ -133,7 +133,7 @@ cargo xtask test --profile default -- --test property_tests
 
 ## Authoritative References
 
-**Test Utilities Documentation** (`crate/lib/sinex-test-utils/docs/`):
+**Test Utilities Documentation** (`xtask/docs/sandbox/`):
 
 - `README.md` — Entry point, quick start, environment variables
 - `test_context.md` — TestContext API, lifecycle, assertions
@@ -152,5 +152,5 @@ cargo xtask test --profile default -- --test property_tests
 
 1. Put new tests in the crate that owns the behavior.
 2. Use `#[sinex_test]` and `TestContext` utilities — avoid bespoke scaffolding.
-3. Keep quick-start commands in muscle memory: `cargo xtask test --profile default --prime`.
+3. Keep quick-start commands in muscle memory: `cargo xtask test --prime`.
 4. Link back to this handbook when opening PRs.

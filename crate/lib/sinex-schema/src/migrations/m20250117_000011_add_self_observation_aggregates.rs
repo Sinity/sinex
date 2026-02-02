@@ -1,15 +1,15 @@
 //! Self-observation continuous aggregates for metrics
 //!
-//! Creates TimescaleDB continuous aggregates for Sinex self-observation events,
+//! Creates `TimescaleDB` continuous aggregates for Sinex self-observation events,
 //! enabling efficient queries on internal metrics without requiring external
 //! observability infrastructure (Prometheus, OpenTelemetry).
 //!
 //! **Issues addressed**:
-//! - Issue 3: Stream Capacity Monitoring → stream_stats_1h
-//! - Issue 16: Assembly Metrics → assembly_stats_1h
-//! - Issue 24/29: Event Processing Metrics → node_stats_1h
-//! - Issue 133: Load Shedding Metrics → gateway_stats_1h
-//! - Issue 145: Replay Control Metrics → gateway_stats_1h
+//! - Issue 3: Stream Capacity Monitoring → `stream_stats_1h`
+//! - Issue 16: Assembly Metrics → `assembly_stats_1h`
+//! - Issue 24/29: Event Processing Metrics → `node_stats_1h`
+//! - Issue 133: Load Shedding Metrics → `gateway_stats_1h`
+//! - Issue 145: Replay Control Metrics → `gateway_stats_1h`
 //! - Issue 147: Prometheus Endpoint → Can query these aggregates
 //!
 //! # Design Philosophy
@@ -22,7 +22,7 @@
 use sea_orm_migration::prelude::*;
 
 #[derive(DeriveMigrationName)]
-pub struct Migration;
+pub(crate) struct Migration;
 
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {

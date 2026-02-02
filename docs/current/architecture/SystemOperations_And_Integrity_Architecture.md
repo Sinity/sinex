@@ -1,11 +1,11 @@
-Status: canonical  
+Status: canonical\
 Last Verified: 2025-12-02 (manual review)
 > **Purpose:** Operational reference for observability, integrity, and service orchestration (keep in sync with the systemd/NixOS modules).
 # System Operations & Integrity Architecture: Ensuring a Resilient and Maintainable Exocortex
 
 *   **Version:** 2.0
 *   **Date:** 2025-07-17
-*   **Implementation Status:** ✅ **OPERATIONAL** - node orchestration operational, journald heartbeat pattern working, StatefulStreamProcessor interface implemented, basic security in place
+*   **Implementation Status:** ✅ **OPERATIONAL** - node orchestration operational, journald heartbeat pattern working, `StatefulStreamProcessor` interface implemented, basic security in place
 *   **Purpose:** This document describes the operational architecture for ensuring the Sinex system's health, security, and maintainability. It focuses on the working operational patterns rather than planned features.
 *   **Scope:** Covers operational observability, security measures, and service orchestration as currently implemented.
 
@@ -46,12 +46,12 @@ The node constellation implements an elegant observability pattern where systemd
 *   **Automatic Service Discovery:** ✅ **OPERATIONAL** - systemd service metadata automatically tracked through journal entries
 *   **Health Inference:** ✅ **OPERATIONAL** - Regular log output creates implicit heartbeat pattern without explicit heartbeat events
 *   **Meta-Observability:** ✅ **OPERATIONAL** - System health becomes queryable Sinex data, enabling self-analysis and alerting
-*   **Unified Monitoring:** ✅ **OPERATIONAL** - All system components (PostgreSQL, message bus, nodes) monitored through single journald channel
+*   **Unified Monitoring:** ✅ **OPERATIONAL** - All system components (`PostgreSQL`, message bus, nodes) monitored through single journald channel
 
 ### 2.2. Operational Metrics
 
 *   **node Service Health:** ✅ **OPERATIONAL** - systemd service status, restart counts, resource usage per node
-*   **Event Processing Pipeline:** ✅ **OPERATIONAL** - NATS JetStream lag, durable consumer positions, checkpoint ages, DLQ sizes
+*   **Event Processing Pipeline:** ✅ **OPERATIONAL** - NATS `JetStream` lag, durable consumer positions, checkpoint ages, DLQ sizes
 *   **Ingestion Hub Performance:** ✅ **OPERATIONAL** - ingestd throughput, batch sizes, validation failures, NATS consumer lag/latency
 *   **Automaton Processing:** ✅ **OPERATIONAL** - Processing rates, error rates, checkpoint intervals per automaton
 
@@ -71,7 +71,7 @@ The node constellation implements an elegant observability pattern where systemd
 *   **Process Isolation:** ✅ **OPERATIONAL** - systemd service isolation with independent user contexts
 *   **Local-First Architecture:** ✅ **OPERATIONAL** - All data processing occurs locally, no external API dependencies
 *   **Filesystem Permissions:** ✅ **OPERATIONAL** - Appropriate file system permissions and socket access controls
-*   **Database Access Control:** ✅ **OPERATIONAL** - PostgreSQL access controlled through Unix socket authentication
+*   **Database Access Control:** ✅ **OPERATIONAL** - `PostgreSQL` access controlled through Unix socket authentication
 
 ## 4. Data Integrity and Configuration Management
 
@@ -86,7 +86,7 @@ The node constellation implements an elegant observability pattern where systemd
 
 ### 4.2. Data Integrity
 
-*   **PostgreSQL Constraints:** ✅ **OPERATIONAL** - Database constraints (PK, FK, UNIQUE) implemented
+*   **`PostgreSQL` Constraints:** ✅ **OPERATIONAL** - Database constraints (PK, FK, UNIQUE) implemented
 *   **Event Schema Validation:** ✅ **OPERATIONAL** - `pg_jsonschema` validation for event payloads
 *   **ULID Consistency:** ✅ **OPERATIONAL** - Time-ordered ULID primary keys ensure data consistency
 *   **Immutable Event Log:** ✅ **OPERATIONAL** - Raw events table provides immutable audit trail
@@ -97,9 +97,9 @@ The node constellation implements an elegant observability pattern where systemd
 
 ### 5.1. Scalability Patterns
 
-*   **Horizontal Scaling:** ✅ **OPERATIONAL** - NATS JetStream durable consumers enable horizontal scaling of automaton processing
+*   **Horizontal Scaling:** ✅ **OPERATIONAL** - NATS `JetStream` durable consumers enable horizontal scaling of automaton processing
 *   **Asynchronous Processing:** ✅ **OPERATIONAL** - Batch processing and asynchronous operations implemented
-*   **TimescaleDB Partitioning:** ✅ **OPERATIONAL** - Automatic time-based partitioning for efficient queries
+*   **`TimescaleDB` Partitioning:** ✅ **OPERATIONAL** - Automatic time-based partitioning for efficient queries
 *   **Checkpoint-Based Recovery:** ✅ **OPERATIONAL** - Reliable state management enables service scaling
 
 ### 5.2. Schema Evolution
@@ -133,8 +133,8 @@ The node constellation implements an elegant observability pattern where systemd
 - Version-controlled configuration management
 
 **Performance and Scalability:**
-- Horizontal scaling through NATS JetStream durable consumers
-- TimescaleDB partitioning for efficient queries
+- Horizontal scaling through NATS `JetStream` durable consumers
+- `TimescaleDB` partitioning for efficient queries
 - Asynchronous processing with checkpoint recovery
 - JSONB flexibility for schema evolution
 
@@ -143,14 +143,14 @@ This operational architecture provides a robust foundation for the Sinex system,
 ## 7. Runbooks (Summary)
 
 Disaster Recovery (summary)
-- Backups: Use `pgBackRest` for PostgreSQL base + WAL archiving; version NixOS config in Git; store annex blobs on redundant remotes.
+- Backups: Use `pgBackRest` for `PostgreSQL` base + WAL archiving; version NixOS config in Git; store annex blobs on redundant remotes.
 - Full host recovery: Rebuild NixOS from config; restore Postgres with `pgbackrest restore` (latest or PITR); reinitialize `git-annex` and sync content; start services and verify.
 - Logical error recovery: Restore to a temporary instance at time T; dump specific tables/rows; apply to production after review.
 
 Daily Ops
 - Health check: verify services; recent event counts; error scans; DB disk usage.
-- Queue/lag: check JetStream consumer lag; DLQs; retry transient failures.
-- Migrations: apply via `sinex-schema` (sea-orm-migration); SQLx compile-time checks always hit the live database (no offline cache).
+- Queue/lag: check `JetStream` consumer lag; DLQs; retry transient failures.
+- Migrations: apply via `sinex-schema` (sea-orm-migration); `SQLx` compile-time checks always hit the live database (no offline cache).
 
 Troubleshooting
 - Ingestion failures: inspect ingestd logs; validate schema IDs and payloads; requeue batches.

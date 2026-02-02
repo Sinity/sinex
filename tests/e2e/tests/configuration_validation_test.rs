@@ -10,18 +10,16 @@
 // - **Individual tests**: 15-30 seconds
 // - **Resource usage**: Minimal (file system only)
 
-use xtask::sandbox::prelude::*;
-use xtask::sandbox::timing::Timeouts;
 use std::fs;
 use std::time::Instant;
 use tempfile::TempDir;
 use tokio::time::timeout;
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::Timeouts;
 
 /// Test configuration validation and hot reload scenarios
 #[sinex_test]
-async fn test_configuration_validation_and_reload(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn test_configuration_validation_and_reload(ctx: TestContext) -> TestResult<()> {
     println!("Testing configuration validation and hot reload scenarios...");
 
     let temp_dir = TempDir::new()?;

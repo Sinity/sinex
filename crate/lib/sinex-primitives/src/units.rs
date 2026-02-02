@@ -17,31 +17,37 @@ impl Bytes {
     pub const MAX: Bytes = Bytes(1024 * 1024 * 1024);
 
     /// Construct the newtype from a raw byte count.
+    #[must_use]
     pub const fn from_bytes(value: u64) -> Self {
         Self(value)
     }
 
     /// Construct from mebibytes (MiB).
+    #[must_use]
     pub const fn from_mebibytes(mib: u64) -> Self {
         Self(mib * 1024 * 1024)
     }
 
     /// Construct from kibibytes (KiB).
+    #[must_use]
     pub const fn from_kibibytes(kib: u64) -> Self {
         Self(kib * 1024)
     }
 
     /// Construct from gibibytes (GiB).
+    #[must_use]
     pub const fn from_gibibytes(gib: u64) -> Self {
         Self(gib * 1024 * 1024 * 1024)
     }
 
     /// Retrieve the underlying count in bytes.
+    #[must_use]
     pub const fn as_u64(self) -> u64 {
         self.0
     }
 
     /// Retrieve the count as `usize` (lossy on 32-bit platforms when > `usize::MAX`).
+    #[must_use]
     pub fn as_usize(self) -> usize {
         self.0 as usize
     }
@@ -118,31 +124,37 @@ impl Seconds {
     pub const MAX: Seconds = Seconds(86400);
 
     /// Construct from a raw number of seconds.
+    #[must_use]
     pub const fn from_secs(value: u64) -> Self {
         Self(value)
     }
 
     /// Construct from milliseconds.
+    #[must_use]
     pub const fn from_millis(millis: u64) -> Self {
         Self(millis / 1000)
     }
 
     /// Construct from minutes.
+    #[must_use]
     pub const fn from_minutes(minutes: u64) -> Self {
         Self(minutes * 60)
     }
 
     /// Construct from hours.
+    #[must_use]
     pub const fn from_hours(hours: u64) -> Self {
         Self(hours * 3600)
     }
 
     /// Retrieve the underlying second count.
+    #[must_use]
     pub const fn as_secs(self) -> u64 {
         self.0
     }
 
     /// Convert to standard Duration
+    #[must_use]
     pub const fn as_duration(self) -> std::time::Duration {
         std::time::Duration::from_secs(self.0)
     }
@@ -210,16 +222,19 @@ pub struct Milliseconds(u64);
 
 impl Milliseconds {
     /// Construct from a raw number of milliseconds.
+    #[must_use]
     pub const fn from_millis(value: u64) -> Self {
         Self(value)
     }
 
     /// Retrieve the underlying millisecond count.
+    #[must_use]
     pub const fn as_millis(self) -> u64 {
         self.0
     }
 
     /// Convert to standard Duration
+    #[must_use]
     pub const fn as_duration(self) -> std::time::Duration {
         std::time::Duration::from_millis(self.0)
     }
@@ -260,21 +275,25 @@ pub struct Microseconds(i64);
 
 impl Microseconds {
     /// Construct from a raw number of microseconds.
+    #[must_use]
     pub const fn from_micros(value: i64) -> Self {
         Self(value)
     }
 
     /// Retrieve the underlying microsecond count.
+    #[must_use]
     pub const fn as_micros(self) -> i64 {
         self.0
     }
 
     /// Convert to milliseconds (lossy).
+    #[must_use]
     pub const fn as_millis(self) -> i64 {
         self.0 / 1000
     }
 
     /// Convert to seconds (lossy).
+    #[must_use]
     pub const fn as_secs(self) -> i64 {
         self.0 / 1_000_000
     }
@@ -307,21 +326,25 @@ pub struct Nanoseconds(i64);
 
 impl Nanoseconds {
     /// Construct from a raw number of nanoseconds.
+    #[must_use]
     pub const fn from_nanos(value: i64) -> Self {
         Self(value)
     }
 
     /// Retrieve the underlying nanosecond count.
+    #[must_use]
     pub const fn as_nanos(self) -> i64 {
         self.0
     }
 
     /// Convert to microseconds (lossy).
+    #[must_use]
     pub const fn as_micros(self) -> i64 {
         self.0 / 1000
     }
 
     /// Convert to milliseconds (lossy).
+    #[must_use]
     pub const fn as_millis(self) -> i64 {
         self.0 / 1_000_000
     }
@@ -368,26 +391,31 @@ impl ExitCode {
     pub const SUCCESS: ExitCode = ExitCode(0);
 
     /// Construct from a raw exit code.
+    #[must_use]
     pub const fn from_raw(value: i32) -> Self {
         Self(value)
     }
 
     /// Retrieve the underlying exit code.
+    #[must_use]
     pub const fn as_i32(self) -> i32 {
         self.0
     }
 
     /// Check if this represents success (exit code 0).
+    #[must_use]
     pub const fn is_success(self) -> bool {
         self.0 == 0
     }
 
     /// Check if this represents a signal termination (128+).
+    #[must_use]
     pub const fn is_signal(self) -> bool {
         self.0 >= 128
     }
 
     /// Get the signal number if terminated by signal.
+    #[must_use]
     pub const fn signal_number(self) -> Option<i32> {
         if self.0 >= 128 {
             Some(self.0 - 128)
@@ -436,11 +464,13 @@ pub struct ProcessId(u32);
 
 impl ProcessId {
     /// Construct from a raw PID.
+    #[must_use]
     pub const fn from_raw(value: u32) -> Self {
         Self(value)
     }
 
     /// Retrieve the underlying PID.
+    #[must_use]
     pub const fn as_u32(self) -> u32 {
         self.0
     }
@@ -476,16 +506,19 @@ impl UnixUid {
     pub const ROOT: UnixUid = UnixUid(0);
 
     /// Construct from a raw UID.
+    #[must_use]
     pub const fn from_raw(value: u32) -> Self {
         Self(value)
     }
 
     /// Retrieve the underlying UID.
+    #[must_use]
     pub const fn as_u32(self) -> u32 {
         self.0
     }
 
     /// Check if this is root (UID 0).
+    #[must_use]
     pub const fn is_root(self) -> bool {
         self.0 == 0
     }
@@ -521,11 +554,13 @@ impl UnixGid {
     pub const ROOT: UnixGid = UnixGid(0);
 
     /// Construct from a raw GID.
+    #[must_use]
     pub const fn from_raw(value: u32) -> Self {
         Self(value)
     }
 
     /// Retrieve the underlying GID.
+    #[must_use]
     pub const fn as_u32(self) -> u32 {
         self.0
     }
@@ -576,11 +611,13 @@ impl EventCount {
     pub const ZERO: EventCount = EventCount(0);
 
     /// Construct from a raw count.
+    #[must_use]
     pub const fn from_raw(value: u64) -> Self {
         Self(value)
     }
 
     /// Retrieve the underlying count.
+    #[must_use]
     pub const fn as_u64(self) -> u64 {
         self.0
     }
@@ -656,11 +693,13 @@ impl LineCount {
     pub const ZERO: LineCount = LineCount(0);
 
     /// Construct from a raw count.
+    #[must_use]
     pub const fn from_raw(value: u32) -> Self {
         Self(value)
     }
 
     /// Retrieve the underlying count.
+    #[must_use]
     pub const fn as_u32(self) -> u32 {
         self.0
     }
@@ -715,16 +754,19 @@ impl SyslogPriority {
     pub const DEBUG: SyslogPriority = SyslogPriority(7);
 
     /// Construct from a raw priority (clamped to 0-7).
+    #[must_use]
     pub const fn from_raw(value: u8) -> Self {
         Self(if value > 7 { 7 } else { value })
     }
 
     /// Retrieve the underlying priority.
+    #[must_use]
     pub const fn as_u8(self) -> u8 {
         self.0
     }
 
     /// Get the priority name.
+    #[must_use]
     pub const fn name(self) -> &'static str {
         match self.0 {
             0 => "emergency",
@@ -740,6 +782,7 @@ impl SyslogPriority {
     }
 
     /// Check if this is an error-level or higher priority (0-3).
+    #[must_use]
     pub const fn is_error(self) -> bool {
         self.0 <= 3
     }
@@ -789,16 +832,19 @@ pub struct SequenceNumber(u64);
 
 impl SequenceNumber {
     /// Construct from a raw sequence number.
+    #[must_use]
     pub const fn from_raw(value: u64) -> Self {
         Self(value)
     }
 
     /// Retrieve the underlying sequence number.
+    #[must_use]
     pub const fn as_u64(self) -> u64 {
         self.0
     }
 
     /// Get the next sequence number.
+    #[must_use]
     pub const fn next(self) -> Self {
         Self(self.0.saturating_add(1))
     }
@@ -903,18 +949,16 @@ mod tests {
     fn test_validation_error_messages() {
         // Verify error messages are descriptive
         let err = Seconds::from_secs(100000).validate().unwrap_err();
-        assert!(matches!(err, ValidationError::General(_)));
-        if let ValidationError::General(msg) = err {
-            assert!(msg.contains("100000"));
-            assert!(msg.contains("86400"));
-            assert!(msg.contains("24 hours"));
-        }
+        assert!(matches!(err, SinexError::Validation(_)));
+        let msg = err.message();
+        assert!(msg.contains("100000"));
+        assert!(msg.contains("86400"));
+        assert!(msg.contains("24 hours"));
 
         let err = Bytes::from_mebibytes(2000).validate().unwrap_err();
-        assert!(matches!(err, ValidationError::General(_)));
-        if let ValidationError::General(msg) = err {
-            assert!(msg.contains("1 GiB"));
-        }
+        assert!(matches!(err, SinexError::Validation(_)));
+        let msg = err.message();
+        assert!(msg.contains("1 GiB"));
     }
 
     #[test]

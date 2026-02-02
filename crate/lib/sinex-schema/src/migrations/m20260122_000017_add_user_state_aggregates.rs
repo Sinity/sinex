@@ -1,13 +1,13 @@
 //! User-facing continuous aggregates for current state tracking
 //!
-//! Creates TimescaleDB continuous aggregates for tracking current state,
+//! Creates `TimescaleDB` continuous aggregates for tracking current state,
 //! addressing the architectural gap where Sinex tracks "what happened"
 //! but not efficiently "what is".
 //!
 //! **Architecture Decision**:
 //! Rather than adopting a streaming database (Materialize/RisingWave),
-//! we use TimescaleDB continuous aggregates for time-series current state
-//! and PostgreSQL materialized views for entity-level current state.
+//! we use `TimescaleDB` continuous aggregates for time-series current state
+//! and `PostgreSQL` materialized views for entity-level current state.
 //! See: docs/current/analysis/streaming-database-evaluation.md
 //!
 //! # Continuous Aggregates (Time-Series State)
@@ -37,7 +37,7 @@
 use sea_orm_migration::prelude::*;
 
 #[derive(DeriveMigrationName)]
-pub struct Migration;
+pub(crate) struct Migration;
 
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {

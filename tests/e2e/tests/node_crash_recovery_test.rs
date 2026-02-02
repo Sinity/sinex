@@ -6,15 +6,11 @@
 //! and persist registry state.
 
 use serde_json::json;
-use sinex_primitives::db::repositories::source_materials::status;
+use sinex_db::repositories::material_status as status;
 use sinex_node_sdk::{
     AcquisitionManager, Checkpoint, CheckpointManager, CheckpointState, RotationPolicy,
 };
-use sinex_schema::ulid::Ulid;
-use xtask::sandbox::{
-    prelude::*, start_test_ingestd_with_config, timing_utils::Timeouts, TestIngestdConfig,
-    TestIngestdHandle,
-};
+use sinex_primitives::Ulid;
 use sqlx::Row;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
@@ -23,6 +19,10 @@ use std::sync::{
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
 use uuid::Uuid;
+use xtask::sandbox::{
+    prelude::*, start_test_ingestd_with_config, timing::Timeouts, TestIngestdConfig,
+    TestIngestdHandle,
+};
 
 async fn setup_ingestd(
     ctx: TestContext,

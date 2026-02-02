@@ -130,7 +130,7 @@ impl ConfirmationBuffer {
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
             // Log periodically to avoid log spam
-            if rejected % 100 == 0 {
+            if rejected.is_multiple_of(100) {
                 tracing::error!(
                     max_capacity = self.max_capacity,
                     rejected_total = rejected + 1,
@@ -184,8 +184,7 @@ impl ConfirmationBuffer {
         tracing::Span::current().record("checked_count", pending.len());
 
         for (event_id, event) in pending.iter() {
-            let received_at: sinex_primitives::temporal::OffsetDateTime =
-                event.received_at.into();
+            let received_at: sinex_primitives::temporal::OffsetDateTime = event.received_at.into();
             let now_odt: sinex_primitives::temporal::OffsetDateTime = now.into();
             let age = now_odt - received_at;
             // Issue 2 fix: Explicit handling of clock skew with logging
@@ -290,7 +289,7 @@ mod tests {
             received_at: sinex_primitives::temporal::now(),
         };
 
-        event.received_at -= time::time::Duration::seconds(1);
+        event.received_at = event.received_at - time::Duration::seconds(1);
         assert!(buffer.add_provisional(event).await);
 
         let timed_out = buffer.check_timeouts().await;

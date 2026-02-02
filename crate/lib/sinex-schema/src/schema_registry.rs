@@ -47,7 +47,7 @@ pub const SINEX_SCHEMAS: &[SchemaInfo] = &[
 /// Metadata about a database schema.
 #[derive(Debug, Clone, Copy)]
 pub struct SchemaInfo {
-    /// Schema name as it appears in PostgreSQL
+    /// Schema name as it appears in `PostgreSQL`
     pub name: &'static str,
     /// Human-readable description of what this schema contains
     pub description: &'static str,

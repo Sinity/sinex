@@ -7,18 +7,18 @@
 use async_nats::jetstream::kv::Operation;
 use color_eyre::eyre::eyre;
 use futures::TryStreamExt;
-use sinex_primitives::ids::Ulid;
-use sinex_primitives::Timestamp;
-use sinex_node_sdk::DbPool;
+use sinex_db::DbPool;
 use sinex_node_sdk::checkpoint::parse_checkpoint_key;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
-use std::str::FromStr;
+use sinex_primitives::ids::Ulid;
+use sinex_primitives::Timestamp;
 use time::Duration;
 use xtask::sandbox::prelude::*;
 
 /// Types of checkpoint inconsistencies that can be detected
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum CheckpointInconsistencyType {
+#[allow(dead_code)] // Test infrastructure for checkpoint consistency analysis
+pub(crate) enum CheckpointInconsistencyType {
     /// No checkpoint exists for an expected processor
     MissingCheckpoint,
     /// Checkpoint references an event that doesn't exist in the database
@@ -33,7 +33,8 @@ pub enum CheckpointInconsistencyType {
 
 /// A detected checkpoint inconsistency
 #[derive(Debug, Clone)]
-pub struct CheckpointInconsistency {
+#[allow(dead_code)] // Test infrastructure for checkpoint consistency analysis
+pub(crate) struct CheckpointInconsistency {
     pub processor_name: String,
     pub details: String,
     pub inconsistency_type: CheckpointInconsistencyType,
@@ -47,7 +48,8 @@ pub struct CheckpointInconsistency {
 /// - Whether the referenced event exists
 /// - Whether there are newer events that haven't been processed
 /// - Whether the checkpoint is stale
-pub async fn analyze_checkpoint(
+#[allow(dead_code)] // Test infrastructure for checkpoint consistency analysis
+pub(crate) async fn analyze_checkpoint(
     pool: &DbPool,
     kv: &async_nats::jetstream::kv::Store,
     processor_name: &str,
@@ -71,8 +73,8 @@ pub async fn analyze_checkpoint(
     };
 
     let last_processed_id = match &snapshot.checkpoint {
-        Checkpoint::Internal { event_id, .. } => Some(event_id.clone()),
-        Checkpoint::Stream { event_id, .. } => event_id.clone(),
+        Checkpoint::Internal { event_id, .. } => Some(*event_id),
+        Checkpoint::Stream { event_id, .. } => *event_id,
         Checkpoint::None | Checkpoint::External { .. } | Checkpoint::Timestamp { .. } => None,
     };
 
@@ -127,20 +129,18 @@ pub async fn analyze_checkpoint(
     if newer_events > 0 {
         issues.push(CheckpointInconsistency {
             processor_name: processor_name.to_string(),
-            details: format!("Checkpoint behind by {} events", newer_events),
+            details: format!("Checkpoint behind by {newer_events} events"),
             inconsistency_type: CheckpointInconsistencyType::CheckpointBehindEvents,
             events_potentially_missed: newer_events.max(0) as u64,
         });
     }
 
-    let hours_since_last_activity =
-        (Timestamp::now() - Timestamp::new(snapshot.last_activity)).num_hours();
-    if hours_since_last_activity >= stale_after.num_hours() {
+    let hours_since_last_activity = (Timestamp::now() - snapshot.last_activity).whole_hours();
+    if hours_since_last_activity >= stale_after.whole_hours() {
         issues.push(CheckpointInconsistency {
             processor_name: processor_name.to_string(),
             details: format!(
-                "Checkpoint stale (last activity {} hours ago)",
-                hours_since_last_activity
+                "Checkpoint stale (last activity {hours_since_last_activity} hours ago)"
             ),
             inconsistency_type: CheckpointInconsistencyType::StaleCheckpoint,
             events_potentially_missed: newer_events.max(0) as u64,
@@ -151,7 +151,8 @@ pub async fn analyze_checkpoint(
 }
 
 /// Save a checkpoint state to the KV store
-pub async fn save_checkpoint_state(
+#[allow(dead_code)] // Test infrastructure for checkpoint consistency analysis
+pub(crate) async fn save_checkpoint_state(
     kv: &async_nats::jetstream::kv::Store,
     processor_name: &str,
     consumer_group: &str,
@@ -170,7 +171,7 @@ pub async fn save_checkpoint_state(
     let state = CheckpointState {
         checkpoint,
         processed_count,
-        last_activity: last_activity.inner(),
+        last_activity,
         data,
         version: 2,
         revision: 0,
@@ -180,7 +181,7 @@ pub async fn save_checkpoint_state(
 }
 
 /// Fetch checkpoint state from the KV store
-pub async fn fetch_checkpoint_state(
+pub(crate) async fn fetch_checkpoint_state(
     kv: &async_nats::jetstream::kv::Store,
     processor_name: &str,
     consumer_group: &str,
@@ -207,7 +208,7 @@ pub async fn fetch_checkpoint_state(
 }
 
 /// Purge checkpoint state from the KV store
-pub async fn purge_checkpoint_state(
+pub(crate) async fn purge_checkpoint_state(
     kv: &async_nats::jetstream::kv::Store,
     processor_name: &str,
     consumer_group: &str,
@@ -219,7 +220,7 @@ pub async fn purge_checkpoint_state(
             continue;
         };
         if proc == processor_name && group == consumer_group && consumer == consumer_name {
-            let _ = kv.purge(&key).await?;
+            kv.purge(&key).await?;
             break;
         }
     }
@@ -227,7 +228,11 @@ pub async fn purge_checkpoint_state(
 }
 
 /// Fetch the ULID of an event at a specific offset within a source
-pub async fn fetch_event_ulid_at(pool: &DbPool, source: &str, offset: i64) -> TestResult<Ulid> {
+pub(crate) async fn fetch_event_ulid_at(
+    pool: &DbPool,
+    source: &str,
+    offset: i64,
+) -> TestResult<Ulid> {
     for attempt in 0..3 {
         if let Some(id_uuid) = sqlx::query_scalar::<_, uuid::Uuid>(
             "SELECT id FROM core.events WHERE source = $1 ORDER BY id OFFSET $2 LIMIT 1",

@@ -54,8 +54,7 @@ pub enum FailureContext<'a> {
 /// `SINEX_TEST_FAIL_DIR` environment variable.
 pub fn persist_failure(test_name: &str, error: impl Into<String>, ctx: FailureContext<'_>) {
     let snapshot_dir = env::var("SINEX_TEST_FAIL_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("target/test-artifacts"));
+        .map_or_else(|_| PathBuf::from("target/test-artifacts"), PathBuf::from);
 
     if let Err(err) = fs::create_dir_all(&snapshot_dir) {
         eprintln!(

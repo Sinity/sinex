@@ -11,8 +11,8 @@ use async_nats::jetstream::{
 use futures::StreamExt;
 use serde_json::json;
 use sinex_primitives::ulid::Ulid;
-use xtask::sandbox::{prelude::*, timing_utils::Timeouts, EphemeralNats};
 use std::time::{Duration, Instant};
+use xtask::sandbox::{prelude::*, timing::Timeouts, EphemeralNats};
 
 async fn setup_stream(js: &JetStream, name: &str, subject: &str, max_msgs: i64) -> TestResult<()> {
     let config = StreamConfig {
@@ -219,8 +219,14 @@ async fn jetstream_high_concurrency_publish() -> TestResult<()> {
     );
 
     let durable = format!("perf_concurrency_consumer_{}", Ulid::new());
-    let consumer =
-        create_consumer(&js, &stream, &subject, &durable, Duration::from_secs(Timeouts::STANDARD)).await?;
+    let consumer = create_consumer(
+        &js,
+        &stream,
+        &subject,
+        &durable,
+        Duration::from_secs(Timeouts::STANDARD),
+    )
+    .await?;
 
     let mut processed = 0usize;
     loop {

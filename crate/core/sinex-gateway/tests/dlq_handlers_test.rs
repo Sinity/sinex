@@ -1,14 +1,14 @@
 //! Comprehensive tests for DLQ (Dead Letter Queue) handlers
 //!
 //! Tests DLQ statistics and purge operations.
-//! Note: Peek tests are excluded because handle_dlq_peek waits indefinitely
+//! Note: Peek tests are excluded because `handle_dlq_peek` waits indefinitely
 //! for messages from the consumer stream without timeout.
 
 use async_nats::jetstream;
 use serde_json::json;
+use sinex_gateway::handlers::dlq::{handle_dlq_list, handle_dlq_purge};
 use sinex_primitives::environment;
 use sinex_primitives::rpc::dlq::{DlqListResponse, DlqPurgeResponse};
-use sinex_gateway::handlers::dlq::{handle_dlq_list, handle_dlq_purge};
 use xtask::sandbox::{nats::EphemeralNats, prelude::*};
 
 async fn setup_dlq_stream(
@@ -44,7 +44,7 @@ async fn publish_dlq_message(
     headers.insert("Original-Subject", "events.raw.test-source");
     headers.insert("Event-Id", event_id);
 
-    let subject = env.nats_subject(&format!("events.dlq.{}", event_id));
+    let subject = env.nats_subject(&format!("events.dlq.{event_id}"));
     client
         .publish_with_headers(subject, headers, payload.to_owned().into())
         .await?;
@@ -80,14 +80,7 @@ async fn dlq_list_counts_messages_correctly() -> TestResult<()> {
 
     // Publish 3 messages
     for i in 0..3 {
-        publish_dlq_message(
-            &client,
-            &env,
-            &format!("event-{}", i),
-            r#"{"test": true}"#,
-            1,
-        )
-        .await?;
+        publish_dlq_message(&client, &env, &format!("event-{i}"), r#"{"test": true}"#, 1).await?;
     }
 
     // Allow JetStream to process
@@ -112,14 +105,7 @@ async fn dlq_list_shows_sequence_info() -> TestResult<()> {
 
     // Publish messages
     for i in 0..3 {
-        publish_dlq_message(
-            &client,
-            &env,
-            &format!("event-{}", i),
-            r#"{"test": true}"#,
-            1,
-        )
-        .await?;
+        publish_dlq_message(&client, &env, &format!("event-{i}"), r#"{"test": true}"#, 1).await?;
     }
 
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -162,14 +148,7 @@ async fn dlq_purge_clears_all_messages() -> TestResult<()> {
 
     // Publish some messages
     for i in 0..5 {
-        publish_dlq_message(
-            &client,
-            &env,
-            &format!("event-{}", i),
-            r#"{"test": true}"#,
-            1,
-        )
-        .await?;
+        publish_dlq_message(&client, &env, &format!("event-{i}"), r#"{"test": true}"#, 1).await?;
     }
 
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -242,14 +221,7 @@ async fn dlq_list_after_publish_and_purge_cycle() -> TestResult<()> {
 
     // First cycle
     for i in 0..3 {
-        publish_dlq_message(
-            &client,
-            &env,
-            &format!("cycle1-{}", i),
-            r#"{"cycle": 1}"#,
-            1,
-        )
-        .await?;
+        publish_dlq_message(&client, &env, &format!("cycle1-{i}"), r#"{"cycle": 1}"#, 1).await?;
     }
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
@@ -262,14 +234,7 @@ async fn dlq_list_after_publish_and_purge_cycle() -> TestResult<()> {
 
     // Second cycle
     for i in 0..2 {
-        publish_dlq_message(
-            &client,
-            &env,
-            &format!("cycle2-{}", i),
-            r#"{"cycle": 2}"#,
-            1,
-        )
-        .await?;
+        publish_dlq_message(&client, &env, &format!("cycle2-{i}"), r#"{"cycle": 2}"#, 1).await?;
     }
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 

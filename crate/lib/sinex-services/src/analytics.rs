@@ -8,8 +8,8 @@ use serde::Serialize;
 use sinex_db::replay::state_machine::{ReplayOperation, ReplayState, ReplayStateMachine};
 use sinex_db::repositories::common::{db_error, TimeBucketResult};
 use sinex_db::DbPool;
-use sinex_primitives::Timestamp;
 use sinex_primitives::Pagination;
+use sinex_primitives::Timestamp;
 use sqlx::postgres::types::PgInterval;
 use sqlx::{pool::PoolConnection, Postgres, Row};
 use std::collections::HashMap;
@@ -20,9 +20,7 @@ use tokio::time::timeout;
 static EPOCH_START: OnceCell<Timestamp> = OnceCell::new();
 
 fn epoch_start() -> Timestamp {
-    EPOCH_START
-        .get_or_init(|| Timestamp::UNIX_EPOCH)
-        .clone()
+    *EPOCH_START.get_or_init(|| Timestamp::new(time::OffsetDateTime::UNIX_EPOCH))
 }
 
 pub struct AnalyticsService {
@@ -43,6 +41,7 @@ pub struct SourceStatistics {
 const ANALYTICS_POOL_ACQUIRE_TIMEOUT: Duration = Duration::from_millis(40);
 
 impl AnalyticsService {
+    #[must_use]
     pub fn new(pool: DbPool) -> Self {
         Self { pool }
     }
@@ -136,8 +135,8 @@ impl AnalyticsService {
                 event_count: row.event_count,
                 event_type_count: row.event_type_count,
                 host_count: row.host_count,
-                first_event: row.first_event.map(|t| t.into()),
-                last_event: row.last_event.map(|t| t.into()),
+                first_event: row.first_event.map(std::convert::Into::into),
+                last_event: row.last_event.map(std::convert::Into::into),
                 avg_ingest_delay: row.avg_ingest_delay,
             })
             .collect();
@@ -152,52 +151,49 @@ impl AnalyticsService {
         end_time: Option<Timestamp>,
     ) -> ServiceResult<HashMap<String, i64>> {
         let mut conn = self.acquire_connection().await?;
-        let result = match (start_time, end_time) {
-            (Some(start), Some(end)) => {
-                let rows = sqlx::query!(
-                    r#"
-                    SELECT
-                        event_type,
-                        COUNT(*) as "count!"
-                    FROM core.events
-                    WHERE ts_orig >= $1 AND ts_orig < $2
-                                        GROUP BY event_type
-                                        ORDER BY COUNT(*) DESC
-                                        LIMIT $3
-                                    "#,
-                    *start,
-                    *end,
-                    Pagination::DEFAULT_LIMIT
-                )
-                .fetch_all(&mut *conn)
-                .await
-                .map_err(|e| db_error(e, "count by type in range"))?;
+        let result = if let (Some(start), Some(end)) = (start_time, end_time) {
+            let rows = sqlx::query!(
+                r#"
+                SELECT
+                    event_type,
+                    COUNT(*) as "count!"
+                FROM core.events
+                WHERE ts_orig >= $1 AND ts_orig < $2
+                                    GROUP BY event_type
+                                    ORDER BY COUNT(*) DESC
+                                    LIMIT $3
+                                "#,
+                *start,
+                *end,
+                Pagination::DEFAULT_LIMIT
+            )
+            .fetch_all(&mut *conn)
+            .await
+            .map_err(|e| db_error(e, "count by type in range"))?;
 
-                rows.into_iter()
-                    .map(|row| (row.event_type, row.count))
-                    .collect()
-            }
-            _ => {
-                let rows = sqlx::query!(
-                    r#"
-                    SELECT
-                        event_type,
-                        COUNT(*) as "count!"
-                    FROM core.events
-                    GROUP BY event_type
-                    ORDER BY COUNT(*) DESC
-                    LIMIT $1
-                    "#,
-                    Pagination::DEFAULT_LIMIT
-                )
-                .fetch_all(&mut *conn)
-                .await
-                .map_err(|e| db_error(e, "count by type all time"))?;
+            rows.into_iter()
+                .map(|row| (row.event_type, row.count))
+                .collect()
+        } else {
+            let rows = sqlx::query!(
+                r#"
+                SELECT
+                    event_type,
+                    COUNT(*) as "count!"
+                FROM core.events
+                GROUP BY event_type
+                ORDER BY COUNT(*) DESC
+                LIMIT $1
+                "#,
+                Pagination::DEFAULT_LIMIT
+            )
+            .fetch_all(&mut *conn)
+            .await
+            .map_err(|e| db_error(e, "count by type all time"))?;
 
-                rows.into_iter()
-                    .map(|row| (row.event_type, row.count))
-                    .collect()
-            }
+            rows.into_iter()
+                .map(|row| (row.event_type, row.count))
+                .collect()
         };
 
         Ok(result)
@@ -215,7 +211,8 @@ impl AnalyticsService {
                 .with_context("interval_minutes", interval_minutes));
         }
 
-        let expected_buckets = (end_time - start_time).whole_minutes() / interval_minutes as i64;
+        let expected_buckets =
+            (end_time - start_time).whole_minutes() / i64::from(interval_minutes);
         if expected_buckets > Pagination::MAX_LIMIT {
             return Err(SinexError::validation("Time range too large for interval")
                 .with_context("expected_buckets", expected_buckets)
@@ -244,15 +241,7 @@ impl AnalyticsService {
         )
         .fetch_all(&mut *conn)
         .await?;
-        Ok(rows
-            .into_iter()
-            .map(|r| {
-                (
-                    Timestamp::from_unix_nanos(r.bucket.unix_timestamp_nanos()),
-                    r.count,
-                )
-            })
-            .collect())
+        Ok(rows.into_iter().map(|r| (r.bucket, r.count)).collect())
     }
 
     /// Get most frequent commands from terminal events
@@ -262,11 +251,11 @@ impl AnalyticsService {
         end_time: Option<Timestamp>,
         limit: i32,
     ) -> ServiceResult<Vec<(String, i64)>> {
-        let limit = (limit as i64).clamp(1, Pagination::MAX_LIMIT);
+        let limit = i64::from(limit).clamp(1, Pagination::MAX_LIMIT);
         let mut conn = self.acquire_connection().await?;
         let rows = match (start_time, end_time) {
             (Some(start), Some(end)) => sqlx::query(
-                r#"
+                r"
                 SELECT
                     payload->>'command' as command,
                     COUNT(*) as count
@@ -278,7 +267,7 @@ impl AnalyticsService {
                 GROUP BY payload->>'command'
                 ORDER BY count DESC
                 LIMIT $3
-                "#,
+                ",
             )
             .bind(*start)
             .bind(*end)
@@ -287,7 +276,7 @@ impl AnalyticsService {
             .await
             .map_err(|e| db_error(e, "top commands"))?,
             _ => sqlx::query(
-                r#"
+                r"
                 SELECT
                     payload->>'command' as command,
                     COUNT(*) as count
@@ -297,7 +286,7 @@ impl AnalyticsService {
                 GROUP BY payload->>'command'
                 ORDER BY count DESC
                 LIMIT $1
-                "#,
+                ",
             )
             .bind(limit)
             .fetch_all(&mut *conn)
@@ -337,7 +326,7 @@ impl AnalyticsService {
         bucket_size_minutes: i32,
         limit: i32,
     ) -> ServiceResult<Vec<(Timestamp, i64)>> {
-        let limit = (limit as i64).clamp(1, Pagination::MAX_LIMIT);
+        let limit = i64::from(limit).clamp(1, Pagination::MAX_LIMIT);
         let mut conn = self.acquire_connection().await?;
         let interval = minutes_to_interval(bucket_size_minutes);
 
@@ -363,15 +352,7 @@ impl AnalyticsService {
         .await
         .map_err(|e| db_error(e, "get activity heatmap"))?;
 
-        Ok(rows
-            .into_iter()
-            .map(|r| {
-                (
-                    Timestamp::from_unix_nanos(r.bucket.unix_timestamp_nanos()),
-                    r.count,
-                )
-            })
-            .collect())
+        Ok(rows.into_iter().map(|r| (r.bucket, r.count)).collect())
     }
 
     /// List replay operations for automation reporting.
@@ -390,11 +371,11 @@ impl AnalyticsService {
     }
 }
 
-/// Helper function to create PgInterval from minutes
+/// Helper function to create `PgInterval` from minutes
 fn minutes_to_interval(minutes: i32) -> PgInterval {
     PgInterval {
         months: 0,
         days: 0,
-        microseconds: minutes as i64 * 60 * 1_000_000,
+        microseconds: i64::from(minutes) * 60 * 1_000_000,
     }
 }

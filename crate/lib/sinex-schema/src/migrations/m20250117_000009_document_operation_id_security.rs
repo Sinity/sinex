@@ -2,14 +2,14 @@
 //!
 //! **Issue 63 (MEDIUM)**: Operation ID Can Be Forged
 //!
-//! The archive trigger (fn_archive_before_delete) checks for sinex.operation_id
+//! The archive trigger (`fn_archive_before_delete`) checks for `sinex.operation_id`
 //! to prevent accidental deletions, but any code with database access can set
 //! this session variable and delete events. This is a known limitation of the
 //! current design.
 //!
 //! ## Security Model
 //!
-//! The sinex.operation_id check is a **safety gate**, not a security boundary:
+//! The `sinex.operation_id` check is a **safety gate**, not a security boundary:
 //! - Prevents accidental deletions from ad-hoc queries
 //! - Requires explicit opt-in for replay operations
 //! - Does NOT prevent malicious or compromised code from deleting events
@@ -19,7 +19,7 @@
 //! For cryptographic integrity, consider:
 //! 1. Application-level signatures on operation metadata
 //! 2. Audit log verification via external system
-//! 3. Row-level security policies based on pg_authid
+//! 3. Row-level security policies based on `pg_authid`
 //! 4. Separate database role for replay operations
 //!
 //! This migration adds inline comments to the trigger function to document
@@ -28,7 +28,7 @@
 use sea_orm_migration::prelude::*;
 
 #[derive(DeriveMigrationName)]
-pub struct Migration;
+pub(crate) struct Migration;
 
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
@@ -36,7 +36,7 @@ impl MigrationTrait for Migration {
         manager
             .get_connection()
             .execute_unprepared(
-                r#"
+                r"
                 CREATE OR REPLACE FUNCTION core.fn_archive_before_delete()
                 RETURNS trigger LANGUAGE plpgsql AS $$
                 DECLARE
@@ -66,7 +66,7 @@ impl MigrationTrait for Migration {
                 END $$;
 
                 -- No need to recreate the trigger; the function replacement is sufficient
-                "#,
+                ",
             )
             .await?;
         Ok(())
@@ -77,7 +77,7 @@ impl MigrationTrait for Migration {
         manager
             .get_connection()
             .execute_unprepared(
-                r#"
+                r"
                 CREATE OR REPLACE FUNCTION core.fn_archive_before_delete()
                 RETURNS trigger LANGUAGE plpgsql AS $$
                 DECLARE
@@ -96,7 +96,7 @@ impl MigrationTrait for Migration {
                   INSERT INTO audit.archived_events SELECT OLD.*, now(), who, why, sup_id;
                   RETURN OLD;
                 END $$;
-                "#,
+                ",
             )
             .await?;
         Ok(())

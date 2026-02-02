@@ -1,0 +1,9 @@
+id: dbg-macro
+message: "Debug macro dbg!() found - remove before commit"
+severity: error
+language: rust
+rule:
+  pattern: dbg!($$$ARGS)
+note: |
+  dbg!() is for temporary debugging only.
+  Use tracing::debug!() for permanent debug logging.

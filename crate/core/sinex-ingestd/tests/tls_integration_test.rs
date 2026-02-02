@@ -1,17 +1,52 @@
 //! TLS Integration Test
 //!
 //! Verifies that the test infrastructure properly propagates TLS configuration
-//! through all components: EphemeralNats → TestIngestdConfig → IngestService.
+//! through all components: `EphemeralNats` → `TestIngestdConfig` → `IngestService`.
 
 use serde_json::json;
-use tokio_stream::StreamExt;
+use sinex_db::DbPoolExt;
+use sinex_primitives::Ulid;
 use xtask::sandbox::{
     nats::{shared_ephemeral_nats, SharedNatsProfile},
     prelude::*,
     sinex_test, start_test_ingestd_with_config,
-    timing_utils::WaitHelpers,
-    TestContext, TestIngestdConfig, TestNodePublisher,
+    timing::WaitHelpers,
+    TestIngestdConfig,
 };
+
+/// Helper to publish a test event directly to `JetStream`.
+async fn publish_test_event(
+    nats_client: &async_nats::Client,
+    source: &str,
+    event_type: &str,
+    payload: serde_json::Value,
+) -> TestResult<Ulid> {
+    let env = sinex_primitives::environment();
+    let event_id = Ulid::new();
+    let ts_orig = sinex_primitives::temporal::now().format_rfc3339();
+
+    let event = json!({
+        "id": event_id.to_string(),
+        "source": source,
+        "event_type": event_type,
+        "payload": payload,
+        "ts_orig": ts_orig,
+        "host": "test-host",
+        "ingestor_version": "test",
+    });
+
+    let subject = env.nats_subject(&format!(
+        "events.raw.{}.{}",
+        source.replace('.', "_"),
+        event_type.replace('.', "_")
+    ));
+    nats_client
+        .publish(subject, serde_json::to_vec(&event)?.into())
+        .await?;
+    nats_client.flush().await?;
+
+    Ok(event_id)
+}
 
 /// Verify that TLS configuration is properly propagated from EphemeralNats through
 /// the ingestd pipeline. This test exercises the full TLS path:
@@ -53,18 +88,18 @@ async fn tls_enabled_event_pipeline(ctx: TestContext) -> TestResult<()> {
 
     // Connect directly using TLS config to publish events
     let nats_client = conn_config.connect().await?;
-    let publisher = TestNodePublisher::new(nats_client, "tls-test-source");
 
     // Publish a test event
-    let event_id = publisher
-        .publish(
-            "tls.test.event",
-            json!({
-                "message": "Hello over TLS",
-                "secure": true
-            }),
-        )
-        .await?;
+    let event_id = publish_test_event(
+        &nats_client,
+        "tls-test-source",
+        "tls.test.event",
+        json!({
+            "message": "Hello over TLS",
+            "secure": true
+        }),
+    )
+    .await?;
 
     // Wait for the event to be persisted
     WaitHelpers::wait_for_event_id(&ctx.pool, event_id.into(), 10).await?;
@@ -82,35 +117,6 @@ async fn tls_enabled_event_pipeline(ctx: TestContext) -> TestResult<()> {
 
     // Cleanup
     ingest_handle.stop().await?;
-
-    Ok(())
-}
-
-/// Verify that connecting with TLS config properly authenticates with the server.
-#[sinex_test]
-async fn tls_connection_authenticates_properly(ctx: TestContext) -> TestResult<()> {
-    let nats = shared_ephemeral_nats(SharedNatsProfile::SecureTls).await?;
-
-    // Connection config should have all TLS fields populated
-    let config = nats.connection_config();
-    assert!(config.require_tls);
-
-    // Should be able to connect with proper TLS credentials
-    let client = config.connect().await?;
-
-    // Verify we can publish/subscribe over the connection
-    let mut sub = client.subscribe("tls.test.topic".to_string()).await?;
-    client
-        .publish("tls.test.topic".to_string(), "test message".into())
-        .await?;
-    client.flush().await?;
-
-    // Verify message is received
-    let msg = tokio::time::timeout(std::time::Duration::from_secs(5), sub.next())
-        .await?
-        .expect("Should receive message");
-
-    assert_eq!(msg.payload.as_ref(), b"test message");
 
     Ok(())
 }

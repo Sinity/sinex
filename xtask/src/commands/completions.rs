@@ -15,7 +15,7 @@ pub enum Shell {
     Zsh,
     /// Fish shell
     Fish,
-    /// PowerShell
+    /// `PowerShell`
     PowerShell,
 }
 
@@ -40,7 +40,7 @@ impl CompletionsCommand {
             Shell::Zsh => generate(shells::Zsh, &mut cmd, name, &mut std::io::stdout()),
             Shell::Fish => generate(shells::Fish, &mut cmd, name, &mut std::io::stdout()),
             Shell::PowerShell => {
-                generate(shells::PowerShell, &mut cmd, name, &mut std::io::stdout())
+                generate(shells::PowerShell, &mut cmd, name, &mut std::io::stdout());
             }
         }
 
@@ -49,7 +49,7 @@ impl CompletionsCommand {
 }
 
 impl XtaskCommand for CompletionsCommand {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "completions"
     }
 

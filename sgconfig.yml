@@ -1,0 +1,13 @@
+# ast-grep configuration for sinex
+# Run: ast-grep scan
+# Run single rule: ast-grep scan -r .config/ast-grep/rules/context-erasure.yml
+
+ruleDirs:
+  - .config/ast-grep/rules
+
+testConfigs: []
+
+# Language configuration
+languageGlobs:
+  rust:
+    - "**/*.rs"

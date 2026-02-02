@@ -4,12 +4,12 @@
 //! to process large content while providing immediate feedback via events.
 //!
 //! It shows:
-//! 1. Setting up StageAsYouGoContext
-//! 2. Using MaterialBuilder to create source materials
+//! 1. Setting up `StageAsYouGoContext`
+//! 2. Using `MaterialBuilder` to create source materials
 //! 3. Emitting events with provenance linked to materials
 //! 4. Finalizing materials
 //!
-//! Run with: cargo run --example stage_as_you_go_demo
+//! Run with: cargo run --example `stage_as_you_go_demo`
 
 use color_eyre::eyre::Result;
 use serde_json::json;
@@ -30,6 +30,7 @@ pub struct DemoLogProcessor {
 }
 
 impl DemoLogProcessor {
+    #[must_use]
     pub fn new(context: StageAsYouGoContext) -> Self {
         Self { context }
     }
@@ -53,7 +54,7 @@ impl StageAsYouGoProcessor for DemoLogProcessor {
             .register_in_flight("demo_log", source_uri, metadata)
             .await?;
 
-        println!("  -> Registered material: {}", material_id);
+        println!("  -> Registered material: {material_id}");
 
         println!("Step 2: Process content and emit events");
         let content_str = String::from_utf8_lossy(content);
@@ -77,7 +78,7 @@ impl StageAsYouGoProcessor for DemoLogProcessor {
                 // Provenance will be overwritten/augmented by context
                 sinex_primitives::Provenance::Synthesis {
                     source_event_ids: sinex_primitives::non_empty::NonEmptyVec::single(
-                        sinex_primitives::EventId::from_ulid(Ulid::new()),
+                        sinex_primitives::events::EventId::from_ulid(Ulid::new()),
                     ),
                     operation_id: None,
                 },
@@ -126,12 +127,12 @@ async fn main() -> Result<()> {
 
     let nats_url =
         std::env::var("NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".to_string());
-    println!("Connecting to NATS at {}...", nats_url);
+    println!("Connecting to NATS at {nats_url}...");
 
     let client = match async_nats::connect(&nats_url).await {
         Ok(c) => c,
         Err(e) => {
-            println!("Could not connect to NATS: {}", e);
+            println!("Could not connect to NATS: {e}");
             println!("Skipping live execution, but code compilation is verified.");
             return Ok(());
         }
@@ -166,13 +167,10 @@ async fn main() -> Result<()> {
     {
         Ok(result) => {
             println!("\nSuccess!");
-            println!("{:#?}", result);
+            println!("{result:#?}");
         }
         Err(e) => {
-            println!(
-                "\nProcessing failed (expected if NATS streams not set up): {}",
-                e
-            );
+            println!("\nProcessing failed (expected if NATS streams not set up): {e}");
             println!("Ensure JetStream streams 'SOURCE_MATERIAL_*' exist.");
         }
     }

@@ -1,6 +1,6 @@
 use serde_json::Value;
-use sinex_primitives::SinexError;
 use sinex_primitives::Id;
+use sinex_primitives::SinexError;
 use sqlx::PgPool;
 
 // Re-export shared types
@@ -61,7 +61,7 @@ pub async fn handle_ops_start(pool: &PgPool, params: Value) -> Result<Value> {
     )
     .fetch_one(pool)
     .await
-    .map_err(|e| SinexError::service(format!("Failed to start operation: {}", e)))?;
+    .map_err(|e| SinexError::service(format!("Failed to start operation: {e}")))?;
 
     let operation_id = Id::<Operation>::from_uuid(operation_uuid);
 
@@ -85,7 +85,7 @@ pub async fn handle_ops_start(pool: &PgPool, params: Value) -> Result<Value> {
     )
     .fetch_one(pool)
     .await
-    .map_err(|e| SinexError::service(format!("Failed to fetch created operation: {}", e)))?;
+    .map_err(|e| SinexError::service(format!("Failed to fetch created operation: {e}")))?;
 
     let response = OpsStartResponse {
         operation: row.into(),
@@ -198,7 +198,7 @@ pub async fn handle_ops_list(pool: &PgPool, params: Value) -> Result<Value> {
         .fetch_all(pool)
         .await
     }
-    .map_err(|e| SinexError::service(format!("Failed to list operations: {}", e)))?;
+    .map_err(|e| SinexError::service(format!("Failed to list operations: {e}")))?;
 
     let response = OpsListResponse {
         operations: rows.into_iter().map(Into::into).collect(),
@@ -214,7 +214,7 @@ pub async fn handle_ops_get(pool: &PgPool, params: Value) -> Result<Value> {
     let operation_id = request
         .operation_id
         .parse::<Id<Operation>>()
-        .map_err(|e| SinexError::parse(format!("Invalid operation ID: {}", e)))?;
+        .map_err(|e| SinexError::parse(format!("Invalid operation ID: {e}")))?;
 
     let row = sqlx::query_as!(
         OperationRow,
@@ -235,7 +235,7 @@ pub async fn handle_ops_get(pool: &PgPool, params: Value) -> Result<Value> {
     )
     .fetch_optional(pool)
     .await
-    .map_err(|e| SinexError::service(format!("Failed to fetch operation: {}", e)))?;
+    .map_err(|e| SinexError::service(format!("Failed to fetch operation: {e}")))?;
 
     match row {
         Some(row) => {
@@ -245,8 +245,7 @@ pub async fn handle_ops_get(pool: &PgPool, params: Value) -> Result<Value> {
             Ok(serde_json::to_value(response)?)
         }
         None => Err(SinexError::not_found(format!(
-            "Operation not found: {}",
-            operation_id
+            "Operation not found: {operation_id}"
         ))),
     }
 }
@@ -269,7 +268,7 @@ pub async fn handle_ops_cancel(
     let operation_id = request
         .operation_id
         .parse::<Id<Operation>>()
-        .map_err(|e| SinexError::parse(format!("Invalid operation ID: {}", e)))?;
+        .map_err(|e| SinexError::parse(format!("Invalid operation ID: {e}")))?;
 
     // Check if operation exists and is running
     let operation = sqlx::query!(
@@ -282,12 +281,11 @@ pub async fn handle_ops_cancel(
     )
     .fetch_optional(pool)
     .await
-    .map_err(|e| SinexError::service(format!("Failed to check operation status: {}", e)))?;
+    .map_err(|e| SinexError::service(format!("Failed to check operation status: {e}")))?;
 
     let Some(op) = operation else {
         return Err(SinexError::not_found(format!(
-            "Operation not found: {}",
-            operation_id
+            "Operation not found: {operation_id}"
         )));
     };
 
@@ -322,7 +320,7 @@ pub async fn handle_ops_cancel(
     )
     .execute(pool)
     .await
-    .map_err(|e| SinexError::service(format!("Failed to cancel operation: {}", e)))?;
+    .map_err(|e| SinexError::service(format!("Failed to cancel operation: {e}")))?;
 
     // Fetch updated operation
     let row = sqlx::query_as!(
@@ -344,7 +342,7 @@ pub async fn handle_ops_cancel(
     )
     .fetch_one(pool)
     .await
-    .map_err(|e| SinexError::service(format!("Failed to fetch cancelled operation: {}", e)))?;
+    .map_err(|e| SinexError::service(format!("Failed to fetch cancelled operation: {e}")))?;
 
     let response = OpsCancelResponse {
         operation: row.into(),
@@ -358,7 +356,7 @@ pub async fn handle_ops_cancel(
 mod tests {
     use super::*;
     use serde_json::json;
-    use xtask::sandbox::{sinex_test, TestContext};
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     async fn ops_start_creates_operation(ctx: &TestContext) -> TestResult<()> {

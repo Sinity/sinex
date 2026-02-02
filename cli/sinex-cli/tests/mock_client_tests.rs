@@ -1,4 +1,4 @@
-//! Integration tests for MockGatewayClient
+//! Integration tests for `MockGatewayClient`
 
 mod common;
 

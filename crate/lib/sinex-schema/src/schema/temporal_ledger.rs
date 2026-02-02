@@ -65,6 +65,7 @@ pub struct TemporalLedgerRecord {
 
 impl TemporalLedger {
     /// Generates the `CREATE TABLE` statement for `raw.temporal_ledger`.
+    #[must_use]
     pub fn create_table_statement() -> TableCreateStatement {
         Table::create()
             .table(Self::table_iden())
@@ -89,6 +90,7 @@ impl TemporalLedger {
     }
 
     /// Generates indexes for `raw.temporal_ledger`.
+    #[must_use]
     pub fn create_indexes() -> Vec<IndexCreateStatement> {
         vec![
             // Unique constraint on material and offset
@@ -119,8 +121,9 @@ impl TemporalLedger {
 
     /// Generates the trigger that enforces the append-only nature of the temporal ledger.
     /// This is a critical invariant that guarantees the history of data capture cannot be altered.
+    #[must_use]
     pub fn create_append_only_trigger_sql() -> &'static str {
-        r#"
+        r"
         CREATE OR REPLACE FUNCTION raw.fn_temporal_ledger_append_only()
         RETURNS TRIGGER LANGUAGE plpgsql AS $$
         BEGIN
@@ -132,6 +135,6 @@ impl TemporalLedger {
         CREATE TRIGGER trg_tl_no_update_delete
         BEFORE UPDATE OR DELETE ON raw.temporal_ledger
         FOR EACH ROW EXECUTE FUNCTION raw.fn_temporal_ledger_append_only();
-        "#
+        "
     }
 }

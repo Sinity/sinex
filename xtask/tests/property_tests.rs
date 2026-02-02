@@ -1,11 +1,16 @@
 //! Property-based tests for xtask.
 //!
 //! Uses proptest to verify invariants that should hold for all valid inputs:
-//! - CommandResult serialization roundtrips preserve data
-//! - ProcessBuilder argument handling is consistent
+//! - `CommandResult` serialization roundtrips preserve data
+//! - `ProcessBuilder` argument handling is consistent
 //! - JSON output conforms to expected schema
+//!
+//! Requires the `sandbox` feature to be enabled (provides proptest).
+
+#![cfg(feature = "sandbox")]
 
 use proptest::prelude::*;
+use sinex_primitives::temporal;
 use xtask::command::CommandResult;
 use xtask::output::{OutputFormat, Status, StructuredError};
 
@@ -15,17 +20,17 @@ use xtask::output::{OutputFormat, Status, StructuredError};
 
 /// Generate a valid command name (alphanumeric with dashes).
 fn command_name_strategy() -> impl Strategy<Value = String> {
-    "[a-z][a-z0-9\\-]{2,20}".prop_map(|s| s.to_string())
+    "[a-z][a-z0-9\\-]{2,20}".prop_map(|s| s)
 }
 
 /// Generate a valid error code (uppercase with underscores).
 fn error_code_strategy() -> impl Strategy<Value = String> {
-    "[A-Z][A-Z0-9_]{2,20}".prop_map(|s| s.to_string())
+    "[A-Z][A-Z0-9_]{2,20}".prop_map(|s| s)
 }
 
 /// Generate a valid error message.
 fn error_message_strategy() -> impl Strategy<Value = String> {
-    "[a-zA-Z0-9 .,!?\\-]{5,100}".prop_map(|s| s.to_string())
+    "[a-zA-Z0-9 .,!?\\-]{5,100}".prop_map(|s| s)
 }
 
 /// Generate a file location string.
@@ -89,7 +94,7 @@ fn output_command_result_strategy() -> impl Strategy<Value = xtask::output::Comm
                     status,
                     duration_secs,
 
-                    timestamp: crate::temporal::now(),
+                    timestamp: temporal::now(),
                     details: None,
                     data: None, // Simplified for now, could use a json strategy
                     is_silent: false,
@@ -121,7 +126,7 @@ fn command_result_strategy() -> impl Strategy<Value = CommandResult> {
                 errors,
                 warnings,
                 duration_secs,
-                timestamp: Some(crate::temporal::now()),
+                timestamp: Some(temporal::now()),
             },
         )
 }
@@ -225,7 +230,7 @@ proptest! {
     #[test]
     fn arguments_preserve_content(args in prop::collection::vec(argument_strategy(), 0..=10)) {
         // Simulate argument collection (like ProcessBuilder.args())
-        let collected: Vec<String> = args.iter().cloned().collect();
+        let collected: Vec<String> = args.clone();
 
         prop_assert_eq!(args.len(), collected.len());
         for (original, collected) in args.iter().zip(collected.iter()) {
@@ -343,7 +348,7 @@ proptest! {
     fn status_color_is_valid_ansi(status in status_strategy()) {
         let color = status.color_code();
         prop_assert!(color.starts_with("\x1b["), "Color should be ANSI escape: {:?}", color);
-        prop_assert!(color.ends_with("m"), "Color should end with 'm': {:?}", color);
+        prop_assert!(color.ends_with('m'), "Color should end with 'm': {:?}", color);
     }
 
     /// Success status is_success returns true.

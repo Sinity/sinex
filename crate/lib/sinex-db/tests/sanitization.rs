@@ -1,8 +1,8 @@
 use serde_json::json;
 use sinex_db::sanitization::EventSanitizer;
-use sinex_db::payloads::filesystem::FileCreatedPayload;
-use sinex_primitives::domain::SanitizedPath;
-use sinex_db::{DynamicPayload, Event, EventSource, EventType, Id, Provenance};
+use sinex_db::{DynamicPayload, Event, Id, Provenance};
+use sinex_primitives::domain::{EventSource, EventType, SanitizedPath};
+use sinex_primitives::events::payloads::FileCreatedPayload;
 use sinex_primitives::Timestamp;
 use xtask::sandbox::sinex_test;
 

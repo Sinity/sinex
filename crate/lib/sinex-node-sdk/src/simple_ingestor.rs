@@ -41,7 +41,7 @@ use tracing::info;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IngestorState<S> {
     pub user_state: S,
-    pub last_checkpoint: sinex_primitives::temporal::OffsetDateTime,
+    pub last_checkpoint: sinex_primitives::temporal::Timestamp,
     pub revision: u64,
 }
 
@@ -49,7 +49,7 @@ impl<S: Default> Default for IngestorState<S> {
     fn default() -> Self {
         Self {
             user_state: S::default(),
-            last_checkpoint: sinex_primitives::temporal::OffsetDateTime::now_utc(),
+            last_checkpoint: sinex_primitives::temporal::Timestamp::now(),
             revision: 0,
         }
     }
@@ -133,8 +133,8 @@ pub trait SimpleIngestor: Send + Sync + 'static {
         &self,
         _state: &Self::State,
         _time_range: Option<(
-            sinex_primitives::temporal::OffsetDateTime,
-            sinex_primitives::temporal::OffsetDateTime,
+            sinex_primitives::temporal::Timestamp,
+            sinex_primitives::temporal::Timestamp,
         )>,
     ) -> NodeResult<CoverageAnalysis> {
         Err(SinexError::processing("Coverage analysis not implemented"))
@@ -228,9 +228,8 @@ impl<I: SimpleIngestor> SimpleIngestorWrapper<I> {
     }
 
     async fn save_state(&mut self, is_shutdown: bool) -> NodeResult<()> {
-        self.state.last_checkpoint = sinex_primitives::temporal::OffsetDateTime::now_utc();
-        let json_state =
-            serde_json::to_value(&self.state).map_err(|e| SinexError::serialization(e))?;
+        self.state.last_checkpoint = sinex_primitives::temporal::Timestamp::now();
+        let json_state = serde_json::to_value(&self.state).map_err(SinexError::serialization)?;
 
         let ckpt_state = CheckpointState {
             checkpoint: Checkpoint::external(
@@ -238,7 +237,7 @@ impl<I: SimpleIngestor> SimpleIngestorWrapper<I> {
                 format!("ingestor_{}", self.ingestor.name()),
             ),
             processed_count: 0, // Ingestors might track this in user state if needed
-            last_activity: sinex_primitives::temporal::OffsetDateTime::now_utc(),
+            last_activity: sinex_primitives::temporal::Timestamp::now(),
             data: Some(json_state),
             version: 1,
             revision: self.state.revision,
@@ -249,7 +248,7 @@ impl<I: SimpleIngestor> SimpleIngestorWrapper<I> {
             ckpt_state
                 .save_to_file(&path)
                 .await
-                .map_err(|e| SinexError::io(e))?;
+                .map_err(SinexError::io)?;
         }
 
         if let Some(cm) = &self.checkpoint_manager {
@@ -349,8 +348,8 @@ impl<I: SimpleIngestor> ExplorationProvider for SimpleIngestorWrapper<I> {
     fn get_coverage_analysis(
         &self,
         time_range: Option<(
-            sinex_primitives::temporal::OffsetDateTime,
-            sinex_primitives::temporal::OffsetDateTime,
+            sinex_primitives::temporal::Timestamp,
+            sinex_primitives::temporal::Timestamp,
         )>,
     ) -> NodeResult<CoverageAnalysis> {
         self.ingestor

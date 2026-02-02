@@ -25,7 +25,7 @@ use crate::sandbox::nats::{
 };
 use crate::sandbox::nats::{shared_nats_handle, shared_secure_nats_handle};
 use crate::sandbox::prelude::TestResult;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// Builder for NATS configuration in Sandbox.
@@ -258,7 +258,7 @@ impl NatsSetup {
         }
     }
 
-    fn shared_nats_config_key(config_file: &PathBuf, secure_tls: bool) -> String {
+    fn shared_nats_config_key(config_file: &Path, secure_tls: bool) -> String {
         let mut hasher = blake3::Hasher::new();
         hasher.update(config_file.to_string_lossy().as_bytes());
         hasher.update(if secure_tls { b":tls" } else { b":plain" });

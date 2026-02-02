@@ -70,7 +70,7 @@ fn multiple_validation_errors_are_reported() -> TestResult<()> {
     let config = TerminalConfig {
         history_sources: vec![HistorySourceConfig {
             path: Utf8PathBuf::from("../invalid"),
-            shell: "".to_string(),
+            shell: String::new(),
         }],
         polling_interval_secs: Seconds::from_secs(0),
         max_capture_bytes: Bytes::from_bytes(0),

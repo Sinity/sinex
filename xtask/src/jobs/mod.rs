@@ -1,117 +1,129 @@
 //! Background job execution and tracking.
 //!
-//! Jobs are stored in `$SINEX_STATE_DIR/jobs/<id>/` with:
-//! - `meta.json` - Job metadata (command, args, pid, started_at, status)
+//! Jobs are tracked in `HistoryDb` (`SQLite`) with log files in `$SINEX_STATE_DIR/jobs/<id>/`:
 //! - `stdout.log` - Captured stdout
 //! - `stderr.log` - Captured stderr
-//! - `result.json` - Final result (when complete)
+//!
+//! `HistoryDb` is the single source of truth. `JobManager` is a thin wrapper for spawning.
 
 use anyhow::{bail, Context, Result};
-use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
-use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::process::{Command, Stdio};
 use std::time::Duration;
 use time::OffsetDateTime;
 
-/// Counter for generating unique job IDs within a session.
-#[allow(dead_code)]
-static JOB_COUNTER: AtomicU64 = AtomicU64::new(0);
+use crate::config::config;
+use crate::history::{BackgroundJob, HistoryDb, InvocationStatus};
 
-/// Status of a background job.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "status", rename_all = "lowercase")]
-pub enum JobStatus {
-    Running { pid: u32 },
-    Completed { exit_code: i32, duration_secs: f64 },
-    Failed { exit_code: i32, error: String },
-    Cancelled,
-}
-
-impl JobStatus {
-    pub fn is_terminal(&self) -> bool {
-        !matches!(self, JobStatus::Running { .. })
-    }
-}
-
-/// Metadata for a background job.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct JobMeta {
-    pub id: u64,
-    pub command: String,
-    pub args: Vec<String>,
-    pub started_at: OffsetDateTime,
-    pub finished_at: Option<OffsetDateTime>,
-    pub status: JobStatus,
-    pub cwd: String,
-}
-
-/// A handle to a job's directory.
+/// A handle to a background job (backed by `HistoryDb`).
 pub struct Job {
-    pub meta: JobMeta,
-    pub dir: PathBuf,
+    /// `HistoryDb` invocation ID
+    pub id: i64,
+    /// Command that was run
+    pub command: String,
+    /// Arguments
+    pub args: Vec<String>,
+    /// When the job started
+    pub started_at: OffsetDateTime,
+    /// Process ID (if running)
+    pub pid: u32,
+    /// Current status
+    pub status: InvocationStatus,
+    /// Path to stdout log
+    pub stdout_path: PathBuf,
+    /// Path to stderr log
+    pub stderr_path: PathBuf,
 }
 
 impl Job {
-    /// Path to the stdout log file.
-    pub fn stdout_path(&self) -> PathBuf {
-        self.dir.join("stdout.log")
+    /// Create Job from `HistoryDb` `BackgroundJob`.
+    fn from_background_job(bg: BackgroundJob, jobs_dir: &Path) -> Self {
+        let stdout_path = bg.stdout_path.map_or_else(
+            || jobs_dir.join(bg.id.to_string()).join("stdout.log"),
+            PathBuf::from,
+        );
+        let stderr_path = bg.stderr_path.map_or_else(
+            || jobs_dir.join(bg.id.to_string()).join("stderr.log"),
+            PathBuf::from,
+        );
+
+        Self {
+            id: bg.id,
+            command: bg.command,
+            args: bg.args,
+            started_at: bg.started_at,
+            pid: bg.pid,
+            status: bg.status,
+            stdout_path,
+            stderr_path,
+        }
     }
 
-    /// Path to the stderr log file.
-    pub fn stderr_path(&self) -> PathBuf {
-        self.dir.join("stderr.log")
-    }
-
-    /// Path to the meta file.
-    pub fn meta_path(&self) -> PathBuf {
-        self.dir.join("meta.json")
+    /// Check if the job has finished.
+    #[must_use]
+    pub fn is_terminal(&self) -> bool {
+        !matches!(self.status, InvocationStatus::Running)
     }
 
     /// Read the last N lines of stdout.
     pub fn tail_stdout(&self, lines: usize) -> Result<String> {
-        tail_file(&self.stdout_path(), lines)
+        let content = self.read_stdout()?;
+        let all_lines: Vec<&str> = content.lines().collect();
+        let start = all_lines.len().saturating_sub(lines);
+        Ok(all_lines[start..].join("\n"))
     }
 
     /// Read the last N lines of stderr.
     #[allow(dead_code)]
     pub fn tail_stderr(&self, lines: usize) -> Result<String> {
-        tail_file(&self.stderr_path(), lines)
+        let content = self.read_stderr()?;
+        let all_lines: Vec<&str> = content.lines().collect();
+        let start = all_lines.len().saturating_sub(lines);
+        Ok(all_lines[start..].join("\n"))
     }
 
     /// Read all stdout.
+    ///
+    /// For completed jobs, reads from DB. For running jobs, reads from file.
     pub fn read_stdout(&self) -> Result<String> {
-        fs::read_to_string(self.stdout_path()).context("failed to read stdout")
+        // Try file first (for running jobs)
+        if self.stdout_path.exists() {
+            return fs::read_to_string(&self.stdout_path).context("failed to read stdout");
+        }
+        // Fall back to DB (for completed jobs)
+        let cfg = config();
+        if let Ok(db) = HistoryDb::open(&cfg.history_db_path()) {
+            if let Ok((Some(content), _)) = db.get_job_logs(self.id) {
+                return Ok(content);
+            }
+        }
+        Ok(String::new())
     }
 
     /// Read all stderr.
+    ///
+    /// For completed jobs, reads from DB. For running jobs, reads from file.
     pub fn read_stderr(&self) -> Result<String> {
-        fs::read_to_string(self.stderr_path()).context("failed to read stderr")
-    }
-
-    /// Update the job metadata.
-    pub fn update_meta(&self) -> Result<()> {
-        let json = serde_json::to_string_pretty(&self.meta)?;
-        fs::write(self.meta_path(), json)?;
-        Ok(())
-    }
-
-    /// Reload the job metadata from disk.
-    #[allow(dead_code)]
-    pub fn reload(&mut self) -> Result<()> {
-        let json = fs::read_to_string(self.meta_path())?;
-        self.meta = serde_json::from_str(&json)?;
-        Ok(())
+        // Try file first (for running jobs)
+        if self.stderr_path.exists() {
+            return fs::read_to_string(&self.stderr_path).context("failed to read stderr");
+        }
+        // Fall back to DB (for completed jobs)
+        let cfg = config();
+        if let Ok(db) = HistoryDb::open(&cfg.history_db_path()) {
+            if let Ok((_, Some(content))) = db.get_job_logs(self.id) {
+                return Ok(content);
+            }
+        }
+        Ok(String::new())
     }
 
     /// Check if the job process is still running.
-    #[allow(dead_code)]
+    #[must_use]
     pub fn is_alive(&self) -> bool {
-        if let JobStatus::Running { pid } = self.meta.status {
-            // Check if process exists
-            Path::new(&format!("/proc/{}", pid)).exists()
+        if matches!(self.status, InvocationStatus::Running) && self.pid > 0 {
+            Path::new(&format!("/proc/{}", self.pid)).exists()
         } else {
             false
         }
@@ -119,33 +131,61 @@ impl Job {
 }
 
 /// Manager for background jobs.
+///
+/// This is a thin wrapper that handles process spawning and log file creation.
+/// All metadata is stored in `HistoryDb`.
 pub struct JobManager {
     jobs_dir: PathBuf,
+    db: HistoryDb,
 }
 
 impl JobManager {
-    /// Create a new job manager with the given jobs directory.
+    /// Create a new job manager.
     pub fn new(jobs_dir: PathBuf) -> Result<Self> {
         fs::create_dir_all(&jobs_dir).context("failed to create jobs directory")?;
-        Ok(Self { jobs_dir })
+        let cfg = config();
+        let db = HistoryDb::open(&cfg.history_db_path())?;
+        Ok(Self { jobs_dir, db })
     }
 
     /// Get the path to a job's directory.
-    fn job_dir(&self, id: u64) -> PathBuf {
+    fn job_dir(&self, id: i64) -> PathBuf {
         self.jobs_dir.join(id.to_string())
     }
 
+    /// Spawn an xtask command in background.
+    pub fn spawn_xtask(&self, subcommand: &str, args: &[String]) -> Result<Job> {
+        let mut full_args = vec![
+            "xtask".to_string(),
+            "--fg".to_string(), // Force foreground since we're in a job
+            subcommand.to_string(),
+        ];
+        full_args.extend(args.iter().cloned());
+        self.spawn("cargo", &full_args)
+    }
+
+    /// Spawn a cargo command as a background job.
+    pub fn spawn_cargo(&self, args: &[String]) -> Result<Job> {
+        self.spawn("cargo", args)
+    }
+
     /// Start a new background job.
-    #[allow(dead_code)]
     pub fn spawn(&self, command: &str, args: &[String]) -> Result<Job> {
-        // Generate unique job ID
-        let id = generate_job_id();
-        let job_dir = self.job_dir(id);
+        // Register with HistoryDb first to get the ID
+        let history_id =
+            self.db
+                .start_background_job(command, args, 0, Path::new(""), Path::new(""))?;
+
+        // Create job directory using HistoryDb ID
+        let job_dir = self.job_dir(history_id);
         fs::create_dir_all(&job_dir)?;
 
+        let stdout_path = job_dir.join("stdout.log");
+        let stderr_path = job_dir.join("stderr.log");
+
         // Create output files
-        let stdout_file = File::create(job_dir.join("stdout.log"))?;
-        let stderr_file = File::create(job_dir.join("stderr.log"))?;
+        let stdout_file = File::create(&stdout_path)?;
+        let stderr_file = File::create(&stderr_path)?;
 
         // Spawn the process
         let child = Command::new(command)
@@ -153,95 +193,96 @@ impl JobManager {
             .stdout(Stdio::from(stdout_file))
             .stderr(Stdio::from(stderr_file))
             .spawn()
-            .with_context(|| format!("failed to spawn: {} {:?}", command, args))?;
+            .with_context(|| format!("failed to spawn: {command} {args:?}"))?;
 
-        let meta = JobMeta {
-            id,
+        let pid = child.id();
+
+        // Update HistoryDb with PID and log paths
+        self.db.update_job_pid(history_id, pid)?;
+        self.db
+            .update_job_paths(history_id, &stdout_path, &stderr_path)?;
+
+        // Spawn background thread to wait for completion and move logs to DB
+        let db_path = config().history_db_path();
+        let stdout_path_clone = stdout_path.clone();
+        let stderr_path_clone = stderr_path.clone();
+        std::thread::spawn(move || {
+            wait_for_child(
+                child,
+                history_id,
+                &db_path,
+                &stdout_path_clone,
+                &stderr_path_clone,
+            );
+        });
+
+        Ok(Job {
+            id: history_id,
             command: command.to_string(),
             args: args.to_vec(),
             started_at: OffsetDateTime::now_utc(),
-            finished_at: None,
-            status: JobStatus::Running { pid: child.id() },
-            cwd: std::env::current_dir()
-                .map(|p| p.display().to_string())
-                .unwrap_or_default(),
-        };
-
-        let job = Job { meta, dir: job_dir };
-        job.update_meta()?;
-
-        // Spawn a background thread to wait for the process and update status
-        let job_dir_clone = job.dir.clone();
-        std::thread::spawn(move || {
-            let _ = wait_for_child(child, &job_dir_clone);
-        });
-
-        Ok(job)
+            pid,
+            status: InvocationStatus::Running,
+            stdout_path,
+            stderr_path,
+        })
     }
 
     /// Get a job by ID.
-    pub fn get(&self, id: u64) -> Result<Option<Job>> {
-        let job_dir = self.job_dir(id);
-        if !job_dir.exists() {
-            return Ok(None);
+    pub fn get(&self, id: i64) -> Result<Option<Job>> {
+        // Query HistoryDb for the job
+        let jobs = self.db.get_recent_background_jobs(1000)?;
+        for bg in jobs {
+            if bg.id == id {
+                return Ok(Some(Job::from_background_job(bg, &self.jobs_dir)));
+            }
         }
-
-        let meta_path = job_dir.join("meta.json");
-        let json = fs::read_to_string(&meta_path).context("failed to read job meta")?;
-        let meta: JobMeta = serde_json::from_str(&json)?;
-
-        Ok(Some(Job { meta, dir: job_dir }))
+        Ok(None)
     }
 
     /// List all jobs.
     pub fn list(&self) -> Result<Vec<Job>> {
-        let mut jobs = Vec::new();
-
-        if !self.jobs_dir.exists() {
-            return Ok(jobs);
-        }
-
-        for entry in fs::read_dir(&self.jobs_dir)? {
-            let entry = entry?;
-            if entry.file_type()?.is_dir() {
-                if let Ok(id) = entry.file_name().to_string_lossy().parse::<u64>() {
-                    if let Ok(Some(job)) = self.get(id) {
-                        jobs.push(job);
-                    }
-                }
-            }
-        }
-
-        // Sort by started_at descending
-        jobs.sort_by(|a, b| b.meta.started_at.cmp(&a.meta.started_at));
-
-        Ok(jobs)
+        let jobs = self.db.get_recent_background_jobs(1000)?;
+        Ok(jobs
+            .into_iter()
+            .map(|bg| Job::from_background_job(bg, &self.jobs_dir))
+            .collect())
     }
 
     /// List recent jobs (up to limit).
     pub fn list_recent(&self, limit: usize) -> Result<Vec<Job>> {
-        let jobs = self.list()?;
-        Ok(jobs.into_iter().take(limit).collect())
+        let jobs = self.db.get_recent_background_jobs(limit)?;
+        Ok(jobs
+            .into_iter()
+            .map(|bg| Job::from_background_job(bg, &self.jobs_dir))
+            .collect())
+    }
+
+    /// List only active (running) jobs.
+    pub fn list_active(&self) -> Result<Vec<Job>> {
+        let jobs = self.db.get_active_background_jobs()?;
+        Ok(jobs
+            .into_iter()
+            .map(|bg| Job::from_background_job(bg, &self.jobs_dir))
+            .collect())
     }
 
     /// Cancel a running job.
-    pub fn cancel(&self, id: u64) -> Result<bool> {
+    pub fn cancel(&self, id: i64) -> Result<bool> {
         let job = match self.get(id)? {
             Some(j) => j,
             None => return Ok(false),
         };
 
-        if let JobStatus::Running { pid } = job.meta.status {
+        if matches!(job.status, InvocationStatus::Running) && job.pid > 0 {
             // Send SIGTERM
             unsafe {
-                libc::kill(pid as i32, libc::SIGTERM);
+                libc::kill(job.pid as i32, libc::SIGTERM);
             }
 
-            // Update status
-            let mut job = job;
-            job.meta.status = JobStatus::Cancelled;
-            job.meta.finished_at = Some(OffsetDateTime::now_utc());
-            job.update_meta()?;
+            // Update status in HistoryDb
+            self.db
+                .finish_invocation(id, InvocationStatus::Cancelled, None, 0.0)?;
 
             Ok(true)
         } else {
@@ -250,21 +291,21 @@ impl JobManager {
     }
 
     /// Wait for a job to complete.
-    pub fn wait(&self, id: u64, timeout: Option<Duration>) -> Result<Job> {
+    pub fn wait(&self, id: i64, timeout: Option<Duration>) -> Result<Job> {
         let start = std::time::Instant::now();
 
         loop {
             let job = self
                 .get(id)?
-                .ok_or_else(|| anyhow::anyhow!("job {} not found", id))?;
+                .ok_or_else(|| anyhow::anyhow!("job {id} not found"))?;
 
-            if job.meta.status.is_terminal() {
+            if job.is_terminal() {
                 return Ok(job);
             }
 
             if let Some(timeout) = timeout {
                 if start.elapsed() > timeout {
-                    bail!("timeout waiting for job {}", id);
+                    bail!("timeout waiting for job {id}");
                 }
             }
 
@@ -274,81 +315,53 @@ impl JobManager {
 
     /// Clean up old completed jobs.
     pub fn prune(&self, older_than_days: u32) -> Result<usize> {
-        let cutoff = OffsetDateTime::now_utc() - time::Duration::days(older_than_days as i64);
-        let mut removed = 0;
+        // Prune from HistoryDb
+        let count = self.db.prune_old_jobs(older_than_days)?;
 
-        for job in self.list()? {
-            if job.meta.status.is_terminal() {
-                if let Some(finished) = job.meta.finished_at {
-                    if finished < cutoff {
-                        fs::remove_dir_all(&job.dir)?;
-                        removed += 1;
+        // Also clean up old job directories
+        if let Ok(entries) = fs::read_dir(&self.jobs_dir) {
+            for entry in entries.filter_map(std::result::Result::ok) {
+                if let Ok(id) = entry.file_name().to_string_lossy().parse::<i64>() {
+                    // If job doesn't exist in HistoryDb, remove the directory
+                    if self.get(id)?.is_none() {
+                        let _ = fs::remove_dir_all(entry.path());
                     }
                 }
             }
         }
 
-        Ok(removed)
+        Ok(count)
     }
 }
 
-/// Generate a unique job ID based on timestamp + counter.
-#[allow(dead_code)]
-fn generate_job_id() -> u64 {
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-
-    let counter = JOB_COUNTER.fetch_add(1, Ordering::SeqCst);
-
-    // Combine timestamp (lower 48 bits) + counter (upper 16 bits)
-    (timestamp & 0xFFFFFFFFFFFF) | ((counter & 0xFFFF) << 48)
-}
-
-/// Wait for a child process and update job status.
-#[allow(dead_code)]
-fn wait_for_child(mut child: Child, job_dir: &Path) -> Result<()> {
+/// Wait for a child process, update `HistoryDb`, and move logs to DB.
+fn wait_for_child(
+    mut child: std::process::Child,
+    history_id: i64,
+    db_path: &Path,
+    stdout_path: &Path,
+    stderr_path: &Path,
+) {
     let start = std::time::Instant::now();
-    let result = child.wait()?;
+    let result = child.wait();
     let duration = start.elapsed().as_secs_f64();
 
-    // Read current meta
-    let meta_path = job_dir.join("meta.json");
-    let json = fs::read_to_string(&meta_path)?;
-    let mut meta: JobMeta = serde_json::from_str(&json)?;
-
-    // Update status
-    meta.finished_at = Some(OffsetDateTime::now_utc());
-    meta.status = if result.success() {
-        JobStatus::Completed {
-            exit_code: 0,
-            duration_secs: duration,
-        }
-    } else {
-        let code = result.code().unwrap_or(-1);
-        JobStatus::Failed {
-            exit_code: code,
-            error: format!("exit code {}", code),
-        }
-    };
-
-    // Write updated meta
-    let json = serde_json::to_string_pretty(&meta)?;
-    fs::write(&meta_path, json)?;
-
-    Ok(())
-}
-
-/// Read the last N lines from a file.
-fn tail_file(path: &Path, lines: usize) -> Result<String> {
-    let file = File::open(path).context("failed to open file")?;
-    let reader = BufReader::new(file);
-
-    let all_lines: Vec<_> = reader.lines().filter_map(|l| l.ok()).collect();
-    let start = all_lines.len().saturating_sub(lines);
-
-    Ok(all_lines[start..].join("\n"))
+    if let Ok(db) = HistoryDb::open(db_path) {
+        let (status, exit_code) = match result {
+            Ok(exit) if exit.success() => (InvocationStatus::Success, Some(0)),
+            Ok(exit) => (InvocationStatus::Failed, exit.code()),
+            Err(_) => (InvocationStatus::Failed, None),
+        };
+        // Store logs in DB and delete files
+        let _ = db.finish_background_job(
+            history_id,
+            status,
+            exit_code,
+            duration,
+            Some(stdout_path),
+            Some(stderr_path),
+        );
+    }
 }
 
 #[cfg(test)]
@@ -357,38 +370,23 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn test_job_manager_basic() {
+    fn test_job_tail_stdout() {
         let dir = tempdir().unwrap();
-        let manager = JobManager::new(dir.path().join("jobs")).unwrap();
+        let stdout_path = dir.path().join("stdout.log");
+        fs::write(&stdout_path, "line1\nline2\nline3\nline4\nline5").unwrap();
 
-        // Spawn a simple job
-        let job = manager.spawn("echo", &["hello".to_string()]).unwrap();
+        let job = Job {
+            id: 1,
+            command: "test".into(),
+            args: vec![],
+            started_at: OffsetDateTime::now_utc(),
+            pid: 0,
+            status: InvocationStatus::Running,
+            stdout_path: stdout_path.clone(),
+            stderr_path: dir.path().join("stderr.log"),
+        };
 
-        assert!(job.meta.id > 0);
-
-        // Wait for it to complete
-        let job = manager
-            .wait(job.meta.id, Some(Duration::from_secs(5)))
-            .unwrap();
-        assert!(job.meta.status.is_terminal());
-
-        // Check stdout
-        let stdout = job.read_stdout().unwrap();
-        assert!(stdout.contains("hello"));
-    }
-
-    #[test]
-    fn test_job_list() {
-        let dir = tempdir().unwrap();
-        let manager = JobManager::new(dir.path().join("jobs")).unwrap();
-
-        // Spawn a few jobs
-        manager.spawn("true", &[]).unwrap();
-        manager.spawn("true", &[]).unwrap();
-
-        std::thread::sleep(Duration::from_millis(100));
-
-        let jobs = manager.list().unwrap();
-        assert_eq!(jobs.len(), 2);
+        let result = job.tail_stdout(3).unwrap();
+        assert_eq!(result, "line3\nline4\nline5");
     }
 }

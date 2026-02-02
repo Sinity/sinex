@@ -1,6 +1,6 @@
 //! Property-based tests for event model robustness
 //!
-//! Migrated from test/property/event_model_fuzzing_test.rs to modern infrastructure.
+//! Migrated from `test/property/event_model_fuzzing_test.rs` to modern infrastructure.
 //! This module implements comprehensive property-based testing (fuzzing) for the Sinex event
 //! processing pipeline to ensure robustness against malformed, extreme, or unexpected data.
 //!
@@ -18,9 +18,10 @@
 //! - Test with extreme values: empty strings, very long strings, unicode, control chars
 //! - Test with edge case numbers: negative, zero, max values, floating point precision
 //! - Test with malformed but parseable JSON structures
-//! - Focus on the modern RawEvent::schemaless() API and database insertion paths
+//! - Focus on the modern `RawEvent::schemaless()` API and database insertion paths
 
 use xtask::sandbox::prelude::*;
+use xtask::sandbox::test_event;
 
 use proptest::{strategy::ValueTree, test_runner::TestCaseResult};
 use serde_json::{Map as JsonMap, Value as JsonValue};
@@ -38,7 +39,7 @@ use sinex_primitives::{Event, Id}; // Modern Event API helpers
 fn problematic_strings() -> impl Strategy<Value = String> {
     prop_oneof![
         // Empty and whitespace
-        Just("".to_string()),
+        Just(String::new()),
         Just(" ".to_string()),
         Just("\t\n\r".to_string()),
         // Very long strings (potential buffer overflow)
@@ -78,9 +79,9 @@ fn edge_case_numbers() -> impl Strategy<Value = i64> {
         Just(1),
         Just(i64::MIN),
         Just(i64::MAX),
-        Just(i32::MIN as i64),
-        Just(i32::MAX as i64),
-        Just(u32::MAX as i64),
+        Just(i64::from(i32::MIN)),
+        Just(i64::from(i32::MAX)),
+        Just(i64::from(u32::MAX)),
         Just(-9223372036854775808), // Min i64
         Just(9223372036854775807),  // Max i64
         any::<i64>(),
@@ -93,9 +94,9 @@ fn edge_case_u64() -> impl Strategy<Value = u64> {
         Just(0),
         Just(1),
         Just(u64::MAX),
-        Just(u32::MAX as u64),
-        Just(u16::MAX as u64),
-        Just(u8::MAX as u64),
+        Just(u64::from(u32::MAX)),
+        Just(u64::from(u16::MAX)),
+        Just(u64::from(u8::MAX)),
         any::<u64>(),
     ]
 }
@@ -113,9 +114,8 @@ fn problematic_timestamps() -> impl Strategy<Value = Timestamp> {
         Just(Timestamp::from_unix_timestamp(2147483647).unwrap()), // 2038-01-19
         Just(Timestamp::from_unix_timestamp(-2147483648).unwrap()), // 1901-12-13
         // Random timestamps
-        (-2208988800i64..4102444800i64).prop_map(|ts| {
-            Timestamp::from_unix_timestamp(ts).unwrap_or(Timestamp::now())
-        }),
+        (-2208988800i64..4102444800i64)
+            .prop_map(|ts| { Timestamp::from_unix_timestamp(ts).unwrap_or(Timestamp::now()) }),
     ]
 }
 
@@ -175,7 +175,7 @@ fn fuzzed_events() -> impl Strategy<Value = Event<JsonValue>> {
             // Set required timestamp fields
             event.host = HostName::new(host);
             event.id = Some(Id::from_ulid(Ulid::new()));
-            event.ts_orig = Some(ts_orig.into());
+            event.ts_orig = Some(ts_orig);
 
             event
         })
@@ -563,10 +563,7 @@ sinex_proptest! {
         event.id = Some(Id::from_ulid(Ulid::new()));
 
         let json_result = serde_json::to_string(&event);
-        match json_result {
-            Ok(_) => {}
-            Err(_) => {}
-        }
+        let _ = json_result.is_ok();
 
         let _ = serde_json::to_string_pretty(&event);
         TestCaseResult::Ok(())
@@ -594,7 +591,7 @@ sinex_proptest! {
             serde_json::json!({}),
         );
         event.id = Some(Id::from_ulid(Ulid::new()));
-        event.ts_orig = Some(timestamp.into());
+        event.ts_orig = Some(timestamp);
 
         // Verify the event can be serialized
         let _json = serde_json::to_string(&event);
@@ -609,7 +606,7 @@ sinex_proptest! {
     ) -> TestResult<()> {
         let mut event = test_event(
             EventSource::new(source.clone()),
-            EventType::new(event_type.clone()),
+            EventType::new(event_type),
             serde_json::json!({}),
         );
         event.host = HostName::new(host.clone());
@@ -643,19 +640,16 @@ async fn test_database_insertion_robustness(ctx: TestContext) -> TestResult<()> 
 
         // Test JSON serialization (this is the critical path for database storage)
         let json_result = serde_json::to_string(&event);
-        match json_result {
-            Ok(json_str) => {
-                // If serialization succeeds, test deserialization as well
-                let deserialize_result = serde_json::from_str::<Event<JsonValue>>(&json_str);
-                assert!(
-                    deserialize_result.is_ok(),
-                    "Event should deserialize successfully if serialization succeeded"
-                );
-            }
-            Err(_) => {
-                // Serialization errors are acceptable as long as they don't cause panics
-                // The main requirement is graceful failure
-            }
+        if let Ok(json_str) = json_result {
+            // If serialization succeeds, test deserialization as well
+            let deserialize_result = serde_json::from_str::<Event<JsonValue>>(&json_str);
+            assert!(
+                deserialize_result.is_ok(),
+                "Event should deserialize successfully if serialization succeeded"
+            );
+        } else {
+            // Serialization errors are acceptable as long as they don't cause panics
+            // The main requirement is graceful failure
         }
     }
     Ok(())

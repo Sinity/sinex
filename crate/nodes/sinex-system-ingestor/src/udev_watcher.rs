@@ -47,7 +47,7 @@ macro_rules! create_udev_event {
     }};
 }
 
-/// Parse udev action string to UdevAction enum
+/// Parse udev action string to `UdevAction` enum
 fn parse_udev_action(action: &str) -> UdevAction {
     match action {
         "add" => UdevAction::Add,
@@ -59,7 +59,7 @@ fn parse_udev_action(action: &str) -> UdevAction {
     }
 }
 
-/// Parse device type string to DeviceType enum
+/// Parse device type string to `DeviceType` enum
 fn parse_udev_device_type(s: &str) -> DeviceType {
     match s.to_lowercase().as_str() {
         "usb" | "usb_device" | "usb_interface" => DeviceType::Usb,
@@ -230,8 +230,7 @@ impl UdevWatcher {
             })
             .map_err(|e| {
                 sinex_node_sdk::SinexError::processing(format!(
-                    "Failed to create inotify watcher: {}",
-                    e
+                    "Failed to create inotify watcher: {e}"
                 ))
             })?;
 
@@ -323,7 +322,7 @@ impl UdevWatcher {
             let raw_event =
                 self.create_device_event(action, &device_path, device_type, properties, material)?;
 
-            Self::send_event(tx, raw_event, &format!("udev_{}", action), material).await?;
+            Self::send_event(tx, raw_event, &format!("udev_{action}"), material).await?;
 
             debug!("udev event: {} {} {}", action, device_type, device_path);
         }

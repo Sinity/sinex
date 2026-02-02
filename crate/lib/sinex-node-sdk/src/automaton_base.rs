@@ -30,7 +30,7 @@ use crate::jetstream_consumer::JetStreamEventConsumer;
 use crate::stream_processor::{EventSender, NodeRuntimeState, ScanReport};
 use crate::{NodeResult, SinexError};
 use serde::{Deserialize, Serialize};
-use sinex_primitives::temporal::{now_utc, OffsetDateTime};
+use sinex_primitives::temporal::{now_utc, OffsetDateTime, Timestamp};
 #[cfg(feature = "db")]
 use sqlx::PgPool;
 use std::collections::VecDeque;
@@ -49,7 +49,7 @@ pub const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActivityEntry {
     /// Timestamp of activity
-    pub timestamp: OffsetDateTime,
+    pub timestamp: Timestamp,
     /// Activity description
     pub description: String,
     /// Optional associated data
@@ -62,9 +62,9 @@ pub struct IngestionHistoryEntry {
     /// Scan/ingestion ID
     pub id: String,
     /// Start time
-    pub started_at: OffsetDateTime,
+    pub started_at: Timestamp,
     /// End time (if completed)
-    pub completed_at: Option<OffsetDateTime>,
+    pub completed_at: Option<Timestamp>,
     /// Number of events generated
     pub events_generated: u64,
     /// Scan report summary
@@ -337,8 +337,8 @@ pub const MAX_PROVENANCE_IDS: usize = 10;
 /// let provenance = provenance_from_ids(&ids);
 /// ```
 pub fn provenance_from_ids(ids: &[EventId]) -> Provenance {
-    if let Some(first) = ids.first().cloned() {
-        Provenance::from_synthesis_safe(first, ids.iter().skip(1).cloned().collect())
+    if let Some(first) = ids.first().copied() {
+        Provenance::from_synthesis_safe(first, ids.iter().skip(1).copied().collect())
     } else {
         bootstrap_provenance()
     }
@@ -358,7 +358,7 @@ pub fn bootstrap_provenance() -> Provenance {
         ])
         .expect("valid ULID bytes"),
     );
-    Provenance::from_synthesis_safe(bootstrap.clone(), vec![])
+    Provenance::from_synthesis_safe(bootstrap, vec![])
 }
 
 /// Extract event IDs from event references, limiting to max count.
@@ -371,22 +371,14 @@ pub fn bootstrap_provenance() -> Provenance {
 /// let ids = event_ids_from_events(refs, MAX_PROVENANCE_IDS);
 /// ```
 pub fn event_ids_from_events(events: Vec<&Event<JsonValue>>, max: usize) -> Vec<EventId> {
-    events
-        .into_iter()
-        .filter_map(|e| e.id.clone())
-        .take(max)
-        .collect()
+    events.into_iter().filter_map(|e| e.id).take(max).collect()
 }
 
 /// Extract event IDs from owned events, limiting to max count.
 ///
 /// Filters out events without IDs (new events not yet persisted).
 pub fn event_ids_from_owned_events(events: &[Event<JsonValue>], max: usize) -> Vec<EventId> {
-    events
-        .iter()
-        .filter_map(|e| e.id.clone())
-        .take(max)
-        .collect()
+    events.iter().filter_map(|e| e.id).take(max).collect()
 }
 
 #[cfg(test)]

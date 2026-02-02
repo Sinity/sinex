@@ -4,7 +4,7 @@
 # Default: 8 parallel crates × ~2GB = ~16GB peak memory
 jobs = 6
 pipelining = true
-target-dir = "/home/sinity/.gemini/tmp/566e9bf8d5e8f5ceb73de488ca76fa51fe7f43c39e3f6b319c89a100c305ff52/target"
+target-dir = ".sinex/target"
 
 # Shared build cache across the workspace (experimental)
 [unstable]

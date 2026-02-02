@@ -1,15 +1,15 @@
 # Material Assembly Subsystem
 
-The Material Assembly subsystem in \`sinex-ingestd\` is responsible for reconstructing source materials (files, streams, blobs) from fragmented data slices arriving over NATS JetStream.
+The Material Assembly subsystem in \`sinex-ingestd\` is responsible for reconstructing source materials (files, streams, blobs) from fragmented data slices arriving over NATS `JetStream`.
 
 ## State Machine & Assembly Workflow
 
 Assembly is managed by a per-material state machine that handles out-of-order delivery and provides transactional guarantees.
 
-1. **Initialization (\`MaterialBegin\`)**: An assembly begins when a \`MaterialBegin\` message is received, providing the \`material_id\` and initial metadata.
-2. **Slice Accumulation (\`MaterialSlice\`)**: Data slices are written to a temporary assembly file.
+1. **Initialization (\`MaterialBegin\`)**: An assembly begins when a \`MaterialBegin\` message is received, providing the \``material_id`\` and initial metadata.
+2. **Slice Accumulation (\``MaterialSlice`\`)**: Data slices are written to a temporary assembly file.
    - **Sequential Delivery**: Slices are appended directly to the temporary file if they match the expected byte offset.
-   - **Out-of-Order Handling**: Slices arriving out of sequence are buffered in temporary slice files and tracked in a \`BTreeMap\`. When the missing gap is filled, the buffered chain is automatically flushed to the main assembly file.
+   - **Out-of-Order Handling**: Slices arriving out of sequence are buffered in temporary slice files and tracked in a \``BTreeMap`\`. When the missing gap is filled, the buffered chain is automatically flushed to the main assembly file.
 3. **Finalization (\`MaterialEnd\`)**: Upon receiving the \`MaterialEnd\` message, the system verifies the total size and BLAKE3 hash of the assembled content.
 4. **Blob Storage**: Verified content is imported into **git-annex**. The resulting annex key is registered in the \`core.blobs\` table.
 5. **Registry Update**: The original source material record is updated with the \`blob_id\` and marked as \`completed\`.
@@ -24,7 +24,7 @@ To ensure data integrity across service restarts or crashes, the assembler utili
 
 ## Concurrency & Isolation
 
-- **Per-Material Locking**: Assembly state is protected by granular, per-material mutexes (\`DashMap<Ulid, Mutex<State>>\`). This ensures that multiple materials can be assembled in parallel without lock contention.
+- **Per-Material Locking**: Assembly state is protected by granular, per-material mutexes (\``DashMap`<Ulid, Mutex<State>>\`). This ensures that multiple materials can be assembled in parallel without lock contention.
 - **Semaphore Limits**: The system limits the number of concurrent in-flight assemblies (default 50) to prevent resource exhaustion (memory, disk space, file handles).
 
 ## Error Handling & Dead Letter Queue (DLQ)

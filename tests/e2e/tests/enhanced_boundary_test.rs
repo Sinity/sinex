@@ -2,19 +2,19 @@
 //
 // Tests system behavior at boundaries, limits, and edge cases
 
-use xtask::sandbox::{prelude::*, sinex_prop, DynamicPayload};
-use sinex_primitives::Timestamp;
 use proptest::prelude::*;
+use sinex_primitives::Timestamp;
 use std::sync::Arc;
-use tokio::time::{Duration, timeout};
+use tokio::time::{timeout, Duration};
+use xtask::sandbox::{prelude::*, sinex_prop, DynamicPayload};
 
 /// Test system behavior with maximum payload sizes
 #[sinex_test]
 async fn test_maximum_payload_sizes(ctx: TestContext) -> Result<()> {
     let payload_sizes = vec![
-        1024,           // 1KB
-        64 * 1024,      // 64KB
-        1024 * 1024,    // 1MB
+        1024,             // 1KB
+        64 * 1024,        // 64KB
+        1024 * 1024,      // 1MB
         10 * 1024 * 1024, // 10MB
     ];
 
@@ -50,8 +50,12 @@ async fn test_maximum_payload_sizes(ctx: TestContext) -> Result<()> {
 #[sinex_test]
 async fn test_minimal_boundary_values(ctx: TestContext) -> Result<()> {
     // Test empty payload
-    ctx.publish(DynamicPayload::new("boundary_test", "empty_payload", serde_json::json!({})))
-        .await?;
+    ctx.publish(DynamicPayload::new(
+        "boundary_test",
+        "empty_payload",
+        serde_json::json!({}),
+    ))
+    .await?;
 
     // Test minimal string
     ctx.publish(DynamicPayload::new(
@@ -95,15 +99,13 @@ async fn test_unicode_boundary_cases(ctx: TestContext) -> Result<()> {
         ("chinese", "你好世界"),
         ("arabic", "مرحبا بالعالم"),
         ("hebrew", "שלום עולם"),
-
         // Special Unicode characters
         ("zero_width", "test\u{200B}test"), // Zero-width space
-        ("rtl_mark", "test\u{200F}test"),    // Right-to-left mark
-        ("combining", "e\u{0301}"),          // e with combining acute accent
-
+        ("rtl_mark", "test\u{200F}test"),   // Right-to-left mark
+        ("combining", "e\u{0301}"),         // e with combining acute accent
         // Edge cases
-        ("surrogate_pair", "𝐀𝐁𝐂𝐃𝐄"),      // Mathematical bold capitals
-        ("replacement", "\u{FFFD}"),         // Replacement character
+        ("surrogate_pair", "𝐀𝐁𝐂𝐃𝐄"), // Mathematical bold capitals
+        ("replacement", "\u{FFFD}"), // Replacement character
     ];
 
     for (name, text) in unicode_cases {
@@ -264,7 +266,7 @@ async fn test_concurrent_access_boundaries(ctx: TestContext) -> Result<()> {
     for task_id in 0..concurrent_tasks {
         let ctx_task = Arc::clone(&ctx);
 
-        let handle = tokio::spawn(async move -> Result<()> {
+        let handle = tokio::spawn(async move {
             let pool = ctx_task.pool.clone();
             for i in 0..events_per_task {
                 let event = ctx_task
@@ -287,11 +289,7 @@ async fn test_concurrent_access_boundaries(ctx: TestContext) -> Result<()> {
     }
 
     // Wait for all tasks with timeout
-    let results = timeout(
-        Duration::from_secs(30),
-        future::join_all(handles),
-    )
-    .await?;
+    let results = timeout(Duration::from_secs(30), future::join_all(handles)).await?;
 
     for result in results {
         result??;
@@ -309,10 +307,10 @@ async fn test_concurrent_access_boundaries(ctx: TestContext) -> Result<()> {
 #[sinex_test]
 async fn test_string_length_boundaries(ctx: TestContext) -> Result<()> {
     let string_lengths = vec![
-        0,      // Empty string
-        1,      // Single character
-        255,    // Common DB varchar limit
-        65535,  // 64KB - 1
+        0,       // Empty string
+        1,       // Single character
+        255,     // Common DB varchar limit
+        65535,   // 64KB - 1
         1048576, // 1MB
     ];
 

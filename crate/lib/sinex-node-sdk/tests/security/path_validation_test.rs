@@ -4,19 +4,18 @@
 //! and migration code, ensuring protection against path traversal attacks.
 
 use camino::Utf8PathBuf;
-use sinex_node_sdk::db::security::{SecurityError, SecurityValidator};
-use sinex_node_sdk::types::validate_path;
-use sinex_node_sdk::{Event, JsonValue};
+use sinex_db::security::{SecurityError, SecurityValidator};
 use sinex_node_sdk::annex::{
     blob_manager::BLOB_EVENT_CHANNEL_CAPACITY, AnnexConfig, BlobManager, VerifiedPath,
 };
-use xtask::sandbox::TestResult;
+use sinex_primitives::{validate_path, Event, JsonValue};
 use std::path::Path;
 use tempfile::TempDir;
 use tokio::fs;
 use tokio::process::Command;
 use tokio::sync::mpsc;
 use xtask::sandbox::prelude::*;
+use xtask::sandbox::TestResult;
 
 #[sinex_test]
 async fn test_path_validation_rejects_traversal_attacks(ctx: TestContext) -> TestResult<()> {
@@ -40,7 +39,7 @@ async fn test_path_validation_rejects_traversal_attacks(ctx: TestContext) -> Tes
         ctx.assert("path validation should reject dangerous paths")
             .that(
                 result.is_err(),
-                &format!("Path '{}' should be rejected", dangerous_path),
+                &format!("Path '{dangerous_path}' should be rejected"),
             )?;
 
         // SecurityValidator should also reject these
@@ -48,7 +47,7 @@ async fn test_path_validation_rejects_traversal_attacks(ctx: TestContext) -> Tes
         ctx.assert("security validator should reject dangerous paths")
             .that(
                 sanitize_result.is_err(),
-                &format!("SecurityValidator should reject '{}'", dangerous_path),
+                &format!("SecurityValidator should reject '{dangerous_path}'"),
             )?;
     }
 
@@ -77,7 +76,7 @@ async fn test_path_validation_allows_safe_paths(ctx: TestContext) -> TestResult<
         ctx.assert("path validation should accept safe paths")
             .that(
                 result.is_ok(),
-                &format!("Path '{}' should be accepted", safe_path),
+                &format!("Path '{safe_path}' should be accepted"),
             )?;
 
         // SecurityValidator should also accept these
@@ -85,7 +84,7 @@ async fn test_path_validation_allows_safe_paths(ctx: TestContext) -> TestResult<
         ctx.assert("security validator should accept safe paths")
             .that(
                 sanitize_result.is_ok(),
-                &format!("SecurityValidator should accept '{}'", safe_path),
+                &format!("SecurityValidator should accept '{safe_path}'"),
             )?;
     }
 
@@ -145,7 +144,7 @@ async fn blob_manager_rejects_percent_encoded_traversal(ctx: TestContext) -> Tes
     let temp_dir = TempDir::new()?;
     let annex_path = temp_dir.path().join("percent-encoded-annex");
 
-    let repo_utf8 = Utf8PathBuf::from_path_buf(annex_path.clone())
+    let repo_utf8 = Utf8PathBuf::from_path_buf(annex_path)
         .map_err(|_| color_eyre::eyre::eyre!("annex path not valid UTF-8"))?;
 
     let (event_tx, mut event_rx) = mpsc::channel::<Event<JsonValue>>(BLOB_EVENT_CHANNEL_CAPACITY);
@@ -162,10 +161,10 @@ async fn blob_manager_rejects_percent_encoded_traversal(ctx: TestContext) -> Tes
     let encoded_path = Utf8PathBuf::from("%2e%2e%2fetc%2fpasswd");
     let verification = VerifiedPath::parse(encoded_path.as_str());
     assert!(
-        verification
-            .as_ref()
-            .map(|_| false)
-            .unwrap_or_else(|err| err.to_string().contains("Path validation failed")),
+        verification.as_ref().map_or_else(
+            |err| err.to_string().contains("Path validation failed"),
+            |_| false
+        ),
         "Percent-encoded traversal paths must be rejected before ingestion"
     );
 
@@ -231,8 +230,7 @@ async fn test_unicode_and_null_byte_handling() -> TestResult<()> {
             // Null bytes should be rejected
             assert!(
                 result.is_err(),
-                "Path with null bytes should be rejected: '{:?}'",
-                dangerous_string
+                "Path with null bytes should be rejected: '{dangerous_string:?}'"
             );
         }
 
@@ -243,8 +241,7 @@ async fn test_unicode_and_null_byte_handling() -> TestResult<()> {
             // Null bytes should be removed
             assert!(
                 !sanitized.contains('\0'),
-                "Null bytes should be removed from: '{:?}'",
-                dangerous_string
+                "Null bytes should be removed from: '{dangerous_string:?}'"
             );
         }
     }

@@ -62,11 +62,6 @@ pub enum StackSubcommand {
         #[command(subcommand)]
         cmd: crate::commands::vm::VmSubcommand,
     },
-    /// Manage TLS
-    Tls {
-        #[command(subcommand)]
-        cmd: crate::tls::TlsCommand,
-    },
     /// Run diagnostics (doctor)
     Doctor {
         /// Run pipeline smoke tests
@@ -92,7 +87,7 @@ pub enum SnapshotSubcommand {
 }
 
 impl XtaskCommand for StackCommand {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "stack"
     }
 
@@ -118,7 +113,6 @@ impl XtaskCommand for StackCommand {
                 };
                 vm_cmd.execute(ctx)
             }
-            StackSubcommand::Tls { cmd } => crate::tls::run(cmd.clone(), ctx.is_json()),
             StackSubcommand::Doctor { pipelines } => execute_doctor(&config, *pipelines, ctx),
             StackSubcommand::Env { export } => execute_env(&config, *export),
         }
@@ -144,9 +138,10 @@ fn execute_start(
     // Check lock
     let checkout_state = CheckoutState::for_current_checkout()?;
     if let Some(lock_info) = checkout_state.is_locked_by_other()? {
+        let pid = lock_info.pid;
         return Ok(CommandResult::failure(crate::output::StructuredError {
             code: "STACK_LOCKED".to_string(),
-            message: format!("Stack locked by {}", lock_info.pid),
+            message: format!("Stack locked by {pid}"),
             location: None,
             suggestion: Some("Stop other stack".into()),
         }));
@@ -169,10 +164,12 @@ fn execute_start(
     stack::nats_generate_config(config, ctx.is_human())?;
     stack::nats_start(config, ctx.is_human())?;
 
+    let pg_port = config.postgres.port;
+    let nats_port = config.nats.port;
     Ok(CommandResult::success()
         .with_message("Stack started")
-        .with_detail(format!("Postgres on port {}", config.postgres.port))
-        .with_detail(format!("NATS on port {}", config.nats.port)))
+        .with_detail(format!("Postgres on port {pg_port}"))
+        .with_detail(format!("NATS on port {nats_port}")))
 }
 
 fn execute_stop(config: &StackConfig, ctx: &CommandContext) -> Result<CommandResult> {
@@ -259,14 +256,14 @@ fn execute_logs(
         "nats" | "nats-server" => "nats.log",
         _ => {
             // Try generic process log location if orchestrator uses it
-            if Path::new(".devenv/state")
+            if Path::new(".sinex/state")
                 .join(process)
                 .join("process.log")
                 .exists()
             {
                 "process.log" // and path logic
             } else {
-                bail!("Unknown process: {}", process);
+                bail!("Unknown process: {process}");
             }
         }
     };
@@ -275,14 +272,14 @@ fn execute_logs(
         config.logs_dir().join(log_file)
     } else {
         // Fallback logic
-        PathBuf::from(format!(".devenv/state/{}/process.log", process))
+        PathBuf::from(format!(".sinex/state/{process}/process.log"))
     };
 
     if !log_path.exists() {
         bail!("Log file not found: {}", log_path.display());
     }
 
-    ctx.heading(&format!("logs: {}", process));
+    ctx.heading(&format!("logs: {process}"));
 
     let mut cmd = Command::new("tail");
     cmd.arg("-n").arg(lines.to_string());
@@ -316,9 +313,7 @@ fn execute_snapshot(
             // Wait, I promised a working consolidation.
             // Re-implementing correctly:
             let safe_name = name.replace(|c: char| !c.is_alphanumeric() && c != '-', "_");
-            let snapshot_path = config
-                .snapshots_dir()
-                .join(format!("{}.tar.zst", safe_name));
+            let snapshot_path = config.snapshots_dir().join(format!("{safe_name}.tar.zst"));
 
             fs::create_dir_all(config.snapshots_dir())?;
 
@@ -343,14 +338,12 @@ fn execute_snapshot(
             if !zstd.success() {
                 bail!("Snapshot failed");
             }
-            Ok(CommandResult::success().with_message(format!("Snapshot {} created", safe_name)))
+            Ok(CommandResult::success().with_message(format!("Snapshot {safe_name} created")))
         }
         SnapshotSubcommand::Restore { name } => {
             // Inverse of create
             let safe_name = name.replace(|c: char| !c.is_alphanumeric() && c != '-', "_");
-            let snapshot_path = config
-                .snapshots_dir()
-                .join(format!("{}.tar.zst", safe_name));
+            let snapshot_path = config.snapshots_dir().join(format!("{safe_name}.tar.zst"));
             if !snapshot_path.exists() {
                 bail!("Snapshot not found");
             }
@@ -377,7 +370,7 @@ fn execute_snapshot(
         }
         SnapshotSubcommand::List => {
             let snaps = stack::list_snapshots(&config.snapshots_dir());
-            println!("Snapshots: {:?}", snaps);
+            println!("Snapshots: {snaps:?}");
             Ok(CommandResult::success())
         }
     }
@@ -394,7 +387,7 @@ fn execute_doctor(
     let _ = ProcessBuilder::new("rustc").arg("--version").run();
     // Check postgres
     let pg_ok = stack::is_process_running(&config.pg_pid_file());
-    println!("PostgreSQL running: {}", pg_ok);
+    println!("PostgreSQL running: {pg_ok}");
 
     // Check extensions using psql if running
     if pg_ok {

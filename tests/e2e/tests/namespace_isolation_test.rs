@@ -1,7 +1,9 @@
+use anyhow::ensure;
 use serde_json::json;
-use xtask::sandbox::PipelineNamespace;
+use sinex_primitives::{DynamicPayload, Ulid};
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::WaitHelpers;
+use xtask::sandbox::PipelineNamespace;
 
 #[sinex_test]
 async fn pipeline_namespace_subjects_are_isolated(ctx: TestContext) -> TestResult<()> {
@@ -24,16 +26,21 @@ async fn pipeline_namespace_subjects_are_isolated(ctx: TestContext) -> TestResul
     )
     .await?;
 
-    let publisher = TestNodePublisher::with_namespace(
-        ctx.nats_client(),
-        source,
-        Some(ns_a.prefix().to_string()),
-    );
-    publisher
-        .publish(event_type, json!({"namespace": "a"}))
-        .await?;
-
+    // Publish directly to namespace A's subject using JetStream
     let js = ctx.jetstream().await?;
+    let subject = ns_a.subject(&format!("events.raw.{source}.{event_type}"));
+
+    // Create event payload
+    let event = DynamicPayload::new(source, event_type, json!({"namespace": "a"}));
+    let event_data = serde_json::to_vec(&json!({
+        "id": Ulid::new().to_string(),
+        "source": source,
+        "event_type": event_type,
+        "payload": event.payload,
+    }))?;
+
+    js.publish(subject, event_data.into()).await?.await?;
+
     let stream_a = ns_a.stream("SINEX_RAW_EVENTS");
     let stream_b = ns_b.stream("SINEX_RAW_EVENTS");
 

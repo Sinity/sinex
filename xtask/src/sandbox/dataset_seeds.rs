@@ -5,8 +5,8 @@
 
 use crate::sandbox::prelude::*;
 use serde_json::{json, Value as JsonValue};
-use std::sync::atomic::{AtomicI64, Ordering};
 use sinex_primitives::Timestamp;
+use std::sync::atomic::{AtomicI64, Ordering};
 use time::{Duration, OffsetDateTime};
 
 /// Clock for generating sequential test timestamps
@@ -101,7 +101,8 @@ pub async fn seed_events_via_scope(
 
     for spec in events {
         let _timestamp = spec.timestamp.unwrap_or_else(|| clock.tick(100));
-        let payload = DynamicPayload::new(spec.source.as_str(), spec.event_type.as_str(), spec.payload);
+        let payload =
+            DynamicPayload::new(spec.source.as_str(), spec.event_type.as_str(), spec.payload);
         let event = ctx.publish(payload).await?;
         if let Some(id) = event.id {
             ids.push(*id.as_ulid());
@@ -116,25 +117,48 @@ pub async fn seed_events_via_scope(
 pub struct AnalyticsDataset {
     pub name: String,
     pub events: Vec<EventSpec>,
+    pub expected_total: i64,
+    pub expected_source_counts: std::collections::HashMap<String, i64>,
+    pub expected_event_type_counts: std::collections::HashMap<String, i64>,
+    pub expected_command_counts: std::collections::HashMap<String, i64>,
 }
 
 impl AnalyticsDataset {
     /// Create minimal semantic dataset for analytics tests
     pub fn semantic_min() -> Self {
+        let events = vec![
+            EventSpec::new("shell.bash", "command.executed")
+                .with_payload(json!({"command": "ls", "exit_code": 0})),
+            EventSpec::new("shell.bash", "command.executed")
+                .with_payload(json!({"command": "git status", "exit_code": 0})),
+            EventSpec::new("shell.bash", "command.executed")
+                .with_payload(json!({"command": "ls", "exit_code": 0})),
+            EventSpec::new("fs-watcher", "file.created")
+                .with_payload(json!({"path": "/tmp/test.txt", "size": 100})),
+            EventSpec::new("fs-watcher", "file.modified")
+                .with_payload(json!({"path": "/tmp/test.txt", "size": 150})),
+        ];
+
+        let mut expected_source_counts = std::collections::HashMap::new();
+        expected_source_counts.insert("shell.bash".to_string(), 3);
+        expected_source_counts.insert("fs-watcher".to_string(), 2);
+
+        let mut expected_event_type_counts = std::collections::HashMap::new();
+        expected_event_type_counts.insert("command.executed".to_string(), 3);
+        expected_event_type_counts.insert("file.created".to_string(), 1);
+        expected_event_type_counts.insert("file.modified".to_string(), 1);
+
+        let mut expected_command_counts = std::collections::HashMap::new();
+        expected_command_counts.insert("ls".to_string(), 2);
+        expected_command_counts.insert("git status".to_string(), 1);
+
         Self {
             name: "analytics-semantic-min".to_string(),
-            events: vec![
-                EventSpec::new("shell.bash", "command.executed")
-                    .with_payload(json!({"command": "ls", "exit_code": 0})),
-                EventSpec::new("shell.bash", "command.executed")
-                    .with_payload(json!({"command": "git status", "exit_code": 0})),
-                EventSpec::new("shell.bash", "command.executed")
-                    .with_payload(json!({"command": "ls", "exit_code": 0})),
-                EventSpec::new("fs-watcher", "file.created")
-                    .with_payload(json!({"path": "/tmp/test.txt", "size": 100})),
-                EventSpec::new("fs-watcher", "file.modified")
-                    .with_payload(json!({"path": "/tmp/test.txt", "size": 150})),
-            ],
+            expected_total: 5,
+            events,
+            expected_source_counts,
+            expected_event_type_counts,
+            expected_command_counts,
         }
     }
 
@@ -147,9 +171,20 @@ impl AnalyticsDataset {
                     .with_payload(json!({"command": format!("cmd-{}", i), "exit_code": 0})),
             );
         }
+
+        let mut expected_source_counts = std::collections::HashMap::new();
+        expected_source_counts.insert("shell.bash".to_string(), count as i64);
+
+        let mut expected_event_type_counts = std::collections::HashMap::new();
+        expected_event_type_counts.insert("command.executed".to_string(), count as i64);
+
         Self {
             name: "analytics-perf".to_string(),
+            expected_total: count as i64,
             events,
+            expected_source_counts,
+            expected_event_type_counts,
+            expected_command_counts: std::collections::HashMap::new(),
         }
     }
 }
@@ -159,51 +194,57 @@ impl AnalyticsDataset {
 pub struct QueryDataset {
     pub name: String,
     pub events: Vec<EventSpec>,
+    pub expected_total: usize,
 }
 
 impl QueryDataset {
     /// Create minimal semantic dataset for query/search tests
     pub fn semantic_min() -> Self {
+        let events = vec![
+            EventSpec::new("shell.bash", "command.executed")
+                .with_payload(json!({"command": "cargo build", "exit_code": 0})),
+            EventSpec::new("shell.bash", "command.executed")
+                .with_payload(json!({"command": "cargo test", "exit_code": 0})),
+            EventSpec::new("fs-watcher", "file.created")
+                .with_payload(json!({"path": "/project/src/main.rs", "size": 500})),
+        ];
         Self {
             name: "query-semantic-min".to_string(),
-            events: vec![
-                EventSpec::new("shell.bash", "command.executed")
-                    .with_payload(json!({"command": "cargo build", "exit_code": 0})),
-                EventSpec::new("shell.bash", "command.executed")
-                    .with_payload(json!({"command": "cargo test", "exit_code": 0})),
-                EventSpec::new("fs-watcher", "file.created")
-                    .with_payload(json!({"path": "/project/src/main.rs", "size": 500})),
-            ],
+            expected_total: events.len(),
+            events,
         }
     }
 }
 
-/// Seed the minimal semantic analytics dataset
+/// Seed the minimal semantic analytics dataset and return the dataset with expected counts
 pub async fn seed_analytics_dataset_semantic_min_via_scope(
     ctx: &Sandbox,
     clock: &SeedClock,
-) -> TestResult<Vec<Ulid>> {
+) -> TestResult<AnalyticsDataset> {
     let dataset = AnalyticsDataset::semantic_min();
-    seed_events_via_scope(ctx, clock, dataset.events).await
+    seed_events_via_scope(ctx, clock, dataset.events.clone()).await?;
+    Ok(dataset)
 }
 
-/// Seed the performance analytics dataset
+/// Seed the performance analytics dataset and return the dataset
 pub async fn seed_analytics_dataset_perf_via_scope(
     ctx: &Sandbox,
     clock: &SeedClock,
     count: usize,
-) -> TestResult<Vec<Ulid>> {
+) -> TestResult<AnalyticsDataset> {
     let dataset = AnalyticsDataset::perf(count);
-    seed_events_via_scope(ctx, clock, dataset.events).await
+    seed_events_via_scope(ctx, clock, dataset.events.clone()).await?;
+    Ok(dataset)
 }
 
-/// Seed the minimal semantic query dataset
+/// Seed the minimal semantic query dataset and return the dataset
 pub async fn seed_query_dataset_semantic_min_via_scope(
     ctx: &Sandbox,
     clock: &SeedClock,
-) -> TestResult<Vec<Ulid>> {
+) -> TestResult<QueryDataset> {
     let dataset = QueryDataset::semantic_min();
-    seed_events_via_scope(ctx, clock, dataset.events).await
+    seed_events_via_scope(ctx, clock, dataset.events.clone()).await?;
+    Ok(dataset)
 }
 
 #[cfg(test)]
@@ -220,8 +261,7 @@ mod tests {
 
     #[test]
     fn test_event_spec_builder() {
-        let spec = EventSpec::new("source", "type")
-            .with_payload(json!({"key": "value"}));
+        let spec = EventSpec::new("source", "type").with_payload(json!({"key": "value"}));
         assert_eq!(spec.source, "source");
         assert_eq!(spec.event_type, "type");
         assert_eq!(spec.payload["key"], "value");

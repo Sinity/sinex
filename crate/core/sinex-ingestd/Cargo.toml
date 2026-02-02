@@ -7,6 +7,8 @@ name = "sinex-ingestd"
 
 [dependencies]
 libc = "0.2"
+shadow-rs = "0.35"
+human-panic = "2.0"
 
 [package.version]
 workspace = true
@@ -116,6 +118,9 @@ path = "../../lib/sinex-db"
 [dev-dependencies.tempfile]
 workspace = true
 
+[dev-dependencies.gethostname]
+workspace = true
+
 [dev-dependencies.xtask]
 path = "../../../xtask"
 default-features = false
@@ -131,3 +136,9 @@ path = "../../lib/sinex-primitives"
 features = [
     "testing",
 ]
+
+[build-dependencies]
+shadow-rs = "0.35"
+
+[lints]
+workspace = true

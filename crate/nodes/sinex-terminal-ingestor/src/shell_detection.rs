@@ -4,14 +4,13 @@
 //! and its capabilities, extracted from sinex-shell-integration.
 
 use camino::Utf8PathBuf;
-use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, env, sync::RwLock};
 use tracing::info;
 
-/// Cache for command existence checks to avoid repeated which::which() calls
-static COMMAND_CACHE: Lazy<RwLock<HashMap<String, bool>>> =
-    Lazy::new(|| RwLock::new(HashMap::new()));
+/// Cache for command existence checks to avoid repeated `which::which()` calls
+static COMMAND_CACHE: std::sync::LazyLock<RwLock<HashMap<String, bool>>> =
+    std::sync::LazyLock::new(|| RwLock::new(HashMap::new()));
 
 /// Supported shell types
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -27,6 +26,7 @@ pub enum ShellType {
 
 impl ShellType {
     /// Get the shell name as a string
+    #[must_use]
     pub fn name(&self) -> &str {
         match self {
             ShellType::Bash => "bash",
@@ -40,11 +40,13 @@ impl ShellType {
     }
 
     /// Check if this shell supports hooks
+    #[must_use]
     pub fn supports_hooks(&self) -> bool {
         matches!(self, ShellType::Bash | ShellType::Zsh | ShellType::Fish)
     }
 
     /// Get the default configuration file path for this shell
+    #[must_use]
     pub fn default_config_path(&self) -> Option<Utf8PathBuf> {
         let home = get_home_dir()?;
 
@@ -64,13 +66,14 @@ impl ShellType {
     /// # Shell-Specific Notes
     ///
     /// ## Fish
-    /// Fish stores history in an SQLite database at `~/.local/share/fish/fish_history`.
-    /// The terminal ingestor includes a SQLite parser to read Fish history incrementally.
+    /// Fish stores history in an `SQLite` database at `~/.local/share/fish/fish_history`.
+    /// The terminal ingestor includes a `SQLite` parser to read Fish history incrementally.
     ///
     /// ## Elvish
     /// Elvish uses a custom binary format at `~/.config/elvish/db`. This format is not
     /// currently supported by the terminal ingestor. Consider exporting Elvish history
     /// to a text format if ingestion is required.
+    #[must_use]
     pub fn default_history_path(&self) -> Option<Utf8PathBuf> {
         let home = get_home_dir()?;
 
@@ -157,10 +160,11 @@ pub fn detect_current_shell() -> Result<ShellInfo, sinex_node_sdk::SinexError> {
 }
 
 /// Detect shell type from path or name
+#[must_use]
 pub fn detect_shell_type(shell_path: &str) -> ShellType {
     let shell_name = shell_path
         .split('/')
-        .last()
+        .next_back()
         .unwrap_or(shell_path)
         .to_lowercase();
 
@@ -176,6 +180,7 @@ pub fn detect_shell_type(shell_path: &str) -> ShellType {
 }
 
 /// Detect shell capabilities
+#[must_use]
 pub fn detect_capabilities(shell_type: &ShellType) -> ShellCapabilities {
     ShellCapabilities {
         supports_hooks: shell_type.supports_hooks(),
@@ -241,10 +246,10 @@ fn get_parent_pid() -> Option<u32> {
     system
         .process(sysinfo::Pid::from_u32(current_pid))?
         .parent()
-        .map(|pid| pid.as_u32())
+        .map(sysinfo::Pid::as_u32)
 }
 
-/// Helper function to get home directory as Utf8PathBuf
+/// Helper function to get home directory as `Utf8PathBuf`
 fn get_home_dir() -> Option<Utf8PathBuf> {
     dirs::home_dir().and_then(|p| Utf8PathBuf::from_path_buf(p).ok())
 }

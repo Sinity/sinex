@@ -6,10 +6,6 @@
 use std::{collections::HashMap, sync::Arc};
 
 use camino::Utf8PathBuf;
-use sinex_primitives::{
-    Event, JsonValue, Ulid,
-    constants::buffers::DEFAULT_EVENT_CHANNEL_SIZE,
-};
 use sinex_node_sdk::{
     checkpoint::CheckpointManager,
     heartbeat::HeartbeatEmitter,
@@ -17,6 +13,7 @@ use sinex_node_sdk::{
     runtime::stream::{EventEmitter, NodeHandles, NodeRuntimeState, ServiceInfo},
     EventTransport,
 };
+use sinex_primitives::{constants::buffers::DEFAULT_EVENT_CHANNEL_SIZE, Event, JsonValue, Ulid};
 use tokio::sync::mpsc;
 
 use super::{EphemeralNats, Sandbox};
@@ -124,10 +121,7 @@ impl<'ctx> TestRuntimeBuilder<'ctx> {
 }
 
 impl TestRuntime {
-    pub async fn new(
-        ctx: &Sandbox,
-        service_name: impl Into<String>,
-    ) -> color_eyre::Result<Self> {
+    pub async fn new(ctx: &Sandbox, service_name: impl Into<String>) -> color_eyre::Result<Self> {
         TestRuntimeBuilder::new(ctx, service_name).build().await
     }
 

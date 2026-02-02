@@ -2,14 +2,16 @@
 
 //! Event Validation Property Tests
 //!
-//! Migrated from test/property/event_validation_property_test.rs to modern infrastructure.
+//! Migrated from `test/property/event_validation_property_test.rs` to modern infrastructure.
 //! This module contains property-based tests for event validation using the modern
-//! RawEvent::schemaless() builder pattern and updated validation architecture.
+//! `RawEvent::schemaless()` builder pattern and updated validation architecture.
 
+use serde_json::Value;
 use sinex_db::validation::EventValidator;
 use sinex_primitives::{Event, EventSource, EventType, HostName, Id, JsonValue, Timestamp, Ulid};
 use time::Duration;
 use xtask::sandbox::prelude::*;
+use xtask::sandbox::test_event;
 type RawEvent = Event<JsonValue>;
 // =============================================================================
 // Property Test Helpers
@@ -56,9 +58,8 @@ fn arbitrary_event() -> impl Strategy<Value = RawEvent> {
                 let ingest_ts = event
                     .id
                     .as_ref()
-                    .map(|id| id.as_ulid().timestamp())
-                    .unwrap_or_else(|| *Timestamp::now());
-                event.ts_orig = Some(Timestamp::from_inner(ingest_ts - Duration::seconds(60)));
+                    .map_or_else(Timestamp::now, |id| id.as_ulid().timestamp());
+                event.ts_orig = Some(ingest_ts - Duration::seconds(60));
             }
 
             event
@@ -68,7 +69,7 @@ fn arbitrary_event() -> impl Strategy<Value = RawEvent> {
 /// Strategy for generating events with empty source
 fn empty_source_event() -> impl Strategy<Value = RawEvent> {
     (
-        Just("".to_string()),    // empty source
+        Just(String::new()),     // empty source
         "[a-z][a-z0-9_.]{2,99}", // event_type
         event_payloads(),        // payload
     )
@@ -212,7 +213,7 @@ sinex_proptest! {
         prop_assert!(result.is_err(), "Event with empty source should fail validation");
         if let Err(e) = result {
             prop_assert!(
-                e.to_string().contains("source") || e.to_string().contains("empty"),
+                e.contains("source") || e.contains("empty"),
                 "Error should mention source issue: {}",
                 e
             );
@@ -227,11 +228,11 @@ sinex_proptest! {
         payload in event_payloads()
     ) -> TestResult<()> {
         let mut event = test_event(
-            EventSource::new(source.clone()),
-            EventType::new(event_type.clone()),
+            EventSource::new(source),
+            EventType::new(event_type),
             payload,
         );
-        event.host = HostName::new(host.clone());
+        event.host = HostName::new(host);
         event.id = Some(Id::from_ulid(Ulid::new()));
 
         prop_assert!(!event.source.is_empty());
@@ -271,10 +272,10 @@ sinex_proptest! {
     fn test_event_timestamp_consistency(
         event in arbitrary_event()
     ) -> TestResult<()> {
-        if let (Some(id), Some(ts_orig)) = (event.id.clone(), event.ts_orig) {
+        if let (Some(id), Some(ts_orig)) = (event.id, event.ts_orig) {
             let ingest_ts = id.timestamp();
             prop_assert!(
-                ingest_ts + Duration::hours(1) >= *ts_orig,
+                ingest_ts + Duration::hours(1) >= Timestamp::from(*ts_orig),
                 "ULID timestamp should not significantly precede origin time"
             );
         }
@@ -293,10 +294,10 @@ sinex_proptest! {
     ) -> TestResult<()> {
         let mut ids: Vec<Ulid> = events
             .iter()
-            .filter_map(|e| e.id.clone().map(|id| id.into()))
+            .filter_map(|e| e.id.map(std::convert::Into::into))
             .collect();
 
-        let unique_ids: std::collections::HashSet<_> = ids.iter().cloned().collect();
+        let unique_ids: std::collections::HashSet<_> = ids.iter().copied().collect();
         prop_assert_eq!(ids.len(), unique_ids.len(),
             "All event IDs should be unique");
 
@@ -338,7 +339,7 @@ sinex_proptest! {
         let result = validate_event(&event);
 
         if let Err(error) = result {
-            let error_string = error.to_string();
+            let error_string = error;
             prop_assert!(!error_string.is_empty(), "Error message should not be empty");
             if event.source.is_empty() {
                 prop_assert!(error_string.contains("source"));
@@ -388,10 +389,10 @@ sinex_proptest! {
         event in arbitrary_event()
     ) -> TestResult<()> {
         // Property: ULID timestamp (ingest) should be close to ts_orig when both exist
-        if let (Some(id), Some(ts_orig)) = (event.id.clone(), event.ts_orig) {
+        if let (Some(id), Some(ts_orig)) = (event.id, event.ts_orig) {
             let ingest_ts = id.timestamp();
             prop_assert!(
-                ingest_ts + Duration::hours(1) >= *ts_orig,
+                ingest_ts + Duration::hours(1) >= Timestamp::from(*ts_orig),
                 "ULID timestamp should not significantly precede origin time"
             );
         }
@@ -411,11 +412,11 @@ sinex_proptest! {
         // Property: Events should have unique IDs and maintain ordering
         let mut ids: Vec<Ulid> = events
             .iter()
-            .filter_map(|e| e.id.clone().map(|id| id.into()))
+            .filter_map(|e| e.id.map(std::convert::Into::into))
             .collect();
 
         // Check uniqueness (though IDs are generated and should be unique)
-        let unique_ids: std::collections::HashSet<_> = ids.iter().cloned().collect();
+        let unique_ids: std::collections::HashSet<_> = ids.iter().copied().collect();
         prop_assert_eq!(ids.len(), unique_ids.len(), "All event IDs should be unique");
 
         // Check that sorting by ID gives consistent order
@@ -427,7 +428,7 @@ sinex_proptest! {
     }
 
     fn property_source_event_id_validation(
-        parent_events in proptest::collection::vec(Just(()).prop_map(|_| Ulid::new()), 0..10),
+        parent_events in proptest::collection::vec(Just(()).prop_map(|()| Ulid::new()), 0..10),
         _event in arbitrary_event()
     ) -> TestResult<()> {
         // Property: Source event IDs should be valid ULIDs

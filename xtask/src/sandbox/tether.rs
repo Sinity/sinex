@@ -38,7 +38,7 @@ impl TetherConfig {
     pub fn from_env(target: &str) -> Result<Self> {
         let gateway_url = std::env::var("SINEX_GATEWAY_URL")
             .or_else(|_| std::env::var(format!("SINEX_{}_GATEWAY_URL", target.to_uppercase())))
-            .unwrap_or_else(|_| format!("https://gateway.{}.sinex.io:9999", target));
+            .unwrap_or_else(|_| format!("https://gateway.{target}.sinex.io:9999"));
 
         let auth_token = std::env::var("SINEX_RPC_TOKEN")
             .or_else(|_| std::env::var(format!("SINEX_{}_RPC_TOKEN", target.to_uppercase())))
@@ -53,7 +53,7 @@ impl TetherConfig {
             gateway_url,
             auth_token,
             subject_filter: None,
-            consumer_prefix: format!("dev-{}", consumer_prefix),
+            consumer_prefix: format!("dev-{consumer_prefix}"),
             from_beginning: false,
         })
     }
@@ -66,7 +66,7 @@ impl TetherConfig {
                     .expect("failed to parse timestamp format description for consumer name"),
             )
             .expect("failed to format timestamp for consumer name");
-        format!("{}-{}", self.consumer_prefix, timestamp)
+        format!("{}-{timestamp}", self.consumer_prefix)
     }
 }
 
@@ -149,7 +149,7 @@ impl TetherClient {
             .header("Content-Type", "application/json")
             .header(
                 "Authorization",
-                format!("Bearer {}", self.config.auth_token),
+                format!("Bearer {}", &self.config.auth_token),
             )
             .json(&request)
             .send()
@@ -236,7 +236,7 @@ impl TetherClient {
 }
 
 /// Event received via The Tether
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 #[allow(dead_code)]
 pub struct TetheredEvent {
     /// The event subject
@@ -294,6 +294,45 @@ impl TetherSession {
                 }
             }
         }
+    }
+
+    /// Stream events to a channel (stub - not yet implemented)
+    #[allow(dead_code)]
+    pub async fn stream_events(&self, _tx: tokio::sync::mpsc::Sender<TetheredEvent>) -> Result<()> {
+        // TODO: Implement actual event streaming via NATS
+        anyhow::bail!("Tether event streaming not yet implemented")
+    }
+
+    /// Get session statistics (stub)
+    #[allow(dead_code)]
+    pub fn stats(&self) -> TetherStats {
+        TetherStats::default()
+    }
+}
+
+/// Statistics for a tether session
+#[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
+pub struct TetherStats {
+    events_received: u64,
+    events_forwarded: u64,
+    errors: u64,
+}
+
+impl TetherStats {
+    /// Number of events received
+    pub fn events_received(&self) -> u64 {
+        self.events_received
+    }
+
+    /// Number of events forwarded
+    pub fn events_forwarded(&self) -> u64 {
+        self.events_forwarded
+    }
+
+    /// Number of errors
+    pub fn errors(&self) -> u64 {
+        self.errors
     }
 }
 

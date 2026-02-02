@@ -5,8 +5,6 @@
 use async_trait::async_trait;
 #[cfg(not(target_env = "msvc"))]
 use mimalloc::MiMalloc;
-use sinex_primitives::domain::SanitizedPath;
-use sinex_primitives::temporal::OffsetDateTime;
 use sinex_node_sdk::{
     stream_processor::{
         Checkpoint, Node, NodeCapabilities, NodeInitContext, NodeType, ScanArgs, ScanEstimate,
@@ -14,6 +12,8 @@ use sinex_node_sdk::{
     },
     NodeResult, SimpleIngestorWrapper,
 };
+use sinex_primitives::domain::SanitizedPath;
+use sinex_primitives::temporal::Timestamp;
 use sinex_processor_runtime::{
     CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
 };
@@ -23,18 +23,13 @@ use sinex_terminal_ingestor::{TerminalConfig, TerminalProcessor};
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
+#[derive(Default)]
 struct UnifiedTerminalNode(SimpleIngestorWrapper<TerminalProcessor>);
 
 impl UnifiedTerminalNode {
     #[allow(dead_code)] // Convenience constructor
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
-    }
-}
-
-impl Default for UnifiedTerminalNode {
-    fn default() -> Self {
-        Self(SimpleIngestorWrapper::default())
     }
 }
 
@@ -98,7 +93,7 @@ impl ExplorationProvider for UnifiedTerminalNode {
 
     fn get_coverage_analysis(
         &self,
-        time_range: Option<(OffsetDateTime, OffsetDateTime)>,
+        time_range: Option<(Timestamp, Timestamp)>,
     ) -> NodeResult<CoverageAnalysis> {
         self.0.ingestor().get_coverage_analysis(time_range)
     }

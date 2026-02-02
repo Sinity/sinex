@@ -1,9 +1,9 @@
 use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
+use sinex_db::{Event, Provenance};
 use sinex_primitives::domain::SanitizedPath;
 use sinex_primitives::events::payloads::{FileCreatedPayload, KittyCommandExecutedPayload};
 use sinex_primitives::Id;
-use sinex_db::{Event, Provenance};
 use sinex_primitives::Timestamp;
 use xtask::sandbox::sinex_test;
 
@@ -67,7 +67,7 @@ async fn events_repository_preserves_provenance(ctx: TestContext) -> TestResult<
             .map_err(|e| color_eyre::eyre::eyre!(e))?,
     );
     let derived_event = Event::builder(derived_payload)
-        .from_parents(vec![source_id.clone()])?
+        .from_parents(vec![source_id])?
         .build()?;
 
     let inserted = ctx.pool.events().insert(derived_event).await?;
@@ -86,7 +86,7 @@ async fn events_repository_preserves_provenance(ctx: TestContext) -> TestResult<
 #[sinex_test]
 async fn register_external_in_flight_uses_provided_id(ctx: TestContext) -> TestResult<()> {
     let forced_id = sinex_primitives::ulid::Ulid::new();
-    let identifier = format!("test-material-{}", forced_id);
+    let identifier = format!("test-material-{forced_id}");
     let record = ctx
         .pool
         .source_materials()

@@ -1,10 +1,10 @@
-//! Unified coordination primitive replacing EventCounter, ProgressTracker, and Barrier patterns
+//! Unified coordination primitive replacing `EventCounter`, `ProgressTracker`, and Barrier patterns
 //!
 //! This module provides a single, flexible coordination primitive that can handle:
-//! - Event counting (like EventCounter)
+//! - Event counting (like `EventCounter`)
 //! - Boolean signaling (like Synchronizer)
-//! - Multi-participant barriers (like TestBarrier)
-//! - Progress tracking (like ProgressTracker)
+//! - Multi-participant barriers (like `TestBarrier`)
+//! - Progress tracking (like `ProgressTracker`)
 
 use crate::error::{Result, SinexError};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -15,9 +15,9 @@ use tokio::sync::Notify;
 /// Reset behavior determines what happens when threshold is reached
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResetBehavior {
-    /// Never reset - count only grows (EventCounter pattern)
+    /// Never reset - count only grows (`EventCounter` pattern)
     Never,
-    /// Manual reset via reset() call (Synchronizer pattern)
+    /// Manual reset via `reset()` call (Synchronizer pattern)
     Manual,
     /// Automatic reset when threshold reached (Barrier pattern)
     Automatic,
@@ -72,6 +72,7 @@ impl CoordinationPrimitive {
     // ===== CORE OPERATIONS =====
 
     /// Increment the state and notify waiters if threshold reached
+    #[must_use]
     pub fn increment(&self) -> usize {
         let new_state = self.state.fetch_add(1, Ordering::AcqRel) + 1;
         self.check_threshold_and_notify(new_state);
@@ -79,6 +80,7 @@ impl CoordinationPrimitive {
     }
 
     /// Add multiple to the state atomically
+    #[must_use]
     pub fn add(&self, amount: usize) -> usize {
         let new_state = self.state.fetch_add(amount, Ordering::AcqRel) + amount;
         self.check_threshold_and_notify(new_state);
@@ -86,6 +88,7 @@ impl CoordinationPrimitive {
     }
 
     /// Subtract from the state atomically (saturating at 0)
+    #[must_use]
     pub fn subtract(&self, amount: usize) -> usize {
         let mut current = self.state.load(Ordering::Acquire);
         loop {
@@ -106,6 +109,7 @@ impl CoordinationPrimitive {
     }
 
     /// Set state to specific value
+    #[must_use]
     pub fn set(&self, value: usize) -> usize {
         let old_state = self.state.swap(value, Ordering::AcqRel);
         self.check_threshold_and_notify(value);
@@ -158,6 +162,7 @@ impl CoordinationPrimitive {
     // ===== CONVENIENCE METHODS FOR SPECIFIC PATTERNS =====
 
     /// Signal condition met (Synchronizer pattern - sets to threshold)
+    #[must_use]
     pub fn signal(&self) -> usize {
         self.set(self.threshold)
     }
@@ -220,31 +225,37 @@ impl CoordinationPrimitive {
     // ===== STATE INSPECTION =====
 
     /// Get current state without blocking
+    #[must_use]
     pub fn get(&self) -> usize {
         self.state.load(Ordering::Acquire)
     }
 
     /// Get threshold value
+    #[must_use]
     pub fn threshold(&self) -> usize {
         self.threshold
     }
 
     /// Check if threshold has been reached
+    #[must_use]
     pub fn is_ready(&self) -> bool {
         self.get() >= self.threshold
     }
 
     /// Get current generation (for barrier reuse tracking)
+    #[must_use]
     pub fn generation(&self) -> usize {
         self.generation.load(Ordering::Acquire)
     }
 
     /// Get primitive name for logging/debugging
+    #[must_use]
     pub fn name(&self) -> &str {
         &self.name
     }
 
     /// Get reset behavior
+    #[must_use]
     pub fn reset_behavior(&self) -> ResetBehavior {
         self.reset_behavior
     }

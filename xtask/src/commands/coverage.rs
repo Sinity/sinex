@@ -57,7 +57,7 @@ pub enum CoverageSubcommand {
 }
 
 impl XtaskCommand for CoverageCommand {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "coverage"
     }
 
@@ -87,7 +87,7 @@ impl XtaskCommand for CoverageCommand {
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata {
             category: Some("test".to_string()),
-            timeout: Some(std::time::Duration::from_secs(300)), // 5 minutes
+            timeout: Some(std::time::Duration::from_mins(5)), // 5 minutes
             modifies_state: false,
             track_in_history: true,
         }
@@ -139,7 +139,7 @@ fn execute_html(
     }
 
     Ok(CommandResult::success()
-        .with_message(format!("HTML report: {}/html/index.html", output))
+        .with_message(format!("HTML report: {output}/html/index.html"))
         .with_duration(ctx.elapsed()))
 }
 
@@ -175,7 +175,7 @@ fn execute_lcov(
     }
 
     Ok(CommandResult::success()
-        .with_message(format!("LCOV report: {}", output))
+        .with_message(format!("LCOV report: {output}"))
         .with_duration(ctx.elapsed()))
 }
 
@@ -223,7 +223,7 @@ fn execute_enforce(
 
     // Validate threshold
     if !(0.0..=100.0).contains(&threshold) {
-        bail!("Threshold must be between 0 and 100 (got {})", threshold);
+        bail!("Threshold must be between 0 and 100 (got {threshold})");
     }
 
     check_llvm_cov_installed()?;
@@ -255,7 +255,7 @@ fn execute_enforce(
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Ok(CommandResult::failure(crate::output::StructuredError {
             code: "COVERAGE_FAILED".to_string(),
-            message: format!("Coverage measurement failed: {}", stderr),
+            message: format!("Coverage measurement failed: {stderr}"),
             location: None,
             suggestion: Some("Check that tests compile and run successfully".to_string()),
         }));
@@ -288,18 +288,15 @@ fn execute_enforce(
     } else {
         CommandResult::failure(crate::output::StructuredError {
             code: "COVERAGE_BELOW_THRESHOLD".to_string(),
-            message: format!(
-                "Coverage {:.2}% is below threshold {:.2}%",
-                total_coverage, threshold
-            ),
+            message: format!("Coverage {total_coverage:.2}% is below threshold {threshold:.2}%"),
             location: None,
             suggestion: Some("Add more tests to increase coverage".to_string()),
         })
     };
 
     result = result
-        .with_detail(format!("Total coverage: {:.1}%", total_coverage))
-        .with_detail(format!("Threshold: {:.1}%", threshold));
+        .with_detail(format!("Total coverage: {total_coverage:.1}%"))
+        .with_detail(format!("Threshold: {threshold:.1}%"));
 
     if !passed {
         result = result.with_detail(format!(
@@ -313,8 +310,8 @@ fn execute_enforce(
         println!();
         println!("Code Coverage Report");
         println!("====================");
-        println!("Total coverage: {:.1}%", total_coverage);
-        println!("Threshold:      {:.1}%", threshold);
+        println!("Total coverage: {total_coverage:.1}%");
+        println!("Threshold:      {threshold:.1}%");
         println!();
 
         if passed {
@@ -371,11 +368,11 @@ fn check_llvm_cov_installed() -> Result<()> {
 fn run_cmd_ctx(desc: &str, mut cmd: Command, ctx: &CommandContext) -> Result<()> {
     let output = cmd
         .output()
-        .with_context(|| format!("Failed to execute {}", desc))?;
+        .with_context(|| format!("Failed to execute {desc}"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("{} failed: {}", desc, stderr);
+        bail!("{desc} failed: {stderr}");
     }
 
     if ctx.is_human() && !output.stdout.is_empty() {
@@ -409,7 +406,7 @@ mod tests {
         let metadata = cmd.metadata();
         assert_eq!(metadata.category, Some("test".to_string()));
         assert!(metadata.timeout.is_some());
-        assert_eq!(metadata.modifies_state, false);
+        assert!(!metadata.modifies_state);
     }
 
     #[test]

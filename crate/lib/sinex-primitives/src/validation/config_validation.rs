@@ -163,7 +163,7 @@ pub struct SecurePath {
 }
 
 impl SecurePath {
-    /// Create a new SecurePath with validation
+    /// Create a new `SecurePath` with validation
     pub fn new(path: &str, level: PathValidationLevel) -> Result<Self, String> {
         let sanitized = match level {
             PathValidationLevel::Basic => {
@@ -199,28 +199,32 @@ impl SecurePath {
         })
     }
 
-    /// Get the inner SanitizedPath
+    /// Get the inner `SanitizedPath`
+    #[must_use]
     pub fn inner(&self) -> &SanitizedPath {
         &self.inner
     }
 
     /// Get the validation level used
+    #[must_use]
     pub fn validation_level(&self) -> PathValidationLevel {
         self.validation_level
     }
 
-    /// Convert to Utf8PathBuf
+    /// Convert to `Utf8PathBuf`
+    #[must_use]
     pub fn to_path_buf(&self) -> Utf8PathBuf {
         Utf8PathBuf::from(self.inner.as_str())
     }
 
     /// Get the path as a string
+    #[must_use]
     pub fn as_str(&self) -> &str {
         self.inner.as_str()
     }
 }
 
-/// Helper for deserializing SanitizedPath with validation
+/// Helper for deserializing `SanitizedPath` with validation
 pub fn deserialize_sanitized_path<'de, D>(deserializer: D) -> Result<SanitizedPath, D::Error>
 where
     D: Deserializer<'de>,
@@ -268,7 +272,7 @@ where
     Ok(sanitized_paths)
 }
 
-/// Helper for deserializing Utf8PathBuf with validation
+/// Helper for deserializing `Utf8PathBuf` with validation
 pub fn deserialize_validated_utf8_path<'de, D>(deserializer: D) -> Result<Utf8PathBuf, D::Error>
 where
     D: Deserializer<'de>,

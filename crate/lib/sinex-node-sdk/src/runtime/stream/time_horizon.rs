@@ -1,11 +1,10 @@
 use serde::{Deserialize, Serialize};
+use sinex_primitives::temporal::Timestamp;
 
 /// Time horizon defines the scope and mode of scanning operations.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TimeHorizon {
-    Historical {
-        end_time: sinex_primitives::temporal::OffsetDateTime,
-    },
+    Historical { end_time: Timestamp },
     Continuous,
     Snapshot,
 }
@@ -19,10 +18,11 @@ impl TimeHorizon {
         matches!(self, TimeHorizon::Historical { .. } | TimeHorizon::Snapshot)
     }
 
-    pub fn end_time(&self) -> Option<sinex_primitives::temporal::OffsetDateTime> {
-        match self {
-            TimeHorizon::Historical { end_time } => Some(*end_time),
-            _ => None,
+    pub fn end_time(&self) -> Option<Timestamp> {
+        if let TimeHorizon::Historical { end_time } = self {
+            Some(*end_time)
+        } else {
+            None
         }
     }
 }

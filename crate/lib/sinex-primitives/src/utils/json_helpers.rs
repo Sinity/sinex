@@ -40,6 +40,7 @@ use serde_json::Value;
 /// Get a string value from a JSON object, returning "N/A" if not found or not a string.
 ///
 /// Use this for display purposes where missing values should show a placeholder.
+#[must_use]
 pub fn get_str<'a>(obj: &'a Value, key: &str) -> &'a str {
     obj.get(key).and_then(|v| v.as_str()).unwrap_or("N/A")
 }
@@ -47,6 +48,7 @@ pub fn get_str<'a>(obj: &'a Value, key: &str) -> &'a str {
 /// Get an owned string value from a JSON object.
 ///
 /// Convenience wrapper around `get_str` that returns an owned String.
+#[must_use]
 pub fn get_string(obj: &Value, key: &str) -> String {
     get_str(obj, key).to_string()
 }
@@ -54,31 +56,43 @@ pub fn get_string(obj: &Value, key: &str) -> String {
 /// Get an optional string value from a JSON object.
 ///
 /// Returns `None` if the key doesn't exist or the value isn't a string.
+#[must_use]
 pub fn get_optional_str<'a>(obj: &'a Value, key: &str) -> Option<&'a str> {
     obj.get(key).and_then(|v| v.as_str())
 }
 
 /// Get an i64 value from a JSON object, returning 0 if not found or not a number.
+#[must_use]
 pub fn get_i64(obj: &Value, key: &str) -> i64 {
-    obj.get(key).and_then(|v| v.as_i64()).unwrap_or(0)
+    obj.get(key)
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or(0)
 }
 
 /// Get a u64 value from a JSON object, returning 0 if not found or not a number.
+#[must_use]
 pub fn get_u64(obj: &Value, key: &str) -> u64 {
-    obj.get(key).and_then(|v| v.as_u64()).unwrap_or(0)
+    obj.get(key)
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0)
 }
 
 /// Get a boolean value from a JSON object, returning false if not found or not a boolean.
+#[must_use]
 pub fn get_bool(obj: &Value, key: &str) -> bool {
-    obj.get(key).and_then(|v| v.as_bool()).unwrap_or(false)
+    obj.get(key)
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
 }
 
 /// Get a nested object from a JSON value, returning None if not found or not an object.
+#[must_use]
 pub fn get_object<'a>(obj: &'a Value, key: &str) -> Option<&'a Value> {
     obj.get(key).filter(|v| v.is_object())
 }
 
 /// Get an array from a JSON value, returning None if not found or not an array.
+#[must_use]
 pub fn get_array<'a>(obj: &'a Value, key: &str) -> Option<&'a Vec<Value>> {
     obj.get(key).and_then(|v| v.as_array())
 }
@@ -234,7 +248,7 @@ mod tests {
         let obj = json!({
             "count": 42,
             "string": "not a number",
-            "float": 3.14
+            "float": 1.23
         });
 
         assert_eq!(get_i64(&obj, "count"), 42);
@@ -293,7 +307,7 @@ mod tests {
             "string": "not an array"
         });
 
-        assert_eq!(get_array(&obj, "items").map(|a| a.len()), Some(3));
+        assert_eq!(get_array(&obj, "items").map(std::vec::Vec::len), Some(3));
         assert!(get_array(&obj, "missing").is_none());
         assert!(get_array(&obj, "object").is_none());
         assert!(get_array(&obj, "string").is_none());

@@ -3,21 +3,22 @@
 //! Unified journal watcher that consolidates journal and systemd monitoring.
 //!
 //! Previously, the system node spawned two separate `journalctl` processes:
-//! - One for general journal entries (journal_watcher.rs)
-//! - One for systemd unit events (systemd_watcher.rs)
+//! - One for general journal entries (`journal_watcher.rs`)
+//! - One for systemd unit events (`systemd_watcher.rs`)
 //!
 //! This unified watcher uses a single `journalctl -f -o json` process and filters
 //! events based on the presence of `_SYSTEMD_UNIT` field to emit both journal
 //! and systemd-specific events, reducing process overhead by 50%.
 
-use sinex_primitives::fs::atomic_write;
 use sinex_db::models::Event;
+use sinex_primitives::fs::atomic_write;
 use sinex_primitives::JsonValue;
 use time::OffsetDateTime;
 
-use crate::payloads::*;
+use crate::payloads::{JournalConfig, JournalEntryPayload, JournalSyncPayload, SystemdUnitType};
 use crate::WatcherMaterialContext;
 use sha2::{Digest, Sha256};
+use sinex_node_sdk::NodeResult;
 use sinex_primitives::events::{
     JournalEntryWrittenPayload as EventJournalEntryWrittenPayload,
     JournalSyncCompletedPayload as EventJournalSyncCompletedPayload, SystemdTimerTriggeredPayload,
@@ -31,7 +32,6 @@ use sinex_primitives::{
     },
     units::{Microseconds, ProcessId, SyslogPriority, UnixGid, UnixUid},
 };
-use sinex_node_sdk::NodeResult;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -44,7 +44,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::watcher_lifecycle::{WatcherHealth, WatcherLifecycle};
 
-/// Convert local SystemdUnitType to core SystemdUnitType
+/// Convert local `SystemdUnitType` to core `SystemdUnitType`
 fn convert_unit_type(local: SystemdUnitType) -> CoreSystemdUnitType {
     match local {
         SystemdUnitType::Service => CoreSystemdUnitType::Service,
@@ -56,7 +56,7 @@ fn convert_unit_type(local: SystemdUnitType) -> CoreSystemdUnitType {
     }
 }
 
-/// Parse unit type string to core SystemdUnitType
+/// Parse unit type string to core `SystemdUnitType`
 fn parse_systemd_unit_type(s: &str) -> CoreSystemdUnitType {
     if s.ends_with(".service") {
         CoreSystemdUnitType::Service
@@ -107,7 +107,7 @@ impl UnifiedJournalWatcher {
             .output()
             .await
             .map_err(|e| {
-                sinex_node_sdk::SinexError::processing(format!("journalctl not found: {}", e))
+                sinex_node_sdk::SinexError::processing(format!("journalctl not found: {e}"))
             })?;
 
         if !check.status.success() {
@@ -200,12 +200,12 @@ impl UnifiedJournalWatcher {
 
         // Add cursor position if we have one
         if let Some(ref cursor) = self.last_cursor {
-            args.push(format!("--after-cursor={}", cursor));
+            args.push(format!("--after-cursor={cursor}"));
         }
 
         // Add unit filters
         for unit in &self.journal_config.units {
-            args.push(format!("--unit={}", unit));
+            args.push(format!("--unit={unit}"));
         }
 
         // Add priority filter
@@ -214,7 +214,7 @@ impl UnifiedJournalWatcher {
                 .journal_config
                 .priorities
                 .iter()
-                .map(|p| p.to_string())
+                .map(std::string::ToString::to_string)
                 .collect();
             args.push(format!("--priority={}", priorities.join("..")));
         }
@@ -234,7 +234,7 @@ impl UnifiedJournalWatcher {
             .output()
             .await
             .map_err(|e| {
-                sinex_node_sdk::SinexError::processing(format!("Failed to run journalctl: {}", e))
+                sinex_node_sdk::SinexError::processing(format!("Failed to run journalctl: {e}"))
             })?;
 
         if !output.status.success() {
@@ -250,50 +250,49 @@ impl UnifiedJournalWatcher {
         let mut batch = Vec::new();
 
         for line in output.stdout.split(|&b| b == b'\n') {
-            if line.is_empty() {
-                continue;
-            }
-
-            match serde_json::from_slice::<serde_json::Value>(line) {
-                Ok(entry) => {
-                    // Process entry and emit both journal and systemd events if applicable
-                    if let Some(journal_event) = self.parse_journal_entry(&entry, material)? {
-                        if first_cursor.is_none() {
-                            first_cursor = journal_event
+            if !line.is_empty() {
+                match serde_json::from_slice::<serde_json::Value>(line) {
+                    Ok(entry) => {
+                        // Process entry and emit both journal and systemd events if applicable
+                        if let Some(journal_event) = self.parse_journal_entry(&entry, material)? {
+                            if first_cursor.is_none() {
+                                first_cursor = journal_event
+                                    .payload
+                                    .get("cursor")
+                                    .and_then(|v| v.as_str())
+                                    .map(std::string::ToString::to_string);
+                            }
+                            last_cursor = journal_event
                                 .payload
                                 .get("cursor")
                                 .and_then(|v| v.as_str())
-                                .map(|s| s.to_string());
+                                .map(std::string::ToString::to_string);
+
+                            batch.push(journal_event);
+                            entries_count += 1;
+
+                            if batch.len() >= self.journal_config.batch_size {
+                                for event in batch.drain(..) {
+                                    self.send_event(journal_tx, event, "journal_batch", material)
+                                        .await?;
+                                }
+                            }
                         }
-                        last_cursor = journal_event
-                            .payload
-                            .get("cursor")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
 
-                        batch.push(journal_event);
-                        entries_count += 1;
-
-                        if batch.len() >= self.journal_config.batch_size {
-                            for event in batch.drain(..) {
-                                self.send_event(journal_tx, event, "journal_batch", material)
-                                    .await?;
+                        // Check if this is a systemd event and emit systemd-specific event
+                        if self.systemd_enabled {
+                            if let Some(systemd_event) = self.parse_systemd_entry(&entry, material)
+                            {
+                                if let Some(ref tx) = systemd_tx {
+                                    self.send_event(tx, systemd_event, "systemd_batch", material)
+                                        .await?;
+                                }
                             }
                         }
                     }
-
-                    // Check if this is a systemd event and emit systemd-specific event
-                    if self.systemd_enabled {
-                        if let Some(systemd_event) = self.parse_systemd_entry(&entry, material) {
-                            if let Some(ref tx) = systemd_tx {
-                                self.send_event(tx, systemd_event, "systemd_batch", material)
-                                    .await?;
-                            }
-                        }
+                    Err(e) => {
+                        debug!("Failed to parse journal entry: {}", e);
                     }
-                }
-                Err(e) => {
-                    debug!("Failed to parse journal entry: {}", e);
                 }
             }
         }
@@ -319,7 +318,7 @@ impl UnifiedJournalWatcher {
                 entries_count,
                 time_start: None,
                 time_end: None,
-                duration_ms: start_time.elapsed().as_millis().min(u64::MAX as u128) as u64,
+                duration_ms: start_time.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
             };
 
             let sync_event = Event::new(
@@ -372,7 +371,7 @@ impl UnifiedJournalWatcher {
         // Add cursor position if we have one
         let cursor_arg;
         if let Some(ref cursor) = self.last_cursor {
-            cursor_arg = format!("--after-cursor={}", cursor);
+            cursor_arg = format!("--after-cursor={cursor}");
             args.push(&cursor_arg);
         }
 
@@ -381,9 +380,9 @@ impl UnifiedJournalWatcher {
             .journal_config
             .units
             .iter()
-            .map(|u| format!("--unit={}", u))
+            .map(|u| format!("--unit={u}"))
             .collect();
-        let unit_refs: Vec<&str> = unit_args.iter().map(|s| s.as_str()).collect();
+        let unit_refs: Vec<&str> = unit_args.iter().map(std::string::String::as_str).collect();
         args.extend(unit_refs);
 
         // Add priority filter
@@ -393,7 +392,7 @@ impl UnifiedJournalWatcher {
                 .journal_config
                 .priorities
                 .iter()
-                .map(|p| p.to_string())
+                .map(std::string::ToString::to_string)
                 .collect();
             priority_arg = format!("--priority={}", priorities.join(".."));
             args.push(&priority_arg);
@@ -415,7 +414,7 @@ impl UnifiedJournalWatcher {
             .stderr(std::process::Stdio::piped())
             .spawn()
             .map_err(|e| {
-                sinex_node_sdk::SinexError::processing(format!("Failed to spawn journalctl: {}", e))
+                sinex_node_sdk::SinexError::processing(format!("Failed to spawn journalctl: {e}"))
             })?;
 
         // Store child process for lifecycle management
@@ -439,50 +438,48 @@ impl UnifiedJournalWatcher {
             match reader.read_line(&mut line).await {
                 Ok(0) => break, // EOF
                 Ok(_) => {
-                    if line.trim().is_empty() {
-                        continue;
-                    }
+                    if !line.trim().is_empty() {
+                        match serde_json::from_str::<serde_json::Value>(&line) {
+                            Ok(entry) => {
+                                // Emit journal event
+                                if let Some(event) = self.parse_journal_entry(&entry, material)? {
+                                    // Update cursor
+                                    if let Some(cursor) =
+                                        event.payload.get("cursor").and_then(|v| v.as_str())
+                                    {
+                                        self.last_cursor = Some(cursor.to_string());
+                                        self.save_cursor(cursor).await?;
+                                    }
 
-                    match serde_json::from_str::<serde_json::Value>(&line) {
-                        Ok(entry) => {
-                            // Emit journal event
-                            if let Some(event) = self.parse_journal_entry(&entry, material)? {
-                                // Update cursor
-                                if let Some(cursor) =
-                                    event.payload.get("cursor").and_then(|v| v.as_str())
-                                {
-                                    self.last_cursor = Some(cursor.to_string());
-                                    self.save_cursor(cursor).await?;
+                                    self.send_event(
+                                        journal_tx,
+                                        event,
+                                        "journal_follow_event",
+                                        material,
+                                    )
+                                    .await?;
                                 }
 
-                                self.send_event(
-                                    journal_tx,
-                                    event,
-                                    "journal_follow_event",
-                                    material,
-                                )
-                                .await?;
-                            }
-
-                            // Emit systemd event if applicable
-                            if self.systemd_enabled {
-                                if let Some(systemd_event) =
-                                    self.parse_systemd_entry(&entry, material)
-                                {
-                                    if let Some(ref tx) = systemd_tx {
-                                        self.send_event(
-                                            tx,
-                                            systemd_event,
-                                            "systemd_follow_event",
-                                            material,
-                                        )
-                                        .await?;
+                                // Emit systemd event if applicable
+                                if self.systemd_enabled {
+                                    if let Some(systemd_event) =
+                                        self.parse_systemd_entry(&entry, material)
+                                    {
+                                        if let Some(ref tx) = systemd_tx {
+                                            self.send_event(
+                                                tx,
+                                                systemd_event,
+                                                "systemd_follow_event",
+                                                material,
+                                            )
+                                            .await?;
+                                        }
                                     }
                                 }
                             }
-                        }
-                        Err(e) => {
-                            debug!("Failed to parse journal entry: {}", e);
+                            Err(e) => {
+                                debug!("Failed to parse journal entry: {}", e);
+                            }
                         }
                     }
                 }
@@ -533,7 +530,7 @@ impl UnifiedJournalWatcher {
 
         // Parse timestamp
         let timestamp: OffsetDateTime = if timestamp_us > 0 {
-            OffsetDateTime::from_unix_timestamp_nanos(timestamp_us as i128 * 1000)
+            OffsetDateTime::from_unix_timestamp_nanos(i128::from(timestamp_us) * 1000)
                 .unwrap_or_else(|_| OffsetDateTime::now_utc())
         } else {
             *sinex_primitives::temporal::now()
@@ -543,15 +540,15 @@ impl UnifiedJournalWatcher {
         let hostname = obj
             .get("_HOSTNAME")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .map(std::string::ToString::to_string);
         let unit = obj
             .get("_SYSTEMD_UNIT")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .map(std::string::ToString::to_string);
         let syslog_identifier = obj
             .get("SYSLOG_IDENTIFIER")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .map(std::string::ToString::to_string);
         let pid = obj
             .get("_PID")
             .and_then(|v| v.as_str())
@@ -567,11 +564,11 @@ impl UnifiedJournalWatcher {
         let cmdline = obj
             .get("_CMDLINE")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .map(std::string::ToString::to_string);
         let exe = obj
             .get("_EXE")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .map(std::string::ToString::to_string);
         let priority = obj
             .get("PRIORITY")
             .and_then(|v| v.as_str())
@@ -579,7 +576,7 @@ impl UnifiedJournalWatcher {
         let facility = obj
             .get("SYSLOG_FACILITY")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .map(std::string::ToString::to_string);
 
         // Determine unit type
         let unit_type = unit.as_ref().and_then(|u| {
@@ -688,8 +685,7 @@ impl UnifiedJournalWatcher {
 
         let json_event = event.to_json_event().map_err(|e| {
             sinex_node_sdk::SinexError::processing(format!(
-                "Failed to serialize journal entry: {}",
-                e
+                "Failed to serialize journal entry: {e}"
             ))
         })?;
 
@@ -723,7 +719,7 @@ impl UnifiedJournalWatcher {
         // timestamp (48 bits) | entropy (80 bits)
         let id_entropy = Self::calculate_entropy(cursor, 1);
         let timestamp_ms = timestamp_us / 1000;
-        let id_val = (timestamp_ms as u128) << 80 | (id_entropy & 0xFFFF_FFFF_FFFF_FFFF_FFFF);
+        let id_val = u128::from(timestamp_ms) << 80 | (id_entropy & 0xFFFF_FFFF_FFFF_FFFF_FFFF);
         let ulid = sinex_primitives::Ulid::from_bytes(id_val.to_be_bytes())
             .unwrap_or_else(|_| sinex_primitives::Ulid::new());
 
@@ -779,7 +775,7 @@ impl UnifiedJournalWatcher {
                         .as_str()
                         .and_then(|s| s.parse::<i64>().ok())
                         .map(|us| {
-                            OffsetDateTime::from_unix_timestamp_nanos(us as i128 * 1000)
+                            OffsetDateTime::from_unix_timestamp_nanos(i128::from(us) * 1000)
                                 .unwrap_or_else(|_| OffsetDateTime::now_utc())
                                 .into()
                         }),
@@ -802,7 +798,7 @@ impl UnifiedJournalWatcher {
                         .as_str()
                         .and_then(|s| s.parse::<i64>().ok())
                         .map(|us| {
-                            OffsetDateTime::from_unix_timestamp_nanos(us as i128 * 1000)
+                            OffsetDateTime::from_unix_timestamp_nanos(i128::from(us) * 1000)
                                 .unwrap_or_else(|_| OffsetDateTime::now_utc())
                                 .into()
                         }),
@@ -825,7 +821,7 @@ impl UnifiedJournalWatcher {
                         .as_str()
                         .and_then(|s| s.parse::<i64>().ok())
                         .map(|us| {
-                            OffsetDateTime::from_unix_timestamp_nanos(us as i128 * 1000)
+                            OffsetDateTime::from_unix_timestamp_nanos(i128::from(us) * 1000)
                                 .unwrap_or_else(|_| OffsetDateTime::now_utc())
                                 .into()
                         }),
@@ -846,7 +842,7 @@ impl UnifiedJournalWatcher {
     fn calculate_entropy(cursor: &str, discriminator: u8) -> u128 {
         let mut hasher = Sha256::new();
         hasher.update(cursor.as_bytes());
-        hasher.update(&[discriminator]);
+        hasher.update([discriminator]);
         let hash = hasher.finalize();
 
         // Use first 16 bytes for 128-bit entropy
@@ -909,8 +905,7 @@ impl UnifiedJournalWatcher {
                     .await
                     .map_err(|e| {
                         sinex_node_sdk::SinexError::processing(format!(
-                            "Failed to save cursor: {}",
-                            e
+                            "Failed to save cursor: {e}"
                         ))
                     })?;
 

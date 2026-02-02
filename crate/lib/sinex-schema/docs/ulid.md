@@ -3,7 +3,7 @@
 Time-ordered, globally unique identifiers for the Sinex system.
 
 This module provides ULID (Universally Unique Lexicographically Sortable Identifier) support with
-PostgreSQL integration via the `pgx_ulid` extension.
+`PostgreSQL` integration via the `pgx_ulid` extension.
 
 ## Architectural Decision: ULID Primary Keys (ADR-001)
 
@@ -24,11 +24,11 @@ address:
 
 ### Decision
 
-Use ULIDs via the `pgx_ulid` PostgreSQL extension for all primary keys.
+Use ULIDs via the `pgx_ulid` `PostgreSQL` extension for all primary keys.
 
 ### Rationale
 
-1. **Best of Both Worlds** – time-ordering benefits with native PostgreSQL support.
+1. **Best of Both Worlds** – time-ordering benefits with native `PostgreSQL` support.
 2. **Performance** – 30 % faster generation than UUIDs in benchmarks.
 3. **Rich Features** – timestamp casting, monotonic generation.
 4. **Binary Storage** – efficient 16-byte storage (same as UUID).
@@ -38,8 +38,8 @@ Use ULIDs via the `pgx_ulid` PostgreSQL extension for all primary keys.
 
 | Option         | Pros                                     | Cons                                  | Decision |
 |----------------|------------------------------------------|---------------------------------------|----------|
-| UUIDv4         | Standard, widely supported               | Random = poor index locality          | ❌        |
-| UUIDv7         | Time-ordered, standard                   | Less mature ecosystem                 | ❌        |
+| `UUIDv4`         | Standard, widely supported               | Random = poor index locality          | ❌        |
+| `UUIDv7`         | Time-ordered, standard                   | Less mature ecosystem                 | ❌        |
 | Custom ULID    | No dependencies                          | Complex implementation                | ❌        |
 | `pgx_ulid`     | All ULID benefits + native PG            | External dependency                   | ✅ **Chosen** |
 
@@ -80,7 +80,7 @@ let timestamp = id.timestamp();
 println!("Created at: {}", timestamp);
 ```
 
-### PostgreSQL Integration
+### `PostgreSQL` Integration
 
 ```sql
 CREATE EXTENSION pgx_ulid;
@@ -121,9 +121,9 @@ assert!(id1 < id2);
 assert!(id2 < id3);
 ```
 
-## SQLx Integration & Casting Helpers
+## `SQLx` Integration & Casting Helpers
 
-Rust code interacts with PostgreSQL through `sqlx`, which transmits ULIDs as UUID bytes. Keep the
+Rust code interacts with `PostgreSQL` through `sqlx`, which transmits ULIDs as UUID bytes. Keep the
 following rules in mind:
 
 1. **Parameter Binding** – pass `Ulid::as_uuid()` (or `Ulid::from(uuid)`) when binding parameters; let
@@ -131,10 +131,10 @@ following rules in mind:
 2. **Single Values** – cast inside SQL with `ulid_from_uuid($1)` when the query expects a `ULID`.
 3. **Arrays** – convert arrays using `ARRAY(SELECT ulid_from_uuid(elem) FROM unnest($1::uuid[]) AS elem)`
    to satisfy compile-time checking.
-4. **Batch Inserts** – SQLx cannot bind 2-D arrays; insert events inside a transaction loop rather
+4. **Batch Inserts** – `SQLx` cannot bind 2-D arrays; insert events inside a transaction loop rather
    than attempting a single `UNNEST`.
 
-PostgreSQL helper functions:
+`PostgreSQL` helper functions:
 
 ```sql
 CREATE OR REPLACE FUNCTION ulid_from_uuid(uuid) RETURNS ULID

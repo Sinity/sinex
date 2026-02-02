@@ -1,4 +1,4 @@
-//! Schema registry definitions for EventPayload types
+//! Schema registry definitions for `EventPayload` types
 //!
 //! This module provides the core types for payload registration via inventory.
 
@@ -23,6 +23,7 @@ pub fn get_all_payloads() -> impl Iterator<Item = &'static PayloadInfo> {
 }
 
 /// Generate schemas for all registered payload types
+#[must_use]
 pub fn generate_all_schemas() -> HashMap<(String, String, String), Value> {
     let mut schemas = HashMap::new();
 

@@ -379,8 +379,8 @@
               natsOffset = offsetRaw.v - (offsetRaw.v / 100 * 100);
               natsPort = 4222 + natsOffset;
 
-              # Per-checkout state directory
-              stateDir = ".devenv/sinex-dev";
+              # Per-checkout state directory (stack data, target, etc)
+              stateDir = ".sinex";
               pgPort = 5432;
             in
             pkgs.mkShell {
@@ -434,7 +434,7 @@
 
               shellHook = ''
                 # Add project scripts and built binaries to PATH
-                export PATH="$PWD/scripts:$PWD/target/debug:$PATH"
+                export PATH="$PWD/scripts:$PWD/${stateDir}/target/debug:$PATH"
 
                 # D-Bus library for system-ingestor
                 export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [ pkgs.dbus ]}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
@@ -468,15 +468,8 @@
                 # Show status in interactive shells (once per session)
                 if [ -n "''${PS1:-}" ] && [ -t 1 ] && [ -z "''${SINEX_DEVENV_MOTD_ONCE:-}" ]; then
                   export SINEX_DEVENV_MOTD_ONCE=1
-                  if [ -x "$PWD/target/debug/xtask" ]; then
-                    "$PWD/target/debug/xtask" status 2>/dev/null || echo "Status unavailable"
-                  else
-                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-                    echo "  sinex devshell (xtask not built yet)"
-                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-                    echo "Build: cargo build -p xtask"
-                    echo "Start: cargo build -p xtask --features sandbox && cargo xtask stack start"
-                  fi
+                  # Let compilation output show (it's one-time anyway)
+                  cargo xtask status --summary || true
                 fi
               '';
             };

@@ -1,7 +1,7 @@
 //! Domain-organized event payload types
 //!
 //! This module contains strongly-typed payloads organized by domain,
-//! replacing the monolithic strongly_typed_events.rs approach.
+//! replacing the monolithic `strongly_typed_events.rs` approach.
 
 macro_rules! define_event_payload {
     (

@@ -1,11 +1,9 @@
 use serde_json::json;
-use sinex_node_sdk::types::ulid::Ulid;
-use sinex_node_sdk::EventType;
 use sinex_node_sdk::ingestion_helpers::{
     ChangeType, IdempotenceKey, LedgerEntry, LedgerReader, RowIdentitySpec, SliceAssembler,
     SnapshotDiff, SnapshotRow, TimeQuality,
 };
-use time::OffsetDateTime;
+use sinex_primitives::{EventType, Timestamp, Ulid};
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
@@ -35,7 +33,7 @@ async fn ledger_reader_prefers_realtime_capture_quality() -> color_eyre::Result<
     let entries = vec![LedgerEntry {
         offset_start: 0,
         offset_end: 100,
-        ts_capture: OffsetDateTime::now_utc(),
+        ts_capture: Timestamp::now(),
         precision: "exact".to_string(),
         source_type: "realtime_capture".to_string(),
     }];

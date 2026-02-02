@@ -70,7 +70,7 @@ pub struct NodeResumeResponse {
 // nodes.set_horizon
 // ─────────────────────────────────────────────────────────────
 
-/// Request: nodes.set_horizon
+/// Request: `nodes.set_horizon`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeSetHorizonRequest {
     pub node_id: NodeId,
@@ -78,7 +78,7 @@ pub struct NodeSetHorizonRequest {
     pub horizon: Timestamp,
 }
 
-/// Response: nodes.set_horizon
+/// Response: `nodes.set_horizon`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeSetHorizonResponse {
     pub status: OperationStatus,

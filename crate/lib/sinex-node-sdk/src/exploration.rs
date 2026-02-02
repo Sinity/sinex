@@ -1,6 +1,6 @@
 use crate::NodeResult;
 use serde::{Deserialize, Serialize};
-use sinex_primitives::temporal::OffsetDateTime;
+use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::SanitizedPath;
 use std::collections::HashMap;
 
@@ -11,7 +11,7 @@ pub struct MissingItem {
     pub source_id: String,
 
     /// Item timestamp
-    pub timestamp: OffsetDateTime,
+    pub timestamp: Timestamp,
 
     /// Brief description
     pub description: String,
@@ -37,7 +37,7 @@ pub struct SourceState {
     pub description: String,
 
     /// Last update timestamp
-    pub last_updated: OffsetDateTime,
+    pub last_updated: Timestamp,
 
     /// Replication lag in seconds
     pub lag_seconds: Option<f64>,
@@ -56,7 +56,7 @@ pub struct SourceState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoverageAnalysis {
     /// Analysis time range
-    pub time_range: (OffsetDateTime, OffsetDateTime),
+    pub time_range: (Timestamp, Timestamp),
 
     /// Total items in source
     pub source_total: u64,
@@ -99,7 +99,7 @@ pub trait ExplorationProvider {
     /// Perform coverage analysis
     fn get_coverage_analysis(
         &self,
-        time_range: Option<(OffsetDateTime, OffsetDateTime)>,
+        time_range: Option<(Timestamp, Timestamp)>,
     ) -> NodeResult<CoverageAnalysis>;
 
     /// Export data for debugging

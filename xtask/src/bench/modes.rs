@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use console::style;
 use std::time::{Duration, Instant};
 
-pub fn sweep_mode(ctx: &BenchContext) -> Result<()> {
+pub(super) fn sweep_mode(ctx: &BenchContext) -> Result<()> {
     println!("{}", style("Running sweep mode").cyan().bold());
     println!();
 
@@ -38,7 +38,7 @@ pub fn sweep_mode(ctx: &BenchContext) -> Result<()> {
     Ok(())
 }
 
-pub fn refine_mode(ctx: &BenchContext) -> Result<()> {
+pub(super) fn refine_mode(ctx: &BenchContext) -> Result<()> {
     println!("{}", style("Running refine mode").cyan().bold());
     println!("Two-phase optimization: quick sweep → find top performers → detailed analysis");
     println!();
@@ -136,7 +136,7 @@ pub fn refine_mode(ctx: &BenchContext) -> Result<()> {
     println!();
     println!("Top {} thread counts:", ctx.config.refine_top_threads);
     for (threads, score) in &top_threads {
-        println!("  {} threads: {:.1}ms", threads, score);
+        println!("  {threads} threads: {score:.1}ms");
     }
 
     // Filter scenarios: must be in top threads and within threshold
@@ -209,7 +209,7 @@ pub fn refine_mode(ctx: &BenchContext) -> Result<()> {
     Ok(())
 }
 
-pub fn bisect_mode(ctx: &BenchContext) -> Result<()> {
+pub(super) fn bisect_mode(ctx: &BenchContext) -> Result<()> {
     println!("{}", style("Running bisect mode").cyan().bold());
 
     let good = ctx
@@ -230,7 +230,7 @@ pub fn bisect_mode(ctx: &BenchContext) -> Result<()> {
     anyhow::bail!("Bisect mode not yet fully implemented - requires git integration")
 }
 
-pub fn stress_mode(ctx: &BenchContext) -> Result<()> {
+pub(super) fn stress_mode(ctx: &BenchContext) -> Result<()> {
     println!("{}", style("Running stress mode").cyan().bold());
     println!(
         "Will run until failure (max {} iterations)",
@@ -294,7 +294,7 @@ pub fn stress_mode(ctx: &BenchContext) -> Result<()> {
     Ok(())
 }
 
-pub fn soak_mode(ctx: &BenchContext) -> Result<()> {
+pub(super) fn soak_mode(ctx: &BenchContext) -> Result<()> {
     println!("{}", style("Running soak mode").cyan().bold());
     println!(
         "Will run for {} seconds ({:.1} minutes)",

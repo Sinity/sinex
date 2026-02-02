@@ -23,6 +23,7 @@ pub struct WatcherHealth {
 
 impl WatcherHealth {
     /// Create a new health snapshot
+    #[must_use]
     pub fn new() -> Self {
         Self {
             active: false,
@@ -33,6 +34,7 @@ impl WatcherHealth {
     }
 
     /// Check if watcher is healthy (active and recent events)
+    #[must_use]
     pub fn is_healthy(&self, max_idle_secs: u64) -> bool {
         if !self.active {
             return false;

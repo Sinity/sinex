@@ -1,17 +1,17 @@
-//! Add index on ts_ingest column for core.events
+//! Add index on `ts_ingest` column for core.events
 //!
-//! **Issue 62 (MEDIUM)**: Missing ts_ingest Index
+//! **Issue 62 (MEDIUM)**: Missing `ts_ingest` Index
 //!
-//! Most queries filter on ts_ingest (the actual ingestion timestamp) but only
-//! ts_orig (the original event timestamp) was indexed. This migration adds a
-//! descending index on ts_ingest to optimize queries that filter or sort by
+//! Most queries filter on `ts_ingest` (the actual ingestion timestamp) but only
+//! `ts_orig` (the original event timestamp) was indexed. This migration adds a
+//! descending index on `ts_ingest` to optimize queries that filter or sort by
 //! ingestion time.
 
 use crate::schema::{Events, TableDef};
 use sea_orm_migration::prelude::*;
 
 #[derive(DeriveMigrationName)]
-pub struct Migration;
+pub(crate) struct Migration;
 
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {

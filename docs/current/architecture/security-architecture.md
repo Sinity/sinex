@@ -8,7 +8,7 @@ Last Verified: 2025-12-02 (manual review)
 Sinex implements defense-in-depth security with multiple layers of protection for data at rest, in transit, and during processing. While some security features are planned but not implemented, the architecture provides a foundation for comprehensive data protection.
 
 Coordinate changes here with `docs/current/security.md` (live posture) and
-`docs/current/architecture/Core_Architecture.md` (JetStream pipeline expectations).
+`docs/current/architecture/Core_Architecture.md` (`JetStream` pipeline expectations).
 
 ## Current Security Implementation
 
@@ -23,16 +23,16 @@ Coordinate changes here with `docs/current/security.md` (live posture) and
 ### Access Control
 ⚠️ **Partial – needs hardening**:
 - Systemd units run as the dedicated `sinex` user with local peer auth.
-- All services currently share the same PostgreSQL role; role separation and
+- All services currently share the same `PostgreSQL` role; role separation and
   scoped credentials remain outstanding work.
-- Gateway RPC requires TLS + bearer token auth; JetStream subjects still lack
+- Gateway RPC requires TLS + bearer token auth; `JetStream` subjects still lack
   fine-grained authz.
 
 ### Input Validation
 ✅ **Multi-layer validation**:
 - JSON Schema validation for event payloads
 - ULID format validation
-- SQL injection prevention via QueryBuilder
+- SQL injection prevention via `QueryBuilder`
 - Type-safe database queries
 
 ## Planned Security Features
@@ -79,9 +79,9 @@ Current approach may be sufficient as:
 ### Trust Boundaries
 1. **User ↔ System**: Full trust (single-user system)
 2. **nodes ↔ ingestd**: NATS credentials + TLS when required
-3. **ingestd ↔ Database**: currently a single PostgreSQL role (risk; see
+3. **ingestd ↔ Database**: currently a single `PostgreSQL` role (risk; see
    implementation priorities)
-4. **Automata ↔ NATS JetStream**: Durable consumer isolation
+4. **Automata ↔ NATS `JetStream`**: Durable consumer isolation
 5. **External APIs**: API keys from environment (rotate via agenix once
    integrated)
 
@@ -134,7 +134,7 @@ Current approach may be sufficient as:
 5. **Implement TLS for IPC**
    - Between nodes and ingestd
    - For NATS connections
-   - For PostgreSQL if remote
+   - For `PostgreSQL` if remote
 
 6. **Security scanning**
    - Dependency audits
@@ -147,7 +147,7 @@ Current approach may be sufficient as:
 - [ ] Enable LUKS full-disk encryption
 - [ ] Configure pgsodium with secure key
 - [ ] Set up agenix secret management
-- [ ] Enable PostgreSQL SSL
+- [ ] Enable `PostgreSQL` SSL
 - [ ] Configure firewall rules
 - [ ] Disable unnecessary services
 - [ ] Set up audit logging

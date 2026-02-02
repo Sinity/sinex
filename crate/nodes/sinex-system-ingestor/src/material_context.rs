@@ -38,7 +38,7 @@ impl WatcherMaterialContext {
             .begin()
             .await
             .map_err(|e| {
-                SinexError::general(format!("Failed to begin system watcher material: {}", e))
+                SinexError::general(format!("Failed to begin system watcher material: {e}"))
             })?;
         let material_id = Id::from_ulid(handle.material_id);
 
@@ -64,7 +64,7 @@ impl WatcherMaterialContext {
 
     pub(crate) async fn decorate_event(&self, event: &mut Event<JsonValue>) -> NodeResult<()> {
         let payload_bytes = serde_json::to_vec(&event.payload).map_err(|e| {
-            SinexError::processing(format!("Failed to serialize system payload: {}", e))
+            SinexError::processing(format!("Failed to serialize system payload: {e}"))
         })?;
 
         let (offset_start, offset_end) = self.append_payload(&payload_bytes).await?;
@@ -97,10 +97,7 @@ impl WatcherMaterialContext {
                 .finalize(handle, reason)
                 .await
                 .map_err(|e| {
-                    SinexError::general(format!(
-                        "Failed to finalize system watcher material: {}",
-                        e
-                    ))
+                    SinexError::general(format!("Failed to finalize system watcher material: {e}"))
                 })?;
         }
 
@@ -121,7 +118,7 @@ impl WatcherMaterialContext {
                 .append_slice(handle, payload_bytes)
                 .await
                 .map_err(|e| {
-                    SinexError::general(format!("Failed to append system payload: {}", e))
+                    SinexError::general(format!("Failed to append system payload: {e}"))
                 })?;
         }
 

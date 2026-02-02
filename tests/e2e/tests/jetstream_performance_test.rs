@@ -18,7 +18,6 @@ use color_eyre::eyre::eyre;
 use futures::StreamExt;
 use serde_json::json;
 use sinex_primitives::{ulid::Ulid, Timestamp};
-use xtask::sandbox::{prelude::*, timing_utils::Timeouts, EphemeralNats};
 use std::collections::HashMap;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -27,6 +26,7 @@ use std::sync::{
 use std::time::{Duration as StdDuration, Instant};
 use tokio::sync::Mutex;
 use tokio::{task::JoinSet, time::sleep};
+use xtask::sandbox::{prelude::*, timing_utils::Timeouts, EphemeralNats};
 
 /// Helper to publish a batch of messages and report the elapsed time.
 async fn publish_batch(

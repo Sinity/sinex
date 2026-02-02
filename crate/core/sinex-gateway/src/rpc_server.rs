@@ -4,7 +4,20 @@
 use crate::{
     distributed_rate_limit::{DistributedRateLimitConfig, DistributedRateLimiter},
     gateway_metrics::GatewayMetrics,
-    handlers::*,
+    handlers::{
+        handle_activity_heatmap, handle_audit_get, handle_coordination_get_leader,
+        handle_coordination_instance_health, handle_coordination_list_instances,
+        handle_create_entities, handle_create_note, handle_dlq_list, handle_dlq_peek,
+        handle_dlq_purge, handle_dlq_requeue, handle_event_count_by_source, handle_link_entities,
+        handle_nodes_drain, handle_nodes_list, handle_nodes_resume, handle_nodes_set_horizon,
+        handle_ops_cancel, handle_ops_get, handle_ops_list, handle_ops_start,
+        handle_replay_approve_operation, handle_replay_cancel_operation,
+        handle_replay_create_operation, handle_replay_execute_operation,
+        handle_replay_list_operations, handle_replay_operation_status,
+        handle_replay_preview_operation, handle_retrieve_blob, handle_search_events,
+        handle_shadow_create, handle_shadow_delete, handle_shadow_list, handle_sources_statistics,
+        handle_store_blob, handle_system_health,
+    },
     rate_limit::TokenRateLimiter,
     replay_control::ReplayControlClient,
     service_container::ServiceContainer,
@@ -105,7 +118,7 @@ struct UnknownMethodError {
     method: String,
 }
 
-/// Map SinexError variants to JSON-RPC error codes and messages.
+/// Map `SinexError` variants to JSON-RPC error codes and messages.
 ///
 /// Code ranges follow JSON-RPC 2.0 conventions:
 /// - -32700 to -32600: Protocol errors (parse, invalid request, etc.)
@@ -124,40 +137,40 @@ fn sinex_error_to_rpc_code(err: &sinex_primitives::error::SinexError) -> (i32, S
         SinexError::Parse(details) => (-32805, details.to_string()),
 
         // Server/infrastructure errors (5xx equivalent)
-        SinexError::Database(details) => (-32810, format!("Database error: {}", details)),
-        SinexError::Network(details) => (-32811, format!("Network error: {}", details)),
-        SinexError::Timeout(details) => (-32812, format!("Timeout: {}", details)),
+        SinexError::Database(details) => (-32810, format!("Database error: {details}")),
+        SinexError::Network(details) => (-32811, format!("Network error: {details}")),
+        SinexError::Timeout(details) => (-32812, format!("Timeout: {details}")),
         SinexError::ResourceExhausted(details) => {
-            (-32813, format!("Resource exhausted: {}", details))
+            (-32813, format!("Resource exhausted: {details}"))
         }
 
         // Service/processing errors
-        SinexError::Service(details) => (-32820, format!("Service error: {}", details)),
-        SinexError::Io(details) => (-32821, format!("IO error: {}", details)),
-        SinexError::Configuration(details) => (-32822, format!("Configuration error: {}", details)),
-        SinexError::Serialization(details) => (-32823, format!("Serialization error: {}", details)),
+        SinexError::Service(details) => (-32820, format!("Service error: {details}")),
+        SinexError::Io(details) => (-32821, format!("IO error: {details}")),
+        SinexError::Configuration(details) => (-32822, format!("Configuration error: {details}")),
+        SinexError::Serialization(details) => (-32823, format!("Serialization error: {details}")),
 
         // Cancellation and lifecycle
-        SinexError::Cancelled(details) => (-32830, format!("Cancelled: {}", details)),
+        SinexError::Cancelled(details) => (-32830, format!("Cancelled: {details}")),
         SinexError::MaxRetriesExceeded(details) => {
-            (-32831, format!("Max retries exceeded: {}", details))
+            (-32831, format!("Max retries exceeded: {details}"))
         }
 
         // Channel errors
-        SinexError::ChannelSend(details) => (-32840, format!("Channel send error: {}", details)),
+        SinexError::ChannelSend(details) => (-32840, format!("Channel send error: {details}")),
         SinexError::ChannelReceive(details) => {
-            (-32841, format!("Channel receive error: {}", details))
+            (-32841, format!("Channel receive error: {details}"))
         }
 
         // Domain-specific errors
-        SinexError::Kv(details) => (-32850, format!("KV store error: {}", details)),
-        SinexError::Automaton(details) => (-32851, format!("Automaton error: {}", details)),
-        SinexError::Checkpoint(details) => (-32852, format!("Checkpoint error: {}", details)),
-        SinexError::Lifecycle(details) => (-32853, format!("Lifecycle error: {}", details)),
-        SinexError::Processing(details) => (-32854, format!("Processing error: {}", details)),
+        SinexError::Kv(details) => (-32850, format!("KV store error: {details}")),
+        SinexError::Automaton(details) => (-32851, format!("Automaton error: {details}")),
+        SinexError::Checkpoint(details) => (-32852, format!("Checkpoint error: {details}")),
+        SinexError::Lifecycle(details) => (-32853, format!("Lifecycle error: {details}")),
+        SinexError::Processing(details) => (-32854, format!("Processing error: {details}")),
 
         // Fallback
-        SinexError::Unknown(details) => (-32899, format!("Unknown error: {}", details)),
+        SinexError::Unknown(details) => (-32899, format!("Unknown error: {details}")),
 
         // Non-exhaustive catch-all (future variants)
         _ => (-32603, "Internal server error".to_string()),
@@ -272,17 +285,17 @@ impl GatewayAuth {
                                         match std::fs::read_to_string(&path_for_closure) {
                                             Ok(new_token) => {
                                                 let trimmed = new_token.trim().to_string();
-                                                if !trimmed.is_empty() {
+                                                if trimmed.is_empty() {
+                                                    warn!(
+                                                        "Token file {:?} is empty after reload",
+                                                        path_for_closure
+                                                    );
+                                                } else {
                                                     let mut token_lock =
                                                         token_clone.blocking_write();
                                                     *token_lock = Some(trimmed);
                                                     info!(
                                                         "RPC token reloaded from {:?}",
-                                                        path_for_closure
-                                                    );
-                                                } else {
-                                                    warn!(
-                                                        "Token file {:?} is empty after reload",
                                                         path_for_closure
                                                     );
                                                 }
@@ -345,18 +358,15 @@ impl GatewayAuth {
         let provided = extract_token(headers).ok_or(AuthError::Missing)?;
 
         let token_guard = self.token.read().await;
-        match token_guard.as_ref() {
-            Some(expected) => {
-                if constant_time_eq(provided.as_bytes(), expected.as_bytes()) {
-                    Ok(())
-                } else {
-                    Err(AuthError::Invalid)
-                }
+        if let Some(expected) = token_guard.as_ref() {
+            if constant_time_eq(provided.as_bytes(), expected.as_bytes()) {
+                Ok(())
+            } else {
+                Err(AuthError::Invalid)
             }
-            None => {
-                warn!("No token configured - rejecting request");
-                Err(AuthError::Missing)
-            }
+        } else {
+            warn!("No token configured - rejecting request");
+            Err(AuthError::Missing)
         }
     }
 
@@ -370,7 +380,7 @@ impl GatewayAuth {
 }
 
 /// Read RPC token from environment variables.
-/// Priority: SINEX_GATEWAY_ADMIN_TOKEN_FILE > SINEX_RPC_TOKEN_FILE > SINEX_RPC_TOKEN
+/// Priority: `SINEX_GATEWAY_ADMIN_TOKEN_FILE` > `SINEX_RPC_TOKEN_FILE` > `SINEX_RPC_TOKEN`
 ///
 /// Reserved for CLI tools and external consumers that need token access.
 #[allow(dead_code)]
@@ -494,7 +504,7 @@ impl RpcAuthContext {
     /// Create an auth context from a validated token
     fn from_token(token: &str) -> Self {
         Self {
-            token_prefix: token.chars().take(8).collect::<String>().to_string(),
+            token_prefix: token.chars().take(8).collect::<String>(),
             authenticated_at: Timestamp::now(),
         }
     }
@@ -503,6 +513,7 @@ impl RpcAuthContext {
     ///
     /// Native messaging uses stdin/stdout and doesn't go through HTTP auth,
     /// so we use a special "system" context to indicate trusted local calls.
+    #[must_use]
     pub fn system() -> Self {
         Self {
             token_prefix: "system".to_string(),
@@ -539,7 +550,7 @@ struct AppState {
     metrics: Arc<GatewayMetrics>,
 }
 
-/// Shared dispatch function for RPC methods (used by both rpc_server and native_messaging)
+/// Shared dispatch function for RPC methods (used by both `rpc_server` and `native_messaging`)
 ///
 /// # Method Dispatch Pattern
 ///
@@ -560,7 +571,7 @@ struct AppState {
 ///
 /// The `auth` parameter contains authenticated actor information for audit logging
 /// and authorization checks. Dangerous operations (dlq.requeue, ops.cancel, shadow.delete)
-/// should log the token_prefix for accountability.
+/// should log the `token_prefix` for accountability.
 pub async fn dispatch_rpc_method(
     services: &ServiceContainer,
     method: &str,
@@ -744,28 +755,28 @@ pub async fn dispatch_rpc_method(
     }
 }
 
-fn replay_control_client<'a>(
-    services: &'a ServiceContainer,
-) -> color_eyre::eyre::Result<&'a ReplayControlClient> {
+fn replay_control_client(
+    services: &ServiceContainer,
+) -> color_eyre::eyre::Result<&ReplayControlClient> {
     services
         .replay_control
         .as_ref()
         .ok_or_else(|| eyre!("Replay control bus is not initialized"))
 }
 
-fn coordination_client<'a>(
-    services: &'a ServiceContainer,
-) -> color_eyre::eyre::Result<&'a CoordinationKvClient> {
+fn coordination_client(
+    services: &ServiceContainer,
+) -> color_eyre::eyre::Result<&CoordinationKvClient> {
     services
         .coordination
         .as_ref()
-        .map(|arc| arc.as_ref())
+        .map(std::convert::AsRef::as_ref)
         .ok_or_else(|| eyre!("Coordination client is not initialized (NATS connection required)"))
 }
 
-fn nats_client_required<'a>(
-    services: &'a ServiceContainer,
-) -> color_eyre::eyre::Result<&'a async_nats::Client> {
+fn nats_client_required(
+    services: &ServiceContainer,
+) -> color_eyre::eyre::Result<&async_nats::Client> {
     services
         .nats_client()
         .ok_or_else(|| eyre!("NATS client is not available"))
@@ -784,16 +795,12 @@ async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
         .is_ok();
 
     // Check NATS connectivity
-    let nats_ok = state
-        .services
-        .nats_client()
-        .map(|client| {
-            matches!(
-                client.connection_state(),
-                async_nats::connection::State::Connected
-            )
-        })
-        .unwrap_or(false);
+    let nats_ok = state.services.nats_client().is_some_and(|client| {
+        matches!(
+            client.connection_state(),
+            async_nats::connection::State::Connected
+        )
+    });
 
     if db_ok && nats_ok {
         (StatusCode::OK, "OK").into_response()
@@ -848,20 +855,19 @@ async fn handle_rpc(
     }
 
     // Extract token for auth context and rate limiting
-    let token = match extract_token(&headers) {
-        Some(t) => t,
-        None => {
-            // This should not happen after auth.verify() passes, but handle gracefully
-            state.metrics.record_request_rejected();
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(JsonRpcResponse::error(
-                    request.id,
-                    -32002,
-                    "Token missing after authentication".to_string(),
-                )),
-            );
-        }
+    let token = if let Some(t) = extract_token(&headers) {
+        t
+    } else {
+        // This should not happen after auth.verify() passes, but handle gracefully
+        state.metrics.record_request_rejected();
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(JsonRpcResponse::error(
+                request.id,
+                -32002,
+                "Token missing after authentication".to_string(),
+            )),
+        );
     };
 
     // Create auth context for handlers
@@ -939,7 +945,7 @@ async fn handle_rpc(
                 JsonRpcResponse::error(
                     request.id,
                     -32603,
-                    format!("Internal error (ref: {})", error_id),
+                    format!("Internal error (ref: {error_id})"),
                 )
             }
         }
@@ -994,7 +1000,7 @@ fn parse_tcp_listen(spec: &str) -> color_eyre::eyre::Result<(String, u16)> {
     ))
 }
 
-/// Bind a TCP listener with SO_REUSEPORT for seamless hot reload
+/// Bind a TCP listener with `SO_REUSEPORT` for seamless hot reload
 ///
 /// This allows multiple processes to bind to the same port simultaneously,
 /// enabling zero-downtime upgrades:
@@ -1137,13 +1143,13 @@ fn client_tls_required_override() -> bool {
 /// # Security Note (Issue 151 - LOW)
 ///
 /// The gateway currently requires mTLS for all TCP bindings. For deployments
-/// behind a reverse proxy (nginx, HAProxy, Envoy), the proxy should handle
+/// behind a reverse proxy (nginx, `HAProxy`, Envoy), the proxy should handle
 /// TLS termination and client authentication. In this configuration:
 ///
 /// - Bind gateway to 127.0.0.1 (loopback only)
 /// - Configure reverse proxy with TLS certificates
 /// - Set up client certificate verification in the proxy
-/// - Use SINEX_GATEWAY_REQUIRE_CLIENT_TLS=0 if proxy handles mTLS
+/// - Use `SINEX_GATEWAY_REQUIRE_CLIENT_TLS=0` if proxy handles mTLS
 ///
 /// For direct TLS support without a proxy, native rustls integration is already
 /// implemented in this file (see `load_rustls_config` and TLS acceptor logic).
@@ -1187,12 +1193,9 @@ where
     let cors = if cors_origins.is_empty() {
         CorsLayer::new()
             .allow_origin(AllowOrigin::predicate(|origin, _| {
-                origin
-                    .to_str()
-                    .map(|s| {
-                        s.starts_with("http://localhost:") || s.starts_with("http://127.0.0.1:")
-                    })
-                    .unwrap_or(false)
+                origin.to_str().is_ok_and(|s| {
+                    s.starts_with("http://localhost:") || s.starts_with("http://127.0.0.1:")
+                })
             }))
             .allow_methods([Method::POST, Method::GET, Method::OPTIONS])
             .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION])
@@ -1234,10 +1237,7 @@ where
             }),
         )
         .layer(PropagateRequestIdLayer::new(request_id_header.clone()))
-        .layer(SetRequestIdLayer::new(
-            request_id_header,
-            MakeRequestUuid::default(),
-        ))
+        .layer(SetRequestIdLayer::new(request_id_header, MakeRequestUuid))
 }
 
 async fn handle_layer_error(err: BoxError) -> impl IntoResponse {
@@ -1257,12 +1257,171 @@ async fn handle_layer_error(err: BoxError) -> impl IntoResponse {
         );
     }
 
-    let message = format!("Unhandled middleware error: {}", err);
+    let message = format!("Unhandled middleware error: {err}");
     rpc_layer_error_response(StatusCode::INTERNAL_SERVER_ERROR, -32099, message)
 }
 
 fn rpc_layer_error_response(status: StatusCode, code: i32, message: String) -> impl IntoResponse {
     (status, Json(JsonRpcResponse::error(None, code, message)))
+}
+
+/// Run the RPC server with configurable binding
+///
+/// Accepts a shutdown signal receiver that will trigger graceful shutdown when signaled.
+///
+/// # CORS Configuration
+/// The `cors_origins` parameter controls allowed origins:
+/// - Empty: Only localhost origins allowed (<http://localhost>:*, <http://127.0.0.1>:*)
+/// - Non-empty: Only the specified origins allowed
+pub async fn run(
+    tcp_listen: Option<&str>,
+    services: ServiceContainer,
+    cors_origins: Vec<String>,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) -> color_eyre::eyre::Result<()> {
+    let bind_address = BindAddress::from_env_or_default(tcp_listen)?;
+
+    // Create shutdown channels for background tasks
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+
+    let auth = GatewayAuth::from_env()?.start_file_watcher(shutdown_rx.clone())?;
+    let limits = RpcServerLimits::from_env().apply_pool_limit(services.pool_max_connections());
+
+    // Issue 143: Per-token rate limiting
+    // Use distributed rate limiting via NATS KV when available, fall back to in-memory
+    let (rate_limiter, cleanup_task) = if let Some(nats) = services.nats_client() {
+        let jetstream = async_nats::jetstream::new(nats.clone());
+        let config = DistributedRateLimitConfig::from_env();
+        match DistributedRateLimiter::new(jetstream, config).await {
+            Ok(limiter) => {
+                info!("Using distributed rate limiting via NATS KV (shared across instances, survives restarts)");
+                (RateLimiter::Distributed(Arc::new(limiter)), None)
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to create distributed rate limiter, falling back to in-memory");
+                let in_memory = Arc::new(TokenRateLimiter::from_env());
+                let task = Arc::clone(&in_memory).spawn_cleanup_task(shutdown_rx.clone());
+                (RateLimiter::InMemory(in_memory), Some(task))
+            }
+        }
+    } else {
+        info!("NATS not available - using in-memory rate limiting (state lost on restart)");
+        let in_memory = Arc::new(TokenRateLimiter::from_env());
+        let task = Arc::clone(&in_memory).spawn_cleanup_task(shutdown_rx.clone());
+        (RateLimiter::InMemory(in_memory), Some(task))
+    };
+
+    // Self-observation metrics
+    let metrics = Arc::new(if let Some(nats) = services.nats_client() {
+        GatewayMetrics::new(nats.clone())
+    } else {
+        info!("NATS not available - gateway metrics emission disabled");
+        GatewayMetrics::disabled()
+    });
+
+    // Spawn metrics emission background task
+    let metrics_task = if metrics.is_enabled() {
+        Some(Arc::clone(&metrics).spawn_emission_task(shutdown_rx.clone()))
+    } else {
+        None
+    };
+
+    let state = AppState {
+        services,
+        auth,
+        rate_limiter,
+        metrics,
+    };
+
+    let base_router = Router::new()
+        .route("/rpc", post(handle_rpc))
+        .route("/", post(handle_rpc))
+        .route("/health", get(health_check));
+
+    let app = apply_rpc_layers(base_router, &limits, &cors_origins).with_state(state);
+
+    let (cert_path, key_path, client_ca) = tls_paths_from_env()?;
+    require_mtls_for_remote(&bind_address, client_ca.as_deref())?;
+    warn_if_remote_bind(&bind_address);
+
+    let BindAddress::Tcp { host, port } = bind_address;
+    let addr = format!("{host}:{port}");
+    let listener = bind_with_reuseport(&addr)
+        .await
+        .wrap_err_with(|| format!("Failed to bind TCP listener to {addr}"))?;
+    let tls_config = load_rustls_config(&cert_path, &key_path, client_ca.as_deref())?;
+    let acceptor = TlsAcceptor::from(Arc::new(tls_config));
+    info!("RPC server listening on TLS {}", addr);
+
+    // Main accept loop with shutdown signal handling
+    loop {
+        tokio::select! {
+            accept_result = listener.accept() => {
+                let (stream, peer) = accept_result
+                    .wrap_err("Failed to accept incoming TCP connection")?;
+                let app_clone = app.clone();
+                let acceptor = acceptor.clone();
+
+                tokio::spawn(async move {
+                    match acceptor.accept(stream).await {
+                        Ok(tls_stream) => {
+                            let builder = HyperBuilder::new(TokioExecutor::new());
+                            let service = TowerToHyperService::new(app_clone);
+                            let io = TokioIo::new(tls_stream);
+                            if let Err(err) = builder.serve_connection(io, service).await {
+                                error!(?err, "TLS RPC connection from {:?} closed with error", peer);
+                            }
+                        }
+                        Err(err) => {
+                            error!(?err, "TLS handshake failed for {:?}", peer);
+                        }
+                    }
+                });
+            }
+            _ = shutdown.changed() => {
+                if *shutdown.borrow() {
+                    info!("Shutdown signal received, stopping RPC server");
+                    break;
+                }
+            }
+        }
+    }
+
+    // Signal all background tasks to shut down
+    info!("Shutting down background tasks...");
+    let _ = shutdown_tx.send(true);
+
+    // Wait for background tasks to complete with timeout
+    let shutdown_timeout = std::time::Duration::from_secs(30);
+
+    if let Some(task) = metrics_task {
+        info!("Awaiting metrics emission task shutdown...");
+        match tokio::time::timeout(shutdown_timeout, task).await {
+            Ok(Ok(())) => info!("Metrics emission task shut down successfully"),
+            Ok(Err(e)) => warn!(?e, "Metrics emission task exited with error"),
+            Err(_) => warn!(
+                "Metrics emission task did not shut down within {:?}",
+                shutdown_timeout
+            ),
+        }
+    }
+
+    if let Some(task) = cleanup_task {
+        info!("Awaiting rate limiter cleanup task shutdown...");
+        match tokio::time::timeout(shutdown_timeout, task).await {
+            Ok(Ok(())) => info!("Rate limiter cleanup task shut down successfully"),
+            Ok(Err(e)) => warn!(?e, "Rate limiter cleanup task exited with error"),
+            Err(_) => warn!(
+                "Rate limiter cleanup task did not shut down within {:?}",
+                shutdown_timeout
+            ),
+        }
+    } else {
+        info!("No rate limiter cleanup task (using distributed rate limiting)");
+    }
+
+    info!("RPC server shutdown complete");
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1279,8 +1438,7 @@ mod tests {
     use tokio::sync::Mutex;
     use tokio::task::JoinHandle;
     use xtask::sandbox::{sinex_test, TestResult};
-    static ENV_LOCK: once_cell::sync::Lazy<Mutex<()>> =
-        once_cell::sync::Lazy::new(|| Mutex::new(()));
+    static ENV_LOCK: std::sync::LazyLock<Mutex<()>> = std::sync::LazyLock::new(|| Mutex::new(()));
 
     fn clear_tcp_env() {
         std::env::remove_var("SINEX_GATEWAY_TCP_LISTEN");
@@ -1294,7 +1452,7 @@ mod tests {
                 Json(json!({"status": "ok"}))
             }),
         );
-        apply_rpc_layers(base, &limits)
+        apply_rpc_layers(base, &limits, &[])
     }
 
     async fn spawn_router(router: Router) -> (SocketAddr, JoinHandle<()>) {
@@ -1566,167 +1724,4 @@ mod tests {
         assert!(auth.verify(&headers).await.is_ok());
         Ok(())
     }
-}
-
-/// Run the RPC server with configurable binding
-///
-/// Accepts a shutdown signal receiver that will trigger graceful shutdown when signaled.
-///
-/// # CORS Configuration
-/// The `cors_origins` parameter controls allowed origins:
-/// - Empty: Only localhost origins allowed (http://localhost:*, http://127.0.0.1:*)
-/// - Non-empty: Only the specified origins allowed
-pub async fn run(
-    tcp_listen: Option<&str>,
-    services: ServiceContainer,
-    cors_origins: Vec<String>,
-    mut shutdown: tokio::sync::watch::Receiver<bool>,
-) -> color_eyre::eyre::Result<()> {
-    let bind_address = BindAddress::from_env_or_default(tcp_listen)?;
-
-    // Create shutdown channels for background tasks
-    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-
-    let auth = GatewayAuth::from_env()?.start_file_watcher(shutdown_rx.clone())?;
-    let limits = RpcServerLimits::from_env().apply_pool_limit(services.pool_max_connections());
-
-    // Issue 143: Per-token rate limiting
-    // Use distributed rate limiting via NATS KV when available, fall back to in-memory
-    let (rate_limiter, cleanup_task) = match services.nats_client() {
-        Some(nats) => {
-            let jetstream = async_nats::jetstream::new(nats.clone());
-            let config = DistributedRateLimitConfig::from_env();
-            match DistributedRateLimiter::new(jetstream, config).await {
-                Ok(limiter) => {
-                    info!("Using distributed rate limiting via NATS KV (shared across instances, survives restarts)");
-                    (RateLimiter::Distributed(Arc::new(limiter)), None)
-                }
-                Err(e) => {
-                    warn!(error = %e, "Failed to create distributed rate limiter, falling back to in-memory");
-                    let in_memory = Arc::new(TokenRateLimiter::from_env());
-                    let task = Arc::clone(&in_memory).spawn_cleanup_task(shutdown_rx.clone());
-                    (RateLimiter::InMemory(in_memory), Some(task))
-                }
-            }
-        }
-        None => {
-            info!("NATS not available - using in-memory rate limiting (state lost on restart)");
-            let in_memory = Arc::new(TokenRateLimiter::from_env());
-            let task = Arc::clone(&in_memory).spawn_cleanup_task(shutdown_rx.clone());
-            (RateLimiter::InMemory(in_memory), Some(task))
-        }
-    };
-
-    // Self-observation metrics
-    let metrics = Arc::new(match services.nats_client() {
-        Some(nats) => GatewayMetrics::new(nats.clone()),
-        None => {
-            info!("NATS not available - gateway metrics emission disabled");
-            GatewayMetrics::disabled()
-        }
-    });
-
-    // Spawn metrics emission background task
-    let metrics_task = if metrics.is_enabled() {
-        Some(Arc::clone(&metrics).spawn_emission_task(shutdown_rx.clone()))
-    } else {
-        None
-    };
-
-    let state = AppState {
-        services,
-        auth,
-        rate_limiter,
-        metrics,
-    };
-
-    let base_router = Router::new()
-        .route("/rpc", post(handle_rpc))
-        .route("/", post(handle_rpc))
-        .route("/health", get(health_check));
-
-    let app = apply_rpc_layers(base_router, &limits, &cors_origins).with_state(state);
-
-    let (cert_path, key_path, client_ca) = tls_paths_from_env()?;
-    require_mtls_for_remote(&bind_address, client_ca.as_deref())?;
-    warn_if_remote_bind(&bind_address);
-
-    let BindAddress::Tcp { host, port } = bind_address;
-    let addr = format!("{}:{}", host, port);
-    let listener = bind_with_reuseport(&addr)
-        .await
-        .wrap_err_with(|| format!("Failed to bind TCP listener to {}", addr))?;
-    let tls_config = load_rustls_config(&cert_path, &key_path, client_ca.as_deref())?;
-    let acceptor = TlsAcceptor::from(Arc::new(tls_config));
-    info!("RPC server listening on TLS {}", addr);
-
-    // Main accept loop with shutdown signal handling
-    loop {
-        tokio::select! {
-            accept_result = listener.accept() => {
-                let (stream, peer) = accept_result
-                    .wrap_err("Failed to accept incoming TCP connection")?;
-                let app_clone = app.clone();
-                let acceptor = acceptor.clone();
-
-                tokio::spawn(async move {
-                    match acceptor.accept(stream).await {
-                        Ok(tls_stream) => {
-                            let builder = HyperBuilder::new(TokioExecutor::new());
-                            let service = TowerToHyperService::new(app_clone);
-                            let io = TokioIo::new(tls_stream);
-                            if let Err(err) = builder.serve_connection(io, service).await {
-                                error!(?err, "TLS RPC connection from {:?} closed with error", peer);
-                            }
-                        }
-                        Err(err) => {
-                            error!(?err, "TLS handshake failed for {:?}", peer);
-                        }
-                    }
-                });
-            }
-            _ = shutdown.changed() => {
-                if *shutdown.borrow() {
-                    info!("Shutdown signal received, stopping RPC server");
-                    break;
-                }
-            }
-        }
-    }
-
-    // Signal all background tasks to shut down
-    info!("Shutting down background tasks...");
-    let _ = shutdown_tx.send(true);
-
-    // Wait for background tasks to complete with timeout
-    let shutdown_timeout = std::time::Duration::from_secs(30);
-
-    if let Some(task) = metrics_task {
-        info!("Awaiting metrics emission task shutdown...");
-        match tokio::time::timeout(shutdown_timeout, task).await {
-            Ok(Ok(())) => info!("Metrics emission task shut down successfully"),
-            Ok(Err(e)) => warn!(?e, "Metrics emission task exited with error"),
-            Err(_) => warn!(
-                "Metrics emission task did not shut down within {:?}",
-                shutdown_timeout
-            ),
-        }
-    }
-
-    if let Some(task) = cleanup_task {
-        info!("Awaiting rate limiter cleanup task shutdown...");
-        match tokio::time::timeout(shutdown_timeout, task).await {
-            Ok(Ok(())) => info!("Rate limiter cleanup task shut down successfully"),
-            Ok(Err(e)) => warn!(?e, "Rate limiter cleanup task exited with error"),
-            Err(_) => warn!(
-                "Rate limiter cleanup task did not shut down within {:?}",
-                shutdown_timeout
-            ),
-        }
-    } else {
-        info!("No rate limiter cleanup task (using distributed rate limiting)");
-    }
-
-    info!("RPC server shutdown complete");
-    Ok(())
 }

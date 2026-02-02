@@ -1,4 +1,4 @@
-//! Material Assembler for consuming material slices from NATS JetStream.
+//! Material Assembler for consuming material slices from NATS `JetStream`.
 //!
 //! The assembler is responsible for rebuilding source material streams from
 //! begin/slice/end messages, persisting the assembled material into git-annex,
@@ -12,9 +12,9 @@ mod pipeline;
 mod state;
 
 const MAX_BUFFERED_SLICES: usize = 100;
-const SLICE_ARRIVAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300); // 5 minutes
-const STALE_ASSEMBLY_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60); // 1 minute
-const ORPHANED_FILE_AGE_THRESHOLD: std::time::Duration = std::time::Duration::from_secs(3600); // 1 hour
+const SLICE_ARRIVAL_TIMEOUT: std::time::Duration = std::time::Duration::from_mins(5); // 5 minutes
+const STALE_ASSEMBLY_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_mins(1); // 1 minute
+const ORPHANED_FILE_AGE_THRESHOLD: std::time::Duration = std::time::Duration::from_hours(1); // 1 hour
 
 use async_nats::{jetstream, Client as NatsClient};
 use blake3::Hasher;
@@ -22,9 +22,9 @@ use dashmap::DashMap;
 use pipeline::MaterialConsumerHandles;
 use sinex_db::{DbPool, DbPoolExt};
 use sinex_node_sdk::annex::GitAnnex;
+use sinex_primitives::Timestamp;
 use sinex_primitives::{environment::SinexEnvironment, Id, JsonValue, Ulid};
 use std::{collections::BTreeMap, path::PathBuf, str::FromStr, sync::Arc};
-use sinex_primitives::Timestamp;
 use tokio::{fs, fs::File, sync::Mutex};
 use tracing::{info, warn};
 
@@ -43,7 +43,7 @@ use state::{
 /// - `assembler_state: Arc<DashMap<Ulid, Arc<Mutex<AssemblerState>>>>` provides independent
 ///   locking for each material. Materials do not block each other.
 /// - Each material's Mutex lock is held only for state snapshots (~1ms), never during slow I/O.
-/// - Lock-free reads via DashMap::get() for handle retrieval (~100ns).
+/// - Lock-free reads via `DashMap::get()` for handle retrieval (~100ns).
 /// - Semaphore limits concurrent assemblies to 50 to prevent memory exhaustion.
 ///
 /// Critical fix applied in commit c799300cd:
@@ -84,7 +84,7 @@ impl MaterialAssembler {
         }
 
         let js = jetstream::new(nats_client.clone());
-        let env = sinex_primitives::environment().clone();
+        let env = sinex_primitives::environment();
 
         let dlq_subject = env.nats_subject_with_namespace(
             namespace.as_deref(),
@@ -99,7 +99,7 @@ impl MaterialAssembler {
             js,
             nats_client,
             pool,
-            env: env.clone(),
+            env,
             namespace,
             annex,
             assembler_state: Arc::new(DashMap::new()),
@@ -118,12 +118,11 @@ impl MaterialAssembler {
             .await
             .map_err(|e| {
                 SinexError::database(format!(
-                    "Failed to fetch source material {}: {}",
-                    material_id, e
+                    "Failed to fetch source material {material_id}: {e}"
                 ))
             })?;
 
-        Ok(record.map_or(false, |record| is_terminal_status(record.status.as_str())))
+        Ok(record.is_some_and(|record| is_terminal_status(record.status.as_str())))
     }
 
     /// Fetch a handle to an existing assembler state for a material.
@@ -155,7 +154,7 @@ impl MaterialAssembler {
         let state_dir = self.state_root.join(material_id.to_string());
         fs::create_dir_all(&state_dir)
             .await
-            .map_err(|e| SinexError::io(format!("Failed to create assembler state dir: {}", e)))?;
+            .map_err(|e| SinexError::io(format!("Failed to create assembler state dir: {e}")))?;
 
         let temp_path = state_dir.join(TEMP_FILE_NAME);
         // Important: placeholder creation can race across async tasks (e.g. slices + end arriving
@@ -166,7 +165,7 @@ impl MaterialAssembler {
             .append(true)
             .open(&temp_path)
             .await
-            .map_err(|e| SinexError::io(format!("Failed to open temp file: {}", e)))?;
+            .map_err(|e| SinexError::io(format!("Failed to open temp file: {e}")))?;
 
         // Limit concurrent assemblies
         let permit = self
@@ -215,7 +214,7 @@ impl MaterialAssembler {
 
     /// Remove the persisted state directory for a material
     async fn cleanup_state(&self, material_id: Ulid) {
-        io::cleanup_state(self, material_id).await
+        io::cleanup_state(self, material_id).await;
     }
 
     /// Import the assembled material into git-annex
@@ -247,8 +246,7 @@ impl MaterialAssembler {
             .map(|_| ())
             .map_err(|e| {
                 SinexError::database(format!(
-                    "Failed to register source material {}: {}",
-                    material_id, e
+                    "Failed to register source material {material_id}: {e}"
                 ))
             })
     }
@@ -278,7 +276,7 @@ impl MaterialAssembler {
     /// - Assembly duration histogram (time from begin to end)
     /// - Active assembly count gauge
     /// - Slice count per material histogram
-    /// - Assembly failure counter by reason (hash_mismatch, corruption, timeout, etc.)
+    /// - Assembly failure counter by reason (`hash_mismatch`, corruption, timeout, etc.)
     /// - Buffer utilization histogram (peak buffered slices per material)
     /// - WAL replay duration on startup
     pub async fn run(self) -> IngestdResult<()> {
@@ -321,9 +319,9 @@ impl MaterialAssembler {
             }
             result = cleanup_task => {
                 match result {
-                    Ok(Ok(())) => return Ok(()),
-                    Ok(Err(e)) => return Err(e),
-                    Err(e) => return Err(SinexError::service(format!("Cleanup task panicked: {}", e))),
+                    Ok(Ok(())) => Ok(()),
+                    Ok(Err(e)) => Err(e),
+                    Err(e) => Err(SinexError::service(format!("Cleanup task panicked: {e}"))),
                 }
             }
         }
@@ -429,8 +427,7 @@ impl MaterialAssembler {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(err) => {
                 return Err(SinexError::io(format!(
-                    "Failed to read state root for cleanup: {}",
-                    err
+                    "Failed to read state root for cleanup: {err}"
                 )))
             }
         };
@@ -440,13 +437,13 @@ impl MaterialAssembler {
         while let Some(entry) = entries
             .next_entry()
             .await
-            .map_err(|e| SinexError::io(format!("Failed to iterate state directory: {}", e)))?
+            .map_err(|e| SinexError::io(format!("Failed to iterate state directory: {e}")))?
         {
             let path = entry.path();
             if !entry
                 .file_type()
                 .await
-                .map_err(|e| SinexError::io(format!("Failed to check file type: {}", e)))?
+                .map_err(|e| SinexError::io(format!("Failed to check file type: {e}")))?
                 .is_dir()
             {
                 continue;

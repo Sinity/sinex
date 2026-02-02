@@ -82,8 +82,7 @@ impl ConfirmedEventHandler for RunnerConfirmedEventHandler {
     async fn handle_confirmed(&self, event: &ProvisionalEvent) -> NodeResult<()> {
         self.sender.send(event.clone()).await.map_err(|err| {
             SinexError::processing(format!(
-                "Failed to forward confirmed event to automaton: {}",
-                err
+                "Failed to forward confirmed event to automaton: {err}"
             ))
         })
     }
@@ -222,10 +221,7 @@ async fn maybe_start_schema_listener(
         debug!("Schema broadcast listener task ended");
     });
 
-    info!(
-        "Started schema broadcast listener and validator for {}",
-        subject
-    );
+    info!("Started schema broadcast listener and validator for {subject}");
 
     Ok((Some(cache), Some(validator), Some(handle)))
 }
@@ -244,8 +240,8 @@ pub struct ScanReport {
 
     /// Time range covered by the scan
     pub time_range: Option<(
-        sinex_primitives::temporal::OffsetDateTime,
-        sinex_primitives::temporal::OffsetDateTime,
+        sinex_primitives::temporal::Timestamp,
+        sinex_primitives::temporal::Timestamp,
     )>,
 
     /// Processor-specific statistics
@@ -488,7 +484,7 @@ impl<T: Node + 'static> NodeRunner<T> {
 
         // Get hostname
         let host = gethostname::gethostname().to_string_lossy().to_string();
-        let consumer_name = format!("{}-{}", host, std::process::id());
+        let consumer_name = format!("{host}-{}", std::process::id());
         let transport_for_context = transport.clone();
         let transport_clone_for_runner = transport.clone();
 
@@ -760,7 +756,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                     .scan(
                         current_checkpoint,
                         TimeHorizon::Historical {
-                            end_time: sinex_primitives::temporal::OffsetDateTime::now_utc(),
+                            end_time: sinex_primitives::temporal::Timestamp::now(),
                         },
                         ScanArgs::default(),
                     )
@@ -821,7 +817,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                     let service = rs.service_info().service_name().to_string();
                     let host = rs.service_info().host().to_string();
                     let pid = std::process::id();
-                    let instance_id = format!("{}-{}", host, pid);
+                    let instance_id = format!("{host}-{pid}");
 
                     let js = async_nats::jetstream::new(nc);
                     let kv_client = sinex_primitives::coordination::CoordinationKvClient::new(
@@ -835,10 +831,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                             .acquire_leadership(&instance_id)
                             .await
                             .map_err(|e| {
-                                SinexError::processing(format!(
-                                    "Failed to acquire leadership: {}",
-                                    e
-                                ))
+                                SinexError::processing(format!("Failed to acquire leadership: {e}"))
                             })?;
 
                     if !is_leader {
@@ -857,7 +850,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                             interval.tick().await;
                             // Basic heartbeat logic - just keep refreshing leadership
                             if let Err(e) = kv_clone.acquire_leadership(&instance_id_clone).await {
-                                warn!("Heartbeat failed: {}", e);
+                                warn!("Heartbeat failed: {e}");
                             }
                         }
                     });
@@ -897,7 +890,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                     .scan(
                         current_checkpoint,
                         TimeHorizon::Historical {
-                            end_time: sinex_primitives::temporal::OffsetDateTime::now_utc(),
+                            end_time: sinex_primitives::temporal::Timestamp::now(),
                         },
                         ScanArgs::default(),
                     )
@@ -971,7 +964,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                 .scan(
                     from,
                     TimeHorizon::Historical {
-                        end_time: sinex_primitives::temporal::OffsetDateTime::now_utc(),
+                        end_time: sinex_primitives::temporal::Timestamp::now(),
                     },
                     ScanArgs::default(),
                 )
@@ -1045,20 +1038,16 @@ impl<T: Node + 'static> NodeRunner<T> {
         event_id: &EventId,
     ) -> NodeResult<Option<Event<JsonValue>>> {
         let event_id_str = event_id.to_string();
-        pool.events()
-            .get_by_id(event_id.clone())
-            .await
-            .map_err(|err| {
-                SinexError::processing(format!(
-                    "Failed to load confirmed event {} from database: {}",
-                    event_id_str, err
-                ))
-            })
+        pool.events().get_by_id(*event_id).await.map_err(|err| {
+            SinexError::processing(format!(
+                "Failed to load confirmed event {event_id_str} from database: {err}"
+            ))
+        })
     }
 
     fn parse_ulid(value: &str, field: &str) -> NodeResult<Ulid> {
         value.parse::<Ulid>().map_err(|err| {
-            SinexError::processing(format!("Invalid ULID for {}: {} ({})", field, value, err))
+            SinexError::processing(format!("Invalid ULID for {field}: {value} ({err})"))
         })
     }
 

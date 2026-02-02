@@ -13,16 +13,19 @@ pub use time::format_description::well_known::Rfc3339;
 pub use time::{Duration, OffsetDateTime};
 
 /// Returns the current time in UTC as a Wrapped Timestamp.
+#[must_use]
 pub fn now() -> Timestamp {
     Timestamp::now()
 }
 
 /// Create a Timestamp from a Unix timestamp in seconds.
+#[must_use]
 pub fn from_unix_timestamp(secs: i64) -> Option<Timestamp> {
     Timestamp::from_unix_timestamp(secs)
 }
 
 /// Create a Timestamp from a Unix timestamp in milliseconds.
+#[must_use]
 pub fn from_unix_timestamp_millis(ms: i64) -> Option<Timestamp> {
     Timestamp::from_unix_timestamp_millis(ms)
 }
@@ -33,17 +36,20 @@ pub fn parse_rfc3339(s: &str) -> std::result::Result<Timestamp, time::error::Par
 }
 
 /// Format a timestamp as an RFC3339 string.
+#[must_use]
 pub fn format_rfc3339(ts: Timestamp) -> String {
     ts.format_rfc3339()
 }
 
-/// Returns the current time in UTC as a raw OffsetDateTime.
+/// Returns the current time in UTC as a raw `OffsetDateTime`.
+#[must_use]
 pub fn now_utc() -> OffsetDateTime {
     OffsetDateTime::now_utc()
 }
 
 /// Parse a duration from a string (e.g., "1h", "30m").
 /// Supported units: s, m, h, d, w.
+#[must_use]
 pub fn parse_duration(s: &str) -> Option<Duration> {
     let s = s.trim();
     if s.is_empty() {

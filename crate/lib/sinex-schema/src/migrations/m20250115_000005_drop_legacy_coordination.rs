@@ -1,8 +1,8 @@
 //! Drop legacy coordination tables
 //!
 //! This migration drops the `core.node_instances` and `core.service_leadership` tables
-//! which have been replaced by NATS KV-based coordination (KV_sinex_instances and
-//! KV_sinex_leadership buckets).
+//! which have been replaced by NATS KV-based coordination (`KV_sinex_instances` and
+//! `KV_sinex_leadership` buckets).
 //!
 //! These tables were never part of the canonical schema migration but may have been
 //! created manually during development. This migration safely drops them if they exist.
@@ -10,7 +10,7 @@
 use sea_orm_migration::prelude::*;
 
 #[derive(DeriveMigrationName)]
-pub struct Migration;
+pub(crate) struct Migration;
 
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
@@ -20,10 +20,10 @@ impl MigrationTrait for Migration {
         manager
             .get_connection()
             .execute_unprepared(
-                r#"
+                r"
                 DROP TABLE IF EXISTS core.service_leadership CASCADE;
                 DROP TABLE IF EXISTS core.node_instances CASCADE;
-                "#,
+                ",
             )
             .await?;
 
@@ -36,7 +36,7 @@ impl MigrationTrait for Migration {
         manager
             .get_connection()
             .execute_unprepared(
-                r#"
+                r"
                 CREATE TABLE IF NOT EXISTS core.node_instances (
                     instance_id TEXT PRIMARY KEY,
                     service_name TEXT NOT NULL,
@@ -65,7 +65,7 @@ impl MigrationTrait for Migration {
 
                 CREATE INDEX IF NOT EXISTS idx_service_leadership_expires
                     ON core.service_leadership(expires_at);
-                "#,
+                ",
             )
             .await?;
 

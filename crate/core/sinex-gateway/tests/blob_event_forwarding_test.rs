@@ -2,10 +2,11 @@ use camino::Utf8PathBuf;
 use color_eyre::eyre::WrapErr;
 use sinex_gateway::ServiceContainer;
 use sinex_node_sdk::annex::GitAnnex;
+use sinex_primitives::SinexError;
 use tempfile::TempDir;
 use which::which;
 use xtask::sandbox::timing::WaitHelpers;
-use xtask::sandbox::{sinex_test, TestContext, TestResult};
+use xtask::sandbox::{sinex_test, TestResult};
 
 struct ReplayBypassGuard {
     previous: Option<String>,

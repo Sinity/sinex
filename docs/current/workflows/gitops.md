@@ -39,10 +39,10 @@ For quick feedback during development:
 cargo xtask check
 
 # 2. Quick test pass (30-60 seconds)
-cargo xtask test --profile fast
+cargo xtask test
 
 # 3. Iterate on failing tests
-cargo xtask test --profile debug -- -E 'test(my_test_name)'
+cargo xtask test --debug -- -E 'test(my_test_name)'
 ```
 
 **Optimization tips:**
@@ -57,7 +57,7 @@ Before committing changes, run:
 ```bash
 # Essential checks (required)
 cargo xtask check
-cargo xtask test --profile fast
+cargo xtask test
 
 # If you modified schemas
 cargo xtask schema generate
@@ -84,7 +84,7 @@ This runs:
 3. Clippy lints (`-D warnings`)
 4. Forbidden pattern scan (no `#[tokio::test]`, raw SQL, etc.)
 5. Schema validation and drift detection
-6. Full test suite with retries (`--profile default`)
+6. Full test suite with retries
 
 **Time budget:** ~5-10 minutes depending on hardware
 

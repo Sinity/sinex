@@ -1,6 +1,6 @@
 //! Fish shell history parser
 //!
-//! Fish stores its history in an SQLite database at `~/.local/share/fish/fish_history`.
+//! Fish stores its history in an `SQLite` database at `~/.local/share/fish/fish_history`.
 //! This module provides functionality to read command history from that database.
 
 use camino::Utf8PathBuf;
@@ -16,7 +16,8 @@ pub struct FishHistoryEntry {
     pub when: Option<i64>,
 }
 
-/// Check if a path points to a Fish SQLite history file
+/// Check if a path points to a Fish `SQLite` history file
+#[must_use]
 pub fn is_fish_sqlite_history(path: &Utf8PathBuf) -> bool {
     // Fish history is stored in SQLite format
     // We can detect this by checking if it's a valid SQLite database
@@ -49,7 +50,7 @@ pub fn is_fish_sqlite_history(path: &Utf8PathBuf) -> bool {
 
 /// Read Fish history entries starting from a given row offset
 ///
-/// Returns a tuple of (entries, last_row_id) where last_row_id is the highest
+/// Returns a tuple of (entries, `last_row_id`) where `last_row_id` is the highest
 /// row ID encountered, which can be used as the starting point for the next read.
 pub fn read_fish_history(
     path: &Utf8PathBuf,

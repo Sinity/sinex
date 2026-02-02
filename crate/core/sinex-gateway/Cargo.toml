@@ -7,6 +7,8 @@ once_cell      = "1"
 subtle         = "2"
 tokio-rustls   = "0.25"
 rustls-pemfile = "1"
+shadow-rs      = "0.35"
+human-panic    = "2.0"
 sinex-primitives = { path = "../../lib/sinex-primitives" }
 sinex-db = { path = "../../lib/sinex-db" }
 
@@ -176,3 +178,9 @@ path = "../../lib/sinex-primitives"
 features = [
     "testing",
 ]
+
+[build-dependencies]
+shadow-rs = "0.35"
+
+[lints]
+workspace = true

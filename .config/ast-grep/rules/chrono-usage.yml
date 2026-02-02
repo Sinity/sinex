@@ -1,0 +1,10 @@
+id: chrono-usage
+message: "Use 'time' crate instead of 'chrono'"
+severity: warning
+language: rust
+rule:
+  pattern: chrono::$TYPE
+# No automatic fix - requires manual conversion (types differ)
+note: |
+  The codebase standardizes on the 'time' crate for date/time handling.
+  Use time::OffsetDateTime, time::Duration, etc. instead of chrono types.

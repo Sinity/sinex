@@ -101,3 +101,6 @@ features = [ "sandbox",]
 [dev-dependencies.sinex-primitives]
 path = "../sinex-primitives"
 features = [ "testing",]
+
+[lints]
+workspace = true

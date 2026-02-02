@@ -31,8 +31,7 @@ async fn table_exists(pool: &PgPool, schema: &str, table: &str) -> NodeResult<bo
     .bind(schema)
     .bind(table)
     .fetch_one(pool)
-    .await
-    .map_err(|e| SinexError::from(e))?;
+    .await?;
 
     Ok(exists.0)
 }
@@ -62,8 +61,8 @@ pub async fn verify_database_connectivity() -> NodeResult<(VerificationStatus, V
             pool
         }
         Ok(Err(e)) => {
-            let error_msg = format!("Database connection failed: {}", e);
-            messages.push(format!("✗ {}", error_msg));
+            let error_msg = format!("Database connection failed: {e}");
+            messages.push(format!("✗ {error_msg}"));
             return Ok((VerificationStatus::Fail, json!(details), messages));
         }
         Err(_) => {
@@ -82,8 +81,8 @@ pub async fn verify_database_connectivity() -> NodeResult<(VerificationStatus, V
             Ok((VerificationStatus::Pass, json!(details), messages))
         }
         Err(e) => {
-            let error_msg = format!("Database operations failed: {}", e);
-            messages.push(format!("✗ {}", error_msg));
+            let error_msg = format!("Database operations failed: {e}");
+            messages.push(format!("✗ {error_msg}"));
             Ok((VerificationStatus::Fail, json!(details), messages))
         }
     }
@@ -102,7 +101,7 @@ pub async fn verify_postgresql_extensions() -> NodeResult<(VerificationStatus, V
 
     let pool = PgPool::connect(&database_url)
         .await
-        .map_err(|e| SinexError::from(e))?;
+        .map_err(SinexError::from)?;
 
     // Required extensions for Sinex
     let required_extensions = vec![
@@ -121,14 +120,14 @@ pub async fn verify_postgresql_extensions() -> NodeResult<(VerificationStatus, V
                 let is_available = status["available"].as_bool().unwrap_or(false);
                 extension_status.insert(extension_name.to_string(), status);
                 if is_available {
-                    messages.push(format!("✓ Extension '{}' available", extension_name));
+                    messages.push(format!("✓ Extension '{extension_name}' available"));
                 } else {
-                    messages.push(format!("✗ Extension '{}' NOT available", extension_name));
+                    messages.push(format!("✗ Extension '{extension_name}' NOT available"));
                     has_failures = true;
                 }
             }
             Err(e) => {
-                error!("Failed to verify extension {}: {}", extension_name, e);
+                error!("Failed to verify extension {extension_name}: {e}");
                 extension_status.insert(
                     extension_name.to_string(),
                     json!({
@@ -137,8 +136,7 @@ pub async fn verify_postgresql_extensions() -> NodeResult<(VerificationStatus, V
                     }),
                 );
                 messages.push(format!(
-                    "✗ Extension '{}' verification failed: {}",
-                    extension_name, e
+                    "✗ Extension '{extension_name}' verification failed: {e}"
                 ));
                 has_failures = true;
             }
@@ -154,7 +152,7 @@ pub async fn verify_postgresql_extensions() -> NodeResult<(VerificationStatus, V
                 messages.push("✓ All extensions can be loaded successfully".to_string());
             }
             Err(e) => {
-                messages.push(format!("✗ Extension loading test failed: {}", e));
+                messages.push(format!("✗ Extension loading test failed: {e}"));
                 has_failures = true;
             }
         }
@@ -180,7 +178,7 @@ pub async fn verify_migration_readiness() -> NodeResult<(VerificationStatus, Val
 
     let pool = PgPool::connect(&database_url)
         .await
-        .map_err(|e| SinexError::from(e))?;
+        .map_err(SinexError::from)?;
 
     // Check current migration status
     let migration_info = check_migration_status(&pool, &mut messages).await?;
@@ -198,13 +196,13 @@ pub async fn verify_migration_readiness() -> NodeResult<(VerificationStatus, Val
                     Ok((VerificationStatus::Pass, json!(details), messages))
                 }
                 Err(e) => {
-                    messages.push(format!("✗ Schema compatibility check failed: {}", e));
+                    messages.push(format!("✗ Schema compatibility check failed: {e}"));
                     Ok((VerificationStatus::Fail, json!(details), messages))
                 }
             }
         }
         Err(e) => {
-            messages.push(format!("✗ Migration dry-run failed: {}", e));
+            messages.push(format!("✗ Migration dry-run failed: {e}"));
             Ok((VerificationStatus::Fail, json!(details), messages))
         }
     }
@@ -219,21 +217,21 @@ async fn test_basic_operations(
     let version_result = sqlx::query!("SELECT version() as version")
         .fetch_one(pool)
         .await
-        .map_err(|e| SinexError::from(e))?;
+        .map_err(SinexError::from)?;
 
     details.insert("postgresql_version", json!(version_result.version));
     messages.push("✓ PostgreSQL version query successful".to_string());
 
     // Test transaction handling
-    let mut tx = pool.begin().await.map_err(|e| SinexError::from(e))?;
+    let mut tx = pool.begin().await.map_err(SinexError::from)?;
 
     // Direct query for transaction test
     sqlx::query("SELECT 1 as test")
         .fetch_one(&mut *tx)
         .await
-        .map_err(|e| SinexError::from(e))?;
+        .map_err(SinexError::from)?;
 
-    tx.rollback().await.map_err(|e| SinexError::from(e))?;
+    tx.rollback().await.map_err(SinexError::from)?;
 
     messages.push("✓ Transaction handling verified".to_string());
 
@@ -250,7 +248,7 @@ async fn verify_single_extension(
     extension_name: &str,
     description: &str,
 ) -> NodeResult<Value> {
-    debug!("Verifying extension: {} ({})", extension_name, description);
+    debug!("Verifying extension: {extension_name} ({description})");
 
     // Check if extension is available in the system
     let available_result = sqlx::query!(
@@ -259,7 +257,7 @@ async fn verify_single_extension(
     )
     .fetch_optional(pool)
     .await
-    .map_err(|e| SinexError::from(e))?;
+    .map_err(SinexError::from)?;
 
     let available = available_result.is_some();
 
@@ -279,7 +277,7 @@ async fn verify_single_extension(
     )
     .fetch_optional(pool)
     .await
-    .map_err(|e| SinexError::from(e))?;
+    .map_err(SinexError::from)?;
 
     let installed = installed_result.is_some();
 
@@ -302,7 +300,7 @@ async fn verify_single_extension(
 
 async fn test_extension_installability(pool: &PgPool, extension_name: &str) -> NodeResult<bool> {
     // Test installation in a transaction that we'll rollback
-    let mut tx = pool.begin().await.map_err(|e| SinexError::from(e))?;
+    let mut tx = pool.begin().await.map_err(SinexError::from)?;
 
     let result = sqlx::query(&format!(
         "CREATE EXTENSION IF NOT EXISTS \"{}\"",
@@ -312,14 +310,14 @@ async fn test_extension_installability(pool: &PgPool, extension_name: &str) -> N
     .await;
 
     // Always rollback to avoid side effects
-    tx.rollback().await.map_err(|e| SinexError::from(e))?;
+    tx.rollback().await.map_err(SinexError::from)?;
 
     Ok(result.is_ok())
 }
 
 async fn test_extension_loading(pool: &PgPool, messages: &mut Vec<String>) -> NodeResult<()> {
     // Test loading all extensions in a transaction that we'll rollback
-    let mut tx = pool.begin().await.map_err(|e| SinexError::from(e))?;
+    let mut tx = pool.begin().await.map_err(SinexError::from)?;
 
     let extensions = vec![
         "uuid-ossp",
@@ -349,7 +347,7 @@ async fn test_extension_loading(pool: &PgPool, messages: &mut Vec<String>) -> No
     test_extension_functionality(&mut tx, messages).await?;
 
     // Rollback to clean up
-    tx.rollback().await.map_err(|e| SinexError::from(e))?;
+    tx.rollback().await.map_err(SinexError::from)?;
 
     Ok(())
 }
@@ -362,21 +360,19 @@ async fn test_extension_functionality(
     let uuid_result = sqlx::query!("SELECT gen_random_uuid() as uuid")
         .fetch_one(&mut **tx)
         .await
-        .map_err(|e| SinexError::from(e))?;
-    messages.push(format!(
-        "✓ UUID generation: {}",
-        uuid_result
-            .uuid
-            .map(|u| u.to_string())
-            .unwrap_or_else(|| "OK".to_string())
-    ));
+        .map_err(SinexError::from)?;
+    let uuid_str = uuid_result
+        .uuid
+        .map(|u| u.to_string())
+        .unwrap_or_else(|| "OK".to_string());
+    messages.push(format!("✓ UUID generation: {uuid_str}"));
 
     // Test ULID generation - using transaction directly
     // NOTE: This raw SQL is intentional - testing database function existence
     let ulid_result = sqlx::query!("SELECT gen_ulid()::text as ulid")
         .fetch_one(&mut **tx)
         .await
-        .map_err(|e| SinexError::from(e))?;
+        .map_err(SinexError::from)?;
     messages.push(format!(
         "✓ ULID generation: {}",
         ulid_result.ulid.as_deref().unwrap_or("OK")
@@ -387,7 +383,7 @@ async fn test_extension_functionality(
         sqlx::query!("SELECT extversion FROM pg_extension WHERE extname = 'timescaledb'")
             .fetch_optional(&mut **tx)
             .await
-            .map_err(|e| SinexError::from(e))?;
+            .map_err(SinexError::from)?;
 
     if let Some(version) = timescale_version {
         messages.push(format!("✓ TimescaleDB version: {}", version.extversion));
@@ -435,10 +431,10 @@ async fn check_migration_status(pool: &PgPool, messages: &mut Vec<String>) -> No
         sqlx::query!("SELECT version, applied_at FROM seaql_migrations ORDER BY version")
             .fetch_all(pool)
             .await
-            .map_err(|e| SinexError::from(e))?;
+            .map_err(SinexError::from)?;
 
     let applied_count = applied_migrations.len();
-    messages.push(format!("ℹ Found {} applied migrations", applied_count));
+    messages.push(format!("ℹ Found {applied_count} applied migrations"));
 
     Ok(json!({
         "migration_table_exists": true,
@@ -474,8 +470,8 @@ async fn perform_migration_dry_run(
     for migration_file in &migration_files {
         if let Err(e) = validate_migration_syntax(migration_file).await {
             return Err(SinexError::processing(format!(
-                "Migration {} has syntax errors: {}",
-                migration_file.version, e
+                "Migration {} has syntax errors: {e}",
+                migration_file.version
             )));
         }
     }
@@ -483,7 +479,7 @@ async fn perform_migration_dry_run(
     messages.push("✓ All migration files have valid syntax".to_string());
 
     // Test migrations in a transaction (rollback to avoid applying them)
-    let mut tx = pool.begin().await.map_err(|e| SinexError::from(e))?;
+    let mut tx = pool.begin().await.map_err(SinexError::from)?;
 
     // This would run the actual sqlx::migrate! but we'll simulate it
     // In a real implementation, we'd need to parse and execute migration files
@@ -494,13 +490,12 @@ async fn perform_migration_dry_run(
         Err(e) => {
             let _ = tx.rollback().await;
             return Err(SinexError::processing(format!(
-                "Migration compatibility test failed: {}",
-                e
+                "Migration compatibility test failed: {e}"
             )));
         }
     }
 
-    tx.rollback().await.map_err(|e| SinexError::from(e))?;
+    tx.rollback().await.map_err(SinexError::from)?;
 
     Ok(())
 }
@@ -518,21 +513,20 @@ async fn discover_migration_files() -> NodeResult<Vec<MigrationFile>> {
 
     if !migrations_root.exists() {
         return Err(SinexError::processing(format!(
-            "Migrations directory not found at {}",
-            migrations_root
+            "Migrations directory not found at {migrations_root}"
         )));
     }
 
     let mut discovered = Vec::new();
 
-    for entry in fs::read_dir(migrations_root.as_std_path()).map_err(|e| SinexError::io(e))? {
-        let entry = entry.map_err(|e| SinexError::io(e))?;
+    for entry in fs::read_dir(migrations_root.as_std_path()).map_err(SinexError::io)? {
+        let entry = entry.map_err(SinexError::io)?;
         let path = entry.path();
 
         if path.is_dir() {
             let dir_name = entry.file_name();
             let dir_name = dir_name.to_str().ok_or_else(|| {
-                SinexError::processing(format!("Invalid migration directory name: {:?}", path))
+                SinexError::processing(format!("Invalid migration directory name: {path:?}"))
             })?;
 
             let module_path = path.join("mod.rs");
@@ -542,8 +536,7 @@ async fn discover_migration_files() -> NodeResult<Vec<MigrationFile>> {
 
             let utf8_path = Utf8PathBuf::from_path_buf(module_path.clone()).map_err(|_| {
                 SinexError::processing(format!(
-                    "Migration path is not valid UTF-8: {:?}",
-                    module_path
+                    "Migration path is not valid UTF-8: {module_path:?}"
                 ))
             })?;
 
@@ -558,7 +551,7 @@ async fn discover_migration_files() -> NodeResult<Vec<MigrationFile>> {
         }
 
         let utf8_path = Utf8PathBuf::from_path_buf(path.clone()).map_err(|_| {
-            SinexError::processing(format!("Migration path is not valid UTF-8: {:?}", path))
+            SinexError::processing(format!("Migration path is not valid UTF-8: {path:?}"))
         })?;
 
         if utf8_path
@@ -634,7 +627,7 @@ async fn test_migration_compatibility(
     sqlx::query!("SELECT 1 as compatibility_test")
         .fetch_one(&mut **tx)
         .await
-        .map_err(|e| SinexError::from(e))?;
+        .map_err(SinexError::from)?;
 
     // Additional compatibility tests would go here
 
@@ -665,11 +658,10 @@ async fn verify_schema_compatibility(
         table_status.insert(table_name.to_string(), exists);
 
         if exists {
-            messages.push(format!("✓ Critical table '{}' exists", table_name));
+            messages.push(format!("✓ Critical table '{table_name}' exists"));
         } else {
             messages.push(format!(
-                "ℹ Critical table '{}' does not exist (will be created)",
-                table_name
+                "ℹ Critical table '{table_name}' does not exist (will be created)"
             ));
         }
     }

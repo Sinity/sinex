@@ -52,9 +52,8 @@ impl AsRef<Utf8Path> for VerifiedPath {
 /// Validates and converts a string path to a secure Utf8PathBuf
 pub fn validate_and_convert_path(path: &str) -> NodeResult<Utf8PathBuf> {
     // First validate the path for security
-    let validated_path = validate_path(path).map_err(|e| {
-        SinexError::validation(format!("Path validation failed for {}: {}", path, e))
-    })?;
+    let validated_path = validate_path(path)
+        .map_err(|e| SinexError::validation(format!("Path validation failed for {path}: {e}")))?;
 
     Ok(validated_path)
 }
@@ -63,8 +62,7 @@ pub fn validate_and_convert_path(path: &str) -> NodeResult<Utf8PathBuf> {
 pub fn validate_path_exists(path: &Utf8Path) -> NodeResult<()> {
     if !path.exists() {
         return Err(SinexError::validation(format!(
-            "Path does not exist: {}",
-            path
+            "Path does not exist: {path}"
         )));
     }
 
@@ -78,7 +76,7 @@ pub fn create_secure_temp_path(prefix: &str, extension: &str) -> NodeResult<Utf8
     // Validate temp directory path
     let temp_dir_str = temp_dir.to_string_lossy();
     let validated_temp_dir = validate_path(&temp_dir_str).map_err(|e| {
-        SinexError::validation(format!("Failed to validate temp directory path: {}", e))
+        SinexError::validation(format!("Failed to validate temp directory path: {e}"))
     })?;
 
     let filename = format!("{}_{}.{}", prefix, uuid::Uuid::new_v4(), extension);

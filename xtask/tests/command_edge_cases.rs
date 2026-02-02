@@ -3,10 +3,10 @@
 //! Tests cover:
 //! - Commands with invalid arguments
 //! - Timeout handling
-//! - ProcessBuilder error cases
+//! - `ProcessBuilder` error cases
 //! - JSON output format validation
-//! - CommandContext behavior
-//! - CommandResult construction
+//! - `CommandContext` behavior
+//! - `CommandResult` construction
 
 use assert_cmd::cargo::cargo_bin_cmd;
 use predicates::prelude::*;
@@ -30,8 +30,7 @@ fn test_process_builder_nonexistent_command() {
     let err = result.unwrap_err().to_string();
     assert!(
         err.contains("failed to spawn") || err.contains("No such file"),
-        "Error should indicate spawn failure: {}",
-        err
+        "Error should indicate spawn failure: {err}"
     );
 }
 
@@ -45,8 +44,7 @@ fn test_process_builder_command_not_found_with_description() {
     let err = result.unwrap_err().to_string();
     assert!(
         err.contains("my custom operation"),
-        "Error should include description: {}",
-        err
+        "Error should include description: {err}"
     );
 }
 
@@ -58,15 +56,14 @@ fn test_process_builder_command_exits_with_error() {
     let err = result.unwrap_err().to_string();
     assert!(
         err.contains("failed") || err.contains("exit code"),
-        "Error should mention failure: {}",
-        err
+        "Error should mention failure: {err}"
     );
 }
 
 #[test]
 fn test_process_builder_command_exits_with_error_code() {
     let result = ProcessBuilder::new("sh")
-        .args(&["-c", "exit 42"])
+        .args(["-c", "exit 42"])
         .with_description("exit code test")
         .run();
 
@@ -74,23 +71,21 @@ fn test_process_builder_command_exits_with_error_code() {
     let err = result.unwrap_err().to_string();
     assert!(
         err.contains("exit code 42") || err.contains("failed"),
-        "Error should mention exit code: {}",
-        err
+        "Error should mention exit code: {err}"
     );
 }
 
 #[test]
 fn test_process_builder_stderr_captured_on_error() {
     let result = ProcessBuilder::new("sh")
-        .args(&["-c", "echo 'error message' >&2; exit 1"])
+        .args(["-c", "echo 'error message' >&2; exit 1"])
         .run();
 
     assert!(result.is_err(), "Should fail with exit code 1");
     let err = result.unwrap_err().to_string();
     assert!(
         err.contains("error message"),
-        "Error should include stderr output: {}",
-        err
+        "Error should include stderr output: {err}"
     );
 }
 
@@ -131,7 +126,7 @@ fn test_process_builder_run_stdout() {
 #[test]
 fn test_process_builder_with_env_variable() {
     let output = ProcessBuilder::new("sh")
-        .args(&["-c", "echo $MY_TEST_VAR"])
+        .args(["-c", "echo $MY_TEST_VAR"])
         .env("MY_TEST_VAR", "custom_value")
         .run()
         .expect("should succeed");
@@ -158,7 +153,7 @@ fn test_process_builder_with_current_dir() {
 #[test]
 fn test_process_builder_multiple_args() {
     let output = ProcessBuilder::new("echo")
-        .args(&["one", "two", "three"])
+        .args(["one", "two", "three"])
         .run()
         .expect("echo should succeed");
 
@@ -522,7 +517,7 @@ fn test_cli_unknown_command() {
 fn test_cli_unknown_flag() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("qa").arg("check").arg("--nonexistent-flag");
+    cmd.arg("check").arg("--nonexistent-flag");
 
     cmd.assert()
         .failure()
@@ -547,10 +542,7 @@ fn test_cli_missing_required_arg() {
 fn test_cli_invalid_format_option() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("--format")
-        .arg("invalid_format")
-        .arg("qa")
-        .arg("check");
+    cmd.arg("--format").arg("invalid_format").arg("check");
 
     cmd.assert()
         .failure()
@@ -562,11 +554,7 @@ fn test_cli_redundant_json_options() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
     // --json and --format json are redundant but should both work
-    cmd.arg("--json")
-        .arg("--format")
-        .arg("json")
-        .arg("qa")
-        .arg("check");
+    cmd.arg("--json").arg("--format").arg("json").arg("check");
 
     // This might succeed or fail depending on format checks
     // The key is it shouldn't crash or give an obscure error
@@ -578,8 +566,7 @@ fn test_cli_redundant_json_options() {
         // Should not be a cryptic error
         assert!(
             stderr.contains("fmt") || stderr.contains("check") || stderr.contains("error"),
-            "Should give a clear error, not cryptic failure: {}",
-            stderr
+            "Should give a clear error, not cryptic failure: {stderr}"
         );
     }
 }
@@ -592,7 +579,7 @@ fn test_cli_redundant_json_options() {
 fn test_json_output_is_valid_json() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("--json").arg("qa").arg("check");
+    cmd.arg("--json").arg("deps").arg("list");
 
     let output = cmd.output().expect("command should run");
 
@@ -600,7 +587,7 @@ fn test_json_output_is_valid_json() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         // Parse as JSON to validate
         let parsed: Result<serde_json::Value, _> = serde_json::from_str(&stdout);
-        assert!(parsed.is_ok(), "Output should be valid JSON: {}", stdout);
+        assert!(parsed.is_ok(), "Output should be valid JSON: {stdout}");
     }
 }
 
@@ -608,7 +595,7 @@ fn test_json_output_is_valid_json() {
 fn test_json_output_contains_required_fields() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("--json").arg("qa").arg("check");
+    cmd.arg("--json").arg("deps").arg("list");
 
     let output = cmd.output().expect("command should run");
 
@@ -627,7 +614,8 @@ fn test_json_output_contains_required_fields() {
 fn test_json_output_status_values() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("--json").arg("qa").arg("check");
+    // Use 'deps list' which has clean JSON output (unlike 'status' which outputs human-readable + JSON)
+    cmd.arg("--json").arg("deps").arg("list");
 
     let output = cmd.output().expect("command should run");
 
@@ -638,12 +626,8 @@ fn test_json_output_status_values() {
 
         let status = parsed.get("status").and_then(|s| s.as_str());
         assert!(
-            matches!(
-                status,
-                Some("success") | Some("failed") | Some("partial") | Some("running")
-            ),
-            "status should be a valid value: {:?}",
-            status
+            matches!(status, Some("success" | "failed" | "partial" | "running")),
+            "status should be a valid value: {status:?}"
         );
     }
 }
@@ -662,8 +646,7 @@ fn test_json_output_for_failing_command() {
         let parsed: Result<serde_json::Value, _> = serde_json::from_str(&stdout);
         assert!(
             parsed.is_ok(),
-            "Even failing commands should output valid JSON: {}",
-            stdout
+            "Even failing commands should output valid JSON: {stdout}"
         );
     }
 }
@@ -685,7 +668,7 @@ fn test_process_output_success_check() {
 #[test]
 fn test_process_output_combined() {
     let output = ProcessBuilder::new("sh")
-        .args(&["-c", "echo stdout; echo stderr >&2"])
+        .args(["-c", "echo stdout; echo stderr >&2"])
         .run()
         .expect("should succeed");
 
@@ -729,7 +712,10 @@ fn test_status_color_codes() {
 fn test_test_command_with_invalid_profile() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("qa").arg("test").arg("nonexistent_profile");
+    cmd.arg("test")
+        .arg("--")
+        .arg("--profile")
+        .arg("nonexistent_profile");
 
     // Should fail because nextest won't find the profile
     let output = cmd.output().expect("command should run");
@@ -777,16 +763,17 @@ fn test_schema_deploy_missing_database_url() {
 #[test]
 fn test_help_works_for_all_subcommands() {
     let subcommands = [
-        vec!["qa", "check", "--help"],
-        vec!["qa", "lint", "--help"],
-        vec!["qa", "test", "--help"],
+        vec!["check", "--help"],
+        vec!["test", "--help"],
+        vec!["build", "--help"],
         vec!["stack", "reset", "--help"],
-        vec!["db", "schema", "deploy", "--help"],
-        vec!["analyze", "deps", "--help"],
-        vec!["analyze", "graph", "--help"],
+        vec!["contracts", "deploy", "--help"],
+        vec!["deps", "list", "--help"],
+        vec!["deps", "graph", "--help"],
         vec!["stack", "doctor", "--help"],
-        vec!["stack", "tls", "--help"],
-        vec!["jobs", "help"],
+        vec!["jobs", "list", "--help"],
+        vec!["xtr", "patterns", "--help"],
+        vec!["xtr", "ci", "--help"],
     ];
 
     for args in subcommands {
@@ -802,12 +789,12 @@ fn test_help_works_for_all_subcommands() {
 fn test_check_skip_options() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    cmd.arg("qa")
-        .arg("check")
+    cmd.arg("check")
         .arg("--skip-fmt")
-        .arg("--skip-check");
+        .arg("--lint=false")
+        .arg("--forbidden=false");
 
-    // With both skipped, should succeed quickly (doing nothing)
+    // With everything skipped, should succeed quickly (doing nothing)
     cmd.assert().success();
 }
 
@@ -815,7 +802,7 @@ fn test_check_skip_options() {
 fn test_completions_all_shells() {
     for shell in ["bash", "zsh", "fish"] {
         let mut cmd = cargo_bin_cmd!("xtask");
-        cmd.arg("completions").arg(shell);
+        cmd.arg("xtr").arg("completions").arg(shell);
 
         // Should succeed (output may go to stderr or stdout depending on clap_complete)
         cmd.assert().success();
@@ -825,8 +812,8 @@ fn test_completions_all_shells() {
 #[test]
 fn test_completions_power_shell() {
     let mut cmd = cargo_bin_cmd!("xtask");
-    cmd.arg("completions").arg("powershell");
+    // Clap uses kebab-case 'power-shell' for the PowerShell variant
+    cmd.arg("xtr").arg("completions").arg("power-shell");
 
-    // powershell should work as well
     cmd.assert().success();
 }

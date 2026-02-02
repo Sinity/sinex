@@ -15,15 +15,15 @@ use async_nats::jetstream;
 use color_eyre::eyre::eyre;
 use futures::StreamExt;
 use serde_json::json;
+use sinex_node_sdk::stream_processor::SchemaBroadcastEntry;
 use sinex_primitives::coordination::kv_client::{CoordinationKvClient, InstanceMetadata};
 use sinex_primitives::environment::environment;
-use sinex_primitives::DynamicPayload;
-use sinex_node_sdk::stream_processor::SchemaBroadcastEntry;
 use sinex_primitives::temporal::{now, Duration as SinexDuration};
+use sinex_primitives::DynamicPayload;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::time::timeout;
-use time::Duration;
 use xtask::sandbox::nats::ensure_coordination_buckets;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
@@ -66,10 +66,13 @@ async fn ensure_raw_event_streams(
 async fn wait_for_schema_broadcast(
     subscription: &mut async_nats::Subscriber,
 ) -> Result<Vec<SchemaBroadcastEntry>> {
-    let message = timeout(time::Duration::from_secs(Timeouts::SHORT), subscription.next())
-        .await
-        .map_err(|_| eyre!("Timed out waiting for schema broadcast"))?
-        .ok_or_else(|| eyre!("Schema broadcast subscription closed"))?;
+    let message = timeout(
+        time::Duration::from_secs(Timeouts::SHORT),
+        subscription.next(),
+    )
+    .await
+    .map_err(|_| eyre!("Timed out waiting for schema broadcast"))?
+    .ok_or_else(|| eyre!("Schema broadcast subscription closed"))?;
     let entries: Vec<SchemaBroadcastEntry> = serde_json::from_slice(&message.payload)?;
     if entries.is_empty() {
         return Err(eyre!("Schema broadcast payload was empty"));
@@ -708,7 +711,9 @@ async fn test_jetstream_consumer_durable_recovery(ctx: TestContext) -> Result<()
     // "No Messages" status even when messages exist, so tolerate a short warm-up.
     let mut acked_count: usize = 0;
     let start = std::time::Instant::now();
-    while acked_count < 3 && start.elapsed() < time::Duration::from_secs(Timeouts::QUICK).to_std()? {
+    while acked_count < 3
+        && start.elapsed() < time::Duration::from_secs(Timeouts::QUICK).to_std()?
+    {
         let fetch_result = consumer
             .fetch()
             .max_messages(3 - acked_count)
@@ -775,7 +780,9 @@ async fn test_jetstream_consumer_durable_recovery(ctx: TestContext) -> Result<()
     // in-flight, so we tolerate a few empty polls and retry briefly.
     let mut remaining_count: usize = 0;
     let start = std::time::Instant::now();
-    while remaining_count < 7 && start.elapsed() < time::Duration::from_secs(Timeouts::QUICK).to_std()? {
+    while remaining_count < 7
+        && start.elapsed() < time::Duration::from_secs(Timeouts::QUICK).to_std()?
+    {
         let fetch_result = consumer
             .fetch()
             .max_messages(10)

@@ -11,18 +11,18 @@ use proc_macro::TokenStream;
 use quote::{quote, ToTokens};
 use syn::parse::Parser;
 use syn::{
-    parse_macro_input, punctuated::Punctuated, spanned::Spanned, token::Comma, Error, Expr, FnArg,
-    ItemFn, Lit, Meta, MetaNameValue, Pat, PatType, Type, TypePath,
+    parse_macro_input, punctuated::Punctuated, spanned::Spanned, token::Comma, Error, Expr,
+    ExprLit, FnArg, ItemFn, Lit, Meta, MetaNameValue, Pat, PatType, Type, TypePath,
 };
 
-/// Configuration parsed from sinex_test attributes
+/// Configuration parsed from `sinex_test` attributes
 struct SinexTestConfig {
     timeout: Option<u64>,
     trace: bool,
     serial: bool,
 }
 
-/// Parse sinex_test attributes
+/// Parse `sinex_test` attributes
 /// Supports: timeout = 30, trace = true
 fn parse_sinex_test_attrs(attr: TokenStream) -> SinexTestConfig {
     let mut config = SinexTestConfig {
@@ -39,26 +39,38 @@ fn parse_sinex_test_attrs(attr: TokenStream) -> SinexTestConfig {
     if let Ok(parsed) = Punctuated::<Meta, Comma>::parse_terminated.parse2(attr_tokens) {
         for meta in parsed {
             match meta {
-                Meta::NameValue(MetaNameValue { path, value, .. }) if path.is_ident("timeout") => {
-                    if let Expr::Lit(expr_lit) = &value {
-                        if let Lit::Int(lit_int) = &expr_lit.lit {
-                            config.timeout = lit_int.base10_parse().ok();
-                        }
-                    }
+                Meta::NameValue(MetaNameValue {
+                    path,
+                    value:
+                        Expr::Lit(ExprLit {
+                            lit: Lit::Int(lit_int),
+                            ..
+                        }),
+                    ..
+                }) if path.is_ident("timeout") => {
+                    config.timeout = lit_int.base10_parse().ok();
                 }
-                Meta::NameValue(MetaNameValue { path, value, .. }) if path.is_ident("trace") => {
-                    if let Expr::Lit(expr_lit) = &value {
-                        if let Lit::Bool(lit_bool) = &expr_lit.lit {
-                            config.trace = lit_bool.value();
-                        }
-                    }
+                Meta::NameValue(MetaNameValue {
+                    path,
+                    value:
+                        Expr::Lit(ExprLit {
+                            lit: Lit::Bool(lit_bool),
+                            ..
+                        }),
+                    ..
+                }) if path.is_ident("trace") => {
+                    config.trace = lit_bool.value();
                 }
-                Meta::NameValue(MetaNameValue { path, value, .. }) if path.is_ident("serial") => {
-                    if let Expr::Lit(expr_lit) = &value {
-                        if let Lit::Bool(lit_bool) = &expr_lit.lit {
-                            config.serial = lit_bool.value();
-                        }
-                    }
+                Meta::NameValue(MetaNameValue {
+                    path,
+                    value:
+                        Expr::Lit(ExprLit {
+                            lit: Lit::Bool(lit_bool),
+                            ..
+                        }),
+                    ..
+                }) if path.is_ident("serial") => {
+                    config.serial = lit_bool.value();
                 }
                 Meta::Path(path) if path.is_ident("trace") => {
                     config.trace = true;
@@ -147,7 +159,7 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     }
 
-    fn lit_from_expr<'a>(expr: &'a Expr) -> Result<&'a Lit, Error> {
+    fn lit_from_expr(expr: &Expr) -> Result<&Lit, Error> {
         if let Expr::Lit(expr_lit) = expr {
             Ok(&expr_lit.lit)
         } else {
@@ -158,9 +170,10 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
     fn is_context(ty: &Type) -> bool {
         match ty {
             Type::Reference(r) => is_context(&r.elem),
-            Type::Path(TypePath { path, .. }) => path.segments.last().map_or(false, |seg| {
-                seg.ident == "Sandbox" || seg.ident == "TestContext"
-            }),
+            Type::Path(TypePath { path, .. }) => path
+                .segments
+                .last()
+                .is_some_and(|seg| seg.ident == "Sandbox" || seg.ident == "TestContext"),
             _ => false,
         }
     }
@@ -172,10 +185,7 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
             return Ok(o);
         }
 
-        let parsed = match Punctuated::<Meta, Comma>::parse_terminated.parse2(attr_tokens.clone()) {
-            Ok(list) => list,
-            Err(err) => return Err(err),
-        };
+        let parsed = Punctuated::<Meta, Comma>::parse_terminated.parse2(attr_tokens.clone())?;
 
         for meta in parsed {
             match meta {
@@ -250,7 +260,6 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
                     .into();
             }
             ctx_param = Some(((**pat).clone(), ty.as_ref().clone()));
-            continue;
         }
 
         let mut strategy = None;
@@ -287,7 +296,7 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     if ctx_param.is_some() && !is_async {
         return Error::new_spanned(
-            &input.sig.fn_token,
+            input.sig.fn_token,
             "Sandbox requires async #[sinex_prop] tests",
         )
         .to_compile_error()
@@ -302,15 +311,8 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
         quote!()
     };
 
-    let seed_stmt = opts
-        .seed
-        .map(|seed| {
-            quote! {
-                cfg.rng_algorithm = ::proptest::test_runner::RngAlgorithm::ChaCha;
-                cfg.rng_seed = ::proptest::test_runner::RngSeed::Fixed(#seed);
-            }
-        })
-        .unwrap_or_else(|| {
+    let seed_stmt = opts.seed.map_or_else(
+        || {
             quote! {
                 if let Some(seed_env) = std::env::var("SINEX_PROPTEST_SEED")
                     .ok()
@@ -320,17 +322,24 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
                     cfg.rng_seed = ::proptest::test_runner::RngSeed::Fixed(seed_env);
                 }
             }
-        });
+        },
+        |seed| {
+            quote! {
+                cfg.rng_algorithm = ::proptest::test_runner::RngAlgorithm::ChaCha;
+                cfg.rng_seed = ::proptest::test_runner::RngSeed::Fixed(#seed);
+            }
+        },
+    );
 
-    let shrink_stmt = opts
-        .max_shrink_time_ms
-        .map(|ms| {
+    let shrink_stmt = opts.max_shrink_time_ms.map_or_else(
+        || quote!(),
+        |ms| {
             quote! {
                 let shrink = (#ms).min(u32::MAX as u64) as u32;
                 cfg.max_shrink_time = shrink.max(1);
             }
-        })
-        .unwrap_or_else(|| quote!());
+        },
+    );
 
     let strategy_expr = if params.len() == 1 {
         params[0].strat.clone()
@@ -365,15 +374,15 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
         quote!( let ( #( #arg_idents ),* ) = value; )
     };
 
-    let ctx_binding = ctx_param
-        .as_ref()
-        .map(|(pat, ty)| {
+    let ctx_binding = ctx_param.as_ref().map_or_else(
+        || quote!(),
+        |(pat, ty)| {
             quote! {
                 let ctx_ref: #ty = ctx_holder.as_ref().expect("Sandbox available");
                 let #pat = ctx_ref;
             }
-        })
-        .unwrap_or_else(|| quote!());
+        },
+    );
     let expects_ctx = ctx_param.is_some();
 
     let runner_setup = quote! {
@@ -691,7 +700,7 @@ pub fn sinex_proptest(input: TokenStream) -> TokenStream {
         let mut destructures = Vec::<TS>::new();
         for (idx, (pat, ty, strat)) in params.iter().enumerate() {
             let ident = syn::Ident::new(&format!("__arg{idx}"), proc_macro2::Span::call_site());
-            let ty_tokens = ty.as_ref().map(|t| quote!(#t)).unwrap_or_else(|| quote!(_));
+            let ty_tokens = ty.as_ref().map_or_else(|| quote!(_), |t| quote!(#t));
             param_defs.push(quote!( #[strategy(#strat)] #ident: #ty_tokens ));
             let ty_ann = ty.as_ref().map(|t| quote!( : #t )).unwrap_or_default();
             destructures.push(quote!( let #pat #ty_ann = #ident; ));
@@ -699,8 +708,7 @@ pub fn sinex_proptest(input: TokenStream) -> TokenStream {
 
         let ctx_tokens = ctx
             .as_ref()
-            .map(|(pat, ty)| quote!( #pat: #ty, ))
-            .unwrap_or_else(|| quote!());
+            .map_or_else(|| quote!(), |(pat, ty)| quote!( #pat: #ty, ));
 
         out.push(quote! {
             #(#passthrough_attrs)*
@@ -752,8 +760,7 @@ fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
             .path()
             .segments
             .last()
-            .map(|seg| seg.ident == "case")
-            .unwrap_or(false);
+            .is_some_and(|seg| seg.ident == "case");
 
         if is_case {
             has_rstest_cases = true;
@@ -778,8 +785,7 @@ fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
                     .path()
                     .segments
                     .last()
-                    .map(|seg| seg.ident == "case")
-                    .unwrap_or(false);
+                    .is_some_and(|seg| seg.ident == "case");
                 if is_case {
                     has_rstest_cases = true;
                 }
@@ -809,15 +815,10 @@ fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
     // Check return type - must be Result<()> or Result<T>
     let has_result_return = if let syn::ReturnType::Type(_, ref ty) = input.sig.output {
         if let syn::Type::Path(type_path) = ty.as_ref() {
-            type_path
-                .path
-                .segments
-                .last()
-                .map(|seg| {
-                    let ident = &seg.ident;
-                    ident == "Result" || ident == "TestResult"
-                })
-                .unwrap_or(false)
+            type_path.path.segments.last().is_some_and(|seg| {
+                let ident = &seg.ident;
+                ident == "Result" || ident == "TestResult"
+            })
         } else {
             false
         }
@@ -847,9 +848,11 @@ fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
     fn is_context_type(ty: &syn::Type) -> bool {
         match ty {
             syn::Type::Reference(r) => is_context_type(&r.elem),
-            syn::Type::Path(type_path) => type_path.path.segments.last().map_or(false, |seg| {
-                seg.ident == "Sandbox" || seg.ident == "TestContext"
-            }),
+            syn::Type::Path(type_path) => type_path
+                .path
+                .segments
+                .last()
+                .is_some_and(|seg| seg.ident == "Sandbox" || seg.ident == "TestContext"),
             _ => false,
         }
     }
@@ -913,7 +916,7 @@ fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
 
         let tracing_block = if enable_tracing {
             quote! {
-                Sandbox::init_tracing("debug");
+                ::xtask::Sandbox::init_tracing("debug");
             }
         } else {
             quote! {}
@@ -923,7 +926,7 @@ fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
             quote! {
                 #serial_guard
                 #tracing_block
-                let ctx = Sandbox::with_name(test_name).await?;
+                let ctx = ::xtask::Sandbox::with_name(test_name).await?;
                 async { #fn_body }.await
             }
         } else {
@@ -1063,7 +1066,7 @@ fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
                     let start = std::time::Instant::now();
                     eprintln!("🔄 {} [timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
 
-                    let ctx = Sandbox::with_name(test_name).await?;
+                    let ctx = ::xtask::Sandbox::with_name(test_name).await?;
                     let ctx_failure_snapshot = ctx.failure_snapshot();
 
                     let result: ::xtask::sandbox::TestResult<()> = if #timeout_secs > 10 {
@@ -1180,7 +1183,7 @@ fn parse_bench_mode(lit: &Lit) -> syn::Result<BenchMode> {
             "micro" => Ok(BenchMode::Micro),
             other => Err(syn::Error::new(
                 lit.span(),
-                format!("unknown bench mode '{}'", other),
+                format!("unknown bench mode '{other}'"),
             )),
         }
     } else {

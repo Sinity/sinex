@@ -38,6 +38,7 @@ pub enum ReplayState {
 
 impl ReplayState {
     /// Check if state is terminal
+    #[must_use]
     pub fn is_terminal(&self) -> bool {
         matches!(
             self,
@@ -76,7 +77,7 @@ pub struct ReplayCheckpoint {
     pub last_event_id: Option<String>,
     /// Current batch number
     pub batch_number: u32,
-    /// PostgreSQL savepoint ID if in transaction
+    /// `PostgreSQL` savepoint ID if in transaction
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub savepoint_id: Option<String>,
     /// Timestamp of last update
@@ -128,7 +129,7 @@ pub struct ReplayOperation {
 // replay.create_operation
 // ─────────────────────────────────────────────────────────────
 
-/// Request: replay.create_operation
+/// Request: `replay.create_operation`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayCreateRequest {
     /// Scope defining what to replay
@@ -138,7 +139,7 @@ pub struct ReplayCreateRequest {
     pub actor: Option<String>,
 }
 
-/// Response: replay.create_operation
+/// Response: `replay.create_operation`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayCreateResponse {
     pub operation: ReplayOperation,
@@ -148,13 +149,13 @@ pub struct ReplayCreateResponse {
 // replay.preview_operation
 // ─────────────────────────────────────────────────────────────
 
-/// Request: replay.preview_operation
+/// Request: `replay.preview_operation`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayPreviewRequest {
     pub operation_id: String,
 }
 
-/// Response: replay.preview_operation
+/// Response: `replay.preview_operation`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayPreviewResponse {
     pub operation: ReplayOperation,
@@ -165,7 +166,7 @@ pub struct ReplayPreviewResponse {
 // replay.approve_operation
 // ─────────────────────────────────────────────────────────────
 
-/// Request: replay.approve_operation
+/// Request: `replay.approve_operation`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayApproveRequest {
     pub operation_id: String,
@@ -173,7 +174,7 @@ pub struct ReplayApproveRequest {
     pub approver: Option<String>,
 }
 
-/// Response: replay.approve_operation
+/// Response: `replay.approve_operation`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayApproveResponse {
     pub operation: ReplayOperation,
@@ -183,7 +184,7 @@ pub struct ReplayApproveResponse {
 // replay.execute_operation
 // ─────────────────────────────────────────────────────────────
 
-/// Request: replay.execute_operation
+/// Request: `replay.execute_operation`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayExecuteRequest {
     pub operation_id: String,
@@ -192,7 +193,7 @@ pub struct ReplayExecuteRequest {
     pub executor: Option<String>,
 }
 
-/// Response: replay.execute_operation
+/// Response: `replay.execute_operation`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayExecuteResponse {
     pub operation: ReplayOperation,
@@ -202,7 +203,7 @@ pub struct ReplayExecuteResponse {
 // replay.cancel_operation
 // ─────────────────────────────────────────────────────────────
 
-/// Request: replay.cancel_operation
+/// Request: `replay.cancel_operation`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayCancelRequest {
     pub operation_id: String,
@@ -210,7 +211,7 @@ pub struct ReplayCancelRequest {
     pub reason: Option<String>,
 }
 
-/// Response: replay.cancel_operation
+/// Response: `replay.cancel_operation`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayCancelResponse {
     pub status: String,
@@ -221,13 +222,13 @@ pub struct ReplayCancelResponse {
 // replay.operation_status
 // ─────────────────────────────────────────────────────────────
 
-/// Request: replay.operation_status
+/// Request: `replay.operation_status`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayStatusRequest {
     pub operation_id: String,
 }
 
-/// Response: replay.operation_status
+/// Response: `replay.operation_status`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayStatusResponse {
     pub operation: ReplayOperation,
@@ -237,7 +238,7 @@ pub struct ReplayStatusResponse {
 // replay.list_operations
 // ─────────────────────────────────────────────────────────────
 
-/// Request: replay.list_operations
+/// Request: `replay.list_operations`
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ReplayListRequest {
     /// Filter by state
@@ -248,7 +249,7 @@ pub struct ReplayListRequest {
     pub limit: Option<i64>,
 }
 
-/// Response: replay.list_operations
+/// Response: `replay.list_operations`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayListResponse {
     pub operations: Vec<ReplayOperation>,

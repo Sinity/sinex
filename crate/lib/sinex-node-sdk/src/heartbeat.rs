@@ -80,7 +80,7 @@ struct StdoutHeartbeatSink;
 
 impl HeartbeatLogSink for StdoutHeartbeatSink {
     fn emit(&self, entry: &serde_json::Value) {
-        println!("{}", entry);
+        println!("{entry}");
     }
 }
 
@@ -133,7 +133,7 @@ impl HeartbeatEmitter {
             git_hash,
             cpu_sample: Arc::new(parking_lot::Mutex::new(initial_cpu_sample)),
             cpu_cores,
-            log_sink: Arc::new(StdoutHeartbeatSink::default()),
+            log_sink: Arc::new(StdoutHeartbeatSink),
             last_emitted_status: Arc::new(parking_lot::Mutex::new(ProcessStatus::Healthy)),
             error_window: Arc::new(parking_lot::Mutex::new(Vec::new())),
         }
@@ -165,14 +165,14 @@ impl HeartbeatEmitter {
 
     /// Increment the events processed counter
     pub fn increment_events_processed(&self, count: u64) {
-        self.events_processed.add(count as usize);
+        let _ = self.events_processed.add(count as usize);
     }
 
     /// Record an error
     ///
     /// Issue 8 fix: Maintains 5-minute sliding window for error tracking
     pub fn record_error(&self, error_message: &str) {
-        self.errors_count.add(1);
+        let _ = self.errors_count.add(1);
         *self.last_error.lock() = Some(error_message.to_string());
 
         // Add to sliding window
@@ -241,12 +241,9 @@ impl HeartbeatEmitter {
     ///
     /// Issue 10 fix: Now logs when CPU sampling fails
     fn get_cpu_usage_percent(&self) -> f32 {
-        let current_cpu = match Self::read_process_cpu_seconds() {
-            Some(value) => value,
-            None => {
-                warn!("Failed to read process CPU seconds via getrusage");
-                return 0.0;
-            }
+        let Some(current_cpu) = Self::read_process_cpu_seconds() else {
+            warn!("Failed to read process CPU seconds via getrusage");
+            return 0.0;
         };
         let now = Instant::now();
         let mut sample = self.cpu_sample.lock();
@@ -434,23 +431,24 @@ impl HeartbeatEmitter {
     }
 
     fn log_process_alert(&self, event_type: &str, metrics: &HeartbeatMetrics) {
-        let payload = match event_type {
-            "process.failed" => serde_json::to_value(ProcessFailedPayload {
+        let payload = if event_type == "process.failed" {
+            serde_json::to_value(ProcessFailedPayload {
                 process_name: metrics.service_name.clone(),
                 uptime_seconds: metrics.uptime_seconds,
                 errors_in_window: metrics.errors_count,
                 last_error_message: metrics.last_error_message.clone(),
                 metadata: metrics.metadata.clone(),
             })
-            .unwrap_or_else(|_| json!({})),
-            _ => serde_json::to_value(ProcessDegradedPayload {
+            .unwrap_or_else(|_| json!({}))
+        } else {
+            serde_json::to_value(ProcessDegradedPayload {
                 process_name: metrics.service_name.clone(),
                 uptime_seconds: metrics.uptime_seconds,
                 errors_in_window: metrics.errors_count,
                 last_error_message: metrics.last_error_message.clone(),
                 metadata: metrics.metadata.clone(),
             })
-            .unwrap_or_else(|_| json!({})),
+            .unwrap_or_else(|_| json!({}))
         };
 
         let alert_entry = json!({
@@ -478,8 +476,8 @@ impl HeartbeatEmitter {
             service = %metrics.service_name,
             status = %metrics.status,
             errors = metrics.errors_count,
-            "Node transitioned to {} state",
-            event_type
+            event_type = %event_type,
+            "Node transitioned to state"
         );
     }
 }
@@ -496,14 +494,14 @@ pub struct HeartbeatCounterHandle {
 impl HeartbeatCounterHandle {
     /// Increment events processed counter
     pub fn increment_events_processed(&self, count: u64) {
-        self.events_processed.add(count as usize);
+        let _ = self.events_processed.add(count as usize);
     }
 
     /// Record an error
     ///
     /// Issue 8 fix: Adds to sliding window for historical context
     pub fn record_error(&self, error_message: &str) {
-        self.errors_count.add(1);
+        let _ = self.errors_count.add(1);
         *self.last_error.lock() = Some(error_message.to_string());
 
         // Add to sliding window
@@ -536,7 +534,7 @@ macro_rules! emit_heartbeat {
                 "timestamp": sinex_primitives::temporal::format_rfc3339(sinex_primitives::temporal::now())
             }
         });
-        println!("{}", log_entry);
+        println!("{log_entry}");
     };
 
     ($service_name:expr, $($field:ident = $value:expr),+) => {
@@ -555,6 +553,6 @@ macro_rules! emit_heartbeat {
             "target": "heartbeat",
             "fields": fields
         });
-        println!("{}", log_entry);
+        println!("{log_entry}");
     };
 }

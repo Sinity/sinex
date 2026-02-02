@@ -125,7 +125,7 @@ impl DotRenderer {
     /// * `graph` - The workspace graph to render
     ///
     /// # Returns
-    /// A new DotRenderer instance
+    /// A new `DotRenderer` instance
     pub fn new(graph: WorkspaceGraph) -> Self {
         Self {
             graph,
@@ -167,7 +167,7 @@ impl Renderer for DotRenderer {
     /// and dependencies as edges. Supports focus mode to show:
     /// - Forward mode: a package and its direct dependencies
     /// - Reverse mode: a package and its direct dependents
-    /// Uses left-to-right ranking for readability.
+    /// - Uses left-to-right ranking for readability.
     fn render(&self) -> Result<String> {
         let mut dot = String::from("digraph dependencies {\n");
         dot.push_str("  rankdir=LR;\n");
@@ -209,10 +209,10 @@ impl Renderer for DotRenderer {
         // Add nodes for all packages in the filtered set
         for pkg in &packages {
             let escaped_name = Self::escape_label(pkg.name());
-            dot.push_str(&format!("  \"{}\";\n", escaped_name));
+            dot.push_str(&format!("  \"{escaped_name}\";\n"));
         }
 
-        dot.push_str("\n");
+        dot.push('\n');
 
         // Build a set of visible package names for edge filtering
         let visible_packages: HashSet<String> =
@@ -241,7 +241,7 @@ impl Renderer for DotRenderer {
                 {
                     let escaped_from = Self::escape_label(&from_name);
                     let escaped_to = Self::escape_label(&to_name);
-                    dot.push_str(&format!("  \"{}\" -> \"{}\";\n", escaped_from, escaped_to));
+                    dot.push_str(&format!("  \"{escaped_from}\" -> \"{escaped_to}\";\n"));
                 }
             }
         }
@@ -334,7 +334,7 @@ impl AsciiRenderer {
     fn style_package(&self, name: &str, is_focus: bool) -> String {
         if is_focus {
             // Cyan + bold for focus package: \x1b[1;36m = bold cyan, \x1b[0m = reset
-            format!("\x1b[1;36m{}\x1b[0m", name)
+            format!("\x1b[1;36m{name}\x1b[0m")
         } else {
             name.to_string()
         }
@@ -349,7 +349,7 @@ impl AsciiRenderer {
     /// The styled string with ANSI gray color codes
     fn style_tree_chars(&self, chars: &str) -> String {
         // Gray (bright black) color: \x1b[90m = bright black, \x1b[0m = reset
-        format!("\x1b[90m{}\x1b[0m", chars)
+        format!("\x1b[90m{chars}\x1b[0m")
     }
 
     fn render_tree(
@@ -362,7 +362,7 @@ impl AsciiRenderer {
     ) -> Result<String> {
         let mut output = String::new();
 
-        let is_focus = self.focus.as_ref().map(|f| f == package).unwrap_or(false);
+        let is_focus = self.focus.as_ref().is_some_and(|f| f == package);
         let tree_chars = if is_last { "└──" } else { "├──" };
         let continuation = if is_last { " " } else { "│" };
 
@@ -465,12 +465,12 @@ mod tests {
         let lines: Vec<&str> = output.lines().collect();
         let node_lines: Vec<&str> = lines
             .iter()
-            .filter(|l| l.trim().ends_with(";") && !l.contains("->"))
+            .filter(|l| l.trim().ends_with(';') && !l.contains("->"))
             .copied()
             .collect();
 
         // Should have at least some nodes
-        assert!(node_lines.len() > 0, "No nodes found in output");
+        assert!(!node_lines.is_empty(), "No nodes found in output");
 
         Ok(())
     }
@@ -526,8 +526,7 @@ mod tests {
             assert!(output_forward.ends_with("}\n"));
 
             // Test reverse mode
-            let renderer_reverse =
-                DotRenderer::new(graph.clone()).with_focus(focus_pkg.clone(), true);
+            let renderer_reverse = DotRenderer::new(graph.clone()).with_focus(focus_pkg, true);
             let output_reverse = renderer_reverse.render()?;
             assert!(output_reverse.starts_with("digraph dependencies {"));
             assert!(output_reverse.ends_with("}\n"));

@@ -5,7 +5,7 @@ use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn test_gateway_tcp_tls_handshake(ctx: TestContext) -> color_eyre::Result<()> {
-    let ctx = ctx.with_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     // 1. Generate self-signed certs for testing
     let subject_alt_names = vec!["localhost".to_string(), "127.0.0.1".to_string()];
     let cert = rcgen::generate_simple_self_signed(subject_alt_names)?;
@@ -56,8 +56,8 @@ async fn test_gateway_tcp_tls_handshake(ctx: TestContext) -> color_eyre::Result<
     // Spawn gateway in background
     let gateway_handle = tokio::spawn(async move {
         // Pass the explicit TCP listen address override
-        let tcp_listen = format!("127.0.0.1:{}", port);
-        rpc_server::run(Some(&tcp_listen), services, shutdown_rx)
+        let tcp_listen = format!("127.0.0.1:{port}");
+        rpc_server::run(Some(&tcp_listen), services, vec![], shutdown_rx)
             .await
             .expect("Gateway failed");
     });
@@ -71,7 +71,7 @@ async fn test_gateway_tcp_tls_handshake(ctx: TestContext) -> color_eyre::Result<
         .danger_accept_invalid_certs(true) // Self-signed needs this or root cert add
         .build()?;
 
-    let url = format!("https://127.0.0.1:{}/health", port);
+    let url = format!("https://127.0.0.1:{port}/health");
     let resp = client.get(&url).send().await;
 
     // Even if /health doesn't exist or returns 404/401, the *Transport Error* (handshake failure) is what we care about.
@@ -82,18 +82,18 @@ async fn test_gateway_tcp_tls_handshake(ctx: TestContext) -> color_eyre::Result<
         }
         Err(e) => {
             if e.is_connect() {
-                panic!("Failed to connect: {}", e);
+                panic!("Failed to connect: {e}");
             } else if e.is_body() || e.is_request() {
                 // Handshake passed, strictly speaking
             } else {
-                panic!("Request failed (likely TLS): {}", e);
+                panic!("Request failed (likely TLS): {e}");
             }
         }
     }
 
     // 4. Negative Test: Plaintext Client
     let plain_client = reqwest::Client::new();
-    let plain_url = format!("http://127.0.0.1:{}/health", port); // HTTP schem against HTTPS port
+    let plain_url = format!("http://127.0.0.1:{port}/health"); // HTTP schem against HTTPS port
     let plain_resp = plain_client
         .get(&plain_url)
         .timeout(Duration::from_millis(500))

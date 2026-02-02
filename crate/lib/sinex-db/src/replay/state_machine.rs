@@ -173,6 +173,11 @@ pub struct ReplayStateMachine {
 }
 
 impl ReplayStateMachine {
+    /// Get a reference to the database pool
+    pub fn pool(&self) -> &PgPool {
+        &self.pool
+    }
+
     fn resolve_time_window(scope: &ReplayScope) -> (Timestamp, Timestamp) {
         if let Some(window) = scope.time_window {
             window

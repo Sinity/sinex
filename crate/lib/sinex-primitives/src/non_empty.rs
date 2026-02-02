@@ -31,12 +31,13 @@ where
 }
 
 impl<T> NonEmptyVec<T> {
-    /// Create a new NonEmptyVec with a single element
+    /// Create a new `NonEmptyVec` with a single element
     pub fn single(value: T) -> Self {
         NonEmptyVec { inner: vec![value] }
     }
 
-    /// Create a new NonEmptyVec from a vector, returning None if empty
+    /// Create a new `NonEmptyVec` from a vector, returning None if empty
+    #[must_use]
     pub fn from_vec(vec: Vec<T>) -> Option<Self> {
         if vec.is_empty() {
             None
@@ -45,7 +46,7 @@ impl<T> NonEmptyVec<T> {
         }
     }
 
-    /// Create a new NonEmptyVec from a head element and tail vector
+    /// Create a new `NonEmptyVec` from a head element and tail vector
     pub fn from_head_tail(head: T, tail: Vec<T>) -> Self {
         let mut inner = vec![head];
         inner.extend(tail);
@@ -53,21 +54,25 @@ impl<T> NonEmptyVec<T> {
     }
 
     /// Get the first element (always exists)
+    #[must_use]
     pub fn first(&self) -> &T {
         &self.inner[0] // Safe indexing - will panic with clear message if invariant violated
     }
 
     /// Get the last element (always exists)
+    #[must_use]
     pub fn last(&self) -> &T {
         &self.inner[self.inner.len() - 1] // Safe indexing - will panic with clear message if invariant violated
     }
 
     /// Get the number of elements
+    #[must_use]
     pub fn len(&self) -> usize {
         self.inner.len()
     }
 
-    /// NonEmptyVec can never be empty by construction
+    /// `NonEmptyVec` can never be empty by construction
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         false
     }
@@ -83,11 +88,13 @@ impl<T> NonEmptyVec<T> {
     }
 
     /// Convert into the underlying vector
+    #[must_use]
     pub fn into_vec(self) -> Vec<T> {
         self.inner
     }
 
     /// Get a reference to the underlying vector
+    #[must_use]
     pub fn as_vec(&self) -> &Vec<T> {
         &self.inner
     }

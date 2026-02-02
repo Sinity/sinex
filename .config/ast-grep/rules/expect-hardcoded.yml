@@ -1,0 +1,13 @@
+id: expect-hardcoded
+message: "Hardcoded expect() message - consider using context"
+severity: hint
+language: rust
+rule:
+  pattern: $X.expect("$MSG")
+constraints:
+  MSG:
+    regex: "^(should|must|cannot|failed|couldn't|unable).*"
+note: |
+  expect() with hardcoded messages loses context at runtime.
+  Consider using unwrap_or_else with a closure that includes context,
+  or use proper error handling with Result.

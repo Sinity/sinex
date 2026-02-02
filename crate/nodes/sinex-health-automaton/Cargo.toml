@@ -8,6 +8,7 @@ name = "sinex-health-automaton"
 [dependencies]
 tracing     = "0.1"
 gethostname = "0.4"
+human-panic = "2.0"
 
 [package.version]
 workspace = true
@@ -98,3 +99,6 @@ path = "../../lib/sinex-primitives"
 features = [
     "testing",
 ]
+
+[lints]
+workspace = true

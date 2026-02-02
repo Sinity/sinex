@@ -3,7 +3,10 @@
 //! Unified system processor implementing `SimpleIngestor`.
 
 // Use local facade for common types
-use crate::common::*;
+use crate::common::{
+    async_trait, info, instrument, Checkpoint, Node, NodeCapabilities, NodeResult, ScanArgs,
+    ScanReport, TimeHorizon,
+};
 use sinex_node_sdk::error_helpers::{parse_config_value, parse_typed_config};
 use sinex_node_sdk::stream_processor::{EventEmitter, NodeRuntimeState};
 
@@ -11,12 +14,11 @@ use sinex_node_sdk::stream_processor::{EventEmitter, NodeRuntimeState};
 use serde_json::json;
 use sinex_db::models::Event;
 use sinex_primitives::events::SystemMonitoringStartedPayload;
-use sinex_primitives::{JsonValue, Seconds};
+use sinex_primitives::{Seconds, Timestamp};
 
 use crate::{DbusWatcher, UdevWatcher, UnifiedJournalWatcher, WatcherMaterialContext};
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::acquisition_manager::{AcquisitionManager, RotationPolicy};
-use sinex_node_sdk::prelude::OffsetDateTime;
 use sinex_node_sdk::SinexError;
 use sinex_node_sdk::{
     nats_publisher::NatsPublisher, simple_ingestor::SimpleIngestor, watcher_handle::WatcherHandle,
@@ -34,7 +36,7 @@ pub use crate::SystemConfig;
 #[derive(Debug, Clone, Serialize, Deserialize, bon::Builder)]
 pub struct SystemState {
     /// When the snapshot was taken
-    pub captured_at: OffsetDateTime,
+    pub captured_at: Timestamp,
 
     /// Enabled source types
     pub enabled_sources: Vec<String>,
@@ -92,6 +94,7 @@ pub struct WatcherSnapshot {
 }
 
 impl WatcherSnapshot {
+    #[must_use]
     pub fn all_ready(&self) -> bool {
         self.dbus_ready && self.journal_ready && self.udev_ready && self.systemd_ready
     }
@@ -128,7 +131,8 @@ impl Default for SystemPersistentState {
 /// Capacity for watcher → emitter channels; we prefer bounded buffers to avoid unbounded growth.
 const WATCHER_CHANNEL_CAPACITY: usize = 1024;
 
-/// Unified system processor implementing SimpleIngestor
+/// Unified system processor implementing `SimpleIngestor`
+#[derive(Default)]
 pub struct SystemProcessor {
     /// System monitoring configuration
     config: SystemConfig,
@@ -146,27 +150,15 @@ pub struct SystemProcessor {
     udev_watcher: Option<WatcherHandle<WatcherMaterialContext>>,
 }
 
-impl Default for SystemProcessor {
-    fn default() -> Self {
-        Self {
-            config: SystemConfig::default(),
-            runtime: None,
-            acquisition: None,
-            processor_material: None,
-            dbus_watcher: None,
-            unified_journal_watcher: None,
-            udev_watcher: None,
-        }
-    }
-}
-
 impl SystemProcessor {
     /// Create a new unified system processor
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Create processor with custom configuration
+    #[must_use]
     pub fn with_config(config: SystemConfig) -> Self {
         Self {
             config,
@@ -205,7 +197,7 @@ impl SystemProcessor {
         watcher: &'static str,
     ) -> NodeResult<WatcherMaterialContext> {
         let acquisition = self.acquisition()?;
-        let source_identifier = format!("system.{}", watcher);
+        let source_identifier = format!("system.{watcher}");
         let metadata = json!({
             "watcher": watcher,
             "processor": self.node_name(),
@@ -297,7 +289,7 @@ impl SystemProcessor {
         }
 
         let snapshot = SystemState {
-            captured_at: OffsetDateTime::now_utc(),
+            captured_at: Timestamp::now(),
             enabled_sources,
             dbus_status,
             journal_status,
@@ -311,6 +303,7 @@ impl SystemProcessor {
     }
 
     /// Expose watcher readiness for tests and diagnostics.
+    #[must_use]
     pub fn watcher_snapshot(&self) -> WatcherSnapshot {
         let unified_ready = self.unified_journal_watcher.is_some();
         WatcherSnapshot {
@@ -413,9 +406,7 @@ impl SystemProcessor {
                 journal_enabled: self.config.journal_enabled,
                 udev_enabled: self.config.udev_enabled,
                 systemd_enabled: self.config.systemd_enabled,
-                start_time: sinex_primitives::temporal::Timestamp::from(
-                    OffsetDateTime::now_utc(),
-                ),
+                start_time: Timestamp::now(),
             },
             material.initial_provenance(),
         )
@@ -434,8 +425,7 @@ impl SystemProcessor {
         if self
             .dbus_watcher
             .as_ref()
-            .map(|handle| handle.is_active())
-            .unwrap_or(false)
+            .is_some_and(sinex_node_sdk::WatcherHandle::is_active)
         {
             return Ok(());
         }
@@ -459,8 +449,7 @@ impl SystemProcessor {
         if self
             .unified_journal_watcher
             .as_ref()
-            .map(|handle| handle.is_active())
-            .unwrap_or(false)
+            .is_some_and(sinex_node_sdk::WatcherHandle::is_active)
         {
             return Ok(());
         }
@@ -484,8 +473,7 @@ impl SystemProcessor {
         if self
             .udev_watcher
             .as_ref()
-            .map(|handle| handle.is_active())
-            .unwrap_or(false)
+            .is_some_and(sinex_node_sdk::WatcherHandle::is_active)
         {
             return Ok(());
         }
@@ -660,7 +648,7 @@ impl SystemProcessor {
         Ok(count)
     }
 
-    fn node_name(&self) -> &str {
+    fn node_name(&self) -> &'static str {
         "system-watcher"
     }
 }
@@ -670,7 +658,7 @@ impl SimpleIngestor for SystemProcessor {
     type Config = SystemConfig;
     type State = SystemPersistentState;
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "system-watcher"
     }
 
@@ -686,9 +674,7 @@ impl SimpleIngestor for SystemProcessor {
         let publisher: Arc<NatsPublisher> = match runtime.transport() {
             EventTransport::Nats(publisher) => Arc::clone(publisher),
         };
-        AcquisitionManager::bootstrap_streams(publisher.nats_client())
-            .await
-            .map_err(SinexError::from)?;
+        AcquisitionManager::bootstrap_streams(publisher.nats_client()).await?;
         let acquisition = Arc::new(runtime.acquisition_manager(
             RotationPolicy::default(),
             "system",
@@ -768,8 +754,8 @@ impl SimpleIngestor for SystemProcessor {
         Ok(ScanReport {
             events_processed: 0,
             duration: start_time.elapsed(),
-            final_checkpoint: Checkpoint::timestamp(OffsetDateTime::now_utc(), None),
-            time_range: Some((OffsetDateTime::now_utc(), OffsetDateTime::now_utc())),
+            final_checkpoint: Checkpoint::timestamp(Timestamp::now(), None),
+            time_range: Some((Timestamp::now(), Timestamp::now())),
             processor_stats: HashMap::new(),
             successful_targets: vec!["system_snapshot".to_string()],
             failed_targets: vec![],
@@ -796,13 +782,13 @@ impl SimpleIngestor for SystemProcessor {
         Ok(ScanReport {
             events_processed,
             duration: start_time.elapsed(),
-            final_checkpoint: Checkpoint::timestamp(OffsetDateTime::now_utc(), None),
+            final_checkpoint: Checkpoint::timestamp(Timestamp::now(), None),
             time_range: Some((
                 match &from {
                     Checkpoint::Timestamp { timestamp, .. } => *timestamp,
-                    _ => OffsetDateTime::now_utc() - time::Duration::hours(1), // estimate
+                    _ => Timestamp::now() - time::Duration::hours(1), // estimate
                 },
-                OffsetDateTime::now_utc(),
+                Timestamp::now(),
             )),
             processor_stats: HashMap::new(),
             successful_targets: vec!["system_historical".to_string()],
@@ -855,8 +841,8 @@ impl SimpleIngestor for SystemProcessor {
         Ok(ScanReport {
             events_processed: 0,
             duration: start_time.elapsed(),
-            final_checkpoint: Checkpoint::timestamp(OffsetDateTime::now_utc(), None),
-            time_range: Some((OffsetDateTime::now_utc(), OffsetDateTime::now_utc())),
+            final_checkpoint: Checkpoint::timestamp(Timestamp::now(), None),
+            time_range: Some((Timestamp::now(), Timestamp::now())),
             processor_stats: HashMap::new(),
             successful_targets: vec!["system_continuous".to_string()],
             failed_targets: vec![],
@@ -891,7 +877,7 @@ impl SimpleIngestor for SystemProcessor {
                 .iter()
                 .enumerate()
                 .map(|(i, desc)| sinex_node_sdk::automaton_base::ActivityEntry {
-                    timestamp: s.captured_at - std::time::Duration::from_secs(i as u64 * 60),
+                    timestamp: s.captured_at - time::Duration::seconds(i as i64 * 60),
                     description: desc.clone(),
                     data: None,
                 })
@@ -915,8 +901,7 @@ impl SimpleIngestor for SystemProcessor {
             last_updated: state
                 .last_state
                 .as_ref()
-                .map(|s| s.captured_at)
-                .unwrap_or_else(OffsetDateTime::now_utc),
+                .map_or_else(Timestamp::now, |s| s.captured_at),
             total_items: None,
             healthy: state.health.dbus_active
                 || state.health.journal_active
@@ -941,10 +926,13 @@ impl SimpleIngestor for SystemProcessor {
     fn get_coverage_analysis(
         &self,
         _state: &Self::State,
-        _time_range: Option<(OffsetDateTime, OffsetDateTime)>,
+        _time_range: Option<(sinex_primitives::Timestamp, sinex_primitives::Timestamp)>,
     ) -> NodeResult<sinex_node_sdk::exploration::CoverageAnalysis> {
         Ok(sinex_node_sdk::exploration::CoverageAnalysis {
-            time_range: (OffsetDateTime::now_utc(), OffsetDateTime::now_utc()),
+            time_range: (
+                sinex_primitives::Timestamp::now(),
+                sinex_primitives::Timestamp::now(),
+            ),
             source_total: 0,
             sinex_total: 0,
             coverage_percentage: 100.0,

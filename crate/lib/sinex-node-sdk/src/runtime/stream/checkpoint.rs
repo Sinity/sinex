@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
+use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::Ulid;
-use time::OffsetDateTime;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Checkpoint {
@@ -18,7 +18,7 @@ pub enum Checkpoint {
         event_id: Option<Ulid>,
     },
     Timestamp {
-        timestamp: OffsetDateTime,
+        timestamp: Timestamp,
         metadata: Option<serde_json::Value>,
     },
 }
@@ -45,7 +45,7 @@ impl Checkpoint {
         }
     }
 
-    pub fn timestamp(timestamp: OffsetDateTime, metadata: Option<serde_json::Value>) -> Self {
+    pub fn timestamp(timestamp: Timestamp, metadata: Option<serde_json::Value>) -> Self {
         Self::Timestamp {
             timestamp,
             metadata,
@@ -59,22 +59,19 @@ impl Checkpoint {
             Checkpoint::Internal {
                 event_id,
                 message_count,
-            } => format!("event {} (#{message_count})", event_id),
+            } => format!("event {event_id} (#{message_count})"),
             Checkpoint::Stream {
                 message_id,
                 event_id,
             } => {
                 if let Some(event_id) = event_id {
-                    format!("stream {} (event {})", message_id, event_id)
+                    format!("stream {message_id} (event {event_id})")
                 } else {
-                    format!("stream {}", message_id)
+                    format!("stream {message_id}")
                 }
             }
             Checkpoint::Timestamp { timestamp, .. } => {
-                format!(
-                    "timestamp {}",
-                    sinex_primitives::temporal::format_rfc3339((*timestamp).into())
-                )
+                format!("timestamp {}", timestamp.format_rfc3339())
             }
         }
     }

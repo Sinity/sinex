@@ -46,17 +46,17 @@ pub struct DuplicateDependency {
 impl WorkspaceAnalyzer {
     /// Create a new workspace analyzer
     ///
-    /// Loads workspace metadata using cargo_metadata and builds a dependency
-    /// graph using guppy's PackageGraph.
+    /// Loads workspace metadata using `cargo_metadata` and builds a dependency
+    /// graph using guppy's `PackageGraph`.
     ///
     /// # Returns
-    /// A new WorkspaceAnalyzer with loaded dependency graph
+    /// A new `WorkspaceAnalyzer` with loaded dependency graph
     ///
     /// # Errors
     /// Returns error if:
     /// - cargo metadata execution fails
     /// - Metadata parsing fails
-    /// - PackageGraph construction fails
+    /// - `PackageGraph` construction fails
     ///
     /// # Example
     /// ```no_run
@@ -82,7 +82,7 @@ impl WorkspaceAnalyzer {
     /// Returns information about all packages that are members of the workspace.
     ///
     /// # Returns
-    /// Vector of PackageInfo for each workspace member
+    /// Vector of `PackageInfo` for each workspace member
     ///
     /// # Example
     /// ```no_run
@@ -121,7 +121,7 @@ impl WorkspaceAnalyzer {
     /// Includes normal, dev, and build dependencies.
     ///
     /// # Returns
-    /// Vector of DependencyInfo describing all dependency relationships
+    /// Vector of `DependencyInfo` describing all dependency relationships
     ///
     /// # Example
     /// ```no_run
@@ -186,7 +186,7 @@ impl WorkspaceAnalyzer {
     /// This can indicate potential version conflicts or opportunities for consolidation.
     ///
     /// # Returns
-    /// Vector of DuplicateDependency, one for each package name that has multiple versions
+    /// Vector of `DuplicateDependency`, one for each package name that has multiple versions
     ///
     /// # Example
     /// ```no_run
@@ -207,10 +207,7 @@ impl WorkspaceAnalyzer {
             let name = package.name().to_string();
             let version = package.version().to_string();
 
-            version_map
-                .entry(name)
-                .or_insert_with(HashSet::new)
-                .insert(version);
+            version_map.entry(name).or_default().insert(version);
         }
 
         // Find packages with multiple versions

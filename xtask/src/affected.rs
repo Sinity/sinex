@@ -40,7 +40,7 @@ pub fn build_nextest_filter(packages: &[String]) -> String {
 
     packages
         .iter()
-        .map(|p| format!("package({})", p))
+        .map(|p| format!("package({p})"))
         .collect::<Vec<_>>()
         .join(" | ")
 }
@@ -61,11 +61,17 @@ fn changed_files() -> Result<Vec<String>> {
             .context("failed to run git diff")?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        return Ok(stdout.lines().map(|s| s.to_string()).collect());
+        return Ok(stdout
+            .lines()
+            .map(std::string::ToString::to_string)
+            .collect());
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut files: Vec<String> = stdout.lines().map(|s| s.to_string()).collect();
+    let mut files: Vec<String> = stdout
+        .lines()
+        .map(std::string::ToString::to_string)
+        .collect();
 
     // Also include untracked files in crate/ directory
     let untracked = Command::new("git")
@@ -75,7 +81,7 @@ fn changed_files() -> Result<Vec<String>> {
 
     if let Some(out) = untracked {
         let stdout = String::from_utf8_lossy(&out.stdout);
-        files.extend(stdout.lines().map(|s| s.to_string()));
+        files.extend(stdout.lines().map(std::string::ToString::to_string));
     }
 
     Ok(files)
@@ -133,7 +139,7 @@ fn build_reverse_dependency_graph() -> Result<HashMap<String, HashSet<String>>> 
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("cargo metadata failed: {}", stderr);
+        anyhow::bail!("cargo metadata failed: {stderr}");
     }
 
     let metadata: serde_json::Value =
@@ -153,7 +159,7 @@ fn build_reverse_dependency_graph() -> Result<HashMap<String, HashSet<String>>> 
             .as_array()
             .map(|deps| {
                 deps.iter()
-                    .filter_map(|d| d["name"].as_str().map(|s| s.to_string()))
+                    .filter_map(|d| d["name"].as_str().map(std::string::ToString::to_string))
                     .collect::<HashSet<_>>()
             })
             .unwrap_or_default();
@@ -203,7 +209,7 @@ pub fn affected_summary(packages: &[String]) -> String {
 
     let mut summary = format!("{} packages affected:\n", packages.len());
     for pkg in packages {
-        summary.push_str(&format!("  - {}\n", pkg));
+        summary.push_str(&format!("  - {pkg}\n"));
     }
     summary
 }

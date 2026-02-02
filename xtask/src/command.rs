@@ -11,7 +11,7 @@
 //! Commands implement the `XtaskCommand` trait and are dispatched through
 //! a central `CommandContext` that handles:
 //! - Output formatting (JSON, human-readable, compact, silent)
-//! - History tracking in SQLite
+//! - History tracking in `SQLite`
 //! - Error handling and recovery
 //!
 //! # Example
@@ -29,7 +29,7 @@
 //!         "my-command"
 //!     }
 //!
-//!     fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
+//!     fn execute(&self, ctx: &CommandContext) -> Result<ExecutionResult> {
 //!         // Command logic here
 //!         Ok(CommandResult::success())
 //!     }
@@ -71,46 +71,51 @@ impl Default for CommandMetadata {
 #[allow(dead_code)]
 impl CommandMetadata {
     /// Create metadata for a build/compilation command.
+    #[must_use]
     pub fn build() -> Self {
         Self {
             category: Some("build".to_string()),
-            timeout: Some(Duration::from_secs(300)), // 5 minutes
+            timeout: Some(Duration::from_mins(5)), // 5 minutes
             modifies_state: true,
             track_in_history: true,
         }
     }
 
     /// Create metadata for a test command.
+    #[must_use]
     pub fn test() -> Self {
         Self {
             category: Some("test".to_string()),
-            timeout: Some(Duration::from_secs(600)), // 10 minutes
+            timeout: Some(Duration::from_mins(10)), // 10 minutes
             modifies_state: false,
             track_in_history: true,
         }
     }
 
     /// Create metadata for a database command.
+    #[must_use]
     pub fn database() -> Self {
         Self {
             category: Some("database".to_string()),
-            timeout: Some(Duration::from_secs(120)), // 2 minutes
+            timeout: Some(Duration::from_mins(2)), // 2 minutes
             modifies_state: true,
             track_in_history: true,
         }
     }
 
     /// Create metadata for a quick check/lint command.
+    #[must_use]
     pub fn check() -> Self {
         Self {
             category: Some("check".to_string()),
-            timeout: Some(Duration::from_secs(60)), // 1 minute
+            timeout: Some(Duration::from_mins(1)), // 1 minute
             modifies_state: false,
             track_in_history: true,
         }
     }
 
     /// Create metadata for utility commands (completions, help, etc.).
+    #[must_use]
     pub fn utility() -> Self {
         Self {
             category: Some("utility".to_string()),
@@ -121,10 +126,11 @@ impl CommandMetadata {
     }
 
     /// Create metadata for diagnostic commands (doctor, health checks).
+    #[must_use]
     pub fn diagnostics() -> Self {
         Self {
             category: Some("diagnostics".to_string()),
-            timeout: Some(Duration::from_secs(120)), // 2 minutes
+            timeout: Some(Duration::from_mins(2)), // 2 minutes
             modifies_state: false,
             track_in_history: true,
         }
@@ -132,8 +138,12 @@ impl CommandMetadata {
 }
 
 /// Result of command execution.
+///
+/// Note: This was renamed from `CommandResult` to `ExecutionResult` to avoid confusion
+/// with `output::CommandResult`. The `CommandResult` name is preserved as a type alias
+/// for backwards compatibility.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CommandResult {
+pub struct ExecutionResult {
     /// Execution status
     pub status: Status,
     /// Optional success/summary message
@@ -154,8 +164,14 @@ pub struct CommandResult {
     pub timestamp: Option<Timestamp>,
 }
 
-impl CommandResult {
+/// Backwards compatibility alias for `ExecutionResult`.
+///
+/// Prefer using `ExecutionResult` in new code to avoid confusion with `output::CommandResult`.
+pub type CommandResult = ExecutionResult;
+
+impl ExecutionResult {
     /// Create a successful result.
+    #[must_use]
     pub fn success() -> Self {
         Self {
             status: Status::Success,
@@ -171,6 +187,7 @@ impl CommandResult {
     }
 
     /// Create a failed result with an error.
+    #[must_use]
     pub fn failure(error: StructuredError) -> Self {
         Self {
             status: Status::Failed,
@@ -187,6 +204,7 @@ impl CommandResult {
 
     /// Create a partial success result (some subtasks failed).
     #[allow(dead_code)]
+    #[must_use]
     pub fn partial() -> Self {
         Self {
             status: Status::Partial,
@@ -203,6 +221,7 @@ impl CommandResult {
 
     /// Suppress all output in human/compact modes
     #[allow(dead_code)]
+    #[must_use]
     pub fn with_silent(mut self) -> Self {
         self.is_silent = true;
         self
@@ -215,6 +234,7 @@ impl CommandResult {
     }
 
     /// Add structured data.
+    #[must_use]
     pub fn with_data(mut self, data: serde_json::Value) -> Self {
         self.data = Some(data);
         self
@@ -226,7 +246,8 @@ impl CommandResult {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.details.extend(details.into_iter().map(|s| s.into()));
+        self.details
+            .extend(details.into_iter().map(std::convert::Into::into));
         self
     }
 
@@ -243,7 +264,8 @@ impl CommandResult {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.warnings.extend(warnings.into_iter().map(|s| s.into()));
+        self.warnings
+            .extend(warnings.into_iter().map(std::convert::Into::into));
         self
     }
 
@@ -255,6 +277,7 @@ impl CommandResult {
 
     /// Add an error.
     #[allow(dead_code)]
+    #[must_use]
     pub fn with_error(mut self, error: StructuredError) -> Self {
         self.errors.push(error);
         if self.status == Status::Success {
@@ -264,18 +287,21 @@ impl CommandResult {
     }
 
     /// Set the duration.
+    #[must_use]
     pub fn with_duration(mut self, duration: Duration) -> Self {
         self.duration_secs = Some(duration.as_secs_f64());
         self
     }
 
     /// Check if the result represents success.
+    #[must_use]
     pub fn is_success(&self) -> bool {
         self.status == Status::Success
     }
 
     /// Check if the result represents failure.
     #[allow(dead_code)]
+    #[must_use]
     pub fn is_failure(&self) -> bool {
         self.status == Status::Failed
     }
@@ -308,35 +334,76 @@ pub struct CommandContext {
     writer: OutputWriter,
     /// Start time for duration tracking
     start_time: std::time::Instant,
+    /// History invocation ID (for diagnostics recording)
+    invocation_id: Option<i64>,
+    /// Whether to run in background mode
+    background: bool,
 }
 
 impl CommandContext {
     /// Create a new command context with the given output writer.
+    #[must_use]
     pub fn new(writer: OutputWriter) -> Self {
         Self {
             writer,
             start_time: std::time::Instant::now(),
+            invocation_id: None,
+            background: false,
         }
+    }
+
+    /// Create a new command context with an invocation ID for history tracking.
+    #[must_use]
+    pub fn with_invocation_id(writer: OutputWriter, invocation_id: Option<i64>) -> Self {
+        Self {
+            writer,
+            start_time: std::time::Instant::now(),
+            invocation_id,
+            background: false,
+        }
+    }
+
+    /// Create a context configured for background execution.
+    #[must_use]
+    pub fn with_background(mut self, background: bool) -> Self {
+        self.background = background;
+        self
+    }
+
+    /// Check if background execution is enabled.
+    #[must_use]
+    pub fn is_background(&self) -> bool {
+        self.background
+    }
+
+    /// Get the history invocation ID.
+    #[must_use]
+    pub fn invocation_id(&self) -> Option<i64> {
+        self.invocation_id
     }
 
     /// Get the output writer.
     #[allow(dead_code)]
+    #[must_use]
     pub fn writer(&self) -> &OutputWriter {
         &self.writer
     }
 
     /// Get elapsed time since command started.
+    #[must_use]
     pub fn elapsed(&self) -> Duration {
         self.start_time.elapsed()
     }
 
     /// Check if output format is human-readable.
+    #[must_use]
     pub fn is_human(&self) -> bool {
         matches!(self.writer.format(), crate::output::OutputFormat::Human)
     }
 
     /// Check if output format is JSON.
     #[allow(dead_code)]
+    #[must_use]
     pub fn is_json(&self) -> bool {
         matches!(self.writer.format(), crate::output::OutputFormat::Json)
     }
@@ -344,8 +411,83 @@ impl CommandContext {
     /// Print a section heading (only in human-readable mode).
     pub fn heading(&self, title: &str) {
         if self.is_human() {
-            println!("========== {} ==========", title);
+            println!("========== {title} ==========");
         }
+    }
+
+    /// Record a diagnostic to the history database.
+    ///
+    /// This is used by check/build commands to capture compiler warnings/errors.
+    pub fn record_diagnostic(
+        &self,
+        diag: &crate::cargo_diagnostics::CompilerDiagnostic,
+    ) -> Result<()> {
+        use crate::config::config;
+        use crate::history::HistoryDb;
+
+        if let Some(inv_id) = self.invocation_id {
+            let cfg = config();
+            if let Ok(db) = HistoryDb::open(&cfg.history_db_path()) {
+                db.record_diagnostic(
+                    inv_id,
+                    &diag.level,
+                    diag.code.as_deref(),
+                    &diag.message,
+                    diag.file_path.as_deref(),
+                    diag.line,
+                    diag.column,
+                    diag.rendered.as_deref(),
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Record multiple diagnostics to the history database.
+    pub fn record_diagnostics(
+        &self,
+        diagnostics: &[crate::cargo_diagnostics::CompilerDiagnostic],
+    ) -> Result<()> {
+        for diag in diagnostics {
+            self.record_diagnostic(diag)?;
+        }
+        Ok(())
+    }
+
+    /// Spawn a command as a background job.
+    ///
+    /// Returns a `CommandResult` with the job ID and log paths. The actual command
+    /// execution happens in a separate process.
+    pub fn spawn_background(&self, subcommand: &str, args: &[String]) -> Result<ExecutionResult> {
+        use crate::config::config;
+        use crate::jobs::JobManager;
+
+        let cfg = config();
+        let manager = JobManager::new(cfg.jobs_dir())?;
+        let job = manager.spawn_xtask(subcommand, args)?;
+
+        let result = ExecutionResult::success()
+            .with_message(format!("Started background job {}", job.id))
+            .with_data(serde_json::json!({
+                "job_id": job.id,
+                "stdout": job.stdout_path.display().to_string(),
+                "stderr": job.stderr_path.display().to_string(),
+                "command": subcommand,
+                "args": args,
+                "hint": format!("Monitor with: cargo xtask jobs status {}", job.id),
+            }));
+
+        if self.is_human() {
+            println!("🚀 Started background job {}", job.id);
+            println!("   Command: cargo xtask {} {}", subcommand, args.join(" "));
+            println!("   Logs: {}", job.stdout_path.display());
+            println!();
+            println!("   Monitor: cargo xtask jobs status {}", job.id);
+            println!("   Output:  cargo xtask jobs output {}", job.id);
+            println!("   Cancel:  cargo xtask jobs cancel {}", job.id);
+        }
+
+        Ok(result.with_duration(self.elapsed()))
     }
 }
 
@@ -363,7 +505,7 @@ pub trait XtaskCommand {
     /// - Use `ctx.writer()` for output formatting
     /// - Use `ProcessBuilder` for spawning processes
     /// - Return `CommandResult` with appropriate status and details
-    fn execute(&self, ctx: &CommandContext) -> Result<CommandResult>;
+    fn execute(&self, ctx: &CommandContext) -> Result<ExecutionResult>;
 
     /// Get command metadata (optional, defaults to basic metadata).
     #[allow(dead_code)]
@@ -381,11 +523,11 @@ mod tests {
     }
 
     impl XtaskCommand for TestCommand {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "test-command"
         }
 
-        fn execute(&self, _ctx: &CommandContext) -> Result<CommandResult> {
+        fn execute(&self, _ctx: &CommandContext) -> Result<ExecutionResult> {
             if self.should_fail {
                 Ok(CommandResult::failure(StructuredError {
                     code: "TEST_ERROR".to_string(),

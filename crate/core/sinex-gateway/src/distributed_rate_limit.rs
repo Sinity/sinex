@@ -29,7 +29,7 @@ pub struct DistributedRateLimitConfig {
 impl Default for DistributedRateLimitConfig {
     fn default() -> Self {
         Self {
-            requests_per_minute: NonZeroU32::new(6000).unwrap(), // 100 req/s
+            requests_per_minute: NonZeroU32::new(6000).expect("6000 is a non-zero constant"), // 100 req/s
             window_seconds: 60,
             enabled: true,
         }
@@ -40,14 +40,13 @@ impl DistributedRateLimitConfig {
     /// Load configuration from environment variables
     pub fn from_env() -> Self {
         let enabled = std::env::var("SINEX_RPC_RATE_LIMIT_ENABLED")
-            .map(|v| v.to_lowercase() != "false" && v != "0")
-            .unwrap_or(true);
+            .map_or(true, |v| v.to_lowercase() != "false" && v != "0");
 
         let requests_per_minute = std::env::var("SINEX_RPC_RATE_LIMIT_PER_MINUTE")
             .ok()
             .and_then(|v| v.parse().ok())
             .and_then(NonZeroU32::new)
-            .unwrap_or_else(|| NonZeroU32::new(6000).unwrap());
+            .unwrap_or_else(|| NonZeroU32::new(6000).expect("6000 is a non-zero constant"));
 
         let window_seconds = std::env::var("SINEX_RPC_RATE_LIMIT_WINDOW_SECS")
             .ok()
@@ -98,7 +97,7 @@ impl DistributedRateLimiter {
             return true;
         }
 
-        let key = format!("token:{}", token);
+        let key = format!("token:{token}");
 
         // Get current count (or 0 if not exists)
         let current_count = match self.kv.get(&key).await {
@@ -133,6 +132,7 @@ impl DistributedRateLimiter {
     }
 
     /// Check if rate limiting is enabled
+    #[must_use]
     pub fn is_enabled(&self) -> bool {
         self.config.enabled
     }

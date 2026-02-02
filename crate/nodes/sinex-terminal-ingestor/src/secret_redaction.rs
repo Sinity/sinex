@@ -16,19 +16,22 @@ lazy_static! {
         // AWS Access Key ID (AKIA/ASIA...)
         RedactionPattern {
             _name: "aws_access_key",
-            regex: Regex::new(r"(?i)\b(AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}\b").unwrap(),
+            regex: Regex::new(r"(?i)\b(AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}\b")
+                .expect("AWS access key regex pattern is valid at compile-time"),
             placeholder: "<AWS_ACCESS_KEY>",
         },
         // URLs with credentials
         RedactionPattern {
             _name: "url_credentials",
-            regex: Regex::new(r"(?i)([a-z]+://)([^:/]+):([^@]+)@").unwrap(),
+            regex: Regex::new(r"(?i)([a-z]+://)([^:/]+):([^@]+)@")
+                .expect("URL credentials regex pattern is valid at compile-time"),
             placeholder: "${1}${2}:<REDACTED>@",
         },
         // Private Key Headers
         RedactionPattern {
             _name: "private_key_header",
-            regex: Regex::new(r"(?i)-----BEGIN[ A-Z]+PRIVATE KEY-----").unwrap(),
+            regex: Regex::new(r"(?i)-----BEGIN[ A-Z]+PRIVATE KEY-----")
+                .expect("Private key header regex pattern is valid at compile-time"),
             placeholder: "<PRIVATE_KEY_HEADER>",
         },
     ];
@@ -37,12 +40,14 @@ lazy_static! {
     // Matches 40 char alphanumeric strings only if they look "random" (mixed case, numbers) and are likely an argument
     // Regex is tricky for "randomness", so we rely on length and charset.
     // We'll target specific flags.
-    static ref CLI_FLAG_SECRET: Regex = Regex::new(r"(?i)(--password|--secret|--token|--key)\s+([^\s]+)").unwrap();
+    static ref CLI_FLAG_SECRET: Regex = Regex::new(r"(?i)(--password|--secret|--token|--key)\s+([^\s]+)")
+        .expect("CLI flag secret regex pattern is valid at compile-time");
 }
 
 impl SecretRedactor {
     /// Redact sensitive information from the input string
-    pub fn redact<'a>(input: &'a str) -> Cow<'a, str> {
+    #[must_use]
+    pub fn redact(input: &str) -> Cow<'_, str> {
         let mut result = Cow::Borrowed(input);
 
         // Apply global patterns

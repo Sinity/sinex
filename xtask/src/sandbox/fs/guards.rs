@@ -9,7 +9,7 @@ use sqlx::pool::PoolConnection;
 use std::ffi::OsStr;
 use std::sync::{Mutex, MutexGuard};
 
-static ENV_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+static ENV_MUTEX: std::sync::LazyLock<Mutex<()>> = std::sync::LazyLock::new(|| Mutex::new(()));
 
 /// Guard for serializing environment-variable mutations inside tests.
 ///
@@ -174,7 +174,7 @@ impl TriggersGuard {
 
         for table in tables {
             let table_name = table.as_ref();
-            let query = format!("ALTER TABLE {} DISABLE TRIGGER ALL", table_name);
+            let query = format!("ALTER TABLE {table_name} DISABLE TRIGGER ALL");
 
             match sqlx::query(&query).execute(conn.as_mut()).await {
                 Ok(_) => disabled_tables.push(table_name.to_string()),
@@ -198,20 +198,20 @@ impl TriggersGuard {
     /// Re-enable triggers on all tables where they were disabled.
     pub async fn restore(self, conn: &mut PoolConnection<Postgres>) -> Result<()> {
         for table in &self.tables {
-            let query = format!("ALTER TABLE {} ENABLE TRIGGER ALL", table);
+            let query = format!("ALTER TABLE {table} ENABLE TRIGGER ALL");
             if let Err(e) = sqlx::query(&query).execute(conn.as_mut()).await {
-                if is_hypertable_trigger_toggle_error(&e) {
+                if !is_hypertable_trigger_toggle_error(&e) {
+                    tracing::warn!(
+                        error = %e,
+                        table = %table,
+                        "Failed to re-enable triggers after cleanup"
+                    );
+                } else {
                     tracing::warn!(
                         table = %table,
                         "Skipping trigger enable for hypertable after cleanup"
                     );
-                    continue;
                 }
-                tracing::warn!(
-                    error = %e,
-                    table = %table,
-                    "Failed to re-enable triggers after cleanup"
-                );
             }
         }
         Ok(())

@@ -1,6 +1,6 @@
 use serde_json::json;
-use sinex_primitives::DynamicPayload;
 use sinex_primitives::temporal::{now, Duration, Rfc3339};
+use sinex_primitives::DynamicPayload;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]

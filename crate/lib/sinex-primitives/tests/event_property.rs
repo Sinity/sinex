@@ -1,6 +1,6 @@
 //! Property tests for event-related functionality
 //!
-//! Migrated from test/property/event_property_test.rs to modern infrastructure.
+//! Migrated from `test/property/event_property_test.rs` to modern infrastructure.
 //! This module consolidates property tests for:
 //! - Event serialization and validation
 //! - Event ID properties (ULID-based)
@@ -10,9 +10,9 @@
 use proptest::prelude::*;
 use proptest::strategy::Strategy;
 use proptest::strategy::ValueTree;
-use serde_json::{json, Value as JsonValue};
+use serde_json::{json, Value, Value as JsonValue};
 use sinex_primitives::events::{OffsetKind, Provenance};
-use sinex_primitives::{Event, EventSource, EventType, HostName, Id, Result, Timestamp, Ulid};
+use sinex_primitives::{Event, EventSource, EventType, HostName, Id, Timestamp, Ulid};
 use time::Duration as TimeDuration;
 use xtask::sandbox::prelude::*;
 type RawEvent = Event<JsonValue>;
@@ -146,11 +146,14 @@ fn arb_version() -> impl Strategy<Value = String> {
 fn arb_timestamp() -> impl Strategy<Value = Timestamp> {
     // Generate timestamps from 1 year ago to 1 hour in the future
     let now = Timestamp::now();
-    let start = *now - TimeDuration::days(365);
-    let end = *now + TimeDuration::hours(1);
+    let start = now - TimeDuration::days(365);
+    let end = now + TimeDuration::hours(1);
 
-    (start.timestamp_millis()..=end.timestamp_millis())
-        .prop_map(move |ts| Timestamp::from_unix_timestamp_millis(ts).unwrap_or(now))
+    // Use unix timestamp in seconds and convert
+    let start_secs = (*start).unix_timestamp();
+    let end_secs = (*end).unix_timestamp();
+
+    (start_secs..=end_secs).prop_map(move |ts| Timestamp::from_unix_timestamp(ts).unwrap_or(now))
 }
 
 /// Strategy for generating complete Event instances
@@ -182,7 +185,7 @@ fn arb_event() -> impl Strategy<Value = RawEvent> {
 // Event Serialization Property Tests
 // =============================================================================
 
-proptest! {
+sinex_proptest! {
     fn test_event_serde_roundtrip(event: RawEvent in arb_event()) -> Result<()> {
         let json_str = serde_json::to_string(&event).unwrap();
         let deserialized: RawEvent = serde_json::from_str(&json_str).unwrap();
@@ -202,7 +205,7 @@ proptest! {
     }
 }
 
-proptest! {
+sinex_proptest! {
     fn test_event_id_properties(
         source: String in arb_source_name(),
         event_type: String in arb_event_type_name(),
@@ -232,10 +235,10 @@ proptest! {
         let now = Timestamp::now();
         let t1 = event1.id.as_ref().unwrap().as_ulid().timestamp();
         let t2 = event2.id.as_ref().unwrap().as_ulid().timestamp();
-        prop_assert!(t1 <= *now);
-        prop_assert!(t2 <= *now);
-        prop_assert!(*now - t1 < TimeDuration::seconds(10));
-        prop_assert!(*now - t2 < TimeDuration::seconds(10));
+        prop_assert!(t1 <= now);
+        prop_assert!(t2 <= now);
+        prop_assert!(now - t1 < TimeDuration::seconds(10));
+        prop_assert!(now - t2 < TimeDuration::seconds(10));
         Ok(())
     }
 
@@ -248,12 +251,12 @@ proptest! {
 
         let now = Timestamp::now();
         let t = event.id.as_ref().unwrap().as_ulid().timestamp();
-        prop_assert!(t <= *now);
-        prop_assert!(*now - t < TimeDuration::hours(1));
+        prop_assert!(t <= now);
+        prop_assert!(now - t < TimeDuration::hours(1));
 
         if let Some(ts_orig) = event.ts_orig {
-            prop_assert!(ts_orig <= *now + TimeDuration::hours(1));
-            prop_assert!(ts_orig >= *now - TimeDuration::days(365));
+            prop_assert!(ts_orig <= now + TimeDuration::hours(1));
+            prop_assert!(ts_orig >= now - TimeDuration::days(365));
         }
 
         prop_assert!(serde_json::to_string(&event.payload).is_ok());
@@ -388,35 +391,32 @@ fn arb_registry_source_name() -> impl Strategy<Value = String> {
     ]
 }
 
-proptest! {
+sinex_proptest! {
     fn test_event_type_validation_property(
         event_type_str: String in arb_event_type()
     ) {
         let event_type = EventType::new(event_type_str.clone());
-        match event_type.validate() {
-            Ok(()) => {
-                prop_assert!(!event_type_str.is_empty());
-                prop_assert!(!event_type_str.starts_with('.'));
-                prop_assert!(!event_type_str.ends_with('.'));
-                prop_assert!(!event_type_str.contains(".."));
-                prop_assert!(event_type_str.chars().all(|c|
+        if let Ok(()) = event_type.validate() {
+            prop_assert!(!event_type_str.is_empty());
+            prop_assert!(!event_type_str.starts_with('.'));
+            prop_assert!(!event_type_str.ends_with('.'));
+            prop_assert!(!event_type_str.contains(".."));
+            prop_assert!(event_type_str.chars().all(|c|
+                c.is_ascii_lowercase() || c == '.' || c == '_' || c == '-'
+            ));
+        } else {
+            let violates_rules = event_type_str.is_empty()
+                || event_type_str.starts_with('.')
+                || event_type_str.ends_with('.')
+                || event_type_str.contains("..")
+                || !event_type_str.chars().all(|c|
                     c.is_ascii_lowercase() || c == '.' || c == '_' || c == '-'
-                ));
-            }
-            Err(_) => {
-                let violates_rules = event_type_str.is_empty()
-                    || event_type_str.starts_with('.')
-                    || event_type_str.ends_with('.')
-                    || event_type_str.contains("..")
-                    || !event_type_str.chars().all(|c|
-                        c.is_ascii_lowercase() || c == '.' || c == '_' || c == '-'
-                    );
-                prop_assert!(
-                    violates_rules,
-                    "Event type '{}' failed validation but doesn't violate known rules",
-                    event_type_str
                 );
-            }
+            prop_assert!(
+                violates_rules,
+                "Event type '{}' failed validation but doesn't violate known rules",
+                event_type_str
+            );
         }
         Ok(())
     }
@@ -425,24 +425,21 @@ proptest! {
         source_str: String in arb_registry_source_name()
     ) -> Result<()> {
         let source = EventSource::new(source_str.clone());
-        match source.validate() {
-            Ok(()) => {
-                prop_assert!(!source_str.is_empty());
-                prop_assert!(source_str.chars().all(|c|
+        if let Ok(()) = source.validate() {
+            prop_assert!(!source_str.is_empty());
+            prop_assert!(source_str.chars().all(|c|
+                c.is_ascii_lowercase() || c == '-' || c == '_'
+            ));
+        } else {
+            let violates_rules = source_str.is_empty()
+                || !source_str.chars().all(|c|
                     c.is_ascii_lowercase() || c == '-' || c == '_'
-                ));
-            }
-            Err(_) => {
-                let violates_rules = source_str.is_empty()
-                    || !source_str.chars().all(|c|
-                        c.is_ascii_lowercase() || c == '-' || c == '_'
-                    );
-                prop_assert!(
-                    violates_rules,
-                    "Event source '{}' failed validation but doesn't violate known rules",
-                    source_str
                 );
-            }
+            prop_assert!(
+                violates_rules,
+                "Event source '{}' failed validation but doesn't violate known rules",
+                source_str
+            );
         }
         Ok(())
     }
@@ -472,8 +469,8 @@ mod unit_tests {
             .ts_orig
             .expect("test_event should stamp an original timestamp");
         let now = Timestamp::now();
-        assert!(ts_orig <= *now);
-        assert!(*now - ts_orig < TimeDuration::seconds(5));
+        assert!(ts_orig <= now);
+        assert!(now - ts_orig < TimeDuration::seconds(5));
         assert!(!event.host.is_empty()); // Should get hostname
         assert_eq!(event.ingestor_version.as_deref(), Some("test"));
         assert!(event.payload_schema_id.is_none());
@@ -532,8 +529,8 @@ mod unit_tests {
         // Test timestamp generator
         let timestamp = arb_timestamp().new_tree(&mut runner).unwrap().current();
         let now = Timestamp::now();
-        assert!(timestamp >= *now - TimeDuration::days(366));
-        assert!(timestamp <= *now + TimeDuration::hours(2));
+        assert!(timestamp >= now - TimeDuration::days(366));
+        assert!(timestamp <= now + TimeDuration::hours(2));
 
         Ok(())
     }

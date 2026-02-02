@@ -4,12 +4,6 @@
 #![doc = include_str!("../docs/coordination.md")]
 #![doc = include_str!("../docs/stage_as_you_go.md")]
 #![doc = include_str!("../docs/stream_runtime.md")]
-#![doc = include_str!("../docs/README.md")]
-#![doc = include_str!("../docs/overview.md")]
-#![doc = include_str!("../../../../docs/current/architecture/SystemOperations_And_Integrity_Architecture.md")]
-#![doc = include_str!("../docs/coordination.md")]
-#![doc = include_str!("../docs/stage_as_you_go.md")]
-#![doc = include_str!("../docs/stream_runtime.md")]
 
 //! # Sinex Node SDK
 //!
@@ -108,7 +102,6 @@ pub mod shutdown;
 #[cfg(feature = "messaging")]
 pub mod simple_ingestor;
 #[cfg(feature = "messaging")]
-#[cfg(feature = "messaging")]
 pub mod simple_node;
 #[cfg(feature = "messaging")]
 pub mod stage_as_you_go;
@@ -175,7 +168,6 @@ pub use shutdown::{default_checkpoint_path, ShutdownConfig, ShutdownHandler, Shu
 #[cfg(feature = "messaging")]
 pub use simple_ingestor::{IngestorState, SimpleIngestor, SimpleIngestorWrapper};
 #[cfg(feature = "messaging")]
-#[cfg(feature = "messaging")]
 pub use simple_node::{
     ErrorAction, PersistedState, SimpleNode, SimpleNodeConfig, SimpleNodeError, SimpleNodeWrapper,
 };
@@ -206,44 +198,23 @@ pub struct VersionInfo {
 
 impl VersionInfo {
     /// Create version info for the current component
+    ///
+    /// Uses shadow-rs build constants for git revision and version information.
     pub fn current(component_name: &str) -> Self {
-        let version = option_env!("NODE_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"));
-        let git_revision = option_env!("NODE_COMMIT_HASH")
-            .or_else(|| option_env!("GIT_HASH"))
-            .unwrap_or("unknown");
-        let mut binary_hash = option_env!("NODE_BINARY_HASH")
-            .or_else(|| option_env!("BINARY_HASH"))
-            .or_else(|| option_env!("GIT_HASH"))
-            .unwrap_or("unknown");
-        if binary_hash == "unknown" {
-            binary_hash = git_revision;
-        }
+        use version::{node_commit_hash, node_version};
+
+        let version = node_version()
+            .map(|v| v.to_string())
+            .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
+        let git_revision = node_commit_hash();
+        // For binary_hash, use commit hash as a proxy (same as git revision)
+        let binary_hash = git_revision.clone();
 
         Self {
-            git_revision: git_revision.to_string(),
-            binary_hash: binary_hash.to_string(),
+            git_revision,
+            binary_hash,
             component_version: format!("{}-v{}", component_name, version),
         }
-    }
-}
-
-#[cfg(test)]
-mod version_info_tests {
-    use super::VersionInfo;
-    use xtask::sandbox::sinex_test;
-
-    #[sinex_test]
-    async fn version_info_has_build_stamp() -> color_eyre::eyre::Result<()> {
-        let info = VersionInfo::current("build-stamp-check");
-        assert!(!info.git_revision.is_empty());
-        assert!(!info.binary_hash.is_empty());
-
-        if !cfg!(debug_assertions) {
-            assert_ne!(info.git_revision, "unknown");
-            assert_ne!(info.binary_hash, "unknown");
-        }
-
-        Ok(())
     }
 }
 
@@ -311,3 +282,23 @@ pub use sinex_primitives::Ulid;
 
 /// Result type for node operations
 pub type NodeResult<T> = std::result::Result<T, SinexError>;
+
+#[cfg(test)]
+mod version_info_tests {
+    use super::VersionInfo;
+    use xtask::sandbox::sinex_test;
+
+    #[sinex_test]
+    async fn version_info_has_build_stamp() -> color_eyre::eyre::Result<()> {
+        let info = VersionInfo::current("build-stamp-check");
+        assert!(!info.git_revision.is_empty());
+        assert!(!info.binary_hash.is_empty());
+
+        if !cfg!(debug_assertions) {
+            assert_ne!(info.git_revision, "unknown");
+            assert_ne!(info.binary_hash, "unknown");
+        }
+
+        Ok(())
+    }
+}

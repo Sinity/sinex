@@ -3,7 +3,7 @@
 //! This module defines the tables necessary to transform the Sinex event log into a
 //! semantically searchable and analyzable knowledge base. It leverages the `pgvector`
 //! extension to store and query high-dimensional vector embeddings directly within
-//! PostgreSQL, enabling powerful AI-driven features.
+//! `PostgreSQL`, enabling powerful AI-driven features.
 
 use crate::schema::{Events, TableDef};
 use crate::ulid::Ulid;
@@ -62,6 +62,7 @@ pub struct EmbeddingModelRecord {
 }
 
 impl EmbeddingModels {
+    #[must_use]
     pub fn create_table_statement() -> TableCreateStatement {
         Table::create()
             .table(Self::table_iden())
@@ -94,6 +95,7 @@ impl EmbeddingModels {
             .to_owned()
     }
 
+    #[must_use]
     pub fn create_indexes() -> Vec<IndexCreateStatement> {
         vec![Index::create()
             .name("uk_embedding_models_provider_model")
@@ -135,6 +137,7 @@ impl TableDef for EmbeddingCache {
 }
 
 impl EmbeddingCache {
+    #[must_use]
     pub fn create_table_statement() -> TableCreateStatement {
         Table::create()
             .table(Self::table_iden())
@@ -178,6 +181,7 @@ impl EmbeddingCache {
             .to_owned()
     }
 
+    #[must_use]
     pub fn create_indexes() -> Vec<IndexCreateStatement> {
         vec![Index::create()
             .name("uk_embedding_cache_hash_model")
@@ -189,6 +193,7 @@ impl EmbeddingCache {
     }
 
     /// Creates indexes, including the crucial vector index for similarity search.
+    #[must_use]
     pub fn create_indexes_sql() -> Vec<String> {
         vec![
             // Standard index for quick lookups by text hash and model.
@@ -231,6 +236,7 @@ impl TableDef for EventEmbeddings {
 }
 
 impl EventEmbeddings {
+    #[must_use]
     pub fn create_table_statement() -> TableCreateStatement {
         Table::create()
             .table(Self::table_iden())
@@ -275,6 +281,7 @@ impl EventEmbeddings {
             .to_owned()
     }
 
+    #[must_use]
     pub fn create_indexes() -> Vec<IndexCreateStatement> {
         vec![Index::create()
             .name("uk_event_embeddings_event_model")
@@ -285,6 +292,7 @@ impl EventEmbeddings {
             .to_owned()]
     }
 
+    #[must_use]
     pub fn create_indexes_sql() -> Vec<String> {
         vec![
             format!("CREATE INDEX IF NOT EXISTS ix_event_embeddings_vector ON core.event_embeddings USING hnsw (embedding vector_cosine_ops);"),
@@ -320,6 +328,7 @@ impl TableDef for EventClusters {
 }
 
 impl EventClusters {
+    #[must_use]
     pub fn create_table_statement() -> TableCreateStatement {
         Table::create()
             .table(Self::table_iden())
@@ -376,6 +385,7 @@ impl TableDef for EventClusterMembers {
 }
 
 impl EventClusterMembers {
+    #[must_use]
     pub fn create_table_statement() -> TableCreateStatement {
         Table::create()
             .table(Self::table_iden())

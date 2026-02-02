@@ -1,14 +1,13 @@
 //! Event generation integration tests
 //!
-//! Tests event generation patterns using TestContext's event publishing capabilities.
+//! Tests event generation patterns using `TestContext`'s event publishing capabilities.
 //! These tests verify that events can be generated correctly through various mechanisms.
 
-use sinex_primitives::{Event, DynamicPayload};
 use serde_json::Value as JsonValue;
+use sinex_primitives::{DynamicPayload, Event, Id, SourceMaterial};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use xtask::sandbox::prelude::*;
-use time::OffsetDateTime;
 
 // =============================================================================
 // Event Generation Test Structures
@@ -66,7 +65,7 @@ async fn test_event_basic_generation(ctx: TestContext) -> TestResult<()> {
         let event = ctx
             .publish(DynamicPayload::new(
                 "test-source",
-                format!("test.event.{}", i),
+                format!("test.event.{i}"),
                 serde_json::json!({
                     "event_id": i,
                     "data": format!("test data {}", i),
@@ -81,12 +80,12 @@ async fn test_event_basic_generation(ctx: TestContext) -> TestResult<()> {
     assert_eq!(events.len(), 5);
     for (i, event) in events.iter().enumerate() {
         assert_eq!(event.source.as_str(), "test-source");
-        assert_eq!(event.event_type.as_str(), format!("test.event.{}", i));
+        assert_eq!(event.event_type.as_str(), format!("test.event.{i}"));
 
         // Verify payload structure
         let payload = &event.payload;
         assert_eq!(payload["event_id"], i);
-        assert_eq!(payload["data"], format!("test data {}", i));
+        assert_eq!(payload["data"], format!("test data {i}"));
     }
 
     println!("✓ Basic event generation verified");
@@ -203,7 +202,7 @@ async fn test_filesystem_event_generation(ctx: TestContext) -> TestResult<()> {
 
         // Verify payload progression
         let payload = &event.payload;
-        assert_eq!(payload["path"], format!("/test/file_{}.txt", i));
+        assert_eq!(payload["path"], format!("/test/file_{i}.txt"));
         assert_eq!(payload["size"], 1024 + i * 100);
         assert_eq!(payload["event_index"], i);
     }
@@ -284,10 +283,12 @@ async fn test_concurrent_event_generation(ctx: TestContext) -> TestResult<()> {
 
         for i in 0..5 {
             let data = TestEventData::filesystem_event(i, "concurrent-fs");
-            let event_res = DynamicPayload::new(data.source, data.event_type, data.payload).build();
+            let event_res = DynamicPayload::new(data.source, data.event_type, data.payload)
+                .from_material_at(Id::<SourceMaterial>::new(), 0)
+                .build();
 
             if let Ok(event) = event_res {
-                if let Ok(_) = repo.insert(event.clone()).await {
+                if repo.insert(event.clone()).await.is_ok() {
                     let _ = fs_tx.send(event).await;
                 }
             }
@@ -304,10 +305,12 @@ async fn test_concurrent_event_generation(ctx: TestContext) -> TestResult<()> {
         let commands = ["ls", "pwd", "date", "whoami", "uname"];
         for i in 0..5 {
             let data = TestEventData::command_event(i, commands[i]);
-            let event_res = DynamicPayload::new(data.source, data.event_type, data.payload).build();
+            let event_res = DynamicPayload::new(data.source, data.event_type, data.payload)
+                .from_material_at(Id::<SourceMaterial>::new(), 0)
+                .build();
 
             if let Ok(event) = event_res {
-                if let Ok(_) = repo.insert(event.clone()).await {
+                if repo.insert(event.clone()).await.is_ok() {
                     let _ = cmd_tx.send(event).await;
                 } else {
                     eprintln!("Failed to insert command event {i}");
@@ -405,9 +408,9 @@ async fn test_event_generation_performance(ctx: TestContext) -> TestResult<()> {
     let generation_rate = event_count as f64 / generation_time.as_secs_f64();
 
     println!("Event generation performance:");
-    println!("- Generated {} events", event_count);
-    println!("- Generation time: {:?}", generation_time);
-    println!("- Generation rate: {:.2} events/second", generation_rate);
+    println!("- Generated {event_count} events");
+    println!("- Generation time: {generation_time:?}");
+    println!("- Generation rate: {generation_rate:.2} events/second");
 
     // Verify all events were generated correctly
     assert_eq!(all_events.len(), event_count);

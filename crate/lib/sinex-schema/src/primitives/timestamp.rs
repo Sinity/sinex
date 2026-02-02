@@ -11,16 +11,19 @@ pub struct Timestamp(#[serde(with = "time::serde::rfc3339")] OffsetDateTime);
 
 impl Timestamp {
     /// Returns the current time in UTC.
+    #[must_use]
     pub fn now() -> Self {
         Self(OffsetDateTime::now_utc())
     }
 
-    /// Create from inner OffsetDateTime
+    /// Create from inner `OffsetDateTime`
+    #[must_use]
     pub fn new(dt: OffsetDateTime) -> Self {
         Self(dt)
     }
 
-    /// Get the inner OffsetDateTime
+    /// Get the inner `OffsetDateTime`
+    #[must_use]
     pub fn inner(&self) -> OffsetDateTime {
         self.0
     }
@@ -32,9 +35,14 @@ impl Timestamp {
 
     /// Create from Unix timestamp in milliseconds.
     pub fn from_unix_timestamp_millis(ms: i64) -> Option<Self> {
-        OffsetDateTime::from_unix_timestamp_nanos(ms as i128 * 1_000_000)
+        OffsetDateTime::from_unix_timestamp_nanos(i128::from(ms) * 1_000_000)
             .ok()
             .map(Self)
+    }
+
+    /// Create from Unix timestamp in nanoseconds.
+    pub fn from_unix_timestamp_nanos(ns: i128) -> Option<Self> {
+        OffsetDateTime::from_unix_timestamp_nanos(ns).ok().map(Self)
     }
 
     /// Parse from an RFC3339 string.
@@ -44,6 +52,7 @@ impl Timestamp {
     }
 
     /// Format as an RFC3339 string.
+    #[must_use]
     pub fn format_rfc3339(&self) -> String {
         use time::format_description::well_known::Rfc3339;
         self.0
@@ -52,13 +61,15 @@ impl Timestamp {
     }
 
     /// Get the sub-microsecond component (0-999 nanoseconds).
-    /// PostgreSQL's timestamptz has microsecond precision; this captures the remaining resolution.
+    /// `PostgreSQL`'s timestamptz has microsecond precision; this captures the remaining resolution.
+    #[must_use]
     pub fn subnano(&self) -> i32 {
         (self.0.nanosecond() % 1_000) as i32
     }
 
     /// Reconstruct a high-precision timestamp from a Postgres timestamp (microsecond precision)
     /// and a sub-microsecond nanosecond remainder (0-999).
+    #[must_use]
     pub fn from_postgres_timestamp(base: OffsetDateTime, sub_nanos: i32) -> Self {
         let nanos = base.nanosecond();
         // Ensure the base doesn't already have the sub-nanos (if it came from a source that preserved them)
@@ -76,8 +87,9 @@ impl Timestamp {
     /// Split into a Postgres-compatible timestamp (truncated to microseconds)
     /// and the sub-microsecond nanosecond remainder (0-999).
     ///
-    /// This ensures that (ts_db, sub_nano) stored in the database can be perfectly
+    /// This ensures that (`ts_db`, `sub_nano`) stored in the database can be perfectly
     /// reconstructed into the original nanosecond-precision timestamp.
+    #[must_use]
     pub fn to_postgres_parts(&self) -> (OffsetDateTime, i32) {
         let full_nanos = self.0.nanosecond();
         let sub_nano = (full_nanos % 1_000) as i32;
@@ -91,6 +103,15 @@ impl Timestamp {
 impl From<OffsetDateTime> for Timestamp {
     fn from(dt: OffsetDateTime) -> Self {
         Self(dt)
+    }
+}
+
+impl From<std::time::SystemTime> for Timestamp {
+    fn from(st: std::time::SystemTime) -> Self {
+        // Convert SystemTime to OffsetDateTime (fallible, but we use a fallback)
+        match OffsetDateTime::from(st) {
+            dt => Self(dt),
+        }
     }
 }
 
@@ -151,7 +172,7 @@ impl schemars::JsonSchema for Timestamp {
 // SQLx support
 #[cfg(feature = "sqlx")]
 mod sqlx_impl {
-    use super::*;
+    use super::{OffsetDateTime, Timestamp};
     use sqlx::postgres::{PgArgumentBuffer, PgHasArrayType, PgTypeInfo, PgValueRef};
     use sqlx::{Decode, Encode, Postgres, Type};
 
@@ -167,7 +188,7 @@ mod sqlx_impl {
         }
     }
 
-    impl<'q> Encode<'q, Postgres> for Timestamp {
+    impl Encode<'_, Postgres> for Timestamp {
         fn encode_by_ref(
             &self,
             buf: &mut PgArgumentBuffer,

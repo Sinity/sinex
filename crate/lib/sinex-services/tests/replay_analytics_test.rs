@@ -1,9 +1,10 @@
-use chrono::{Duration as ChronoDuration, Utc};
 use serde_json::json;
 use sinex_db::replay::state_machine::{ReplayScope, ReplayState, ReplayStateMachine};
+use sinex_primitives::temporal;
 use sinex_primitives::DynamicPayload;
 use sinex_services::AnalyticsService;
 use std::collections::HashMap;
+use time::Duration;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
@@ -19,13 +20,10 @@ async fn replay_outcomes_surface_in_analytics(ctx: TestContext) -> TestResult<()
     .await?;
 
     let replay = ReplayStateMachine::new(ctx.pool.clone());
-    let end = Utc::now();
+    let end = temporal::now();
     let scope = ReplayScope {
         processor_id: "fs-test".to_string(),
-        time_window: Some((
-            end - ChronoDuration::hours(1),
-            end + ChronoDuration::minutes(1),
-        )),
+        time_window: Some(((end - Duration::hours(1)), (end + Duration::minutes(1)))),
         material_filter: None,
         filters: HashMap::new(),
     };

@@ -10,7 +10,7 @@ use sinex_schema::ulid::Ulid;
 /// Trait for types that can be used as event payloads.
 ///
 /// Implementing this trait allows for strongly-typed event processing.
-/// Each payload type defines its constant Source and EventType.
+/// Each payload type defines its constant Source and `EventType`.
 pub trait EventPayload: Serialize + DeserializeOwned + Send + Sync + 'static {
     /// The event source for this payload type
     const SOURCE: EventSource;
@@ -30,6 +30,7 @@ pub trait EventPayload: Serialize + DeserializeOwned + Send + Sync + 'static {
     }
 
     /// Start building an event from this payload with material provenance.
+    #[allow(clippy::wrong_self_convention)] // Intentional: consumes self to build event
     fn from_material(
         self,
         material_id: impl Into<Id<SourceMaterial>>,
@@ -41,6 +42,7 @@ pub trait EventPayload: Serialize + DeserializeOwned + Send + Sync + 'static {
     }
 
     /// Start building an event from this payload with synthesis provenance.
+    #[allow(clippy::wrong_self_convention)] // Intentional: consumes self to build event
     fn from_parents<I>(self, parents: I) -> Result<EventBuilder<Self, HasProvenance>>
     where
         Self: Sized,
@@ -85,7 +87,9 @@ where
     }
 
     fn to_json_value(&self) -> Result<JsonValue> {
-        serde_json::to_value(self).map_err(|e| SinexError::serialization(e.to_string()))
+        serde_json::to_value(self).map_err(|e| {
+            SinexError::serialization("failed to serialize event payload").with_std_error(&e)
+        })
     }
 }
 
@@ -116,11 +120,13 @@ impl DynamicPayload {
     }
 
     /// Access the underlying JSON payload
+    #[must_use]
     pub fn payload(&self) -> &JsonValue {
         &self.payload
     }
 
     /// Take ownership of the JSON payload
+    #[must_use]
     pub fn into_payload(self) -> JsonValue {
         self.payload
     }
@@ -151,16 +157,19 @@ impl DynamicPayload {
     }
 
     /// Build an event with explicit provenance.
+    #[must_use]
     pub fn with_provenance(self, provenance: Provenance) -> EventBuilder<JsonValue, HasProvenance> {
         self.into_builder().with_provenance(provenance)
     }
 
     /// Convert directly to an event with explicit provenance.
+    #[must_use]
     pub fn into_event(self, provenance: Provenance) -> Event<JsonValue> {
         Event::new_json(self.source, self.event_type, self.payload, provenance)
     }
 
-    /// Convert into an EventBuilder
+    /// Convert into an `EventBuilder`
+    #[must_use]
     pub fn into_builder(self) -> EventBuilder<JsonValue, NoProvenance> {
         EventBuilder::new_internal(self.source, self.event_type, self.payload)
     }
@@ -182,6 +191,7 @@ impl DynamicPayload {
     }
 
     /// Set schema ID before adding provenance.
+    #[must_use]
     pub fn schema_id(self, schema_id: Ulid) -> EventBuilder<JsonValue, NoProvenance> {
         self.into_builder().schema_id(schema_id)
     }

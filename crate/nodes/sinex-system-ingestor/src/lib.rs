@@ -31,7 +31,7 @@ mod common {
 
     // External dependencies
 
-    pub use {
+    pub(crate) use {
         async_trait::async_trait,
         tracing::{info, instrument},
     };

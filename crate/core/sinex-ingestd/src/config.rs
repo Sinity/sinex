@@ -21,7 +21,7 @@ use validator::{Validate, ValidationError};
 #[derive(Debug, Clone, Serialize, Deserialize, Validate, bon::Builder)]
 #[builder(on(String, into))]
 pub struct IngestdConfig {
-    /// Database URL for PostgreSQL connection
+    /// Database URL for `PostgreSQL` connection
     #[validate(url(message = "Invalid database URL"))]
     #[validate(custom(
         function = "validate_postgres_url",
@@ -50,7 +50,7 @@ pub struct IngestdConfig {
     #[builder(default = default_batch_timeout_secs())]
     #[validate(custom(function = "validate_batch_timeout_secs"))]
     pub batch_timeout_secs: Seconds,
-    /// Maximum messages to fetch per JetStream pull batch
+    /// Maximum messages to fetch per `JetStream` pull batch
     #[builder(default = default_consumer_fetch_max_messages())]
     #[validate(range(
         min = 1,
@@ -58,12 +58,12 @@ pub struct IngestdConfig {
         message = "Fetch batch size must be between 1 and 10000"
     ))]
     pub consumer_fetch_max_messages: usize,
-    /// JetStream pull expiration timeout in milliseconds
+    /// `JetStream` pull expiration timeout in milliseconds
     #[serde(default = "default_consumer_fetch_timeout_ms")]
     #[builder(default = default_consumer_fetch_timeout_ms())]
     #[validate(custom(function = "validate_fetch_timeout"))]
     pub consumer_fetch_timeout_ms: Milliseconds,
-    /// Maximum unacknowledged messages for the main JetStream consumer
+    /// Maximum unacknowledged messages for the main `JetStream` consumer
     #[builder(default = default_consumer_max_ack_pending())]
     #[validate(range(
         min = 1,
@@ -114,7 +114,7 @@ pub struct IngestdConfig {
     #[builder(default = String::from("ingestd"))]
     pub nats_consumer_name: String,
 
-    /// Optional namespace appended to all JetStream subjects/streams (used by tests).
+    /// Optional namespace appended to all `JetStream` subjects/streams (used by tests).
     #[serde(default)]
     pub nats_namespace: Option<String>,
 
@@ -141,7 +141,7 @@ pub struct IngestdConfig {
     /// When enabled, ingestd will reject any event that doesn't have a registered schema.
     /// When disabled (default), events without schemas are allowed but won't be validated.
     ///
-    /// Set via: SINEX_INGESTD_STRICT_VALIDATION=true
+    /// Set via: `SINEX_INGESTD_STRICT_VALIDATION=true`
     #[serde(default)]
     #[builder(default = false)]
     pub strict_validation: bool,
@@ -199,9 +199,9 @@ impl IngestdConfig {
         // Note: CLI args for certs are not yet exposed in this helper, users should use env vars or config file for full TLS.
         // We only map the basic URL and require_tls flag here as they are common CLI args.
         let mut nats_config = sinex_primitives::nats::NatsConnectionConfig::from_env();
-        nats_config.url = nats_url.clone();
+        nats_config.url = nats_url;
         nats_config.require_tls = nats_require_tls;
-        let nats_config_clone = nats_config.clone();
+        let nats_config_clone = nats_config;
 
         let db_url = database_url.unwrap_or_else(default_database_url);
         let mut config = Self::default();
@@ -346,12 +346,13 @@ impl IngestdConfig {
     }
 
     /// Get database connection options
+    #[must_use]
     pub fn get_db_options(&self) -> sqlx::postgres::PgPoolOptions {
         sqlx::postgres::PgPoolOptions::new()
             .max_connections(self.database_pool_size)
             .acquire_timeout(std::time::Duration::from_secs(30))
-            .idle_timeout(std::time::Duration::from_secs(600))
-            .max_lifetime(std::time::Duration::from_secs(1800))
+            .idle_timeout(std::time::Duration::from_mins(10))
+            .max_lifetime(std::time::Duration::from_mins(30))
             .before_acquire(|conn, _meta| {
                 Box::pin(async move {
                     // Clean up any lingering transaction state before returning to caller.
@@ -432,13 +433,12 @@ impl Default for IngestdConfig {
 
 /// Default database URL with environment namespacing
 fn default_database_url() -> String {
-    match std::env::var("DATABASE_URL") {
-        Ok(url) => environment().database_url(&url).unwrap_or(url),
-        Err(_) => {
-            let env = environment();
-            let base_name = env.database_name("sinex");
-            format!("postgresql:///{base_name}?host=/run/postgresql")
-        }
+    if let Ok(url) = std::env::var("DATABASE_URL") {
+        environment().database_url(&url).unwrap_or(url)
+    } else {
+        let env = environment();
+        let base_name = env.database_name("sinex");
+        format!("postgresql:///{base_name}?host=/run/postgresql")
     }
 }
 

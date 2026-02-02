@@ -68,24 +68,21 @@ impl TestCounters {
     pub fn delivery_count(&self) -> u64 {
         self.deliveries
             .as_ref()
-            .map(|c| c.load(std::sync::atomic::Ordering::SeqCst))
-            .unwrap_or(0)
+            .map_or(0, |c| c.load(std::sync::atomic::Ordering::SeqCst))
     }
 
     /// Check if fail_once has been triggered (is now false).
     pub fn has_failed_once(&self) -> bool {
         self.fail_once
             .as_ref()
-            .map(|f| !f.load(std::sync::atomic::Ordering::SeqCst))
-            .unwrap_or(false)
+            .is_some_and(|f| !f.load(std::sync::atomic::Ordering::SeqCst))
     }
 
     /// Get remaining confirmation failures.
     pub fn remaining_confirmation_failures(&self) -> usize {
         self.confirmation_failures
             .as_ref()
-            .map(|c| c.load(std::sync::atomic::Ordering::SeqCst))
-            .unwrap_or(0)
+            .map_or(0, |c| c.load(std::sync::atomic::Ordering::SeqCst))
     }
 }
 

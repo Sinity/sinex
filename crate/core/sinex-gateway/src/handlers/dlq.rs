@@ -8,8 +8,8 @@
 
 use color_eyre::eyre::{eyre, Context, Result};
 use serde_json::Value;
-use sinex_primitives::environment::SinexEnvironment;
 use sinex_node_sdk::dlq_retry::{DlqRetryConfig, DlqRetryHandler};
+use sinex_primitives::environment::SinexEnvironment;
 use std::time::Duration;
 
 // Re-export RPC types for consistency
@@ -111,7 +111,7 @@ pub async fn handle_dlq_peek(
                     .headers
                     .as_ref()
                     .and_then(|h| h.get("Original-Subject"))
-                    .map(|v| v.to_string());
+                    .map(std::string::ToString::to_string);
 
                 // Create safe preview of payload (limit size)
                 let payload_str = String::from_utf8_lossy(&msg.payload);
@@ -121,7 +121,7 @@ pub async fn handle_dlq_peek(
                     payload_str.to_string()
                 };
 
-                let sequence = msg.info().map(|info| info.stream_sequence).unwrap_or(0);
+                let sequence = msg.info().map_or(0, |info| info.stream_sequence);
 
                 previews.push(DlqMessagePeek {
                     subject: msg.subject.to_string(),
@@ -244,7 +244,7 @@ pub async fn handle_dlq_purge(
 mod tests {
     use super::*;
     use serde_json::json;
-    use sinex_primitives::environment;
+    use sinex_primitives::{environment, temporal};
     use xtask::sandbox::{sinex_test, EphemeralNats};
 
     #[sinex_test]

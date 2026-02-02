@@ -20,13 +20,13 @@ fn rpc_url_strategy() -> impl Strategy<Value = String> {
         Just("https://127.0.0.1:9999".to_string()),
         Just("https://localhost:9999".to_string()),
         Just("http://localhost:8080".to_string()),
-        (1..=65535u16).prop_map(|port| format!("https://127.0.0.1:{}", port)),
+        (1..=65535u16).prop_map(|port| format!("https://127.0.0.1:{port}")),
     ]
 }
 
 /// Generate a valid bearer token (alphanumeric + common token chars).
 fn token_strategy() -> impl Strategy<Value = String> {
-    "[a-zA-Z0-9_\\-]{16,64}".prop_map(|s| s.to_string())
+    "[a-zA-Z0-9_\\-]{16,64}".prop_map(|s| s)
 }
 
 /// Generate a valid timeout value.
@@ -69,7 +69,7 @@ fn output_format_strategy() -> impl Strategy<Value = OutputFormat> {
 
 /// Generate a valid alias name (simple identifier).
 fn alias_name_strategy() -> impl Strategy<Value = String> {
-    "[a-z][a-z0-9_]{0,15}".prop_map(|s| s.to_string())
+    "[a-z][a-z0-9_]{0,15}".prop_map(|s| s)
 }
 
 /// Generate an alias command (list of arguments).
@@ -77,7 +77,7 @@ fn alias_command_strategy() -> impl Strategy<Value = Vec<String>> {
     prop::collection::vec("[a-z0-9\\-]{1,20}", 1..=5)
 }
 
-/// Generate a ThemeConfig.
+/// Generate a `ThemeConfig`.
 fn theme_config_strategy() -> impl Strategy<Value = ThemeConfig> {
     (
         table_style_strategy(),
@@ -100,7 +100,7 @@ fn config_strategy() -> impl Strategy<Value = Config> {
     (
         rpc_url_strategy(),
         prop::option::of(token_strategy()),
-        prop::option::of("[a-zA-Z0-9/._\\-]{5,50}".prop_map(|s| s.to_string())),
+        prop::option::of("[a-zA-Z0-9/._\\-]{5,50}".prop_map(|s| s)),
         timeout_strategy(),
         output_format_strategy(),
         prop::collection::hash_map(alias_name_strategy(), alias_command_strategy(), 0..=3),
@@ -178,8 +178,8 @@ proptest! {
         let parsed: OutputFormat = serde_json::from_str(&json_str).expect("should deserialize");
 
         // Match the discriminant
-        let original_name = format!("{:?}", format);
-        let parsed_name = format!("{:?}", parsed);
+        let original_name = format!("{format:?}");
+        let parsed_name = format!("{parsed:?}");
         prop_assert_eq!(original_name, parsed_name);
     }
 }
@@ -240,7 +240,7 @@ struct TestOutputItem {
     count: u64,
 }
 
-/// Generate a TestOutputItem.
+/// Generate a `TestOutputItem`.
 fn test_output_item_strategy() -> impl Strategy<Value = TestOutputItem> {
     ("[a-zA-Z0-9]{8,16}", "[a-zA-Z ]{3,20}", 0u64..=1_000_000u64)
         .prop_map(|(id, name, count)| TestOutputItem { id, name, count })
@@ -324,8 +324,8 @@ proptest! {
         whitespace in "[ \t\n]+",
         suffix in "[a-z\\.]{1,10}"
     ) {
-        let subject_with_ws = format!("{}{}{}", prefix, whitespace, suffix);
-        let has_whitespace = subject_with_ws.chars().any(|c| c.is_whitespace());
+        let subject_with_ws = format!("{prefix}{whitespace}{suffix}");
+        let has_whitespace = subject_with_ws.chars().any(char::is_whitespace);
         prop_assert!(has_whitespace, "Subject should contain whitespace");
     }
 

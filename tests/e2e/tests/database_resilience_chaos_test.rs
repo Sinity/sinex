@@ -1,19 +1,19 @@
 // # Database Resilience Chaos Tests
 //
-// Tests for system resilience under database connection failures and Redis stream failures.
+// Tests for system resilience under database connection failures and stream failures.
 // Simulates network failures, retries, and recovery scenarios.
 
 use futures::future::join_all;
-use serde_json::json;
-use sinex_primitives::{DynamicPayload, Timestamp};
-use xtask::sandbox::prelude::*;
-use xtask::sandbox::timing::Timeouts;
+use sinex_db::DbPoolExt;
+use sinex_primitives::Timestamp;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use xtask::sandbox::prelude::*;
 
 /// Test system resilience under database connection failures
 #[sinex_test]
 async fn test_database_failure_resilience(ctx: TestContext) -> TestResult<()> {
+    let pool = ctx.pool().clone();
     let failure_count = Arc::new(AtomicU64::new(0));
     let recovery_count = Arc::new(AtomicU64::new(0));
     let event_count = Arc::new(AtomicU64::new(0));
@@ -22,7 +22,7 @@ async fn test_database_failure_resilience(ctx: TestContext) -> TestResult<()> {
 
     // Simulate database operations under failure conditions
     for worker_id in 0..5 {
-        let ctx_clone = ctx.clone();
+        let pool_clone = pool.clone();
         let failures = failure_count.clone();
         let recoveries = recovery_count.clone();
         let events = event_count.clone();
@@ -36,61 +36,49 @@ async fn test_database_failure_resilience(ctx: TestContext) -> TestResult<()> {
                     // Simulate database failure
                     failures.fetch_add(1, Ordering::SeqCst);
                     println!(
-                        "Worker {} operation {} - simulated database failure",
-                        worker_id, operation_id
+                        "Worker {worker_id} operation {operation_id} - simulated database failure"
                     );
 
                     // Simulate retry logic with exponential backoff
                     for retry in 0..3 {
                         tokio::time::sleep(Duration::from_millis(100 * (1 << retry))).await;
 
-                        match ctx_clone
-                            .publish(
-                                DynamicPayload::new(
-                                    &format!("chaos-worker-{}", worker_id),
-                                    &format!("database.retry.{}.{}", operation_id, retry),
-                                    json!({"worker": worker_id, "operation": operation_id, "retry": retry}),
-                                )
-                            )
-                            .await
-                        {
+                        let event = sinex_primitives::testing::event_fixture(
+                            format!("chaos-worker-{worker_id}"),
+                            format!("database.retry.{operation_id}.{retry}"),
+                            json!({"worker": worker_id, "operation": operation_id, "retry": retry}),
+                        );
+
+                        match pool_clone.events().insert(event).await {
                             Ok(_) => {
                                 recoveries.fetch_add(1, Ordering::SeqCst);
                                 println!(
-                                    "Worker {} operation {} retry {} succeeded",
-                                    worker_id, operation_id, retry
+                                    "Worker {worker_id} operation {operation_id} retry {retry} succeeded"
                                 );
                                 break;
                             }
                             Err(e) => {
                                 println!(
-                                    "Worker {} operation {} retry {} failed: {}",
-                                    worker_id, operation_id, retry, e
+                                    "Worker {worker_id} operation {operation_id} retry {retry} failed: {e}"
                                 );
                             }
                         }
                     }
                 } else {
                     // Normal database operation
-                    match ctx_clone
-                        .publish(
-                            DynamicPayload::new(
-                                &format!("chaos-worker-{}", worker_id),
-                                &format!("database.operation.{}", operation_id),
-                                json!({"worker": worker_id, "operation": operation_id}),
-                            )
-                        )
-                        .await
-                    {
+                    let event = sinex_primitives::testing::event_fixture(
+                        format!("chaos-worker-{worker_id}"),
+                        format!("database.operation.{operation_id}"),
+                        json!({"worker": worker_id, "operation": operation_id}),
+                    );
+
+                    match pool_clone.events().insert(event).await {
                         Ok(_) => {
                             recoveries.fetch_add(1, Ordering::SeqCst);
                         }
                         Err(e) => {
                             failures.fetch_add(1, Ordering::SeqCst);
-                            println!(
-                                "Worker {} operation {} failed: {}",
-                                worker_id, operation_id, e
-                            );
+                            println!("Worker {worker_id} operation {operation_id} failed: {e}");
                         }
                     }
                 }
@@ -109,21 +97,14 @@ async fn test_database_failure_resilience(ctx: TestContext) -> TestResult<()> {
     let total_recoveries = recovery_count.load(Ordering::SeqCst);
 
     println!("Database failure resilience test results:");
-    println!("- Total events attempted: {}", total_events);
-    println!("- Total failures: {}", total_failures);
-    println!("- Total recoveries: {}", total_recoveries);
+    println!("- Total events attempted: {total_events}");
+    println!("- Total failures: {total_failures}");
+    println!("- Total recoveries: {total_recoveries}");
 
     // Verify database state after chaos
-    let final_events = sqlx::query!(
-        r#"SELECT COUNT(*) as "count!" FROM core.events WHERE source LIKE 'chaos-worker-%'"#
-    )
-    .fetch_one(ctx.pool())
-    .await?;
+    let final_events = pool.events().count_all().await?;
 
-    println!(
-        "Events successfully stored: {}",
-        final_events.count
-    );
+    println!("Events successfully stored: {final_events}");
 
     // System should show resilience - some operations should succeed
     assert!(
@@ -139,6 +120,7 @@ async fn test_database_failure_resilience(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 async fn test_stream_failure_resilience(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
+    let pool = ctx.pool().clone();
 
     let stream_operations = Arc::new(AtomicU64::new(0));
     let stream_failures = Arc::new(AtomicU64::new(0));
@@ -148,7 +130,7 @@ async fn test_stream_failure_resilience(ctx: TestContext) -> TestResult<()> {
 
     // Simulate stream operations under failure conditions
     for worker_id in 0..3 {
-        let ctx_clone = ctx.clone();
+        let pool_clone = pool.clone();
         let operations = stream_operations.clone();
         let failures = stream_failures.clone();
         let recoveries = stream_recoveries.clone();
@@ -161,71 +143,56 @@ async fn test_stream_failure_resilience(ctx: TestContext) -> TestResult<()> {
                     "worker": worker_id,
                     "stream": stream_id,
                     "timestamp": Timestamp::now().to_string(),
-                    "data": format!("chaos-event-{}-{}", worker_id, stream_id)
+                    "data": format!("chaos-event-{worker_id}-{stream_id}")
                 });
 
                 // Simulate intermittent failures
                 if stream_id % 10 == 0 {
                     failures.fetch_add(1, Ordering::SeqCst);
-                    println!(
-                        "Worker {} stream {} - simulated stream failure",
-                        worker_id, stream_id
-                    );
+                    println!("Worker {worker_id} stream {stream_id} - simulated stream failure");
 
                     // Simulate retry with exponential backoff
                     for retry in 0..3 {
                         tokio::time::sleep(Duration::from_millis(200 * (1 << retry))).await;
 
-                        match ctx_clone
-                            .publish(
-                                DynamicPayload::new(
-                                    &format!("stream-chaos-{}", worker_id),
-                                    &format!("stream.retry.{}", stream_id),
-                                    event_data.clone(),
-                                )
-                            )
-                            .await
-                        {
+                        let event = sinex_primitives::testing::event_fixture(
+                            format!("stream-chaos-{worker_id}"),
+                            format!("stream.retry.{stream_id}"),
+                            event_data.clone(),
+                        );
+
+                        match pool_clone.events().insert(event).await {
                             Ok(_) => {
                                 recoveries.fetch_add(1, Ordering::SeqCst);
                                 println!(
-                                    "Worker {} stream {} retry {} - succeeded",
-                                    worker_id, stream_id, retry
+                                    "Worker {worker_id} stream {stream_id} retry {retry} - succeeded"
                                 );
                                 break;
                             }
                             Err(e) => {
                                 println!(
-                                    "Worker {} stream {} retry {} - failed: {}",
-                                    worker_id, stream_id, retry, e
+                                    "Worker {worker_id} stream {stream_id} retry {retry} - failed: {e}"
                                 );
                             }
                         }
                     }
                 } else {
                     // Normal stream operation
-                    match ctx_clone
-                        .publish(
-                            DynamicPayload::new(
-                                &format!("stream-chaos-{}", worker_id),
-                                &format!("stream.operation.{}", stream_id),
-                                event_data,
-                            )
-                        )
-                        .await
-                    {
+                    let event = sinex_primitives::testing::event_fixture(
+                        format!("stream-chaos-{worker_id}"),
+                        format!("stream.operation.{stream_id}"),
+                        event_data,
+                    );
+
+                    match pool_clone.events().insert(event).await {
                         Ok(_) => {
                             recoveries.fetch_add(1, Ordering::SeqCst);
-                            println!(
-                                "Worker {} stream {} - operation succeeded",
-                                worker_id, stream_id
-                            );
+                            println!("Worker {worker_id} stream {stream_id} - operation succeeded");
                         }
                         Err(e) => {
                             failures.fetch_add(1, Ordering::SeqCst);
                             println!(
-                                "Worker {} stream {} - operation failed: {}",
-                                worker_id, stream_id, e
+                                "Worker {worker_id} stream {stream_id} - operation failed: {e}"
                             );
                         }
                     }
@@ -245,9 +212,9 @@ async fn test_stream_failure_resilience(ctx: TestContext) -> TestResult<()> {
     let total_recoveries = stream_recoveries.load(Ordering::SeqCst);
 
     println!("Stream failure resilience test results:");
-    println!("- Total stream operations: {}", total_operations);
-    println!("- Total failures: {}", total_failures);
-    println!("- Total recoveries: {}", total_recoveries);
+    println!("- Total stream operations: {total_operations}");
+    println!("- Total failures: {total_failures}");
+    println!("- Total recoveries: {total_recoveries}");
 
     // System should show resilience with stream failures
     assert!(

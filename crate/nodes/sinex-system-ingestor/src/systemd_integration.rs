@@ -197,6 +197,7 @@ impl SystemdMonitor {
 
 impl SystemdUnitType {
     /// Determine unit type from unit name
+    #[must_use]
     pub fn from_name(name: &str) -> Self {
         if name.ends_with(".service") {
             Self::Service

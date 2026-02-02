@@ -7,6 +7,7 @@ name = "sinex-fs-ingestor"
 
 [dependencies]
 async-stream = "0.3"
+human-panic = "2.0"
 
 [features]
 default = [
@@ -117,3 +118,9 @@ path = "../../lib/sinex-primitives"
 features = [
     "testing",
 ]
+
+[dev-dependencies.sinex-db]
+path = "../../lib/sinex-db"
+
+[lints]
+workspace = true

@@ -253,6 +253,7 @@ mod tests {
     use super::*;
     use serde_json::json;
     use sinex_primitives::environment;
+    use sinex_primitives::temporal;
     use xtask::sandbox::{sinex_test, EphemeralNats};
 
     #[sinex_test]

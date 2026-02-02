@@ -11,7 +11,7 @@
 // - **Resource usage**: High database load
 // - **Dependencies**: PostgreSQL
 
-use sinex_primitives::db::models::EventFactory;
+use sinex_db::models::EventFactory;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::Timeouts;
 
@@ -19,9 +19,7 @@ use sinex_primitives::ulid::Ulid;
 
 /// Test graceful degradation under database connectivity issues
 #[sinex_test]
-async fn test_graceful_degradation_database_failure(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
 
     // Create test processor manifest for degradation testing
@@ -87,10 +85,11 @@ async fn test_graceful_degradation_database_failure(
     }
 
     async fn checkpoint_test(pool: DbPool) -> AnyhowResult<(), color_eyre::eyre::Error> {
-        let _manifest_check = sqlx::query!("SELECT processor_name FROM core.processor_manifests LIMIT 1")
-            .fetch_one(&pool)
-            .await
-            .map_err(color_eyre::eyre::Error::from)?;
+        let _manifest_check =
+            sqlx::query!("SELECT processor_name FROM core.processor_manifests LIMIT 1")
+                .fetch_one(&pool)
+                .await
+                .map_err(color_eyre::eyre::Error::from)?;
         Ok(())
     }
 
@@ -130,7 +129,10 @@ async fn test_graceful_degradation_database_failure(
     }
 
     // Test checkpoint operation
-    let operation = timeout(Duration::from_secs(Timeouts::SHORT - 3), checkpoint_test(pool3));
+    let operation = timeout(
+        Duration::from_secs(Timeouts::SHORT - 3),
+        checkpoint_test(pool3),
+    );
     match operation.await {
         Ok(Ok(_)) => {
             println!("  Operation 2 succeeded unexpectedly");

@@ -4,14 +4,19 @@
 //! complete v7.0 schema from scratch, establishing all tables, indexes, functions,
 //! and triggers in the correct dependency order.
 
-use crate::schema::*;
+use crate::schema::{
+    ArchivedEvents, Blobs, EmbeddingCache, EmbeddingModels, Entities, EntityRelations,
+    EventAnnotations, EventClusterMembers, EventClusters, EventEmbeddings, EventPayloadSchemas,
+    Events, GitopsSchemaSources, OperationsLog, ProcessorManifests, SourceMaterialRegistry,
+    TaggedItems, Tags, TemporalLedger, ValidationCache,
+};
 use sea_orm::{DatabaseBackend, Statement};
 use sea_orm_migration::prelude::*;
 use std::env;
 const REQUIRED_EXTENSIONS: &[&str] = &["ulid", "pg_jsonschema", "vector", "timescaledb", "pg_trgm"];
 
 #[derive(DeriveMigrationName)]
-pub struct Migration;
+pub(crate) struct Migration;
 
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
@@ -22,7 +27,7 @@ impl MigrationTrait for Migration {
         // --- Phase 1: Setup Schemas and Helper Functions ---
         // These are required before any tables can be created.
         manager.get_connection().execute_unprepared(
-            r#"
+            r"
             CREATE SCHEMA IF NOT EXISTS core;
             CREATE SCHEMA IF NOT EXISTS raw;
             CREATE SCHEMA IF NOT EXISTS audit;
@@ -80,7 +85,7 @@ impl MigrationTrait for Migration {
                 BEFORE UPDATE ON sinex_schemas.dlq_events
                 FOR EACH ROW
                 EXECUTE FUNCTION public.set_current_timestamp_updated_at();
-            "#
+            "
         ).await?;
 
         // --- Phase 2: Create Tables in Dependency Order ---
@@ -104,7 +109,7 @@ impl MigrationTrait for Migration {
         manager
             .get_connection()
             .execute_unprepared(
-                r#"
+                r"
                 DO $$
                 BEGIN
                     -- Replace legacy whitespace constraints with normalized checks that trim all whitespace characters.
@@ -119,7 +124,7 @@ impl MigrationTrait for Migration {
                     ALTER TABLE core.events ADD CONSTRAINT events_event_type_nonblank CHECK (length(BTRIM(event_type, E' \t\n\r\v\f')) > 0);
                 END
                 $$;
-                "#,
+                ",
             )
             .await?;
         manager
@@ -133,7 +138,7 @@ impl MigrationTrait for Migration {
         manager
             .get_connection()
             .execute_unprepared(
-                r#"
+                r"
                 -- Operations API helpers
                 CREATE OR REPLACE FUNCTION core.start_operation(p_operation_type TEXT, p_operator TEXT, p_scope JSONB, p_scope_window tstzrange DEFAULT NULL)
                 RETURNS ULID AS $$
@@ -327,14 +332,14 @@ impl MigrationTrait for Migration {
                     EXECUTE format('DROP TABLE IF EXISTS %I', p_table);
                 END;
                 $$ LANGUAGE plpgsql;
-                "#,
+                ",
             )
             .await?;
 
         manager
             .get_connection()
             .execute_unprepared(
-                r#"
+                r"
                 CREATE OR REPLACE FUNCTION core.expand_cascade(temp_table TEXT, max_depth INTEGER)
                 RETURNS INTEGER AS $$
                 DECLARE
@@ -377,7 +382,7 @@ impl MigrationTrait for Migration {
                     RETURN current_depth;
                 END;
                 $$ LANGUAGE plpgsql;
-                "#,
+                ",
             )
             .await?;
 
@@ -571,7 +576,7 @@ impl MigrationTrait for Migration {
         manager
             .get_connection()
             .execute_unprepared(
-                r#"
+                r"
             DROP SCHEMA IF EXISTS core CASCADE;
             DROP SCHEMA IF EXISTS raw CASCADE;
             DROP SCHEMA IF EXISTS audit CASCADE;
@@ -579,7 +584,7 @@ impl MigrationTrait for Migration {
             DROP SCHEMA IF EXISTS metrics CASCADE;
             DROP FUNCTION IF EXISTS public.set_current_timestamp_updated_at();
             DROP FUNCTION IF EXISTS public.ulid_to_timestamptz(ULID);
-            "#,
+            ",
             )
             .await?;
         Ok(())
@@ -605,8 +610,7 @@ async fn ensure_required_extensions(conn: &SchemaManagerConnection<'_>) -> Resul
         if !resolved_available && *extension == "ulid" {
             let fallback = "pgx_ulid";
             let fallback_check = format!(
-                "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_available_extensions WHERE name = '{ext}') AS available",
-                ext = fallback
+                "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_available_extensions WHERE name = '{fallback}') AS available"
             );
             resolved_available = conn
                 .query_one(Statement::from_string(
@@ -631,7 +635,7 @@ async fn ensure_required_extensions(conn: &SchemaManagerConnection<'_>) -> Resul
             continue;
         }
 
-        let statement = format!(r#"CREATE EXTENSION IF NOT EXISTS "{ext}";"#, ext = target);
+        let statement = format!(r#"CREATE EXTENSION IF NOT EXISTS "{target}";"#);
         conn.execute_unprepared(&statement).await?;
     }
 

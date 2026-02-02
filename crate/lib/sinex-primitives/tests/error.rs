@@ -202,7 +202,7 @@ fn error_details_display_formats_chain() -> TestResult<()> {
         .with_source("Source 1")
         .with_source("Source 2");
 
-    let display = format!("{}", details);
+    let display = format!("{details}");
     assert!(display.contains("Base error"));
     assert!(display.contains("key1: value1"));
     assert!(display.contains("key2: value2"));
@@ -358,7 +358,7 @@ fn complex_context_values_are_supported() -> TestResult<()> {
     let error = SinexError::service("Processing failed")
         .with_context("json", serde_json::json!({"nested": {"value": 42}}))
         .with_context("array", format!("{:?}", vec![1, 2, 3]))
-        .with_context("map", format!("{:?}", map));
+        .with_context("map", format!("{map:?}"));
 
     let context = error.context_map();
     assert!(context.get("json").unwrap().contains("nested"));

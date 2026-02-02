@@ -13,10 +13,10 @@ use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::Timeouts;
 
 use sinex_primitives::Timestamp;
-use xtask::sandbox::events;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Barrier};
 use std::time::Instant;
+use xtask::sandbox::events;
 
 // =============================================================================
 // Race Condition Tests

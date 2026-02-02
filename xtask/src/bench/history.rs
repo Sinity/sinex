@@ -6,12 +6,12 @@ use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
 use std::path::Path;
 
-pub struct HistoryDb {
+pub(super) struct HistoryDb {
     conn: Connection,
 }
 
 impl HistoryDb {
-    pub fn open(path: &Path) -> Result<Self> {
+    pub(super) fn open(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)
             .with_context(|| format!("Failed to open history database at {}", path.display()))?;
 
@@ -27,7 +27,7 @@ impl HistoryDb {
         }
 
         conn.execute_batch(
-            r#"
+            r"
             CREATE TABLE IF NOT EXISTS runs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT NOT NULL,
@@ -55,14 +55,15 @@ impl HistoryDb {
 
             CREATE INDEX IF NOT EXISTS idx_results_run_id ON results(run_id);
             CREATE INDEX IF NOT EXISTS idx_results_scenario ON results(threads);
-            "#,
+            ",
         )
         .context("Failed to initialize history database schema")?;
 
         Ok(())
     }
 
-    pub fn save_run(
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn save_run(
         &self,
         mode: &str,
         profile: &str,
@@ -84,7 +85,7 @@ impl HistoryDb {
                 timestamp,
                 git_sha,
                 git_branch,
-                if git_dirty { 1 } else { 0 },
+                i32::from(git_dirty),
                 mode,
                 profile,
                 rustc_version,
@@ -112,7 +113,7 @@ impl HistoryDb {
         Ok(run_id)
     }
 
-    pub fn get_trend(&self, scenario: &Scenario, limit: usize) -> Result<Vec<HistoryPoint>> {
+    pub(super) fn get_trend(&self, scenario: &Scenario, limit: usize) -> Result<Vec<HistoryPoint>> {
         let mut stmt = self.conn.prepare(
             "SELECT r.median_ms, r.mean_ms, runs.timestamp, runs.git_sha
              FROM results r
@@ -136,7 +137,7 @@ impl HistoryDb {
         Ok(points)
     }
 
-    pub fn get_baseline(
+    pub(super) fn get_baseline(
         &self,
         scenario: &Scenario,
         exclude_run_id: Option<i64>,
@@ -171,7 +172,7 @@ impl HistoryDb {
         }
     }
 
-    pub fn summarize_scenarios(
+    pub(super) fn summarize_scenarios(
         &self,
         results: &[ScenarioResult],
         exclude_run_id: Option<i64>,
@@ -236,7 +237,7 @@ fn table_has_column(conn: &Connection, table: &str, column: &str) -> Result<bool
 
 fn migrate_results_drop_clean_after_use(conn: &Connection) -> Result<()> {
     conn.execute_batch(
-        r#"
+        r"
         BEGIN;
         ALTER TABLE results RENAME TO results_old;
 
@@ -279,14 +280,14 @@ fn migrate_results_drop_clean_after_use(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_results_run_id ON results(run_id);
         CREATE INDEX IF NOT EXISTS idx_results_scenario ON results(threads);
         COMMIT;
-        "#,
+        ",
     )
     .context("Failed to migrate bench history schema")?;
     Ok(())
 }
 
 #[derive(Debug, Clone)]
-pub struct HistoryPoint {
+pub(super) struct HistoryPoint {
     pub median_ms: f64,
     pub mean_ms: f64,
     pub timestamp: String,
@@ -294,7 +295,7 @@ pub struct HistoryPoint {
 }
 
 #[derive(Debug, Clone)]
-pub struct ScenarioHistorySummary {
+pub(super) struct ScenarioHistorySummary {
     pub scenario_key: String,
     pub trend: Vec<HistoryPoint>,
     pub baseline: Option<RunStats>,
@@ -302,7 +303,7 @@ pub struct ScenarioHistorySummary {
 }
 
 impl ScenarioHistorySummary {
-    pub fn regression_description(&self) -> String {
+    pub(super) fn regression_description(&self) -> String {
         match &self.regression {
             Regression::None => "No regression detected".to_string(),
             Regression::Detected {
@@ -311,15 +312,14 @@ impl ScenarioHistorySummary {
                 pct_change,
                 threshold_pct,
             } => format!(
-                "Regression detected: median {:.1}ms vs {:.1}ms (change {:.1}% > {:.1}% threshold)",
-                current_ms, baseline_ms, pct_change, threshold_pct
+                "Regression detected: median {current_ms:.1}ms vs {baseline_ms:.1}ms (change {pct_change:.1}% > {threshold_pct:.1}% threshold)"
             ),
         }
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct HistoryReport {
+pub(super) struct HistoryReport {
     pub run_id: i64,
     pub scenarios: Vec<ScenarioHistorySummary>,
 }
