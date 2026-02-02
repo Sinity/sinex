@@ -175,7 +175,7 @@ non_std_lazy_statics = "allow"        # LazyLock migration is separate effort
 # Worth tracking but not blocking (run periodically)
 cognitive_complexity = "warn"
 needless_raw_string_hashes = "allow"  # 192 in SQL strings, cosmetic only
-wildcard_imports = "warn"             # 24 instances, should fix
+wildcard_imports = "allow"            # Intentional: super::*, prelude::*, schema::* in migrations
 
 
 [workspace.package]
