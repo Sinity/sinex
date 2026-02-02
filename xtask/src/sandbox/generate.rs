@@ -68,9 +68,7 @@ impl NodeSpec {
     /// Parse a node spec from user input
     pub fn parse(input: &str, name: Option<&str>) -> Self {
         // Extract name from input or use provided
-        let name = name
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| Self::derive_name_from_spec(input));
+        let name = name.map_or_else(|| Self::derive_name_from_spec(input), |s| s.to_string());
 
         Self {
             name,
@@ -270,7 +268,7 @@ impl NodeGenerator {
     /// Create a new node generator
     pub fn new(config: GeneratorConfig) -> Result<Self> {
         let http_client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(120))
+            .timeout(std::time::Duration::from_mins(2))
             .build()
             .context("Failed to create HTTP client")?;
 

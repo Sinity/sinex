@@ -362,7 +362,7 @@ impl AsciiRenderer {
     ) -> Result<String> {
         let mut output = String::new();
 
-        let is_focus = self.focus.as_ref().map(|f| f == package).unwrap_or(false);
+        let is_focus = self.focus.as_ref().is_some_and(|f| f == package);
         let tree_chars = if is_last { "└──" } else { "├──" };
         let continuation = if is_last { " " } else { "│" };
 
@@ -465,7 +465,7 @@ mod tests {
         let lines: Vec<&str> = output.lines().collect();
         let node_lines: Vec<&str> = lines
             .iter()
-            .filter(|l| l.trim().ends_with(";") && !l.contains("->"))
+            .filter(|l| l.trim().ends_with(';') && !l.contains("->"))
             .copied()
             .collect();
 
@@ -526,8 +526,7 @@ mod tests {
             assert!(output_forward.ends_with("}\n"));
 
             // Test reverse mode
-            let renderer_reverse =
-                DotRenderer::new(graph.clone()).with_focus(focus_pkg.clone(), true);
+            let renderer_reverse = DotRenderer::new(graph.clone()).with_focus(focus_pkg, true);
             let output_reverse = renderer_reverse.render()?;
             assert!(output_reverse.starts_with("digraph dependencies {"));
             assert!(output_reverse.ends_with("}\n"));

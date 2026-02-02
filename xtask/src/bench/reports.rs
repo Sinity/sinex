@@ -4,7 +4,7 @@ use super::{
 use anyhow::{Context, Result};
 use std::path::Path;
 
-pub fn generate_markdown(
+pub(super) fn generate_markdown(
     config: &BenchConfig,
     env: &Environment,
     results: &[ScenarioResult],
@@ -115,7 +115,7 @@ pub fn generate_markdown(
     Ok(())
 }
 
-pub fn generate_html(
+pub(super) fn generate_html(
     config: &BenchConfig,
     env: &Environment,
     results: &[ScenarioResult],
@@ -374,7 +374,9 @@ fn build_history_section(report: &HistoryReport) -> String {
         ));
         html.push_str("</div>");
 
-        if !scenario.trend.is_empty() {
+        if scenario.trend.is_empty() {
+            html.push_str("<p><em>No trend data available.</em></p>");
+        } else {
             html.push_str("<table><thead><tr><th>Timestamp</th><th>Median (ms)</th><th>Mean (ms)</th><th>Git SHA</th></tr></thead><tbody>");
             for point in &scenario.trend {
                 html.push_str(&format!(
@@ -383,8 +385,6 @@ fn build_history_section(report: &HistoryReport) -> String {
                 ));
             }
             html.push_str("</tbody></table>");
-        } else {
-            html.push_str("<p><em>No trend data available.</em></p>");
         }
     }
 

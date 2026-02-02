@@ -1,4 +1,3 @@
-use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -25,8 +24,8 @@ use tokio::{
 use tokio_stream::StreamExt;
 use which::which;
 
-static SHARED_NATS_REGISTRY: Lazy<AsyncMutex<HashMap<String, Arc<EphemeralNats>>>> =
-    Lazy::new(|| AsyncMutex::new(HashMap::new()));
+static SHARED_NATS_REGISTRY: std::sync::LazyLock<AsyncMutex<HashMap<String, Arc<EphemeralNats>>>> =
+    std::sync::LazyLock::new(|| AsyncMutex::new(HashMap::new()));
 
 /// Ephemeral JetStream-enabled NATS server spawned for tests.
 pub struct EphemeralNats {

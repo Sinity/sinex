@@ -31,7 +31,7 @@ pub struct DbCommand {
 }
 
 impl XtaskCommand for DbCommand {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "db"
     }
 

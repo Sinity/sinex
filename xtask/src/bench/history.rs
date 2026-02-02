@@ -6,12 +6,12 @@ use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
 use std::path::Path;
 
-pub struct HistoryDb {
+pub(super) struct HistoryDb {
     conn: Connection,
 }
 
 impl HistoryDb {
-    pub fn open(path: &Path) -> Result<Self> {
+    pub(super) fn open(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)
             .with_context(|| format!("Failed to open history database at {}", path.display()))?;
 
@@ -63,7 +63,7 @@ impl HistoryDb {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn save_run(
+    pub(super) fn save_run(
         &self,
         mode: &str,
         profile: &str,
@@ -85,7 +85,7 @@ impl HistoryDb {
                 timestamp,
                 git_sha,
                 git_branch,
-                if git_dirty { 1 } else { 0 },
+                i32::from(git_dirty),
                 mode,
                 profile,
                 rustc_version,
@@ -113,7 +113,7 @@ impl HistoryDb {
         Ok(run_id)
     }
 
-    pub fn get_trend(&self, scenario: &Scenario, limit: usize) -> Result<Vec<HistoryPoint>> {
+    pub(super) fn get_trend(&self, scenario: &Scenario, limit: usize) -> Result<Vec<HistoryPoint>> {
         let mut stmt = self.conn.prepare(
             "SELECT r.median_ms, r.mean_ms, runs.timestamp, runs.git_sha
              FROM results r
@@ -137,7 +137,7 @@ impl HistoryDb {
         Ok(points)
     }
 
-    pub fn get_baseline(
+    pub(super) fn get_baseline(
         &self,
         scenario: &Scenario,
         exclude_run_id: Option<i64>,
@@ -172,7 +172,7 @@ impl HistoryDb {
         }
     }
 
-    pub fn summarize_scenarios(
+    pub(super) fn summarize_scenarios(
         &self,
         results: &[ScenarioResult],
         exclude_run_id: Option<i64>,
@@ -287,7 +287,7 @@ fn migrate_results_drop_clean_after_use(conn: &Connection) -> Result<()> {
 }
 
 #[derive(Debug, Clone)]
-pub struct HistoryPoint {
+pub(super) struct HistoryPoint {
     pub median_ms: f64,
     pub mean_ms: f64,
     pub timestamp: String,
@@ -295,7 +295,7 @@ pub struct HistoryPoint {
 }
 
 #[derive(Debug, Clone)]
-pub struct ScenarioHistorySummary {
+pub(super) struct ScenarioHistorySummary {
     pub scenario_key: String,
     pub trend: Vec<HistoryPoint>,
     pub baseline: Option<RunStats>,
@@ -303,7 +303,7 @@ pub struct ScenarioHistorySummary {
 }
 
 impl ScenarioHistorySummary {
-    pub fn regression_description(&self) -> String {
+    pub(super) fn regression_description(&self) -> String {
         match &self.regression {
             Regression::None => "No regression detected".to_string(),
             Regression::Detected {
@@ -320,7 +320,7 @@ impl ScenarioHistorySummary {
 }
 
 #[derive(Debug, Clone)]
-pub struct HistoryReport {
+pub(super) struct HistoryReport {
     pub run_id: i64,
     pub scenarios: Vec<ScenarioHistorySummary>,
 }

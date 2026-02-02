@@ -8,6 +8,7 @@ use anyhow::Result;
 
 use crate::cargo_diagnostics::{run_cargo_check, run_cargo_clippy, DiagnosticSummary};
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
+use crate::preflight;
 use crate::process::ProcessBuilder;
 use crate::resources;
 
@@ -26,9 +27,12 @@ pub struct CheckCommand {
     /// Also run slow lints
     #[arg(long)]
     pub heavy: bool,
-    /// Only check affected packages
-    #[arg(short = 'A', long)]
+    /// Only check affected packages (DEFAULT - use --all to check all)
+    #[arg(short = 'A', long, default_value_t = true, action = clap::ArgAction::Set)]
     pub affected: bool,
+    /// Check ALL packages (disables --affected default)
+    #[arg(short = 'a', long)]
+    pub all: bool,
     /// Check specific package(s) only
     #[arg(short = 'p', long = "package")]
     pub packages: Vec<String>,
@@ -54,15 +58,16 @@ impl CheckCommand {
                 args.push("-p".to_string());
                 args.push(p.clone());
             }
-        } else if self.affected {
+        } else if self.affected && !self.all {
+            // --affected is default ON, --all disables it
             let affected_pkgs = crate::affected::affected_packages()?;
-            if !affected_pkgs.is_empty() {
+            if affected_pkgs.is_empty() {
+                args.push("--workspace".to_string());
+            } else {
                 for p in affected_pkgs {
                     args.push("-p".to_string());
                     args.push(p);
                 }
-            } else {
-                args.push("--workspace".to_string());
             }
         } else {
             args.push("--workspace".to_string());
@@ -101,7 +106,7 @@ impl CheckCommand {
 }
 
 impl XtaskCommand for CheckCommand {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "check"
     }
 
@@ -133,6 +138,9 @@ impl XtaskCommand for CheckCommand {
             }
             return ctx.spawn_background("check", &args);
         }
+
+        // Ensure infrastructure is ready (DB needed for sqlx compile-time checks)
+        preflight::ensure_ready(ctx)?;
 
         // Resource warning before heavy operation
         if ctx.is_human() {
@@ -245,6 +253,7 @@ mod tests {
             forbidden: true,
             heavy: false,
             affected: false,
+            all: false,
             packages: vec![],
             skip_tests: false,
         };
@@ -262,6 +271,7 @@ mod tests {
             forbidden: false,
             heavy: false,
             affected: false,
+            all: false,
             packages: vec![],
             skip_tests: false,
         };

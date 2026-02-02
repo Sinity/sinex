@@ -12,7 +12,7 @@ pub struct DepsCommand {
 }
 
 impl XtaskCommand for DepsCommand {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "deps"
     }
 

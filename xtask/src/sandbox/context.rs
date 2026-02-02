@@ -59,7 +59,6 @@ use color_eyre::eyre::{eyre, WrapErr};
 use futures::future::BoxFuture;
 use futures::FutureExt;
 use futures::StreamExt;
-use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use serde_json::Value as JsonValue;
 use sinex_db::DbPool;
@@ -123,8 +122,8 @@ pub(crate) struct CreatedEventInfo {
     material_id: Option<Ulid>,
 }
 
-static CLEANUP_HANDLES: Lazy<AsyncMutex<Vec<tokio::task::JoinHandle<()>>>> =
-    Lazy::new(|| AsyncMutex::new(Vec::new()));
+static CLEANUP_HANDLES: std::sync::LazyLock<AsyncMutex<Vec<tokio::task::JoinHandle<()>>>> =
+    std::sync::LazyLock::new(|| AsyncMutex::new(Vec::new()));
 
 const CLEANUP_AWAIT_SECS: u64 = 2;
 const BACKGROUND_TIMEOUT_SECS: u64 = 10;
@@ -411,7 +410,7 @@ impl Sandbox {
             nats: None,
             nats_client: None,
             nats_mode: NatsMode::None,
-            env: sinex_primitives::environment().clone(),
+            env: sinex_primitives::environment(),
             pipeline_namespace: pipeline_namespace.clone(),
             pipeline_ingestd: Arc::new(AsyncMutex::new(None)),
             _reaper: Arc::new(NamespaceReaper {
@@ -803,7 +802,7 @@ impl Sandbox {
     pub async fn ensure_clean(&self) -> TestResult<()> {
         self.quiesce_background_tasks().await?;
         match verify_clean_state(&self.pool).await {
-            Ok(_) => Ok(()),
+            Ok(()) => Ok(()),
             Err(err) => {
                 let diagnostics = self.db.cleanup_diagnostics();
                 Err(err).wrap_err_with(|| {
@@ -838,7 +837,7 @@ impl Sandbox {
                 lbl,
                 tokio::spawn(async move {
                     let _ = handle;
-                    let _ = tokio::task::yield_now().await;
+                    let () = tokio::task::yield_now().await;
                 }),
             );
         });
@@ -1015,8 +1014,7 @@ impl Sandbox {
         // Include the ID in the identifier to avoid source_identifier uniqueness conflicts.
         // Each unique id gets its own unique source_identifier.
         let identifier = source_identifier
-            .map(|s| format!("{s}-{id}"))
-            .unwrap_or_else(|| format!("test-material-{id}"));
+            .map_or_else(|| format!("test-material-{id}"), |s| format!("{s}-{id}"));
 
         // Use INSERT with ON CONFLICT DO NOTHING to avoid FK violations.
         // If the record already exists (by id), we don't need to update it.
@@ -1256,14 +1254,13 @@ impl Sandbox {
         let mut envelope = event.clone();
 
         // Assign an ID if the event doesn't have one
-        let event_id = match &envelope.id {
-            Some(id) => *id.as_ulid(),
-            None => {
-                let new_id = Id::new();
-                let ulid = *new_id.as_ulid();
-                envelope.id = Some(new_id);
-                ulid
-            }
+        let event_id = if let Some(id) = &envelope.id {
+            *id.as_ulid()
+        } else {
+            let new_id = Id::new();
+            let ulid = *new_id.as_ulid();
+            envelope.id = Some(new_id);
+            ulid
         };
 
         if envelope.ingestor_version.is_none() {
@@ -1370,7 +1367,7 @@ impl BackgroundRegistry {
                         Err(join_err) => warn!(%label, error = %join_err, "Background task join failed"),
                     }
                 }
-                _ = &mut timeout_sleep => {
+                () = &mut timeout_sleep => {
                     warn!(%label, "Background task did not finish within timeout; aborting");
                     handle.abort();
                     let _ = handle.await;
@@ -1466,8 +1463,8 @@ impl Drop for Sandbox {
 
         if !records.is_empty() {
             if let Ok(handle) = Handle::try_current() {
-                let cleanup_pool = pool.clone();
-                let cleanup_records = records.clone();
+                let cleanup_pool = pool;
+                let cleanup_records = records;
                 let mut join_handle = Some(handle.spawn(async move {
                     if let Err(err) = cleanup_created_records(cleanup_pool, cleanup_records).await {
                         warn!("Sandbox cleanup failed: {}", err);

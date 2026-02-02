@@ -1,8 +1,7 @@
 //! Per-checkout state management with cross-checkout locking.
 //!
-//! This module manages the `.devenv/sinex-dev/` state directory for each
-//! checkout, ensuring only one dev stack can be active at a time across
-//! all checkouts.
+//! This module manages the `.sinex/` state directory for each checkout,
+//! ensuring only one dev stack can be active at a time across all checkouts.
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -43,15 +42,15 @@ impl LockInfo {
 
 /// Manages per-checkout state directory and cross-checkout locking
 pub struct CheckoutState {
-    /// Path to the checkout root (where .devenv lives)
+    /// Path to the checkout root (where .sinex lives)
     checkout_root: PathBuf,
-    /// Path to the state directory (.devenv/sinex-dev/)
+    /// Path to the state directory (.sinex/)
     state_dir: PathBuf,
 }
 
 impl CheckoutState {
-    /// State directory name within .devenv
-    const STATE_DIR_NAME: &'static str = "sinex-dev";
+    /// State directory name
+    const STATE_DIR_NAME: &'static str = ".sinex";
     /// Lock file name within state directory
     const LOCK_FILE_NAME: &'static str = ".lock";
 
@@ -63,7 +62,7 @@ impl CheckoutState {
 
     /// Create a CheckoutState for a specific checkout path
     pub fn new(checkout_root: PathBuf) -> Result<Self> {
-        let state_dir = checkout_root.join(".devenv").join(Self::STATE_DIR_NAME);
+        let state_dir = checkout_root.join(Self::STATE_DIR_NAME);
         Ok(Self {
             checkout_root,
             state_dir,
@@ -92,7 +91,7 @@ impl CheckoutState {
         &self.checkout_root
     }
 
-    /// Get the state directory path (.devenv/sinex-dev/)
+    /// Get the state directory path (.sinex/)
     pub fn state_dir(&self) -> &Path {
         &self.state_dir
     }
@@ -183,11 +182,11 @@ impl CheckoutState {
         }
 
         // Check if it's a different checkout
-        if lock_info.checkout_path != self.checkout_root {
-            // Different checkout has the lock
+        if lock_info.checkout_path == self.checkout_root {
+            // Same checkout, different PID - another process in this checkout
             Ok(Some(lock_info))
         } else {
-            // Same checkout, different PID - another process in this checkout
+            // Different checkout has the lock
             Ok(Some(lock_info))
         }
     }

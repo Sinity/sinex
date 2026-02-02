@@ -21,7 +21,7 @@ use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskComman
 pub struct LintForbiddenCommand;
 
 impl XtaskCommand for LintForbiddenCommand {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "lint-forbidden"
     }
 

@@ -29,22 +29,24 @@ pub struct Config {
 
 impl Config {
     /// Load configuration from environment variables.
-    pub fn from_env() -> Self {
-        let state_dir = env::var("SINEX_STATE_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| {
+    pub(crate) fn from_env() -> Self {
+        let state_dir = env::var("SINEX_STATE_DIR").map_or_else(
+            |_| {
                 dirs::state_dir()
                     .unwrap_or_else(|| PathBuf::from("/tmp"))
                     .join("sinex")
-            });
+            },
+            PathBuf::from,
+        );
 
-        let cache_dir = env::var("SINEX_CACHE_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| {
+        let cache_dir = env::var("SINEX_CACHE_DIR").map_or_else(
+            |_| {
                 dirs::cache_dir()
                     .unwrap_or_else(|| PathBuf::from("/tmp"))
                     .join("sinex")
-            });
+            },
+            PathBuf::from,
+        );
 
         let hostname = gethostname::gethostname().to_string_lossy().into_owned();
 
@@ -61,24 +63,24 @@ impl Config {
     }
 
     /// Path to the history database.
-    pub fn history_db_path(&self) -> PathBuf {
+    pub(crate) fn history_db_path(&self) -> PathBuf {
         self.state_dir.join("xtask-history.db")
     }
 
     /// Directory for job output files.
-    pub fn jobs_dir(&self) -> PathBuf {
+    pub(crate) fn jobs_dir(&self) -> PathBuf {
         self.state_dir.join("jobs")
     }
 
     /// Ensure the state directory exists.
     #[allow(dead_code)]
-    pub fn ensure_state_dir(&self) -> std::io::Result<()> {
+    pub(crate) fn ensure_state_dir(&self) -> std::io::Result<()> {
         std::fs::create_dir_all(&self.state_dir)
     }
 
     /// Ensure the jobs directory exists.
     #[allow(dead_code)]
-    pub fn ensure_jobs_dir(&self) -> std::io::Result<()> {
+    pub(crate) fn ensure_jobs_dir(&self) -> std::io::Result<()> {
         std::fs::create_dir_all(self.jobs_dir())
     }
 }
@@ -90,7 +92,7 @@ impl Default for Config {
 }
 
 /// Global configuration singleton.
-static CONFIG: once_cell::sync::Lazy<Config> = once_cell::sync::Lazy::new(Config::from_env);
+static CONFIG: std::sync::LazyLock<Config> = std::sync::LazyLock::new(Config::from_env);
 
 /// Get the global configuration.
 pub fn config() -> &'static Config {
@@ -105,14 +107,16 @@ pub fn config() -> &'static Config {
 pub fn workspace_root() -> PathBuf {
     env::var("CARGO_MANIFEST_DIR")
         .map(PathBuf::from)
-        .map(|p| {
-            // CARGO_MANIFEST_DIR points to xtask/, go up one level for workspace root
-            p.parent().map(|p| p.to_path_buf()).unwrap_or(p)
-        })
-        .unwrap_or_else(|_| {
-            // Fallback: use current directory
-            env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-        })
+        .map_or_else(
+            |_| {
+                // Fallback: use current directory
+                env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+            },
+            |p| {
+                // CARGO_MANIFEST_DIR points to xtask/, go up one level for workspace root
+                p.parent().map(|p| p.to_path_buf()).unwrap_or(p)
+            },
+        )
 }
 
 #[cfg(test)]

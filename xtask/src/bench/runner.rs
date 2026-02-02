@@ -10,14 +10,14 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub struct BenchContext {
+pub(super) struct BenchContext {
     pub config: BenchConfig,
     pub output_dir: PathBuf,
     pub environment: Environment,
 }
 
 impl BenchContext {
-    pub fn new(config: BenchConfig) -> Result<Self> {
+    pub(super) fn new(config: BenchConfig) -> Result<Self> {
         let timestamp = time::OffsetDateTime::now_utc()
             .format(
                 &time::format_description::parse("[year][month][day]-[hour][minute][second]")
@@ -27,7 +27,7 @@ impl BenchContext {
         let output_dir = config
             .output
             .clone()
-            .unwrap_or_else(|| default_bench_output_dir(&timestamp.to_string()));
+            .unwrap_or_else(|| default_bench_output_dir(&timestamp.clone()));
 
         std::fs::create_dir_all(&output_dir).with_context(|| {
             format!(
@@ -47,7 +47,7 @@ impl BenchContext {
         })
     }
 
-    pub fn compile(&self) -> Result<Duration> {
+    pub(super) fn compile(&self) -> Result<Duration> {
         println!("{}", style("Compiling workspace...").cyan().bold());
 
         let start = Instant::now();
@@ -105,18 +105,18 @@ fn default_bench_output_dir(timestamp: &str) -> PathBuf {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Scenario {
+pub(super) struct Scenario {
     pub threads: u32,
 }
 
 impl Scenario {
-    pub fn key(&self) -> String {
+    pub(super) fn key(&self) -> String {
         format!("t={}", self.threads)
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RunResult {
+pub(super) struct RunResult {
     pub success: bool,
     pub elapsed_ms: f64,
     pub stdout: String,
@@ -124,22 +124,22 @@ pub struct RunResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScenarioResult {
+pub(super) struct ScenarioResult {
     pub scenario: Scenario,
     pub runs: Vec<RunResult>,
     pub stats: RunStats,
 }
 
-pub struct BenchRunner<'a> {
+pub(super) struct BenchRunner<'a> {
     pub ctx: &'a BenchContext,
 }
 
 impl<'a> BenchRunner<'a> {
-    pub fn new(ctx: &'a BenchContext) -> Self {
+    pub(super) fn new(ctx: &'a BenchContext) -> Self {
         Self { ctx }
     }
 
-    pub fn run_scenario(
+    pub(super) fn run_scenario(
         &self,
         scenario: &Scenario,
         run_index: usize,
@@ -220,7 +220,7 @@ impl<'a> BenchRunner<'a> {
         })
     }
 
-    pub fn run_scenario_multiple(&self, scenario: &Scenario) -> Result<ScenarioResult> {
+    pub(super) fn run_scenario_multiple(&self, scenario: &Scenario) -> Result<ScenarioResult> {
         let runs_count = self.ctx.config.runs as usize;
         let mut runs = Vec::new();
         let mut failures = 0;
@@ -276,7 +276,7 @@ impl<'a> BenchRunner<'a> {
     }
 }
 
-pub fn generate_scenarios(config: &BenchConfig) -> Vec<Scenario> {
+pub(super) fn generate_scenarios(config: &BenchConfig) -> Vec<Scenario> {
     config
         .threads
         .iter()

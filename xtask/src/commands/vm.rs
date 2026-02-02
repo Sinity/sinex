@@ -75,7 +75,7 @@ pub struct VmCommand {
 // ─────────────────────────────────────────────────────────────────────────────
 
 impl XtaskCommand for VmCommand {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "vm"
     }
 

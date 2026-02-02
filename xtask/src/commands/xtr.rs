@@ -4,13 +4,14 @@
 //! - patterns: AST-grep code pattern search
 //! - ci: CI pipeline commands
 //! - completions: Shell completion generation
+//! - tls: TLS certificate management
 
 use anyhow::Result;
 use clap::Subcommand;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 
-/// Rarely-used utilities (patterns, ci, completions)
+/// Rarely-used utilities (patterns, ci, completions, tls)
 #[derive(Debug, Clone, clap::Args)]
 pub struct XtrCommand {
     #[command(subcommand)]
@@ -29,10 +30,13 @@ pub enum XtrSubcommand {
         #[arg(value_enum)]
         shell: super::completions::Shell,
     },
+    /// TLS certificate management
+    #[command(subcommand)]
+    Tls(crate::tls::TlsCommand),
 }
 
 impl XtaskCommand for XtrCommand {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "xtr"
     }
 
@@ -47,6 +51,7 @@ impl XtaskCommand for XtrCommand {
                 super::completions::CompletionsCommand::generate_completions(*shell, cmd)?;
                 Ok(CommandResult::success())
             }
+            XtrSubcommand::Tls(cmd) => crate::tls::run(cmd.clone(), ctx.is_json()),
         }
     }
 

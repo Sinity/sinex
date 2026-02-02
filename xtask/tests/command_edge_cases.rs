@@ -632,10 +632,7 @@ fn test_json_output_status_values() {
 
         let status = parsed.get("status").and_then(|s| s.as_str());
         assert!(
-            matches!(
-                status,
-                Some("success") | Some("failed") | Some("partial") | Some("running")
-            ),
+            matches!(status, Some("success" | "failed" | "partial" | "running")),
             "status should be a valid value: {:?}",
             status
         );

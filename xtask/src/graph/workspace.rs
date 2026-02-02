@@ -339,12 +339,7 @@ impl WorkspaceGraph {
         // Check if target is reachable
         let is_reachable = resolved
             .package_ids(guppy::graph::DependencyDirection::Forward)
-            .any(|id| {
-                self.graph
-                    .metadata(id)
-                    .map(|p| p.name() == to)
-                    .unwrap_or(false)
-            });
+            .any(|id| self.graph.metadata(id).is_ok_and(|p| p.name() == to));
 
         if is_reachable {
             // For now, return a simple direct path marker

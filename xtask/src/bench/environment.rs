@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::process::Command;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Environment {
+pub(super) struct Environment {
     pub timestamp: String,
     pub hostname: String,
     pub uname: String,
@@ -29,7 +29,7 @@ pub struct Environment {
 }
 
 impl Environment {
-    pub fn capture() -> Result<Self> {
+    pub(super) fn capture() -> Result<Self> {
         Ok(Self {
             timestamp: time::OffsetDateTime::now_utc()
                 .format(&time::format_description::well_known::Rfc3339)
@@ -58,13 +58,13 @@ impl Environment {
         })
     }
 
-    pub fn write_to_file(&self, path: &std::path::Path) -> Result<()> {
+    pub(super) fn write_to_file(&self, path: &std::path::Path) -> Result<()> {
         let content = self.format_text();
         std::fs::write(path, content)
             .with_context(|| format!("Failed to write environment to {}", path.display()))
     }
 
-    pub fn format_text(&self) -> String {
+    pub(super) fn format_text(&self) -> String {
         format!(
             r#"# Environment snapshot - {}
 
@@ -255,9 +255,9 @@ fn postgres_version() -> Option<String> {
 }
 
 fn database_url_masked() -> String {
-    std::env::var("DATABASE_URL")
-        .ok()
-        .map(|url| {
+    std::env::var("DATABASE_URL").ok().map_or_else(
+        || "unset".to_string(),
+        |url| {
             if let Some(idx) = url.find("://") {
                 let scheme = &url[..idx + 3];
                 if let Some(host_idx) = url[idx + 3..].find('@') {
@@ -268,8 +268,8 @@ fn database_url_masked() -> String {
             } else {
                 url
             }
-        })
-        .unwrap_or_else(|| "unset".to_string())
+        },
+    )
 }
 
 fn git_sha(short: bool) -> Option<String> {

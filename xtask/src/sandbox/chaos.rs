@@ -715,13 +715,13 @@ impl ChaosEventProcessor {
         let original = event.clone();
         let processed = self.context.maybe_corrupt(event);
 
-        if original.payload != processed.payload {
+        if original.payload == processed.payload {
+            ChaosEventResult::Processed(processed)
+        } else {
             ChaosEventResult::Corrupted {
                 original,
                 corrupted: processed,
             }
-        } else {
-            ChaosEventResult::Processed(processed)
         }
     }
 

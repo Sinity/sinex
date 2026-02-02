@@ -57,7 +57,7 @@ pub enum CoverageSubcommand {
 }
 
 impl XtaskCommand for CoverageCommand {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "coverage"
     }
 
@@ -87,7 +87,7 @@ impl XtaskCommand for CoverageCommand {
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata {
             category: Some("test".to_string()),
-            timeout: Some(std::time::Duration::from_secs(300)), // 5 minutes
+            timeout: Some(std::time::Duration::from_mins(5)), // 5 minutes
             modifies_state: false,
             track_in_history: true,
         }

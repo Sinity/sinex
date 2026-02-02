@@ -37,7 +37,7 @@ struct SnapshotResult {
 }
 
 impl XtaskCommand for SnapshotCommand {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "snapshot"
     }
 
@@ -53,11 +53,10 @@ impl XtaskCommand for SnapshotCommand {
             }));
         }
 
-        let output_path = self
-            .output
-            .as_ref()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| "context.xml".to_string());
+        let output_path = self.output.as_ref().map_or_else(
+            || "context.xml".to_string(),
+            |p| p.to_string_lossy().to_string(),
+        );
 
         let mut args = vec!["--output".to_string(), output_path.clone()];
 
@@ -121,14 +120,14 @@ impl XtaskCommand for SnapshotCommand {
 
         // Get file info
         let file_meta = std::fs::metadata(&output_path).ok();
-        let file_size = file_meta.map(|m| m.len() as usize).unwrap_or(0);
+        let file_size = file_meta.map_or(0, |m| m.len() as usize);
 
         // Count files in output (rough estimate from XML)
         let content = std::fs::read_to_string(&output_path).unwrap_or_default();
         let file_count = content.matches("<file ").count();
 
         let snapshot_result = SnapshotResult {
-            output_file: output_path.clone(),
+            output_file: output_path,
             file_count,
             total_bytes: file_size,
             compressed: self.compress,

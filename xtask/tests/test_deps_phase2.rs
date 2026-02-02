@@ -203,7 +203,7 @@ fn test_deps_timings_custom_top_parameter() {
         // If there's output, verify it's timing-related
         if !stdout.is_empty() {
             assert!(
-                stdout.contains("5") || stdout.contains("crate") || stdout.contains("duration")
+                stdout.contains('5') || stdout.contains("crate") || stdout.contains("duration")
             );
         }
     } else {

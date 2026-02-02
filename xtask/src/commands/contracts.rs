@@ -77,7 +77,7 @@ pub struct ContractsCommand {
 }
 
 impl XtaskCommand for ContractsCommand {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "contracts"
     }
 
@@ -258,16 +258,16 @@ fn execute_compat(base: Option<String>, glob: &str, ctx: &CommandContext) -> Res
             .status()
             .with_context(|| format!("failed to spawn contracts validate for {file}"))?;
 
-        if !status.success() {
-            errors += 1;
-            if ctx.is_human() {
-                eprintln!("❌ Compatibility regression detected in {file}");
-            }
-        } else {
+        if status.success() {
             if ctx.is_human() {
                 println!("✅ {file} remains backward compatible");
             }
             checked.push(file.to_string());
+        } else {
+            errors += 1;
+            if ctx.is_human() {
+                eprintln!("❌ Compatibility regression detected in {file}");
+            }
         }
     }
 
@@ -522,7 +522,7 @@ mod tests {
         let cmd = ContractsCommand {
             subcommand: ContractsSubcommand::Deploy {
                 input: "schemas/v1".to_string(),
-                database_url: "".to_string(),
+                database_url: String::new(),
             },
         };
 

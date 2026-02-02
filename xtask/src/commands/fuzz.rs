@@ -33,7 +33,7 @@ pub enum FuzzSubcommand {
 }
 
 impl XtaskCommand for FuzzCommand {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "fuzz"
     }
 
@@ -53,7 +53,7 @@ impl XtaskCommand for FuzzCommand {
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata {
             category: Some("security".to_string()),
-            timeout: Some(std::time::Duration::from_secs(600)), // 10 minutes default
+            timeout: Some(std::time::Duration::from_mins(10)), // 10 minutes default
             modifies_state: matches!(self.subcommand, FuzzSubcommand::Init { .. }),
             track_in_history: true,
         }

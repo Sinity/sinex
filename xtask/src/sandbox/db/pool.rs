@@ -1,7 +1,6 @@
 //! Database pool management for sandbox.
 use crate::sandbox::prelude::*;
 use futures::future::BoxFuture;
-use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use sinex_db::DbPool;
@@ -31,9 +30,9 @@ const SLOT_MAX_CONNECTIONS: u32 = 4;
 const ADMIN_MAX_CONNECTIONS: u32 = 8;
 
 /// Pool performance metrics
-static POOL_METRICS: Lazy<PoolMetrics> = Lazy::new(PoolMetrics::new);
-static OPTIONAL_EXTENSION_MISSING: Lazy<Mutex<HashMap<String, String>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+static POOL_METRICS: std::sync::LazyLock<PoolMetrics> = std::sync::LazyLock::new(PoolMetrics::new);
+static OPTIONAL_EXTENSION_MISSING: std::sync::LazyLock<Mutex<HashMap<String, String>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 /// Pool performance metrics for monitoring
 struct PoolMetrics {
     acquisitions: AtomicUsize,
@@ -55,7 +54,7 @@ impl PoolMetrics {
     fn record_acquisition(&self, wait_time: Duration) {
         self.acquisitions.fetch_add(1, Ordering::Relaxed);
         self.total_wait_time.fetch_add(
-            wait_time.as_millis().min(u64::MAX as u128) as u64,
+            wait_time.as_millis().min(u128::from(u64::MAX)) as u64,
             Ordering::Relaxed,
         );
     }
@@ -203,8 +202,8 @@ pub fn get_slot_stats() -> Vec<SlotStats> {
                                 t.format(&time::format_description::well_known::Rfc3339)
                                     .unwrap()
                             }),
-                            last_clean_result: result.clone(),
-                            residuals: residuals.clone(),
+                            last_clean_result: result,
+                            residuals,
                             quarantined: slot.quarantined.load(Ordering::SeqCst),
                         }
                     } else {
@@ -216,8 +215,8 @@ pub fn get_slot_stats() -> Vec<SlotStats> {
                                 t.format(&time::format_description::well_known::Rfc3339)
                                     .unwrap()
                             }),
-                            last_clean_result: result.clone(),
-                            residuals: residuals.clone(),
+                            last_clean_result: result,
+                            residuals,
                             quarantined: slot.quarantined.load(Ordering::SeqCst),
                         }
                     }
@@ -237,11 +236,11 @@ pub(crate) fn template_db_name() -> Option<String> {
 }
 
 /// Mutex to ensure only one thread creates the template database
-static TEMPLATE_CREATION_LOCK: Lazy<tokio::sync::Mutex<()>> =
-    Lazy::new(|| tokio::sync::Mutex::new(()));
+static TEMPLATE_CREATION_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
 
-static DATABASE_POOL_TEST_LOCK: Lazy<tokio::sync::Mutex<()>> =
-    Lazy::new(|| tokio::sync::Mutex::new(()));
+static DATABASE_POOL_TEST_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 pub type DatabasePoolTestGuard = tokio::sync::MutexGuard<'static, ()>;
 
@@ -419,16 +418,15 @@ async fn store_pool_meta(
     Ok(())
 }
 
-/// Issue 68 (LOW): Fingerprint Order Sensitivity - FIXED
+/// Compute a fingerprint of all migration and schema files.
 ///
-/// This function now hashes both the filename and content in sorted order,
-/// ensuring reordering migration files produces different hashes. The hash
-/// includes (filename + content) pairs to detect ordering changes.
+/// Hashes both filename and content in sorted order, so any change to migration
+/// files (including reordering) produces a different fingerprint.
 ///
-/// Note: This is a LOW priority issue. The fix ensures that reordering
-/// migration files results in different fingerprints, which is the desired
-/// behavior for detecting schema drift.
-fn migrations_fingerprint() -> Option<String> {
+/// Used by:
+/// - Sandbox: to determine if template database needs rebuilding
+/// - Preflight: to detect pending migrations
+pub fn migrations_fingerprint() -> Option<String> {
     let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let schema_dir = crate_dir.join("../sinex-schema");
     let migrations_dir = schema_dir.join("src/migrations").canonicalize().ok()?;
@@ -493,9 +491,7 @@ impl Default for PoolConfig {
 }
 
 fn default_pool_size() -> usize {
-    let cpu_count = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(MIN_POOL_SIZE);
+    let cpu_count = std::thread::available_parallelism().map_or(MIN_POOL_SIZE, |n| n.get());
     let test_threads = nextest_test_threads(cpu_count).unwrap_or(cpu_count).max(1);
     let target = test_threads.saturating_mul(POOL_SIZE_MULTIPLIER);
     target.max(MIN_POOL_SIZE)
@@ -676,7 +672,7 @@ impl TestDatabase {
         Ok(DatabaseStats {
             event_count: row.event_count.unwrap_or(0),
             agent_count: row.synthesis_count.unwrap_or(0),
-            checkpoint_count: row.checkpoint_count.unwrap_or(0) as i64,
+            checkpoint_count: i64::from(row.checkpoint_count.unwrap_or(0)),
         })
     }
 
@@ -829,7 +825,7 @@ impl CleanupManager {
                     eprintln!(
                         "⚠️  Failed to release advisory lock {} for {}: {}",
                         task.lock_id, task.slot_name, e
-                    )
+                    );
                 }
                 Err(_) => eprintln!(
                     "⚠️  Timeout releasing advisory lock {} for {} (pool may be shutting down)",
@@ -858,7 +854,8 @@ impl CleanupManager {
 }
 
 /// Global cleanup manager
-static CLEANUP_MANAGER: Lazy<CleanupManager> = Lazy::new(CleanupManager::new);
+static CLEANUP_MANAGER: std::sync::LazyLock<CleanupManager> =
+    std::sync::LazyLock::new(CleanupManager::new);
 
 impl Drop for TestDatabase {
     fn drop(&mut self) {
@@ -925,7 +922,7 @@ impl DatabaseSlot {
             *time_guard = Some(now);
         }
         match result {
-            Ok(_) => {
+            Ok(()) => {
                 let mut res_guard = self.last_clean_result.lock();
                 *res_guard = Some("ok".to_string());
                 let mut residual_guard = self.last_residuals.lock();
@@ -1145,30 +1142,7 @@ impl DatabasePool {
                 // Check if database already exists
                 let exists = database_exists(&mut conn, &name).await?;
 
-                if !exists {
-                    match create_database_from_template(&mut conn, &name, &template_name).await? {
-                        CreateDatabaseOutcome::Created => {
-                            eprintln!("  Created new pool database: {name}");
-                            let meta = PoolMeta {
-                                fingerprint: migrations_fingerprint(),
-                                extensions: template_ext_versions.clone(),
-                                dirty: false,
-                                updated_at_rfc3339: OffsetDateTime::now_utc()
-                                    .format(&time::format_description::well_known::Rfc3339)
-                                    .unwrap(),
-                                last_error: None,
-                            };
-                            let _ = store_pool_meta(conn.as_mut(), &name, &meta).await;
-                        }
-                        CreateDatabaseOutcome::AlreadyExists => {
-                            eprintln!(
-                                "  Database {name} already exists after creation race; reusing"
-                            );
-                            // Ensure permissions are granted even when database was created concurrently
-                            let _ = grant_pool_database_permissions(&name).await;
-                        }
-                    }
-                } else {
+                if exists {
                     // Ensure permissions are granted on pre-existing databases (CI restarts, etc)
                     let _ = grant_pool_database_permissions(&name).await;
                     // Check extension versions against the template; drop/recreate if drifted
@@ -1281,7 +1255,7 @@ impl DatabasePool {
                                 "  Unable to query extensions for {name}, forcing recreation"
                     );
                         }
-                        let _ = db_pool.close().await;
+                        let () = db_pool.close().await;
                     } else {
                         // Can't connect to DB quickly; play it safe and recreate
                         needs_recreate = true;
@@ -1322,6 +1296,29 @@ impl DatabasePool {
                         }
                     } else {
                         eprintln!("  Reusing existing pool database: {name}");
+                    }
+                } else {
+                    match create_database_from_template(&mut conn, &name, &template_name).await? {
+                        CreateDatabaseOutcome::Created => {
+                            eprintln!("  Created new pool database: {name}");
+                            let meta = PoolMeta {
+                                fingerprint: migrations_fingerprint(),
+                                extensions: template_ext_versions.clone(),
+                                dirty: false,
+                                updated_at_rfc3339: OffsetDateTime::now_utc()
+                                    .format(&time::format_description::well_known::Rfc3339)
+                                    .unwrap(),
+                                last_error: None,
+                            };
+                            let _ = store_pool_meta(conn.as_mut(), &name, &meta).await;
+                        }
+                        CreateDatabaseOutcome::AlreadyExists => {
+                            eprintln!(
+                                "  Database {name} already exists after creation race; reusing"
+                            );
+                            // Ensure permissions are granted even when database was created concurrently
+                            let _ = grant_pool_database_permissions(&name).await;
+                        }
                     }
                 }
 
@@ -1410,7 +1407,7 @@ impl DatabasePool {
         let mut attempts = 0;
 
         // Maximum acquisition timeout to prevent infinite hangs (Issue 66, 101)
-        const MAX_ACQUISITION_TIMEOUT: Duration = Duration::from_secs(120);
+        const MAX_ACQUISITION_TIMEOUT: Duration = Duration::from_mins(2);
         const MAX_ATTEMPTS: usize = 100;
 
         // Use process ID and random offset to reduce contention
@@ -1515,14 +1512,14 @@ impl DatabasePool {
                                 "♻️  Slot {} is broken (missing TimescaleDB library); recreating it",
                                 slot.name
                             );
-                            let _ = pool.close().await;
+                            let () = pool.close().await;
                             let _ = recreate_pool_database(&slot.name, &slot.url).await;
                         } else {
                             eprintln!(
                                 "⚠️  Slot {} failed liveness check ({}); trying next slot",
                                 slot.name, err
                             );
-                            let _ = pool.close().await;
+                            let () = pool.close().await;
                         }
                         continue;
                     }
@@ -1531,7 +1528,7 @@ impl DatabasePool {
                             "⚠️  Slot {} liveness check timed out; trying next slot",
                             slot.name
                         );
-                        let _ = pool.close().await;
+                        let () = pool.close().await;
                         continue;
                     }
                 }
@@ -1553,7 +1550,7 @@ impl DatabasePool {
                                 "♻️  Slot {} session preflight hit missing TimescaleDB library; recreating it",
                                 slot.name
                             );
-                            let _ = pool.close().await;
+                            let () = pool.close().await;
                             let _ = recreate_pool_database(&slot.name, &slot.url).await;
                             continue;
                         }
@@ -1561,7 +1558,7 @@ impl DatabasePool {
                             "⚠️  Slot {} failed session preflight ({}); trying next slot",
                             slot.name, e
                         );
-                        let _ = pool.close().await;
+                        let () = pool.close().await;
                         continue;
                     }
                     Err(_) => {
@@ -1584,7 +1581,7 @@ impl DatabasePool {
                             "⚠️  Failed to acquire lock connection for {}: {}; trying next slot",
                             slot.name, err
                         );
-                            let _ = pool.close().await;
+                            let () = pool.close().await;
                             continue;
                         }
                         Err(_) => {
@@ -1592,7 +1589,7 @@ impl DatabasePool {
                                 "⚠️  Timed out acquiring lock connection for {}; trying next slot",
                                 slot.name
                             );
-                            let _ = pool.close().await;
+                            let () = pool.close().await;
                             continue;
                         }
                     };
@@ -1613,7 +1610,7 @@ impl DatabasePool {
                                 slot.name
                             );
                             drop(lock_conn);
-                            let _ = pool.close().await;
+                            let () = pool.close().await;
                             let _ = recreate_pool_database(&slot.name, &slot.url).await;
                         } else {
                             eprintln!(
@@ -1621,7 +1618,7 @@ impl DatabasePool {
                                 slot.name, err
                             );
                             drop(lock_conn);
-                            let _ = pool.close().await;
+                            let () = pool.close().await;
                         }
                         continue;
                     }
@@ -1631,7 +1628,7 @@ impl DatabasePool {
                             slot.name
                         );
                         drop(lock_conn);
-                        let _ = pool.close().await;
+                        let () = pool.close().await;
                         continue;
                     }
                 };
@@ -1687,8 +1684,7 @@ impl DatabasePool {
 
                 let meta_matches = existing_meta
                     .as_ref()
-                    .map(|m| m.fingerprint == expected_fp && m.extensions == expected_ext)
-                    .unwrap_or(false);
+                    .is_some_and(|m| m.fingerprint == expected_fp && m.extensions == expected_ext);
 
                 // If the DB is from an older template/extension set, prefer recreation over
                 // cleanup; cleanup can't fix schema/extension drift.
@@ -1702,7 +1698,7 @@ impl DatabasePool {
                         .execute(lock_conn.as_mut())
                         .await;
                     drop(lock_conn);
-                    let _ = pool.close().await;
+                    let () = pool.close().await;
                     let _ = recreate_pool_database(&slot.name, &slot.url).await;
                     {
                         let mut pool_opt = slot.pool.lock();
@@ -1712,7 +1708,7 @@ impl DatabasePool {
                     continue;
                 }
 
-                let was_clean = existing_meta.as_ref().map(|m| !m.dirty).unwrap_or(false);
+                let was_clean = existing_meta.as_ref().is_some_and(|m| !m.dirty);
 
                 // Mark dirty immediately after lock acquisition (crash-safe).
                 let dirty_meta = PoolMeta {
@@ -1747,7 +1743,7 @@ impl DatabasePool {
                 // not known-clean under clean-after-use).
                 let clean_start = std::time::Instant::now();
                 match clean_database(slot, &pool, &slot.name, &slot.url).await {
-                    Ok(_) => {
+                    Ok(()) => {
                         let clean_time = clean_start.elapsed();
                         if clean_time.as_millis() > 100 {
                             eprintln!("🔧 Database {} cleaned in {:.1?}", slot.name, clean_time);
@@ -1853,8 +1849,7 @@ fn is_missing_database_error(err: &sqlx::Error) -> bool {
             db_err
                 .code()
                 .as_ref()
-                .map(|c| c.as_ref() == "3D000")
-                .unwrap_or(false)
+                .is_some_and(|c| c.as_ref() == "3D000")
                 || db_err.message().contains("does not exist")
         }
         _ => err.to_string().contains("does not exist"),
@@ -2062,14 +2057,10 @@ async fn create_database_from_template(
         }
         Err(err) => {
             if let Error::Database(db_err) = &err {
-                let duplicate_code = db_err
-                    .code()
-                    .as_ref()
-                    .map(|c| {
-                        let code = c.as_ref();
-                        code == "42P04" || code == "23505"
-                    })
-                    .unwrap_or(false);
+                let duplicate_code = db_err.code().as_ref().is_some_and(|c| {
+                    let code = c.as_ref();
+                    code == "42P04" || code == "23505"
+                });
                 if duplicate_code || db_err.message().contains("already exists") {
                     Ok(CreateDatabaseOutcome::AlreadyExists)
                 } else {
@@ -2122,14 +2113,10 @@ async fn create_database_from_template_admin(
         }
         Err(err) => {
             if let Error::Database(db_err) = &err {
-                let duplicate_code = db_err
-                    .code()
-                    .as_ref()
-                    .map(|c| {
-                        let code = c.as_ref();
-                        code == "42P04" || code == "23505"
-                    })
-                    .unwrap_or(false);
+                let duplicate_code = db_err.code().as_ref().is_some_and(|c| {
+                    let code = c.as_ref();
+                    code == "42P04" || code == "23505"
+                });
                 if duplicate_code || db_err.message().contains("already exists") {
                     Ok(CreateDatabaseOutcome::AlreadyExists)
                 } else {
@@ -2193,7 +2180,7 @@ async fn clean_database(
 
         // Use the shared db_common implementation
         match crate::sandbox::db::pool::reset_database(&working_pool).await {
-            Ok(_) => {
+            Ok(()) => {
                 if let Err(verify_err) =
                     crate::sandbox::db::pool::verify_clean_state(&working_pool).await
                 {
@@ -2694,13 +2681,14 @@ async fn force_event_material_cleanup(pool: &DbPool) -> TestResult<()> {
 }
 
 #[cfg(test)]
+#[allow(dead_code)] // Test helper available for checkpoint consistency tests
 pub(crate) async fn force_event_material_cleanup_for_tests(pool: &DbPool) -> TestResult<()> {
     force_event_material_cleanup(pool).await
 }
 
 // Global pool instance - initialized on first use
-pub(crate) static POOL: Lazy<tokio::sync::Mutex<Option<Arc<DatabasePool>>>> =
-    Lazy::new(|| tokio::sync::Mutex::new(None));
+pub(crate) static POOL: std::sync::LazyLock<tokio::sync::Mutex<Option<Arc<DatabasePool>>>> =
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(None));
 
 /// Acquire a test database
 pub async fn acquire_test_database() -> TestResult<TestDatabase> {
@@ -2767,9 +2755,7 @@ async fn connect_admin_with_retry(admin_url: &str) -> TestResult<PgConnection> {
 
     Err(eyre!(format!(
         "Admin connection failed after retries: {}. Ensure PostgreSQL is running and reachable for tests.",
-        last_error
-            .map(|e| e.to_string())
-            .unwrap_or_else(|| "unknown error".to_string())
+        last_error.map_or_else(|| "unknown error".to_string(), |e| e.to_string())
     )))
 }
 
@@ -3062,12 +3048,10 @@ async fn ensure_template_database(
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         let drop_query = format!("DROP DATABASE IF EXISTS {template_name} WITH (FORCE)");
-        match sqlx::query(&drop_query).execute(&mut admin_conn).await {
-            Ok(_) => {}
-            Err(_) => {
-                let fallback = format!("DROP DATABASE IF EXISTS {template_name}");
-                sqlx::query(&fallback).execute(&mut admin_conn).await?;
-            }
+        if let Ok(_) = sqlx::query(&drop_query).execute(&mut admin_conn).await {
+        } else {
+            let fallback = format!("DROP DATABASE IF EXISTS {template_name}");
+            sqlx::query(&fallback).execute(&mut admin_conn).await?;
         }
 
         let create_query = format!("CREATE DATABASE {template_name}");
@@ -3106,7 +3090,7 @@ async fn ensure_template_database(
             let template_pool: DbPool = sqlx::postgres::PgPoolOptions::new()
                 .max_connections(template_pool_max)
                 .min_connections(1)
-                .max_lifetime(Duration::from_secs(300))
+                .max_lifetime(Duration::from_mins(5))
                 .idle_timeout(Duration::from_secs(10))
                 .acquire_timeout(Duration::from_secs(15)) // Increased for parallel template operations
                 .connect(&template_migration_url)
@@ -3120,7 +3104,7 @@ async fn ensure_template_database(
 
             // Check for required extensions first
             match check_required_extensions(&template_pool).await {
-                Ok(_) => {}
+                Ok(()) => {}
                 Err(e) => {
                     eprintln!("❌ Missing required PostgreSQL extensions: {e}");
                     eprintln!("   Check NixOS PostgreSQL configuration and required extensions.");
@@ -3531,7 +3515,7 @@ pub async fn check_pool_health() -> TestResult<PoolHealthReport> {
 /// Current number of slots available in the database pool.
 pub async fn pool_slot_count() -> usize {
     let pool_lock = POOL.lock().await;
-    pool_lock.as_ref().map(|pool| pool.slots.len()).unwrap_or(0)
+    pool_lock.as_ref().map_or(0, |pool| pool.slots.len())
 }
 
 /// Acquire a connection to the Postgres admin database with retry logic.

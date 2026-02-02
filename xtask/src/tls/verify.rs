@@ -100,13 +100,7 @@ pub fn check_tls_config(
 
     // Check private key
     if let Some(ref key_file) = key_path {
-        if !key_file.exists() {
-            result.issues.push(format!(
-                "Private key file not found: {}",
-                key_file.display()
-            ));
-            result.valid = false;
-        } else {
+        if key_file.exists() {
             // Verify key matches certificate
             if let Some(ref cert_file) = cert_path {
                 match verify_key_matches_cert(cert_file, key_file) {
@@ -142,6 +136,12 @@ pub fn check_tls_config(
                     }
                 }
             }
+        } else {
+            result.issues.push(format!(
+                "Private key file not found: {}",
+                key_file.display()
+            ));
+            result.valid = false;
         }
     } else {
         result.issues.push(
@@ -250,8 +250,7 @@ fn check_certificate(path: &PathBuf) -> Result<CertInfo> {
         .basic_constraints()
         .ok()
         .flatten()
-        .map(|bc| bc.value.ca)
-        .unwrap_or(false);
+        .is_some_and(|bc| bc.value.ca);
 
     // Extract SANs
     let mut san = Vec::new();
@@ -338,8 +337,7 @@ fn verify_certificate_chain(cert_path: &PathBuf, ca_path: &PathBuf) -> Result<bo
 fn check_nats_tls(result: &mut TlsCheckResult) {
     // Check NATS TLS environment variables
     let require_tls = std::env::var("SINEX_NATS_REQUIRE_TLS")
-        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "on"))
-        .unwrap_or(false);
+        .is_ok_and(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "on"));
 
     if !require_tls {
         result.warnings.push(

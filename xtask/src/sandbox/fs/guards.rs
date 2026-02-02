@@ -9,7 +9,7 @@ use sqlx::pool::PoolConnection;
 use std::ffi::OsStr;
 use std::sync::{Mutex, MutexGuard};
 
-static ENV_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+static ENV_MUTEX: std::sync::LazyLock<Mutex<()>> = std::sync::LazyLock::new(|| Mutex::new(()));
 
 /// Guard for serializing environment-variable mutations inside tests.
 ///

@@ -96,7 +96,7 @@ pub struct HistoryCommand {
 }
 
 impl XtaskCommand for HistoryCommand {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "history"
     }
 
@@ -149,8 +149,7 @@ fn execute_list(
                 let profile = inv.profile.as_deref().unwrap_or("-");
                 let duration = inv
                     .duration_secs
-                    .map(|d| format!("{:.1}s", d))
-                    .unwrap_or_else(|| "-".into());
+                    .map_or_else(|| "-".into(), |d| format!("{:.1}s", d));
                 let status = format!("{:?}", inv.status).to_lowercase();
                 println!(
                     "{:<6} {:<12} {:<10} {:<10} {:>8}  {}",
@@ -435,7 +434,7 @@ fn execute_tests_trends(
                     test.package, test.test_name, test.avg_duration_secs
                 );
                 for (i, duration) in test.durations.iter().enumerate() {
-                    let timestamp = test.timestamps.get(i).map(|s| s.as_str()).unwrap_or("-");
+                    let timestamp = test.timestamps.get(i).map_or("-", |s| s.as_str());
                     println!("  {}: {:.3}s", timestamp, duration);
                 }
                 println!();

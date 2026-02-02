@@ -118,7 +118,7 @@ fn parse_diagnostic_message(msg: &serde_json::Value) -> Option<CompilerDiagnosti
         spans
             .iter()
             .find(|s| s.get("is_primary").and_then(|p| p.as_bool()) == Some(true))
-            .map(|span| {
+            .map_or((None, None, None), |span| {
                 (
                     span.get("file_name")
                         .and_then(|f| f.as_str())
@@ -131,7 +131,6 @@ fn parse_diagnostic_message(msg: &serde_json::Value) -> Option<CompilerDiagnosti
                         .map(|c| c as u32),
                 )
             })
-            .unwrap_or((None, None, None))
     } else {
         (None, None, None)
     };

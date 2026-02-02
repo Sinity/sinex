@@ -30,7 +30,7 @@ use clap::Subcommand;
 use std::path::PathBuf;
 
 /// TLS subcommands for certificate management.
-#[derive(Subcommand, Clone)]
+#[derive(Debug, Clone, Subcommand)]
 pub enum TlsCommand {
     /// Generate self-signed certificates for local development
     GenerateDevCerts {

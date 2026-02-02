@@ -62,11 +62,6 @@ pub enum StackSubcommand {
         #[command(subcommand)]
         cmd: crate::commands::vm::VmSubcommand,
     },
-    /// Manage TLS
-    Tls {
-        #[command(subcommand)]
-        cmd: crate::tls::TlsCommand,
-    },
     /// Run diagnostics (doctor)
     Doctor {
         /// Run pipeline smoke tests
@@ -92,7 +87,7 @@ pub enum SnapshotSubcommand {
 }
 
 impl XtaskCommand for StackCommand {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "stack"
     }
 
@@ -118,7 +113,6 @@ impl XtaskCommand for StackCommand {
                 };
                 vm_cmd.execute(ctx)
             }
-            StackSubcommand::Tls { cmd } => crate::tls::run(cmd.clone(), ctx.is_json()),
             StackSubcommand::Doctor { pipelines } => execute_doctor(&config, *pipelines, ctx),
             StackSubcommand::Env { export } => execute_env(&config, *export),
         }
@@ -259,7 +253,7 @@ fn execute_logs(
         "nats" | "nats-server" => "nats.log",
         _ => {
             // Try generic process log location if orchestrator uses it
-            if Path::new(".devenv/state")
+            if Path::new(".sinex/state")
                 .join(process)
                 .join("process.log")
                 .exists()
@@ -275,7 +269,7 @@ fn execute_logs(
         config.logs_dir().join(log_file)
     } else {
         // Fallback logic
-        PathBuf::from(format!(".devenv/state/{}/process.log", process))
+        PathBuf::from(format!(".sinex/state/{}/process.log", process))
     };
 
     if !log_path.exists() {

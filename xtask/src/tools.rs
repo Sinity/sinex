@@ -25,7 +25,7 @@ pub struct ToolInfo {
 impl ToolInfo {
     /// Create a new ToolInfo for an unavailable tool
     #[allow(dead_code)]
-    pub fn unavailable(name: &str) -> Self {
+    pub(crate) fn unavailable(name: &str) -> Self {
         Self {
             path: PathBuf::from(name),
             version: String::from("not found"),
@@ -53,7 +53,7 @@ impl ToolManager {
     /// let info = ToolManager::check_tool("cargo").unwrap();
     /// assert!(info.is_available);
     /// ```
-    pub fn check_tool(name: &str) -> Result<ToolInfo> {
+    pub(crate) fn check_tool(name: &str) -> Result<ToolInfo> {
         // Try to find tool in PATH using which crate
         let path = which(name).with_context(|| format!("Tool '{}' not found in PATH", name))?;
 
@@ -113,7 +113,7 @@ impl ToolManager {
     /// let guidance = ToolManager::install_guidance("cargo-audit");
     /// assert!(guidance.contains("nix"));
     /// ```
-    pub fn install_guidance(name: &str) -> String {
+    pub(crate) fn install_guidance(name: &str) -> String {
         let nix_package = match name {
             "cargo-audit" => "cargo-audit",
             "cargo-deny" => "cargo-deny",
@@ -162,7 +162,7 @@ impl ToolManager {
     /// assert_eq!(missing[0].0, "nonexistent");
     /// ```
     #[allow(dead_code)]
-    pub fn check_required_tools(tools: &[&str]) -> Result<Vec<(String, String)>> {
+    pub(crate) fn check_required_tools(tools: &[&str]) -> Result<Vec<(String, String)>> {
         let mut missing = Vec::new();
 
         for tool in tools {

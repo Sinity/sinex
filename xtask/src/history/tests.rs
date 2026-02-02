@@ -84,7 +84,7 @@ struct NextestMeta {
 
 /// Parse nextest libtest-json output and extract test results.
 #[cfg(test)]
-pub fn parse_nextest_output(output: &str) -> Vec<TestResult> {
+pub(super) fn parse_nextest_output(output: &str) -> Vec<TestResult> {
     let mut results = Vec::new();
     let mut current_package = String::from("unknown");
 

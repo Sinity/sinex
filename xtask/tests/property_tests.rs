@@ -20,17 +20,17 @@ use xtask::output::{OutputFormat, Status, StructuredError};
 
 /// Generate a valid command name (alphanumeric with dashes).
 fn command_name_strategy() -> impl Strategy<Value = String> {
-    "[a-z][a-z0-9\\-]{2,20}".prop_map(|s| s.to_string())
+    "[a-z][a-z0-9\\-]{2,20}".prop_map(|s| s)
 }
 
 /// Generate a valid error code (uppercase with underscores).
 fn error_code_strategy() -> impl Strategy<Value = String> {
-    "[A-Z][A-Z0-9_]{2,20}".prop_map(|s| s.to_string())
+    "[A-Z][A-Z0-9_]{2,20}".prop_map(|s| s)
 }
 
 /// Generate a valid error message.
 fn error_message_strategy() -> impl Strategy<Value = String> {
-    "[a-zA-Z0-9 .,!?\\-]{5,100}".prop_map(|s| s.to_string())
+    "[a-zA-Z0-9 .,!?\\-]{5,100}".prop_map(|s| s)
 }
 
 /// Generate a file location string.
@@ -230,7 +230,7 @@ proptest! {
     #[test]
     fn arguments_preserve_content(args in prop::collection::vec(argument_strategy(), 0..=10)) {
         // Simulate argument collection (like ProcessBuilder.args())
-        let collected: Vec<String> = args.to_vec();
+        let collected: Vec<String> = args.clone();
 
         prop_assert_eq!(args.len(), collected.len());
         for (original, collected) in args.iter().zip(collected.iter()) {
@@ -348,7 +348,7 @@ proptest! {
     fn status_color_is_valid_ansi(status in status_strategy()) {
         let color = status.color_code();
         prop_assert!(color.starts_with("\x1b["), "Color should be ANSI escape: {:?}", color);
-        prop_assert!(color.ends_with("m"), "Color should end with 'm': {:?}", color);
+        prop_assert!(color.ends_with('m'), "Color should end with 'm': {:?}", color);
     }
 
     /// Success status is_success returns true.

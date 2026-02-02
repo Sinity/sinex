@@ -12,7 +12,7 @@ pub struct GraphCommand {
 }
 
 impl XtaskCommand for GraphCommand {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "graph"
     }
 

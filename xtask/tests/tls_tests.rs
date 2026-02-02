@@ -112,7 +112,7 @@ fn test_generate_dev_certs_refuses_overwrite_without_force() {
     let output_path = temp_dir.path().to_path_buf();
 
     let config = CertConfig {
-        output_dir: output_path.clone(),
+        output_dir: output_path,
         san: vec!["localhost".to_string()],
         ca_name: "Test CA".to_string(),
         validity_days: 30,

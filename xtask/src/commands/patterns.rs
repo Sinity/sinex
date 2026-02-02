@@ -43,7 +43,7 @@ struct PatternSearchResult {
 }
 
 impl XtaskCommand for PatternsCommand {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "patterns"
     }
 
@@ -51,8 +51,7 @@ impl XtaskCommand for PatternsCommand {
         let search_dir = self
             .dir
             .as_ref()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| "crate".to_string());
+            .map_or_else(|| "crate".to_string(), |p| p.to_string_lossy().to_string());
 
         // Run ast-grep with JSON output
         let output = Command::new("ast-grep")

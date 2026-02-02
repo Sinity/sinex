@@ -110,17 +110,14 @@ impl TestBarrier {
     /// Wait for all participants to reach the barrier
     pub async fn wait(&self, timeout_duration: Duration) -> TestResult<()> {
         self.arrivals_total.fetch_add(1, Ordering::SeqCst);
-        match tokio::time::timeout(timeout_duration, self.barrier.wait()).await {
-            Ok(wait_result) => {
-                if wait_result.is_leader() {
-                    self.generation.fetch_add(1, Ordering::SeqCst);
-                }
-                Ok(())
+        if let Ok(wait_result) = tokio::time::timeout(timeout_duration, self.barrier.wait()).await {
+            if wait_result.is_leader() {
+                self.generation.fetch_add(1, Ordering::SeqCst);
             }
-            Err(_) => {
-                self.arrivals_total.fetch_sub(1, Ordering::SeqCst);
-                Err(SinexError::timeout("TestBarrier wait timed out").into())
-            }
+            Ok(())
+        } else {
+            self.arrivals_total.fetch_sub(1, Ordering::SeqCst);
+            Err(SinexError::timeout("TestBarrier wait timed out").into())
         }
     }
 

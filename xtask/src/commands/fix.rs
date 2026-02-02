@@ -13,7 +13,7 @@ pub struct FixCommand {
 }
 
 impl XtaskCommand for FixCommand {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "fix"
     }
 

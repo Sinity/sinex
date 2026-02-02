@@ -131,7 +131,7 @@ fn test_graph_deps_dot_has_closing_brace() {
 
     // DOT output should have closing brace (may have extra newline from println)
     assert!(
-        stdout.contains("}"),
+        stdout.contains('}'),
         "DOT output should contain closing brace"
     );
     assert!(
@@ -154,7 +154,7 @@ fn test_graph_deps_dot_contains_nodes() {
 
     // Should have at least some nodes (package names in quotes)
     let has_nodes = stdout.lines().any(|line| {
-        line.trim().ends_with(";")
+        line.trim().ends_with(';')
             && !line.contains("->")
             && !line.contains("rankdir")
             && !line.contains("shape")
@@ -786,8 +786,7 @@ fn test_graph_deps_json_contains_xtask_node() {
     // Check that xtask is in nodes
     let has_xtask = parsed["nodes"]
         .as_array()
-        .map(|nodes| nodes.iter().any(|n| n["id"].as_str() == Some("xtask")))
-        .unwrap_or(false);
+        .is_some_and(|nodes| nodes.iter().any(|n| n["id"].as_str() == Some("xtask")));
 
     assert!(has_xtask, "JSON output should contain xtask node");
 }

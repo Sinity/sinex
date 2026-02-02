@@ -63,7 +63,7 @@ struct GlobalOpts {
 
 impl GlobalOpts {
     /// Get the effective output format.
-    pub fn output_format(&self) -> OutputFormat {
+    pub(crate) fn output_format(&self) -> OutputFormat {
         if self.json {
             OutputFormat::Json
         } else {
@@ -72,7 +72,7 @@ impl GlobalOpts {
     }
 
     /// Check if background execution is requested.
-    pub fn is_background(&self) -> bool {
+    pub(crate) fn is_background(&self) -> bool {
         self.bg && !self.fg
     }
 }
@@ -161,29 +161,9 @@ enum Commands {
     /// Rarely-used utilities (patterns, ci, completions)
     Xtr(commands::XtrCommand),
 
-    // === Kept for backwards compat (hidden) ===
-    /// Dependency graph visualization (use `deps graph` instead)
-    #[command(hide = true)]
-    Graph(commands::GraphCommand),
-    /// Code pattern search (use `xtr patterns` instead)
-    #[command(hide = true)]
-    Patterns(commands::PatternsCommand),
-    /// CI Pipelines (use `xtr ci` instead)
-    #[command(hide = true)]
-    Ci(CiCommand),
-    /// Generate Shell Completions (use `xtr completions` instead)
-    #[command(hide = true)]
-    Completions {
-        #[arg(value_enum)]
-        shell: clap_complete::Shell,
-    },
-
     // === Infrastructure (less common) ===
     /// VM and NixOS operations
     Vm(VmCommand),
-    /// TLS certificate management
-    #[command(subcommand, hide = true)]
-    Tls(TlsCommand),
 }
 
 pub fn run_cli() -> Result<()> {
@@ -218,13 +198,7 @@ pub fn run_cli() -> Result<()> {
         Commands::Docs(_) => ("docs", None, None),
         Commands::Coverage(_) => ("coverage", None, None),
         Commands::Xtr(_) => ("xtr", None, None),
-        // Hidden/backwards compat
-        Commands::Graph(_) => ("graph", None, None),
-        Commands::Patterns(_) => ("patterns", None, None),
-        Commands::Ci(_) => ("ci", None, None),
-        Commands::Completions { .. } => ("completions", None, None),
         Commands::Vm(_) => ("vm", None, None),
-        Commands::Tls(_) => ("tls", None, None),
     };
 
     // Track invocation in history
@@ -263,37 +237,7 @@ pub fn run_cli() -> Result<()> {
         Commands::Docs(cmd) => cmd.execute(&ctx),
         Commands::Coverage(cmd) => cmd.execute(&ctx),
         Commands::Xtr(cmd) => cmd.execute(&ctx),
-        // Hidden/backwards compat - show deprecation warnings
-        Commands::Graph(cmd) => {
-            eprintln!("\x1b[33mNote:\x1b[0m 'graph' is moving to 'deps graph'. Consider updating your workflow.");
-            cmd.execute(&ctx)
-        }
-        Commands::Patterns(cmd) => {
-            eprintln!("\x1b[33mNote:\x1b[0m 'patterns' is moving to 'xtr patterns'. Consider updating your workflow.");
-            cmd.execute(&ctx)
-        }
-        Commands::Ci(cmd) => {
-            eprintln!(
-                "\x1b[33mNote:\x1b[0m 'ci' is moving to 'xtr ci'. Consider updating your workflow."
-            );
-            cmd.execute(&ctx)
-        }
-        Commands::Completions { shell } => {
-            eprintln!("\x1b[33mNote:\x1b[0m 'completions' is moving to 'xtr completions'. Consider updating your workflow.");
-            let shell_mapped = match shell {
-                clap_complete::Shell::Bash => commands::completions::Shell::Bash,
-                clap_complete::Shell::Zsh => commands::completions::Shell::Zsh,
-                clap_complete::Shell::Fish => commands::completions::Shell::Fish,
-                clap_complete::Shell::PowerShell => commands::completions::Shell::PowerShell,
-                _ => commands::completions::Shell::Bash,
-            };
-            use clap::CommandFactory;
-            let cmd = Cli::command();
-            commands::CompletionsCommand::generate_completions(shell_mapped, cmd)?;
-            Ok(crate::command::CommandResult::success())
-        }
         Commands::Vm(cmd) => cmd.execute(&ctx),
-        Commands::Tls(cmd) => cmd.execute(&ctx),
     };
 
     // Update history
@@ -357,31 +301,28 @@ fn list_commands(format: OutputFormat) -> Result<()> {
     let cli = Cli::command();
     let commands = extract_commands(&cli);
 
-    match format {
-        OutputFormat::Json => {
-            let output = serde_json::json!({
-                "commands": commands,
-                "version": build_info::PKG_VERSION,
-                "git_hash": build_info::SHORT_COMMIT,
-            });
-            println!("{}", serde_json::to_string_pretty(&output)?);
-        }
-        _ => {
-            println!("Available commands:\n");
-            for cmd in &commands {
-                if cmd.hidden {
+    if matches!(format, OutputFormat::Json) {
+        let output = serde_json::json!({
+            "commands": commands,
+            "version": build_info::PKG_VERSION,
+            "git_hash": build_info::SHORT_COMMIT,
+        });
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else {
+        println!("Available commands:\n");
+        for cmd in &commands {
+            if cmd.hidden {
+                continue;
+            }
+            let about = cmd.about.as_deref().unwrap_or("");
+            println!("  {:16} {}", cmd.name, about);
+
+            for sub in &cmd.subcommands {
+                if sub.hidden {
                     continue;
                 }
-                let about = cmd.about.as_deref().unwrap_or("");
-                println!("  {:16} {}", cmd.name, about);
-
-                for sub in &cmd.subcommands {
-                    if sub.hidden {
-                        continue;
-                    }
-                    let sub_about = sub.about.as_deref().unwrap_or("");
-                    println!("    {:14} {}", sub.name, sub_about);
-                }
+                let sub_about = sub.about.as_deref().unwrap_or("");
+                println!("    {:14} {}", sub.name, sub_about);
             }
         }
     }

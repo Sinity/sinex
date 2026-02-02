@@ -6,6 +6,7 @@
 use crate::affected;
 use crate::cargo_diagnostics::DiagnosticSummary;
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
+use crate::preflight;
 use anyhow::Result;
 use std::process::{Command, Stdio};
 
@@ -17,9 +18,12 @@ pub struct BuildCommand {
     /// Build in release mode
     #[arg(short, long)]
     pub release: bool,
-    /// Only build affected packages
-    #[arg(short, long)]
+    /// Only build affected packages (DEFAULT - use --all to build all)
+    #[arg(short = 'A', long, default_value_t = true, action = clap::ArgAction::Set)]
     pub affected: bool,
+    /// Build ALL packages (disables --affected default)
+    #[arg(short, long)]
+    pub all: bool,
 }
 
 impl BuildCommand {
@@ -100,7 +104,7 @@ fn parse_diagnostic_message(
         spans
             .iter()
             .find(|s| s.get("is_primary").and_then(|p| p.as_bool()) == Some(true))
-            .map(|span| {
+            .map_or((None, None, None), |span| {
                 (
                     span.get("file_name")
                         .and_then(|f| f.as_str())
@@ -113,7 +117,6 @@ fn parse_diagnostic_message(
                         .map(|c| c as u32),
                 )
             })
-            .unwrap_or((None, None, None))
     } else {
         (None, None, None)
     };
@@ -142,7 +145,7 @@ fn parse_diagnostic_message(
 }
 
 impl XtaskCommand for BuildCommand {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "build"
     }
 
@@ -157,11 +160,17 @@ impl XtaskCommand for BuildCommand {
             if self.release {
                 args.push("--release".to_string());
             }
-            if self.affected {
+            if self.affected && !self.all {
                 args.push("--affected".to_string());
+            }
+            if self.all {
+                args.push("--all".to_string());
             }
             return ctx.spawn_background("build", &args);
         }
+
+        // Ensure infrastructure is ready (DB needed for sqlx compile-time checks)
+        preflight::ensure_ready(ctx)?;
 
         let mut args: Vec<String> = Vec::new();
 
@@ -171,7 +180,8 @@ impl XtaskCommand for BuildCommand {
 
         let mut packages = self.package.clone();
 
-        if self.affected {
+        // --affected is default ON, --all disables it
+        if self.affected && !self.all {
             let affected = affected::affected_packages()?;
             if affected.is_empty() {
                 if ctx.is_human() {
@@ -233,10 +243,10 @@ impl XtaskCommand for BuildCommand {
             "diagnostics_recorded": ctx.invocation_id().is_some()
         }));
 
-        if !summary.success {
-            result = result.with_detail("build failed");
-        } else {
+        if summary.success {
             result = result.with_detail("build passed");
+        } else {
+            result = result.with_detail("build failed");
         }
 
         Ok(result.with_duration(ctx.elapsed()))

@@ -60,7 +60,7 @@ pub enum CiSubcommand {
 }
 
 impl XtaskCommand for CiCommand {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "ci"
     }
 
@@ -267,6 +267,7 @@ fn execute_workspace(target_dir: &str, ctx: &CommandContext) -> Result<CommandRe
         forbidden: true,
         heavy: false,
         affected: false,
+        all: true, // CI should check all packages
         packages: vec![],
         skip_tests: false, // CI should always check tests
     }
@@ -780,7 +781,7 @@ mod tests {
                 target_dir: "target-ci".to_string(),
             },
         };
-        let cloned = cmd.subcommand.clone();
+        let cloned = cmd.subcommand;
         match cloned {
             CiSubcommand::SchemaSync { target_dir } => {
                 assert_eq!(target_dir, "target-ci");

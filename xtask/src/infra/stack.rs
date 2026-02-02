@@ -387,7 +387,7 @@ pub fn pg_start(config: &StackConfig, verbose: bool) -> Result<()> {
             .stderr(Stdio::null())
             .status();
 
-        if check.map(|s| s.success()).unwrap_or(false) {
+        if check.is_ok_and(|s| s.success()) {
             if verbose {
                 println!("PostgreSQL started");
             }
