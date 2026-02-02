@@ -7,10 +7,9 @@ fn main() {
         .output()
         .ok()
         .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
+        .map_or_else(|| "unknown".to_string(), |s| s.trim().to_string());
 
-    println!("cargo:rustc-env=SINEX_GIT_REV={}", git_rev);
+    println!("cargo:rustc-env=SINEX_GIT_REV={git_rev}");
 
     // Also set the full revision for detailed tracking
     let git_rev_full = Command::new("git")
@@ -18,10 +17,9 @@ fn main() {
         .output()
         .ok()
         .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
+        .map_or_else(|| "unknown".to_string(), |s| s.trim().to_string());
 
-    println!("cargo:rustc-env=SINEX_GIT_REV_FULL={}", git_rev_full);
+    println!("cargo:rustc-env=SINEX_GIT_REV_FULL={git_rev_full}");
 
     // Get git branch
     let git_branch = Command::new("git")
@@ -29,16 +27,15 @@ fn main() {
         .output()
         .ok()
         .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
+        .map_or_else(|| "unknown".to_string(), |s| s.trim().to_string());
 
-    println!("cargo:rustc-env=SINEX_GIT_BRANCH={}", git_branch);
+    println!("cargo:rustc-env=SINEX_GIT_BRANCH={git_branch}");
 
     // Get build timestamp
     let build_time = time::OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
         .unwrap();
-    println!("cargo:rustc-env=SINEX_BUILD_TIME={}", build_time);
+    println!("cargo:rustc-env=SINEX_BUILD_TIME={build_time}");
 
     // Rerun if .git/HEAD or .git/refs change
     println!("cargo:rerun-if-changed=.git/HEAD");

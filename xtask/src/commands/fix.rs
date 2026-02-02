@@ -46,23 +46,37 @@ impl XtaskCommand for FixCommand {
         // 2. cargo fix --allow-dirty
         println!("Running cargo fix...");
         let mut fix = ProcessBuilder::cargo();
-        fix = fix.arg("fix").arg("--allow-dirty").arg("--allow-staged");
+        fix = fix
+            .arg("fix")
+            .arg("--allow-dirty")
+            .arg("--allow-staged")
+            .arg("--all-targets")
+            .inherit_output();
         for p in &self.package {
             fix = fix.arg("-p").arg(p);
         }
         fix.run_ok()?;
 
-        // 3. cargo clippy --fix --allow-dirty
+        // 3. cargo clippy --fix --allow-dirty --all-targets
+        // Need inherit_output() so clippy can write to files properly
+        // Also need explicit -W flags because workspace lints alone don't trigger --fix
         println!("Running clippy --fix...");
-        let mut clippy = ProcessBuilder::cargo();
-        clippy = clippy
+        let mut clippy = ProcessBuilder::cargo()
             .arg("clippy")
             .arg("--fix")
             .arg("--allow-dirty")
-            .arg("--allow-staged");
+            .arg("--allow-staged")
+            .arg("--all-targets");
         for p in &self.package {
             clippy = clippy.arg("-p").arg(p);
         }
+        clippy = clippy
+            .arg("--")
+            .arg("-W")
+            .arg("clippy::all")
+            .arg("-W")
+            .arg("clippy::pedantic")
+            .inherit_output();
         clippy.run_ok()?;
 
         Ok(CommandResult::success().with_detail("fixes applied"))
