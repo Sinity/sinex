@@ -168,12 +168,11 @@ impl XtaskCommand for LintForbiddenCommand {
             &sqlx_query_as_allow,
         )?);
 
-        // Report unwrap/expect in production code (informational, not blocking)
-        // This tracks technical debt without breaking the build
-        report_unwrap_expect_count()?;
-
         // Report runtime vs compile-time SQLx query usage
         report_sqlx_query_stats()?;
+
+        // Note: unwrap/expect checking is handled by clippy (unwrap_used, expect_used lints)
+        // No need to duplicate with grep-based counting here.
 
         // Check for test-utils usage in production code (layering violation)
         check_test_utils_layering(&mut violations)?;
@@ -259,25 +258,6 @@ fn is_tests_path(path: &str) -> bool {
     path.contains("/tests/") || path.starts_with("tests/")
     // xtask is a build tool - its sync tests are acceptable
     || path.starts_with("xtask/")
-}
-
-/// Report count of unwrap/expect calls in production code (informational only).
-/// This helps track technical debt without blocking the build.
-fn report_unwrap_expect_count() -> Result<()> {
-    let unwrap_count = count_pattern_outside_tests(r"\.unwrap\(\)")?;
-    let expect_count = count_pattern_outside_tests(r"\.expect\(")?;
-    let total = unwrap_count + expect_count;
-
-    if total > 0 {
-        println!(
-            "⚠️  unwrap/expect in production code: {} total ({} unwrap, {} expect)",
-            total, unwrap_count, expect_count
-        );
-        println!("   Run: rg '\\.unwrap\\(\\)|.expect\\(' --glob '*.rs' --glob '!**/tests/**' -c");
-    } else {
-        println!("✅ No unwrap/expect in production code");
-    }
-    Ok(())
 }
 
 /// Check for sinex_test_utils usage outside expected locations.

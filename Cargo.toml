@@ -95,10 +95,12 @@ cast_precision_loss = "allow"
 cast_sign_loss = "allow"
 cast_possible_wrap = "allow"
 
-# Tracked by xtask forbidden patterns instead of clippy
-unwrap_used = "allow"
-expect_used = "allow"
-panic = "allow"
+# Error handling discipline - clippy handles these
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+
+# These are legitimate in CLI/debug code
 print_stdout = "allow"
 print_stderr = "allow"
 as_conversions = "allow"
