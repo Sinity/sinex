@@ -323,14 +323,16 @@ impl AcquisitionManager {
         source_identifier: &str,
         metadata: JsonValue,
     ) -> NodeResult<()> {
+        let started_at = now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .map_err(|e| SinexError::messaging(format!("Failed to format timestamp: {}", e)))?;
+
         let msg = MaterialBeginMessage {
             material_id: material_id.to_string(),
             material_kind: self.source_type.clone(),
             source_identifier: source_identifier.to_string(),
             metadata,
-            started_at: now_utc()
-                .format(&time::format_description::well_known::Rfc3339)
-                .unwrap(),
+            started_at,
         };
 
         let subject = self
@@ -503,11 +505,13 @@ impl AcquisitionManager {
         content_hash: &str,
         metadata: JsonValue,
     ) -> NodeResult<()> {
+        let ended_at = now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .map_err(|e| SinexError::messaging(format!("Failed to format timestamp: {}", e)))?;
+
         let msg = MaterialEndMessage {
             material_id: material_id.to_string(),
-            ended_at: now_utc()
-                .format(&time::format_description::well_known::Rfc3339)
-                .unwrap(),
+            ended_at,
             content_hash: content_hash.to_string(),
             total_slices,
             total_size_bytes: total_bytes,
@@ -571,10 +575,10 @@ impl<'a> MaterialBuilder<'a> {
         if !self.metadata.is_object() {
             self.metadata = json!({});
         }
-        self.metadata
-            .as_object_mut()
-            .unwrap()
-            .insert(key.to_string(), value);
+        // SAFETY: We checked/initialized is_object() above, so this cannot fail
+        if let Some(obj) = self.metadata.as_object_mut() {
+            obj.insert(key.to_string(), value);
+        }
         self
     }
 
@@ -644,18 +648,25 @@ impl AppendStreamAcquirer {
             self.current_handle = Some(self.manager.begin_material(source_identifier).await?);
         }
 
-        let handle = self.current_handle.as_mut().unwrap();
+        let handle = self
+            .current_handle
+            .as_mut()
+            .ok_or_else(|| SinexError::invalid_state("current_handle should be initialized"))?;
 
         // Check rotation
         if self.manager.should_rotate(handle).await {
             info!("Rotating material due to size/age limits");
-            let old_handle = self.current_handle.take().unwrap();
+            let old_handle = self.current_handle.take().ok_or_else(|| {
+                SinexError::invalid_state("current_handle should exist for rotation")
+            })?;
             self.manager.finalize(old_handle, "rotation").await?;
             self.current_handle = Some(self.manager.begin_material(source_identifier).await?);
         }
 
         // Append to current material
-        let handle = self.current_handle.as_mut().unwrap();
+        let handle = self.current_handle.as_mut().ok_or_else(|| {
+            SinexError::invalid_state("current_handle should exist after rotation")
+        })?;
         self.manager.append_slice(handle, data).await?;
 
         Ok(())

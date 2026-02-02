@@ -24,7 +24,7 @@
 //! let task = tokio::spawn(async {
 //!     // Watcher logic here
 //! });
-//! handle.start(task, None);
+//! handle.start(task, None)?;
 //!
 //! // Check if active
 //! if handle.is_active() {
@@ -41,6 +41,8 @@
 
 use std::sync::{Arc, RwLock};
 use tokio::task::JoinHandle;
+
+use sinex_primitives::{Result as SinexResult, SinexError};
 
 /// State machine for watcher lifecycle
 #[derive(Debug)]
@@ -151,22 +153,29 @@ impl<M> WatcherHandle<M> {
     /// * `task` - Main watcher task handle
     /// * `forwarder` - Optional forwarder task handle
     ///
-    /// # Panics
-    /// Panics if called when watcher is already in Running or Stopped state.
-    pub fn start(&mut self, task: JoinHandle<()>, forwarder: Option<JoinHandle<()>>) {
+    /// # Errors
+    /// Returns `SinexError::InvalidState` if called when watcher is already in Running or Stopped state.
+    pub fn start(
+        &mut self,
+        task: JoinHandle<()>,
+        forwarder: Option<JoinHandle<()>>,
+    ) -> SinexResult<()> {
         match &self.state {
             WatcherState::Initialized => {
                 self.state = WatcherState::Running { task, forwarder };
                 if let Ok(mut health) = self.health.write() {
                     health.active = true;
                 }
+                Ok(())
             }
-            WatcherState::Running { .. } => {
-                panic!("WatcherHandle::start called on already-running watcher");
-            }
-            WatcherState::Stopped => {
-                panic!("WatcherHandle::start called on stopped watcher");
-            }
+            WatcherState::Running { .. } => Err(SinexError::invalid_state(
+                "WatcherHandle::start called on already-running watcher",
+            )
+            .with_context("watcher_name", self.name)),
+            WatcherState::Stopped => Err(SinexError::invalid_state(
+                "WatcherHandle::start called on stopped watcher",
+            )
+            .with_context("watcher_name", self.name)),
         }
     }
 
@@ -282,7 +291,7 @@ mod tests {
         let task = tokio::spawn(async {
             sleep(Duration::from_secs(10)).await;
         });
-        handle.start(task, None);
+        handle.start(task, None)?;
         assert!(handle.is_active());
 
         // Shutdown consumes self, so check state before shutdown
@@ -335,7 +344,7 @@ mod tests {
         });
 
         let mut handle = WatcherHandle::<()>::initialized("test");
-        handle.start(task, None);
+        handle.start(task, None)?;
 
         handle.shutdown().await;
         sleep(Duration::from_millis(100)).await;
@@ -351,7 +360,7 @@ mod tests {
         let mut handle = WatcherHandle::initialized("test").with_material(material);
 
         let task = tokio::spawn(async {});
-        handle.start(task, None);
+        handle.start(task, None)?;
 
         let extracted = handle.take_material();
         assert_eq!(extracted, Some("test_context"));
@@ -369,7 +378,7 @@ mod tests {
         });
 
         let mut handle = WatcherHandle::<()>::initialized("test");
-        handle.start(main_task, Some(forwarder_task));
+        handle.start(main_task, Some(forwarder_task))?;
         assert!(handle.is_active());
 
         handle.shutdown().await;

@@ -54,7 +54,7 @@ fn validate_host(host: &str) -> Result<(), ValidationError> {
 
 // Regex for safe relative paths (no directory traversal)
 lazy_static::lazy_static! {
-    static ref SAFE_PATH_REGEX: regex::Regex = regex::Regex::new(r"^[a-zA-Z0-9_\-/]+$").unwrap();
+    static ref SAFE_PATH_REGEX: regex::Regex = regex::Regex::new(r"^[a-zA-Z0-9_\-/]+$").expect("valid compile-time regex pattern");
 }
 
 /// File path validation

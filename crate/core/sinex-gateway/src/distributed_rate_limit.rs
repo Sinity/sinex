@@ -29,7 +29,7 @@ pub struct DistributedRateLimitConfig {
 impl Default for DistributedRateLimitConfig {
     fn default() -> Self {
         Self {
-            requests_per_minute: NonZeroU32::new(6000).unwrap(), // 100 req/s
+            requests_per_minute: NonZeroU32::new(6000).expect("6000 is a non-zero constant"), // 100 req/s
             window_seconds: 60,
             enabled: true,
         }
@@ -46,7 +46,7 @@ impl DistributedRateLimitConfig {
             .ok()
             .and_then(|v| v.parse().ok())
             .and_then(NonZeroU32::new)
-            .unwrap_or_else(|| NonZeroU32::new(6000).unwrap());
+            .unwrap_or_else(|| NonZeroU32::new(6000).expect("6000 is a non-zero constant"));
 
         let window_seconds = std::env::var("SINEX_RPC_RATE_LIMIT_WINDOW_SECS")
             .ok()

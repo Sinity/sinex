@@ -27,8 +27,8 @@ pub struct RateLimitConfig {
 impl Default for RateLimitConfig {
     fn default() -> Self {
         Self {
-            requests_per_second: NonZeroU32::new(100).unwrap(),
-            burst_size: NonZeroU32::new(50).unwrap(),
+            requests_per_second: NonZeroU32::new(100).expect("100 is a valid NonZero value"),
+            burst_size: NonZeroU32::new(50).expect("50 is a valid NonZero value"),
             idle_timeout: Duration::from_hours(1), // 1 hour
             enabled: true,
         }
@@ -45,13 +45,13 @@ impl RateLimitConfig {
             .ok()
             .and_then(|v| v.parse::<u32>().ok())
             .and_then(NonZeroU32::new)
-            .unwrap_or_else(|| NonZeroU32::new(100).unwrap());
+            .unwrap_or_else(|| NonZeroU32::new(100).expect("100 is a valid NonZero value"));
 
         let burst_size = std::env::var("SINEX_RPC_RATE_LIMIT_BURST")
             .ok()
             .and_then(|v| v.parse::<u32>().ok())
             .and_then(NonZeroU32::new)
-            .unwrap_or_else(|| NonZeroU32::new(50).unwrap());
+            .unwrap_or_else(|| NonZeroU32::new(50).expect("50 is a valid NonZero value"));
 
         let idle_timeout_secs = std::env::var("SINEX_RPC_RATE_LIMIT_IDLE_TIMEOUT_SECS")
             .ok()
@@ -197,8 +197,8 @@ mod tests {
         // With burst_size=50 and requests_per_second=100, initial burst allows
         // consuming up to burst capacity quickly before rate limiting kicks in
         let limiter = TokenRateLimiter::new(RateLimitConfig {
-            requests_per_second: NonZeroU32::new(100).unwrap(),
-            burst_size: NonZeroU32::new(50).unwrap(),
+            requests_per_second: NonZeroU32::new(100).expect("100 is a valid NonZero value"),
+            burst_size: NonZeroU32::new(50).expect("50 is a valid NonZero value"),
             idle_timeout: Duration::from_mins(1),
             enabled: true,
         });
@@ -226,8 +226,8 @@ mod tests {
     #[test]
     fn test_rate_limiter_disabled() {
         let limiter = TokenRateLimiter::new(RateLimitConfig {
-            requests_per_second: NonZeroU32::new(1).unwrap(),
-            burst_size: NonZeroU32::new(1).unwrap(),
+            requests_per_second: NonZeroU32::new(1).expect("1 is a valid NonZero value"),
+            burst_size: NonZeroU32::new(1).expect("1 is a valid NonZero value"),
             idle_timeout: Duration::from_mins(1),
             enabled: false,
         });
@@ -241,8 +241,8 @@ mod tests {
     #[test]
     fn test_separate_tokens_have_separate_limits() {
         let limiter = TokenRateLimiter::new(RateLimitConfig {
-            requests_per_second: NonZeroU32::new(5).unwrap(),
-            burst_size: NonZeroU32::new(5).unwrap(),
+            requests_per_second: NonZeroU32::new(5).expect("5 is a valid NonZero value"),
+            burst_size: NonZeroU32::new(5).expect("5 is a valid NonZero value"),
             idle_timeout: Duration::from_mins(1),
             enabled: true,
         });
@@ -259,8 +259,8 @@ mod tests {
     #[test]
     fn test_cleanup_removes_stale_entries() {
         let limiter = TokenRateLimiter::new(RateLimitConfig {
-            requests_per_second: NonZeroU32::new(10).unwrap(),
-            burst_size: NonZeroU32::new(5).unwrap(),
+            requests_per_second: NonZeroU32::new(10).expect("10 is a valid NonZero value"),
+            burst_size: NonZeroU32::new(5).expect("5 is a valid NonZero value"),
             idle_timeout: Duration::from_millis(1), // Very short for testing
             enabled: true,
         });

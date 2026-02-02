@@ -137,7 +137,7 @@ impl HealthReporter {
         // Update wall clock time (for display/observability)
         let now_wall = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
         self.metrics
             .last_error_time
@@ -178,7 +178,10 @@ impl HealthReporter {
     /// Returns the current status after checking.
     pub async fn check_and_emit(&self) -> Result<ProcessStatus> {
         let new_status = self.calculate_status();
-        let mut last_status_guard = self.last_status.write().unwrap();
+        let mut last_status_guard = self
+            .last_status
+            .write()
+            .expect("health reporter status lock poisoned");
         let old_status = *last_status_guard;
 
         // Only emit if status changed
