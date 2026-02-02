@@ -229,8 +229,8 @@ impl NodeConfig {
         Figment::from(Serialized::defaults(Self::defaults(service_name)))
             .merge(Toml::file("node.toml").nested())
             .merge(Toml::file("/etc/sinex/node.toml").nested())
-            .merge(Toml::file(format!("{}.toml", service_name)).nested())
-            .merge(Toml::file(format!("/etc/sinex/{}.toml", service_name)).nested())
+            .merge(Toml::file(format!("{service_name}.toml")).nested())
+            .merge(Toml::file(format!("/etc/sinex/{service_name}.toml")).nested())
     }
 
     fn env_prefix(service_name: &str) -> String {
@@ -242,7 +242,7 @@ impl NodeConfig {
         figment
             .merge(Env::raw().only(&["DATABASE_URL"]))
             .merge(Env::prefixed("SINEX_").map(map_env_key))
-            .merge(Env::prefixed(&format!("SINEX_{}_", env_prefix)).map(map_env_key))
+            .merge(Env::prefixed(&format!("SINEX_{env_prefix}_")).map(map_env_key))
     }
 
     /// Load configuration using Figment from defaults, config files, and environment.
@@ -322,14 +322,13 @@ impl NodeConfig {
         use validator::Validate as ValidateTrait;
 
         ValidateTrait::validate(self)
-            .map_err(|e| ConfigError::Validation(format!("Validation failed: {}", e)))?;
+            .map_err(|e| ConfigError::Validation(format!("Validation failed: {e}")))?;
 
         // Additional runtime validation - check if parent directory exists
         if let Some(parent) = self.work_dir.parent() {
             if !parent.exists() {
                 return Err(ConfigError::Validation(format!(
-                    "Work directory parent does not exist: {}",
-                    parent.as_str()
+                    "Work directory parent does not exist: {parent}"
                 )));
             }
         }
@@ -350,8 +349,8 @@ impl EventSourceConfig {
 
     fn figment_base(service_name: &str) -> Figment {
         Figment::from(Serialized::defaults(Self::defaults(service_name)))
-            .merge(Toml::file(format!("{}.toml", service_name)).nested())
-            .merge(Toml::file(format!("/etc/sinex/{}.toml", service_name)).nested())
+            .merge(Toml::file(format!("{service_name}.toml")).nested())
+            .merge(Toml::file(format!("/etc/sinex/{service_name}.toml")).nested())
             .merge(Toml::file("event-source.toml").nested())
             .merge(Toml::file("/etc/sinex/event-source.toml").nested())
     }
@@ -375,7 +374,7 @@ impl EventSourceConfig {
         use validator::Validate as ValidateTrait;
 
         ValidateTrait::validate(self)
-            .map_err(|e| ConfigError::Validation(format!("Validation failed: {}", e)))?;
+            .map_err(|e| ConfigError::Validation(format!("Validation failed: {e}")))?;
 
         // Base validation includes runtime checks
         self.base.validate_config()?;
@@ -399,8 +398,8 @@ impl AutomatonConfig {
 
     fn figment_base(service_name: &str) -> Figment {
         Figment::from(Serialized::defaults(Self::defaults(service_name)))
-            .merge(Toml::file(format!("{}.toml", service_name)).nested())
-            .merge(Toml::file(format!("/etc/sinex/{}.toml", service_name)).nested())
+            .merge(Toml::file(format!("{service_name}.toml")).nested())
+            .merge(Toml::file(format!("/etc/sinex/{service_name}.toml")).nested())
             .merge(Toml::file("automaton.toml").nested())
             .merge(Toml::file("/etc/sinex/automaton.toml").nested())
     }
@@ -424,7 +423,7 @@ impl AutomatonConfig {
         use validator::Validate as ValidateTrait;
 
         ValidateTrait::validate(self)
-            .map_err(|e| ConfigError::Validation(format!("Validation failed: {}", e)))?;
+            .map_err(|e| ConfigError::Validation(format!("Validation failed: {e}")))?;
 
         // Base validation includes runtime checks
         self.base.validate_config()?;

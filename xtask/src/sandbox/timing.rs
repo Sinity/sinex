@@ -69,7 +69,7 @@ impl TestSynchronizer {
         tokio::time::timeout(self.timeout_duration, rx.wait_for(|&val| val))
             .await
             .map_err(|_| SinexError::timeout("TestSynchronizer wait timed out"))?
-            .map_err(|e| SinexError::unknown(format!("Watch error: {}", e)))?;
+            .map_err(|e| SinexError::unknown(format!("Watch error: {e}")))?;
         Ok(())
     }
 

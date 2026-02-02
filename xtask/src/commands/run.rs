@@ -491,7 +491,7 @@ impl RunCommand {
         let job = manager.spawn("cargo", &args)?;
 
         Ok(CommandResult::success()
-            .with_message(format!("Backgrounded {} as job {}", package, job.id))
+            .with_message(format!("Backgrounded {package} as job {}", job.id))
             .with_data(serde_json::json!({
                 "job_id": job.id,
                 "package": package,

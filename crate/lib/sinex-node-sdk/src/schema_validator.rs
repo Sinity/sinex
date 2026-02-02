@@ -286,9 +286,7 @@ impl NodeSchemaValidator {
             let error_messages: Vec<String> = errors.map(|e| e.to_string()).collect();
 
             return Err(crate::SinexError::validation(format!(
-                "Schema validation failed for {}.{}: {}",
-                source,
-                event_type,
+                "Schema validation failed for {source}.{event_type}: {}",
                 error_messages.join("; ")
             )));
         }
@@ -346,7 +344,7 @@ impl NodeSchemaValidator {
         })?;
 
         let schema_id: Ulid = schema_id_str.parse().map_err(|e| {
-            crate::SinexError::processing(format!("Invalid schema_id from DB: {}", e))
+            crate::SinexError::processing(format!("Invalid schema_id from DB: {e}"))
         })?;
 
         // Fetch full schema JSON from NATS KV

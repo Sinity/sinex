@@ -561,7 +561,7 @@ impl NodeCoordination {
         // Issue 12 fix: Monitor spawned task health
         let service_name_health = self.instance.service_name.clone();
         let _monitor_handle = tokio::spawn(async move {
-            let subject = format!("sinex.coordination.{}.handoff", service_name_clone);
+            let subject = format!("sinex.coordination.{service_name_clone}.handoff");
             match nats_clone.subscribe(subject.clone()).await {
                 Ok(mut sub) => {
                     while let Some(msg) = sub.next().await {
@@ -692,7 +692,7 @@ impl NodeCoordination {
         self.nats_client
             .publish(subject, payload.into())
             .await
-            .map_err(|e| SinexError::network(format!("Failed to publish handoff ready: {}", e)))?;
+            .map_err(|e| SinexError::network(format!("Failed to publish handoff ready: {e}")))?;
 
         // Step 3: Release lease explicitly (best-effort)
         if let Err(e) = self

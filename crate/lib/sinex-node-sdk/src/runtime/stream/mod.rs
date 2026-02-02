@@ -82,8 +82,7 @@ impl ConfirmedEventHandler for RunnerConfirmedEventHandler {
     async fn handle_confirmed(&self, event: &ProvisionalEvent) -> NodeResult<()> {
         self.sender.send(event.clone()).await.map_err(|err| {
             SinexError::processing(format!(
-                "Failed to forward confirmed event to automaton: {}",
-                err
+                "Failed to forward confirmed event to automaton: {err}"
             ))
         })
     }
@@ -222,10 +221,7 @@ async fn maybe_start_schema_listener(
         debug!("Schema broadcast listener task ended");
     });
 
-    info!(
-        "Started schema broadcast listener and validator for {}",
-        subject
-    );
+    info!("Started schema broadcast listener and validator for {subject}");
 
     Ok((Some(cache), Some(validator), Some(handle)))
 }
@@ -835,10 +831,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                             .acquire_leadership(&instance_id)
                             .await
                             .map_err(|e| {
-                                SinexError::processing(format!(
-                                    "Failed to acquire leadership: {}",
-                                    e
-                                ))
+                                SinexError::processing(format!("Failed to acquire leadership: {e}"))
                             })?;
 
                     if !is_leader {
@@ -857,7 +850,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                             interval.tick().await;
                             // Basic heartbeat logic - just keep refreshing leadership
                             if let Err(e) = kv_clone.acquire_leadership(&instance_id_clone).await {
-                                warn!("Heartbeat failed: {}", e);
+                                warn!("Heartbeat failed: {e}");
                             }
                         }
                     });
@@ -1047,8 +1040,7 @@ impl<T: Node + 'static> NodeRunner<T> {
         let event_id_str = event_id.to_string();
         pool.events().get_by_id(*event_id).await.map_err(|err| {
             SinexError::processing(format!(
-                "Failed to load confirmed event {} from database: {}",
-                event_id_str, err
+                "Failed to load confirmed event {event_id_str} from database: {err}"
             ))
         })
     }

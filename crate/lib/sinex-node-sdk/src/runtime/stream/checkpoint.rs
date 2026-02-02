@@ -59,15 +59,15 @@ impl Checkpoint {
             Checkpoint::Internal {
                 event_id,
                 message_count,
-            } => format!("event {} (#{message_count})", event_id),
+            } => format!("event {event_id} (#{message_count})"),
             Checkpoint::Stream {
                 message_id,
                 event_id,
             } => {
                 if let Some(event_id) = event_id {
-                    format!("stream {} (event {})", message_id, event_id)
+                    format!("stream {message_id} (event {event_id})")
                 } else {
-                    format!("stream {}", message_id)
+                    format!("stream {message_id}")
                 }
             }
             Checkpoint::Timestamp { timestamp, .. } => {

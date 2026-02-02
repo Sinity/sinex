@@ -429,7 +429,7 @@ impl NodeGenerator {
             .header("Content-Type", "application/json")
             .header(
                 "Authorization",
-                format!("Bearer {}", self.config.llm_api_key),
+                format!("Bearer {}", &self.config.llm_api_key),
             )
             .json(&request)
             .send()
@@ -475,7 +475,7 @@ impl NodeGenerator {
     }
 
     fn create_crate(&self, spec: &NodeSpec, code: &str) -> Result<Utf8PathBuf> {
-        let crate_name = format!("sinex-{}", spec.name);
+        let crate_name = format!("sinex-{}", &spec.name);
         let crate_path = self
             .config
             .workspace_root
@@ -484,7 +484,7 @@ impl NodeGenerator {
 
         // Create directory structure
         std::fs::create_dir_all(crate_path.join("src"))
-            .with_context(|| format!("Failed to create crate directory: {}", crate_path))?;
+            .with_context(|| format!("Failed to create crate directory: {crate_path}"))?;
 
         // Write Cargo.toml
         let cargo_toml = format!(

@@ -482,7 +482,7 @@ impl AcquisitionManager {
 
         // Clean up temp file
         if let Err(e) = tokio::fs::remove_file(&handle.temp_path).await {
-            warn!("Failed to remove temp file: {}", e);
+            warn!("Failed to remove temp file: {e}");
         }
 
         info!(

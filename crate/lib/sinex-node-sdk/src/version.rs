@@ -153,7 +153,7 @@ impl FromStr for NodeVersion {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         // Parse version string (expected format: "major.minor.patch" or "major.minor.patch+metadata")
         let version = Version::from_str(s.split('+').next().unwrap_or(s)).map_err(|e| {
-            crate::SinexError::configuration(format!("Invalid version string '{}': {}", s, e))
+            crate::SinexError::configuration(format!("Invalid version string '{s}': {e}"))
         })?;
 
         Ok(Self {
@@ -248,7 +248,7 @@ impl NodeInstance {
 /// Returns `SinexError::configuration` if the node version is invalid
 pub fn node_version() -> crate::NodeResult<Version> {
     Version::from_str(build::PKG_VERSION)
-        .map_err(|e| crate::SinexError::configuration(format!("Invalid node version: {}", e)))
+        .map_err(|e| crate::SinexError::configuration(format!("Invalid node version: {e}")))
 }
 
 /// Get full version string with build metadata

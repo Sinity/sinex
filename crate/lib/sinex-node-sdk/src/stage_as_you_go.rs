@@ -341,7 +341,7 @@ impl StageAsYouGoContext {
             .with_metadata(metadata.clone())
             .begin()
             .await
-            .map_err(|e| SinexError::processing(format!("Failed to begin material: {}", e)))?;
+            .map_err(|e| SinexError::processing(format!("Failed to begin material: {e}")))?;
         let material_id = handle.material_id;
         self.acquisition_handles
             .lock()
@@ -467,7 +467,7 @@ impl StageAsYouGoContext {
             .await
             .remove(&id)
             .ok_or_else(|| {
-                SinexError::processing(format!("Missing acquisition handle for material {}", id))
+                SinexError::processing(format!("Missing acquisition handle for material {id}"))
             })?;
 
         self.finalize_via_acquisition(
@@ -525,7 +525,7 @@ impl StageAsYouGoContext {
             .await
             .remove(&id)
             .ok_or_else(|| {
-                SinexError::processing(format!("Missing acquisition handle for material {}", id))
+                SinexError::processing(format!("Missing acquisition handle for material {id}"))
             })?;
 
         let mut buffer = vec![0u8; MAX_SLICE_BYTES];
@@ -546,7 +546,7 @@ impl StageAsYouGoContext {
             manager
                 .append_slice(&mut handle, &buffer[..read])
                 .await
-                .map_err(|e| SinexError::processing(format!("Failed to append slice: {}", e)))?;
+                .map_err(|e| SinexError::processing(format!("Failed to append slice: {e}")))?;
             total_bytes += read as i64;
         }
 
@@ -565,7 +565,7 @@ impl StageAsYouGoContext {
         manager
             .finalize_with_metadata(handle, MATERIAL_FINALIZE_REASON, metadata)
             .await
-            .map_err(|e| SinexError::processing(format!("Failed to finalize material: {}", e)))?;
+            .map_err(|e| SinexError::processing(format!("Failed to finalize material: {e}")))?;
 
         info!(
             material_id = %id,
@@ -590,7 +590,7 @@ impl StageAsYouGoContext {
             manager
                 .append_slice(&mut handle, chunk)
                 .await
-                .map_err(|e| SinexError::processing(format!("Failed to append slice: {}", e)))?;
+                .map_err(|e| SinexError::processing(format!("Failed to append slice: {e}")))?;
         }
 
         let metadata =
@@ -599,7 +599,7 @@ impl StageAsYouGoContext {
         manager
             .finalize_with_metadata(handle, MATERIAL_FINALIZE_REASON, metadata)
             .await
-            .map_err(|e| SinexError::processing(format!("Failed to finalize material: {}", e)))
+            .map_err(|e| SinexError::processing(format!("Failed to finalize material: {e}")))
     }
 }
 

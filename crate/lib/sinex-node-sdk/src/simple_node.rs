@@ -465,7 +465,7 @@ where
 
         self.persisted_state.last_checkpoint = sinex_primitives::temporal::now();
         let state_json = serde_json::to_value(&self.persisted_state)
-            .map_err(|e| SinexError::processing(format!("Failed to serialize state: {}", e)))?;
+            .map_err(|e| SinexError::processing(format!("Failed to serialize state: {e}")))?;
 
         let checkpoint_state = CheckpointState {
             checkpoint: Checkpoint::external(

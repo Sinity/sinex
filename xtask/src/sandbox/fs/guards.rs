@@ -174,7 +174,7 @@ impl TriggersGuard {
 
         for table in tables {
             let table_name = table.as_ref();
-            let query = format!("ALTER TABLE {} DISABLE TRIGGER ALL", table_name);
+            let query = format!("ALTER TABLE {table_name} DISABLE TRIGGER ALL");
 
             match sqlx::query(&query).execute(conn.as_mut()).await {
                 Ok(_) => disabled_tables.push(table_name.to_string()),
@@ -198,7 +198,7 @@ impl TriggersGuard {
     /// Re-enable triggers on all tables where they were disabled.
     pub async fn restore(self, conn: &mut PoolConnection<Postgres>) -> Result<()> {
         for table in &self.tables {
-            let query = format!("ALTER TABLE {} ENABLE TRIGGER ALL", table);
+            let query = format!("ALTER TABLE {table} ENABLE TRIGGER ALL");
             if let Err(e) = sqlx::query(&query).execute(conn.as_mut()).await {
                 if is_hypertable_trigger_toggle_error(&e) {
                     tracing::warn!(

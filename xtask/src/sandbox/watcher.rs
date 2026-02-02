@@ -49,7 +49,7 @@ impl FileWatcher {
                 }
             },
         )
-        .map_err(|e| anyhow::anyhow!("Failed to create file watcher: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to create file watcher: {e}"))?;
 
         // Watch the src directory
         let src_path = path_clone.join("src");
@@ -57,7 +57,7 @@ impl FileWatcher {
             debouncer
                 .watcher()
                 .watch(src_path.as_std_path(), RecursiveMode::Recursive)
-                .map_err(|e| anyhow::anyhow!("Failed to watch {}: {}", src_path, e))?;
+                .map_err(|e| anyhow::anyhow!("Failed to watch {src_path}: {e}"))?;
         }
 
         // Watch Cargo.toml
@@ -66,7 +66,7 @@ impl FileWatcher {
             debouncer
                 .watcher()
                 .watch(cargo_toml.as_std_path(), RecursiveMode::NonRecursive)
-                .map_err(|e| anyhow::anyhow!("Failed to watch {}: {}", cargo_toml, e))?;
+                .map_err(|e| anyhow::anyhow!("Failed to watch {cargo_toml}: {e}"))?;
         }
 
         Ok(Self { debouncer })
@@ -93,13 +93,13 @@ impl FileWatcher {
                 }
             },
         )
-        .map_err(|e| anyhow::anyhow!("Failed to create file watcher: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to create file watcher: {e}"))?;
 
         // Watch the entire workspace but filter in the callback
         debouncer
             .watcher()
             .watch(workspace_root, RecursiveMode::Recursive)
-            .map_err(|e| anyhow::anyhow!("Failed to watch {}: {}", workspace_root.display(), e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to watch {}: {e}", workspace_root.display()))?;
 
         Ok(Self { debouncer })
     }

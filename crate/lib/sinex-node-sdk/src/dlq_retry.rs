@@ -156,13 +156,13 @@ impl DlqRetryHandler {
             })
             .await
             .map_err(|e| {
-                SinexError::processing(format!("Failed to create specific DLQ consumer: {}", e))
+                SinexError::processing(format!("Failed to create specific DLQ consumer: {e}"))
             })?;
 
         let mut messages = consumer
             .messages()
             .await
-            .map_err(|e| SinexError::processing(format!("Failed to get messages: {}", e)))?;
+            .map_err(|e| SinexError::processing(format!("Failed to get messages: {e}")))?;
 
         // Use timeout to avoid blocking forever when event doesn't exist
         let next_msg = tokio::time::timeout(Duration::from_secs(5), messages.next()).await;
