@@ -1,6 +1,6 @@
 //! Tests for the gateway client module
 //!
-//! Uses MockGatewayClient for unit tests and wiremock for integration tests.
+//! Uses `MockGatewayClient` for unit tests and wiremock for integration tests.
 
 mod common;
 
@@ -457,8 +457,7 @@ async fn test_gateway_client_timeout() {
             || err.contains("deadline")
             || err.contains("operation was canceled")
             || err.contains("error sending request"),
-        "Expected timeout error, got: {}",
-        err
+        "Expected timeout error, got: {err}"
     );
 }
 

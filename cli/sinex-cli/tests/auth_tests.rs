@@ -285,8 +285,7 @@ fn test_load_client_cert_truly_invalid_content() {
     let err = result.unwrap_err().to_string();
     assert!(
         err.contains("No certificates found") || err.contains("No private key found"),
-        "Expected certificate or key error, got: {}",
-        err
+        "Expected certificate or key error, got: {err}"
     );
 }
 
@@ -332,8 +331,7 @@ fn test_load_token_file_permission_denied() {
             err_msg.contains("Failed to read token")
                 || err_msg.contains("No authentication token")
                 || err_msg.contains("permission denied"),
-            "Expected permission or no-token error, got: {}",
-            err_msg
+            "Expected permission or no-token error, got: {err_msg}"
         );
     } else {
         // If running with elevated capabilities, the file might still be readable

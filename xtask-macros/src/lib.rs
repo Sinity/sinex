@@ -15,14 +15,14 @@ use syn::{
     ExprLit, FnArg, ItemFn, Lit, Meta, MetaNameValue, Pat, PatType, Type, TypePath,
 };
 
-/// Configuration parsed from sinex_test attributes
+/// Configuration parsed from `sinex_test` attributes
 struct SinexTestConfig {
     timeout: Option<u64>,
     trace: bool,
     serial: bool,
 }
 
-/// Parse sinex_test attributes
+/// Parse `sinex_test` attributes
 /// Supports: timeout = 30, trace = true
 fn parse_sinex_test_attrs(attr: TokenStream) -> SinexTestConfig {
     let mut config = SinexTestConfig {
@@ -312,15 +312,8 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
         quote!()
     };
 
-    let seed_stmt = opts
-        .seed
-        .map(|seed| {
-            quote! {
-                cfg.rng_algorithm = ::proptest::test_runner::RngAlgorithm::ChaCha;
-                cfg.rng_seed = ::proptest::test_runner::RngSeed::Fixed(#seed);
-            }
-        })
-        .unwrap_or_else(|| {
+    let seed_stmt = opts.seed.map_or_else(
+        || {
             quote! {
                 if let Some(seed_env) = std::env::var("SINEX_PROPTEST_SEED")
                     .ok()
@@ -330,17 +323,24 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
                     cfg.rng_seed = ::proptest::test_runner::RngSeed::Fixed(seed_env);
                 }
             }
-        });
+        },
+        |seed| {
+            quote! {
+                cfg.rng_algorithm = ::proptest::test_runner::RngAlgorithm::ChaCha;
+                cfg.rng_seed = ::proptest::test_runner::RngSeed::Fixed(#seed);
+            }
+        },
+    );
 
-    let shrink_stmt = opts
-        .max_shrink_time_ms
-        .map(|ms| {
+    let shrink_stmt = opts.max_shrink_time_ms.map_or_else(
+        || quote!(),
+        |ms| {
             quote! {
                 let shrink = (#ms).min(u32::MAX as u64) as u32;
                 cfg.max_shrink_time = shrink.max(1);
             }
-        })
-        .unwrap_or_else(|| quote!());
+        },
+    );
 
     let strategy_expr = if params.len() == 1 {
         params[0].strat.clone()
@@ -375,15 +375,15 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
         quote!( let ( #( #arg_idents ),* ) = value; )
     };
 
-    let ctx_binding = ctx_param
-        .as_ref()
-        .map(|(pat, ty)| {
+    let ctx_binding = ctx_param.as_ref().map_or_else(
+        || quote!(),
+        |(pat, ty)| {
             quote! {
                 let ctx_ref: #ty = ctx_holder.as_ref().expect("Sandbox available");
                 let #pat = ctx_ref;
             }
-        })
-        .unwrap_or_else(|| quote!());
+        },
+    );
     let expects_ctx = ctx_param.is_some();
 
     let runner_setup = quote! {
@@ -701,7 +701,7 @@ pub fn sinex_proptest(input: TokenStream) -> TokenStream {
         let mut destructures = Vec::<TS>::new();
         for (idx, (pat, ty, strat)) in params.iter().enumerate() {
             let ident = syn::Ident::new(&format!("__arg{idx}"), proc_macro2::Span::call_site());
-            let ty_tokens = ty.as_ref().map(|t| quote!(#t)).unwrap_or_else(|| quote!(_));
+            let ty_tokens = ty.as_ref().map_or_else(|| quote!(_), |t| quote!(#t));
             param_defs.push(quote!( #[strategy(#strat)] #ident: #ty_tokens ));
             let ty_ann = ty.as_ref().map(|t| quote!( : #t )).unwrap_or_default();
             destructures.push(quote!( let #pat #ty_ann = #ident; ));
@@ -709,8 +709,7 @@ pub fn sinex_proptest(input: TokenStream) -> TokenStream {
 
         let ctx_tokens = ctx
             .as_ref()
-            .map(|(pat, ty)| quote!( #pat: #ty, ))
-            .unwrap_or_else(|| quote!());
+            .map_or_else(|| quote!(), |(pat, ty)| quote!( #pat: #ty, ));
 
         out.push(quote! {
             #(#passthrough_attrs)*
@@ -762,8 +761,7 @@ fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
             .path()
             .segments
             .last()
-            .map(|seg| seg.ident == "case")
-            .unwrap_or(false);
+            .is_some_and(|seg| seg.ident == "case");
 
         if is_case {
             has_rstest_cases = true;
@@ -788,8 +786,7 @@ fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
                     .path()
                     .segments
                     .last()
-                    .map(|seg| seg.ident == "case")
-                    .unwrap_or(false);
+                    .is_some_and(|seg| seg.ident == "case");
                 if is_case {
                     has_rstest_cases = true;
                 }
@@ -819,15 +816,10 @@ fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
     // Check return type - must be Result<()> or Result<T>
     let has_result_return = if let syn::ReturnType::Type(_, ref ty) = input.sig.output {
         if let syn::Type::Path(type_path) = ty.as_ref() {
-            type_path
-                .path
-                .segments
-                .last()
-                .map(|seg| {
-                    let ident = &seg.ident;
-                    ident == "Result" || ident == "TestResult"
-                })
-                .unwrap_or(false)
+            type_path.path.segments.last().is_some_and(|seg| {
+                let ident = &seg.ident;
+                ident == "Result" || ident == "TestResult"
+            })
         } else {
             false
         }
@@ -1192,7 +1184,7 @@ fn parse_bench_mode(lit: &Lit) -> syn::Result<BenchMode> {
             "micro" => Ok(BenchMode::Micro),
             other => Err(syn::Error::new(
                 lit.span(),
-                format!("unknown bench mode '{}'", other),
+                format!("unknown bench mode '{other}'"),
             )),
         }
     } else {

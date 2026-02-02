@@ -1,4 +1,4 @@
-//! Mock GatewayClient for testing sinex-cli commands
+//! Mock `GatewayClient` for testing sinex-cli commands
 
 #![allow(dead_code)]
 
@@ -20,7 +20,7 @@ pub struct MockGatewayClient {
 }
 
 struct MockClientInner {
-    /// Recorded method calls (method_name, args)
+    /// Recorded method calls (`method_name`, args)
     calls: Vec<(String, Vec<String>)>,
     /// Preset responses for specific methods
     responses: HashMap<String, MockResponse>,

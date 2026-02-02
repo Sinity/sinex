@@ -106,19 +106,19 @@ impl ConfigFixture {
     pub(crate) fn to_yaml(&self) -> String {
         let mut yaml = format!("rpc_url: \"{}\"\n", self.rpc_url);
         if let Some(ref token) = self.token {
-            yaml.push_str(&format!("token: \"{}\"\n", token));
+            yaml.push_str(&format!("token: \"{token}\"\n"));
         }
         if let Some(ref token_file) = self.token_file {
-            yaml.push_str(&format!("token_file: \"{}\"\n", token_file));
+            yaml.push_str(&format!("token_file: \"{token_file}\"\n"));
         }
         if let Some(ref ca_cert) = self.ca_cert {
-            yaml.push_str(&format!("ca_cert: \"{}\"\n", ca_cert));
+            yaml.push_str(&format!("ca_cert: \"{ca_cert}\"\n"));
         }
         if let Some(ref client_cert) = self.client_cert {
-            yaml.push_str(&format!("client_cert: \"{}\"\n", client_cert));
+            yaml.push_str(&format!("client_cert: \"{client_cert}\"\n"));
         }
         if let Some(ref client_key) = self.client_key {
-            yaml.push_str(&format!("client_key: \"{}\"\n", client_key));
+            yaml.push_str(&format!("client_key: \"{client_key}\"\n"));
         }
         yaml.push_str(&format!("insecure: {}\n", self.insecure));
         yaml.push_str(&format!("timeout: {}\n", self.timeout));
@@ -128,10 +128,10 @@ impl ConfigFixture {
     pub(crate) fn to_toml(&self) -> String {
         let mut toml = format!("rpc_url = \"{}\"\n", self.rpc_url);
         if let Some(ref token) = self.token {
-            toml.push_str(&format!("token = \"{}\"\n", token));
+            toml.push_str(&format!("token = \"{token}\"\n"));
         }
         if let Some(ref token_file) = self.token_file {
-            toml.push_str(&format!("token_file = \"{}\"\n", token_file));
+            toml.push_str(&format!("token_file = \"{token_file}\"\n"));
         }
         toml.push_str(&format!("insecure = {}\n", self.insecure));
         toml.push_str(&format!("timeout = {}\n", self.timeout));

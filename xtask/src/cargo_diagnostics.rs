@@ -35,6 +35,7 @@ pub struct LintCount {
 impl DiagnosticSummary {
     /// Get breakdown of warning counts by lint code, sorted by count descending.
     /// Returns only warnings (not errors) with recognized lint codes.
+    #[must_use]
     pub fn lint_breakdown(&self) -> Vec<LintCount> {
         use std::collections::HashMap;
 
@@ -56,6 +57,7 @@ impl DiagnosticSummary {
     }
 
     /// Get the top N lints by count
+    #[must_use]
     pub fn top_lints(&self, n: usize) -> Vec<LintCount> {
         self.lint_breakdown().into_iter().take(n).collect()
     }

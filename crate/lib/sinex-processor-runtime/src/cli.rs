@@ -28,6 +28,7 @@ use tracing::{info, warn};
 
 use crate::replay::{ReplayFilters, ReplayMode, ReplayProgress, ReplayResult, ReplayRuntimeExt};
 
+#[must_use]
 pub fn command_requires_heartbeat(command: &NodeCommand) -> bool {
     matches!(
         command,
@@ -98,7 +99,7 @@ pub struct NatsArgs {
     #[arg(long, env = "SINEX_NATS_CREDS")]
     pub creds_file: Option<PathBuf>,
 
-    /// NKey seed file path
+    /// `NKey` seed file path
     #[arg(long, env = "SINEX_NATS_NKEY_SEED")]
     pub nkey_file: Option<PathBuf>,
 
@@ -325,8 +326,7 @@ pub fn parse_time_horizon(horizon_str: &str) -> NodeResult<TimeHorizon> {
             })
             .map_err(|e| {
                 SinexError::general(format!(
-                    "Invalid time horizon '{}': {}. Use 'continuous', 'snapshot', or ISO timestamp",
-                    horizon_str, e
+                    "Invalid time horizon '{horizon_str}': {e}. Use 'continuous', 'snapshot', or ISO timestamp"
                 ))
             })
     }
@@ -359,7 +359,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
         };
 
         if tracing_subscriber::fmt()
-            .with_env_filter(format!("sinex={}", log_level))
+            .with_env_filter(format!("sinex={log_level}"))
             .try_init()
             .is_err()
         {
@@ -486,8 +486,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
                                 let mut runner = runner.lock().await;
                                 runner.run_service().await.map_err(|e| {
                                     sinex_primitives::SinexError::service(format!(
-                                        "Node error: {}",
-                                        e
+                                        "Node error: {e}"
                                     ))
                                 })
                             }
@@ -549,7 +548,10 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
 
                 // Create scan args
                 let scan_args = ScanArgs {
-                    targets: targets.iter().map(|p| p.to_string()).collect(),
+                    targets: targets
+                        .iter()
+                        .map(std::string::ToString::to_string)
+                        .collect(),
                     dry_run,
                     interactive,
                     max_events,
@@ -577,7 +579,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
                     if !estimate_result.warnings.is_empty() {
                         println!("  Warnings:");
                         for warning in &estimate_result.warnings {
-                            println!("    - {}", warning);
+                            println!("    - {warning}");
                         }
                     }
                     println!();
@@ -631,28 +633,28 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
                 if !report.processor_stats.is_empty() {
                     println!("  Processor stats:");
                     for (key, value) in &report.processor_stats {
-                        println!("    {}: {}", key, value);
+                        println!("    {key}: {value}");
                     }
                 }
 
                 if !report.successful_targets.is_empty() {
                     println!("  Successful targets: {}", report.successful_targets.len());
                     for target in &report.successful_targets {
-                        println!("    - {}", target);
+                        println!("    - {target}");
                     }
                 }
 
                 if !report.failed_targets.is_empty() {
                     println!("  Failed targets:");
                     for (target, error) in &report.failed_targets {
-                        println!("    - {}: {}", target, error);
+                        println!("    - {target}: {error}");
                     }
                 }
 
                 if !report.warnings.is_empty() {
                     println!("  Warnings:");
                     for warning in &report.warnings {
-                        println!("    - {}", warning);
+                        println!("    - {warning}");
                     }
                 }
             }
@@ -685,7 +687,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
                                     .unwrap_or_default()
                             );
                             if let Some(total) = state.total_items {
-                                println!("  Total items: {}", total);
+                                println!("  Total items: {total}");
                             }
                             println!("  Healthy: {}", state.healthy);
 
@@ -711,7 +713,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
                             if !state.metadata.is_empty() {
                                 println!("  Metadata:");
                                 for (key, value) in &state.metadata {
-                                    println!("    {}: {}", key, value);
+                                    println!("    {key}: {value}");
                                 }
                             }
                         }
@@ -755,7 +757,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
                                 }
                                 println!("    Events: {}", entry.events_generated);
                                 if let Some(error) = &entry.error {
-                                    println!("    Error: {}", error);
+                                    println!("    Error: {error}");
                                 }
                             }
                         }
@@ -814,7 +816,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
                             if !analysis.recommendations.is_empty() {
                                 println!("  Recommendations:");
                                 for rec in &analysis.recommendations {
-                                    println!("    - {}", rec);
+                                    println!("    - {rec}");
                                 }
                             }
                         }
@@ -864,9 +866,8 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
             // this indicates a bug in environment namespacing logic, not user input.
             SanitizedPath::from_str(namespaced_str.as_ref()).unwrap_or_else(|err| {
                 panic!(
-                    "Environment-generated work directory '{}' failed validation: {}. \
-                     This is a bug in environment namespacing logic.",
-                    namespaced_str, err
+                    "Environment-generated work directory '{namespaced_str}' failed validation: {err}. \
+                     This is a bug in environment namespacing logic."
                 )
             })
         })
@@ -889,7 +890,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
             .unwrap_or_else(|_| base_url.clone());
         SqlxPgPool::connect(&namespaced_url)
             .await
-            .map_err(|e| SinexError::general(format!("Failed to connect to database: {}", e)))
+            .map_err(|e| SinexError::general(format!("Failed to connect to database: {e}")))
     }
 
     async fn connect_nats_transport(
