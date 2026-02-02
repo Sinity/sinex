@@ -328,64 +328,45 @@ impl ExecutionResult {
     }
 }
 
-/// Execution context passed to commands.
+/// Context passed to commands during execution.
 pub struct CommandContext {
-    /// Output writer with format preference
-    writer: OutputWriter,
-    /// Start time for duration tracking
     start_time: std::time::Instant,
-    /// History invocation ID (for diagnostics recording)
-    invocation_id: Option<i64>,
-    /// Whether to run in background mode
+    writer: crate::output::OutputWriter,
+    // json: bool, // Removed unused field
     background: bool,
+    invocation_id: Option<i64>,
 }
 
 impl CommandContext {
-    /// Create a new command context with the given output writer.
-    #[must_use]
-    pub fn new(writer: OutputWriter) -> Self {
+    pub fn new(
+        writer: crate::output::OutputWriter,
+        _json: bool,
+        background: bool,
+        invocation_id: Option<i64>,
+    ) -> Self {
         Self {
-            writer,
             start_time: std::time::Instant::now(),
-            invocation_id: None,
-            background: false,
-        }
-    }
-
-    /// Create a new command context with an invocation ID for history tracking.
-    #[must_use]
-    pub fn with_invocation_id(writer: OutputWriter, invocation_id: Option<i64>) -> Self {
-        Self {
             writer,
-            start_time: std::time::Instant::now(),
+            // json,
+            background,
             invocation_id,
-            background: false,
         }
     }
 
-    /// Create a context configured for background execution.
-    #[must_use]
-    pub fn with_background(mut self, background: bool) -> Self {
-        self.background = background;
-        self
+    pub fn is_verbose(&self) -> bool {
+        // Verbosity implied by format or specific flags if we add them later
+        false
     }
 
-    /// Check if background execution is enabled.
-    #[must_use]
     pub fn is_background(&self) -> bool {
         self.background
     }
 
-    /// Get the history invocation ID.
-    #[must_use]
     pub fn invocation_id(&self) -> Option<i64> {
         self.invocation_id
     }
 
-    /// Get the output writer.
-    #[allow(dead_code)]
-    #[must_use]
-    pub fn writer(&self) -> &OutputWriter {
+    pub fn writer(&self) -> &crate::output::OutputWriter {
         &self.writer
     }
 
@@ -548,7 +529,12 @@ mod tests {
     #[test]
     fn test_command_success() {
         let cmd = TestCommand { should_fail: false };
-        let ctx = CommandContext::new(OutputWriter::new(crate::output::OutputFormat::Silent));
+        let ctx = CommandContext::new(
+            OutputWriter::new(crate::output::OutputFormat::Silent),
+            false,
+            false,
+            None,
+        );
         let result = cmd.execute(&ctx).expect("should not error");
 
         assert!(result.is_success());
@@ -558,7 +544,12 @@ mod tests {
     #[test]
     fn test_command_failure() {
         let cmd = TestCommand { should_fail: true };
-        let ctx = CommandContext::new(OutputWriter::new(crate::output::OutputFormat::Silent));
+        let ctx = CommandContext::new(
+            OutputWriter::new(crate::output::OutputFormat::Silent),
+            false,
+            false,
+            None,
+        );
         let result = cmd.execute(&ctx).expect("should not error");
 
         assert!(result.is_failure());
@@ -622,7 +613,12 @@ mod tests {
 
     #[test]
     fn test_command_context_elapsed() {
-        let ctx = CommandContext::new(OutputWriter::new(crate::output::OutputFormat::Silent));
+        let ctx = CommandContext::new(
+            OutputWriter::new(crate::output::OutputFormat::Silent),
+            false,
+            false,
+            None,
+        );
         std::thread::sleep(std::time::Duration::from_millis(10));
         let elapsed = ctx.elapsed();
 
@@ -631,19 +627,39 @@ mod tests {
 
     #[test]
     fn test_command_context_is_human() {
-        let ctx_human = CommandContext::new(OutputWriter::new(crate::output::OutputFormat::Human));
+        let ctx_human = CommandContext::new(
+            OutputWriter::new(crate::output::OutputFormat::Human),
+            false,
+            false,
+            None,
+        );
         assert!(ctx_human.is_human());
 
-        let ctx_json = CommandContext::new(OutputWriter::new(crate::output::OutputFormat::Json));
+        let ctx_json = CommandContext::new(
+            OutputWriter::new(crate::output::OutputFormat::Json),
+            true,
+            false,
+            None,
+        );
         assert!(!ctx_json.is_human());
     }
 
     #[test]
     fn test_command_context_is_json() {
-        let ctx_json = CommandContext::new(OutputWriter::new(crate::output::OutputFormat::Json));
+        let ctx_json = CommandContext::new(
+            OutputWriter::new(crate::output::OutputFormat::Json),
+            true,
+            false,
+            None,
+        );
         assert!(ctx_json.is_json());
 
-        let ctx_human = CommandContext::new(OutputWriter::new(crate::output::OutputFormat::Human));
+        let ctx_human = CommandContext::new(
+            OutputWriter::new(crate::output::OutputFormat::Human),
+            false,
+            false,
+            None,
+        );
         assert!(!ctx_human.is_json());
     }
 

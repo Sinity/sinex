@@ -526,7 +526,12 @@ mod tests {
             },
         };
 
-        let ctx = CommandContext::new(OutputWriter::new(crate::output::OutputFormat::Silent));
+        let ctx = CommandContext::new(
+            OutputWriter::new(crate::output::OutputFormat::Silent),
+            false,
+            false,
+            None,
+        );
         let result = cmd.execute(&ctx);
 
         assert!(result.is_err());

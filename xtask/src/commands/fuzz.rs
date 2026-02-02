@@ -456,9 +456,12 @@ mod tests {
         let cmd = FuzzCommand {
             subcommand: FuzzSubcommand::List,
         };
-        let ctx = crate::command::CommandContext::new(crate::output::OutputWriter::new(
-            crate::output::OutputFormat::Silent,
-        ));
+        let ctx = crate::command::CommandContext::new(
+            crate::output::OutputWriter::new(crate::output::OutputFormat::Silent),
+            false,
+            false,
+            None,
+        );
 
         // Should not panic even if no fuzz targets exist
         let result = cmd.execute(&ctx);
@@ -474,9 +477,12 @@ mod tests {
                 jobs: None,
             },
         };
-        let ctx = crate::command::CommandContext::new(crate::output::OutputWriter::new(
-            crate::output::OutputFormat::Silent,
-        ));
+        let ctx = crate::command::CommandContext::new(
+            crate::output::OutputWriter::new(crate::output::OutputFormat::Silent),
+            false,
+            false,
+            None,
+        );
 
         let result = cmd.execute(&ctx).expect("should return result");
         assert!(result.is_failure());

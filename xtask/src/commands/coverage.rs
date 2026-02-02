@@ -411,7 +411,12 @@ mod tests {
 
     #[test]
     fn test_threshold_validation() {
-        let ctx = CommandContext::new(crate::output::OutputWriter::new(OutputFormat::Silent));
+        let ctx = CommandContext::new(
+            crate::output::OutputWriter::new(OutputFormat::Silent),
+            false,
+            false,
+            None,
+        );
 
         let result = execute_enforce(150.0, None, false, "target/coverage/html", &ctx);
         assert!(result.is_err());

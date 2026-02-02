@@ -349,7 +349,7 @@ fn test_command_metadata_diagnostics() {
 
 #[test]
 fn test_command_context_elapsed() {
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent));
+    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, false, None);
     std::thread::sleep(Duration::from_millis(10));
     let elapsed = ctx.elapsed();
 
@@ -358,19 +358,19 @@ fn test_command_context_elapsed() {
 
 #[test]
 fn test_command_context_is_human() {
-    let ctx_human = CommandContext::new(OutputWriter::new(OutputFormat::Human));
+    let ctx_human = CommandContext::new(OutputWriter::new(OutputFormat::Human), false, false, None);
     assert!(ctx_human.is_human());
 
-    let ctx_json = CommandContext::new(OutputWriter::new(OutputFormat::Json));
+    let ctx_json = CommandContext::new(OutputWriter::new(OutputFormat::Json), true, false, None);
     assert!(!ctx_json.is_human());
 }
 
 #[test]
 fn test_command_context_is_json() {
-    let ctx_json = CommandContext::new(OutputWriter::new(OutputFormat::Json));
+    let ctx_json = CommandContext::new(OutputWriter::new(OutputFormat::Json), true, false, None);
     assert!(ctx_json.is_json());
 
-    let ctx_human = CommandContext::new(OutputWriter::new(OutputFormat::Human));
+    let ctx_human = CommandContext::new(OutputWriter::new(OutputFormat::Human), false, false, None);
     assert!(!ctx_human.is_json());
 }
 
@@ -382,7 +382,7 @@ fn test_command_context_output_formats() {
         OutputFormat::Compact,
         OutputFormat::Silent,
     ] {
-        let ctx = CommandContext::new(OutputWriter::new(format));
+        let ctx = CommandContext::new(OutputWriter::new(format), false, false, None);
         // Just verify we can create contexts with all formats
         let _ = ctx.elapsed();
     }
@@ -465,7 +465,7 @@ fn test_xtask_command_trait_success() {
         name: "mock-success".to_string(),
     };
 
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent));
+    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, false, None);
     let result = cmd.execute(&ctx).expect("execute should not error");
 
     assert!(result.is_success());
@@ -479,7 +479,7 @@ fn test_xtask_command_trait_failure() {
         name: "mock-failure".to_string(),
     };
 
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent));
+    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, false, None);
     let result = cmd.execute(&ctx).expect("execute should not error");
 
     assert!(result.is_failure());

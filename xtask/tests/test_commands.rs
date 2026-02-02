@@ -38,7 +38,7 @@ fn test_jobs_list_command() {
     };
     assert_eq!(cmd.name(), "jobs");
 
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent));
+    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, false, None);
     let result = cmd.execute(&ctx);
 
     // List should not fail (even if no jobs exist)
@@ -51,7 +51,7 @@ fn test_jobs_prune_command() {
         subcommand: JobsSubcommand::Prune { older_than: 30 },
     };
 
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent));
+    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, false, None);
     let result = cmd.execute(&ctx);
 
     // Prune should succeed (even if no jobs to prune)
@@ -79,7 +79,7 @@ fn test_command_context_formats() {
         OutputFormat::Compact,
         OutputFormat::Silent,
     ] {
-        let ctx = CommandContext::new(OutputWriter::new(format));
+        let ctx = CommandContext::new(OutputWriter::new(format), false, false, None);
         let elapsed = ctx.elapsed();
         assert!(elapsed.as_nanos() > 0);
     }
