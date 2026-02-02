@@ -65,6 +65,8 @@ target-ci
 /spec/combo/
 .claude-outputs/
 .direnv/
+.sinex/
+.tls/
 .devenv/
 .devenv.flake.nix
 compilation*log

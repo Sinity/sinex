@@ -4,7 +4,7 @@
 # Default: 8 parallel crates × ~2GB = ~16GB peak memory
 jobs = 6
 pipelining = true
-target-dir = ".devenv/sinex-dev/target"
+target-dir = ".sinex/target"
 
 # Shared build cache across the workspace (experimental)
 [unstable]
