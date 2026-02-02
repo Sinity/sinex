@@ -40,8 +40,8 @@ use serde::{Deserialize, Serialize};
 /// # Fields
 ///
 /// - **package**: The name of the package being analyzed
-/// - **dependent_count**: How many packages depend on this one (rebuild radius)
-/// - **dependency_count**: How many packages this one depends on
+/// - **`dependent_count`**: How many packages depend on this one (rebuild radius)
+/// - **`dependency_count`**: How many packages this one depends on
 /// - **criticality**: Computed score (0.0 to 1.0) representing relative impact
 ///
 /// # Example
@@ -81,8 +81,8 @@ pub struct ImpactMetrics {
 /// # Fields
 ///
 /// - **metrics**: Complete metrics for all packages
-/// - **high_impact_packages**: Packages with criticality 0.5-0.8 (require careful changes)
-/// - **critical_packages**: Packages with criticality >= 0.8 (very sensitive)
+/// - **`high_impact_packages`**: Packages with criticality 0.5-0.8 (require careful changes)
+/// - **`critical_packages`**: Packages with criticality >= 0.8 (very sensitive)
 ///
 /// # Example
 ///
@@ -180,6 +180,7 @@ impl Criticality {
     /// assert_eq!(Criticality::from_score(0.9), Criticality::Critical);
     /// assert_eq!(Criticality::from_score(0.6), Criticality::High);
     /// ```
+    #[must_use]
     pub fn from_score(score: f64) -> Self {
         if score >= 0.8 {
             Self::Critical
@@ -221,6 +222,7 @@ impl ImpactMetrics {
     /// println!("Criticality: {:.2}", metrics.criticality);
     /// ```
     #[allow(dead_code)]
+    #[must_use]
     pub fn new(package: String, dependent_count: usize, dependency_count: usize) -> Self {
         // Calculate criticality based on dependent count
         // Simple heuristic: score = dependent_count / max_possible_dependents
@@ -257,6 +259,7 @@ impl ImpactMetrics {
     ///     _ => {}
     /// }
     /// ```
+    #[must_use]
     pub fn criticality_level(&self) -> Criticality {
         Criticality::from_score(self.criticality)
     }
@@ -279,8 +282,8 @@ impl ImpactMetrics {
 ///
 /// An `ImpactReport` containing:
 /// - **metrics**: Complete metrics for every package in the workspace
-/// - **critical_packages**: Packages with criticality >= 0.8 (highest risk)
-/// - **high_impact_packages**: Packages with criticality 0.5-0.8 (high risk)
+/// - **`critical_packages`**: Packages with criticality >= 0.8 (highest risk)
+/// - **`high_impact_packages`**: Packages with criticality 0.5-0.8 (high risk)
 ///
 /// # Errors
 ///

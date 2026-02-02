@@ -156,16 +156,15 @@ async fn test_build_timestamp_parsing() -> TestResult<()> {
         "2024-08-06T15:30:45.123Z",
     ];
 
-    for timestamp in timestamp_examples {
-        let parsed = chrono::DateTime::parse_from_rfc3339(timestamp);
-        assert!(parsed.is_ok(), "Failed to parse timestamp: {timestamp}");
+    for timestamp_str in timestamp_examples {
+        let parsed = Timestamp::parse_rfc3339(timestamp_str);
+        assert!(parsed.is_ok(), "Failed to parse timestamp: {timestamp_str}");
 
-        if let Ok(dt) = parsed {
-            let now = OffsetDateTime::now_utc();
-            let age_seconds = now
-                .signed_duration_since(dt.with_timezone(&chrono::Utc))
-                .num_seconds()
-                .max(0) as u64;
+        if let Ok(ts) = parsed {
+            let now = Timestamp::now();
+            // Calculate age by subtracting (Timestamp - Timestamp = Duration)
+            let age = now - ts;
+            let age_seconds = age.whole_seconds().max(0) as u64;
 
             // Should be a reasonable age (not negative, not in far future)
             assert!(age_seconds < 365 * 24 * 3600 * 10); // Less than 10 years old
@@ -286,7 +285,7 @@ async fn test_leadership_election_logic() -> TestResult<()> {
     assert!(!should_be_leader(&older_candidate, &newer_candidate));
 
     // Test same version with different start times
-    let earlier_time = now - std::time::Duration::from_secs(60);
+    let earlier_time = now - std::time::Duration::from_mins(1);
     let same_version = SimpleVersion {
         major: 1,
         minor: 0,
@@ -324,7 +323,7 @@ async fn test_tiebreaker_scenarios() -> TestResult<()> {
             minor: 0,
             patch: 100,
         },
-        start_time: base_time - std::time::Duration::from_secs(60),
+        start_time: base_time - std::time::Duration::from_mins(1),
         _instance_id: "earlier".to_string(),
     };
 

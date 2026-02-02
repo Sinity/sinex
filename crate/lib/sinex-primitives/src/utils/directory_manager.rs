@@ -38,6 +38,7 @@ pub struct DirectoryManager {
 
 impl DirectoryManager {
     /// Create a new directory manager
+    #[must_use]
     pub fn new(config: DirectoryConfig) -> Self {
         Self { config }
     }
@@ -141,11 +142,13 @@ impl DirectoryManager {
     }
 
     /// Get the base path
+    #[must_use]
     pub fn base_path(&self) -> &Utf8Path {
         &self.config.base_path
     }
 
     /// Get the configuration
+    #[must_use]
     pub fn config(&self) -> &DirectoryConfig {
         &self.config
     }

@@ -7,15 +7,14 @@
 //! - Event creation and querying
 //! - Connection pool operations
 //!
-//! Uses #[sinex_test] for automatic transaction isolation and TestContext
+//! Uses #[`sinex_test`] for automatic transaction isolation and `TestContext`
 //! for unified database access patterns.
 
 use serde_json::json;
-// Using shorter imports from sinex-db's re-exports
-use sinex_db::{
-    payloads::filesystem::{FileCreatedPayload, FileModifiedPayload},
-    DbPoolExt, DynamicPayload, EventSource, Ulid,
-};
+use sinex_db::{DbPoolExt, DynamicPayload, Ulid};
+use sinex_primitives::events::payloads::{FileCreatedPayload, FileModifiedPayload};
+use sinex_primitives::events::EventPayload;
+use sinex_primitives::EventSource;
 use std::time::Duration as StdDuration;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::WaitHelpers;
@@ -67,10 +66,7 @@ async fn test_batch_event_insertion(ctx: TestContext) -> TestResult<()> {
         persisted.len()
     );
 
-    let persisted_ids: Vec<_> = persisted
-        .iter()
-        .filter_map(|e| e.id.as_ref().cloned())
-        .collect();
+    let persisted_ids: Vec<_> = persisted.iter().filter_map(|e| e.id).collect();
     for event in &inserted_events {
         if let Some(ref id) = event.id {
             assert!(

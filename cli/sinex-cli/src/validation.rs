@@ -60,10 +60,7 @@ impl TimeRange {
 /// Validate a time range (since must be before until)
 ///
 /// Delegates to sinex-primitives's validate_time_range with CLI-specific context.
-pub fn validate_time_range(
-    since: Option<Timestamp>,
-    until: Option<Timestamp>,
-) -> Result<()> {
+pub fn validate_time_range(since: Option<Timestamp>, until: Option<Timestamp>) -> Result<()> {
     query_validation::validate_time_range(since, until)
         .map_err(|e| eyre!("Invalid time range: {}", e))
 }

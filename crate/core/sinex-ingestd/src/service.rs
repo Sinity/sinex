@@ -126,12 +126,10 @@ impl IngestService {
             } else {
                 EventValidator::load_schemas_from_db(pool, config.validate_schemas).await?
             }
+        } else if config.strict_validation {
+            EventValidator::new_strict(false)
         } else {
-            if config.strict_validation {
-                EventValidator::new_strict(false)
-            } else {
-                EventValidator::new(false)
-            }
+            EventValidator::new(false)
         };
 
         if let Some(ref nats_client) = nats_client {
@@ -202,7 +200,7 @@ impl IngestService {
         let observer = self.observer.clone();
         let stats_shutdown = shutdown_flag.clone();
         let stats_handle = tokio::spawn(async move {
-            let mut interval = interval(Duration::from_secs(60));
+            let mut interval = interval(Duration::from_mins(1));
 
             loop {
                 tokio::select! {
@@ -229,7 +227,7 @@ impl IngestService {
                             }
                         }
                     }
-                    _ = shutdown_signal(&stats_shutdown) => {
+                    () = shutdown_signal(&stats_shutdown) => {
                         break;
                     }
                 }
@@ -277,7 +275,7 @@ impl IngestService {
                     Err(join_err) => {
                         error!(error = ?join_err, "JetStream consumer panicked");
                         self.shutdown_flag.store(true, Ordering::Relaxed);
-                        Err(SinexError::service(format!("JetStream consumer panicked: {}", join_err)))
+                        Err(SinexError::service(format!("JetStream consumer panicked: {join_err}")))
                     }
                 }
             }
@@ -307,13 +305,13 @@ impl IngestService {
                     Err(join_err) => {
                         error!(error = ?join_err, "MaterialAssembler panicked");
                         self.shutdown_flag.store(true, Ordering::Relaxed);
-                        Err(SinexError::service(format!("MaterialAssembler panicked: {}", join_err)))
+                        Err(SinexError::service(format!("MaterialAssembler panicked: {join_err}")))
                     }
                 }
             }
 
             // Normal shutdown signal
-            _ = shutdown_signal(&shutdown_flag) => {
+            () = shutdown_signal(&shutdown_flag) => {
                 info!("Received shutdown signal");
                 Ok(())
             }
@@ -326,7 +324,7 @@ impl IngestService {
         monitor_result
     }
 
-    /// Start the JetStream consumer task
+    /// Start the `JetStream` consumer task
     async fn start_jetstream_consumer_task(
         &self,
         nats_client: NatsClient,
@@ -369,7 +367,7 @@ impl IngestService {
                         }
                     }
                 }
-                _ = shutdown_signal(&shutdown_flag) => {
+                () = shutdown_signal(&shutdown_flag) => {
                     info!("JetStream consumer shutting down");
                     Ok(())
                 }
@@ -377,7 +375,7 @@ impl IngestService {
         })
     }
 
-    /// Start the MaterialAssembler task
+    /// Start the `MaterialAssembler` task
     async fn start_material_assembler_task(
         &self,
         nats_client: NatsClient,
@@ -405,8 +403,7 @@ impl IngestService {
                         "Failed to initialize git-annex repository"
                     );
                     return Err(SinexError::service(format!(
-                        "Failed to initialize git-annex at {}: {}",
-                        annex_repo_path, e
+                        "Failed to initialize git-annex at {annex_repo_path}: {e}"
                     )));
                 }
             };
@@ -457,7 +454,7 @@ impl IngestService {
         let shutdown_flag = self.shutdown_flag.clone();
 
         tokio::spawn(async move {
-            let mut interval = interval(Duration::from_secs(300)); // Reload every 5 minutes
+            let mut interval = interval(Duration::from_mins(5)); // Reload every 5 minutes
 
             loop {
                 tokio::select! {
@@ -471,7 +468,7 @@ impl IngestService {
                             }
                         }
                     }
-                    _ = shutdown_signal(&shutdown_flag) => {
+                    () = shutdown_signal(&shutdown_flag) => {
                         break;
                     }
                 }
@@ -496,7 +493,7 @@ impl IngestService {
                         error!("Background task panicked: {:?}", join_err);
                     }
                 }
-                _ = &mut timeout_sleep => {
+                () = &mut timeout_sleep => {
                     warn!("Background task did not shutdown in time; aborting");
                     handle.abort();
                     if let Err(join_err) = handle.await {
@@ -655,12 +652,7 @@ impl IngestService {
         // Broadcast metadata for cache invalidation signal
         js.publish(subject.clone(), serde_json::to_vec(&entries)?.into())
             .await
-            .context(&{
-                format!(
-                    "Failed to publish schema broadcast to subject '{}'",
-                    subject
-                )
-            })
+            .context(&{ format!("Failed to publish schema broadcast to subject '{subject}'") })
             .map_err(|e| SinexError::network(format!("Failed to publish schema broadcast: {e}")))?
             .await
             .context("Failed to confirm schema broadcast acknowledgement")
@@ -741,6 +733,7 @@ impl IngestService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::sinex_test;
 
     fn test_service() -> IngestService {
         IngestService {
@@ -757,7 +750,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn wait_for_tasks_aborts_hung_tasks_before_shutdown() {
+    async fn wait_for_tasks_aborts_hung_tasks_before_shutdown() -> xtask::sandbox::TestResult<()> {
         struct CancelFlag(Arc<AtomicBool>);
 
         impl Drop for CancelFlag {
@@ -780,5 +773,6 @@ mod tests {
         service.wait_for_tasks(Duration::from_millis(10)).await;
 
         assert!(cancelled.load(Ordering::SeqCst));
+        Ok(())
     }
 }

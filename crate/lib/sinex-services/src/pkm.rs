@@ -39,18 +39,18 @@ struct MetadataBuilder {
 }
 
 impl MetadataBuilder {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             data: serde_json::Map::new(),
         }
     }
 
-    pub fn with_tags(mut self, tags: Vec<String>) -> Self {
+    pub(crate) fn with_tags(mut self, tags: Vec<String>) -> Self {
         self.data.insert("tags".to_string(), json!(tags));
         self
     }
 
-    pub fn with_created_at(mut self, timestamp: sinex_primitives::Timestamp) -> Self {
+    pub(crate) fn with_created_at(mut self, timestamp: sinex_primitives::Timestamp) -> Self {
         self.data.insert(
             "created_at".to_string(),
             json!(sinex_primitives::temporal::format_rfc3339(timestamp)),
@@ -58,7 +58,7 @@ impl MetadataBuilder {
         self
     }
 
-    pub fn with_source_material_id(mut self, id: Option<Ulid>) -> Self {
+    pub(crate) fn with_source_material_id(mut self, id: Option<Ulid>) -> Self {
         if let Some(id) = id {
             self.data
                 .insert("source_material_id".to_string(), json!(id.to_string()));
@@ -66,19 +66,19 @@ impl MetadataBuilder {
         self
     }
 
-    pub fn with_created_by(mut self, created_by: &str) -> Self {
+    pub(crate) fn with_created_by(mut self, created_by: &str) -> Self {
         self.data
             .insert("created_by".to_string(), json!(created_by));
         self
     }
 
-    pub fn with_extraction_method(mut self, method: &str) -> Self {
+    pub(crate) fn with_extraction_method(mut self, method: &str) -> Self {
         self.data
             .insert("extraction_method".to_string(), json!(method));
         self
     }
 
-    pub fn build(self) -> serde_json::Value {
+    pub(crate) fn build(self) -> serde_json::Value {
         serde_json::Value::Object(self.data)
     }
 }
@@ -129,7 +129,10 @@ impl EntityTypeMapper {
         "event",
     ];
 
-    pub fn create_entity_from_type(name: &str, entity_type: &str) -> ServiceResult<CreateEntity> {
+    pub(crate) fn create_entity_from_type(
+        name: &str,
+        entity_type: &str,
+    ) -> ServiceResult<CreateEntity> {
         let normalized = entity_type.trim().to_lowercase();
         if normalized.is_empty() {
             return Err(SinexError::validation("Entity type is required")
@@ -157,6 +160,7 @@ impl EntityTypeMapper {
 }
 
 impl PkmService {
+    #[must_use]
     pub fn new(pool: DbPool) -> Self {
         Self { pool }
     }
@@ -179,7 +183,7 @@ impl PkmService {
         let annotation = self
             .pool
             .events()
-            .add_annotation(event_id.clone(), "note", content, metadata, created_by)
+            .add_annotation(event_id, "note", content, metadata, created_by)
             .await?;
 
         info!(
@@ -189,7 +193,7 @@ impl PkmService {
             "Created note annotation with provenance"
         );
 
-        Ok(annotation.id.as_ulid().clone())
+        Ok(*annotation.id.as_ulid())
     }
 
     /// Create knowledge graph entities from source material
@@ -208,8 +212,7 @@ impl PkmService {
 
         if source_material.is_none() {
             return Err(SinexError::not_found(format!(
-                "Source material {} not found",
-                source_material_id
+                "Source material {source_material_id} not found"
             ))
             .with_id("source_material_id", source_material_id));
         }
@@ -233,7 +236,7 @@ impl PkmService {
                 .create_entity_with_executor(&mut *tx, entity)
                 .await?;
 
-            entity_ids.push(entity.id.as_ulid().clone());
+            entity_ids.push(*entity.id.as_ulid());
         }
 
         tx.commit().await?;
@@ -269,12 +272,8 @@ impl PkmService {
             .pool
             .knowledge_graph()
             .create_relation(
-                CreateEntityRelation::new(
-                    from_entity_id.clone(),
-                    to_entity_id.clone(),
-                    relationship_type,
-                )
-                .with_properties(serde_json::to_value(metadata)?),
+                CreateEntityRelation::new(from_entity_id, to_entity_id, relationship_type)
+                    .with_properties(serde_json::to_value(metadata)?),
             )
             .await?;
 
@@ -287,7 +286,7 @@ impl PkmService {
             "Created entity relationship with provenance"
         );
 
-        Ok(relationship.id.as_ulid().clone())
+        Ok(*relationship.id.as_ulid())
     }
 
     /// Register external content as source material
@@ -309,7 +308,7 @@ impl PkmService {
             .blobs()
             .find_by_blake3(&checksum)
             .await
-            .map_err(|e| SinexError::service(format!("blob lookup failed: {}", e)))?;
+            .map_err(|e| SinexError::service(format!("blob lookup failed: {e}")))?;
 
         if let Some(blob) = existing_blob {
             // Check if there's a source material for this blob
@@ -324,7 +323,7 @@ impl PkmService {
                     source_material_id = %material.id,
                     "Source material already exists with same checksum"
                 );
-                return Ok(material.id.into());
+                return Ok(material.id);
             }
         }
 
@@ -364,7 +363,7 @@ impl PkmService {
             "Registered new source material"
         );
 
-        Ok(source_material.id.into())
+        Ok(source_material.id)
     }
 
     /// Register in-flight source material for Stage-as-You-Go pattern
@@ -386,7 +385,7 @@ impl PkmService {
             "Registered in-flight source material"
         );
 
-        Ok(source_material.id.into())
+        Ok(source_material.id)
     }
 
     /// Finalize in-flight source material with actual content
@@ -406,11 +405,10 @@ impl PkmService {
             .content_hash(sha256_checksum.clone())
             .original_filename("inline-content".to_string())
             .size_bytes(content.len() as i64)
-            .mime_type(
-                mime_type
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| "application/octet-stream".to_string()),
-            )
+            .mime_type(mime_type.map_or_else(
+                || "application/octet-stream".to_string(),
+                std::string::ToString::to_string,
+            ))
             .checksum_blake3(blake3_checksum)
             .build();
 
@@ -422,9 +420,9 @@ impl PkmService {
             .blobs()
             .insert_with_executor(&mut *tx, blob)
             .await
-            .map_err(|e| SinexError::service(format!("blob insert failed: {}", e)))?;
+            .map_err(|e| SinexError::service(format!("blob insert failed: {e}")))?;
 
-        let content_preview = if mime_type.map(|m| m.starts_with("text/")).unwrap_or(false) {
+        let content_preview = if mime_type.is_some_and(|m| m.starts_with("text/")) {
             Some(Self::create_safe_content_preview(content, mime_type))
         } else {
             None
@@ -531,7 +529,7 @@ impl PkmService {
 
     /// Create a safe content preview with UTF-8 character boundary awareness
     fn create_safe_content_preview(content: &[u8], mime_type: Option<&str>) -> String {
-        if mime_type.map(|m| m.starts_with("text/")).unwrap_or(false) {
+        if mime_type.is_some_and(|m| m.starts_with("text/")) {
             let max_chars = 500;
             // Convert to string and safely truncate at character boundaries
             let content_str = String::from_utf8_lossy(content);
@@ -539,7 +537,7 @@ impl PkmService {
                 content_str.into_owned()
             } else {
                 let truncated: String = content_str.chars().take(max_chars).collect();
-                format!("{}...", truncated)
+                format!("{truncated}...")
             }
         } else {
             format!("[Binary content - {} bytes]", content.len())

@@ -12,6 +12,7 @@ arboard     = "3.4"
 blake3      = "1.5"
 urlencoding = "2.1"
 gethostname = "0.4"
+human-panic = "2.0"
 
 [package.version]
 workspace = true
@@ -103,3 +104,6 @@ path = "../../lib/sinex-primitives"
 features = [
     "testing",
 ]
+
+[lints]
+workspace = true

@@ -1,16 +1,13 @@
 // Service integration tests covering cross-service flows.
 
-use chrono::Duration;
 use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::EventSource;
 use sinex_services::AnalyticsService;
 use std::sync::Arc;
 use std::time::Instant;
-use xtask::sandbox::dataset_seeds::{
-    seed_events_via_scope, seed_service_integration_dataset_semantic_min_via_scope, EventSpec,
-    SeedClock,
-};
+use time::Duration;
+use xtask::sandbox::dataset_seeds::{seed_events_via_scope, EventSpec, SeedClock};
 use xtask::sandbox::prelude::*;
 
 /// Test cross-service data flow: Event creation -> Analytics -> Repository queries
@@ -19,21 +16,28 @@ async fn test_cross_service_data_flow(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing cross-service data flow integration");
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
-    let clock = SeedClock::fixed();
-    let dataset = seed_service_integration_dataset_semantic_min_via_scope(&scope, &clock).await?;
+    let clock = SeedClock::new();
+
+    // Create a semantic dataset inline
+    let events = vec![
+        EventSpec::new("shell.bash", "command.executed")
+            .with_payload(json!({"command": "ls", "exit_code": 0})),
+        EventSpec::new("shell.bash", "command.executed")
+            .with_payload(json!({"command": "git status", "exit_code": 0})),
+        EventSpec::new("fs-watcher", "file.created")
+            .with_payload(json!({"path": "/tmp/test.txt", "size": 100})),
+    ];
+    seed_events_via_scope(scope.ctx(), &clock, events).await?;
+    scope.wait_for_event_count(3).await?;
 
     let analytics = Arc::new(AnalyticsService::new(ctx.pool.clone()));
     let source_counts = analytics.get_event_count_by_source(None, None).await?;
-    for (source, expected) in &dataset.expected_sources {
-        let expected_i64 = *expected as i64;
-        assert_eq!(source_counts.get(source), Some(&expected_i64));
-    }
+    assert_eq!(source_counts.get("shell.bash"), Some(&2));
+    assert_eq!(source_counts.get("fs-watcher"), Some(&1));
 
     let type_counts = analytics.get_event_count_by_type(None, None).await?;
-    for (event_type, expected) in &dataset.expected_event_types {
-        let expected_i64 = *expected as i64;
-        assert_eq!(type_counts.get(event_type), Some(&expected_i64));
-    }
+    assert_eq!(type_counts.get("command.executed"), Some(&2));
+    assert_eq!(type_counts.get("file.created"), Some(&1));
 
     let events_by_source = ctx
         .pool
@@ -46,10 +50,7 @@ async fn test_cross_service_data_flow(ctx: TestContext) -> TestResult<()> {
     assert_eq!(events_by_source.len(), 1, "Should find fs-watcher event");
 
     let recent_events = ctx.pool.events().get_recent(10).await?;
-    assert!(
-        recent_events.len() >= dataset.expected_total,
-        "Should find all recent events"
-    );
+    assert!(recent_events.len() >= 3, "Should find all recent events");
 
     tracing::info!("Cross-service integration test completed successfully");
     scope.shutdown().await?;
@@ -70,14 +71,11 @@ async fn test_service_initialization(ctx: TestContext) -> TestResult<()> {
         "Empty database should return empty counts"
     );
 
+    let clock = SeedClock::new();
     seed_events_via_scope(
-        &scope,
-        &SeedClock::fixed(),
-        &[EventSpec::new(
-            "test-source",
-            "test.event",
-            json!({"test": "data"}),
-        )],
+        scope.ctx(),
+        &clock,
+        vec![EventSpec::new("test-source", "test.event").with_payload(json!({"test": "data"}))],
     )
     .await?;
 
@@ -95,23 +93,24 @@ async fn test_service_error_handling(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing service error handling patterns");
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
+    let clock = SeedClock::new();
 
     seed_events_via_scope(
-        &scope,
-        &SeedClock::fixed(),
-        &[EventSpec::new(
-            "error-test",
-            "problematic.event",
-            json!({
+        scope.ctx(),
+        &clock,
+        vec![
+            EventSpec::new("error-test", "problematic.event").with_payload(json!({
                 "malformed_json": "{ incomplete json",
                 "null_values": null,
                 "empty_string": "",
                 "very_long_content": "x".repeat(100000),
                 "special_characters": "Special chars with SQL'; DROP TABLE events; --"
-            }),
-        )],
+            })),
+        ],
     )
     .await?;
+
+    scope.wait_for_source_events("error-test", 1).await?;
 
     let analytics = AnalyticsService::new(ctx.pool.clone());
     let counts = analytics.get_event_count_by_source(None, None).await?;
@@ -142,7 +141,7 @@ async fn test_service_performance_integration(ctx: TestContext) -> TestResult<()
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
     let start_time = Instant::now();
-    let clock = SeedClock::fixed();
+    let clock = SeedClock::new();
 
     let desired_events = 24usize;
     let specs: Vec<EventSpec> = (0..desired_events)
@@ -150,21 +149,20 @@ async fn test_service_performance_integration(ctx: TestContext) -> TestResult<()
             EventSpec::new(
                 format!("perf-source-{}", idx % 5),
                 format!("perf.event.{}", idx % 3),
-                json!({
-                    "sequence": idx,
-                    "data": format!("Performance test data item {}", idx),
-                    "timestamp": clock.base().to_rfc3339(),
-                    "metadata": {
-                        "batch": idx / 10,
-                        "category": if idx % 2 == 0 { "even" } else { "odd" }
-                    }
-                }),
             )
-            .before(Duration::minutes(idx as i64))
+            .with_payload(json!({
+                "sequence": idx,
+                "data": format!("Performance test data item {}", idx),
+                "metadata": {
+                    "batch": idx / 10,
+                    "category": if idx % 2 == 0 { "even" } else { "odd" }
+                }
+            }))
+            .at(clock.tick(60_000)) // Advance by 1 minute each event
         })
         .collect();
 
-    seed_events_via_scope(&scope, &clock, &specs).await?;
+    seed_events_via_scope(scope.ctx(), &clock, specs).await?;
     scope.wait_for_event_count(desired_events).await?;
 
     let setup_duration = start_time.elapsed();
@@ -223,22 +221,19 @@ async fn test_service_lifecycle(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing service lifecycle management");
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
-    let clock = SeedClock::fixed();
+    let clock = SeedClock::new();
 
     let specs: Vec<EventSpec> = (0..5)
         .map(|i| {
-            EventSpec::new(
-                "lifecycle-test",
-                format!("lifecycle.event.{}", i),
-                json!({
+            EventSpec::new("lifecycle-test", format!("lifecycle.event.{i}"))
+                .with_payload(json!({
                     "step": i,
                     "description": format!("Lifecycle test step {}", i)
-                }),
-            )
-            .before(Duration::minutes(i as i64))
+                }))
+                .at(clock.tick(60_000)) // Advance by 1 minute each
         })
         .collect();
-    seed_events_via_scope(&scope, &clock, &specs).await?;
+    seed_events_via_scope(scope.ctx(), &clock, specs).await?;
     scope.wait_for_source_events("lifecycle-test", 5).await?;
 
     {
@@ -276,25 +271,22 @@ async fn test_time_based_service_integration(ctx: TestContext) -> TestResult<()>
     tracing::info!("Testing time-based service integration");
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
-    let clock = SeedClock::fixed();
-    let now = clock.base();
+    let clock = SeedClock::new();
+    let now = clock.now();
+
+    let thirty_mins_ago = now - Duration::minutes(30);
+    let one_day_ago = now - Duration::days(1);
 
     seed_events_via_scope(
-        &scope,
+        scope.ctx(),
         &clock,
-        &[
-            EventSpec::new(
-                "time-test",
-                "recent.event",
-                json!({"description": "Recent event"}),
-            )
-            .at(now - Duration::minutes(30)),
-            EventSpec::new(
-                "time-test",
-                "old.event",
-                json!({"description": "Old event"}),
-            )
-            .at(now - Duration::days(1)),
+        vec![
+            EventSpec::new("time-test", "recent.event")
+                .with_payload(json!({"description": "Recent event"}))
+                .at(thirty_mins_ago),
+            EventSpec::new("time-test", "old.event")
+                .with_payload(json!({"description": "Old event"}))
+                .at(one_day_ago),
         ],
     )
     .await?;
@@ -328,19 +320,18 @@ async fn test_service_configuration(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing service configuration patterns");
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
+    let clock = SeedClock::new();
 
     let analytics = AnalyticsService::new(ctx.pool.clone());
     seed_events_via_scope(
-        &scope,
-        &SeedClock::fixed(),
-        &[EventSpec::new(
-            "config-test",
-            "config.event",
-            json!({
+        scope.ctx(),
+        &clock,
+        vec![
+            EventSpec::new("config-test", "config.event").with_payload(json!({
                 "configuration": "test",
                 "service_integration": true
-            }),
-        )],
+            })),
+        ],
     )
     .await?;
 
@@ -368,21 +359,22 @@ async fn test_cross_service_error_handling(ctx: TestContext) -> TestResult<()> {
     tracing::info!("Testing cross-service error handling");
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
+    let clock = SeedClock::new();
 
     seed_events_via_scope(
-        &scope,
-        &SeedClock::fixed(),
-        &[EventSpec::new(
-            "error-propagation",
-            "error.event",
-            json!({
+        scope.ctx(),
+        &clock,
+        vec![
+            EventSpec::new("error-propagation", "error.event").with_payload(json!({
                 "potentially_problematic": true,
                 "large_field": "x".repeat(10000),
                 "special_chars": "Testing 'quotes' and \"double quotes\" and `backticks`"
-            }),
-        )],
+            })),
+        ],
     )
     .await?;
+
+    scope.wait_for_source_events("error-propagation", 1).await?;
 
     let analytics = AnalyticsService::new(ctx.pool.clone());
     let analytics_result = analytics.get_event_count_by_source(None, None).await;

@@ -1,3 +1,7 @@
+mod build {
+    include!(concat!(env!("OUT_DIR"), "/shadow.rs"));
+}
+
 use clap::Parser;
 use color_eyre::eyre::Result;
 use sinex_ingestd::{IngestService, IngestdConfig};
@@ -15,7 +19,7 @@ static GLOBAL: MiMalloc = MiMalloc;
 #[derive(Parser, Debug)]
 #[command(
     author,
-    version,
+    version = build::CLAP_LONG_VERSION,
     about = "Sinex ingestion daemon - central hub for event ingestion"
 )]
 struct Args {
@@ -65,6 +69,7 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    human_panic::setup_panic!();
     color_eyre::install()?;
     let args = Args::parse();
 
@@ -119,7 +124,7 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        _ = shutdown_signal => {
+        () = shutdown_signal => {
             info!("Shutting down gracefully...");
             if let Err(e) = service.shutdown().await {
                 error!("Error during shutdown: {}", e);

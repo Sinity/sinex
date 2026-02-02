@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use tracing::info;
 
 /// Configuration for NATS connections including TLS and Auth.
-#[derive(Debug, Clone, Serialize, Deserialize, Builder, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Builder, PartialEq, Eq)]
 pub struct NatsConnectionConfig {
     /// NATS server URL (e.g. `nats://localhost:4222` or `tls://demo.nats.io:4443`)
     #[builder(default = String::from("nats://localhost:4222"))]
@@ -34,7 +34,7 @@ pub struct NatsConnectionConfig {
     /// Path to NATS credentials file (JWT + Key)
     pub creds_file: Option<PathBuf>,
 
-    /// Path to NKey seed file
+    /// Path to `NKey` seed file
     pub nkey_file: Option<PathBuf>,
 
     /// Auth token
@@ -64,6 +64,7 @@ impl NatsConnectionConfig {
     /// - `SINEX_NATS_CA_CERT`, `SINEX_NATS_CLIENT_CERT`, `SINEX_NATS_CLIENT_KEY`
     /// - `SINEX_NATS_CREDS`, `SINEX_NATS_NKEY_SEED`
     /// - `SINEX_NATS_TOKEN`
+    #[must_use]
     pub fn from_env() -> Self {
         let url =
             std::env::var("SINEX_NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".to_string());
@@ -99,12 +100,10 @@ impl NatsConnectionConfig {
                 "NATS URL cannot be empty".to_string(),
             ));
         }
-        if self.require_tls {
-            if !self.url.starts_with("tls://") && !self.url.starts_with("wss://") {
-                return Err(SinexError::configuration(
-                    "NATS URL must use tls:// or wss:// when require_tls is enabled".to_string(),
-                ));
-            }
+        if self.require_tls && !self.url.starts_with("tls://") && !self.url.starts_with("wss://") {
+            return Err(SinexError::configuration(
+                "NATS URL must use tls:// or wss:// when require_tls is enabled".to_string(),
+            ));
         }
         Ok(())
     }
@@ -176,8 +175,8 @@ impl NatsConnectionConfig {
     }
 }
 
-/// Standard JetStream topology for Sinex ingestion pipelines.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+/// Standard `JetStream` topology for Sinex ingestion pipelines.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct JetStreamTopology {
     pub events_stream: String,
     pub events_subject: String,
@@ -191,6 +190,7 @@ pub struct JetStreamTopology {
 }
 
 impl JetStreamTopology {
+    #[must_use]
     pub fn new(
         env: &crate::environment::SinexEnvironment,
         base_stream: String,
@@ -203,7 +203,7 @@ impl JetStreamTopology {
         let confirmations_prefix = format!("{}.", namespaced("events.confirmations"));
 
         Self {
-            events_stream: base_stream.clone(),
+            events_stream: base_stream,
             events_subject: namespaced("events.raw.>"),
             confirmations_stream,
             confirmations_subject: namespaced("events.confirmations.>"),
@@ -218,8 +218,7 @@ impl JetStreamTopology {
 
 fn env_bool(key: &str) -> bool {
     std::env::var(key)
-        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "on"))
-        .unwrap_or(false)
+        .is_ok_and(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "on"))
 }
 
 fn env_path(key: &str) -> Option<PathBuf> {

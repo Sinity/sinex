@@ -68,6 +68,29 @@ pub enum DepsCommand {
         #[arg(long)]
         package: Option<String>,
     },
+
+    /// Visualize dependency graph
+    Graph {
+        /// Output format (dot, json, ascii)
+        #[arg(long, default_value = "ascii")]
+        format: String,
+
+        /// Focus on specific package
+        #[arg(long)]
+        focus: Option<String>,
+
+        /// Show reverse dependencies
+        #[arg(long)]
+        reverse: bool,
+
+        /// Maximum depth
+        #[arg(long, default_value = "10")]
+        depth: usize,
+
+        /// Output file (if not specified, writes to stdout)
+        #[arg(short, long)]
+        output: Option<String>,
+    },
 }
 
 impl DepsCommand {
@@ -147,12 +170,11 @@ impl DepsCommand {
                     }
 
                     rendered.push_str(&format!(
-                        "Dependency tree for '{}' (depth: {}):\n",
-                        pkg_name, depth
+                        "Dependency tree for '{pkg_name}' (depth: {depth}):\n"
                     ));
                     rendered.push_str("(Full tree visualization will be available in Phase 3)\n");
                 } else {
-                    rendered.push_str(&format!("Workspace dependency tree (depth: {}):\n", depth));
+                    rendered.push_str(&format!("Workspace dependency tree (depth: {depth}):\n"));
                     rendered.push_str("(Full tree visualization will be available in Phase 3)\n");
 
                     // Show workspace packages as placeholder
@@ -206,47 +228,62 @@ impl DepsCommand {
                 let report =
                     UnusedDetector::detect().context("Failed to detect unused dependencies")?;
 
-                let rendered;
-                if ctx.is_json() {
-                    rendered = serde_json::to_string_pretty(&report)?;
-                } else {
-                    // write_unused_report prints directly, we should change it to return string
-                    // but for now let's just capture it if possible or assume it's okay.
-                    // Actually, let's fix write_unused_report too.
-                    let mut buffer = Vec::new();
-                    crate::deps::reports::write_unused_report_to_buffer(
-                        &mut buffer,
-                        &report,
-                        "human",
-                    )?;
-                    rendered = String::from_utf8(buffer)?;
-                }
-
                 // In CI mode, fail if unused dependencies found
                 if *ci && !report.unused.is_empty() {
                     return Ok(CommandResult::failure(crate::output::StructuredError::new(
                         "UNUSED_DEPS",
                         format!("Found {} unused dependencies", report.unused.len()),
                     ))
-                    .with_data(serde_json::Value::String(rendered)));
+                    .with_data(serde_json::to_value(&report)?));
                 }
 
-                Ok(CommandResult::success()
-                    .with_data(serde_json::Value::String(rendered))
-                    .with_silent()
-                    .with_duration(ctx.elapsed()))
+                if ctx.is_json() {
+                    // JSON output - return structured report
+                    Ok(CommandResult::success()
+                        .with_data(serde_json::to_value(&report)?)
+                        .with_silent()
+                        .with_duration(ctx.elapsed()))
+                } else {
+                    // Human output
+                    let mut buffer = Vec::new();
+                    crate::deps::reports::write_unused_report_to_buffer(
+                        &mut buffer,
+                        &report,
+                        "human",
+                    )?;
+                    let rendered = String::from_utf8(buffer)?;
+
+                    Ok(CommandResult::success()
+                        .with_data(serde_json::Value::String(rendered))
+                        .with_silent()
+                        .with_duration(ctx.elapsed()))
+                }
             }
 
             Self::Timings { compare: _, top } => {
                 let report = TimingAnalyzer::analyze()?;
-                let mut buffer = Vec::new();
-                crate::deps::reports::write_timing_report_to_buffer(&mut buffer, &report, *top)?;
-                let rendered = String::from_utf8(buffer)?;
 
-                Ok(CommandResult::success()
-                    .with_data(serde_json::Value::String(rendered))
-                    .with_silent()
-                    .with_duration(ctx.elapsed()))
+                if ctx.is_json() {
+                    // JSON output - return the structured report
+                    Ok(CommandResult::success()
+                        .with_data(serde_json::to_value(&report)?)
+                        .with_silent()
+                        .with_duration(ctx.elapsed()))
+                } else {
+                    // Human output
+                    let mut buffer = Vec::new();
+                    crate::deps::reports::write_timing_report_to_buffer(
+                        &mut buffer,
+                        &report,
+                        *top,
+                    )?;
+                    let rendered = String::from_utf8(buffer)?;
+
+                    Ok(CommandResult::success()
+                        .with_data(serde_json::Value::String(rendered))
+                        .with_silent()
+                        .with_duration(ctx.elapsed()))
+                }
             }
 
             Self::Impact { package } => {
@@ -257,7 +294,7 @@ impl DepsCommand {
 
                 if let Some(pkg_name) = package {
                     // Single package analysis
-                    let metrics = graph.compute_impact_metrics(&pkg_name)?;
+                    let metrics = graph.compute_impact_metrics(pkg_name)?;
 
                     if ctx.is_json() {
                         Ok(CommandResult::success()
@@ -266,7 +303,7 @@ impl DepsCommand {
                             .with_duration(ctx.elapsed()))
                     } else {
                         let mut rendered = String::new();
-                        rendered.push_str(&format!("Impact Analysis for {}\n", pkg_name));
+                        rendered.push_str(&format!("Impact Analysis for {pkg_name}\n"));
                         rendered.push_str(&format!(
                             "  Dependent packages: {}\n",
                             metrics.dependent_count
@@ -299,15 +336,15 @@ impl DepsCommand {
                         if !report.critical_packages.is_empty() {
                             rendered.push_str("Critical Packages (>80% rebuild impact):\n");
                             for pkg in &report.critical_packages {
-                                rendered.push_str(&format!("  - {}\n", pkg));
+                                rendered.push_str(&format!("  - {pkg}\n"));
                             }
-                            rendered.push_str("\n");
+                            rendered.push('\n');
                         }
 
                         if !report.high_impact_packages.is_empty() {
                             rendered.push_str("High Impact Packages (50-80% rebuild impact):\n");
                             for pkg in &report.high_impact_packages {
-                                rendered.push_str(&format!("  - {}\n", pkg));
+                                rendered.push_str(&format!("  - {pkg}\n"));
                             }
                         }
                         Ok(CommandResult::success()
@@ -315,6 +352,51 @@ impl DepsCommand {
                             .with_silent()
                             .with_duration(ctx.elapsed()))
                     }
+                }
+            }
+
+            Self::Graph {
+                format,
+                focus,
+                reverse,
+                depth,
+                output,
+            } => {
+                use crate::graph::render::{AsciiRenderer, DotRenderer, JsonRenderer, Renderer};
+                use crate::graph::workspace::WorkspaceGraph;
+
+                let graph = WorkspaceGraph::new()?;
+
+                let rendered = match format.as_str() {
+                    "dot" => {
+                        let mut renderer = DotRenderer::new(graph);
+                        if let Some(focus_pkg) = focus {
+                            renderer = renderer.with_focus(focus_pkg.clone(), *reverse);
+                        }
+                        renderer.render()?
+                    }
+                    "json" => {
+                        let renderer = JsonRenderer::new(graph);
+                        renderer.render()?
+                    }
+                    _ => {
+                        let renderer = AsciiRenderer::new(&graph, focus.clone(), *depth);
+                        renderer.render()?
+                    }
+                };
+
+                if let Some(output_path) = output {
+                    std::fs::write(output_path, &rendered)
+                        .with_context(|| format!("Failed to write to {output_path}"))?;
+                    Ok(CommandResult::success()
+                        .with_message(format!("Graph written to {output_path}"))
+                        .with_duration(ctx.elapsed()))
+                } else {
+                    // Print to stdout directly
+                    print!("{rendered}");
+                    Ok(CommandResult::success()
+                        .with_silent()
+                        .with_duration(ctx.elapsed()))
                 }
             }
         }

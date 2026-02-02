@@ -1,18 +1,18 @@
 //! Property tests for node architecture
 //!
 //! Tests that verify node communication, lifecycle, and coordination properties
-//! using modern Sinex infrastructure (NATS JetStream, TestContext, etc.)
+//! using modern Sinex infrastructure (NATS `JetStream`, `TestContext`, etc.)
 
 use proptest::prelude::*;
 use proptest::test_runner::TestCaseError;
 use serde_json::json;
-use sinex_node_sdk::db::repositories::DbPoolExt;
-use sinex_node_sdk::types::domain::{EventSource, EventType};
-use sinex_node_sdk::{Event, JsonValue};
+use sinex_db::repositories::DbPoolExt;
+use sinex_primitives::domain::{EventSource, EventType};
+use sinex_primitives::{Event, JsonValue};
 use std::time::Duration;
 use xtask::sandbox::{prelude::*, sinex_prop, sinex_proptest, test_event};
 
-/// Helper to convert color_eyre::Report errors to TestCaseError for property tests
+/// Helper to convert `color_eyre::Report` errors to `TestCaseError` for property tests
 fn report_to_test_error<E: std::fmt::Display>(e: E) -> TestCaseError {
     TestCaseError::Fail(e.to_string().into())
 }
@@ -22,7 +22,7 @@ mod strategies {
     use super::*;
 
     /// Strategy for generating realistic event sequences
-    pub fn event_sequences() -> impl Strategy<Value = Vec<Event<JsonValue>>> {
+    pub(super) fn event_sequences() -> impl Strategy<Value = Vec<Event<JsonValue>>> {
         (1usize..=100).prop_flat_map(|size| {
             proptest::collection::vec(
                 (event_sources(), event_types(), event_payloads()).prop_map(
@@ -40,7 +40,7 @@ mod strategies {
     }
 
     /// Strategy for generating event source names
-    pub fn event_sources() -> impl Strategy<Value = String> {
+    pub(super) fn event_sources() -> impl Strategy<Value = String> {
         prop_oneof![
             Just("fs".to_string()),
             Just("terminal".to_string()),
@@ -51,7 +51,7 @@ mod strategies {
     }
 
     /// Strategy for generating event type names
-    pub fn event_types() -> impl Strategy<Value = String> {
+    pub(super) fn event_types() -> impl Strategy<Value = String> {
         prop_oneof![
             Just("file.created".to_string()),
             Just("file.modified".to_string()),
@@ -62,7 +62,7 @@ mod strategies {
     }
 
     /// Strategy for generating realistic event payloads
-    pub fn event_payloads() -> impl Strategy<Value = serde_json::Value> {
+    pub(super) fn event_payloads() -> impl Strategy<Value = serde_json::Value> {
         prop_oneof![
             // Simple payload
             Just(json!({"type": "simple", "data": "test"})),
@@ -212,7 +212,7 @@ async fn node_handles_intermittent_failures(
         .count_all()
         .await
         .map_err(report_to_test_error)?;
-    assert_eq!(final_count, successful_events as i64);
+    assert_eq!(final_count, i64::from(successful_events));
 
     // Verify system recovered from failures
     assert!(successful_events > 0, "At least some events should succeed");
@@ -483,7 +483,7 @@ async fn node_maintains_event_ordering_under_load(
                     json!({
                         "source_id": source_id,
                         "event_id": event_id,
-                        "timestamp": OffsetDateTime::now_utc().timestamp_millis()
+                        "timestamp": OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000
                     }),
                 );
 
@@ -538,8 +538,8 @@ async fn node_maintains_event_ordering_under_load(
         for window in source_events.windows(2) {
             let (payload1, payload2) = (&window[0].payload, &window[1].payload);
             if let (Some(id1), Some(id2)) = (
-                payload1.get("event_id").and_then(|v| v.as_u64()),
-                payload2.get("event_id").and_then(|v| v.as_u64()),
+                payload1.get("event_id").and_then(serde_json::Value::as_u64),
+                payload2.get("event_id").and_then(serde_json::Value::as_u64),
             ) {
                 // Within a source, event_ids should be sequential
                 assert!(

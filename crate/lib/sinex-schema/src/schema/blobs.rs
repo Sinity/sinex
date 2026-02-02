@@ -92,6 +92,7 @@ pub struct BlobRecord {
 
 impl Blobs {
     /// Generates the `CREATE TABLE` statement for `core.blobs`.
+    #[must_use]
     pub fn create_table_statement() -> TableCreateStatement {
         Table::create()
             .table(Self::table_iden())
@@ -133,6 +134,7 @@ impl Blobs {
     }
 
     /// Generates all necessary indexes for `core.blobs`.
+    #[must_use]
     pub fn create_indexes() -> Vec<IndexCreateStatement> {
         vec![
             // The true natural key of the annexed content is the combination of its hashing algorithm and the resulting hash.
@@ -172,6 +174,7 @@ impl Blobs {
 
 impl SourceMaterialRegistry {
     /// Generates the `ALTER TABLE` statement to add the foreign key to `core.blobs`.
+    #[must_use]
     pub fn create_blob_foreign_key() -> ForeignKeyCreateStatement {
         ForeignKey::create()
             .from(Self::table_iden(), Alias::new("optional_blob_id"))

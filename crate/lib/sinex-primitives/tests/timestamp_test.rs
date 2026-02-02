@@ -8,8 +8,9 @@
 
 use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
-use sinex_primitives::temporal::{now, Duration, Rfc3339, Timestamp};
+use sinex_primitives::temporal::{now, Duration, Timestamp};
 use xtask::sandbox::prelude::*;
+use xtask::sandbox::test_event;
 
 /// Test timestamp boundary conditions
 #[sinex_test]
@@ -18,15 +19,12 @@ async fn test_timestamp_boundaries(ctx: TestContext) -> TestResult<()> {
         // Unix epoch
         Timestamp::from_unix_timestamp(0).unwrap(),
         // Far future (year 9999)
-        Timestamp::from_inner(
-            time::OffsetDateTime::new_in_utc(
-                time::Date::from_calendar_date(9999, time::Month::December, 31).unwrap(),
-                time::Time::from_hms(23, 59, 59).unwrap(),
-            )
-        ),
+        Timestamp::new(time::OffsetDateTime::new_utc(
+            time::Date::from_calendar_date(9999, time::Month::December, 31).unwrap(),
+            time::Time::from_hms(23, 59, 59).unwrap(),
+        )),
         // Near boundaries
-        Timestamp::from_unix_timestamp(i32::MAX as i64)
-            .unwrap(),
+        Timestamp::from_unix_timestamp(i64::from(i32::MAX)).unwrap(),
         // Current time
         now(),
     ];
@@ -71,7 +69,7 @@ async fn test_timestamp_boundaries(ctx: TestContext) -> TestResult<()> {
         );
         let ingest_ts = event.id.as_ref().expect("event should have id").timestamp();
         assert!(
-            ingest_ts > time::OffsetDateTime::from_unix_timestamp(0).unwrap(),
+            ingest_ts > Timestamp::from_unix_timestamp(0).unwrap(),
             "Ingestion (ULID) timestamp should be set"
         );
     }
@@ -153,22 +151,22 @@ async fn test_timestamp_precision(ctx: TestContext) -> color_eyre::Result<()> {
     // Test various precision levels
     let precision_cases = vec![
         // Second precision
-        Timestamp::from_inner(time::OffsetDateTime::new_in_utc(
+        Timestamp::new(time::OffsetDateTime::new_utc(
             time::Date::from_calendar_date(2024, time::Month::January, 1).unwrap(),
             time::Time::from_hms(12, 0, 0).unwrap(),
         )),
         // Millisecond precision
-        Timestamp::from_inner(time::OffsetDateTime::new_in_utc(
+        Timestamp::new(time::OffsetDateTime::new_utc(
             time::Date::from_calendar_date(2024, time::Month::January, 1).unwrap(),
             time::Time::from_hms_nano(12, 0, 0, 123_000_000).unwrap(),
         )),
         // Microsecond precision
-        Timestamp::from_inner(time::OffsetDateTime::new_in_utc(
+        Timestamp::new(time::OffsetDateTime::new_utc(
             time::Date::from_calendar_date(2024, time::Month::January, 1).unwrap(),
             time::Time::from_hms_nano(12, 0, 0, 123_456_000).unwrap(),
         )),
         // Nanosecond precision
-        Timestamp::from_inner(time::OffsetDateTime::new_in_utc(
+        Timestamp::new(time::OffsetDateTime::new_utc(
             time::Date::from_calendar_date(2024, time::Month::January, 1).unwrap(),
             time::Time::from_hms_nano(12, 0, 0, 123_456_789).unwrap(),
         )),
@@ -218,8 +216,7 @@ async fn test_timestamp_precision(ctx: TestContext) -> color_eyre::Result<()> {
         assert_eq!(
             original_ts.unix_timestamp_nanos(),
             (*stored_ts).unix_timestamp_nanos(),
-            "Nanosecond precision should be preserved for event {}",
-            level
+            "Nanosecond precision should be preserved for event {level}"
         );
     }
 
@@ -237,7 +234,7 @@ async fn test_timezone_handling(ctx: TestContext) -> color_eyre::Result<()> {
         ("utc_explicit", utc_time),
         (
             "utc_parsed",
-            Timestamp::from_inner(time::OffsetDateTime::parse(
+            Timestamp::new(time::OffsetDateTime::parse(
                 &(*utc_time)
                     .format(&time::format_description::well_known::Rfc3339)
                     .unwrap(),
@@ -246,7 +243,8 @@ async fn test_timezone_handling(ctx: TestContext) -> color_eyre::Result<()> {
         ),
         (
             "utc_timestamp",
-            Timestamp::from_unix_timestamp_nanos((*utc_time).unix_timestamp_nanos())?,
+            Timestamp::from_unix_timestamp_nanos((*utc_time).unix_timestamp_nanos())
+                .ok_or_else(|| color_eyre::eyre::eyre!("invalid timestamp"))?,
         ),
     ];
 
@@ -283,8 +281,7 @@ async fn test_timezone_handling(ctx: TestContext) -> color_eyre::Result<()> {
         let diff = (event_ts - first_ts).abs();
         assert!(
             diff < time::Duration::milliseconds(10),
-            "All timezone variants should represent the same logical time, diff: {:?}",
-            diff
+            "All timezone variants should represent the same logical time, diff: {diff:?}"
         );
     }
 
@@ -300,14 +297,14 @@ async fn test_timestamp_validation(ctx: TestContext) -> color_eyre::Result<()> {
         EventType::from("valid_event"),
         json!({"message": "This should work"}),
     )
-    .at_time(*Timestamp::now());
+    .at_time(Timestamp::now());
 
     // This should succeed
     let result = ctx.pool.events().insert(valid_event).await;
     assert!(result.is_ok(), "Valid timestamp should be accepted");
 
     // Test edge case: distant future (should work but might be logged)
-    let far_future = Timestamp::from_inner(time::OffsetDateTime::new_in_utc(
+    let far_future = Timestamp::new(time::OffsetDateTime::new_utc(
         time::Date::from_calendar_date(2999, time::Month::December, 31).unwrap(),
         time::Time::from_hms(23, 59, 59).unwrap(),
     ));
@@ -316,12 +313,12 @@ async fn test_timestamp_validation(ctx: TestContext) -> color_eyre::Result<()> {
         EventType::from("future_event"),
         json!({"message": "From the future"}),
     )
-    .at_time(*far_future);
+    .at_time(far_future);
 
     let future_result = ctx.pool.events().insert(future_event).await;
     match future_result {
         Ok(_) => println!("Far future timestamp accepted"),
-        Err(e) => println!("Far future timestamp rejected: {}", e),
+        Err(e) => println!("Far future timestamp rejected: {e}"),
     }
 
     Ok(())
@@ -330,7 +327,7 @@ async fn test_timestamp_validation(ctx: TestContext) -> color_eyre::Result<()> {
 /// Test timestamp ordering in queries
 #[sinex_test]
 async fn test_timestamp_query_ordering(ctx: TestContext) -> color_eyre::Result<()> {
-    let base_time = *Timestamp::now() - time::Duration::minutes(30);
+    let base_time = Timestamp::now() - time::Duration::minutes(30);
     let mut expected_order = Vec::new();
 
     // Create events with specific logical timestamps
@@ -343,7 +340,7 @@ async fn test_timestamp_query_ordering(ctx: TestContext) -> color_eyre::Result<(
             EventType::from("ordered_event"),
             json!({
                 "sequence": i,
-                "logical_time": logical_time.format(&time::format_description::well_known::Rfc3339).unwrap()
+                "logical_time": (*logical_time).format(&time::format_description::well_known::Rfc3339).unwrap()
             }),
         )
         .at_time(logical_time);
@@ -380,9 +377,8 @@ async fn test_timestamp_query_ordering(ctx: TestContext) -> color_eyre::Result<(
     for (sequence, stored_ts) in ordered_events {
         let expected_ts = expected_order[sequence];
         assert_eq!(
-            *stored_ts, expected_ts,
-            "Logical timestamp should be preserved for event {}",
-            sequence
+            stored_ts, expected_ts,
+            "Logical timestamp should be preserved for event {sequence}"
         );
     }
 
@@ -392,7 +388,7 @@ async fn test_timestamp_query_ordering(ctx: TestContext) -> color_eyre::Result<(
 /// Test timestamp with different payload types
 #[sinex_test]
 async fn test_timestamps_with_various_payloads(ctx: TestContext) -> color_eyre::Result<()> {
-    let test_time = *Timestamp::now() - time::Duration::minutes(10);
+    let test_time = Timestamp::now() - time::Duration::minutes(10);
 
     // Test with different payload complexities
     let payload_cases = vec![

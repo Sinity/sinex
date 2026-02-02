@@ -9,6 +9,7 @@ name = "sinex-content-automaton"
 serde_json = "1.0"
 async-trait = "0.1"
 tracing = "0.1"
+human-panic = "2.0"
 
 [dependencies.sinex-primitives]
 path = "../../lib/sinex-primitives"
@@ -71,3 +72,6 @@ features = [ "sandbox",]
 [dev-dependencies.sinex-primitives]
 path = "../../lib/sinex-primitives"
 features = [ "testing",]
+
+[lints]
+workspace = true

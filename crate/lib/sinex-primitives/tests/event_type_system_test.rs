@@ -3,12 +3,12 @@
 //! Tests for the strongly-typed event system, validating event types,
 //! sources, and the modern payload system.
 //!
-//! Migrated from test/unit/event_type_system_test.rs to use modern patterns:
-//! - TestContext instead of custom fixtures
-//! - Modern Event API with Event::from_payload()
+//! Migrated from `test/unit/event_type_system_test.rs` to use modern patterns:
+//! - `TestContext` instead of custom fixtures
+//! - Modern Event API with `Event::from_payload()`
 //! - Direct repository access via ctx.pool.*()
-//! - Modern payload types from sinex_primitives::events::payloads
-//! - color_eyre for error handling
+//! - Modern payload types from `sinex_primitives::events::payloads`
+//! - `color_eyre` for error handling
 
 use xtask::sandbox::prelude::*;
 
@@ -22,7 +22,7 @@ use sinex_primitives::events::payloads::{
     FileModifiedPayload, KittyCommandExecutedPayload,
 };
 use sinex_primitives::events::EventPayload;
-use sinex_primitives::{DynamicPayload, Event, ExitCode, Id, JsonValue, Provenance, Ulid};
+use sinex_primitives::{units::ExitCode, DynamicPayload, Event, Id, JsonValue, Provenance, Ulid};
 use std::collections::HashSet;
 
 async fn ensure_material(ctx: &TestContext, label: &str) -> TestResult<Id<SourceMaterial>> {
@@ -326,7 +326,7 @@ async fn test_source_event_type_mapping(ctx: TestContext) -> TestResult<()> {
         let mut created_events = Vec::new();
 
         // Create test events for each expected type
-        for &event_type in expected_types.iter() {
+        for &event_type in &expected_types {
             let test_payload = match (source, event_type) {
                 ("fs-watcher", "file.created") => {
                     json!({"path": "/test/file.txt", "size": 1024, "created_at": "2024-01-01T00:00:00Z", "permissions": 644})
@@ -382,7 +382,10 @@ async fn test_source_event_type_mapping(ctx: TestContext) -> TestResult<()> {
             .map(|e| e.event_type.as_str().to_string())
             .collect();
 
-        let expected_set: HashSet<String> = expected_types.iter().map(|s| s.to_string()).collect();
+        let expected_set: HashSet<String> = expected_types
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect();
 
         assert_eq!(
             actual_types, expected_set,
@@ -615,7 +618,7 @@ async fn test_event_type_constants_consistency(ctx: TestContext) -> TestResult<(
     let shell_prov = Provenance::from_material(shell_material, 0, None, None);
     // Use fluent API for typed payloads
     let kitty_event = kitty_executed.into_event(shell_prov.clone());
-    let atuin_event = atuin_executed.into_event(shell_prov.clone());
+    let atuin_event = atuin_executed.into_event(shell_prov);
 
     // Different sources but same event type
     assert_eq!(kitty_event.source.as_str(), "shell.kitty");

@@ -40,8 +40,8 @@ Common issues, debugging strategies, and patterns for writing reliable tests.
 
 **Solutions**:
 ```bash
-# Use fewer concurrent tests
-cargo xtask test --profile fast
+# Use debug mode (single-threaded)
+cargo xtask test --debug
 
 # Or increase PostgreSQL max_connections
 # (in postgresql.conf or via devenv)
@@ -76,8 +76,8 @@ psql -c "SELECT pg_terminate_backend(pid)
 
 **Solution**: The harness auto-rebuilds, but for manual reset:
 ```bash
-rm target/xtask sandbox/template_stamp.json
-cargo xtask test --profile default --prime
+rm target/xtask/sandbox/template_stamp.json
+cargo xtask test --prime
 ```
 
 ### "Tests hang on cleanup"
@@ -188,14 +188,14 @@ Artifacts contain:
 - Pool statistics
 - Captured logs
 
-### Use `default` Profile
+### Use Debug Mode
 
 ```bash
-# More retries, longer timeouts
-cargo xtask test --profile default
+# Default: retries enabled
+cargo xtask test
 
 # Debug mode (single-threaded, full output)
-cargo xtask test --profile debug
+cargo xtask test --debug
 ```
 
 ### Snapshot Retries
@@ -364,19 +364,19 @@ println!("Cleanup failures: {}", stats.cleanup_failures);
 4. **Use TestSynchronizer** — wait for background signals
 5. **Use ULID ordering** — never assume insertion order
 6. **Use proptest** — find edge cases systematically
-7. **Use `default` profile** — retries enabled for CI
+7. **Use default flags** — retries enabled by default
 
 ## CI-Specific Tips
 
 ```bash
-# CI profile with appropriate skips
-cargo xtask test --profile default --prime
+# CI configuration with priming
+cargo xtask test --prime
 
 # Increase property test cases
-SINEX_PROPTEST_CASES=1024 cargo xtask test --profile default
+SINEX_PROPTEST_CASES=1024 cargo xtask test
 
 # Debug CI failures locally
-cargo xtask test --profile debug -- -p failing-crate
+cargo xtask test --debug -- -p failing-crate
 ```
 
 ## Key Files

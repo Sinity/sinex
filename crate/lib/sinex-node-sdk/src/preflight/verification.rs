@@ -39,7 +39,7 @@ pub async fn verify_end_to_end_integration() -> NodeResult<(VerificationStatus, 
             details.insert("database_integration", db_info);
         }
         Err(e) => {
-            messages.push(format!("✗ Database integration test failed: {}", e));
+            messages.push(format!("✗ Database integration test failed: {e}"));
             has_failures = true;
         }
     }
@@ -51,7 +51,7 @@ pub async fn verify_end_to_end_integration() -> NodeResult<(VerificationStatus, 
                 details.insert("service_integration", service_info);
             }
             Err(e) => {
-                messages.push(format!("✗ Service integration test failed: {}", e));
+                messages.push(format!("✗ Service integration test failed: {e}"));
                 has_warnings = true;
             }
         }
@@ -89,7 +89,7 @@ async fn verify_database_integration(messages: &mut Vec<String>) -> NodeResult<V
             messages.push("✓ Schema access test passed".to_string());
         }
         Err(e) => {
-            messages.push(format!("✗ Schema access test failed: {}", e));
+            messages.push(format!("✗ Schema access test failed: {e}"));
             has_failures = true;
         }
     }
@@ -102,7 +102,7 @@ async fn verify_database_integration(messages: &mut Vec<String>) -> NodeResult<V
                 messages.push("✓ Transaction test passed".to_string());
             }
             Err(e) => {
-                messages.push(format!("✗ Transaction test failed: {}", e));
+                messages.push(format!("✗ Transaction test failed: {e}"));
                 has_failures = true;
             }
         }
@@ -116,7 +116,7 @@ async fn verify_database_integration(messages: &mut Vec<String>) -> NodeResult<V
                 messages.push("✓ Concurrent queries test passed".to_string());
             }
             Err(e) => {
-                messages.push(format!("⚠ Concurrent queries test failed: {}", e));
+                messages.push(format!("⚠ Concurrent queries test failed: {e}"));
                 has_warnings = true;
             }
         }
@@ -129,7 +129,7 @@ async fn verify_database_integration(messages: &mut Vec<String>) -> NodeResult<V
             messages.push("✓ Database extensions test completed".to_string());
         }
         Err(e) => {
-            messages.push(format!("⚠ Extensions test failed: {}", e));
+            messages.push(format!("⚠ Extensions test failed: {e}"));
             has_warnings = true;
         }
     }
@@ -147,17 +147,17 @@ async fn verify_database_integration(messages: &mut Vec<String>) -> NodeResult<V
 async fn test_schema_access(pool: &PgPool, _messages: &mut Vec<String>) -> NodeResult<Value> {
     // Check that core.events table exists
     let events_table_exists = sqlx::query_scalar::<_, bool>(
-        r#"
+        r"
         SELECT EXISTS (
             SELECT FROM information_schema.tables
             WHERE table_schema = 'core'
             AND table_name = 'events'
         )
-        "#,
+        ",
     )
     .fetch_one(pool)
     .await
-    .map_err(|e| SinexError::from(e))?;
+    .map_err(SinexError::from)?;
 
     if !events_table_exists {
         return Err(SinexError::processing(
@@ -175,35 +175,35 @@ async fn test_schema_access(pool: &PgPool, _messages: &mut Vec<String>) -> NodeR
     let count_result = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM core.events")
         .fetch_one(pool)
         .await
-        .map_err(|e| SinexError::from(e))?;
+        .map_err(SinexError::from)?;
 
     // Check core.source_materials table exists
     let source_materials_exists = sqlx::query_scalar::<_, bool>(
-        r#"
+        r"
         SELECT EXISTS (
             SELECT FROM information_schema.tables
             WHERE table_schema = 'core'
             AND table_name = 'source_materials'
         )
-        "#,
+        ",
     )
     .fetch_one(pool)
     .await
-    .map_err(|e| SinexError::from(e))?;
+    .map_err(SinexError::from)?;
 
     // Check core.blobs table exists
     let blobs_exists = sqlx::query_scalar::<_, bool>(
-        r#"
+        r"
         SELECT EXISTS (
             SELECT FROM information_schema.tables
             WHERE table_schema = 'core'
             AND table_name = 'blobs'
         )
-        "#,
+        ",
     )
     .fetch_one(pool)
     .await
-    .map_err(|e| SinexError::from(e))?;
+    .map_err(SinexError::from)?;
 
     Ok(json!({
         "events_table_exists": events_table_exists,
@@ -219,37 +219,34 @@ async fn test_schema_access(pool: &PgPool, _messages: &mut Vec<String>) -> NodeR
 /// Test transaction support using SELECT queries only
 async fn test_transactions(pool: &PgPool, _messages: &mut [String]) -> NodeResult<Value> {
     // Test committed transaction with SELECT
-    let mut tx = pool.begin().await.map_err(|e| SinexError::from(e))?;
+    let mut tx = pool.begin().await.map_err(SinexError::from)?;
 
     // Run a simple SELECT inside the transaction
     let select_in_tx = sqlx::query_scalar::<_, i32>("SELECT 1")
         .fetch_one(&mut *tx)
         .await
-        .map_err(|e| SinexError::from(e))?;
+        .map_err(SinexError::from)?;
 
-    tx.commit().await.map_err(|e| SinexError::from(e))?;
+    tx.commit().await.map_err(SinexError::from)?;
 
     let commit_works = select_in_tx == 1;
 
     // Test rollback with SELECT
-    let mut tx_rollback = pool.begin().await.map_err(|e| SinexError::from(e))?;
+    let mut tx_rollback = pool.begin().await.map_err(SinexError::from)?;
 
     // Run a simple SELECT inside the transaction
     let _select_in_rollback = sqlx::query_scalar::<_, i32>("SELECT 1")
         .fetch_one(&mut *tx_rollback)
         .await
-        .map_err(|e| SinexError::from(e))?;
+        .map_err(SinexError::from)?;
 
-    tx_rollback
-        .rollback()
-        .await
-        .map_err(|e| SinexError::from(e))?;
+    tx_rollback.rollback().await.map_err(SinexError::from)?;
 
     // Verify no side effects by checking we can still query
     let after_rollback = sqlx::query_scalar::<_, i32>("SELECT 1")
         .fetch_one(pool)
         .await
-        .map_err(|e| SinexError::from(e))?;
+        .map_err(SinexError::from)?;
 
     let rollback_works = after_rollback == 1;
 
@@ -272,12 +269,9 @@ async fn test_concurrent_queries(pool: &PgPool, messages: &mut Vec<String>) -> N
         let pool_clone = pool.clone();
         join_set.spawn(async move {
             // Run concurrent SELECT queries - no mutations
-            sqlx::query_scalar::<_, i64>(&format!(
-                "SELECT COUNT(*) + {} - {} FROM core.events",
-                i, i
-            ))
-            .fetch_one(&pool_clone)
-            .await
+            sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) + {i} - {i} FROM core.events"))
+                .fetch_one(&pool_clone)
+                .await
         });
     }
 
@@ -288,13 +282,13 @@ async fn test_concurrent_queries(pool: &PgPool, messages: &mut Vec<String>) -> N
         match result {
             Ok(Ok(_)) => success_count += 1,
             Ok(Err(e)) => failures.push(e.to_string()),
-            Err(e) => failures.push(format!("Join error: {}", e)),
+            Err(e) => failures.push(format!("Join error: {e}")),
         }
     }
 
     if !failures.is_empty() {
         for failure in &failures {
-            messages.push(format!("⚠ Concurrent query failed: {}", failure));
+            messages.push(format!("⚠ Concurrent query failed: {failure}"));
         }
     }
 
@@ -458,7 +452,7 @@ async fn verify_service_integration(_messages: &mut [String]) -> NodeResult<Valu
     let state = CheckpointState {
         checkpoint: Checkpoint::None,
         processed_count: 1,
-        last_activity: sinex_primitives::temporal::OffsetDateTime::now_utc(),
+        last_activity: sinex_primitives::temporal::Timestamp::now(),
         data: Some(json!({ "preflight": true })),
         version: 2,
         revision: 0,
@@ -483,7 +477,7 @@ async fn get_test_pool() -> NodeResult<PgPool> {
 
     let pool = PgPool::connect(&database_url)
         .await
-        .map_err(|e| SinexError::from(e))?;
+        .map_err(SinexError::from)?;
 
     Ok(pool)
 }
@@ -510,7 +504,7 @@ pub async fn run_preflight_checks() -> NodeResult<(VerificationStatus, Value, Ve
             }
         }
         Err(e) => {
-            messages.push(format!("✗ Integration tests failed: {}", e));
+            messages.push(format!("✗ Integration tests failed: {e}"));
             has_failures = true;
         }
     }
@@ -528,7 +522,7 @@ pub async fn run_preflight_checks() -> NodeResult<(VerificationStatus, Value, Ve
             }
         }
         Err(e) => {
-            messages.push(format!("⚠ Performance baseline failed: {}", e));
+            messages.push(format!("⚠ Performance baseline failed: {e}"));
             has_warnings = true;
         }
     }
@@ -569,7 +563,7 @@ pub async fn verify_performance_baseline() -> NodeResult<(VerificationStatus, Va
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM core.events")
             .fetch_one(&pool)
             .await
-            .map_err(|e| SinexError::from(e))?;
+            .map_err(SinexError::from)?;
 
         let query_duration = query_start.elapsed();
         query_times.push(query_duration.as_millis());
@@ -581,14 +575,12 @@ pub async fn verify_performance_baseline() -> NodeResult<(VerificationStatus, Va
 
     let status = if avg_query_time > 100 {
         messages.push(format!(
-            "⚠ Average query time {}ms exceeds 100ms baseline",
-            avg_query_time
+            "⚠ Average query time {avg_query_time}ms exceeds 100ms baseline"
         ));
         VerificationStatus::Warning
     } else {
         messages.push(format!(
-            "✓ Average query time {}ms within baseline",
-            avg_query_time
+            "✓ Average query time {avg_query_time}ms within baseline"
         ));
         VerificationStatus::Pass
     };

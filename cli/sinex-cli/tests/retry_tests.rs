@@ -164,32 +164,28 @@ async fn test_exponential_backoff_timing() {
     let backoff0 = retry_config.backoff_for_attempt(0);
     assert!(
         (backoff0.as_millis() as i64 - 100).abs() < 2,
-        "Expected ~100ms, got {:?}",
-        backoff0
+        "Expected ~100ms, got {backoff0:?}"
     );
 
     // Attempt 1: 100ms * 2^0 = 100ms
     let backoff1 = retry_config.backoff_for_attempt(1);
     assert!(
         (backoff1.as_millis() as i64 - 100).abs() < 2,
-        "Expected ~100ms, got {:?}",
-        backoff1
+        "Expected ~100ms, got {backoff1:?}"
     );
 
     // Attempt 2: 100ms * 2^1 = 200ms
     let backoff2 = retry_config.backoff_for_attempt(2);
     assert!(
         (backoff2.as_millis() as i64 - 200).abs() < 2,
-        "Expected ~200ms, got {:?}",
-        backoff2
+        "Expected ~200ms, got {backoff2:?}"
     );
 
     // Attempt 3: 100ms * 2^2 = 400ms
     let backoff3 = retry_config.backoff_for_attempt(3);
     assert!(
         (backoff3.as_millis() as i64 - 400).abs() < 2,
-        "Expected ~400ms, got {:?}",
-        backoff3
+        "Expected ~400ms, got {backoff3:?}"
     );
 }
 

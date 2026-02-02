@@ -8,7 +8,7 @@
  * - Service configuration validation
  */
 
-use crate::{SinexError, NodeResult};
+use crate::{NodeResult, SinexError};
 use serde_json::{json, Value};
 use std::{collections::HashMap, fmt, process::Command, str::FromStr};
 use tracing::{debug, info};
@@ -75,7 +75,7 @@ pub async fn verify_service_dependencies() -> NodeResult<(VerificationStatus, Va
             details.insert("binaries", binary_info);
         }
         Err(e) => {
-            messages.push(format!("✗ Binary availability check failed: {}", e));
+            messages.push(format!("✗ Binary availability check failed: {e}"));
             has_failures = true;
         }
     }
@@ -86,7 +86,7 @@ pub async fn verify_service_dependencies() -> NodeResult<(VerificationStatus, Va
             details.insert("systemd_services", systemd_info);
         }
         Err(e) => {
-            messages.push(format!("⚠ SystemD service verification warning: {}", e));
+            messages.push(format!("⚠ SystemD service verification warning: {e}"));
             has_warnings = true;
         }
     }
@@ -97,7 +97,7 @@ pub async fn verify_service_dependencies() -> NodeResult<(VerificationStatus, Va
             details.insert("postgresql", postgres_info);
         }
         Err(e) => {
-            messages.push(format!("✗ PostgreSQL service verification failed: {}", e));
+            messages.push(format!("✗ PostgreSQL service verification failed: {e}"));
             has_failures = true;
         }
     }
@@ -108,10 +108,7 @@ pub async fn verify_service_dependencies() -> NodeResult<(VerificationStatus, Va
             details.insert("external_dependencies", deps_info);
         }
         Err(e) => {
-            messages.push(format!(
-                "⚠ External dependencies verification warning: {}",
-                e
-            ));
+            messages.push(format!("⚠ External dependencies verification warning: {e}"));
             has_warnings = true;
         }
     }
@@ -122,10 +119,7 @@ pub async fn verify_service_dependencies() -> NodeResult<(VerificationStatus, Va
             details.insert("service_configuration", config_info);
         }
         Err(e) => {
-            messages.push(format!(
-                "⚠ Service configuration verification warning: {}",
-                e
-            ));
+            messages.push(format!("⚠ Service configuration verification warning: {e}"));
             has_warnings = true;
         }
     }
@@ -182,8 +176,8 @@ async fn verify_binary_availability(messages: &mut Vec<String>) -> NodeResult<Va
                 );
 
                 messages.push(format!(
-                    "✓ Required binary '{}' available at {}",
-                    binary_name, binary_data.path
+                    "✓ Required binary '{binary_name}' available at {}",
+                    binary_data.path
                 ));
             }
             Err(e) => {
@@ -199,15 +193,9 @@ async fn verify_binary_availability(messages: &mut Vec<String>) -> NodeResult<Va
 
                 if required {
                     missing_binaries.push(binary_name.to_string());
-                    messages.push(format!(
-                        "✗ Required binary '{}' not found: {}",
-                        binary_name, e
-                    ));
+                    messages.push(format!("✗ Required binary '{binary_name}' not found: {e}"));
                 } else {
-                    messages.push(format!(
-                        "⚠ Optional binary '{}' not found: {}",
-                        binary_name, e
-                    ));
+                    messages.push(format!("⚠ Optional binary '{binary_name}' not found: {e}"));
                 }
             }
         }
@@ -227,7 +215,7 @@ async fn verify_binary_availability(messages: &mut Vec<String>) -> NodeResult<Va
                     }),
                 );
 
-                messages.push(format!("✓ Optional binary '{}' available", binary_name));
+                messages.push(format!("✓ Optional binary '{binary_name}' available"));
             }
             Err(_) => {
                 binary_info.insert(
@@ -269,12 +257,11 @@ async fn check_binary_availability(binary_name: &str) -> NodeResult<BinaryInfo> 
     let which_output = Command::new("which")
         .arg(binary_name)
         .output()
-        .map_err(|e| SinexError::processing(format!("Failed to execute 'which' command: {}", e)))?;
+        .map_err(|e| SinexError::processing(format!("Failed to execute 'which' command: {e}")))?;
 
     if !which_output.status.success() {
         return Err(SinexError::processing(format!(
-            "Binary '{}' not found in PATH",
-            binary_name
+            "Binary '{binary_name}' not found in PATH"
         )));
     }
 
@@ -331,9 +318,9 @@ async fn verify_systemd_services(messages: &mut Vec<String>) -> NodeResult<Value
 
                 if service_name.starts_with("sinex-") {
                     // For Sinex services, it's OK if they're not loaded yet (they will be after deployment)
-                    messages.push(format!("ℹ Sinex service '{}' status checked", service_name));
+                    messages.push(format!("ℹ Sinex service '{service_name}' status checked"));
                 } else {
-                    messages.push(format!("✓ Service '{}' is available", service_name));
+                    messages.push(format!("✓ Service '{service_name}' is available"));
                 }
             }
             Err(e) => {
@@ -347,11 +334,10 @@ async fn verify_systemd_services(messages: &mut Vec<String>) -> NodeResult<Value
 
                 if service_name.starts_with("sinex-") {
                     messages.push(format!(
-                        "ℹ Sinex service '{}' not yet configured (expected)",
-                        service_name
+                        "ℹ Sinex service '{service_name}' not yet configured (expected)"
                     ));
                 } else {
-                    messages.push(format!("⚠ Service '{}' check failed: {}", service_name, e));
+                    messages.push(format!("⚠ Service '{service_name}' check failed: {e}"));
                 }
             }
         }
@@ -364,11 +350,10 @@ async fn verify_systemd_services(messages: &mut Vec<String>) -> NodeResult<Value
                 let status = ServiceStatus::from_str(status_str).unwrap_or(ServiceStatus::Unknown);
                 service_info.insert(service_name.to_string(), service_data.clone());
                 if status.is_running() {
-                    messages.push(format!("✓ Dependency service '{}' is active", service_name));
+                    messages.push(format!("✓ Dependency service '{service_name}' is active"));
                 } else {
                     messages.push(format!(
-                        "⚠ Dependency service '{}' status: {}",
-                        service_name, status
+                        "⚠ Dependency service '{service_name}' status: {status}"
                     ));
                 }
             }
@@ -382,8 +367,7 @@ async fn verify_systemd_services(messages: &mut Vec<String>) -> NodeResult<Value
                 );
 
                 messages.push(format!(
-                    "⚠ Dependency service '{}' check failed: {}",
-                    service_name, e
+                    "⚠ Dependency service '{service_name}' check failed: {e}"
                 ));
             }
         }
@@ -402,12 +386,11 @@ async fn check_systemd_service(service_name: &str) -> NodeResult<Value> {
             "--property=ActiveState,SubState,LoadState",
         ])
         .output()
-        .map_err(|e| SinexError::processing(format!("Failed to execute systemctl show: {}", e)))?;
+        .map_err(|e| SinexError::processing(format!("Failed to execute systemctl show: {e}")))?;
 
     if !status_output.status.success() {
         return Err(SinexError::processing(format!(
-            "Failed to get service status for {}",
-            service_name
+            "Failed to get service status for {service_name}"
         )));
     }
 
@@ -469,18 +452,16 @@ async fn verify_postgresql_service(messages: &mut Vec<String>) -> NodeResult<Val
                                 "error": e.to_string()
                             }),
                         );
-                        messages.push(format!("✗ PostgreSQL connectivity failed: {}", e));
+                        messages.push(format!("✗ PostgreSQL connectivity failed: {e}"));
                         return Err(SinexError::processing(format!(
-                            "PostgreSQL connectivity test failed: {}",
-                            e
+                            "PostgreSQL connectivity test failed: {e}"
                         )));
                     }
                 }
             } else {
                 let status = service_data["status"].as_str().unwrap_or("unknown");
                 messages.push(format!(
-                    "✗ PostgreSQL service is not active (status: {})",
-                    status
+                    "✗ PostgreSQL service is not active (status: {status})"
                 ));
                 return Err(SinexError::processing(
                     "PostgreSQL service is not running".to_string(),
@@ -496,10 +477,9 @@ async fn verify_postgresql_service(messages: &mut Vec<String>) -> NodeResult<Val
                 }),
             );
 
-            messages.push(format!("✗ PostgreSQL service check failed: {}", e));
+            messages.push(format!("✗ PostgreSQL service check failed: {e}"));
             return Err(SinexError::processing(format!(
-                "PostgreSQL service verification failed: {}",
-                e
+                "PostgreSQL service verification failed: {e}"
             )));
         }
     }
@@ -515,9 +495,7 @@ async fn test_postgresql_connectivity() -> NodeResult<Value> {
         .arg("-c")
         .arg("SELECT version();")
         .output()
-        .map_err(|e| {
-            SinexError::processing(format!("Failed to execute psql test command: {}", e))
-        })?;
+        .map_err(|e| SinexError::processing(format!("Failed to execute psql test command: {e}")))?;
 
     if test_output.status.success() {
         let version_output = String::from_utf8_lossy(&test_output.stdout);
@@ -534,10 +512,10 @@ async fn test_postgresql_connectivity() -> NodeResult<Value> {
         }))
     } else {
         let error_output = String::from_utf8_lossy(&test_output.stderr);
-        return Err(SinexError::processing(format!(
+        Err(SinexError::processing(format!(
             "PostgreSQL connection test failed: {}",
             error_output.trim()
-        )));
+        )))
     }
 }
 
@@ -558,7 +536,7 @@ async fn verify_external_dependencies(messages: &mut Vec<String>) -> NodeResult<
                     "error": e.to_string()
                 }),
             );
-            messages.push(format!("⚠ Git dependencies warning: {}", e));
+            messages.push(format!("⚠ Git dependencies warning: {e}"));
         }
     }
 
@@ -575,7 +553,7 @@ async fn verify_external_dependencies(messages: &mut Vec<String>) -> NodeResult<
                     "error": e.to_string()
                 }),
             );
-            messages.push(format!("⚠ Event source dependencies warning: {}", e));
+            messages.push(format!("⚠ Event source dependencies warning: {e}"));
         }
     }
 
@@ -606,8 +584,7 @@ async fn verify_git_dependencies() -> NodeResult<Value> {
                 }),
             );
             return Err(SinexError::processing(format!(
-                "Git binary not available: {}",
-                e
+                "Git binary not available: {e}"
             )));
         }
     }

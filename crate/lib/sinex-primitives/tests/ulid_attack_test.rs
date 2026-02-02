@@ -11,7 +11,7 @@ async fn ulid_duplicate_insert_is_rejected(ctx: TestContext) -> TestResult<()> {
     let material = ctx.create_source_material(Some("ulid-collision")).await?;
     let collision_id = Ulid::new();
 
-    insert_material_event(&pool, collision_id, material.clone(), json!({"seq": 1})).await?;
+    insert_material_event(&pool, collision_id, material, json!({"seq": 1})).await?;
 
     let err = insert_material_event(&pool, collision_id, material, json!({"seq": 2})).await;
     assert!(
@@ -31,7 +31,7 @@ async fn ulid_duplicate_insert_is_rejected(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 async fn event_validator_blocks_ulid_time_skew_attack() -> TestResult<()> {
     let validator = EventValidator::new();
-    let future_ulid = Ulid::from_datetime(*Timestamp::now() + Duration::hours(1));
+    let future_ulid = Ulid::from_datetime(Timestamp::now() + Duration::hours(1));
 
     let mut event = DynamicPayload::new(
         "ulid-security",

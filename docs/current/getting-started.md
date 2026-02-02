@@ -26,13 +26,13 @@ crate/
 │   └── sinex-gateway/         #   JSON-RPC server
 │
 ├── lib/                       # Libraries (the "what's shared")
-│   ├── sinex-core/            #   Error types, IDs, validation, config
+│   ├── sinex-primitives/      #   Error types, IDs, validation, domain types
 │   ├── sinex-schema/          #   Migrations, event taxonomy, JSON schemas
 │   ├── sinex-db/              #   Connection pool, repository traits
 │   ├── sinex-node-sdk/        #   Node lifecycle, streaming, checkpoints
 │   ├── sinex-processor-runtime/  # CLI framework (clap integration)
 │   ├── sinex-services/        #   Ingest service, health checks
-│   └── sinex-test-utils/      #   Test fixtures, parallel DB pools
+│   └── sinex-macros/          #   Proc macros (EventPayload, with_context)
 │
 └── nodes/                     # Event nodes & automata
     ├── sinex-fs-ingestor/     #   Filesystem watcher
@@ -57,7 +57,7 @@ nix develop                     # or: direnv allow
 cargo xtask check               # workspace-wide cargo check
 
 # 3. Run tests
-cargo xtask test --profile default
+cargo xtask test
 
 # 4. Start services for manual testing
 devenv up nats ingestd gateway
@@ -83,10 +83,10 @@ Database settings (`PGHOST`, `DATABASE_URL`, etc.) are auto-exported by the shel
 
 ### Writing tests
 
-- Use `sinex_test_utils::sinex_test` for async tests
+- Use `#[sinex_test]` from `xtask::sandbox` for async tests
 - Each test gets an isolated database via the parallel pool
-- Nextest only: `cargo xtask test --profile default` (not `cargo test`)
-- See `TESTING.md` for test organization and profiles
+- Nextest only: `cargo xtask test` (not `cargo test`)
+- See `TESTING.md` for test organization and flags
 
 ### Debugging ingestion
 
@@ -116,7 +116,7 @@ cargo build --workspace --all-targets
 cargo xtask check
 
 # Run all tests
-cargo xtask test --profile default
+cargo xtask test
 
 # Generate JSON schemas after payload changes
 cargo xtask schema generate

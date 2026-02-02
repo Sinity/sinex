@@ -75,7 +75,7 @@ pub struct VmCommand {
 // ─────────────────────────────────────────────────────────────────────────────
 
 impl XtaskCommand for VmCommand {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "vm"
     }
 
@@ -150,10 +150,10 @@ fn execute_test(
     if ctx.is_human() {
         println!("Running VM tests...");
         if let Some(cat) = category {
-            println!("  Category: {}", cat);
+            println!("  Category: {cat}");
         }
-        println!("  Parallel: {}", parallel);
-        println!("  Timeout: {}s", timeout);
+        println!("  Parallel: {parallel}");
+        println!("  Timeout: {timeout}s");
         if !tests.is_empty() {
             println!("  Tests: {}", tests.join(", "));
         }
@@ -191,19 +191,19 @@ fn execute_start(
 
     if ctx.is_human() {
         println!("Starting VM...");
-        println!("  Preset: {}", preset);
-        println!("  Persistent: {}", persistent);
+        println!("  Preset: {preset}");
+        println!("  Persistent: {persistent}");
         if let Some(snap) = snapshot {
-            println!("  Snapshot: {}", snap);
+            println!("  Snapshot: {snap}");
         }
         println!();
     }
 
     // Build the VM using nix
-    let flake_output = format!(".#sinex-vm-{}", preset);
+    let flake_output = format!(".#sinex-vm-{preset}");
 
     if ctx.is_human() {
-        println!("Building VM: nix build {}", flake_output);
+        println!("Building VM: nix build {flake_output}");
     }
 
     let build_status = Command::new("nix")
@@ -214,7 +214,7 @@ fn execute_start(
         .context("Failed to build VM")?;
 
     if !build_status.success() {
-        bail!("Failed to build VM with preset: {}", preset);
+        bail!("Failed to build VM with preset: {preset}");
     }
 
     // Get the built VM path
@@ -286,7 +286,7 @@ fn execute_ssh(ctx: &CommandContext) -> Result<CommandResult> {
     let ssh_port = std::env::var("SINEX_VM_SSH_PORT").unwrap_or_else(|_| "2222".to_string());
 
     if ctx.is_human() {
-        println!("Connecting to VM via SSH on port {}...", ssh_port);
+        println!("Connecting to VM via SSH on port {ssh_port}...");
     }
 
     let status = Command::new("ssh")
@@ -333,7 +333,7 @@ fn execute_stop(ctx: &CommandContext) -> Result<CommandResult> {
 
     for pid in &pids {
         if ctx.is_human() {
-            println!("Sending SIGTERM to PID {}...", pid);
+            println!("Sending SIGTERM to PID {pid}...");
         }
 
         Command::new("kill")
@@ -353,27 +353,25 @@ fn execute_snapshot(cmd: &VmSnapshotSubcommand, ctx: &CommandContext) -> Result<
             // This would use QEMU monitor commands to create a snapshot
             // For now, just document the approach
             if ctx.is_human() {
-                println!("Creating VM snapshot '{}'...", name);
+                println!("Creating VM snapshot '{name}'...");
                 println!();
                 println!("Note: VM snapshots require QEMU monitor access.");
-                println!("Use Ctrl+A C in the VM console, then: savevm {}", name);
+                println!("Use Ctrl+A C in the VM console, then: savevm {name}");
             }
 
-            Ok(CommandResult::success().with_message(format!(
-                "Snapshot '{}' created (manual step required)",
-                name
-            )))
+            Ok(CommandResult::success()
+                .with_message(format!("Snapshot '{name}' created (manual step required)")))
         }
         VmSnapshotSubcommand::Restore { name } => {
             ctx.heading("vm snapshot restore");
 
             if ctx.is_human() {
-                println!("To restore snapshot '{}':", name);
-                println!("  cargo xtask vm start --snapshot {}", name);
+                println!("To restore snapshot '{name}':");
+                println!("  cargo xtask vm start --snapshot {name}");
             }
 
             Ok(CommandResult::success()
-                .with_message(format!("Use 'vm start --snapshot {}' to restore", name)))
+                .with_message(format!("Use 'vm start --snapshot {name}' to restore")))
         }
         VmSnapshotSubcommand::List => {
             ctx.heading("vm snapshot list");

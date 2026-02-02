@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RunStats {
+pub(super) struct RunStats {
     pub median_ms: f64,
     pub mean_ms: f64,
     pub stddev_ms: f64,
@@ -14,7 +14,7 @@ pub struct RunStats {
 }
 
 impl RunStats {
-    pub fn from_samples(samples: &[f64]) -> Self {
+    pub(super) fn from_samples(samples: &[f64]) -> Self {
         if samples.is_empty() {
             return Self::zero();
         }
@@ -57,7 +57,7 @@ impl RunStats {
         }
     }
 
-    pub fn format_summary(&self) -> String {
+    pub(super) fn format_summary(&self) -> String {
         format!(
             "median={:.1}ms mean={:.1}ms σ={:.1}ms 95%CI=[{:.1}, {:.1}]",
             self.median_ms, self.mean_ms, self.stddev_ms, self.ci95_lower, self.ci95_upper
@@ -66,7 +66,7 @@ impl RunStats {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Regression {
+pub(super) enum Regression {
     None,
     Detected {
         current_ms: f64,
@@ -78,7 +78,7 @@ pub enum Regression {
 
 impl Regression {}
 
-pub fn compare_with_baseline(
+pub(super) fn compare_with_baseline(
     current: &RunStats,
     baseline: &RunStats,
     threshold_pct: f64,
@@ -109,8 +109,8 @@ fn median(sorted: &[f64]) -> f64 {
     if len == 0 {
         return 0.0;
     }
-    if len % 2 == 0 {
-        (sorted[len / 2 - 1] + sorted[len / 2]) / 2.0
+    if len.is_multiple_of(2) {
+        f64::midpoint(sorted[len / 2 - 1], sorted[len / 2])
     } else {
         sorted[len / 2]
     }
@@ -164,8 +164,8 @@ fn detect_outliers_iqr(sorted: &[f64]) -> Vec<f64> {
     let q1 = percentile(sorted, 25.0);
     let q3 = percentile(sorted, 75.0);
     let iqr = q3 - q1;
-    let lower_bound = q1 - 1.5 * iqr;
-    let upper_bound = q3 + 1.5 * iqr;
+    let lower_bound = 1.5f64.mul_add(-iqr, q1);
+    let upper_bound = 1.5f64.mul_add(iqr, q3);
 
     sorted
         .iter()

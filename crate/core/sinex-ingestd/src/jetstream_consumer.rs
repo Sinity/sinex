@@ -1,22 +1,20 @@
-//! JetStream event consumer with confirmations and DLQ support
+//! `JetStream` event consumer with confirmations and DLQ support
 //!
 //! See `crate::docs::ingestion_pipeline` for architectural details.
 
 use async_nats::{jetstream, Client as NatsClient};
 use futures::StreamExt;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sinex_db::repositories::StreamBatchRow;
 use sinex_db::{repositories::DbPoolExt, DbPool};
+use sinex_primitives::Timestamp;
 use sinex_primitives::{environment::SinexEnvironment, ulid::Ulid, JsonValue};
 use sqlx::postgres::PgPoolCopyExt;
 use std::collections::{HashSet, VecDeque};
-use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use sinex_primitives::Timestamp;
 use tokio::time::{timeout, Duration};
 use tracing::{debug, error, info, warn};
-use uuid::Uuid;
 
 use crate::{
     validator::{EventValidator, ValidationResult},
@@ -74,6 +72,7 @@ pub struct JetStreamTopology {
 }
 
 impl JetStreamTopology {
+    #[must_use]
     pub fn new(
         env: &SinexEnvironment,
         base_stream: String,
@@ -86,7 +85,7 @@ impl JetStreamTopology {
         let confirmations_prefix = format!("{}.", namespaced("events.confirmations"));
 
         Self {
-            events_stream: base_stream.clone(),
+            events_stream: base_stream,
             events_subject: namespaced("events.raw.>"),
             confirmations_stream,
             confirmations_subject: namespaced("events.confirmations.>"),
@@ -113,7 +112,7 @@ const CONFIRM_PUBLISH_BACKOFF_BASE: Duration = Duration::from_millis(200);
 const CONFIRM_PUBLISH_BACKOFF_MAX: Duration = Duration::from_secs(2);
 const CONFIRM_RETRY_DELAY: Duration = Duration::from_secs(1);
 const STREAM_CAPACITY_WARNING_THRESHOLD: f64 = 0.8; // Alert at 80% capacity
-const STREAM_CAPACITY_CHECK_INTERVAL: Duration = Duration::from_secs(300); // Check every 5 minutes
+const STREAM_CAPACITY_CHECK_INTERVAL: Duration = Duration::from_mins(5); // Check every 5 minutes
 
 #[derive(Debug)]
 struct PersistBatchResult {
@@ -162,19 +161,6 @@ struct PreparedEvent {
     event: Event<JsonValue>,
     parsed_id: Ulid,
     message: jetstream::Message,
-}
-
-enum PreparedProvenance {
-    Material {
-        source_material_id: Uuid,
-        anchor_byte: i64,
-        offset_start: Option<i64>,
-        offset_end: Option<i64>,
-        offset_kind: String,
-    },
-    Synthesis {
-        source_event_ids: Vec<Uuid>,
-    },
 }
 
 #[derive(Debug, Default)]
@@ -234,7 +220,7 @@ impl JetStreamConsumer {
         }
     }
 
-    /// Build a consumer with a custom AckWait (primarily for tests).
+    /// Build a consumer with a custom `AckWait` (primarily for tests).
     pub fn with_ack_wait(
         nats_client: NatsClient,
         pool: DbPool,
@@ -247,7 +233,7 @@ impl JetStreamConsumer {
         consumer
     }
 
-    /// Override the JetStream batch fetch behavior (max messages per pull and expiration timeout).
+    /// Override the `JetStream` batch fetch behavior (max messages per pull and expiration timeout).
     pub fn with_batch_fetch_config(mut self, max_messages: usize, timeout: Duration) -> Self {
         self.batch_fetch_max_messages = max_messages.max(1);
         self.batch_fetch_timeout = timeout;
@@ -305,7 +291,7 @@ impl JetStreamConsumer {
         consumer
     }
 
-    /// Bootstrap all required JetStream streams
+    /// Bootstrap all required `JetStream` streams
     async fn bootstrap_streams(&self) -> IngestdResult<()> {
         info!("Bootstrapping JetStream streams");
 
@@ -318,12 +304,12 @@ impl JetStreamConsumer {
                 subjects: vec![self.topology.events_subject.clone()],
                 retention: jetstream::stream::RetentionPolicy::Limits,
                 max_messages: 10_000_000,
-                max_age: Duration::from_secs(90 * 24 * 60 * 60), // 90 days (operational history)
+                max_age: Duration::from_hours(2160), // 90 days (operational history)
                 storage: jetstream::stream::StorageType::File,
                 ..Default::default()
             })
             .await
-            .map_err(|e| SinexError::network(format!("Failed to create events stream: {}", e)))?;
+            .map_err(|e| SinexError::network(format!("Failed to create events stream: {e}")))?;
 
         // Confirmations stream with compaction - only keep latest per event
         // Short retention since confirmations are ephemeral operational state
@@ -334,13 +320,13 @@ impl JetStreamConsumer {
                 subjects: vec![self.topology.confirmations_subject.clone()],
                 retention: jetstream::stream::RetentionPolicy::Limits,
                 max_messages_per_subject: 1, // Compaction: only keep latest confirmation
-                max_age: Duration::from_secs(7 * 24 * 60 * 60), // 7 days (operational buffer)
+                max_age: Duration::from_hours(168), // 7 days (operational buffer)
                 storage: jetstream::stream::StorageType::File,
                 ..Default::default()
             })
             .await
             .map_err(|e| {
-                SinexError::network(format!("Failed to create confirmations stream: {}", e))
+                SinexError::network(format!("Failed to create confirmations stream: {e}"))
             })?;
 
         // DLQ stream
@@ -351,12 +337,12 @@ impl JetStreamConsumer {
                 subjects: vec![self.topology.dlq_subject.clone()],
                 retention: jetstream::stream::RetentionPolicy::Limits,
                 max_messages: 1_000_000,
-                max_age: Duration::from_secs(30 * 24 * 60 * 60), // 30 days
+                max_age: Duration::from_hours(720), // 30 days
                 storage: jetstream::stream::StorageType::File,
                 ..Default::default()
             })
             .await
-            .map_err(|e| SinexError::network(format!("Failed to create DLQ stream: {}", e)))?;
+            .map_err(|e| SinexError::network(format!("Failed to create DLQ stream: {e}")))?;
 
         info!("JetStream streams bootstrapped successfully");
         Ok(())
@@ -374,7 +360,7 @@ impl JetStreamConsumer {
             .js
             .get_stream(&stream_name)
             .await
-            .map_err(|e| SinexError::network(format!("Failed to get stream: {}", e)))?;
+            .map_err(|e| SinexError::network(format!("Failed to get stream: {e}")))?;
 
         // Create durable consumer
         let consumer = stream
@@ -391,10 +377,10 @@ impl JetStreamConsumer {
                 },
             )
             .await
-            .map_err(|e| SinexError::network(format!("Failed to create consumer: {}", e)))?;
+            .map_err(|e| SinexError::network(format!("Failed to create consumer: {e}")))?;
 
         // Stats logging interval
-        let mut stats_interval = tokio::time::interval(Duration::from_secs(60));
+        let mut stats_interval = tokio::time::interval(Duration::from_mins(1));
         // Stream capacity monitoring interval
         let mut capacity_check_interval = tokio::time::interval(STREAM_CAPACITY_CHECK_INTERVAL);
 
@@ -426,7 +412,7 @@ impl JetStreamConsumer {
             .expires(self.batch_fetch_timeout)
             .messages()
             .await
-            .map_err(|e| SinexError::network(format!("Failed to fetch messages: {}", e)))?;
+            .map_err(|e| SinexError::network(format!("Failed to fetch messages: {e}")))?;
         let mut batch = Vec::new();
 
         while let Some(msg) = messages.next().await {
@@ -464,7 +450,7 @@ impl JetStreamConsumer {
             Ok(e) => e,
             Err(e) => {
                 error!(event_id = ?msg.headers, "Failed to parse event: {}", e);
-                self.route_validation_failure(&msg, format!("Parse error: {}", e))
+                self.route_validation_failure(&msg, format!("Parse error: {e}"))
                     .await?;
                 return Ok(None);
             }
@@ -473,20 +459,19 @@ impl JetStreamConsumer {
         // Validate event using EventValidator
         if let Err(e) = self.validate_event(&event).await {
             warn!(event_id = ?event.id, "Event validation failed: {}", e);
-            self.route_validation_failure(&msg, format!("Validation failed: {}", e))
+            self.route_validation_failure(&msg, format!("Validation failed: {e}"))
                 .await?;
             return Ok(None);
         }
 
         // The ID MUST be present for events coming from Ingestors
-        let parsed_id = match event.id {
-            Some(id) => *id.as_ulid(),
-            None => {
-                error!("Event missing required ID; routing to DLQ");
-                self.route_validation_failure(&msg, "Missing event ID".to_string())
-                    .await?;
-                return Ok(None);
-            }
+        let parsed_id = if let Some(id) = event.id {
+            *id.as_ulid()
+        } else {
+            error!("Event missing required ID; routing to DLQ");
+            self.route_validation_failure(&msg, "Missing event ID".to_string())
+                .await?;
+            return Ok(None);
         };
 
         Ok(Some(PreparedEvent {
@@ -503,7 +488,7 @@ impl JetStreamConsumer {
                 let persisted_set = persisted
                     .inserted_ids
                     .as_ref()
-                    .map(|ids| ids.iter().cloned().collect::<HashSet<_>>());
+                    .map(|ids| ids.iter().copied().collect::<HashSet<_>>());
                 if let Some(fail_flag) = &self.post_persist_fail_once {
                     if fail_flag.swap(false, Ordering::SeqCst) {
                         return Err(SinexError::database("forced post-persist failure"));
@@ -571,7 +556,7 @@ impl JetStreamConsumer {
                         .message
                         .ack()
                         .await
-                        .map_err(|e| SinexError::network(format!("Failed to ack: {}", e)))?;
+                        .map_err(|e| SinexError::network(format!("Failed to ack: {e}")))?;
                 }
 
                 self.stats
@@ -586,7 +571,7 @@ impl JetStreamConsumer {
                         if let Err(err) = self
                             .route_to_dlq_and_ack(
                                 &prepared.message,
-                                format!("Persistence error: {}", e),
+                                format!("Persistence error: {e}"),
                             )
                             .await
                         {
@@ -713,8 +698,7 @@ impl JetStreamConsumer {
                 } else {
                     error!("Failed to persist events batch: {}", err);
                     Err(SinexError::database(format!(
-                        "Failed to persist events batch: {}",
-                        err
+                        "Failed to persist events batch: {err}"
                     )))
                 }
             }
@@ -725,8 +709,7 @@ impl JetStreamConsumer {
                     "Timed out waiting for batch insert to complete"
                 );
                 Err(SinexError::database(format!(
-                    "Persisting batch timed out after {:?}",
-                    DB_WRITE_TIMEOUT
+                    "Persisting batch timed out after {DB_WRITE_TIMEOUT:?}"
                 )))
             }
         }
@@ -819,8 +802,8 @@ impl JetStreamConsumer {
                 // Re-map extracted provenance to match StreamBatchRow expectations
                 // extract_provenance returns Option<Vec<Ulid>> for source_event_ids
                 // StreamBatchRow expects Option<Vec<Uuid>>.
-                let source_event_ids =
-                    source_event_ids.map(|ids| ids.iter().map(|id| id.as_uuid()).collect());
+                let source_event_ids = source_event_ids
+                    .map(|ids| ids.iter().map(sinex_primitives::Ulid::as_uuid).collect());
                 let source_material_id = source_material_id.map(|id| id.as_uuid());
 
                 StreamBatchRow {
@@ -843,7 +826,7 @@ impl JetStreamConsumer {
                     associated_blob_ids: event
                         .associated_blob_ids
                         .as_ref()
-                        .map(|ids| ids.iter().map(|id| id.as_uuid()).collect()),
+                        .map(|ids| ids.iter().map(sinex_primitives::Ulid::as_uuid).collect()),
                 }
             })
             .collect();
@@ -855,8 +838,7 @@ impl JetStreamConsumer {
         .await
         .map_err(|_| {
             SinexError::database(format!(
-                "Persisting batch timed out after {:?}",
-                DB_WRITE_TIMEOUT
+                "Persisting batch timed out after {DB_WRITE_TIMEOUT:?}"
             ))
         })?
         .map_err(|err| {
@@ -880,9 +862,7 @@ impl JetStreamConsumer {
         let confirmation = Confirmation {
             event_id: event_id_str.clone(),
             persisted: true,
-            ts_ingest: sinex_primitives::temporal::format_rfc3339(
-                Timestamp::now(),
-            ),
+            ts_ingest: sinex_primitives::temporal::format_rfc3339(Timestamp::now()),
         };
 
         let subject = format!("{}{}", self.topology.confirmations_prefix, event_id_str);
@@ -895,9 +875,9 @@ impl JetStreamConsumer {
         self.js
             .publish_with_headers(subject, headers, payload.into())
             .await
-            .map_err(|e| SinexError::network(format!("Failed to publish confirmation: {}", e)))?
+            .map_err(|e| SinexError::network(format!("Failed to publish confirmation: {e}")))?
             .await
-            .map_err(|e| SinexError::network(format!("Confirmation ack failed: {}", e)))?;
+            .map_err(|e| SinexError::network(format!("Confirmation ack failed: {e}")))?;
 
         debug!(event_id = %event_id, "Published confirmation");
         Ok(())
@@ -954,13 +934,10 @@ impl JetStreamConsumer {
                 .headers
                 .as_ref()
                 .and_then(|h| h.get("Nats-Msg-Id"))
-                .map(|v| v.as_str().to_string())
-                .unwrap_or_else(|| "unknown".to_string()),
+                .map_or_else(|| "unknown".to_string(), |v| v.as_str().to_string()),
             error,
             original_payload,
-            failed_at: sinex_primitives::temporal::format_rfc3339(
-                Timestamp::now(),
-            ),
+            failed_at: sinex_primitives::temporal::format_rfc3339(Timestamp::now()),
         };
 
         let payload = match serde_json::to_vec(&dlq_entry) {
@@ -1012,7 +989,7 @@ impl JetStreamConsumer {
         if self.route_to_dlq(msg, error).await {
             msg.ack()
                 .await
-                .map_err(|e| SinexError::network(format!("Failed to ack: {}", e)))?;
+                .map_err(|e| SinexError::network(format!("Failed to ack: {e}")))?;
             self.stats.dlq_routed.fetch_add(1, Ordering::Relaxed);
         } else {
             self.stats
@@ -1022,7 +999,7 @@ impl JetStreamConsumer {
                 .await
                 .map_err(|e| {
                     self.stats.nack_failures.fetch_add(1, Ordering::Relaxed);
-                    SinexError::network(format!("Failed to NAK after DLQ failure: {}", e))
+                    SinexError::network(format!("Failed to NAK after DLQ failure: {e}"))
                 })?;
         }
         Ok(())
@@ -1033,7 +1010,7 @@ impl JetStreamConsumer {
         match self.js.get_stream(stream_name).await {
             Ok(mut stream) => {
                 if let Ok(info) = stream.info().await {
-                    let state = info.state.clone();
+                    let state = info.state;
                     let config = info.config.clone();
 
                     // Check message count capacity

@@ -1,7 +1,7 @@
 use proptest::prelude::*;
-use sinex_node_sdk::types::ulid::Ulid;
 use sinex_node_sdk::checkpoint::CheckpointState;
 use sinex_node_sdk::stream_processor::Checkpoint;
+use sinex_primitives::Ulid;
 use xtask::sandbox::prelude::*;
 
 fn arb_ulid() -> impl Strategy<Value = Ulid> {
@@ -12,11 +12,11 @@ fn arb_ulid() -> impl Strategy<Value = Ulid> {
 fn arb_non_ulid_string() -> impl Strategy<Value = String> {
     prop_oneof![
         // Strings shorter than required ULID length
-        "[0-9A-Za-z]{1,25}".prop_map(|s| s.to_string()),
+        "[0-9A-Za-z]{1,25}".prop_map(|s| s),
         // Strings longer than required ULID length
-        "[0-9A-Za-z]{27,40}".prop_map(|s| s.to_string()),
+        "[0-9A-Za-z]{27,40}".prop_map(|s| s),
         // Strings containing characters outside the ULID alphabet
-        "[^0-9A-Za-z]{1,16}".prop_map(|s| s.to_string()),
+        "[^0-9A-Za-z]{1,16}".prop_map(|s| s),
     ]
 }
 

@@ -4,10 +4,10 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use sinex_primitives::JsonValue;
 use sinex_node_sdk::simple_node::{
     SimpleNode, SimpleNodeContext, SimpleNodeError, SimpleNodeWrapper,
 };
+use sinex_primitives::JsonValue;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ContentState {

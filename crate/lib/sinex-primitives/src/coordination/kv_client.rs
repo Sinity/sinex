@@ -28,6 +28,7 @@ pub struct InstanceMetadata {
 }
 
 impl CoordinationKvClient {
+    #[must_use]
     pub fn new(js: Context, service_name: String) -> Self {
         let env = crate::environment::environment();
         let instances_bucket = format!("KV_{}", env.nats_kv_bucket_name("sinex_instances"));
@@ -44,7 +45,7 @@ impl CoordinationKvClient {
         self.js
             .get_key_value(&self.instances_bucket)
             .await
-            .map_err(|e| SinexError::kv(format!("Failed to get instances bucket: {}", e)))
+            .map_err(|e| SinexError::kv(format!("Failed to get instances bucket: {e}")))
     }
 
     async fn leadership_bucket(&self) -> Result<Store, SinexError> {
@@ -63,8 +64,7 @@ impl CoordinationKvClient {
                 .await
                 .map_err(|e| {
                     SinexError::kv(format!(
-                        "Failed to get leadership bucket (create: {}, open: {})",
-                        create_err, e
+                        "Failed to get leadership bucket (create: {create_err}, open: {e})"
                     ))
                 }),
         }
@@ -76,13 +76,13 @@ impl CoordinationKvClient {
         let bucket = self.instances_bucket().await?;
         let key = format!("{}.{}", self.service_name, metadata.instance_id);
         let value = serde_json::to_vec(metadata).map_err(|e| {
-            SinexError::serialization(format!("Failed to serialize instance metadata: {}", e))
+            SinexError::serialization(format!("Failed to serialize instance metadata: {e}"))
         })?;
 
         bucket
             .put(key, value.into())
             .await
-            .map_err(|e| SinexError::kv(format!("Failed to register instance: {}", e)))?;
+            .map_err(|e| SinexError::kv(format!("Failed to register instance: {e}")))?;
 
         info!(
             service = %self.service_name,
@@ -109,22 +109,22 @@ impl CoordinationKvClient {
         let key = &self.service_name;
 
         // 1. Try to create if not exists using update with revision 0
-        match bucket.update(key, candidate_id.to_string().into(), 0).await {
-            Ok(_) => {
-                info!("Acquired leadership for {}", self.service_name);
-                return Ok(true);
-            }
-            Err(_) => {
-                // Failed to create (exists or deleted with history)
-            }
+        if bucket
+            .update(key, candidate_id.to_string().into(), 0)
+            .await
+            .is_ok()
+        {
+            info!("Acquired leadership for {}", self.service_name);
+            return Ok(true);
         }
+        // Failed to create (exists or deleted with history)
 
         // 2. Check current state via entry()
         // We use entry() to get revision info and handle Tombstones
         let entry = bucket
             .entry(key)
             .await
-            .map_err(|e| SinexError::kv(format!("Failed to get leadership key entry: {}", e)))?;
+            .map_err(|e| SinexError::kv(format!("Failed to get leadership key entry: {e}")))?;
 
         if let Some(entry) = entry {
             use async_nats::jetstream::kv::Operation;
@@ -183,7 +183,7 @@ impl CoordinationKvClient {
         let entry = bucket
             .get(key)
             .await
-            .map_err(|e| SinexError::kv(format!("Failed to get leadership key: {}", e)))?;
+            .map_err(|e| SinexError::kv(format!("Failed to get leadership key: {e}")))?;
 
         if let Some(entry) = entry {
             let current_leader = std::str::from_utf8(&entry).unwrap_or("");
@@ -193,7 +193,7 @@ impl CoordinationKvClient {
                 bucket
                     .delete(key)
                     .await
-                    .map_err(|e| SinexError::kv(format!("Failed to release leadership: {}", e)))?;
+                    .map_err(|e| SinexError::kv(format!("Failed to release leadership: {e}")))?;
                 info!("Released leadership for {}", self.service_name);
             }
         }
@@ -217,20 +217,15 @@ impl CoordinationKvClient {
         let mut keys = bucket
             .keys()
             .await
-            .map_err(|e| SinexError::kv(format!("Failed to list instance keys: {}", e)))?;
+            .map_err(|e| SinexError::kv(format!("Failed to list instance keys: {e}")))?;
 
         while let Some(key_result) = keys.next().await {
             if let Ok(key) = key_result {
                 if key.starts_with(&prefix) {
-                    let entry_res: Result<Option<bytes::Bytes>, _> = bucket.get(&key).await;
-                    match entry_res {
-                        Ok(Some(entry)) => {
-                            if let Ok(metadata) = serde_json::from_slice::<InstanceMetadata>(&entry)
-                            {
-                                instances.push(metadata);
-                            }
+                    if let Ok(Some(entry)) = bucket.get(&key).await {
+                        if let Ok(metadata) = serde_json::from_slice::<InstanceMetadata>(&entry) {
+                            instances.push(metadata);
                         }
-                        _ => {}
                     }
                 }
             }
@@ -249,13 +244,11 @@ impl CoordinationKvClient {
         let entry = bucket
             .get(key)
             .await
-            .map_err(|e| SinexError::kv(format!("Failed to get leadership key: {}", e)))?;
+            .map_err(|e| SinexError::kv(format!("Failed to get leadership key: {e}")))?;
 
         if let Some(entry) = entry {
             let leader = std::str::from_utf8(&entry)
-                .map_err(|e| {
-                    SinexError::serialization(format!("Invalid leader ID encoding: {}", e))
-                })?
+                .map_err(|e| SinexError::serialization(format!("Invalid leader ID encoding: {e}")))?
                 .to_string();
             Ok(Some(leader))
         } else {
@@ -276,11 +269,11 @@ impl CoordinationKvClient {
         let entry = bucket
             .get(&key)
             .await
-            .map_err(|e| SinexError::kv(format!("Failed to get instance: {}", e)))?;
+            .map_err(|e| SinexError::kv(format!("Failed to get instance: {e}")))?;
 
         if let Some(entry) = entry {
             let metadata = serde_json::from_slice::<InstanceMetadata>(&entry).map_err(|e| {
-                SinexError::serialization(format!("Failed to deserialize instance metadata: {}", e))
+                SinexError::serialization(format!("Failed to deserialize instance metadata: {e}"))
             })?;
             Ok(Some(metadata))
         } else {

@@ -1,7 +1,7 @@
 use serde_json::{json, Value as JsonValue};
-use sinex_primitives::events::{EventId, SourceMaterial};
 use sinex_primitives::domain::SanitizedPath;
 use sinex_primitives::events::payloads::{FileCreatedPayload, KittyCommandExecutedPayload};
+use sinex_primitives::events::{EventId, SourceMaterial};
 use sinex_primitives::Id;
 use sinex_primitives::{DynamicPayload, Event};
 use xtask::sandbox::sinex_test;

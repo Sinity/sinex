@@ -7,7 +7,7 @@ use serde_json::Value;
 // search.search_events
 // ─────────────────────────────────────────────────────────────
 
-/// Request: search.search_events
+/// Request: `search.search_events`
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SearchEventsRequest {
     /// Text to search for
@@ -49,7 +49,7 @@ pub struct SearchResult {
     pub score: Option<f64>,
 }
 
-/// Response: search.search_events
+/// Response: `search.search_events`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchEventsResponse {
     pub results: Vec<SearchResult>,

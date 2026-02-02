@@ -191,7 +191,7 @@ Manual cache invalidation (only for debugging):
 
 ```bash
 rm target/xtask sandbox/template_stamp.json
-cargo xtask test --profile default --prime
+cargo xtask test --prime
 ```
 
 ## Performance Characteristics
@@ -307,7 +307,7 @@ let ids = seed_events_via_pipeline(&pipeline, &clock, &specs).await?;
 **Cause**: More concurrent tests than available slots.
 
 **Solutions**:
-- Reduce concurrent tests: `cargo xtask test --profile fast`
+- Reduce concurrent tests: `cargo xtask test --debug`
 - Raise PostgreSQL `max_connections`
 - Adjust `.config/nextest.toml` test threads
 
@@ -331,7 +331,7 @@ psql -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname LI
 **Solution**: The harness auto-rebuilds; for manual reset:
 ```bash
 rm target/xtask sandbox/template_stamp.json
-cargo xtask test --profile default --prime
+cargo xtask test --prime
 ```
 
 ### "Tests hang on cleanup"

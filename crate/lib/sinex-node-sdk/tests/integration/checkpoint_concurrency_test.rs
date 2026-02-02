@@ -3,19 +3,19 @@
 //! Exercises NATS KV checkpoint persistence under concurrent updates.
 
 use sinex_primitives::Ulid;
+use sinex_primitives::temporal::Timestamp;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
 use xtask::sandbox::prelude::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use time::OffsetDateTime;
 
 const DEFAULT_GROUP: &str = "concurrency";
 const DEFAULT_CONSUMER: &str = "worker";
 
 #[sinex_test]
 async fn test_concurrent_checkpoint_updates_basic(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let kv = ctx.checkpoint_kv().await?;
     let processor_name = format!("concurrent_test_processor_{}", Ulid::new());
     let manager = CheckpointManager::new(
@@ -36,7 +36,7 @@ async fn test_concurrent_checkpoint_updates_basic(ctx: TestContext) -> TestResul
             let mut state = CheckpointState::default();
             state.checkpoint = Checkpoint::internal(Ulid::new(), i + 1);
             state.processed_count = i + 1;
-            state.last_activity = OffsetDateTime::now_utc();
+            state.last_activity = Timestamp::now();
             if manager.save_checkpoint(&state).await.is_ok() {
                 successes.fetch_add(1, Ordering::SeqCst);
             }
@@ -60,7 +60,7 @@ async fn test_concurrent_checkpoint_updates_basic(ctx: TestContext) -> TestResul
 
 #[sinex_test]
 async fn test_checkpoint_last_write_wins(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     let kv = ctx.checkpoint_kv().await?;
     let processor_name = format!("last_write_processor_{}", Ulid::new());
     let manager = CheckpointManager::new(
@@ -80,7 +80,7 @@ async fn test_checkpoint_last_write_wins(ctx: TestContext) -> TestResult<()> {
             let mut state = CheckpointState::default();
             state.checkpoint = Checkpoint::internal(Ulid::new(), i + 1);
             state.processed_count = i + 1;
-            state.last_activity = OffsetDateTime::now_utc();
+            state.last_activity = Timestamp::now();
             state.data = Some(serde_json::json!({"seq": i + 1}));
             manager.save_checkpoint(&state).await
         }));

@@ -1,17 +1,16 @@
 # Testing Documentation
 
-## Crate-Level Test Documentation
+## Test Utilities
 
-Detailed test patterns and utilities are documented in the `sinex-test-utils` crate
-(`crate/lib/sinex-test-utils/docs/`):
+Test infrastructure lives in `xtask/src/sandbox/` and is documented in `xtask/docs/sandbox/`:
 
 | Document | Content |
 |----------|---------|
-| `README.md` | Entry point, quick start, environment variables, feature flags |
+| `README.md` | Entry point, quick start, environment variables |
 | `test_context.md` | TestContext API, lifecycle, assertions, diagnostics |
 | `database_testing.md` | Pool architecture, isolation, cleanup, FK handling |
 | `pipeline_testing.md` | NATS, JetStream, PipelineScope, namespace isolation |
-| `timing_patterns.md` | Synchronization, barriers, adaptive polling, SINEX_EDGE_MODE |
+| `timing_patterns.md` | Synchronization, barriers, adaptive polling |
 | `property_testing.md` | Proptest integration, strategies, regression files |
 | `troubleshooting.md` | Common issues, best practices, test templates |
 
@@ -22,20 +21,20 @@ Detailed test patterns and utilities are documented in the `sinex-test-utils` cr
 ## Running Tests
 
 ```bash
-# Fast feedback (no retries)
-cargo xtask test --profile fast
+# Fast feedback
+cargo xtask test
 
-# Full workspace (recommended before PR)
-cargo xtask test --profile default --prime
+# Debug mode (single-threaded, full output)
+cargo xtask test --debug
 
-# CI selection
-cargo xtask test --profile default --prime
+# Full workspace with priming (recommended before PR)
+cargo xtask test --prime
 
 # Specific crate
-cargo xtask test --profile default -- -p sinex-test-utils
+cargo xtask test -- -p sinex-primitives
 
 # Update snapshots
-INSTA_UPDATE=always cargo xtask test --profile default --prime
+INSTA_UPDATE=always cargo xtask test --prime
 ```
 
 ## Test Levels

@@ -8,9 +8,9 @@ for later event creation with proper provenance tracking.
 ## Architecture
 
 This module follows the Stage-as-you-go pattern:
-1. **Source Material Capture**: Clipboard content → raw.source_material_registry
-2. **Temporal Ledger**: Precise timing → raw.temporal_ledger
-3. **Event Generation**: Material processing → events with Provenance::Material
+1. **Source Material Capture**: Clipboard content → `raw.source_material_registry`
+2. **Temporal Ledger**: Precise timing → `raw.temporal_ledger`
+3. **Event Generation**: Material processing → events with `Provenance::Material`
 
 ## Features
 

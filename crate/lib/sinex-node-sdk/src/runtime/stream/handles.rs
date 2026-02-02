@@ -98,8 +98,8 @@ impl EventEmitter {
         if let Some(validator) = &self.validator {
             validator
                 .validate(
-                    &event.source.to_string(),
-                    &event.event_type.to_string(),
+                    event.source.as_ref(),
+                    event.event_type.as_ref(),
                     &event.payload,
                 )
                 .await

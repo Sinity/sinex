@@ -1,11 +1,11 @@
-pub use color_eyre::eyre::{bail, eyre, Error, Result, WrapErr};
+pub use color_eyre::eyre::{bail, ensure, eyre, Error, Result, WrapErr};
 pub use futures::future::BoxFuture;
 pub use once_cell::sync::Lazy;
 pub use serde_json::{json, Value as JsonValue};
 pub use sinex_db::{DbPool, DbPoolExt};
 pub use sinex_primitives::prelude::*;
 pub use sinex_primitives::{
-    DynamicPayload, Event, EventSource, EventType, Id, OffsetDateTime, SinexError, Timestamp, Ulid,
+    DynamicPayload, Event, EventSource, EventType, Id, SinexError, Timestamp, Ulid,
 };
 
 pub type EventId = Id<Event>;
@@ -30,6 +30,16 @@ pub use super::orchestrator::{
 };
 pub use super::preflight::*;
 pub use super::timing::{Timeouts, TimingUtils, WaitHelpers};
+
+// Pipeline coordination
+pub use super::coordination::{PipelineNamespace, PipelineScope};
+pub use super::nats::EventOverrides;
+
+// Chaos testing re-exports
+pub use super::chaos::{
+    ChaosContext, ChaosEventProcessor, ChaosEventResult, ChaosMetrics, ChaosMetricsSnapshot,
+    ChaosScenarios, ChaosTestBuilder,
+};
 
 // Type aliases
 pub type TestContext = Sandbox;

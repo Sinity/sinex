@@ -11,7 +11,7 @@ pub mod timeouts {
     pub const RENAME_OPERATION_TIMEOUT: Duration = Duration::from_secs(5);
 
     /// Interval for capturing terminal scrollback content  
-    pub const KITTY_SCROLLBACK_INTERVAL: Duration = Duration::from_secs(180);
+    pub const KITTY_SCROLLBACK_INTERVAL: Duration = Duration::from_mins(3);
 
     /// Delay to apply when resources are exhausted to prevent overload
     pub const RESOURCE_EXHAUSTION_DELAY: Duration = Duration::from_secs(5);
@@ -26,7 +26,7 @@ pub mod timeouts {
     pub const RETRY_INITIAL_DELAY: Duration = Duration::from_millis(10);
 
     /// Maximum retry backoff delay
-    pub const RETRY_MAX_DELAY: Duration = Duration::from_millis(1000);
+    pub const RETRY_MAX_DELAY: Duration = Duration::from_secs(1);
 }
 
 /// Size and count limits for data validation
@@ -120,7 +120,7 @@ pub mod filesystem {
     pub const CLEANUP_INTERVAL: Duration = Duration::from_secs(30);
 
     /// Keep-alive interval for filesystem watcher main loop
-    pub const WATCHER_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(60);
+    pub const WATCHER_KEEPALIVE_INTERVAL: Duration = Duration::from_mins(1);
 }
 
 /// Validation and integrity constants
@@ -163,7 +163,7 @@ pub mod redis {
     pub const MAX_PENDING_ENTRIES: u64 = 10_000;
 
     /// Claim timeout for stuck messages
-    pub const CLAIM_TIMEOUT: Duration = Duration::from_secs(300);
+    pub const CLAIM_TIMEOUT: Duration = Duration::from_mins(5);
 
     /// Block timeout for stream reads
     pub const BLOCK_TIMEOUT_MS: u64 = 1000;

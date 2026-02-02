@@ -23,10 +23,10 @@ Current system architecture references.
 - [patterns/](./patterns/) — Additional pattern documentation
 
 **Crate-specific patterns and diagrams:**
-- Testing: `crate/lib/sinex-test-utils/docs/` (patterns.md, diagrams.md)
+- Testing: `xtask/docs/sandbox/` (patterns.md, diagrams.md)
 - Database: `crate/lib/sinex-db/docs/` (patterns.md, diagrams.md)
 - Pipeline: `crate/core/sinex-ingestd/docs/` (patterns.md, diagrams.md)
-- Core: `crate/lib/sinex-core/docs/diagrams.md`
+- Primitives: `crate/lib/sinex-primitives/docs/` (types, validation, error handling)
 
 ## See Also
 

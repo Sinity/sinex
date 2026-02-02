@@ -41,11 +41,7 @@ use figment::{
     Figment,
 };
 use serde::{Deserialize, Serialize};
-use sinex_primitives::{
-    environment::environment,
-    units::Seconds,
-    validation::validate_path,
-};
+use sinex_primitives::{environment::environment, units::Seconds, validation::validate_path};
 use std::collections::HashMap;
 use uncased::{Uncased, UncasedStr};
 use validator::Validate;
@@ -233,8 +229,8 @@ impl NodeConfig {
         Figment::from(Serialized::defaults(Self::defaults(service_name)))
             .merge(Toml::file("node.toml").nested())
             .merge(Toml::file("/etc/sinex/node.toml").nested())
-            .merge(Toml::file(format!("{}.toml", service_name)).nested())
-            .merge(Toml::file(format!("/etc/sinex/{}.toml", service_name)).nested())
+            .merge(Toml::file(format!("{service_name}.toml")).nested())
+            .merge(Toml::file(format!("/etc/sinex/{service_name}.toml")).nested())
     }
 
     fn env_prefix(service_name: &str) -> String {
@@ -246,7 +242,7 @@ impl NodeConfig {
         figment
             .merge(Env::raw().only(&["DATABASE_URL"]))
             .merge(Env::prefixed("SINEX_").map(map_env_key))
-            .merge(Env::prefixed(&format!("SINEX_{}_", env_prefix)).map(map_env_key))
+            .merge(Env::prefixed(&format!("SINEX_{env_prefix}_")).map(map_env_key))
     }
 
     /// Load configuration using Figment from defaults, config files, and environment.
@@ -312,11 +308,9 @@ impl NodeConfig {
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(defaults.database_pool_size),
             work_dir: std::env::var("SINEX_WORK_DIR")
-                .map(|s| sanitize_work_dir(&s))
-                .unwrap_or(defaults.work_dir),
+                .map_or(defaults.work_dir, |s| sanitize_work_dir(&s)),
             dry_run: std::env::var("SINEX_DRY_RUN")
-                .map(|s| s.parse().unwrap_or(false))
-                .unwrap_or(defaults.dry_run),
+                .map_or(defaults.dry_run, |s| s.parse().unwrap_or(false)),
             replay: None,
         }
     }
@@ -326,14 +320,13 @@ impl NodeConfig {
         use validator::Validate as ValidateTrait;
 
         ValidateTrait::validate(self)
-            .map_err(|e| ConfigError::Validation(format!("Validation failed: {}", e)))?;
+            .map_err(|e| ConfigError::Validation(format!("Validation failed: {e}")))?;
 
         // Additional runtime validation - check if parent directory exists
         if let Some(parent) = self.work_dir.parent() {
             if !parent.exists() {
                 return Err(ConfigError::Validation(format!(
-                    "Work directory parent does not exist: {}",
-                    parent.as_str()
+                    "Work directory parent does not exist: {parent}"
                 )));
             }
         }
@@ -354,8 +347,8 @@ impl EventSourceConfig {
 
     fn figment_base(service_name: &str) -> Figment {
         Figment::from(Serialized::defaults(Self::defaults(service_name)))
-            .merge(Toml::file(format!("{}.toml", service_name)).nested())
-            .merge(Toml::file(format!("/etc/sinex/{}.toml", service_name)).nested())
+            .merge(Toml::file(format!("{service_name}.toml")).nested())
+            .merge(Toml::file(format!("/etc/sinex/{service_name}.toml")).nested())
             .merge(Toml::file("event-source.toml").nested())
             .merge(Toml::file("/etc/sinex/event-source.toml").nested())
     }
@@ -379,7 +372,7 @@ impl EventSourceConfig {
         use validator::Validate as ValidateTrait;
 
         ValidateTrait::validate(self)
-            .map_err(|e| ConfigError::Validation(format!("Validation failed: {}", e)))?;
+            .map_err(|e| ConfigError::Validation(format!("Validation failed: {e}")))?;
 
         // Base validation includes runtime checks
         self.base.validate_config()?;
@@ -403,8 +396,8 @@ impl AutomatonConfig {
 
     fn figment_base(service_name: &str) -> Figment {
         Figment::from(Serialized::defaults(Self::defaults(service_name)))
-            .merge(Toml::file(format!("{}.toml", service_name)).nested())
-            .merge(Toml::file(format!("/etc/sinex/{}.toml", service_name)).nested())
+            .merge(Toml::file(format!("{service_name}.toml")).nested())
+            .merge(Toml::file(format!("/etc/sinex/{service_name}.toml")).nested())
             .merge(Toml::file("automaton.toml").nested())
             .merge(Toml::file("/etc/sinex/automaton.toml").nested())
     }
@@ -428,7 +421,7 @@ impl AutomatonConfig {
         use validator::Validate as ValidateTrait;
 
         ValidateTrait::validate(self)
-            .map_err(|e| ConfigError::Validation(format!("Validation failed: {}", e)))?;
+            .map_err(|e| ConfigError::Validation(format!("Validation failed: {e}")))?;
 
         // Base validation includes runtime checks
         self.base.validate_config()?;
@@ -476,9 +469,10 @@ fn default_work_dir() -> Utf8PathBuf {
 }
 
 fn get_cache_dir_or_fallback() -> Utf8PathBuf {
-    dirs::cache_dir()
-        .map(|p| Utf8PathBuf::from_path_buf(p).unwrap_or_else(|_| Utf8PathBuf::from("/tmp")))
-        .unwrap_or_else(|| Utf8PathBuf::from("/tmp"))
+    dirs::cache_dir().map_or_else(
+        || Utf8PathBuf::from("/tmp"),
+        |p| Utf8PathBuf::from_path_buf(p).unwrap_or_else(|_| Utf8PathBuf::from("/tmp")),
+    )
 }
 
 fn default_batch_size() -> usize {
@@ -550,9 +544,10 @@ fn sanitize_work_dir(path_str: &str) -> Utf8PathBuf {
 }
 
 fn validate_log_level(level: &str) -> Result<(), validator::ValidationError> {
-    match level {
-        "trace" | "debug" | "info" | "warn" | "error" => Ok(()),
-        _ => Err(validator::ValidationError::new("invalid_log_level")),
+    if matches!(level, "trace" | "debug" | "info" | "warn" | "error") {
+        Ok(())
+    } else {
+        Err(validator::ValidationError::new("invalid_log_level"))
     }
 }
 
@@ -565,11 +560,9 @@ fn validate_work_dir(path: &Utf8PathBuf) -> Result<(), validator::ValidationErro
 }
 
 fn validate_rfc3339(timestamp: &str) -> Result<(), validator::ValidationError> {
-    sinex_primitives::temporal::Timestamp::parse_rfc3339(
-        timestamp,
-    )
-    .map(|_| ())
-    .map_err(|_| validator::ValidationError::new("invalid_rfc3339"))
+    sinex_primitives::temporal::Timestamp::parse_rfc3339(timestamp)
+        .map(|_| ())
+        .map_err(|_| validator::ValidationError::new("invalid_rfc3339"))
 }
 
 fn validate_seconds_nonzero(value: &Seconds) -> Result<(), validator::ValidationError> {

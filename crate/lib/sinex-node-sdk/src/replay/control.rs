@@ -1,4 +1,4 @@
-use crate::{NodeResult, SinexError};
+use crate::NodeResult;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::Notify;
@@ -66,9 +66,9 @@ impl ReplayController {
         }
 
         if self.is_cancelled() {
-            return Err(SinexError::from(sinex_primitives::SinexError::cancelled(
+            return Err(sinex_primitives::SinexError::cancelled(
                 "Replay was cancelled",
-            )));
+            ));
         }
 
         Ok(())
@@ -76,9 +76,9 @@ impl ReplayController {
 
     pub fn check_cancelled(&self) -> NodeResult<()> {
         if self.is_cancelled() {
-            return Err(SinexError::from(sinex_primitives::SinexError::cancelled(
+            return Err(sinex_primitives::SinexError::cancelled(
                 "Replay was cancelled",
-            )));
+            ));
         }
         Ok(())
     }

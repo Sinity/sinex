@@ -150,22 +150,21 @@ impl ServiceContainer {
 
         // Create blob manager for content service
         // Issue 130: Use persistent default path instead of /tmp
-        let annex_path_str = match std::env::var("SINEX_ANNEX_PATH") {
-            Ok(value) => value,
-            Err(_) => {
-                // Use ~/.local/share/sinex/annex as persistent default
-                let default_path = if let Ok(home) = std::env::var("HOME") {
-                    format!("{}/.local/share/sinex/annex", home)
-                } else {
-                    // Fallback to work_directory if HOME is not set
-                    let work_dir = sinex_environment::environment().work_directory("annex");
-                    work_dir.to_string_lossy().into_owned()
-                };
-                default_path
-            }
+        let annex_path_str = if let Ok(value) = std::env::var("SINEX_ANNEX_PATH") {
+            value
+        } else {
+            // Use ~/.local/share/sinex/annex as persistent default
+            let default_path = if let Ok(home) = std::env::var("HOME") {
+                format!("{home}/.local/share/sinex/annex")
+            } else {
+                // Fallback to work_directory if HOME is not set
+                let work_dir = sinex_environment::environment().work_directory("annex");
+                work_dir.to_string_lossy().into_owned()
+            };
+            default_path
         };
         let annex_path = SanitizedPath::from_str_validated(&annex_path_str)
-            .map_err(|e| SinexError::validation(format!("Invalid SINEX_ANNEX_PATH: {}", e)))?;
+            .map_err(|e| SinexError::validation(format!("Invalid SINEX_ANNEX_PATH: {e}")))?;
         let annex_path = Utf8PathBuf::from(annex_path.as_str());
 
         // Ensure the annex directory exists
@@ -188,7 +187,7 @@ impl ServiceContainer {
 
         // Initialize all services
         let allow_replay_bypass =
-            std::env::var("SINEX_ALLOW_REPLAY_CONTROL_BYPASS").map_or(false, |value| {
+            std::env::var("SINEX_ALLOW_REPLAY_CONTROL_BYPASS").is_ok_and(|value| {
                 matches!(
                     value.trim().to_ascii_lowercase().as_str(),
                     "1" | "true" | "yes"
@@ -260,25 +259,30 @@ impl ServiceContainer {
     }
 
     /// Get NATS client if available
+    #[must_use]
     pub fn nats_client(&self) -> Option<&async_nats::Client> {
         self.nats_client.as_ref()
     }
 
     /// Get Sinex environment
+    #[must_use]
     pub fn environment(&self) -> &sinex_primitives::environment::SinexEnvironment {
         &self.env
     }
 
     /// Get a database pool for general operations
     /// Uses the content service pool as it's already used for system operations
+    #[must_use]
     pub fn pool(&self) -> &sqlx::PgPool {
         self.content.pool()
     }
 
+    #[must_use]
     pub fn pool_max_connections(&self) -> usize {
         self.pool_max_connections
     }
 
+    #[must_use]
     pub fn replay_control_status(&self) -> ReplayControlStatus {
         let enabled = self.replay_control.is_some();
         let bypass_active = self.replay_control_bypass && !enabled;

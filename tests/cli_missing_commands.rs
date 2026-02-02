@@ -24,7 +24,7 @@ async fn start_test_gateway(
     let server_handle = tokio::spawn({
         let services = services.clone();
         async move {
-            let _ = rpc_server::run(Some(tcp_listen.as_str()), services, shutdown_rx).await;
+            let _ = rpc_server::run(Some(tcp_listen.as_str()), services, vec![], shutdown_rx).await;
         }
     });
 

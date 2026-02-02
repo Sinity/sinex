@@ -22,7 +22,7 @@ All Sinex application variables **MUST** use the `SINEX_` prefix.
 |---------|----------|
 | Gateway | `crate/core/sinex-gateway/docs/environment.md` |
 | Ingestd | `crate/core/sinex-ingestd/docs/environment.md` |
-| Test utilities | `crate/lib/sinex-test-utils/docs/environment.md` |
+| Test utilities | `xtask/docs/sandbox/environment.md` |
 | Desktop ingestor | `crate/nodes/sinex-desktop-ingestor/docs/environment.md` |
 | Terminal ingestor | `crate/nodes/sinex-terminal-ingestor/docs/environment.md` |
 
@@ -140,5 +140,5 @@ sinex-gateway
 
 ## See Also
 
-- Type-safe config values: `crate/lib/sinex-core/docs/newtypes.md`
+- Type-safe config values: `crate/lib/sinex-primitives/docs/newtypes.md`
 - Security architecture: `docs/current/security-architecture.md`

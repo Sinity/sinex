@@ -37,11 +37,12 @@ pub struct SearchService {
 }
 
 impl SearchService {
+    #[must_use]
     pub fn new(pool: DbPool) -> Self {
         Self { pool }
     }
 
-    /// Search events based on criteria using parameterized SQLx query building
+    /// Search events based on criteria using parameterized `SQLx` query building
     pub async fn search_events(&self, query: SearchQuery) -> ServiceResult<Vec<SearchResult>> {
         let prepared = PreparedSearch::new(query)?;
         let snippet_text = prepared.search_text.as_deref();
@@ -51,10 +52,10 @@ impl SearchService {
         let results = rows
             .into_iter()
             .map(|row| {
-                let snippet = row
-                    .snippet
-                    .map(|value| value.replace("<b>", "").replace("</b>", ""))
-                    .unwrap_or_else(|| Self::extract_snippet(&row.payload, snippet_text));
+                let snippet = row.snippet.map_or_else(
+                    || Self::extract_snippet(&row.payload, snippet_text),
+                    |value| value.replace("<b>", "").replace("</b>", ""),
+                );
                 let score = row.score.unwrap_or(1.0);
                 SearchResult {
                     event_id: row.id,
@@ -94,7 +95,7 @@ impl SearchService {
             s.to_string()
         } else {
             let truncated: String = s.chars().take(max_chars).collect();
-            format!("{}...", truncated)
+            format!("{truncated}...")
         }
     }
 
@@ -116,7 +117,7 @@ impl SearchService {
         let end = (char_pos + match_char_len + context_chars).min(total_chars);
 
         let substring: String = chars[start..end].iter().collect();
-        format!("...{}...", substring)
+        format!("...{substring}...")
     }
 }
 
@@ -139,8 +140,8 @@ impl PreparedSearch {
         } = query;
 
         let pagination = Pagination::with_bounds(
-            Some(limit as i64),
-            Some(offset as i64),
+            Some(i64::from(limit)),
+            Some(i64::from(offset)),
             Pagination::DEFAULT_LIMIT,
             Pagination::MAX_LIMIT,
         );
@@ -181,7 +182,7 @@ impl PreparedSearch {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_primitives::temporal::Duration;
+
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]

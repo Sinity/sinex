@@ -62,3 +62,6 @@ features = [ "sandbox",]
 [dev-dependencies.sinex-primitives]
 path = "../../crate/lib/sinex-primitives"
 features = [ "testing",]
+
+[lints]
+workspace = true

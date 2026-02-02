@@ -1,6 +1,6 @@
 # Analytics Service
 
-`AnalyticsService` provides read-only rollups and time-series analysis for dashboards and telemetry. It leverages TimescaleDB hypertable capabilities to perform efficient aggregations over high-volume event data.
+`AnalyticsService` provides read-only rollups and time-series analysis for dashboards and telemetry. It leverages `TimescaleDB` hypertable capabilities to perform efficient aggregations over high-volume event data.
 
 ## API Surface
 
@@ -20,7 +20,7 @@
 To prevent long-running analytical queries from starving the primary ingestion pool, the service uses an aggressive **40ms connection acquisition timeout**. If the database pool is under heavy load, analytics requests fail fast rather than blocking.
 
 ### Time Bucketing
-The service uses TimescaleDB's `time_bucket` function for all temporal aggregations. When possible, it prefers `ts_orig` (event occurrence) but falls back to `ts_ingest` (arrival time) to ensure consistent bucketing.
+The service uses `TimescaleDB`'s `time_bucket` function for all temporal aggregations. When possible, it prefers `ts_orig` (event occurrence) but falls back to `ts_ingest` (arrival time) to ensure consistent bucketing.
 
 ### Ingest Delay Analysis
 The `avg_ingest_delay` metric computes the delta between `ts_orig` and `ts_ingest`. This is a critical observability metric used to detect backpressure or processing lag in the node fleet.

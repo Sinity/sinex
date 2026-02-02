@@ -4,10 +4,14 @@
 //! continuous scanning modes for desktop events.
 
 // Use local facade for common types
-use crate::common::*;
+use crate::common::{
+    async_trait, error, info, instrument, parse_config_value, parse_typed_config, warn,
+    ActivityEntry, Checkpoint, CoverageAnalysis, Deserialize, HashMap, IngestionHistoryEntry, Node,
+    NodeCapabilities, NodeResult, NodeRuntimeState, ScanArgs, ScanReport, Serialize, SinexError,
+    SourceState, TimeHorizon,
+};
 
 use crate::{window_manager::WindowManagerType, ClipboardWatcher, WindowManagerWatcher};
-use sinex_primitives::Seconds;
 use sinex_node_sdk::prelude::OffsetDateTime;
 use sinex_node_sdk::{
     acquisition_manager::{AcquisitionManager, RotationPolicy},
@@ -17,6 +21,7 @@ use sinex_node_sdk::{
     watcher_handle::WatcherHandle,
     EventTransport,
 };
+use sinex_primitives::{Seconds, Timestamp};
 use std::sync::Arc;
 use tokio::sync::watch;
 
@@ -54,7 +59,7 @@ impl Default for DesktopConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DesktopState {
     /// When the snapshot was taken
-    pub captured_at: OffsetDateTime,
+    pub captured_at: Timestamp,
 
     /// Enabled source types
     pub enabled_sources: Vec<String>,
@@ -104,7 +109,7 @@ pub struct DesktopMonitorHealth {
     pub window_manager_last_success: Option<OffsetDateTime>,
 }
 
-/// Persistent state for SimpleIngestor
+/// Persistent state for `SimpleIngestor`
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DesktopPersistentState {
     pub health: DesktopMonitorHealth,
@@ -114,7 +119,7 @@ pub struct DesktopPersistentState {
 /// Unified desktop processor implementing Node with Stage-as-You-Go
 ///
 /// This processor captures desktop activity as source material first, then generates
-/// events with proper provenance tracking via JetStream capture.
+/// events with proper provenance tracking via `JetStream` capture.
 pub struct DesktopProcessor {
     /// Runtime state captured during initialization
     runtime: Option<NodeRuntimeState>,
@@ -136,6 +141,7 @@ impl DesktopProcessor {
     const _BYTES_PER_EVENT: u64 = 256;
 
     /// Create a new unified desktop processor
+    #[must_use]
     pub fn new() -> Self {
         Self {
             runtime: None,
@@ -172,13 +178,11 @@ impl DesktopProcessor {
                 monitoring_active: self
                     .clipboard_watcher
                     .as_ref()
-                    .map(|h| h.is_active())
-                    .unwrap_or(false),
+                    .is_some_and(sinex_node_sdk::WatcherHandle::is_active),
                 last_clipboard_change: health.clipboard_last_success,
                 clipboard_content_hash: None, // Would need to hash current clipboard
                 last_error: health.clipboard_last_error.clone(),
-            })
-            .into();
+            });
         }
 
         if self.config.window_manager_enabled {
@@ -190,18 +194,16 @@ impl DesktopProcessor {
                 connection_active: self
                     .window_manager_watcher
                     .as_ref()
-                    .map(|h| h.is_active())
-                    .unwrap_or(false),
+                    .is_some_and(sinex_node_sdk::WatcherHandle::is_active),
                 current_workspace: None, // Would need to query WM
                 active_window: None,     // Would need to query WM
                 total_windows: 0,        // Would need to query WM
                 last_error: health.window_manager_last_error.clone(),
-            })
-            .into();
+            });
         }
 
         let state = DesktopState {
-            captured_at: OffsetDateTime::now_utc(),
+            captured_at: Timestamp::now(),
             enabled_sources,
             clipboard_status,
             window_manager_status,
@@ -237,7 +239,7 @@ impl SimpleIngestor for DesktopProcessor {
     type Config = DesktopConfig;
     type State = DesktopPersistentState;
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "desktop-watcher"
     }
 
@@ -310,9 +312,7 @@ impl SimpleIngestor for DesktopProcessor {
         let publisher: Arc<NatsPublisher> = match runtime.transport() {
             EventTransport::Nats(publisher) => Arc::clone(publisher),
         };
-        AcquisitionManager::bootstrap_streams(publisher.nats_client())
-            .await
-            .map_err(SinexError::from)?;
+        AcquisitionManager::bootstrap_streams(publisher.nats_client()).await?;
 
         let acquisition = Arc::new(runtime.acquisition_manager(
             RotationPolicy::default(),
@@ -349,8 +349,8 @@ impl SimpleIngestor for DesktopProcessor {
         let report = ScanReport {
             events_processed: snapshot.enabled_sources.len() as u64,
             duration: start_time.elapsed(),
-            final_checkpoint: Checkpoint::timestamp(OffsetDateTime::now_utc(), None),
-            time_range: Some((OffsetDateTime::now_utc(), OffsetDateTime::now_utc())),
+            final_checkpoint: Checkpoint::timestamp(Timestamp::now(), None),
+            time_range: Some((Timestamp::now(), Timestamp::now())),
             processor_stats: HashMap::new(),
             successful_targets: vec!["desktop_snapshot".to_string()],
             failed_targets: vec![],
@@ -487,8 +487,8 @@ impl SimpleIngestor for DesktopProcessor {
         Ok(ScanReport {
             events_processed: 0,
             duration: start_time.elapsed(),
-            final_checkpoint: Checkpoint::timestamp(OffsetDateTime::now_utc(), None),
-            time_range: Some((OffsetDateTime::now_utc(), OffsetDateTime::now_utc())),
+            final_checkpoint: Checkpoint::timestamp(Timestamp::now(), None),
+            time_range: Some((Timestamp::now(), Timestamp::now())),
             processor_stats: HashMap::new(),
             successful_targets: vec!["desktop_continuous".to_string()],
             failed_targets: vec![],
@@ -535,8 +535,7 @@ impl SimpleIngestor for DesktopProcessor {
             last_updated: state
                 .last_state
                 .as_ref()
-                .map(|s| s.captured_at)
-                .unwrap_or_else(OffsetDateTime::now_utc),
+                .map_or_else(Timestamp::now, |s| s.captured_at),
             total_items: None,
             healthy: state.health.clipboard_active
                 || state.health.window_manager_active
@@ -560,10 +559,13 @@ impl SimpleIngestor for DesktopProcessor {
     fn get_coverage_analysis(
         &self,
         _state: &Self::State,
-        _time_range: Option<(OffsetDateTime, OffsetDateTime)>,
+        _time_range: Option<(sinex_primitives::Timestamp, sinex_primitives::Timestamp)>,
     ) -> NodeResult<CoverageAnalysis> {
         Ok(CoverageAnalysis {
-            time_range: (OffsetDateTime::now_utc(), OffsetDateTime::now_utc()),
+            time_range: (
+                sinex_primitives::Timestamp::now(),
+                sinex_primitives::Timestamp::now(),
+            ),
             source_total: 0,
             sinex_total: 0,
             coverage_percentage: 100.0,

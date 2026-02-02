@@ -2,10 +2,11 @@
 //! usable inside node checkpoint state structures.
 
 use proptest::prelude::*;
-use sinex_node_sdk::db::sanitization::EventSanitizer;
-use sinex_node_sdk::types::domain::{EventSource, EventType};
+use sinex_db::sanitization::EventSanitizer;
 use sinex_node_sdk::CheckpointState;
+use sinex_primitives::domain::{EventSource, EventType};
 use xtask::sandbox::prelude::*;
+use xtask::sandbox::test_event;
 
 fn arb_event_payload() -> impl Strategy<Value = serde_json::Value> {
     prop_oneof![
@@ -32,7 +33,7 @@ sinex_proptest! {
         let state = CheckpointState {
             checkpoint: sinex_node_sdk::Checkpoint::None,
             processed_count: 0,
-            last_activity: OffsetDateTime::now_utc(),
+            last_activity: OffsetDateTime::now_utc().into(),
             data: Some(event.payload.clone()),
             version: 1,
             revision: 0,

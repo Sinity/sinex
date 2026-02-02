@@ -7,9 +7,9 @@ use async_nats::jetstream;
 use blake3::Hasher;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
+use sinex_primitives::Timestamp;
 use sinex_primitives::Ulid;
 use std::{collections::BTreeMap, path::PathBuf, str::FromStr};
-use sinex_primitives::Timestamp;
 use tokio::fs::File;
 use tracing::{debug, info, warn};
 
@@ -130,15 +130,15 @@ pub(super) struct FinalizationState {
 }
 
 impl AssemblerState {
-    pub fn buffers_dir(&self) -> PathBuf {
+    pub(super) fn buffers_dir(&self) -> PathBuf {
         self.state_dir.join(BUFFER_DIR_NAME)
     }
 
-    pub fn _state_file(&self) -> PathBuf {
+    pub(super) fn _state_file(&self) -> PathBuf {
         self.state_dir.join(STATE_FILE_NAME)
     }
 
-    pub fn finalization_view(&self) -> FinalizationState {
+    pub(super) fn finalization_view(&self) -> FinalizationState {
         FinalizationState {
             material_id: self.material_id,
             temp_path: self.temp_path.clone(),
@@ -274,18 +274,21 @@ pub(super) async fn handle_begin(
     };
     tracing::Span::current().record("material_id", tracing::field::display(&material_id));
 
-    let started_at = Timestamp::parse(
+    let started_at = time::OffsetDateTime::parse(
         &begin.started_at,
         &time::format_description::well_known::Rfc3339,
     )
-    .unwrap_or_else(|_| {
-        warn!(
-            material_id = %material_id,
-            started_at = %begin.started_at,
-            "Invalid started_at on begin message, defaulting to now"
-        );
-        Timestamp::now()
-    });
+    .map_or_else(
+        |_| {
+            warn!(
+                material_id = %material_id,
+                started_at = %begin.started_at,
+                "Invalid started_at on begin message, defaulting to now"
+            );
+            Timestamp::now()
+        },
+        Timestamp::new,
+    );
 
     if assembler.pool.is_closed() {
         return Err(SinexError::database(
@@ -347,7 +350,7 @@ pub(super) async fn handle_begin(
                 .append(true)
                 .open(&state.temp_path)
                 .await
-                .map_err(|e| SinexError::io(format!("Failed to open temp file: {}", e)))?;
+                .map_err(|e| SinexError::io(format!("Failed to open temp file: {e}")))?;
             state.temp_file = Some(temp_file);
         }
 

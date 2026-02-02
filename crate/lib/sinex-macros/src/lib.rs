@@ -43,7 +43,7 @@ pub fn with_context(attr: TokenStream, item: TokenStream) -> TokenStream {
 
 /// Macro for generating event type registries with automatic constant generation
 ///
-/// Generates source constants, event type constants, and EventEnvelope implementations.
+/// Generates source constants, event type constants, and `EventEnvelope` implementations.
 ///
 /// # Examples
 ///
@@ -71,7 +71,7 @@ pub fn event_registry(input: TokenStream) -> TokenStream {
 
 /// Macro for generating typed event envelope implementations
 ///
-/// Automatically generates to_json_event() and helper methods for event envelopes.
+/// Automatically generates `to_json_event()` and helper methods for event envelopes.
 ///
 /// # Examples
 ///
@@ -139,7 +139,7 @@ pub fn db_transaction(input: TokenStream) -> TokenStream {
 
 /// Macro for defining strongly-typed ID types based on ULID
 ///
-/// Generates a newtype struct around ulid::Ulid with all necessary trait implementations.
+/// Generates a newtype struct around `ulid::Ulid` with all necessary trait implementations.
 ///
 /// # Examples
 ///
@@ -155,9 +155,9 @@ pub fn define_id_type(input: TokenStream) -> TokenStream {
     id_types::define_id_type(input)
 }
 
-/// Derive macro for EventPayload trait
+/// Derive macro for `EventPayload` trait
 ///
-/// Automatically implements EventPayload trait with SOURCE and EVENT_TYPE constants.
+/// Automatically implements `EventPayload` trait with SOURCE and `EVENT_TYPE` constants.
 ///
 /// # Examples
 ///
@@ -178,7 +178,7 @@ pub fn derive_event_payload(input: TokenStream) -> TokenStream {
     event_payload::derive_event_payload_impl(input)
 }
 
-/// Derive macro for ValidateRecord
+/// Derive macro for `ValidateRecord`
 ///
 /// Validates at compile time that a Record struct matches its schema definition.
 ///

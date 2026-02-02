@@ -6,6 +6,7 @@ description = "Direct document ingestor for Sinex satellites"
 
 [dependencies]
 mime_guess = "2.0"
+human-panic = "2.0"
 
 [dev-dependencies]
 tempfile = "3.10"
@@ -64,3 +65,6 @@ path = "../../lib/sinex-primitives"
 features = [
     "testing",
 ]
+
+[lints]
+workspace = true

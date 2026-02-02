@@ -15,7 +15,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::events::payloads::{DirDiscoveredPayload, FileDiscoveredPayload};
 use sinex_primitives::events::EventPayload;
-use sinex_primitives::temporal::OffsetDateTime;
+use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::SanitizedPath;
 use std::collections::HashMap;
 use tokio::fs;
@@ -50,7 +50,7 @@ pub struct FilesystemNode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesystemState {
     /// Timestamp when state was captured
-    pub captured_at: OffsetDateTime,
+    pub captured_at: Timestamp,
 
     /// File count by directory
     pub file_counts: HashMap<Utf8PathBuf, u64>,
@@ -86,7 +86,7 @@ impl FilesystemNode {
             Checkpoint::Timestamp { timestamp, .. } => Some(*timestamp),
             Checkpoint::External { position, .. } => {
                 // Try to parse timestamp from position
-                serde_json::from_value::<OffsetDateTime>(position.clone()).ok()
+                serde_json::from_value::<Timestamp>(position.clone()).ok()
             }
             _ => None,
         };
@@ -102,7 +102,8 @@ impl FilesystemNode {
             // Skip files older than checkpoint
             if let Some(cutoff) = cutoff_time {
                 if let Ok(modified) = metadata.modified() {
-                    let modified_dt: OffsetDateTime = modified.into();
+                    let modified_odt: sinex_primitives::temporal::OffsetDateTime = modified.into();
+                    let modified_dt: Timestamp = modified_odt.into();
                     if modified_dt <= cutoff {
                         continue;
                     }
@@ -117,17 +118,18 @@ impl FilesystemNode {
                         .modified()
                         .ok()
                         .map(|t| {
-                            let dt: OffsetDateTime = t.into();
+                            let odt: sinex_primitives::temporal::OffsetDateTime = t.into();
+                            let dt: Timestamp = odt.into();
                             dt
                         })
-                        .unwrap_or_else(sinex_primitives::temporal::OffsetDateTime::now_utc);
+                        .unwrap_or_else(sinex_primitives::temporal::Timestamp::now);
 
                     let payload = FileDiscoveredPayload {
                         path: SanitizedPath::new_unchecked(
                             entry_path.to_string_lossy().to_string(),
                         ),
                         size: metadata.len(),
-                        modified_at: modified_time.into(),
+                        modified_at: modified_time,
                         permissions: Some(metadata.permissions().mode()),
                     };
 
@@ -144,16 +146,17 @@ impl FilesystemNode {
                         .modified()
                         .ok()
                         .map(|t| {
-                            let dt: OffsetDateTime = t.into();
+                            let odt: sinex_primitives::temporal::OffsetDateTime = t.into();
+                            let dt: Timestamp = odt.into();
                             dt
                         })
-                        .unwrap_or_else(sinex_primitives::temporal::OffsetDateTime::now_utc);
+                        .unwrap_or_else(sinex_primitives::temporal::Timestamp::now);
 
                     let payload = DirDiscoveredPayload {
                         path: SanitizedPath::new_unchecked(
                             entry_path.to_string_lossy().to_string(),
                         ),
-                        modified_at: modified_time.into(),
+                        modified_at: modified_time,
                     };
 
                     // Example uses synthesis provenance with a placeholder parent ID
@@ -196,7 +199,7 @@ impl FilesystemNode {
         }
 
         let state = FilesystemState {
-            captured_at: sinex_primitives::temporal::OffsetDateTime::now_utc(),
+            captured_at: sinex_primitives::temporal::Timestamp::now(),
             file_counts,
             total_files,
             directories: self.watch_paths.clone(),
@@ -345,10 +348,8 @@ impl Node for FilesystemNode {
             }
         }
 
-        let final_checkpoint = Checkpoint::timestamp(
-            sinex_primitives::temporal::OffsetDateTime::now_utc().into(),
-            None,
-        );
+        let final_checkpoint =
+            Checkpoint::timestamp(sinex_primitives::temporal::Timestamp::now(), None);
 
         Ok(ScanReport {
             events_processed,
@@ -357,12 +358,9 @@ impl Node for FilesystemNode {
             time_range: Some((
                 match &from {
                     Checkpoint::Timestamp { timestamp, .. } => *timestamp,
-                    _ => {
-                        sinex_primitives::temporal::OffsetDateTime::now_utc()
-                            - time::Duration::hours(1)
-                    }
+                    _ => sinex_primitives::temporal::Timestamp::now() - time::Duration::hours(1),
                 },
-                sinex_primitives::temporal::OffsetDateTime::now_utc(),
+                sinex_primitives::temporal::Timestamp::now(),
             )),
             processor_stats: HashMap::from([
                 (
@@ -404,7 +402,7 @@ impl Node for FilesystemNode {
     async fn current_checkpoint(&self) -> NodeResult<Checkpoint> {
         // Return timestamp-based checkpoint
         Ok(Checkpoint::timestamp(
-            sinex_primitives::temporal::OffsetDateTime::now_utc().into(),
+            sinex_primitives::temporal::Timestamp::now(),
             None,
         ))
     }
@@ -458,7 +456,7 @@ impl ExplorationProvider for FilesystemNode {
             is_connected: true,
             healthy: true,
             description: "Filesystem node running".to_string(),
-            last_updated: sinex_primitives::temporal::OffsetDateTime::now_utc(),
+            last_updated: sinex_primitives::temporal::Timestamp::now(),
             lag_seconds: None,
             recent_activity: Vec::new(),
             total_items: None,
@@ -470,12 +468,12 @@ impl ExplorationProvider for FilesystemNode {
     }
     fn get_coverage_analysis(
         &self,
-        _time_range: Option<(OffsetDateTime, OffsetDateTime)>,
+        _time_range: Option<(Timestamp, Timestamp)>,
     ) -> NodeResult<CoverageAnalysis> {
         Ok(CoverageAnalysis {
             time_range: (
-                sinex_primitives::temporal::OffsetDateTime::now_utc(),
-                sinex_primitives::temporal::OffsetDateTime::now_utc(),
+                sinex_primitives::temporal::Timestamp::now(),
+                sinex_primitives::temporal::Timestamp::now(),
             ),
             source_total: 0,
             sinex_total: 0,

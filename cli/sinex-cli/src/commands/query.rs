@@ -305,21 +305,11 @@ fn parse_time(s: &str) -> Result<Timestamp> {
 
 /// Format search results as a table
 fn format_table_results(results: &[SearchResult]) -> String {
-    use comfy_table::presets::UTF8_FULL;
-    use comfy_table::{Cell, CellAlignment, ContentArrangement, Table};
     use console::style;
+    use tabled::{builder::Builder, settings::Style};
 
-    let mut table = Table::new();
-    table
-        .load_preset(UTF8_FULL)
-        .set_content_arrangement(ContentArrangement::Dynamic)
-        .set_header(vec![
-            Cell::new("TIMESTAMP").set_alignment(CellAlignment::Left),
-            Cell::new("SOURCE").set_alignment(CellAlignment::Left),
-            Cell::new("EVENT TYPE").set_alignment(CellAlignment::Left),
-            Cell::new("HOST").set_alignment(CellAlignment::Left),
-            Cell::new("SNIPPET").set_alignment(CellAlignment::Left),
-        ]);
+    let mut builder = Builder::new();
+    builder.push_record(["TIMESTAMP", "SOURCE", "EVENT TYPE", "HOST", "SNIPPET"]);
 
     for result in results {
         let timestamp = result
@@ -331,15 +321,17 @@ fn format_table_results(results: &[SearchResult]) -> String {
             .unwrap_or_else(|_| "invalid".to_string());
         let snippet = truncate_string(&result.snippet, 60);
 
-        table.add_row(vec![
-            Cell::new(style(timestamp).dim().to_string()),
-            Cell::new(&result.source),
-            Cell::new(&result.event_type),
-            Cell::new(style(&result.host).dim().to_string()),
-            Cell::new(snippet),
+        builder.push_record([
+            style(timestamp).dim().to_string(),
+            result.source.clone(),
+            result.event_type.clone(),
+            style(&result.host).dim().to_string(),
+            snippet,
         ]);
     }
 
+    let mut table = builder.build();
+    table.with(Style::rounded());
     table.to_string()
 }
 
@@ -552,7 +544,7 @@ mod tests {
 
         // Verify approximate durations
         let hour_ago = parse_preset_time("Last hour");
-        let diff = (now - hour_ago).num_minutes();
+        let diff = (now - hour_ago).whole_minutes();
         assert!(
             (58..=62).contains(&diff),
             "Last hour should be ~60 mins ago, got {}",

@@ -79,7 +79,7 @@ impl DevOrchestrator {
             let mut lines = reader.lines();
             tokio::spawn(async move {
                 while let Ok(Some(line)) = lines.next_line().await {
-                    println!("[build] {}", line);
+                    println!("[build] {line}");
                 }
             });
         }
@@ -90,14 +90,14 @@ impl DevOrchestrator {
             let mut lines = reader.lines();
             tokio::spawn(async move {
                 while let Ok(Some(line)) = lines.next_line().await {
-                    eprintln!("[build] {}", line);
+                    eprintln!("[build] {line}");
                 }
             });
         }
 
         let status = child.wait().await?;
         if !status.success() {
-            bail!("Build failed with status: {}", status);
+            bail!("Build failed with status: {status}");
         }
 
         // Determine binary path
@@ -112,7 +112,7 @@ impl DevOrchestrator {
             .join(profile)
             .join(&self.args.binary);
 
-        println!("[build] Build complete: {}", binary_path);
+        println!("[build] Build complete: {binary_path}");
         Ok(binary_path.into())
     }
 
@@ -150,7 +150,7 @@ impl DevOrchestrator {
             let name = self.args.binary.clone();
             tokio::spawn(async move {
                 while let Ok(Some(line)) = lines.next_line().await {
-                    println!("[{}] {}", name, line);
+                    println!("[{name}] {line}");
                 }
             });
         }
@@ -162,7 +162,7 @@ impl DevOrchestrator {
             let name = self.args.binary.clone();
             tokio::spawn(async move {
                 while let Ok(Some(line)) = lines.next_line().await {
-                    eprintln!("[{}] {}", name, line);
+                    eprintln!("[{name}] {line}");
                 }
             });
         }
@@ -192,11 +192,11 @@ impl DevOrchestrator {
             tokio::select! {
                 result = child.wait() => {
                     match result {
-                        Ok(status) => println!("[run] {} exited with: {}", self.args.binary, status),
-                        Err(e) => eprintln!("[run] Error waiting for {}: {}", self.args.binary, e),
+                        Ok(status) => println!("[run] {} exited with: {status}", self.args.binary),
+                        Err(e) => eprintln!("[run] Error waiting for {}: {e}", self.args.binary),
                     }
                 }
-                _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
+                () = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
                     eprintln!("[run] Timeout waiting for graceful shutdown, killing...");
                     let _ = child.kill().await;
                 }
@@ -243,11 +243,11 @@ impl DevOrchestrator {
                 tokio::select! {
                     result = old_child.wait() => {
                         match result {
-                            Ok(status) => println!("[handoff] Old instance exited: {}", status),
-                            Err(e) => eprintln!("[handoff] Error waiting for old instance: {}", e),
+                            Ok(status) => println!("[handoff] Old instance exited: {status}"),
+                            Err(e) => eprintln!("[handoff] Error waiting for old instance: {e}"),
                         }
                     }
-                    _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => {
+                    () = tokio::time::sleep(std::time::Duration::from_secs(10)) => {
                         eprintln!("[handoff] Timeout waiting for old instance, force killing...");
                         let _ = old_child.kill().await;
                     }
@@ -296,7 +296,7 @@ impl DevOrchestrator {
             let name = self.args.binary.clone();
             tokio::spawn(async move {
                 while let Ok(Some(line)) = lines.next_line().await {
-                    println!("[{}] {}", name, line);
+                    println!("[{name}] {line}");
                 }
             });
         }
@@ -308,7 +308,7 @@ impl DevOrchestrator {
             let name = self.args.binary.clone();
             tokio::spawn(async move {
                 while let Ok(Some(line)) = lines.next_line().await {
-                    eprintln!("[{}] {}", name, line);
+                    eprintln!("[{name}] {line}");
                 }
             });
         }
@@ -373,20 +373,20 @@ impl DevOrchestrator {
                 } => {
                     match status {
                         Ok(s) if !s.success() => {
-                            eprintln!("[run] {} exited with: {}. Waiting for file changes...", self.args.binary, s);
+                            eprintln!("[run] {} exited with: {s}. Waiting for file changes...", self.args.binary);
                             self.child = None;
                         }
                         Ok(s) => {
-                            println!("[run] {} exited with: {}", self.args.binary, s);
+                            println!("[run] {} exited with: {s}", self.args.binary);
                             break;
                         }
                         Err(e) => {
-                            eprintln!("[run] Process error: {}", e);
+                            eprintln!("[run] Process error: {e}");
                             break;
                         }
                     }
                 }
-                _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                () = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
                     // Periodic check for shutdown
                 }
             }

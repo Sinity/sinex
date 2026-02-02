@@ -105,6 +105,7 @@ impl Default for CascadeAnalyzerConfig {
 
 impl CascadeAnalyzerConfig {
     /// Create config from environment variables
+    #[must_use]
     pub fn from_env() -> Self {
         Self {
             batch_size: env_var_usize("SINEX_CASCADE_BATCH_SIZE", DEFAULT_CASCADE_BATCH_SIZE),
@@ -137,10 +138,9 @@ fn env_var_u64(var: &str, default: u64) -> u64 {
 }
 
 fn env_var_bool(var: &str, default: bool) -> bool {
-    std::env::var(var)
-        .ok()
-        .map(|s| matches!(s.to_lowercase().as_str(), "true" | "1" | "yes"))
-        .unwrap_or(default)
+    std::env::var(var).ok().map_or(default, |s| {
+        matches!(s.to_lowercase().as_str(), "true" | "1" | "yes")
+    })
 }
 
 /// Memory-efficient cascade analyzer using streaming algorithms
@@ -164,6 +164,7 @@ impl StreamingCascadeAnalyzer {
     }
 
     /// Create new analyzer with default configuration
+    #[must_use]
     pub fn new(pool: PgPool) -> Self {
         Self::with_config(pool, CascadeAnalyzerConfig::default())
     }
@@ -193,6 +194,7 @@ impl StreamingCascadeAnalyzer {
     }
 
     /// Create new analyzer with custom configuration
+    #[must_use]
     pub fn with_config(pool: PgPool, config: CascadeAnalyzerConfig) -> Self {
         Self { pool, config }
     }
@@ -434,14 +436,14 @@ impl StreamingCascadeAnalyzer {
         // TODO: In production, implement proper Tarjan's algorithm (analysis/cascade_analyzer.md)
         let max_cycle_depth = self.config.max_depth.max(1);
         let query = format!(
-            r#"
+            r"
             WITH RECURSIVE cycle_check AS (
                 SELECT 
                     id,
                     parent_ids,
                     ARRAY[id] as path,
                     FALSE as has_cycle
-                FROM {0}
+                FROM {quoted_table}
                 WHERE depth = 0
                 
                 UNION ALL
@@ -451,17 +453,16 @@ impl StreamingCascadeAnalyzer {
                     t.parent_ids,
                     cc.path || t.id,
                     t.id = ANY(cc.path) as has_cycle
-                FROM {0} t
+                FROM {quoted_table} t
                 JOIN cycle_check cc ON t.id = ANY(cc.parent_ids)
                 WHERE NOT cc.has_cycle
-                AND array_length(cc.path, 1) < {1}
+                AND array_length(cc.path, 1) < {max_cycle_depth}
             )
             SELECT (path)::uuid[] AS path
             FROM cycle_check
             WHERE has_cycle
             LIMIT 10
-            "#,
-            quoted_table, max_cycle_depth
+            "
         );
 
         let rows = sqlx::query_as::<_, (Vec<Uuid>,)>(&query)
@@ -517,7 +518,7 @@ impl StreamingCascadeAnalyzer {
         // Query dependencies - need to use raw query due to ULID type limitations
         use sqlx::Row;
         let rows = sqlx::query(
-            r#"
+            r"
             SELECT 
                 id as event_id,
                 CASE
@@ -526,7 +527,7 @@ impl StreamingCascadeAnalyzer {
                 END as source_event_ids
             FROM core.events
             WHERE id = ANY($1::ulid[])
-            "#,
+            ",
         )
         .bind(event_ids.to_uuid_vec())
         .fetch_all(&self.pool)
@@ -607,7 +608,7 @@ mod tests {
     use super::*;
     use serde_json::json;
     use sinex_primitives::temporal::now;
-    use xtask::sandbox::{sinex_test, TestContext};
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     fn session_id_validation_enforces_length() -> TestResult<()> {
@@ -649,7 +650,7 @@ mod tests {
         let cycle_links = vec![(a, vec![b]), (b, vec![c]), (c, vec![a])];
 
         for (event_id, parents) in &cycle_links {
-            let parents_uuid: Vec<Uuid> = parents.iter().map(|id| id.to_uuid()).collect();
+            let parents_uuid: Vec<Uuid> = parents.iter().map(sinex_db::Ulid::to_uuid).collect();
             sqlx::query(
                 "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids) \
                  VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid[]::ulid[])",

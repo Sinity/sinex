@@ -1,4 +1,4 @@
-//! ValidateRecord derive macro for compile-time schema validation
+//! `ValidateRecord` derive macro for compile-time schema validation
 //!
 //! This macro validates that a Record struct matches its corresponding schema definition.
 

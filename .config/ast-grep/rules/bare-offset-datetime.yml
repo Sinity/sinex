@@ -1,0 +1,18 @@
+id: bare-offset-datetime
+message: "Use Timestamp wrapper instead of bare OffsetDateTime"
+severity: hint
+language: rust
+rule:
+  pattern: OffsetDateTime::now_utc()
+# NO AUTO-FIX: Context-dependent transformation
+# - Where context expects Timestamp → Timestamp::now()
+# - Where context expects OffsetDateTime → keep OffsetDateTime::now_utc()
+# Manual review required for each case
+ignores:
+  # Exclude core infrastructure that legitimately uses OffsetDateTime
+  - "crate/lib/sinex-schema/src/primitives/timestamp.rs"
+  - "crate/lib/sinex-primitives/src/temporal.rs"
+note: |
+  The codebase uses Timestamp as the canonical time wrapper.
+  Consider using Timestamp::now() instead of OffsetDateTime::now_utc()
+  where the context expects a Timestamp.

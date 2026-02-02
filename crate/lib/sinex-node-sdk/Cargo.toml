@@ -15,6 +15,7 @@ which = "6.0"
 urlencoding = "2.1"
 libc = "0.2"
 semver = { version = "1.0", features = ["serde"] }
+shadow-rs = "0.35"
 
 # Sinex crates
 sinex-primitives = { path = "../sinex-primitives", features = ["sqlx", "nats"] }
@@ -96,6 +97,9 @@ workspace = true
 path = "../sinex-macros"
 optional = true
 
+[build-dependencies]
+shadow-rs = "0.35"
+
 [build-dependencies.time]
 workspace = true
 
@@ -104,3 +108,6 @@ tempfile = "3.13"
 proptest = "1"
 xtask = { path = "../../../xtask", default-features = false, features = ["sandbox"] }
 sinex-primitives = { path = "../sinex-primitives", features = ["testing"] }
+
+[lints]
+workspace = true

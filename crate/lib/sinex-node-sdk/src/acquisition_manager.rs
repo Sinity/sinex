@@ -5,7 +5,7 @@
 //! with rotation, hashing, and NATS publishing.
 
 use crate::stream_processor::NodeHandles;
-use crate::{SinexError, NodeResult};
+use crate::{NodeResult, SinexError};
 use async_nats::{jetstream, Client as NatsClient};
 use serde::Serialize;
 use serde_json::{json, Value as JsonValue};
@@ -182,7 +182,10 @@ impl AcquisitionManager {
             ..Default::default()
         })
         .await
-        .map_err(|e| SinexError::messaging(e.to_string()))?;
+        .map_err(|e| {
+            SinexError::messaging("failed to create SOURCE_MATERIAL_BEGIN stream")
+                .with_std_error(&e)
+        })?;
 
         js.get_or_create_stream(jetstream::stream::Config {
             name: env.nats_stream_name_with_namespace(namespace, "SOURCE_MATERIAL_SLICES"),
@@ -193,7 +196,10 @@ impl AcquisitionManager {
             ..Default::default()
         })
         .await
-        .map_err(|e| SinexError::messaging(e.to_string()))?;
+        .map_err(|e| {
+            SinexError::messaging("failed to create SOURCE_MATERIAL_SLICES stream")
+                .with_std_error(&e)
+        })?;
 
         js.get_or_create_stream(jetstream::stream::Config {
             name: env.nats_stream_name_with_namespace(namespace, "SOURCE_MATERIAL_END"),
@@ -202,7 +208,9 @@ impl AcquisitionManager {
             ..Default::default()
         })
         .await
-        .map_err(|e| SinexError::messaging(e.to_string()))?;
+        .map_err(|e| {
+            SinexError::messaging("failed to create SOURCE_MATERIAL_END stream").with_std_error(&e)
+        })?;
 
         Ok(())
     }
@@ -315,14 +323,16 @@ impl AcquisitionManager {
         source_identifier: &str,
         metadata: JsonValue,
     ) -> NodeResult<()> {
+        let started_at = now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .map_err(|e| SinexError::messaging(format!("Failed to format timestamp: {e}")))?;
+
         let msg = MaterialBeginMessage {
             material_id: material_id.to_string(),
             material_kind: self.source_type.clone(),
             source_identifier: source_identifier.to_string(),
             metadata,
-            started_at: now_utc()
-                .format(&time::format_description::well_known::Rfc3339)
-                .unwrap(),
+            started_at,
         };
 
         let subject = self
@@ -333,10 +343,10 @@ impl AcquisitionManager {
         let js = async_nats::jetstream::new(self.nats_client.clone());
         js.publish(subject, payload.into())
             .await
-            .map_err(|e| SinexError::messaging(format!("Failed to publish material begin: {}", e)))?
+            .map_err(|e| SinexError::messaging(format!("Failed to publish material begin: {e}")))?
             .await
             .map_err(|e| {
-                SinexError::messaging(format!("Failed to publish material begin (ack): {}", e))
+                SinexError::messaging(format!("Failed to publish material begin (ack): {e}"))
             })?;
 
         debug!(material_id = %material_id, "Published material begin");
@@ -408,10 +418,10 @@ impl AcquisitionManager {
         let js = async_nats::jetstream::new(self.nats_client.clone());
         js.publish_with_headers(subject, headers, data.to_vec().into())
             .await
-            .map_err(|e| SinexError::messaging(format!("Failed to publish material slice: {}", e)))?
+            .map_err(|e| SinexError::messaging(format!("Failed to publish material slice: {e}")))?
             .await
             .map_err(|e| {
-                SinexError::messaging(format!("Failed to publish material slice (ack): {}", e))
+                SinexError::messaging(format!("Failed to publish material slice (ack): {e}"))
             })?;
 
         debug!(
@@ -472,7 +482,7 @@ impl AcquisitionManager {
 
         // Clean up temp file
         if let Err(e) = tokio::fs::remove_file(&handle.temp_path).await {
-            warn!("Failed to remove temp file: {}", e);
+            warn!("Failed to remove temp file: {e}");
         }
 
         info!(
@@ -495,11 +505,13 @@ impl AcquisitionManager {
         content_hash: &str,
         metadata: JsonValue,
     ) -> NodeResult<()> {
+        let ended_at = now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .map_err(|e| SinexError::messaging(format!("Failed to format timestamp: {e}")))?;
+
         let msg = MaterialEndMessage {
             material_id: material_id.to_string(),
-            ended_at: now_utc()
-                .format(&time::format_description::well_known::Rfc3339)
-                .unwrap(),
+            ended_at,
             content_hash: content_hash.to_string(),
             total_slices,
             total_size_bytes: total_bytes,
@@ -514,10 +526,10 @@ impl AcquisitionManager {
         let js = async_nats::jetstream::new(self.nats_client.clone());
         js.publish(subject, payload.into())
             .await
-            .map_err(|e| SinexError::messaging(format!("Failed to publish material end: {}", e)))?
+            .map_err(|e| SinexError::messaging(format!("Failed to publish material end: {e}")))?
             .await
             .map_err(|e| {
-                SinexError::messaging(format!("Failed to publish material end (ack): {}", e))
+                SinexError::messaging(format!("Failed to publish material end (ack): {e}"))
             })?;
 
         debug!(
@@ -531,10 +543,7 @@ impl AcquisitionManager {
 
     /// Check if rotation is needed (ported from MaterialRotationManager)
     pub async fn should_rotate(&self, handle: &SourceMaterialHandle) -> bool {
-        let age_seconds = (now_utc()
-            - handle.started_at)
-            .whole_seconds()
-            .max(0) as u64;
+        let age_seconds = (now_utc() - handle.started_at).whole_seconds().max(0) as u64;
 
         handle.bytes_written >= self.rotation_policy.max_bytes.as_u64() as i64
             || age_seconds >= self.rotation_policy.max_age_seconds.as_secs()
@@ -566,10 +575,10 @@ impl<'a> MaterialBuilder<'a> {
         if !self.metadata.is_object() {
             self.metadata = json!({});
         }
-        self.metadata
-            .as_object_mut()
-            .unwrap()
-            .insert(key.to_string(), value);
+        // SAFETY: We checked/initialized is_object() above, so this cannot fail
+        if let Some(obj) = self.metadata.as_object_mut() {
+            obj.insert(key.to_string(), value);
+        }
         self
     }
 
@@ -592,7 +601,7 @@ impl<'a> MaterialBuilder<'a> {
             .write(true)
             .open(&temp_path)
             .await
-            .map_err(|e| SinexError::io(e))?;
+            .map_err(SinexError::io)?;
 
         info!(
             material_id = %material_id,
@@ -639,18 +648,25 @@ impl AppendStreamAcquirer {
             self.current_handle = Some(self.manager.begin_material(source_identifier).await?);
         }
 
-        let handle = self.current_handle.as_mut().unwrap();
+        let handle = self
+            .current_handle
+            .as_mut()
+            .ok_or_else(|| SinexError::invalid_state("current_handle should be initialized"))?;
 
         // Check rotation
         if self.manager.should_rotate(handle).await {
             info!("Rotating material due to size/age limits");
-            let old_handle = self.current_handle.take().unwrap();
+            let old_handle = self.current_handle.take().ok_or_else(|| {
+                SinexError::invalid_state("current_handle should exist for rotation")
+            })?;
             self.manager.finalize(old_handle, "rotation").await?;
             self.current_handle = Some(self.manager.begin_material(source_identifier).await?);
         }
 
         // Append to current material
-        let handle = self.current_handle.as_mut().unwrap();
+        let handle = self.current_handle.as_mut().ok_or_else(|| {
+            SinexError::invalid_state("current_handle should exist after rotation")
+        })?;
         self.manager.append_slice(handle, data).await?;
 
         Ok(())

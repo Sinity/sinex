@@ -5,11 +5,52 @@ use serde_json::json;
 use sinex_db::query_helpers::ulid_to_uuid;
 use sinex_ingestd::validator::EventValidator;
 use sinex_ingestd::{JetStreamConsumer, JetStreamTopology};
-use sinex_primitives::Ulid;
+use sinex_primitives::{temporal, Ulid};
 use tokio::sync::RwLock;
 use tokio::time::Duration;
+use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
-use xtask::sandbox::{sinex_test, EventOverrides, TestContext, TestNodePublisher, TestResult};
+
+/// Helper to publish a test event directly to `JetStream`.
+async fn publish_event(
+    nats_client: &async_nats::Client,
+    namespace: &str,
+    source: &str,
+    event_type: &str,
+    payload: serde_json::Value,
+    overrides: EventOverrides,
+) -> TestResult<Ulid> {
+    let env = sinex_primitives::environment();
+    let event_id = overrides.id.unwrap_or_default();
+    let ts_orig = overrides
+        .ts_orig
+        .unwrap_or_else(|| temporal::now().format_rfc3339());
+
+    let event = json!({
+        "id": event_id.to_string(),
+        "source": source,
+        "event_type": event_type,
+        "payload": payload,
+        "ts_orig": ts_orig,
+        "host": "test-host",
+        "ingestor_version": "test",
+    });
+
+    let subject = env.nats_subject_with_namespace(
+        Some(namespace),
+        &format!(
+            "events.raw.{}.{}",
+            source.replace('.', "_"),
+            event_type.replace('.', "_")
+        ),
+    );
+    nats_client
+        .publish(subject, serde_json::to_vec(&event)?.into())
+        .await?;
+    nats_client.flush().await?;
+
+    Ok(event_id)
+}
 
 async fn spawn_consumer(
     ctx: &TestContext,
@@ -57,16 +98,20 @@ async fn ingestion_handles_burst_under_latency_budget(ctx: TestContext) -> TestR
     let ctx = ctx.with_nats().shared().await?;
     let (consumer_handle, namespace) = spawn_consumer(&ctx, "latency").await?;
     let nats_client = ctx.nats_client();
-    let publisher =
-        TestNodePublisher::with_namespace(nats_client, "latency-suite", Some(namespace.clone()));
 
     let total_events = 120;
     let start = Instant::now();
     for idx in 0..total_events {
         let event_type = format!("latency.event.{idx}");
-        publisher
-            .publish(event_type.as_str(), json!({"sequence": idx}))
-            .await?;
+        publish_event(
+            &nats_client,
+            &namespace,
+            "latency-suite",
+            &event_type,
+            json!({"sequence": idx}),
+            EventOverrides::default(),
+        )
+        .await?;
     }
 
     WaitHelpers::wait_for_condition(
@@ -78,7 +123,7 @@ async fn ingestion_handles_burst_under_latency_budget(ctx: TestContext) -> TestR
                 )
                 .fetch_one(&pool)
                 .await?;
-                Ok(stored.unwrap_or(0) >= total_events)
+                Ok::<bool, color_eyre::eyre::Error>(stored.unwrap_or(0) >= total_events)
             }
         },
         Timeouts::MEDIUM,
@@ -88,8 +133,7 @@ async fn ingestion_handles_burst_under_latency_budget(ctx: TestContext) -> TestR
     let elapsed = start.elapsed();
     assert!(
         elapsed < Duration::from_secs(25),
-        "burst ingestion should complete well under 25s (got {:?})",
-        elapsed
+        "burst ingestion should complete well under 25s (got {elapsed:?})"
     );
 
     consumer_handle.abort();
@@ -102,21 +146,21 @@ async fn replaying_events_after_restart_does_not_duplicate(ctx: TestContext) -> 
     let ctx = ctx.with_nats().shared().await?;
     let (consumer_handle, namespace) = spawn_consumer(&ctx, "restart").await?;
     let nats_client = ctx.nats_client();
-    let publisher =
-        TestNodePublisher::with_namespace(nats_client, "restart-suite", Some(namespace.clone()));
 
     let ids: Vec<Ulid> = (0..10).map(|_| Ulid::new()).collect();
     for (idx, id) in ids.iter().enumerate() {
-        publisher
-            .publish_with_overrides(
-                &format!("restart.event.{idx}"),
-                json!({"sequence": idx}),
-                EventOverrides {
-                    id: Some(*id),
-                    ..Default::default()
-                },
-            )
-            .await?;
+        publish_event(
+            &nats_client,
+            &namespace,
+            "restart-suite",
+            &format!("restart.event.{idx}"),
+            json!({"sequence": idx}),
+            EventOverrides {
+                id: Some(*id),
+                ..Default::default()
+            },
+        )
+        .await?;
     }
 
     WaitHelpers::wait_for_condition(
@@ -130,7 +174,7 @@ async fn replaying_events_after_restart_does_not_duplicate(ctx: TestContext) -> 
                 .fetch_one(&pool)
                 .await?;
 
-                Ok(stored.unwrap_or(0) >= expected)
+                Ok::<bool, color_eyre::eyre::Error>(stored.unwrap_or(0) >= expected)
             }
         },
         Timeouts::SHORT,
@@ -143,19 +187,19 @@ async fn replaying_events_after_restart_does_not_duplicate(ctx: TestContext) -> 
     // Restart the consumer and replay the same events to ensure no duplicates.
     let (consumer_handle, namespace) = spawn_consumer(&ctx, "restart-2").await?;
     let nats_client = ctx.nats_client();
-    let publisher =
-        TestNodePublisher::with_namespace(nats_client, "restart-suite", Some(namespace.clone()));
     for (idx, id) in ids.iter().enumerate() {
-        publisher
-            .publish_with_overrides(
-                &format!("restart.event.{idx}"),
-                json!({"sequence": idx, "phase": "replay"}),
-                EventOverrides {
-                    id: Some(*id),
-                    ..Default::default()
-                },
-            )
-            .await?;
+        publish_event(
+            &nats_client,
+            &namespace,
+            "restart-suite",
+            &format!("restart.event.{idx}"),
+            json!({"sequence": idx, "phase": "replay"}),
+            EventOverrides {
+                id: Some(*id),
+                ..Default::default()
+            },
+        )
+        .await?;
     }
 
     // Wait for the restarted consumer to read the re-sent events.
@@ -169,7 +213,7 @@ async fn replaying_events_after_restart_does_not_duplicate(ctx: TestContext) -> 
                 )
                 .fetch_one(&pool)
                 .await?;
-                Ok(stored.unwrap_or(0) >= expected)
+                Ok::<bool, color_eyre::eyre::Error>(stored.unwrap_or(0) >= expected)
             }
         },
         Timeouts::SHORT,
@@ -186,7 +230,7 @@ async fn replaying_events_after_restart_does_not_duplicate(ctx: TestContext) -> 
                 )
                 .fetch_one(&pool)
                 .await?;
-                Ok(stored.unwrap_or(0) >= expected)
+                Ok::<bool, color_eyre::eyre::Error>(stored.unwrap_or(0) >= expected)
             }
         },
         Timeouts::SHORT,
@@ -202,8 +246,7 @@ async fn replaying_events_after_restart_does_not_duplicate(ctx: TestContext) -> 
         assert_eq!(
             occurrences.unwrap_or(0),
             1,
-            "event {} should remain unique after replay",
-            id
+            "event {id} should remain unique after replay"
         );
     }
 

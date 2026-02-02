@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 // content.store_blob
 // ─────────────────────────────────────────────────────────────
 
-/// Request: content.store_blob
+/// Request: `content.store_blob`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoreBlobRequest {
     /// Base64-encoded content
@@ -22,7 +22,7 @@ pub struct StoreBlobRequest {
     pub source: Option<String>,
 }
 
-/// Response: content.store_blob
+/// Response: `content.store_blob`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoreBlobResponse {
     /// Annex key for retrieval
@@ -37,14 +37,14 @@ pub struct StoreBlobResponse {
 // content.retrieve_blob
 // ─────────────────────────────────────────────────────────────
 
-/// Request: content.retrieve_blob
+/// Request: `content.retrieve_blob`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RetrieveBlobRequest {
     /// Annex key
     pub key: String,
 }
 
-/// Response: content.retrieve_blob
+/// Response: `content.retrieve_blob`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RetrieveBlobResponse {
     /// Base64-encoded content

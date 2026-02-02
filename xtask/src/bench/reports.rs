@@ -4,7 +4,7 @@ use super::{
 use anyhow::{Context, Result};
 use std::path::Path;
 
-pub fn generate_markdown(
+pub(super) fn generate_markdown(
     config: &BenchConfig,
     env: &Environment,
     results: &[ScenarioResult],
@@ -27,12 +27,12 @@ pub fn generate_markdown(
         config
             .threads
             .iter()
-            .map(|t| t.to_string())
+            .map(std::string::ToString::to_string)
             .collect::<Vec<_>>()
             .join(", ")
     ));
     md.push_str(&format!("| Git SHA | {} |\n", env.git_sha_short));
-    md.push_str("\n");
+    md.push('\n');
 
     md.push_str("## Environment\n\n");
     md.push_str("```\n");
@@ -103,7 +103,7 @@ pub fn generate_markdown(
         }
     }
 
-    md.push_str("\n");
+    md.push('\n');
 
     std::fs::write(output_path, md).with_context(|| {
         format!(
@@ -115,7 +115,7 @@ pub fn generate_markdown(
     Ok(())
 }
 
-pub fn generate_html(
+pub(super) fn generate_html(
     config: &BenchConfig,
     env: &Environment,
     results: &[ScenarioResult],
@@ -123,9 +123,7 @@ pub fn generate_html(
     output_path: &Path,
 ) -> Result<()> {
     let chart_data = generate_chart_data(results);
-    let history_section = history
-        .map(|report| build_history_section(report))
-        .unwrap_or_else(|| "".to_string());
+    let history_section = history.map(build_history_section).unwrap_or_default();
 
     let html = format!(
         r#"<!DOCTYPE html>
@@ -376,7 +374,9 @@ fn build_history_section(report: &HistoryReport) -> String {
         ));
         html.push_str("</div>");
 
-        if !scenario.trend.is_empty() {
+        if scenario.trend.is_empty() {
+            html.push_str("<p><em>No trend data available.</em></p>");
+        } else {
             html.push_str("<table><thead><tr><th>Timestamp</th><th>Median (ms)</th><th>Mean (ms)</th><th>Git SHA</th></tr></thead><tbody>");
             for point in &scenario.trend {
                 html.push_str(&format!(
@@ -385,8 +385,6 @@ fn build_history_section(report: &HistoryReport) -> String {
                 ));
             }
             html.push_str("</tbody></table>");
-        } else {
-            html.push_str("<p><em>No trend data available.</em></p>");
         }
     }
 

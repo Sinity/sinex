@@ -1,6 +1,7 @@
 use sinex_ingestd::service::try_acquire_migration_lock;
+use sinex_primitives::error::SinexError;
+use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::WaitHelpers;
-use xtask::sandbox::{sinex_test, TestContext};
 
 #[sinex_test]
 async fn migration_lock_blocks_second_holder(ctx: TestContext) -> TestResult<()> {
@@ -27,7 +28,7 @@ async fn migration_lock_blocks_second_holder(ctx: TestContext) -> TestResult<()>
                     Err(err) if err.to_string().contains("already applying migrations") => {
                         Ok::<bool, SinexError>(false)
                     }
-                    Err(err) => Err(err.into()),
+                    Err(err) => Err(err),
                 }
             }
         },

@@ -1,11 +1,9 @@
 //! Optional Database Dependency Test
 //!
-//! Verifies that nodes can run without DATABASE_URL (ingestors) while
+//! Verifies that nodes can run without `DATABASE_URL` (ingestors) while
 //! automata that need it get clear error messages. Checkpoints always use NATS KV.
 
-use sinex_node_sdk::db::models::Event;
-use sinex_node_sdk::types::buffers::DEFAULT_EVENT_CHANNEL_SIZE;
-use sinex_node_sdk::JsonValue;
+use sinex_db::models::Event;
 use sinex_node_sdk::{
     checkpoint::CheckpointManager,
     nats_publisher::NatsPublisher,
@@ -15,10 +13,13 @@ use sinex_node_sdk::{
     },
     EventTransport, NodeResult,
 };
+// Channel size constant - not available in sinex_primitives::constants, use local
+const DEFAULT_EVENT_CHANNEL_SIZE: usize = 1000;
+use sinex_primitives::{error::SinexError, JsonValue};
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use xtask::sandbox::sinex_serial_test;
 use xtask::sandbox::timing::{WaitHelpers, DEFAULT_WAIT_SECS};
-use xtask::sandbox::{sinex_serial_test, TestContext};
 
 /// Minimal test processor that doesn't require database access
 struct EdgeTestProcessor {
@@ -93,7 +94,7 @@ impl Node for EdgeTestProcessor {
 
 #[sinex_serial_test(timeout = 30)]
 async fn test_ingestor_without_database(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
 
     // No DATABASE_URL - ingestors don't need it
     std::env::remove_var("DATABASE_URL");
@@ -127,7 +128,7 @@ async fn test_ingestor_without_database(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_serial_test(timeout = 30)]
 async fn test_automaton_requires_db_pool(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
 
     let (event_sender, _event_receiver) =
         mpsc::channel::<Event<JsonValue>>(DEFAULT_EVENT_CHANNEL_SIZE);
@@ -168,7 +169,7 @@ async fn test_automaton_requires_db_pool(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_serial_test(timeout = 30)]
 async fn test_schema_broadcast_cache_updates(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
 
     // No DATABASE_URL needed - schema cache works without it
     std::env::remove_var("DATABASE_URL");
@@ -181,7 +182,7 @@ async fn test_schema_broadcast_cache_updates(ctx: TestContext) -> TestResult<()>
     let js = async_nats::jetstream::new(nats_client.clone());
 
     // Create the schema KV bucket that the runner expects
-    let env = sinex_node_sdk::environment();
+    let env = sinex_primitives::environment::environment();
     let schema_bucket = format!("KV_{}", env.nats_kv_bucket_name("sinex_schemas"));
     js.create_key_value(async_nats::jetstream::kv::Config {
         bucket: schema_bucket,
@@ -209,7 +210,8 @@ async fn test_schema_broadcast_cache_updates(ctx: TestContext) -> TestResult<()>
         .schema_cache()
         .expect("schema cache should be initialized automatically");
 
-    let subject = sinex_node_sdk::environment().nats_subject("system.schemas.active");
+    let subject =
+        sinex_primitives::environment::environment().nats_subject("system.schemas.active");
     let entries = vec![SchemaBroadcastEntry {
         name: "schema.test".to_string(),
         version: "1.0.0".to_string(),
@@ -223,7 +225,7 @@ async fn test_schema_broadcast_cache_updates(ctx: TestContext) -> TestResult<()>
     WaitHelpers::wait_for_condition(
         || {
             let cache = cache.clone();
-            async move { Ok(!cache.get().await.is_empty()) }
+            async move { Ok::<bool, SinexError>(!cache.get().await.is_empty()) }
         },
         DEFAULT_WAIT_SECS,
     )

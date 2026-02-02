@@ -12,7 +12,7 @@
 //! - **Unified query interface**: One query language for all data
 //! - **Local-first**: No external dependencies for observability
 //! - **Privacy-preserving**: Telemetry stays on the user's machine
-//! - **Time-series native**: TimescaleDB + continuous aggregates
+//! - **Time-series native**: `TimescaleDB` + continuous aggregates
 //!
 //! # Event Types
 //!
@@ -20,7 +20,7 @@
 //! - `sinex.metric.gauge` - Point-in-time values (connections, queue depth)
 //! - `sinex.metric.histogram` - Distribution samples (latencies)
 //! - `sinex.health.status` - Component health state changes
-//! - `sinex.stream.stats` - NATS JetStream statistics
+//! - `sinex.stream.stats` - NATS `JetStream` statistics
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -33,7 +33,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "sinex", event_type = "metric.counter")]
 pub struct MetricCounterPayload {
-    /// Metric name (e.g., "gateway.requests", "ingestd.events_processed")
+    /// Metric name (e.g., "gateway.requests", "`ingestd.events_processed`")
     pub name: String,
     /// Current counter value
     pub value: u64,
@@ -53,7 +53,7 @@ pub struct MetricCounterPayload {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "sinex", event_type = "metric.gauge")]
 pub struct MetricGaugePayload {
-    /// Metric name (e.g., "stream.fill_pct", "pool.active_connections")
+    /// Metric name (e.g., "`stream.fill_pct`", "`pool.active_connections`")
     pub name: String,
     /// Current gauge value
     pub value: f64,
@@ -70,7 +70,7 @@ pub struct MetricGaugePayload {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "sinex", event_type = "metric.histogram")]
 pub struct MetricHistogramPayload {
-    /// Metric name (e.g., "gateway.request_latency_ms")
+    /// Metric name (e.g., "`gateway.request_latency_ms`")
     pub name: String,
     /// Sample count in this window
     pub count: u64,
@@ -96,7 +96,7 @@ pub struct MetricHistogramPayload {
     pub component: String,
 }
 
-/// NATS JetStream stream statistics
+/// NATS `JetStream` stream statistics
 ///
 /// Addresses Issue 3: Stream Capacity Monitoring
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]

@@ -116,14 +116,17 @@ impl ErrorDetails {
         self
     }
 
+    #[must_use]
     pub fn message(&self) -> &str {
         &self.message
     }
 
+    #[must_use]
     pub fn context_map(&self) -> &IndexMap<String, String> {
         &self.context
     }
 
+    #[must_use]
     pub fn sources(&self) -> &[String] {
         &self.sources
     }
@@ -315,7 +318,13 @@ impl SinexError {
     }
 
     pub fn with_context(mut self, key: impl Into<String>, value: impl ToString) -> Self {
-        use SinexError::*;
+        use SinexError::{
+            AlreadyExists, Automaton, BlobStorage, Cancelled, ChannelReceive, ChannelSend,
+            Checkpoint, Configuration, Coordination, Database, DbPersistenceFailed, InvalidState,
+            Io, Kv, Lifecycle, MaxRetriesExceeded, Nats, NatsAckFailed, NatsPublish, NatsSubscribe,
+            Network, NotFound, Parse, PermissionDenied, Processing, ResourceExhausted,
+            Serialization, Service, Timeout, Unknown, Validation,
+        };
         let details = match &mut self {
             Database(d)
             | DbPersistenceFailed(d)
@@ -354,7 +363,13 @@ impl SinexError {
     }
 
     pub fn with_source(mut self, source: impl ToString) -> Self {
-        use SinexError::*;
+        use SinexError::{
+            AlreadyExists, Automaton, BlobStorage, Cancelled, ChannelReceive, ChannelSend,
+            Checkpoint, Configuration, Coordination, Database, DbPersistenceFailed, InvalidState,
+            Io, Kv, Lifecycle, MaxRetriesExceeded, Nats, NatsAckFailed, NatsPublish, NatsSubscribe,
+            Network, NotFound, Parse, PermissionDenied, Processing, ResourceExhausted,
+            Serialization, Service, Timeout, Unknown, Validation,
+        };
         let details = match &mut self {
             Database(d)
             | DbPersistenceFailed(d)
@@ -415,16 +430,24 @@ impl SinexError {
         self.with_context(key, id.to_string())
     }
 
+    #[must_use]
     pub fn with_count(self, count: usize) -> Self {
         self.with_context("count", count)
     }
 
+    #[must_use]
     pub fn with_duration(self, duration: std::time::Duration) -> Self {
         self.with_context("duration_ms", duration.as_millis())
     }
 
     fn details(&self) -> &ErrorDetails {
-        use SinexError::*;
+        use SinexError::{
+            AlreadyExists, Automaton, BlobStorage, Cancelled, ChannelReceive, ChannelSend,
+            Checkpoint, Configuration, Coordination, Database, DbPersistenceFailed, InvalidState,
+            Io, Kv, Lifecycle, MaxRetriesExceeded, Nats, NatsAckFailed, NatsPublish, NatsSubscribe,
+            Network, NotFound, Parse, PermissionDenied, Processing, ResourceExhausted,
+            Serialization, Service, Timeout, Unknown, Validation,
+        };
         match self {
             Database(d)
             | DbPersistenceFailed(d)
@@ -460,20 +483,30 @@ impl SinexError {
         }
     }
 
+    #[must_use]
     pub fn message(&self) -> &str {
         self.details().message()
     }
 
+    #[must_use]
     pub fn context_map(&self) -> &IndexMap<String, String> {
         self.details().context_map()
     }
 
+    #[must_use]
     pub fn sources(&self) -> &[String] {
         self.details().sources()
     }
 
+    #[must_use]
     pub fn variant_name(&self) -> &'static str {
-        use SinexError::*;
+        use SinexError::{
+            AlreadyExists, Automaton, BlobStorage, Cancelled, ChannelReceive, ChannelSend,
+            Checkpoint, Configuration, Coordination, Database, DbPersistenceFailed, InvalidState,
+            Io, Kv, Lifecycle, MaxRetriesExceeded, Nats, NatsAckFailed, NatsPublish, NatsSubscribe,
+            Network, NotFound, Parse, PermissionDenied, Processing, ResourceExhausted,
+            Serialization, Service, Timeout, Unknown, Validation,
+        };
         match self {
             Database(_) => "Database",
             DbPersistenceFailed(_) => "DbPersistenceFailed",
@@ -512,32 +545,38 @@ impl SinexError {
     }
 
     // Helper methods for error categorization (used in tests)
+    #[must_use]
     pub fn is_retryable(&self) -> bool {
-        use SinexError::*;
+        use SinexError::{ChannelReceive, ChannelSend, Network, Timeout, Unknown};
         matches!(
             self,
             Network(_) | Timeout(_) | ChannelSend(_) | ChannelReceive(_) | Unknown(_)
         )
     }
 
+    #[must_use]
     pub fn is_client_error(&self) -> bool {
-        use SinexError::*;
+        use SinexError::{AlreadyExists, NotFound, PermissionDenied, Validation};
         matches!(
             self,
             Validation(_) | NotFound(_) | AlreadyExists(_) | PermissionDenied(_)
         )
     }
 
+    #[must_use]
     pub fn is_permanent(&self) -> bool {
-        use SinexError::*;
+        use SinexError::{Configuration, MaxRetriesExceeded, PermissionDenied};
         matches!(
             self,
             MaxRetriesExceeded(_) | PermissionDenied(_) | Configuration(_)
         )
     }
 
+    #[must_use]
     pub fn status_code(&self) -> u16 {
-        use SinexError::*;
+        use SinexError::{
+            AlreadyExists, NotFound, PermissionDenied, ResourceExhausted, Timeout, Validation,
+        };
         match self {
             Validation(_) => 400,
             NotFound(_) => 404,
@@ -575,7 +614,7 @@ where
     T: std::clone::Clone + std::fmt::Debug + std::fmt::Display + std::cmp::PartialEq,
 {
     fn from(e: async_nats::error::Error<T>) -> Self {
-        SinexError::nats(format!("{}", e))
+        SinexError::nats(format!("{e}"))
     }
 }
 

@@ -1,7 +1,7 @@
 //! Comprehensive tests for database schema definitions
 //!
 //! These tests validate that all schema definitions are correct and can be
-//! executed against a real PostgreSQL database with the required extensions.
+//! executed against a real `PostgreSQL` database with the required extensions.
 
 use sea_orm_migration::prelude::*;
 use sinex_primitives::DynamicPayload;
@@ -141,7 +141,7 @@ mod table_creation_tests {
             sqlx::query(&sql)
                 .execute(pool)
                 .await
-                .expect(&format!("Should create table {}", table_name));
+                .unwrap_or_else(|_| panic!("Should create table {table_name}"));
         }
 
         // Test that we can select into Record structs
@@ -156,7 +156,7 @@ mod table_creation_tests {
             "test-event",
             "test-host",
             serde_json::json!({"test": "data"}),
-            crate::temporal::now()
+            *sinex_primitives::temporal::now()
         ).execute(pool).await.unwrap();
 
         // Basic roundtrip query validates table compatibility
@@ -206,7 +206,7 @@ mod constraint_tests {
             "test-event",
             "test-host",
             serde_json::json!({"test": "data"}),
-            crate::temporal::now(),
+            *sinex_primitives::temporal::now(),
             material_id.as_uuid()
         ).execute(pool).await.unwrap();
 
@@ -219,7 +219,7 @@ mod constraint_tests {
             "test-event",
             "test-host",
             serde_json::json!({"test": "data"}),
-            crate::temporal::now(),
+            *sinex_primitives::temporal::now(),
             &[event_id.as_uuid()][..]
         ).execute(pool).await.unwrap();
 
@@ -232,7 +232,7 @@ mod constraint_tests {
             "test-event",
             "test-host",
             serde_json::json!({"test": "data"}),
-            crate::temporal::now(),
+            *sinex_primitives::temporal::now(),
             material_id.as_uuid(),
             &[event_id.as_uuid()][..]
         ).execute(pool).await;
@@ -251,7 +251,7 @@ mod constraint_tests {
             "test-event",
             "test-host",
             serde_json::json!({"test": "data"}),
-            crate::temporal::now()
+            *sinex_primitives::temporal::now()
         ).execute(pool).await;
 
         assert!(result.is_err(), "Should reject events with no provenance");
@@ -279,7 +279,7 @@ mod constraint_tests {
             "test-event",
             "test-host",
             serde_json::json!({"test": "data"}),
-            crate::temporal::now(),
+            *sinex_primitives::temporal::now(),
             material_id.as_uuid()
         ).execute(pool).await;
 
@@ -297,7 +297,7 @@ mod constraint_tests {
             "", // Empty event_type - should fail
             "test-host",
             serde_json::json!({"test": "data"}),
-            crate::temporal::now(),
+            *sinex_primitives::temporal::now(),
             material_id.as_uuid()
         ).execute(pool).await;
 

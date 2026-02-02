@@ -1,0 +1,9 @@
+id: todo-macro
+message: "TODO macro found in production code"
+severity: error
+language: rust
+rule:
+  pattern: todo!($$$ARGS)
+note: |
+  todo!() macros should not be in production code.
+  Implement the functionality or remove the code path.

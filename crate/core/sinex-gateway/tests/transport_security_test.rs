@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use color_eyre::eyre::{eyre, Result};
-use once_cell::sync::Lazy;
 use rcgen::{
     BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose,
     SanType,
@@ -14,9 +13,9 @@ use serde_json::json;
 use sinex_gateway::{rpc_server, ServiceContainer};
 use tempfile::TempDir;
 use tokio::time::{sleep, Duration, Instant};
-use xtask::sandbox::{sinex_test, timing_utils::Timeouts, TestContext};
+use xtask::sandbox::{sinex_test, timing::Timeouts};
 
-static ENV_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+static ENV_LOCK: std::sync::LazyLock<Mutex<()>> = std::sync::LazyLock::new(|| Mutex::new(()));
 
 struct EnvVarGuard {
     key: &'static str,
@@ -176,7 +175,7 @@ async fn gateway_tls_accepts_handshake(ctx: TestContext) -> Result<()> {
     let server_handle = tokio::spawn({
         let services = services.clone();
         async move {
-            let _ = rpc_server::run(Some(tcp_listen.as_str()), services, shutdown_rx).await;
+            let _ = rpc_server::run(Some(tcp_listen.as_str()), services, vec![], shutdown_rx).await;
         }
     });
 

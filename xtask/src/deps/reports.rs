@@ -3,25 +3,28 @@
 use anyhow::Result;
 use serde_json::json;
 use std::io::Write;
+use std::str::FromStr;
 
 use super::analyzer::{DependencyInfo, DuplicateDependency, PackageInfo};
 
 /// Output format
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub enum OutputFormat {
     /// Human-readable output
+    #[default]
     Human,
     /// JSON output
     Json,
 }
 
-impl OutputFormat {
-    /// Parse from string
-    pub fn from_str(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
+impl FromStr for OutputFormat {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s.to_lowercase().as_str() {
             "json" => Self::Json,
             _ => Self::Human,
-        }
+        })
     }
 }
 
@@ -89,7 +92,7 @@ pub fn write_duplicates_report<W: Write>(
                         dup.versions.len()
                     )?;
                     for version in &dup.versions {
-                        writeln!(writer, "    - {}", version)?;
+                        writeln!(writer, "    - {version}")?;
                     }
                 }
 
@@ -176,9 +179,9 @@ pub fn write_unused_report_to_buffer<W: Write>(
     match format {
         "json" => {
             let json = serde_json::to_string_pretty(report)?;
-            writeln!(writer, "{}", json)?;
+            writeln!(writer, "{json}")?;
         }
-        "human" | _ => {
+        _ => {
             if report.unused.is_empty() {
                 writeln!(
                     writer,
@@ -198,14 +201,14 @@ pub fn write_unused_report_to_buffer<W: Write>(
                 for dep in &report.unused {
                     by_package
                         .entry(&dep.package)
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(&dep.dependency);
                 }
 
                 for (package, deps) in by_package {
-                    writeln!(writer, "  {}:", package)?;
+                    writeln!(writer, "  {package}:")?;
                     for dep in deps {
-                        writeln!(writer, "    - {}", dep)?;
+                        writeln!(writer, "    - {dep}")?;
                     }
                 }
             }
@@ -228,7 +231,7 @@ pub fn write_timing_report_to_buffer<W: Write>(
     writeln!(writer, "Build Timing Analysis")?;
     writeln!(writer, "Total build time: {:.2}s\n", report.total_time_secs)?;
 
-    writeln!(writer, "Top {} slowest crates:", top)?;
+    writeln!(writer, "Top {top} slowest crates:")?;
     for (i, crate_info) in report.crate_times.iter().take(top).enumerate() {
         let percent = (crate_info.duration_secs / report.total_time_secs) * 100.0;
         writeln!(

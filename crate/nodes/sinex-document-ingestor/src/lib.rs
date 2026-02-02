@@ -2,20 +2,14 @@
 #![doc = include_str!("../../../../docs/current/architecture/Core_Architecture.md")]
 #![doc = include_str!("../../../lib/sinex-node-sdk/docs/overview.md")]
 
-//! Document ingestor that captures materials directly into JetStream via the
-//! AcquisitionManager (Stage-as-You-Go).
+//! Document ingestor that captures materials directly into `JetStream` via the
+//! `AcquisitionManager` (Stage-as-You-Go).
 
 use async_trait::async_trait;
 use camino::{Utf8Path, Utf8PathBuf};
 use mime_guess::MimeGuess;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_primitives::{
-    domain::SanitizedPath,
-    events::{payloads::document::DocumentIngestedPayload, EventPayload},
-    ulid::Ulid,
-};
-use sinex_primitives::validation::validate_path_within_root;
 use sinex_node_sdk::{
     acquisition_manager::{AcquisitionManager, RotationPolicy},
     simple_ingestor::SimpleIngestor,
@@ -23,13 +17,19 @@ use sinex_node_sdk::{
     stream_processor::{
         Checkpoint, NodeCapabilities, NodeRuntimeState, ScanArgs, ScanReport, TimeHorizon,
     },
-    EventTransport, SinexError, NodeResult,
+    EventTransport, NodeResult, SinexError,
+};
+use sinex_primitives::temporal::Timestamp;
+use sinex_primitives::validation::validate_path_within_root;
+use sinex_primitives::{
+    domain::SanitizedPath,
+    events::{payloads::document::DocumentIngestedPayload, EventPayload},
+    ulid::Ulid,
 };
 use sinex_processor_runtime::{
     CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
 };
 use std::{collections::HashMap, sync::Arc, time::Instant};
-use time::OffsetDateTime;
 use tokio::{fs, io::AsyncReadExt};
 use tracing::{error, info, warn};
 
@@ -108,6 +108,7 @@ pub struct DocumentProcessor {
 }
 
 impl DocumentProcessor {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             runtime: None,
@@ -153,7 +154,7 @@ impl DocumentProcessor {
         Ok(ScanReport {
             events_processed,
             duration: start.elapsed(),
-            final_checkpoint: Checkpoint::timestamp(OffsetDateTime::now_utc(), None),
+            final_checkpoint: Checkpoint::timestamp(Timestamp::now(), None),
             time_range: None,
             processor_stats: HashMap::new(),
             successful_targets,
@@ -233,8 +234,7 @@ impl DocumentProcessor {
 
         let mut handle = acquisition
             .begin_material_with_metadata(utf8_path.as_str(), metadata_json.clone())
-            .await
-            .map_err(SinexError::from)?;
+            .await?;
         let mut file = fs::File::open(&utf8_path).await?;
         let mut total_bytes: i64 = 0;
         let mut buf = vec![0u8; MAX_CHUNK_BYTES];
@@ -245,19 +245,13 @@ impl DocumentProcessor {
                 break;
             }
 
-            acquisition
-                .append_slice(&mut handle, &buf[..read])
-                .await
-                .map_err(SinexError::from)?;
+            acquisition.append_slice(&mut handle, &buf[..read]).await?;
             total_bytes += read as i64;
         }
 
         let material_id = handle.material_id;
 
-        acquisition
-            .finalize(handle, MATERIAL_REASON_INGEST)
-            .await
-            .map_err(SinexError::from)?;
+        acquisition.finalize(handle, MATERIAL_REASON_INGEST).await?;
 
         let payload = DocumentIngestedPayload {
             file_path: sanitized_path.as_str().to_string(),
@@ -321,7 +315,7 @@ impl SimpleIngestor for DocumentProcessor {
     type Config = DocumentIngestorConfig;
     type State = DocumentCheckpoint;
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "document-ingestor"
     }
 
@@ -343,15 +337,13 @@ impl SimpleIngestor for DocumentProcessor {
         runtime: &NodeRuntimeState,
         _state: &mut Self::State,
     ) -> NodeResult<()> {
-        config.validate().map_err(|e| SinexError::configuration(e))?;
+        config.validate().map_err(SinexError::configuration)?;
 
         let publisher = match runtime.transport() {
             EventTransport::Nats(publisher) => Arc::clone(publisher),
         };
 
-        AcquisitionManager::bootstrap_streams(publisher.nats_client())
-            .await
-            .map_err(SinexError::from)?;
+        AcquisitionManager::bootstrap_streams(publisher.nats_client()).await?;
 
         let acquisition = Arc::new(runtime.acquisition_manager(
             RotationPolicy::default(),
@@ -420,7 +412,7 @@ impl ExplorationProvider for DocumentProcessor {
             is_connected: true,
             healthy: true,
             description: "Document Ingestor".to_string(),
-            last_updated: OffsetDateTime::now_utc(),
+            last_updated: Timestamp::now(),
             lag_seconds: None,
             recent_activity: Vec::new(),
             total_items: None,
@@ -434,13 +426,10 @@ impl ExplorationProvider for DocumentProcessor {
 
     fn get_coverage_analysis(
         &self,
-        _time_range: Option<(OffsetDateTime, OffsetDateTime)>,
+        _time_range: Option<(Timestamp, Timestamp)>,
     ) -> NodeResult<CoverageAnalysis> {
         Ok(CoverageAnalysis {
-            time_range: (
-                OffsetDateTime::now_utc() - std::time::Duration::from_secs(7 * 24 * 3600),
-                OffsetDateTime::now_utc(),
-            ),
+            time_range: (Timestamp::now() - time::Duration::days(7), Timestamp::now()),
             source_total: 0,
             sinex_total: 0,
             coverage_percentage: 0.0,

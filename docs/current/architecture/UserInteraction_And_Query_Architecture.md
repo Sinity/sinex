@@ -4,7 +4,7 @@ Last Verified: 2025-12-02 (manual review)
 
 *   **Version:** 2.1
 *   **Date:** 2025-07-24
-*   **Implementation Status:** ✅ **OPERATIONAL** – Gateway + CLI in production; JetStream command bus remains planned
+*   **Implementation Status:** ✅ **OPERATIONAL** – Gateway + CLI in production; `JetStream` command bus remains planned
 *   **Purpose:** Describe how users and tools interact with Sinex today: gateway service, CLI, and supporting service layer.
 *   **Scope:** Current behaviour. Future enhancements are called out explicitly.
 
@@ -18,7 +18,7 @@ Last Verified: 2025-12-02 (manual review)
 | `sinex-gateway` | `crate/core/sinex-gateway` | Hosts a JSON-RPC server (TLS-only TCP) and an optional native-messaging bridge | ✅ operational |
 | `exo` CLI | `cli/exo.py` | Primary user tooling; prefers RPC, can fall back to direct Postgres access | ✅ operational |
 | Service layer | `crate/lib/sinex-services` | Analytics, search, PKM, and content APIs invoked by gateway handlers | ✅ operational |
-| JetStream command bus | — | Planned async command/response fabric | 🚧 planned |
+| `JetStream` command bus | — | Planned async command/response fabric | 🚧 planned |
 
 ## 2. Gateway Architecture
 
@@ -32,10 +32,10 @@ Last Verified: 2025-12-02 (manual review)
 ### 2.2 Request Handling
 1. Client submits JSON-RPC payload (method + params).
 2. `rpc_server::handle_rpc` deserialises the message and forwards it to `dispatch_rpc_method`.
-3. Dispatch routes into the appropriate module in `sinex-services`, which talks to PostgreSQL via `sinex-core`.
+3. Dispatch routes into the appropriate module in `sinex-services`, which talks to `PostgreSQL` via `sinex-core`.
 4. Responses are sent synchronously; errors become JSON-RPC failures (`-32601` unknown method, `-32603` internal error).
 
-**Key point:** the gateway does **not** publish or consume `api.command.*` / `api.response.*` events on JetStream today. All work is handled within the process using synchronous database calls.
+**Key point:** the gateway does **not** publish or consume `api.command.*` / `api.response.*` events on `JetStream` today. All work is handled within the process using synchronous database calls.
 
 ### 2.3 Authentication & Transport Limits
 - RPC traffic is guarded by a shared secret exported via `SINEX_RPC_TOKEN` (or `SINEX_GATEWAY_ADMIN_TOKEN_FILE` / `SINEX_RPC_TOKEN_FILE`). Gateway startup fails if no token is present.
@@ -74,12 +74,12 @@ Adding a method requires extending `dispatch_rpc_method`, exposing functionality
   - Use `--rpc-ca-cert` / `SINEX_RPC_CA_CERT` to trust a local/self-signed gateway CA.
   - Use `--rpc-client-cert` + `--rpc-client-key` (or `SINEX_RPC_CLIENT_CERT` / `SINEX_RPC_CLIENT_KEY`) when mTLS is enabled.
 - **Database mode (`--use-db`):**  
-  - Connects to PostgreSQL using `DATABASE_URL`.  
+  - Connects to `PostgreSQL` using `DATABASE_URL`.  
   - Unlocks low-level operations not yet exposed via RPC (schema introspection, DLQ management, blob utilities).
 
 ### 3.2 Error Handling & UX
 - RPC failures prompt the user to retry with `--use-db` and surface the JSON-RPC error code.
-- Database mode propagates SQLx errors directly; most commands wrap them with context.
+- Database mode propagates `SQLx` errors directly; most commands wrap them with context.
 - Completion and help output derive from live metadata where possible (see `cli/DESIGN.md`).
 
 ## 4. Service Layer Responsibilities
@@ -94,7 +94,7 @@ These modules run synchronously and use shared database pools. Keep transactions
 
 ## 5. Roadmap
 
-- **JetStream command/response:** Revisit once ingestion and automata have stabilised on JetStream end-to-end. Expected benefits include async processing and richer auditing.
+- **`JetStream` command/response:** Revisit once ingestion and automata have stabilised on `JetStream` end-to-end. Expected benefits include async processing and richer auditing.
 - **Streaming / WebSocket APIs:** Layer on top of the gateway after command bus work lands.
 - **Authentication & authorisation:** Add token or mTLS enforcement plus per-method access control.
 - **Observability:** Instrument RPC handlers with tracing and metrics once performance hotspots are identified.

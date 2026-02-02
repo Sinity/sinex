@@ -12,8 +12,8 @@ use color_eyre::eyre::{eyre, Result};
 use futures::StreamExt;
 use serde_json::json;
 use sinex_primitives::ulid::Ulid;
-use xtask::sandbox::{prelude::*, timing_utils::Timeouts, EphemeralNats};
 use std::time::{Duration as StdDuration, Instant};
+use xtask::sandbox::{prelude::*, timing_utils::Timeouts, EphemeralNats};
 
 async fn create_stream(js: &JetStream, name: &str, subject: &str) -> Result<()> {
     let config = StreamConfig {

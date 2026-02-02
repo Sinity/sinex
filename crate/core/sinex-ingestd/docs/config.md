@@ -15,7 +15,7 @@ Ingestd environment overrides are prefixed with `SINEX_INGESTD_`.
   `nats_url` uses `tls://` or `wss://`. Set via `SINEX_NATS_REQUIRE_TLS=1` or the
   config file key `ingestd.nats_require_tls`.
 
-## JetStream Consumer Knobs
+## `JetStream` Consumer Knobs
 
 - `consumer_fetch_max_messages` (default: 100): Max messages per pull batch. Set via
   `SINEX_INGESTD_CONSUMER_FETCH_MAX_MESSAGES` or `ingestd.consumer_fetch_max_messages`.

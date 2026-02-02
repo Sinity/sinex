@@ -1,15 +1,15 @@
-//! Git Activity Detector - Example SimpleProcessor Implementation
+//! Git Activity Detector - Example `SimpleProcessor` Implementation
 //!
-//! This example demonstrates how to use SimpleProcessor to create
+//! This example demonstrates how to use `SimpleProcessor` to create
 //! a node that detects git commands from terminal events.
 //!
-//! Run with: cargo run --example git_activity_detector
+//! Run with: cargo run --example `git_activity_detector`
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::simple_node::{SimpleNode, SimpleNodeContext, SimpleNodeError};
+use sinex_node_sdk::Timestamp;
 use std::collections::HashMap;
-use time::OffsetDateTime;
 
 // ============================================================================
 // Input Event Type
@@ -27,8 +27,8 @@ pub struct TerminalCommandEvent {
     #[serde(default)]
     pub exit_code: i32,
     /// When the command was executed
-    #[serde(default = "Utc::now")]
-    pub timestamp: DateTime<Utc>,
+    #[serde(default = "Timestamp::now")]
+    pub timestamp: Timestamp,
 }
 
 // ============================================================================
@@ -49,7 +49,7 @@ pub struct GitActivityEvent {
     /// Whether the command succeeded
     pub success: bool,
     /// Timestamp of the activity
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
 }
 
 // ============================================================================
@@ -66,7 +66,7 @@ pub struct GitActivityState {
     /// Total git commands seen
     pub total_commands: u64,
     /// Last activity timestamp
-    pub last_activity: Option<DateTime<Utc>>,
+    pub last_activity: Option<Timestamp>,
 }
 
 // ============================================================================
@@ -77,6 +77,7 @@ pub struct GitActivityState {
 pub struct GitActivityDetector;
 
 impl GitActivityDetector {
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
@@ -88,7 +89,7 @@ impl GitActivityDetector {
         // Find "git" and get the next word
         for (i, part) in parts.iter().enumerate() {
             if *part == "git" {
-                return parts.get(i + 1).map(|s| s.to_string());
+                return parts.get(i + 1).map(std::string::ToString::to_string);
             }
         }
 
@@ -191,7 +192,7 @@ mod tests {
             command: "ls -la".to_string(),
             cwd: "/home/user".to_string(),
             exit_code: 0,
-            timestamp: OffsetDateTime::now_utc(),
+            timestamp: Timestamp::now(),
         };
 
         let result = processor.process(&mut state, input).await.unwrap();
@@ -208,7 +209,7 @@ mod tests {
             command: "git commit -m 'test'".to_string(),
             cwd: "/home/user/project".to_string(),
             exit_code: 0,
-            timestamp: OffsetDateTime::now_utc(),
+            timestamp: Timestamp::now(),
         };
 
         let result = processor.process(&mut state, input).await.unwrap();
@@ -233,7 +234,7 @@ mod tests {
             command: "git status".to_string(),
             cwd: "/repo1".to_string(),
             exit_code: 0,
-            timestamp: OffsetDateTime::now_utc(),
+            timestamp: Timestamp::now(),
         };
         processor.process(&mut state, input1).await.unwrap();
 
@@ -242,7 +243,7 @@ mod tests {
             command: "git push".to_string(),
             cwd: "/repo1".to_string(),
             exit_code: 0,
-            timestamp: OffsetDateTime::now_utc(),
+            timestamp: Timestamp::now(),
         };
         processor.process(&mut state, input2).await.unwrap();
 
@@ -251,7 +252,7 @@ mod tests {
             command: "git pull".to_string(),
             cwd: "/repo2".to_string(),
             exit_code: 0,
-            timestamp: OffsetDateTime::now_utc(),
+            timestamp: Timestamp::now(),
         };
         processor.process(&mut state, input3).await.unwrap();
 

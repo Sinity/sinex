@@ -37,7 +37,7 @@ use tracing::{debug, error, info, warn};
 const DBUS_MESSAGE_CHANNEL_SIZE: usize = 10_000;
 
 /// D-Bus bus type enumeration
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DBusType {
     Session,
     System,
@@ -71,12 +71,12 @@ impl FromStr for DBusType {
         match s {
             "session" => Ok(DBusType::Session),
             "system" => Ok(DBusType::System),
-            _ => Err(format!("Unsupported DBus type: {}", s)),
+            _ => Err(format!("Unsupported DBus type: {s}")),
         }
     }
 }
 
-/// Convert D-Bus member name to PowerEventType
+/// Convert D-Bus member name to `PowerEventType`
 fn parse_power_event(member: &str) -> PowerEventType {
     match member {
         "PrepareForSleep" => PowerEventType::Sleep,
@@ -86,7 +86,7 @@ fn parse_power_event(member: &str) -> PowerEventType {
     }
 }
 
-/// Convert D-Bus member name to BluetoothEventType
+/// Convert D-Bus member name to `BluetoothEventType`
 fn parse_bluetooth_event(member: &str) -> BluetoothEventType {
     match member {
         "Connected" => BluetoothEventType::Connected,
@@ -98,7 +98,7 @@ fn parse_bluetooth_event(member: &str) -> BluetoothEventType {
     }
 }
 
-/// Convert D-Bus member name to NetworkEventType
+/// Convert D-Bus member name to `NetworkEventType`
 fn parse_network_event(member: &str) -> NetworkEventType {
     match member {
         "Connected" | "Activated" => NetworkEventType::Connected,
@@ -108,7 +108,7 @@ fn parse_network_event(member: &str) -> NetworkEventType {
     }
 }
 
-/// Parse bus type string to DBusBus enum
+/// Parse bus type string to `DBusBus` enum
 fn parse_bus_type(bus_type: &str) -> DBusBus {
     match bus_type {
         "session" => DBusBus::Session,
@@ -116,7 +116,7 @@ fn parse_bus_type(bus_type: &str) -> DBusBus {
     }
 }
 
-/// Parse playback status string to PlaybackStatus enum
+/// Parse playback status string to `PlaybackStatus` enum
 fn parse_playback_status(s: &str) -> PlaybackStatus {
     match s {
         "Playing" => PlaybackStatus::Playing,
@@ -136,7 +136,7 @@ struct MonitorConfig {
 
 /// Helper to create processing errors with consistent formatting
 fn dbus_error(message: &str, source: impl std::fmt::Display) -> sinex_node_sdk::SinexError {
-    sinex_node_sdk::SinexError::processing(format!("{}: {}", message, source))
+    sinex_node_sdk::SinexError::processing(format!("{message}: {source}"))
 }
 
 /// D-Bus watcher with real-time signal subscription
@@ -174,7 +174,7 @@ impl DbusWatcher {
             tasks.push(tokio::spawn(async move {
                 tokio::select! {
                     res = Self::monitor_bus_with_config(monitor_config) => res,
-                    _ = token.cancelled() => Ok(()),
+                    () = token.cancelled() => Ok(()),
                 }
             }));
         }
@@ -191,7 +191,7 @@ impl DbusWatcher {
             tasks.push(tokio::spawn(async move {
                 tokio::select! {
                     res = Self::monitor_bus_with_config(monitor_config) => res,
-                    _ = token.cancelled() => Ok(()),
+                    () = token.cancelled() => Ok(()),
                 }
             }));
         }
@@ -502,7 +502,7 @@ impl DbusWatcher {
             && interface == "org.freedesktop.Notifications"
             && member == "Notify"
         {
-            let payload = Self::parse_notification_args(args, timestamp.clone());
+            let payload = Self::parse_notification_args(args, timestamp);
             let event = Event::new(payload, material.initial_provenance()).to_json_event()?;
             Self::send_event(tx, event, "dbus_notification", material).await?;
         }
@@ -516,8 +516,8 @@ impl DbusWatcher {
                 .and_then(|s| s.split('.').next_back())
                 .unwrap_or("unknown");
 
-            let payload = Self::parse_mpris_properties(args, player, sender, timestamp.clone())
-                .unwrap_or_else(|| Self::default_media_payload(player, sender, timestamp.clone()));
+            let payload = Self::parse_mpris_properties(args, player, sender, timestamp)
+                .unwrap_or_else(|| Self::default_media_payload(player, sender, timestamp));
 
             let event = Event::new(payload, material.initial_provenance()).to_json_event()?;
             Self::send_event(tx, event, "dbus_media_playback", material).await?;
@@ -726,30 +726,27 @@ impl DbusWatcher {
         use dbus::arg::ArgType;
 
         match iter.arg_type() {
-            ArgType::String => iter
-                .get::<&str>()
-                .map(|s| serde_json::Value::String(s.to_string()))
-                .unwrap_or(serde_json::Value::Null),
-            ArgType::Int32 => iter
-                .get::<i32>()
-                .map(|i| serde_json::Value::Number(serde_json::Number::from(i)))
-                .unwrap_or(serde_json::Value::Null),
-            ArgType::UInt32 => iter
-                .get::<u32>()
-                .map(|i| serde_json::Value::Number(serde_json::Number::from(i)))
-                .unwrap_or(serde_json::Value::Null),
+            ArgType::String => iter.get::<&str>().map_or(serde_json::Value::Null, |s| {
+                serde_json::Value::String(s.to_string())
+            }),
+            ArgType::Int32 => iter.get::<i32>().map_or(serde_json::Value::Null, |i| {
+                serde_json::Value::Number(serde_json::Number::from(i))
+            }),
+            ArgType::UInt32 => iter.get::<u32>().map_or(serde_json::Value::Null, |i| {
+                serde_json::Value::Number(serde_json::Number::from(i))
+            }),
             ArgType::Boolean => iter
                 .get::<bool>()
-                .map(serde_json::Value::Bool)
-                .unwrap_or(serde_json::Value::Null),
+                .map_or(serde_json::Value::Null, serde_json::Value::Bool),
             ArgType::Array => Self::parse_dbus_array(iter),
             ArgType::DictEntry => Self::parse_dbus_dict_entry(iter),
             ArgType::Variant => Self::parse_dbus_variant(iter),
             ArgType::Struct => Self::parse_dbus_struct(iter),
             ArgType::ObjectPath => iter
                 .get::<dbus::Path>()
-                .map(|p| serde_json::Value::String(p.to_string()))
-                .unwrap_or(serde_json::Value::Null),
+                .map_or(serde_json::Value::Null, |p| {
+                    serde_json::Value::String(p.to_string())
+                }),
             _ => serde_json::Value::String(format!("unsupported_type_{:?}", iter.arg_type())),
         }
     }
@@ -779,7 +776,7 @@ impl DbusWatcher {
 
                     let key_str = match key {
                         serde_json::Value::String(s) => s,
-                        _ => format!("{:?}", key),
+                        _ => format!("{key:?}"),
                     };
 
                     dict_obj.insert(key_str, value);
@@ -844,7 +841,7 @@ impl DbusWatcher {
                 .map(|arr| {
                     arr.iter()
                         .filter_map(|v| v.as_str())
-                        .map(|s| s.to_string())
+                        .map(std::string::ToString::to_string)
                         .collect()
                 })
                 .unwrap_or_default();
@@ -854,9 +851,15 @@ impl DbusWatcher {
                 .and_then(Self::parse_notification_hints)
                 .unwrap_or_default();
 
-            let timeout = arg_array.get(7).and_then(|v| v.as_i64()).unwrap_or(-1) as i32;
+            let timeout = arg_array
+                .get(7)
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(-1) as i32;
 
-            let urgency = hints.get("urgency").and_then(|v| v.as_u64()).unwrap_or(1) as u8;
+            let urgency = hints
+                .get("urgency")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(1) as u8;
 
             DbusNotificationSentPayload {
                 app_name,

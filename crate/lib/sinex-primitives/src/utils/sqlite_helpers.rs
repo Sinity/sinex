@@ -1,17 +1,17 @@
-//! SQLite operation helpers to reduce boilerplate
+//! `SQLite` operation helpers to reduce boilerplate
 //!
-//! This module provides utilities for common SQLite operations with
+//! This module provides utilities for common `SQLite` operations with
 //! consistent error handling and context.
 
 use crate::error::{Result, SinexError};
 use camino::Utf8Path;
 use rusqlite::{Connection, OpenFlags, Statement};
 
-/// Helper for opening SQLite databases with consistent error handling
+/// Helper for opening `SQLite` databases with consistent error handling
 pub struct SqliteConnection;
 
 impl SqliteConnection {
-    /// Open a read-only SQLite connection with error context
+    /// Open a read-only `SQLite` connection with error context
     pub fn open_readonly<P: AsRef<Utf8Path>>(path: P, operation: &str) -> Result<Connection> {
         let path_ref = path.as_ref();
 
@@ -25,7 +25,7 @@ impl SqliteConnection {
         })
     }
 
-    /// Open a read-write SQLite connection with error context
+    /// Open a read-write `SQLite` connection with error context
     pub fn open_readwrite<P: AsRef<Utf8Path>>(path: P, operation: &str) -> Result<Connection> {
         let path_ref = path.as_ref();
 
@@ -62,7 +62,7 @@ impl SqliteStatementExt for Connection {
     }
 }
 
-/// Builder for SQLite queries with error context
+/// Builder for `SQLite` queries with error context
 pub struct SqliteQueryBuilder<'a> {
     operation: &'a str,
     query_type: Option<&'a str>,
@@ -70,6 +70,7 @@ pub struct SqliteQueryBuilder<'a> {
 }
 
 impl<'a> SqliteQueryBuilder<'a> {
+    #[must_use]
     pub fn new(operation: &'a str) -> Self {
         Self {
             operation,
@@ -78,6 +79,7 @@ impl<'a> SqliteQueryBuilder<'a> {
         }
     }
 
+    #[must_use]
     pub fn query_type(mut self, query_type: &'a str) -> Self {
         self.query_type = Some(query_type);
         self

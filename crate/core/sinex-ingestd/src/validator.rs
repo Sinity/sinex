@@ -62,11 +62,13 @@ pub struct ValidationStatsSnapshot {
 
 impl ValidationStatsSnapshot {
     /// Total events validated.
+    #[must_use]
     pub fn total(&self) -> u64 {
         self.valid + self.skipped + self.no_schema + self.schema_not_found + self.invalid
     }
 
     /// Coverage percentage: events with schema / total validated (excluding skipped).
+    #[must_use]
     pub fn coverage_pct(&self) -> f64 {
         let with_schema = self.valid + self.invalid;
         let total_validated = with_schema + self.no_schema + self.schema_not_found;
@@ -89,6 +91,7 @@ pub struct EventValidator {
 
 impl EventValidator {
     /// Create a new event validator (schemas can be loaded later).
+    #[must_use]
     pub fn new(validation_enabled: bool) -> Self {
         Self {
             inner: CoreEventValidator::with_validation_enabled(validation_enabled),
@@ -101,6 +104,7 @@ impl EventValidator {
     /// Create a validator with strict mode enabled.
     ///
     /// In strict mode, events without registered schemas are rejected.
+    #[must_use]
     pub fn new_strict(validation_enabled: bool) -> Self {
         Self {
             inner: CoreEventValidator::with_validation_enabled(validation_enabled),
@@ -159,15 +163,14 @@ impl EventValidator {
     }
 
     /// Use the shared validator to check payloads and convert into ingestd-specific outcomes.
+    #[must_use]
     pub fn validate_payload_for(
         &self,
         source: &str,
         event_type: &str,
         payload: &JsonValue,
     ) -> ValidationResult {
-        let result = if !self.validation_enabled {
-            ValidationResult::Skipped
-        } else {
+        let result = if self.validation_enabled {
             match self.inner.validate_payload_for(source, event_type, payload) {
                 SchemaValidationOutcome::Valid => ValidationResult::Valid,
                 SchemaValidationOutcome::NoSchema => ValidationResult::NoSchema,
@@ -176,61 +179,71 @@ impl EventValidator {
                 }
                 SchemaValidationOutcome::Invalid { errors } => ValidationResult::Invalid { errors },
             }
+        } else {
+            ValidationResult::Skipped
         };
         self.stats.record(&result);
         result
     }
 
     /// Validate a full event structure (used in tests and pipelines).
+    #[must_use]
     pub fn validate_event(
         &self,
         event: &sinex_db::models::event::Event<JsonValue>,
     ) -> ValidationResult {
-        let result = if !self.validation_enabled {
-            ValidationResult::Skipped
-        } else {
+        let result = if self.validation_enabled {
             match self.inner.validate(event) {
                 Ok(()) => ValidationResult::Valid,
                 Err(err) => ValidationResult::Invalid {
                     errors: vec![err.to_string()],
                 },
             }
+        } else {
+            ValidationResult::Skipped
         };
         self.stats.record(&result);
         result
     }
 
     /// Get current schema count.
+    #[must_use]
     pub fn schema_count(&self) -> usize {
         self.inner.schema_count()
     }
 
     /// Get validation statistics snapshot.
+    #[must_use]
     pub fn stats(&self) -> ValidationStatsSnapshot {
         self.stats.snapshot()
     }
 
     /// Check if strict validation mode is enabled.
+    #[must_use]
     pub fn is_strict_mode(&self) -> bool {
         self.strict_mode
     }
 
     /// Get a reference to the stats Arc for sharing with metrics emitters.
+    #[must_use]
     pub fn stats_handle(&self) -> Arc<ValidationStats> {
         Arc::clone(&self.stats)
     }
 
     /// Schema diagnostics for admin endpoints.
+    #[must_use]
     pub fn get_available_schemas(&self) -> Vec<SchemaInfo> {
         self.inner.get_available_schemas()
     }
 
     /// Lookup schema ID for a source/event pair.
+    #[must_use]
     pub fn get_schema_id(&self, source: &EventSource, event_type: &EventType) -> Option<Ulid> {
         self.inner.get_schema_id(source, event_type)
     }
 
     /// Lookup schema version for a source/event pair.
+    #[must_use]
     pub fn get_schema_version(
         &self,
         source: &EventSource,
@@ -268,6 +281,7 @@ pub enum ValidationResult {
 
 impl ValidationResult {
     /// Check if the event should be accepted
+    #[must_use]
     pub fn should_accept(&self) -> bool {
         matches!(
             self,
@@ -279,11 +293,13 @@ impl ValidationResult {
     }
 
     /// Check if the validation failed
+    #[must_use]
     pub fn is_failure(&self) -> bool {
         matches!(self, ValidationResult::Invalid { .. })
     }
 
     /// Get error message if validation failed
+    #[must_use]
     pub fn error_message(&self) -> Option<String> {
         match self {
             ValidationResult::Invalid { errors } => {

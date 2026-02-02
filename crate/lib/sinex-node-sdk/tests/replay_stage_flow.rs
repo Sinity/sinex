@@ -1,11 +1,9 @@
 #[path = "support/mod.rs"]
 mod support;
 
-use chrono::{Duration, Utc};
 use serde_json::{json, Value as JsonValue};
-use sinex_node_sdk::types::events::DynamicPayload;
-use sinex_node_sdk::types::ulid::Ulid;
 use sinex_node_sdk::replay::{ReplayFilters, ReplayMode, ReplayProgress, ReplayService};
+use sinex_primitives::{DynamicPayload, Ulid};
 use std::{collections::HashMap, time::Duration as StdDuration};
 use support::runtime::TestRuntimeBuilder;
 use tokio::time::timeout;
@@ -13,9 +11,9 @@ use xtask::sandbox::prelude::*;
 
 #[sinex_serial_test]
 async fn replay_emits_events_through_emitter(ctx: TestContext) -> color_eyre::Result<()> {
-    let ctx = ctx.with_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     ctx.ensure_clean().await?;
-    let start_time = OffsetDateTime::now_utc();
+    let start_time = Timestamp::now();
     let source = format!("terminal-history-{}", Ulid::new());
 
     publish_event(
@@ -82,9 +80,9 @@ async fn replay_emits_events_through_emitter(ctx: TestContext) -> color_eyre::Re
 
 #[sinex_serial_test]
 async fn custom_filters_emit_only_matching_events(ctx: TestContext) -> color_eyre::Result<()> {
-    let ctx = ctx.with_nats().await?;
+    let ctx = ctx.with_nats().shared().await?;
     ctx.ensure_clean().await?;
-    let start_time = OffsetDateTime::now_utc();
+    let start_time = Timestamp::now();
     let run_id = Ulid::new();
 
     publish_event(

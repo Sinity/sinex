@@ -3,13 +3,13 @@
 // Tests for automaton registration, heartbeat, and lifecycle operations under chaos conditions.
 // Simulates concurrent registrations, network failures, and lifecycle state conflicts.
 
-use sinex_primitives::Timestamp;
 use futures::future::join_all;
 use serde_json::json;
-use sinex_primitives::db::models::AutomatonManifest;
-use xtask::sandbox::prelude::*;
+use sinex_db::models::AutomatonManifest;
+use sinex_primitives::Timestamp;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use xtask::sandbox::prelude::*;
 
 /// Test multiple agent instances registering simultaneously
 #[sinex_test]

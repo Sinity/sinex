@@ -72,7 +72,7 @@ impl JetStreamTestHelper {
             .pipeline_namespace()
             .stream(&format!("SINEX_RAW_EVENTS_{suffix}"));
         let topology = JetStreamTopology::new(
-            &env,
+            env,
             stream,
             ctx.pipeline_namespace()
                 .consumer_name(&format!("ingestd-{suffix}")),
@@ -275,8 +275,6 @@ impl JetStreamTestHelper {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use xtask_macros::*;
 
     #[sinex_test]
     async fn jetstream_test_helper_creates_topology(ctx: Sandbox) -> TestResult<()> {

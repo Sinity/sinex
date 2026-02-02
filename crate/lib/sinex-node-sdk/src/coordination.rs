@@ -127,7 +127,7 @@ mod tests {
             kv,
             service_name.to_string(),
             "test".to_string(),
-            format!("{}-{}", service_name, Ulid::new()),
+            format!("{service_name}-{}", Ulid::new()),
         ));
 
         let handles = NodeHandles::new(
@@ -191,7 +191,7 @@ pub struct HandoffRequest {
 impl Default for HandoffRequest {
     fn default() -> Self {
         Self {
-            from_instance: "".to_string(),
+            from_instance: String::new(),
             from_version: NodeVersion::current_or_default(),
             to_version: NodeVersion::current_or_default(),
             requested_at: SystemTime::now(),
@@ -257,7 +257,7 @@ impl WorkTracker {
     ///
     /// Issue 14 fix: Returns a guard that auto-finishes on drop to prevent drift
     pub fn start_operation(&self) -> WorkGuard {
-        self.in_flight_operations.add(1);
+        let _ = self.in_flight_operations.add(1);
         if let Some(heartbeat) = &self.heartbeat_emitter {
             heartbeat.increment_events_processed(1);
         }
@@ -274,7 +274,7 @@ impl WorkTracker {
 
     /// Request graceful shutdown
     pub fn request_shutdown(&self) {
-        self.shutdown_requested.signal();
+        let _ = self.shutdown_requested.signal();
     }
 
     /// Get number of in-flight operations
@@ -379,8 +379,7 @@ pub struct NodeCoordination {
 impl NodeCoordination {
     fn current_metadata(&self) -> InstanceMetadata {
         let mut meta: InstanceMetadata = (&self.instance).into();
-        meta.last_heartbeat =
-            sinex_primitives::temporal::Timestamp::now().unix_timestamp();
+        meta.last_heartbeat = sinex_primitives::temporal::Timestamp::now().unix_timestamp();
         meta
     }
 
@@ -469,10 +468,8 @@ impl NodeCoordination {
                     self.record_coordination_failure("acquire_leadership", &e);
                     if self.current_mode == InstanceMode::Leader {
                         warn!("Cannot confirm leadership, degrading to Standby");
-                        InstanceMode::Standby
-                    } else {
-                        InstanceMode::Standby
                     }
+                    InstanceMode::Standby
                 }
             };
 
@@ -562,13 +559,13 @@ impl NodeCoordination {
         // Issue 12 fix: Monitor spawned task health
         let service_name_health = self.instance.service_name.clone();
         let _monitor_handle = tokio::spawn(async move {
-            let subject = format!("sinex.coordination.{}.handoff", service_name_clone);
+            let subject = format!("sinex.coordination.{service_name_clone}.handoff");
             match nats_clone.subscribe(subject.clone()).await {
                 Ok(mut sub) => {
                     while let Some(msg) = sub.next().await {
                         if let Ok(req) = serde_json::from_slice::<HandoffRequest>(&msg.payload) {
-                            if let Err(_) = handoff_sender_clone.send(req).await {
-                                handoff_drops_clone.add(1);
+                            if handoff_sender_clone.send(req).await.is_err() {
+                                let _ = handoff_drops_clone.add(1);
                                 warn!(
                                     handoff_drops = handoff_drops_clone.get(),
                                     "Handoff channel backpressure: dropped handoff request"
@@ -693,7 +690,7 @@ impl NodeCoordination {
         self.nats_client
             .publish(subject, payload.into())
             .await
-            .map_err(|e| SinexError::network(format!("Failed to publish handoff ready: {}", e)))?;
+            .map_err(|e| SinexError::network(format!("Failed to publish handoff ready: {e}")))?;
 
         // Step 3: Release lease explicitly (best-effort)
         if let Err(e) = self
@@ -746,15 +743,13 @@ impl NodeCoordination {
 
         let subject = format!("sinex.coordination.{}.handoff", self.instance.service_name);
         let payload = serde_json::to_vec(&request).map_err(|e| {
-            SinexError::validation(format!("Failed to serialize handoff request: {}", e))
+            SinexError::validation(format!("Failed to serialize handoff request: {e}"))
         })?;
 
         self.nats_client
             .publish(subject, payload.into())
             .await
-            .map_err(|e| {
-                SinexError::network(format!("Failed to publish handoff request: {}", e))
-            })?;
+            .map_err(|e| SinexError::network(format!("Failed to publish handoff request: {e}")))?;
 
         info!(
             event = "coordination.handoff_request_published",
@@ -791,7 +786,7 @@ impl NodeCoordination {
             .subscribe(subject.clone())
             .await
             .map_err(|e| {
-                SinexError::network(format!("Failed to subscribe to handoff_ready: {}", e))
+                SinexError::network(format!("Failed to subscribe to handoff_ready: {e}"))
             })?;
 
         // Wait for ready signal with timeout
@@ -832,7 +827,7 @@ impl NodeCoordination {
         self.kv_client
             .list_instances()
             .await
-            .map_err(|e| SinexError::service(format!("Failed to list instances: {}", e)))
+            .map_err(|e| SinexError::service(format!("Failed to list instances: {e}")))
     }
 
     /// Initiate handoff from older version (if any) during startup
@@ -899,13 +894,16 @@ impl NodeCoordination {
                 "error": error
         });
 
-        let bytes =
-            serde_json::to_vec(&payload).map_err(|e| SinexError::validation(e.to_string()))?;
+        let bytes = serde_json::to_vec(&payload).map_err(|e| {
+            SinexError::validation("failed to serialize failure signal").with_std_error(&e)
+        })?;
 
         self.nats_client
             .publish(subject, bytes.into())
             .await
-            .map_err(|e| SinexError::network(format!("Failed to publish failure signal: {}", e)))?;
+            .map_err(|e| {
+                SinexError::network("failed to publish failure signal").with_std_error(&e)
+            })?;
 
         error!("Signaled critical failure to standbys: {}", error);
 
@@ -1005,9 +1003,9 @@ impl NodeCoordination {
     }
 
     fn record_coordination_failure(&self, context: &str, error: impl std::fmt::Display) {
-        let failures = self.leadership_failures.add(1);
+        let _ = self.leadership_failures.add(1);
         warn!(
-            coordination_failures = failures,
+            coordination_failures = self.leadership_failures.get(),
             context,
             error = %error,
             "Coordination lease operation failed"

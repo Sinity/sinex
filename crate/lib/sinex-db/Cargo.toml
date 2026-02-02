@@ -57,3 +57,7 @@ bon = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 mockall = "0.12"
 xtask = { path = "../../../xtask", features = ["sandbox"] }
+sinex-primitives = { path = "../sinex-primitives", features = ["testing"] }
+
+[lints]
+workspace = true

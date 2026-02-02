@@ -24,7 +24,7 @@ pub fn timestamp_to_datetime(timestamp_secs: i64) -> Result<Timestamp> {
 /// Returns an error if the timestamp is invalid
 pub fn timestamp_with_nanos_to_datetime(timestamp_secs: i64, nanos: u32) -> Result<Timestamp> {
     OffsetDateTime::from_unix_timestamp(timestamp_secs)
-        .map(|dt| Timestamp::from(dt + Duration::nanoseconds(nanos as i64)))
+        .map(|dt| Timestamp::from(dt + Duration::nanoseconds(i64::from(nanos))))
         .map_err(|_| {
             SinexError::parse("Invalid timestamp with nanoseconds")
                 .with_context("timestamp_secs", timestamp_secs)
@@ -36,7 +36,7 @@ pub fn timestamp_with_nanos_to_datetime(timestamp_secs: i64, nanos: u32) -> Resu
 ///
 /// Returns None if conversion fails
 pub fn timestamp_millis_to_datetime(timestamp_ms: i64) -> Option<Timestamp> {
-    OffsetDateTime::from_unix_timestamp_nanos(timestamp_ms as i128 * 1_000_000)
+    OffsetDateTime::from_unix_timestamp_nanos(i128::from(timestamp_ms) * 1_000_000)
         .ok()
         .map(Timestamp::from)
 }
@@ -45,7 +45,7 @@ pub fn timestamp_millis_to_datetime(timestamp_ms: i64) -> Option<Timestamp> {
 ///
 /// Returns None if conversion fails
 pub fn timestamp_micros_to_datetime(timestamp_us: i64) -> Option<Timestamp> {
-    OffsetDateTime::from_unix_timestamp_nanos(timestamp_us as i128 * 1_000)
+    OffsetDateTime::from_unix_timestamp_nanos(i128::from(timestamp_us) * 1_000)
         .ok()
         .map(Timestamp::from)
 }
@@ -54,7 +54,7 @@ pub fn timestamp_micros_to_datetime(timestamp_us: i64) -> Option<Timestamp> {
 ///
 /// Returns an error if the timestamp is invalid or would overflow
 pub fn timestamp_nanos_to_datetime(timestamp_ns: i64) -> Result<Timestamp> {
-    OffsetDateTime::from_unix_timestamp_nanos(timestamp_ns as i128)
+    OffsetDateTime::from_unix_timestamp_nanos(i128::from(timestamp_ns))
         .map(Timestamp::from)
         .map_err(|_| {
             SinexError::parse("Invalid timestamp from nanoseconds")
@@ -63,16 +63,19 @@ pub fn timestamp_nanos_to_datetime(timestamp_ns: i64) -> Result<Timestamp> {
 }
 
 /// Parse a human-friendly relative time string (e.g., "1h", "2d", "30m")
+#[must_use]
 pub fn parse_relative_duration(s: &str) -> Option<Duration> {
     crate::temporal::parse_duration(s)
 }
 
-/// Parse a human-friendly relative time string, returning std::time::Duration
+/// Parse a human-friendly relative time string, returning `std::time::Duration`
+#[must_use]
 pub fn parse_relative_std_duration(s: &str) -> Option<std::time::Duration> {
     parse_relative_duration(s).and_then(|d| d.try_into().ok())
 }
 
 /// Try to parse a timestamp from various common formats
+#[must_use]
 pub fn parse_flexible_timestamp(value: &str) -> Option<Timestamp> {
     // First try parsing as RFC3339
     let value = value.trim();

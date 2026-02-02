@@ -103,16 +103,16 @@ This is the consolidated architecture overview. It links to and summarizes the c
 ```
 
 ## Flow
-- nodes → NATS JetStream → sinex-ingestd → Postgres (`core.events`) → Automata → Gateway (JSON‑RPC) → CLI.
+- nodes → NATS `JetStream` → sinex-ingestd → Postgres (`core.events`) → Automata → Gateway (JSON‑RPC) → CLI.
 
 Data Substrate
-- Storage: PostgreSQL (+ TimescaleDB)
+- Storage: `PostgreSQL` (+ `TimescaleDB`)
 - IDs: ULIDs for ordering and distribution
 - Event store: `core.events` with strict provenance
 - Schema: see `crate/lib/sinex-schema/docs/overview.md` for table details
 
 Streaming & Ingestion
-- Messaging: NATS JetStream (subjects, durable consumers, explicit acks)
+- Messaging: NATS `JetStream` (subjects, durable consumers, explicit acks)
 - Backpressure: bounded batches, ack timeouts, lag monitoring
 - Ingestion: validation, persistence, idempotency, single writer
 - See also: `docs/current/architecture/provenance.md` (Stage-as-you-go + provenance rules) and `docs/vision/streaming-architecture.md` (backpressure guidance)
@@ -139,7 +139,7 @@ Implementation Guides
 **Crate-Specific Diagrams:**
 - Ingestd: `crate/core/sinex-ingestd/docs/diagrams.md` — Event sourcing & NATS topology
 - Database: `crate/lib/sinex-db/docs/diagrams.md` — Schema & repository architecture
-- Testing: `crate/lib/sinex-test-utils/docs/diagrams.md` — Parallel test pool
-- Core: `crate/lib/sinex-core/docs/diagrams.md` — Leader/standby coordination
+- Testing: `xtask/docs/sandbox/diagrams.md` — Parallel test pool
+- Primitives: `crate/lib/sinex-primitives/docs/diagrams.md` — Type system & validation
 
 See also: [Ingestion & Provenance Patterns](provenance.md) for sensor layering, Stage-as-you-go guidance, and timestamp taxonomy.

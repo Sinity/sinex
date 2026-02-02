@@ -1,10 +1,10 @@
 //! Pipeline management for material assembler consumers.
 //!
-//! This module contains the JetStream consumer spawning logic and stream
+//! This module contains the `JetStream` consumer spawning logic and stream
 //! bootstrapping for the three material assembly streams: begin, slices, and end.
 
 use super::state::MaterialBeginMessage;
-use super::*;
+use super::{MaterialAssembler, MaterialEndMessage, Ulid};
 
 use async_nats::jetstream;
 use futures::{FutureExt, StreamExt};
@@ -22,7 +22,7 @@ use crate::{IngestdResult, SinexError};
 const BATCH_PROCESSING_SEMAPHORE_PERMITS: usize = 4; // Allow up to 4 concurrent batches
 
 /// Handles for the three material consumer tasks
-pub(crate) struct MaterialConsumerHandles {
+pub(super) struct MaterialConsumerHandles {
     pub(crate) begin: JoinHandle<IngestdResult<()>>,
     pub(crate) slices: JoinHandle<IngestdResult<()>>,
     pub(crate) end: JoinHandle<IngestdResult<()>>,
@@ -36,7 +36,7 @@ impl Drop for MaterialConsumerHandles {
     }
 }
 
-/// Bootstrap JetStream streams for materials
+/// Bootstrap `JetStream` streams for materials
 pub(super) async fn bootstrap_streams(assembler: &MaterialAssembler) -> IngestdResult<()> {
     info!("Bootstrapping material streams");
 
@@ -49,7 +49,7 @@ pub(super) async fn bootstrap_streams(assembler: &MaterialAssembler) -> IngestdR
             ..Default::default()
         })
         .await
-        .map_err(|e| SinexError::network(format!("Failed to create begin stream: {}", e)))?;
+        .map_err(|e| SinexError::network(format!("Failed to create begin stream: {e}")))?;
 
     assembler
         .js
@@ -57,12 +57,12 @@ pub(super) async fn bootstrap_streams(assembler: &MaterialAssembler) -> IngestdR
             name: namespaced_stream(assembler, "SOURCE_MATERIAL_SLICES"),
             subjects: vec![namespaced_subject(assembler, "source_material.slices.>")],
             storage: jetstream::stream::StorageType::File,
-            max_age: tokio::time::Duration::from_secs(7 * 24 * 60 * 60),
+            max_age: tokio::time::Duration::from_hours(168),
             max_message_size: 512 * 1024,
             ..Default::default()
         })
         .await
-        .map_err(|e| SinexError::network(format!("Failed to create slices stream: {}", e)))?;
+        .map_err(|e| SinexError::network(format!("Failed to create slices stream: {e}")))?;
 
     assembler
         .js
@@ -73,7 +73,7 @@ pub(super) async fn bootstrap_streams(assembler: &MaterialAssembler) -> IngestdR
             ..Default::default()
         })
         .await
-        .map_err(|e| SinexError::network(format!("Failed to create end stream: {}", e)))?;
+        .map_err(|e| SinexError::network(format!("Failed to create end stream: {e}")))?;
 
     info!("Material streams bootstrapped successfully");
     Ok(())
@@ -86,14 +86,14 @@ pub(super) fn spawn_begin_consumer(
 ) -> JoinHandle<IngestdResult<()>> {
     let js = assembler.js.clone();
     let assembler = assembler.clone_for_task();
-    let shutdown_flag = shutdown_flag.clone();
+    let shutdown_flag = shutdown_flag;
 
     tokio::spawn(async move {
         let stream_name = namespaced_stream(&assembler, "SOURCE_MATERIAL_BEGIN");
         let stream = js
             .get_stream(&stream_name)
             .await
-            .map_err(|e| SinexError::network(format!("Failed to get begin stream: {}", e)))?;
+            .map_err(|e| SinexError::network(format!("Failed to get begin stream: {e}")))?;
 
         let consumer_name = namespaced_consumer(&assembler, "ingestd_material_begin");
         let consumer = stream
@@ -109,7 +109,7 @@ pub(super) fn spawn_begin_consumer(
                 },
             )
             .await
-            .map_err(|e| SinexError::network(format!("Failed to create begin consumer: {}", e)))?;
+            .map_err(|e| SinexError::network(format!("Failed to create begin consumer: {e}")))?;
 
         loop {
             if shutdown_flag.load(Ordering::Relaxed) {
@@ -120,9 +120,7 @@ pub(super) fn spawn_begin_consumer(
                 .max_messages(50)
                 .messages()
                 .await
-                .map_err(|e| {
-                    SinexError::network(format!("Failed to fetch begin messages: {}", e))
-                })?;
+                .map_err(|e| SinexError::network(format!("Failed to fetch begin messages: {e}")))?;
 
             while let Some(message) = messages.next().await {
                 if shutdown_flag.load(Ordering::Relaxed) {
@@ -198,7 +196,7 @@ pub(super) fn spawn_slices_consumer(
 ) -> JoinHandle<IngestdResult<()>> {
     let js = assembler.js.clone();
     let assembler = assembler.clone_for_task();
-    let shutdown_flag = shutdown_flag.clone();
+    let shutdown_flag = shutdown_flag;
 
     // Semaphore to limit concurrent batch processing and prevent memory exhaustion
     let batch_semaphore = Arc::new(tokio::sync::Semaphore::new(
@@ -210,7 +208,7 @@ pub(super) fn spawn_slices_consumer(
         let stream = js
             .get_stream(&stream_name)
             .await
-            .map_err(|e| SinexError::network(format!("Failed to get slices stream: {}", e)))?;
+            .map_err(|e| SinexError::network(format!("Failed to get slices stream: {e}")))?;
 
         let consumer_name = namespaced_consumer(&assembler, "ingestd_material_slices");
         let consumer = stream
@@ -226,7 +224,7 @@ pub(super) fn spawn_slices_consumer(
                 },
             )
             .await
-            .map_err(|e| SinexError::network(format!("Failed to create slices consumer: {}", e)))?;
+            .map_err(|e| SinexError::network(format!("Failed to create slices consumer: {e}")))?;
 
         loop {
             if shutdown_flag.load(Ordering::Relaxed) {
@@ -235,7 +233,7 @@ pub(super) fn spawn_slices_consumer(
 
             // Acquire semaphore permit before fetching next batch (backpressure)
             let _permit = batch_semaphore.acquire().await.map_err(|e| {
-                SinexError::service(format!("Failed to acquire batch semaphore: {}", e))
+                SinexError::service(format!("Failed to acquire batch semaphore: {e}"))
             })?;
 
             let mut messages = consumer
@@ -243,9 +241,7 @@ pub(super) fn spawn_slices_consumer(
                 .max_messages(200)
                 .messages()
                 .await
-                .map_err(|e| {
-                    SinexError::network(format!("Failed to fetch slice messages: {}", e))
-                })?;
+                .map_err(|e| SinexError::network(format!("Failed to fetch slice messages: {e}")))?;
 
             while let Some(message) = messages.next().await {
                 if shutdown_flag.load(Ordering::Relaxed) {
@@ -269,7 +265,7 @@ pub(super) fn spawn_slices_consumer(
                 let material_id = message
                     .subject
                     .split('.')
-                    .last()
+                    .next_back()
                     .and_then(|part| Ulid::from_str(part).ok());
 
                 let Some(material_id) = material_id else {
@@ -351,14 +347,14 @@ pub(super) fn spawn_end_consumer(
 ) -> JoinHandle<IngestdResult<()>> {
     let js = assembler.js.clone();
     let assembler = assembler.clone_for_task();
-    let shutdown_flag = shutdown_flag.clone();
+    let shutdown_flag = shutdown_flag;
 
     tokio::spawn(async move {
         let stream_name = namespaced_stream(&assembler, "SOURCE_MATERIAL_END");
         let stream = js
             .get_stream(&stream_name)
             .await
-            .map_err(|e| SinexError::network(format!("Failed to get end stream: {}", e)))?;
+            .map_err(|e| SinexError::network(format!("Failed to get end stream: {e}")))?;
 
         let consumer_name = namespaced_consumer(&assembler, "ingestd_material_end");
         let consumer = stream
@@ -373,7 +369,7 @@ pub(super) fn spawn_end_consumer(
                 },
             )
             .await
-            .map_err(|e| SinexError::network(format!("Failed to create end consumer: {}", e)))?;
+            .map_err(|e| SinexError::network(format!("Failed to create end consumer: {e}")))?;
 
         loop {
             if shutdown_flag.load(Ordering::Relaxed) {
@@ -384,7 +380,7 @@ pub(super) fn spawn_end_consumer(
                 .max_messages(50)
                 .messages()
                 .await
-                .map_err(|e| SinexError::network(format!("Failed to fetch end messages: {}", e)))?;
+                .map_err(|e| SinexError::network(format!("Failed to fetch end messages: {e}")))?;
 
             while let Some(message) = messages.next().await {
                 if shutdown_flag.load(Ordering::Relaxed) {

@@ -40,10 +40,12 @@ pub fn gateway_auth_mode_from_env() -> eyre::Result<GatewayAuthModeSnapshot> {
     }
 }
 
+#[must_use]
 pub fn extract_token(headers: &HeaderMap) -> Option<String> {
     extract_token_inner(headers)
 }
 
+#[must_use]
 pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     constant_time_eq_inner(a, b)
 }
@@ -52,6 +54,7 @@ pub fn read_token_from_env() -> eyre::Result<Option<String>> {
     read_token_from_env_inner()
 }
 
+#[must_use]
 pub fn rpc_server_limits_snapshot() -> RpcServerLimitsSnapshot {
     let limits = RpcServerLimits::from_env();
     RpcServerLimitsSnapshot {

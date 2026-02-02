@@ -11,8 +11,8 @@ use base64::Engine;
 use color_eyre::eyre::{eyre, Context, ContextCompat, Result};
 use serde_json::{json, Value};
 use sinex_primitives::{
-    coordination::CoordinationKvClient, domain::Entity, temporal, temporal::Timestamp, Event,
-    Id, JsonValue, Ulid,
+    coordination::CoordinationKvClient, domain::Entity, temporal, temporal::Timestamp, Event, Id,
+    JsonValue, Ulid,
 };
 use sinex_services::{AnalyticsService, ContentService, PkmService, SearchQuery, SearchService};
 use std::sync::OnceLock;
@@ -49,7 +49,7 @@ impl<'a> RpcParams<'a> {
     }
 
     fn optional_i64(&self, key: &str) -> Option<i64> {
-        self.inner.get(key).and_then(|v| v.as_i64())
+        self.inner.get(key).and_then(serde_json::Value::as_i64)
     }
 
     fn require_value(&self, key: &str) -> Result<&'a Value> {
@@ -127,16 +127,16 @@ pub(crate) fn validate_entity_link_ids(from: &Id<Entity>, to: &Id<Entity>) -> Re
 /// Base64 encoding expands data by ~1.33x (4 chars per 3 bytes). When handling
 /// blob uploads via RPC, ensure:
 ///
-/// - SINEX_GATEWAY_MAX_BODY_BYTES >= SINEX_GATEWAY_MAX_BLOB_BYTES * 1.4
+/// - `SINEX_GATEWAY_MAX_BODY_BYTES` >= `SINEX_GATEWAY_MAX_BLOB_BYTES` * 1.4
 ///   (1.4 accounts for base64 overhead plus JSON envelope)
 ///
 /// Default configuration:
-/// - Body limit: 2MB (SINEX_GATEWAY_MAX_BODY_BYTES)
-/// - Blob limit: 5MB (SINEX_GATEWAY_MAX_BLOB_BYTES)
+/// - Body limit: 2MB (`SINEX_GATEWAY_MAX_BODY_BYTES`)
+/// - Blob limit: 5MB (`SINEX_GATEWAY_MAX_BLOB_BYTES`)
 ///
 /// This mismatch is intentional: the body limit applies to the raw HTTP request,
 /// while the blob limit applies to decoded content. For large blobs, clients should
-/// increase SINEX_GATEWAY_MAX_BODY_BYTES proportionally.
+/// increase `SINEX_GATEWAY_MAX_BODY_BYTES` proportionally.
 pub(crate) fn decode_blob_content(content_b64: &str, limit: usize) -> Result<Vec<u8>> {
     let max_encoded = max_base64_length(limit);
     if content_b64.len() > max_encoded {
@@ -173,15 +173,12 @@ pub async fn handle_system_health(services: &ServiceContainer, _params: Value) -
         .is_ok();
 
     // Check NATS connectivity
-    let nats_connected = services
-        .nats_client()
-        .map(|client| {
-            matches!(
-                client.connection_state(),
-                async_nats::connection::State::Connected
-            )
-        })
-        .unwrap_or(false);
+    let nats_connected = services.nats_client().is_some_and(|client| {
+        matches!(
+            client.connection_state(),
+            async_nats::connection::State::Connected
+        )
+    });
 
     let overall_status = if db_healthy && (nats_connected || replay_control.bypass_active) {
         "healthy"
@@ -341,7 +338,9 @@ pub async fn handle_create_entities(service: &PkmService, params: Value) -> Resu
     let entity_ids = service
         .create_entities_from_source_material(source_material_id, entities, created_by)
         .await?;
-    Ok(json!({ "entity_ids": entity_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>() }))
+    Ok(
+        json!({ "entity_ids": entity_ids.iter().map(std::string::ToString::to_string).collect::<Vec<_>>() }),
+    )
 }
 
 pub async fn handle_link_entities(service: &PkmService, params: Value) -> Result<Value> {
@@ -469,7 +468,9 @@ pub async fn handle_replay_cancel_operation(
 ) -> Result<Value> {
     let params = RpcParams::new(&params);
     let operation_id = params.require_ulid("operation_id")?;
-    let reason = params.optional_str("reason").map(|s| s.to_string());
+    let reason = params
+        .optional_str("reason")
+        .map(std::string::ToString::to_string);
     let operation = client.cancel(operation_id, reason).await?;
     Ok(json!({ "cancelled": true, "operation": operation }))
 }
@@ -503,7 +504,7 @@ use sinex_primitives::rpc::coordination::{
     InstanceHealthResponse, InstanceInfo, ListInstancesResponse,
 };
 
-/// Convert InstanceMetadata to InstanceInfo for RPC response
+/// Convert `InstanceMetadata` to `InstanceInfo` for RPC response
 fn metadata_to_instance_info(
     meta: &sinex_primitives::coordination::InstanceMetadata,
     is_leader: bool,
@@ -514,10 +515,7 @@ fn metadata_to_instance_info(
         instance_id: InstanceId::new(&meta.instance_id),
         node_type: NodeType::Service, // InstanceMetadata doesn't have node_type, assume Service
         hostname: Some(HostName::new(&meta.hostname)),
-        last_heartbeat: Some(
-            *Timestamp::from_unix_timestamp(meta.last_heartbeat)
-                .unwrap_or(time::OffsetDateTime::UNIX_EPOCH.into())
-        ),
+        last_heartbeat: Timestamp::from_unix_timestamp(meta.last_heartbeat),
         is_leader,
     }
 }
@@ -612,6 +610,20 @@ fn blob_response_payload(content: &[u8], metadata: &sinex_node_sdk::annex::BlobM
         "size_bytes": metadata.size_bytes,
     })
 }
+fn blob_size_limit_bytes() -> usize {
+    static LIMIT: OnceLock<usize> = OnceLock::new();
+    *LIMIT.get_or_init(|| {
+        std::env::var("SINEX_GATEWAY_MAX_BLOB_BYTES")
+            .ok()
+            .and_then(|raw| raw.parse::<usize>().ok())
+            .unwrap_or(DEFAULT_BLOB_SIZE_BYTES)
+    })
+}
+
+fn max_base64_length(limit_bytes: usize) -> usize {
+    // Each 3 bytes become 4 base64 chars. Round up to ensure we account for padding.
+    limit_bytes.div_ceil(3) * 4
+}
 
 #[cfg(test)]
 mod tests {
@@ -662,18 +674,4 @@ mod tests {
         assert!(rpc_params.require_ulid("operation_id").is_err());
         Ok(())
     }
-}
-fn blob_size_limit_bytes() -> usize {
-    static LIMIT: OnceLock<usize> = OnceLock::new();
-    *LIMIT.get_or_init(|| {
-        std::env::var("SINEX_GATEWAY_MAX_BLOB_BYTES")
-            .ok()
-            .and_then(|raw| raw.parse::<usize>().ok())
-            .unwrap_or(DEFAULT_BLOB_SIZE_BYTES)
-    })
-}
-
-fn max_base64_length(limit_bytes: usize) -> usize {
-    // Each 3 bytes become 4 base64 chars. Round up to ensure we account for padding.
-    ((limit_bytes + 2) / 3) * 4
 }

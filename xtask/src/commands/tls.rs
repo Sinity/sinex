@@ -3,7 +3,7 @@ pub use crate::tls::TlsCommand;
 use anyhow::Result;
 
 impl XtaskCommand for TlsCommand {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "tls"
     }
 

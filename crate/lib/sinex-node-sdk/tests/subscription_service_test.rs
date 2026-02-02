@@ -212,7 +212,7 @@ async fn test_subscription_filter_validation(ctx: TestContext) -> Result<()> {
         let subscription = json!({
             "core.events_feed_all": [filter]
         });
-        let proc_name = format!("filter_test_{}", name);
+        let proc_name = format!("filter_test_{name}");
 
         let result = sqlx::query!(
             "INSERT INTO core.processor_manifests
@@ -225,7 +225,7 @@ async fn test_subscription_filter_validation(ctx: TestContext) -> Result<()> {
         .execute(&ctx.pool)
         .await;
 
-        assert!(result.is_ok(), "Filter pattern '{}' should be valid", name);
+        assert!(result.is_ok(), "Filter pattern '{name}' should be valid");
     }
 
     // Verify all filters were stored

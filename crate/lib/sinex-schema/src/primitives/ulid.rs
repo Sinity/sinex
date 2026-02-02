@@ -36,9 +36,9 @@ lazy_static! {
     });
 }
 
-/// A wrapper around ULID that provides PostgreSQL compatibility via UUID.
+/// A wrapper around ULID that provides `PostgreSQL` compatibility via UUID.
 ///
-/// Time-ordered, globally unique identifiers with PostgreSQL integration.
+/// Time-ordered, globally unique identifiers with `PostgreSQL` integration.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Ulid(InnerUlid);
@@ -51,6 +51,7 @@ impl fmt::Debug for Ulid {
 
 impl Ulid {
     /// Generate a new ULID with monotonic ordering guarantee.
+    #[must_use]
     pub fn new() -> Self {
         use rand::Rng;
 
@@ -58,7 +59,7 @@ impl Ulid {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis()
-            .min(u64::MAX as u128) as u64;
+            .min(u128::from(u64::MAX)) as u64;
 
         let mut state = MONOTONIC_STATE.lock().unwrap_or_else(|poisoned| {
             tracing::warn!("ULID monotonic state mutex was poisoned, recovering with fresh state");
@@ -130,41 +131,48 @@ impl Ulid {
     }
 
     /// Create from a timestamp
+    #[must_use]
     pub fn from_datetime(datetime: Timestamp) -> Self {
         let timestamp_ms = (datetime.unix_timestamp_nanos() / 1_000_000) as u64;
         Self(InnerUlid::from_parts(timestamp_ms, rand::random()))
     }
 
     /// Get the timestamp component
+    #[must_use]
     pub fn timestamp(&self) -> Timestamp {
         let timestamp_ms = self.0.timestamp_ms();
         Timestamp::new(
-            OffsetDateTime::from_unix_timestamp_nanos(timestamp_ms as i128 * 1_000_000)
+            OffsetDateTime::from_unix_timestamp_nanos(i128::from(timestamp_ms) * 1_000_000)
                 .expect("ULID timestamp should be valid"),
         )
     }
 
-    /// Convert to UUID for PostgreSQL storage
+    /// Convert to UUID for `PostgreSQL` storage
+    #[must_use]
     pub fn to_uuid(&self) -> Uuid {
         Uuid::from_bytes(self.0.to_bytes())
     }
 
     /// Get as UUID for SQLX parameter binding
+    #[must_use]
     pub fn as_uuid(&self) -> Uuid {
         self.to_uuid()
     }
 
     /// Create from UUID
+    #[must_use]
     pub fn from_uuid(uuid: Uuid) -> Self {
         Self(InnerUlid::from_bytes(*uuid.as_bytes()))
     }
 
     /// Get the inner ULID
+    #[must_use]
     pub fn inner(&self) -> &InnerUlid {
         &self.0
     }
 
     /// Convert to bytes
+    #[must_use]
     pub fn to_bytes(&self) -> [u8; 16] {
         self.0.to_bytes()
     }
@@ -175,11 +183,13 @@ impl Ulid {
     }
 
     /// Check if this is a nil/zero ULID
+    #[must_use]
     pub fn is_nil(&self) -> bool {
         self.0.to_bytes().iter().all(|&b| b == 0)
     }
 
     /// Create a nil/zero ULID (all zeros)
+    #[must_use]
     pub fn nil() -> Self {
         Self::from_bytes([0; 16]).expect("nil ULID should always be valid")
     }
@@ -278,7 +288,7 @@ impl From<Uuid> for Ulid {
 // SQLx support
 #[cfg(feature = "sqlx")]
 mod sqlx_impl {
-    use super::*;
+    use super::{Ulid, Uuid};
     use sqlx::postgres::{PgArgumentBuffer, PgHasArrayType, PgTypeInfo, PgValueRef};
     use sqlx::{Postgres, Type, TypeInfo};
 
@@ -345,7 +355,7 @@ mod arbitrary_impl {
 
 // JSON Schema support
 mod schema_impl {
-    use super::*;
+    use super::Ulid;
     use schemars::{
         schema::{InstanceType, Schema, SchemaObject, StringValidation},
         JsonSchema,

@@ -33,7 +33,7 @@ pub async fn verify_configuration_generation(
             details.insert("environment", env_info);
         }
         Err(e) => {
-            messages.push(format!("✗ Environment variable validation failed: {}", e));
+            messages.push(format!("✗ Environment variable validation failed: {e}"));
             has_failures = true;
         }
     }
@@ -44,7 +44,7 @@ pub async fn verify_configuration_generation(
             details.insert("configuration_files", config_info);
         }
         Err(e) => {
-            messages.push(format!("⚠ Configuration file validation warning: {}", e));
+            messages.push(format!("⚠ Configuration file validation warning: {e}"));
             has_warnings = true;
         }
     }
@@ -55,7 +55,7 @@ pub async fn verify_configuration_generation(
             details.insert("toml_generation", toml_info);
         }
         Err(e) => {
-            messages.push(format!("✗ TOML generation test failed: {}", e));
+            messages.push(format!("✗ TOML generation test failed: {e}"));
             has_failures = true;
         }
     }
@@ -66,7 +66,7 @@ pub async fn verify_configuration_generation(
             details.insert("event_sources", event_config);
         }
         Err(e) => {
-            messages.push(format!("⚠ Event source configuration warning: {}", e));
+            messages.push(format!("⚠ Event source configuration warning: {e}"));
             has_warnings = true;
         }
     }
@@ -78,8 +78,7 @@ pub async fn verify_configuration_generation(
         }
         Err(e) => {
             messages.push(format!(
-                "⚠ Service configuration compatibility warning: {}",
-                e
+                "⚠ Service configuration compatibility warning: {e}"
             ));
             has_warnings = true;
         }
@@ -141,7 +140,7 @@ async fn verify_environment_variables(messages: &mut Vec<String>) -> NodeResult<
                     }),
                 );
 
-                messages.push(format!("✓ Environment variable '{}' is set", var_name));
+                messages.push(format!("✓ Environment variable '{var_name}' is set"));
             }
             Err(_) => {
                 env_vars.insert(
@@ -156,14 +155,12 @@ async fn verify_environment_variables(messages: &mut Vec<String>) -> NodeResult<
                 if required {
                     missing_vars.push(var_name.to_string());
                     messages.push(format!(
-                        "✗ Required environment variable '{}' is missing",
-                        var_name
+                        "✗ Required environment variable '{var_name}' is missing"
                     ));
                     has_issues = true;
                 } else {
                     messages.push(format!(
-                        "ℹ Optional environment variable '{}' is not set",
-                        var_name
+                        "ℹ Optional environment variable '{var_name}' is not set"
                     ));
                 }
             }
@@ -186,8 +183,7 @@ async fn verify_environment_variables(messages: &mut Vec<String>) -> NodeResult<
                 );
 
                 messages.push(format!(
-                    "✓ Optional environment variable '{}' is set",
-                    var_name
+                    "✓ Optional environment variable '{var_name}' is set"
                 ));
             }
             Err(_) => {
@@ -249,10 +245,7 @@ async fn verify_configuration_files(messages: &mut Vec<String>) -> NodeResult<Va
                     );
 
                     found_configs.push(path_str.to_string());
-                    messages.push(format!(
-                        "✓ Configuration file found and valid: {}",
-                        path_str
-                    ));
+                    messages.push(format!("✓ Configuration file found and valid: {path_str}"));
                 }
                 Err(e) => {
                     config_files.insert(
@@ -267,8 +260,7 @@ async fn verify_configuration_files(messages: &mut Vec<String>) -> NodeResult<Va
                     );
 
                     messages.push(format!(
-                        "⚠ Configuration file exists but invalid: {} ({})",
-                        path_str, e
+                        "⚠ Configuration file exists but invalid: {path_str} ({e})"
                     ));
                 }
             }
@@ -283,7 +275,7 @@ async fn verify_configuration_files(messages: &mut Vec<String>) -> NodeResult<Va
                 }),
             );
 
-            debug!("Configuration file not found: {}", path_str);
+            debug!("Configuration file not found: {path_str}");
         }
     }
 
@@ -292,8 +284,7 @@ async fn verify_configuration_files(messages: &mut Vec<String>) -> NodeResult<Va
         // Validate SINEX_CONFIG path for security (prevent arbitrary file reads)
         if let Err(e) = validate_path(&custom_config) {
             messages.push(format!(
-                "⚠ Invalid SINEX_CONFIG path '{}': {}",
-                custom_config, e
+                "⚠ Invalid SINEX_CONFIG path '{custom_config}': {e}"
             ));
         } else {
             let custom_path = Utf8Path::new(&custom_config);
@@ -330,15 +321,13 @@ async fn verify_configuration_files(messages: &mut Vec<String>) -> NodeResult<Va
                         );
 
                         messages.push(format!(
-                            "⚠ Custom configuration file (SINEX_CONFIG) is invalid: {}",
-                            e
+                            "⚠ Custom configuration file (SINEX_CONFIG) is invalid: {e}"
                         ));
                     }
                 }
             } else {
                 messages.push(format!(
-                    "⚠ SINEX_CONFIG points to non-existent file: {}",
-                    custom_config
+                    "⚠ SINEX_CONFIG points to non-existent file: {custom_config}"
                 ));
             }
         }
@@ -373,10 +362,9 @@ async fn test_toml_generation(messages: &mut Vec<String>) -> NodeResult<Value> {
             }))
         }
         Err(e) => {
-            messages.push(format!("✗ Generated TOML is invalid: {}", e));
+            messages.push(format!("✗ Generated TOML is invalid: {e}"));
             Err(SinexError::configuration(format!(
-                "TOML generation produces invalid configuration: {}",
-                e
+                "TOML generation produces invalid configuration: {e}"
             )))
         }
     }
@@ -424,9 +412,9 @@ async fn verify_event_source_configuration(messages: &mut Vec<String>) -> NodeRe
         event_sources.insert(source_name.to_string(), config_info);
 
         if is_available {
-            messages.push(format!("✓ Event source '{}' is available", source_name));
+            messages.push(format!("✓ Event source '{source_name}' is available"));
         } else {
-            messages.push(format!("ℹ Event source '{}' is not available", source_name));
+            messages.push(format!("ℹ Event source '{source_name}' is not available"));
         }
     }
 
@@ -517,7 +505,7 @@ async fn verify_service_configuration_compatibility(
             messages.push("✓ systemd compatibility verified".to_string());
         }
         Err(e) => {
-            messages.push(format!("⚠ systemd compatibility warning: {}", e));
+            messages.push(format!("⚠ systemd compatibility warning: {e}"));
             compatibility_info.insert(
                 "systemd",
                 json!({
@@ -535,7 +523,7 @@ async fn verify_service_configuration_compatibility(
             messages.push("✓ NixOS module compatibility verified".to_string());
         }
         Err(e) => {
-            messages.push(format!("ℹ NixOS module compatibility check: {}", e));
+            messages.push(format!("ℹ NixOS module compatibility check: {e}"));
             compatibility_info.insert(
                 "nixos",
                 json!({
@@ -555,7 +543,7 @@ async fn check_systemd_compatibility() -> NodeResult<Value> {
         .arg("--version")
         .output()
         .await
-        .map_err(|e| SinexError::processing(format!("Failed to check systemd version: {}", e)))?;
+        .map_err(|e| SinexError::processing(format!("Failed to check systemd version: {e}")))?;
 
     if !systemd_version.status.success() {
         return Err(SinexError::processing(
@@ -598,13 +586,12 @@ async fn check_nixos_compatibility() -> NodeResult<Value> {
 
 pub async fn validate_toml_file(path: &Utf8Path) -> NodeResult<Value> {
     // Validate path before file operation to prevent path traversal
-    let validated_path = validate_path(path.as_str()).map_err(|e| {
-        SinexError::validation(format!("Invalid or dangerous path {:?}: {}", path, e))
-    })?;
+    let validated_path = validate_path(path.as_str())
+        .map_err(|e| SinexError::validation(format!("Invalid or dangerous path {path:?}: {e}")))?;
 
     let content = tokio::fs::read_to_string(&validated_path)
         .await
-        .map_err(|e| SinexError::io(e))?;
+        .map_err(SinexError::io)?;
 
     validate_toml_content(&content)
 }
@@ -613,7 +600,7 @@ fn validate_toml_content(content: &str) -> NodeResult<Value> {
     // Parse TOML to validate syntax
     let parsed: toml::Value = content
         .parse()
-        .map_err(|e| SinexError::configuration(format!("Invalid TOML syntax: {}", e)))?;
+        .map_err(|e| SinexError::configuration(format!("Invalid TOML syntax: {e}")))?;
 
     let mut sections = Vec::new();
 

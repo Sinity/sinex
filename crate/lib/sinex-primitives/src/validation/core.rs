@@ -49,17 +49,18 @@ fn clean_path(path: &Path) -> PathBuf {
         match component {
             Component::CurDir => {
                 // Skip current directory components
-                continue;
             }
             Component::ParentDir => {
                 // Pop the last component if possible
                 if let Some(last) = components.last() {
                     if !matches!(last, Component::ParentDir | Component::RootDir) {
                         components.pop();
-                        continue;
+                    } else {
+                        components.push(component);
                     }
+                } else {
+                    components.push(component);
                 }
-                components.push(component);
             }
             _ => {
                 components.push(component);

@@ -9,12 +9,13 @@
 # Essential commands
 cargo xtask check                    # Fast: fmt + cargo check
 cargo xtask lint                     # Clippy with -D warnings
-cargo xtask test --profile default   # Run tests (default profile)
+cargo xtask test                     # Run tests (retries enabled)
+cargo xtask test --debug             # Debug mode (single-threaded)
 cargo xtask db setup                 # Create database + migrate
 
 # With JSON output (recommended for agents)
 cargo xtask check --json             # {"command":"check","status":"success",...}
-cargo xtask test --profile fast --json | jq '.status'
+cargo xtask test --json | jq '.status'
 ```
 
 ---
@@ -102,23 +103,22 @@ cargo xtask check --json 2>&1 | tee result.json | jq -r '.status'
 
 | Command | Purpose |
 |---------|---------|
-| `cargo xtask test --profile <PROFILE>` | Run nextest with profile |
-| `cargo xtask test --profile fast` | Quick iteration (no retries) |
-| `cargo xtask test --profile default` | CI profile (balanced) |
-| `cargo xtask test --profile debug` | Single-threaded, full output |
-| `cargo xtask test --profile perf` | Performance tests only |
+| `cargo xtask test` | Run tests (retries enabled) |
+| `cargo xtask test --debug` | Single-threaded, full output |
 | `cargo xtask test --prime` | Prime database pool before tests |
+| `cargo xtask test --heavy` | Include `#[ignore]` tests |
+| `cargo xtask test --affected` | Only changed packages |
 
 **Passing args to nextest:**
 ```bash
 # Filter by package
-cargo xtask test --profile fast -- -p sinex-core
+cargo xtask test -- -p sinex-primitives
 
 # Filter by test name
 cargo xtask test -- -E 'test(my_test_name)'
 
 # Combine filters
-cargo xtask test --profile fast -- -p sinex-node-sdk -E 'test(unit::)'
+cargo xtask test -- -p sinex-node-sdk -E 'test(unit::)'
 ```
 
 ### Database
@@ -168,17 +168,17 @@ cargo xtask test --profile fast -- -p sinex-node-sdk -E 'test(unit::)'
 
 ---
 
-## Nextest Profiles
+## Test Flags
 
-Profiles are defined in `.config/nextest.toml`:
+Use xtask flags instead of nextest profiles:
 
-| Profile | Purpose | Retries | Parallelism |
-|---------|---------|---------|-------------|
-| `default` | CI + pre-commit | 1 | Auto |
-| `fast` | Quick local iteration | 0 | High |
-| `debug` | Debugging failures | 0 | 1 thread |
-| `perf` | Performance tests | 0 | Controlled |
-| `ci` | Full CI validation | 2 | Auto |
+| Flag | Purpose |
+|------|---------|
+| (none) | Standard runs with retries |
+| `--debug` | Single-threaded, full output |
+| `--prime` | Prime database template before testing |
+| `--heavy` | Include `#[ignore]` tests |
+| `--affected` | Only test changed packages |
 
 ---
 
@@ -203,7 +203,7 @@ xtask reads configuration from environment (typically set by devenv):
 
 ### Pre-commit Check
 ```bash
-cargo xtask check && cargo xtask test --profile fast
+cargo xtask check && cargo xtask test
 ```
 
 ### Full Validation
@@ -213,7 +213,7 @@ cargo xtask ci-preflight
 
 ### Debug a Failing Test
 ```bash
-cargo xtask test --profile debug -- -E 'test(failing_test_name)'
+cargo xtask test --debug -- -E 'test(failing_test_name)'
 ```
 
 ### Check Environment Health

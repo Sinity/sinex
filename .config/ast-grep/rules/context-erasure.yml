@@ -1,0 +1,9 @@
+id: context-erasure
+message: "Error context erasure: use .with_context() instead of .map_err(|_| ...)"
+severity: warning
+language: rust
+rule:
+  pattern: $X.map_err(|_| $Y)
+note: |
+  Using |_| in map_err discards the original error context.
+  Use .with_context(|| "message") or .map_err(SinexError::from) instead.

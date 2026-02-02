@@ -1,12 +1,15 @@
 #![doc = include_str!("../docs/clipboard.md")]
 
 // Use local facade for common types
-use crate::common::*;
+use crate::common::{
+    debug, error, info, interval, path_utils, warn, Command, Duration, JsonValue, NodeResult,
+    SinexError, Timestamp, VecDeque,
+};
+use sinex_node_sdk::stage_as_you_go::StageAsYouGoContext;
 use sinex_primitives::events::payloads::{ClipboardCopiedPayload, ClipboardSelectedPayload};
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::Seconds;
 use sinex_primitives::{Id, Ulid};
-use sinex_node_sdk::stage_as_you_go::StageAsYouGoContext;
 use tokio::sync::watch;
 
 // Clipboard-specific imports
@@ -42,7 +45,7 @@ const CLIPBOARD_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 ///
 /// This is the delay between clipboard checks using the native arboard API.
 /// 100ms provides responsive detection while being efficient. This value is
-/// hardcoded rather than using the poll_interval_secs parameter to ensure
+/// hardcoded rather than using the `poll_interval_secs` parameter to ensure
 /// optimal performance with the native clipboard API.
 const CLIPBOARD_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
@@ -199,7 +202,7 @@ impl ClipboardWatcher {
     /// Get active window application name
     async fn get_active_window_app(&self) -> Option<String> {
         // Try Hyprland first with timeout
-        if let Ok(output) = tokio::time::timeout(
+        if let Ok(Ok(output)) = tokio::time::timeout(
             CLIPBOARD_COMMAND_TIMEOUT,
             Command::new("hyprctl")
                 .args(["activewindow", "-j"])
@@ -207,20 +210,18 @@ impl ClipboardWatcher {
         )
         .await
         {
-            if let Ok(output) = output {
-                if output.status.success() {
-                    if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
-                        return json
-                            .get("class")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
-                    }
+            if output.status.success() {
+                if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+                    return json
+                        .get("class")
+                        .and_then(|v| v.as_str())
+                        .map(std::string::ToString::to_string);
                 }
             }
         }
 
         // Try xdotool for X11 with timeout
-        if let Ok(output) = tokio::time::timeout(
+        if let Ok(Ok(output)) = tokio::time::timeout(
             CLIPBOARD_COMMAND_TIMEOUT,
             Command::new("xdotool")
                 .args(["getactivewindow", "getwindowclassname"])
@@ -228,10 +229,8 @@ impl ClipboardWatcher {
         )
         .await
         {
-            if let Ok(output) = output {
-                if output.status.success() {
-                    return Some(String::from_utf8_lossy(&output.stdout).trim().to_string());
-                }
+            if output.status.success() {
+                return Some(String::from_utf8_lossy(&output.stdout).trim().to_string());
             }
         }
 
@@ -241,7 +240,7 @@ impl ClipboardWatcher {
     /// Get active window title
     async fn get_active_window_title(&self) -> Option<String> {
         // Try Hyprland first with timeout
-        if let Ok(output) = tokio::time::timeout(
+        if let Ok(Ok(output)) = tokio::time::timeout(
             CLIPBOARD_COMMAND_TIMEOUT,
             Command::new("hyprctl")
                 .args(["activewindow", "-j"])
@@ -249,20 +248,18 @@ impl ClipboardWatcher {
         )
         .await
         {
-            if let Ok(output) = output {
-                if output.status.success() {
-                    if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
-                        return json
-                            .get("title")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
-                    }
+            if output.status.success() {
+                if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+                    return json
+                        .get("title")
+                        .and_then(|v| v.as_str())
+                        .map(std::string::ToString::to_string);
                 }
             }
         }
 
         // Try xdotool for X11 with timeout
-        if let Ok(output) = tokio::time::timeout(
+        if let Ok(Ok(output)) = tokio::time::timeout(
             CLIPBOARD_COMMAND_TIMEOUT,
             Command::new("xdotool")
                 .args(["getactivewindow", "getwindowname"])
@@ -270,10 +267,8 @@ impl ClipboardWatcher {
         )
         .await
         {
-            if let Ok(output) = output {
-                if output.status.success() {
-                    return Some(String::from_utf8_lossy(&output.stdout).trim().to_string());
-                }
+            if output.status.success() {
+                return Some(String::from_utf8_lossy(&output.stdout).trim().to_string());
             }
         }
 
@@ -361,7 +356,7 @@ impl ClipboardWatcher {
                 content_hash: content.hash.clone(),
                 original_hash: self
                     .find_original_hash(&content.hash)
-                    .map(|h| h.to_string()),
+                    .map(std::string::ToString::to_string),
                 annex_key: None,
                 blob_id: None,
             }
@@ -382,14 +377,14 @@ impl ClipboardWatcher {
                 content_type: content.content_type.clone(),
                 content_size: data_bytes.len(),
                 text_preview: content.text_preview.clone(),
-                file_count: content.file_paths.as_ref().map(|paths| paths.len()),
+                file_count: content.file_paths.as_ref().map(std::vec::Vec::len),
                 file_paths: content.file_paths.clone(),
                 source_app: content.source_app.clone(),
                 window_title: content.window_title.clone(),
                 content_hash: content.hash.clone(),
                 original_hash: self
                     .find_original_hash(&content.hash)
-                    .map(|h| h.to_string()),
+                    .map(std::string::ToString::to_string),
                 annex_key: None,
                 blob_id: None,
             }
@@ -444,7 +439,7 @@ impl ClipboardWatcher {
             "source_app": content.source_app,
             "window_title": content.window_title,
             "content_hash": content.hash,
-            "original_hash": self.find_original_hash(&content.hash).map(|h| h.to_string()),
+            "original_hash": self.find_original_hash(&content.hash).map(std::string::ToString::to_string),
         })
     }
 
@@ -476,7 +471,7 @@ impl ClipboardWatcher {
             let (content_type, text_preview, file_paths) = self.analyze_content(&validated_text);
             let source_app = self.get_active_window_app().await;
             let window_title = self.get_active_window_title().await;
-            let timestamp = OffsetDateTime::now_utc().into();
+            let timestamp = Timestamp::now();
 
             Some(ClipboardContent {
                 text: validated_text,
@@ -535,7 +530,7 @@ impl ClipboardWatcher {
     }
 
     /// Get current primary selection content (Linux)
-    /// Uses arboard's GetExtLinux trait to access PRIMARY selection
+    /// Uses arboard's `GetExtLinux` trait to access PRIMARY selection
     async fn get_primary_selection_content(&self) -> Option<ClipboardContent> {
         if !self.enable_primary_selection {
             return None;
@@ -698,6 +693,7 @@ impl ClipboardWatcher {
 #[cfg(test)]
 impl ClipboardWatcher {
     /// Lightweight stub used by unit tests so we don't require wl-paste/xclip.
+    #[must_use]
     pub fn stub() -> Self {
         Self {
             poll_interval: Duration::from_secs(1),
@@ -733,10 +729,10 @@ impl ClipboardWatcher {
 mod tests {
     use super::*;
     use sinex_node_sdk::acquisition_manager::AcquisitionManager;
+    use sinex_primitives::Event;
     use std::sync::Arc;
-    use time::OffsetDateTime;
     use tokio::sync::mpsc;
-    use xtask::sandbox::{sinex_test, EphemeralNats, TestContext, TestResult};
+    use xtask::sandbox::{sinex_test, EphemeralNats, TestResult};
 
     fn sample_clipboard_content(text: &str, watcher: &ClipboardWatcher) -> ClipboardContent {
         ClipboardContent {

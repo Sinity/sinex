@@ -150,6 +150,7 @@ impl FileWatcher {
     }
 
     /// Get the current configuration
+    #[must_use]
     pub fn config(&self) -> &FileWatcherConfig {
         &self.config
     }
@@ -195,7 +196,6 @@ fn convert_notify_event_secure(
             }
             Err(_) => {
                 // Try next watch root
-                continue;
             }
         }
     }
@@ -211,6 +211,6 @@ fn convert_notify_event_secure(
     Some(FileChangeEvent {
         path: path_buf,
         kind,
-        timestamp: crate::temporal::now().into(),
+        timestamp: crate::temporal::now(),
     })
 }

@@ -3,19 +3,21 @@
 use super::ulid::Ulid;
 use sqlx::types::Uuid as SqlxUuid;
 
-/// Convert ULID to PostgreSQL UUID type
+/// Convert ULID to `PostgreSQL` UUID type
 #[inline]
+#[must_use]
 pub fn ulid_to_uuid(ulid: Ulid) -> SqlxUuid {
     SqlxUuid::from_bytes(*ulid.to_uuid().as_bytes())
 }
 
-/// Convert PostgreSQL UUID to ULID
+/// Convert `PostgreSQL` UUID to ULID
 #[inline]
+#[must_use]
 pub fn uuid_to_ulid(uuid: SqlxUuid) -> Ulid {
     Ulid::from_uuid(uuid::Uuid::from_bytes(*uuid.as_bytes()))
 }
 
-/// Convert PostgreSQL UUID to ULID with validation
+/// Convert `PostgreSQL` UUID to ULID with validation
 pub fn uuid_to_ulid_safe(uuid: SqlxUuid) -> Result<Ulid, String> {
     let uuid_std = uuid::Uuid::from_bytes(*uuid.as_bytes());
     let bytes = uuid_std.as_bytes();
@@ -108,7 +110,8 @@ impl DbUuidCollectionExt for Vec<SqlxUuid> {
 
 impl DbUuidCollectionExt for Option<Vec<SqlxUuid>> {
     fn to_ulid_vec(self) -> Vec<Ulid> {
-        self.map(|v| v.to_ulid_vec()).unwrap_or_default()
+        self.map(DbUuidCollectionExt::to_ulid_vec)
+            .unwrap_or_default()
     }
 }
 
@@ -124,11 +127,13 @@ pub fn opt_from_db(uuid: Option<SqlxUuid>) -> Option<Ulid> {
 }
 
 #[inline]
+#[must_use]
 pub fn opt_vec_to_db(ulids: Option<Vec<Ulid>>) -> Option<Vec<SqlxUuid>> {
     ulids.map(|v| v.to_uuid_vec())
 }
 
 #[inline]
+#[must_use]
 pub fn opt_vec_from_db(uuids: Option<Vec<SqlxUuid>>) -> Option<Vec<Ulid>> {
-    uuids.map(|v| v.to_ulid_vec())
+    uuids.map(DbUuidCollectionExt::to_ulid_vec)
 }

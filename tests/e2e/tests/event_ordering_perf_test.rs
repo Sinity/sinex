@@ -1,11 +1,11 @@
 //! Performance-oriented event ordering tests.
 
 use serde_json::json;
-use sinex_primitives::{types::Ulid, DynamicPayload};
-use xtask::sandbox::prelude::*;
+use sinex_primitives::{DynamicPayload, Ulid};
 use std::collections::HashSet;
 use std::time::Duration;
 use tokio::time::sleep;
+use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 #[ignore = "long"]
@@ -106,6 +106,9 @@ async fn perf_database_ordering_consistency(ctx: TestContext) -> Result<()> {
         sleep(Duration::from_millis(2)).await;
     }
 
-    assert!(!all_event_ulids.is_empty(), "Should insert perf batch events");
+    assert!(
+        !all_event_ulids.is_empty(),
+        "Should insert perf batch events"
+    );
     Ok(())
 }

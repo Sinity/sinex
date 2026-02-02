@@ -68,9 +68,7 @@ impl NodeSpec {
     /// Parse a node spec from user input
     pub fn parse(input: &str, name: Option<&str>) -> Self {
         // Extract name from input or use provided
-        let name = name
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| Self::derive_name_from_spec(input));
+        let name = name.map_or_else(|| Self::derive_name_from_spec(input), |s| s.to_string());
 
         Self {
             name,
@@ -270,7 +268,7 @@ impl NodeGenerator {
     /// Create a new node generator
     pub fn new(config: GeneratorConfig) -> Result<Self> {
         let http_client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(120))
+            .timeout(std::time::Duration::from_mins(2))
             .build()
             .context("Failed to create HTTP client")?;
 
@@ -431,7 +429,7 @@ impl NodeGenerator {
             .header("Content-Type", "application/json")
             .header(
                 "Authorization",
-                format!("Bearer {}", self.config.llm_api_key),
+                format!("Bearer {}", &self.config.llm_api_key),
             )
             .json(&request)
             .send()
@@ -477,7 +475,7 @@ impl NodeGenerator {
     }
 
     fn create_crate(&self, spec: &NodeSpec, code: &str) -> Result<Utf8PathBuf> {
-        let crate_name = format!("sinex-{}", spec.name);
+        let crate_name = format!("sinex-{}", &spec.name);
         let crate_path = self
             .config
             .workspace_root
@@ -486,7 +484,7 @@ impl NodeGenerator {
 
         // Create directory structure
         std::fs::create_dir_all(crate_path.join("src"))
-            .with_context(|| format!("Failed to create crate directory: {}", crate_path))?;
+            .with_context(|| format!("Failed to create crate directory: {crate_path}"))?;
 
         // Write Cargo.toml
         let cargo_toml = format!(

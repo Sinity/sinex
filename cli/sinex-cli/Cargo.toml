@@ -4,7 +4,7 @@ name = "sinex-cli"
 [dependencies]
 clap_complete       = "4"
 serde_yaml          = "0.9"
-comfy-table         = "7"
+tabled              = "0.17"
 indicatif           = "0.17"
 console             = "0.15"
 time                = { workspace = true }
@@ -120,3 +120,6 @@ path = "../../crate/lib/sinex-primitives"
 features = [
     "testing",
 ]
+
+[lints]
+workspace = true

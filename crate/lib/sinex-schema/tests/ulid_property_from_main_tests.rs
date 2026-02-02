@@ -2,9 +2,8 @@
 //!
 //! These tests verify ULID properties without requiring database access
 
-use chrono::{DateTime, Utc};
 use proptest::prelude::*;
-use sinex_schema::ulid::Ulid;
+use sinex_schema::ulid::{Timestamp, Ulid};
 use std::collections::HashSet;
 use std::sync::{Arc, Barrier};
 use xtask::sandbox::{sinex_proptest, sinex_test};
@@ -92,7 +91,7 @@ fn test_ulid_concurrent_uniqueness() -> TestResult<()> {
     for handle in handles {
         let ids = handle.join().unwrap();
         for id in ids {
-            assert!(all_ids.insert(id), "Duplicate ULID generated: {}", id);
+            assert!(all_ids.insert(id), "Duplicate ULID generated: {id}");
         }
     }
 
@@ -130,17 +129,17 @@ fn test_ulid_monotonic_within_ms() -> TestResult<()> {
 // Test ULID timestamp extraction
 #[sinex_test]
 fn test_ulid_timestamp_extraction() -> TestResult<()> {
-    let before: DateTime<Utc> = Utc::now();
+    let before = Timestamp::now();
 
     let ulid = Ulid::new();
 
-    let after: DateTime<Utc> = Utc::now();
+    let after = Timestamp::now();
 
     let timestamp = ulid.timestamp();
 
     // Allow small clock jitter tolerance (+/- 2 seconds)
-    let early_bound = before - chrono::Duration::seconds(2);
-    let late_bound = after + chrono::Duration::seconds(2);
+    let early_bound = before - time::Duration::seconds(2);
+    let late_bound = after + time::Duration::seconds(2);
     assert!(timestamp >= early_bound, "Timestamp too early");
     assert!(timestamp <= late_bound, "Timestamp too late");
     Ok(())
@@ -151,7 +150,9 @@ fn test_ulid_timestamp_extraction() -> TestResult<()> {
 fn test_ulid_nil() -> TestResult<()> {
     let nil = Ulid::nil();
     assert_eq!(nil.to_string(), "00000000000000000000000000");
-    assert_eq!(nil.timestamp(), DateTime::from_timestamp(0, 0).unwrap());
+    let nil_timestamp = nil.timestamp();
+    let zero_timestamp = Timestamp::from_unix_timestamp(0).unwrap();
+    assert_eq!(nil_timestamp, zero_timestamp);
 
     // Nil should be less than any other ULID
     let regular = Ulid::new();

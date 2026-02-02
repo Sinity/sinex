@@ -56,6 +56,7 @@ pub struct GatewayMetrics {
 
 impl GatewayMetrics {
     /// Create new gateway metrics collector
+    #[must_use]
     pub fn new(nats_client: async_nats::Client) -> Self {
         let config = SelfObserverConfig::from_env("sinex-gateway");
         Self {
@@ -73,6 +74,7 @@ impl GatewayMetrics {
     }
 
     /// Create disabled metrics (no NATS connection)
+    #[must_use]
     pub fn disabled() -> Self {
         Self {
             total_requests: AtomicU64::new(0),

@@ -144,8 +144,7 @@ All nodes support two operational modes:
 All current guidance—suite layout, quick-start commands, Nextest profiles, and
 property-testing conventions—lives in the [Testing Handbook](TESTING.md).
 Keep that document handy when adding or reviewing tests; it links directly to
-crate-level deep dives such as the `sinex-test-utils` API reference and the
-NixOS VM harness.
+the test utilities documentation in `xtask/docs/sandbox/` and the NixOS VM harness.
 
 ## 🚀 Quick Start
 
@@ -247,16 +246,16 @@ The Sinex test suite is optimized for parallel execution, achieving 50%+ faster 
 
 - **Parallel Execution**: Automatically uses all available CPU cores
 - **Database Isolation**: pool size is 2× Nextest test threads (min 64), capped by PostgreSQL `max_connections`, with advisory locks
-- **Common Testing**: `cargo xtask test --profile default --prime` for the dev loop (Nextest-only; `cargo test` is unsupported). CI uses profile `default` (perf/stress/external excluded).
+- **Common Testing**: `cargo xtask test --prime` for the dev loop (Nextest-only; `cargo test` is unsupported). Heavy/external tests are excluded by default.
 - **Comprehensive Coverage**: Unit, integration, property, and adversarial tests
 
 See [`TESTING.md`](TESTING.md) for the detailed testing guide and config/precedence notes.
 
 Quick commands:
 ```bash
-cargo xtask check                         # cargo check --workspace
-cargo xtask test --profile default --prime   # Nextest with pool priming
-cargo xtask test --profile default --prime   # CI selection (default profile)
+cargo xtask check                     # cargo check --workspace
+cargo xtask test --prime              # Nextest with pool priming
+cargo xtask test --debug              # Debug mode (single-threaded, full output)
 NIX_CONFIG=$'experimental-features = nix-command flakes\naccept-flake-config = true' \
   ./tests/e2e/nixos-vm/run-vm-tests.sh -c smoke     # VM smoke tests
 ```
@@ -269,7 +268,7 @@ GitHub Actions exercises the exact same scripts you run locally. Before pushing,
 | --- | --- | --- |
 | Any Rust code | `cargo xtask check` | Fast local guard; CI runs `cargo xtask ci workspace`. |
 | Event payloads or schema helpers | `cargo xtask schema generate` | `ci.yml` and `schema-management.yml` refuse to run if `schemas/` drifts. |
-| CI-equivalent test selection | `cargo xtask test --profile default --prime` | Matches CI Nextest selection (default profile filter). |
+| CI-equivalent test selection | `cargo xtask test --prime` | Matches CI test configuration. |
 
 Additional notes:
 
@@ -302,14 +301,13 @@ sinex/
 │   │   ├── sinex-ingestd/         # Central ingestion daemon
 │   │   ├── sinex-gateway/         # API gateway service
 │   ├── lib/                       # Shared libraries
-│   │   ├── sinex-core/            # Core types + database repositories
+│   │   ├── sinex-primitives/      # Core types, validation, error handling
 │   │   ├── sinex-schema/          # Database schema + migrations
 │   │   ├── sinex-node-sdk/        # Node development SDK
 │   │   ├── sinex-processor-runtime/
 │   │   ├── sinex-macros/
 │   │   ├── sinex-services/
-│   │   ├── sinex-db/              # Database patterns
-│   │   └── sinex-test-utils/      # Testing infrastructure
+│   │   └── sinex-db/              # Database patterns
 │   └── nodes/                     # Event nodes & automata
 │       ├── sinex-fs-ingestor/
 │       ├── sinex-terminal-ingestor/

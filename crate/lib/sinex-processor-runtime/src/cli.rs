@@ -14,7 +14,8 @@ pub use sinex_node_sdk::exploration::{
 };
 use sinex_node_sdk::stream_processor::{Checkpoint, NodeRunner, TimeHorizon};
 use sinex_node_sdk::{NodeResult, SinexError};
-use sinex_primitives::{SanitizedPath, Timestamp};
+use sinex_primitives::temporal::Timestamp;
+use sinex_primitives::SanitizedPath;
 use time::OffsetDateTime;
 
 // Re-export common types from sinex_node_sdk::automaton_base
@@ -27,6 +28,7 @@ use tracing::{info, warn};
 
 use crate::replay::{ReplayFilters, ReplayMode, ReplayProgress, ReplayResult, ReplayRuntimeExt};
 
+#[must_use]
 pub fn command_requires_heartbeat(command: &NodeCommand) -> bool {
     matches!(
         command,
@@ -97,7 +99,7 @@ pub struct NatsArgs {
     #[arg(long, env = "SINEX_NATS_CREDS")]
     pub creds_file: Option<PathBuf>,
 
-    /// NKey seed file path
+    /// `NKey` seed file path
     #[arg(long, env = "SINEX_NATS_NKEY_SEED")]
     pub nkey_file: Option<PathBuf>,
 
@@ -231,8 +233,8 @@ pub enum NodeCommand {
 fn parse_checkpoint_json(checkpoint_str: &str) -> NodeResult<Checkpoint> {
     // TODO: Add size limit to prevent DoS via massive JSON checkpoint strings
     let val: serde_json::Value =
-        serde_json::from_str(checkpoint_str).map_err(|e| SinexError::serialization(e))?;
-    serde_json::from_value(val).map_err(|e| SinexError::serialization(e))
+        serde_json::from_str(checkpoint_str).map_err(SinexError::serialization)?;
+    serde_json::from_value(val).map_err(SinexError::serialization)
 }
 
 /// Parse checkpoint as timestamp
@@ -241,7 +243,7 @@ fn parse_checkpoint_timestamp(checkpoint_str: &str) -> NodeResult<Checkpoint> {
         checkpoint_str,
         &time::format_description::well_known::Rfc3339,
     )
-    .map(|ts| Checkpoint::timestamp(ts, None))
+    .map(|ts| Checkpoint::timestamp(ts.into(), None))
     .map_err(|e| SinexError::general(format!("Invalid timestamp format: {e}")))
 }
 
@@ -261,45 +263,6 @@ pub fn parse_checkpoint(checkpoint_str: &str) -> NodeResult<Checkpoint> {
         parse_checkpoint_json(checkpoint_str)
             .or_else(|_| parse_checkpoint_timestamp(checkpoint_str))
             .or_else(|_| Ok(parse_checkpoint_stream(checkpoint_str)))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use xtask::sandbox::sinex_test;
-
-    #[sinex_test]
-    fn scan_mode_emits_heartbeats() -> TestResult<()> {
-        let command = NodeCommand::Scan {
-            from: "none".to_string(),
-            until: "snapshot".to_string(),
-            targets: Vec::new(),
-            dry_run: false,
-            interactive: false,
-            max_events: 0,
-            no_skip_duplicates: false,
-            estimate: false,
-        };
-
-        assert!(command_requires_heartbeat(&command));
-
-        Ok(())
-    }
-
-    #[sinex_test]
-    fn explore_mode_emits_heartbeats() -> TestResult<()> {
-        let command = NodeCommand::Explore {
-            source_state: true,
-            ingestion_history: false,
-            coverage_analysis: false,
-            limit: 5,
-            export_to: None,
-        };
-
-        assert!(command_requires_heartbeat(&command));
-
-        Ok(())
     }
 }
 
@@ -358,11 +321,12 @@ pub fn parse_time_horizon(horizon_str: &str) -> NodeResult<TimeHorizon> {
     } else {
         // Try to parse as ISO timestamp for historical scan
         OffsetDateTime::parse(horizon_str, &time::format_description::well_known::Rfc3339)
-            .map(|dt| TimeHorizon::Historical { end_time: dt })
+            .map(|dt| TimeHorizon::Historical {
+                end_time: dt.into(),
+            })
             .map_err(|e| {
                 SinexError::general(format!(
-                    "Invalid time horizon '{}': {}. Use 'continuous', 'snapshot', or ISO timestamp",
-                    horizon_str, e
+                    "Invalid time horizon '{horizon_str}': {e}. Use 'continuous', 'snapshot', or ISO timestamp"
                 ))
             })
     }
@@ -395,7 +359,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
         };
 
         if tracing_subscriber::fmt()
-            .with_env_filter(format!("sinex={}", log_level))
+            .with_env_filter(format!("sinex={log_level}"))
             .try_init()
             .is_err()
         {
@@ -406,21 +370,20 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
         let mut node_config: HashMap<String, serde_json::Value> =
             if let Some(config_str) = args.node_config.clone() {
                 serde_json::from_str(&config_str).map_err(|e| {
-                    SinexError::general(format!(
-                        "{}: {}",
-                        "Failed to parse node configuration JSON", e
-                    ))
+                    SinexError::general(format!("Failed to parse node configuration JSON: {e}"))
                 })?
             } else {
                 HashMap::new()
             };
 
-        if let NodeCommand::Service { consumer_group, .. } = &args.command {
-            if let Some(group) = consumer_group {
-                node_config
-                    .entry("consumer_group".to_string())
-                    .or_insert_with(|| serde_json::json!(group));
-            }
+        if let NodeCommand::Service {
+            consumer_group: Some(group),
+            ..
+        } = &args.command
+        {
+            node_config
+                .entry("consumer_group".to_string())
+                .or_insert_with(|| serde_json::json!(group));
         }
 
         let replay_config = Self::extract_replay_config(&mut node_config)?;
@@ -485,8 +448,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
                 }
 
                 let coordination_disabled = std::env::var("SINEX_COORDINATION_DISABLED")
-                    .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-                    .unwrap_or(false);
+                    .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
 
                 // Run service with optional coordination
                 if dry_run || coordination_disabled {
@@ -521,8 +483,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
                                 let mut runner = runner.lock().await;
                                 runner.run_service().await.map_err(|e| {
                                     sinex_primitives::SinexError::service(format!(
-                                        "Node error: {}",
-                                        e
+                                        "Node error: {e}"
                                     ))
                                 })
                             }
@@ -543,11 +504,10 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
             } => {
                 info!("Running scan operation");
 
-                let checkpoint = parse_checkpoint(from).map_err(|e| {
-                    SinexError::general(format!("{}: {}", "Failed to parse checkpoint", e))
-                })?;
+                let checkpoint = parse_checkpoint(from)
+                    .map_err(|e| SinexError::general(format!("Failed to parse checkpoint: {e}")))?;
                 let time_horizon = parse_time_horizon(until).map_err(|e| {
-                    SinexError::general(format!("{}: {}", "Failed to parse time horizon", e))
+                    SinexError::general(format!("Failed to parse time horizon: {e}"))
                 })?;
 
                 // Create stream processor runner
@@ -584,7 +544,10 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
 
                 // Create scan args
                 let scan_args = ScanArgs {
-                    targets: targets.iter().map(|p| p.to_string()).collect(),
+                    targets: targets
+                        .iter()
+                        .map(std::string::ToString::to_string)
+                        .collect(),
                     dry_run,
                     interactive,
                     max_events,
@@ -612,7 +575,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
                     if !estimate_result.warnings.is_empty() {
                         println!("  Warnings:");
                         for warning in &estimate_result.warnings {
-                            println!("    - {}", warning);
+                            println!("    - {warning}");
                         }
                     }
                     println!();
@@ -666,28 +629,28 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
                 if !report.processor_stats.is_empty() {
                     println!("  Processor stats:");
                     for (key, value) in &report.processor_stats {
-                        println!("    {}: {}", key, value);
+                        println!("    {key}: {value}");
                     }
                 }
 
                 if !report.successful_targets.is_empty() {
                     println!("  Successful targets: {}", report.successful_targets.len());
                     for target in &report.successful_targets {
-                        println!("    - {}", target);
+                        println!("    - {target}");
                     }
                 }
 
                 if !report.failed_targets.is_empty() {
                     println!("  Failed targets:");
                     for (target, error) in &report.failed_targets {
-                        println!("    - {}: {}", target, error);
+                        println!("    - {target}: {error}");
                     }
                 }
 
                 if !report.warnings.is_empty() {
                     println!("  Warnings:");
                     for warning in &report.warnings {
-                        println!("    - {}", warning);
+                        println!("    - {warning}");
                     }
                 }
             }
@@ -720,7 +683,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
                                     .unwrap_or_default()
                             );
                             if let Some(total) = state.total_items {
-                                println!("  Total items: {}", total);
+                                println!("  Total items: {total}");
                             }
                             println!("  Healthy: {}", state.healthy);
 
@@ -746,7 +709,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
                             if !state.metadata.is_empty() {
                                 println!("  Metadata:");
                                 for (key, value) in &state.metadata {
-                                    println!("    {}: {}", key, value);
+                                    println!("    {key}: {value}");
                                 }
                             }
                         }
@@ -790,7 +753,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
                                 }
                                 println!("    Events: {}", entry.events_generated);
                                 if let Some(error) = &entry.error {
-                                    println!("    Error: {}", error);
+                                    println!("    Error: {error}");
                                 }
                             }
                         }
@@ -849,7 +812,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
                             if !analysis.recommendations.is_empty() {
                                 println!("  Recommendations:");
                                 for rec in &analysis.recommendations {
-                                    println!("    - {}", rec);
+                                    println!("    - {rec}");
                                 }
                             }
                         }
@@ -869,7 +832,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
                     };
 
                     match node.export_data(&export_path, format) {
-                        Ok(_) => {
+                        Ok(()) => {
                             println!("Data exported to: {}", export_path.as_str());
                         }
                         Err(e) => {
@@ -899,9 +862,8 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
             // this indicates a bug in environment namespacing logic, not user input.
             SanitizedPath::from_str(namespaced_str.as_ref()).unwrap_or_else(|err| {
                 panic!(
-                    "Environment-generated work directory '{}' failed validation: {}. \
-                     This is a bug in environment namespacing logic.",
-                    namespaced_str, err
+                    "Environment-generated work directory '{namespaced_str}' failed validation: {err}. \
+                     This is a bug in environment namespacing logic."
                 )
             })
         })
@@ -912,10 +874,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
             db_url.clone()
         } else {
             std::env::var("DATABASE_URL").map_err(|e| {
-                SinexError::general(format!(
-                    "{}: {}",
-                    "DATABASE_URL environment variable not set", e
-                ))
+                SinexError::general(format!("DATABASE_URL environment variable not set: {e}"))
             })?
         };
         let env = sinex_primitives::environment();
@@ -924,7 +883,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
             .unwrap_or_else(|_| base_url.clone());
         SqlxPgPool::connect(&namespaced_url)
             .await
-            .map_err(|e| SinexError::general(format!("Failed to connect to database: {}", e)))
+            .map_err(|e| SinexError::general(format!("Failed to connect to database: {e}")))
     }
 
     async fn connect_nats_transport(
@@ -952,7 +911,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
             }
 
             let cfg: ReplayConfig =
-                serde_json::from_value(raw).map_err(|e| SinexError::serialization(e))?;
+                serde_json::from_value(raw).map_err(SinexError::serialization)?;
 
             if cfg.enabled {
                 Ok(Some(cfg))
@@ -1033,7 +992,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
 
             Ok(Some(ReplayMode::Custom { filters }))
         } else {
-            let start = start_time.unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+            let start = start_time.unwrap_or_else(|| time::OffsetDateTime::UNIX_EPOCH.into());
             Ok(Some(ReplayMode::TimeRange {
                 start_time: start,
                 end_time,
@@ -1041,7 +1000,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
         }
     }
 
-    fn parse_timestamp(value: Option<&str>) -> NodeResult<Option<OffsetDateTime>> {
+    fn parse_timestamp(value: Option<&str>) -> NodeResult<Option<Timestamp>> {
         if let Some(raw) = value {
             let parsed = OffsetDateTime::parse(raw, &time::format_description::well_known::Rfc3339)
                 .map_err(|e| {
@@ -1049,7 +1008,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
                         "Invalid RFC3339 timestamp in replay configuration: {e}"
                     ))
                 })?;
-            Ok(Some(parsed))
+            Ok(Some(parsed.into()))
         } else {
             Ok(None)
         }
@@ -1112,4 +1071,43 @@ macro_rules! processor_main {
             runner.run(args).await.map_err(|e| e.into())
         }
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use xtask::sandbox::sinex_test;
+
+    #[sinex_test]
+    fn scan_mode_emits_heartbeats() -> TestResult<()> {
+        let command = NodeCommand::Scan {
+            from: "none".to_string(),
+            until: "snapshot".to_string(),
+            targets: Vec::new(),
+            dry_run: false,
+            interactive: false,
+            max_events: 0,
+            no_skip_duplicates: false,
+            estimate: false,
+        };
+
+        assert!(command_requires_heartbeat(&command));
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn explore_mode_emits_heartbeats() -> TestResult<()> {
+        let command = NodeCommand::Explore {
+            source_state: true,
+            ingestion_history: false,
+            coverage_analysis: false,
+            limit: 5,
+            export_to: None,
+        };
+
+        assert!(command_requires_heartbeat(&command));
+
+        Ok(())
+    }
 }

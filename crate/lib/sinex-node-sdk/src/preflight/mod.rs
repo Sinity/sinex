@@ -7,7 +7,7 @@ pub mod services;
 pub mod verification;
 
 // validate_toml_file is now private to the configuration module
-use crate::{SinexError, NodeResult};
+use crate::{NodeResult, SinexError};
 pub use services::verify_service_dependencies;
 pub use verification::run_preflight_checks;
 

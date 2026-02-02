@@ -59,7 +59,7 @@ async fn test_version_info_performance() -> TestResult<()> {
     // Create many version infos to test performance
     let mut version_infos = Vec::new();
     for i in 0..100 {
-        let version_info = VersionInfo::current(&format!("component-{}", i));
+        let version_info = VersionInfo::current(&format!("component-{i}"));
         version_infos.push(version_info);
     }
 
@@ -68,15 +68,14 @@ async fn test_version_info_performance() -> TestResult<()> {
     // Should complete quickly (allow 5 seconds for 100 creations)
     assert!(
         elapsed.as_secs() < 5,
-        "Version info creation too slow: {:?}",
-        elapsed
+        "Version info creation too slow: {elapsed:?}"
     );
 
     // All should be valid
     for (i, version_info) in version_infos.iter().enumerate() {
         assert!(version_info
             .component_version
-            .contains(&format!("component-{}", i)));
+            .contains(&format!("component-{i}")));
         assert!(!version_info.git_revision.is_empty());
         assert!(!version_info.binary_hash.is_empty());
     }
@@ -213,7 +212,7 @@ async fn test_version_info_memory_usage() -> TestResult<()> {
 
     // Create and drop many version infos
     for i in 0..1000 {
-        let version_info = VersionInfo::current(&format!("memory-test-{}", i));
+        let version_info = VersionInfo::current(&format!("memory-test-{i}"));
         assert!(!version_info.component_version.is_empty());
         // Explicit drop to ensure cleanup
         drop(version_info);
@@ -225,8 +224,7 @@ async fn test_version_info_memory_usage() -> TestResult<()> {
     let memory_growth = end_memory.saturating_sub(start_memory);
     assert!(
         memory_growth < 20 * 1024 * 1024,
-        "Memory leaked during version info creation: {} bytes",
-        memory_growth
+        "Memory leaked during version info creation: {memory_growth} bytes"
     );
 
     Ok(())
@@ -250,7 +248,7 @@ async fn test_concurrent_version_info_creation() -> TestResult<()> {
         let success_count = success_count.clone();
 
         let task = tokio::spawn(async move {
-            let version_info = VersionInfo::current(&format!("concurrent-{}", i));
+            let version_info = VersionInfo::current(&format!("concurrent-{i}"));
 
             // Verify basic fields are populated
             if !version_info.git_revision.is_empty()
@@ -278,7 +276,7 @@ async fn test_concurrent_version_info_creation() -> TestResult<()> {
         let version_info = result?;
         assert!(version_info
             .component_version
-            .contains(&format!("concurrent-{}", i)));
+            .contains(&format!("concurrent-{i}")));
     }
 
     Ok(())
@@ -302,7 +300,7 @@ async fn test_version_info_concurrent_stress() -> TestResult<()> {
         let task = tokio::spawn(async move {
             // Each task creates multiple version infos
             for j in 0..5 {
-                let component_name = format!("stress-{}-{}", i, j);
+                let component_name = format!("stress-{i}-{j}");
                 let version_info = VersionInfo::current(&component_name);
 
                 if !version_info.component_version.is_empty()
@@ -330,9 +328,7 @@ async fn test_version_info_concurrent_stress() -> TestResult<()> {
     assert_eq!(total, 500); // 100 tasks * 5 version infos each
     assert!(
         successes >= 475,
-        "Too many errors in concurrent stress test: {}/{}",
-        errors,
-        total
+        "Too many errors in concurrent stress test: {errors}/{total}"
     );
 
     Ok(())

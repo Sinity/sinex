@@ -5,11 +5,10 @@
 
 use proptest::prelude::*;
 use serde_json::json;
-use sinex_node_sdk::types::domain::{EventSource, EventType};
-use sinex_node_sdk::{Event, JsonValue};
 use sinex_node_sdk::{Checkpoint, NodeType, ScanArgs, TimeHorizon};
+use sinex_primitives::domain::{EventSource, EventType};
+use sinex_primitives::{Event, JsonValue, Timestamp};
 use std::collections::HashMap;
-use time::OffsetDateTime;
 use xtask::sandbox::{prelude::*, sinex_proptest, test_event};
 
 /// Create property test strategies for events
@@ -90,11 +89,11 @@ sinex_proptest! {
         let checkpoints = vec![
             Checkpoint::None,
             Checkpoint::Internal {
-                event_id: sinex_node_sdk::types::ulid::Ulid::new(),
+                event_id: sinex_primitives::Ulid::new(),
                 message_count,
             },
             Checkpoint::Timestamp {
-                timestamp: OffsetDateTime::now_utc() + time::time::Duration::seconds(timestamp_offset),
+                timestamp: Timestamp::now() + time::Duration::seconds(timestamp_offset),
                 metadata: Some(json!({"test": true})),
             },
         ];
@@ -172,7 +171,7 @@ sinex_proptest! {
         events in proptest::collection::vec(arb_event_data(), 1..=20),
     ) -> TestResult<()> {
         // Property: Same event data should produce equivalent events
-        for (source, event_type, payload) in events.iter() {
+        for (source, event_type, payload) in &events {
             let event1 = create_test_event(source, event_type, payload.clone());
             let event2 = create_test_event(source, event_type, payload.clone());
 
@@ -204,7 +203,7 @@ sinex_proptest! {
         ),
     ) -> TestResult<()> {
         // Property: Event creation should handle malformed payloads gracefully
-        for payload in malformed_payloads.iter() {
+        for payload in &malformed_payloads {
             let event = create_test_event("test-source", "test.event", payload.clone());
 
             // Property: Event should still be created (ID is None for schemaless events)
@@ -226,14 +225,14 @@ sinex_proptest! {
         message_count in 0u64..1000u64,
     ) -> TestResult<()> {
         let checkpoint1 = Checkpoint::Internal {
-            event_id: sinex_node_sdk::types::ulid::Ulid::new(),
+            event_id: sinex_primitives::Ulid::new(),
             message_count,
         };
 
         let checkpoint2 = Checkpoint::None;
 
         let checkpoint3 = Checkpoint::Timestamp {
-            timestamp: OffsetDateTime::now_utc(),
+            timestamp: Timestamp::now(),
             metadata: Some(json!({"test": "data"})),
         };
 
@@ -244,7 +243,7 @@ sinex_proptest! {
 
         // Property: Same type checkpoints should have similar description format
         let checkpoint4 = Checkpoint::Internal {
-            event_id: sinex_node_sdk::types::ulid::Ulid::new(),
+            event_id: sinex_primitives::Ulid::new(),
             message_count,
         };
 
@@ -261,7 +260,7 @@ sinex_proptest! {
     fn test_time_horizon_behavior_properties(
         hours_forward in 1u32..24u32, // 1 hour to 1 day
     ) -> TestResult<()> {
-        let end_time = OffsetDateTime::now_utc() + time::time::Duration::hours(hours_forward as i64);
+        let end_time = Timestamp::now() + time::Duration::hours(i64::from(hours_forward));
 
         let horizons = vec![
             TimeHorizon::Snapshot,

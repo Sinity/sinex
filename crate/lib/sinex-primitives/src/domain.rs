@@ -1,7 +1,7 @@
 //! Domain-specific typed strings for the Sinex system
 //!
 //! This module provides strongly-typed string wrappers to prevent
-//! accidental mixing of different string types (e.g., EventSource vs EventType).
+//! accidental mixing of different string types (e.g., `EventSource` vs `EventType`).
 
 use camino::{Utf8Path, Utf8PathBuf};
 use schemars::JsonSchema;
@@ -89,7 +89,7 @@ macro_rules! define_string_type {
 }
 
 /// Macro to define a new string type that requires validation
-/// This version has a fallible FromStr implementation
+/// This version has a fallible `FromStr` implementation
 macro_rules! define_validated_string_type {
     ($(#[$meta:meta])* $name:ident) => {
         $(#[$meta])*
@@ -421,6 +421,7 @@ define_string_type!(
 /// State of a processing node
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum NodeState {
     /// Node is actively processing events
     Running,
@@ -431,6 +432,7 @@ pub enum NodeState {
     /// Node has encountered a fatal error
     Failed,
     /// Node state is unknown
+    #[default]
     Unknown,
 }
 
@@ -458,12 +460,6 @@ impl std::str::FromStr for NodeState {
             "unknown" => Ok(Self::Unknown),
             _ => Err(format!("unknown node state: {s}")),
         }
-    }
-}
-
-impl Default for NodeState {
-    fn default() -> Self {
-        Self::Unknown
     }
 }
 
@@ -823,7 +819,13 @@ impl FromStr for Sha256Hash {
 
 #[cfg(feature = "sqlx")]
 mod sqlx_impls {
-    use super::*;
+    use super::{
+        AbsoluteUri, AnnexKey, Blake3Hash, BranchName, CommandText, CommitHash, ConsumerGroup,
+        ConsumerName, EntityTypeName, EventSource, EventType, GlobPattern, HostName, Hostname,
+        IngestorName, InstanceId, IpAddress, JobId, NatsSubject, NodeId, ProcessorName,
+        RegexPattern, RelationType, RelativePath, RemoteName, SanitizedPath, SchemaName,
+        SchemaVersion, ServiceName, Sha256Hash, ShellName, UserId,
+    };
 
     // Register string types without validation
     impl_sqlx_for_string_type!(EventSource);
@@ -878,14 +880,16 @@ fn normalize_path_lexically(path: &Utf8Path) -> Utf8PathBuf {
                     if let Some(last) = components.last() {
                         if *last != ".." {
                             components.pop();
-                            continue;
+                        } else {
+                            components.push(name.to_string());
                         }
+                    } else {
+                        components.push(name.to_string());
                     }
-                } else if name == "." {
+                } else if name != "." {
                     // Skip current directory references
-                    continue;
+                    components.push(name.to_string());
                 }
-                components.push(name.to_string());
             }
             camino::Utf8Component::RootDir => {
                 components.clear();
@@ -893,17 +897,18 @@ fn normalize_path_lexically(path: &Utf8Path) -> Utf8PathBuf {
             }
             camino::Utf8Component::CurDir => {
                 // Skip current directory references
-                continue;
             }
             camino::Utf8Component::ParentDir => {
                 // Treat as ".." component
                 if let Some(last) = components.last() {
                     if last != ".." {
                         components.pop();
-                        continue;
+                    } else {
+                        components.push("..".to_string());
                     }
+                } else {
+                    components.push("..".to_string());
                 }
-                components.push("..".to_string());
             }
             camino::Utf8Component::Prefix(_) => {
                 // Handle Windows prefixes by keeping them
@@ -936,7 +941,7 @@ fn path_contains_traversal(path: &Utf8PathBuf) -> bool {
 
     // Check for components that are exactly ".."
     for component in path.components() {
-        if let camino::Utf8Component::ParentDir = component {
+        if component == camino::Utf8Component::ParentDir {
             return true;
         }
         if let camino::Utf8Component::Normal(name) = component {
@@ -994,6 +999,6 @@ impl FromStr for NatsSubject {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Entity;
 
-/// Marker type for EntityRelation IDs
+/// Marker type for `EntityRelation` IDs
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EntityRelation;

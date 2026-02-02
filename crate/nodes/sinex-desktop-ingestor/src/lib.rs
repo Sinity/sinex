@@ -26,7 +26,7 @@ mod common {
         stream_processor::{
             Checkpoint, Node, NodeCapabilities, NodeRuntimeState, ScanArgs, ScanReport, TimeHorizon,
         },
-        SinexError, NodeResult,
+        NodeResult, SinexError,
     };
 
     pub use time::OffsetDateTime;

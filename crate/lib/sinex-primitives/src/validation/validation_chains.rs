@@ -54,7 +54,7 @@ fn validate_host(host: &str) -> Result<(), ValidationError> {
 
 // Regex for safe relative paths (no directory traversal)
 lazy_static::lazy_static! {
-    static ref SAFE_PATH_REGEX: regex::Regex = regex::Regex::new(r"^[a-zA-Z0-9_\-/]+$").unwrap();
+    static ref SAFE_PATH_REGEX: regex::Regex = regex::Regex::new(r"^[a-zA-Z0-9_\-/]+$").expect("valid compile-time regex pattern");
 }
 
 /// File path validation
@@ -124,20 +124,21 @@ pub trait ValidateExt {
 impl<T: Validate> ValidateExt for T {
     fn validate_friendly(&self) -> Result<(), String> {
         match self.validate() {
-            Ok(_) => Ok(()),
+            Ok(()) => Ok(()),
             Err(errors) => Err(format_validation_errors(&errors)),
         }
     }
 
     fn validate_with_context(&self, context: &str) -> Result<(), String> {
         match self.validate() {
-            Ok(_) => Ok(()),
+            Ok(()) => Ok(()),
             Err(errors) => Err(format_validation_errors_with_context(&errors, context)),
         }
     }
 }
 
 /// Format validation errors into a user-friendly message
+#[must_use]
 pub fn format_validation_errors(errors: &ValidationErrors) -> String {
     let mut messages = Vec::new();
 
@@ -181,6 +182,7 @@ pub fn format_validation_errors(errors: &ValidationErrors) -> String {
 }
 
 /// Format validation errors with additional context
+#[must_use]
 pub fn format_validation_errors_with_context(errors: &ValidationErrors, context: &str) -> String {
     let base_message = format_validation_errors(errors);
     format!("{context}: {base_message}")

@@ -13,13 +13,12 @@ use futures::StreamExt;
 use proptest::prelude::*;
 use proptest::test_runner::TestCaseError;
 use serde_json::{json, Value};
-use sinex_node_sdk::types::ulid::Ulid;
-use sinex_node_sdk::DynamicPayload;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
+use sinex_primitives::{DynamicPayload, Ulid};
 use std::sync::LazyLock;
 use xtask::sandbox::prelude::*;
 
-/// Helper to convert color_eyre::Report errors to TestCaseError for property tests
+/// Helper to convert `color_eyre::Report` errors to `TestCaseError` for property tests
 fn report_to_test_error<E: std::fmt::Display>(e: E) -> TestCaseError {
     TestCaseError::Fail(e.to_string().into())
 }
@@ -50,7 +49,7 @@ fn checkpoint_progress_is_monotonic() -> TestResult<()> {
     for processed in scenarios {
         run_async(async {
             let ctx = TestContext::new().await?;
-            let ctx = ctx.with_nats().await?;
+            let ctx = ctx.with_nats().shared().await?;
             let kv = ctx.checkpoint_kv().await?;
 
             let manager = CheckpointManager::new(
@@ -68,7 +67,7 @@ fn checkpoint_progress_is_monotonic() -> TestResult<()> {
                         event_id: None,
                     },
                     processed_count,
-                    last_activity: OffsetDateTime::now_utc(),
+                    last_activity: Timestamp::now(),
                     data: Some(serde_json::json!({"batch": idx})),
                     version: 2,
                     revision: 0,
@@ -111,7 +110,7 @@ sinex_proptest! {
         let state = CheckpointState {
             checkpoint: Checkpoint::None,
             processed_count: 0,
-            last_activity: OffsetDateTime::now_utc(),
+            last_activity: OffsetDateTime::now_utc().into(),
             data: Some(json_payload.clone()),
             version: 1,
             revision: 0,
@@ -174,7 +173,7 @@ fn jetstream_delivery_preserves_sequence() -> TestResult<()> {
             name: stream_name.clone(),
             subjects: vec![subject.clone()],
             retention: RetentionPolicy::WorkQueue,
-            max_age: Duration::from_secs(60),
+            max_age: Duration::from_mins(1),
             ..Default::default()
         };
         let stream = jetstream.get_or_create_stream(stream_cfg).await?;

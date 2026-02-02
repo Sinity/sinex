@@ -72,6 +72,7 @@ pub struct SourceMaterialRecord {
 
 impl SourceMaterialRegistry {
     /// Generates the `CREATE TABLE` statement for `raw.source_material_registry`.
+    #[must_use]
     pub fn create_table_statement() -> TableCreateStatement {
         Table::create()
             .table(Self::table_iden())
@@ -136,6 +137,7 @@ impl SourceMaterialRegistry {
     }
 
     /// Generates indexes for `raw.source_material_registry`.
+    #[must_use]
     pub fn create_indexes() -> Vec<IndexCreateStatement> {
         vec![
             // Unique constraint on source identifier

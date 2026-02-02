@@ -1,8 +1,8 @@
-//! Configure TimescaleDB chunk interval for core.events
+//! Configure `TimescaleDB` chunk interval for core.events
 //!
 //! **Issue 61 (MEDIUM)**: No Chunk Size Configuration
 //!
-//! TimescaleDB's default chunk interval is 7 days, which may not be optimal
+//! `TimescaleDB`'s default chunk interval is 7 days, which may not be optimal
 //! for all workloads. This migration sets an explicit 7-day chunk interval
 //! to make the configuration explicit and documented.
 //!
@@ -21,7 +21,7 @@ use crate::schema::{Events, TableDef};
 use sea_orm_migration::prelude::*;
 
 #[derive(DeriveMigrationName)]
-pub struct Migration;
+pub(crate) struct Migration;
 
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {

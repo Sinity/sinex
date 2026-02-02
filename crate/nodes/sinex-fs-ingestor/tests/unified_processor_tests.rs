@@ -1,5 +1,5 @@
-use sinex_primitives::Bytes;
 use sinex_fs_ingestor::{FilesystemConfig, FilesystemProcessor};
+use sinex_primitives::Bytes;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
@@ -33,7 +33,7 @@ async fn config_validation(ctx: TestContext) -> TestResult<()> {
 
     let invalid_config = FilesystemConfig {
         watch_paths: vec![],
-        ..valid_config.clone()
+        ..valid_config
     };
     assert!(invalid_config.validate_config().is_err());
 

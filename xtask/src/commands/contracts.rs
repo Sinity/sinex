@@ -1,4 +1,8 @@
-//! Schema management commands - generate, deploy, compatibility checks
+//! Event payload schema (contracts) management - promoted from db schema
+//!
+//! These are API contracts for event payloads, NOT database table schemas.
+//! The rename clarifies the purpose: managing event payload schemas that define
+//! the contract between producers and consumers.
 
 use anyhow::{bail, Context, Result};
 use std::fs;
@@ -9,41 +13,54 @@ use tempfile::NamedTempFile;
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::process::ProcessBuilder;
 
-/// Schema command variants
+/// Contracts (event payload schema) command variants
 #[derive(Debug, Clone, clap::Subcommand)]
-pub enum SchemaSubcommand {
+pub enum ContractsSubcommand {
+    /// Generate event payload schemas from Rust types
     Generate {
+        /// Output directory for generated schemas
         #[arg(short, long, default_value = "schemas/v1")]
         output: String,
+        /// Sync schemas to database after generation
         #[arg(short, long)]
         sync: bool,
     },
+    /// Deploy schemas to database
     Deploy {
+        /// Input directory containing schemas
         #[arg(short, long, default_value = "schemas/v1")]
         input: String,
+        /// Database URL to deploy to
         #[arg(long)]
         database_url: String,
     },
+    /// Check backward compatibility of schema changes
     Compat {
+        /// Base branch/commit to compare against
         #[arg(long)]
         base: Option<String>,
+        /// Glob pattern for schema files
         #[arg(long, default_value = "schemas/v1")]
         glob: String,
     },
+    /// Verify required tables exist in database
     CheckReady {
+        /// Database name
         #[arg(long)]
         database: Option<String>,
+        /// Superuser for connection
         #[arg(long)]
         superuser: Option<String>,
     },
+    /// Show schema information
     Info {
         #[arg(value_enum)]
-        query: SchemaInfoQuery,
+        query: ContractsInfoQuery,
     },
 }
 
 #[derive(Debug, Clone, clap::ValueEnum)]
-pub enum SchemaInfoQuery {
+pub enum ContractsInfoQuery {
     /// List all schema names
     ListSchemas,
     /// List schemas requiring grants
@@ -52,29 +69,31 @@ pub enum SchemaInfoQuery {
     DescribeSchemas,
 }
 
-/// Schema management command
-pub struct SchemaCommand {
-    pub subcommand: SchemaSubcommand,
+/// Contracts management command (event payload schemas)
+#[derive(Debug, Clone, clap::Args)]
+pub struct ContractsCommand {
+    #[command(subcommand)]
+    pub subcommand: ContractsSubcommand,
 }
 
-impl XtaskCommand for SchemaCommand {
-    fn name(&self) -> &str {
-        "schema"
+impl XtaskCommand for ContractsCommand {
+    fn name(&self) -> &'static str {
+        "contracts"
     }
 
     fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         match &self.subcommand {
-            SchemaSubcommand::Generate { output, sync } => execute_generate(output, *sync, ctx),
-            SchemaSubcommand::Deploy {
+            ContractsSubcommand::Generate { output, sync } => execute_generate(output, *sync, ctx),
+            ContractsSubcommand::Deploy {
                 input,
                 database_url,
             } => execute_deploy(input, database_url, ctx),
-            SchemaSubcommand::Compat { base, glob } => execute_compat(base.clone(), glob, ctx),
-            SchemaSubcommand::CheckReady {
+            ContractsSubcommand::Compat { base, glob } => execute_compat(base.clone(), glob, ctx),
+            ContractsSubcommand::CheckReady {
                 database,
                 superuser,
             } => execute_check_ready(database.clone(), superuser.clone(), ctx),
-            SchemaSubcommand::Info { query } => execute_info(query, ctx),
+            ContractsSubcommand::Info { query } => execute_info(query, ctx),
         }
     }
 
@@ -93,7 +112,7 @@ fn execute_generate(output: &str, sync: bool, ctx: &CommandContext) -> Result<Co
     cmd.args(&args);
 
     if ctx.is_human() {
-        println!("========== schema generate ==========");
+        println!("========== contracts generate ==========");
     }
 
     let status = cmd
@@ -101,18 +120,18 @@ fn execute_generate(output: &str, sync: bool, ctx: &CommandContext) -> Result<Co
         .with_context(|| "failed to spawn schema generate")?;
 
     if !status.success() {
-        bail!("schema generate failed with status {}", status);
+        bail!("contracts generate failed with status {status}");
     }
 
     Ok(CommandResult::success()
-        .with_message(format!("Schemas generated in {}", output))
+        .with_message(format!("Event payload schemas generated in {output}"))
         .with_duration(ctx.elapsed()))
 }
 
 fn execute_deploy(input: &str, database_url: &str, ctx: &CommandContext) -> Result<CommandResult> {
     let db_url = database_url.trim();
     if db_url.is_empty() {
-        bail!("DATABASE_URL is required for schema deploy (use --database-url or env)");
+        bail!("DATABASE_URL is required for contracts deploy (use --database-url or env)");
     }
 
     ensure_psql()?;
@@ -140,19 +159,19 @@ fn execute_deploy(input: &str, database_url: &str, ctx: &CommandContext) -> Resu
     cmd.arg("sync").arg("--input").arg(input);
 
     if ctx.is_human() {
-        println!("========== schema deploy ==========");
+        println!("========== contracts deploy ==========");
     }
 
     let status = cmd
         .status()
-        .with_context(|| "failed to spawn schema deploy")?;
+        .with_context(|| "failed to spawn contracts deploy")?;
 
     if !status.success() {
-        bail!("schema deploy failed with status {}", status);
+        bail!("contracts deploy failed with status {status}");
     }
 
     Ok(CommandResult::success()
-        .with_message(format!("Schemas deployed from {}", input))
+        .with_message(format!("Event payload schemas deployed from {input}"))
         .with_duration(ctx.elapsed()))
 }
 
@@ -168,8 +187,8 @@ fn execute_compat(base: Option<String>, glob: &str, ctx: &CommandContext) -> Res
     };
 
     let diff_output = ProcessBuilder::git()
-        .args(&["diff", "--name-only", &format!("{base}...HEAD"), "--", glob])
-        .with_description("git diff for schema compat")
+        .args(["diff", "--name-only", &format!("{base}...HEAD"), "--", glob])
+        .with_description("git diff for contracts compat")
         .run()?;
 
     // git diff can return 0 or 1 (for changes found)
@@ -180,15 +199,15 @@ fn execute_compat(base: Option<String>, glob: &str, ctx: &CommandContext) -> Res
     let changed = diff_output.stdout.trim();
     if changed.is_empty() {
         if ctx.is_human() {
-            println!("✅ No schema edits detected");
+            println!("✅ No contract edits detected");
         }
         return Ok(CommandResult::success()
-            .with_message("No schema changes detected")
+            .with_message("No contract changes detected")
             .with_duration(ctx.elapsed()));
     }
 
     if ctx.is_human() {
-        println!("🔍 Checking compatibility for updated schemas against {base}:");
+        println!("🔍 Checking compatibility for updated contracts against {base}:");
         println!("{changed}");
     }
 
@@ -200,9 +219,9 @@ fn execute_compat(base: Option<String>, glob: &str, ctx: &CommandContext) -> Res
         let path = Path::new(file);
         if !path.exists() {
             if ctx.is_human() {
-                println!("⚠️  Skipping deleted schema {file}");
+                println!("⚠️  Skipping deleted contract {file}");
             }
-            skipped.push(format!("{} (deleted)", file));
+            skipped.push(format!("{file} (deleted)"));
             continue;
         }
 
@@ -215,16 +234,16 @@ fn execute_compat(base: Option<String>, glob: &str, ctx: &CommandContext) -> Res
             .unwrap_or_else(|_| Command::new("false").status().unwrap());
         if !cat_file.success() {
             if ctx.is_human() {
-                println!("➕ New schema {file} (no backward check required)");
+                println!("➕ New contract {file} (no backward check required)");
             }
-            skipped.push(format!("{} (new)", file));
+            skipped.push(format!("{file} (new)"));
             continue;
         }
 
         let tmp = NamedTempFile::new()?;
         let old_contents = ProcessBuilder::git()
-            .args(&["show", &git_obj])
-            .with_description(&format!("reading {}", git_obj))
+            .args(["show", &git_obj])
+            .with_description(format!("reading {git_obj}"))
             .run()?;
 
         fs::write(tmp.path(), old_contents.stdout.as_bytes())?;
@@ -237,31 +256,31 @@ fn execute_compat(base: Option<String>, glob: &str, ctx: &CommandContext) -> Res
         cmd.arg("validate").arg(tmp.path()).arg(path.as_os_str());
         let status = cmd
             .status()
-            .with_context(|| format!("failed to spawn schema validate for {file}"))?;
+            .with_context(|| format!("failed to spawn contracts validate for {file}"))?;
 
-        if !status.success() {
-            errors += 1;
-            if ctx.is_human() {
-                eprintln!("❌ Compatibility regression detected in {file}");
-            }
-        } else {
+        if status.success() {
             if ctx.is_human() {
                 println!("✅ {file} remains backward compatible");
             }
             checked.push(file.to_string());
+        } else {
+            errors += 1;
+            if ctx.is_human() {
+                eprintln!("❌ Compatibility regression detected in {file}");
+            }
         }
     }
 
     if errors > 0 {
-        bail!("Schema compatibility check failed ({errors} issue(s))");
+        bail!("Contract compatibility check failed ({errors} issue(s))");
     }
 
     if ctx.is_human() {
-        println!("✅ Schema compatibility check passed");
+        println!("✅ Contract compatibility check passed");
     }
 
     Ok(CommandResult::success()
-        .with_message("Schema compatibility check passed")
+        .with_message("Contract compatibility check passed")
         .with_details(checked)
         .with_duration(ctx.elapsed()))
 }
@@ -281,7 +300,7 @@ fn execute_check_ready(
         .or_else(|| std::env::var("SUPERUSER").ok())
         .unwrap_or_else(|| "postgres".to_string());
 
-    // Check core.events
+    // Check core.events - capture output instead of printing
     let mut cmd = pg_command("psql");
     cmd.arg("-v")
         .arg("ON_ERROR_STOP=1")
@@ -291,12 +310,16 @@ fn execute_check_ready(
         .arg("SELECT to_regclass('core.events') AS reg")
         .env("PGUSER", &superuser);
 
-    let status = cmd
-        .status()
+    let output = cmd
+        .output()
         .with_context(|| "psql core.events check failed")?;
 
-    if !status.success() {
+    if !output.status.success() {
         bail!("core.events missing in database {db}");
+    }
+
+    if ctx.is_human() {
+        print!("{}", String::from_utf8_lossy(&output.stdout));
     }
 
     // Check sinex_schemas.event_payload_schemas
@@ -309,50 +332,73 @@ fn execute_check_ready(
         .arg("SELECT to_regclass('sinex_schemas.event_payload_schemas') AS reg")
         .env("PGUSER", &superuser);
 
-    let status2 = cmd2
-        .status()
-        .with_context(|| "psql schema registry check failed")?;
+    let output2 = cmd2
+        .output()
+        .with_context(|| "psql contract registry check failed")?;
 
-    if !status2.success() {
+    if !output2.status.success() {
         bail!("sinex_schemas.event_payload_schemas missing in database {db}");
     }
 
     if ctx.is_human() {
+        print!("{}", String::from_utf8_lossy(&output2.stdout));
         println!("✅ core.events and sinex_schemas.event_payload_schemas are present");
     }
 
     Ok(CommandResult::success()
-        .with_message("Schema tables verified")
-        .with_duration(ctx.elapsed()))
+        .with_message("Contract tables verified")
+        .with_duration(ctx.elapsed())
+        .with_data(serde_json::json!({
+            "database": db,
+            "tables": {
+                "core.events": true,
+                "sinex_schemas.event_payload_schemas": true
+            }
+        })))
 }
 
-fn execute_info(query: &SchemaInfoQuery, ctx: &CommandContext) -> Result<CommandResult> {
+fn execute_info(query: &ContractsInfoQuery, ctx: &CommandContext) -> Result<CommandResult> {
     use sinex_schema::schema_registry::{schema_names, schemas_requiring_grants, SINEX_SCHEMAS};
 
     match query {
-        SchemaInfoQuery::ListSchemas => {
-            for name in schema_names() {
-                println!("{}", name);
+        ContractsInfoQuery::ListSchemas => {
+            let names: Vec<_> = schema_names().collect();
+            if ctx.is_human() {
+                for name in &names {
+                    println!("{name}");
+                }
             }
             Ok(CommandResult::success()
-                .with_message("Listed all schema names")
-                .with_duration(ctx.elapsed()))
+                .with_message("Listed all contract names")
+                .with_duration(ctx.elapsed())
+                .with_data(serde_json::json!({ "schemas": names })))
         }
-        SchemaInfoQuery::ListGrantableSchemas => {
-            for schema in schemas_requiring_grants() {
-                println!("{}", schema.name);
+        ContractsInfoQuery::ListGrantableSchemas => {
+            let grantable: Vec<_> = schemas_requiring_grants().map(|s| s.name).collect();
+            if ctx.is_human() {
+                for name in &grantable {
+                    println!("{name}");
+                }
             }
             Ok(CommandResult::success()
                 .with_message("Listed grantable schemas")
-                .with_duration(ctx.elapsed()))
+                .with_duration(ctx.elapsed())
+                .with_data(serde_json::json!({ "grantable_schemas": grantable })))
         }
-        SchemaInfoQuery::DescribeSchemas => {
-            for schema in SINEX_SCHEMAS {
-                println!("{:20} - {}", schema.name, schema.description);
+        ContractsInfoQuery::DescribeSchemas => {
+            let descriptions: Vec<_> = SINEX_SCHEMAS
+                .iter()
+                .map(|s| serde_json::json!({ "name": s.name, "description": s.description }))
+                .collect();
+            if ctx.is_human() {
+                for schema in SINEX_SCHEMAS {
+                    println!("{:20} - {}", schema.name, schema.description);
+                }
             }
             Ok(CommandResult::success()
-                .with_message("Described all schemas")
-                .with_duration(ctx.elapsed()))
+                .with_message("Described all contracts")
+                .with_duration(ctx.elapsed())
+                .with_data(serde_json::json!({ "schemas": descriptions })))
         }
     }
 }
@@ -375,7 +421,7 @@ fn sinex_schema_cmd() -> Command {
 
 fn resolve_default_base_branch() -> Result<String> {
     let output = ProcessBuilder::git()
-        .args(&["symbolic-ref", "refs/remotes/origin/HEAD"])
+        .args(["symbolic-ref", "refs/remotes/origin/HEAD"])
         .with_description("resolving origin/HEAD")
         .run()?;
 
@@ -391,26 +437,26 @@ fn resolve_default_base_branch() -> Result<String> {
 }
 
 fn ensure_psql() -> Result<()> {
-    let status = pg_command("psql")
+    let output = pg_command("psql")
         .arg("--version")
-        .status()
+        .output()
         .with_context(|| "failed to spawn psql")?;
 
-    if !status.success() {
+    if !output.status.success() {
         bail!("psql not available on PATH");
     }
     Ok(())
 }
 
 fn ensure_db_connection(db_url: &str) -> Result<()> {
-    let status = pg_command("psql")
+    let output = pg_command("psql")
         .arg(db_url)
         .arg("-c")
         .arg("SELECT 1")
-        .status()
+        .output()
         .with_context(|| format!("failed to connect to {db_url}"))?;
 
-    if !status.success() {
+    if !output.status.success() {
         bail!("Unable to connect to {db_url}");
     }
     Ok(())
@@ -446,9 +492,9 @@ mod tests {
     use crate::output::OutputWriter;
 
     #[test]
-    fn test_schema_command_metadata() {
-        let cmd = SchemaCommand {
-            subcommand: SchemaSubcommand::Generate {
+    fn test_contracts_command_metadata() {
+        let cmd = ContractsCommand {
+            subcommand: ContractsSubcommand::Generate {
                 output: "schemas/v1".to_string(),
                 sync: false,
             },
@@ -460,23 +506,23 @@ mod tests {
     }
 
     #[test]
-    fn test_schema_command_name() {
-        let cmd = SchemaCommand {
-            subcommand: SchemaSubcommand::CheckReady {
+    fn test_contracts_command_name() {
+        let cmd = ContractsCommand {
+            subcommand: ContractsSubcommand::CheckReady {
                 database: None,
                 superuser: None,
             },
         };
 
-        assert_eq!(cmd.name(), "schema");
+        assert_eq!(cmd.name(), "contracts");
     }
 
     #[test]
     fn test_deploy_requires_database_url() {
-        let cmd = SchemaCommand {
-            subcommand: SchemaSubcommand::Deploy {
+        let cmd = ContractsCommand {
+            subcommand: ContractsSubcommand::Deploy {
                 input: "schemas/v1".to_string(),
-                database_url: "".to_string(),
+                database_url: String::new(),
             },
         };
 

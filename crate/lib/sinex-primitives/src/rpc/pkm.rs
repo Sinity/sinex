@@ -11,7 +11,7 @@ use serde_json::Value;
 // pkm.create_note
 // ─────────────────────────────────────────────────────────────
 
-/// Request: pkm.create_note
+/// Request: `pkm.create_note`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateNoteRequest {
     /// Event ID to attach note to
@@ -26,7 +26,7 @@ pub struct CreateNoteRequest {
     pub created_by: Option<UserId>,
 }
 
-/// Response: pkm.create_note
+/// Response: `pkm.create_note`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateNoteResponse {
     pub annotation_id: Id<Event<JsonValue>>,
@@ -43,7 +43,7 @@ pub struct EntityDefinition {
     pub entity_type: EntityTypeName,
 }
 
-/// Request: pkm.create_entities_from_list
+/// Request: `pkm.create_entities_from_list`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateEntitiesRequest {
     /// Source material ID
@@ -55,7 +55,7 @@ pub struct CreateEntitiesRequest {
     pub created_by: Option<UserId>,
 }
 
-/// Response: pkm.create_entities_from_list
+/// Response: `pkm.create_entities_from_list`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateEntitiesResponse {
     pub entity_ids: Vec<Id<Entity>>,
@@ -65,7 +65,7 @@ pub struct CreateEntitiesResponse {
 // pkm.link_entities
 // ─────────────────────────────────────────────────────────────
 
-/// Request: pkm.link_entities
+/// Request: `pkm.link_entities`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LinkEntitiesRequest {
     /// Source entity ID
@@ -82,7 +82,7 @@ pub struct LinkEntitiesRequest {
     pub source_material_id: Option<Id<SourceMaterial>>,
 }
 
-/// Response: pkm.link_entities
+/// Response: `pkm.link_entities`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LinkEntitiesResponse {
     pub relation_id: Id<EntityRelation>,

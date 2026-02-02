@@ -57,7 +57,7 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
                 "material_kind": "test-wal",
                 "source_identifier": "test://wal-resume",
                 "metadata": {"run": 1},
-                "started_at": crate::temporal::now().to_rfc3339(),
+                "started_at": sinex_primitives::temporal::now().format_rfc3339(),
             })
             .to_string()
             .into(),
@@ -70,7 +70,7 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
         headers.insert("Offset", "0");
         js.publish_with_headers(
             ctx.pipeline_namespace()
-                .subject(&format!("source_material.slices.{}", material_id)),
+                .subject(&format!("source_material.slices.{material_id}")),
             headers,
             b"PART".to_vec().into(),
         )
@@ -84,7 +84,7 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
                 let p = wal_file.clone();
                 async move {
                     if !p.exists() {
-                        return Ok(false);
+                        return Ok::<bool, sinex_primitives::error::SinexError>(false);
                     }
                     let content = tokio::fs::read_to_string(&p)
                         .await
@@ -116,7 +116,7 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
         headers.insert("Offset", "4");
         js.publish_with_headers(
             ctx.pipeline_namespace()
-                .subject(&format!("source_material.slices.{}", material_id)),
+                .subject(&format!("source_material.slices.{material_id}")),
             headers,
             b"IAL!".to_vec().into(),
         )
@@ -130,7 +130,7 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
             ctx.pipeline_namespace().subject("source_material.end"),
             json!({
                 "material_id": material_id.to_string(),
-                "ended_at": crate::temporal::now().to_rfc3339(),
+                "ended_at": sinex_primitives::temporal::now().format_rfc3339(),
                 "content_hash": hash,
                 "total_slices": 2,
                 "total_size_bytes": 8,
@@ -150,16 +150,15 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
                 async move {
                     let repo = pool.source_materials();
                     let id = sinex_primitives::Id::from_ulid(material_id);
-                    let rec = repo
-                        .get_by_id(id)
-                        .await
-                        .map_err(sinex_primitives::error::SinexError::from)?;
+                    let rec = repo.get_by_id(id).await.map_err(|e| {
+                        sinex_primitives::error::SinexError::database(e.to_string())
+                    })?;
                     if let Some(r) = rec {
                         if r.status == sinex_db::repositories::material_status::COMPLETED {
                             return Ok(true);
                         }
                         if r.status == sinex_db::repositories::material_status::FAILED {
-                            return Err(sinex_primitives::error::SinexError::service(format!(
+                            return Err(sinex_primitives::error::SinexError::validation(format!(
                                 "Material failed: metadata={:?}",
                                 r.metadata
                             )));

@@ -5,6 +5,9 @@ path = "src/main.rs"
 [package]
 name = "sinex-terminal-command-canonicalizer"
 
+[dependencies]
+human-panic = "2.0"
+
 [features]
 default = [
 ]
@@ -89,3 +92,6 @@ path = "../../lib/sinex-primitives"
 features = [
     "testing",
 ]
+
+[lints]
+workspace = true

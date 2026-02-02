@@ -4,9 +4,11 @@ use async_nats::jetstream;
 use serde_json::json;
 use sinex_ingestd::{IngestdResult, MaterialAssembler};
 use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
+use sinex_primitives::temporal;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
+use tokio_stream::StreamExt;
 use xtask::sandbox::prelude::*;
 
 async fn fake_annex() -> TestResult<(Arc<GitAnnex>, tempfile::TempDir)> {
@@ -84,7 +86,7 @@ async fn assembler_rejects_corrupted_slice_and_records_dlq(ctx: TestContext) -> 
             "material_kind": "test",
             "source_identifier": "test://corrupt",
             "metadata": {"kind": "corrupt"},
-            "started_at": crate::temporal::now().to_rfc3339(),
+            "started_at": temporal::now().format_rfc3339(),
         })
         .to_string()
         .into(),
@@ -94,14 +96,14 @@ async fn assembler_rejects_corrupted_slice_and_records_dlq(ctx: TestContext) -> 
 
     // Publish a slice with mismatched offset/length to simulate corruption.
     let mut headers = async_nats::HeaderMap::new();
-    headers.insert("Nats-Msg-Id", format!("{}-0", material_id).as_str());
+    headers.insert("Nats-Msg-Id", format!("{material_id}-0").as_str());
     headers.insert("Slice-Index", "0");
     headers.insert("Offset", "10");
     headers.insert("Chunk-Hash", "deadbeef");
 
     js.publish_with_headers(
         ctx.pipeline_namespace()
-            .subject(&format!("source_material.slices.{}", material_id)),
+            .subject(&format!("source_material.slices.{material_id}")),
         headers,
         b"payload".to_vec().into(),
     )
@@ -113,7 +115,7 @@ async fn assembler_rejects_corrupted_slice_and_records_dlq(ctx: TestContext) -> 
         ctx.pipeline_namespace().subject("source_material.end"),
         json!({
             "material_id": material_id.to_string(),
-            "ended_at": crate::temporal::now().to_rfc3339(),
+            "ended_at": temporal::now().format_rfc3339(),
             "content_hash": "cafebabe",
             "total_slices": 1,
             "total_size_bytes": 7,
@@ -183,7 +185,7 @@ async fn assembler_handles_early_slices_before_begin(ctx: TestContext) -> TestRe
 
     js.publish_with_headers(
         ctx.pipeline_namespace()
-            .subject(&format!("source_material.slices.{}", material_id)),
+            .subject(&format!("source_material.slices.{material_id}")),
         headers,
         data.to_vec().into(),
     )
@@ -212,7 +214,7 @@ async fn assembler_handles_early_slices_before_begin(ctx: TestContext) -> TestRe
             "material_kind": "test",
             "source_identifier": "test://early",
             "metadata": {"source": "early-test"},
-            "started_at": crate::temporal::now().to_rfc3339(),
+            "started_at": temporal::now().format_rfc3339(),
         })
         .to_string()
         .into(),
@@ -225,7 +227,7 @@ async fn assembler_handles_early_slices_before_begin(ctx: TestContext) -> TestRe
         ctx.pipeline_namespace().subject("source_material.end"),
         json!({
             "material_id": material_id.to_string(),
-            "ended_at": crate::temporal::now().to_rfc3339(),
+            "ended_at": temporal::now().format_rfc3339(),
             "content_hash": chunk_hash.to_string(),
             "total_slices": 1,
             "total_size_bytes": data.len() as i64,
@@ -301,7 +303,7 @@ async fn assembler_routes_empty_material_to_dlq(ctx: TestContext) -> TestResult<
             "material_kind": "test",
             "source_identifier": "test://empty",
             "metadata": {"kind": "empty"},
-            "started_at": crate::temporal::now().to_rfc3339(),
+            "started_at": temporal::now().format_rfc3339(),
         })
         .to_string()
         .into(),
@@ -314,7 +316,7 @@ async fn assembler_routes_empty_material_to_dlq(ctx: TestContext) -> TestResult<
         ctx.pipeline_namespace().subject("source_material.end"),
         json!({
             "material_id": material_id.to_string(),
-            "ended_at": crate::temporal::now().to_rfc3339(),
+            "ended_at": temporal::now().format_rfc3339(),
             "content_hash": blake3::hash(b"").to_hex().to_string(),
             "total_slices": 0,
             "total_size_bytes": 0,
@@ -371,7 +373,7 @@ async fn assembler_cleans_up_state_on_corruption(ctx: TestContext) -> TestResult
             "material_kind": "test",
             "source_identifier": "test://corrupt-cleanup",
             "metadata": {},
-            "started_at": crate::temporal::now().to_rfc3339(),
+            "started_at": temporal::now().format_rfc3339(),
         })
         .to_string()
         .into(),
@@ -382,7 +384,7 @@ async fn assembler_cleans_up_state_on_corruption(ctx: TestContext) -> TestResult
     // Slice
     js.publish(
         ctx.pipeline_namespace()
-            .subject(&format!("source_material.slices.{}", material_id)),
+            .subject(&format!("source_material.slices.{material_id}")),
         b"data".to_vec().into(),
     )
     .await?
@@ -393,7 +395,7 @@ async fn assembler_cleans_up_state_on_corruption(ctx: TestContext) -> TestResult
         ctx.pipeline_namespace().subject("source_material.end"),
         json!({
             "material_id": material_id.to_string(),
-            "ended_at": crate::temporal::now().to_rfc3339(),
+            "ended_at": temporal::now().format_rfc3339(),
             "content_hash": "wrong-hash",
             "total_slices": 1,
             "total_size_bytes": 4,
@@ -460,7 +462,7 @@ async fn assembler_handles_end_before_begin(ctx: TestContext) -> TestResult<()> 
     let hash = blake3::hash(data).to_hex().to_string();
     js.publish(
         ctx.pipeline_namespace()
-            .subject(&format!("source_material.slices.{}", material_id)),
+            .subject(&format!("source_material.slices.{material_id}")),
         data.to_vec().into(),
     )
     .await?
@@ -471,7 +473,7 @@ async fn assembler_handles_end_before_begin(ctx: TestContext) -> TestResult<()> 
         ctx.pipeline_namespace().subject("source_material.end"),
         json!({
             "material_id": material_id.to_string(),
-            "ended_at": crate::temporal::now().to_rfc3339(),
+            "ended_at": temporal::now().format_rfc3339(),
             "content_hash": hash,
             "total_slices": 1,
             "total_size_bytes": data.len() as i64,
@@ -504,7 +506,7 @@ async fn assembler_handles_end_before_begin(ctx: TestContext) -> TestResult<()> 
             "material_kind": "test",
             "source_identifier": "test://late-begin",
             "metadata": {},
-            "started_at": crate::temporal::now().to_rfc3339(),
+            "started_at": temporal::now().format_rfc3339(),
         })
         .to_string()
         .into(),
@@ -545,7 +547,7 @@ async fn assembler_is_idempotent_for_duplicate_slices(ctx: TestContext) -> TestR
 
             "metadata": {},
 
-            "started_at": crate::temporal::now().to_rfc3339(),
+            "started_at": temporal::now().format_rfc3339(),
 
         })
         .to_string()
@@ -560,7 +562,7 @@ async fn assembler_is_idempotent_for_duplicate_slices(ctx: TestContext) -> TestR
 
     js.publish_with_headers(
         ctx.pipeline_namespace()
-            .subject(&format!("source_material.slices.{}", material_id)),
+            .subject(&format!("source_material.slices.{material_id}")),
         {
             let mut h = async_nats::HeaderMap::new();
             h.insert("Offset", "0");
@@ -575,7 +577,7 @@ async fn assembler_is_idempotent_for_duplicate_slices(ctx: TestContext) -> TestR
 
     js.publish_with_headers(
         ctx.pipeline_namespace()
-            .subject(&format!("source_material.slices.{}", material_id)),
+            .subject(&format!("source_material.slices.{material_id}")),
         {
             let mut h = async_nats::HeaderMap::new();
             h.insert("Offset", "0");
@@ -596,7 +598,7 @@ async fn assembler_is_idempotent_for_duplicate_slices(ctx: TestContext) -> TestR
 
             "material_id": material_id.to_string(),
 
-            "ended_at": crate::temporal::now().to_rfc3339(),
+            "ended_at": temporal::now().format_rfc3339(),
 
             "content_hash": hash,
 

@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-The Sinex database schema represents a sophisticated event-driven architecture that has evolved from a simple `raw.events` table to a comprehensive unified event storage system. The design emphasizes immutability, provenance tracking, time-series optimization, and semantic knowledge management. Key innovations include ULID-based primary keys for time-ordered storage and distribution, TimescaleDB integration for high-performance time-series queries, and a dual-layer provenance system linking events to both external source materials and internal event chains.
+The Sinex database schema represents a sophisticated event-driven architecture that has evolved from a simple `raw.events` table to a comprehensive unified event storage system. The design emphasizes immutability, provenance tracking, time-series optimization, and semantic knowledge management. Key innovations include ULID-based primary keys for time-ordered storage and distribution, `TimescaleDB` integration for high-performance time-series queries, and a dual-layer provenance system linking events to both external source materials and internal event chains.
 
 ## 1. Schema Evolution Story
 
@@ -11,21 +11,21 @@ The Sinex database schema represents a sophisticated event-driven architecture t
 The migration history reveals a clear evolution from proof-of-concept to production-ready architecture:
 
 #### Phase 1: Foundation (2025-01-03)
-- **00000000000000_enable_extensions.sql**: Established core PostgreSQL extensions
+- **`00000000000000_enable_extensions.sql`**: Established core `PostgreSQL` extensions
   - ULID for time-sortable unique identifiers
-  - TimescaleDB for time-series management
-  - pg_jsonschema for JSON validation
+  - `TimescaleDB` for time-series management
+  - `pg_jsonschema` for JSON validation
   - pgvector for semantic search capabilities
 
 #### Phase 2: Initial Schema Creation (2025-01-03 to 2025-01-13)
-- **20250103120000_create_core_schemas.sql**: Basic schema separation
+- **`20250103120000_create_core_schemas.sql`**: Basic schema separation
   - `raw` schema for immutable events
   - `sinex_schemas` for validation schemas
   - `core` for structured data
-- **20250103120002_create_raw_events.sql**: Original events table design
+- **`20250103120002_create_raw_events.sql`**: Original events table design
   - Simple ULID key
   - Basic event structure with payload validation
-- **20250103120003_convert_events_to_hypertable.sql**: TimescaleDB integration
+- **`20250103120003_convert_events_to_hypertable.sql`**: `TimescaleDB` integration
   - Custom ULID-to-timestamp partitioning function
   - Performance-optimized indexing strategy
 
@@ -33,15 +33,15 @@ The migration history reveals a clear evolution from proof-of-concept to product
 - Knowledge management tables (`km` schema)
 - Dead Letter Queue for error handling
 - Vector embeddings support
-- Schema registry with GitOps integration
+- Schema registry with `GitOps` integration
 - Analytics and continuous aggregates
 
 #### Phase 4: Unified Architecture (2025-07-17 to 2025-07-20)
-- **20250717120000_rename_raw_events_to_core_events.sql**: Major refactoring
+- **`20250717120000_rename_raw_events_to_core_events.sql`**: Major refactoring
   - Moved from `raw.events` to `core.events`
   - Added comprehensive provenance tracking
   - Introduced processor manifests and source material registry
-- **20250720000001_fix_events_default_and_hypertable.sql**: Final optimization
+- **`20250720000001_fix_events_default_and_hypertable.sql`**: Final optimization
   - Corrected default value handling
   - Optimized hypertable configuration
   - Added verification testing within migration
@@ -69,7 +69,7 @@ The transition from separate `raw.events` and `synthesis.events` tables to a uni
 The schema registry evolved from simple validation to a comprehensive GitOps-managed system:
 - **Phase 1**: Manual schema definitions
 - **Phase 2**: Database-stored schemas with validation
-- **Phase 3**: GitOps integration for version-controlled schema management
+- **Phase 3**: `GitOps` integration for version-controlled schema management
 - **Phase 4**: Validation caching for performance optimization
 
 ## 2. Table Design Patterns
@@ -93,10 +93,10 @@ ts_ingest TIMESTAMPTZ NOT NULL GENERATED ALWAYS AS (id::timestamp) STORED,
 **Implementation Pattern**:
 - Primary key: ULID
 - Generated timestamp column for human-readable time queries
-- Custom partitioning function for TimescaleDB
+- Custom partitioning function for `TimescaleDB`
 
-#### TimescaleDB Integration Challenge
-The schema solves a unique challenge: combining ULID keys with TimescaleDB's partitioning requirements:
+#### `TimescaleDB` Integration Challenge
+The schema solves a unique challenge: combining ULID keys with `TimescaleDB`'s partitioning requirements:
 
 ```sql
 -- Custom partitioning function
@@ -323,7 +323,7 @@ Schema separation enables sophisticated access control:
 - **Data lifecycle management** by schema (different backup/retention policies)
 - **Compliance and auditing** granularity
 
-## 4. TimescaleDB Integration
+## 4. `TimescaleDB` Integration
 
 ### Hypertable Design Innovation
 
@@ -338,7 +338,7 @@ SELECT create_hypertable(
 **Key Innovation**:
 - Partitioned by ULID-extracted timestamp
 - Maintains ULID as single primary key (no composite keys)
-- Custom partitioning function enables ULID compatibility with TimescaleDB
+- Custom partitioning function enables ULID compatibility with `TimescaleDB`
 
 #### Partitioning Strategy Benefits
 - **Time-based partitioning** without sacrificing ULID benefits
@@ -349,7 +349,7 @@ SELECT create_hypertable(
 ### Continuous Aggregates Design
 
 #### Materialized Views Pattern
-Due to custom partitioning functions, the schema uses regular materialized views instead of TimescaleDB continuous aggregates:
+Due to custom partitioning functions, the schema uses regular materialized views instead of `TimescaleDB` continuous aggregates:
 
 ```sql
 CREATE MATERIALIZED VIEW metrics.event_counts_by_type_1h AS
@@ -380,7 +380,7 @@ $$ LANGUAGE plpgsql;
 
 ### Compression Policies (Planned)
 
-The migration history shows preparation for TimescaleDB compression:
+The migration history shows preparation for `TimescaleDB` compression:
 - `20250706120001_enable_timescaledb_compression.sql` (later removed)
 - Suggests future implementation of automatic compression for architectural data
 - Would enable significant storage savings for older events
@@ -519,7 +519,7 @@ CREATE INDEX idx_core_events_payload_gin ON core.events USING GIN (payload jsonb
 CREATE INDEX idx_schemas_event_types ON sinex_schemas.event_payload_schemas USING GIN (event_types);
 ```
 
-##### Vector Indexes (IVFFlat)
+##### Vector Indexes (`IVFFlat`)
 ```sql
 -- Semantic similarity search with pgvector
 CREATE INDEX idx_concepts_embedding ON km.concepts 
@@ -623,7 +623,7 @@ pub struct PoolConfig {
 ```
 
 #### Production Safety Features
-- **PostgreSQL limit validation** - Prevents connection exhaustion
+- **`PostgreSQL` limit validation** - Prevents connection exhaustion
 - **Test pool optimization** - Higher concurrency for parallel tests
 - **Automatic retry logic** - For transient failures and deadlocks
 
@@ -658,7 +658,7 @@ pub async fn find_batch_violations(
 
 ### ULID Integration Patterns
 
-#### Custom PostgreSQL Extensions
+#### Custom `PostgreSQL` Extensions
 ```sql
 -- Extension-provided ULID type with native operations
 CREATE EXTENSION IF NOT EXISTS ulid;
@@ -668,9 +668,9 @@ id::timestamp -- Native conversion
 gen_ulid() -- Generation function with proper entropy
 ```
 
-#### TimescaleDB Integration Challenge Solved
-The schema solves the complex "ULID + TimescaleDB" challenge:
-- **Challenge**: TimescaleDB requires timestamp-based partitioning
+#### `TimescaleDB` Integration Challenge Solved
+The schema solves the complex "ULID + `TimescaleDB`" challenge:
+- **Challenge**: `TimescaleDB` requires timestamp-based partitioning
 - **Solution**: Custom partitioning function extracting time from ULID
 - **Benefit**: Maintains ULID benefits while enabling time-series optimization
 
@@ -711,7 +711,7 @@ json_matches_schema(schema_content::json, payload::json)
 sinex_schemas.validation_cache -- Caches validation results
 ```
 
-#### GitOps Integration Pattern
+#### `GitOps` Integration Pattern
 ```sql
 sinex_schemas.gitops_schema_sources
 ├── repository_url      -- Git repository source
@@ -848,7 +848,7 @@ The schema enables Command Query Responsibility Segregation:
 
 ### Time-Series Optimization Results
 
-The ULID + TimescaleDB combination delivers:
+The ULID + `TimescaleDB` combination delivers:
 - **Insertion performance**: No sequence bottlenecks
 - **Range query performance**: Automatic partition elimination
 - **Maintenance efficiency**: Parallel operations across partitions
@@ -955,12 +955,12 @@ core.operations_log
 ### Identified Extension Points
 
 #### Compression and Partitioning Evolution
-- **TimescaleDB compression policies** for automatic old data compression
+- **`TimescaleDB` compression policies** for automatic old data compression
 - **Advanced partitioning strategies** for high-volume event sources
 - **Automated partition management** with intelligent chunk sizing
 
 #### Advanced Analytics Capabilities
-- **Real-time continuous aggregates** when TimescaleDB supports custom partitioning
+- **Real-time continuous aggregates** when `TimescaleDB` supports custom partitioning
 - **Complex event processing** patterns for real-time anomaly detection
 - **Machine learning feature stores** built on event history
 
@@ -993,9 +993,9 @@ core.operations_log
 - **Anomaly detection** patterns in event streams
 - **Intelligent archival policies** based on usage patterns
 
-#### Modern PostgreSQL Features
+#### Modern `PostgreSQL` Features
 - **Logical replication** for distributed architectures
-- **Table partitioning improvements** in newer PostgreSQL versions
+- **Table partitioning improvements** in newer `PostgreSQL` versions
 - **JSON path optimization** for complex payload queries
 
 ## 14. Conclusion
@@ -1004,7 +1004,7 @@ The Sinex database schema represents a sophisticated evolution from simple event
 
 ### Core Innovations
 
-1. **ULID & TimescaleDB Integration**: Successfully combines time-ordered UUIDs with time-series database optimization
+1. **ULID & `TimescaleDB` Integration**: Successfully combines time-ordered UUIDs with time-series database optimization
 2. **Dual-Layer Provenance**: Comprehensive lineage tracking from external sources through internal processing
 3. **Schema-Separated Domains**: Clear boundaries enabling independent scaling and access control
 4. **Array-Based Relationships**: Performance optimization avoiding traditional junction tables

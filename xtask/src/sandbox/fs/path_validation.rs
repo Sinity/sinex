@@ -168,10 +168,9 @@ fn validate_not_system_critical(path: &Utf8Path) -> PathValidationResult<()> {
     ];
 
     for forbidden in &forbidden_paths {
-        if *forbidden == "/run" && path_str.contains("sinex-tests") {
-            continue;
-        }
-        if path_str.starts_with(forbidden) {
+        if !(*forbidden == "/run" && path_str.contains("sinex-tests"))
+            && path_str.starts_with(forbidden)
+        {
             return Err(SinexError::validation(format!(
                 "Test paths cannot access system directory: {forbidden}"
             )));

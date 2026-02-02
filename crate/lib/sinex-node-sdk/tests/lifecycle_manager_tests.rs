@@ -1,4 +1,4 @@
-//! Tests for LifecycleManager status transitions and service management
+//! Tests for `LifecycleManager` status transitions and service management
 //!
 //! Tests lifecycle state transitions, shutdown handling, and health check integration.
 
@@ -63,7 +63,7 @@ async fn health_check_interval_can_be_configured() -> TestResult<()> {
 
 #[sinex_test]
 async fn heartbeat_interval_can_be_configured() -> TestResult<()> {
-    use sinex_node_sdk::types::Seconds;
+    use sinex_primitives::Seconds;
 
     let manager =
         LifecycleManager::new("test-service".to_string()).with_heartbeat(Seconds::from_secs(10));
@@ -125,8 +125,7 @@ async fn concurrent_status_updates_are_safe() -> TestResult<()> {
                 | ServiceStatus::Failed
                 | ServiceStatus::Stopped
         ),
-        "Final status should be a valid state: {:?}",
-        final_status
+        "Final status should be a valid state: {final_status:?}"
     );
 
     Ok(())
@@ -161,13 +160,10 @@ async fn run_with_health_check_sets_running_status() -> TestResult<()> {
     .await;
 
     // The task should complete (main task returns Ok immediately)
-    match result {
-        Ok(inner_result) => {
-            inner_result?;
-        }
-        Err(_) => {
-            // Timeout is acceptable - health check was running
-        }
+    if let Ok(inner_result) = result {
+        inner_result?;
+    } else {
+        // Timeout is acceptable - health check was running
     }
 
     Ok(())

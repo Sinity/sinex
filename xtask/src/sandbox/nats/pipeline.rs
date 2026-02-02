@@ -12,7 +12,7 @@ pub struct EventOverrides {
     pub id: Option<Ulid>,
 }
 
-static PIPELINE_SEMAPHORE: Lazy<Arc<Semaphore>> = Lazy::new(|| {
+static PIPELINE_SEMAPHORE: std::sync::LazyLock<Arc<Semaphore>> = std::sync::LazyLock::new(|| {
     let permits = std::env::var("SINEX_TEST_PIPELINE_CONCURRENCY")
         .ok()
         .and_then(|v| v.parse().ok())

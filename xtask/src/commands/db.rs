@@ -16,10 +16,10 @@ pub enum DbSubcommand {
         #[arg(short = 'y', long)]
         yes: bool,
     },
-    /// Schema management
+    /// Schema management (alias for contracts)
     Schema {
         #[command(subcommand)]
-        cmd: crate::commands::schema::SchemaSubcommand,
+        cmd: crate::commands::contracts::ContractsSubcommand,
     },
 }
 
@@ -31,7 +31,7 @@ pub struct DbCommand {
 }
 
 impl XtaskCommand for DbCommand {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "db"
     }
 
@@ -42,10 +42,10 @@ impl XtaskCommand for DbCommand {
             DbSubcommand::Setup => execute_setup(ctx),
             DbSubcommand::Reset { yes } => execute_reset(*yes, ctx),
             DbSubcommand::Schema { cmd } => {
-                let schema_cmd = crate::commands::schema::SchemaCommand {
+                let contracts_cmd = crate::commands::contracts::ContractsCommand {
                     subcommand: cmd.clone(),
                 };
-                schema_cmd.execute(ctx)
+                contracts_cmd.execute(ctx)
             }
         }
     }
@@ -63,10 +63,10 @@ fn execute_status(ctx: &CommandContext) -> Result<CommandResult> {
     let config = crate::infra::stack::StackConfig::for_current_checkout().ok();
 
     let mut cmd = ProcessBuilder::psql();
-    cmd = cmd.args(&["-c", "select current_database(), current_user"]);
+    cmd = cmd.args(["-c", "select current_database(), current_user"]);
 
     if let Some(cfg) = &config {
-        cmd = cmd.env("PGHOST", cfg.run_dir().to_string_lossy().to_string());
+        cmd = cmd.env("PGHOST", cfg.run_dir().to_string_lossy());
         cmd = cmd.env("PGPORT", cfg.postgres.port.to_string());
         cmd = cmd.env("PGUSER", &cfg.postgres.user);
         cmd = cmd.env("PGDATABASE", &cfg.postgres.database);
@@ -127,7 +127,7 @@ fn execute_setup(ctx: &CommandContext) -> Result<CommandResult> {
     run_db_migrate(ctx)?;
 
     Ok(CommandResult::success()
-        .with_message(format!("Database '{}' setup complete", db))
+        .with_message(format!("Database '{db}' setup complete"))
         .with_duration(ctx.elapsed()))
 }
 
@@ -150,13 +150,13 @@ fn execute_reset(yes: bool, ctx: &CommandContext) -> Result<CommandResult> {
 
     let mut cmd = ProcessBuilder::psql();
     if let Some(cfg) = &config {
-        cmd = cmd.env("PGHOST", cfg.run_dir().to_string_lossy().to_string());
+        cmd = cmd.env("PGHOST", cfg.run_dir().to_string_lossy());
         cmd = cmd.env("PGPORT", cfg.postgres.port.to_string());
         cmd = cmd.env("PGUSER", &cfg.postgres.superuser);
         cmd = cmd.env("PGDATABASE", "postgres");
     }
 
-    cmd.args(&["-c", &format!("DROP DATABASE IF EXISTS {db}")])
+    cmd.args(["-c", &format!("DROP DATABASE IF EXISTS {db}")])
         .with_description("dropping database")
         .inherit_output()
         .run_ok()?;
@@ -178,7 +178,7 @@ fn execute_reset(yes: bool, ctx: &CommandContext) -> Result<CommandResult> {
     run_db_migrate(ctx)?;
 
     Ok(CommandResult::success()
-        .with_message(format!("Database '{}' reset complete", db))
+        .with_message(format!("Database '{db}' reset complete"))
         .with_duration(ctx.elapsed()))
 }
 
@@ -190,7 +190,7 @@ fn run_db_migrate(ctx: &CommandContext) -> Result<()> {
     let config = crate::infra::stack::StackConfig::for_current_checkout().ok();
 
     let mut cmd = ProcessBuilder::cargo();
-    cmd = cmd.args(&[
+    cmd = cmd.args([
         "run",
         "--package",
         "sinex-schema",

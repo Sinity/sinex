@@ -22,7 +22,7 @@ pub struct MutantsCommand {
 }
 
 impl XtaskCommand for MutantsCommand {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "mutants"
     }
 
@@ -64,8 +64,8 @@ impl XtaskCommand for MutantsCommand {
 
         // Build description for logging
         let description = match (&self.package, &self.file) {
-            (Some(pkg), _) => format!("cargo mutants --package {}", pkg),
-            (None, Some(f)) => format!("cargo mutants --file {}", f),
+            (Some(pkg), _) => format!("cargo mutants --package {pkg}"),
+            (None, Some(f)) => format!("cargo mutants --file {f}"),
             (None, None) => "cargo mutants (full workspace)".to_string(),
         };
 
@@ -83,7 +83,7 @@ impl XtaskCommand for MutantsCommand {
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata {
             category: Some("test".to_string()),
-            timeout: Some(Duration::from_secs(1800)), // 30 minutes for mutation testing
+            timeout: Some(Duration::from_mins(30)), // 30 minutes for mutation testing
             modifies_state: false,
             track_in_history: true,
         }

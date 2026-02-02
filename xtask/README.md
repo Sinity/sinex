@@ -43,20 +43,22 @@ Visualize the dependency graph in different formats for analysis and debugging.
 
 ```bash
 # ASCII tree (default, good for terminal)
-cargo xtask graph deps
+cargo xtask deps graph
 
 # Graphviz DOT format (can be rendered with Graphviz tools)
-cargo xtask graph deps --render-format dot [-o graph.dot]
+cargo xtask deps graph --format dot [-o graph.dot]
 
 # JSON for D3.js visualization
-cargo xtask graph deps --render-format json
+cargo xtask deps graph --format json
 
 # Focus on specific package (narrow scope)
-cargo xtask graph deps --focus sinex-core [--reverse]
+cargo xtask deps graph --focus sinex-core [--reverse]
 
 # Depth limiting (prevent overwhelming output)
-cargo xtask graph deps --depth 3
+cargo xtask deps graph --depth 3
 ```
+
+Note: The old `cargo xtask graph deps` command still works but is deprecated. Use `cargo xtask deps graph` instead.
 
 ### Development Workflow
 
@@ -64,13 +66,13 @@ Essential commands for daily development.
 
 ```bash
 # Fast iteration (use between edits)
-cargo xtask check                    # fmt --check + cargo check (~10s)
+cargo xtask check                    # fmt + clippy + forbidden patterns (~10s)
 
 # Before commit
-cargo xtask check && cargo xtask test --profile default
+cargo xtask check && cargo xtask test
 
 # Full CI validation (comprehensive)
-cargo xtask ci-preflight             # lint + all tests + integration
+cargo xtask ci workspace             # schema + lint + all tests
 ```
 
 ### Database Operations
@@ -85,52 +87,53 @@ cargo xtask db status        # Check Postgres connectivity
 
 ### Testing Commands
 
-Run tests with different profiles optimized for different use cases.
+Run tests with different options for different use cases.
 
 ```bash
-# Quick feedback during development (12 threads, no retries)
-cargo xtask test --profile fast
-
-# CI validation (12 threads, 3 retries)
-cargo xtask test --profile default
+# Standard run (multi-threaded with retries)
+cargo xtask test
 
 # Debug failing tests (1 thread, full output)
-cargo xtask test --profile debug
+cargo xtask test --debug
 
-# Include performance/stress tests
-# These tests are marked `#[ignore]` by default to keep feedback fast. To run them:
-# - Use the xtask alias: `cargo xtask test:heavy --prime`
-# - Or include ignored tests directly: `cargo xtask test --include-ignored --prime`
+# Include heavy/ignored tests
+cargo xtask test --heavy
+
+# Prime database before testing
+cargo xtask test --prime
+
+# Run with coverage collection
+cargo xtask test --coverage
 
 # Advanced filters
-cargo xtask test --profile default -- -p sinex-core
-cargo xtask test --profile debug -- -E 'test(my_test_name)'
+cargo xtask test -- -p sinex-core
+cargo xtask test --debug -- -E 'test(my_test_name)'
 ```
 
 ### Running heavy / ignored tests
 
-Some tests are marked `#[ignore = "long"]` or `#[ignore = "external"]` and are skipped by default. To run only those heavy/external tests via xtask (recommended):
+Some tests are marked `#[ignore = "long"]` or `#[ignore = "external"]` and are skipped by default.
 
 ```bash
-# Run tests that are annotated with #[ignore = "long"|"external"]
-direnv exec /realm/project/sinex cargo xtask test:heavy --prime
+# Run heavy/ignored tests
+cargo xtask test --heavy --prime
 
-# If you want to run *all* ignored tests (including flaky or platform-specific skips):
-# direnv exec /realm/project/sinex cargo xtask test --include-ignored --prime
+# Include all ignored tests
+cargo xtask test --heavy
 ```
 
 Or use the helper script at `./scripts/run-heavy-tests.sh` or the provided VS Code task "Run heavy tests (include ignored)".
 
-### Schema Management
+### Contracts (Schema Management)
 
 JSON schema registry and validation.
 
 ```bash
 # Generate JSON schemas from EventPayload types
-cargo xtask schema generate
+cargo xtask contracts generate
 
 # Verify core schema tables exist
-cargo xtask schema check-ready
+cargo xtask contracts check-ready
 ```
 
 ### TLS Management
@@ -156,38 +159,54 @@ cargo xtask tls setup-env
 Environment health checks and code quality scanning.
 
 ```bash
-# Environment health check
-cargo xtask doctor --json
+# Comprehensive health check (Postgres, NATS, required tools)
+cargo xtask status --doctor --json
 
-# Check NATS/Postgres connectivity
-cargo xtask doctor --pipelines
+# Compact one-line status
+cargo xtask status --summary
 
-# Scan for forbidden patterns (unsafe, unwrap, expect)
-cargo xtask lint-forbidden --json
+# Stack diagnostics
+cargo xtask stack doctor
+
+# Show currently running background jobs
+cargo xtask jobs active
+cargo xtask jobs list
+
+# Query build history (test timing, flaky tests, etc.)
+cargo xtask history list
+cargo xtask history tests slowest
+cargo xtask history tests flaky
+cargo xtask history diagnostics        # Recent compiler warnings/errors
+```
+
+### xtr (Rarely Used Commands)
+
+Commands under the `xtr` umbrella are less frequently used in day-to-day development.
+
+```bash
+# AST-grep pattern search
+cargo xtask xtr patterns -p '$X.unwrap()' --limit 10
+
+# CI pipelines
+cargo xtask xtr ci workspace
+cargo xtask xtr ci postgres -- cargo xtask test
+
+# Shell completions
+cargo xtask xtr completions zsh > ~/.zsh/completions/_xtask
+cargo xtask xtr completions bash
+cargo xtask xtr completions fish
 ```
 
 ### Code Quality
 
-Linting and formatting checks.
+Linting and formatting checks (all included in `check`).
 
 ```bash
-# Format check only (no changes)
+# Format + clippy + forbidden patterns
 cargo xtask check
 
-# Lint with Clippy (strict warnings)
-cargo xtask lint
-```
-
-### Coverage
-
-Code coverage reports.
-
-```bash
-# Generate HTML coverage report and open in browser
-cargo xtask coverage html --open
-
-# Summary coverage by file
-cargo xtask coverage summary --files
+# JSON output for CI
+cargo xtask check --json
 ```
 
 ### Benchmarking
@@ -241,17 +260,16 @@ cargo build -p xtask
 ```bash
 # Ensure code quality
 cargo xtask check
-cargo xtask lint
 
 # Run tests
-cargo xtask test --profile fast
+cargo xtask test
 
 # Database schema consistency
-cargo xtask schema generate
+cargo xtask contracts generate
 cargo xtask db status
 
 # Full validation
-cargo xtask ci-preflight
+cargo xtask ci workspace
 ```
 
 ### Analyzing Build Performance
@@ -281,7 +299,7 @@ cargo xtask deps impact sinex-core
 
 ```bash
 # Quick health check
-cargo xtask doctor
+cargo xtask status --doctor
 
 # Check database connectivity
 cargo xtask db status --json
@@ -289,8 +307,8 @@ cargo xtask db status --json
 # Verify TLS setup
 cargo xtask tls check
 
-# Check for forbidden patterns
-cargo xtask lint-forbidden --json
+# Stack diagnostics
+cargo xtask stack doctor
 ```
 
 ## Exit Codes
@@ -307,18 +325,17 @@ For CI integration and programmatic use, commands support `--json` flag:
 
 ```bash
 cargo xtask check --json | jq '.status'
-cargo xtask test --profile fast --json | jq '.errors[]'
-cargo xtask deps list --format json | jq '.packages | length'
+cargo xtask test --json | jq '.errors[]'
+cargo xtask deps list --json | jq '.data.packages | length'
 ```
 
 JSON schema for responses is documented in `CLAUDE.md` under xtask Commands section.
 
 ## Performance Notes
 
-- **cargo xtask check**: ~10 seconds (incremental)
-- **cargo xtask test --profile fast**: ~30-60 seconds (12 parallel threads)
-- **cargo xtask lint**: ~15 seconds
-- **cargo xtask ci-preflight**: ~2-3 minutes (full validation)
+- **cargo xtask check**: ~10-20 seconds (incremental)
+- **cargo xtask test**: ~30-60 seconds (multi-threaded)
+- **cargo xtask ci workspace**: ~2-3 minutes (full validation)
 
 Timing varies based on:
 

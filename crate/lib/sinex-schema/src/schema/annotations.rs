@@ -69,6 +69,7 @@ pub struct TagRecord {
 
 impl Tags {
     /// Generates the `CREATE TABLE` statement for `core.tags`.
+    #[must_use]
     pub fn create_table_statement() -> TableCreateStatement {
         Table::create()
             .table(Self::table_iden())
@@ -139,6 +140,7 @@ impl TableDef for TaggedItems {
 }
 
 impl TaggedItems {
+    #[must_use]
     pub fn create_table_statement() -> TableCreateStatement {
         Table::create()
             .table(Self::table_iden())
@@ -177,6 +179,7 @@ impl TaggedItems {
 
     /// Generates indexes for `core.tagged_items`. The index on `(item_id, item_type)` is
     /// crucial for efficiently finding all tags for a specific item.
+    #[must_use]
     pub fn create_indexes() -> Vec<IndexCreateStatement> {
         vec![Index::create()
             .name("ix_tagged_items_item")
@@ -236,6 +239,7 @@ pub struct EventAnnotationRecord {
 
 impl EventAnnotations {
     /// Generates the `CREATE TABLE` statement for `core.event_annotations`.
+    #[must_use]
     pub fn create_table_statement() -> TableCreateStatement {
         Table::create()
             .table(Self::table_iden())
@@ -290,6 +294,7 @@ impl EventAnnotations {
     }
 
     /// Generates indexes for `core.event_annotations`.
+    #[must_use]
     pub fn create_indexes() -> Vec<IndexCreateStatement> {
         vec![
             // Index to quickly find all annotations for a given event.
@@ -309,6 +314,7 @@ impl EventAnnotations {
     }
 
     /// Generates raw SQL for GIN indexes (PostgreSQL-specific feature)
+    #[must_use]
     pub fn create_gin_indexes_sql() -> Vec<String> {
         vec![
             // GIN index for full-text search on the annotation content
@@ -321,15 +327,16 @@ impl EventAnnotations {
         ]
     }
 
-    /// Creates a trigger to update the updated_at column
+    /// Creates a trigger to update the `updated_at` column
+    #[must_use]
     pub fn create_updated_at_trigger_sql() -> String {
         format!(
-            r#"
+            r"
             DROP TRIGGER IF EXISTS trg_event_annotations_updated_at ON {}.{};
             CREATE TRIGGER trg_event_annotations_updated_at
             BEFORE UPDATE ON {}.{}
             FOR EACH ROW EXECUTE FUNCTION public.set_current_timestamp_updated_at();
-            "#,
+            ",
             Self::schema_name(),
             Self::table_name(),
             Self::schema_name(),

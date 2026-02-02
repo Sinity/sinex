@@ -8,7 +8,7 @@
  * - Filesystem permissions
  */
 
-use crate::{SinexError, NodeResult};
+use crate::{NodeResult, SinexError};
 use camino::Utf8Path;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -32,7 +32,7 @@ pub async fn verify_system_resources() -> NodeResult<(VerificationStatus, Value,
             details.insert("memory", memory_info);
         }
         Err(e) => {
-            messages.push(format!("✗ Memory verification failed: {}", e));
+            messages.push(format!("✗ Memory verification failed: {e}"));
             has_failures = true;
         }
     }
@@ -43,7 +43,7 @@ pub async fn verify_system_resources() -> NodeResult<(VerificationStatus, Value,
             details.insert("disk", disk_info);
         }
         Err(e) => {
-            messages.push(format!("✗ Disk space verification failed: {}", e));
+            messages.push(format!("✗ Disk space verification failed: {e}"));
             has_failures = true;
         }
     }
@@ -62,7 +62,7 @@ pub async fn verify_system_resources() -> NodeResult<(VerificationStatus, Value,
             details.insert("cpu", cpu_info);
         }
         Err(e) => {
-            messages.push(format!("✗ CPU verification failed: {}", e));
+            messages.push(format!("✗ CPU verification failed: {e}"));
             has_failures = true;
         }
     }
@@ -73,7 +73,7 @@ pub async fn verify_system_resources() -> NodeResult<(VerificationStatus, Value,
             details.insert("filesystem", fs_info);
         }
         Err(e) => {
-            messages.push(format!("✗ Filesystem verification failed: {}", e));
+            messages.push(format!("✗ Filesystem verification failed: {e}"));
             has_failures = true;
         }
     }
@@ -84,7 +84,7 @@ pub async fn verify_system_resources() -> NodeResult<(VerificationStatus, Value,
             details.insert("network", network_info);
         }
         Err(e) => {
-            messages.push(format!("⚠ Network verification warning: {}", e));
+            messages.push(format!("⚠ Network verification warning: {e}"));
             has_warnings = true;
         }
     }
@@ -95,7 +95,7 @@ pub async fn verify_system_resources() -> NodeResult<(VerificationStatus, Value,
             details.insert("process_limits", limits_info);
         }
         Err(e) => {
-            messages.push(format!("⚠ Process limits verification warning: {}", e));
+            messages.push(format!("⚠ Process limits verification warning: {e}"));
             has_warnings = true;
         }
     }
@@ -186,24 +186,19 @@ async fn verify_disk_space(messages: &mut Vec<String>) -> NodeResult<Value> {
 
                 if available_gb < min_gb {
                     messages.push(format!(
-                        "✗ {}: {:.2}GB available, {:.2}GB required",
-                        description, available_gb, min_gb
+                        "✗ {description}: {available_gb:.2}GB available, {min_gb:.2}GB required"
                     ));
                     has_issues = true;
                 } else if available_gb < min_gb * 2.0 {
                     messages.push(format!(
-                        "⚠ {}: {:.2}GB available (low)",
-                        description, available_gb
+                        "⚠ {description}: {available_gb:.2}GB available (low)"
                     ));
                 } else {
-                    messages.push(format!(
-                        "✓ {}: {:.2}GB available",
-                        description, available_gb
-                    ));
+                    messages.push(format!("✓ {description}: {available_gb:.2}GB available"));
                 }
             }
             Err(e) => {
-                messages.push(format!("⚠ Could not check disk space for {}: {}", path, e));
+                messages.push(format!("⚠ Could not check disk space for {path}: {e}"));
                 disk_info.insert(
                     path.to_string(),
                     json!({
@@ -231,7 +226,7 @@ async fn verify_disk_space(messages: &mut Vec<String>) -> NodeResult<Value> {
 fn get_disk_space(path: &str) -> NodeResult<(f64, f64)> {
     use nix::sys::statvfs::statvfs;
 
-    let stat = statvfs(path).map_err(|e| SinexError::processing(format!("{}: {}", "Error", e)))?;
+    let stat = statvfs(path).map_err(|e| SinexError::processing(format!("Error: {e}")))?;
 
     let block_size = stat.block_size();
     let total_blocks = stat.blocks();
@@ -261,20 +256,19 @@ async fn verify_cpu_capacity(messages: &mut Vec<String>) -> NodeResult<Value> {
 
     if cpu_count < min_cpu_count {
         return Err(SinexError::processing(format!(
-            "Insufficient CPU cores: {} available, {} required",
-            cpu_count, min_cpu_count
+            "Insufficient CPU cores: {cpu_count} available, {min_cpu_count} required"
         )));
     }
 
     if load_avg.one > max_recommended_load {
         messages.push(format!(
-            "⚠ High CPU load: {:.2}, recommended max: {:.2}",
-            load_avg.one, max_recommended_load
+            "⚠ High CPU load: {:.2}, recommended max: {max_recommended_load:.2}",
+            load_avg.one
         ));
     } else {
         messages.push(format!(
-            "✓ CPU capacity sufficient: {} cores, load: {:.2}",
-            cpu_count, load_avg.one
+            "✓ CPU capacity sufficient: {cpu_count} cores, load: {:.2}",
+            load_avg.one
         ));
     }
 
@@ -302,17 +296,14 @@ async fn verify_filesystem_permissions(messages: &mut Vec<String>) -> NodeResult
                 permissions_info.insert(dir_path.to_string(), perms);
 
                 if is_writable {
-                    messages.push(format!("✓ Directory {} is writable", dir_path));
+                    messages.push(format!("✓ Directory {dir_path} is writable"));
                 } else {
-                    messages.push(format!("✗ Directory {} is not writable", dir_path));
+                    messages.push(format!("✗ Directory {dir_path} is not writable"));
                     has_issues = true;
                 }
             }
             Err(e) => {
-                messages.push(format!(
-                    "⚠ Could not check permissions for {}: {}",
-                    dir_path, e
-                ));
+                messages.push(format!("⚠ Could not check permissions for {dir_path}: {e}"));
                 permissions_info.insert(
                     dir_path.to_string(),
                     json!({
@@ -342,7 +333,7 @@ async fn check_directory_permissions(dir_path: &str) -> NodeResult<Value> {
     if !path.exists() {
         tokio::fs::create_dir_all(path)
             .await
-            .map_err(|e| SinexError::processing(format!("{}: {}", "Error", e)))?;
+            .map_err(|e| SinexError::processing(format!("Error: {e}")))?;
     }
 
     // Test write permissions by creating a temporary file
@@ -379,7 +370,7 @@ async fn verify_network_connectivity(messages: &mut Vec<String>) -> NodeResult<V
             network_info.insert("dns_resolution", json!(true));
         }
         Err(e) => {
-            messages.push(format!("⚠ DNS resolution issue: {}", e));
+            messages.push(format!("⚠ DNS resolution issue: {e}"));
             network_info.insert("dns_resolution", json!(false));
         }
     }
@@ -391,7 +382,7 @@ async fn verify_network_connectivity(messages: &mut Vec<String>) -> NodeResult<V
             network_info.insert("localhost_connectivity", json!(true));
         }
         Err(e) => {
-            messages.push(format!("⚠ Localhost connectivity issue: {}", e));
+            messages.push(format!("⚠ Localhost connectivity issue: {e}"));
             network_info.insert("localhost_connectivity", json!(false));
         }
     }
@@ -403,7 +394,7 @@ async fn test_dns_resolution() -> NodeResult<()> {
     // Try to resolve a well-known hostname
     "google.com:80"
         .to_socket_addrs()
-        .map_err(|e| SinexError::processing(format!("Failed to resolve DNS: {}", e)))?
+        .map_err(|e| SinexError::processing(format!("Failed to resolve DNS: {e}")))?
         .next()
         .ok_or_else(|| SinexError::processing("No DNS resolution results".to_string()))?;
 
@@ -417,7 +408,7 @@ async fn test_localhost_connectivity() -> NodeResult<()> {
     // Test localhost connectivity by attempting to connect to a common port
     let addr: SocketAddr = "127.0.0.1:22"
         .parse()
-        .map_err(|e| SinexError::processing(format!("Failed to parse localhost address: {}", e)))?;
+        .map_err(|e| SinexError::processing(format!("Failed to parse localhost address: {e}")))?;
 
     // Try to connect with a short timeout
     match tokio::time::timeout(
@@ -433,7 +424,7 @@ async fn test_localhost_connectivity() -> NodeResult<()> {
             // SSH not running is normal, just test that localhost is reachable
             // Try a different approach - just verify localhost resolves
             "localhost:80".to_socket_addrs().map_err(|e| {
-                SinexError::processing(format!("Localhost name resolution failed: {}", e))
+                SinexError::processing(format!("Localhost name resolution failed: {e}"))
             })?;
             Ok(())
         }
@@ -450,7 +441,7 @@ async fn verify_process_limits(messages: &mut Vec<String>) -> NodeResult<Value> 
             messages.push("✓ File descriptor limits checked".to_string());
         }
         Err(e) => {
-            messages.push(format!("⚠ Could not check file descriptor limits: {}", e));
+            messages.push(format!("⚠ Could not check file descriptor limits: {e}"));
         }
     }
 
@@ -461,7 +452,7 @@ async fn verify_process_limits(messages: &mut Vec<String>) -> NodeResult<Value> 
             messages.push("✓ Process limits checked".to_string());
         }
         Err(e) => {
-            messages.push(format!("⚠ Could not check process limits: {}", e));
+            messages.push(format!("⚠ Could not check process limits: {e}"));
         }
     }
 
@@ -472,7 +463,7 @@ fn check_file_descriptor_limits() -> NodeResult<Value> {
     use nix::sys::resource::{getrlimit, Resource};
 
     let (soft, hard) = getrlimit(Resource::RLIMIT_NOFILE).map_err(|e| {
-        SinexError::processing(format!("Failed to get file descriptor limits: {}", e))
+        SinexError::processing(format!("Failed to get file descriptor limits: {e}"))
     })?;
 
     let min_recommended = 1024;
@@ -490,7 +481,7 @@ fn check_process_limits_info() -> NodeResult<Value> {
     use nix::sys::resource::{getrlimit, Resource};
 
     let (soft, hard) = getrlimit(Resource::RLIMIT_NPROC)
-        .map_err(|e| SinexError::processing(format!("Failed to get process limits: {}", e)))?;
+        .map_err(|e| SinexError::processing(format!("Failed to get process limits: {e}")))?;
 
     Ok(json!({
         "max_processes_soft": soft,

@@ -1,7 +1,7 @@
 //! Integration tests that exercise the current `BlobManager` API surface.
 //!
 //! The historical suite depended on retired helpers and never compiled after
-//! the JetStream migration. These focused scenarios ensure deduplication,
+//! the `JetStream` migration. These focused scenarios ensure deduplication,
 //! round-tripping, and integrity verification keep working against git-annex.
 
 use camino::Utf8PathBuf;
@@ -15,7 +15,7 @@ async fn blob_manager_fixture(ctx: &TestContext) -> color_eyre::Result<(BlobMana
     system_test_preflight()?;
     let temp_dir = TempDir::new()?;
     let annex_path = temp_dir.path().join("annex");
-    let repo_utf8 = Utf8PathBuf::from_path_buf(annex_path.clone())
+    let repo_utf8 = Utf8PathBuf::from_path_buf(annex_path)
         .map_err(|_| color_eyre::eyre::eyre!("annex path must be valid UTF-8"))?;
 
     let annex_config = AnnexConfig {

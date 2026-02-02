@@ -1,4 +1,4 @@
-//! EventPayload derive macro implementation
+//! `EventPayload` derive macro implementation
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -96,13 +96,12 @@ fn generate_builder_methods(input: &DeriveInput) -> Vec<TokenStream> {
     };
 
     for field in &fields_named.named {
-        let Some(field_ident) = &field.ident else {
-            continue;
-        };
-        let method_ident = format_ident!("with_{}", field_ident);
-        let doc = format!("Builder-style method for `{}'", field_ident);
-        let setter = build_setter(&method_ident, field_ident, &field.ty, &doc);
-        methods.push(setter);
+        if let Some(field_ident) = &field.ident {
+            let method_ident = format_ident!("with_{}", field_ident);
+            let doc = format!("Builder-style method for `{field_ident}'");
+            let setter = build_setter(&method_ident, field_ident, &field.ty, &doc);
+            methods.push(setter);
+        }
     }
 
     methods
@@ -164,31 +163,29 @@ fn parse_event_payload_attrs(attrs: &[syn::Attribute]) -> syn::Result<EventPaylo
     let mut version = None;
 
     for attr in attrs {
-        if !attr.path().is_ident("event_payload") {
-            continue;
+        if attr.path().is_ident("event_payload") {
+            // Parse the attribute using syn 2.0 style
+            attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("source") {
+                    let value = meta.value()?;
+                    let s: syn::LitStr = value.parse()?;
+                    source = Some(s.value());
+                    Ok(())
+                } else if meta.path.is_ident("event_type") {
+                    let value = meta.value()?;
+                    let s: syn::LitStr = value.parse()?;
+                    event_type = Some(s.value());
+                    Ok(())
+                } else if meta.path.is_ident("version") {
+                    let value = meta.value()?;
+                    let s: syn::LitStr = value.parse()?;
+                    version = Some(s.value());
+                    Ok(())
+                } else {
+                    Err(meta.error("unrecognized event_payload attribute"))
+                }
+            })?;
         }
-
-        // Parse the attribute using syn 2.0 style
-        attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident("source") {
-                let value = meta.value()?;
-                let s: syn::LitStr = value.parse()?;
-                source = Some(s.value());
-                Ok(())
-            } else if meta.path.is_ident("event_type") {
-                let value = meta.value()?;
-                let s: syn::LitStr = value.parse()?;
-                event_type = Some(s.value());
-                Ok(())
-            } else if meta.path.is_ident("version") {
-                let value = meta.value()?;
-                let s: syn::LitStr = value.parse()?;
-                version = Some(s.value());
-                Ok(())
-            } else {
-                Err(meta.error("unrecognized event_payload attribute"))
-            }
-        })?;
     }
 
     let source =

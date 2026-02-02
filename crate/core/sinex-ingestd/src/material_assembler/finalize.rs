@@ -1,4 +1,4 @@
-//! Material finalization methods for MaterialAssembler.
+//! Material finalization methods for `MaterialAssembler`.
 //!
 //! This module contains database finalization, blob management, error routing,
 //! and cleanup logic that executes when a material assembly completes (or fails).
@@ -9,9 +9,9 @@ use sinex_db::{
     repositories::{DbPoolExt, TemporalLedgerEntry},
 };
 use sinex_node_sdk::annex::AnnexKey;
+use sinex_primitives::Timestamp;
 use sinex_primitives::{Id, JsonValue, Ulid};
 use sinex_schema::schema::records::SourceMaterialRecord;
-use sinex_primitives::Timestamp;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
@@ -73,10 +73,10 @@ impl MaterialAssembler {
                     error_debug = ?e,
                     "Failed to query blob store"
                 );
-                SinexError::database(format!("Failed to query blob store: {}", e))
+                SinexError::database(format!("Failed to query blob store: {e}"))
             })?
         {
-            return Ok(Id::from_ulid(existing.id.as_ulid().clone()));
+            return Ok(Id::from_ulid(*existing.id.as_ulid()));
         }
 
         let metadata = serde_json::json!({
@@ -105,10 +105,10 @@ impl MaterialAssembler {
                 error_debug = ?e,
                 "Failed to insert blob metadata"
             );
-            SinexError::database(format!("Failed to insert blob metadata: {}", e))
+            SinexError::database(format!("Failed to insert blob metadata: {e}"))
         })?;
 
-        Ok(Id::from_ulid(stored.id.as_ulid().clone()))
+        Ok(Id::from_ulid(*stored.id.as_ulid()))
     }
 
     /// Finalize source material registry and ledger
@@ -125,19 +125,19 @@ impl MaterialAssembler {
         repo.update_metadata(id, metadata.clone())
             .await
             .map_err(|e| {
-                SinexError::database(format!("Failed to update material metadata: {}", e))
+                SinexError::database(format!("Failed to update material metadata: {e}"))
             })?;
 
         let encoding_hint = metadata
             .as_object()
             .and_then(|map| map.get("encoding"))
             .and_then(|value| value.as_str())
-            .map(|s| s.to_string());
+            .map(std::string::ToString::to_string);
         let content_preview_hint = metadata
             .as_object()
             .and_then(|map| map.get("content_preview"))
             .and_then(|value| value.as_str())
-            .map(|s| s.to_string());
+            .map(std::string::ToString::to_string);
 
         repo.finalize_in_flight(
             Id::from_ulid(state.material_id),
@@ -147,15 +147,15 @@ impl MaterialAssembler {
             Some(total_size_bytes),
         )
         .await
-        .map_err(|e| SinexError::database(format!("Failed to finalize material: {}", e)))
+        .map_err(|e| SinexError::database(format!("Failed to finalize material: {e}")))
     }
 
-    /// Append entry in raw.temporal_ledger
+    /// Append entry in `raw.temporal_ledger`
     pub(super) async fn record_ledger_entry(&self, state: &FinalizationState) -> IngestdResult<()> {
         let entry = TemporalLedgerEntry::realtime_capture(
             state.material_id,
             state.expected_offset,
-            state.started_at.into(),
+            state.started_at,
         );
 
         self.pool
@@ -163,7 +163,7 @@ impl MaterialAssembler {
             .append_temporal_ledger(entry)
             .await
             .map_err(|e| {
-                SinexError::database(format!("Failed to append temporal ledger entry: {}", e))
+                SinexError::database(format!("Failed to append temporal ledger entry: {e}"))
             })?;
 
         Ok(())
@@ -262,11 +262,11 @@ impl MaterialAssembler {
                 return Ok(());
             }
 
-            let ended_at = Timestamp::parse(
+            let ended_at = time::OffsetDateTime::parse(
                 &end_preview.ended_at,
                 &time::format_description::well_known::Rfc3339,
             )
-            .unwrap_or_else(|_| Timestamp::now());
+            .map_or_else(|_| Timestamp::now(), Timestamp::new);
 
             let view = state.finalization_view();
             let assembled_bytes = view.expected_offset;
@@ -302,7 +302,7 @@ impl MaterialAssembler {
                 } else if has_invalid_offsets {
                     format!(
                         "buffered slice offsets outside expected_bytes={expected_bytes} (buffered_offsets={:?})",
-                        state.buffered_slices.keys().cloned().collect::<Vec<_>>()
+                        state.buffered_slices.keys().copied().collect::<Vec<_>>()
                     )
                 } else {
                     format!(
@@ -319,7 +319,7 @@ impl MaterialAssembler {
                     "reason": reason,
                     "assembled_bytes": view.expected_offset,
                     "slice_count": view.slice_count,
-                    "buffered_offsets": state.buffered_slices.keys().cloned().collect::<Vec<_>>(),
+                    "buffered_offsets": state.buffered_slices.keys().copied().collect::<Vec<_>>(),
                     "expected_bytes": expected_bytes,
                     "expected_slices": expected_slices,
                     "end": {
@@ -363,8 +363,7 @@ impl MaterialAssembler {
             state.finalizing = true;
             let end = state.pending_end.take().ok_or_else(|| {
                 SinexError::service(format!(
-                    "State corruption: pending_end missing during finalization for material {}",
-                    material_id
+                    "State corruption: pending_end missing during finalization for material {material_id}"
                 ))
             })?;
 
@@ -432,8 +431,7 @@ impl MaterialAssembler {
         // - Race between finalization and ongoing slice writes (prevented by finalizing flag)
         let file_size = tokio::fs::metadata(&final_state.temp_path)
             .await
-            .map(|m| m.len() as i64)
-            .unwrap_or(0);
+            .map_or(0, |m| m.len() as i64);
         if file_size != assembled_bytes {
             warn!(
                 material_id = %material_id,
