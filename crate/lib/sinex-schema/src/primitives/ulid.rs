@@ -58,7 +58,7 @@ impl Ulid {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis()
-            .min(u64::MAX as u128) as u64;
+            .min(u128::from(u64::MAX)) as u64;
 
         let mut state = MONOTONIC_STATE.lock().unwrap_or_else(|poisoned| {
             tracing::warn!("ULID monotonic state mutex was poisoned, recovering with fresh state");
@@ -139,7 +139,7 @@ impl Ulid {
     pub fn timestamp(&self) -> Timestamp {
         let timestamp_ms = self.0.timestamp_ms();
         Timestamp::new(
-            OffsetDateTime::from_unix_timestamp_nanos(timestamp_ms as i128 * 1_000_000)
+            OffsetDateTime::from_unix_timestamp_nanos(i128::from(timestamp_ms) * 1_000_000)
                 .expect("ULID timestamp should be valid"),
         )
     }

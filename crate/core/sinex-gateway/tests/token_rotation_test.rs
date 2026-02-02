@@ -156,7 +156,7 @@ async fn test_empty_token_file() -> TestResult<()> {
     let auth = sinex_gateway::rpc_server::read_token_from_env().expect("Failed to read token");
 
     // Empty tokens should be treated as missing
-    assert_eq!(auth, Some("".to_string()));
+    assert_eq!(auth, Some(String::new()));
 
     // Clean up
     std::env::remove_var("SINEX_RPC_TOKEN_FILE");

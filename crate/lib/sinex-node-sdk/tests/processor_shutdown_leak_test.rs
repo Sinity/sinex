@@ -47,7 +47,7 @@ impl Node for HangingProcessor {
         })
     }
 
-    fn node_name(&self) -> &str {
+    fn node_name(&self) -> &'static str {
         "hanging-processor"
     }
 

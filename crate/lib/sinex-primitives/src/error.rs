@@ -315,7 +315,13 @@ impl SinexError {
     }
 
     pub fn with_context(mut self, key: impl Into<String>, value: impl ToString) -> Self {
-        use SinexError::*;
+        use SinexError::{
+            AlreadyExists, Automaton, BlobStorage, Cancelled, ChannelReceive, ChannelSend,
+            Checkpoint, Configuration, Coordination, Database, DbPersistenceFailed, InvalidState,
+            Io, Kv, Lifecycle, MaxRetriesExceeded, Nats, NatsAckFailed, NatsPublish, NatsSubscribe,
+            Network, NotFound, Parse, PermissionDenied, Processing, ResourceExhausted,
+            Serialization, Service, Timeout, Unknown, Validation,
+        };
         let details = match &mut self {
             Database(d)
             | DbPersistenceFailed(d)
@@ -354,7 +360,13 @@ impl SinexError {
     }
 
     pub fn with_source(mut self, source: impl ToString) -> Self {
-        use SinexError::*;
+        use SinexError::{
+            AlreadyExists, Automaton, BlobStorage, Cancelled, ChannelReceive, ChannelSend,
+            Checkpoint, Configuration, Coordination, Database, DbPersistenceFailed, InvalidState,
+            Io, Kv, Lifecycle, MaxRetriesExceeded, Nats, NatsAckFailed, NatsPublish, NatsSubscribe,
+            Network, NotFound, Parse, PermissionDenied, Processing, ResourceExhausted,
+            Serialization, Service, Timeout, Unknown, Validation,
+        };
         let details = match &mut self {
             Database(d)
             | DbPersistenceFailed(d)
@@ -424,7 +436,13 @@ impl SinexError {
     }
 
     fn details(&self) -> &ErrorDetails {
-        use SinexError::*;
+        use SinexError::{
+            AlreadyExists, Automaton, BlobStorage, Cancelled, ChannelReceive, ChannelSend,
+            Checkpoint, Configuration, Coordination, Database, DbPersistenceFailed, InvalidState,
+            Io, Kv, Lifecycle, MaxRetriesExceeded, Nats, NatsAckFailed, NatsPublish, NatsSubscribe,
+            Network, NotFound, Parse, PermissionDenied, Processing, ResourceExhausted,
+            Serialization, Service, Timeout, Unknown, Validation,
+        };
         match self {
             Database(d)
             | DbPersistenceFailed(d)
@@ -473,7 +491,13 @@ impl SinexError {
     }
 
     pub fn variant_name(&self) -> &'static str {
-        use SinexError::*;
+        use SinexError::{
+            AlreadyExists, Automaton, BlobStorage, Cancelled, ChannelReceive, ChannelSend,
+            Checkpoint, Configuration, Coordination, Database, DbPersistenceFailed, InvalidState,
+            Io, Kv, Lifecycle, MaxRetriesExceeded, Nats, NatsAckFailed, NatsPublish, NatsSubscribe,
+            Network, NotFound, Parse, PermissionDenied, Processing, ResourceExhausted,
+            Serialization, Service, Timeout, Unknown, Validation,
+        };
         match self {
             Database(_) => "Database",
             DbPersistenceFailed(_) => "DbPersistenceFailed",
@@ -513,7 +537,7 @@ impl SinexError {
 
     // Helper methods for error categorization (used in tests)
     pub fn is_retryable(&self) -> bool {
-        use SinexError::*;
+        use SinexError::{ChannelReceive, ChannelSend, Network, Timeout, Unknown};
         matches!(
             self,
             Network(_) | Timeout(_) | ChannelSend(_) | ChannelReceive(_) | Unknown(_)
@@ -521,7 +545,7 @@ impl SinexError {
     }
 
     pub fn is_client_error(&self) -> bool {
-        use SinexError::*;
+        use SinexError::{AlreadyExists, NotFound, PermissionDenied, Validation};
         matches!(
             self,
             Validation(_) | NotFound(_) | AlreadyExists(_) | PermissionDenied(_)
@@ -529,7 +553,7 @@ impl SinexError {
     }
 
     pub fn is_permanent(&self) -> bool {
-        use SinexError::*;
+        use SinexError::{Configuration, MaxRetriesExceeded, PermissionDenied};
         matches!(
             self,
             MaxRetriesExceeded(_) | PermissionDenied(_) | Configuration(_)
@@ -537,7 +561,9 @@ impl SinexError {
     }
 
     pub fn status_code(&self) -> u16 {
-        use SinexError::*;
+        use SinexError::{
+            AlreadyExists, NotFound, PermissionDenied, ResourceExhausted, Timeout, Validation,
+        };
         match self {
             Validation(_) => 400,
             NotFound(_) => 404,

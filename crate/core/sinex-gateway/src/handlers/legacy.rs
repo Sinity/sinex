@@ -173,15 +173,12 @@ pub async fn handle_system_health(services: &ServiceContainer, _params: Value) -
         .is_ok();
 
     // Check NATS connectivity
-    let nats_connected = services
-        .nats_client()
-        .map(|client| {
-            matches!(
-                client.connection_state(),
-                async_nats::connection::State::Connected
-            )
-        })
-        .unwrap_or(false);
+    let nats_connected = services.nats_client().is_some_and(|client| {
+        matches!(
+            client.connection_state(),
+            async_nats::connection::State::Connected
+        )
+    });
 
     let overall_status = if db_healthy && (nats_connected || replay_control.bypass_active) {
         "healthy"

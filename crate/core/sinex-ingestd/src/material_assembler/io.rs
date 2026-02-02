@@ -168,8 +168,7 @@ async fn restore_state_params(
             &state_snapshot.started_at,
             &time::format_description::well_known::Rfc3339,
         )
-        .map(Timestamp::new)
-        .unwrap_or_else(|_| Timestamp::now()),
+        .map_or_else(|_| Timestamp::now(), Timestamp::new),
         material_kind: state_snapshot.material_kind,
         source_identifier: state_snapshot.source_identifier,
         metadata: state_snapshot.metadata,
@@ -277,19 +276,18 @@ async fn load_buffered_slices(buffers_dir: &PathBuf) -> IngestdResult<BTreeMap<i
             continue;
         }
 
-        let offset = match buf_path
+        let offset = if let Some(offset) = buf_path
             .file_stem()
             .and_then(|stem| stem.to_str())
             .and_then(|stem| stem.parse::<i64>().ok())
         {
-            Some(offset) => offset,
-            None => {
-                warn!(
-                    path = %buf_path.display(),
-                    "Skipping buffered slice with invalid filename"
-                );
-                continue;
-            }
+            offset
+        } else {
+            warn!(
+                path = %buf_path.display(),
+                "Skipping buffered slice with invalid filename"
+            );
+            continue;
         };
 
         buffered_slices.insert(offset, buf_path);
@@ -447,7 +445,7 @@ pub(super) async fn handle_slice(
             // Actually I must preserve the logic.
             let buffered_count = state.buffered_slices.len();
             let expected_offset = state.expected_offset;
-            let buffered_offsets: Vec<_> = state.buffered_slices.keys().cloned().collect();
+            let buffered_offsets: Vec<_> = state.buffered_slices.keys().copied().collect();
             state.finalizing = true;
             drop(state); // unlock
 

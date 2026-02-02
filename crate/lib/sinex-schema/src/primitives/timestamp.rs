@@ -32,7 +32,7 @@ impl Timestamp {
 
     /// Create from Unix timestamp in milliseconds.
     pub fn from_unix_timestamp_millis(ms: i64) -> Option<Self> {
-        OffsetDateTime::from_unix_timestamp_nanos(ms as i128 * 1_000_000)
+        OffsetDateTime::from_unix_timestamp_nanos(i128::from(ms) * 1_000_000)
             .ok()
             .map(Self)
     }
@@ -181,7 +181,7 @@ mod sqlx_impl {
         }
     }
 
-    impl<'q> Encode<'q, Postgres> for Timestamp {
+    impl Encode<'_, Postgres> for Timestamp {
         fn encode_by_ref(
             &self,
             buf: &mut PgArgumentBuffer,

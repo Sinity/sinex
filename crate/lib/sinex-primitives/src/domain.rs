@@ -932,7 +932,7 @@ fn path_contains_traversal(path: &Utf8PathBuf) -> bool {
 
     // Check for components that are exactly ".."
     for component in path.components() {
-        if let camino::Utf8Component::ParentDir = component {
+        if component == camino::Utf8Component::ParentDir {
             return true;
         }
         if let camino::Utf8Component::Normal(name) = component {

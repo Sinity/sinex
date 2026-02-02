@@ -122,7 +122,7 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
         WaitHelpers::wait_for_condition(
             || {
                 let js = js.clone();
-                let stream = stream.to_string();
+                let stream = stream.clone();
                 async move {
                     let mut stream_handle = js
                         .get_stream(&stream)
@@ -343,7 +343,7 @@ async fn assembler_handles_concurrent_materials_and_records_ledger(
                 Err(join_err) => return Err(join_err.into()),
             }
         }
-        _ = tokio::time::sleep(Duration::from_secs(90)) => {
+        () = tokio::time::sleep(Duration::from_secs(90)) => {
             handle.abort();
             color_eyre::eyre::bail!("timed out waiting for ledger entries");
         }

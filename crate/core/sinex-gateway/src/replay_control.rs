@@ -71,7 +71,7 @@ fn validate_actor(actor: &str) -> Result<()> {
     }
 
     // Validate actor identifier (after prefix) is not empty
-    let identifier = actor.split_once(':').map(|(_, id)| id).unwrap_or("");
+    let identifier = actor.split_once(':').map_or("", |(_, id)| id);
 
     if identifier.is_empty() {
         return Err(eyre!("Actor identifier cannot be empty after prefix"));
@@ -213,7 +213,6 @@ impl ReplayControlClient {
         if response.status == "error" {
             let message = response
                 .message
-                .clone()
                 .unwrap_or_else(|| "Replay control request failed".to_string());
             self.record_error(message.clone());
             return Err(eyre!("{}", message));
@@ -250,7 +249,6 @@ impl ReplayControlClient {
         if response.status == "error" {
             let message = response
                 .message
-                .clone()
                 .unwrap_or_else(|| "Replay control request failed".to_string());
             self.record_error(message.clone());
             return Err(eyre!("{}", message));
@@ -552,7 +550,7 @@ impl ReplayExecutionEngine {
         Self {
             replay,
             nats_client,
-            env: environment().clone(),
+            env: environment(),
         }
     }
 
@@ -758,8 +756,7 @@ impl ReplayExecutionEngine {
                 let event_id = event
                     .id
                     .as_ref()
-                    .map(|id| id.to_string())
-                    .unwrap_or_else(|| Ulid::new().to_string());
+                    .map_or_else(|| Ulid::new().to_string(), |id| id.to_string());
 
                 // Build replay subject with marker
                 let subject = self.env.nats_subject(&format!(

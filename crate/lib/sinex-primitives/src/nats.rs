@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use tracing::info;
 
 /// Configuration for NATS connections including TLS and Auth.
-#[derive(Debug, Clone, Serialize, Deserialize, Builder, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Builder, PartialEq, Eq)]
 pub struct NatsConnectionConfig {
     /// NATS server URL (e.g. `nats://localhost:4222` or `tls://demo.nats.io:4443`)
     #[builder(default = String::from("nats://localhost:4222"))]
@@ -175,7 +175,7 @@ impl NatsConnectionConfig {
 }
 
 /// Standard JetStream topology for Sinex ingestion pipelines.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct JetStreamTopology {
     pub events_stream: String,
     pub events_subject: String,
@@ -201,7 +201,7 @@ impl JetStreamTopology {
         let confirmations_prefix = format!("{}.", namespaced("events.confirmations"));
 
         Self {
-            events_stream: base_stream.clone(),
+            events_stream: base_stream,
             events_subject: namespaced("events.raw.>"),
             confirmations_stream,
             confirmations_subject: namespaced("events.confirmations.>"),
@@ -216,8 +216,7 @@ impl JetStreamTopology {
 
 fn env_bool(key: &str) -> bool {
     std::env::var(key)
-        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "on"))
-        .unwrap_or(false)
+        .is_ok_and(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "on"))
 }
 
 fn env_path(key: &str) -> Option<PathBuf> {

@@ -42,7 +42,7 @@ lazy_static! {
 
 impl SecretRedactor {
     /// Redact sensitive information from the input string
-    pub fn redact<'a>(input: &'a str) -> Cow<'a, str> {
+    pub fn redact(input: &str) -> Cow<'_, str> {
         let mut result = Cow::Borrowed(input);
 
         // Apply global patterns

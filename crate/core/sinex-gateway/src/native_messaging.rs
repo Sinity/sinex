@@ -92,16 +92,15 @@ impl NativeMessagingConfig {
         }
 
         // TODO: Implement capability-based access control (analysis/native_messaging.md)
-        let incoming_id = match message.extension_id.as_deref() {
-            Some(id) => id,
-            None => {
-                warn!(
-                    event = "native_messaging.auth",
-                    reason = "missing_extension_id",
-                    "Rejected native messaging call: extension metadata missing"
-                );
-                return Err(eyre!("Missing extension_id"));
-            }
+        let incoming_id = if let Some(id) = message.extension_id.as_deref() {
+            id
+        } else {
+            warn!(
+                event = "native_messaging.auth",
+                reason = "missing_extension_id",
+                "Rejected native messaging call: extension metadata missing"
+            );
+            return Err(eyre!("Missing extension_id"));
         };
 
         let trusted = self
@@ -119,17 +118,16 @@ impl NativeMessagingConfig {
             })?;
 
         if let Some(expected_secret) = &trusted.secret {
-            let provided = match message.extension_secret.as_deref() {
-                Some(secret) => secret,
-                None => {
-                    warn!(
-                        event = "native_messaging.auth",
-                        extension_id = incoming_id,
-                        reason = "missing_secret",
-                        "Trusted extension omitted the required secret"
-                    );
-                    return Err(eyre!("Missing extension_secret"));
-                }
+            let provided = if let Some(secret) = message.extension_secret.as_deref() {
+                secret
+            } else {
+                warn!(
+                    event = "native_messaging.auth",
+                    extension_id = incoming_id,
+                    reason = "missing_secret",
+                    "Trusted extension omitted the required secret"
+                );
+                return Err(eyre!("Missing extension_secret"));
             };
             if !secrets_match(expected_secret, provided) {
                 warn!(
@@ -156,16 +154,15 @@ impl NativeMessagingConfig {
             return Ok(());
         }
 
-        let host = match message.host.as_deref() {
-            Some(host) => host,
-            None => {
-                warn!(
-                    event = "native_messaging.auth",
-                    reason = "missing_host",
-                    "Rejected native messaging call: host metadata missing"
-                );
-                return Err(eyre!("Missing host"));
-            }
+        let host = if let Some(host) = message.host.as_deref() {
+            host
+        } else {
+            warn!(
+                event = "native_messaging.auth",
+                reason = "missing_host",
+                "Rejected native messaging call: host metadata missing"
+            );
+            return Err(eyre!("Missing host"));
         };
 
         if !self.trusted_hosts.iter().any(|allowed| allowed == host) {
@@ -192,17 +189,16 @@ impl NativeMessagingConfig {
             None => return Ok(()),
         };
 
-        let provided = match message.protocol_version.as_deref() {
-            Some(version) => version,
-            None => {
-                warn!(
-                    event = "native_messaging.auth",
-                    expected_version = expected,
-                    reason = "missing_protocol_version",
-                    "Rejected native messaging call: protocol version missing"
-                );
-                return Err(eyre!("Missing protocol_version"));
-            }
+        let provided = if let Some(version) = message.protocol_version.as_deref() {
+            version
+        } else {
+            warn!(
+                event = "native_messaging.auth",
+                expected_version = expected,
+                reason = "missing_protocol_version",
+                "Rejected native messaging call: protocol version missing"
+            );
+            return Err(eyre!("Missing protocol_version"));
         };
 
         if provided != expected {
@@ -506,21 +502,18 @@ pub async fn run_with_transport<T: NativeMessagingTransport>(
     loop {
         tokio::select! {
             message_result = transport.read_message() => {
-                match message_result? {
-                    Some(message) => {
-                        debug!("Received message: {:?}", message);
+                if let Some(message) = message_result? {
+                    debug!("Received message: {:?}", message);
 
-                        let response = process_message(&services, &config, message).await;
+                    let response = process_message(&services, &config, message).await;
 
-                        if let Err(e) = transport.write_message(&response).await {
-                            error!("Failed to write response: {}", e);
-                            break;
-                        }
-                    }
-                    None => {
-                        info!("EOF reached, shutting down");
+                    if let Err(e) = transport.write_message(&response).await {
+                        error!("Failed to write response: {}", e);
                         break;
                     }
+                } else {
+                    info!("EOF reached, shutting down");
+                    break;
                 }
             }
             _ = shutdown.changed() => {

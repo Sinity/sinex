@@ -396,30 +396,27 @@ sinex_proptest! {
         event_type_str: String in arb_event_type()
     ) {
         let event_type = EventType::new(event_type_str.clone());
-        match event_type.validate() {
-            Ok(()) => {
-                prop_assert!(!event_type_str.is_empty());
-                prop_assert!(!event_type_str.starts_with('.'));
-                prop_assert!(!event_type_str.ends_with('.'));
-                prop_assert!(!event_type_str.contains(".."));
-                prop_assert!(event_type_str.chars().all(|c|
+        if let Ok(()) = event_type.validate() {
+            prop_assert!(!event_type_str.is_empty());
+            prop_assert!(!event_type_str.starts_with('.'));
+            prop_assert!(!event_type_str.ends_with('.'));
+            prop_assert!(!event_type_str.contains(".."));
+            prop_assert!(event_type_str.chars().all(|c|
+                c.is_ascii_lowercase() || c == '.' || c == '_' || c == '-'
+            ));
+        } else {
+            let violates_rules = event_type_str.is_empty()
+                || event_type_str.starts_with('.')
+                || event_type_str.ends_with('.')
+                || event_type_str.contains("..")
+                || !event_type_str.chars().all(|c|
                     c.is_ascii_lowercase() || c == '.' || c == '_' || c == '-'
-                ));
-            }
-            Err(_) => {
-                let violates_rules = event_type_str.is_empty()
-                    || event_type_str.starts_with('.')
-                    || event_type_str.ends_with('.')
-                    || event_type_str.contains("..")
-                    || !event_type_str.chars().all(|c|
-                        c.is_ascii_lowercase() || c == '.' || c == '_' || c == '-'
-                    );
-                prop_assert!(
-                    violates_rules,
-                    "Event type '{}' failed validation but doesn't violate known rules",
-                    event_type_str
                 );
-            }
+            prop_assert!(
+                violates_rules,
+                "Event type '{}' failed validation but doesn't violate known rules",
+                event_type_str
+            );
         }
         Ok(())
     }
@@ -428,24 +425,21 @@ sinex_proptest! {
         source_str: String in arb_registry_source_name()
     ) -> Result<()> {
         let source = EventSource::new(source_str.clone());
-        match source.validate() {
-            Ok(()) => {
-                prop_assert!(!source_str.is_empty());
-                prop_assert!(source_str.chars().all(|c|
+        if let Ok(()) = source.validate() {
+            prop_assert!(!source_str.is_empty());
+            prop_assert!(source_str.chars().all(|c|
+                c.is_ascii_lowercase() || c == '-' || c == '_'
+            ));
+        } else {
+            let violates_rules = source_str.is_empty()
+                || !source_str.chars().all(|c|
                     c.is_ascii_lowercase() || c == '-' || c == '_'
-                ));
-            }
-            Err(_) => {
-                let violates_rules = source_str.is_empty()
-                    || !source_str.chars().all(|c|
-                        c.is_ascii_lowercase() || c == '-' || c == '_'
-                    );
-                prop_assert!(
-                    violates_rules,
-                    "Event source '{}' failed validation but doesn't violate known rules",
-                    source_str
                 );
-            }
+            prop_assert!(
+                violates_rules,
+                "Event source '{}' failed validation but doesn't violate known rules",
+                source_str
+            );
         }
         Ok(())
     }

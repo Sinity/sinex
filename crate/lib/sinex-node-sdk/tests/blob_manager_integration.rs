@@ -15,7 +15,7 @@ async fn blob_manager_fixture(ctx: &TestContext) -> color_eyre::Result<(BlobMana
     system_test_preflight()?;
     let temp_dir = TempDir::new()?;
     let annex_path = temp_dir.path().join("annex");
-    let repo_utf8 = Utf8PathBuf::from_path_buf(annex_path.clone())
+    let repo_utf8 = Utf8PathBuf::from_path_buf(annex_path)
         .map_err(|_| color_eyre::eyre::eyre!("annex path must be valid UTF-8"))?;
 
     let annex_config = AnnexConfig {

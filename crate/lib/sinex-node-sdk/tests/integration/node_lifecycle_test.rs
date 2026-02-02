@@ -438,7 +438,7 @@ async fn test_node_graceful_shutdown(ctx: TestContext) -> color_eyre::Result<()>
             message_id: "shutdown-final".to_string(),
             event_id: None,
         },
-        processed_count: operations_completed.load(Ordering::SeqCst) as u64,
+        processed_count: u64::from(operations_completed.load(Ordering::SeqCst)),
         last_activity: Timestamp::now(),
         data: Some(serde_json::json!({
             "shutdown_reason": "graceful",

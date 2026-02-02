@@ -326,21 +326,18 @@ fn test_load_token_file_permission_denied() {
     // If it returns Ok, the file was unexpectedly readable (e.g., running as root-like capability)
     // If it returns Err with "No authentication token", the exists() check failed
     // If it returns Err with "Failed to read token", the read operation properly failed
-    match result {
-        Err(e) => {
-            let err_msg = e.to_string();
-            assert!(
-                err_msg.contains("Failed to read token")
-                    || err_msg.contains("No authentication token")
-                    || err_msg.contains("permission denied"),
-                "Expected permission or no-token error, got: {}",
-                err_msg
-            );
-        }
-        Ok(_) => {
-            // If running with elevated capabilities, the file might still be readable
-            // This is acceptable in test environments
-        }
+    if let Err(e) = result {
+        let err_msg = e.to_string();
+        assert!(
+            err_msg.contains("Failed to read token")
+                || err_msg.contains("No authentication token")
+                || err_msg.contains("permission denied"),
+            "Expected permission or no-token error, got: {}",
+            err_msg
+        );
+    } else {
+        // If running with elevated capabilities, the file might still be readable
+        // This is acceptable in test environments
     }
 }
 

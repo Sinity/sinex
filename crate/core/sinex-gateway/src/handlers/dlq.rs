@@ -121,7 +121,7 @@ pub async fn handle_dlq_peek(
                     payload_str.to_string()
                 };
 
-                let sequence = msg.info().map(|info| info.stream_sequence).unwrap_or(0);
+                let sequence = msg.info().map_or(0, |info| info.stream_sequence);
 
                 previews.push(DlqMessagePeek {
                     subject: msg.subject.to_string(),

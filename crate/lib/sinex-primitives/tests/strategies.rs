@@ -149,7 +149,7 @@ pub fn arb_file_path() -> impl Strategy<Value = String> {
         Just("/var/log/system.log".to_string()),
         Just("/.hidden".to_string()),
         Just("/tmp/file with spaces.txt".to_string()),
-        "/[a-z0-9/._-]{1,100}\\.[a-z]{1,5}".prop_map(|s| s.to_string()),
+        "/[a-z0-9/._-]{1,100}\\.[a-z]{1,5}".prop_map(|s| s),
     ]
 }
 

@@ -28,7 +28,7 @@ struct UnifiedTerminalNode(SimpleIngestorWrapper<TerminalProcessor>);
 
 impl UnifiedTerminalNode {
     #[allow(dead_code)] // Convenience constructor
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 }

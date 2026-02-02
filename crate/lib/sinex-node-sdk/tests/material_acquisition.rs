@@ -551,7 +551,7 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
         .await;
 
         match wait_result {
-            Ok(_) => {
+            Ok(()) => {
                 completed = true;
                 break;
             }

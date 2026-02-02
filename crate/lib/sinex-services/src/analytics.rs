@@ -150,52 +150,49 @@ impl AnalyticsService {
         end_time: Option<Timestamp>,
     ) -> ServiceResult<HashMap<String, i64>> {
         let mut conn = self.acquire_connection().await?;
-        let result = match (start_time, end_time) {
-            (Some(start), Some(end)) => {
-                let rows = sqlx::query!(
-                    r#"
-                    SELECT
-                        event_type,
-                        COUNT(*) as "count!"
-                    FROM core.events
-                    WHERE ts_orig >= $1 AND ts_orig < $2
-                                        GROUP BY event_type
-                                        ORDER BY COUNT(*) DESC
-                                        LIMIT $3
-                                    "#,
-                    *start,
-                    *end,
-                    Pagination::DEFAULT_LIMIT
-                )
-                .fetch_all(&mut *conn)
-                .await
-                .map_err(|e| db_error(e, "count by type in range"))?;
+        let result = if let (Some(start), Some(end)) = (start_time, end_time) {
+            let rows = sqlx::query!(
+                r#"
+                SELECT
+                    event_type,
+                    COUNT(*) as "count!"
+                FROM core.events
+                WHERE ts_orig >= $1 AND ts_orig < $2
+                                    GROUP BY event_type
+                                    ORDER BY COUNT(*) DESC
+                                    LIMIT $3
+                                "#,
+                *start,
+                *end,
+                Pagination::DEFAULT_LIMIT
+            )
+            .fetch_all(&mut *conn)
+            .await
+            .map_err(|e| db_error(e, "count by type in range"))?;
 
-                rows.into_iter()
-                    .map(|row| (row.event_type, row.count))
-                    .collect()
-            }
-            _ => {
-                let rows = sqlx::query!(
-                    r#"
-                    SELECT
-                        event_type,
-                        COUNT(*) as "count!"
-                    FROM core.events
-                    GROUP BY event_type
-                    ORDER BY COUNT(*) DESC
-                    LIMIT $1
-                    "#,
-                    Pagination::DEFAULT_LIMIT
-                )
-                .fetch_all(&mut *conn)
-                .await
-                .map_err(|e| db_error(e, "count by type all time"))?;
+            rows.into_iter()
+                .map(|row| (row.event_type, row.count))
+                .collect()
+        } else {
+            let rows = sqlx::query!(
+                r#"
+                SELECT
+                    event_type,
+                    COUNT(*) as "count!"
+                FROM core.events
+                GROUP BY event_type
+                ORDER BY COUNT(*) DESC
+                LIMIT $1
+                "#,
+                Pagination::DEFAULT_LIMIT
+            )
+            .fetch_all(&mut *conn)
+            .await
+            .map_err(|e| db_error(e, "count by type all time"))?;
 
-                rows.into_iter()
-                    .map(|row| (row.event_type, row.count))
-                    .collect()
-            }
+            rows.into_iter()
+                .map(|row| (row.event_type, row.count))
+                .collect()
         };
 
         Ok(result)
@@ -213,7 +210,8 @@ impl AnalyticsService {
                 .with_context("interval_minutes", interval_minutes));
         }
 
-        let expected_buckets = (end_time - start_time).whole_minutes() / interval_minutes as i64;
+        let expected_buckets =
+            (end_time - start_time).whole_minutes() / i64::from(interval_minutes);
         if expected_buckets > Pagination::MAX_LIMIT {
             return Err(SinexError::validation("Time range too large for interval")
                 .with_context("expected_buckets", expected_buckets)
@@ -252,7 +250,7 @@ impl AnalyticsService {
         end_time: Option<Timestamp>,
         limit: i32,
     ) -> ServiceResult<Vec<(String, i64)>> {
-        let limit = (limit as i64).clamp(1, Pagination::MAX_LIMIT);
+        let limit = i64::from(limit).clamp(1, Pagination::MAX_LIMIT);
         let mut conn = self.acquire_connection().await?;
         let rows = match (start_time, end_time) {
             (Some(start), Some(end)) => sqlx::query(
@@ -327,7 +325,7 @@ impl AnalyticsService {
         bucket_size_minutes: i32,
         limit: i32,
     ) -> ServiceResult<Vec<(Timestamp, i64)>> {
-        let limit = (limit as i64).clamp(1, Pagination::MAX_LIMIT);
+        let limit = i64::from(limit).clamp(1, Pagination::MAX_LIMIT);
         let mut conn = self.acquire_connection().await?;
         let interval = minutes_to_interval(bucket_size_minutes);
 
@@ -377,6 +375,6 @@ fn minutes_to_interval(minutes: i32) -> PgInterval {
     PgInterval {
         months: 0,
         days: 0,
-        microseconds: minutes as i64 * 60 * 1_000_000,
+        microseconds: i64::from(minutes) * 60 * 1_000_000,
     }
 }

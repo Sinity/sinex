@@ -173,7 +173,7 @@ fn jetstream_delivery_preserves_sequence() -> TestResult<()> {
             name: stream_name.clone(),
             subjects: vec![subject.clone()],
             retention: RetentionPolicy::WorkQueue,
-            max_age: Duration::from_secs(60),
+            max_age: Duration::from_mins(1),
             ..Default::default()
         };
         let stream = jetstream.get_or_create_stream(stream_cfg).await?;

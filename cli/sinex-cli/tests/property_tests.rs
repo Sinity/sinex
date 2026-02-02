@@ -26,7 +26,7 @@ fn rpc_url_strategy() -> impl Strategy<Value = String> {
 
 /// Generate a valid bearer token (alphanumeric + common token chars).
 fn token_strategy() -> impl Strategy<Value = String> {
-    "[a-zA-Z0-9_\\-]{16,64}".prop_map(|s| s.to_string())
+    "[a-zA-Z0-9_\\-]{16,64}".prop_map(|s| s)
 }
 
 /// Generate a valid timeout value.
@@ -69,7 +69,7 @@ fn output_format_strategy() -> impl Strategy<Value = OutputFormat> {
 
 /// Generate a valid alias name (simple identifier).
 fn alias_name_strategy() -> impl Strategy<Value = String> {
-    "[a-z][a-z0-9_]{0,15}".prop_map(|s| s.to_string())
+    "[a-z][a-z0-9_]{0,15}".prop_map(|s| s)
 }
 
 /// Generate an alias command (list of arguments).
@@ -100,7 +100,7 @@ fn config_strategy() -> impl Strategy<Value = Config> {
     (
         rpc_url_strategy(),
         prop::option::of(token_strategy()),
-        prop::option::of("[a-zA-Z0-9/._\\-]{5,50}".prop_map(|s| s.to_string())),
+        prop::option::of("[a-zA-Z0-9/._\\-]{5,50}".prop_map(|s| s)),
         timeout_strategy(),
         output_format_strategy(),
         prop::collection::hash_map(alias_name_strategy(), alias_command_strategy(), 0..=3),

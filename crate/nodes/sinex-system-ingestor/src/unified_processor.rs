@@ -418,8 +418,7 @@ impl SystemProcessor {
         if self
             .dbus_watcher
             .as_ref()
-            .map(|handle| handle.is_active())
-            .unwrap_or(false)
+            .is_some_and(|handle| handle.is_active())
         {
             return Ok(());
         }
@@ -443,8 +442,7 @@ impl SystemProcessor {
         if self
             .unified_journal_watcher
             .as_ref()
-            .map(|handle| handle.is_active())
-            .unwrap_or(false)
+            .is_some_and(|handle| handle.is_active())
         {
             return Ok(());
         }
@@ -468,8 +466,7 @@ impl SystemProcessor {
         if self
             .udev_watcher
             .as_ref()
-            .map(|handle| handle.is_active())
-            .unwrap_or(false)
+            .is_some_and(|handle| handle.is_active())
         {
             return Ok(());
         }
@@ -644,7 +641,7 @@ impl SystemProcessor {
         Ok(count)
     }
 
-    fn node_name(&self) -> &str {
+    fn node_name(&self) -> &'static str {
         "system-watcher"
     }
 }
@@ -654,7 +651,7 @@ impl SimpleIngestor for SystemProcessor {
     type Config = SystemConfig;
     type State = SystemPersistentState;
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "system-watcher"
     }
 
@@ -897,8 +894,7 @@ impl SimpleIngestor for SystemProcessor {
             last_updated: state
                 .last_state
                 .as_ref()
-                .map(|s| s.captured_at)
-                .unwrap_or_else(Timestamp::now),
+                .map_or_else(Timestamp::now, |s| s.captured_at),
             total_items: None,
             healthy: state.health.dbus_active
                 || state.health.journal_active

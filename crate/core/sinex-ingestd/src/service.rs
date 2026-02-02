@@ -126,12 +126,10 @@ impl IngestService {
             } else {
                 EventValidator::load_schemas_from_db(pool, config.validate_schemas).await?
             }
+        } else if config.strict_validation {
+            EventValidator::new_strict(false)
         } else {
-            if config.strict_validation {
-                EventValidator::new_strict(false)
-            } else {
-                EventValidator::new(false)
-            }
+            EventValidator::new(false)
         };
 
         if let Some(ref nats_client) = nats_client {
@@ -202,7 +200,7 @@ impl IngestService {
         let observer = self.observer.clone();
         let stats_shutdown = shutdown_flag.clone();
         let stats_handle = tokio::spawn(async move {
-            let mut interval = interval(Duration::from_secs(60));
+            let mut interval = interval(Duration::from_mins(1));
 
             loop {
                 tokio::select! {
@@ -229,7 +227,7 @@ impl IngestService {
                             }
                         }
                     }
-                    _ = shutdown_signal(&stats_shutdown) => {
+                    () = shutdown_signal(&stats_shutdown) => {
                         break;
                     }
                 }
@@ -313,7 +311,7 @@ impl IngestService {
             }
 
             // Normal shutdown signal
-            _ = shutdown_signal(&shutdown_flag) => {
+            () = shutdown_signal(&shutdown_flag) => {
                 info!("Received shutdown signal");
                 Ok(())
             }
@@ -369,7 +367,7 @@ impl IngestService {
                         }
                     }
                 }
-                _ = shutdown_signal(&shutdown_flag) => {
+                () = shutdown_signal(&shutdown_flag) => {
                     info!("JetStream consumer shutting down");
                     Ok(())
                 }
@@ -457,7 +455,7 @@ impl IngestService {
         let shutdown_flag = self.shutdown_flag.clone();
 
         tokio::spawn(async move {
-            let mut interval = interval(Duration::from_secs(300)); // Reload every 5 minutes
+            let mut interval = interval(Duration::from_mins(5)); // Reload every 5 minutes
 
             loop {
                 tokio::select! {
@@ -471,7 +469,7 @@ impl IngestService {
                             }
                         }
                     }
-                    _ = shutdown_signal(&shutdown_flag) => {
+                    () = shutdown_signal(&shutdown_flag) => {
                         break;
                     }
                 }
@@ -496,7 +494,7 @@ impl IngestService {
                         error!("Background task panicked: {:?}", join_err);
                     }
                 }
-                _ = &mut timeout_sleep => {
+                () = &mut timeout_sleep => {
                     warn!("Background task did not shutdown in time; aborting");
                     handle.abort();
                     if let Err(join_err) = handle.await {

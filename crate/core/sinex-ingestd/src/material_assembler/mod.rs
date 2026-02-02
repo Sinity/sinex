@@ -12,9 +12,9 @@ mod pipeline;
 mod state;
 
 const MAX_BUFFERED_SLICES: usize = 100;
-const SLICE_ARRIVAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300); // 5 minutes
-const STALE_ASSEMBLY_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60); // 1 minute
-const ORPHANED_FILE_AGE_THRESHOLD: std::time::Duration = std::time::Duration::from_secs(3600); // 1 hour
+const SLICE_ARRIVAL_TIMEOUT: std::time::Duration = std::time::Duration::from_mins(5); // 5 minutes
+const STALE_ASSEMBLY_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_mins(1); // 1 minute
+const ORPHANED_FILE_AGE_THRESHOLD: std::time::Duration = std::time::Duration::from_hours(1); // 1 hour
 
 use async_nats::{jetstream, Client as NatsClient};
 use blake3::Hasher;
@@ -84,7 +84,7 @@ impl MaterialAssembler {
         }
 
         let js = jetstream::new(nats_client.clone());
-        let env = sinex_primitives::environment().clone();
+        let env = sinex_primitives::environment();
 
         let dlq_subject = env.nats_subject_with_namespace(
             namespace.as_deref(),
@@ -99,7 +99,7 @@ impl MaterialAssembler {
             js,
             nats_client,
             pool,
-            env: env.clone(),
+            env,
             namespace,
             annex,
             assembler_state: Arc::new(DashMap::new()),
@@ -215,7 +215,7 @@ impl MaterialAssembler {
 
     /// Remove the persisted state directory for a material
     async fn cleanup_state(&self, material_id: Ulid) {
-        io::cleanup_state(self, material_id).await
+        io::cleanup_state(self, material_id).await;
     }
 
     /// Import the assembled material into git-annex

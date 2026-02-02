@@ -51,10 +51,10 @@ impl SearchService {
         let results = rows
             .into_iter()
             .map(|row| {
-                let snippet = row
-                    .snippet
-                    .map(|value| value.replace("<b>", "").replace("</b>", ""))
-                    .unwrap_or_else(|| Self::extract_snippet(&row.payload, snippet_text));
+                let snippet = row.snippet.map_or_else(
+                    || Self::extract_snippet(&row.payload, snippet_text),
+                    |value| value.replace("<b>", "").replace("</b>", ""),
+                );
                 let score = row.score.unwrap_or(1.0);
                 SearchResult {
                     event_id: row.id,
@@ -139,8 +139,8 @@ impl PreparedSearch {
         } = query;
 
         let pagination = Pagination::with_bounds(
-            Some(limit as i64),
-            Some(offset as i64),
+            Some(i64::from(limit)),
+            Some(i64::from(offset)),
             Pagination::DEFAULT_LIMIT,
             Pagination::MAX_LIMIT,
         );

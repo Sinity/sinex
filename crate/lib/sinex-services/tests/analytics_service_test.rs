@@ -554,9 +554,7 @@ async fn test_analytics_aggregation_accuracy(ctx: TestContext) -> TestResult<()>
                         .with_payload(json!({"test": "precision", "seq": k})),
                 );
             }
-            *expected_source_counts
-                .entry(source.to_string())
-                .or_insert(0) += count as i64;
+            *expected_source_counts.entry(source.clone()).or_insert(0) += count as i64;
             *expected_type_counts
                 .entry(event_type.to_string())
                 .or_insert(0) += count as i64;

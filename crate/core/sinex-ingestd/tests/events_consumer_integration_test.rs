@@ -143,6 +143,7 @@ async fn publish_event(
 }
 
 /// Helper to publish raw bytes directly (for malformed event testing).
+#[allow(dead_code)] // Test infrastructure for malformed event testing
 async fn publish_raw_bytes(
     nats_client: &async_nats::Client,
     namespace: &str,
@@ -477,8 +478,7 @@ async fn jetstream_consumer_redelivers_when_confirmation_publish_fails(
                 Ok::<bool, SinexError>(
                     deliveries
                         .as_ref()
-                        .map(|d| d.load(Ordering::Relaxed) >= 2)
-                        .unwrap_or(false),
+                        .is_some_and(|d| d.load(Ordering::Relaxed) >= 2),
                 )
             }
         },
@@ -768,8 +768,7 @@ async fn jetstream_consumer_routes_db_failures_to_dlq(ctx: TestContext) -> TestR
                     Ok::<bool, SinexError>(
                         fail_once
                             .as_ref()
-                            .map(|f| !f.load(Ordering::SeqCst))
-                            .unwrap_or(false),
+                            .is_some_and(|f| !f.load(Ordering::SeqCst)),
                     )
                 }
             },

@@ -104,7 +104,7 @@ pub struct HealthEvent {
     pub event_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum HealthStatus {
     Healthy,
     Degraded,
@@ -169,13 +169,10 @@ impl SimpleNode for HealthAggregator {
         let mut periodic_reports = Vec::new();
 
         // 1. Window-based emission (every aggregation_window_seconds)
-        let should_emit_window = state
-            .last_window_emission
-            .map(|last| {
-                let elapsed = now - last;
-                elapsed >= Duration::seconds(state.config.aggregation_window_seconds as i64)
-            })
-            .unwrap_or(true);
+        let should_emit_window = state.last_window_emission.is_none_or(|last| {
+            let elapsed = now - last;
+            elapsed >= Duration::seconds(state.config.aggregation_window_seconds as i64)
+        });
 
         if should_emit_window && state.config.enable_system_health_status {
             periodic_reports.push(self.create_system_status(state, now));
@@ -209,7 +206,7 @@ impl SimpleNode for HealthAggregator {
         // Add event to sliding window
         component_health.events.push(HealthEvent {
             timestamp: now,
-            previous_status: previous_status.clone(),
+            previous_status,
             current_status: current_status.clone(),
             event_id: context.event_id.to_string(),
         });
@@ -241,13 +238,10 @@ impl SimpleNode for HealthAggregator {
             .copied()
             .unwrap_or(60);
 
-        let should_emit_component = component_health
-            .last_check_emission
-            .map(|last| {
-                let elapsed = now - last;
-                elapsed >= Duration::seconds(check_interval as i64)
-            })
-            .unwrap_or(true);
+        let should_emit_component = component_health.last_check_emission.is_none_or(|last| {
+            let elapsed = now - last;
+            elapsed >= Duration::seconds(check_interval as i64)
+        });
 
         if should_emit_component && state.config.enable_component_health_reports {
             periodic_reports.push(self.create_component_report(component_health, now));

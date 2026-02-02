@@ -39,18 +39,18 @@ struct MetadataBuilder {
 }
 
 impl MetadataBuilder {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             data: serde_json::Map::new(),
         }
     }
 
-    pub fn with_tags(mut self, tags: Vec<String>) -> Self {
+    pub(crate) fn with_tags(mut self, tags: Vec<String>) -> Self {
         self.data.insert("tags".to_string(), json!(tags));
         self
     }
 
-    pub fn with_created_at(mut self, timestamp: sinex_primitives::Timestamp) -> Self {
+    pub(crate) fn with_created_at(mut self, timestamp: sinex_primitives::Timestamp) -> Self {
         self.data.insert(
             "created_at".to_string(),
             json!(sinex_primitives::temporal::format_rfc3339(timestamp)),
@@ -58,7 +58,7 @@ impl MetadataBuilder {
         self
     }
 
-    pub fn with_source_material_id(mut self, id: Option<Ulid>) -> Self {
+    pub(crate) fn with_source_material_id(mut self, id: Option<Ulid>) -> Self {
         if let Some(id) = id {
             self.data
                 .insert("source_material_id".to_string(), json!(id.to_string()));
@@ -66,19 +66,19 @@ impl MetadataBuilder {
         self
     }
 
-    pub fn with_created_by(mut self, created_by: &str) -> Self {
+    pub(crate) fn with_created_by(mut self, created_by: &str) -> Self {
         self.data
             .insert("created_by".to_string(), json!(created_by));
         self
     }
 
-    pub fn with_extraction_method(mut self, method: &str) -> Self {
+    pub(crate) fn with_extraction_method(mut self, method: &str) -> Self {
         self.data
             .insert("extraction_method".to_string(), json!(method));
         self
     }
 
-    pub fn build(self) -> serde_json::Value {
+    pub(crate) fn build(self) -> serde_json::Value {
         serde_json::Value::Object(self.data)
     }
 }
@@ -129,7 +129,10 @@ impl EntityTypeMapper {
         "event",
     ];
 
-    pub fn create_entity_from_type(name: &str, entity_type: &str) -> ServiceResult<CreateEntity> {
+    pub(crate) fn create_entity_from_type(
+        name: &str,
+        entity_type: &str,
+    ) -> ServiceResult<CreateEntity> {
         let normalized = entity_type.trim().to_lowercase();
         if normalized.is_empty() {
             return Err(SinexError::validation("Entity type is required")
@@ -403,9 +406,7 @@ impl PkmService {
             .original_filename("inline-content".to_string())
             .size_bytes(content.len() as i64)
             .mime_type(
-                mime_type
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| "application/octet-stream".to_string()),
+                mime_type.map_or_else(|| "application/octet-stream".to_string(), |s| s.to_string()),
             )
             .checksum_blake3(blake3_checksum)
             .build();
@@ -420,7 +421,7 @@ impl PkmService {
             .await
             .map_err(|e| SinexError::service(format!("blob insert failed: {}", e)))?;
 
-        let content_preview = if mime_type.map(|m| m.starts_with("text/")).unwrap_or(false) {
+        let content_preview = if mime_type.is_some_and(|m| m.starts_with("text/")) {
             Some(Self::create_safe_content_preview(content, mime_type))
         } else {
             None
@@ -527,7 +528,7 @@ impl PkmService {
 
     /// Create a safe content preview with UTF-8 character boundary awareness
     fn create_safe_content_preview(content: &[u8], mime_type: Option<&str>) -> String {
-        if mime_type.map(|m| m.starts_with("text/")).unwrap_or(false) {
+        if mime_type.is_some_and(|m| m.starts_with("text/")) {
             let max_chars = 500;
             // Convert to string and safely truncate at character boundaries
             let content_str = String::from_utf8_lossy(content);

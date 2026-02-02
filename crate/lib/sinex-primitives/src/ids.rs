@@ -162,7 +162,7 @@ mod sqlx_impl {
         }
     }
 
-    impl<'q, T> Encode<'q, Postgres> for Id<T> {
+    impl<T> Encode<'_, Postgres> for Id<T> {
         fn encode_by_ref(
             &self,
             buf: &mut PgArgumentBuffer,

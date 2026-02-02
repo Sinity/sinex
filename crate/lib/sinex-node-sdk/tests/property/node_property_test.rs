@@ -22,7 +22,7 @@ mod strategies {
     use super::*;
 
     /// Strategy for generating realistic event sequences
-    pub fn event_sequences() -> impl Strategy<Value = Vec<Event<JsonValue>>> {
+    pub(super) fn event_sequences() -> impl Strategy<Value = Vec<Event<JsonValue>>> {
         (1usize..=100).prop_flat_map(|size| {
             proptest::collection::vec(
                 (event_sources(), event_types(), event_payloads()).prop_map(
@@ -40,7 +40,7 @@ mod strategies {
     }
 
     /// Strategy for generating event source names
-    pub fn event_sources() -> impl Strategy<Value = String> {
+    pub(super) fn event_sources() -> impl Strategy<Value = String> {
         prop_oneof![
             Just("fs".to_string()),
             Just("terminal".to_string()),
@@ -51,7 +51,7 @@ mod strategies {
     }
 
     /// Strategy for generating event type names
-    pub fn event_types() -> impl Strategy<Value = String> {
+    pub(super) fn event_types() -> impl Strategy<Value = String> {
         prop_oneof![
             Just("file.created".to_string()),
             Just("file.modified".to_string()),
@@ -62,7 +62,7 @@ mod strategies {
     }
 
     /// Strategy for generating realistic event payloads
-    pub fn event_payloads() -> impl Strategy<Value = serde_json::Value> {
+    pub(super) fn event_payloads() -> impl Strategy<Value = serde_json::Value> {
         prop_oneof![
             // Simple payload
             Just(json!({"type": "simple", "data": "test"})),
@@ -212,7 +212,7 @@ async fn node_handles_intermittent_failures(
         .count_all()
         .await
         .map_err(report_to_test_error)?;
-    assert_eq!(final_count, successful_events as i64);
+    assert_eq!(final_count, i64::from(successful_events));
 
     // Verify system recovered from failures
     assert!(successful_events > 0, "At least some events should succeed");

@@ -23,7 +23,7 @@ pub struct RetryConfig {
     #[builder(default = Duration::from_millis(100))]
     pub initial_delay: Duration,
     /// Maximum delay between attempts
-    #[builder(default = Duration::from_millis(1000))]
+    #[builder(default = Duration::from_secs(1))]
     pub max_delay: Duration,
     /// Backoff multiplier
     #[builder(default = 2.0)]
@@ -133,7 +133,7 @@ where
     Fut: std::future::Future<Output = Result<()>>,
 {
     wait_for_condition(
-        || async { health_check().await.map(|_| true) },
+        || async { health_check().await.map(|()| true) },
         timeout_secs,
         &format!("{service_name} readiness"),
     )
@@ -159,7 +159,7 @@ pub async fn wait_with_cancel(
     mut cancel_receiver: tokio::sync::oneshot::Receiver<()>,
 ) -> Result<()> {
     tokio::select! {
-        _ = tokio::time::sleep(duration) => Ok(()),
+        () = tokio::time::sleep(duration) => Ok(()),
         _ = &mut cancel_receiver => Err(SinexError::cancelled("Wait cancelled")),
     }
 }
@@ -258,7 +258,7 @@ where
     let factor = config.multiplier as u64;
 
     let retry_strategy = ExponentialBackoff::from_millis(
-        config.initial_delay.as_millis().min(u64::MAX as u128) as u64,
+        config.initial_delay.as_millis().min(u128::from(u64::MAX)) as u64,
     )
     .factor(factor)
     .max_delay(config.max_delay)
@@ -351,7 +351,7 @@ where
     E: std::fmt::Display,
 {
     let retry_strategy =
-        FixedInterval::from_millis(interval.as_millis().min(u64::MAX as u128) as u64)
+        FixedInterval::from_millis(interval.as_millis().min(u128::from(u64::MAX)) as u64)
             .take(max_retries);
 
     let retry_strategy = if with_jitter {
@@ -431,8 +431,9 @@ where
         // Early: starts with 50ms minimum for reasonable delays
         // Later: backs off proportionally to elapsed time
         let elapsed = start.elapsed();
-        let adaptive_delay =
-            Duration::from_millis(50.max(elapsed.as_millis().min(u64::MAX as u128) as u64 / 10));
+        let adaptive_delay = Duration::from_millis(
+            50.max(elapsed.as_millis().min(u128::from(u64::MAX)) as u64 / 10),
+        );
         tokio::time::sleep(adaptive_delay).await;
     }
 
@@ -497,7 +498,7 @@ where
             // Use adaptive backoff for multiple condition waiting too
             let elapsed = start.elapsed();
             backoff = Duration::from_millis(
-                50.max(elapsed.as_millis().min(u64::MAX as u128) as u64 / 10),
+                50.max(elapsed.as_millis().min(u128::from(u64::MAX)) as u64 / 10),
             )
             .min(Duration::from_secs(1));
         }

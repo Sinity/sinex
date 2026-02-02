@@ -28,7 +28,7 @@ struct UnifiedFilesystemNode(SimpleIngestorWrapper<FilesystemProcessor>);
 
 impl UnifiedFilesystemNode {
     #[allow(dead_code)] // Convenience constructor
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 }

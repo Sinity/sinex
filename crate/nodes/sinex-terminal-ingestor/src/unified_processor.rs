@@ -100,8 +100,7 @@ impl Default for TerminalConfig {
         let polling_interval_secs = std::env::var(ENV_POLLING_INTERVAL)
             .ok()
             .and_then(|s| s.parse::<u64>().ok())
-            .map(Seconds::from_secs)
-            .unwrap_or(DEFAULT_POLLING_INTERVAL);
+            .map_or(DEFAULT_POLLING_INTERVAL, Seconds::from_secs);
 
         Self {
             history_sources: default_sources,
@@ -205,7 +204,7 @@ impl HistoryWatcherContext {
                 .await;
 
             tokio::select! {
-                _ = tokio::time::sleep(self.polling_interval) => {},
+                () = tokio::time::sleep(self.polling_interval) => {},
                 shutdown_result = shutdown_rx.changed() => {
                     if shutdown_result.is_err() || *shutdown_rx.borrow() {
                         info!(path = %self.path, "History watcher shutdown requested");
@@ -238,7 +237,7 @@ impl HistoryWatcherContext {
             let _ = self.poll_fish_history_once(&mut fish_row_id).await;
 
             tokio::select! {
-                _ = tokio::time::sleep(self.polling_interval) => {},
+                () = tokio::time::sleep(self.polling_interval) => {},
                 shutdown_result = shutdown_rx.changed() => {
                     if shutdown_result.is_err() || *shutdown_rx.borrow() {
                         info!(path = %self.path, "Fish history watcher shutdown requested");
@@ -760,7 +759,7 @@ impl SimpleIngestor for TerminalProcessor {
     type Config = TerminalConfig;
     type State = TerminalCheckpoint;
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "terminal-watcher"
     }
 

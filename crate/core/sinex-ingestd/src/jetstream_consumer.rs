@@ -84,7 +84,7 @@ impl JetStreamTopology {
         let confirmations_prefix = format!("{}.", namespaced("events.confirmations"));
 
         Self {
-            events_stream: base_stream.clone(),
+            events_stream: base_stream,
             events_subject: namespaced("events.raw.>"),
             confirmations_stream,
             confirmations_subject: namespaced("events.confirmations.>"),
@@ -111,7 +111,7 @@ const CONFIRM_PUBLISH_BACKOFF_BASE: Duration = Duration::from_millis(200);
 const CONFIRM_PUBLISH_BACKOFF_MAX: Duration = Duration::from_secs(2);
 const CONFIRM_RETRY_DELAY: Duration = Duration::from_secs(1);
 const STREAM_CAPACITY_WARNING_THRESHOLD: f64 = 0.8; // Alert at 80% capacity
-const STREAM_CAPACITY_CHECK_INTERVAL: Duration = Duration::from_secs(300); // Check every 5 minutes
+const STREAM_CAPACITY_CHECK_INTERVAL: Duration = Duration::from_mins(5); // Check every 5 minutes
 
 #[derive(Debug)]
 struct PersistBatchResult {
@@ -303,7 +303,7 @@ impl JetStreamConsumer {
                 subjects: vec![self.topology.events_subject.clone()],
                 retention: jetstream::stream::RetentionPolicy::Limits,
                 max_messages: 10_000_000,
-                max_age: Duration::from_secs(90 * 24 * 60 * 60), // 90 days (operational history)
+                max_age: Duration::from_hours(2160), // 90 days (operational history)
                 storage: jetstream::stream::StorageType::File,
                 ..Default::default()
             })
@@ -319,7 +319,7 @@ impl JetStreamConsumer {
                 subjects: vec![self.topology.confirmations_subject.clone()],
                 retention: jetstream::stream::RetentionPolicy::Limits,
                 max_messages_per_subject: 1, // Compaction: only keep latest confirmation
-                max_age: Duration::from_secs(7 * 24 * 60 * 60), // 7 days (operational buffer)
+                max_age: Duration::from_hours(168), // 7 days (operational buffer)
                 storage: jetstream::stream::StorageType::File,
                 ..Default::default()
             })
@@ -336,7 +336,7 @@ impl JetStreamConsumer {
                 subjects: vec![self.topology.dlq_subject.clone()],
                 retention: jetstream::stream::RetentionPolicy::Limits,
                 max_messages: 1_000_000,
-                max_age: Duration::from_secs(30 * 24 * 60 * 60), // 30 days
+                max_age: Duration::from_hours(720), // 30 days
                 storage: jetstream::stream::StorageType::File,
                 ..Default::default()
             })
@@ -379,7 +379,7 @@ impl JetStreamConsumer {
             .map_err(|e| SinexError::network(format!("Failed to create consumer: {}", e)))?;
 
         // Stats logging interval
-        let mut stats_interval = tokio::time::interval(Duration::from_secs(60));
+        let mut stats_interval = tokio::time::interval(Duration::from_mins(1));
         // Stream capacity monitoring interval
         let mut capacity_check_interval = tokio::time::interval(STREAM_CAPACITY_CHECK_INTERVAL);
 
@@ -464,14 +464,13 @@ impl JetStreamConsumer {
         }
 
         // The ID MUST be present for events coming from Ingestors
-        let parsed_id = match event.id {
-            Some(id) => *id.as_ulid(),
-            None => {
-                error!("Event missing required ID; routing to DLQ");
-                self.route_validation_failure(&msg, "Missing event ID".to_string())
-                    .await?;
-                return Ok(None);
-            }
+        let parsed_id = if let Some(id) = event.id {
+            *id.as_ulid()
+        } else {
+            error!("Event missing required ID; routing to DLQ");
+            self.route_validation_failure(&msg, "Missing event ID".to_string())
+                .await?;
+            return Ok(None);
         };
 
         Ok(Some(PreparedEvent {
@@ -488,7 +487,7 @@ impl JetStreamConsumer {
                 let persisted_set = persisted
                     .inserted_ids
                     .as_ref()
-                    .map(|ids| ids.iter().cloned().collect::<HashSet<_>>());
+                    .map(|ids| ids.iter().copied().collect::<HashSet<_>>());
                 if let Some(fail_flag) = &self.post_persist_fail_once {
                     if fail_flag.swap(false, Ordering::SeqCst) {
                         return Err(SinexError::database("forced post-persist failure"));
@@ -937,8 +936,7 @@ impl JetStreamConsumer {
                 .headers
                 .as_ref()
                 .and_then(|h| h.get("Nats-Msg-Id"))
-                .map(|v| v.as_str().to_string())
-                .unwrap_or_else(|| "unknown".to_string()),
+                .map_or_else(|| "unknown".to_string(), |v| v.as_str().to_string()),
             error,
             original_payload,
             failed_at: sinex_primitives::temporal::format_rfc3339(Timestamp::now()),

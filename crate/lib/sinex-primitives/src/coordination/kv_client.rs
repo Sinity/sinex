@@ -109,15 +109,11 @@ impl CoordinationKvClient {
         let key = &self.service_name;
 
         // 1. Try to create if not exists using update with revision 0
-        match bucket.update(key, candidate_id.to_string().into(), 0).await {
-            Ok(_) => {
-                info!("Acquired leadership for {}", self.service_name);
-                return Ok(true);
-            }
-            Err(_) => {
-                // Failed to create (exists or deleted with history)
-            }
+        if let Ok(_) = bucket.update(key, candidate_id.to_string().into(), 0).await {
+            info!("Acquired leadership for {}", self.service_name);
+            return Ok(true);
         }
+        // Failed to create (exists or deleted with history)
 
         // 2. Check current state via entry()
         // We use entry() to get revision info and handle Tombstones

@@ -172,8 +172,7 @@ impl DesktopProcessor {
                 monitoring_active: self
                     .clipboard_watcher
                     .as_ref()
-                    .map(|h| h.is_active())
-                    .unwrap_or(false),
+                    .is_some_and(|h| h.is_active()),
                 last_clipboard_change: health.clipboard_last_success,
                 clipboard_content_hash: None, // Would need to hash current clipboard
                 last_error: health.clipboard_last_error.clone(),
@@ -189,8 +188,7 @@ impl DesktopProcessor {
                 connection_active: self
                     .window_manager_watcher
                     .as_ref()
-                    .map(|h| h.is_active())
-                    .unwrap_or(false),
+                    .is_some_and(|h| h.is_active()),
                 current_workspace: None, // Would need to query WM
                 active_window: None,     // Would need to query WM
                 total_windows: 0,        // Would need to query WM
@@ -235,7 +233,7 @@ impl SimpleIngestor for DesktopProcessor {
     type Config = DesktopConfig;
     type State = DesktopPersistentState;
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "desktop-watcher"
     }
 
@@ -531,8 +529,7 @@ impl SimpleIngestor for DesktopProcessor {
             last_updated: state
                 .last_state
                 .as_ref()
-                .map(|s| s.captured_at)
-                .unwrap_or_else(Timestamp::now),
+                .map_or_else(Timestamp::now, |s| s.captured_at),
             total_items: None,
             healthy: state.health.clipboard_active
                 || state.health.window_manager_active

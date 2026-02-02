@@ -326,7 +326,7 @@ async fn test_source_event_type_mapping(ctx: TestContext) -> TestResult<()> {
         let mut created_events = Vec::new();
 
         // Create test events for each expected type
-        for &event_type in expected_types.iter() {
+        for &event_type in &expected_types {
             let test_payload = match (source, event_type) {
                 ("fs-watcher", "file.created") => {
                     json!({"path": "/test/file.txt", "size": 1024, "created_at": "2024-01-01T00:00:00Z", "permissions": 644})
@@ -615,7 +615,7 @@ async fn test_event_type_constants_consistency(ctx: TestContext) -> TestResult<(
     let shell_prov = Provenance::from_material(shell_material, 0, None, None);
     // Use fluent API for typed payloads
     let kitty_event = kitty_executed.into_event(shell_prov.clone());
-    let atuin_event = atuin_executed.into_event(shell_prov.clone());
+    let atuin_event = atuin_executed.into_event(shell_prov);
 
     // Different sources but same event type
     assert_eq!(kitty_event.source.as_str(), "shell.kitty");

@@ -66,10 +66,7 @@ async fn test_batch_event_insertion(ctx: TestContext) -> TestResult<()> {
         persisted.len()
     );
 
-    let persisted_ids: Vec<_> = persisted
-        .iter()
-        .filter_map(|e| e.id.as_ref().cloned())
-        .collect();
+    let persisted_ids: Vec<_> = persisted.iter().filter_map(|e| e.id).collect();
     for event in &inserted_events {
         if let Some(ref id) = event.id {
             assert!(

@@ -11,7 +11,7 @@ use std::env;
 const REQUIRED_EXTENSIONS: &[&str] = &["ulid", "pg_jsonschema", "vector", "timescaledb", "pg_trgm"];
 
 #[derive(DeriveMigrationName)]
-pub struct Migration;
+pub(crate) struct Migration;
 
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {

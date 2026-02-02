@@ -375,7 +375,7 @@ impl SinexEnvironment {
                         "Socket path already namespaced for environment {}",
                         self.name
                     );
-                    return path.to_path_buf();
+                    return path.clone();
                 }
 
                 // Transform /run/sinex/file -> /run/sinex-env/file
@@ -398,10 +398,10 @@ impl SinexEnvironment {
 
                 PathBuf::from(namespaced_parent).join(filename)
             } else {
-                path.to_path_buf()
+                path.clone()
             }
         } else {
-            path.to_path_buf()
+            path.clone()
         }
     }
 
@@ -418,7 +418,7 @@ impl SinexEnvironment {
                 "Work directory already namespaced for environment {}",
                 self.name
             );
-            return path.to_path_buf();
+            return path;
         }
 
         // Append environment suffix to the path

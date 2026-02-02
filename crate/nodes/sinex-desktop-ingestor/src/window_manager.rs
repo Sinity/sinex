@@ -29,7 +29,7 @@ use tokio_retry::strategy::ExponentialBackoff;
 /// - GNOME (D-Bus org.gnome.Shell interface)
 /// - KDE Plasma (KWin D-Bus interface)
 /// - X11 WMs (EWMH/X11 protocol via x11rb)
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum WindowManagerType {
     Hyprland,
 }
@@ -44,7 +44,7 @@ const HYPRLAND_INITIAL_BACKOFF_MS: u64 = 500;
 ///
 /// The exponential backoff will cap at this value to prevent excessive delays.
 /// With a 500ms initial backoff and factor of 2, this is reached after ~7 attempts.
-const HYPRLAND_MAX_BACKOFF: Duration = Duration::from_secs(60);
+const HYPRLAND_MAX_BACKOFF: Duration = Duration::from_mins(1);
 
 /// Time-to-live for window state entries in memory
 ///
@@ -63,7 +63,7 @@ const HYPRLAND_SOCKET_READ_TIMEOUT: Duration = Duration::from_secs(30);
 ///
 /// A full snapshot of window and workspace state is captured at this interval to
 /// provide a consistent baseline and to trigger stale window cleanup.
-const STATE_SNAPSHOT_INTERVAL: Duration = Duration::from_secs(300); // 5 minutes
+const STATE_SNAPSHOT_INTERVAL: Duration = Duration::from_mins(5); // 5 minutes
 
 type BackoffStrategy = Box<dyn Iterator<Item = Duration> + Send>;
 
@@ -400,21 +400,22 @@ impl WindowManagerWatcher {
                 .windows
                 .iter()
                 .find(|(_, info)| info.class == class && info.title == title)
-                .map(|(addr, _)| addr.clone())
-                .unwrap_or_else(|| {
-                    use std::collections::hash_map::DefaultHasher;
-                    use std::hash::{Hash, Hasher};
-                    let mut hasher = DefaultHasher::new();
-                    class.hash(&mut hasher);
-                    title.hash(&mut hasher);
-                    format!("0x{:x}", hasher.finish())
-                });
+                .map_or_else(
+                    || {
+                        use std::collections::hash_map::DefaultHasher;
+                        use std::hash::{Hash, Hasher};
+                        let mut hasher = DefaultHasher::new();
+                        class.hash(&mut hasher);
+                        title.hash(&mut hasher);
+                        format!("0x{:x}", hasher.finish())
+                    },
+                    |(addr, _)| addr.clone(),
+                );
 
             let workspace_id = self
                 .current_workspace
                 .as_deref()
-                .map(|id| self.parse_id(id, "workspace_id"))
-                .unwrap_or(0);
+                .map_or(0, |id| self.parse_id(id, "workspace_id"));
             let metadata = serde_json::json!({
                 "window_class": class,
                 "window_title": title,
@@ -587,8 +588,7 @@ impl WindowManagerWatcher {
                 .unwrap_or_default(),
             workspace_id: window_info
                 .as_ref()
-                .map(|info| self.parse_id(&info.workspace_id, "workspace_id"))
-                .unwrap_or(0),
+                .map_or(0, |info| self.parse_id(&info.workspace_id, "workspace_id")),
             close_reason: None,
         };
         let event = payload
@@ -683,8 +683,7 @@ impl WindowManagerWatcher {
 
         let metadata = serde_json::json!({
             "from_workspace_id": self.current_workspace.as_ref()
-                .map(|w| self.parse_id(w, "current_workspace_id"))
-                .unwrap_or(0),
+                .map_or(0, |w| self.parse_id(w, "current_workspace_id")),
             "to_workspace_id": self.parse_id(&workspace_id, "workspace_id"),
         });
         let material_id = self
@@ -700,14 +699,12 @@ impl WindowManagerWatcher {
             from_workspace_id: self
                 .current_workspace
                 .as_ref()
-                .map(|w| self.parse_id(w, "current_workspace_id"))
-                .unwrap_or(0),
+                .map_or(0, |w| self.parse_id(w, "current_workspace_id")),
             to_workspace_id: self.parse_id(&workspace_id, "workspace_id"),
             monitor_id: self
                 .current_monitor
                 .as_ref()
-                .map(|m| self.parse_id(m, "monitor_id"))
-                .unwrap_or(0),
+                .map_or(0, |m| self.parse_id(m, "monitor_id")),
             active_window_id: self.current_focused_window.clone(),
         };
         let event = payload
@@ -868,7 +865,7 @@ impl WindowManagerWatcher {
                             }
 
                             // Periodic state capture
-                            _ = sleep(STATE_SNAPSHOT_INTERVAL) => {
+                            () = sleep(STATE_SNAPSHOT_INTERVAL) => {
                                 if let Err(e) = self.capture_state_snapshot().await {
                                     error!("Error capturing state snapshot: {}", e);
                                 }
@@ -886,7 +883,7 @@ impl WindowManagerWatcher {
                     let jittered_delay = Self::next_backoff(&mut reconnect_backoff);
                     warn!("Reconnecting to Hyprland in {:?}...", jittered_delay);
                     tokio::select! {
-                        _ = sleep(jittered_delay) => {}
+                        () = sleep(jittered_delay) => {}
                         shutdown_result = self.shutdown_rx.changed() => {
                             if shutdown_result.is_err() || *self.shutdown_rx.borrow() {
                                 info!("Window manager watcher shutdown requested");
@@ -906,7 +903,7 @@ impl WindowManagerWatcher {
                 jittered_delay
             );
             tokio::select! {
-                _ = sleep(jittered_delay) => {}
+                () = sleep(jittered_delay) => {}
                 shutdown_result = self.shutdown_rx.changed() => {
                     if shutdown_result.is_err() || *self.shutdown_rx.borrow() {
                         info!("Window manager watcher shutdown requested");
@@ -984,13 +981,11 @@ impl WindowManagerWatcher {
             current_workspace: self
                 .current_workspace
                 .as_ref()
-                .map(|w| self.parse_id(w, "current_workspace_id"))
-                .unwrap_or(0),
+                .map_or(0, |w| self.parse_id(w, "current_workspace_id")),
             current_monitor: self
                 .current_monitor
                 .as_ref()
-                .map(|m| self.parse_id(m, "monitor_id"))
-                .unwrap_or(0),
+                .map_or(0, |m| self.parse_id(m, "monitor_id")),
             captured_at: Timestamp::now().to_string(),
         };
         let material_payload = self.build_material_payload(

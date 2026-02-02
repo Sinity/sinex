@@ -28,7 +28,7 @@ struct UnifiedDocumentNode(SimpleIngestorWrapper<DocumentProcessor>);
 
 impl UnifiedDocumentNode {
     #[allow(dead_code)] // Convenience constructor
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 }

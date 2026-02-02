@@ -40,8 +40,7 @@ impl DistributedRateLimitConfig {
     /// Load configuration from environment variables
     pub fn from_env() -> Self {
         let enabled = std::env::var("SINEX_RPC_RATE_LIMIT_ENABLED")
-            .map(|v| v.to_lowercase() != "false" && v != "0")
-            .unwrap_or(true);
+            .map_or(true, |v| v.to_lowercase() != "false" && v != "0");
 
         let requests_per_minute = std::env::var("SINEX_RPC_RATE_LIMIT_PER_MINUTE")
             .ok()

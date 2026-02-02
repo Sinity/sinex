@@ -29,7 +29,7 @@ impl Default for RateLimitConfig {
         Self {
             requests_per_second: NonZeroU32::new(100).unwrap(),
             burst_size: NonZeroU32::new(50).unwrap(),
-            idle_timeout: Duration::from_secs(3600), // 1 hour
+            idle_timeout: Duration::from_hours(1), // 1 hour
             enabled: true,
         }
     }
@@ -39,8 +39,7 @@ impl RateLimitConfig {
     /// Load configuration from environment variables
     pub fn from_env() -> Self {
         let enabled = std::env::var("SINEX_RPC_RATE_LIMIT_ENABLED")
-            .map(|v| v.to_lowercase() != "false" && v != "0")
-            .unwrap_or(true);
+            .map_or(true, |v| v.to_lowercase() != "false" && v != "0");
 
         let requests_per_second = std::env::var("SINEX_RPC_RATE_LIMIT_REQUESTS_PER_SEC")
             .ok()
@@ -126,15 +125,14 @@ impl TokenRateLimiter {
         entry.last_access = now;
 
         // Check rate limit
-        match entry.limiter.check() {
-            Ok(()) => Ok(()),
-            Err(_) => {
-                debug!(
-                    token_prefix = &token[..8.min(token.len())],
-                    "Rate limit exceeded"
-                );
-                Err(())
-            }
+        if entry.limiter.check() == Ok(()) {
+            Ok(())
+        } else {
+            debug!(
+                token_prefix = &token[..8.min(token.len())],
+                "Rate limit exceeded"
+            );
+            Err(())
         }
     }
 
@@ -170,7 +168,7 @@ impl TokenRateLimiter {
         mut shutdown: tokio::sync::watch::Receiver<bool>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(600)); // 10 minutes
+            let mut interval = tokio::time::interval(Duration::from_mins(10)); // 10 minutes
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
@@ -201,7 +199,7 @@ mod tests {
         let limiter = TokenRateLimiter::new(RateLimitConfig {
             requests_per_second: NonZeroU32::new(100).unwrap(),
             burst_size: NonZeroU32::new(50).unwrap(),
-            idle_timeout: Duration::from_secs(60),
+            idle_timeout: Duration::from_mins(1),
             enabled: true,
         });
 
@@ -230,7 +228,7 @@ mod tests {
         let limiter = TokenRateLimiter::new(RateLimitConfig {
             requests_per_second: NonZeroU32::new(1).unwrap(),
             burst_size: NonZeroU32::new(1).unwrap(),
-            idle_timeout: Duration::from_secs(60),
+            idle_timeout: Duration::from_mins(1),
             enabled: false,
         });
 
@@ -245,7 +243,7 @@ mod tests {
         let limiter = TokenRateLimiter::new(RateLimitConfig {
             requests_per_second: NonZeroU32::new(5).unwrap(),
             burst_size: NonZeroU32::new(5).unwrap(),
-            idle_timeout: Duration::from_secs(60),
+            idle_timeout: Duration::from_mins(1),
             enabled: true,
         });
 

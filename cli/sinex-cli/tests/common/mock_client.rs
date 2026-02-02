@@ -44,7 +44,7 @@ pub enum MockResponse {
 
 impl MockGatewayClient {
     /// Create a new mock client with default responses
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             inner: Arc::new(Mutex::new(MockClientInner {
                 calls: Vec::new(),
@@ -54,19 +54,19 @@ impl MockGatewayClient {
     }
 
     /// Set a mock response for a specific method
-    pub fn set_response(&self, method: &str, response: MockResponse) {
+    pub(crate) fn set_response(&self, method: &str, response: MockResponse) {
         let mut inner = self.inner.lock().unwrap();
         inner.responses.insert(method.to_string(), response);
     }
 
     /// Get the list of recorded method calls
-    pub fn get_calls(&self) -> Vec<(String, Vec<String>)> {
+    pub(crate) fn get_calls(&self) -> Vec<(String, Vec<String>)> {
         let inner = self.inner.lock().unwrap();
         inner.calls.clone()
     }
 
     /// Clear all recorded calls
-    pub fn clear_calls(&self) {
+    pub(crate) fn clear_calls(&self) {
         let mut inner = self.inner.lock().unwrap();
         inner.calls.clear();
     }
@@ -85,7 +85,7 @@ impl MockGatewayClient {
 
     // Mock implementations of GatewayClient methods
 
-    pub async fn ping(&self) -> Result<String> {
+    pub(crate) async fn ping(&self) -> Result<String> {
         self.record_call("ping", vec![]);
         Ok(self
             .get_response("ping")
@@ -96,7 +96,7 @@ impl MockGatewayClient {
             .unwrap_or_else(|| "pong".to_string()))
     }
 
-    pub async fn version(&self) -> Result<String> {
+    pub(crate) async fn version(&self) -> Result<String> {
         self.record_call("version", vec![]);
         Ok(self
             .get_response("version")
@@ -107,7 +107,7 @@ impl MockGatewayClient {
             .unwrap_or_else(|| "0.4.2".to_string()))
     }
 
-    pub async fn health(&self) -> Result<SystemHealthResponse> {
+    pub(crate) async fn health(&self) -> Result<SystemHealthResponse> {
         use sinex_primitives::rpc::system::{
             ComponentHealth, ComponentsHealth, ReplayControlHealth,
         };
@@ -142,7 +142,7 @@ impl MockGatewayClient {
             }))
     }
 
-    pub async fn list_nodes(&self) -> Result<Vec<InstanceInfo>> {
+    pub(crate) async fn list_nodes(&self) -> Result<Vec<InstanceInfo>> {
         self.record_call("list_nodes", vec![]);
         Ok(self
             .get_response("list_nodes")
@@ -153,7 +153,7 @@ impl MockGatewayClient {
             .unwrap_or_default())
     }
 
-    pub async fn node_status(&self, node_id: &str) -> Result<NodeStatus> {
+    pub(crate) async fn node_status(&self, node_id: &str) -> Result<NodeStatus> {
         use sinex_primitives::domain::{NodeId, NodeState};
 
         self.record_call("node_status", vec![node_id.to_string()]);
@@ -171,7 +171,7 @@ impl MockGatewayClient {
             }))
     }
 
-    pub async fn drain_node(&self, node_id: &str, reason: Option<&str>) -> Result<()> {
+    pub(crate) async fn drain_node(&self, node_id: &str, reason: Option<&str>) -> Result<()> {
         self.record_call(
             "drain_node",
             vec![node_id.to_string(), reason.unwrap_or("").to_string()],
@@ -179,12 +179,12 @@ impl MockGatewayClient {
         Ok(())
     }
 
-    pub async fn resume_node(&self, node_id: &str) -> Result<()> {
+    pub(crate) async fn resume_node(&self, node_id: &str) -> Result<()> {
         self.record_call("resume_node", vec![node_id.to_string()]);
         Ok(())
     }
 
-    pub async fn set_node_horizon(&self, node_id: &str, horizon: &str) -> Result<()> {
+    pub(crate) async fn set_node_horizon(&self, node_id: &str, horizon: &str) -> Result<()> {
         self.record_call(
             "set_node_horizon",
             vec![node_id.to_string(), horizon.to_string()],
@@ -192,7 +192,7 @@ impl MockGatewayClient {
         Ok(())
     }
 
-    pub async fn replay_list(&self) -> Result<Vec<ReplayOperation>> {
+    pub(crate) async fn replay_list(&self) -> Result<Vec<ReplayOperation>> {
         self.record_call("replay_list", vec![]);
         Ok(self
             .get_response("replay_list")
@@ -203,7 +203,7 @@ impl MockGatewayClient {
             .unwrap_or_default())
     }
 
-    pub async fn replay_status(&self, operation_id: &str) -> Result<ReplayOperation> {
+    pub(crate) async fn replay_status(&self, operation_id: &str) -> Result<ReplayOperation> {
         use sinex_primitives::rpc::replay::{ReplayCheckpoint, ReplayScope, ReplayState};
         use std::collections::HashMap;
 
@@ -244,7 +244,7 @@ impl MockGatewayClient {
             }))
     }
 
-    pub async fn dlq_list(&self) -> Result<DlqListResponse> {
+    pub(crate) async fn dlq_list(&self) -> Result<DlqListResponse> {
         self.record_call("dlq_list", vec![]);
         Ok(self
             .get_response("dlq_list")
@@ -260,7 +260,7 @@ impl MockGatewayClient {
             }))
     }
 
-    pub async fn dlq_peek(&self, limit: Option<usize>) -> Result<DlqPeekResponse> {
+    pub(crate) async fn dlq_peek(&self, limit: Option<usize>) -> Result<DlqPeekResponse> {
         self.record_call("dlq_peek", vec![format!("{:?}", limit)]);
         Ok(self
             .get_response("dlq_peek")
@@ -273,7 +273,7 @@ impl MockGatewayClient {
             }))
     }
 
-    pub async fn dlq_requeue(&self, event_ids: Vec<String>) -> Result<DlqRequeueResponse> {
+    pub(crate) async fn dlq_requeue(&self, event_ids: Vec<String>) -> Result<DlqRequeueResponse> {
         self.record_call("dlq_requeue", event_ids);
         Ok(self
             .get_response("dlq_requeue")
@@ -287,7 +287,7 @@ impl MockGatewayClient {
             }))
     }
 
-    pub async fn dlq_purge(&self, confirm: bool) -> Result<DlqPurgeResponse> {
+    pub(crate) async fn dlq_purge(&self, confirm: bool) -> Result<DlqPurgeResponse> {
         self.record_call("dlq_purge", vec![confirm.to_string()]);
         Ok(self
             .get_response("dlq_purge")
@@ -301,7 +301,7 @@ impl MockGatewayClient {
             }))
     }
 
-    pub async fn search_events(&self, query: SearchQuery) -> Result<Vec<SearchResult>> {
+    pub(crate) async fn search_events(&self, query: SearchQuery) -> Result<Vec<SearchResult>> {
         self.record_call("search_events", vec![format!("{:?}", query)]);
         Ok(self
             .get_response("search_events")

@@ -58,6 +58,7 @@ async fn publish_event(
 }
 
 /// Helper to publish raw bytes directly (for malformed event testing).
+#[allow(dead_code)] // Test infrastructure for malformed event testing
 async fn publish_raw_bytes(
     nats_client: &async_nats::Client,
     namespace: &str,

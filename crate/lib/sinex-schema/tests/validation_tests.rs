@@ -87,7 +87,7 @@ mod constraint_validation_tests {
     use super::*;
     use tokio::sync::OnceCell;
 
-    pub(super) async fn setup_test_tables(pool: &PgPool) {
+    pub async fn setup_test_tables(pool: &PgPool) {
         static TABLES_READY: OnceCell<()> = OnceCell::const_new();
         TABLES_READY
             .get_or_try_init(|| async {
@@ -387,7 +387,7 @@ mod constraint_validation_tests {
             "invalid",
         ];
 
-        for kind in invalid_kinds.iter() {
+        for kind in &invalid_kinds {
             let event_id = Ulid::new();
             let result = sqlx::query!(
                 "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, offset_kind) VALUES ($1::uuid::ulid, $2, $3, $4, $5, $6, $7::uuid::ulid, $8)",
@@ -857,7 +857,7 @@ mod performance_constraint_tests {
                     serde_json::json!({"index": i}),
                     OffsetDateTime::now_utc(),
                     material_id.as_uuid(),
-                    i as i64
+                    i64::from(i)
                 )
                 .execute(conn.as_mut())
                 .await

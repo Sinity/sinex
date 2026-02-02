@@ -272,17 +272,17 @@ impl GatewayAuth {
                                         match std::fs::read_to_string(&path_for_closure) {
                                             Ok(new_token) => {
                                                 let trimmed = new_token.trim().to_string();
-                                                if !trimmed.is_empty() {
+                                                if trimmed.is_empty() {
+                                                    warn!(
+                                                        "Token file {:?} is empty after reload",
+                                                        path_for_closure
+                                                    );
+                                                } else {
                                                     let mut token_lock =
                                                         token_clone.blocking_write();
                                                     *token_lock = Some(trimmed);
                                                     info!(
                                                         "RPC token reloaded from {:?}",
-                                                        path_for_closure
-                                                    );
-                                                } else {
-                                                    warn!(
-                                                        "Token file {:?} is empty after reload",
                                                         path_for_closure
                                                     );
                                                 }
@@ -345,18 +345,15 @@ impl GatewayAuth {
         let provided = extract_token(headers).ok_or(AuthError::Missing)?;
 
         let token_guard = self.token.read().await;
-        match token_guard.as_ref() {
-            Some(expected) => {
-                if constant_time_eq(provided.as_bytes(), expected.as_bytes()) {
-                    Ok(())
-                } else {
-                    Err(AuthError::Invalid)
-                }
+        if let Some(expected) = token_guard.as_ref() {
+            if constant_time_eq(provided.as_bytes(), expected.as_bytes()) {
+                Ok(())
+            } else {
+                Err(AuthError::Invalid)
             }
-            None => {
-                warn!("No token configured - rejecting request");
-                Err(AuthError::Missing)
-            }
+        } else {
+            warn!("No token configured - rejecting request");
+            Err(AuthError::Missing)
         }
     }
 
@@ -494,7 +491,7 @@ impl RpcAuthContext {
     /// Create an auth context from a validated token
     fn from_token(token: &str) -> Self {
         Self {
-            token_prefix: token.chars().take(8).collect::<String>().to_string(),
+            token_prefix: token.chars().take(8).collect::<String>(),
             authenticated_at: Timestamp::now(),
         }
     }
@@ -784,16 +781,12 @@ async fn health_check(State(state): State<AppState>) -> impl IntoResponse {
         .is_ok();
 
     // Check NATS connectivity
-    let nats_ok = state
-        .services
-        .nats_client()
-        .map(|client| {
-            matches!(
-                client.connection_state(),
-                async_nats::connection::State::Connected
-            )
-        })
-        .unwrap_or(false);
+    let nats_ok = state.services.nats_client().is_some_and(|client| {
+        matches!(
+            client.connection_state(),
+            async_nats::connection::State::Connected
+        )
+    });
 
     if db_ok && nats_ok {
         (StatusCode::OK, "OK").into_response()
@@ -848,20 +841,19 @@ async fn handle_rpc(
     }
 
     // Extract token for auth context and rate limiting
-    let token = match extract_token(&headers) {
-        Some(t) => t,
-        None => {
-            // This should not happen after auth.verify() passes, but handle gracefully
-            state.metrics.record_request_rejected();
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(JsonRpcResponse::error(
-                    request.id,
-                    -32002,
-                    "Token missing after authentication".to_string(),
-                )),
-            );
-        }
+    let token = if let Some(t) = extract_token(&headers) {
+        t
+    } else {
+        // This should not happen after auth.verify() passes, but handle gracefully
+        state.metrics.record_request_rejected();
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(JsonRpcResponse::error(
+                request.id,
+                -32002,
+                "Token missing after authentication".to_string(),
+            )),
+        );
     };
 
     // Create auth context for handlers
@@ -1187,12 +1179,9 @@ where
     let cors = if cors_origins.is_empty() {
         CorsLayer::new()
             .allow_origin(AllowOrigin::predicate(|origin, _| {
-                origin
-                    .to_str()
-                    .map(|s| {
-                        s.starts_with("http://localhost:") || s.starts_with("http://127.0.0.1:")
-                    })
-                    .unwrap_or(false)
+                origin.to_str().is_ok_and(|s| {
+                    s.starts_with("http://localhost:") || s.starts_with("http://127.0.0.1:")
+                })
             }))
             .allow_methods([Method::POST, Method::GET, Method::OPTIONS])
             .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION])
@@ -1286,38 +1275,34 @@ pub async fn run(
 
     // Issue 143: Per-token rate limiting
     // Use distributed rate limiting via NATS KV when available, fall back to in-memory
-    let (rate_limiter, cleanup_task) = match services.nats_client() {
-        Some(nats) => {
-            let jetstream = async_nats::jetstream::new(nats.clone());
-            let config = DistributedRateLimitConfig::from_env();
-            match DistributedRateLimiter::new(jetstream, config).await {
-                Ok(limiter) => {
-                    info!("Using distributed rate limiting via NATS KV (shared across instances, survives restarts)");
-                    (RateLimiter::Distributed(Arc::new(limiter)), None)
-                }
-                Err(e) => {
-                    warn!(error = %e, "Failed to create distributed rate limiter, falling back to in-memory");
-                    let in_memory = Arc::new(TokenRateLimiter::from_env());
-                    let task = Arc::clone(&in_memory).spawn_cleanup_task(shutdown_rx.clone());
-                    (RateLimiter::InMemory(in_memory), Some(task))
-                }
+    let (rate_limiter, cleanup_task) = if let Some(nats) = services.nats_client() {
+        let jetstream = async_nats::jetstream::new(nats.clone());
+        let config = DistributedRateLimitConfig::from_env();
+        match DistributedRateLimiter::new(jetstream, config).await {
+            Ok(limiter) => {
+                info!("Using distributed rate limiting via NATS KV (shared across instances, survives restarts)");
+                (RateLimiter::Distributed(Arc::new(limiter)), None)
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to create distributed rate limiter, falling back to in-memory");
+                let in_memory = Arc::new(TokenRateLimiter::from_env());
+                let task = Arc::clone(&in_memory).spawn_cleanup_task(shutdown_rx.clone());
+                (RateLimiter::InMemory(in_memory), Some(task))
             }
         }
-        None => {
-            info!("NATS not available - using in-memory rate limiting (state lost on restart)");
-            let in_memory = Arc::new(TokenRateLimiter::from_env());
-            let task = Arc::clone(&in_memory).spawn_cleanup_task(shutdown_rx.clone());
-            (RateLimiter::InMemory(in_memory), Some(task))
-        }
+    } else {
+        info!("NATS not available - using in-memory rate limiting (state lost on restart)");
+        let in_memory = Arc::new(TokenRateLimiter::from_env());
+        let task = Arc::clone(&in_memory).spawn_cleanup_task(shutdown_rx.clone());
+        (RateLimiter::InMemory(in_memory), Some(task))
     };
 
     // Self-observation metrics
-    let metrics = Arc::new(match services.nats_client() {
-        Some(nats) => GatewayMetrics::new(nats.clone()),
-        None => {
-            info!("NATS not available - gateway metrics emission disabled");
-            GatewayMetrics::disabled()
-        }
+    let metrics = Arc::new(if let Some(nats) = services.nats_client() {
+        GatewayMetrics::new(nats.clone())
+    } else {
+        info!("NATS not available - gateway metrics emission disabled");
+        GatewayMetrics::disabled()
     });
 
     // Spawn metrics emission background task
@@ -1439,8 +1424,7 @@ mod tests {
     use tokio::sync::Mutex;
     use tokio::task::JoinHandle;
     use xtask::sandbox::{sinex_test, TestResult};
-    static ENV_LOCK: once_cell::sync::Lazy<Mutex<()>> =
-        once_cell::sync::Lazy::new(|| Mutex::new(()));
+    static ENV_LOCK: std::sync::LazyLock<Mutex<()>> = std::sync::LazyLock::new(|| Mutex::new(()));
 
     fn clear_tcp_env() {
         std::env::remove_var("SINEX_GATEWAY_TCP_LISTEN");

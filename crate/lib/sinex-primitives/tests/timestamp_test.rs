@@ -24,7 +24,7 @@ async fn test_timestamp_boundaries(ctx: TestContext) -> TestResult<()> {
             time::Time::from_hms(23, 59, 59).unwrap(),
         )),
         // Near boundaries
-        Timestamp::from_unix_timestamp(i32::MAX as i64).unwrap(),
+        Timestamp::from_unix_timestamp(i64::from(i32::MAX)).unwrap(),
         // Current time
         now(),
     ];

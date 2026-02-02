@@ -451,8 +451,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
                 }
 
                 let coordination_disabled = std::env::var("SINEX_COORDINATION_DISABLED")
-                    .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-                    .unwrap_or(false);
+                    .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
 
                 // Run service with optional coordination
                 if dry_run || coordination_disabled {
@@ -835,7 +834,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
                     };
 
                     match node.export_data(&export_path, format) {
-                        Ok(_) => {
+                        Ok(()) => {
                             println!("Data exported to: {}", export_path.as_str());
                         }
                         Err(e) => {

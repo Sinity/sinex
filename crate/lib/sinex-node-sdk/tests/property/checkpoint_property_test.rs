@@ -407,7 +407,7 @@ async fn checkpoint_cleanup_maintains_consistency(
     let mut managers = Vec::new();
     let mut unique_names = Vec::new();
 
-    for processor_name in processor_names.iter() {
+    for processor_name in &processor_names {
         let unique_name = format!("{processor_name}-{case_id}");
         unique_names.push(unique_name.clone());
 

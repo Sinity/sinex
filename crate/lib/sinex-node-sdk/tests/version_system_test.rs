@@ -285,7 +285,7 @@ async fn test_leadership_election_logic() -> TestResult<()> {
     assert!(!should_be_leader(&older_candidate, &newer_candidate));
 
     // Test same version with different start times
-    let earlier_time = now - std::time::Duration::from_secs(60);
+    let earlier_time = now - std::time::Duration::from_mins(1);
     let same_version = SimpleVersion {
         major: 1,
         minor: 0,
@@ -323,7 +323,7 @@ async fn test_tiebreaker_scenarios() -> TestResult<()> {
             minor: 0,
             patch: 100,
         },
-        start_time: base_time - std::time::Duration::from_secs(60),
+        start_time: base_time - std::time::Duration::from_mins(1),
         _instance_id: "earlier".to_string(),
     };
 

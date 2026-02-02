@@ -266,8 +266,7 @@ impl MaterialAssembler {
                 &end_preview.ended_at,
                 &time::format_description::well_known::Rfc3339,
             )
-            .map(Timestamp::new)
-            .unwrap_or_else(|_| Timestamp::now());
+            .map_or_else(|_| Timestamp::now(), Timestamp::new);
 
             let view = state.finalization_view();
             let assembled_bytes = view.expected_offset;
@@ -303,7 +302,7 @@ impl MaterialAssembler {
                 } else if has_invalid_offsets {
                     format!(
                         "buffered slice offsets outside expected_bytes={expected_bytes} (buffered_offsets={:?})",
-                        state.buffered_slices.keys().cloned().collect::<Vec<_>>()
+                        state.buffered_slices.keys().copied().collect::<Vec<_>>()
                     )
                 } else {
                     format!(
@@ -320,7 +319,7 @@ impl MaterialAssembler {
                     "reason": reason,
                     "assembled_bytes": view.expected_offset,
                     "slice_count": view.slice_count,
-                    "buffered_offsets": state.buffered_slices.keys().cloned().collect::<Vec<_>>(),
+                    "buffered_offsets": state.buffered_slices.keys().copied().collect::<Vec<_>>(),
                     "expected_bytes": expected_bytes,
                     "expected_slices": expected_slices,
                     "end": {
@@ -433,8 +432,7 @@ impl MaterialAssembler {
         // - Race between finalization and ongoing slice writes (prevented by finalizing flag)
         let file_size = tokio::fs::metadata(&final_state.temp_path)
             .await
-            .map(|m| m.len() as i64)
-            .unwrap_or(0);
+            .map_or(0, |m| m.len() as i64);
         if file_size != assembled_bytes {
             warn!(
                 material_id = %material_id,

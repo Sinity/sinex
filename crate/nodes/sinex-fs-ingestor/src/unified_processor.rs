@@ -183,7 +183,7 @@ impl EventMetrics {
         self.processing_errors.fetch_add(1, Ordering::Relaxed);
     }
 
-    pub fn recent_activity(&self) -> Vec<sinex_node_sdk::ActivityEntry> {
+    pub(crate) fn recent_activity(&self) -> Vec<sinex_node_sdk::ActivityEntry> {
         vec![]
     }
 }
@@ -346,10 +346,10 @@ impl FilesystemProcessor {
     }
 
     fn snapshot_state(&self) -> FilesystemState {
-        let host = self
-            .service_info()
-            .map(|info| HostName::new(info.host().to_string()))
-            .unwrap_or_else(|_| HostName::new("unknown-host"));
+        let host = self.service_info().map_or_else(
+            |_| HostName::new("unknown-host"),
+            |info| HostName::new(info.host().to_string()),
+        );
 
         FilesystemState {
             captured_at: sinex_primitives::temporal::now(),
@@ -370,7 +370,7 @@ impl SimpleIngestor for FilesystemProcessor {
     type Config = FilesystemConfig;
     type State = FilesystemCheckpoint;
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "filesystem-watcher"
     }
 
@@ -555,7 +555,7 @@ async fn watch_path(root: String, ctx: WatchContext) -> NodeResult<()> {
     let mut watcher: RecommendedWatcher =
         notify::recommended_watcher(move |res: Result<Event, notify::Error>| match res {
             Ok(event) => match tx.try_send(event) {
-                Ok(_) => {}
+                Ok(()) => {}
                 Err(TrySendError::Full(_)) => {
                     let dropped = drop_counter.fetch_add(1, Ordering::Relaxed) + 1;
                     if dropped == 1 || dropped.is_multiple_of(100) {
@@ -970,16 +970,14 @@ fn file_created_at(metadata: &StdMetadata) -> sinex_primitives::temporal::Timest
         .created()
         .or_else(|_| metadata.modified())
         .map(OffsetDateTime::from)
-        .map(|ts| ts.into())
-        .unwrap_or_else(|_| sinex_primitives::temporal::now())
+        .map_or_else(|_| sinex_primitives::temporal::now(), |ts| ts.into())
 }
 
 fn file_modified_at(metadata: &StdMetadata) -> sinex_primitives::temporal::Timestamp {
     metadata
         .modified()
         .map(OffsetDateTime::from)
-        .map(|ts| ts.into())
-        .unwrap_or_else(|_| sinex_primitives::temporal::now())
+        .map_or_else(|_| sinex_primitives::temporal::now(), |ts| ts.into())
 }
 
 #[cfg(test)]

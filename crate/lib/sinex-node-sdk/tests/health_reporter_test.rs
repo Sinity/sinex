@@ -12,7 +12,7 @@ use xtask::sandbox::prelude::*;
 /// Create a test health reporter with NATS connection
 async fn create_test_reporter(ctx: TestContext) -> TestResult<(TestContext, Arc<HealthReporter>)> {
     let ctx = ctx.with_nats().shared().await?;
-    let nats_client = ctx.nats_client().clone();
+    let nats_client = ctx.nats_client();
 
     let config = SelfObserverConfig {
         component: "test-component".to_string(),
@@ -228,7 +228,7 @@ async fn health_reporter_calculates_error_rate_in_sliding_window(
 #[sinex_test]
 async fn health_reporter_with_custom_thresholds(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let nats_client = ctx.nats_client().clone();
+    let nats_client = ctx.nats_client();
 
     let config = SelfObserverConfig {
         component: "test-strict".to_string(),

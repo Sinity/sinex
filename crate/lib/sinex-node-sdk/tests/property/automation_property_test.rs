@@ -171,7 +171,7 @@ sinex_proptest! {
         events in proptest::collection::vec(arb_event_data(), 1..=20),
     ) -> TestResult<()> {
         // Property: Same event data should produce equivalent events
-        for (source, event_type, payload) in events.iter() {
+        for (source, event_type, payload) in &events {
             let event1 = create_test_event(source, event_type, payload.clone());
             let event2 = create_test_event(source, event_type, payload.clone());
 
@@ -203,7 +203,7 @@ sinex_proptest! {
         ),
     ) -> TestResult<()> {
         // Property: Event creation should handle malformed payloads gracefully
-        for payload in malformed_payloads.iter() {
+        for payload in &malformed_payloads {
             let event = create_test_event("test-source", "test.event", payload.clone());
 
             // Property: Event should still be created (ID is None for schemaless events)
@@ -260,7 +260,7 @@ sinex_proptest! {
     fn test_time_horizon_behavior_properties(
         hours_forward in 1u32..24u32, // 1 hour to 1 day
     ) -> TestResult<()> {
-        let end_time = Timestamp::now() + time::Duration::hours(hours_forward as i64);
+        let end_time = Timestamp::now() + time::Duration::hours(i64::from(hours_forward));
 
         let horizons = vec![
             TimeHorizon::Snapshot,

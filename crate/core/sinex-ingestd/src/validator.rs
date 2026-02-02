@@ -165,9 +165,7 @@ impl EventValidator {
         event_type: &str,
         payload: &JsonValue,
     ) -> ValidationResult {
-        let result = if !self.validation_enabled {
-            ValidationResult::Skipped
-        } else {
+        let result = if self.validation_enabled {
             match self.inner.validate_payload_for(source, event_type, payload) {
                 SchemaValidationOutcome::Valid => ValidationResult::Valid,
                 SchemaValidationOutcome::NoSchema => ValidationResult::NoSchema,
@@ -176,6 +174,8 @@ impl EventValidator {
                 }
                 SchemaValidationOutcome::Invalid { errors } => ValidationResult::Invalid { errors },
             }
+        } else {
+            ValidationResult::Skipped
         };
         self.stats.record(&result);
         result
@@ -186,15 +186,15 @@ impl EventValidator {
         &self,
         event: &sinex_db::models::event::Event<JsonValue>,
     ) -> ValidationResult {
-        let result = if !self.validation_enabled {
-            ValidationResult::Skipped
-        } else {
+        let result = if self.validation_enabled {
             match self.inner.validate(event) {
                 Ok(()) => ValidationResult::Valid,
                 Err(err) => ValidationResult::Invalid {
                     errors: vec![err.to_string()],
                 },
             }
+        } else {
+            ValidationResult::Skipped
         };
         self.stats.record(&result);
         result

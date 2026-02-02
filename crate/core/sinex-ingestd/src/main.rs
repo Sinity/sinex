@@ -124,7 +124,7 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        _ = shutdown_signal => {
+        () = shutdown_signal => {
             info!("Shutting down gracefully...");
             if let Err(e) = service.shutdown().await {
                 error!("Error during shutdown: {}", e);

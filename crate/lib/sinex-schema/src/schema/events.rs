@@ -124,6 +124,7 @@ impl TableDef for Events {
 }
 
 /// The Rust struct representation of a row from `core.events`.
+///
 /// This is used by `sqlx::query_as!` for deserializing database results. Its
 /// structure is a 1-to-1 mapping of the physical table layout. The conversion
 /// to the logical `sinex_db::models::Event` domain model happens in the repository.

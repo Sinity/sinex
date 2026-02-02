@@ -474,7 +474,7 @@ mod edge_case_tests {
 
         // Debug format should include "Ulid(" and the string representation
         assert!(debug_str.starts_with("Ulid("));
-        assert!(debug_str.ends_with(")"));
+        assert!(debug_str.ends_with(')'));
         assert!(debug_str.contains(&ulid.to_string()));
         Ok(())
     }

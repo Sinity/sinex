@@ -126,7 +126,7 @@ mod ulid_property_tests {
             }
 
             // All ULIDs should be unique
-            let unique_ulids: HashSet<_> = all_ulids.iter().cloned().collect();
+            let unique_ulids: HashSet<_> = all_ulids.iter().copied().collect();
             prop_assert_eq!(unique_ulids.len(), all_ulids.len());
             Ok(())
         }
@@ -135,7 +135,7 @@ mod ulid_property_tests {
             let ulids: Vec<_> = (0..count).map(|_| Ulid::new()).collect();
 
             // All should be unique
-            let unique_count = ulids.iter().cloned().collect::<HashSet<_>>().len();
+            let unique_count = ulids.iter().copied().collect::<HashSet<_>>().len();
             prop_assert_eq!(unique_count, ulids.len());
 
             // Note: We don't assert strict monotonicity across large bursts; generation may span clock jitter
@@ -145,13 +145,13 @@ mod ulid_property_tests {
         fn prop_ulid_with_specific_timestamp_behavior(
             timestamp_ms in 1577836800000u64..1893456000000u64 // 2020-2030
         ) -> TestResult<()> {
-            let datetime = OffsetDateTime::from_unix_timestamp_nanos(timestamp_ms as i128 * 1_000_000).unwrap();
+            let datetime = OffsetDateTime::from_unix_timestamp_nanos(i128::from(timestamp_ms) * 1_000_000).unwrap();
             let ulid = Ulid::from_datetime(Timestamp::new(datetime));
 
             let extracted = ulid.timestamp();
 
             // Should be very close (within a few seconds due to precision)
-            let diff = (extracted.inner().unix_timestamp_nanos() - (timestamp_ms as i128 * 1_000_000)).abs();
+            let diff = (extracted.inner().unix_timestamp_nanos() - (i128::from(timestamp_ms) * 1_000_000)).abs();
             prop_assert!(diff <= 1_000_000_000); // Within 1 second
             Ok(())
         }
@@ -209,7 +209,7 @@ mod stress_tests {
             }
 
             // All ULIDs across all bursts should be unique
-            let unique_count = all_ulids.iter().cloned().collect::<HashSet<_>>().len();
+            let unique_count = all_ulids.iter().copied().collect::<HashSet<_>>().len();
             prop_assert_eq!(unique_count, all_ulids.len());
 
             // Do not assert global ordering; only uniqueness is required
@@ -228,7 +228,7 @@ mod stress_tests {
             prop_assert_eq!(ulids.len(), sample_count);
 
             // All should be unique
-            let unique_count = ulids.iter().cloned().collect::<HashSet<_>>().len();
+            let unique_count = ulids.iter().copied().collect::<HashSet<_>>().len();
             prop_assert_eq!(unique_count, sample_count);
 
             // Memory usage should be reasonable (16 bytes per ULID + Vec overhead)
@@ -330,7 +330,7 @@ mod edge_case_properties {
 
             prop_assert_eq!(debug1.as_str(), debug2.as_str());
             prop_assert!(debug1.starts_with("Ulid("));
-            prop_assert!(debug1.ends_with(")"));
+            prop_assert!(debug1.ends_with(')'));
             prop_assert!(debug1.contains(&ulid.to_string()));
             Ok(())
         }
@@ -339,7 +339,7 @@ mod edge_case_properties {
             timestamp_secs in 1577836800i64..1893456000i64, // 2020-2030
             nanos in 0u32..1_000_000_000u32
         ) -> TestResult<()> {
-            let datetime = OffsetDateTime::from_unix_timestamp_nanos((timestamp_secs as i128) * 1_000_000_000 + (nanos as i128)).unwrap();
+            let datetime = OffsetDateTime::from_unix_timestamp_nanos(i128::from(timestamp_secs) * 1_000_000_000 + i128::from(nanos)).unwrap();
             let ulid = Ulid::from_datetime(Timestamp::new(datetime));
             let extracted = ulid.timestamp();
 
@@ -417,13 +417,13 @@ mod concurrent_property_tests {
 
             // Collect all ULIDs and verify thread-local uniqueness
             for (thread_id, thread_ulids) in results.iter() {
-                let set: HashSet<_> = thread_ulids.iter().cloned().collect();
+                let set: HashSet<_> = thread_ulids.iter().copied().collect();
                 prop_assert_eq!(set.len(), thread_ulids.len(), "Thread {} should have unique ULIDs", thread_id);
-                all_ulids.extend(thread_ulids.iter().cloned());
+                all_ulids.extend(thread_ulids.iter().copied());
             }
 
             // All ULIDs across all threads should be unique
-            let unique_count = all_ulids.iter().cloned().collect::<HashSet<_>>().len();
+            let unique_count = all_ulids.iter().copied().collect::<HashSet<_>>().len();
             prop_assert_eq!(unique_count, all_ulids.len(), "All ULIDs should be unique");
             Ok(())
         }

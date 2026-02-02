@@ -314,7 +314,7 @@ impl SimpleIngestor for DocumentProcessor {
     type Config = DocumentIngestorConfig;
     type State = DocumentCheckpoint;
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "document-ingestor"
     }
 

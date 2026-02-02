@@ -124,14 +124,14 @@ pub trait ValidateExt {
 impl<T: Validate> ValidateExt for T {
     fn validate_friendly(&self) -> Result<(), String> {
         match self.validate() {
-            Ok(_) => Ok(()),
+            Ok(()) => Ok(()),
             Err(errors) => Err(format_validation_errors(&errors)),
         }
     }
 
     fn validate_with_context(&self, context: &str) -> Result<(), String> {
         match self.validate() {
-            Ok(_) => Ok(()),
+            Ok(()) => Ok(()),
             Err(errors) => Err(format_validation_errors_with_context(&errors, context)),
         }
     }

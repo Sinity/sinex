@@ -22,7 +22,7 @@ use crate::{IngestdResult, SinexError};
 const BATCH_PROCESSING_SEMAPHORE_PERMITS: usize = 4; // Allow up to 4 concurrent batches
 
 /// Handles for the three material consumer tasks
-pub(crate) struct MaterialConsumerHandles {
+pub(super) struct MaterialConsumerHandles {
     pub(crate) begin: JoinHandle<IngestdResult<()>>,
     pub(crate) slices: JoinHandle<IngestdResult<()>>,
     pub(crate) end: JoinHandle<IngestdResult<()>>,
@@ -57,7 +57,7 @@ pub(super) async fn bootstrap_streams(assembler: &MaterialAssembler) -> IngestdR
             name: namespaced_stream(assembler, "SOURCE_MATERIAL_SLICES"),
             subjects: vec![namespaced_subject(assembler, "source_material.slices.>")],
             storage: jetstream::stream::StorageType::File,
-            max_age: tokio::time::Duration::from_secs(7 * 24 * 60 * 60),
+            max_age: tokio::time::Duration::from_hours(168),
             max_message_size: 512 * 1024,
             ..Default::default()
         })
@@ -86,7 +86,7 @@ pub(super) fn spawn_begin_consumer(
 ) -> JoinHandle<IngestdResult<()>> {
     let js = assembler.js.clone();
     let assembler = assembler.clone_for_task();
-    let shutdown_flag = shutdown_flag.clone();
+    let shutdown_flag = shutdown_flag;
 
     tokio::spawn(async move {
         let stream_name = namespaced_stream(&assembler, "SOURCE_MATERIAL_BEGIN");
@@ -198,7 +198,7 @@ pub(super) fn spawn_slices_consumer(
 ) -> JoinHandle<IngestdResult<()>> {
     let js = assembler.js.clone();
     let assembler = assembler.clone_for_task();
-    let shutdown_flag = shutdown_flag.clone();
+    let shutdown_flag = shutdown_flag;
 
     // Semaphore to limit concurrent batch processing and prevent memory exhaustion
     let batch_semaphore = Arc::new(tokio::sync::Semaphore::new(
@@ -351,7 +351,7 @@ pub(super) fn spawn_end_consumer(
 ) -> JoinHandle<IngestdResult<()>> {
     let js = assembler.js.clone();
     let assembler = assembler.clone_for_task();
-    let shutdown_flag = shutdown_flag.clone();
+    let shutdown_flag = shutdown_flag;
 
     tokio::spawn(async move {
         let stream_name = namespaced_stream(&assembler, "SOURCE_MATERIAL_END");

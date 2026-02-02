@@ -139,12 +139,11 @@ async fn test_database_connection_exhaustion_recovery(ctx: TestContext) -> TestR
 
         let task = tokio::spawn(async move {
             // Each task gets its own context for isolation
-            let task_ctx = match TestContext::new().await {
-                Ok(ctx) => ctx,
-                Err(_) => {
-                    error_count.fetch_add(1, Ordering::SeqCst);
-                    return;
-                }
+            let task_ctx = if let Ok(ctx) = TestContext::new().await {
+                ctx
+            } else {
+                error_count.fetch_add(1, Ordering::SeqCst);
+                return;
             };
 
             // Create and insert event using publish pattern
@@ -180,7 +179,7 @@ async fn test_database_connection_exhaustion_recovery(ctx: TestContext) -> TestR
     // Verify that failures are handled gracefully (no panics)
     for result in results {
         match result {
-            Ok(_) => {} // Success or handled error
+            Ok(()) => {} // Success or handled error
             Err(e) => {
                 // Task panic is not acceptable
                 panic!("Task should not panic during connection exhaustion: {}", e);

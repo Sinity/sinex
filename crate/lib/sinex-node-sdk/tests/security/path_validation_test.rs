@@ -144,7 +144,7 @@ async fn blob_manager_rejects_percent_encoded_traversal(ctx: TestContext) -> Tes
     let temp_dir = TempDir::new()?;
     let annex_path = temp_dir.path().join("percent-encoded-annex");
 
-    let repo_utf8 = Utf8PathBuf::from_path_buf(annex_path.clone())
+    let repo_utf8 = Utf8PathBuf::from_path_buf(annex_path)
         .map_err(|_| color_eyre::eyre::eyre!("annex path not valid UTF-8"))?;
 
     let (event_tx, mut event_rx) = mpsc::channel::<Event<JsonValue>>(BLOB_EVENT_CHANNEL_CAPACITY);
@@ -161,10 +161,10 @@ async fn blob_manager_rejects_percent_encoded_traversal(ctx: TestContext) -> Tes
     let encoded_path = Utf8PathBuf::from("%2e%2e%2fetc%2fpasswd");
     let verification = VerifiedPath::parse(encoded_path.as_str());
     assert!(
-        verification
-            .as_ref()
-            .map(|_| false)
-            .unwrap_or_else(|err| err.to_string().contains("Path validation failed")),
+        verification.as_ref().map_or_else(
+            |err| err.to_string().contains("Path validation failed"),
+            |_| false
+        ),
         "Percent-encoded traversal paths must be rejected before ingestion"
     );
 

@@ -37,7 +37,7 @@ use tracing::{debug, error, info, warn};
 const DBUS_MESSAGE_CHANNEL_SIZE: usize = 10_000;
 
 /// D-Bus bus type enumeration
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DBusType {
     Session,
     System,
@@ -174,7 +174,7 @@ impl DbusWatcher {
             tasks.push(tokio::spawn(async move {
                 tokio::select! {
                     res = Self::monitor_bus_with_config(monitor_config) => res,
-                    _ = token.cancelled() => Ok(()),
+                    () = token.cancelled() => Ok(()),
                 }
             }));
         }
@@ -191,7 +191,7 @@ impl DbusWatcher {
             tasks.push(tokio::spawn(async move {
                 tokio::select! {
                     res = Self::monitor_bus_with_config(monitor_config) => res,
-                    _ = token.cancelled() => Ok(()),
+                    () = token.cancelled() => Ok(()),
                 }
             }));
         }
@@ -726,30 +726,27 @@ impl DbusWatcher {
         use dbus::arg::ArgType;
 
         match iter.arg_type() {
-            ArgType::String => iter
-                .get::<&str>()
-                .map(|s| serde_json::Value::String(s.to_string()))
-                .unwrap_or(serde_json::Value::Null),
-            ArgType::Int32 => iter
-                .get::<i32>()
-                .map(|i| serde_json::Value::Number(serde_json::Number::from(i)))
-                .unwrap_or(serde_json::Value::Null),
-            ArgType::UInt32 => iter
-                .get::<u32>()
-                .map(|i| serde_json::Value::Number(serde_json::Number::from(i)))
-                .unwrap_or(serde_json::Value::Null),
+            ArgType::String => iter.get::<&str>().map_or(serde_json::Value::Null, |s| {
+                serde_json::Value::String(s.to_string())
+            }),
+            ArgType::Int32 => iter.get::<i32>().map_or(serde_json::Value::Null, |i| {
+                serde_json::Value::Number(serde_json::Number::from(i))
+            }),
+            ArgType::UInt32 => iter.get::<u32>().map_or(serde_json::Value::Null, |i| {
+                serde_json::Value::Number(serde_json::Number::from(i))
+            }),
             ArgType::Boolean => iter
                 .get::<bool>()
-                .map(serde_json::Value::Bool)
-                .unwrap_or(serde_json::Value::Null),
+                .map_or(serde_json::Value::Null, serde_json::Value::Bool),
             ArgType::Array => Self::parse_dbus_array(iter),
             ArgType::DictEntry => Self::parse_dbus_dict_entry(iter),
             ArgType::Variant => Self::parse_dbus_variant(iter),
             ArgType::Struct => Self::parse_dbus_struct(iter),
             ArgType::ObjectPath => iter
                 .get::<dbus::Path>()
-                .map(|p| serde_json::Value::String(p.to_string()))
-                .unwrap_or(serde_json::Value::Null),
+                .map_or(serde_json::Value::Null, |p| {
+                    serde_json::Value::String(p.to_string())
+                }),
             _ => serde_json::Value::String(format!("unsupported_type_{:?}", iter.arg_type())),
         }
     }

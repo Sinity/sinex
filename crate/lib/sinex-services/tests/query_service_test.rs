@@ -376,7 +376,7 @@ async fn test_query_pagination_stable_during_concurrent_ingestion(
                 "paged results must remain ordered by timestamp"
             );
         }
-        for result in page.iter() {
+        for result in page {
             ensure!(
                 paged_ids.insert(result.event_id),
                 "pagination returned duplicate event ids"

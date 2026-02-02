@@ -224,32 +224,32 @@ async fn run_complete_verification(
         let phase_start = Instant::now();
         info!("Running verification phase: {:?}", phase);
         let remaining = deadline.saturating_duration_since(now);
-        let phase_result = match tokio::time::timeout(remaining, run_verification_phase(&phase))
-            .await
+        let phase_result = if let Ok(outcome) =
+            tokio::time::timeout(remaining, run_verification_phase(&phase)).await
         {
-            Ok(outcome) => match outcome {
+            match outcome {
                 Ok(result) => result,
                 Err(e) => {
                     error!("Phase {:?} failed: {}", phase, e);
                     report.errors.push(format!("Phase {:?}: {}", phase, e));
                     PhaseResult {
                         status: VerificationStatus::Fail,
-                        duration_ms: phase_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
+                        duration_ms: phase_start.elapsed().as_millis().min(u128::from(u64::MAX))
+                            as u64,
                         details: serde_json::json!({"error": e.to_string()}),
                         messages: vec![e.to_string()],
                     }
                 }
-            },
-            Err(_) => {
-                let timeout_message = format!("Phase {:?} timed out after {:?}", phase, remaining);
-                error!(timeout_message);
-                report.errors.push(timeout_message.clone());
-                PhaseResult {
-                    status: VerificationStatus::Fail,
-                    duration_ms: phase_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
-                    details: serde_json::json!({"error": "timeout"}),
-                    messages: vec!["Phase exceeded allotted time".to_string(), timeout_message],
-                }
+            }
+        } else {
+            let timeout_message = format!("Phase {:?} timed out after {:?}", phase, remaining);
+            error!(timeout_message);
+            report.errors.push(timeout_message.clone());
+            PhaseResult {
+                status: VerificationStatus::Fail,
+                duration_ms: phase_start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+                details: serde_json::json!({"error": "timeout"}),
+                messages: vec!["Phase exceeded allotted time".to_string(), timeout_message],
             }
         };
 
@@ -273,7 +273,7 @@ async fn run_complete_verification(
 
     report.overall_status = overall_status;
     report.completed_at = Some(sinex_primitives::temporal::now());
-    report.duration_ms = Some(start_time.elapsed().as_millis().min(u64::MAX as u128) as u64);
+    report.duration_ms = Some(start_time.elapsed().as_millis().min(u128::from(u64::MAX)) as u64);
 
     // Output report
     output_report(&report, output_format).await?;
@@ -303,7 +303,7 @@ async fn run_verification_phase(phase: &VerificationPhase) -> NodeResult<PhaseRe
 
     Ok(PhaseResult {
         status,
-        duration_ms: start.elapsed().as_millis().min(u64::MAX as u128) as u64,
+        duration_ms: start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
         details,
         messages,
     })
@@ -592,8 +592,7 @@ async fn generate_verification_report(
             for verification in &recent_verifications {
                 let ts_str = verification
                     .ts_orig
-                    .map(|t| t.to_string())
-                    .unwrap_or_else(|| "UNKNOWN_TIME".to_string());
+                    .map_or_else(|| "UNKNOWN_TIME".to_string(), |t| t.to_string());
                 println!(
                     "  {} - {} ({})",
                     ts_str,
@@ -605,8 +604,7 @@ async fn generate_verification_report(
                     verification
                         .id
                         .as_ref()
-                        .map(|id| id.to_string())
-                        .unwrap_or_else(|| "NO_ID".to_string())
+                        .map_or_else(|| "NO_ID".to_string(), |id| id.to_string())
                 );
             }
         }

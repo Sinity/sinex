@@ -114,7 +114,7 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> 
     let pipeline_start = Instant::now();
 
     // Phase 2: Process each event through the ingestion pipeline
-    for (source, event_type, payload) in test_events.iter() {
+    for (source, event_type, payload) in &test_events {
         let event = ctx
             .publish(DynamicPayload::new(
                 source.as_str(),
@@ -128,8 +128,7 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> 
 
         let event_id_display = event_id
             .as_ref()
-            .map(|id| id.to_string())
-            .unwrap_or_else(|| "missing".to_string());
+            .map_or_else(|| "missing".to_string(), |id| id.to_string());
         tracing::debug!(
             source = source,
             event_type = event_type,
@@ -175,7 +174,7 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> 
     }
 
     // Phase 4: Verify data integrity and processing semantics
-    for (source, event_type, expected_payload) in test_events.iter() {
+    for (source, event_type, expected_payload) in &test_events {
         let stored_event = stored_events
             .iter()
             .find(|e| e.source.as_ref() == source && e.event_type.as_ref() == *event_type)
@@ -203,8 +202,7 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> 
         let event_id_display = stored_event
             .id
             .as_ref()
-            .map(|id| id.to_string())
-            .unwrap_or_else(|| "missing".to_string());
+            .map_or_else(|| "missing".to_string(), |id| id.to_string());
         tracing::debug!(
             event_id = %event_id_display,
             source = stored_event.source.as_ref(),
@@ -283,8 +281,7 @@ async fn test_concurrent_pipeline_processing(ctx: TestContext) -> Result<()> {
                         let event_id = event.id;
                         let event_id_display = event_id
                             .as_ref()
-                            .map(|id| id.to_string())
-                            .unwrap_or_else(|| "missing".to_string());
+                            .map_or_else(|| "missing".to_string(), |id| id.to_string());
                         stream_events.push(event_id);
                         tracing::trace!(
                             stream_id = stream_id,
@@ -411,7 +408,7 @@ async fn test_pipeline_data_transformation(ctx: TestContext) -> Result<()> {
     let mut raw_event_ids = Vec::new();
 
     // Phase 1: Insert raw events
-    for (source, event_type, payload) in raw_events.iter() {
+    for (source, event_type, payload) in &raw_events {
         let event = ctx
             .publish(DynamicPayload::new(*source, *event_type, payload.clone()))
             .await?;
@@ -419,7 +416,7 @@ async fn test_pipeline_data_transformation(ctx: TestContext) -> Result<()> {
     }
 
     // Wait for raw events to persist before processing
-    for (source, _, _) in raw_events.iter() {
+    for (source, _, _) in &raw_events {
         ctx.timing().wait_for_source_events(source, 1).await?;
     }
 
@@ -539,13 +536,11 @@ async fn test_pipeline_data_transformation(ctx: TestContext) -> Result<()> {
         let transformed_id_display = transformed_event
             .id
             .as_ref()
-            .map(|id| id.to_string())
-            .unwrap_or_else(|| "missing".to_string());
+            .map_or_else(|| "missing".to_string(), |id| id.to_string());
         let source_id_display = source_event
             .id
             .as_ref()
-            .map(|id| id.to_string())
-            .unwrap_or_else(|| "missing".to_string());
+            .map_or_else(|| "missing".to_string(), |id| id.to_string());
         tracing::debug!(
             transformed_id = %transformed_id_display,
             source_id = %source_id_display,
@@ -624,8 +619,7 @@ async fn test_pipeline_error_handling(ctx: TestContext) -> Result<()> {
                     let event_id = event.id;
                     let event_id_display = event_id
                         .as_ref()
-                        .map(|id| id.to_string())
-                        .unwrap_or_else(|| "missing".to_string());
+                        .map_or_else(|| "missing".to_string(), |id| id.to_string());
                     successful_events.push(event_id);
                     tracing::debug!(
                         source = source,
@@ -642,7 +636,9 @@ async fn test_pipeline_error_handling(ctx: TestContext) -> Result<()> {
                 }
             }
             Err(e) => {
-                if !should_succeed {
+                if should_succeed {
+                    return Err(e);
+                } else {
                     error_scenarios.push((source, event_type, e.to_string()));
                     tracing::debug!(
                         source = source,
@@ -650,8 +646,6 @@ async fn test_pipeline_error_handling(ctx: TestContext) -> Result<()> {
                         error = %e,
                         "Expected error occurred"
                     );
-                } else {
-                    return Err(e);
                 }
             }
         }

@@ -14,18 +14,18 @@ pub struct TestDir {
 }
 
 impl TestDir {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let dir = TempDir::new().unwrap();
         let path = dir.path().to_path_buf();
         Self { _dir: dir, path }
     }
 
-    pub fn path(&self) -> &Path {
+    pub(crate) fn path(&self) -> &Path {
         &self.path
     }
 
     /// Create a file with given content
-    pub fn create_file(&self, name: &str, content: &str) -> PathBuf {
+    pub(crate) fn create_file(&self, name: &str, content: &str) -> PathBuf {
         let path = self.path.join(name);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).unwrap();
@@ -37,7 +37,7 @@ impl TestDir {
 
     /// Create a file with specific permissions (Unix only)
     #[cfg(unix)]
-    pub fn create_file_with_mode(&self, name: &str, content: &str, mode: u32) -> PathBuf {
+    pub(crate) fn create_file_with_mode(&self, name: &str, content: &str, mode: u32) -> PathBuf {
         use std::os::unix::fs::PermissionsExt;
         let path = self.create_file(name, content);
         fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
@@ -45,7 +45,7 @@ impl TestDir {
     }
 
     /// Create a directory
-    pub fn create_dir(&self, name: &str) -> PathBuf {
+    pub(crate) fn create_dir(&self, name: &str) -> PathBuf {
         let path = self.path.join(name);
         fs::create_dir_all(&path).unwrap();
         path
@@ -65,7 +65,7 @@ pub struct ConfigFixture {
 }
 
 impl ConfigFixture {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             rpc_url: "https://localhost:9999".to_string(),
             token: None,
@@ -78,32 +78,32 @@ impl ConfigFixture {
         }
     }
 
-    pub fn rpc_url(mut self, url: &str) -> Self {
+    pub(crate) fn rpc_url(mut self, url: &str) -> Self {
         self.rpc_url = url.to_string();
         self
     }
 
-    pub fn token(mut self, token: &str) -> Self {
+    pub(crate) fn token(mut self, token: &str) -> Self {
         self.token = Some(token.to_string());
         self
     }
 
-    pub fn token_file(mut self, path: &str) -> Self {
+    pub(crate) fn token_file(mut self, path: &str) -> Self {
         self.token_file = Some(path.to_string());
         self
     }
 
-    pub fn insecure(mut self) -> Self {
+    pub(crate) fn insecure(mut self) -> Self {
         self.insecure = true;
         self
     }
 
-    pub fn timeout(mut self, secs: u64) -> Self {
+    pub(crate) fn timeout(mut self, secs: u64) -> Self {
         self.timeout = secs;
         self
     }
 
-    pub fn to_yaml(&self) -> String {
+    pub(crate) fn to_yaml(&self) -> String {
         let mut yaml = format!("rpc_url: \"{}\"\n", self.rpc_url);
         if let Some(ref token) = self.token {
             yaml.push_str(&format!("token: \"{}\"\n", token));
@@ -125,7 +125,7 @@ impl ConfigFixture {
         yaml
     }
 
-    pub fn to_toml(&self) -> String {
+    pub(crate) fn to_toml(&self) -> String {
         let mut toml = format!("rpc_url = \"{}\"\n", self.rpc_url);
         if let Some(ref token) = self.token {
             toml.push_str(&format!("token = \"{}\"\n", token));
@@ -150,27 +150,27 @@ pub struct TokenFixture;
 
 impl TokenFixture {
     /// Valid bearer token
-    pub fn valid() -> &'static str {
+    pub(crate) fn valid() -> &'static str {
         "sinex_test_token_1234567890abcdef"
     }
 
     /// Token with special characters
-    pub fn with_special_chars() -> &'static str {
+    pub(crate) fn with_special_chars() -> &'static str {
         "token-with-dashes_and_underscores.dots"
     }
 
     /// Very long token
-    pub fn long() -> String {
+    pub(crate) fn long() -> String {
         "sinex_".to_string() + &"x".repeat(500)
     }
 
     /// Empty token
-    pub fn empty() -> &'static str {
+    pub(crate) fn empty() -> &'static str {
         ""
     }
 
     /// Token with newline (invalid)
-    pub fn with_newline() -> &'static str {
+    pub(crate) fn with_newline() -> &'static str {
         "token\nwith\nnewlines"
     }
 }
@@ -180,7 +180,7 @@ pub struct TlsFixture;
 
 impl TlsFixture {
     /// Valid self-signed certificate (PEM)
-    pub fn valid_cert() -> &'static str {
+    pub(crate) fn valid_cert() -> &'static str {
         "-----BEGIN CERTIFICATE-----\n\
          MIIBkTCB+wIJAKHHCgVZU1W/MA0GCSqGSIb3DQEBCwUAMBExDzANBgNVBAMMBnRl\n\
          c3RDQTAeFw0yNDAxMDEwMDAwMDBaFw0yNTAxMDEwMDAwMDBaMBExDzANBgNVBAMM\n\
@@ -189,14 +189,14 @@ impl TlsFixture {
     }
 
     /// Invalid certificate (malformed PEM)
-    pub fn invalid_cert() -> &'static str {
+    pub(crate) fn invalid_cert() -> &'static str {
         "-----BEGIN CERTIFICATE-----\n\
          THIS IS NOT A VALID CERTIFICATE\n\
          -----END CERTIFICATE-----"
     }
 
     /// Expired certificate marker
-    pub fn expired_cert() -> &'static str {
+    pub(crate) fn expired_cert() -> &'static str {
         "-----BEGIN CERTIFICATE-----\n\
          MIIBkTCB+wIJAKHHCgVZU1W/MA0GCSqGSIb3DQEBCwUAMBExDzANBgNVBAMMBnRl\n\
          c3RDQTAeFw0yMDAxMDEwMDAwMDBaFw0yMDAxMDIwMDAwMDBaMBExDzANBgNVBAMM\n\
@@ -204,7 +204,7 @@ impl TlsFixture {
     }
 
     /// Valid private key (PEM)
-    pub fn valid_key() -> &'static str {
+    pub(crate) fn valid_key() -> &'static str {
         "-----BEGIN PRIVATE KEY-----\n\
          MIICdwIBADANBgkqhkiG9w0BAQEFAASCAmEwggJdAgEAAoGBAMC+ZC/KkPM2MVfU\n\
          -----END PRIVATE KEY-----"
@@ -245,7 +245,7 @@ pub mod http {
         use std::time::Duration;
         Mock::given(method("POST"))
             .and(path(path_str))
-            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(60)))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_mins(1)))
             .mount(server)
             .await;
     }

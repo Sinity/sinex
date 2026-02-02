@@ -137,10 +137,9 @@ fn env_var_u64(var: &str, default: u64) -> u64 {
 }
 
 fn env_var_bool(var: &str, default: bool) -> bool {
-    std::env::var(var)
-        .ok()
-        .map(|s| matches!(s.to_lowercase().as_str(), "true" | "1" | "yes"))
-        .unwrap_or(default)
+    std::env::var(var).ok().map_or(default, |s| {
+        matches!(s.to_lowercase().as_str(), "true" | "1" | "yes")
+    })
 }
 
 /// Memory-efficient cascade analyzer using streaming algorithms

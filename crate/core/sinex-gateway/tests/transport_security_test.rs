@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use color_eyre::eyre::{eyre, Result};
-use once_cell::sync::Lazy;
 use rcgen::{
     BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose,
     SanType,
@@ -16,7 +15,7 @@ use tempfile::TempDir;
 use tokio::time::{sleep, Duration, Instant};
 use xtask::sandbox::{sinex_test, timing::Timeouts};
 
-static ENV_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+static ENV_LOCK: std::sync::LazyLock<Mutex<()>> = std::sync::LazyLock::new(|| Mutex::new(()));
 
 struct EnvVarGuard {
     key: &'static str,

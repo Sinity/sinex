@@ -161,13 +161,10 @@ async fn run_with_health_check_sets_running_status() -> TestResult<()> {
     .await;
 
     // The task should complete (main task returns Ok immediately)
-    match result {
-        Ok(inner_result) => {
-            inner_result?;
-        }
-        Err(_) => {
-            // Timeout is acceptable - health check was running
-        }
+    if let Ok(inner_result) = result {
+        inner_result?;
+    } else {
+        // Timeout is acceptable - health check was running
     }
 
     Ok(())
