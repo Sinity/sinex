@@ -80,7 +80,7 @@ struct StdoutHeartbeatSink;
 
 impl HeartbeatLogSink for StdoutHeartbeatSink {
     fn emit(&self, entry: &serde_json::Value) {
-        println!("{}", entry);
+        println!("{entry}");
     }
 }
 
@@ -241,12 +241,9 @@ impl HeartbeatEmitter {
     ///
     /// Issue 10 fix: Now logs when CPU sampling fails
     fn get_cpu_usage_percent(&self) -> f32 {
-        let current_cpu = match Self::read_process_cpu_seconds() {
-            Some(value) => value,
-            None => {
-                warn!("Failed to read process CPU seconds via getrusage");
-                return 0.0;
-            }
+        let Some(current_cpu) = Self::read_process_cpu_seconds() else {
+            warn!("Failed to read process CPU seconds via getrusage");
+            return 0.0;
         };
         let now = Instant::now();
         let mut sample = self.cpu_sample.lock();
@@ -478,7 +475,8 @@ impl HeartbeatEmitter {
             service = %metrics.service_name,
             status = %metrics.status,
             errors = metrics.errors_count,
-            "Node transitioned to {event_type} state"
+            event_type = %event_type,
+            "Node transitioned to state"
         );
     }
 }
@@ -535,7 +533,7 @@ macro_rules! emit_heartbeat {
                 "timestamp": sinex_primitives::temporal::format_rfc3339(sinex_primitives::temporal::now())
             }
         });
-        println!("{}", log_entry);
+        println!("{log_entry}");
     };
 
     ($service_name:expr, $($field:ident = $value:expr),+) => {
@@ -554,6 +552,6 @@ macro_rules! emit_heartbeat {
             "target": "heartbeat",
             "fields": fields
         });
-        println!("{}", log_entry);
+        println!("{log_entry}");
     };
 }

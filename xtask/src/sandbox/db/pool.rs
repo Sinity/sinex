@@ -200,7 +200,7 @@ pub fn get_slot_stats() -> Vec<SlotStats> {
                             idle_connections: p.num_idle(),
                             last_clean_time: time.map(|t| {
                                 t.format(&time::format_description::well_known::Rfc3339)
-                                    .unwrap()
+                                    .expect("format timestamp as RFC3339")
                             }),
                             last_clean_result: result,
                             residuals,
@@ -213,7 +213,7 @@ pub fn get_slot_stats() -> Vec<SlotStats> {
                             idle_connections: 0,
                             last_clean_time: time.map(|t| {
                                 t.format(&time::format_description::well_known::Rfc3339)
-                                    .unwrap()
+                                    .expect("format timestamp as RFC3339")
                             }),
                             last_clean_result: result,
                             residuals,
@@ -683,7 +683,7 @@ impl TestDatabase {
             template_name: template_db_name(),
             last_clean_time: time.map(|t| {
                 t.format(&time::format_description::well_known::Rfc3339)
-                    .unwrap()
+                    .expect("format timestamp as RFC3339")
             }),
             last_clean_result: result,
             residuals,
@@ -781,7 +781,7 @@ impl CleanupManager {
                         meta.last_error = None;
                         meta.updated_at_rfc3339 = OffsetDateTime::now_utc()
                             .format(&time::format_description::well_known::Rfc3339)
-                            .unwrap();
+                            .expect("format timestamp as RFC3339");
                         let _ = store_pool_meta(conn.as_mut(), &task.slot_name, &meta).await;
                     }
                 }
@@ -794,7 +794,7 @@ impl CleanupManager {
                         meta.last_error = Some(e.to_string());
                         meta.updated_at_rfc3339 = OffsetDateTime::now_utc()
                             .format(&time::format_description::well_known::Rfc3339)
-                            .unwrap();
+                            .expect("format timestamp as RFC3339");
                         let _ = store_pool_meta(conn.as_mut(), &task.slot_name, &meta).await;
                     }
                 }
@@ -1283,7 +1283,7 @@ impl DatabasePool {
                                     fingerprint: migrations_fingerprint(),
                                     extensions: template_ext_versions.clone(),
                                     dirty: false,
-                                    updated_at_rfc3339: OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap(),
+                                    updated_at_rfc3339: OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).expect("format timestamp as RFC3339"),
                                     last_error: None,
                                 };
                                 let _ = store_pool_meta(conn.as_mut(), &name, &meta).await;
@@ -1307,7 +1307,7 @@ impl DatabasePool {
                                 dirty: false,
                                 updated_at_rfc3339: OffsetDateTime::now_utc()
                                     .format(&time::format_description::well_known::Rfc3339)
-                                    .unwrap(),
+                                    .expect("format timestamp as RFC3339"),
                                 last_error: None,
                             };
                             let _ = store_pool_meta(conn.as_mut(), &name, &meta).await;
@@ -1717,7 +1717,7 @@ impl DatabasePool {
                     dirty: true,
                     updated_at_rfc3339: OffsetDateTime::now_utc()
                         .format(&time::format_description::well_known::Rfc3339)
-                        .unwrap(),
+                        .expect("format timestamp as RFC3339"),
                     last_error: None,
                 };
                 if let Err(e) = store_pool_meta(lock_conn.as_mut(), &slot.name, &dirty_meta).await {
@@ -1772,7 +1772,7 @@ impl DatabasePool {
                             dirty: true,
                             updated_at_rfc3339: OffsetDateTime::now_utc()
                                 .format(&time::format_description::well_known::Rfc3339)
-                                .unwrap(),
+                                .expect("format timestamp as RFC3339"),
                             last_error: Some(e.to_string()),
                         };
                         let _ = store_pool_meta(lock_conn.as_mut(), &slot.name, &dirty_meta).await;
@@ -1912,7 +1912,7 @@ async fn ensure_pool_database_exists(db_name: &str, slot_url: &str) -> TestResul
             dirty: false,
             updated_at_rfc3339: OffsetDateTime::now_utc()
                 .format(&time::format_description::well_known::Rfc3339)
-                .unwrap(),
+                .expect("format timestamp as RFC3339"),
             last_error: None,
         };
         let _ = store_pool_meta(&mut template_guard.admin_conn, db_name, &meta).await;
@@ -2510,7 +2510,7 @@ async fn recreate_pool_database(db_name: &str, slot_url: &str) -> TestResult<()>
             dirty: false,
             updated_at_rfc3339: OffsetDateTime::now_utc()
                 .format(&time::format_description::well_known::Rfc3339)
-                .unwrap(),
+                .expect("format timestamp as RFC3339"),
             last_error: None,
         };
         let _ = store_pool_meta(&mut template_guard.admin_conn, db_name, &meta).await;

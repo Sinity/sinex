@@ -66,12 +66,16 @@ impl HistoryDb {
     pub fn open(path: &Path) -> Result<Self> {
         // Ensure parent directory exists
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create directory: {}", parent.display()))?;
+            std::fs::create_dir_all(parent).with_context(|| {
+                let parent_display = parent.display();
+                format!("failed to create directory: {parent_display}")
+            })?;
         }
 
-        let conn = Connection::open(path)
-            .with_context(|| format!("failed to open history database: {}", path.display()))?;
+        let conn = Connection::open(path).with_context(|| {
+            let path_display = path.display();
+            format!("failed to open history database: {path_display}")
+        })?;
 
         let db = Self { conn };
         db.init_schema()?;

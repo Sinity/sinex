@@ -138,9 +138,10 @@ fn execute_start(
     // Check lock
     let checkout_state = CheckoutState::for_current_checkout()?;
     if let Some(lock_info) = checkout_state.is_locked_by_other()? {
+        let pid = lock_info.pid;
         return Ok(CommandResult::failure(crate::output::StructuredError {
             code: "STACK_LOCKED".to_string(),
-            message: format!("Stack locked by {}", lock_info.pid),
+            message: format!("Stack locked by {pid}"),
             location: None,
             suggestion: Some("Stop other stack".into()),
         }));
@@ -163,10 +164,12 @@ fn execute_start(
     stack::nats_generate_config(config, ctx.is_human())?;
     stack::nats_start(config, ctx.is_human())?;
 
+    let pg_port = config.postgres.port;
+    let nats_port = config.nats.port;
     Ok(CommandResult::success()
         .with_message("Stack started")
-        .with_detail(format!("Postgres on port {}", config.postgres.port))
-        .with_detail(format!("NATS on port {}", config.nats.port)))
+        .with_detail(format!("Postgres on port {pg_port}"))
+        .with_detail(format!("NATS on port {nats_port}")))
 }
 
 fn execute_stop(config: &StackConfig, ctx: &CommandContext) -> Result<CommandResult> {

@@ -15,7 +15,7 @@ pub struct TestDir {
 
 impl TestDir {
     pub(crate) fn new() -> Self {
-        let dir = TempDir::new().unwrap();
+        let dir = TempDir::new().expect("failed to create temp directory");
         let path = dir.path().to_path_buf();
         Self { _dir: dir, path }
     }
@@ -28,10 +28,11 @@ impl TestDir {
     pub(crate) fn create_file(&self, name: &str, content: &str) -> PathBuf {
         let path = self.path.join(name);
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).unwrap();
+            fs::create_dir_all(parent).expect("failed to create parent directories");
         }
-        let mut file = fs::File::create(&path).unwrap();
-        file.write_all(content.as_bytes()).unwrap();
+        let mut file = fs::File::create(&path).expect("failed to create file");
+        file.write_all(content.as_bytes())
+            .expect("failed to write file content");
         path
     }
 
@@ -40,14 +41,15 @@ impl TestDir {
     pub(crate) fn create_file_with_mode(&self, name: &str, content: &str, mode: u32) -> PathBuf {
         use std::os::unix::fs::PermissionsExt;
         let path = self.create_file(name, content);
-        fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(mode))
+            .expect("failed to set file permissions");
         path
     }
 
     /// Create a directory
     pub(crate) fn create_dir(&self, name: &str) -> PathBuf {
         let path = self.path.join(name);
-        fs::create_dir_all(&path).unwrap();
+        fs::create_dir_all(&path).expect("failed to create directory");
         path
     }
 }
@@ -104,7 +106,7 @@ impl ConfigFixture {
     }
 
     pub(crate) fn to_yaml(&self) -> String {
-        let mut yaml = format!("rpc_url: \"{}\"\n", self.rpc_url);
+        let mut yaml = format!("rpc_url: \"{}\"\n", &self.rpc_url);
         if let Some(ref token) = self.token {
             yaml.push_str(&format!("token: \"{token}\"\n"));
         }
@@ -120,21 +122,21 @@ impl ConfigFixture {
         if let Some(ref client_key) = self.client_key {
             yaml.push_str(&format!("client_key: \"{client_key}\"\n"));
         }
-        yaml.push_str(&format!("insecure: {}\n", self.insecure));
-        yaml.push_str(&format!("timeout: {}\n", self.timeout));
+        yaml.push_str(&format!("insecure: {}\n", &self.insecure));
+        yaml.push_str(&format!("timeout: {}\n", &self.timeout));
         yaml
     }
 
     pub(crate) fn to_toml(&self) -> String {
-        let mut toml = format!("rpc_url = \"{}\"\n", self.rpc_url);
+        let mut toml = format!("rpc_url = \"{}\"\n", &self.rpc_url);
         if let Some(ref token) = self.token {
             toml.push_str(&format!("token = \"{token}\"\n"));
         }
         if let Some(ref token_file) = self.token_file {
             toml.push_str(&format!("token_file = \"{token_file}\"\n"));
         }
-        toml.push_str(&format!("insecure = {}\n", self.insecure));
-        toml.push_str(&format!("timeout = {}\n", self.timeout));
+        toml.push_str(&format!("insecure = {}\n", &self.insecure));
+        toml.push_str(&format!("timeout = {}\n", &self.timeout));
         toml
     }
 }
@@ -277,7 +279,10 @@ mod tests {
         let dir = TestDir::new();
         let file = dir.create_file("test.txt", "content");
         assert!(file.exists());
-        assert_eq!(fs::read_to_string(&file).unwrap(), "content");
+        assert_eq!(
+            fs::read_to_string(&file).expect("failed to read file"),
+            "content"
+        );
     }
 
     #[test]
@@ -286,7 +291,9 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let dir = TestDir::new();
         let file = dir.create_file_with_mode("secret.txt", "password", 0o600);
-        let perms = fs::metadata(&file).unwrap().permissions();
+        let perms = fs::metadata(&file)
+            .expect("failed to get file metadata")
+            .permissions();
         assert_eq!(perms.mode() & 0o777, 0o600);
     }
 

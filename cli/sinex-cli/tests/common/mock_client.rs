@@ -55,31 +55,46 @@ impl MockGatewayClient {
 
     /// Set a mock response for a specific method
     pub(crate) fn set_response(&self, method: &str, response: MockResponse) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self
+            .inner
+            .lock()
+            .expect("failed to acquire lock on mock client");
         inner.responses.insert(method.to_string(), response);
     }
 
     /// Get the list of recorded method calls
     pub(crate) fn get_calls(&self) -> Vec<(String, Vec<String>)> {
-        let inner = self.inner.lock().unwrap();
+        let inner = self
+            .inner
+            .lock()
+            .expect("failed to acquire lock on mock client");
         inner.calls.clone()
     }
 
     /// Clear all recorded calls
     pub(crate) fn clear_calls(&self) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self
+            .inner
+            .lock()
+            .expect("failed to acquire lock on mock client");
         inner.calls.clear();
     }
 
     /// Record a method call
     fn record_call(&self, method: &str, args: Vec<String>) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self
+            .inner
+            .lock()
+            .expect("failed to acquire lock on mock client");
         inner.calls.push((method.to_string(), args));
     }
 
     /// Get a preset response or return a default
     fn get_response(&self, method: &str) -> Option<MockResponse> {
-        let inner = self.inner.lock().unwrap();
+        let inner = self
+            .inner
+            .lock()
+            .expect("failed to acquire lock on mock client");
         inner.responses.get(method).cloned()
     }
 
@@ -261,7 +276,7 @@ impl MockGatewayClient {
     }
 
     pub(crate) async fn dlq_peek(&self, limit: Option<usize>) -> Result<DlqPeekResponse> {
-        self.record_call("dlq_peek", vec![format!("{:?}", limit)]);
+        self.record_call("dlq_peek", vec![format!("{limit:?}")]);
         Ok(self
             .get_response("dlq_peek")
             .and_then(|r| match r {
@@ -302,7 +317,7 @@ impl MockGatewayClient {
     }
 
     pub(crate) async fn search_events(&self, query: SearchQuery) -> Result<Vec<SearchResult>> {
-        self.record_call("search_events", vec![format!("{:?}", query)]);
+        self.record_call("search_events", vec![format!("{query:?}")]);
         Ok(self
             .get_response("search_events")
             .and_then(|r| match r {
@@ -326,7 +341,7 @@ mod tests {
     #[tokio::test]
     async fn test_mock_client_ping() {
         let client = MockGatewayClient::new();
-        let result = client.ping().await.unwrap();
+        let result = client.ping().await.expect("ping request failed");
         assert_eq!(result, "pong");
 
         let calls = client.get_calls();
@@ -339,7 +354,7 @@ mod tests {
         let client = MockGatewayClient::new();
         client.set_response("ping", MockResponse::String("custom_pong".to_string()));
 
-        let result = client.ping().await.unwrap();
+        let result = client.ping().await.expect("ping request failed");
         assert_eq!(result, "custom_pong");
     }
 
@@ -347,9 +362,9 @@ mod tests {
     async fn test_mock_client_records_calls() {
         let client = MockGatewayClient::new();
 
-        client.ping().await.unwrap();
-        client.version().await.unwrap();
-        client.health().await.unwrap();
+        client.ping().await.expect("ping request failed");
+        client.version().await.expect("version request failed");
+        client.health().await.expect("health request failed");
 
         let calls = client.get_calls();
         assert_eq!(calls.len(), 3);
@@ -362,7 +377,7 @@ mod tests {
     async fn test_mock_client_clear_calls() {
         let client = MockGatewayClient::new();
 
-        client.ping().await.unwrap();
+        client.ping().await.expect("ping request failed");
         assert_eq!(client.get_calls().len(), 1);
 
         client.clear_calls();
@@ -376,12 +391,15 @@ mod tests {
         client
             .drain_node("node-1", Some("maintenance"))
             .await
-            .unwrap();
-        client.resume_node("node-1").await.unwrap();
+            .expect("drain_node request failed");
+        client
+            .resume_node("node-1")
+            .await
+            .expect("resume_node request failed");
         client
             .set_node_horizon("node-1", "2024-01-01T00:00:00Z")
             .await
-            .unwrap();
+            .expect("set_node_horizon request failed");
 
         let calls = client.get_calls();
         assert_eq!(calls.len(), 3);

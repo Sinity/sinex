@@ -149,7 +149,8 @@ impl StackConfig {
 
     #[must_use]
     pub fn nats_url(&self) -> String {
-        format!("nats://localhost:{}", self.nats.port)
+        let port = self.nats.port;
+        format!("nats://localhost:{port}")
     }
 }
 
@@ -398,7 +399,7 @@ pub fn pg_start(config: &StackConfig, verbose: bool) -> Result<()> {
     for _ in 0..60 {
         let check = Command::new(pg_bin("pg_isready"))
             .args(["-h", config.run_dir().to_str().unwrap()])
-            .args(["-p", config.postgres.port.to_string().as_str()])
+            .arg(config.postgres.port.to_string())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
@@ -453,7 +454,7 @@ pub fn pg_setup_database(config: &StackConfig, verbose: bool) -> Result<()> {
     let psql = |user: &str, db: &str, sql: &str| -> Result<String> {
         let output = Command::new(pg_bin("psql"))
             .args(["-h", config.run_dir().to_str().unwrap()])
-            .args(["-p", config.postgres.port.to_string().as_str()])
+            .arg(config.postgres.port.to_string())
             .args(["-U", user])
             .args(["-d", db])
             .args(["-tAc", sql])
@@ -662,7 +663,8 @@ pub fn nats_start(config: &StackConfig, verbose: bool) -> Result<()> {
     fs::write(config.nats_pid_file(), child.id().to_string())?;
 
     for _ in 0..30 {
-        let check = std::net::TcpStream::connect(format!("127.0.0.1:{}", config.nats.port));
+        let port = config.nats.port;
+        let check = std::net::TcpStream::connect(format!("127.0.0.1:{port}"));
         if check.is_ok() {
             if verbose {
                 println!("NATS started");

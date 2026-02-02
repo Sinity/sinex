@@ -652,7 +652,7 @@ impl CheckpointManager {
         Ok(CheckpointStats {
             total_checkpoints: 1, // KV stores one version
             max_processed: processed_count,
-            last_update: last_update.map(|t| t),
+            last_update,
             first_checkpoint: None,
         })
     }
