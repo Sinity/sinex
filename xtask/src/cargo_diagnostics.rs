@@ -32,6 +32,13 @@ pub struct LintCount {
     pub count: usize,
 }
 
+/// File path with warning count
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileCount {
+    pub path: String,
+    pub count: usize,
+}
+
 impl DiagnosticSummary {
     /// Get breakdown of warning counts by lint code, sorted by count descending.
     /// Returns only warnings (not errors) with recognized lint codes.
@@ -60,6 +67,34 @@ impl DiagnosticSummary {
     #[must_use]
     pub fn top_lints(&self, n: usize) -> Vec<LintCount> {
         self.lint_breakdown().into_iter().take(n).collect()
+    }
+
+    /// Get breakdown of warning counts by file path, sorted by count descending.
+    #[must_use]
+    pub fn file_breakdown(&self) -> Vec<FileCount> {
+        use std::collections::HashMap;
+
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        for diag in &self.diagnostics {
+            if diag.level == "warning" {
+                if let Some(ref path) = diag.file_path {
+                    *counts.entry(path.clone()).or_insert(0) += 1;
+                }
+            }
+        }
+
+        let mut result: Vec<FileCount> = counts
+            .into_iter()
+            .map(|(path, count)| FileCount { path, count })
+            .collect();
+        result.sort_by(|a, b| b.count.cmp(&a.count));
+        result
+    }
+
+    /// Get the top N files by warning count
+    #[must_use]
+    pub fn top_files(&self, n: usize) -> Vec<FileCount> {
+        self.file_breakdown().into_iter().take(n).collect()
     }
 }
 

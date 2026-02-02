@@ -271,6 +271,7 @@ fn execute_workspace(target_dir: &str, ctx: &CommandContext) -> Result<CommandRe
         packages: vec![],
         skip_tests: false,    // CI should always check tests
         lint_breakdown: true, // Show lint breakdown in CI
+        by_file: false,
     }
     .execute(ctx)?;
     if !check_result.is_success() {

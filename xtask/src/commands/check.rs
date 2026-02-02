@@ -42,6 +42,9 @@ pub struct CheckCommand {
     /// Show breakdown of warning counts by lint code (top 10)
     #[arg(long)]
     pub lint_breakdown: bool,
+    /// Show breakdown of warning counts by file path (top 20)
+    #[arg(long)]
+    pub by_file: bool,
 }
 
 impl CheckCommand {
@@ -137,6 +140,9 @@ impl XtaskCommand for CheckCommand {
             }
             if self.lint_breakdown {
                 args.push("--lint-breakdown".to_string());
+            }
+            if self.by_file {
+                args.push("--by-file".to_string());
             }
             for p in &self.packages {
                 args.push("-p".to_string());
@@ -242,6 +248,24 @@ impl XtaskCommand for CheckCommand {
                 }
             }
 
+            // Show file breakdown if requested
+            if self.by_file {
+                let top_files = clippy_summary.top_files(20);
+                if !top_files.is_empty() {
+                    if ctx.is_human() {
+                        println!("📁 Top files by warning count:");
+                        for file in &top_files {
+                            println!("  {:>4}  {}", file.count, file.path);
+                        }
+                        println!();
+                    }
+                    // Add to JSON data
+                    result = result.with_data(serde_json::json!({
+                        "file_breakdown": top_files
+                    }));
+                }
+            }
+
             if !clippy_summary.success {
                 return Ok(result.with_detail("clippy failed"));
             }
@@ -287,6 +311,7 @@ mod tests {
             packages: vec![],
             skip_tests: false,
             lint_breakdown: false,
+            by_file: false,
         };
 
         let metadata = cmd.metadata();
@@ -306,6 +331,7 @@ mod tests {
             packages: vec![],
             skip_tests: false,
             lint_breakdown: false,
+            by_file: false,
         };
 
         assert_eq!(cmd.name(), "check");
