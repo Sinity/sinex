@@ -127,7 +127,7 @@ mod tests {
             kv,
             service_name.to_string(),
             "test".to_string(),
-            format!("{}-{}", service_name, Ulid::new()),
+            format!("{service_name}-{}", Ulid::new()),
         ));
 
         let handles = NodeHandles::new(
@@ -257,7 +257,7 @@ impl WorkTracker {
     ///
     /// Issue 14 fix: Returns a guard that auto-finishes on drop to prevent drift
     pub fn start_operation(&self) -> WorkGuard {
-        self.in_flight_operations.add(1);
+        let _ = self.in_flight_operations.add(1);
         if let Some(heartbeat) = &self.heartbeat_emitter {
             heartbeat.increment_events_processed(1);
         }
@@ -274,7 +274,7 @@ impl WorkTracker {
 
     /// Request graceful shutdown
     pub fn request_shutdown(&self) {
-        self.shutdown_requested.signal();
+        let _ = self.shutdown_requested.signal();
     }
 
     /// Get number of in-flight operations
@@ -468,10 +468,8 @@ impl NodeCoordination {
                     self.record_coordination_failure("acquire_leadership", &e);
                     if self.current_mode == InstanceMode::Leader {
                         warn!("Cannot confirm leadership, degrading to Standby");
-                        InstanceMode::Standby
-                    } else {
-                        InstanceMode::Standby
                     }
+                    InstanceMode::Standby
                 }
             };
 
@@ -567,7 +565,7 @@ impl NodeCoordination {
                     while let Some(msg) = sub.next().await {
                         if let Ok(req) = serde_json::from_slice::<HandoffRequest>(&msg.payload) {
                             if handoff_sender_clone.send(req).await.is_err() {
-                                handoff_drops_clone.add(1);
+                                let _ = handoff_drops_clone.add(1);
                                 warn!(
                                     handoff_drops = handoff_drops_clone.get(),
                                     "Handoff channel backpressure: dropped handoff request"
@@ -745,15 +743,13 @@ impl NodeCoordination {
 
         let subject = format!("sinex.coordination.{}.handoff", self.instance.service_name);
         let payload = serde_json::to_vec(&request).map_err(|e| {
-            SinexError::validation(format!("Failed to serialize handoff request: {}", e))
+            SinexError::validation(format!("Failed to serialize handoff request: {e}"))
         })?;
 
         self.nats_client
             .publish(subject, payload.into())
             .await
-            .map_err(|e| {
-                SinexError::network(format!("Failed to publish handoff request: {}", e))
-            })?;
+            .map_err(|e| SinexError::network(format!("Failed to publish handoff request: {e}")))?;
 
         info!(
             event = "coordination.handoff_request_published",
@@ -790,7 +786,7 @@ impl NodeCoordination {
             .subscribe(subject.clone())
             .await
             .map_err(|e| {
-                SinexError::network(format!("Failed to subscribe to handoff_ready: {}", e))
+                SinexError::network(format!("Failed to subscribe to handoff_ready: {e}"))
             })?;
 
         // Wait for ready signal with timeout
@@ -831,7 +827,7 @@ impl NodeCoordination {
         self.kv_client
             .list_instances()
             .await
-            .map_err(|e| SinexError::service(format!("Failed to list instances: {}", e)))
+            .map_err(|e| SinexError::service(format!("Failed to list instances: {e}")))
     }
 
     /// Initiate handoff from older version (if any) during startup
@@ -1007,9 +1003,9 @@ impl NodeCoordination {
     }
 
     fn record_coordination_failure(&self, context: &str, error: impl std::fmt::Display) {
-        let failures = self.leadership_failures.add(1);
+        let _ = self.leadership_failures.add(1);
         warn!(
-            coordination_failures = failures,
+            coordination_failures = self.leadership_failures.get(),
             context,
             error = %error,
             "Coordination lease operation failed"

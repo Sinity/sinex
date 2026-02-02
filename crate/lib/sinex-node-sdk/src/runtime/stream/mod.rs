@@ -484,7 +484,7 @@ impl<T: Node + 'static> NodeRunner<T> {
 
         // Get hostname
         let host = gethostname::gethostname().to_string_lossy().to_string();
-        let consumer_name = format!("{}-{}", host, std::process::id());
+        let consumer_name = format!("{host}-{}", std::process::id());
         let transport_for_context = transport.clone();
         let transport_clone_for_runner = transport.clone();
 
@@ -817,7 +817,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                     let service = rs.service_info().service_name().to_string();
                     let host = rs.service_info().host().to_string();
                     let pid = std::process::id();
-                    let instance_id = format!("{}-{}", host, pid);
+                    let instance_id = format!("{host}-{pid}");
 
                     let js = async_nats::jetstream::new(nc);
                     let kv_client = sinex_primitives::coordination::CoordinationKvClient::new(
@@ -1047,7 +1047,7 @@ impl<T: Node + 'static> NodeRunner<T> {
 
     fn parse_ulid(value: &str, field: &str) -> NodeResult<Ulid> {
         value.parse::<Ulid>().map_err(|err| {
-            SinexError::processing(format!("Invalid ULID for {}: {} ({})", field, value, err))
+            SinexError::processing(format!("Invalid ULID for {field}: {value} ({err})"))
         })
     }
 

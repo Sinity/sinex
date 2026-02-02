@@ -200,18 +200,18 @@ impl TriggersGuard {
         for table in &self.tables {
             let query = format!("ALTER TABLE {table} ENABLE TRIGGER ALL");
             if let Err(e) = sqlx::query(&query).execute(conn.as_mut()).await {
-                if is_hypertable_trigger_toggle_error(&e) {
+                if !is_hypertable_trigger_toggle_error(&e) {
+                    tracing::warn!(
+                        error = %e,
+                        table = %table,
+                        "Failed to re-enable triggers after cleanup"
+                    );
+                } else {
                     tracing::warn!(
                         table = %table,
                         "Skipping trigger enable for hypertable after cleanup"
                     );
-                    continue;
                 }
-                tracing::warn!(
-                    error = %e,
-                    table = %table,
-                    "Failed to re-enable triggers after cleanup"
-                );
             }
         }
         Ok(())

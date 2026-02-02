@@ -260,7 +260,6 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
                     .into();
             }
             ctx_param = Some(((**pat).clone(), ty.as_ref().clone()));
-            continue;
         }
 
         let mut strategy = None;

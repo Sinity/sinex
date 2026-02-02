@@ -55,10 +55,12 @@ fn clean_path(path: &Path) -> PathBuf {
                 if let Some(last) = components.last() {
                     if !matches!(last, Component::ParentDir | Component::RootDir) {
                         components.pop();
-                        continue;
+                    } else {
+                        components.push(component);
                     }
+                } else {
+                    components.push(component);
                 }
-                components.push(component);
             }
             _ => {
                 components.push(component);

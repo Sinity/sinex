@@ -104,9 +104,12 @@ impl MockGatewayClient {
         self.record_call("ping", vec![]);
         Ok(self
             .get_response("ping")
-            .and_then(|r| match r {
-                MockResponse::String(s) => Some(s),
-                _ => None,
+            .and_then(|r| {
+                if let MockResponse::String(s) = r {
+                    Some(s)
+                } else {
+                    None
+                }
             })
             .unwrap_or_else(|| "pong".to_string()))
     }
@@ -115,9 +118,12 @@ impl MockGatewayClient {
         self.record_call("version", vec![]);
         Ok(self
             .get_response("version")
-            .and_then(|r| match r {
-                MockResponse::String(s) => Some(s),
-                _ => None,
+            .and_then(|r| {
+                if let MockResponse::String(s) = r {
+                    Some(s)
+                } else {
+                    None
+                }
             })
             .unwrap_or_else(|| "0.4.2".to_string()))
     }
@@ -130,9 +136,12 @@ impl MockGatewayClient {
         self.record_call("health", vec![]);
         Ok(self
             .get_response("health")
-            .and_then(|r| match r {
-                MockResponse::Health(h) => Some(h),
-                _ => None,
+            .and_then(|r| {
+                if let MockResponse::Health(h) = r {
+                    Some(h)
+                } else {
+                    None
+                }
             })
             .unwrap_or_else(|| SystemHealthResponse {
                 status: "healthy".to_string(),
@@ -161,9 +170,12 @@ impl MockGatewayClient {
         self.record_call("list_nodes", vec![]);
         Ok(self
             .get_response("list_nodes")
-            .and_then(|r| match r {
-                MockResponse::Nodes(nodes) => Some(nodes),
-                _ => None,
+            .and_then(|r| {
+                if let MockResponse::Nodes(nodes) = r {
+                    Some(nodes)
+                } else {
+                    None
+                }
             })
             .unwrap_or_default())
     }
@@ -174,9 +186,12 @@ impl MockGatewayClient {
         self.record_call("node_status", vec![node_id.to_string()]);
         Ok(self
             .get_response("node_status")
-            .and_then(|r| match r {
-                MockResponse::NodeStatus(status) => Some(status),
-                _ => None,
+            .and_then(|r| {
+                if let MockResponse::NodeStatus(status) = r {
+                    Some(status)
+                } else {
+                    None
+                }
             })
             .unwrap_or_else(|| NodeStatus {
                 node_id: NodeId::new(node_id),
@@ -211,9 +226,12 @@ impl MockGatewayClient {
         self.record_call("replay_list", vec![]);
         Ok(self
             .get_response("replay_list")
-            .and_then(|r| match r {
-                MockResponse::ReplayOperations(ops) => Some(ops),
-                _ => None,
+            .and_then(|r| {
+                if let MockResponse::ReplayOperations(ops) = r {
+                    Some(ops)
+                } else {
+                    None
+                }
             })
             .unwrap_or_default())
     }
@@ -225,9 +243,12 @@ impl MockGatewayClient {
         self.record_call("replay_status", vec![operation_id.to_string()]);
         Ok(self
             .get_response("replay_status")
-            .and_then(|r| match r {
-                MockResponse::ReplayOperation(op) => Some(op),
-                _ => None,
+            .and_then(|r| {
+                if let MockResponse::ReplayOperation(op) = r {
+                    Some(op)
+                } else {
+                    None
+                }
             })
             .unwrap_or_else(|| ReplayOperation {
                 operation_id: operation_id.to_string(),
@@ -263,9 +284,12 @@ impl MockGatewayClient {
         self.record_call("dlq_list", vec![]);
         Ok(self
             .get_response("dlq_list")
-            .and_then(|r| match r {
-                MockResponse::DlqList(resp) => Some(resp),
-                _ => None,
+            .and_then(|r| {
+                if let MockResponse::DlqList(resp) = r {
+                    Some(resp)
+                } else {
+                    None
+                }
             })
             .unwrap_or(DlqListResponse {
                 total_messages: 0,
@@ -279,9 +303,12 @@ impl MockGatewayClient {
         self.record_call("dlq_peek", vec![format!("{limit:?}")]);
         Ok(self
             .get_response("dlq_peek")
-            .and_then(|r| match r {
-                MockResponse::DlqPeek(resp) => Some(resp),
-                _ => None,
+            .and_then(|r| {
+                if let MockResponse::DlqPeek(resp) = r {
+                    Some(resp)
+                } else {
+                    None
+                }
             })
             .unwrap_or_else(|| DlqPeekResponse {
                 messages: Vec::new(),
@@ -292,9 +319,12 @@ impl MockGatewayClient {
         self.record_call("dlq_requeue", event_ids);
         Ok(self
             .get_response("dlq_requeue")
-            .and_then(|r| match r {
-                MockResponse::DlqRequeue(resp) => Some(resp),
-                _ => None,
+            .and_then(|r| {
+                if let MockResponse::DlqRequeue(resp) = r {
+                    Some(resp)
+                } else {
+                    None
+                }
             })
             .unwrap_or_else(|| DlqRequeueResponse {
                 status: "success".to_string(),
@@ -306,9 +336,12 @@ impl MockGatewayClient {
         self.record_call("dlq_purge", vec![confirm.to_string()]);
         Ok(self
             .get_response("dlq_purge")
-            .and_then(|r| match r {
-                MockResponse::DlqPurge(resp) => Some(resp),
-                _ => None,
+            .and_then(|r| {
+                if let MockResponse::DlqPurge(resp) = r {
+                    Some(resp)
+                } else {
+                    None
+                }
             })
             .unwrap_or_else(|| DlqPurgeResponse {
                 status: "success".to_string(),
@@ -320,9 +353,12 @@ impl MockGatewayClient {
         self.record_call("search_events", vec![format!("{query:?}")]);
         Ok(self
             .get_response("search_events")
-            .and_then(|r| match r {
-                MockResponse::SearchResults(results) => Some(results),
-                _ => None,
+            .and_then(|r| {
+                if let MockResponse::SearchResults(results) = r {
+                    Some(results)
+                } else {
+                    None
+                }
             })
             .unwrap_or_default())
     }

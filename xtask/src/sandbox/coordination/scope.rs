@@ -347,13 +347,12 @@ impl<'ctx> PipelineScope<'ctx> {
         let logs = self.ctx.captured_logs();
         let mut ingestd_lines: VecDeque<String> = VecDeque::with_capacity(LOG_TAIL);
         for line in logs {
-            if !line.contains("ingestd") {
-                continue;
+            if line.contains("ingestd") {
+                if ingestd_lines.len() == LOG_TAIL {
+                    ingestd_lines.pop_front();
+                }
+                ingestd_lines.push_back(line);
             }
-            if ingestd_lines.len() == LOG_TAIL {
-                ingestd_lines.pop_front();
-            }
-            ingestd_lines.push_back(line);
         }
 
         if ingestd_lines.is_empty() {

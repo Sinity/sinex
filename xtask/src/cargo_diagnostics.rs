@@ -135,21 +135,19 @@ fn parse_cargo_json_output(output: &str, success: bool) -> anyhow::Result<Diagno
     let mut warnings = 0;
 
     for line in output.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
-            // Check if this is a compiler message
-            if json.get("reason").and_then(|r| r.as_str()) == Some("compiler-message") {
-                if let Some(message) = json.get("message") {
-                    if let Some(diag) = parse_diagnostic_message(message) {
-                        match diag.level.as_str() {
-                            "error" => errors += 1,
-                            "warning" => warnings += 1,
-                            _ => {}
+        if !line.trim().is_empty() {
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
+                // Check if this is a compiler message
+                if json.get("reason").and_then(|r| r.as_str()) == Some("compiler-message") {
+                    if let Some(message) = json.get("message") {
+                        if let Some(diag) = parse_diagnostic_message(message) {
+                            match diag.level.as_str() {
+                                "error" => errors += 1,
+                                "warning" => warnings += 1,
+                                _ => {}
+                            }
+                            diagnostics.push(diag);
                         }
-                        diagnostics.push(diag);
                     }
                 }
             }

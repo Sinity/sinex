@@ -370,10 +370,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
         let mut node_config: HashMap<String, serde_json::Value> =
             if let Some(config_str) = args.node_config.clone() {
                 serde_json::from_str(&config_str).map_err(|e| {
-                    SinexError::general(format!(
-                        "{}: {}",
-                        "Failed to parse node configuration JSON", e
-                    ))
+                    SinexError::general(format!("Failed to parse node configuration JSON: {e}"))
                 })?
             } else {
                 HashMap::new()
@@ -507,11 +504,10 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
             } => {
                 info!("Running scan operation");
 
-                let checkpoint = parse_checkpoint(from).map_err(|e| {
-                    SinexError::general(format!("{}: {}", "Failed to parse checkpoint", e))
-                })?;
+                let checkpoint = parse_checkpoint(from)
+                    .map_err(|e| SinexError::general(format!("Failed to parse checkpoint: {e}")))?;
                 let time_horizon = parse_time_horizon(until).map_err(|e| {
-                    SinexError::general(format!("{}: {}", "Failed to parse time horizon", e))
+                    SinexError::general(format!("Failed to parse time horizon: {e}"))
                 })?;
 
                 // Create stream processor runner
@@ -878,10 +874,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
             db_url.clone()
         } else {
             std::env::var("DATABASE_URL").map_err(|e| {
-                SinexError::general(format!(
-                    "{}: {}",
-                    "DATABASE_URL environment variable not set", e
-                ))
+                SinexError::general(format!("DATABASE_URL environment variable not set: {e}"))
             })?
         };
         let env = sinex_primitives::environment();

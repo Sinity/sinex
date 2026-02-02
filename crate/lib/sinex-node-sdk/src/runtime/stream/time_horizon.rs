@@ -19,9 +19,10 @@ impl TimeHorizon {
     }
 
     pub fn end_time(&self) -> Option<Timestamp> {
-        match self {
-            TimeHorizon::Historical { end_time } => Some(*end_time),
-            _ => None,
+        if let TimeHorizon::Historical { end_time } = self {
+            Some(*end_time)
+        } else {
+            None
         }
     }
 }

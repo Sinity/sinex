@@ -250,50 +250,49 @@ impl UnifiedJournalWatcher {
         let mut batch = Vec::new();
 
         for line in output.stdout.split(|&b| b == b'\n') {
-            if line.is_empty() {
-                continue;
-            }
-
-            match serde_json::from_slice::<serde_json::Value>(line) {
-                Ok(entry) => {
-                    // Process entry and emit both journal and systemd events if applicable
-                    if let Some(journal_event) = self.parse_journal_entry(&entry, material)? {
-                        if first_cursor.is_none() {
-                            first_cursor = journal_event
+            if !line.is_empty() {
+                match serde_json::from_slice::<serde_json::Value>(line) {
+                    Ok(entry) => {
+                        // Process entry and emit both journal and systemd events if applicable
+                        if let Some(journal_event) = self.parse_journal_entry(&entry, material)? {
+                            if first_cursor.is_none() {
+                                first_cursor = journal_event
+                                    .payload
+                                    .get("cursor")
+                                    .and_then(|v| v.as_str())
+                                    .map(std::string::ToString::to_string);
+                            }
+                            last_cursor = journal_event
                                 .payload
                                 .get("cursor")
                                 .and_then(|v| v.as_str())
                                 .map(std::string::ToString::to_string);
+
+                            batch.push(journal_event);
+                            entries_count += 1;
+
+                            if batch.len() >= self.journal_config.batch_size {
+                                for event in batch.drain(..) {
+                                    self.send_event(journal_tx, event, "journal_batch", material)
+                                        .await?;
+                                }
+                            }
                         }
-                        last_cursor = journal_event
-                            .payload
-                            .get("cursor")
-                            .and_then(|v| v.as_str())
-                            .map(std::string::ToString::to_string);
 
-                        batch.push(journal_event);
-                        entries_count += 1;
-
-                        if batch.len() >= self.journal_config.batch_size {
-                            for event in batch.drain(..) {
-                                self.send_event(journal_tx, event, "journal_batch", material)
-                                    .await?;
+                        // Check if this is a systemd event and emit systemd-specific event
+                        if self.systemd_enabled {
+                            if let Some(systemd_event) = self.parse_systemd_entry(&entry, material)
+                            {
+                                if let Some(ref tx) = systemd_tx {
+                                    self.send_event(tx, systemd_event, "systemd_batch", material)
+                                        .await?;
+                                }
                             }
                         }
                     }
-
-                    // Check if this is a systemd event and emit systemd-specific event
-                    if self.systemd_enabled {
-                        if let Some(systemd_event) = self.parse_systemd_entry(&entry, material) {
-                            if let Some(ref tx) = systemd_tx {
-                                self.send_event(tx, systemd_event, "systemd_batch", material)
-                                    .await?;
-                            }
-                        }
+                    Err(e) => {
+                        debug!("Failed to parse journal entry: {}", e);
                     }
-                }
-                Err(e) => {
-                    debug!("Failed to parse journal entry: {}", e);
                 }
             }
         }
@@ -439,50 +438,48 @@ impl UnifiedJournalWatcher {
             match reader.read_line(&mut line).await {
                 Ok(0) => break, // EOF
                 Ok(_) => {
-                    if line.trim().is_empty() {
-                        continue;
-                    }
+                    if !line.trim().is_empty() {
+                        match serde_json::from_str::<serde_json::Value>(&line) {
+                            Ok(entry) => {
+                                // Emit journal event
+                                if let Some(event) = self.parse_journal_entry(&entry, material)? {
+                                    // Update cursor
+                                    if let Some(cursor) =
+                                        event.payload.get("cursor").and_then(|v| v.as_str())
+                                    {
+                                        self.last_cursor = Some(cursor.to_string());
+                                        self.save_cursor(cursor).await?;
+                                    }
 
-                    match serde_json::from_str::<serde_json::Value>(&line) {
-                        Ok(entry) => {
-                            // Emit journal event
-                            if let Some(event) = self.parse_journal_entry(&entry, material)? {
-                                // Update cursor
-                                if let Some(cursor) =
-                                    event.payload.get("cursor").and_then(|v| v.as_str())
-                                {
-                                    self.last_cursor = Some(cursor.to_string());
-                                    self.save_cursor(cursor).await?;
+                                    self.send_event(
+                                        journal_tx,
+                                        event,
+                                        "journal_follow_event",
+                                        material,
+                                    )
+                                    .await?;
                                 }
 
-                                self.send_event(
-                                    journal_tx,
-                                    event,
-                                    "journal_follow_event",
-                                    material,
-                                )
-                                .await?;
-                            }
-
-                            // Emit systemd event if applicable
-                            if self.systemd_enabled {
-                                if let Some(systemd_event) =
-                                    self.parse_systemd_entry(&entry, material)
-                                {
-                                    if let Some(ref tx) = systemd_tx {
-                                        self.send_event(
-                                            tx,
-                                            systemd_event,
-                                            "systemd_follow_event",
-                                            material,
-                                        )
-                                        .await?;
+                                // Emit systemd event if applicable
+                                if self.systemd_enabled {
+                                    if let Some(systemd_event) =
+                                        self.parse_systemd_entry(&entry, material)
+                                    {
+                                        if let Some(ref tx) = systemd_tx {
+                                            self.send_event(
+                                                tx,
+                                                systemd_event,
+                                                "systemd_follow_event",
+                                                material,
+                                            )
+                                            .await?;
+                                        }
                                     }
                                 }
                             }
-                        }
-                        Err(e) => {
-                            debug!("Failed to parse journal entry: {}", e);
+                            Err(e) => {
+                                debug!("Failed to parse journal entry: {}", e);
+                            }
                         }
                     }
                 }

@@ -147,32 +147,17 @@ impl CheckpointState {
     /// Used to restore state after a hot reload. If the file doesn't exist
     /// or is invalid, returns None (allowing fresh start).
     pub async fn load_from_file(path: &std::path::Path) -> Option<Self> {
-        let contents = match tokio::fs::read_to_string(path).await {
-            Ok(c) => c,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                debug!(path = %path.display(), "No checkpoint file found");
-                return None;
-            }
-            Err(e) => {
-                warn!(
-                    path = %path.display(),
-                    error = %e,
-                    "Failed to read checkpoint file"
-                );
-                return None;
-            }
+        let Ok(contents) = tokio::fs::read_to_string(path).await else {
+            debug!(path = %path.display(), "No checkpoint file found or failed to read");
+            return None;
         };
 
-        let wrapper: FileCheckpointWrapper = match serde_json::from_str(&contents) {
-            Ok(w) => w,
-            Err(e) => {
-                warn!(
-                    path = %path.display(),
-                    error = %e,
-                    "Failed to parse checkpoint file"
-                );
-                return None;
-            }
+        let Ok(wrapper) = serde_json::from_str::<FileCheckpointWrapper>(&contents) else {
+            warn!(
+                path = %path.display(),
+                "Failed to parse checkpoint file"
+            );
+            return None;
         };
 
         // Validate magic and version
@@ -260,11 +245,10 @@ pub fn checkpoint_bucket_name(prefix: Option<&str>) -> String {
     let env = sinex_primitives::environment::environment();
     let base_bucket = "sinex_checkpoints";
 
-    let namespaced_base = match prefix {
-        Some(prefix) if !prefix.trim().is_empty() => {
-            env.nats_kv_bucket_with_namespace(Some(prefix), base_bucket)
-        }
-        _ => env.nats_kv_bucket_name(base_bucket),
+    let namespaced_base = if let Some(prefix) = prefix.filter(|p| !p.trim().is_empty()) {
+        env.nats_kv_bucket_with_namespace(Some(prefix), base_bucket)
+    } else {
+        env.nats_kv_bucket_name(base_bucket)
     };
 
     format!("KV_{}", namespaced_base)
@@ -453,11 +437,11 @@ impl CheckpointManager {
                 continue;
             }
 
-            let entry = match self.kv.entry(&key).await.map_err(|e| {
+            let Some(entry) = self.kv.entry(&key).await.map_err(|e| {
                 SinexError::checkpoint(format!("Failed to read checkpoint KV entry: {e}"))
-            })? {
-                Some(entry) => entry,
-                None => continue,
+            })?
+            else {
+                continue;
             };
 
             if !matches!(entry.operation, Operation::Put) || entry.value.is_empty() {
@@ -586,9 +570,8 @@ impl CheckpointManager {
                 SinexError::checkpoint(format!("Failed to read checkpoint KV: {e}"))
             })?;
 
-        let entry = match entry {
-            Some(e) => e,
-            None => return Ok(Vec::new()),
+        let Some(entry) = entry else {
+            return Ok(Vec::new());
         };
 
         let state: CheckpointState =
@@ -789,13 +772,10 @@ pub async fn cleanup_stale_checkpoints(
         };
 
         // Parse the checkpoint state
-        let state: CheckpointState = match serde_json::from_slice(&entry) {
-            Ok(state) => state,
-            Err(e) => {
-                warn!(key = %key, error = %e, "Failed to parse checkpoint during cleanup");
-                result.errors += 1;
-                continue;
-            }
+        let Ok(state) = serde_json::from_slice::<CheckpointState>(&entry) else {
+            warn!(key = %key, "Failed to parse checkpoint during cleanup");
+            result.errors += 1;
+            continue;
         };
 
         // Check if checkpoint is stale

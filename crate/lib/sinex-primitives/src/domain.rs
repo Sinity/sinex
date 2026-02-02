@@ -880,14 +880,16 @@ fn normalize_path_lexically(path: &Utf8Path) -> Utf8PathBuf {
                     if let Some(last) = components.last() {
                         if *last != ".." {
                             components.pop();
-                            continue;
+                        } else {
+                            components.push(name.to_string());
                         }
+                    } else {
+                        components.push(name.to_string());
                     }
-                } else if name == "." {
+                } else if name != "." {
                     // Skip current directory references
-                    continue;
+                    components.push(name.to_string());
                 }
-                components.push(name.to_string());
             }
             camino::Utf8Component::RootDir => {
                 components.clear();
@@ -901,10 +903,12 @@ fn normalize_path_lexically(path: &Utf8Path) -> Utf8PathBuf {
                 if let Some(last) = components.last() {
                     if last != ".." {
                         components.pop();
-                        continue;
+                    } else {
+                        components.push("..".to_string());
                     }
+                } else {
+                    components.push("..".to_string());
                 }
-                components.push("..".to_string());
             }
             camino::Utf8Component::Prefix(_) => {
                 // Handle Windows prefixes by keeping them

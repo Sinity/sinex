@@ -186,20 +186,15 @@ async fn verify_disk_space(messages: &mut Vec<String>) -> NodeResult<Value> {
 
                 if available_gb < min_gb {
                     messages.push(format!(
-                        "✗ {}: {:.2}GB available, {:.2}GB required",
-                        description, available_gb, min_gb
+                        "✗ {description}: {available_gb:.2}GB available, {min_gb:.2}GB required"
                     ));
                     has_issues = true;
                 } else if available_gb < min_gb * 2.0 {
                     messages.push(format!(
-                        "⚠ {}: {:.2}GB available (low)",
-                        description, available_gb
+                        "⚠ {description}: {available_gb:.2}GB available (low)"
                     ));
                 } else {
-                    messages.push(format!(
-                        "✓ {}: {:.2}GB available",
-                        description, available_gb
-                    ));
+                    messages.push(format!("✓ {description}: {available_gb:.2}GB available"));
                 }
             }
             Err(e) => {
@@ -261,20 +256,19 @@ async fn verify_cpu_capacity(messages: &mut Vec<String>) -> NodeResult<Value> {
 
     if cpu_count < min_cpu_count {
         return Err(SinexError::processing(format!(
-            "Insufficient CPU cores: {} available, {} required",
-            cpu_count, min_cpu_count
+            "Insufficient CPU cores: {cpu_count} available, {min_cpu_count} required"
         )));
     }
 
     if load_avg.one > max_recommended_load {
         messages.push(format!(
-            "⚠ High CPU load: {:.2}, recommended max: {:.2}",
-            load_avg.one, max_recommended_load
+            "⚠ High CPU load: {:.2}, recommended max: {max_recommended_load:.2}",
+            load_avg.one
         ));
     } else {
         messages.push(format!(
-            "✓ CPU capacity sufficient: {} cores, load: {:.2}",
-            cpu_count, load_avg.one
+            "✓ CPU capacity sufficient: {cpu_count} cores, load: {:.2}",
+            load_avg.one
         ));
     }
 

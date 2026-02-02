@@ -92,9 +92,10 @@ impl FromStr for WindowManagerType {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "hyprland" => Ok(WindowManagerType::Hyprland),
-            _ => Err(format!("Unsupported window manager type: {s}")),
+        if s == "hyprland" {
+            Ok(WindowManagerType::Hyprland)
+        } else {
+            Err(format!("Unsupported window manager type: {s}"))
         }
     }
 }
@@ -893,7 +894,6 @@ impl WindowManagerWatcher {
                             }
                         }
                     }
-                    continue;
                 }
             }
 

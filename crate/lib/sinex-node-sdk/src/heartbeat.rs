@@ -165,14 +165,14 @@ impl HeartbeatEmitter {
 
     /// Increment the events processed counter
     pub fn increment_events_processed(&self, count: u64) {
-        self.events_processed.add(count as usize);
+        let _ = self.events_processed.add(count as usize);
     }
 
     /// Record an error
     ///
     /// Issue 8 fix: Maintains 5-minute sliding window for error tracking
     pub fn record_error(&self, error_message: &str) {
-        self.errors_count.add(1);
+        let _ = self.errors_count.add(1);
         *self.last_error.lock() = Some(error_message.to_string());
 
         // Add to sliding window
@@ -431,23 +431,24 @@ impl HeartbeatEmitter {
     }
 
     fn log_process_alert(&self, event_type: &str, metrics: &HeartbeatMetrics) {
-        let payload = match event_type {
-            "process.failed" => serde_json::to_value(ProcessFailedPayload {
+        let payload = if event_type == "process.failed" {
+            serde_json::to_value(ProcessFailedPayload {
                 process_name: metrics.service_name.clone(),
                 uptime_seconds: metrics.uptime_seconds,
                 errors_in_window: metrics.errors_count,
                 last_error_message: metrics.last_error_message.clone(),
                 metadata: metrics.metadata.clone(),
             })
-            .unwrap_or_else(|_| json!({})),
-            _ => serde_json::to_value(ProcessDegradedPayload {
+            .unwrap_or_else(|_| json!({}))
+        } else {
+            serde_json::to_value(ProcessDegradedPayload {
                 process_name: metrics.service_name.clone(),
                 uptime_seconds: metrics.uptime_seconds,
                 errors_in_window: metrics.errors_count,
                 last_error_message: metrics.last_error_message.clone(),
                 metadata: metrics.metadata.clone(),
             })
-            .unwrap_or_else(|_| json!({})),
+            .unwrap_or_else(|_| json!({}))
         };
 
         let alert_entry = json!({
@@ -493,14 +494,14 @@ pub struct HeartbeatCounterHandle {
 impl HeartbeatCounterHandle {
     /// Increment events processed counter
     pub fn increment_events_processed(&self, count: u64) {
-        self.events_processed.add(count as usize);
+        let _ = self.events_processed.add(count as usize);
     }
 
     /// Record an error
     ///
     /// Issue 8 fix: Adds to sliding window for historical context
     pub fn record_error(&self, error_message: &str) {
-        self.errors_count.add(1);
+        let _ = self.errors_count.add(1);
         *self.last_error.lock() = Some(error_message.to_string());
 
         // Add to sliding window
