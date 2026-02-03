@@ -437,12 +437,13 @@ struct MockCommand {
     name: String,
 }
 
+#[async_trait::async_trait]
 impl XtaskCommand for MockCommand {
     fn name(&self) -> &str {
         &self.name
     }
 
-    fn execute(&self, _ctx: &CommandContext) -> anyhow::Result<CommandResult> {
+    async fn execute(&self, _ctx: &CommandContext) -> anyhow::Result<CommandResult> {
         if self.should_fail {
             Ok(CommandResult::failure(StructuredError::new(
                 "MOCK_ERR",
@@ -458,29 +459,29 @@ impl XtaskCommand for MockCommand {
     }
 }
 
-#[test]
-fn test_xtask_command_trait_success() {
+#[tokio::test]
+async fn test_xtask_command_trait_success() {
     let cmd = MockCommand {
         should_fail: false,
         name: "mock-success".to_string(),
     };
 
     let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, false, None);
-    let result = cmd.execute(&ctx).expect("execute should not error");
+    let result = cmd.execute(&ctx).await.expect("execute should not error");
 
     assert!(result.is_success());
     assert_eq!(cmd.name(), "mock-success");
 }
 
-#[test]
-fn test_xtask_command_trait_failure() {
+#[tokio::test]
+async fn test_xtask_command_trait_failure() {
     let cmd = MockCommand {
         should_fail: true,
         name: "mock-failure".to_string(),
     };
 
     let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, false, None);
-    let result = cmd.execute(&ctx).expect("execute should not error");
+    let result = cmd.execute(&ctx).await.expect("execute should not error");
 
     assert!(result.is_failure());
     assert_eq!(result.errors[0].code, "MOCK_ERR");

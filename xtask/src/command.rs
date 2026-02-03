@@ -338,6 +338,7 @@ pub struct CommandContext {
 }
 
 impl CommandContext {
+    #[must_use]
     pub fn new(
         writer: crate::output::OutputWriter,
         _json: bool,
@@ -353,19 +354,23 @@ impl CommandContext {
         }
     }
 
+    #[must_use]
     pub fn is_verbose(&self) -> bool {
         // Verbosity implied by format or specific flags if we add them later
         false
     }
 
+    #[must_use]
     pub fn is_background(&self) -> bool {
         self.background
     }
 
+    #[must_use]
     pub fn invocation_id(&self) -> Option<i64> {
         self.invocation_id
     }
 
+    #[must_use]
     pub fn writer(&self) -> &crate::output::OutputWriter {
         &self.writer
     }
@@ -439,13 +444,17 @@ impl CommandContext {
     ///
     /// Returns a `CommandResult` with the job ID and log paths. The actual command
     /// execution happens in a separate process.
-    pub fn spawn_background(&self, subcommand: &str, args: &[String]) -> Result<ExecutionResult> {
+    pub async fn spawn_background(
+        &self,
+        subcommand: &str,
+        args: &[String],
+    ) -> Result<ExecutionResult> {
         use crate::config::config;
         use crate::jobs::JobManager;
 
         let cfg = config();
         let manager = JobManager::new(cfg.jobs_dir())?;
-        let job = manager.spawn_xtask(subcommand, args)?;
+        let job = manager.spawn_xtask(subcommand, args).await?;
 
         let result = ExecutionResult::success()
             .with_message(format!("Started background job {}", job.id))
@@ -472,10 +481,7 @@ impl CommandContext {
     }
 }
 
-/// Trait for xtask commands.
-///
-/// All commands implement this trait to provide consistent execution,
-/// metadata, and integration with history tracking.
+#[async_trait::async_trait]
 pub trait XtaskCommand {
     /// Get the command name (used for history tracking and error messages).
     fn name(&self) -> &str;
@@ -486,7 +492,7 @@ pub trait XtaskCommand {
     /// - Use `ctx.writer()` for output formatting
     /// - Use `ProcessBuilder` for spawning processes
     /// - Return `CommandResult` with appropriate status and details
-    fn execute(&self, ctx: &CommandContext) -> Result<ExecutionResult>;
+    async fn execute(&self, ctx: &CommandContext) -> Result<ExecutionResult>;
 
     /// Get command metadata (optional, defaults to basic metadata).
     #[allow(dead_code)]
@@ -503,12 +509,13 @@ mod tests {
         should_fail: bool,
     }
 
+    #[async_trait::async_trait]
     impl XtaskCommand for TestCommand {
         fn name(&self) -> &'static str {
             "test-command"
         }
 
-        fn execute(&self, _ctx: &CommandContext) -> Result<ExecutionResult> {
+        async fn execute(&self, _ctx: &CommandContext) -> Result<ExecutionResult> {
             if self.should_fail {
                 Ok(CommandResult::failure(StructuredError {
                     code: "TEST_ERROR".to_string(),
@@ -526,8 +533,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_command_success() {
+    #[tokio::test]
+    async fn test_command_success() {
         let cmd = TestCommand { should_fail: false };
         let ctx = CommandContext::new(
             OutputWriter::new(crate::output::OutputFormat::Silent),
@@ -535,14 +542,14 @@ mod tests {
             false,
             None,
         );
-        let result = cmd.execute(&ctx).expect("should not error");
+        let result = cmd.execute(&ctx).await.expect("should not error");
 
         assert!(result.is_success());
         assert_eq!(result.message, Some("Test passed".to_string()));
     }
 
-    #[test]
-    fn test_command_failure() {
+    #[tokio::test]
+    async fn test_command_failure() {
         let cmd = TestCommand { should_fail: true };
         let ctx = CommandContext::new(
             OutputWriter::new(crate::output::OutputFormat::Silent),
@@ -550,7 +557,7 @@ mod tests {
             false,
             None,
         );
-        let result = cmd.execute(&ctx).expect("should not error");
+        let result = cmd.execute(&ctx).await.expect("should not error");
 
         assert!(result.is_failure());
         assert_eq!(result.errors.len(), 1);

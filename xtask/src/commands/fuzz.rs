@@ -32,12 +32,13 @@ pub enum FuzzSubcommand {
     Corpus { target: String },
 }
 
+#[async_trait::async_trait]
 impl XtaskCommand for FuzzCommand {
     fn name(&self) -> &'static str {
         "fuzz"
     }
 
-    fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
+    async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         match &self.subcommand {
             FuzzSubcommand::Init { package } => execute_init(package, ctx),
             FuzzSubcommand::List => execute_list(ctx),
@@ -451,8 +452,8 @@ mod tests {
         assert!(metadata.modifies_state);
     }
 
-    #[test]
-    fn test_list_command() {
+    #[tokio::test]
+    async fn test_list_command() {
         let cmd = FuzzCommand {
             subcommand: FuzzSubcommand::List,
         };
@@ -464,12 +465,12 @@ mod tests {
         );
 
         // Should not panic even if no fuzz targets exist
-        let result = cmd.execute(&ctx);
+        let result = cmd.execute(&ctx).await;
         assert!(result.is_ok());
     }
 
-    #[test]
-    fn test_invalid_target_format() {
+    #[tokio::test]
+    async fn test_invalid_target_format() {
         let cmd = FuzzCommand {
             subcommand: FuzzSubcommand::Run {
                 target: "invalid_format".to_string(),
@@ -484,7 +485,7 @@ mod tests {
             None,
         );
 
-        let result = cmd.execute(&ctx).expect("should return result");
+        let result = cmd.execute(&ctx).await.expect("should return result");
         assert!(result.is_failure());
         assert_eq!(result.errors[0].code, "INVALID_TARGET_FORMAT");
     }
