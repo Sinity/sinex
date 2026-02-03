@@ -383,6 +383,31 @@ impl ArchivedEvents {
         )
     }
 
+    /// Generates indexes for the archived events table.
+    #[must_use]
+    pub fn create_indexes_sql() -> Vec<String> {
+        vec![
+            // Index for querying archives by original timestamp
+            format!(
+                "CREATE INDEX IF NOT EXISTS ix_archived_events_ts_orig ON {}.{}(ts_orig)",
+                Self::schema_name(),
+                Self::table_name()
+            ),
+            // Index for querying archives by archive time
+            format!(
+                "CREATE INDEX IF NOT EXISTS ix_archived_events_archived_at ON {}.{}(archived_at)",
+                Self::schema_name(),
+                Self::table_name()
+            ),
+            // Index for querying archives by source
+            format!(
+                "CREATE INDEX IF NOT EXISTS ix_archived_events_source ON {}.{}(source)",
+                Self::schema_name(),
+                Self::table_name()
+            ),
+        ]
+    }
+
     /// Generates the trigger function that enforces the Archive-on-Delete invariant.
     ///
     /// ## Security Model
@@ -425,5 +450,144 @@ impl ArchivedEvents {
         BEFORE DELETE ON core.events
         FOR EACH ROW EXECUTE FUNCTION core.fn_archive_before_delete();
         "
+    }
+}
+
+// =============================================================================
+// The `core.event_tombstones` Table
+// =============================================================================
+
+/// **Table: `core.event_tombstones`**
+///
+/// Minimal skeleton records for events that have been permanently purged from the archive.
+/// Unlike archived events (which preserve full data and can be restored), tombstones represent
+/// events whose data is permanently gone. They preserve only structural metadata to maintain
+/// the provenance graph skeleton.
+///
+/// ## Design Philosophy: "Principled Forgetting"
+///
+/// Tombstones acknowledge that some data will eventually be forgotten, but they preserve:
+/// - **Event identity**: Which event existed (id, source, event_type)
+/// - **Temporal context**: When the original event occurred (ts_orig)
+/// - **Audit trail**: When and why it was tombstoned (ts_purged, purge_reason)
+///
+/// This enables queries like "how many terminal events from 2024 were eventually purged?"
+/// without keeping the actual payloads forever.
+///
+/// ## Storage Efficiency
+///
+/// | Tier | Typical Size | Purpose |
+/// |------|--------------|---------|
+/// | Live | ~1-10KB/event | Full data, real-time queries |
+/// | Archive | ~1-10KB/event | Full data preserved, can restore |
+/// | Tombstone | ~100 bytes/event | Skeleton only, permanent |
+///
+/// ## Lifecycle Flow
+///
+/// ```text
+/// Live ←→ Archive → Tombstone
+///          ↑           │
+///          └───────────┘  (one-way: data is gone)
+/// ```
+#[derive(Iden, Copy, Clone)]
+pub enum EventTombstones {
+    Table,
+    Id,
+    Source,
+    EventType,
+    TsOrig,
+    TsPurged,
+    PurgeReason,
+    PurgeOperationId,
+    ArchivedAt,
+}
+
+impl TableDef for EventTombstones {
+    fn table_name() -> &'static str {
+        "event_tombstones"
+    }
+    fn schema_name() -> &'static str {
+        "core"
+    }
+    fn primary_key() -> &'static str {
+        "id"
+    }
+}
+
+/// The Rust struct representation of a row from `core.event_tombstones`.
+///
+/// Used for deserializing tombstone records for analytics and audit queries.
+#[derive(Debug, FromRow)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct EventTombstoneRecord {
+    pub id: Ulid,
+    pub source: String,
+    pub event_type: String,
+    pub ts_orig: Timestamp,
+    pub ts_purged: Timestamp,
+    pub purge_reason: Option<String>,
+    pub purge_operation_id: Option<Ulid>,
+    pub archived_at: Option<Timestamp>,
+}
+
+impl EventTombstones {
+    /// Generates the `CREATE TABLE` statement for `core.event_tombstones`.
+    ///
+    /// Note: This is defined in migration m20260203_000019 as raw SQL for simplicity.
+    /// This method is provided for programmatic access to the schema definition.
+    #[must_use]
+    pub fn create_table_statement() -> TableCreateStatement {
+        Table::create()
+            .table((Alias::new("core"), EventTombstones::Table))
+            .if_not_exists()
+            .col(
+                ColumnDef::new(EventTombstones::Id)
+                    .custom(Alias::new("ULID"))
+                    .primary_key(),
+            )
+            .col(ColumnDef::new(EventTombstones::Source).text().not_null())
+            .col(ColumnDef::new(EventTombstones::EventType).text().not_null())
+            .col(
+                ColumnDef::new(EventTombstones::TsOrig)
+                    .timestamp_with_time_zone()
+                    .not_null(),
+            )
+            .col(
+                ColumnDef::new(EventTombstones::TsPurged)
+                    .timestamp_with_time_zone()
+                    .not_null()
+                    .extra("DEFAULT now()"),
+            )
+            .col(ColumnDef::new(EventTombstones::PurgeReason).text())
+            .col(ColumnDef::new(EventTombstones::PurgeOperationId).custom(Alias::new("ULID")))
+            .col(ColumnDef::new(EventTombstones::ArchivedAt).timestamp_with_time_zone())
+            .to_owned()
+    }
+
+    /// Generates indexes for the tombstones table.
+    #[must_use]
+    pub fn create_indexes_sql() -> Vec<String> {
+        vec![
+            format!(
+                "CREATE INDEX IF NOT EXISTS ix_tombstones_source ON {}.{}(source)",
+                Self::schema_name(),
+                Self::table_name()
+            ),
+            format!(
+                "CREATE INDEX IF NOT EXISTS ix_tombstones_ts_orig ON {}.{}(ts_orig)",
+                Self::schema_name(),
+                Self::table_name()
+            ),
+            format!(
+                "CREATE INDEX IF NOT EXISTS ix_tombstones_ts_purged ON {}.{}(ts_purged)",
+                Self::schema_name(),
+                Self::table_name()
+            ),
+            format!(
+                "CREATE INDEX IF NOT EXISTS ix_tombstones_purge_operation ON {}.{}(purge_operation_id) WHERE purge_operation_id IS NOT NULL",
+                Self::schema_name(),
+                Self::table_name()
+            ),
+        ]
     }
 }
