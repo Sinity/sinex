@@ -76,12 +76,13 @@ pub struct ContractsCommand {
     pub subcommand: ContractsSubcommand,
 }
 
+#[async_trait::async_trait]
 impl XtaskCommand for ContractsCommand {
     fn name(&self) -> &'static str {
         "contracts"
     }
 
-    fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
+    async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         match &self.subcommand {
             ContractsSubcommand::Generate { output, sync } => execute_generate(output, *sync, ctx),
             ContractsSubcommand::Deploy {
@@ -517,8 +518,8 @@ mod tests {
         assert_eq!(cmd.name(), "contracts");
     }
 
-    #[test]
-    fn test_deploy_requires_database_url() {
+    #[tokio::test]
+    async fn test_deploy_requires_database_url() {
         let cmd = ContractsCommand {
             subcommand: ContractsSubcommand::Deploy {
                 input: "schemas/v1".to_string(),
@@ -526,8 +527,13 @@ mod tests {
             },
         };
 
-        let ctx = CommandContext::new(OutputWriter::new(crate::output::OutputFormat::Silent));
-        let result = cmd.execute(&ctx);
+        let ctx = CommandContext::new(
+            OutputWriter::new(crate::output::OutputFormat::Silent),
+            false,
+            false,
+            None,
+        );
+        let result = cmd.execute(&ctx).await;
 
         assert!(result.is_err());
         assert!(result

@@ -5,31 +5,34 @@
 
 use crate::sandbox::prelude::*;
 use serde_json::{json, Value as JsonValue};
-use sinex_primitives::Timestamp;
+use sinex_primitives::events::DynamicPayload;
+use sinex_primitives::temporal::{Duration, Timestamp};
+use sinex_schema::ulid::Ulid;
 use std::sync::atomic::{AtomicI64, Ordering};
-use time::{Duration, OffsetDateTime};
 
 /// Clock for generating sequential test timestamps
 ///
 /// Ensures events have predictable ordering in tests.
 pub struct SeedClock {
-    base: OffsetDateTime,
+    base: Timestamp,
     offset_ms: AtomicI64,
 }
 
 impl SeedClock {
     /// Create a new seed clock starting from now - 1 hour
+    #[must_use]
     pub fn new() -> Self {
         Self {
-            base: OffsetDateTime::now_utc() - Duration::hours(1),
+            base: Timestamp::now() - Duration::hours(1),
             offset_ms: AtomicI64::new(0),
         }
     }
 
     /// Create a seed clock starting from a specific time
+    #[must_use]
     pub fn from_base(base: Timestamp) -> Self {
         Self {
-            base: base.inner(),
+            base,
             offset_ms: AtomicI64::new(0),
         }
     }
@@ -37,18 +40,22 @@ impl SeedClock {
     /// Get current timestamp and advance by given milliseconds
     pub fn tick(&self, advance_ms: i64) -> Timestamp {
         let offset = self.offset_ms.fetch_add(advance_ms, Ordering::SeqCst);
-        Timestamp::new(self.base + Duration::milliseconds(offset))
+        self.timestamp_at_offset(offset)
     }
 
     /// Get current timestamp without advancing
     pub fn now(&self) -> Timestamp {
         let offset = self.offset_ms.load(Ordering::SeqCst);
-        Timestamp::new(self.base + Duration::milliseconds(offset))
+        self.timestamp_at_offset(offset)
     }
 
     /// Reset to base time
     pub fn reset(&self) {
         self.offset_ms.store(0, Ordering::SeqCst);
+    }
+
+    fn timestamp_at_offset(&self, offset: i64) -> Timestamp {
+        self.base + Duration::milliseconds(offset)
     }
 }
 
@@ -79,12 +86,14 @@ impl EventSpec {
     }
 
     /// Set payload
+    #[must_use]
     pub fn with_payload(mut self, payload: JsonValue) -> Self {
         self.payload = payload;
         self
     }
 
     /// Set timestamp
+    #[must_use]
     pub fn at(mut self, timestamp: Timestamp) -> Self {
         self.timestamp = Some(timestamp);
         self
@@ -101,11 +110,13 @@ pub async fn seed_events_via_scope(
 
     for spec in events {
         let _timestamp = spec.timestamp.unwrap_or_else(|| clock.tick(100));
+
         let payload =
             DynamicPayload::new(spec.source.as_str(), spec.event_type.as_str(), spec.payload);
+
         let event = ctx.publish(payload).await?;
         if let Some(id) = event.id {
-            ids.push(*id.as_ulid());
+            ids.push(*id.as_ulid() as Ulid);
         }
     }
 
@@ -125,6 +136,7 @@ pub struct AnalyticsDataset {
 
 impl AnalyticsDataset {
     /// Create minimal semantic dataset for analytics tests
+    #[must_use]
     pub fn semantic_min() -> Self {
         let events = vec![
             EventSpec::new("shell.bash", "command.executed")
@@ -163,6 +175,7 @@ impl AnalyticsDataset {
     }
 
     /// Create performance dataset with many events
+    #[must_use]
     pub fn perf(count: usize) -> Self {
         let mut events = Vec::with_capacity(count);
         for i in 0..count {
@@ -199,6 +212,7 @@ pub struct QueryDataset {
 
 impl QueryDataset {
     /// Create minimal semantic dataset for query/search tests
+    #[must_use]
     pub fn semantic_min() -> Self {
         let events = vec![
             EventSpec::new("shell.bash", "command.executed")

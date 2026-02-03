@@ -189,15 +189,11 @@ fn convert_notify_event_secure(
     // Find the appropriate watch root for validation
     let mut validated = false;
     for watch_root in validated_watch_roots {
-        match validate_discovered_file(path_str, watch_root.as_str(), security_policy) {
-            Ok(_) => {
-                validated = true;
-                break;
-            }
-            Err(_) => {
-                // Try next watch root
-            }
+        if let Ok(_) = validate_discovered_file(path_str, watch_root.as_str(), security_policy) {
+            validated = true;
+            break;
         }
+        // Try next watch root
     }
 
     if !validated {

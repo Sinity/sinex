@@ -12,6 +12,7 @@ pub struct TestSnapshot {
 }
 
 impl TestSnapshot {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }

@@ -622,7 +622,7 @@ async fn material_acquisition_concurrent_sessions_isolated(mut ctx: TestContext)
             let session_id = format!("session-{idx}");
             let mut handle = manager.begin_material(&session_id).await?;
             let material_id = handle.material_id;
-            synchronizer.worker_ready();
+            let _ = synchronizer.worker_ready();
             synchronizer
                 .wait_for_all_ready(Duration::from_secs(20))
                 .await?;

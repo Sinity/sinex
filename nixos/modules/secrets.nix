@@ -1,9 +1,13 @@
-{ config, lib, ... }:
+{ config, lib, options, ... }:
 
 with lib;
 
 let
   cfg = config.services.sinex;
+
+  # Check if agenix is available (age.secrets option exists)
+  agenixAvailable = options ? age && options.age ? secrets;
+
   secretDir = ../../secret;
   available = builtins.pathExists secretDir;
   files = if available then builtins.readDir secretDir else {};
@@ -42,6 +46,9 @@ let
   defaultIdentities = [ "/etc/ssh/ssh_host_ed25519_key" ]
     ++ optional (builtins.pathExists "/home/${defaultOwner}/.ssh/id_ed25519") "/home/${defaultOwner}/.ssh/id_ed25519";
 
+  # Whether to actually configure agenix
+  shouldConfigureAgenix = agenixAvailable && cfg.enable && (cfg.secrets.enableAgenix or false);
+
 in
 {
   options.sinex.secrets = {
@@ -57,10 +64,12 @@ in
     };
   };
 
-  config = mkIf (cfg.enable && (cfg.secrets.enableAgenix or false)) {
+  # Use optionalAttrs to completely avoid defining age.* when agenix isn't available
+  config = {
+    sinex.secrets.paths = mkDefault (if shouldConfigureAgenix then mapAttrs (_: spec: spec.path) specs else {});
+    sinex.secrets.exportScript = mkDefault (if shouldConfigureAgenix then exportScript else "");
+  } // optionalAttrs shouldConfigureAgenix {
     age.identityPaths = mkDefault defaultIdentities;
     age.secrets = specs;
-    sinex.secrets.paths = mkDefault (mapAttrs (_: spec: spec.path) specs);
-    sinex.secrets.exportScript = mkDefault exportScript;
   };
 }

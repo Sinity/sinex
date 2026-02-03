@@ -76,7 +76,7 @@ pub fn create_temp_test_file(test_name: &str, content: &str) -> TestResult<Utf8P
 
 /// Create a test binary file with specific content
 ///
-/// Similar to create_test_file but for binary content.
+/// Similar to `create_test_file` but for binary content.
 pub fn create_test_binary_file(
     parent_dir: &Path,
     filename: &str,

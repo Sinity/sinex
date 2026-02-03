@@ -1,8 +1,8 @@
-//! RAII guards for PostgreSQL session state.
+//! RAII guards for `PostgreSQL` session state.
 //!
 //! These guards follow the same pattern as `OperationIdGuard`: explicit restore
 //! via consuming `restore()` method. Drop is not implemented because guards are
-//! consumed by restore() calls.
+//! consumed by `restore()` calls.
 
 use crate::sandbox::prelude::*;
 use sqlx::pool::PoolConnection;
@@ -28,7 +28,7 @@ impl EnvGuard {
     pub fn new() -> Self {
         let lock = ENV_MUTEX
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         Self {
             lock: Some(lock),
             original: Vec::new(),
@@ -94,7 +94,7 @@ pub struct ReplicationRoleGuard {
 }
 
 impl ReplicationRoleGuard {
-    /// Attempt to set session_replication_role to 'replica' for cleanup.
+    /// Attempt to set `session_replication_role` to 'replica' for cleanup.
     pub async fn disable_for_cleanup(conn: &mut PoolConnection<Postgres>) -> Result<Self> {
         sqlx::query("SET session_replication_role = 'replica'")
             .execute(conn.as_mut())
@@ -104,7 +104,7 @@ impl ReplicationRoleGuard {
         Ok(Self { was_set: true })
     }
 
-    /// Restore session_replication_role to 'origin'.
+    /// Restore `session_replication_role` to 'origin'.
     pub async fn restore(self, conn: &mut PoolConnection<Postgres>) -> Result<()> {
         if self.was_set {
             if let Err(e) = sqlx::query("SET session_replication_role = 'origin'")
@@ -120,6 +120,7 @@ impl ReplicationRoleGuard {
         Ok(())
     }
 
+    #[must_use]
     pub fn was_set(&self) -> bool {
         self.was_set
     }
@@ -154,6 +155,7 @@ impl RowSecurityGuard {
         Ok(())
     }
 
+    #[must_use]
     pub fn was_disabled(&self) -> bool {
         self.was_disabled
     }
@@ -200,16 +202,16 @@ impl TriggersGuard {
         for table in &self.tables {
             let query = format!("ALTER TABLE {table} ENABLE TRIGGER ALL");
             if let Err(e) = sqlx::query(&query).execute(conn.as_mut()).await {
-                if !is_hypertable_trigger_toggle_error(&e) {
+                if is_hypertable_trigger_toggle_error(&e) {
+                    tracing::warn!(
+                        table = %table,
+                        "Skipping trigger enable for hypertable after cleanup"
+                    );
+                } else {
                     tracing::warn!(
                         error = %e,
                         table = %table,
                         "Failed to re-enable triggers after cleanup"
-                    );
-                } else {
-                    tracing::warn!(
-                        table = %table,
-                        "Skipping trigger enable for hypertable after cleanup"
                     );
                 }
             }
@@ -217,6 +219,7 @@ impl TriggersGuard {
         Ok(())
     }
 
+    #[must_use]
     pub fn disabled_tables(&self) -> &[String] {
         &self.tables
     }

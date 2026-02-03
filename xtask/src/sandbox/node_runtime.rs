@@ -43,11 +43,13 @@ impl<'ctx> TestRuntimeBuilder<'ctx> {
         }
     }
 
+    #[must_use]
     pub fn with_dry_run(mut self, dry_run: bool) -> Self {
         self.dry_run = dry_run;
         self
     }
 
+    #[must_use]
     pub fn with_raw_config(mut self, raw_config: HashMap<String, serde_json::Value>) -> Self {
         self.raw_config = raw_config;
         self
@@ -125,6 +127,7 @@ impl TestRuntime {
         TestRuntimeBuilder::new(ctx, service_name).build().await
     }
 
+    #[must_use]
     pub fn heartbeat(&self, interval: sinex_primitives::Seconds) -> HeartbeatEmitter {
         self.runtime.heartbeat_emitter(interval)
     }

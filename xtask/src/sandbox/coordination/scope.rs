@@ -1,9 +1,10 @@
-//! PipelineScope - unified test harness for pipeline integration tests.
+//! `PipelineScope` - unified test harness for pipeline integration tests.
 //!
-//! This module combines the previous PipelineHarness functionality directly,
+//! This module combines the previous `PipelineHarness` functionality directly,
 //! providing a single type for pipeline tests.
 
 use crate::sandbox::coordination::PipelineNamespace;
+use crate::sandbox::events::EventPublisher;
 use crate::sandbox::nats::{acquire_pipeline_permit, wait_for_event_persisted};
 use crate::sandbox::orchestrator::{start_test_ingestd_with_config, TestIngestdConfig};
 use crate::sandbox::prelude::{EventId, TestResult};
@@ -19,7 +20,7 @@ use tokio::runtime::Handle;
 use tokio::sync::OwnedSemaphorePermit;
 use tracing::info;
 
-/// PipelineScope provides a complete pipeline test harness with ingestd, JetStream,
+/// `PipelineScope` provides a complete pipeline test harness with ingestd, `JetStream`,
 /// and automatic cleanup.
 ///
 /// This is the primary type for tests that need to exercise the full ingestion pipeline.
@@ -61,31 +62,36 @@ impl<'ctx> PipelineScope<'ctx> {
     }
 
     /// Access the underlying Sandbox.
+    #[must_use]
     pub fn ctx(&self) -> &Sandbox {
         self.ctx
     }
 
     /// Access the per-test pipeline namespace.
+    #[must_use]
     pub fn namespace(&self) -> &PipelineNamespace {
         self.ctx.pipeline_namespace()
     }
 
-    /// Build a namespaced JetStream subject.
+    /// Build a namespaced `JetStream` subject.
+    #[must_use]
     pub fn subject(&self, base: &str) -> String {
         self.namespace().subject(base)
     }
 
-    /// Build a namespaced JetStream stream name.
+    /// Build a namespaced `JetStream` stream name.
+    #[must_use]
     pub fn stream(&self, base: &str) -> String {
         self.namespace().stream(base)
     }
 
-    /// Build a namespaced JetStream consumer name.
+    /// Build a namespaced `JetStream` consumer name.
+    #[must_use]
     pub fn consumer_name(&self, base: &str) -> String {
         self.namespace().consumer_name(base)
     }
 
-    /// Publish a test event through JetStream and wait until ingestd persists it.
+    /// Publish a test event through `JetStream` and wait until ingestd persists it.
     ///
     /// Accepts any type implementing `Publishable`:
     /// - Typed `EventPayload` implementations (recommended)
@@ -110,7 +116,7 @@ impl<'ctx> PipelineScope<'ctx> {
         .await
     }
 
-    /// Publish a test event with overrides (ts_orig, id, etc.) and wait until persisted.
+    /// Publish a test event with overrides (`ts_orig`, id, etc.) and wait until persisted.
     pub async fn publish_with_overrides<P: Publishable>(
         &self,
         payload: P,
@@ -163,7 +169,7 @@ impl<'ctx> PipelineScope<'ctx> {
         };
 
         let publish_start = Instant::now();
-        let event_id = self.ctx.publish_prebuilt_event(&event).await?;
+        let event_id: sinex_schema::ulid::Ulid = self.ctx.publish_prebuilt_event(&event).await?;
         let publish_ms = publish_start.elapsed().as_millis();
         let wait_start = Instant::now();
         wait_for_event_persisted(self.ctx, event_id).await?;

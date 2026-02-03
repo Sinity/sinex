@@ -17,7 +17,7 @@ C_RESET=$'\033[0m'
 # State directory for history
 STATE_DIR="${SINEX_STATE_DIR:-$HOME/.local/state/sinex}"
 HISTORY_DB="${STATE_DIR}/xtask-history.db"
-DEV_STATE_DIR="${SINEX_DEV_STATE_DIR:-.devenv/sinex-dev}"
+DEV_STATE_DIR="${SINEX_DEV_STATE_DIR:-.sinex}"
 
 # Status symbols
 sym_ok="${C_GREEN}✓${C_RESET}"

@@ -39,12 +39,18 @@
 //! ```
 
 use crate::sandbox::prelude::*;
+use std::collections::HashSet;
 
-use crate::sandbox::assertions::EventAssert;
+use crate::sandbox::assertions::{ContextualAssert, EventAssert};
+use crate::sandbox::background::{
+    await_pending_cleanups, BackgroundRegistry, BACKGROUND_TIMEOUT_SECS, CLEANUP_AWAIT_SECS,
+    CLEANUP_HANDLES,
+};
 use crate::sandbox::coordination::PipelineNamespace;
 use crate::sandbox::coordination::PipelineScope;
 use crate::sandbox::db::pool::{acquire_test_database, TestDatabase};
 use crate::sandbox::db::{reset_database, verify_clean_state};
+use crate::sandbox::events::{cleanup_created_records, CreatedEventInfo, EventPublisher};
 use crate::sandbox::nats::shared_nats_handle;
 use crate::sandbox::nats::EphemeralNats;
 use crate::sandbox::nats::NatsSetup;
@@ -53,24 +59,20 @@ use crate::sandbox::orchestrator::{
 };
 use crate::sandbox::prelude::TestResult;
 use crate::sandbox::snapshot_helper::{self, FailureContext};
-use crate::sandbox::timing::{TimingUtils, WaitHelpers, DEFAULT_WAIT_SECS};
+use crate::sandbox::timing::TimingUtils;
 use async_nats::{jetstream, Client as NatsClient};
 use color_eyre::eyre::{eyre, WrapErr};
-use futures::future::BoxFuture;
 use futures::FutureExt;
 use futures::StreamExt;
 use parking_lot::Mutex;
 use serde_json::Value as JsonValue;
 use sinex_db::DbPool;
 use sinex_db::DbPoolExt;
-use sinex_primitives::{Event, OffsetKind, Provenance, SourceMaterial};
-use sinex_primitives::{Id, Timestamp, Ulid};
+use sinex_primitives::events::Publishable;
+use sinex_primitives::{Event, Id, SourceMaterial, Ulid};
 use std::result::Result as StdResult;
 
-use sinex_primitives::events::Publishable;
-use sinex_primitives::{EventSource, EventType};
-use std::collections::HashSet;
-use std::mem;
+use std::str::FromStr;
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
@@ -80,9 +82,6 @@ use tokio::sync::Mutex as AsyncMutex;
 use tokio::sync::OnceCell as AsyncOnceCell;
 use tokio::task::JoinHandle;
 use tracing::warn;
-use uuid::Uuid;
-
-use std::str::FromStr;
 
 fn format_cleanup_failure_context(
     message: &str,
@@ -109,47 +108,6 @@ fn format_cleanup_failure_context(
         pending,
         diagnostics.format_for_error()
     )
-}
-
-/// Test context providing database isolation and test utilities
-///
-/// This struct provides access to an isolated database and test-specific
-/// utilities without wrapping production APIs. Tests should use the pool
-/// field directly to access repositories and production Event creation APIs.
-#[derive(Clone, Debug)]
-pub(crate) struct CreatedEventInfo {
-    event_id: Ulid,
-    material_id: Option<Ulid>,
-}
-
-static CLEANUP_HANDLES: std::sync::LazyLock<AsyncMutex<Vec<tokio::task::JoinHandle<()>>>> =
-    std::sync::LazyLock::new(|| AsyncMutex::new(Vec::new()));
-
-const CLEANUP_AWAIT_SECS: u64 = 2;
-const BACKGROUND_TIMEOUT_SECS: u64 = 10;
-
-async fn await_pending_cleanups() {
-    let timeout = Duration::from_secs(CLEANUP_AWAIT_SECS);
-
-    let mut handles = CLEANUP_HANDLES.lock().await;
-    let pending = mem::take(&mut *handles);
-    drop(handles);
-
-    for mut handle in pending {
-        match tokio::time::timeout(timeout, &mut handle).await {
-            Ok(Ok(())) => {}
-            Ok(Err(err)) => {
-                warn!("Background cleanup task failed: {}", err);
-            }
-            Err(_) => {
-                handle.abort();
-                warn!(
-                    "Background cleanup task exceeded {:?}; aborting to avoid cross-test deadlocks",
-                    timeout
-                );
-            }
-        }
-    }
 }
 
 pub struct Sandbox {
@@ -227,22 +185,27 @@ pub struct SandboxFailureSnapshot {
 }
 
 impl SandboxFailureSnapshot {
+    #[must_use]
     pub fn test_name(&self) -> &str {
         &self.test_name
     }
 
+    #[must_use]
     pub fn baseline_event_count(&self) -> i64 {
         self.baseline_events
     }
 
+    #[must_use]
     pub fn elapsed_ms(&self) -> u128 {
         self.start_time.elapsed().as_millis()
     }
 
+    #[must_use]
     pub fn captured_logs(&self) -> Vec<String> {
         self.captured_logs.lock().clone()
     }
 
+    #[must_use]
     pub fn background_snapshot(&self) -> BackgroundSnapshot {
         match self.background.try_lock() {
             Ok(guard) => BackgroundSnapshot {
@@ -295,12 +258,20 @@ impl Sandbox {
     }
 
     /// Best-effort access to the current Sandbox handle (pool + background).
+    #[must_use]
     pub fn try_current() -> Option<SandboxHandle> {
         Self::CURRENT_CTX.with(|cell| cell.borrow().clone())
     }
     /// Accessor for the shared database pool.
+    #[must_use]
     pub fn pool(&self) -> &DbPool {
         &self.pool
+    }
+
+    /// Publish a test event through the ingestion pipeline.
+    pub async fn publish<P: Publishable>(&self, payload: P) -> TestResult<Event<JsonValue>> {
+        // Use the trait implementation from events.rs
+        EventPublisher::publish(self, payload).await
     }
 
     /// Recursively sanitize a JSON payload (strings and object keys).
@@ -433,30 +404,12 @@ impl Sandbox {
     }
 
     /// Configure NATS for this test context using a fluent builder.
-    ///
-    /// Returns a [`NatsSetup`] builder that can be configured and awaited.
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// // Shared NATS (default, recommended for most tests)
-    /// let ctx = ctx.with_nats().shared().await?;
-    ///
-    /// // Dedicated NATS instance (for isolation)
-    /// let ctx = ctx.with_nats().dedicated().await?;
-    ///
-    /// // Shared with TLS
-    /// let ctx = ctx.with_nats().shared().secure().await?;
-    ///
-    /// // Custom configuration
-    /// let builder = EphemeralNats::builder().with_auth_token("secret");
-    /// let ctx = ctx.with_nats().config(builder).await?;
-    /// ```
+    #[must_use]
     pub fn with_nats(self) -> NatsSetup {
         NatsSetup::new(self)
     }
 
-    /// Internal: Set NATS state (used by NatsSetup builder).
+    /// Internal: Set NATS state (used by `NatsSetup` builder).
     pub(crate) fn set_nats(
         &mut self,
         nats: Option<Arc<EphemeralNats>>,
@@ -468,17 +421,13 @@ impl Sandbox {
         self.nats_mode = mode;
     }
 
-    /// Internal: Register client with reaper for cleanup (used by NatsSetup builder).
+    /// Internal: Register client with reaper for cleanup (used by `NatsSetup` builder).
     pub(crate) fn register_reaper_client(&self, client: NatsClient) {
         self._reaper.nats.lock().replace(client);
     }
 
     /// Get the NATS client for this test context
-    ///
-    /// Returns the NATS client from either `with_nats()` initialization or
-    /// lazy initialization via `ensure_nats()`.
-    ///
-    /// Panics if NATS was not enabled.
+    #[must_use]
     pub fn nats_client(&self) -> NatsClient {
         // First check the primary nats_client field
         if let Some(client) = &self.nats_client {
@@ -494,26 +443,6 @@ impl Sandbox {
     }
 
     /// Lazily initialize shared NATS without consuming self.
-    ///
-    /// This is designed for property tests where `&Sandbox` is passed and
-    /// ownership-consuming methods like `with_nats(self)` cannot be used.
-    ///
-    /// If NATS was already initialized via `with_nats()` or `with_shared_nats()`,
-    /// returns the existing client. Otherwise, lazily initializes shared NATS
-    /// on first call and returns that client for all subsequent calls.
-    ///
-    /// # Example
-    /// ```ignore
-    /// #[sinex_prop(cases = 50)]
-    /// async fn property_nats_delivery(
-    ///     ctx: &Sandbox,
-    ///     #[strategy(message_sequence_strategy())] messages: Vec<TestMessage>,
-    /// ) -> TestResult<()> {
-    ///     let nats = ctx.ensure_nats().await?;
-    ///     // Use nats client...
-    ///     Ok(())
-    /// }
-    /// ```
     pub async fn ensure_nats(&self) -> TestResult<NatsClient> {
         // If already initialized via with_nats/with_shared_nats, use that
         if let Some(client) = &self.nats_client {
@@ -533,15 +462,13 @@ impl Sandbox {
         Ok(client.clone())
     }
 
-    /// Lazily get JetStream context without consuming self (for property tests).
+    /// Lazily get `JetStream` context without consuming self (for property tests).
     pub async fn ensure_jetstream(&self) -> TestResult<jetstream::Context> {
         let client = self.ensure_nats().await?;
         Ok(jetstream::new(client))
     }
 
     /// Lazily get checkpoint KV bucket without consuming self (for property tests).
-    ///
-    /// Uses `ensure_jetstream()` internally, so NATS is lazily initialized if needed.
     pub async fn ensure_checkpoint_kv(&self) -> TestResult<jetstream::kv::Store> {
         let js = self.ensure_jetstream().await?;
         let prefix = self.pipeline_namespace().prefix();
@@ -560,10 +487,7 @@ impl Sandbox {
         Ok(kv_store)
     }
 
-    /// Access the underlying EphemeralNats handle (lifetime-managed by the context).
-    ///
-    /// Returns the NATS handle from either `with_nats()` initialization or
-    /// lazy initialization via `ensure_nats()`.
+    /// Access the underlying `EphemeralNats` handle (lifetime-managed by the context).
     pub fn nats_handle(&self) -> TestResult<Arc<EphemeralNats>> {
         // First check the primary nats field
         if let Some(nats) = &self.nats {
@@ -578,10 +502,7 @@ impl Sandbox {
         ))
     }
 
-    /// Get a JetStream context bound to this test's NATS instance.
-    ///
-    /// Works with both `with_nats()` initialization and lazy initialization
-    /// via `ensure_nats()`.
+    /// Get a `JetStream` context bound to this test's NATS instance.
     pub async fn jetstream(&self) -> TestResult<jetstream::Context> {
         let nats = self.nats_handle()?;
         nats.jetstream().await
@@ -607,11 +528,13 @@ impl Sandbox {
     }
 
     /// Get the Sinex environment for this test context
+    #[must_use]
     pub fn env(&self) -> &SinexEnvironment {
         &self.env
     }
 
-    /// Access the per-test JetStream namespace used for pipeline resources.
+    /// Access the per-test `JetStream` namespace used for pipeline resources.
+    #[must_use]
     pub fn pipeline_namespace(&self) -> &PipelineNamespace {
         &self.pipeline_namespace
     }
@@ -621,7 +544,7 @@ impl Sandbox {
         PipelineScope::new(self).await
     }
 
-    async fn ensure_pipeline_ingestd(&self) -> TestResult<()> {
+    pub(crate) async fn ensure_pipeline_ingestd(&self) -> TestResult<()> {
         self.ensure_shared_nats()?;
         let mut guard = self.pipeline_ingestd.lock().await;
         if guard.is_some() {
@@ -693,6 +616,7 @@ impl Sandbox {
     }
 
     /// Get the NATS server URL if NATS is enabled
+    #[must_use]
     pub fn nats_url(&self) -> Option<String> {
         self.nats.as_ref().map(|n| n.client_url().to_string())
     }
@@ -716,6 +640,7 @@ impl Sandbox {
     }
 
     /// Enable tracing for this test context
+    #[must_use]
     pub fn with_tracing(mut self, level: &str) -> Self {
         Self::init_tracing(level);
         self._tracing_enabled = true;
@@ -737,21 +662,25 @@ impl Sandbox {
     }
 
     /// Get all captured log messages
+    #[must_use]
     pub fn captured_logs(&self) -> Vec<String> {
         self.captured_logs.lock().clone()
     }
 
     /// Get test name for fixture scoping
+    #[must_use]
     pub fn test_name(&self) -> &str {
         &self.test_name
     }
 
     /// Get elapsed time since context creation
+    #[must_use]
     pub fn elapsed(&self) -> Duration {
         self.start_time.elapsed()
     }
 
     /// Number of events present when the context was created
+    #[must_use]
     pub fn baseline_event_count(&self) -> i64 {
         self.baseline_events
     }
@@ -762,6 +691,7 @@ impl Sandbox {
     }
 
     /// Capture snapshot metadata that survives if the context is moved.
+    #[must_use]
     pub fn failure_snapshot(&self) -> SandboxFailureSnapshot {
         SandboxFailureSnapshot {
             test_name: self.test_name.clone(),
@@ -772,7 +702,7 @@ impl Sandbox {
         }
     }
 
-    fn record_created_event(&self, event_id: Ulid, material_id: Option<Ulid>) {
+    pub(crate) fn record_created_event(&self, event_id: Ulid, material_id: Option<Ulid>) {
         self.created_events.lock().push(CreatedEventInfo {
             event_id,
             material_id,
@@ -889,6 +819,7 @@ impl Sandbox {
         ))
     }
 
+    #[must_use]
     pub fn background_snapshot(&self) -> BackgroundSnapshot {
         match self.background.try_lock() {
             Ok(guard) => BackgroundSnapshot {
@@ -900,105 +831,6 @@ impl Sandbox {
                 labels: Vec::new(),
             },
         }
-    }
-
-    // ========== Event Publishing API ==========
-
-    /// Publish a test event through the ingestion pipeline.
-    ///
-    /// This is the recommended method for publishing events in tests. It accepts
-    /// any type implementing `Publishable`, which includes:
-    /// - All typed `EventPayload` implementations (recommended)
-    /// - `DynamicPayload` for runtime source/type (escape hatch)
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// // Typed payload (recommended) - compile-time source/type safety
-    /// ctx.publish(FileCreatedPayload { path: sp("/test"), size: 1024, ... }).await?;
-    ///
-    /// // Dynamic payload (escape hatch) - runtime source/type
-    /// ctx.publish(DynamicPayload::new("source", "type", json!({...}))).await?;
-    /// ```
-    pub async fn publish<P: Publishable>(&self, payload: P) -> TestResult<Event<JsonValue>> {
-        self.publish_event_internal(
-            payload.source(),
-            payload.event_type(),
-            payload.to_json_value()?,
-            None,
-        )
-        .await
-    }
-
-    /// Internal implementation for event publishing (used by EventPublisher).
-    ///
-    /// This method uses `ensure_nats()` to lazily initialize NATS if not already
-    /// configured, enabling property tests (which receive `&Sandbox`) to
-    /// publish events without requiring ownership-consuming `with_nats(self)`.
-    pub(crate) async fn publish_event_internal(
-        &self,
-        source: EventSource,
-        event_type: EventType,
-        payload: JsonValue,
-        timestamp_override: Option<Timestamp>,
-    ) -> TestResult<Event<JsonValue>> {
-        use sinex_primitives::HostName;
-
-        // Ensure NATS is available (lazy initialization for property tests)
-        let _client = self.ensure_nats().await?;
-
-        let mut sanitized_payload = payload;
-        Sandbox::sanitize_payload(&mut sanitized_payload);
-
-        // Create real source material first
-        let material_id = Id::<SourceMaterial>::new();
-        self.ensure_source_material(material_id, Some(source.as_str()))
-            .await?;
-        let material_ulid = *material_id.as_ulid();
-
-        // Build event with real provenance from the start
-        let event = Event::<JsonValue> {
-            id: Some(Id::new()),
-            source,
-            event_type,
-            payload: sanitized_payload,
-            ts_orig: Some(timestamp_override.unwrap_or_else(sinex_primitives::Timestamp::now)),
-            host: HostName::new(gethostname::gethostname().to_string_lossy().to_string()),
-            ingestor_version: Some("test-ingestor".to_string()),
-            payload_schema_id: None,
-            provenance: Provenance::Material {
-                id: material_id,
-                anchor_byte: 0,
-                offset_start: None,
-                offset_end: None,
-                offset_kind: OffsetKind::Byte,
-            },
-            associated_blob_ids: None,
-        };
-
-        let persisted_id = self.publish_prebuilt_event(&event).await?;
-        let published_event_id = Id::<Event<JsonValue>>::from_ulid(persisted_id);
-        WaitHelpers::wait_for_event_id(&self.pool, published_event_id, DEFAULT_WAIT_SECS).await?;
-
-        let stored = self
-            .pool
-            .events()
-            .get_by_id(published_event_id)
-            .await?
-            .ok_or_else(|| {
-                eyre!(
-                    "Event {} not found after pipeline publish",
-                    published_event_id
-                )
-            })?;
-
-        let cleanup_material = match &stored.provenance() {
-            Provenance::Material { id, .. } => Some(*id.as_ulid()),
-            _ => Some(material_ulid),
-        };
-        self.record_created_event(*published_event_id.as_ulid(), cleanup_material);
-
-        Ok(stored)
     }
 
     /// Ensure a source material record exists for tests that construct provenance manually.
@@ -1068,16 +900,19 @@ impl Sandbox {
     }
 
     /// Connection URL for the underlying test database.
+    #[must_use]
     pub fn database_url(&self) -> &str {
         self.db.url()
     }
 
     /// Name of the dedicated database slot backing this context.
+    #[must_use]
     pub fn database_name(&self) -> &str {
         self.db.name()
     }
 
     /// Access timing utilities
+    #[must_use]
     pub fn timing(&self) -> TimingUtils<'_> {
         TimingUtils::new(self)
     }
@@ -1094,6 +929,7 @@ impl Sandbox {
     }
 
     /// Create contextual assertion helper
+    #[must_use]
     pub fn assert(&self, context: &str) -> ContextualAssert {
         ContextualAssert::new(context)
     }
@@ -1131,28 +967,7 @@ impl Sandbox {
     // ========== Event Assertion API ==========
 
     /// Create a fluent event assertion builder for composable filters.
-    ///
-    /// This is the recommended method for asserting event counts. It accepts
-    /// typed `EventSource` and `EventType` filters (strings also work via `Into`).
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// // Exact count assertion
-    /// ctx.assert_event().count(5).await?;
-    ///
-    /// // At least N events
-    /// ctx.assert_event().at_least(3).await?;
-    ///
-    /// // Filtered by source (using typed constant)
-    /// ctx.assert_event().source(EVENT_SOURCE_FS_WATCHER).count(5).await?;
-    ///
-    /// // Filtered by event type
-    /// ctx.assert_event().event_type(EVENT_TYPE_FILE_CREATED).at_least(3).await?;
-    ///
-    /// // Strings work too via Into trait
-    /// ctx.assert_event().source("fs-watcher").count(5).await?;
-    /// ```
+    #[must_use]
     pub fn assert_event(&self) -> EventAssert<'_> {
         EventAssert::new(self)
     }
@@ -1233,161 +1048,6 @@ impl Sandbox {
     }
 }
 
-impl Sandbox {
-    /// Publish a pre-built event to the ingestion pipeline via NATS.
-    ///
-    /// **For most tests, use `ctx.publish(DynamicPayload::new(...))` instead.**
-    ///
-    /// This method is for specialized tests that need to publish events with
-    /// explicit provenance that was constructed ahead of time. For example:
-    /// - Testing that Material provenance survives NATS serialization
-    /// - Testing that Synthesis provenance survives NATS serialization
-    ///
-    /// The event must already have its provenance set. This method just publishes
-    /// the pre-built event to NATS without modifying its provenance.
-    ///
-    /// If the event doesn't have an ID, one will be assigned automatically.
-    /// The event ID (ULID) is returned so tests can wait for it using `WaitHelpers`.
-    pub async fn publish_prebuilt_event(&self, event: &Event<JsonValue>) -> TestResult<Ulid> {
-        self.ensure_pipeline_ingestd().await?;
-        let client = self.nats_client();
-        let mut envelope = event.clone();
-
-        // Assign an ID if the event doesn't have one
-        let event_id = if let Some(id) = &envelope.id {
-            *id.as_ulid()
-        } else {
-            let new_id = Id::new();
-            let ulid = *new_id.as_ulid();
-            envelope.id = Some(new_id);
-            ulid
-        };
-
-        if envelope.ingestor_version.is_none() {
-            envelope.ingestor_version = Some("test-ingestd".to_string());
-        }
-        let payload = serde_json::to_vec(&envelope)?;
-
-        let base_subject = format!("events.raw.{}", event.source);
-        let subject = self.pipeline_namespace().subject(&base_subject);
-
-        client.publish(subject, payload.into()).await?;
-
-        Ok(event_id)
-    }
-}
-
-async fn cleanup_created_records(pool: DbPool, records: Vec<CreatedEventInfo>) -> TestResult<()> {
-    if records.is_empty() {
-        return Ok(());
-    }
-
-    let event_ids: Vec<Uuid> = records.iter().map(|info| info.event_id.to_uuid()).collect();
-
-    if !event_ids.is_empty() {
-        sqlx::query!(
-            "DELETE FROM core.events WHERE id = ANY(($1::uuid[])::ulid[])",
-            &event_ids
-        )
-        .execute(&pool)
-        .await?;
-    }
-
-    let material_set: HashSet<Uuid> = records
-        .iter()
-        .filter_map(|info| info.material_id.map(|id| id.to_uuid()))
-        .collect();
-    let material_ids: Vec<Uuid> = material_set.into_iter().collect();
-
-    if !material_ids.is_empty() {
-        sqlx::query!(
-            "DELETE FROM raw.source_material_registry WHERE id = ANY(($1::uuid[])::ulid[])",
-            &material_ids
-        )
-        .execute(&pool)
-        .await?;
-    }
-
-    Ok(())
-}
-
-#[derive(Default)]
-pub(crate) struct BackgroundRegistry {
-    tasks: Vec<(String, JoinHandle<()>)>,
-    shutdown_hooks: Vec<(String, BoxFuture<'static, ()>)>,
-}
-
-impl BackgroundRegistry {
-    fn background_timeout_secs() -> u64 {
-        BACKGROUND_TIMEOUT_SECS
-    }
-
-    fn pending_count(&self) -> usize {
-        self.tasks.len() + self.shutdown_hooks.len()
-    }
-
-    fn add_task(&mut self, label: impl Into<String>, handle: JoinHandle<()>) {
-        self.tasks.push((label.into(), handle));
-    }
-
-    fn add_hook(&mut self, label: impl Into<String>, hook: BoxFuture<'static, ()>) {
-        self.shutdown_hooks.push((label.into(), hook));
-    }
-
-    fn labels(&self) -> Vec<String> {
-        self.tasks
-            .iter()
-            .map(|(l, _)| l.clone())
-            .chain(self.shutdown_hooks.iter().map(|(l, _)| l.clone()))
-            .collect()
-    }
-
-    async fn run_shutdown_hooks(&mut self, timeout_secs: u64) {
-        // Run shutdown hooks first so tasks can observe the signal.
-        let hooks = std::mem::take(&mut self.shutdown_hooks);
-        for (label, hook) in hooks {
-            if let Err(err) = tokio::time::timeout(Duration::from_secs(timeout_secs), hook).await {
-                warn!(%label, ?err, "Timeout waiting for shutdown hook");
-            }
-        }
-    }
-
-    async fn wait_for_tasks(&mut self, timeout_secs: u64) {
-        // Wait for tracked background tasks to finish, aborting on timeout.
-        let tasks = std::mem::take(&mut self.tasks);
-        for (label, handle) in tasks {
-            let mut handle = handle;
-            let timeout_sleep = tokio::time::sleep(Duration::from_secs(timeout_secs));
-            tokio::pin!(timeout_sleep);
-
-            tokio::select! {
-                result = &mut handle => {
-                    match result {
-                        Ok(()) => {}
-                        Err(join_err) => warn!(%label, error = %join_err, "Background task join failed"),
-                    }
-                }
-                () = &mut timeout_sleep => {
-                    warn!(%label, "Background task did not finish within timeout; aborting");
-                    handle.abort();
-                    let _ = handle.await;
-                }
-            };
-        }
-    }
-
-    async fn quiesce(&mut self) {
-        let timeout_secs = Self::background_timeout_secs();
-        self.run_shutdown_hooks(timeout_secs).await;
-        self.wait_for_tasks(timeout_secs).await;
-    }
-
-    async fn quiesce_tasks_only(&mut self) {
-        let timeout_secs = Self::background_timeout_secs();
-        self.wait_for_tasks(timeout_secs).await;
-    }
-}
-
 /// Cleanup implementation for Sandbox
 impl Drop for Sandbox {
     fn drop(&mut self) {
@@ -1403,7 +1063,7 @@ impl Drop for Sandbox {
         // Ensure any registered background work is flushed before returning the database.
         let registry = self.background.clone();
         let quiesce_fut = async move {
-            let _ = tokio::time::timeout(Duration::from_secs(15), async {
+            let _ = tokio::time::timeout(Duration::from_secs(BACKGROUND_TIMEOUT_SECS), async {
                 registry.lock().await.quiesce().await;
             })
             .await;
@@ -1432,7 +1092,7 @@ impl Drop for Sandbox {
                     }
                     let _ = tx.send(());
                 });
-                let _ = rx.recv_timeout(Duration::from_secs(20));
+                let _ = rx.recv_timeout(Duration::from_secs(CLEANUP_AWAIT_SECS));
             }
             Err(_) => {
                 // Issue 116: No runtime available, spawn blocking thread with its own runtime
@@ -1451,7 +1111,7 @@ impl Drop for Sandbox {
                     }
                     let _ = tx.send(());
                 });
-                let _ = rx.recv_timeout(Duration::from_secs(20));
+                let _ = rx.recv_timeout(Duration::from_secs(CLEANUP_AWAIT_SECS));
             }
         }
 
@@ -1518,111 +1178,5 @@ impl Drop for Sandbox {
                 self.test_name, duration
             );
         }
-    }
-}
-
-/// Rich assertion helper with contextual error messages
-pub struct ContextualAssert {
-    context: String,
-}
-
-impl ContextualAssert {
-    fn new(context: &str) -> Self {
-        Self {
-            context: context.to_string(),
-        }
-    }
-
-    /// Assert two values are equal
-    pub fn eq<T>(self, left: &T, right: &T) -> TestResult<Self>
-    where
-        T: std::fmt::Debug + PartialEq,
-    {
-        if left != right {
-            color_eyre::eyre::bail!(
-                "{}: values are not equal\n  Left: {:?}\n  Right: {:?}",
-                self.context,
-                left,
-                right
-            );
-        }
-        Ok(self)
-    }
-
-    /// Assert a condition is true
-    pub fn that(self, condition: bool, message: &str) -> TestResult<Self> {
-        if !condition {
-            color_eyre::eyre::bail!("{}: {}", self.context, message);
-        }
-        Ok(self)
-    }
-
-    /// Assert collection is not empty
-    pub fn not_empty<T>(self, collection: &[T]) -> TestResult<Self> {
-        if collection.is_empty() {
-            color_eyre::eyre::bail!("{}: collection should not be empty", self.context);
-        }
-        Ok(self)
-    }
-
-    /// Assert collection has specific size
-    pub fn has_size<T>(self, collection: &[T], expected_size: usize) -> TestResult<Self> {
-        if collection.len() != expected_size {
-            color_eyre::eyre::bail!(
-                "{}: collection size mismatch. Expected: {}, Actual: {}",
-                self.context,
-                expected_size,
-                collection.len()
-            );
-        }
-        Ok(self)
-    }
-
-    /// Assert option is Some
-    pub fn some<T>(self, option: &Option<T>) -> TestResult<Self> {
-        if option.is_none() {
-            color_eyre::eyre::bail!("{}: option should be Some, but was None", self.context);
-        }
-        Ok(self)
-    }
-
-    /// Assert option is None
-    pub fn none<T>(self, option: &Option<T>) -> TestResult<Self> {
-        if option.is_some() {
-            color_eyre::eyre::bail!("{}: option should be None, but was Some", self.context);
-        }
-        Ok(self)
-    }
-
-    /// Assert result contains error with specific message
-    pub fn error_contains<T, E>(
-        self,
-        result: &Result<T, E>,
-        expected_error: &str,
-    ) -> TestResult<Self>
-    where
-        E: std::fmt::Display,
-    {
-        match result {
-            Ok(_) => {
-                color_eyre::eyre::bail!(
-                    "{}: expected error containing '{}', but result was Ok",
-                    self.context,
-                    expected_error
-                );
-            }
-            Err(error) => {
-                let error_string = error.to_string();
-                if !error_string.contains(expected_error) {
-                    color_eyre::eyre::bail!(
-                        "{}: error message '{}' does not contain expected text '{}'",
-                        self.context,
-                        error_string,
-                        expected_error
-                    );
-                }
-            }
-        }
-        Ok(self)
     }
 }

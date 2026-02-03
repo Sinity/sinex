@@ -290,6 +290,137 @@ impl ProcessBuilder {
 
         Ok(output.status.success())
     }
+
+    /// Spawn the command and return the `std::process::Child` handle.
+    ///
+    /// This is useful for long-running processes or when you need manual control
+    /// over the process lifecycle (e.g., background jobs).
+    pub fn spawn(self) -> Result<std::process::Child> {
+        let mut cmd = Command::new(&self.program);
+        cmd.args(&self.args);
+
+        if let Some(ref dir) = self.working_dir {
+            cmd.current_dir(dir);
+        }
+
+        for (key, val) in &self.env_vars {
+            cmd.env(key, val);
+        }
+
+        // Configure stdio based on capture setting
+        if self.capture_output {
+            cmd.stdout(Stdio::piped());
+            cmd.stderr(Stdio::piped());
+        } else {
+            cmd.stdout(Stdio::inherit());
+            cmd.stderr(Stdio::inherit());
+        }
+
+        cmd.spawn()
+            .with_context(|| format!("failed to spawn: {}", self.program))
+    }
+
+    /// Spawn the command using tokio and return the `tokio::process::Child` handle.
+    ///
+    /// This is the async version of `spawn()`.
+    pub fn spawn_tokio(self) -> Result<tokio::process::Child> {
+        let mut cmd = tokio::process::Command::new(&self.program);
+        cmd.args(&self.args);
+
+        if let Some(ref dir) = self.working_dir {
+            cmd.current_dir(dir);
+        }
+
+        for (key, val) in &self.env_vars {
+            cmd.env(key, val);
+        }
+
+        if self.capture_output {
+            cmd.stdout(Stdio::piped());
+            cmd.stderr(Stdio::piped());
+        } else {
+            cmd.stdout(Stdio::inherit());
+            cmd.stderr(Stdio::inherit());
+        }
+
+        cmd.spawn()
+            .with_context(|| format!("failed to spawn async: {}", self.program))
+    }
+
+    /// Execute the command and return an async stream of stdout lines.
+    ///
+    /// This is the non-blocking equivalent of `spawn_with_streaming`.
+    pub fn spawn_tokio_streaming(
+        self,
+    ) -> Result<(
+        tokio::process::Child,
+        tokio::io::Lines<tokio::io::BufReader<tokio::process::ChildStdout>>,
+    )> {
+        use tokio::io::AsyncBufReadExt;
+
+        let mut cmd = tokio::process::Command::new(&self.program);
+        cmd.args(&self.args);
+
+        if let Some(ref dir) = self.working_dir {
+            cmd.current_dir(dir);
+        }
+
+        for (key, val) in &self.env_vars {
+            cmd.env(key, val);
+        }
+
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::piped());
+
+        let mut child = cmd
+            .spawn()
+            .with_context(|| format!("failed to spawn async streaming: {}", self.program))?;
+
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("failed to capture async stdout"))?;
+
+        let reader = tokio::io::BufReader::new(stdout).lines();
+
+        Ok((child, reader))
+    }
+
+    /// Execute the command and return a streaming iterator over stdout lines.
+    ///
+    /// This is useful for TUI applications that need to process output in real-time
+    /// (e.g., tests) while still capturing it.
+    ///
+    /// Note: This version is synchronous and blocks the caller when reading from the reader.
+    /// For async contexts, use `spawn_tokio_streaming`.
+    pub fn spawn_with_streaming(self) -> Result<(std::process::Child, impl std::io::BufRead)> {
+        let mut cmd = Command::new(&self.program);
+        cmd.args(&self.args);
+
+        if let Some(ref dir) = self.working_dir {
+            cmd.current_dir(dir);
+        }
+
+        for (key, val) in &self.env_vars {
+            cmd.env(key, val);
+        }
+
+        // We strictly pipe stdout for streaming
+        cmd.stdout(Stdio::piped());
+        // Stderr is piped too to avoid pollution, caller can read it from child if needed
+        cmd.stderr(Stdio::piped());
+
+        let mut child = cmd
+            .spawn()
+            .with_context(|| format!("failed to spawn for streaming: {}", self.program))?;
+
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("failed to capture stdout"))?;
+
+        Ok((child, std::io::BufReader::new(stdout)))
+    }
 }
 
 #[cfg(test)]

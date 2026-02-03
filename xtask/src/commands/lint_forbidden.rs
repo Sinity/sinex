@@ -20,12 +20,13 @@ use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskComman
 #[derive(Debug, Clone, clap::Args)]
 pub struct LintForbiddenCommand;
 
+#[async_trait::async_trait]
 impl XtaskCommand for LintForbiddenCommand {
     fn name(&self) -> &'static str {
         "lint-forbidden"
     }
 
-    fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
+    async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         if ctx.is_human() {
             println!("========== forbidden pattern scan ==========");
         }
@@ -44,15 +45,20 @@ impl XtaskCommand for LintForbiddenCommand {
             "crate/lib/sinex-node-sdk/src/watcher_handle.rs",
             "crate/lib/sinex-node-sdk/src/schema_validator.rs",
             "crate/lib/sinex-node-sdk/examples/git_activity_detector.rs",
-            "cli/sinex-cli/tests/retry_tests.rs",
-            "cli/sinex-cli/tests/gateway_client_tests.rs",
-            "cli/sinex-cli/tests/mock_client_tests.rs",
-            "cli/sinex-cli/tests/common/mock_client.rs",
-            "cli/sinex-cli/src/fmt/progress.rs",
+            "crate/cli/tests/retry_tests.rs",
+            "crate/cli/tests/gateway_client_tests.rs",
+            "crate/cli/tests/mock_client_tests.rs",
+            "crate/cli/tests/common/mock_client.rs",
+            "crate/cli/src/fmt/progress.rs",
             "xtask/src/main.rs",
+            "xtask/src/command.rs",
             "xtask/src/commands/lint_forbidden.rs",
+            "xtask/src/commands/contracts.rs",
+            "xtask/src/commands/fuzz.rs",
             "xtask/src/sandbox/fs/resources.rs",
-            "xtask-macros/src/lib.rs",
+            "xtask/tests/command_edge_cases.rs",
+            "xtask/tests/test_commands.rs",
+            "xtask/macros/src/lib.rs",
         ];
         // Sync #[test] allowed for unit tests that don't need async/DB
         let rust_test_allow = [
@@ -94,18 +100,18 @@ impl XtaskCommand for LintForbiddenCommand {
             "crate/tools/sx/src/watcher.rs",
             "crate/nodes/sinex-terminal-ingestor/src/secret_redaction.rs",
             "crate/nodes/sinex-terminal-ingestor/src/fish_history.rs",
-            "cli/sinex-cli/src/validation.rs",
-            "cli/sinex-cli/src/error.rs",
-            "cli/sinex-cli/src/fmt/syntax.rs",
-            "cli/sinex-cli/src/fmt/output.rs",
-            "cli/sinex-cli/src/fmt/progress.rs",
-            "cli/sinex-cli/src/commands/query.rs",
+            "crate/cli/src/validation.rs",
+            "crate/cli/src/error.rs",
+            "crate/cli/src/fmt/syntax.rs",
+            "crate/cli/src/fmt/output.rs",
+            "crate/cli/src/fmt/progress.rs",
+            "crate/cli/src/commands/query.rs",
             "xtask/src/main.rs",
             "xtask/src/command.rs",
             "xtask/src/output.rs",
             "xtask/src/process.rs",
             "xtask/src/tools.rs",
-            "xtask-macros/src/lib.rs",
+            "xtask/macros/src/lib.rs",
         ];
         // Runtime sqlx::query() is allowed for:
         // - Session control (SET, ROLLBACK, RESET)

@@ -56,12 +56,13 @@ pub enum CoverageSubcommand {
     Clean,
 }
 
+#[async_trait::async_trait]
 impl XtaskCommand for CoverageCommand {
     fn name(&self) -> &'static str {
         "coverage"
     }
 
-    fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
+    async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         match &self.subcommand {
             CoverageSubcommand::Html {
                 output,
@@ -411,7 +412,12 @@ mod tests {
 
     #[test]
     fn test_threshold_validation() {
-        let ctx = CommandContext::new(crate::output::OutputWriter::new(OutputFormat::Silent));
+        let ctx = CommandContext::new(
+            crate::output::OutputWriter::new(OutputFormat::Silent),
+            false,
+            false,
+            None,
+        );
 
         let result = execute_enforce(150.0, None, false, "target/coverage/html", &ctx);
         assert!(result.is_err());

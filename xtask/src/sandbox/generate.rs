@@ -1,11 +1,11 @@
 //! Node generator with LLM integration
 //!
 //! This module implements `cargo xtask dev generate "spec..."` which uses an LLM
-//! to generate SimpleProcessor implementations from natural language specs.
+//! to generate `SimpleProcessor` implementations from natural language specs.
 //!
 //! The workflow:
 //! 1. User describes what they want: "detect git commands from terminal events"
-//! 2. LLM generates a complete SimpleProcessor implementation
+//! 2. LLM generates a complete `SimpleProcessor` implementation
 //! 3. Code is written to a new crate in the workspace
 //! 4. Hot reload picks up the change
 
@@ -66,9 +66,13 @@ pub struct NodeSpec {
 
 impl NodeSpec {
     /// Parse a node spec from user input
+    #[must_use]
     pub fn parse(input: &str, name: Option<&str>) -> Self {
         // Extract name from input or use provided
-        let name = name.map_or_else(|| Self::derive_name_from_spec(input), |s| s.to_string());
+        let name = name.map_or_else(
+            || Self::derive_name_from_spec(input),
+            std::string::ToString::to_string,
+        );
 
         Self {
             name,
@@ -115,7 +119,7 @@ impl NodeSpec {
     }
 }
 
-/// The prompt template for generating SimpleProcessor code
+/// The prompt template for generating `SimpleProcessor` code
 pub const SIMPLE_PROCESSOR_TEMPLATE: &str = r#"# Sinex SimpleProcessor Generator
 
 You are generating a Rust SimpleProcessor implementation for the Sinex event processing system.
@@ -278,7 +282,7 @@ impl NodeGenerator {
         })
     }
 
-    /// Generate a SimpleProcessor from a spec
+    /// Generate a `SimpleProcessor` from a spec
     pub async fn generate(&self, spec: &NodeSpec) -> Result<GeneratedNode> {
         println!(
             "[generate] Creating SimpleProcessor '{}' from spec...",
@@ -310,6 +314,7 @@ impl NodeGenerator {
     }
 
     /// Build the prompt (public for dry-run preview)
+    #[must_use]
     pub fn build_prompt(&self, spec: &NodeSpec) -> String {
         SIMPLE_PROCESSOR_TEMPLATE.replace("{spec}", &spec.description)
     }
@@ -370,7 +375,7 @@ impl NodeGenerator {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            bail!("Anthropic API error {}: {}", status, body);
+            bail!("Anthropic API error {status}: {body}");
         }
 
         let response: AnthropicResponse = response
@@ -439,7 +444,7 @@ impl NodeGenerator {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            bail!("OpenAI API error {}: {}", status, body);
+            bail!("OpenAI API error {status}: {body}");
         }
 
         let response: OpenAIResponse = response

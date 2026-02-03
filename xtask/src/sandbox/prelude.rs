@@ -33,6 +33,7 @@ pub use super::timing::{Timeouts, TimingUtils, WaitHelpers};
 
 // Pipeline coordination
 pub use super::coordination::{PipelineNamespace, PipelineScope};
+pub use super::events::EventPublisher;
 pub use super::nats::EventOverrides;
 
 // Chaos testing re-exports

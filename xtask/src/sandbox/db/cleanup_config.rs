@@ -14,7 +14,7 @@ pub struct CleanupConfig {
 /// Strategy for cleaning up a specific table.
 #[derive(Debug, Clone)]
 pub struct TableCleanupStrategy {
-    /// Fully qualified table name (e.g., "core.events", "raw.temporal_ledger")
+    /// Fully qualified table name (e.g., "core.events", "`raw.temporal_ledger`")
     pub table_name: &'static str,
     /// How to clean this table
     pub method: CleanupMethod,
@@ -203,6 +203,7 @@ impl CleanupConfig {
     }
 
     /// Ordered list for FK-safe cleanup; unknown tables are appended in config order.
+    #[must_use]
     pub fn ordered_tables(&self) -> Vec<&TableCleanupStrategy> {
         // Child-to-parent ordering to minimize FK contention.
         const ORDER: &[&str] = &[

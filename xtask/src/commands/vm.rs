@@ -74,6 +74,7 @@ pub struct VmCommand {
 // XtaskCommand Implementation
 // ─────────────────────────────────────────────────────────────────────────────
 
+#[async_trait::async_trait]
 impl XtaskCommand for VmCommand {
     fn name(&self) -> &'static str {
         "vm"
@@ -88,7 +89,7 @@ impl XtaskCommand for VmCommand {
         }
     }
 
-    fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
+    async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         match &self.subcommand {
             VmSubcommand::Test {
                 category,

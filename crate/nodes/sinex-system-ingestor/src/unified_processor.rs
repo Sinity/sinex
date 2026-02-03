@@ -4,8 +4,8 @@
 
 // Use local facade for common types
 use crate::common::{
-    async_trait, info, instrument, Checkpoint, Node, NodeCapabilities, NodeResult, ScanArgs,
-    ScanReport, TimeHorizon,
+    async_trait, info, instrument, Checkpoint, NodeCapabilities, NodeResult, ScanArgs, ScanReport,
+    TimeHorizon,
 };
 use sinex_node_sdk::error_helpers::{parse_config_value, parse_typed_config};
 use sinex_node_sdk::stream_processor::{EventEmitter, NodeRuntimeState};

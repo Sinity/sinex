@@ -1125,6 +1125,15 @@ in
               || (gatewayTlsCertFile != null && gatewayTlsKeyFile != null);
             message = "Gateway TCP/TLS requires tlsCertFile and tlsKeyFile when gateway is enabled.";
           }
+          {
+            # mTLS is required for non-loopback bindings to prevent unauthorized access
+            assertion =
+              (!cfg.core.enable || !cfg.core.gateway.enable)
+              || (cfg.core.gateway.listenAddress == "127.0.0.1:9999")
+              || (!cfg.core.gateway.requireClientTLS)
+              || (gatewayTlsClientCAFile != null);
+            message = "Gateway mTLS on non-loopback address requires tlsClientCAFile. Set services.sinex.core.gateway.tlsClientCAFile.";
+          }
         ];
         environment.systemPackages = mkAfter (
           [ pkgs.dbus pkgs.git pkgs.git-annex ]

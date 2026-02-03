@@ -209,10 +209,9 @@ mod tests {
     use sinex_primitives::environment;
     use xtask::sandbox::{sinex_test, EphemeralNats};
 
-    type TestResult<T> = std::result::Result<T, Box<dyn std::error::Error>>;
-
     #[sinex_test]
-    async fn nodes_list_returns_empty_when_no_bucket() -> TestResult<()> {
+    async fn nodes_list_returns_empty_when_no_bucket(
+    ) -> std::result::Result<(), Box<dyn std::error::Error>> {
         let nats = EphemeralNats::start().await?;
         let client = nats.connect().await?;
         let env = environment();
@@ -224,7 +223,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn nodes_drain_publishes_command() -> TestResult<()> {
+    async fn nodes_drain_publishes_command() -> std::result::Result<(), Box<dyn std::error::Error>>
+    {
         let nats = EphemeralNats::start().await?;
         let client = nats.connect().await?;
         let env = environment();
@@ -242,7 +242,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn nodes_resume_publishes_command() -> TestResult<()> {
+    async fn nodes_resume_publishes_command() -> std::result::Result<(), Box<dyn std::error::Error>>
+    {
         let nats = EphemeralNats::start().await?;
         let client = nats.connect().await?;
         let env = environment();
@@ -259,7 +260,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn nodes_set_horizon_validates_timestamp() -> TestResult<()> {
+    async fn nodes_set_horizon_validates_timestamp(
+    ) -> std::result::Result<(), Box<dyn std::error::Error>> {
         let nats = EphemeralNats::start().await?;
         let client = nats.connect().await?;
         let env = environment();

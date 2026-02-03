@@ -33,11 +33,11 @@ impl Timeouts {
     pub const SHORT: u64 = 10;
     /// Medium waits (15 seconds) - moderate operations
     pub const MEDIUM: u64 = 15;
-    /// Standard waits (30 seconds) - default for most tests (= DEFAULT_WAIT_SECS)
+    /// Standard waits (30 seconds) - default for most tests (= `DEFAULT_WAIT_SECS`)
     pub const STANDARD: u64 = DEFAULT_WAIT_SECS;
-    /// Long waits (60 seconds) - integration tests (= INTEGRATION_WAIT_SECS)
+    /// Long waits (60 seconds) - integration tests (= `INTEGRATION_WAIT_SECS`)
     pub const LONG: u64 = INTEGRATION_WAIT_SECS;
-    /// Stress test waits (90 seconds) - heavy operations (= STRESS_WAIT_SECS)
+    /// Stress test waits (90 seconds) - heavy operations (= `STRESS_WAIT_SECS`)
     pub const STRESS: u64 = STRESS_WAIT_SECS;
     /// Extended waits (120 seconds) - very slow operations
     pub const EXTENDED: u64 = 120;
@@ -54,6 +54,7 @@ pub struct TestSynchronizer {
 
 impl TestSynchronizer {
     /// Create a new test synchronizer with timeout
+    #[must_use]
     pub fn new(timeout_duration: Duration) -> Self {
         let (tx, rx) = tokio::sync::watch::channel(false);
         Self {
@@ -98,6 +99,7 @@ pub struct TestBarrier {
 
 impl TestBarrier {
     /// Create a new test barrier for coordinating multiple tasks
+    #[must_use]
     pub fn new(participant_count: usize) -> Self {
         Self {
             barrier: Arc::new(tokio::sync::Barrier::new(participant_count)),
@@ -143,6 +145,7 @@ pub struct WorkerReadinessCoordinator {
 }
 
 impl WorkerReadinessCoordinator {
+    #[must_use]
     pub fn new(target_workers: usize) -> Self {
         Self {
             counter: CoordinationPrimitive::event_counter(
@@ -152,6 +155,7 @@ impl WorkerReadinessCoordinator {
         }
     }
 
+    #[must_use]
     pub fn worker_ready(&self) -> usize {
         self.counter.increment()
     }
@@ -163,6 +167,7 @@ impl WorkerReadinessCoordinator {
             .map_err(Into::into)
     }
 
+    #[must_use]
     pub fn ready_count(&self) -> usize {
         self.counter.get()
     }
@@ -597,12 +602,16 @@ impl TimingPatterns {
     }
 
     /// Create a progress tracker for multi-phase testing
+    #[must_use]
     pub fn create_test_phases(phase_names: &[&str]) -> (CoordinationPrimitive, Vec<String>) {
         let tracker = CoordinationPrimitive::progress_tracker(
             phase_names.len(),
             format!("progress_tracker_{}", phase_names.len()),
         );
-        let names = phase_names.iter().map(|s| s.to_string()).collect();
+        let names = phase_names
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect();
         (tracker, names)
     }
 }
@@ -613,6 +622,7 @@ pub struct TimingUtils<'ctx> {
 }
 
 impl<'ctx> TimingUtils<'ctx> {
+    #[must_use]
     pub fn new(ctx: &'ctx Sandbox) -> Self {
         Self { ctx }
     }
@@ -687,16 +697,19 @@ impl<'ctx> TimingUtils<'ctx> {
     }
 
     /// Create event counter for coordination using production primitives
+    #[must_use]
     pub fn event_counter(&self, target: usize) -> CoordinationPrimitive {
         CoordinationPrimitive::event_counter(target, format!("test_{}", self.ctx.test_name()))
     }
 
     /// Create test synchronizer
+    #[must_use]
     pub fn synchronizer(&self, timeout: Duration) -> TestSynchronizer {
         TestSynchronizer::new(timeout)
     }
 
     /// Create progress tracker using production primitives
+    #[must_use]
     pub fn progress_tracker(&self, step_count: usize) -> CoordinationPrimitive {
         CoordinationPrimitive::progress_tracker(
             step_count,
@@ -705,6 +718,7 @@ impl<'ctx> TimingUtils<'ctx> {
     }
 
     /// Create test barrier for coordination
+    #[must_use]
     pub fn barrier(&self, participant_count: usize) -> TestBarrier {
         TestBarrier::new(participant_count)
     }
@@ -1067,7 +1081,7 @@ mod tests {
 
         // Simulate event processing
         for _ in 0..5 {
-            counter.increment();
+            let _ = counter.increment();
         }
 
         assert_eq!(counter.get(), 5);
@@ -1086,7 +1100,7 @@ mod tests {
         // Progress through phases
         for (i, _phase) in phase_names.iter().enumerate() {
             assert_eq!(tracker.get(), i);
-            tracker.increment();
+            let _ = tracker.increment();
         }
 
         assert!(tracker.is_ready());
@@ -1192,11 +1206,11 @@ mod tests {
         assert_eq!(tracker.get(), 0);
         assert!(!tracker.is_ready());
 
-        tracker.increment();
+        let _ = tracker.increment();
         assert_eq!(tracker.get(), 1);
 
-        tracker.increment();
-        tracker.increment();
+        let _ = tracker.increment();
+        let _ = tracker.increment();
         assert!(tracker.is_ready());
 
         Ok(())

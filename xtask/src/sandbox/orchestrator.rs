@@ -43,6 +43,7 @@ pub struct DevOrchestrator {
 
 impl DevOrchestrator {
     /// Create a new orchestrator
+    #[must_use]
     pub fn new(args: RunArgs, workspace_root: Utf8PathBuf) -> Self {
         Self {
             args,
@@ -211,10 +212,7 @@ impl DevOrchestrator {
         let binary_path = match self.build().await {
             Ok(path) => path,
             Err(e) => {
-                eprintln!(
-                    "[build] Build failed: {}. Keeping current process running...",
-                    e
-                );
+                eprintln!("[build] Build failed: {e}. Keeping current process running...");
                 return Ok(()); // Don't crash, just wait for next file change
             }
         };
@@ -358,7 +356,7 @@ impl DevOrchestrator {
                 Some(event) = rx.recv() => {
                     match event {
                         WatchEvent::FileChanged(path) => {
-                            println!("[watch] Change detected: {:?}", path);
+                            println!("[watch] Change detected: {path:?}");
                             println!("[watch] Rebuilding...");
                             self.restart().await?;
                         }

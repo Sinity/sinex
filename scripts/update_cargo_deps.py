@@ -26,8 +26,7 @@ cargo_files = [
     "./crate/nodes/sinex-system-ingestor/Cargo.toml",
     "./crate/nodes/sinex-fs-ingestor/Cargo.toml",
     "./crate/nodes/sinex-health-automaton/Cargo.toml",
-    "./cli/sinex-cli/Cargo.toml",
-    "./cli/sinexctl/Cargo.toml",
+    "./crate/cli/Cargo.toml",
     "./tests/e2e/Cargo.toml",
 ]
 
