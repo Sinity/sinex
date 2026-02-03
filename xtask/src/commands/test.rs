@@ -170,7 +170,10 @@ impl XtaskCommand for TestCommand {
         }
 
         // Determine profile
-        let profile = if self.debug { "default" } else { "ci" };
+        // Available profiles in .config/nextest.toml:
+        //   default = 24 threads, fail-fast=false (good for CI/batch runs)
+        //   debug   = 1 thread, 300s slow-timeout (good for investigating tests)
+        let profile = if self.debug { "debug" } else { "default" };
         let use_fail_fast = self.fail_fast;
 
         // Compute affected packages (default ON, --all disables it)
@@ -258,7 +261,9 @@ impl XtaskCommand for TestCommand {
         }
 
         if self.include_ignored || self.all || self.heavy {
-            runner.add_arg("--ignored");
+            // Use --run-ignored=all to run both regular and ignored tests
+            // Note: --ignored alone would run ONLY ignored tests
+            runner.add_arg("--run-ignored=all");
         }
 
         // Pass through args to test binary
@@ -301,15 +306,13 @@ impl XtaskCommand for TestCommand {
     }
 }
 
-/// Check if sufficient disk space is available
+/// Check if sufficient disk space is available on current directory's filesystem
 fn check_disk_space_gb(min_gb: u64) -> bool {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::MetadataExt;
-        if let Ok(metadata) = std::fs::metadata(".") {
-            let blocks = metadata.blocks();
-            let block_size = metadata.blksize();
-            let available_bytes = blocks * block_size;
+        use nix::sys::statvfs::statvfs;
+        if let Ok(stat) = statvfs(".") {
+            let available_bytes = stat.blocks_available() * stat.fragment_size();
             let available_gb = available_bytes / (1024 * 1024 * 1024);
             return available_gb >= min_gb;
         }
