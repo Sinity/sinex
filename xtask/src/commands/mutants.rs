@@ -21,12 +21,13 @@ pub struct MutantsCommand {
     pub args: Vec<String>,
 }
 
+#[async_trait::async_trait]
 impl XtaskCommand for MutantsCommand {
     fn name(&self) -> &'static str {
         "mutants"
     }
 
-    fn execute(&self, _ctx: &CommandContext) -> Result<CommandResult> {
+    async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         // Check if cargo-mutants is available
         let check_result = Command::new("cargo")
             .arg("mutants")

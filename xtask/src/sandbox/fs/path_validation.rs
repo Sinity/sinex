@@ -23,7 +23,7 @@ pub type PathValidationResult<T> = Result<T, SinexError>;
 
 /// Validates a path for use in test operations
 ///
-/// This provides additional validation on top of SanitizedPath specifically
+/// This provides additional validation on top of `SanitizedPath` specifically
 /// for test environments, including:
 /// - Ensuring paths are within safe test directories
 /// - Preventing access to system-critical paths

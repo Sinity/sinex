@@ -208,6 +208,7 @@ pub(crate) async fn fetch_checkpoint_state(
 }
 
 /// Purge checkpoint state from the KV store
+#[allow(dead_code)]
 pub(crate) async fn purge_checkpoint_state(
     kv: &async_nats::jetstream::kv::Store,
     processor_name: &str,
@@ -228,6 +229,7 @@ pub(crate) async fn purge_checkpoint_state(
 }
 
 /// Fetch the ULID of an event at a specific offset within a source
+#[allow(dead_code)]
 pub(crate) async fn fetch_event_ulid_at(
     pool: &DbPool,
     source: &str,

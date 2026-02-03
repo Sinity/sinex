@@ -35,7 +35,7 @@ members = [
   "xtask",
 
   # CLI tools
-  "cli/sinex-cli",
+  "crate/cli",
 
   # Keep experimental automata disabled until stabilized
   # "crate/nodes/sinex-content-automaton",
@@ -155,6 +155,19 @@ edition = "2021"
 authors = ["Sinex Exocortex Contributors"]
 repository = "https://github.com/sinex/exocortex"
 license = "MIT OR Apache-2.0"
+
+# cargo-machete false positives (deps used in build.rs, conditional, platform-specific)
+[workspace.metadata.cargo-machete]
+ignored = [
+    "prost",              # sinex-ingestd: build.rs
+    "tonic-build",        # sinex-node-sdk: build.rs
+    "sinex-test-utils",   # dev-dependencies in multiple crates
+    "tracing-subscriber", # binary crates logging setup
+    "xterm-query",        # sinex-terminal-ingestor: conditional
+    "battery",            # sinex-system-ingestor: platform-specific
+    "procfs",             # sinex-system-ingestor: platform-specific
+    "systemstat",         # sinex-system-ingestor: platform-specific
+]
 
 [workspace.dependencies]
 # Async runtime

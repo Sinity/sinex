@@ -2,12 +2,13 @@ pub use crate::bench::BenchConfig as BenchArgs;
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use anyhow::Result;
 
+#[async_trait::async_trait]
 impl XtaskCommand for BenchArgs {
     fn name(&self) -> &'static str {
         "bench"
     }
 
-    fn execute(&self, _ctx: &CommandContext) -> Result<CommandResult> {
+    async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         crate::bench::run(self.clone())?;
         Ok(CommandResult::success())
     }

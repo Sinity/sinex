@@ -12,7 +12,9 @@ pub enum DbSubcommand {
     Status,
     Migrate,
     Setup,
+    /// Logical database reset (drop and re-run migrations)
     Reset {
+        /// Confirm reset
         #[arg(short = 'y', long)]
         yes: bool,
     },
@@ -30,22 +32,23 @@ pub struct DbCommand {
     pub subcommand: DbSubcommand,
 }
 
+#[async_trait::async_trait]
 impl XtaskCommand for DbCommand {
     fn name(&self) -> &'static str {
         "db"
     }
 
-    fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
+    async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         match &self.subcommand {
-            DbSubcommand::Status => execute_status(ctx),
-            DbSubcommand::Migrate => execute_migrate(ctx),
-            DbSubcommand::Setup => execute_setup(ctx),
-            DbSubcommand::Reset { yes } => execute_reset(*yes, ctx),
+            DbSubcommand::Status => execute_status(ctx).await,
+            DbSubcommand::Migrate => execute_migrate(ctx).await,
+            DbSubcommand::Setup => execute_setup(ctx).await,
+            DbSubcommand::Reset { yes } => execute_reset(*yes, ctx).await,
             DbSubcommand::Schema { cmd } => {
                 let contracts_cmd = crate::commands::contracts::ContractsCommand {
                     subcommand: cmd.clone(),
                 };
-                contracts_cmd.execute(ctx)
+                contracts_cmd.execute(ctx).await
             }
         }
     }
@@ -55,7 +58,7 @@ impl XtaskCommand for DbCommand {
     }
 }
 
-fn execute_status(ctx: &CommandContext) -> Result<CommandResult> {
+async fn execute_status(ctx: &CommandContext) -> Result<CommandResult> {
     if ctx.is_human() {
         println!("========== psql status ==========");
     }
@@ -94,14 +97,14 @@ fn execute_status(ctx: &CommandContext) -> Result<CommandResult> {
         .with_duration(ctx.elapsed()))
 }
 
-fn execute_migrate(ctx: &CommandContext) -> Result<CommandResult> {
+async fn execute_migrate(ctx: &CommandContext) -> Result<CommandResult> {
     run_db_migrate(ctx)?;
     Ok(CommandResult::success()
         .with_message("Database migrations applied")
         .with_duration(ctx.elapsed()))
 }
 
-fn execute_setup(ctx: &CommandContext) -> Result<CommandResult> {
+async fn execute_setup(ctx: &CommandContext) -> Result<CommandResult> {
     let config = crate::infra::stack::StackConfig::for_current_checkout().ok();
 
     let db = if let Some(cfg) = &config {
@@ -131,7 +134,7 @@ fn execute_setup(ctx: &CommandContext) -> Result<CommandResult> {
         .with_duration(ctx.elapsed()))
 }
 
-fn execute_reset(yes: bool, ctx: &CommandContext) -> Result<CommandResult> {
+async fn execute_reset(yes: bool, ctx: &CommandContext) -> Result<CommandResult> {
     if !yes {
         bail!("Refusing to drop DB without --yes");
     }

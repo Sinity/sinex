@@ -1,4 +1,4 @@
-//! JetStream Test Helper
+//! `JetStream` Test Helper
 //!
 //! Provides ergonomic helpers for setting up and testing JetStream-based
 //! event processing pipelines. Eliminates boilerplate around topology creation,
@@ -32,7 +32,7 @@ use std::time::Duration;
 /// Helper for JetStream-based test setup and assertions.
 ///
 /// Encapsulates the common pattern of:
-/// - Creating a JetStreamTopology
+/// - Creating a `JetStreamTopology`
 /// - Waiting for all streams (events, confirmations, DLQ) to be ready
 /// - Providing DLQ state assertions
 pub struct JetStreamTestHelper {
@@ -43,10 +43,10 @@ pub struct JetStreamTestHelper {
 }
 
 impl JetStreamTestHelper {
-    /// Create a new JetStreamTestHelper with the given suffix.
+    /// Create a new `JetStreamTestHelper` with the given suffix.
     ///
     /// This will:
-    /// 1. Create a JetStreamTopology with namespaced stream/consumer names
+    /// 1. Create a `JetStreamTopology` with namespaced stream/consumer names
     /// 2. Wait for all three streams (events, confirmations, DLQ) to be ready
     ///
     /// # Arguments
@@ -56,7 +56,7 @@ impl JetStreamTestHelper {
         Self::with_timeout(ctx, suffix, Duration::from_secs(Timeouts::SHORT)).await
     }
 
-    /// Create a new JetStreamTestHelper with a custom stream wait timeout.
+    /// Create a new `JetStreamTestHelper` with a custom stream wait timeout.
     pub async fn with_timeout(
         ctx: &Sandbox,
         suffix: &str,
@@ -121,17 +121,20 @@ impl JetStreamTestHelper {
         Ok(helper)
     }
 
-    /// Get the JetStream topology for consumer setup.
+    /// Get the `JetStream` topology for consumer setup.
+    #[must_use]
     pub fn topology(&self) -> &JetStreamTopology {
         &self.topology
     }
 
-    /// Get the JetStream context for stream operations.
+    /// Get the `JetStream` context for stream operations.
+    #[must_use]
     pub fn jetstream(&self) -> &jetstream::Context {
         &self.js
     }
 
     /// Get the NATS handle for additional operations.
+    #[must_use]
     pub fn nats(&self) -> &Arc<EphemeralNats> {
         &self.nats
     }

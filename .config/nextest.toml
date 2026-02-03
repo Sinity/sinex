@@ -21,7 +21,7 @@ status-level       = "pass"
 final-status-level = "fail"
 
 [profile.default.junit]
-path                 = "target/nextest/junit.xml"
+path                 = ".sinex/nextest/junit.xml"
 store-success-output = false
 store-failure-output = true
 

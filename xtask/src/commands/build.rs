@@ -144,12 +144,13 @@ fn parse_diagnostic_message(
     })
 }
 
+#[async_trait::async_trait]
 impl XtaskCommand for BuildCommand {
     fn name(&self) -> &'static str {
         "build"
     }
 
-    fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
+    async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         // Handle background execution
         if ctx.is_background() {
             let mut args = Vec::new();
@@ -166,7 +167,7 @@ impl XtaskCommand for BuildCommand {
             if self.all {
                 args.push("--all".to_string());
             }
-            return ctx.spawn_background("build", &args);
+            return ctx.spawn_background("build", &args).await;
         }
 
         // Ensure infrastructure is ready (DB needed for sqlx compile-time checks)

@@ -33,7 +33,7 @@ use tokio::{
     task::JoinHandle,
     time::{interval, Duration},
 };
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// Helper function to create a shutdown signal future
 async fn shutdown_signal(shutdown_flag: &Arc<AtomicBool>) {
@@ -63,92 +63,17 @@ impl IngestService {
     pub async fn new(config: IngestdConfig) -> IngestdResult<Self> {
         info!("Initializing ingestion service");
 
-        // Initialize database pool
-        let db_pool = if config.dry_run {
-            None
-        } else {
-            let pool = config
-                .get_db_options()
-                .connect(&config.database_url)
-                .await
-                .map_err(|e| {
-                    SinexError::database(format!(
-                        "Failed to connect to database at {}: {e}",
-                        config.database_url
-                    ))
-                })?;
-            Some(pool)
-        };
+        let db_pool = Self::init_db_pool(&config).await?;
+        let (nats_client, jetstream) = Self::init_nats(&config).await?;
+        let validator = Self::init_validator(&config, db_pool.as_ref()).await?;
 
-        // Initialize NATS client and JetStream
-        let (nats_client, jetstream) = if config.dry_run {
-            (None, None)
-        } else {
-            let client = config.nats.connect().await.map_err(|e| {
-                SinexError::network(format!(
-                    "Failed to connect to NATS at {}: {e}",
-                    config.nats.url
-                ))
-                .with_operation("service.connect_nats")
-                .with_context("nats_url", config.nats.url.clone())
-            })?;
-            let js = jetstream::new(client.clone());
-
-            (Some(client), Some(js))
-        };
-
-        // Initialize event validator
-        let validator = if let Some(ref pool) = db_pool {
-            // Ensure only one instance performs migration/schema sync at a time.
-            let _migration_lock = try_acquire_migration_lock(pool).await?;
-
-            // First, synchronize schemas from codebase to database
-            if !config.dry_run && !config.skip_schema_sync {
-                let sync_result = crate::schema_sync::synchronize_schemas(pool)
-                    .await
-                    .context("Failed to synchronize event schemas from codebase to database")
-                    .map_err(|e| {
-                        SinexError::service(format!("Failed to synchronize schemas: {e}"))
-                            .with_operation("service.schema_sync")
-                    })?;
-
-                info!(
-                    discovered = sync_result.discovered,
-                    created = sync_result.created,
-                    updated = sync_result.updated,
-                    unchanged = sync_result.unchanged,
-                    "Schema synchronization completed"
-                );
-            }
-
-            if config.strict_validation {
-                EventValidator::load_schemas_from_db_strict(pool, config.validate_schemas).await?
-            } else {
-                EventValidator::load_schemas_from_db(pool, config.validate_schemas).await?
-            }
-        } else if config.strict_validation {
-            EventValidator::new_strict(false)
-        } else {
-            EventValidator::new(false)
-        };
-
-        if let Some(ref nats_client) = nats_client {
-            if let Some(ref pool) = db_pool {
-                if let Err(e) = Self::broadcast_active_schemas(&validator, nats_client, pool).await
-                {
-                    warn!("Failed to broadcast schemas: {}", e);
-                }
+        if let (Some(nats), Some(pool)) = (&nats_client, &db_pool) {
+            if let Err(e) = Self::broadcast_active_schemas(&validator, nats, pool).await {
+                warn!("Failed to broadcast schemas: {}", e);
             }
         }
 
-        // Initialize self-observation
-        let observer = match &nats_client {
-            Some(nats) => {
-                let config = SelfObserverConfig::from_env("sinex-ingestd");
-                SelfObserver::new(nats.clone(), config)
-            }
-            None => SelfObserver::disabled(),
-        };
+        let observer = Self::init_observer(&nats_client);
 
         let service = Self {
             config: config.clone(),
@@ -166,39 +91,148 @@ impl IngestService {
         Ok(service)
     }
 
+    async fn init_db_pool(config: &IngestdConfig) -> IngestdResult<Option<PgPool>> {
+        if config.dry_run {
+            return Ok(None);
+        }
+
+        let pool = config
+            .get_db_options()
+            .connect(&config.database_url)
+            .await
+            .map_err(|e| {
+                SinexError::database(format!(
+                    "Failed to connect to database at {}: {e}",
+                    config.database_url
+                ))
+            })?;
+        Ok(Some(pool))
+    }
+
+    async fn init_nats(
+        config: &IngestdConfig,
+    ) -> IngestdResult<(Option<NatsClient>, Option<jetstream::Context>)> {
+        if config.dry_run {
+            return Ok((None, None));
+        }
+
+        let client = config.nats.connect().await.map_err(|e| {
+            SinexError::network(format!(
+                "Failed to connect to NATS at {}: {e}",
+                config.nats.url
+            ))
+            .with_operation("service.connect_nats")
+            .with_context("nats_url", config.nats.url.clone())
+        })?;
+        let js = jetstream::new(client.clone());
+
+        Ok((Some(client), Some(js)))
+    }
+
+    async fn init_validator(
+        config: &IngestdConfig,
+        pool: Option<&PgPool>,
+    ) -> IngestdResult<EventValidator> {
+        if let Some(pool) = pool {
+            let _lock = try_acquire_migration_lock(pool).await?;
+
+            if !config.dry_run && !config.skip_schema_sync {
+                Self::sync_schemas(pool).await?;
+            }
+
+            if config.strict_validation {
+                EventValidator::load_schemas_from_db_strict(pool, config.validate_schemas).await
+            } else {
+                EventValidator::load_schemas_from_db(pool, config.validate_schemas).await
+            }
+        } else if config.strict_validation {
+            Ok(EventValidator::new_strict(false))
+        } else {
+            Ok(EventValidator::new(false))
+        }
+    }
+
+    async fn sync_schemas(pool: &PgPool) -> IngestdResult<()> {
+        let sync_result = crate::schema_sync::synchronize_schemas(pool)
+            .await
+            .context("Failed to synchronize event schemas from codebase to database")
+            .map_err(|e| {
+                SinexError::service(format!("Failed to synchronize schemas: {e}"))
+                    .with_operation("service.schema_sync")
+            })?;
+
+        info!(
+            discovered = sync_result.discovered,
+            created = sync_result.created,
+            updated = sync_result.updated,
+            unchanged = sync_result.unchanged,
+            "Schema synchronization completed"
+        );
+        Ok(())
+    }
+
+    fn init_observer(nats_client: &Option<NatsClient>) -> SelfObserver {
+        match nats_client {
+            Some(nats) => {
+                let config = SelfObserverConfig::from_env("sinex-ingestd");
+                SelfObserver::new(nats.clone(), config)
+            }
+            None => SelfObserver::disabled(),
+        }
+    }
+
     /// Run the ingestion service
     pub async fn run(&mut self) -> IngestdResult<()> {
         info!("Starting ingestion service");
 
+        // Start JetStream and MaterialAssembler tasks (critical - failure stops service)
+        let js_handle = match (&self.nats_client, &self.db_pool) {
+            (Some(nats), Some(pool)) => Some(
+                self.start_jetstream_consumer_task(nats.clone(), pool.clone())
+                    .await,
+            ),
+            _ => None,
+        };
+
+        let ma_handle = match (&self.nats_client, &self.db_pool) {
+            (Some(nats), Some(pool)) => Some(
+                self.start_material_assembler_task(nats.clone(), pool.clone())
+                    .await,
+            ),
+            _ => None,
+        };
+
         // Start background tasks
+        self.start_stats_logging_task().await;
+
+        if let Some(ref pool) = self.db_pool {
+            let handle = self
+                .start_schema_reload_task(pool.clone(), self.nats_client.clone())
+                .await;
+            self.track_task(handle).await;
+        }
+
+        // Notify systemd that we're ready
+        if let Err(e) = sd_notify::notify(true, &[sd_notify::NotifyState::Ready]) {
+            warn!("Failed to notify systemd ready state: {}", e);
+        }
+
+        // Monitor critical tasks - exit on first failure or shutdown signal
+        let monitor_result = self.monitor_runtime(js_handle, ma_handle).await;
+
+        // Ensure background tasks have a chance to shut down before closing resources.
+        self.wait_for_tasks(Duration::from_secs(5)).await;
+
+        info!("Ingestion service stopped");
+        monitor_result
+    }
+
+    /// Start stats logging task with self-observation emission
+    async fn start_stats_logging_task(&self) {
         let stats = self.stats.clone();
+        let observer = self.observer.clone();
         let shutdown_flag = self.shutdown_flag.clone();
 
-        // Start JetStream consumer task (critical - failure stops service)
-        let mut jetstream_consumer_handle = None;
-        if let Some(ref nats_client) = self.nats_client {
-            if let Some(ref pool) = self.db_pool {
-                jetstream_consumer_handle = Some(
-                    self.start_jetstream_consumer_task(nats_client.clone(), pool.clone())
-                        .await,
-                );
-            }
-        }
-
-        // Start MaterialAssembler task (critical - failure stops service)
-        let mut material_assembler_handle = None;
-        if let Some(ref nats_client) = self.nats_client {
-            if let Some(ref pool) = self.db_pool {
-                material_assembler_handle = Some(
-                    self.start_material_assembler_task(nats_client.clone(), pool.clone())
-                        .await,
-                );
-            }
-        }
-
-        // Stats logging task with self-observation emission
-        let observer = self.observer.clone();
-        let stats_shutdown = shutdown_flag.clone();
         let stats_handle = tokio::spawn(async move {
             let mut interval = interval(Duration::from_mins(1));
 
@@ -214,100 +248,54 @@ impl IngestService {
                             let validation_errors = stats.validation_errors.load(Ordering::Relaxed);
                             let db_errors = stats.db_errors.load(Ordering::Relaxed);
 
-                            // Emit as node processing stats
                             if let Err(e) = observer.emit_node_processing_stats(
                                 "ingestd",
                                 events_processed,
-                                events_received.saturating_sub(events_processed), // dropped = received - processed
-                                None, // avg latency - would need instrumentation
-                                0, // queue depth - not tracked currently
+                                events_received.saturating_sub(events_processed),
+                                None,
+                                0,
                                 validation_errors + db_errors,
                             ).await {
                                 warn!("Failed to emit self-observation metrics: {}", e);
                             }
                         }
                     }
-                    () = shutdown_signal(&stats_shutdown) => {
+                    () = shutdown_signal(&shutdown_flag) => {
                         break;
                     }
                 }
             }
         });
         self.track_task(stats_handle).await;
+    }
 
-        // Schema reload task
-        if let Some(ref pool) = self.db_pool {
-            let handle = self
-                .start_schema_reload_task(pool.clone(), self.nats_client.clone())
-                .await;
-            self.track_task(handle).await;
-        }
+    /// Monitor critical tasks - exit on first failure or shutdown signal
+    async fn monitor_runtime(
+        &self,
+        js_handle: Option<JoinHandle<IngestdResult<()>>>,
+        ma_handle: Option<JoinHandle<IngestdResult<()>>>,
+    ) -> IngestdResult<()> {
+        let shutdown_flag = self.shutdown_flag.clone();
 
-        // Notify systemd that we're ready
-        if let Err(e) = sd_notify::notify(true, &[sd_notify::NotifyState::Ready]) {
-            warn!("Failed to notify systemd ready state: {}", e);
-        }
-
-        // Monitor critical tasks - exit on first failure or shutdown signal
-        let monitor_result = tokio::select! {
+        tokio::select! {
             // JetStream consumer exited
             result = async {
-                match jetstream_consumer_handle {
+                match js_handle {
                     Some(handle) => handle.await,
                     None => std::future::pending().await,
                 }
             } => {
-                match result {
-                    Ok(Ok(())) if shutdown_flag.load(Ordering::Relaxed) => {
-                        info!("JetStream consumer completed during shutdown");
-                        Ok(())
-                    }
-                    Ok(Ok(())) => {
-                        error!("JetStream consumer exited unexpectedly without error");
-                        self.shutdown_flag.store(true, Ordering::Relaxed);
-                        Err(SinexError::service("JetStream consumer exited unexpectedly"))
-                    }
-                    Ok(Err(e)) => {
-                        error!(error = %e, "JetStream consumer failed");
-                        self.shutdown_flag.store(true, Ordering::Relaxed);
-                        Err(e)
-                    }
-                    Err(join_err) => {
-                        error!(error = ?join_err, "JetStream consumer panicked");
-                        self.shutdown_flag.store(true, Ordering::Relaxed);
-                        Err(SinexError::service(format!("JetStream consumer panicked: {join_err}")))
-                    }
-                }
+                Self::handle_task_result("JetStream consumer", result, &shutdown_flag)
             }
 
             // MaterialAssembler exited
             result = async {
-                match material_assembler_handle {
+                match ma_handle {
                     Some(handle) => handle.await,
                     None => std::future::pending().await,
                 }
             } => {
-                match result {
-                    Ok(Ok(())) if shutdown_flag.load(Ordering::Relaxed) => {
-                        info!("MaterialAssembler completed during shutdown");
-                        Ok(())
-                    }
-                    Ok(Ok(())) => {
-                        error!("MaterialAssembler exited unexpectedly without error");
-                        self.shutdown_flag.store(true, Ordering::Relaxed);
-                        Err(SinexError::service("MaterialAssembler exited unexpectedly"))
-                    }
-                    Ok(Err(e)) => {
-                        error!(error = %e, "MaterialAssembler failed");
-                        self.shutdown_flag.store(true, Ordering::Relaxed);
-                        Err(e)
-                    }
-                    Err(join_err) => {
-                        error!(error = ?join_err, "MaterialAssembler panicked");
-                        self.shutdown_flag.store(true, Ordering::Relaxed);
-                        Err(SinexError::service(format!("MaterialAssembler panicked: {join_err}")))
-                    }
-                }
+                Self::handle_task_result("MaterialAssembler", result, &shutdown_flag)
             }
 
             // Normal shutdown signal
@@ -315,13 +303,51 @@ impl IngestService {
                 info!("Received shutdown signal");
                 Ok(())
             }
-        };
+        }
+    }
 
-        // Ensure background tasks have a chance to shut down before closing resources.
-        self.wait_for_tasks(Duration::from_secs(5)).await;
+    fn handle_task_result(
+        name: &str,
+        result: Result<IngestdResult<()>, tokio::task::JoinError>,
+        shutdown_flag: &Arc<AtomicBool>,
+    ) -> IngestdResult<()> {
+        match result {
+            Ok(res) => Self::handle_join_success(name, res, shutdown_flag),
+            Err(e) => Self::handle_join_error(name, e, shutdown_flag),
+        }
+    }
 
-        info!("Ingestion service stopped");
-        monitor_result
+    fn handle_join_success(
+        name: &str,
+        result: IngestdResult<()>,
+        shutdown_flag: &Arc<AtomicBool>,
+    ) -> IngestdResult<()> {
+        match result {
+            Ok(()) if shutdown_flag.load(Ordering::Relaxed) => {
+                info!("{name} completed during shutdown");
+                Ok(())
+            }
+            Ok(()) => {
+                error!("{name} exited unexpectedly without error");
+                shutdown_flag.store(true, Ordering::Relaxed);
+                Err(SinexError::service(format!("{name} exited unexpectedly")))
+            }
+            Err(e) => {
+                error!(error = %e, "{name} failed");
+                shutdown_flag.store(true, Ordering::Relaxed);
+                Err(e)
+            }
+        }
+    }
+
+    fn handle_join_error(
+        name: &str,
+        err: tokio::task::JoinError,
+        shutdown_flag: &Arc<AtomicBool>,
+    ) -> IngestdResult<()> {
+        error!(error = ?err, "{name} panicked");
+        shutdown_flag.store(true, Ordering::Relaxed);
+        Err(SinexError::service(format!("{name} panicked: {err}")))
     }
 
     /// Start the `JetStream` consumer task
@@ -482,27 +508,44 @@ impl IngestService {
     }
 
     async fn wait_for_tasks(&self, timeout: Duration) {
-        let mut handles = self.task_handles.lock().await;
-        for mut handle in handles.drain(..) {
-            let timeout_sleep = tokio::time::sleep(timeout);
-            tokio::pin!(timeout_sleep);
+        let mut handles = {
+            let mut guard = self.task_handles.lock().await;
+            std::mem::take(&mut *guard)
+        };
 
-            tokio::select! {
-                result = &mut handle => {
-                    if let Err(join_err) = result {
-                        error!("Background task panicked: {:?}", join_err);
-                    }
-                }
-                () = &mut timeout_sleep => {
-                    warn!("Background task did not shutdown in time; aborting");
-                    handle.abort();
-                    if let Err(join_err) = handle.await {
-                        if !join_err.is_cancelled() {
-                            error!("Background task failed after abort: {:?}", join_err);
+        if handles.is_empty() {
+            return;
+        }
+
+        info!(
+            "Waiting for {} background tasks to finish...",
+            handles.len()
+        );
+
+        let wait_task = async {
+            for (i, handle) in handles.iter_mut().enumerate() {
+                if let Err(e) = handle.await {
+                    match e.try_into_panic() {
+                        Ok(panic) => {
+                            let msg = match panic.downcast_ref::<&'static str>() {
+                                Some(s) => *s,
+                                None => match panic.downcast_ref::<String>() {
+                                    Some(s) => s.as_str(),
+                                    None => "Unknown panic",
+                                },
+                            };
+                            error!("Background task {} panicked: {}", i, msg);
                         }
+                        Err(_) => debug!("Background task {} was cancelled or failed", i),
                     }
                 }
             }
+        };
+
+        if tokio::time::timeout(timeout, wait_task).await.is_err() {
+            warn!("Timed out waiting for background tasks after {:?}", timeout);
+        } else {
+            info!("All background tasks finished");
         }
     }
 

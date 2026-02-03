@@ -7,7 +7,7 @@ pub async fn verify_clean_state(pool: &DbPool) -> TestResult<()> {
     let mut failures = Vec::new();
     for (table, count) in counts {
         if count > 0 {
-            failures.push(format!("{}: {}", table, count));
+            failures.push(format!("{table}: {count}"));
         }
     }
 

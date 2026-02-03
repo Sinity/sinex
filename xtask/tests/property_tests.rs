@@ -36,7 +36,7 @@ fn error_message_strategy() -> impl Strategy<Value = String> {
 /// Generate a file location string.
 fn location_strategy() -> impl Strategy<Value = String> {
     ("[a-z_/]{5,30}", 1u32..=10000u32, 1u32..=200u32)
-        .prop_map(|(path, line, col)| format!("{}:{}:{}", path, line, col))
+        .prop_map(|(path, line, col)| format!("{path}:{line}:{col}"))
 }
 
 /// Generate a Status enum value.
@@ -50,7 +50,7 @@ fn status_strategy() -> impl Strategy<Value = Status> {
     ]
 }
 
-/// Generate an OutputFormat enum value.
+/// Generate an `OutputFormat` enum value.
 fn output_format_strategy() -> impl Strategy<Value = OutputFormat> {
     prop_oneof![
         Just(OutputFormat::Human),
@@ -60,7 +60,7 @@ fn output_format_strategy() -> impl Strategy<Value = OutputFormat> {
     ]
 }
 
-/// Generate a StructuredError.
+/// Generate a `StructuredError`.
 fn structured_error_strategy() -> impl Strategy<Value = StructuredError> {
     (
         error_code_strategy(),
@@ -76,7 +76,7 @@ fn structured_error_strategy() -> impl Strategy<Value = StructuredError> {
         })
 }
 
-/// Generate a CommandResult (using the output module's version).
+/// Generate a `CommandResult` (using the output module's version).
 fn output_command_result_strategy() -> impl Strategy<Value = xtask::output::CommandResult> {
     (
         command_name_strategy(),
@@ -106,7 +106,7 @@ fn output_command_result_strategy() -> impl Strategy<Value = xtask::output::Comm
         )
 }
 
-/// Generate a CommandResult (using the command module's version).
+/// Generate a `CommandResult` (using the command module's version).
 fn command_result_strategy() -> impl Strategy<Value = CommandResult> {
     (
         status_strategy(),
@@ -199,8 +199,8 @@ proptest! {
         let parsed: OutputFormat = serde_json::from_str(&json_str).expect("should deserialize");
 
         // Compare discriminants
-        let original_name = format!("{:?}", format);
-        let parsed_name = format!("{:?}", parsed);
+        let original_name = format!("{format:?}");
+        let parsed_name = format!("{parsed:?}");
         prop_assert_eq!(original_name, parsed_name);
     }
 }
@@ -251,7 +251,7 @@ proptest! {
         special in prop_oneof![Just("="), Just("-"), Just("_"), Just(".")],
         suffix in "[a-zA-Z0-9]{1,10}"
     ) {
-        let arg = format!("{}{}{}", prefix, special, suffix);
+        let arg = format!("{prefix}{special}{suffix}");
 
         // Verify the argument can be serialized and deserialized
         let json = serde_json::to_string(&arg).expect("should serialize");
@@ -323,7 +323,7 @@ proptest! {
             .expect("should parse as JSON value");
 
         let duration = parsed.get("duration_secs")
-            .and_then(|v| v.as_f64())
+            .and_then(sinex_primitives::JsonValue::as_f64)
             .expect("duration_secs should be a number");
 
         prop_assert!(duration >= 0.0, "Duration should be non-negative");

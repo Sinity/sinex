@@ -45,7 +45,7 @@ impl FileWatcher {
                     }
                 }
                 Err(e) => {
-                    eprintln!("Watch error: {:?}", e);
+                    eprintln!("Watch error: {e:?}");
                 }
             },
         )
@@ -89,7 +89,7 @@ impl FileWatcher {
                     }
                 }
                 Err(e) => {
-                    eprintln!("Watch error: {:?}", e);
+                    eprintln!("Watch error: {e:?}");
                 }
             },
         )

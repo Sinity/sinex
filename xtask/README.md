@@ -221,6 +221,19 @@ cargo xtask bench --mode sweeps --threads 8,12,16
 cargo xtask bench --mode refine --runs 5
 ```
 
+## Architecture
+
+The `xtask` crate is organized into several key modules:
+
+- **`command` / `commands`**: The CLI framework and individual command implementations.
+- **`infra`**: Management of the *local development stack*. This includes starting/stopping long-lived service processes (Postgres, NATS) used across many tests and for manual development.
+- **`sandbox`**: Management of *isolated test environments*. The sandbox provides ephemeral resources (temporary database slots, isolated NATS namespaces) for integration and E2E tests. It depends on `infra` to ensure the underlying service managers are available.
+
+### Infra vs Sandbox
+
+- Use **`infra`** when you need to manage the lifecycle of a service manager itself (e.g., `cargo xtask stack start`).
+- Use **`sandbox`** (specifically `Sandbox` and `PipelineScope`) when writing tests that need isolated access to these services.
+
 ## Documentation
 
 - **Command reference**: `xtask/docs/README.md` (full details)

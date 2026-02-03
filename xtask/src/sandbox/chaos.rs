@@ -4,8 +4,8 @@
 //! system behavior under adverse conditions:
 //!
 //! - **ChaosConfig/ChaosInjector**: Low-level latency and failure injection
-//! - **ChaosTestBuilder**: Builder for constructing chaos test scenarios
-//! - **ChaosScenarios**: High-level scenario orchestration (partitions, message loss, etc.)
+//! - **`ChaosTestBuilder`**: Builder for constructing chaos test scenarios
+//! - **`ChaosScenarios`**: High-level scenario orchestration (partitions, message loss, etc.)
 //!
 //! # Example
 //!
@@ -49,6 +49,7 @@ pub struct ChaosConfig {
 }
 
 impl ChaosConfig {
+    #[must_use]
     pub fn new(latency: Duration, failure_rate: f64) -> Self {
         Self {
             latency,
@@ -93,10 +94,11 @@ pub struct ChaosInjector {
     config: ChaosConfig,
 }
 
-/// Backwards-compatible alias for ChaosInjector.
+/// Backwards-compatible alias for `ChaosInjector`.
 pub type ChaosInjestor = ChaosInjector;
 
 impl ChaosInjector {
+    #[must_use]
     pub fn new(latency: Duration, failure_rate: f64) -> Self {
         Self {
             config: ChaosConfig::new(latency, failure_rate),
@@ -152,6 +154,7 @@ pub struct ChaosMetrics {
 }
 
 impl ChaosMetrics {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -274,6 +277,7 @@ impl Default for ChaosTestBuilder {
 
 impl ChaosTestBuilder {
     /// Create a new chaos test builder with no chaos enabled.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             corruption_rate: 0.0,
@@ -289,6 +293,7 @@ impl ChaosTestBuilder {
 
     /// Set message corruption rate (0.0 to 1.0).
     /// Corrupted messages will have their payloads garbled.
+    #[must_use]
     pub fn with_message_corruption(mut self, rate: f64) -> Self {
         self.corruption_rate = rate.clamp(0.0, 1.0);
         self
@@ -296,6 +301,7 @@ impl ChaosTestBuilder {
 
     /// Set message reordering rate (0.0 to 1.0).
     /// Reordered messages may be delivered out of sequence.
+    #[must_use]
     pub fn with_reordering(mut self, rate: f64) -> Self {
         self.reorder_rate = rate.clamp(0.0, 1.0);
         self
@@ -303,24 +309,28 @@ impl ChaosTestBuilder {
 
     /// Set message drop rate (0.0 to 1.0).
     /// Dropped messages will be silently discarded.
+    #[must_use]
     pub fn with_drop_rate(mut self, rate: f64) -> Self {
         self.drop_rate = rate.clamp(0.0, 1.0);
         self
     }
 
     /// Set base latency to inject on each message.
+    #[must_use]
     pub fn with_latency(mut self, latency: Duration) -> Self {
         self.latency = latency;
         self
     }
 
     /// Set latency jitter (random additional delay up to this amount).
+    #[must_use]
     pub fn with_latency_jitter(mut self, jitter: Duration) -> Self {
         self.latency_jitter = jitter;
         self
     }
 
     /// Enable slow consumer simulation with the given delay per message.
+    #[must_use]
     pub fn with_slow_consumer(mut self, delay: Duration) -> Self {
         self.slow_consumer_delay = Some(delay);
         self
@@ -328,6 +338,7 @@ impl ChaosTestBuilder {
 
     /// Set general failure rate (0.0 to 1.0).
     /// Operations will randomly fail with this probability.
+    #[must_use]
     pub fn with_failure_rate(mut self, rate: f64) -> Self {
         self.failure_rate = rate.clamp(0.0, 1.0);
         self
@@ -340,6 +351,7 @@ impl ChaosTestBuilder {
     }
 
     /// Build the chaos context.
+    #[must_use]
     pub fn build(self) -> ChaosContext {
         ChaosContext {
             corruption_rate: self.corruption_rate,
@@ -371,11 +383,13 @@ pub struct ChaosContext {
 
 impl ChaosContext {
     /// Get access to the metrics tracker.
+    #[must_use]
     pub fn metrics(&self) -> &ChaosMetrics {
         &self.metrics
     }
 
     /// Check if a message should be dropped.
+    #[must_use]
     pub fn should_drop(&self) -> bool {
         if self.drop_rate > 0.0 {
             let mut rng = rand::thread_rng();
@@ -388,6 +402,7 @@ impl ChaosContext {
     }
 
     /// Apply chaos to an event, potentially corrupting it.
+    #[must_use]
     pub fn maybe_corrupt(&self, mut event: Event<JsonValue>) -> Event<JsonValue> {
         if self.corruption_rate > 0.0 {
             let mut rng = rand::thread_rng();
@@ -402,6 +417,7 @@ impl ChaosContext {
 
     /// Buffer event for potential reordering.
     /// Returns events that should be processed (potentially reordered).
+    #[must_use]
     pub fn buffer_for_reorder(&self, event: Event<JsonValue>) -> Vec<Event<JsonValue>> {
         if self.reorder_rate > 0.0 {
             let mut rng = rand::thread_rng();
@@ -428,6 +444,7 @@ impl ChaosContext {
     }
 
     /// Flush any remaining buffered events.
+    #[must_use]
     pub fn flush_reorder_buffer(&self) -> Vec<Event<JsonValue>> {
         self.reorder_buffer.lock().drain(..).collect()
     }
@@ -457,6 +474,7 @@ impl ChaosContext {
     }
 
     /// Check if operation should fail randomly.
+    #[must_use]
     pub fn should_fail(&self) -> bool {
         if self.failure_rate > 0.0 {
             let mut rng = rand::thread_rng();
@@ -521,6 +539,7 @@ impl Default for ChaosScenarios {
 
 impl ChaosScenarios {
     /// Create a new chaos scenarios orchestrator.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             metrics: Arc::new(ChaosMetrics::new()),
@@ -537,11 +556,13 @@ impl ChaosScenarios {
     }
 
     /// Get access to the metrics tracker.
+    #[must_use]
     pub fn metrics(&self) -> &ChaosMetrics {
         &self.metrics
     }
 
     /// Check if a network partition is currently active.
+    #[must_use]
     pub fn is_partition_active(&self) -> bool {
         self.partition_active.load(Ordering::SeqCst)
     }
@@ -606,6 +627,7 @@ impl ChaosScenarios {
     /// - Drops some messages to test checkpoint recovery
     /// - Injects latency to simulate slow processing
     /// - Does NOT corrupt messages (to verify checkpoint integrity)
+    #[must_use]
     pub fn checkpoint_survival_context(&self) -> ChaosContext {
         ChaosTestBuilder::new()
             .with_drop_rate(0.2) // 20% message loss
@@ -622,6 +644,7 @@ impl ChaosScenarios {
     /// - Message drops
     /// - High latency with jitter
     /// - Random failures
+    #[must_use]
     pub fn worst_case_context(&self) -> ChaosContext {
         ChaosTestBuilder::new()
             .with_message_corruption(0.05) // 5% corruption
@@ -639,6 +662,7 @@ impl ChaosScenarios {
     /// This scenario:
     /// - Simulates a slow consumer that can't keep up
     /// - Tests backpressure handling
+    #[must_use]
     pub fn slow_consumer_context(&self, delay_per_message: Duration) -> ChaosContext {
         ChaosTestBuilder::new()
             .with_slow_consumer(delay_per_message)
@@ -689,6 +713,7 @@ pub struct ChaosEventProcessor {
 }
 
 impl ChaosEventProcessor {
+    #[must_use]
     pub fn new(context: ChaosContext) -> Self {
         Self { context }
     }
@@ -726,6 +751,7 @@ impl ChaosEventProcessor {
     }
 
     /// Get access to the underlying context.
+    #[must_use]
     pub fn context(&self) -> &ChaosContext {
         &self.context
     }

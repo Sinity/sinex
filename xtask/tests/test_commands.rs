@@ -31,28 +31,28 @@ fn test_ci_command_metadata() {
     assert!(metadata.timeout.is_some());
 }
 
-#[test]
-fn test_jobs_list_command() {
+#[tokio::test]
+async fn test_jobs_list_command() {
     let cmd = JobsCommand {
         subcommand: JobsSubcommand::List { limit: 10 },
     };
     assert_eq!(cmd.name(), "jobs");
 
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent));
-    let result = cmd.execute(&ctx);
+    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, false, None);
+    let result = cmd.execute(&ctx).await;
 
     // List should not fail (even if no jobs exist)
     assert!(result.is_ok());
 }
 
-#[test]
-fn test_jobs_prune_command() {
+#[tokio::test]
+async fn test_jobs_prune_command() {
     let cmd = JobsCommand {
         subcommand: JobsSubcommand::Prune { older_than: 30 },
     };
 
-    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent));
-    let result = cmd.execute(&ctx);
+    let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Silent), false, false, None);
+    let result = cmd.execute(&ctx).await;
 
     // Prune should succeed (even if no jobs to prune)
     assert!(result.is_ok());
@@ -79,7 +79,7 @@ fn test_command_context_formats() {
         OutputFormat::Compact,
         OutputFormat::Silent,
     ] {
-        let ctx = CommandContext::new(OutputWriter::new(format));
+        let ctx = CommandContext::new(OutputWriter::new(format), false, false, None);
         let elapsed = ctx.elapsed();
         assert!(elapsed.as_nanos() > 0);
     }

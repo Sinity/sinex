@@ -686,15 +686,6 @@ dependencies = [
 
 [[package]]
 name = "cargo-platform"
-version = "0.1.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e35af189006b9c0f00a064685c727031e3ed2d8020f7ba284d78cc2671bd36ea"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "cargo-platform"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "87a0c0e6148f11f01f32650a2ea02d532b2ad4e81d8bd41e6e565b5adc5e6082"
@@ -705,26 +696,12 @@ dependencies = [
 
 [[package]]
 name = "cargo_metadata"
-version = "0.18.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d886547e41f740c616ae73108f6eb70afe6d940c7bc697cb30f13daec073037"
-dependencies = [
- "camino",
- "cargo-platform 0.1.9",
- "semver",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "cargo_metadata"
 version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ef987d17b0a113becdd19d3d0022d04d7ef41f9efe4f3fb63ac44ba61df3ade9"
 dependencies = [
  "camino",
- "cargo-platform 0.3.2",
+ "cargo-platform",
  "semver",
  "serde",
  "serde_json",
@@ -2039,7 +2016,7 @@ checksum = "d5cfa90edd9867077f5d44ed857295edb5e2ad1a375f95fdd479dd78e8982bbd"
 dependencies = [
  "ahash 0.8.12",
  "camino",
- "cargo_metadata 0.23.1",
+ "cargo_metadata",
  "cfg-if",
  "debug-ignore",
  "fixedbitset",
@@ -2309,12 +2286,6 @@ dependencies = [
  "toml 0.9.11+spec-1.1.0",
  "uuid",
 ]
-
-[[package]]
-name = "human_bytes"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "91f255a4535024abf7640cb288260811fc14794f62b063652ed349f9a6c2348e"
 
 [[package]]
 name = "hyper"
@@ -5545,49 +5516,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sinex-cli"
-version = "0.4.2"
-dependencies = [
- "assert_cmd",
- "atty",
- "clap",
- "clap_complete",
- "color-eyre",
- "console",
- "crossterm 0.29.0",
- "directories",
- "dirs",
- "figment",
- "indicatif",
- "inquire",
- "insta",
- "predicates",
- "proptest",
- "ratatui",
- "reqwest 0.12.24",
- "rustls 0.22.4",
- "rustls-native-certs 0.8.3",
- "rustls-pemfile 2.2.0",
- "serde",
- "serde_json",
- "serde_yaml",
- "serial_test",
- "sinex-primitives",
- "sinex-schema",
- "syntect",
- "tabled",
- "tempfile",
- "thiserror 2.0.17",
- "time",
- "tokio",
- "toml 0.8.23",
- "tracing",
- "wiremock",
- "xtask",
- "xtask-macros",
-]
-
-[[package]]
 name = "sinex-content-automaton"
 version = "0.4.2"
 dependencies = [
@@ -6215,6 +6143,50 @@ dependencies = [
  "uuid",
  "which 5.0.0",
  "xtask",
+]
+
+[[package]]
+name = "sinexctl"
+version = "0.4.2"
+dependencies = [
+ "assert_cmd",
+ "atty",
+ "clap",
+ "clap_complete",
+ "color-eyre",
+ "console",
+ "crossterm 0.29.0",
+ "directories",
+ "dirs",
+ "figment",
+ "indicatif",
+ "inquire",
+ "insta",
+ "predicates",
+ "proptest",
+ "ratatui",
+ "reqwest 0.12.24",
+ "rustls 0.22.4",
+ "rustls-native-certs 0.8.3",
+ "rustls-pemfile 2.2.0",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "serial_test",
+ "sinex-primitives",
+ "sinex-schema",
+ "syntect",
+ "tabled",
+ "tempfile",
+ "thiserror 2.0.17",
+ "time",
+ "tokio",
+ "toml 0.8.23",
+ "tracing",
+ "tracing-subscriber",
+ "wiremock",
+ "xtask",
+ "xtask-macros",
 ]
 
 [[package]]
@@ -8468,7 +8440,6 @@ dependencies = [
  "blake3",
  "bon",
  "camino",
- "cargo_metadata 0.18.1",
  "clap",
  "clap_complete",
  "color-eyre",
@@ -8477,11 +8448,8 @@ dependencies = [
  "futures",
  "gethostname 0.4.3",
  "guppy",
- "hex",
  "human-panic",
- "human_bytes",
  "indicatif",
- "inquire",
  "insta",
  "libc",
  "nix 0.27.1",
@@ -8494,10 +8462,8 @@ dependencies = [
  "proptest",
  "rand 0.8.5",
  "rcgen",
- "regex",
  "reqwest 0.12.24",
  "rusqlite",
- "semver",
  "serde",
  "serde_json",
  "sha2",

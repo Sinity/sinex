@@ -111,12 +111,13 @@ impl CheckCommand {
     }
 }
 
+#[async_trait::async_trait]
 impl XtaskCommand for CheckCommand {
     fn name(&self) -> &'static str {
         "check"
     }
 
-    fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
+    async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         // Handle background execution
         if ctx.is_background() {
             let mut args = Vec::new();
@@ -148,7 +149,7 @@ impl XtaskCommand for CheckCommand {
                 args.push("-p".to_string());
                 args.push(p.clone());
             }
-            return ctx.spawn_background("check", &args);
+            return ctx.spawn_background("check", &args).await;
         }
 
         // Ensure infrastructure is ready (DB needed for sqlx compile-time checks)
@@ -277,7 +278,9 @@ impl XtaskCommand for CheckCommand {
             if ctx.is_human() {
                 println!("Scanning for forbidden patterns...");
             }
-            crate::commands::lint_forbidden::LintForbiddenCommand.execute(ctx)?;
+            crate::commands::lint_forbidden::LintForbiddenCommand
+                .execute(ctx)
+                .await?;
             result = result.with_detail("forbidden pattern scan passed");
         }
 

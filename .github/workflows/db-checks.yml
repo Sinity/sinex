@@ -38,9 +38,6 @@ jobs:
     concurrency:
       group: db-checks-schema-${{ github.ref }}
       cancel-in-progress: true
-    env:
-      DEVENV_ROOT: ${{ github.workspace }}
-      DEVENV_DOTFILE: ${{ github.workspace }}/.devenv
     steps:
       - uses: actions/checkout@v5
 

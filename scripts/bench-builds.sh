@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Simple benchmark harness for Sinex builds.
-# Run this inside your dev environment (e.g. `devenv shell`) so cargo sees
+# Run this inside your dev environment (e.g. `nix develop`) so cargo sees
 # the right toolchain and Postgres settings.
 #
 # Usage:
@@ -103,8 +103,8 @@ main() {
   fi
   echo "Toolchain: $(rustc --version 2>/dev/null || echo 'rustc not found') / $(cargo --version 2>/dev/null || echo 'cargo not found')"
   echo "Nix: $(nix --version 2>/dev/null || echo 'nix not found')"
-  if [[ -z "${SINEX_DEVENV_SYSTEM:-}" ]]; then
-    echo "NOTE: SINEX_DEVENV_SYSTEM is not set; you probably want to run this inside 'devenv shell'." >&2
+  if [[ -z "${SINEX_DEV_STATE_DIR:-}" ]]; then
+    echo "NOTE: SINEX_DEV_STATE_DIR is not set; you probably want to run this inside 'nix develop'." >&2
   fi
   echo
 

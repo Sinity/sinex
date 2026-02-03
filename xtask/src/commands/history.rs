@@ -95,12 +95,13 @@ pub struct HistoryCommand {
     pub subcommand: HistorySubcommand,
 }
 
+#[async_trait::async_trait]
 impl XtaskCommand for HistoryCommand {
     fn name(&self) -> &'static str {
         "history"
     }
 
-    fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
+    async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         let db = open_history_db()?;
 
         match &self.subcommand {
