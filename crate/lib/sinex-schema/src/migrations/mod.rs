@@ -20,6 +20,8 @@ pub(crate) mod m20260121_000014_add_jsonb_merge_function;
 pub(crate) mod m20260121_000015_drop_payload_expensive_indexes;
 pub(crate) mod m20260122_000016_add_embeddings;
 pub(crate) mod m20260122_000017_add_user_state_aggregates;
+pub(crate) mod m20260203_000018_dynamic_embedding_dimensions;
+pub(crate) mod m20260203_000019_add_event_tombstones;
 
 // To add a new migration in the future, a developer would:
 // 1. Create a new file, e.g., `src/migrations/m<timestamp>_add_new_feature.rs`.

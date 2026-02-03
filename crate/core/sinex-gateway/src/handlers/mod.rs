@@ -6,6 +6,7 @@
 pub mod audit;
 pub mod dlq;
 pub mod legacy;
+pub mod lifecycle;
 pub mod nodes;
 pub mod ops;
 pub mod shadow;
@@ -16,6 +17,10 @@ pub use legacy::*;
 // Re-export new domain-specific handler functions
 pub use audit::handle_audit_get;
 pub use dlq::{handle_dlq_list, handle_dlq_peek, handle_dlq_purge, handle_dlq_requeue};
+pub use lifecycle::{
+    handle_lifecycle_archive, handle_lifecycle_restore, handle_lifecycle_status,
+    handle_lifecycle_tombstone,
+};
 pub use nodes::{
     handle_nodes_drain, handle_nodes_list, handle_nodes_resume, handle_nodes_set_horizon,
 };

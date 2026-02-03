@@ -733,6 +733,32 @@ pub async fn dispatch_rpc_method(
             handle_audit_get(pool, params).await.map_err(Into::into)
         }
 
+        // Data lifecycle methods
+        "lifecycle.status" => {
+            let pool = services.pool();
+            crate::handlers::handle_lifecycle_status(pool, params)
+                .await
+                .map_err(Into::into)
+        }
+        "lifecycle.archive" => {
+            let pool = services.pool();
+            crate::handlers::handle_lifecycle_archive(pool, params, auth)
+                .await
+                .map_err(Into::into)
+        }
+        "lifecycle.restore" => {
+            let pool = services.pool();
+            crate::handlers::handle_lifecycle_restore(pool, params, auth)
+                .await
+                .map_err(Into::into)
+        }
+        "lifecycle.tombstone" => {
+            let pool = services.pool();
+            crate::handlers::handle_lifecycle_tombstone(pool, params, auth)
+                .await
+                .map_err(Into::into)
+        }
+
         // Shadow consumer methods (The Tether)
         "shadow.create" => {
             let nats = nats_client_required(services)?;

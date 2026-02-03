@@ -1282,6 +1282,307 @@ impl<'a> EventRepository<'a> {
         let result = result.map_err(|e| db_error(e, "hard delete by source"))?;
         Ok(result.rows_affected())
     }
+
+    // ========== Data Lifecycle Operations ==========
+
+    /// Get status of all lifecycle tiers (live, archive, tombstone).
+    ///
+    /// Returns event counts, age distributions, and source diversity for each tier.
+    pub async fn lifecycle_tier_status(&self) -> DbResult<Vec<LifecycleTierStatus>> {
+        // Use runtime query since the function is created by migration
+        let rows = sqlx::query_as::<_, LifecycleTierStatus>(
+            r#"
+            SELECT
+                tier,
+                event_count,
+                oldest_ts,
+                newest_ts,
+                distinct_sources
+            FROM core.lifecycle_tier_status()
+            "#,
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "get lifecycle tier status"))?;
+
+        Ok(rows)
+    }
+
+    /// Execute cascade tombstone operation.
+    ///
+    /// Moves archived events and their cascade to tombstones.
+    /// This is a ONE-WAY operation - data is permanently gone after this.
+    ///
+    /// # Arguments
+    /// * `archived_ids` - IDs of archived events to tombstone (must be complete cascade)
+    /// * `reason` - Human-readable reason for tombstoning
+    /// * `operation_id` - ULID for audit correlation
+    ///
+    /// # Returns
+    /// Number of tombstones created
+    pub async fn execute_cascade_tombstone(
+        &self,
+        archived_ids: &[Ulid],
+        reason: &str,
+        operation_id: Ulid,
+    ) -> DbResult<u64> {
+        if archived_ids.is_empty() {
+            return Ok(0);
+        }
+
+        let ids: Vec<Uuid> = archived_ids.iter().map(|id| id.to_uuid()).collect();
+        // Use runtime query since the function is created by migration
+        let count: i64 = sqlx::query_scalar(
+            r#"SELECT core.execute_cascade_tombstone($1::ulid[], $2, $3::uuid::ulid)"#,
+        )
+        .bind(&ids)
+        .bind(reason)
+        .bind(operation_id.as_uuid())
+        .fetch_one(self.pool)
+        .await
+        .map_err(|e| db_error(e, "execute cascade tombstone"))?;
+
+        Ok(count as u64)
+    }
+
+    /// Execute cascade restore operation.
+    ///
+    /// Moves archived events and their cascade back to live (core.events).
+    ///
+    /// # Arguments
+    /// * `archived_ids` - IDs of archived events to restore (must be complete cascade)
+    /// * `operation_id` - Operation ID for audit context
+    ///
+    /// # Returns
+    /// Number of events restored
+    pub async fn execute_cascade_restore(
+        &self,
+        archived_ids: &[Ulid],
+        operation_id: &str,
+    ) -> DbResult<u64> {
+        if archived_ids.is_empty() {
+            return Ok(0);
+        }
+
+        let ids: Vec<Uuid> = archived_ids.iter().map(|id| id.to_uuid()).collect();
+        // Use runtime query since the function is created by migration
+        let count: i64 =
+            sqlx::query_scalar(r#"SELECT core.execute_cascade_restore($1::ulid[], $2)"#)
+                .bind(&ids)
+                .bind(operation_id)
+                .fetch_one(self.pool)
+                .await
+                .map_err(|e| db_error(e, "execute cascade restore"))?;
+
+        Ok(count as u64)
+    }
+
+    /// Populate cascade roots from archived events table.
+    ///
+    /// Similar to `populate_cascade_roots` but sources from audit.archived_events
+    /// instead of core.events. Used for restore and tombstone cascade analysis.
+    pub async fn populate_cascade_roots_from_archive(
+        &self,
+        table_name: &str,
+        archived_ids: &[Ulid],
+    ) -> DbResult<()> {
+        if archived_ids.is_empty() {
+            return Ok(());
+        }
+
+        let ids: Vec<Uuid> = archived_ids.iter().map(|id| id.to_uuid()).collect();
+
+        // Insert archived events into cascade table with depth 0
+        sqlx::query(&format!(
+            r#"
+            INSERT INTO {} (id, depth, parent_ids, processed)
+            SELECT ae.id, 0, COALESCE(ae.source_event_ids, '{{}}'::ULID[]), FALSE
+            FROM audit.archived_events ae
+            WHERE ae.id = ANY($1::ulid[])
+            ON CONFLICT (id) DO NOTHING
+            "#,
+            table_name
+        ))
+        .bind(&ids)
+        .execute(self.pool)
+        .await
+        .map_err(|e| db_error(e, "populate cascade roots from archive"))?;
+
+        Ok(())
+    }
+
+    /// Expand cascade graph from archived events.
+    ///
+    /// Iteratively finds children in audit.archived_events that reference
+    /// events already in the cascade table.
+    pub async fn expand_cascade_from_archive(
+        &self,
+        table_name: &str,
+        max_depth: i32,
+    ) -> DbResult<usize> {
+        let mut current_depth = 0;
+
+        while current_depth < max_depth {
+            // Find archived events that reference events at current depth
+            let rows_inserted = sqlx::query_scalar::<_, i64>(&format!(
+                r#"
+                WITH new_children AS (
+                    INSERT INTO {} (id, depth, parent_ids, processed)
+                    SELECT DISTINCT ae.id, $1 + 1, COALESCE(ae.source_event_ids, '{{}}'::ULID[]), FALSE
+                    FROM audit.archived_events ae
+                    JOIN {} ct ON ae.source_event_ids && ARRAY[ct.id]
+                    WHERE ct.depth = $1 AND ct.processed = FALSE
+                    AND NOT EXISTS (SELECT 1 FROM {} ex WHERE ex.id = ae.id)
+                    ON CONFLICT (id) DO NOTHING
+                    RETURNING 1
+                )
+                SELECT COUNT(*)::BIGINT FROM new_children
+                "#,
+                table_name, table_name, table_name
+            ))
+            .bind(current_depth)
+            .fetch_one(self.pool)
+            .await
+            .map_err(|e| db_error(e, "expand cascade from archive"))?;
+
+            // Mark current depth as processed
+            sqlx::query(&format!(
+                "UPDATE {} SET processed = TRUE WHERE depth = $1",
+                table_name
+            ))
+            .bind(current_depth)
+            .execute(self.pool)
+            .await
+            .map_err(|e| db_error(e, "mark cascade depth processed"))?;
+
+            if rows_inserted == 0 {
+                break;
+            }
+
+            current_depth += 1;
+        }
+
+        Ok(current_depth as usize)
+    }
+
+    /// Get all event IDs in a cascade table (for execution).
+    pub async fn get_cascade_ids(&self, table_name: &str) -> DbResult<Vec<Ulid>> {
+        let rows = sqlx::query_scalar::<_, Uuid>(&format!(
+            "SELECT id::uuid FROM {} ORDER BY depth DESC",
+            table_name
+        ))
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "get cascade ids"))?;
+
+        Ok(rows.into_iter().map(Ulid::from).collect())
+    }
+
+    /// Count archived events matching filters.
+    pub async fn count_archived_events(
+        &self,
+        source: Option<&EventSource>,
+        before: Option<Timestamp>,
+    ) -> DbResult<i64> {
+        // Build query dynamically based on filters
+        let (query, needs_source, needs_before) = match (source.is_some(), before.is_some()) {
+            (true, true) => (
+                "SELECT COUNT(*)::BIGINT FROM audit.archived_events WHERE source = $1 AND ts_orig < $2",
+                true,
+                true,
+            ),
+            (true, false) => (
+                "SELECT COUNT(*)::BIGINT FROM audit.archived_events WHERE source = $1",
+                true,
+                false,
+            ),
+            (false, true) => (
+                "SELECT COUNT(*)::BIGINT FROM audit.archived_events WHERE ts_orig < $1",
+                false,
+                true,
+            ),
+            (false, false) => (
+                "SELECT COUNT(*)::BIGINT FROM audit.archived_events",
+                false,
+                false,
+            ),
+        };
+
+        let mut q = sqlx::query_scalar::<_, i64>(query);
+        if needs_source {
+            q = q.bind(source.unwrap().as_str());
+        }
+        if needs_before {
+            q = q.bind(*before.unwrap());
+        }
+
+        let count = q
+            .fetch_one(self.pool)
+            .await
+            .map_err(|e| db_error(e, "count archived events"))?;
+
+        Ok(count)
+    }
+
+    /// Get archived event IDs matching filters (for cascade analysis).
+    pub async fn get_archived_event_ids(
+        &self,
+        source: Option<&EventSource>,
+        before: Option<Timestamp>,
+        limit: i64,
+    ) -> DbResult<Vec<Ulid>> {
+        let rows = match (source, before) {
+            (Some(s), Some(b)) => {
+                sqlx::query_scalar!(
+                    r#"SELECT id::uuid as "id!" FROM audit.archived_events WHERE source = $1 AND ts_orig < $2 ORDER BY ts_orig LIMIT $3"#,
+                    s.as_str(),
+                    b as _,
+                    limit
+                )
+                .fetch_all(self.pool)
+                .await
+            }
+            (Some(s), None) => {
+                sqlx::query_scalar!(
+                    r#"SELECT id::uuid as "id!" FROM audit.archived_events WHERE source = $1 ORDER BY ts_orig LIMIT $2"#,
+                    s.as_str(),
+                    limit
+                )
+                .fetch_all(self.pool)
+                .await
+            }
+            (None, Some(b)) => {
+                sqlx::query_scalar!(
+                    r#"SELECT id::uuid as "id!" FROM audit.archived_events WHERE ts_orig < $1 ORDER BY ts_orig LIMIT $2"#,
+                    b as _,
+                    limit
+                )
+                .fetch_all(self.pool)
+                .await
+            }
+            (None, None) => {
+                sqlx::query_scalar!(
+                    r#"SELECT id::uuid as "id!" FROM audit.archived_events ORDER BY ts_orig LIMIT $1"#,
+                    limit
+                )
+                .fetch_all(self.pool)
+                .await
+            }
+        }
+        .map_err(|e| db_error(e, "get archived event ids"))?;
+
+        Ok(rows.into_iter().map(Ulid::from).collect())
+    }
+}
+
+/// Lifecycle tier status record.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
+pub struct LifecycleTierStatus {
+    pub tier: String,
+    pub event_count: i64,
+    pub oldest_ts: Option<Timestamp>,
+    pub newest_ts: Option<Timestamp>,
+    pub distinct_sources: i64,
 }
 
 pub struct EventRepositoryTx<'a, 't> {

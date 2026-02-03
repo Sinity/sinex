@@ -68,3 +68,9 @@ pub const AUDIT_GET: &str = "audit.get";
 pub const SHADOW_CREATE: &str = "shadow.create";
 pub const SHADOW_LIST: &str = "shadow.list";
 pub const SHADOW_DELETE: &str = "shadow.delete";
+
+// Lifecycle
+pub const LIFECYCLE_STATUS: &str = "lifecycle.status";
+pub const LIFECYCLE_ARCHIVE: &str = "lifecycle.archive";
+pub const LIFECYCLE_RESTORE: &str = "lifecycle.restore";
+pub const LIFECYCLE_TOMBSTONE: &str = "lifecycle.tombstone";
