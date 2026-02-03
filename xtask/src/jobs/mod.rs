@@ -197,12 +197,16 @@ impl JobManager {
         let stderr_file = File::create(&stderr_path)?;
 
         // Spawn the process using tokio
+        // CARGO_NO_SLICE=1 bypasses the systemd-run wrapper (scripts/cargo) which would
+        // otherwise run cargo commands in a systemd scope, making process control (kill, etc.)
+        // unreliable. Background jobs need direct process control.
         let mut cmd = process::Command::new(command);
         cmd.args(args)
+            .env("CARGO_NO_SLICE", "1")
             .stdout(Stdio::from(stdout_file))
             .stderr(Stdio::from(stderr_file));
 
-        let mut child = cmd
+        let child = cmd
             .spawn()
             .with_context(|| format!("failed to spawn: {command} {args:?}"))?;
 
@@ -363,10 +367,10 @@ impl JobManager {
         // Also clean up old job directories
         if let Ok(entries) = fs::read_dir(&self.jobs_dir) {
             for entry in entries.filter_map(std::result::Result::ok) {
-                if let Ok(id) = entry.file_name().to_string_lossy().parse::<i64>() {
+                if let Ok(_id) = entry.file_name().to_string_lossy().parse::<i64>() {
                     // If job doesn't exist in HistoryDb, remove the directory
                     let exists = {
-                        let db = self
+                        let _db = self
                             .db
                             .lock()
                             .map_err(|_| anyhow::anyhow!("db lock poisoned"))?;
