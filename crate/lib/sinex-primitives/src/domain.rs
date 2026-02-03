@@ -878,10 +878,10 @@ fn normalize_path_lexically(path: &Utf8Path) -> Utf8PathBuf {
                 if name == ".." {
                     // Pop the last component if it's not a ".." itself
                     if let Some(last) = components.last() {
-                        if *last != ".." {
-                            components.pop();
-                        } else {
+                        if *last == ".." {
                             components.push(name.to_string());
+                        } else {
+                            components.pop();
                         }
                     } else {
                         components.push(name.to_string());
@@ -901,10 +901,10 @@ fn normalize_path_lexically(path: &Utf8Path) -> Utf8PathBuf {
             camino::Utf8Component::ParentDir => {
                 // Treat as ".." component
                 if let Some(last) = components.last() {
-                    if last != ".." {
-                        components.pop();
-                    } else {
+                    if last == ".." {
                         components.push("..".to_string());
+                    } else {
+                        components.pop();
                     }
                 } else {
                     components.push("..".to_string());

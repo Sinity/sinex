@@ -349,8 +349,6 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
 
     /// Run the CLI with parsed arguments
     pub async fn run(&mut self, args: NodeCli) -> NodeResult<()> {
-        use sinex_node_sdk::stream_processor::{NodeRunner, ScanArgs};
-
         // Initialize logging based on verbosity
         let log_level = match args.verbose {
             0 => "info",
@@ -396,102 +394,9 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
 
         match args.command {
             NodeCommand::Service { dry_run, .. } => {
-                info!("Starting node service mode");
-
-                // Create stream processor runner
-                let mut runner = NodeRunner::new(node);
-
-                // Set up dependencies
-                let service_name = Self::resolve_service_name(&args);
-                let work_dir = Self::resolve_work_dir(&args);
-
-                // Create database pool
-                let db_pool = if dry_run {
-                    None
-                } else {
-                    match Self::connect_primary_db(&args).await {
-                        Ok(pool) => Some(pool),
-                        Err(err) => {
-                            // Check if we allow running without DB (Edge Mode)
-                            let edge_mode = std::env::var("SINEX_EDGE_MODE").is_ok();
-                            if edge_mode && args.database_url.is_none() {
-                                warn!("Running in Edge Mode without database connection");
-                                None
-                            } else {
-                                return Err(err);
-                            }
-                        }
-                    }
-                };
-                let transport = Self::connect_nats_transport(&args.nats.to_config()).await?;
-
-                // Initialize runner with transport
-                runner
-                    .initialize_with_transport(
-                        service_name.clone(),
-                        node_config.clone(),
-                        db_pool.clone(),
-                        transport,
-                        std::path::PathBuf::from(work_dir.as_str()),
-                        dry_run,
-                    )
-                    .await?;
-
-                if !dry_run {
-                    if let Some(cfg) = replay_config.clone() {
-                        if let Err(err) = Self::execute_replay(&mut runner, cfg).await {
-                            warn!(error = %err, "Replay execution failed to complete");
-                        }
-                    }
-                } else if replay_config.is_some() {
-                    warn!("Replay configuration ignored in dry-run mode");
-                }
-
-                let coordination_disabled = std::env::var("SINEX_COORDINATION_DISABLED")
-                    .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
-
-                // Run service with optional coordination
-                if dry_run || coordination_disabled {
-                    runner.run_service().await?;
-                } else {
-                    use sinex_node_sdk::coordination::NodeCoordination;
-
-                    use std::sync::Arc;
-                    use tokio::sync::Mutex;
-                    use uuid::Uuid;
-
-                    let runtime_snapshot = runner.runtime_state().ok_or_else(|| {
-                        SinexError::general("Runtime state unavailable for coordination")
-                    })?;
-
-                    // Create coordination with generated instance ID
-                    let instance_id = Uuid::new_v4().to_string();
-
-                    let coordination =
-                        NodeCoordination::from_runtime(&runtime_snapshot, instance_id);
-
-                    // Wrap runner in Arc<Mutex<>> for sharing
-                    let runner = Arc::new(Mutex::new(runner));
-
-                    // Run with coordination (hot standby pattern)
-                    coordination
-                        .await?
-                        .run_coordination_loop(move || {
-                            let runner = runner.clone();
-                            async move {
-                                // Only leader processes events
-                                let mut runner = runner.lock().await;
-                                runner.run_service().await.map_err(|e| {
-                                    sinex_primitives::SinexError::service(format!(
-                                        "Node error: {e}"
-                                    ))
-                                })
-                            }
-                        })
-                        .await?;
-                }
+                self.handle_service_command(node, node_config, replay_config, args, dry_run)
+                    .await
             }
-
             NodeCommand::Scan {
                 ref from,
                 ref until,
@@ -502,113 +407,431 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
                 no_skip_duplicates,
                 estimate,
             } => {
-                info!("Running scan operation");
-
-                let checkpoint = parse_checkpoint(from)
-                    .map_err(|e| SinexError::general(format!("Failed to parse checkpoint: {e}")))?;
-                let time_horizon = parse_time_horizon(until).map_err(|e| {
-                    SinexError::general(format!("Failed to parse time horizon: {e}"))
-                })?;
-
-                // Create stream processor runner
-                let mut runner = NodeRunner::new(node);
-
-                // Set up minimal dependencies for scan mode
-                let service_name = args
-                    .service_name
-                    .as_deref()
-                    .unwrap_or("sinex-node")
-                    .to_string();
-                let work_dir = Self::resolve_work_dir(&args);
-
-                // For scan mode, database connection is optional for dry runs
-                let db_pool = if dry_run {
-                    None
-                } else {
-                    Some(Self::connect_primary_db(&args).await?)
-                };
-
-                let transport = Self::connect_nats_transport(&args.nats.to_config()).await?;
-
-                // Initialize runner with transport
-                runner
-                    .initialize_with_transport(
-                        service_name,
-                        node_config,
-                        db_pool,
-                        transport,
-                        std::path::PathBuf::from(work_dir.as_str()),
-                        dry_run,
-                    )
-                    .await?;
-
-                // Create scan args
-                let scan_args = ScanArgs {
-                    targets: targets
-                        .iter()
-                        .map(std::string::ToString::to_string)
-                        .collect(),
+                self.handle_scan_command(
+                    node,
+                    node_config,
+                    from,
+                    until,
+                    targets,
                     dry_run,
                     interactive,
                     max_events,
-                    skip_duplicates: !no_skip_duplicates,
-                    config: HashMap::new(),
-                };
+                    no_skip_duplicates,
+                    estimate,
+                    &args,
+                )
+                .await
+            }
+            NodeCommand::Explore {
+                source_state,
+                ingestion_history,
+                coverage_analysis,
+                limit,
+                ref export_to,
+            } => {
+                self.handle_explore_command(
+                    node,
+                    source_state,
+                    ingestion_history,
+                    coverage_analysis,
+                    limit,
+                    export_to.as_ref(),
+                )
+                .await
+            }
+        }
+    }
 
-                // Run estimation if requested
-                if estimate {
-                    let estimate_result = runner
-                        .estimate_scan_scope(&checkpoint, &time_horizon, &scan_args)
-                        .await?;
-                    println!("Scan Estimation:");
-                    println!("  Estimated events: {}", estimate_result.estimated_events);
+    #[allow(clippy::too_many_arguments)]
+    async fn handle_service_command(
+        &self,
+        node: T,
+        node_config: HashMap<String, serde_json::Value>,
+        replay_config: Option<ReplayConfig>,
+        args: NodeCli,
+        dry_run: bool,
+    ) -> NodeResult<()> {
+        info!("Starting node service mode");
+
+        // Create stream processor runner
+        let mut runner = NodeRunner::new(node);
+
+        // Set up dependencies
+        let service_name = Self::resolve_service_name(&args);
+        let work_dir = Self::resolve_work_dir(&args);
+
+        // Create database pool
+        let db_pool = if dry_run {
+            None
+        } else {
+            match Self::connect_primary_db(&args).await {
+                Ok(pool) => Some(pool),
+                Err(err) => {
+                    // Check if we allow running without DB (Edge Mode)
+                    let edge_mode = std::env::var("SINEX_EDGE_MODE").is_ok();
+                    if edge_mode && args.database_url.is_none() {
+                        warn!("Running in Edge Mode without database connection");
+                        None
+                    } else {
+                        return Err(err);
+                    }
+                }
+            }
+        };
+        let transport = Self::connect_nats_transport(&args.nats.to_config()).await?;
+
+        // Initialize runner with transport
+        runner
+            .initialize_with_transport(
+                service_name.clone(),
+                node_config.clone(),
+                db_pool.clone(),
+                transport,
+                std::path::PathBuf::from(work_dir.as_str()),
+                dry_run,
+            )
+            .await?;
+
+        if !dry_run {
+            if let Some(cfg) = replay_config.clone() {
+                if let Err(err) = Self::execute_replay(&mut runner, cfg).await {
+                    warn!(error = %err, "Replay execution failed to complete");
+                }
+            }
+        } else if replay_config.is_some() {
+            warn!("Replay configuration ignored in dry-run mode");
+        }
+
+        let coordination_disabled = std::env::var("SINEX_COORDINATION_DISABLED")
+            .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+
+        // Run service with optional coordination
+        if dry_run || coordination_disabled {
+            runner.run_service().await?;
+        } else {
+            use sinex_node_sdk::coordination::NodeCoordination;
+
+            use std::sync::Arc;
+            use tokio::sync::Mutex;
+            use uuid::Uuid;
+
+            let runtime_snapshot = runner
+                .runtime_state()
+                .ok_or_else(|| SinexError::general("Runtime state unavailable for coordination"))?;
+
+            // Create coordination with generated instance ID
+            let instance_id = Uuid::new_v4().to_string();
+
+            let coordination = NodeCoordination::from_runtime(&runtime_snapshot, instance_id);
+
+            // Wrap runner in Arc<Mutex<>> for sharing
+            let runner = Arc::new(Mutex::new(runner));
+
+            // Run with coordination (hot standby pattern)
+            coordination
+                .await?
+                .run_coordination_loop(move || {
+                    let runner = runner.clone();
+                    async move {
+                        // Only leader processes events
+                        let mut runner = runner.lock().await;
+                        runner.run_service().await.map_err(|e| {
+                            sinex_primitives::SinexError::service(format!("Node error: {e}"))
+                        })
+                    }
+                })
+                .await?;
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn handle_scan_command(
+        &self,
+        node: T,
+        node_config: HashMap<String, serde_json::Value>,
+        from: &str,
+        until: &str,
+        targets: &[SanitizedPath],
+        dry_run: bool,
+        interactive: bool,
+        max_events: u64,
+        no_skip_duplicates: bool,
+        estimate: bool,
+        args: &NodeCli,
+    ) -> NodeResult<()> {
+        use sinex_node_sdk::stream_processor::ScanArgs;
+
+        info!("Running scan operation");
+
+        let checkpoint = parse_checkpoint(from)
+            .map_err(|e| SinexError::general(format!("Failed to parse checkpoint: {e}")))?;
+        let time_horizon = parse_time_horizon(until)
+            .map_err(|e| SinexError::general(format!("Failed to parse time horizon: {e}")))?;
+
+        // Create stream processor runner
+        let mut runner = NodeRunner::new(node);
+
+        // Set up minimal dependencies for scan mode
+        let service_name = args
+            .service_name
+            .as_deref()
+            .unwrap_or("sinex-node")
+            .to_string();
+        let work_dir = Self::resolve_work_dir(args);
+
+        // For scan mode, database connection is optional for dry runs
+        let db_pool = if dry_run {
+            None
+        } else {
+            Some(Self::connect_primary_db(args).await?)
+        };
+
+        let transport = Self::connect_nats_transport(&args.nats.to_config()).await?;
+
+        // Initialize runner with transport
+        runner
+            .initialize_with_transport(
+                service_name,
+                node_config,
+                db_pool,
+                transport,
+                std::path::PathBuf::from(work_dir.as_str()),
+                dry_run,
+            )
+            .await?;
+
+        // Create scan args
+        let scan_args = ScanArgs {
+            targets: targets.iter().map(ToString::to_string).collect(),
+            dry_run,
+            interactive,
+            max_events,
+            skip_duplicates: !no_skip_duplicates,
+            config: HashMap::new(),
+        };
+
+        // Run estimation if requested
+        if estimate {
+            let estimate_result = runner
+                .estimate_scan_scope(&checkpoint, &time_horizon, &scan_args)
+                .await?;
+            println!("Scan Estimation:");
+            println!("  Estimated events: {}", estimate_result.estimated_events);
+            println!(
+                "  Estimated duration: {:?}",
+                estimate_result.estimated_duration
+            );
+            println!(
+                "  Estimated data size: {} bytes",
+                estimate_result.estimated_data_size
+            );
+            println!("  Estimated targets: {}", estimate_result.estimated_targets);
+            println!("  Confidence: {:.1}%", estimate_result.confidence * 100.0);
+            if !estimate_result.warnings.is_empty() {
+                println!("  Warnings:");
+                for warning in &estimate_result.warnings {
+                    println!("    - {warning}");
+                }
+            }
+            println!();
+
+            if interactive {
+                print!("Proceed with scan? [y/N] ");
+                use std::io::{self, Write};
+                io::stdout().flush()?;
+                let mut input = String::new();
+                io::stdin().read_line(&mut input)?;
+                if !input.trim().to_lowercase().starts_with('y') {
+                    println!("Scan cancelled");
+                    return Ok(());
+                }
+            }
+        }
+
+        // Run scan
+        let report = runner.run_scan(checkpoint, time_horizon, scan_args).await?;
+
+        // Display results
+        println!("Scan Results:");
+        println!("  Events processed: {}", report.events_processed);
+        println!("  Duration: {:?}", report.duration);
+        println!(
+            "  Final checkpoint: {}",
+            report.final_checkpoint.description()
+        );
+
+        if let Some((start, end)) = report.time_range {
+            println!(
+                "  Time range: {} to {}",
+                start
+                    .format(
+                        &time::format_description::parse(
+                            "[year]-[month]-[day] [hour]:[minute]:[second]"
+                        )
+                        .unwrap()
+                    )
+                    .unwrap_or_default(),
+                end.format(
+                    &time::format_description::parse(
+                        "[year]-[month]-[day] [hour]:[minute]:[second]"
+                    )
+                    .unwrap()
+                )
+                .unwrap_or_default()
+            );
+        }
+
+        if !report.processor_stats.is_empty() {
+            println!("  Processor stats:");
+            for (key, value) in &report.processor_stats {
+                println!("    {key}: {value}");
+            }
+        }
+
+        if !report.successful_targets.is_empty() {
+            println!("  Successful targets: {}", report.successful_targets.len());
+            for target in &report.successful_targets {
+                println!("    - {target}");
+            }
+        }
+
+        if !report.failed_targets.is_empty() {
+            println!("  Failed targets:");
+            for (target, error) in &report.failed_targets {
+                println!("    - {target}: {error}");
+            }
+        }
+
+        if !report.warnings.is_empty() {
+            println!("  Warnings:");
+            for warning in &report.warnings {
+                println!("    - {warning}");
+            }
+        }
+        Ok(())
+    }
+
+    async fn handle_explore_command(
+        &self,
+        node: T,
+        source_state: bool,
+        ingestion_history: bool,
+        coverage_analysis: bool,
+        limit: u64,
+        export_to: Option<&SanitizedPath>,
+    ) -> NodeResult<()> {
+        info!("Running exploration mode");
+
+        // For exploration, we can work with the processor directly
+        if source_state {
+            match node.get_source_state() {
+                Ok(state) => {
+                    println!("Source State:");
+                    println!("  Description: {}", state.description);
                     println!(
-                        "  Estimated duration: {:?}",
-                        estimate_result.estimated_duration
+                        "  Last updated: {}",
+                        state
+                            .last_updated
+                            .format(
+                                &time::format_description::parse(
+                                    "[year]-[month]-[day] [hour]:[minute]:[second]"
+                                )
+                                .unwrap()
+                            )
+                            .unwrap_or_default()
                     );
-                    println!(
-                        "  Estimated data size: {} bytes",
-                        estimate_result.estimated_data_size
-                    );
-                    println!("  Estimated targets: {}", estimate_result.estimated_targets);
-                    println!("  Confidence: {:.1}%", estimate_result.confidence * 100.0);
-                    if !estimate_result.warnings.is_empty() {
-                        println!("  Warnings:");
-                        for warning in &estimate_result.warnings {
-                            println!("    - {warning}");
+                    if let Some(total) = state.total_items {
+                        println!("  Total items: {total}");
+                    }
+                    println!("  Healthy: {}", state.healthy);
+
+                    if !state.recent_activity.is_empty() {
+                        println!("  Recent activity:");
+                        for activity in &state.recent_activity {
+                            println!(
+                                "    - {}: {}",
+                                activity
+                                    .timestamp
+                                    .format(
+                                        &time::format_description::parse(
+                                            "[hour]:[minute]:[second]"
+                                        )
+                                        .unwrap()
+                                    )
+                                    .unwrap_or_default(),
+                                activity.description
+                            );
                         }
                     }
-                    println!();
 
-                    if interactive {
-                        print!("Proceed with scan? [y/N] ");
-                        use std::io::{self, Write};
-                        io::stdout().flush()?;
-                        let mut input = String::new();
-                        io::stdin().read_line(&mut input)?;
-                        if !input.trim().to_lowercase().starts_with('y') {
-                            println!("Scan cancelled");
-                            return Ok(());
+                    if !state.metadata.is_empty() {
+                        println!("  Metadata:");
+                        for (key, value) in &state.metadata {
+                            println!("    {key}: {value}");
                         }
                     }
                 }
+                Err(e) => {
+                    warn!(error = %e, "Failed to get source state");
+                }
+            }
+            println!();
+        }
 
-                // Run scan
-                let report = runner.run_scan(checkpoint, time_horizon, scan_args).await?;
+        if ingestion_history {
+            match node.get_ingestion_history(limit) {
+                Ok(history) => {
+                    println!("Ingestion History ({} entries):", history.len());
+                    for entry in &history {
+                        println!("  ID: {}", entry.id);
+                        println!(
+                            "    Started: {}",
+                            entry
+                                .started_at
+                                .format(
+                                    &time::format_description::parse(
+                                        "[year]-[month]-[day] [hour]:[minute]:[second]"
+                                    )
+                                    .unwrap()
+                                )
+                                .unwrap_or_default()
+                        );
+                        if let Some(completed) = entry.completed_at {
+                            println!(
+                                "    Completed: {}",
+                                completed
+                                    .format(
+                                        &time::format_description::parse(
+                                            "[year]-[month]-[day] [hour]:[minute]:[second]"
+                                        )
+                                        .unwrap()
+                                    )
+                                    .unwrap_or_default()
+                            );
+                        }
+                        println!("    Events: {}", entry.events_generated);
+                        if let Some(error) = &entry.error {
+                            println!("    Error: {error}");
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(error = %e, "Failed to get ingestion history");
+                }
+            }
+            println!();
+        }
 
-                // Display results
-                println!("Scan Results:");
-                println!("  Events processed: {}", report.events_processed);
-                println!("  Duration: {:?}", report.duration);
-                println!(
-                    "  Final checkpoint: {}",
-                    report.final_checkpoint.description()
-                );
-
-                if let Some((start, end)) = report.time_range {
+        if coverage_analysis {
+            match node.get_coverage_analysis(None) {
+                Ok(analysis) => {
+                    println!("Coverage Analysis:");
                     println!(
                         "  Time range: {} to {}",
-                        start
+                        analysis
+                            .time_range
+                            .0
                             .format(
                                 &time::format_description::parse(
                                     "[year]-[month]-[day] [hour]:[minute]:[second]"
@@ -616,233 +839,66 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
                                 .unwrap()
                             )
                             .unwrap_or_default(),
-                        end.format(
-                            &time::format_description::parse(
-                                "[year]-[month]-[day] [hour]:[minute]:[second]"
+                        analysis
+                            .time_range
+                            .1
+                            .format(
+                                &time::format_description::parse(
+                                    "[year]-[month]-[day] [hour]:[minute]:[second]"
+                                )
+                                .unwrap()
                             )
-                            .unwrap()
-                        )
-                        .unwrap_or_default()
+                            .unwrap_or_default()
                     );
-                }
+                    println!("  Source total: {}", analysis.source_total);
+                    println!("  Sinex total: {}", analysis.sinex_total);
+                    println!("  Coverage: {:.1}%", analysis.coverage_percentage);
+                    println!("  Missing: {}", analysis.missing_count);
+                    println!("  Duplicates: {}", analysis.duplicate_count);
 
-                if !report.processor_stats.is_empty() {
-                    println!("  Processor stats:");
-                    for (key, value) in &report.processor_stats {
-                        println!("    {key}: {value}");
+                    if !analysis.missing_samples.is_empty() {
+                        println!("  Missing samples:");
+                        for sample in &analysis.missing_samples {
+                            println!(
+                                "    - {}: {} ({})",
+                                sample.source_id,
+                                sample.description,
+                                sample.missing_reason.as_deref().unwrap_or("Unknown")
+                            );
+                        }
+                    }
+
+                    if !analysis.recommendations.is_empty() {
+                        println!("  Recommendations:");
+                        for rec in &analysis.recommendations {
+                            println!("    - {rec}");
+                        }
                     }
                 }
-
-                if !report.successful_targets.is_empty() {
-                    println!("  Successful targets: {}", report.successful_targets.len());
-                    for target in &report.successful_targets {
-                        println!("    - {target}");
-                    }
-                }
-
-                if !report.failed_targets.is_empty() {
-                    println!("  Failed targets:");
-                    for (target, error) in &report.failed_targets {
-                        println!("    - {target}: {error}");
-                    }
-                }
-
-                if !report.warnings.is_empty() {
-                    println!("  Warnings:");
-                    for warning in &report.warnings {
-                        println!("    - {warning}");
-                    }
+                Err(e) => {
+                    warn!(error = %e, "Failed to get coverage analysis");
                 }
             }
+            println!();
+        }
 
-            NodeCommand::Explore {
-                source_state,
-                ingestion_history,
-                coverage_analysis,
-                limit,
-                export_to,
-            } => {
-                info!("Running exploration mode");
+        if let Some(export_path) = export_to {
+            let path_buf = std::path::PathBuf::from(export_path.as_str());
+            let format = match path_buf.extension().and_then(|ext| ext.to_str()) {
+                Some("json") => ExportFormat::Json,
+                Some("csv") => ExportFormat::Csv,
+                _ => ExportFormat::Raw,
+            };
 
-                // For exploration, we can work with the processor directly
-                if source_state {
-                    match node.get_source_state() {
-                        Ok(state) => {
-                            println!("Source State:");
-                            println!("  Description: {}", state.description);
-                            println!(
-                                "  Last updated: {}",
-                                state
-                                    .last_updated
-                                    .format(
-                                        &time::format_description::parse(
-                                            "[year]-[month]-[day] [hour]:[minute]:[second]"
-                                        )
-                                        .unwrap()
-                                    )
-                                    .unwrap_or_default()
-                            );
-                            if let Some(total) = state.total_items {
-                                println!("  Total items: {total}");
-                            }
-                            println!("  Healthy: {}", state.healthy);
-
-                            if !state.recent_activity.is_empty() {
-                                println!("  Recent activity:");
-                                for activity in &state.recent_activity {
-                                    println!(
-                                        "    - {}: {}",
-                                        activity
-                                            .timestamp
-                                            .format(
-                                                &time::format_description::parse(
-                                                    "[hour]:[minute]:[second]"
-                                                )
-                                                .unwrap()
-                                            )
-                                            .unwrap_or_default(),
-                                        activity.description
-                                    );
-                                }
-                            }
-
-                            if !state.metadata.is_empty() {
-                                println!("  Metadata:");
-                                for (key, value) in &state.metadata {
-                                    println!("    {key}: {value}");
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            warn!(error = %e, "Failed to get source state");
-                        }
-                    }
-                    println!();
+            match node.export_data(export_path, format) {
+                Ok(()) => {
+                    println!("Data exported to: {}", export_path.as_str());
                 }
-
-                if ingestion_history {
-                    match node.get_ingestion_history(limit) {
-                        Ok(history) => {
-                            println!("Ingestion History ({} entries):", history.len());
-                            for entry in &history {
-                                println!("  ID: {}", entry.id);
-                                println!(
-                                    "    Started: {}",
-                                    entry
-                                        .started_at
-                                        .format(
-                                            &time::format_description::parse(
-                                                "[year]-[month]-[day] [hour]:[minute]:[second]"
-                                            )
-                                            .unwrap()
-                                        )
-                                        .unwrap_or_default()
-                                );
-                                if let Some(completed) = entry.completed_at {
-                                    println!(
-                                        "    Completed: {}",
-                                        completed
-                                            .format(
-                                                &time::format_description::parse(
-                                                    "[year]-[month]-[day] [hour]:[minute]:[second]"
-                                                )
-                                                .unwrap()
-                                            )
-                                            .unwrap_or_default()
-                                    );
-                                }
-                                println!("    Events: {}", entry.events_generated);
-                                if let Some(error) = &entry.error {
-                                    println!("    Error: {error}");
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            warn!(error = %e, "Failed to get ingestion history");
-                        }
-                    }
-                    println!();
-                }
-
-                if coverage_analysis {
-                    match node.get_coverage_analysis(None) {
-                        Ok(analysis) => {
-                            println!("Coverage Analysis:");
-                            println!(
-                                "  Time range: {} to {}",
-                                analysis
-                                    .time_range
-                                    .0
-                                    .format(
-                                        &time::format_description::parse(
-                                            "[year]-[month]-[day] [hour]:[minute]:[second]"
-                                        )
-                                        .unwrap()
-                                    )
-                                    .unwrap_or_default(),
-                                analysis
-                                    .time_range
-                                    .1
-                                    .format(
-                                        &time::format_description::parse(
-                                            "[year]-[month]-[day] [hour]:[minute]:[second]"
-                                        )
-                                        .unwrap()
-                                    )
-                                    .unwrap_or_default()
-                            );
-                            println!("  Source total: {}", analysis.source_total);
-                            println!("  Sinex total: {}", analysis.sinex_total);
-                            println!("  Coverage: {:.1}%", analysis.coverage_percentage);
-                            println!("  Missing: {}", analysis.missing_count);
-                            println!("  Duplicates: {}", analysis.duplicate_count);
-
-                            if !analysis.missing_samples.is_empty() {
-                                println!("  Missing samples:");
-                                for sample in &analysis.missing_samples {
-                                    println!(
-                                        "    - {}: {} ({})",
-                                        sample.source_id,
-                                        sample.description,
-                                        sample.missing_reason.as_deref().unwrap_or("Unknown")
-                                    );
-                                }
-                            }
-
-                            if !analysis.recommendations.is_empty() {
-                                println!("  Recommendations:");
-                                for rec in &analysis.recommendations {
-                                    println!("    - {rec}");
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            warn!(error = %e, "Failed to get coverage analysis");
-                        }
-                    }
-                    println!();
-                }
-
-                if let Some(export_path) = export_to {
-                    let path_buf = std::path::PathBuf::from(export_path.as_str());
-                    let format = match path_buf.extension().and_then(|ext| ext.to_str()) {
-                        Some("json") => ExportFormat::Json,
-                        Some("csv") => ExportFormat::Csv,
-                        _ => ExportFormat::Raw,
-                    };
-
-                    match node.export_data(&export_path, format) {
-                        Ok(()) => {
-                            println!("Data exported to: {}", export_path.as_str());
-                        }
-                        Err(e) => {
-                            warn!(error = %e, "Failed to export data");
-                        }
-                    }
+                Err(e) => {
+                    warn!(error = %e, "Failed to export data");
                 }
             }
         }
-
         Ok(())
     }
 

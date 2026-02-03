@@ -6,7 +6,7 @@
 // Use local facade for common types
 use crate::common::{
     async_trait, error, info, instrument, parse_config_value, parse_typed_config, warn,
-    ActivityEntry, Checkpoint, CoverageAnalysis, Deserialize, HashMap, IngestionHistoryEntry, Node,
+    ActivityEntry, Checkpoint, CoverageAnalysis, Deserialize, HashMap, IngestionHistoryEntry,
     NodeCapabilities, NodeResult, NodeRuntimeState, ScanArgs, ScanReport, Serialize, SinexError,
     SourceState, TimeHorizon,
 };
@@ -423,7 +423,7 @@ impl SimpleIngestor for DesktopProcessor {
                                     error!("Clipboard monitoring failed: {}", e);
                                 }
                             });
-                            handle.start(task, None);
+                            let _ = handle.start(task, None);
                             state.health.clipboard_active = true;
                         }
                         Err(e) => {
@@ -460,7 +460,7 @@ impl SimpleIngestor for DesktopProcessor {
                                     error!("Window manager monitoring failed: {}", e);
                                 }
                             });
-                            handle.start(task, None);
+                            let _ = handle.start(task, None);
                             state.health.window_manager_active = true;
                         }
                         Err(e) => {

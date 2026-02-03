@@ -361,63 +361,61 @@ impl MaterialAssembler {
 
             interval.tick().await;
 
-            let now = Timestamp::now();
-            let mut stale_materials = Vec::new();
+            let stale_materials = self.find_stale_materials().await;
 
-            // Collect stale materials
-            for entry in self.assembler_state.iter() {
-                let material_id = *entry.key();
-                let acquire_start = std::time::Instant::now();
-                let state = entry.value().lock().await;
-                let acquire_ms = acquire_start.elapsed().as_millis() as u64;
-                if acquire_ms > 50 {
-                    tracing::warn!(material_id = %material_id, acquire_ms, "Slow lock acquisition in stale assembly check");
-                }
-
-                // Skip if finalizing
-                if state.finalizing {
-                    continue;
-                }
-
-                // Check if last slice arrival was too long ago
-                let elapsed = now - state.last_slice_received;
-                if elapsed.whole_seconds() > SLICE_ARRIVAL_TIMEOUT.as_secs() as i64 {
-                    // Also check if we have pending end or buffered slices (incomplete assembly)
-                    if state.pending_end.is_none() || !state.buffered_slices.is_empty() {
-                        stale_materials.push((material_id, elapsed.whole_seconds()));
-                    }
-                }
-            }
-
-            // Clean up stale materials
             for (material_id, elapsed_secs) in stale_materials {
-                info!(
-                    material_id = %material_id,
-                    elapsed_secs,
-                    "Cleaning up stale assembly due to slice arrival timeout"
-                );
-
-                self.route_material_error(
-                    material_id,
-                    "slice_arrival_timeout",
-                    serde_json::json!({
-                        "timeout_seconds": SLICE_ARRIVAL_TIMEOUT.as_secs(),
-                        "elapsed_seconds": elapsed_secs,
-                    }),
-                )
-                .await;
-
-                self.finalize_failed_material(material_id, "slice_arrival_timeout")
-                    .await;
+                self.process_stale_material(material_id, elapsed_secs).await;
             }
 
-            // Periodically scan for orphaned temp files and clean them up
             if let Err(e) = self.cleanup_orphaned_temp_files().await {
                 warn!("Failed to cleanup orphaned temp files: {}", e);
             }
         }
 
         Ok(())
+    }
+
+    async fn find_stale_materials(&self) -> Vec<(Ulid, i64)> {
+        let now = Timestamp::now();
+        let mut stale = Vec::new();
+
+        for entry in self.assembler_state.iter() {
+            let material_id = *entry.key();
+            let state = entry.value().lock().await;
+
+            if state.finalizing {
+                continue;
+            }
+
+            let elapsed = now - state.last_slice_received;
+            if elapsed.whole_seconds() > SLICE_ARRIVAL_TIMEOUT.as_secs() as i64 {
+                if state.pending_end.is_none() || !state.buffered_slices.is_empty() {
+                    stale.push((material_id, elapsed.whole_seconds()));
+                }
+            }
+        }
+        stale
+    }
+
+    async fn process_stale_material(&self, material_id: Ulid, elapsed_secs: i64) {
+        info!(
+            material_id = %material_id,
+            elapsed_secs,
+            "Cleaning up stale assembly due to slice arrival timeout"
+        );
+
+        self.route_material_error(
+            material_id,
+            "slice_arrival_timeout",
+            serde_json::json!({
+                "timeout_seconds": SLICE_ARRIVAL_TIMEOUT.as_secs(),
+                "elapsed_seconds": elapsed_secs,
+            }),
+        )
+        .await;
+
+        self.finalize_failed_material(material_id, "slice_arrival_timeout")
+            .await;
     }
 
     /// Scan state root for orphaned temp files from crashed/terminated assemblies
@@ -432,62 +430,64 @@ impl MaterialAssembler {
             }
         };
 
-        let now = std::time::SystemTime::now();
-
         while let Some(entry) = entries
             .next_entry()
             .await
             .map_err(|e| SinexError::io(format!("Failed to iterate state directory: {e}")))?
         {
-            let path = entry.path();
-            if !entry
+            if entry
                 .file_type()
                 .await
                 .map_err(|e| SinexError::io(format!("Failed to check file type: {e}")))?
                 .is_dir()
             {
-                continue;
+                self.check_orphaned_folder(entry.path()).await?;
             }
+        }
 
-            let folder_name = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or_default();
-            let material_id = match Ulid::from_str(folder_name) {
-                Ok(id) => id,
-                Err(_) => continue, // Skip non-ULID folders
-            };
+        Ok(())
+    }
 
-            // Check if this material is still active in memory
-            if self.assembler_state.contains_key(&material_id) {
-                continue; // Active, don't touch it
-            }
+    async fn check_orphaned_folder(&self, path: std::path::PathBuf) -> IngestdResult<()> {
+        let folder_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
 
-            // Check if material is terminal in database
-            if self.material_is_terminal(material_id).await? {
-                // Terminal but not cleaned up - clean it now
-                info!(
-                    material_id = %material_id,
-                    "Cleaning up orphaned state for terminal material"
-                );
-                self.cleanup_state(material_id).await;
-                continue;
-            }
+        let Ok(material_id) = Ulid::from_str(folder_name) else {
+            return Ok(()); // Skip non-ULID folders
+        };
 
-            // Check file age - only clean up if old enough
-            let temp_path = path.join(state::TEMP_FILE_NAME);
-            if temp_path.exists() {
-                if let Ok(metadata) = fs::metadata(&temp_path).await {
-                    if let Ok(modified) = metadata.modified() {
-                        if let Ok(age) = now.duration_since(modified) {
-                            if age > ORPHANED_FILE_AGE_THRESHOLD {
-                                warn!(
-                                    material_id = %material_id,
-                                    age_hours = age.as_secs() / 3600,
-                                    "Cleaning up very old orphaned temp file"
-                                );
-                                self.cleanup_state(material_id).await;
-                            }
+        // Check if this material is still active in memory
+        if self.assembler_state.contains_key(&material_id) {
+            return Ok(()); // Active, don't touch it
+        }
+
+        // Check if material is terminal in database
+        if self.material_is_terminal(material_id).await? {
+            // Terminal but not cleaned up - clean it now
+            info!(
+                material_id = %material_id,
+                "Cleaning up orphaned state for terminal material"
+            );
+            self.cleanup_state(material_id).await;
+            return Ok(());
+        }
+
+        // Check file age - only clean up if old enough
+        let temp_path = path.join(state::TEMP_FILE_NAME);
+        if temp_path.exists() {
+            if let Ok(metadata) = fs::metadata(&temp_path).await {
+                if let Ok(modified) = metadata.modified() {
+                    let now = std::time::SystemTime::now();
+                    if let Ok(age) = now.duration_since(modified) {
+                        if age > ORPHANED_FILE_AGE_THRESHOLD {
+                            warn!(
+                                material_id = %material_id,
+                                age_hours = age.as_secs() / 3600,
+                                "Cleaning up very old orphaned temp file"
+                            );
+                            self.cleanup_state(material_id).await;
                         }
                     }
                 }

@@ -575,7 +575,11 @@ impl ReplayExecutionEngine {
         );
 
         let result = self.run_operation(operation_id).await;
+        self.handle_execution_finish(operation_id, &result).await;
+        result
+    }
 
+    async fn handle_execution_finish(&self, operation_id: Ulid, result: &Result<ReplayOperation>) {
         if let Err(ref err) = result {
             error!(
                 operation_id = %operation_id,
@@ -594,20 +598,45 @@ impl ReplayExecutionEngine {
         if let Err(err) = self.replay.release_execution_lock(operation_id).await {
             warn!(?err, "Failed to release replay execution lock");
         }
-
-        result
     }
 
     async fn run_operation(&self, operation_id: Ulid) -> Result<ReplayOperation> {
-        let initial = self.replay.load_operation(operation_id).await?;
-        if initial.state != ReplayState::Approved {
+        let (initial, total_events) = self.prepare_operation(operation_id).await?;
+
+        // Initialize checkpoint
+        let mut checkpoint = ReplayCheckpoint {
+            processed_events: 0,
+            total_events,
+            last_event_id: initial.checkpoint.last_event_id,
+            batch_number: 0,
+            savepoint_id: None,
+            updated_at: sinex_primitives::temporal::now(),
+        };
+
+        // Execute actual replay
+        let replay_result = self
+            .replay_events(
+                operation_id,
+                &initial.scope,
+                self.replay.pool(),
+                &mut checkpoint,
+            )
+            .await;
+
+        self.finalize_operation(operation_id, total_events, checkpoint, replay_result)
+            .await
+    }
+
+    async fn prepare_operation(&self, operation_id: Ulid) -> Result<(ReplayOperation, u64)> {
+        let op = self.replay.load_operation(operation_id).await?;
+        if op.state != ReplayState::Approved {
             return Err(eyre!(
                 "Operation {} must be approved before execution",
                 operation_id
             ));
         }
 
-        let preview = initial.preview_summary.clone().ok_or_else(|| {
+        let preview = op.preview_summary.clone().ok_or_else(|| {
             eyre!(
                 "Operation {} is missing preview summary; run preview before execution",
                 operation_id
@@ -628,28 +657,20 @@ impl ReplayExecutionEngine {
         info!(
             operation_id = %operation_id,
             total_events = total_events,
-            processor_id = %initial.scope.processor_id,
+            processor_id = %op.scope.processor_id,
             "Beginning event replay"
         );
 
-        // Initialize checkpoint
-        let mut checkpoint = ReplayCheckpoint {
-            processed_events: 0,
-            total_events,
-            last_event_id: initial.checkpoint.last_event_id,
-            batch_number: 0,
-            savepoint_id: None,
-            updated_at: sinex_primitives::temporal::now(),
-        };
+        Ok((op, total_events))
+    }
 
-        // Get the pool from the state machine for queries
-        let pool = self.replay.pool();
-
-        // Execute actual replay
-        let replay_result = self
-            .replay_events(operation_id, &initial.scope, pool, &mut checkpoint)
-            .await;
-
+    async fn finalize_operation(
+        &self,
+        operation_id: Ulid,
+        total_events: u64,
+        mut checkpoint: ReplayCheckpoint,
+        replay_result: Result<u64>,
+    ) -> Result<ReplayOperation> {
         match replay_result {
             Ok(processed_count) => {
                 info!(
@@ -695,11 +716,6 @@ impl ReplayExecutionEngine {
     }
 
     /// Replay events matching the scope by republishing them through NATS.
-    ///
-    /// Events are:
-    /// 1. Queried from the database in batches
-    /// 2. Republished to replay subjects (with replay marker headers)
-    /// 3. Progress is tracked via checkpoints
     async fn replay_events(
         &self,
         operation_id: Ulid,
@@ -709,19 +725,12 @@ impl ReplayExecutionEngine {
     ) -> Result<u64> {
         let event_source = EventSource::new(&scope.processor_id);
 
-        // Resolve time window (default to last 24 hours if not specified)
-        let (start_time, end_time) = scope.time_window.unwrap_or_else(|| {
-            let end = sinex_primitives::temporal::now();
-            let start = end - time::Duration::hours(24);
-            (start, end)
-        });
-
+        let (start_time, end_time) = self.resolve_time_window(scope);
         let mut offset: i64 = 0;
         let mut total_processed: u64 = 0;
         let js = async_nats::jetstream::new(self.nats_client.clone());
 
         loop {
-            // Query batch of events
             let events = pool
                 .events()
                 .get_by_source_and_time_range(
@@ -742,112 +751,15 @@ impl ReplayExecutionEngine {
                 break;
             }
 
-            let batch_size = events.len();
-            checkpoint.batch_number = checkpoint.batch_number.saturating_add(1);
+            let batch_processed = self
+                .process_replay_batch(operation_id, events, &js, checkpoint)
+                .await?;
 
-            debug!(
-                operation_id = %operation_id,
-                batch = checkpoint.batch_number,
-                events = batch_size,
-                offset = offset,
-                "Processing replay batch"
-            );
+            total_processed += batch_processed;
+            offset += REPLAY_BATCH_SIZE;
 
-            // Republish each event
-            for event in events {
-                let event_id = event
-                    .id
-                    .as_ref()
-                    .map_or_else(|| Ulid::new().to_string(), std::string::ToString::to_string);
-
-                // Build replay subject with marker
-                let subject = self.env.nats_subject(&format!(
-                    "events.replay.{}.{}",
-                    event.source.as_str().replace('.', "_"),
-                    event.event_type.as_str().replace('.', "_")
-                ));
-
-                // Serialize event payload
-                let payload = serde_json::json!({
-                    "id": event_id,
-                    "source": event.source.as_str(),
-                    "event_type": event.event_type.as_str(),
-                    "ts_orig": event.ts_orig.map(|t| t.format_rfc3339()),
-                    "host": event.host.as_str(),
-                    "payload": event.payload,
-                    "replay_operation_id": operation_id.to_string(),
-                    "replay_timestamp": sinex_primitives::temporal::now().format_rfc3339(),
-                });
-
-                let payload_bytes = serde_json::to_vec(&payload)
-                    .wrap_err("Failed to serialize event for replay")?;
-
-                // Add headers for replay tracking
-                let mut headers = async_nats::HeaderMap::new();
-                headers.insert(
-                    "Nats-Msg-Id",
-                    format!("replay-{operation_id}-{event_id}").as_str(),
-                );
-                headers.insert("X-Replay-Operation", operation_id.to_string().as_str());
-                headers.insert("X-Original-Event-Id", event_id.as_str());
-
-                // Publish to JetStream
-                match js
-                    .publish_with_headers(subject.clone(), headers, payload_bytes.into())
-                    .await
-                {
-                    Ok(ack_future) => {
-                        // Wait for ack with timeout
-                        match tokio::time::timeout(Duration::from_secs(10), ack_future).await {
-                            Ok(Ok(_)) => {
-                                total_processed += 1;
-                                checkpoint.processed_events = total_processed;
-                                checkpoint.last_event_id = event.id.map(|id| *id.as_ulid());
-                            }
-                            Ok(Err(err)) => {
-                                warn!(
-                                    operation_id = %operation_id,
-                                    event_id = %event_id,
-                                    error = %err,
-                                    "Failed to get ack for replayed event"
-                                );
-                                // Continue despite ack failure - event may still be processed
-                                total_processed += 1;
-                            }
-                            Err(_) => {
-                                warn!(
-                                    operation_id = %operation_id,
-                                    event_id = %event_id,
-                                    "Timeout waiting for ack on replayed event"
-                                );
-                                total_processed += 1;
-                            }
-                        }
-                    }
-                    Err(err) => {
-                        error!(
-                            operation_id = %operation_id,
-                            event_id = %event_id,
-                            subject = %subject,
-                            error = %err,
-                            "Failed to publish replayed event"
-                        );
-                        return Err(eyre!("Failed to publish event {}: {}", event_id, err));
-                    }
-                }
-
-                // Update checkpoint periodically
-                if total_processed.is_multiple_of(CHECKPOINT_UPDATE_INTERVAL) {
-                    checkpoint.updated_at = sinex_primitives::temporal::now();
-                    self.replay
-                        .update_checkpoint(operation_id, checkpoint)
-                        .await?;
-                }
-            }
-
-            offset += batch_size as i64;
-
-            // Update checkpoint after each batch
+            // Updated checkpoint after each batch
+            checkpoint.processed_events = total_processed;
             checkpoint.updated_at = sinex_primitives::temporal::now();
             self.replay
                 .update_checkpoint(operation_id, checkpoint)
@@ -855,6 +767,129 @@ impl ReplayExecutionEngine {
         }
 
         Ok(total_processed)
+    }
+
+    fn resolve_time_window(&self, scope: &ReplayScope) -> (Timestamp, Timestamp) {
+        scope.time_window.unwrap_or_else(|| {
+            let end = sinex_primitives::temporal::now();
+            let start = end - sinex_primitives::temporal::Duration::hours(24);
+            (start, end)
+        })
+    }
+
+    async fn process_replay_batch(
+        &self,
+        operation_id: Ulid,
+        events: Vec<sinex_primitives::events::Event>,
+        js: &async_nats::jetstream::Context,
+        checkpoint: &mut ReplayCheckpoint,
+    ) -> Result<u64> {
+        let batch_size = events.len();
+        checkpoint.batch_number = checkpoint.batch_number.saturating_add(1);
+
+        debug!(
+            operation_id = %operation_id,
+            batch = checkpoint.batch_number,
+            events = batch_size,
+            "Processing replay batch"
+        );
+
+        let mut processed_count = 0;
+        for event in events {
+            match self.republish_event(operation_id, &event, js).await {
+                Ok(event_id) => {
+                    processed_count += 1;
+                    checkpoint.last_event_id = Some(event_id);
+
+                    // Update checkpoint periodically within batch
+                    if processed_count % CHECKPOINT_UPDATE_INTERVAL == 0 {
+                        checkpoint.processed_events =
+                            checkpoint.processed_events.saturating_add(processed_count);
+                        checkpoint.updated_at = sinex_primitives::temporal::now();
+                        self.replay
+                            .update_checkpoint(operation_id, checkpoint)
+                            .await?;
+                    }
+                }
+                Err(err) => {
+                    error!(
+                        operation_id = %operation_id,
+                        error = %err,
+                        "Failed to republish event during replay"
+                    );
+                }
+            }
+        }
+
+        Ok(processed_count)
+    }
+
+    async fn republish_event(
+        &self,
+        operation_id: Ulid,
+        event: &sinex_primitives::events::Event,
+        js: &async_nats::jetstream::Context,
+    ) -> Result<Ulid> {
+        let event_id = event.id.map_or_else(Ulid::new, |id| *id.as_ulid());
+
+        // Build replay subject with marker
+        let subject = self.env.nats_subject(&format!(
+            "events.replay.{}.{}",
+            event.source.as_str().replace('.', "_"),
+            event.event_type.as_str().replace('.', "_")
+        ));
+
+        // Serialize event payload
+        let payload = serde_json::json!({
+            "id": event_id.to_string(),
+            "source": event.source.as_str(),
+            "event_type": event.event_type.as_str(),
+            "ts_orig": event.ts_orig.map(|t| t.format_rfc3339()),
+            "host": event.host.as_str(),
+            "payload": event.payload,
+            "replay_operation_id": operation_id.to_string(),
+            "replay_timestamp": sinex_primitives::temporal::now().format_rfc3339(),
+        });
+
+        let payload_bytes =
+            serde_json::to_vec(&payload).wrap_err("Failed to serialize event for replay")?;
+
+        // Add headers for replay tracking
+        let mut headers = async_nats::HeaderMap::new();
+        headers.insert(
+            "Nats-Msg-Id",
+            format!("replay-{operation_id}-{event_id}").as_str(),
+        );
+        headers.insert("X-Replay-Operation", operation_id.to_string().as_str());
+        headers.insert("X-Original-Event-Id", event_id.to_string().as_str());
+
+        // Publish to JetStream
+        let ack_future = js
+            .publish_with_headers(subject, headers, payload_bytes.into())
+            .await
+            .wrap_err("Failed to publish replayed event to NATS")?;
+
+        // Wait for ack with timeout
+        match tokio::time::timeout(Duration::from_secs(10), ack_future).await {
+            Ok(Ok(_)) => Ok(event_id),
+            Ok(Err(err)) => {
+                warn!(
+                    operation_id = %operation_id,
+                    event_id = %event_id,
+                    error = %err,
+                    "Failed to get ack for replayed event"
+                );
+                Ok(event_id)
+            }
+            Err(_) => {
+                warn!(
+                    operation_id = %operation_id,
+                    event_id = %event_id,
+                    "Timeout waiting for ack on replayed event"
+                );
+                Ok(event_id)
+            }
+        }
     }
 }
 

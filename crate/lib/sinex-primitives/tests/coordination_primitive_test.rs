@@ -33,7 +33,7 @@ async fn coordination_supports_synchronizer_pattern() -> TestResult<()> {
     assert_eq!(sync.reset_behavior(), ResetBehavior::Manual);
     assert!(!sync.is_ready());
 
-    sync.signal();
+    let _ = sync.signal();
     assert!(sync.is_ready());
     sync.wait(Duration::from_millis(10)).await?;
 
@@ -83,18 +83,18 @@ async fn coordination_event_counter_factory_tracks_progress() -> TestResult<()> 
     assert_eq!(counter.name(), "test_events");
     assert_eq!(counter.threshold(), 100);
 
-    counter.add(50);
+    let _ = counter.add(50);
     assert_eq!(counter.get(), 50);
     assert!(!counter.is_ready());
 
-    counter.add(30);
+    let _ = counter.add(30);
     assert_eq!(counter.get(), 80);
 
-    counter.add(20);
+    let _ = counter.add(20);
     assert!(counter.is_ready());
     assert_eq!(counter.get(), 100);
 
-    counter.add(10);
+    let _ = counter.add(10);
     assert_eq!(counter.get(), 110);
     Ok(())
 }
@@ -107,7 +107,7 @@ async fn coordination_handles_concurrent_adders() -> TestResult<()> {
         let counter_clone = counter.clone();
         handles.push(tokio::spawn(async move {
             for _ in 0..100 {
-                counter_clone.add(1);
+                let _ = counter_clone.add(1);
             }
         }));
     }
@@ -127,12 +127,12 @@ async fn coordination_covers_edge_cases() -> TestResult<()> {
     assert!(zero_barrier.is_ready());
 
     let large_counter = CoordinationPrimitive::event_counter(usize::MAX, "large_test");
-    large_counter.add(1000);
+    let _ = large_counter.add(1000);
     assert!(!large_counter.is_ready());
 
     let unnamed = CoordinationPrimitive::synchronizer("");
     assert_eq!(unnamed.name(), "");
-    unnamed.signal();
+    let _ = unnamed.signal();
     assert!(unnamed.is_ready());
     Ok(())
 }
