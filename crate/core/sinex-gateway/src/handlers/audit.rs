@@ -5,9 +5,8 @@
 //! - Follow provenance links from operation to affected events
 
 use serde_json::Value;
-use sinex_primitives::events::SourceMaterial;
-use sinex_primitives::Id;
-use sinex_primitives::SinexError;
+use sinex_primitives::events::{Event, SourceMaterial};
+use sinex_primitives::{Id, SinexError, Timestamp};
 use sqlx::PgPool;
 
 // Re-export shared types
@@ -16,6 +15,61 @@ pub use sinex_primitives::rpc::audit::{
 };
 
 type Result<T> = std::result::Result<T, SinexError>;
+
+/// Maximum events to return in provenance query (pagination TODO)
+const MAX_AFFECTED_EVENTS: i64 = 100;
+
+/// Query events affected by an operation.
+///
+/// Operations affect events through archive operations. We find affected events by:
+/// 1. Using the operation ULID's embedded timestamp as the start time
+/// 2. Adding duration_ms (or a default buffer) to get the end time
+/// 3. Querying archived_events whose archived_at falls within this window
+async fn query_affected_events(
+    pool: &PgPool,
+    operation_id: &Id<SourceMaterial>,
+    duration_ms: Option<i32>,
+) -> Result<Vec<EventSummary>> {
+    // The operation ULID contains its creation timestamp
+    // We query archived events that were archived during the operation's execution
+    let duration = duration_ms.unwrap_or(5000); // Default 5s buffer for short operations
+
+    let rows = sqlx::query!(
+        r#"
+        SELECT
+            id as "id: Id<Event>",
+            source,
+            event_type,
+            ts_orig as "ts_orig: Timestamp",
+            ts_ingest as "ts_ingest: Timestamp"
+        FROM audit.archived_events
+        WHERE archived_at >= ($1::ulid)::timestamptz
+          AND archived_at <= ($1::ulid)::timestamptz + ($2 || ' milliseconds')::interval
+        ORDER BY ts_orig DESC
+        LIMIT $3
+        "#,
+        operation_id as _,
+        duration.to_string(),
+        MAX_AFFECTED_EVENTS
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| SinexError::service("failed to query affected events").with_std_error(&e))?;
+
+    let events = rows
+        .into_iter()
+        .map(|row| EventSummary {
+            id: row.id,
+            source: row.source,
+            event_type: row.event_type,
+            ts_orig: Some(row.ts_orig),
+            ts_ingest: row.ts_ingest,
+            provenance_operation_id: Some(operation_id.clone()),
+        })
+        .collect();
+
+    Ok(events)
+}
 
 /// Internal DB row type for operation records
 #[derive(Debug, sqlx::FromRow)]
@@ -77,9 +131,11 @@ pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
         duration_ms: row.duration_ms,
     };
 
-    // TODO: Implement provenance tracking for audit trail
-    // For now, return empty array
-    let affected_events: Vec<EventSummary> = Vec::new();
+    // Query affected events based on operation timeframe
+    // Operations track events via timestamp correlation:
+    // - Archived events: archived_at within operation's execution window
+    // - The operation ULID contains its start timestamp
+    let affected_events = query_affected_events(pool, &row.id, row.duration_ms).await?;
 
     let event_count = affected_events.len();
     let response = AuditGetResponse {
