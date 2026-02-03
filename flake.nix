@@ -439,6 +439,9 @@
                 # D-Bus library for system-ingestor
                 export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [ pkgs.dbus ]}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
+                # Clippy configuration (moved to .config/)
+                export CLIPPY_CONF_DIR="$PWD/.config"
+
                 # XDG-compliant directories (read by xtask/config.rs)
                 export SINEX_STATE_DIR="''${XDG_STATE_HOME:-$HOME/.local/state}/sinex"
                 export SINEX_CACHE_DIR="''${XDG_CACHE_HOME:-$HOME/.cache}/sinex"

@@ -346,18 +346,18 @@ The project uses `cargo-deny` for security and licensing compliance:
 
 ```bash
 # Run all checks
-cargo deny check
+cargo deny -c .config/deny.toml check
 
 # Individual checks
-cargo deny check advisories    # Security vulnerabilities
-cargo deny check licenses      # License compliance
-cargo deny check bans          # Banned dependencies
-cargo deny check sources       # Source verification
+cargo deny -c .config/deny.toml check advisories    # Security vulnerabilities
+cargo deny -c .config/deny.toml check licenses      # License compliance
+cargo deny -c .config/deny.toml check bans          # Banned dependencies
+cargo deny -c .config/deny.toml check sources       # Source verification
 ```
 
 **CI enforcement:** `cargo deny check advisories` runs in CI pipeline
 
-**Configuration:** See `deny.toml` for policy definitions
+**Configuration:** See `.config/deny.toml` for policy definitions
 
 ### Security Scanning
 
