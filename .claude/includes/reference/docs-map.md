@@ -25,3 +25,4 @@
 | **Provenance** | `crate/lib/sinex-node-sdk/docs/provenance.md` | |
 | **ingestd architecture** | `crate/core/sinex-ingestd/docs/architecture.md` | `pipeline-design.md` |
 | **Gateway architecture** | `crate/core/sinex-gateway/docs/architecture.md` | `native_messaging.md` |
+| **CLI usage** | `crate/cli/README.md` | `crate/cli/DESIGN.md` |

@@ -36,11 +36,13 @@ tests/
 ├── e2e/                     # End-to-end pipeline tests
 └── ci/                      # CI infrastructure tests
 
-cli/
-├── sinex-cli/               # Rust CLI
-└── sinexctl/                # CLI utility
+crate/cli/                   # Unified CLI (sinexctl binary)
 
-.config/                     # nextest.toml, etc.
+.config/                     # Tool configuration
+├── nextest.toml             # Test runner config
+├── clippy.toml              # Lint configuration
+├── deny.toml                # Dependency audit
+└── ast-grep/                # Code patterns
 xtask/                       # Build automation (cargo xtask)
 ├── src/
 │   ├── sandbox/             # Test infrastructure (feature-gated)

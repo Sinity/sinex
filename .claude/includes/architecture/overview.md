@@ -51,5 +51,7 @@ sinex-services      ← Business logic: analytics, search, content, pkm
     │
     └── sinex-gateway     ← API layer
 
+sinexctl            ← Unified CLI (uses sinex-primitives, sinex-schema)
+
 xtask (sandbox)     ← Test infrastructure (used via feature gate in test code)
 ```

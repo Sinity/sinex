@@ -34,3 +34,9 @@
 | **sinex-pkm-automaton** | Automaton | `entity.discovered`, `relation.found` | `crate/nodes/sinex-pkm-automaton/docs/` |
 | **sinex-content-automaton** | Automaton | `content.analyzed/summary` | `crate/nodes/sinex-content-automaton/docs/` |
 | **sinex-health-automaton** | Automaton | `health.check`, `health.alert` | `crate/nodes/sinex-health-automaton/docs/` |
+
+### CLI (`crate/cli/`)
+
+| Binary | Purpose | Key Features | Docs |
+|--------|---------|--------------|------|
+| **sinexctl** | Unified CLI for sinex operations | Event queries, config management, TUI dashboard | `crate/cli/README.md`, `DESIGN.md` |

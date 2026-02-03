@@ -1,12 +1,13 @@
-## Stack Management
+## Infrastructure Management
 
 ```bash
-cargo xtask stack start              # Start Postgres + NATS
-cargo xtask stack stop               # Stop the stack
-cargo xtask stack status             # Show stack status
-cargo xtask stack doctor             # Run diagnostics
-cargo xtask stack reset              # Wipe data and restart
-cargo xtask stack logs               # View logs
+cargo xtask infra start              # Start Postgres + NATS
+cargo xtask infra stop               # Stop infrastructure
+cargo xtask infra status             # Show infrastructure status
+cargo xtask infra reset              # Wipe data and restart
+cargo xtask infra logs               # View logs
+cargo xtask infra snapshot           # Save infrastructure state
+cargo xtask infra env                # Print environment variables
 ```
 
 ---
@@ -28,8 +29,8 @@ cargo xtask contracts deploy         # Deploy schemas to database
 ## TLS Operations
 
 ```bash
-cargo xtask tls generate-dev-certs   # Generate CA/server/client certificates
-cargo xtask tls check                # Verify TLS configuration
-cargo xtask tls generate-client-cert # Generate additional client certs
-cargo xtask tls setup-env            # Generate .env.tls file
+cargo xtask xtr tls generate-dev-certs   # Generate CA/server/client certificates
+cargo xtask xtr tls check                # Verify TLS configuration
+cargo xtask xtr tls generate-client-cert # Generate additional client certs
+cargo xtask xtr tls setup-env            # Generate .env.tls file
 ```
