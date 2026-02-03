@@ -59,8 +59,10 @@ devenv.lock
 .agent/
 .agent-*/
 
-# Claude Code
-.claude/
+# Claude Code (track includes, ignore ephemeral)
+.claude/scratch/
+.claude/*.local.md
+.claude/*.local.json
 
 # Test artifacts
 test-results/

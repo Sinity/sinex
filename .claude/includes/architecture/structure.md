@@ -1,0 +1,49 @@
+## Project Structure
+
+```
+crate/
+├── lib/
+│   ├── sinex-primitives/    # Foundation: types, validation, error handling, domain types, IDs
+│   ├── sinex-db/            # Database pools, repositories, query helpers
+│   ├── sinex-node-sdk/      # Node runtime framework
+│   ├── sinex-services/      # Business logic services
+│   ├── sinex-schema/        # DB schema + migrations
+│   ├── sinex-processor-runtime/  # Node CLI framework
+│   └── sinex-macros/        # Proc macros
+├── core/
+│   ├── sinex-ingestd/       # Ingestion daemon
+│   └── sinex-gateway/       # API gateway
+└── nodes/
+    ├── sinex-fs-ingestor/
+    ├── sinex-terminal-ingestor/
+    ├── sinex-desktop-ingestor/
+    ├── sinex-system-ingestor/
+    ├── sinex-analytics-automaton/
+    ├── sinex-search-automaton/
+    ├── sinex-pkm-automaton/
+    └── sinex-content-automaton/
+
+docs/
+├── current/                 # Active documentation
+│   ├── architecture/        # Architecture docs
+│   ├── configuration/       # Environment variables, config
+│   ├── testing/             # Testing guides
+│   └── getting-started.md   # Onboarding
+├── planning/                # Design documents
+└── vision/                  # Future direction
+
+tests/
+├── e2e/                     # End-to-end pipeline tests
+└── ci/                      # CI infrastructure tests
+
+cli/
+├── sinex-cli/               # Rust CLI
+└── sinexctl/                # CLI utility
+
+.config/                     # nextest.toml, etc.
+xtask/                       # Build automation (cargo xtask)
+├── src/
+│   ├── sandbox/             # Test infrastructure (feature-gated)
+│   └── ...
+└── Cargo.toml
+```
