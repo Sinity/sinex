@@ -129,7 +129,7 @@ features = [
 ]
 
 [dev-dependencies.xtask-macros]
-path = "../../../xtask-macros"
+path = "../../../xtask/macros"
 
 [dev-dependencies.sinex-primitives]
 path = "../../lib/sinex-primitives"
