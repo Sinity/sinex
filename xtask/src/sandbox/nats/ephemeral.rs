@@ -52,6 +52,7 @@ impl EphemeralNats {
         builder.start().await
     }
 
+    #[must_use]
     pub fn builder() -> EphemeralNatsBuilder {
         EphemeralNatsBuilder::default()
     }
@@ -186,12 +187,14 @@ impl EphemeralNatsBuilder {
 
 impl EphemeralNats {
     /// Return the client URL (e.g. `127.0.0.1:4222`).
+    #[must_use]
     pub fn client_url(&self) -> &str {
         &self.url
     }
 
     /// Return a `NatsConnectionConfig` suitable for connecting to this server.
     /// Includes TLS certificates if the server was started with TLS.
+    #[must_use]
     pub fn connection_config(&self) -> NatsConnectionConfig {
         let mut config = NatsConnectionConfig::default();
         config.url = self.url.clone();
@@ -208,6 +211,7 @@ impl EphemeralNats {
     }
 
     /// Return the tail of the NATS log file, if logging is enabled.
+    #[must_use]
     pub fn log_tail(&self, max_lines: usize) -> Option<String> {
         let path = self.log_path.as_ref()?;
         let contents = std::fs::read_to_string(path).ok()?;
@@ -234,6 +238,7 @@ impl EphemeralNats {
     }
 
     /// Expose underlying process for managed shutdown.
+    #[must_use]
     pub fn process_handle(&self) -> Arc<AsyncMutex<Option<Child>>> {
         self.process.clone()
     }
@@ -278,6 +283,7 @@ impl EphemeralNats {
     }
 
     /// Attach chaos settings (latency + failure rate) to this server instance.
+    #[must_use]
     pub fn with_chaos(mut self, latency: Duration, failure_rate: f64) -> Self {
         self.chaos = Some(ChaosConfig {
             latency,
@@ -294,11 +300,13 @@ impl EphemeralNats {
     }
 
     /// Return the active stream prefix (if any).
+    #[must_use]
     pub fn stream_prefix(&self) -> Option<&str> {
         self.stream_prefix.as_deref()
     }
 
     /// Apply the configured stream prefix (if any) to a name.
+    #[must_use]
     pub fn qualify(&self, name: &str) -> String {
         if let Some(prefix) = &self.stream_prefix {
             format!("{prefix}{name}")
@@ -307,24 +315,28 @@ impl EphemeralNats {
         }
     }
 
-    /// Create a JetStream context bound to this server.
+    /// Create a `JetStream` context bound to this server.
     pub async fn jetstream(&self) -> Result<jetstream::Context> {
         let client = self.connect().await?;
         Ok(jetstream::new(client))
     }
 
-    /// Create a JetStream context using an existing client connection.
+    /// Create a `JetStream` context using an existing client connection.
     /// This keeps tests coupled to `EphemeralNats` while avoiding extra connections.
+    #[must_use]
     pub fn jetstream_with_client(&self, client: Client) -> jetstream::Context {
         jetstream::new(client)
     }
 
-    /// Create or update a JetStream stream with the provided subjects.
+    /// Create or update a `JetStream` stream with the provided subjects.
     pub async fn create_stream(&self, name: &str, subjects: &[&str]) -> Result<()> {
         let js = self.jetstream().await?;
         let config = jetstream::stream::Config {
             name: name.to_string(),
-            subjects: subjects.iter().map(|s| s.to_string()).collect(),
+            subjects: subjects
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
             ..Default::default()
         };
         js.get_or_create_stream(config)
@@ -361,7 +373,7 @@ impl EphemeralNats {
     }
 
     /// Create a stream + durable consumer with sensible defaults (explicit ack, 30s wait,
-    /// max_deliver=10) for simple test setups.
+    /// `max_deliver=10`) for simple test setups.
     pub async fn ensure_default_stream_with_consumer(
         &self,
         stream: &str,
@@ -456,7 +468,7 @@ impl EphemeralNats {
         Ok(())
     }
 
-    /// Wait for a stream to become available on this JetStream server.
+    /// Wait for a stream to become available on this `JetStream` server.
     pub async fn wait_for_stream(
         &self,
         js: &jetstream::Context,
@@ -611,13 +623,13 @@ async fn get_or_init_shared(id: &str, builder: EphemeralNatsBuilder) -> Result<A
         .clone())
 }
 
-/// Obtain (or lazily start) a shared EphemeralNats instance for the given profile.
+/// Obtain (or lazily start) a shared `EphemeralNats` instance for the given profile.
 pub async fn shared_ephemeral_nats(profile: SharedNatsProfile) -> Result<Arc<EphemeralNats>> {
     let builder = profile.builder();
     get_or_init_shared(profile.key(), builder).await
 }
 
-/// Obtain (or lazily start) a shared EphemeralNats instance with a custom key.
+/// Obtain (or lazily start) a shared `EphemeralNats` instance with a custom key.
 /// Use `reset_shared_ephemeral_nats` if you need to replace an existing key.
 pub async fn shared_ephemeral_nats_with_key(
     key: &str,

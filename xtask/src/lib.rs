@@ -26,14 +26,14 @@ pub mod resources;
 #[cfg(feature = "sandbox")]
 pub mod sandbox;
 #[cfg(feature = "sandbox")]
-pub use sandbox::{EventOverrides, Sandbox, TestContext, TestResult};
+pub use sandbox::{EventOverrides, EventPublisher, Sandbox, TestContext, TestResult};
+pub mod testing;
 pub mod tls;
 mod tools;
 
 use command::{CommandContext, XtaskCommand};
 use commands::{
     BenchArgs, BuildCommand, CheckCommand, FixCommand, JobsCommand, StatusCommand, TestCommand,
-    VmCommand,
 };
 use config::config;
 use history::HistoryDb;
@@ -127,10 +127,10 @@ enum Commands {
     // === Runtime ===
     /// Run binaries with hot-reload support
     Run(commands::RunCommand),
-    /// Manage local stack (database, NATS)
-    Stack {
+    /// Manage local infrastructure (database, NATS)
+    Infra {
         #[command(subcommand)]
-        cmd: commands::stack::StackSubcommand,
+        cmd: commands::infra::InfraSubcommand,
     },
     /// Database operations (migrate, seed, setup)
     Db {
@@ -156,20 +156,12 @@ enum Commands {
     /// Documentation generation
     Docs(commands::DocsCommand),
 
-    // === Code coverage ===
-    /// Code coverage reporting
-    Coverage(commands::CoverageCommand),
-
     // === Less frequent (xtr umbrella) ===
     /// Rarely-used utilities (patterns, ci, completions)
     Xtr(commands::XtrCommand),
-
-    // === Infrastructure (less common) ===
-    /// VM and NixOS operations
-    Vm(VmCommand),
 }
 
-pub fn run_cli() -> Result<()> {
+pub async fn run_cli() -> Result<()> {
     let cli = Cli::parse();
 
     // Handle --list-commands before normal dispatch
@@ -190,7 +182,7 @@ pub fn run_cli() -> Result<()> {
         Commands::Bench(_) => ("bench", None, None),
         Commands::Build(_) => ("build", None, None),
         Commands::Run(_) => ("run", None, None),
-        Commands::Stack { .. } => ("stack", None, None),
+        Commands::Infra { .. } => ("infra", None, None),
         Commands::Db { .. } => ("db", None, None),
         Commands::Jobs(_) => ("jobs", None, None),
         Commands::Status(_) => ("status", None, None),
@@ -199,9 +191,7 @@ pub fn run_cli() -> Result<()> {
         Commands::Snapshot(_) => ("snapshot", None, None),
         Commands::Contracts(_) => ("contracts", None, None),
         Commands::Docs(_) => ("docs", None, None),
-        Commands::Coverage(_) => ("coverage", None, None),
         Commands::Xtr(_) => ("xtr", None, None),
-        Commands::Vm(_) => ("vm", None, None),
     };
 
     // Track invocation in history
@@ -215,32 +205,35 @@ pub fn run_cli() -> Result<()> {
         None
     };
 
-    // Create context with invocation ID for diagnostics recording
-    let ctx = CommandContext::with_invocation_id(
+    // Create context with invocation ID
+    let ctx = CommandContext::new(
         OutputWriter::new(cli.global.output_format()),
+        cli.global.json,
+        cli.global.is_background(),
         invocation_id,
-    )
-    .with_background(cli.global.is_background());
+    );
 
     let result = match command {
-        Commands::Fix(cmd) => cmd.execute(&ctx),
-        Commands::Check(cmd) => cmd.execute(&ctx),
-        Commands::Test(cmd) => cmd.execute(&ctx),
-        Commands::Bench(cmd) => cmd.execute(&ctx),
-        Commands::Build(cmd) => cmd.execute(&ctx),
-        Commands::Run(cmd) => cmd.execute(&ctx),
-        Commands::Stack { cmd } => commands::StackCommand { subcommand: cmd }.execute(&ctx),
-        Commands::Db { cmd } => commands::DbCommand { subcommand: cmd }.execute(&ctx),
-        Commands::Jobs(cmd) => cmd.execute(&ctx),
-        Commands::Status(cmd) => cmd.execute(&ctx),
-        Commands::Deps(cmd) => cmd.execute(&ctx),
-        Commands::History(cmd) => cmd.execute(&ctx),
-        Commands::Snapshot(cmd) => cmd.execute(&ctx),
-        Commands::Contracts(cmd) => cmd.execute(&ctx),
-        Commands::Docs(cmd) => cmd.execute(&ctx),
-        Commands::Coverage(cmd) => cmd.execute(&ctx),
-        Commands::Xtr(cmd) => cmd.execute(&ctx),
-        Commands::Vm(cmd) => cmd.execute(&ctx),
+        Commands::Fix(cmd) => cmd.execute(&ctx).await,
+        Commands::Check(cmd) => cmd.execute(&ctx).await,
+        Commands::Test(cmd) => cmd.execute(&ctx).await,
+        Commands::Bench(cmd) => cmd.execute(&ctx).await,
+        Commands::Build(cmd) => cmd.execute(&ctx).await,
+        Commands::Run(cmd) => cmd.execute(&ctx).await,
+        Commands::Infra { cmd } => {
+            commands::InfraCommand { subcommand: cmd }
+                .execute(&ctx)
+                .await
+        }
+        Commands::Db { cmd } => commands::DbCommand { subcommand: cmd }.execute(&ctx).await,
+        Commands::Jobs(cmd) => cmd.execute(&ctx).await,
+        Commands::Status(cmd) => cmd.execute(&ctx).await,
+        Commands::Deps(cmd) => cmd.execute(&ctx).await,
+        Commands::History(cmd) => cmd.execute(&ctx).await,
+        Commands::Snapshot(cmd) => cmd.execute(&ctx).await,
+        Commands::Contracts(cmd) => cmd.execute(&ctx).await,
+        Commands::Docs(cmd) => cmd.execute(&ctx).await,
+        Commands::Xtr(cmd) => cmd.execute(&ctx).await,
     };
 
     // Update history
@@ -283,20 +276,57 @@ fn list_commands(format: OutputFormat) -> Result<()> {
     use serde::Serialize;
 
     #[derive(Serialize)]
+    struct ArgInfo {
+        name: String,
+        short: Option<char>,
+        long: Option<String>,
+        help: Option<String>,
+        required: bool,
+        global: bool,
+        possible_values: Vec<String>,
+        takes_value: bool,
+    }
+
+    #[derive(Serialize)]
     struct CommandInfo {
         name: String,
         about: Option<String>,
         subcommands: Vec<CommandInfo>,
+        args: Vec<ArgInfo>,
         hidden: bool,
     }
 
     fn extract_commands(cmd: &clap::Command) -> Vec<CommandInfo> {
         cmd.get_subcommands()
-            .map(|sub| CommandInfo {
-                name: sub.get_name().to_string(),
-                about: sub.get_about().map(std::string::ToString::to_string),
-                subcommands: extract_commands(sub),
-                hidden: sub.is_hide_set(),
+            .map(|sub| {
+                let args = sub
+                    .get_arguments()
+                    .map(|arg| ArgInfo {
+                        name: arg.get_id().to_string(),
+                        short: arg.get_short(),
+                        long: arg.get_long().map(String::from),
+                        help: arg.get_help().map(|h| h.to_string()),
+                        required: arg.is_required_set(),
+                        global: arg.is_global_set(),
+                        possible_values: arg
+                            .get_possible_values()
+                            .iter()
+                            .map(|v| v.get_name().to_string())
+                            .collect(),
+                        takes_value: matches!(
+                            arg.get_action(),
+                            clap::ArgAction::Set | clap::ArgAction::Append
+                        ),
+                    })
+                    .collect();
+
+                CommandInfo {
+                    name: sub.get_name().to_string(),
+                    about: sub.get_about().map(std::string::ToString::to_string),
+                    subcommands: extract_commands(sub),
+                    args,
+                    hidden: sub.is_hide_set(),
+                }
             })
             .collect()
     }
@@ -320,12 +350,69 @@ fn list_commands(format: OutputFormat) -> Result<()> {
             let about = cmd.about.as_deref().unwrap_or("");
             println!("  {:16} {}", cmd.name, about);
 
+            if !cmd.args.is_empty() {
+                // Filter out global args for cleaner output in the main listing
+                let local_args: Vec<&ArgInfo> = cmd.args.iter().filter(|a| !a.global).collect();
+
+                if !local_args.is_empty() {
+                    println!();
+                    for arg in local_args {
+                        let mut flags = String::new();
+                        if let Some(short) = arg.short {
+                            flags.push('-');
+                            flags.push(short);
+                        }
+                        if let Some(long) = &arg.long {
+                            if !flags.is_empty() {
+                                flags.push_str(", ");
+                            }
+                            flags.push_str("--");
+                            flags.push_str(long);
+                        }
+                        // Add required indicator
+                        if arg.required {
+                            flags.push_str(" <REQUIRED>");
+                        }
+
+                        let help = arg.help.as_deref().unwrap_or("");
+                        // Simple padding
+                        println!("    {:<24} {}", flags, help);
+                    }
+                    println!();
+                }
+            }
+
             for sub in &cmd.subcommands {
                 if sub.hidden {
                     continue;
                 }
                 let sub_about = sub.about.as_deref().unwrap_or("");
                 println!("    {:14} {}", sub.name, sub_about);
+
+                if !sub.args.is_empty() {
+                    for arg in &sub.args {
+                        let mut flags = String::new();
+                        if let Some(short) = arg.short {
+                            flags.push('-');
+                            flags.push(short);
+                        }
+                        if let Some(long) = &arg.long {
+                            if !flags.is_empty() {
+                                flags.push_str(", ");
+                            }
+                            flags.push_str("--");
+                            flags.push_str(long);
+                        }
+                        if arg.required {
+                            flags.push_str(" <REQUIRED>");
+                        }
+
+                        let help = arg.help.as_deref().unwrap_or("");
+                        println!("      {:<22} {}", flags, help);
+                    }
+                    // Add a small spacer after args if there were any
+                    println!();
+                }
             }
         }
     }

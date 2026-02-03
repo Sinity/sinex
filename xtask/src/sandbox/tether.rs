@@ -13,6 +13,7 @@
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
+use sinex_primitives::temporal::{format_rfc3339, Timestamp};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
@@ -21,7 +22,7 @@ use tokio::sync::mpsc;
 pub struct TetherConfig {
     /// Target environment (e.g., "prod", "staging")
     pub target: String,
-    /// Gateway RPC URL (e.g., "https://gateway.sinex.io:9999")
+    /// Gateway RPC URL (e.g., "<https://gateway.sinex.io:9999>")
     pub gateway_url: String,
     /// RPC authentication token
     pub auth_token: String,
@@ -31,6 +32,16 @@ pub struct TetherConfig {
     pub consumer_prefix: String,
     /// Start from beginning of stream
     pub from_beginning: bool,
+    /// NATS connection URL
+    pub nats_url: String,
+    /// NATS credentials (optional)
+    pub nats_creds: Option<String>,
+    /// NATS TLS CA certificate (optional)
+    pub nats_ca: Option<String>,
+    /// NATS TLS client certificate (optional)
+    pub nats_cert: Option<String>,
+    /// NATS TLS client key (optional)
+    pub nats_key: Option<String>,
 }
 
 impl TetherConfig {
@@ -48,6 +59,26 @@ impl TetherConfig {
             .or_else(|_| std::env::var("USERNAME"))
             .unwrap_or_else(|_| "dev".to_string());
 
+        let nats_url = std::env::var("SINEX_TETHER_NATS_URL")
+            .or_else(|_| std::env::var(format!("SINEX_{}_NATS_URL", target.to_uppercase())))
+            .unwrap_or_else(|_| format!("nats://nats.{target}.sinex.io:4222"));
+
+        let nats_creds = std::env::var("SINEX_TETHER_NATS_CREDS")
+            .or_else(|_| std::env::var(format!("SINEX_{}_NATS_CREDS", target.to_uppercase())))
+            .ok();
+
+        let nats_ca = std::env::var("SINEX_TETHER_NATS_CA")
+            .or_else(|_| std::env::var(format!("SINEX_{}_NATS_CA", target.to_uppercase())))
+            .ok();
+
+        let nats_cert = std::env::var("SINEX_TETHER_NATS_CERT")
+            .or_else(|_| std::env::var(format!("SINEX_{}_NATS_CERT", target.to_uppercase())))
+            .ok();
+
+        let nats_key = std::env::var("SINEX_TETHER_NATS_KEY")
+            .or_else(|_| std::env::var(format!("SINEX_{}_NATS_KEY", target.to_uppercase())))
+            .ok();
+
         Ok(Self {
             target: target.to_string(),
             gateway_url,
@@ -55,17 +86,23 @@ impl TetherConfig {
             subject_filter: None,
             consumer_prefix: format!("dev-{consumer_prefix}"),
             from_beginning: false,
+            nats_url,
+            nats_creds,
+            nats_ca,
+            nats_cert,
+            nats_key,
         })
     }
 
     /// Generate a unique consumer name for this session
+    #[must_use]
     pub fn consumer_name(&self) -> String {
-        let timestamp = time::OffsetDateTime::now_utc()
-            .format(
-                &time::format_description::parse("[year][month][day]T[hour][minute][second]")
-                    .expect("failed to parse timestamp format description for consumer name"),
-            )
-            .expect("failed to format timestamp for consumer name");
+        let timestamp = format_rfc3339(Timestamp::now())
+            .replace([':', '-', '.'], "") // Compact format: YYYYMMDDTHHMMSSmmmZ
+            .chars()
+            .take(15) // YYYYMMDDTHHMMSS
+            .collect::<String>();
+
         format!("{}-{timestamp}", self.consumer_prefix)
     }
 }
@@ -159,7 +196,7 @@ impl TetherClient {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            bail!("RPC request failed with status {}: {}", status, body);
+            bail!("RPC request failed with status {status}: {body}");
         }
 
         let rpc_response: JsonRpcResponse = response
@@ -221,7 +258,7 @@ impl TetherClient {
     /// Delete a shadow consumer
     #[allow(dead_code)]
     pub async fn delete_shadow_consumer(&self, consumer_name: &str) -> Result<()> {
-        println!("[tether] Deleting shadow consumer '{}'...", consumer_name);
+        println!("[tether] Deleting shadow consumer '{consumer_name}'...");
 
         self.rpc_call(
             "shadow.delete",
@@ -250,19 +287,23 @@ pub struct TetheredEvent {
 /// Tether session that manages the shadow consumer lifecycle
 #[allow(dead_code)]
 pub struct TetherSession {
+    config: TetherConfig,
     client: TetherClient,
     consumer_info: Option<ShadowConsumerInfo>,
+    nats_client: Option<async_nats::Client>,
 }
 
 impl TetherSession {
     /// Start a new tether session
     pub async fn start(config: TetherConfig) -> Result<Self> {
-        let client = TetherClient::new(config)?;
+        let client = TetherClient::new(config.clone())?;
         let consumer_info = client.create_shadow_consumer().await?;
 
         Ok(Self {
+            config,
             client,
             consumer_info: Some(consumer_info),
+            nats_client: None,
         })
     }
 
@@ -296,11 +337,79 @@ impl TetherSession {
         }
     }
 
-    /// Stream events to a channel (stub - not yet implemented)
-    #[allow(dead_code)]
-    pub async fn stream_events(&self, _tx: tokio::sync::mpsc::Sender<TetheredEvent>) -> Result<()> {
-        // TODO: Implement actual event streaming via NATS
-        anyhow::bail!("Tether event streaming not yet implemented")
+    /// Stream events to a channel
+    pub async fn stream_events(
+        &mut self,
+        tx: tokio::sync::mpsc::Sender<TetheredEvent>,
+    ) -> Result<()> {
+        let info = self.consumer_info.as_ref().context("No active consumer")?;
+
+        // 1. Connect to NATS if not already connected
+        if self.nats_client.is_none() {
+            let mut options = async_nats::ConnectOptions::new();
+
+            if let Some(ref creds) = self.config.nats_creds {
+                options = options
+                    .credentials_file(creds)
+                    .await
+                    .context("Failed to load NATS creds")?;
+            }
+
+            // Note: In a real implementation, we would set up TLS here using config.nats_ca/cert/key
+            // For now, we'll assume basic connection or pre-configured environment
+
+            let nats = async_nats::connect_with_options(&self.config.nats_url, options)
+                .await
+                .context("Failed to connect to NATS")?;
+            self.nats_client = Some(nats);
+        }
+
+        let nats = self.nats_client.as_ref().unwrap();
+        let jetstream = async_nats::jetstream::new(nats.clone());
+
+        // 2. Get the stream and consumer
+        let stream = jetstream
+            .get_stream(&info.stream_name)
+            .await
+            .context("Failed to get stream")?;
+        let consumer: async_nats::jetstream::consumer::PullConsumer = stream
+            .get_consumer(&info.consumer_name)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to get consumer: {e}"))?;
+
+        // 3. Start pull loop
+        let mut messages = consumer
+            .messages()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to get messages: {e}"))?;
+
+        while let Some(msg) = tokio::select! {
+            next = futures::StreamExt::next(&mut messages) => next,
+        } {
+            let msg = msg.map_err(|e| anyhow::anyhow!("Error in message stream: {e}"))?;
+
+            let payload: serde_json::Value = serde_json::from_slice(&msg.payload).unwrap_or_else(
+                |_| serde_json::json!({"raw_data": String::from_utf8_lossy(&msg.payload)}),
+            );
+
+            let event = TetheredEvent {
+                subject: msg.subject.to_string(),
+                payload,
+                sequence: msg
+                    .info()
+                    .map_err(|e| anyhow::anyhow!("No message info: {e}"))?
+                    .stream_sequence,
+            };
+
+            if tx.send(event).await.is_err() {
+                break; // Channel closed
+            }
+
+            // Acknowledge the message
+            msg.ack().await.ok();
+        }
+
+        Ok(())
     }
 
     /// Get session statistics (stub)
@@ -321,16 +430,19 @@ pub struct TetherStats {
 
 impl TetherStats {
     /// Number of events received
+    #[must_use]
     pub fn events_received(&self) -> u64 {
         self.events_received
     }
 
     /// Number of events forwarded
+    #[must_use]
     pub fn events_forwarded(&self) -> u64 {
         self.events_forwarded
     }
 
     /// Number of errors
+    #[must_use]
     pub fn errors(&self) -> u64 {
         self.errors
     }
@@ -395,11 +507,19 @@ mod tests {
             subject_filter: None,
             consumer_prefix: "dev-testuser".to_string(),
             from_beginning: false,
+            nats_url: "nats://localhost:4222".to_string(),
+            nats_creds: None,
+            nats_ca: None,
+            nats_cert: None,
+            nats_key: None,
         };
 
         let name = config.consumer_name();
         assert!(name.starts_with("dev-testuser-"));
         // Should have timestamp suffix
-        assert!(name.len() > "dev-testuser-".len());
+        // Compact format is 15 chars (YYYYMMDDTHHMMSS)
+        let suffix = name.trim_start_matches("dev-testuser-");
+        assert_eq!(suffix.len(), 15);
+        assert!(suffix.chars().all(|c| c.is_ascii_digit() || c == 'T'));
     }
 }

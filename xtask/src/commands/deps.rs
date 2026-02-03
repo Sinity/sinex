@@ -11,12 +11,13 @@ pub struct DepsCommand {
     pub subcommand: crate::deps::DepsCommand,
 }
 
+#[async_trait::async_trait]
 impl XtaskCommand for DepsCommand {
     fn name(&self) -> &'static str {
         "deps"
     }
 
-    fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
+    async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         self.subcommand.run(ctx)
     }
 

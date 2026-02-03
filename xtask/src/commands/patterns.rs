@@ -42,12 +42,13 @@ struct PatternSearchResult {
     matches: Vec<PatternMatch>,
 }
 
+#[async_trait::async_trait]
 impl XtaskCommand for PatternsCommand {
     fn name(&self) -> &'static str {
         "patterns"
     }
 
-    fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
+    async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         let search_dir = self
             .dir
             .as_ref()

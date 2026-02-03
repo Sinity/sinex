@@ -1,4 +1,4 @@
-//! Stack command - infrastructure management.
+//! Infra command - infrastructure management.
 
 use anyhow::{bail, Context, Result};
 use clap::Subcommand;
@@ -9,16 +9,15 @@ use std::process::{Command, Stdio};
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::infra::stack::{self, StackConfig, StackStatus};
 use crate::infra::state::CheckoutState;
-use crate::process::ProcessBuilder;
 
-/// Stack command - manages the isolated development environment.
-pub struct StackCommand {
-    pub subcommand: StackSubcommand,
+/// Infra command - manages the isolated development environment.
+pub struct InfraCommand {
+    pub subcommand: InfraSubcommand,
 }
 
 #[derive(Subcommand)]
-pub enum StackSubcommand {
-    /// Start the stack
+pub enum InfraSubcommand {
+    /// Start the infrastructure
     Start {
         /// Start all processes
         #[arg(long)]
@@ -26,17 +25,17 @@ pub enum StackSubcommand {
         /// Specific processes to start
         processes: Vec<String>,
     },
-    /// Stop the stack
+    /// Stop the infrastructure
     Stop,
-    /// Show stack status
+    /// Show infrastructure status
     Status {
         /// Watch mode
         #[arg(long, short)]
         watch: bool,
     },
-    /// Reset the stack (wipe data)
+    /// Stop services and wipe infrastructure state (wipes data-dir!)
     Reset {
-        /// Confirm reset
+        /// Automatically confirm reset
         #[arg(long)]
         yes: bool,
     },
@@ -44,7 +43,7 @@ pub enum StackSubcommand {
     Logs {
         /// Process name
         #[arg(value_name = "PROCESS", default_value = "all")]
-        process: String, // Made it optionalish by default? No, "all" is string.
+        process: String,
         /// Lines to show
         #[arg(long, short, default_value_t = 50)]
         lines: usize,
@@ -62,13 +61,7 @@ pub enum StackSubcommand {
         #[command(subcommand)]
         cmd: crate::commands::vm::VmSubcommand,
     },
-    /// Run diagnostics (doctor)
-    Doctor {
-        /// Run pipeline smoke tests
-        #[arg(long)]
-        pipelines: bool,
-    },
-    /// Print stack environment variables
+    /// Print infrastructure environment variables
     Env {
         /// Shell format (export NAME=VALUE)
         #[arg(long, default_value_t = true)]
@@ -86,35 +79,35 @@ pub enum SnapshotSubcommand {
     List,
 }
 
-impl XtaskCommand for StackCommand {
+#[async_trait::async_trait]
+impl XtaskCommand for InfraCommand {
     fn name(&self) -> &'static str {
-        "stack"
+        "infra"
     }
 
-    fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
+    async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         let config = StackConfig::for_current_checkout()?;
 
         match &self.subcommand {
-            StackSubcommand::Start { all, processes } => {
-                execute_start(&config, *all, processes, ctx)
+            InfraSubcommand::Start { all, processes } => {
+                execute_start(&config, *all, processes, ctx).await
             }
-            StackSubcommand::Stop => execute_stop(&config, ctx),
-            StackSubcommand::Status { watch } => execute_status(&config, *watch, ctx),
-            StackSubcommand::Reset { yes } => execute_reset(&config, *yes, ctx),
-            StackSubcommand::Logs {
+            InfraSubcommand::Stop => execute_stop(&config, ctx).await,
+            InfraSubcommand::Status { watch } => execute_status(&config, *watch, ctx).await,
+            InfraSubcommand::Reset { yes } => execute_reset(&config, *yes, ctx).await,
+            InfraSubcommand::Logs {
                 process,
                 lines,
                 follow,
-            } => execute_logs(&config, process, *lines, *follow, ctx),
-            StackSubcommand::Snapshot { cmd } => execute_snapshot(&config, cmd, ctx),
-            StackSubcommand::Vm { cmd } => {
+            } => execute_logs(&config, process, *lines, *follow, ctx).await,
+            InfraSubcommand::Snapshot { cmd } => execute_snapshot(&config, cmd, ctx).await,
+            InfraSubcommand::Vm { cmd } => {
                 let vm_cmd = crate::commands::vm::VmCommand {
                     subcommand: cmd.clone(),
                 };
-                vm_cmd.execute(ctx)
+                vm_cmd.execute(ctx).await
             }
-            StackSubcommand::Doctor { pipelines } => execute_doctor(&config, *pipelines, ctx),
-            StackSubcommand::Env { export } => execute_env(&config, *export),
+            InfraSubcommand::Env { export } => execute_env(&config, *export),
         }
     }
 
@@ -127,27 +120,27 @@ impl XtaskCommand for StackCommand {
 // Implementations
 // ─────────────────────────────────────────────────────────────────────────────
 
-fn execute_start(
+async fn execute_start(
     config: &StackConfig,
     _all: bool,
     _processes: &[String],
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    ctx.heading("stack start");
+    ctx.heading("infra start");
 
     // Check lock
     let checkout_state = CheckoutState::for_current_checkout()?;
     if let Some(lock_info) = checkout_state.is_locked_by_other()? {
         let pid = lock_info.pid;
         return Ok(CommandResult::failure(crate::output::StructuredError {
-            code: "STACK_LOCKED".to_string(),
-            message: format!("Stack locked by {pid}"),
+            code: "INFRA_LOCKED".to_string(),
+            message: format!("Infra locked by {pid}"),
             location: None,
-            suggestion: Some("Stop other stack".into()),
+            suggestion: Some("Stop other infra stack".into()),
         }));
     }
 
-    let _lock = checkout_state.acquire_lock(Some("stack".into()))?;
+    let _lock = checkout_state.acquire_lock(Some("infra".into()))?;
     std::mem::forget(_lock);
 
     stack::ensure_directories(config)?;
@@ -167,23 +160,23 @@ fn execute_start(
     let pg_port = config.postgres.port;
     let nats_port = config.nats.port;
     Ok(CommandResult::success()
-        .with_message("Stack started")
+        .with_message("Infra started")
         .with_detail(format!("Postgres on port {pg_port}"))
         .with_detail(format!("NATS on port {nats_port}")))
 }
 
-fn execute_stop(config: &StackConfig, ctx: &CommandContext) -> Result<CommandResult> {
-    ctx.heading("stack stop");
+async fn execute_stop(config: &StackConfig, ctx: &CommandContext) -> Result<CommandResult> {
+    ctx.heading("infra stop");
 
     stack::nats_stop(config, ctx.is_human())?;
     stack::pg_stop(config, ctx.is_human())?;
 
     let checkout_state = CheckoutState::for_current_checkout()?;
     checkout_state.release_lock()?;
-    Ok(CommandResult::success().with_message("Stack stopped"))
+    Ok(CommandResult::success().with_message("Infra stopped"))
 }
 
-fn execute_status(
+async fn execute_status(
     config: &StackConfig,
     watch: bool,
     ctx: &CommandContext,
@@ -196,10 +189,10 @@ fn execute_status(
         let status = StackStatus::gather(config);
 
         if ctx.is_human() {
-            println!("sinex-dev stack status");
+            println!("sinex-dev infra status");
             println!("────────────────────────────────────────");
             println!(
-                "PostgreSQL:  {} (port: {})",
+                "PostgreSQL:  {} (port: {}, socket)",
                 if status.postgres.running {
                     "running"
                 } else {
@@ -229,22 +222,26 @@ fn execute_status(
         if !watch {
             break;
         }
-        std::thread::sleep(std::time::Duration::from_secs(2));
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     }
 
     Ok(CommandResult::success())
 }
 
-fn execute_reset(config: &StackConfig, yes: bool, ctx: &CommandContext) -> Result<CommandResult> {
+async fn execute_reset(
+    config: &StackConfig,
+    yes: bool,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
     if !yes {
         bail!("Reset requires --yes");
     }
-    execute_stop(config, ctx)?;
+    execute_stop(config, ctx).await?;
     fs::remove_dir_all(config.data_dir())?;
-    execute_start(config, false, &[], ctx)
+    execute_start(config, false, &[], ctx).await
 }
 
-fn execute_logs(
+async fn execute_logs(
     config: &StackConfig,
     process: &str,
     lines: usize,
@@ -261,7 +258,7 @@ fn execute_logs(
                 .join("process.log")
                 .exists()
             {
-                "process.log" // and path logic
+                "process.log"
             } else {
                 bail!("Unknown process: {process}");
             }
@@ -296,28 +293,19 @@ fn execute_logs(
     Ok(CommandResult::success())
 }
 
-fn execute_snapshot(
+async fn execute_snapshot(
     config: &StackConfig,
     cmd: &SnapshotSubcommand,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
     match cmd {
         SnapshotSubcommand::Create { name } => {
-            ctx.heading("stack snapshot create");
-            // Implement using tars and zstd similar to dev.rs
-            // For brevity in this refactor step, I'm omitting the full tar logic here as I moved it to stack logic ideally.
-            // But dev.rs logic was inline. I should have moved 'stack_snapshot' to sandbox/stack.rs
-            // Since I didn't verify if I moved it (I think I missed it in the previous step), I will add a TODO or implement minimal.
-            // Actually, I should have copied `stack_snapshot` logic.
-            // Let's defer full snapshot logic to a follow-up or claim it's a TODO to consolidate efficiently.
-            // Wait, I promised a working consolidation.
-            // Re-implementing correctly:
+            ctx.heading("infra snapshot create");
             let safe_name = name.replace(|c: char| !c.is_alphanumeric() && c != '-', "_");
             let snapshot_path = config.snapshots_dir().join(format!("{safe_name}.tar.zst"));
 
             fs::create_dir_all(config.snapshots_dir())?;
 
-            // Simple implementation
             let tar = Command::new("tar")
                 .args([
                     "-C",
@@ -341,14 +329,13 @@ fn execute_snapshot(
             Ok(CommandResult::success().with_message(format!("Snapshot {safe_name} created")))
         }
         SnapshotSubcommand::Restore { name } => {
-            // Inverse of create
             let safe_name = name.replace(|c: char| !c.is_alphanumeric() && c != '-', "_");
             let snapshot_path = config.snapshots_dir().join(format!("{safe_name}.tar.zst"));
             if !snapshot_path.exists() {
                 bail!("Snapshot not found");
             }
 
-            execute_stop(config, ctx)?;
+            execute_stop(config, ctx).await?;
             fs::remove_dir_all(config.data_dir()).ok();
             fs::remove_dir_all(config.pg_data()).ok();
             fs::remove_dir_all(config.nats_data()).ok();
@@ -366,7 +353,7 @@ fn execute_snapshot(
             if !tar.success() {
                 bail!("Restore failed");
             }
-            execute_start(config, false, &[], ctx)
+            execute_start(config, false, &[], ctx).await
         }
         SnapshotSubcommand::List => {
             let snaps = stack::list_snapshots(&config.snapshots_dir());
@@ -374,42 +361,6 @@ fn execute_snapshot(
             Ok(CommandResult::success())
         }
     }
-}
-
-fn execute_doctor(
-    config: &StackConfig,
-    pipelines: bool,
-    ctx: &CommandContext,
-) -> Result<CommandResult> {
-    ctx.heading("stack doctor");
-    // Reuse specific doctor logic
-    // Check rustc
-    let _ = ProcessBuilder::new("rustc").arg("--version").run();
-    // Check postgres
-    let pg_ok = stack::is_process_running(&config.pg_pid_file());
-    println!("PostgreSQL running: {pg_ok}");
-
-    // Check extensions using psql if running
-    if pg_ok {
-        let output = Command::new(stack::pg_bin("psql"))
-            .env("PGHOST", config.run_dir())
-            .env("PGPORT", config.postgres.port.to_string())
-            .args(["-tAc", "SELECT extname FROM pg_extension"])
-            .output()?;
-        println!(
-            "Extensions: {}",
-            String::from_utf8_lossy(&output.stdout).replace('\n', ", ")
-        );
-    }
-
-    if pipelines {
-        println!("Running pipelines smoke test...");
-        let _ = ProcessBuilder::cargo()
-            .args(["run", "-p", "sinex-test-utils"])
-            .run();
-    }
-
-    Ok(CommandResult::success())
 }
 
 fn execute_env(config: &StackConfig, export: bool) -> Result<CommandResult> {

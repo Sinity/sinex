@@ -1,4 +1,4 @@
-//! NatsSetup builder for Sandbox NATS initialization.
+//! `NatsSetup` builder for Sandbox NATS initialization.
 //!
 //! This module provides a unified builder pattern for configuring NATS in tests,
 //! replacing the previous proliferation of `with_nats*` methods.
@@ -62,6 +62,7 @@ impl NatsSetup {
     ///
     /// Shared NATS is faster as it reuses a single server across tests.
     /// Tests are isolated via namespace prefixing.
+    #[must_use]
     pub fn shared(mut self) -> Self {
         self.mode = NatsSetupMode::Shared;
         self
@@ -71,6 +72,7 @@ impl NatsSetup {
     ///
     /// This starts a fresh ephemeral NATS server for complete isolation.
     /// Use when tests require exclusive NATS access or custom server config.
+    #[must_use]
     pub fn dedicated(mut self) -> Self {
         self.mode = NatsSetupMode::Dedicated;
         self
@@ -80,6 +82,7 @@ impl NatsSetup {
     ///
     /// For shared mode, uses the secure TLS profile.
     /// For dedicated mode, configures TLS on the ephemeral server.
+    #[must_use]
     pub fn secure(mut self) -> Self {
         self.secure = true;
         self
@@ -98,6 +101,7 @@ impl NatsSetup {
     ///
     /// For dedicated mode: uses the builder directly.
     /// For shared mode: uses the builder with the computed shared key.
+    #[must_use]
     pub fn config(mut self, builder: EphemeralNatsBuilder) -> Self {
         self.custom_builder = Some(builder);
         self

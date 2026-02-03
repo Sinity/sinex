@@ -57,10 +57,11 @@ pub fn has_pending_migrations() -> Result<bool> {
     }
 
     // Get config for database connection
-    let config = match crate::infra::stack::StackConfig::for_current_checkout() {
-        Ok(c) => c,
-        Err(_) => return Ok(false),
-    };
+    let config: crate::infra::stack::StackConfig =
+        match crate::infra::stack::StackConfig::for_current_checkout() {
+            Ok(c) => c,
+            Err(_) => return Ok(false),
+        };
 
     // Query migration count from database
     let output = std::process::Command::new("psql")

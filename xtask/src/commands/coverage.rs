@@ -56,12 +56,13 @@ pub enum CoverageSubcommand {
     Clean,
 }
 
+#[async_trait::async_trait]
 impl XtaskCommand for CoverageCommand {
     fn name(&self) -> &'static str {
         "coverage"
     }
 
-    fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
+    async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         match &self.subcommand {
             CoverageSubcommand::Html {
                 output,

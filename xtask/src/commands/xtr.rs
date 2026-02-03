@@ -35,15 +35,16 @@ pub enum XtrSubcommand {
     Tls(crate::tls::TlsCommand),
 }
 
+#[async_trait::async_trait]
 impl XtaskCommand for XtrCommand {
     fn name(&self) -> &'static str {
         "xtr"
     }
 
-    fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
+    async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         match &self.subcommand {
-            XtrSubcommand::Patterns(cmd) => cmd.execute(ctx),
-            XtrSubcommand::Ci(cmd) => cmd.execute(ctx),
+            XtrSubcommand::Patterns(cmd) => cmd.execute(ctx).await,
+            XtrSubcommand::Ci(cmd) => cmd.execute(ctx).await,
             XtrSubcommand::Completions { shell } => {
                 use clap::CommandFactory;
                 // Get the CLI command for completions

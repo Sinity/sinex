@@ -19,12 +19,13 @@ pub struct FixCommand {
     pub thorough: bool,
 }
 
+#[async_trait::async_trait]
 impl XtaskCommand for FixCommand {
     fn name(&self) -> &'static str {
         "fix"
     }
 
-    fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
+    async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         // Handle background execution
         if ctx.is_background() {
             let mut args = Vec::new();
@@ -38,7 +39,7 @@ impl XtaskCommand for FixCommand {
             if self.thorough {
                 args.push("--thorough".to_string());
             }
-            return ctx.spawn_background("fix", &args);
+            return ctx.spawn_background("fix", &args).await;
         }
 
         // Determine which packages to fix

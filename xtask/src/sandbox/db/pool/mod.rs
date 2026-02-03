@@ -2,7 +2,7 @@
 use crate::sandbox::prelude::*;
 use futures::future::BoxFuture;
 use parking_lot::Mutex;
-use serde::{Deserialize, Serialize};
+
 use sinex_db::DbPool;
 use sinex_primitives::SinexError;
 use time::OffsetDateTime;
@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use toml::Value;
@@ -29,121 +29,16 @@ const POOL_SIZE_MULTIPLIER: usize = 2;
 const SLOT_MAX_CONNECTIONS: u32 = 4;
 const ADMIN_MAX_CONNECTIONS: u32 = 8;
 
-/// Pool performance metrics
-static POOL_METRICS: std::sync::LazyLock<PoolMetrics> = std::sync::LazyLock::new(PoolMetrics::new);
+pub mod meta;
+pub mod metrics;
+pub mod stats;
+
+pub use meta::{PoolMeta, TemplateInfo, TemplateMeta};
+use metrics::POOL_METRICS;
+pub use stats::{CleanupDiagnostics, DatabaseStats, PoolStats, SlotStats};
+
 static OPTIONAL_EXTENSION_MISSING: std::sync::LazyLock<Mutex<HashMap<String, String>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
-/// Pool performance metrics for monitoring
-struct PoolMetrics {
-    acquisitions: AtomicUsize,
-    total_wait_time: AtomicU64,
-    cleanup_failures: AtomicUsize,
-    template_recreations: AtomicUsize,
-}
-
-impl PoolMetrics {
-    fn new() -> Self {
-        Self {
-            acquisitions: AtomicUsize::new(0),
-            total_wait_time: AtomicU64::new(0),
-            cleanup_failures: AtomicUsize::new(0),
-            template_recreations: AtomicUsize::new(0),
-        }
-    }
-
-    fn record_acquisition(&self, wait_time: Duration) {
-        self.acquisitions.fetch_add(1, Ordering::Relaxed);
-        self.total_wait_time.fetch_add(
-            wait_time.as_millis().min(u128::from(u64::MAX)) as u64,
-            Ordering::Relaxed,
-        );
-    }
-
-    fn record_cleanup_failure(&self) {
-        self.cleanup_failures.fetch_add(1, Ordering::Relaxed);
-    }
-
-    fn record_template_recreation(&self) {
-        self.template_recreations.fetch_add(1, Ordering::Relaxed);
-    }
-
-    fn get_stats(&self) -> PoolStats {
-        let acquisitions = self.acquisitions.load(Ordering::Relaxed);
-        let total_wait = self.total_wait_time.load(Ordering::Relaxed);
-
-        PoolStats {
-            total_acquisitions: acquisitions,
-            average_wait_time_ms: if acquisitions > 0 {
-                total_wait / acquisitions as u64
-            } else {
-                0
-            },
-            cleanup_failures: self.cleanup_failures.load(Ordering::Relaxed),
-            template_recreations: self.template_recreations.load(Ordering::Relaxed),
-            total_connections: 0,
-            idle_connections: 0,
-        }
-    }
-}
-
-/// Pool statistics for monitoring
-#[derive(Debug, Clone, Serialize)]
-pub struct PoolStats {
-    pub total_acquisitions: usize,
-    pub average_wait_time_ms: u64,
-    pub cleanup_failures: usize,
-    pub template_recreations: usize,
-    pub total_connections: usize,
-    pub idle_connections: usize,
-}
-
-/// Slot-level connection stats
-#[derive(Debug, Clone, Serialize)]
-pub struct SlotStats {
-    pub name: String,
-    pub total_connections: usize,
-    pub idle_connections: usize,
-    pub last_clean_time: Option<String>,
-    pub last_clean_result: Option<String>,
-    pub residuals: Option<Vec<(String, i64)>>,
-    pub quarantined: bool,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct CleanupDiagnostics {
-    slot_name: String,
-    template_name: Option<String>,
-    last_clean_time: Option<String>,
-    last_clean_result: Option<String>,
-    residuals: Option<Vec<(String, i64)>>,
-    quarantined: bool,
-}
-
-impl CleanupDiagnostics {
-    pub(crate) fn format_for_error(&self) -> String {
-        let template_name = self.template_name.as_deref().unwrap_or("unknown");
-        let last_clean_time = self.last_clean_time.as_deref().unwrap_or("unknown");
-        let last_clean_result = self.last_clean_result.as_deref().unwrap_or("unknown");
-        let residuals = match &self.residuals {
-            Some(rows) if !rows.is_empty() => rows
-                .iter()
-                .map(|(table, count)| format!("{table}:{count}"))
-                .collect::<Vec<_>>()
-                .join(", "),
-            _ => "none".to_string(),
-        };
-
-        format!(
-            "slot={}\ntemplate={}\nlast_clean_time={}\nlast_clean_result={}\nresiduals={}\nquarantined={}",
-            self.slot_name,
-            template_name,
-            last_clean_time,
-            last_clean_result,
-            residuals,
-            self.quarantined
-        )
-    }
-}
 
 /// Get current pool statistics
 pub fn get_pool_stats() -> PoolStats {
@@ -264,26 +159,6 @@ pub async fn acquire_pool_test_guard() -> DatabasePoolTestGuard {
 // Historical context: Earlier versions used filesystem stamps which required
 // manual cleanup. Current implementation uses database COMMENT storage which
 // is transactional and doesn't accumulate stale files.
-#[derive(Debug, Serialize, Deserialize)]
-struct TemplateMeta {
-    fingerprint: String,
-    extensions: HashMap<String, String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct PoolMeta {
-    fingerprint: Option<String>,
-    extensions: HashMap<String, String>,
-    dirty: bool,
-    updated_at_rfc3339: String,
-    last_error: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-struct TemplateInfo {
-    name: String,
-    extensions: HashMap<String, String>,
-}
 
 /// Holds a shared advisory lock for the template database on a live admin connection.
 ///
@@ -426,6 +301,7 @@ async fn store_pool_meta(
 /// Used by:
 /// - Sandbox: to determine if template database needs rebuilding
 /// - Preflight: to detect pending migrations
+#[must_use]
 pub fn migrations_fingerprint() -> Option<String> {
     let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let schema_dir = crate_dir.join("../sinex-schema");
@@ -491,7 +367,8 @@ impl Default for PoolConfig {
 }
 
 fn default_pool_size() -> usize {
-    let cpu_count = std::thread::available_parallelism().map_or(MIN_POOL_SIZE, |n| n.get());
+    let cpu_count =
+        std::thread::available_parallelism().map_or(MIN_POOL_SIZE, std::num::NonZero::get);
     let test_threads = nextest_test_threads(cpu_count).unwrap_or(cpu_count).max(1);
     let target = test_threads.saturating_mul(POOL_SIZE_MULTIPLIER);
     target.max(MIN_POOL_SIZE)
@@ -616,31 +493,37 @@ impl std::fmt::Debug for TestDatabase {
 
 impl TestDatabase {
     /// Get the database name
+    #[must_use]
     pub fn name(&self) -> &str {
         &self.name
     }
 
     /// Get the database pool for operations
+    #[must_use]
     pub fn pool(&self) -> &DbPool {
         &self.pool
     }
 
     /// Connection URL for opening ad-hoc connections
+    #[must_use]
     pub fn url(&self) -> &str {
         &self.slot.url
     }
 
     /// Advisory lock identifier associated with this database slot
+    #[must_use]
     pub fn lock_id(&self) -> i64 {
         self.lock_id
     }
 
     /// Get acquisition timestamp for diagnostics
+    #[must_use]
     pub fn acquired_at(&self) -> Instant {
         self.acquired_at
     }
 
     /// Get the process ID that acquired this database
+    #[must_use]
     pub fn acquisition_process_id(&self) -> u32 {
         self.acquisition_process_id
     }
@@ -698,12 +581,6 @@ impl TestDatabase {
 }
 
 /// Database statistics for debugging
-#[derive(Debug, Clone)]
-pub struct DatabaseStats {
-    pub event_count: i64,
-    pub agent_count: i64,
-    pub checkpoint_count: i64,
-}
 
 /// Cleanup task for background processing
 #[derive(Debug)]
@@ -2016,7 +1893,7 @@ async fn wait_for_database_absence_admin(conn: &mut PgConnection, name: &str) ->
 /// Grant schema permissions to app user on a newly created pool database.
 ///
 /// This uses the centralized permissions module which automatically grants on ALL
-/// schemas including public (for seaql_migrations), eliminating hardcoded schema lists.
+/// schemas including public (for `seaql_migrations`), eliminating hardcoded schema lists.
 async fn grant_pool_database_permissions(db_name: &str) -> TestResult<()> {
     crate::sandbox::db::permissions::grant_pool_database_permissions(db_name).await
 }
@@ -2328,13 +2205,13 @@ async fn ensure_core_events_triggers(pool: &DbPool) -> TestResult<()> {
 
     if !core_events_trigger_exists(pool, "trg_events_no_update").await? {
         sqlx::query(
-            r#"
+            r"
             CREATE OR REPLACE FUNCTION core.fn_events_no_update()
             RETURNS trigger LANGUAGE plpgsql AS $$
             BEGIN
                 RAISE EXCEPTION 'UPDATE on core.events is forbidden';
             END $$;
-            "#,
+            ",
         )
         .execute(&mut *conn)
         .await
@@ -2356,7 +2233,7 @@ async fn ensure_core_events_triggers(pool: &DbPool) -> TestResult<()> {
 
     if !core_events_trigger_exists(pool, "trg_events_archive_before_delete").await? {
         sqlx::query(
-            r#"
+            r"
             CREATE OR REPLACE FUNCTION core.fn_archive_before_delete()
             RETURNS trigger LANGUAGE plpgsql AS $$
             DECLARE
@@ -2372,7 +2249,7 @@ async fn ensure_core_events_triggers(pool: &DbPool) -> TestResult<()> {
               INSERT INTO audit.archived_events SELECT OLD.*, now(), who, why, sup_id;
               RETURN OLD;
             END $$;
-            "#,
+            ",
         )
         .execute(&mut *conn)
         .await
@@ -2632,7 +2509,7 @@ async fn force_event_material_cleanup(pool: &DbPool) -> TestResult<()> {
 
                 // Delete from remaining tables (config-driven) after cascades to catch ancillary rows.
                 for table in &cleanup_tables {
-                    let _ = sqlx::query(&format!("DELETE FROM {}", table))
+                    let _ = sqlx::query(&format!("DELETE FROM {table}"))
                         .execute(conn.as_mut())
                         .await;
                 }
@@ -3144,7 +3021,7 @@ async fn ensure_template_database(
                 if let Some(username) = std::env::var("DATABASE_URL_APP").ok().and_then(|url| {
                     url.split("://")
                         .nth(1)
-                        .and_then(|s| s.split('@').next().map(|u| u.to_string()))
+                        .and_then(|s| s.split('@').next().map(std::string::ToString::to_string))
                 }) {
                     eprintln!(
                     "  🔑 Granting schema permissions to user '{username}' in template database"
@@ -3231,7 +3108,7 @@ async fn ensure_template_database(
     }
 }
 
-/// Check if required PostgreSQL extensions are available
+/// Check if required `PostgreSQL` extensions are available
 async fn check_required_extensions(pool: &DbPool) -> TestResult<()> {
     let required_extensions = [
         ("ulid", "ULID extension for primary keys"),
@@ -3356,7 +3233,7 @@ async fn ensure_extension_installed(pool: &DbPool, extension: &str) -> TestResul
     Ok(())
 }
 
-/// Apply test-specific PostgreSQL optimizations (session-level only)
+/// Apply test-specific `PostgreSQL` optimizations (session-level only)
 async fn apply_test_session_optimizations(pool: &DbPool) -> TestResult<()> {
     // Always enable test optimizations (disables synchronous_commit for speed)
     eprintln!("⚡ Applying test session optimizations...");
@@ -3395,12 +3272,12 @@ async fn optimize_template_for_tests(pool: &DbPool) -> TestResult<()> {
         // CRITICAL: Disable TimescaleDB continuous aggregate policies in tests
         // These consume all background workers and cause timeouts
         eprintln!("  🔧 Disabling TimescaleDB continuous aggregate policies...");
-        let disable_policies_sql = r#"
+        let disable_policies_sql = r"
         SELECT alter_job(job_id, scheduled => false)
         FROM timescaledb_information.jobs
         WHERE application_name LIKE '%Continuous Aggregate%'
            OR application_name LIKE '%Telemetry%'
-    "#;
+    ";
 
         if let Err(e) = sqlx::query(disable_policies_sql).execute(pool).await {
             eprintln!("  ⚠️  Could not disable TimescaleDB policies: {e}");

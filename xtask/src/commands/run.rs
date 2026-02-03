@@ -11,7 +11,8 @@ use anyhow::{bail, Context, Result};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::Stdio;
+use tokio::process::{Child, Command};
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config::config;
@@ -130,10 +131,10 @@ pub enum RunSubcommand {
     ///
     /// # Environment Variables
     ///
-    /// - SINEX_GATEWAY_URL or SINEX_{TARGET}_GATEWAY_URL: Gateway RPC URL
-    /// - SINEX_RPC_TOKEN or SINEX_{TARGET}_RPC_TOKEN: RPC auth token (required)
-    /// - SINEX_TETHER_NATS_URL or SINEX_{TARGET}_NATS_URL: Production NATS URL
-    /// - SINEX_TETHER_NATS_*: NATS TLS config (CA_CERT, CLIENT_CERT, CLIENT_KEY, CREDS)
+    /// - `SINEX_GATEWAY_URL` or SINEX_{TARGET}_`GATEWAY_URL`: Gateway RPC URL
+    /// - `SINEX_RPC_TOKEN` or SINEX_{TARGET}_`RPC_TOKEN`: RPC auth token (required)
+    /// - `SINEX_TETHER_NATS_URL` or SINEX_{TARGET}_`NATS_URL`: Production NATS URL
+    /// - `SINEX_TETHER_NATS`_*: NATS TLS config (`CA_CERT`, `CLIENT_CERT`, `CLIENT_KEY`, CREDS)
     ///
     /// Note: Requires the `sandbox` feature to be enabled.
     #[cfg(feature = "sandbox")]
@@ -184,25 +185,27 @@ struct RunResult {
     status: String,
 }
 
+#[async_trait::async_trait]
 impl XtaskCommand for RunCommand {
     fn name(&self) -> &'static str {
         "run"
     }
 
-    fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
+    async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         match &self.subcommand {
-            RunSubcommand::List => execute_list(ctx),
+            RunSubcommand::List => execute_list(ctx).await,
             RunSubcommand::Ingestd { instance_id } => {
-                self.run_binary("ingestd", instance_id.clone(), ctx)
+                self.run_binary("ingestd", instance_id.clone(), ctx).await
             }
             RunSubcommand::Gateway { instance_id } => {
-                self.run_binary("gateway", instance_id.clone(), ctx)
+                self.run_binary("gateway", instance_id.clone(), ctx).await
             }
             RunSubcommand::Node { name, instance_id } => {
-                self.run_binary(name, instance_id.clone(), ctx)
+                self.run_binary(name, instance_id.clone(), ctx).await
             }
             RunSubcommand::Stack { instance_id } => {
                 self.run_bundle(&["ingestd", "gateway"], instance_id.clone(), ctx)
+                    .await
             }
             RunSubcommand::AllIngestors { instance_id } => {
                 let ingestors: Vec<&str> = BINARIES
@@ -210,7 +213,7 @@ impl XtaskCommand for RunCommand {
                     .filter(|(name, _, _)| name.contains("ingestor"))
                     .map(|(name, _, _)| *name)
                     .collect();
-                self.run_bundle(&ingestors, instance_id.clone(), ctx)
+                self.run_bundle(&ingestors, instance_id.clone(), ctx).await
             }
             RunSubcommand::AllAutomatons { instance_id } => {
                 let automatons: Vec<&str> = BINARIES
@@ -218,7 +221,7 @@ impl XtaskCommand for RunCommand {
                     .filter(|(name, _, _)| name.contains("automaton"))
                     .map(|(name, _, _)| *name)
                     .collect();
-                self.run_bundle(&automatons, instance_id.clone(), ctx)
+                self.run_bundle(&automatons, instance_id.clone(), ctx).await
             }
             #[cfg(feature = "sandbox")]
             RunSubcommand::Tether {
@@ -226,7 +229,7 @@ impl XtaskCommand for RunCommand {
                 filter,
                 from_beginning,
                 from_sequence,
-            } => execute_tether(ctx, target, filter, *from_beginning, *from_sequence),
+            } => execute_tether(ctx, target, filter, *from_beginning, *from_sequence).await,
         }
     }
 
@@ -236,7 +239,7 @@ impl XtaskCommand for RunCommand {
 }
 
 impl RunCommand {
-    fn run_binary(
+    async fn run_binary(
         &self,
         name: &str,
         instance_id: Option<String>,
@@ -259,18 +262,20 @@ impl RunCommand {
         let instance_id = instance_id.unwrap_or_else(|| format!("{}-{}", name, std::process::id()));
 
         if self.bg {
-            return self.run_background(package, binary, &instance_id, ctx);
+            return self
+                .run_background(package, binary, &instance_id, ctx)
+                .await;
         }
 
         if self.watch {
-            return self.run_watch(package, binary, &instance_id, ctx);
+            return self.run_watch(package, binary, &instance_id, ctx).await;
         }
 
         // Direct run
-        self.run_direct(package, binary, &instance_id, ctx)
+        self.run_direct(package, binary, &instance_id, ctx).await
     }
 
-    fn run_bundle(
+    async fn run_bundle(
         &self,
         binaries: &[&str],
         instance_prefix: Option<String>,
@@ -304,7 +309,7 @@ impl RunCommand {
 
                 args.extend(["--".to_string(), format!("--instance-id={instance_id}")]);
 
-                let job = manager.spawn("cargo", &args)?;
+                let job = manager.spawn("cargo", &args).await?;
                 job_ids.push(job.id);
             }
 
@@ -340,7 +345,7 @@ impl RunCommand {
                 build_cmd.arg("--release");
             }
 
-            let status = build_cmd.status()?;
+            let status = build_cmd.status().await?;
             if !status.success() {
                 bail!("Failed to build {name}");
             }
@@ -382,8 +387,9 @@ impl RunCommand {
             );
         }
 
-        // Wait for any child to exit, then stop all
+        // Wait for any child to exit - use polling loop
         let mut exited_name: Option<String> = None;
+
         loop {
             for (name, child) in &mut children {
                 match child.try_wait() {
@@ -405,33 +411,36 @@ impl RunCommand {
             if exited_name.is_some() {
                 break;
             }
-            std::thread::sleep(std::time::Duration::from_millis(500));
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
 
         // Kill remaining children
         if ctx.is_human() {
-            println!("\nShutting down remaining processes...");
+            println!(
+                "
+Shutting down remaining processes..."
+            );
         }
-        for (name, mut child) in children {
-            if Some(&name) != exited_name.as_ref() {
-                if let Err(e) = child.kill() {
+        for (name, child) in &mut children {
+            if Some(&name.clone()) != exited_name.as_ref() {
+                if let Err(e) = child.kill().await {
                     if ctx.is_human() {
                         eprintln!("Warning: couldn't kill {name}: {e}");
                     }
                 }
-                let _ = child.wait();
+                let _ = child.wait().await;
             }
         }
 
         Ok(CommandResult::success()
             .with_message(format!(
                 "Bundle stopped (triggered by {})",
-                exited_name.unwrap_or_else(|| "unknown".to_string())
+                exited_name.unwrap_or_else(|| "Ctrl+C".to_string())
             ))
             .with_duration(ctx.elapsed()))
     }
 
-    fn run_direct(
+    async fn run_direct(
         &self,
         package: &str,
         _binary: &str,
@@ -453,6 +462,7 @@ impl RunCommand {
         let status = Command::new("cargo")
             .args(&args)
             .status()
+            .await
             .with_context(|| format!("Failed to run {package}"))?;
 
         if status.success() {
@@ -470,7 +480,7 @@ impl RunCommand {
         }
     }
 
-    fn run_background(
+    async fn run_background(
         &self,
         package: &str,
         _binary: &str,
@@ -488,7 +498,7 @@ impl RunCommand {
 
         args.extend(["--".to_string(), format!("--instance-id={instance_id}")]);
 
-        let job = manager.spawn("cargo", &args)?;
+        let job = manager.spawn("cargo", &args).await?;
 
         Ok(CommandResult::success()
             .with_message(format!("Backgrounded {package} as job {}", job.id))
@@ -500,7 +510,7 @@ impl RunCommand {
             .with_duration(ctx.elapsed()))
     }
 
-    fn run_watch(
+    async fn run_watch(
         &self,
         package: &str,
         binary: &str,
@@ -513,7 +523,7 @@ impl RunCommand {
         }
 
         // Use cargo-watch if available
-        let watch_check = Command::new("which")
+        let watch_check = std::process::Command::new("which")
             .arg("cargo-watch")
             .output()
             .ok()
@@ -535,6 +545,7 @@ impl RunCommand {
             let status = Command::new("cargo")
                 .args(&args)
                 .status()
+                .await
                 .context("cargo-watch failed")?;
 
             if status.success() {
@@ -551,11 +562,11 @@ impl RunCommand {
         }
 
         // Just do a direct run
-        self.run_direct(package, binary, instance_id, ctx)
+        self.run_direct(package, binary, instance_id, ctx).await
     }
 }
 
-fn execute_list(ctx: &CommandContext) -> Result<CommandResult> {
+async fn execute_list(ctx: &CommandContext) -> Result<CommandResult> {
     let mut binaries: Vec<serde_json::Value> = Vec::new();
 
     if ctx.is_human() {
@@ -622,7 +633,7 @@ fn execute_list(ctx: &CommandContext) -> Result<CommandResult> {
 
 /// Execute the tether command
 #[cfg(feature = "sandbox")]
-fn execute_tether(
+async fn execute_tether(
     ctx: &CommandContext,
     target: &str,
     filter: &str,
@@ -631,65 +642,86 @@ fn execute_tether(
 ) -> Result<CommandResult> {
     use crate::sandbox::tether::{TetherConfig, TetherSession};
 
-    // Build a runtime for the tether
-    let rt = tokio::runtime::Runtime::new()?;
+    // Build config from environment, then override with CLI args
+    let mut config = TetherConfig::from_env(target)?;
+    config.subject_filter = if filter.is_empty() {
+        None
+    } else {
+        Some(filter.to_string())
+    };
+    config.from_beginning = from_beginning;
+    // Note: from_sequence not yet supported in TetherConfig
+    let _ = from_sequence;
 
-    rt.block_on(async {
-        // Build config from environment, then override with CLI args
-        let mut config = TetherConfig::from_env(target)?;
-        config.subject_filter = if filter.is_empty() {
-            None
+    if ctx.is_human() {
+        println!("Connecting to {target} via The Tether...");
+        println!("  Gateway: {}", config.gateway_url);
+        if let Some(ref f) = config.subject_filter {
+            println!("  Filter: {f}");
+        }
+        if from_beginning {
+            println!("  Starting from: beginning of stream");
         } else {
-            Some(filter.to_string())
-        };
-        config.from_beginning = from_beginning;
-        // Note: from_sequence not yet supported in TetherConfig
-        let _ = from_sequence;
-
-        if ctx.is_human() {
-            println!("Connecting to {} via The Tether...", target);
-            println!("  Gateway: {}", config.gateway_url);
-            if let Some(ref f) = config.subject_filter {
-                println!("  Filter: {}", f);
-            }
-            if from_beginning {
-                println!("  Starting from: beginning of stream");
-            } else {
-                println!("  Starting from: new events only");
-            }
-            println!();
+            println!("  Starting from: new events only");
         }
+        println!();
+    }
 
-        // Start the session
-        let mut session = TetherSession::start(config).await?;
+    // Start the session
+    let session = TetherSession::start(config).await?;
 
-        if ctx.is_human() {
-            if let Some(info) = session.consumer_info() {
-                println!(
-                    "Connected! Consumer: {}, Stream: {}",
-                    info.consumer_name, info.stream_name
-                );
-            }
+    if ctx.is_human() {
+        if let Some(info) = session.consumer_info() {
+            println!(
+                "Connected! Consumer: {}, Stream: {}",
+                info.consumer_name, info.stream_name
+            );
         }
+        println!(
+            "{}",
+            console::style("Streaming events... (Press Ctrl+C to stop)").dim()
+        );
+        println!();
+    }
 
-        // TODO: Implement actual event streaming
-        // The streaming functionality is not yet complete.
-        // For now, just verify connection and clean up.
-        if ctx.is_human() {
-            println!("\nNote: Event streaming not yet implemented. Connection verified.");
+    let (tx, mut rx) = tokio::sync::mpsc::channel(100);
+    let mut session_clone = session;
+
+    // Spawn streaming task
+    let stream_handle = tokio::spawn(async move {
+        if let Err(e) = session_clone.stream_events(tx).await {
+            eprintln!("[tether] Streaming error: {}", e);
         }
+        session_clone
+    });
 
-        // Cleanup
-        session.cleanup().await;
+    // Print events as they arrive
+    let mut count = 0;
+    while let Some(event) = rx.recv().await {
+        count += 1;
+        if ctx.is_human() {
+            println!(
+                "[{}] {} {}",
+                console::style(event.sequence).cyan(),
+                console::style(&event.subject).green(),
+                serde_json::to_string(&event.payload).unwrap_or_default()
+            );
+        } else {
+            println!("{}", serde_json::to_string(&event)?);
+        }
+    }
 
-        Ok(CommandResult::success()
-            .with_message("Tether connection verified (streaming not yet implemented)")
-            .with_data(serde_json::json!({
-                "target": target,
-                "status": "connection_verified",
-            }))
-            .with_duration(ctx.elapsed()))
-    })
+    // Cleanup
+    let mut session = stream_handle.await?;
+    session.cleanup().await;
+
+    Ok(CommandResult::success()
+        .with_message(format!("Tether session closed. Received {count} events."))
+        .with_data(serde_json::json!({
+            "target": target,
+            "events_received": count,
+        }))
+        .with_duration(ctx.elapsed()))
 }
 
 #[cfg(test)]

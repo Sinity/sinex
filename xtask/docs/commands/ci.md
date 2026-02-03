@@ -105,7 +105,7 @@ test:
     - cargo xtask ci workspace --json > ci-results.json
   artifacts:
     reports:
-      junit: target/nextest/ci/junit.xml
+      junit: .sinex/nextest/junit.xml
     paths:
       - ci-results.json
 ```

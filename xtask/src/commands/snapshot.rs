@@ -36,12 +36,13 @@ struct SnapshotResult {
     compressed: bool,
 }
 
+#[async_trait::async_trait]
 impl XtaskCommand for SnapshotCommand {
     fn name(&self) -> &'static str {
         "snapshot"
     }
 
-    fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
+    async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         // Check if repomix is available
         let repomix_check = Command::new("which").arg("repomix").output();
         if repomix_check.is_err() || !repomix_check.unwrap().status.success() {

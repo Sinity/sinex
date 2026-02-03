@@ -1,4 +1,4 @@
-//! EventAssert builder for fluent event count assertions.
+//! `EventAssert` builder for fluent event count assertions.
 //!
 //! This module provides a composable filter pattern for asserting event counts,
 //! replacing the previous proliferation of `assert_event_count*` methods.

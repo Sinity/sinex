@@ -25,7 +25,7 @@ pub struct StatusCommand {
     pub watch: bool,
 
     /// Quick one-liner summary (replaces 'motd' command)
-    #[arg(long)]
+    #[arg(long, alias = "compact")]
     pub summary: bool,
 
     /// Run diagnostics (replaces 'stack doctor')
@@ -131,6 +131,7 @@ struct DoctorReport {
     nats: DoctorServiceCheck,
     tools: Vec<ToolCheck>,
     tls: Option<TlsCheck>,
+    postgres_extensions: Option<Vec<String>>,
     overall: bool,
 }
 
@@ -154,23 +155,20 @@ struct TlsCheck {
     client_cert_exists: bool,
 }
 
+#[async_trait::async_trait]
 impl XtaskCommand for StatusCommand {
     fn name(&self) -> &'static str {
         "status"
     }
 
-    fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
-        // Dispatch based on mode
+    async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         if self.summary {
-            return execute_summary(ctx);
+            execute_summary(ctx).await
+        } else if self.doctor {
+            execute_doctor(self.pipelines, ctx).await
+        } else {
+            execute_full_status(self.watch, ctx).await
         }
-
-        if self.doctor {
-            return execute_doctor(self.pipelines, ctx);
-        }
-
-        // Default: full status
-        execute_full_status(self.watch, ctx)
     }
 
     fn metadata(&self) -> CommandMetadata {
@@ -179,7 +177,7 @@ impl XtaskCommand for StatusCommand {
 }
 
 /// Quick one-liner summary (replaces 'motd' command)
-fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
+async fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
     // Quick infrastructure checks
     let pg_ready = std::process::Command::new("pg_isready")
         .arg("-q")
@@ -371,7 +369,7 @@ fn execute_summary(ctx: &CommandContext) -> Result<CommandResult> {
 }
 
 /// Run diagnostics (replaces 'stack doctor')
-fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult> {
+async fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult> {
     use crate::process::ProcessBuilder;
 
     let mut all_ok = true;
@@ -402,7 +400,13 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
     };
 
     // Check required tools
-    let tools_to_check = ["ast-grep", "repomix", "cargo-machete", "cargo-nextest"];
+    let tools_to_check = [
+        "rustc",
+        "ast-grep",
+        "repomix",
+        "cargo-machete",
+        "cargo-nextest",
+    ];
     let mut tool_checks = Vec::new();
     for tool in tools_to_check {
         let check_result = ToolManager::check_tool(tool);
@@ -417,6 +421,27 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
             available,
             version,
         });
+    }
+
+    // Check Postgres extensions
+    let mut pg_extensions = None;
+    if pg_ready {
+        let config = crate::infra::stack::StackConfig::for_current_checkout().ok();
+        if let Some(cfg) = config {
+            let output = std::process::Command::new("psql")
+                .env("PGHOST", cfg.run_dir())
+                .env("PGPORT", cfg.postgres.port.to_string())
+                .args(["-tAc", "SELECT extname FROM pg_extension"])
+                .output();
+
+            if let Ok(o) = output {
+                let exts: Vec<String> = String::from_utf8_lossy(&o.stdout)
+                    .lines()
+                    .map(|l| l.to_string())
+                    .collect();
+                pg_extensions = Some(exts);
+            }
+        }
     }
 
     // Check TLS certificates
@@ -442,6 +467,7 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
         },
         tools: tool_checks,
         tls: tls_check,
+        postgres_extensions: pg_extensions,
         overall: all_ok,
     };
 
@@ -475,6 +501,12 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
             print_check("CA certificate", tls.ca_exists, None);
             print_check("Server certificate", tls.server_cert_exists, None);
             print_check("Client certificate", tls.client_cert_exists, None);
+        }
+
+        // Extensions
+        if let Some(exts) = &report.postgres_extensions {
+            println!("\n{}", style("Postgres Extensions:").bold());
+            println!("  {}", exts.join(", "));
         }
 
         // Pipeline smoke tests
@@ -516,14 +548,18 @@ fn print_check(name: &str, ok: bool, detail: Option<&str>) {
 }
 
 /// Full status (default mode)
-fn execute_full_status(watch: bool, ctx: &CommandContext) -> Result<CommandResult> {
+async fn execute_full_status(watch: bool, ctx: &CommandContext) -> Result<CommandResult> {
+    let term = console::Term::stdout();
+
     loop {
         if watch {
-            print!("\x1B[2J\x1B[H"); // Clear screen
+            term.clear_screen()?;
+            term.move_cursor_to(0, 0)?;
         }
 
         // Collect status data
         let pg_start = std::time::Instant::now();
+        // Use pg_isready if available
         let pg_ready = std::process::Command::new("pg_isready")
             .arg("-q")
             .status()
@@ -727,7 +763,7 @@ fn execute_full_status(watch: bool, ctx: &CommandContext) -> Result<CommandResul
             return Ok(CommandResult::success().with_duration(ctx.elapsed()));
         }
 
-        std::thread::sleep(std::time::Duration::from_secs(2));
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     }
 }
 
