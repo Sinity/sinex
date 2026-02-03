@@ -10,8 +10,8 @@ use sinex_primitives::temporal;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use sinex_cli::model::search::{SearchQuery, SearchResult};
-use sinex_cli::Result;
+use sinexctl::model::search::{SearchQuery, SearchResult};
+use sinexctl::Result;
 
 /// Mock gateway client that records method calls and returns preset responses
 #[derive(Clone)]

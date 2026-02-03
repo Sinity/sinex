@@ -10,7 +10,7 @@ use std::path::Path;
 
 use common::{TestDir, TlsFixture, TokenFixture};
 use serial_test::serial;
-use sinex_cli::auth::{load_client_cert, load_root_ca, load_token};
+use sinexctl::auth::{load_client_cert, load_root_ca, load_token};
 
 // ============================================================================
 // Token Loading Tests

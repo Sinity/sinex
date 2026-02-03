@@ -7,8 +7,8 @@
 
 use proptest::prelude::*;
 use serde::{Deserialize, Serialize};
-use sinex_cli::config::{Config, ThemeConfig};
-use sinex_cli::model::OutputFormat;
+use sinexctl::config::{Config, ThemeConfig};
+use sinexctl::model::OutputFormat;
 
 // ============================================================================
 // Strategy Generators

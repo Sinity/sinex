@@ -1,36 +1,13 @@
+[[bin]]
+name = "sinexctl"
+path = "src/main.rs"
+
+[lib]
+name = "sinexctl"
+path = "src/lib.rs"
+
 [package]
-name = "sinex-cli"
-
-[dependencies]
-clap_complete       = "4"
-serde_yaml          = "0.9"
-tabled              = "0.17"
-indicatif           = "0.17"
-console             = "0.15"
-time                = { workspace = true }
-directories         = "5.0"
-dirs                = "5.0"
-rustls              = "0.22"
-rustls-pemfile      = "2.1"
-rustls-native-certs = "0.8"
-inquire             = "0.7"
-syntect             = "5.2"
-atty                = "0.2"
-ratatui             = "0.28"
-crossterm           = "0.29"
-sinex-primitives    = { path = "../../crate/lib/sinex-primitives" }
-
-[features]
-wiremock = [
-]
-
-[dev-dependencies]
-wiremock    = "0.6"
-assert_cmd  = "2"
-predicates  = "3"
-tempfile    = "3"
-toml        = "0.8"
-serial_test = "3"
+name = "sinexctl"
 
 [package.version]
 workspace = true
@@ -44,33 +21,45 @@ workspace = true
 [package.authors]
 workspace = true
 
+[dependencies]
+clap_complete       = "4"
+serde_yaml          = "0.9"
+tabled              = "0.17"
+indicatif           = "0.17"
+console             = "0.15"
+directories         = "5.0"
+dirs                = "5.0"
+rustls              = "0.22"
+rustls-pemfile      = "2.1"
+rustls-native-certs = "0.8"
+inquire             = "0.7"
+syntect             = "5.2"
+atty                = "0.2"
+ratatui             = "0.28"
+crossterm           = "0.29"
+
+[dependencies.sinex-primitives]
+path = "../lib/sinex-primitives"
+
+[dependencies.sinex-schema]
+path = "../lib/sinex-schema"
+features = ["arbitrary"]
+
 [dependencies.clap]
 workspace = true
-features = [
-    "derive",
-    "env",
-]
+features = ["derive", "env"]
 
 [dependencies.tokio]
 workspace = true
-features = [
-    "rt-multi-thread",
-    "macros",
-    "time",
-]
+features = ["rt-multi-thread", "macros", "time"]
 
 [dependencies.reqwest]
 version = "0.12"
-features = [
-    "json",
-    "rustls-tls",
-]
+features = ["json", "rustls-tls"]
 
 [dependencies.serde]
 workspace = true
-features = [
-    "derive",
-]
+features = ["derive"]
 
 [dependencies.serde_json]
 workspace = true
@@ -81,23 +70,27 @@ workspace = true
 [dependencies.thiserror]
 workspace = true
 
-[dependencies.sinex-schema]
-path = "../../crate/lib/sinex-schema"
-features = [
-    "arbitrary",
-]
-
-
-
 [dependencies.figment]
 version = "0.10"
-features = [
-    "toml",
-    "env",
-]
+features = ["toml", "env"]
 
 [dependencies.tracing]
 workspace = true
+
+[dependencies.tracing-subscriber]
+workspace = true
+features = ["env-filter"]
+
+[dependencies.time]
+workspace = true
+
+[dev-dependencies]
+wiremock    = "0.6"
+assert_cmd  = "2"
+predicates  = "3"
+tempfile    = "3"
+toml        = "0.8"
+serial_test = "3"
 
 [dev-dependencies.proptest]
 workspace = true
@@ -105,21 +98,24 @@ workspace = true
 [dev-dependencies.insta]
 workspace = true
 
+[dev-dependencies.tokio]
+workspace = true
+features = ["rt-multi-thread", "macros"]
+
+[dev-dependencies.serde_json]
+workspace = true
+
 [dev-dependencies.xtask]
 path = "../../xtask"
 default-features = false
-features = [
-    "sandbox",
-]
+features = ["sandbox"]
 
 [dev-dependencies.xtask-macros]
-path = "../../xtask-macros"
+path = "../../xtask/macros"
 
 [dev-dependencies.sinex-primitives]
-path = "../../crate/lib/sinex-primitives"
-features = [
-    "testing",
-]
+path = "../lib/sinex-primitives"
+features = ["testing"]
 
 [lints]
 workspace = true

@@ -5,8 +5,8 @@ mod common;
 use std::env;
 
 use common::ConfigFixture;
-use sinex_cli::config::Config;
-use sinex_cli::model::OutputFormat;
+use sinexctl::config::Config;
+use sinexctl::model::OutputFormat;
 
 // ============================================================================
 // Default Configuration Tests

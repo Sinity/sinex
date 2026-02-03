@@ -1,12 +1,12 @@
 use clap::{CommandFactory, Parser, Subcommand};
-use sinex_cli::client::{ClientConfig, GatewayClient};
-use sinex_cli::commands::{
+use sinexctl::client::{ClientConfig, GatewayClient};
+use sinexctl::commands::{
     AuditCommand, CompletionsCommand, ConfigCommands, CoreCommands, DlqCommands, ErrorsCommand,
     GatewayCommands, NodeCommands, OpsCommands, QueryCommand, RecentCommand, ReplayCommands,
     StatusCommand, TuiCommand, WatchCommand,
 };
-use sinex_cli::model::OutputFormat;
-use sinex_cli::{default_rpc_url, Config};
+use sinexctl::model::OutputFormat;
+use sinexctl::{default_rpc_url, Config};
 
 /// Sinex control CLI
 #[derive(Debug, Parser)]

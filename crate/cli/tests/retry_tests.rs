@@ -6,7 +6,7 @@ use serde_json::json;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use sinex_cli::client::{ClientConfig, GatewayClient, RetryConfig};
+use sinexctl::client::{ClientConfig, GatewayClient, RetryConfig};
 
 #[tokio::test]
 async fn test_retry_on_connection_failure() {

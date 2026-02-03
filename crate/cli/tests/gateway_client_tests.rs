@@ -13,11 +13,11 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use common::{MockGatewayClient, MockResponse, TestDir, TokenFixture};
-use sinex_cli::client::{ClientConfig, GatewayClient, RetryConfig};
 use sinex_primitives::rpc::dlq::DlqListResponse;
 use sinex_primitives::rpc::system::{
     ComponentHealth, ComponentsHealth, ReplayControlHealth, SystemHealthResponse,
 };
+use sinexctl::client::{ClientConfig, GatewayClient, RetryConfig};
 
 // ============================================================================
 // MockGatewayClient Tests
@@ -148,7 +148,7 @@ async fn test_mock_client_replay_operations() {
 
 #[tokio::test]
 async fn test_mock_client_search() {
-    use sinex_cli::model::search::SearchQuery;
+    use sinexctl::model::search::SearchQuery;
 
     let client = MockGatewayClient::new();
 
@@ -636,7 +636,7 @@ fn test_client_config_default() {
 
 #[test]
 fn test_client_config_from_app_config() {
-    use sinex_cli::config::Config;
+    use sinexctl::config::Config;
 
     let mut app_config = Config::default();
     app_config.rpc_url = "https://custom:8080".to_string();
