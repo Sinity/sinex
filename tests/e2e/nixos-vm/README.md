@@ -74,7 +74,6 @@ in the qcow2 image.
 - **test-base.nix**: Minimal base configuration for all tests
 - **test-helpers.nix**: Python and bash helper functions
 - **vm-configs.nix**: Predefined VM profiles (minimal, standard, performance, large)
-- **health-checks.nix**: System health monitoring utilities
 
 ### Test Categories
 
