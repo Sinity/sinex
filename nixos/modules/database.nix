@@ -50,12 +50,16 @@ let
   postgresqlPkgBase = db.package;
   postgresqlPackages = pkgs.postgresql16Packages;
 
-  # pg_jsonschema is packaged in this repository under nix/pkgs/pg_jsonschema.
-  # Wire it into the Postgres build explicitly so that any cluster provisioned
-  # via this module (including ones used by xtask ci postgres) always has the
-  # extension available in pg_available_extensions, instead of relying on a
-  # separate overlay to attach it indirectly.
-  pgJsonschema = pkgs.callPackage ../../nix/pkgs/pg_jsonschema { };
+  # pg_jsonschema must be provided via the flake overlay
+  # The overlay adds it to pkgs.postgresql16Packages.pg_jsonschema
+  pgJsonschema = pkgs.postgresql16Packages.pg_jsonschema or (throw ''
+    pg_jsonschema is not available in pkgs.postgresql16Packages.
+    You must apply the sinex flake overlay to your pkgs:
+
+      nixpkgs.overlays = [ inputs.sinex.overlays.default ];
+
+    Or provide services.sinex.package directly from flake outputs.
+  '');
 
   extensionPackageBuilder =
     ps:
@@ -147,7 +151,6 @@ host    all             all             ::/0                    reject
   migrationPackage =
     if db.migration.package != null then db.migration.package else cfg.package;
 
-  databaseExtensionsOverlay = import ../../nix/overlays/database-extensions.nix;
   sinexAllowUnfreePredicate =
     pkg:
     let
@@ -159,7 +162,8 @@ in
 {
   config = mkMerge [
     (mkIf (db.enable && db.autoSetup) {
-      nixpkgs.overlays = mkAfter [ databaseExtensionsOverlay ];
+      # The flake overlay must be applied by the user to provide pg_jsonschema
+      # and sinex packages. This module only sets allowUnfree for TimescaleDB.
       nixpkgs.config.allowUnfree = mkDefault true;
       nixpkgs.config.allowUnfreePredicate = mkDefault sinexAllowUnfreePredicate;
     })

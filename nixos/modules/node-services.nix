@@ -20,7 +20,7 @@ let
   dlqPath = cfg.storage.dlq.path;
 
   sinexPackage = cfg.package;
-  serviceUser = cfg.users.nodes;
+  serviceUser = cfg.users.satellites;
 
   databaseUrl = "postgresql://${cfg.database.user}@${cfg.database.host}:${toString cfg.database.port}/${cfg.database.name}";
 
@@ -187,7 +187,7 @@ let
     in
     mkNodeUnits {
       name = "filesystem";
-      binary = "fs-watcher";
+      binary = "fs-ingestor";
       description = "Filesystem node";
       inherit instances batch resources extraArgs;
       env = [ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env;
@@ -202,7 +202,7 @@ let
     in
     mkNodeUnits {
       name = "terminal";
-      binary = "terminal-node";
+      binary = "terminal-ingestor";
       description = "Terminal node";
       inherit instances batch resources;
       extraArgs = sat.extraArgs;
@@ -219,7 +219,7 @@ let
     in
     mkNodeUnits {
       name = "desktop";
-      binary = "desktop-node";
+      binary = "desktop-ingestor";
       description = "Desktop node";
       inherit instances batch resources;
       extraArgs = sat.extraArgs;
@@ -235,7 +235,7 @@ let
     in
     mkNodeUnits {
       name = "system";
-      binary = "system-node";
+      binary = "system-ingestor";
       description = "System node";
       inherit instances batch resources;
       extraArgs = sat.extraArgs;
@@ -319,9 +319,9 @@ let
           };
         healthUnit =
           if !health.enable then {} else {
-            "sinex-health-aggregator" = mkAutomataUnit {
-              binary = "health-aggregator";
-              description = "Sinex health aggregator";
+            "sinex-health-automaton" = mkAutomataUnit {
+              binary = "health-automaton";
+              description = "Sinex health automaton";
               profile = health.profile;
               subjects = health.subjects;
               env = health.env;

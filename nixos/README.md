@@ -77,21 +77,32 @@ Apply with:
 sudo nixos-rebuild switch --flake .#your-host
 ```
 
-> **Important**: When consuming the module from this flake, either add the provided overlay so `pkgs.sinex`/`pkgs.sinexCli` are available, or set `services.sinex.package`/`services.sinex.cliPackage` directly from the flake outputs. The CLI package is optional, but wiring it explicitly avoids relying on overlays.
+> **REQUIRED**: You MUST apply the sinex flake overlay to your pkgs. The overlay provides:
+> - `pkgs.sinex` (all binaries bundled)
+> - `pkgs.sinexctl` (CLI tool)
+> - `pkgs.sinex-ingestd`, `pkgs.sinex-gateway`, etc. (individual packages)
+> - `pkgs.postgresql16Packages.pg_jsonschema` (required PostgreSQL extension)
+>
 > ```nix
 > {
 >   inputs.sinex.url = "github:.../sinex";
-> 
+>
 >   outputs = { self, nixpkgs, sinex, ... }: {
->     nixosModules.sinex = sinex.nixosModules.sinex;
->     overlays.default = sinex.overlays.default;
+>     nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
+>       modules = [
+>         # Apply the overlay - REQUIRED
+>         ({ ... }: { nixpkgs.overlays = [ sinex.overlays.default ]; })
+>         sinex.nixosModules.default
+>         ./configuration.nix
+>       ];
+>     };
 >   };
 > }
 > ```
-> If you skip the overlay, provide packages explicitly:
+>
+> Alternatively, provide packages explicitly without the overlay:
 > ```nix
 > services.sinex.package = inputs.sinex.packages.${pkgs.stdenv.hostPlatform.system}.sinex;
-> services.sinex.cliPackage = inputs.sinex.packages.${pkgs.stdenv.hostPlatform.system}.sinexCli;
 > ```
 
 ### Service Group Controls
@@ -967,9 +978,9 @@ in
 
 ## Support & Documentation
 
-- **Architecture**: See `spec/SADI.md` and `plan.md`
+- **Architecture**: See `docs/current/architecture/Core_Architecture.md`
 - **Development**: See `CLAUDE.md` for developer reference
-- **API**: Check `cli/README.md` for CLI usage
+- **CLI**: See `crate/cli/README.md` for sinexctl usage
 - **Issues**: Report to project repository
 - **TimescaleDB**: [Official docs](https://docs.timescale.com/)
 - **Performance tuning**: See TimescaleDB best practices guide

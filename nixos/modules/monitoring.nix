@@ -34,6 +34,18 @@ in
 
     (mkIf enablePrometheus {
       services.prometheus =
+        let
+          # Build scrape configs for enabled exporters
+          builtinScrapeConfigs =
+            (optional monitoringCfg.exporters.node {
+              job_name = "node";
+              static_configs = [{ targets = [ "localhost:9100" ]; }];
+            })
+            ++ (optional monitoringCfg.exporters.postgres {
+              job_name = "postgres";
+              static_configs = [{ targets = [ "localhost:9187" ]; }];
+            });
+        in
         {
           enable = true;
           listenAddress = prometheusCfg.listen;
@@ -44,9 +56,7 @@ in
             node.enable = monitoringCfg.exporters.node;
             postgres.enable = monitoringCfg.exporters.postgres;
           };
-        }
-        // optionalAttrs (prometheusCfg.extraScrapeConfigs != []) {
-          scrapeConfigs = prometheusCfg.extraScrapeConfigs;
+          scrapeConfigs = builtinScrapeConfigs ++ prometheusCfg.extraScrapeConfigs;
         };
     })
 
