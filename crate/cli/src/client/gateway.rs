@@ -4,7 +4,9 @@ use std::time::Duration;
 use reqwest::ClientBuilder;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sinex_primitives::rpc::{coordination::*, dlq::*, methods, nodes::*, replay::*, system::*};
+use sinex_primitives::rpc::{
+    coordination::*, dlq::*, lifecycle::*, methods, nodes::*, replay::*, system::*,
+};
 use sinex_primitives::temporal::Timestamp;
 
 use crate::auth::{load_client_cert, load_root_ca, load_token};
@@ -617,5 +619,76 @@ impl GatewayClient {
             .await?;
         let response: AuditGetResponse = serde_json::from_value(result)?;
         Ok(response)
+    }
+
+    // ==================== Lifecycle Commands ====================
+
+    /// Get lifecycle tier status
+    pub async fn lifecycle_status(&self) -> Result<LifecycleStatusResponse> {
+        let req = LifecycleStatusRequest { by_source: false };
+        let result = self
+            .call_rpc(methods::LIFECYCLE_STATUS, serde_json::to_value(&req)?)
+            .await?;
+        serde_json::from_value(result).map_err(Into::into)
+    }
+
+    /// Archive live events (move to audit.archived_events)
+    pub async fn lifecycle_archive(
+        &self,
+        source: Option<String>,
+        before: Option<String>,
+        event_ids: Option<Vec<String>>,
+        limit: i64,
+        dry_run: bool,
+    ) -> Result<LifecycleArchiveResponse> {
+        let req = LifecycleArchiveRequest {
+            source,
+            before,
+            event_ids,
+            limit,
+            reason: None,
+            dry_run,
+        };
+        let result = self
+            .call_rpc(methods::LIFECYCLE_ARCHIVE, serde_json::to_value(&req)?)
+            .await?;
+        serde_json::from_value(result).map_err(Into::into)
+    }
+
+    /// Restore archived events back to live
+    pub async fn lifecycle_restore(
+        &self,
+        event_ids: Vec<String>,
+        dry_run: bool,
+    ) -> Result<LifecycleRestoreResponse> {
+        let req = LifecycleRestoreRequest { event_ids, dry_run };
+        let result = self
+            .call_rpc(methods::LIFECYCLE_RESTORE, serde_json::to_value(&req)?)
+            .await?;
+        serde_json::from_value(result).map_err(Into::into)
+    }
+
+    /// Tombstone archived events (PERMANENT!)
+    pub async fn lifecycle_tombstone(
+        &self,
+        source: Option<String>,
+        before: Option<String>,
+        event_ids: Option<Vec<String>>,
+        limit: i64,
+        reason: String,
+        dry_run: bool,
+    ) -> Result<LifecycleTombstoneResponse> {
+        let req = LifecycleTombstoneRequest {
+            source,
+            before,
+            event_ids,
+            limit,
+            reason,
+            dry_run,
+        };
+        let result = self
+            .call_rpc(methods::LIFECYCLE_TOMBSTONE, serde_json::to_value(&req)?)
+            .await?;
+        serde_json::from_value(result).map_err(Into::into)
     }
 }
