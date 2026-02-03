@@ -16,9 +16,6 @@ jobs:
   test:
     name: Devenv Integration Test
     runs-on: ubuntu-latest
-    env:
-      DEVENV_ROOT: ${{ github.workspace }}
-      DEVENV_DOTFILE: ${{ github.workspace }}/.devenv
     concurrency:
       group: ci-${{ github.ref }}
       cancel-in-progress: true

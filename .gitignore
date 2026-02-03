@@ -1,16 +1,22 @@
-# Generated artefacts and editor backups
+# Editor/OS
 *.log
 *.bak
 *.tmp
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.mcp.json
 
 # Rust
 target/
 **/target/
+target.old*/
 **/*.rs.bk
-*.pdb
-# Incremental compilation cache (if not in target/)
-on/
-
+rustc-ice-*.txt
 
 # Coverage
 .coverage/
@@ -19,36 +25,18 @@ coverage.lcov
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
 *.so
-.Python
+.pytest_cache/
+.mypy_cache/
 env/
 venv/
 .venv/
-pip-log.txt
-pip-delete-this-directory.txt
-.pytest_cache/
-*.egg-info/
-dist/
-build/
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-.mcp.json
-
-# OS
-.DS_Store
-Thumbs.db
 
 # Database
 *.db
 *.sqlite
 *.sqlite3
-.postgres/
+postgres_data/
 
 # Environment
 .env
@@ -56,56 +44,24 @@ Thumbs.db
 
 # Nix
 result
-target-ci
 
-# Legacy local dev stack configuration (no longer used)
-.sinex-dev.local
-
-# Project specific
-/spec/combo/
-.claude-outputs/
-.direnv/
+# Project state
 .sinex/
 .tls/
+.direnv/
+.nats/
+
+# Legacy tooling
 .devenv/
 .devenv.flake.nix
-compilation*log
-
-# Rust compiler ICE dumps
-rustc-ice-*.txt
-
-# Dependency compilation marker
-.sinex-deps-compiled
-
-# Git worktrees
-worktree-*
-
-# Removed daemon scripts - don't restore
-scripts/compile-daemon.sh
-scripts/git-state-tracker.sh
-
-combined-bundles/
-postgres_data/
-
-# Bench results (local artifacts)
-test-results/bench-*/
-bench-results.txt
-
-# config
-.serena
 devenv.lock
-.nats/
-.claude/
-.agent-plot-venv/
-test-results/
+.serena/
+.agent/
+.agent-*/
 
-# Temporary session notes/summaries
-**/FIXES_SUMMARY.md
-**/TACTICAL_FIXES*.md
-**/LOW_PRIORITY_FIXES*.md
-**/FIXES_APPLIED.md
-**/FIXES_CHECKLIST.md
-**/CHANGES.md
-ISSUE_*.md
-tactical-fixes-summary.md
-**/TACTICAL_ISSUES_TODO.md
+# Claude Code
+.claude/
+
+# Test artifacts
+test-results/
+tests/e2e/target-ci/
