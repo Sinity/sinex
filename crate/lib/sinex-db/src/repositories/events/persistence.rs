@@ -433,7 +433,7 @@ impl<'a> EventRepository<'a> {
             offset_end,
             offset_kind,
             anchor_byte,
-        ) = extract_provenance(&event);
+        ) = extract_provenance(&event)?;
 
         // Convert ULIDs to UUIDs
         let source_event_uuids = source_event_ids
@@ -583,7 +583,7 @@ impl<'a> EventRepository<'a> {
             offset_end,
             offset_kind,
             anchor_byte,
-        ) = extract_provenance(&event);
+        ) = extract_provenance(&event)?;
 
         if let Some(source_event_ids) = source_event_ids.as_ref() {
             ensure_no_synthesis_cycles(&mut **tx, &id, source_event_ids).await?;
@@ -808,7 +808,7 @@ impl<'a> EventRepository<'a> {
                 offset_end,
                 offset_kind,
                 anchor_byte,
-            ) = extract_provenance(event);
+            ) = extract_provenance(event)?;
 
             let source_event_uuids = source_event_ids_raw
                 .map(|ids| ids.into_iter().map(|id| id.as_uuid()).collect::<Vec<_>>());

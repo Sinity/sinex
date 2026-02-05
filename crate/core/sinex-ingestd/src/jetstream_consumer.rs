@@ -904,7 +904,7 @@ impl JetStreamConsumer {
                     offset_end,
                     offset_kind,
                     anchor_byte,
-                ) = sinex_db::repositories::events::conversions::extract_provenance(event);
+                ) = sinex_db::repositories::events::conversions::extract_provenance(event)?;
 
                 // Re-map extracted provenance to match StreamBatchRow expectations
                 // extract_provenance returns Option<Vec<Ulid>> for source_event_ids
@@ -913,7 +913,7 @@ impl JetStreamConsumer {
                     .map(|ids| ids.iter().map(sinex_primitives::Ulid::as_uuid).collect());
                 let source_material_id = source_material_id.map(|id| id.as_uuid());
 
-                StreamBatchRow {
+                Ok(StreamBatchRow {
                     id: prepared.parsed_id,
                     source: event.source.as_str().to_string(),
                     event_type: event.event_type.as_str().to_string(),
@@ -934,9 +934,9 @@ impl JetStreamConsumer {
                         .associated_blob_ids
                         .as_ref()
                         .map(|ids| ids.iter().map(sinex_primitives::Ulid::as_uuid).collect()),
-                }
+                })
             })
-            .collect();
+            .collect::<IngestdResult<Vec<_>>>()?;
 
         let result = timeout(
             DB_WRITE_TIMEOUT,

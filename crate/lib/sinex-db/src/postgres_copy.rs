@@ -36,7 +36,7 @@ impl ToPostgresCopy for Event<JsonValue> {
             offset_end,
             offset_kind,
             anchor_byte,
-        ) = extract_provenance(self);
+        ) = extract_provenance(self).map_err(|e| Error::Protocol(e.to_string()))?;
 
         let source_material_id = source_material_id.map(|id| id.to_string());
 
