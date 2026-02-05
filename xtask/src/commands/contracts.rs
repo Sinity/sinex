@@ -148,7 +148,8 @@ fn execute_deploy(
     ensure_db_connection(db_url)?;
 
     // Check for required extensions
-    let required_exts = ["pg_jsonschema", "pgx_ulid", "timescaledb", "vector"];
+    // Note: ULID extension can be either "pgx_ulid" or "ulid" depending on package
+    let required_exts = ["pg_jsonschema", "timescaledb", "vector"];
     let mut missing = Vec::new();
     for ext in required_exts {
         if !psql_query_bool(
@@ -157,6 +158,14 @@ fn execute_deploy(
         )? {
             missing.push(ext);
         }
+    }
+    // Check for ULID extension (either pgx_ulid or ulid)
+    let has_ulid = psql_query_bool(
+        db_url,
+        "SELECT 1 FROM pg_extension WHERE extname IN ('pgx_ulid', 'ulid')",
+    )?;
+    if !has_ulid {
+        missing.push("ulid (or pgx_ulid)");
     }
     if !missing.is_empty() {
         bail!(
@@ -437,8 +446,6 @@ fn sinex_schema_cmd() -> Command {
         .arg("sinex-schema")
         .arg("--bin")
         .arg("sinex-schema")
-        .arg("--features")
-        .arg("schema-manager")
         .arg("--");
     cmd
 }
