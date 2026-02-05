@@ -2,7 +2,7 @@
 
 | Task | Correct Pattern |
 |------|-----------------|
-| Write tests | `#[sinex_test]` instead of `#[tokio::test]` or `#[test]` - provides isolation, timeouts, cleanup |
+| Write tests | `#[sinex_test]` for ALL tests — omit `ctx` param if not needed |
 | Create typed events | `payload.from_material(id).build()` or `payload.from_parents(ids)?.build()` |
 | Create dynamic events | `EventBuilder::dynamic(source, type, json).from_material(id, 0).build()` |
 | Test events (with DB) | `ctx.publish(source, type, json)` |
@@ -40,3 +40,4 @@
 | Skipping preflight in tests | Miss env issues | `system_test_preflight()` |
 | Raw `cargo build/test/check` | Bypasses history, preflight, JSON | `cargo xtask check/test/build` |
 | Bare `grep` command | Slow, blocked by hook | Use `Grep` tool or `rg` via xtask |
+| `SQLX_OFFLINE=true` | Bypasses compile-time query verification | Fix the database schema instead |

@@ -33,6 +33,9 @@ pub enum ContractsSubcommand {
         /// Database URL to deploy to
         #[arg(long)]
         database_url: String,
+        /// Preview changes without deploying
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Check backward compatibility of schema changes
     Compat {
@@ -88,7 +91,8 @@ impl XtaskCommand for ContractsCommand {
             ContractsSubcommand::Deploy {
                 input,
                 database_url,
-            } => execute_deploy(input, database_url, ctx),
+                dry_run,
+            } => execute_deploy(input, database_url, *dry_run, ctx),
             ContractsSubcommand::Compat { base, glob } => execute_compat(base.clone(), glob, ctx),
             ContractsSubcommand::CheckReady {
                 database,
@@ -129,7 +133,12 @@ fn execute_generate(output: &str, sync: bool, ctx: &CommandContext) -> Result<Co
         .with_duration(ctx.elapsed()))
 }
 
-fn execute_deploy(input: &str, database_url: &str, ctx: &CommandContext) -> Result<CommandResult> {
+fn execute_deploy(
+    input: &str,
+    database_url: &str,
+    dry_run: bool,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
     let db_url = database_url.trim();
     if db_url.is_empty() {
         bail!("DATABASE_URL is required for contracts deploy (use --database-url or env)");
@@ -159,8 +168,16 @@ fn execute_deploy(input: &str, database_url: &str, ctx: &CommandContext) -> Resu
     let mut cmd = sinex_schema_cmd();
     cmd.arg("sync").arg("--input").arg(input);
 
+    if dry_run {
+        cmd.arg("--dry-run");
+    }
+
     if ctx.is_human() {
-        println!("========== contracts deploy ==========");
+        if dry_run {
+            println!("========== contracts deploy (DRY RUN) ==========");
+        } else {
+            println!("========== contracts deploy ==========");
+        }
     }
 
     let status = cmd
@@ -171,8 +188,14 @@ fn execute_deploy(input: &str, database_url: &str, ctx: &CommandContext) -> Resu
         bail!("contracts deploy failed with status {status}");
     }
 
+    let message = if dry_run {
+        format!("Event payload schemas preview from {input} (no changes made)")
+    } else {
+        format!("Event payload schemas deployed from {input}")
+    };
+
     Ok(CommandResult::success()
-        .with_message(format!("Event payload schemas deployed from {input}"))
+        .with_message(message)
         .with_duration(ctx.elapsed()))
 }
 
@@ -524,6 +547,7 @@ mod tests {
             subcommand: ContractsSubcommand::Deploy {
                 input: "schemas/v1".to_string(),
                 database_url: String::new(),
+                dry_run: false,
             },
         };
 

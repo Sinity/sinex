@@ -1,6 +1,16 @@
-## Test Attribute (USE THIS, not `#[tokio::test]`)
+## Test Attribute (USE `#[sinex_test]` FOR EVERYTHING)
 
-Test utilities are available via the `sandbox` feature in `xtask`. When writing tests, use the `#[sinex_test]` macro:
+`#[sinex_test]` is universal. If a test doesn't need `TestContext`, don't take it as an argument:
+
+```rust
+#[sinex_test]
+async fn test_without_context() -> TestResult<()> {
+    // No ctx parameter - still works
+    Ok(())
+}
+```
+
+Test utilities are available via the `sandbox` feature in `xtask`:
 
 ```rust
 #[cfg(test)]

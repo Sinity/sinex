@@ -18,11 +18,6 @@ pub enum DbSubcommand {
         #[arg(short = 'y', long)]
         yes: bool,
     },
-    /// Schema management (alias for contracts)
-    Schema {
-        #[command(subcommand)]
-        cmd: crate::commands::contracts::ContractsSubcommand,
-    },
 }
 
 /// Database management command
@@ -44,12 +39,6 @@ impl XtaskCommand for DbCommand {
             DbSubcommand::Migrate => execute_migrate(ctx).await,
             DbSubcommand::Setup => execute_setup(ctx).await,
             DbSubcommand::Reset { yes } => execute_reset(*yes, ctx).await,
-            DbSubcommand::Schema { cmd } => {
-                let contracts_cmd = crate::commands::contracts::ContractsCommand {
-                    subcommand: cmd.clone(),
-                };
-                contracts_cmd.execute(ctx).await
-            }
         }
     }
 

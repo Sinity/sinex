@@ -307,7 +307,13 @@ impl RunCommand {
                     args.push("--release".to_string());
                 }
 
-                args.extend(["--".to_string(), format!("--instance-id={instance_id}")]);
+                // Only pass --instance-id to nodes (ingestors, automatons, processors)
+                let is_node = package.contains("ingestor")
+                    || package.contains("automaton")
+                    || package.contains("canonicalizer");
+                if is_node {
+                    args.extend(["--".to_string(), format!("--instance-id={instance_id}")]);
+                }
 
                 let job = manager.spawn("cargo", &args).await?;
                 job_ids.push(job.id);
@@ -370,8 +376,16 @@ impl RunCommand {
                 println!("Starting {name} (instance: {instance_id})...");
             }
 
-            let child = Command::new(&binary_path)
-                .arg(format!("--instance-id={instance_id}"))
+            // Only pass --instance-id to nodes (ingestors, automatons, processors)
+            let is_node = name.contains("ingestor")
+                || name.contains("automaton")
+                || name.contains("canonicalizer");
+
+            let mut cmd = Command::new(&binary_path);
+            if is_node {
+                cmd.arg(format!("--instance-id={instance_id}"));
+            }
+            let child = cmd
                 .stdout(Stdio::inherit())
                 .stderr(Stdio::inherit())
                 .spawn()
@@ -457,7 +471,14 @@ Shutting down remaining processes..."
             args.push("--release".to_string());
         }
 
-        args.extend(["--".to_string(), format!("--instance-id={instance_id}")]);
+        // Only pass --instance-id to nodes (ingestors, automatons, processors)
+        // Core services (ingestd, gateway) don't support this flag
+        let is_node = package.contains("ingestor")
+            || package.contains("automaton")
+            || package.contains("canonicalizer");
+        if is_node {
+            args.extend(["--".to_string(), format!("--instance-id={instance_id}")]);
+        }
 
         let status = Command::new("cargo")
             .args(&args)
@@ -496,7 +517,14 @@ Shutting down remaining processes..."
             args.push("--release".to_string());
         }
 
-        args.extend(["--".to_string(), format!("--instance-id={instance_id}")]);
+        // Only pass --instance-id to nodes (ingestors, automatons, processors)
+        // Core services (ingestd, gateway) don't support this flag
+        let is_node = package.contains("ingestor")
+            || package.contains("automaton")
+            || package.contains("canonicalizer");
+        if is_node {
+            args.extend(["--".to_string(), format!("--instance-id={instance_id}")]);
+        }
 
         let job = manager.spawn("cargo", &args).await?;
 

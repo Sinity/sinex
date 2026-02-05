@@ -69,8 +69,8 @@ cargo xtask test --debug -- -p sinex-node-sdk -E 'test(unit::)'
 cargo xtask bench --mode sweeps --threads 8,12,16
 cargo xtask bench --mode refine --runs 5
 
-# CI ephemeral Postgres
-cargo xtask ci postgres -- cargo xtask test
+# CI ephemeral Postgres (requires sandbox feature)
+cargo xtask xtr ci postgres -- cargo xtask test
 
 # Code pattern search (ast-grep)
 cargo xtask patterns -p '$X.unwrap()' --limit 10

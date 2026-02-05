@@ -1,0 +1,3101 @@
+---
+source: xtask/tests/command_consistency.rs
+assertion_line: 23
+expression: json
+---
+{
+  "commands": [
+    {
+      "about": "Apply automatic fixes (fmt, clippy, fix)",
+      "args": [
+        {
+          "global": false,
+          "help": "Packages to fix (default: all workspace packages)",
+          "long": "package",
+          "name": "package",
+          "possible_values": [],
+          "required": false,
+          "short": "p",
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Only fix affected packages (based on git changes)",
+          "long": "affected",
+          "name": "affected",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": "a",
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Thorough mode: iterate packages individually for maximum fix coverage. Slower but catches more fixes since clippy --fix only applies to freshly compiled code",
+          "long": "thorough",
+          "name": "thorough",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": "t",
+          "takes_value": false
+        }
+      ],
+      "hidden": false,
+      "name": "fix",
+      "subcommands": []
+    },
+    {
+      "about": "Fast validation (check, clippy, lint-forbidden)",
+      "args": [
+        {
+          "global": false,
+          "help": "Skip formatting check",
+          "long": "skip-fmt",
+          "name": "skip_fmt",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Run clippy lints (default: true)",
+          "long": "lint",
+          "name": "lint",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Run forbidden pattern scan (default: true)",
+          "long": "forbidden",
+          "name": "forbidden",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Also run slow lints",
+          "long": "heavy",
+          "name": "heavy",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Only check affected packages (DEFAULT - use --all to check all)",
+          "long": "affected",
+          "name": "affected",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": "A",
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Check ALL packages (disables --affected default)",
+          "long": "all",
+          "name": "all",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": "a",
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Check specific package(s) only",
+          "long": "package",
+          "name": "packages",
+          "possible_values": [],
+          "required": false,
+          "short": "p",
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Skip test compilation check (faster, but may miss test errors)",
+          "long": "skip-tests",
+          "name": "skip_tests",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Show breakdown of warning counts by lint code (top 10)",
+          "long": "lint-breakdown",
+          "name": "lint_breakdown",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Show breakdown of warning counts by file path (top 20)",
+          "long": "by-file",
+          "name": "by_file",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        }
+      ],
+      "hidden": false,
+      "name": "check",
+      "subcommands": []
+    },
+    {
+      "about": "Run test suite",
+      "args": [
+        {
+          "global": false,
+          "help": "Use debug profile (single-threaded, extended timeout)",
+          "long": "debug",
+          "name": "debug",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Stop on first failure (default: false, run all tests)",
+          "long": "fail-fast",
+          "name": "fail_fast",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Number of threads (default: 24, debug: 1)",
+          "long": "threads",
+          "name": "threads",
+          "possible_values": [],
+          "required": false,
+          "short": "t",
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Test retries (nextest)",
+          "long": "retries",
+          "name": "retries",
+          "possible_values": [],
+          "required": false,
+          "short": "r",
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Test timeout (nextest)",
+          "long": "timeout",
+          "name": "timeout",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Run only on affected packages (DEFAULT - use --all to run all)",
+          "long": "affected",
+          "name": "affected",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Prime database before testing",
+          "long": "prime",
+          "name": "prime",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "List tests instead of running",
+          "long": "list",
+          "name": "list",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": "l",
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Filter tests by name pattern (nextest -E filter)",
+          "long": "filter",
+          "name": "filter",
+          "possible_values": [],
+          "required": false,
+          "short": "E",
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Run tests for specific package(s)",
+          "long": "package",
+          "name": "package",
+          "possible_values": [],
+          "required": false,
+          "short": "p",
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Print what would happen",
+          "long": "dry-run",
+          "name": "dry_run",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Run preflight checks",
+          "long": "preflight",
+          "name": "preflight",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Include tests marked `#[ignore]`",
+          "long": "include-ignored",
+          "name": "include_ignored",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Run fuzz tests",
+          "long": "fuzz",
+          "name": "fuzz",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Run mutation tests",
+          "long": "mutants",
+          "name": "mutants",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Run heavy/ignored tests",
+          "long": "heavy",
+          "name": "heavy",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Run ALL packages (disables --affected default)",
+          "long": "all",
+          "name": "all",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": "a",
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Run benchmarks (delegate to bench command)",
+          "long": "bench",
+          "name": "bench",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Run coverage (delegate to coverage command)",
+          "long": "coverage",
+          "name": "coverage",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Arguments passed to the test binary (not supported by nextest directly, usually)",
+          "long": null,
+          "name": "args",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        }
+      ],
+      "hidden": false,
+      "name": "test",
+      "subcommands": []
+    },
+    {
+      "about": "Run benchmarks",
+      "args": [
+        {
+          "global": false,
+          "help": "Benchmark mode",
+          "long": "mode",
+          "name": "mode",
+          "possible_values": [
+            "sweeps",
+            "refine",
+            "bisect",
+            "stress",
+            "soak"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Nextest profile to use",
+          "long": "profile",
+          "name": "profile",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Number of runs per configuration",
+          "long": "runs",
+          "name": "runs",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Thread counts to test (comma-separated)",
+          "long": "threads",
+          "name": "threads",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Baseline directory to compare against",
+          "long": "baseline",
+          "name": "baseline",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Regression threshold percentage (default: 10%)",
+          "long": "regression-threshold-pct",
+          "name": "regression_threshold_pct",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "`SQLite` history database path",
+          "long": "history-db",
+          "name": "history_db",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Number of history points to include per scenario when reporting trends",
+          "long": "history-trend-limit",
+          "name": "history_trend_limit",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Generate markdown report",
+          "long": "report-md",
+          "name": "report_md",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Generate HTML report",
+          "long": "report-html",
+          "name": "report_html",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Tag git commit with results",
+          "long": "git-tag",
+          "name": "git_tag",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Dry run (compile only, no test execution)",
+          "long": "dry-run",
+          "name": "dry_run",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "GitHub Actions mode (emit annotations)",
+          "long": "gha",
+          "name": "gha",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Bisect mode: known good commit",
+          "long": "bisect-good",
+          "name": "bisect_good",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Bisect mode: known bad commit",
+          "long": "bisect-bad",
+          "name": "bisect_bad",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Stress mode: maximum iterations before giving up",
+          "long": "stress-limit",
+          "name": "stress_limit",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Soak mode: duration in seconds",
+          "long": "soak-duration",
+          "name": "soak_duration",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Output directory (defaults to test-results/bench-nextest-TIMESTAMP)",
+          "long": "output",
+          "name": "output",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Verbose output",
+          "long": "verbose",
+          "name": "verbose",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": "v",
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Refine mode: number of top thread counts to explore in detail",
+          "long": "refine-top-threads",
+          "name": "refine_top_threads",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Refine mode: only refine configs within this % of best (e.g., 10 = within 10%)",
+          "long": "refine-threshold-pct",
+          "name": "refine_threshold_pct",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Refine mode: number of runs for initial quick sweep",
+          "long": "refine-sweep-runs",
+          "name": "refine_sweep_runs",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Target package(s) to test (comma-separated, or 'workspace' for all)",
+          "long": "target",
+          "name": "target",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Continue running other scenarios even if one fails",
+          "long": "continue-on-fail",
+          "name": "continue_on_fail",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Don't use nextest --no-fail-fast (allow early exit on test failure)",
+          "long": "fail-fast",
+          "name": "fail_fast",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        }
+      ],
+      "hidden": false,
+      "name": "bench",
+      "subcommands": []
+    },
+    {
+      "about": "Build packages",
+      "args": [
+        {
+          "global": false,
+          "help": "Packages to build (default: all)",
+          "long": "package",
+          "name": "package",
+          "possible_values": [],
+          "required": false,
+          "short": "p",
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Build in release mode",
+          "long": "release",
+          "name": "release",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": "r",
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Only build affected packages (DEFAULT - use --all to build all)",
+          "long": "affected",
+          "name": "affected",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": "A",
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Build ALL packages (disables --affected default)",
+          "long": "all",
+          "name": "all",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": "a",
+          "takes_value": false
+        }
+      ],
+      "hidden": false,
+      "name": "build",
+      "subcommands": []
+    },
+    {
+      "about": "Run binaries with hot-reload support",
+      "args": [
+        {
+          "global": true,
+          "help": "Watch mode: rebuild and restart on source changes",
+          "long": "watch",
+          "name": "watch",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": true,
+          "help": "Run in background (returns job ID immediately)",
+          "long": "bg",
+          "name": "bg",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": true,
+          "help": "Build in release mode",
+          "long": "release",
+          "name": "release",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        }
+      ],
+      "hidden": false,
+      "name": "run",
+      "subcommands": [
+        {
+          "about": "Run sinex-ingestd",
+          "args": [
+            {
+              "global": false,
+              "help": "Instance ID for multi-instance coordination",
+              "long": "instance-id",
+              "name": "instance_id",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "hidden": false,
+          "name": "ingestd",
+          "subcommands": []
+        },
+        {
+          "about": "Run sinex-gateway",
+          "args": [
+            {
+              "global": false,
+              "help": "Instance ID for multi-instance coordination",
+              "long": "instance-id",
+              "name": "instance_id",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "hidden": false,
+          "name": "gateway",
+          "subcommands": []
+        },
+        {
+          "about": "Run a specific node by name",
+          "args": [
+            {
+              "global": false,
+              "help": "Node name (e.g., fs-ingestor, analytics-automaton)",
+              "long": null,
+              "name": "name",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Instance ID for multi-instance coordination",
+              "long": "instance-id",
+              "name": "instance_id",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "hidden": false,
+          "name": "node",
+          "subcommands": []
+        },
+        {
+          "about": "Run core services bundle (ingestd + gateway)",
+          "args": [
+            {
+              "global": false,
+              "help": "Instance ID prefix",
+              "long": "instance-id",
+              "name": "instance_id",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "hidden": false,
+          "name": "stack",
+          "subcommands": []
+        },
+        {
+          "about": "Run all ingestors",
+          "args": [
+            {
+              "global": false,
+              "help": "Instance ID prefix",
+              "long": "instance-id",
+              "name": "instance_id",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "hidden": false,
+          "name": "all-ingestors",
+          "subcommands": []
+        },
+        {
+          "about": "Run all automatons",
+          "args": [
+            {
+              "global": false,
+              "help": "Instance ID prefix",
+              "long": "instance-id",
+              "name": "instance_id",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "hidden": false,
+          "name": "all-automatons",
+          "subcommands": []
+        },
+        {
+          "about": "List available binaries",
+          "args": [],
+          "hidden": false,
+          "name": "list",
+          "subcommands": []
+        },
+        {
+          "about": "Connect to a remote environment via The Tether",
+          "args": [
+            {
+              "global": false,
+              "help": "Target environment (e.g., \"prod\", \"staging\")",
+              "long": null,
+              "name": "target",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Subject filter for events (default: events.>)",
+              "long": "filter",
+              "name": "filter",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Start from the beginning of the stream",
+              "long": "from-beginning",
+              "name": "from_beginning",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Start from a specific sequence number",
+              "long": "from-sequence",
+              "name": "from_sequence",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "hidden": false,
+          "name": "tether",
+          "subcommands": []
+        }
+      ]
+    },
+    {
+      "about": "Manage local infrastructure (database, NATS)",
+      "args": [],
+      "hidden": false,
+      "name": "infra",
+      "subcommands": [
+        {
+          "about": "Start the infrastructure",
+          "args": [
+            {
+              "global": false,
+              "help": "Start all processes",
+              "long": "all",
+              "name": "all",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Specific processes to start",
+              "long": null,
+              "name": "processes",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "hidden": false,
+          "name": "start",
+          "subcommands": []
+        },
+        {
+          "about": "Stop the infrastructure",
+          "args": [],
+          "hidden": false,
+          "name": "stop",
+          "subcommands": []
+        },
+        {
+          "about": "Show infrastructure status",
+          "args": [
+            {
+              "global": false,
+              "help": "Watch mode",
+              "long": "watch",
+              "name": "watch",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": "w",
+              "takes_value": false
+            }
+          ],
+          "hidden": false,
+          "name": "status",
+          "subcommands": []
+        },
+        {
+          "about": "Stop services and wipe infrastructure state (wipes data-dir!)",
+          "args": [
+            {
+              "global": false,
+              "help": "Automatically confirm reset",
+              "long": "yes",
+              "name": "yes",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "hidden": false,
+          "name": "reset",
+          "subcommands": []
+        },
+        {
+          "about": "View logs",
+          "args": [
+            {
+              "global": false,
+              "help": "Process name",
+              "long": null,
+              "name": "process",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Lines to show",
+              "long": "lines",
+              "name": "lines",
+              "possible_values": [],
+              "required": false,
+              "short": "l",
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Follow output",
+              "long": "follow",
+              "name": "follow",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": "f",
+              "takes_value": false
+            }
+          ],
+          "hidden": false,
+          "name": "logs",
+          "subcommands": []
+        },
+        {
+          "about": "Create/Manage snapshots",
+          "args": [],
+          "hidden": false,
+          "name": "snapshot",
+          "subcommands": [
+            {
+              "about": "Create a named snapshot",
+              "args": [
+                {
+                  "global": false,
+                  "help": null,
+                  "long": null,
+                  "name": "name",
+                  "possible_values": [],
+                  "required": true,
+                  "short": null,
+                  "takes_value": true
+                }
+              ],
+              "hidden": false,
+              "name": "create",
+              "subcommands": []
+            },
+            {
+              "about": "Restore from a named snapshot",
+              "args": [
+                {
+                  "global": false,
+                  "help": null,
+                  "long": null,
+                  "name": "name",
+                  "possible_values": [],
+                  "required": true,
+                  "short": null,
+                  "takes_value": true
+                }
+              ],
+              "hidden": false,
+              "name": "restore",
+              "subcommands": []
+            },
+            {
+              "about": "List available snapshots",
+              "args": [],
+              "hidden": false,
+              "name": "list",
+              "subcommands": []
+            }
+          ]
+        },
+        {
+          "about": "Manage VM integration",
+          "args": [],
+          "hidden": false,
+          "name": "vm",
+          "subcommands": [
+            {
+              "about": "Run VM tests (wraps run-vm-tests.sh)",
+              "args": [
+                {
+                  "global": false,
+                  "help": "Test category: smoke, integration, performance, chaos",
+                  "long": "category",
+                  "name": "category",
+                  "possible_values": [],
+                  "required": false,
+                  "short": "c",
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": "Run tests in parallel",
+                  "long": "parallel",
+                  "name": "parallel",
+                  "possible_values": [
+                    "true",
+                    "false"
+                  ],
+                  "required": false,
+                  "short": null,
+                  "takes_value": false
+                },
+                {
+                  "global": false,
+                  "help": "Timeout per test in seconds",
+                  "long": null,
+                  "name": "timeout",
+                  "possible_values": [],
+                  "required": true,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": "Specific test names to run",
+                  "long": null,
+                  "name": "tests",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                }
+              ],
+              "hidden": false,
+              "name": "test",
+              "subcommands": []
+            },
+            {
+              "about": "Start an interactive VM",
+              "args": [
+                {
+                  "global": false,
+                  "help": "VM preset: minimal, standard, full",
+                  "long": null,
+                  "name": "preset",
+                  "possible_values": [],
+                  "required": true,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": "Keep state between runs",
+                  "long": "persistent",
+                  "name": "persistent",
+                  "possible_values": [
+                    "true",
+                    "false"
+                  ],
+                  "required": false,
+                  "short": null,
+                  "takes_value": false
+                },
+                {
+                  "global": false,
+                  "help": "Start from a snapshot",
+                  "long": "snapshot",
+                  "name": "snapshot",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                }
+              ],
+              "hidden": false,
+              "name": "start",
+              "subcommands": []
+            },
+            {
+              "about": "SSH into a running VM",
+              "args": [],
+              "hidden": false,
+              "name": "ssh",
+              "subcommands": []
+            },
+            {
+              "about": "Stop a running VM",
+              "args": [],
+              "hidden": false,
+              "name": "stop",
+              "subcommands": []
+            },
+            {
+              "about": "Manage VM snapshots",
+              "args": [],
+              "hidden": false,
+              "name": "snapshot",
+              "subcommands": [
+                {
+                  "about": "Create a named snapshot",
+                  "args": [
+                    {
+                      "global": false,
+                      "help": null,
+                      "long": null,
+                      "name": "name",
+                      "possible_values": [],
+                      "required": true,
+                      "short": null,
+                      "takes_value": true
+                    }
+                  ],
+                  "hidden": false,
+                  "name": "create",
+                  "subcommands": []
+                },
+                {
+                  "about": "Restore from a snapshot",
+                  "args": [
+                    {
+                      "global": false,
+                      "help": null,
+                      "long": null,
+                      "name": "name",
+                      "possible_values": [],
+                      "required": true,
+                      "short": null,
+                      "takes_value": true
+                    }
+                  ],
+                  "hidden": false,
+                  "name": "restore",
+                  "subcommands": []
+                },
+                {
+                  "about": "List available snapshots",
+                  "args": [],
+                  "hidden": false,
+                  "name": "list",
+                  "subcommands": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "about": "Print infrastructure environment variables",
+          "args": [
+            {
+              "global": false,
+              "help": "Shell format (export NAME=VALUE)",
+              "long": "export",
+              "name": "export",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "hidden": false,
+          "name": "env",
+          "subcommands": []
+        }
+      ]
+    },
+    {
+      "about": "Database operations (migrate, seed, setup)",
+      "args": [],
+      "hidden": false,
+      "name": "db",
+      "subcommands": [
+        {
+          "about": null,
+          "args": [],
+          "hidden": false,
+          "name": "status",
+          "subcommands": []
+        },
+        {
+          "about": null,
+          "args": [],
+          "hidden": false,
+          "name": "migrate",
+          "subcommands": []
+        },
+        {
+          "about": null,
+          "args": [],
+          "hidden": false,
+          "name": "setup",
+          "subcommands": []
+        },
+        {
+          "about": "Logical database reset (drop and re-run migrations)",
+          "args": [
+            {
+              "global": false,
+              "help": "Confirm reset",
+              "long": "yes",
+              "name": "yes",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": "y",
+              "takes_value": false
+            }
+          ],
+          "hidden": false,
+          "name": "reset",
+          "subcommands": []
+        },
+        {
+          "about": "Schema management (alias for contracts)",
+          "args": [],
+          "hidden": false,
+          "name": "schema",
+          "subcommands": [
+            {
+              "about": "Generate event payload schemas from Rust types",
+              "args": [
+                {
+                  "global": false,
+                  "help": "Output directory for generated schemas",
+                  "long": "output",
+                  "name": "output",
+                  "possible_values": [],
+                  "required": false,
+                  "short": "o",
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": "Sync schemas to database after generation",
+                  "long": "sync",
+                  "name": "sync",
+                  "possible_values": [
+                    "true",
+                    "false"
+                  ],
+                  "required": false,
+                  "short": "s",
+                  "takes_value": false
+                }
+              ],
+              "hidden": false,
+              "name": "generate",
+              "subcommands": []
+            },
+            {
+              "about": "Deploy schemas to database",
+              "args": [
+                {
+                  "global": false,
+                  "help": "Input directory containing schemas",
+                  "long": "input",
+                  "name": "input",
+                  "possible_values": [],
+                  "required": false,
+                  "short": "i",
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": "Database URL to deploy to",
+                  "long": "database-url",
+                  "name": "database_url",
+                  "possible_values": [],
+                  "required": true,
+                  "short": null,
+                  "takes_value": true
+                }
+              ],
+              "hidden": false,
+              "name": "deploy",
+              "subcommands": []
+            },
+            {
+              "about": "Check backward compatibility of schema changes",
+              "args": [
+                {
+                  "global": false,
+                  "help": "Base branch/commit to compare against",
+                  "long": "base",
+                  "name": "base",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": "Glob pattern for schema files",
+                  "long": "glob",
+                  "name": "glob",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                }
+              ],
+              "hidden": false,
+              "name": "compat",
+              "subcommands": []
+            },
+            {
+              "about": "Verify required tables exist in database",
+              "args": [
+                {
+                  "global": false,
+                  "help": "Database name",
+                  "long": "database",
+                  "name": "database",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": "Superuser for connection",
+                  "long": "superuser",
+                  "name": "superuser",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                }
+              ],
+              "hidden": false,
+              "name": "check-ready",
+              "subcommands": []
+            },
+            {
+              "about": "Show schema information",
+              "args": [
+                {
+                  "global": false,
+                  "help": null,
+                  "long": null,
+                  "name": "query",
+                  "possible_values": [
+                    "list-schemas",
+                    "list-grantable-schemas",
+                    "describe-schemas"
+                  ],
+                  "required": true,
+                  "short": null,
+                  "takes_value": true
+                }
+              ],
+              "hidden": false,
+              "name": "info",
+              "subcommands": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "about": "Background job management",
+      "args": [],
+      "hidden": false,
+      "name": "jobs",
+      "subcommands": [
+        {
+          "about": "List recent jobs",
+          "args": [
+            {
+              "global": false,
+              "help": null,
+              "long": "limit",
+              "name": "limit",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "hidden": false,
+          "name": "list",
+          "subcommands": []
+        },
+        {
+          "about": "Show only running/active jobs",
+          "args": [],
+          "hidden": false,
+          "name": "active",
+          "subcommands": []
+        },
+        {
+          "about": "Show status of a specific job",
+          "args": [
+            {
+              "global": false,
+              "help": null,
+              "long": null,
+              "name": "id",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "follow",
+              "name": "follow",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": "f",
+              "takes_value": false
+            }
+          ],
+          "hidden": false,
+          "name": "status",
+          "subcommands": []
+        },
+        {
+          "about": "Show full output of a job",
+          "args": [
+            {
+              "global": false,
+              "help": null,
+              "long": null,
+              "name": "id",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "stderr",
+              "name": "stderr",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "hidden": false,
+          "name": "output",
+          "subcommands": []
+        },
+        {
+          "about": "Wait for a job to complete",
+          "args": [
+            {
+              "global": false,
+              "help": null,
+              "long": null,
+              "name": "id",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "timeout",
+              "name": "timeout",
+              "possible_values": [],
+              "required": false,
+              "short": "t",
+              "takes_value": true
+            }
+          ],
+          "hidden": false,
+          "name": "wait",
+          "subcommands": []
+        },
+        {
+          "about": "Cancel a running job",
+          "args": [
+            {
+              "global": false,
+              "help": null,
+              "long": null,
+              "name": "id",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "hidden": false,
+          "name": "cancel",
+          "subcommands": []
+        },
+        {
+          "about": "Remove completed jobs older than N days",
+          "args": [
+            {
+              "global": false,
+              "help": null,
+              "long": "older-than",
+              "name": "older_than",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "hidden": false,
+          "name": "prune",
+          "subcommands": []
+        }
+      ]
+    },
+    {
+      "about": "Workspace status and service health",
+      "args": [
+        {
+          "global": false,
+          "help": "Service to check (default: all)",
+          "long": null,
+          "name": "service",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Watch for changes (live updates)",
+          "long": "watch",
+          "name": "watch",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": "w",
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Quick one-liner summary (replaces 'motd' command)",
+          "long": "summary",
+          "name": "summary",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Run diagnostics (replaces 'stack doctor')",
+          "long": "doctor",
+          "name": "doctor",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Include pipeline smoke tests (with --doctor)",
+          "long": "pipelines",
+          "name": "pipelines",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        }
+      ],
+      "hidden": false,
+      "name": "status",
+      "subcommands": []
+    },
+    {
+      "about": "Dependency analysis (list, tree, duplicates, unused, timings, impact, graph)",
+      "args": [],
+      "hidden": false,
+      "name": "deps",
+      "subcommands": [
+        {
+          "about": "List all workspace packages",
+          "args": [
+            {
+              "global": false,
+              "help": "Include transitive dependencies",
+              "long": "all",
+              "name": "all",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "hidden": false,
+          "name": "list",
+          "subcommands": []
+        },
+        {
+          "about": "Show dependency tree for a package",
+          "args": [
+            {
+              "global": false,
+              "help": "Target package (defaults to all workspace packages)",
+              "long": "package",
+              "name": "package",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Maximum tree depth",
+              "long": "depth",
+              "name": "depth",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "hidden": false,
+          "name": "tree",
+          "subcommands": []
+        },
+        {
+          "about": "Find duplicate dependencies (multiple versions)",
+          "args": [
+            {
+              "global": false,
+              "help": "Minimum number of versions to report",
+              "long": "threshold",
+              "name": "threshold",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "hidden": false,
+          "name": "duplicates",
+          "subcommands": []
+        },
+        {
+          "about": "Detect unused dependencies",
+          "args": [
+            {
+              "global": false,
+              "help": "Fail build if unused dependencies found (for CI)",
+              "long": "ci",
+              "name": "ci",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "hidden": false,
+          "name": "unused",
+          "subcommands": []
+        },
+        {
+          "about": "Analyze build timings",
+          "args": [
+            {
+              "global": false,
+              "help": "Compare with previous build",
+              "long": "compare",
+              "name": "compare",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Number of slowest crates to show",
+              "long": "top",
+              "name": "top",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "hidden": false,
+          "name": "timings",
+          "subcommands": []
+        },
+        {
+          "about": "Analyze rebuild impact of package changes",
+          "args": [
+            {
+              "global": false,
+              "help": "Target package to analyze (defaults to all)",
+              "long": "package",
+              "name": "package",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "hidden": false,
+          "name": "impact",
+          "subcommands": []
+        },
+        {
+          "about": "Visualize dependency graph",
+          "args": [
+            {
+              "global": false,
+              "help": "Output format (dot, json, ascii)",
+              "long": "format",
+              "name": "format",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Focus on specific package",
+              "long": "focus",
+              "name": "focus",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Show reverse dependencies",
+              "long": "reverse",
+              "name": "reverse",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Maximum depth",
+              "long": "depth",
+              "name": "depth",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Output file (if not specified, writes to stdout)",
+              "long": "output",
+              "name": "output",
+              "possible_values": [],
+              "required": false,
+              "short": "o",
+              "takes_value": true
+            }
+          ],
+          "hidden": false,
+          "name": "graph",
+          "subcommands": []
+        }
+      ]
+    },
+    {
+      "about": "Build/test history and trends",
+      "args": [],
+      "hidden": false,
+      "name": "history",
+      "subcommands": [
+        {
+          "about": "List recent invocations",
+          "args": [
+            {
+              "global": false,
+              "help": null,
+              "long": "limit",
+              "name": "limit",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "command",
+              "name": "command",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "hidden": false,
+          "name": "list",
+          "subcommands": []
+        },
+        {
+          "about": "Show the last invocation for a command",
+          "args": [
+            {
+              "global": false,
+              "help": null,
+              "long": "command",
+              "name": "command",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "hidden": false,
+          "name": "last",
+          "subcommands": []
+        },
+        {
+          "about": "Show statistics for a command",
+          "args": [
+            {
+              "global": false,
+              "help": null,
+              "long": "command",
+              "name": "command",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "days",
+              "name": "days",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "hidden": false,
+          "name": "stats",
+          "subcommands": []
+        },
+        {
+          "about": "Prune old history entries",
+          "args": [
+            {
+              "global": false,
+              "help": null,
+              "long": "older-than",
+              "name": "older_than",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "hidden": false,
+          "name": "prune",
+          "subcommands": []
+        },
+        {
+          "about": "Export history as JSON",
+          "args": [
+            {
+              "global": false,
+              "help": null,
+              "long": "limit",
+              "name": "limit",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "hidden": false,
+          "name": "export",
+          "subcommands": []
+        },
+        {
+          "about": "Query test result history",
+          "args": [],
+          "hidden": false,
+          "name": "tests",
+          "subcommands": [
+            {
+              "about": null,
+              "args": [
+                {
+                  "global": false,
+                  "help": null,
+                  "long": "limit",
+                  "name": "limit",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                }
+              ],
+              "hidden": false,
+              "name": "slowest",
+              "subcommands": []
+            },
+            {
+              "about": null,
+              "args": [
+                {
+                  "global": false,
+                  "help": null,
+                  "long": "limit",
+                  "name": "limit",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                }
+              ],
+              "hidden": false,
+              "name": "flaky",
+              "subcommands": []
+            },
+            {
+              "about": null,
+              "args": [
+                {
+                  "global": false,
+                  "help": null,
+                  "long": "threshold-pct",
+                  "name": "threshold_pct",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": null,
+                  "long": "window",
+                  "name": "window",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": null,
+                  "long": "limit",
+                  "name": "limit",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                }
+              ],
+              "hidden": false,
+              "name": "getting-slower",
+              "subcommands": []
+            },
+            {
+              "about": null,
+              "args": [
+                {
+                  "global": false,
+                  "help": null,
+                  "long": "pattern",
+                  "name": "pattern",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": null,
+                  "long": "package",
+                  "name": "package",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": null,
+                  "long": "runs",
+                  "name": "runs",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                }
+              ],
+              "hidden": false,
+              "name": "trends",
+              "subcommands": []
+            },
+            {
+              "about": null,
+              "args": [],
+              "hidden": false,
+              "name": "eta",
+              "subcommands": []
+            }
+          ]
+        },
+        {
+          "about": "Query build diagnostics (warnings/errors)",
+          "args": [
+            {
+              "global": false,
+              "help": "Maximum number of diagnostics to show",
+              "long": "limit",
+              "name": "limit",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Filter by level (error, warning)",
+              "long": "level",
+              "name": "level",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Filter by file path pattern",
+              "long": "file",
+              "name": "file",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "hidden": false,
+          "name": "diagnostics",
+          "subcommands": []
+        }
+      ]
+    },
+    {
+      "about": "Codebase snapshot for AI context (repomix)",
+      "args": [
+        {
+          "global": false,
+          "help": "Output file path",
+          "long": "output",
+          "name": "output",
+          "possible_values": [],
+          "required": false,
+          "short": "o",
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Include patterns (glob)",
+          "long": "include",
+          "name": "include",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Exclude patterns (glob)",
+          "long": "exclude",
+          "name": "exclude",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Use Tree-sitter to extract essential code structure (smaller output)",
+          "long": "compress",
+          "name": "compress",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Remove code comments from output",
+          "long": "remove-comments",
+          "name": "remove_comments",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        }
+      ],
+      "hidden": false,
+      "name": "snapshot",
+      "subcommands": []
+    },
+    {
+      "about": "Event payload schema/contract management",
+      "args": [],
+      "hidden": false,
+      "name": "contracts",
+      "subcommands": [
+        {
+          "about": "Generate event payload schemas from Rust types",
+          "args": [
+            {
+              "global": false,
+              "help": "Output directory for generated schemas",
+              "long": "output",
+              "name": "output",
+              "possible_values": [],
+              "required": false,
+              "short": "o",
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Sync schemas to database after generation",
+              "long": "sync",
+              "name": "sync",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": "s",
+              "takes_value": false
+            }
+          ],
+          "hidden": false,
+          "name": "generate",
+          "subcommands": []
+        },
+        {
+          "about": "Deploy schemas to database",
+          "args": [
+            {
+              "global": false,
+              "help": "Input directory containing schemas",
+              "long": "input",
+              "name": "input",
+              "possible_values": [],
+              "required": false,
+              "short": "i",
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Database URL to deploy to",
+              "long": "database-url",
+              "name": "database_url",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "hidden": false,
+          "name": "deploy",
+          "subcommands": []
+        },
+        {
+          "about": "Check backward compatibility of schema changes",
+          "args": [
+            {
+              "global": false,
+              "help": "Base branch/commit to compare against",
+              "long": "base",
+              "name": "base",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Glob pattern for schema files",
+              "long": "glob",
+              "name": "glob",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "hidden": false,
+          "name": "compat",
+          "subcommands": []
+        },
+        {
+          "about": "Verify required tables exist in database",
+          "args": [
+            {
+              "global": false,
+              "help": "Database name",
+              "long": "database",
+              "name": "database",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Superuser for connection",
+              "long": "superuser",
+              "name": "superuser",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "hidden": false,
+          "name": "check-ready",
+          "subcommands": []
+        },
+        {
+          "about": "Show schema information",
+          "args": [
+            {
+              "global": false,
+              "help": null,
+              "long": null,
+              "name": "query",
+              "possible_values": [
+                "list-schemas",
+                "list-grantable-schemas",
+                "describe-schemas"
+              ],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "hidden": false,
+          "name": "info",
+          "subcommands": []
+        }
+      ]
+    },
+    {
+      "about": "Documentation generation",
+      "args": [],
+      "hidden": false,
+      "name": "docs",
+      "subcommands": [
+        {
+          "about": "Build documentation",
+          "args": [
+            {
+              "global": false,
+              "help": "Build for specific package",
+              "long": "package",
+              "name": "package",
+              "possible_values": [],
+              "required": false,
+              "short": "p",
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Open in browser after build",
+              "long": "open",
+              "name": "open",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Include private items",
+              "long": "private",
+              "name": "private",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Build all-features documentation",
+              "long": "all-features",
+              "name": "all_features",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "hidden": false,
+          "name": "build",
+          "subcommands": []
+        },
+        {
+          "about": "Serve documentation locally (requires `simple-http-server` or `python3`)",
+          "args": [
+            {
+              "global": false,
+              "help": "Port to serve on",
+              "long": "port",
+              "name": "port",
+              "possible_values": [],
+              "required": false,
+              "short": "p",
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Build docs before serving",
+              "long": "build",
+              "name": "build",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "hidden": false,
+          "name": "serve",
+          "subcommands": []
+        }
+      ]
+    },
+    {
+      "about": "Rarely-used utilities (patterns, ci, completions)",
+      "args": [],
+      "hidden": false,
+      "name": "xtr",
+      "subcommands": [
+        {
+          "about": "Code pattern search using ast-grep",
+          "args": [
+            {
+              "global": false,
+              "help": "The pattern to search for (ast-grep syntax)",
+              "long": "pattern",
+              "name": "pattern",
+              "possible_values": [],
+              "required": true,
+              "short": "p",
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Language to search (rust, typescript, etc)",
+              "long": "lang",
+              "name": "lang",
+              "possible_values": [],
+              "required": false,
+              "short": "l",
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Limit results",
+              "long": "limit",
+              "name": "limit",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Directory to search (default: crate/)",
+              "long": "dir",
+              "name": "dir",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "hidden": false,
+          "name": "patterns",
+          "subcommands": []
+        },
+        {
+          "about": "CI pipeline commands",
+          "args": [],
+          "hidden": false,
+          "name": "ci",
+          "subcommands": [
+            {
+              "about": "Start an ephemeral Postgres and run the given command with env vars set",
+              "args": [
+                {
+                  "global": false,
+                  "help": null,
+                  "long": "port",
+                  "name": "port",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": null,
+                  "long": "data-dir",
+                  "name": "data_dir",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": null,
+                  "long": "socket-dir",
+                  "name": "socket_dir",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": null,
+                  "long": "keep-data",
+                  "name": "keep_data",
+                  "possible_values": [
+                    "true",
+                    "false"
+                  ],
+                  "required": false,
+                  "short": null,
+                  "takes_value": false
+                },
+                {
+                  "global": false,
+                  "help": null,
+                  "long": "app-user",
+                  "name": "app_user",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": null,
+                  "long": "superuser",
+                  "name": "superuser",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": null,
+                  "long": "database",
+                  "name": "database",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": null,
+                  "long": "operation-id",
+                  "name": "operation_id",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": null,
+                  "long": null,
+                  "name": "command",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                }
+              ],
+              "hidden": false,
+              "name": "postgres",
+              "subcommands": []
+            },
+            {
+              "about": "Full workspace validation (schema setup + lint + tests)",
+              "args": [
+                {
+                  "global": false,
+                  "help": null,
+                  "long": "target-dir",
+                  "name": "target_dir",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                }
+              ],
+              "hidden": false,
+              "name": "workspace",
+              "subcommands": []
+            },
+            {
+              "about": "Schema-only pipeline (migrate, check-ready, regenerate)",
+              "args": [
+                {
+                  "global": false,
+                  "help": null,
+                  "long": "target-dir",
+                  "name": "target_dir",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": null,
+                  "long": "skip-clean",
+                  "name": "skip_clean",
+                  "possible_values": [
+                    "true",
+                    "false"
+                  ],
+                  "required": false,
+                  "short": null,
+                  "takes_value": false
+                }
+              ],
+              "hidden": false,
+              "name": "schema-only",
+              "subcommands": []
+            },
+            {
+              "about": "Schema validation pipeline (migrate, check-ready, seed registry, sync)",
+              "args": [
+                {
+                  "global": false,
+                  "help": null,
+                  "long": "target-dir",
+                  "name": "target_dir",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                }
+              ],
+              "hidden": false,
+              "name": "schema-sync",
+              "subcommands": []
+            }
+          ]
+        },
+        {
+          "about": "Generate shell completions",
+          "args": [
+            {
+              "global": false,
+              "help": "Shell to generate completions for",
+              "long": null,
+              "name": "shell",
+              "possible_values": [
+                "bash",
+                "zsh",
+                "fish",
+                "power-shell"
+              ],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "hidden": false,
+          "name": "completions",
+          "subcommands": []
+        },
+        {
+          "about": "TLS certificate management",
+          "args": [],
+          "hidden": false,
+          "name": "tls",
+          "subcommands": [
+            {
+              "about": "Generate self-signed certificates for local development",
+              "args": [
+                {
+                  "global": false,
+                  "help": "Output directory for certificates (default: .tls)",
+                  "long": "output",
+                  "name": "output",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": "Subject Alternative Names (comma-separated) Default: localhost,127.0.0.1",
+                  "long": "san",
+                  "name": "san",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": "Common Name for certificates",
+                  "long": "ca-name",
+                  "name": "ca_name",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": "Certificate validity in days",
+                  "long": "days",
+                  "name": "days",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": "Force overwrite existing certificates",
+                  "long": "force",
+                  "name": "force",
+                  "possible_values": [
+                    "true",
+                    "false"
+                  ],
+                  "required": false,
+                  "short": null,
+                  "takes_value": false
+                }
+              ],
+              "hidden": false,
+              "name": "generate-dev-certs",
+              "subcommands": []
+            },
+            {
+              "about": "Verify TLS configuration and certificates",
+              "args": [
+                {
+                  "global": false,
+                  "help": "Path to certificate file (or reads from `SINEX_GATEWAY_TLS_CERT`)",
+                  "long": "cert",
+                  "name": "cert",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": "Path to private key file (or reads from `SINEX_GATEWAY_TLS_KEY`)",
+                  "long": "key",
+                  "name": "key",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": "Path to CA certificate for mTLS (or reads from `SINEX_GATEWAY_TLS_CLIENT_CA`)",
+                  "long": "ca",
+                  "name": "ca",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": "Verify certificate chain validity",
+                  "long": "verify-chain",
+                  "name": "verify_chain",
+                  "possible_values": [
+                    "true",
+                    "false"
+                  ],
+                  "required": false,
+                  "short": null,
+                  "takes_value": false
+                },
+                {
+                  "global": false,
+                  "help": "Check NATS TLS configuration as well",
+                  "long": "nats",
+                  "name": "nats",
+                  "possible_values": [
+                    "true",
+                    "false"
+                  ],
+                  "required": false,
+                  "short": null,
+                  "takes_value": false
+                }
+              ],
+              "hidden": false,
+              "name": "check",
+              "subcommands": []
+            },
+            {
+              "about": "Generate a client certificate signed by the CA",
+              "args": [
+                {
+                  "global": false,
+                  "help": "Output directory for the client certificate",
+                  "long": "output",
+                  "name": "output",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": "Common Name for the client certificate",
+                  "long": "name",
+                  "name": "name",
+                  "possible_values": [],
+                  "required": true,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": "Path to CA certificate (default: .tls/ca.pem)",
+                  "long": "ca-cert",
+                  "name": "ca_cert",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": "Path to CA private key (default: .tls/ca-key.pem)",
+                  "long": "ca-key",
+                  "name": "ca_key",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": "Certificate validity in days",
+                  "long": "days",
+                  "name": "days",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                }
+              ],
+              "hidden": false,
+              "name": "generate-client-cert",
+              "subcommands": []
+            },
+            {
+              "about": "Generate .env file with TLS environment variables",
+              "args": [
+                {
+                  "global": false,
+                  "help": "TLS directory containing certificates",
+                  "long": "tls-dir",
+                  "name": "tls_dir",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": "Output .env file path",
+                  "long": "output",
+                  "name": "output",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": "Enable mTLS (include client CA configuration)",
+                  "long": "mtls",
+                  "name": "mtls",
+                  "possible_values": [
+                    "true",
+                    "false"
+                  ],
+                  "required": false,
+                  "short": null,
+                  "takes_value": false
+                },
+                {
+                  "global": false,
+                  "help": "Include NATS TLS configuration",
+                  "long": "nats",
+                  "name": "nats",
+                  "possible_values": [
+                    "true",
+                    "false"
+                  ],
+                  "required": false,
+                  "short": null,
+                  "takes_value": false
+                },
+                {
+                  "global": false,
+                  "help": "Append to existing file instead of overwriting",
+                  "long": "append",
+                  "name": "append",
+                  "possible_values": [
+                    "true",
+                    "false"
+                  ],
+                  "required": false,
+                  "short": null,
+                  "takes_value": false
+                }
+              ],
+              "hidden": false,
+              "name": "setup-env",
+              "subcommands": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -38,4 +38,4 @@ cargo xtask xtr patterns -p '$X'     # AST-grep pattern search
 cargo xtask xtr completions zsh      # Generate shell completions
 ```
 
-Note: `cargo xtask ci` still works as a backwards-compatible alias.
+Note: `xtr ci` requires the `sandbox` feature (used in CI environments, not default).

@@ -132,6 +132,8 @@ impl TestReporter {
     {
         if self.human {
             println!("{}", style("\n🚀 Launching tests...").bold());
+            // Progress bar won't tick until suite-started; indicate compilation phase
+            self.pb.set_message("Compiling test binaries...");
         }
 
         // Spawn stderr handler
@@ -168,6 +170,9 @@ impl TestReporter {
                     }
                     Message::TestStarted(t) => {
                         self.pb.set_message(format!("Running {}", t.name));
+                        if !self.human {
+                            eprintln!("  ▸ {}", t.name);
+                        }
                     }
                     Message::TestFinished(t) => {
                         let duration = t.exec_time.unwrap_or(0.0);
@@ -177,14 +182,30 @@ impl TestReporter {
                             "passed" => {
                                 stats.passed += 1;
                                 self.pb.inc(1);
+                                // Show slow tests (>5s) even in normal mode
+                                if duration > 5.0 {
+                                    let msg = format!(
+                                        "  {} {} ({:.1}s)",
+                                        Emoji("⚡", "~"),
+                                        t.name,
+                                        duration
+                                    );
+                                    self.pb.println(&msg);
+                                    if !self.human {
+                                        eprintln!("{msg}");
+                                    }
+                                }
                             }
                             "failed" => {
                                 stats.failed += 1;
                                 self.pb.inc(1);
                                 // Log failure immediately above bar
                                 let msg =
-                                    format!("{} {} ({:.3}s)", Emoji("❌", "x"), t.name, duration);
-                                self.pb.println(msg);
+                                    format!("  {} {} ({:.1}s)", Emoji("❌", "x"), t.name, duration);
+                                self.pb.println(&msg);
+                                if !self.human {
+                                    eprintln!("{msg}");
+                                }
                             }
                             "ignored" => {
                                 stats.ignored += 1;
@@ -214,7 +235,7 @@ impl TestReporter {
         }
 
         if self.human {
-            self.pb.finish_and_clear();
+            self.pb.finish_with_message("done");
         }
 
         // Detect test discovery failures: if no suite-started message was received,

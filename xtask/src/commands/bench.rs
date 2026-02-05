@@ -8,7 +8,7 @@ impl XtaskCommand for BenchArgs {
         "bench"
     }
 
-    async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
+    async fn execute(&self, _ctx: &CommandContext) -> Result<CommandResult> {
         crate::bench::run(self.clone())?;
         Ok(CommandResult::success())
     }

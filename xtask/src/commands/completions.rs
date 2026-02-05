@@ -54,7 +54,7 @@ impl XtaskCommand for CompletionsCommand {
         "completions"
     }
 
-    async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
+    async fn execute(&self, _ctx: &CommandContext) -> Result<CommandResult> {
         // Note: The actual completions generation is handled by the dispatcher in main.rs
         // which has access to the Cli command structure. This execute method serves as
         // a marker for the XtaskCommand trait implementation.
