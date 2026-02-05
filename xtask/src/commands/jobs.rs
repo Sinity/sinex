@@ -123,8 +123,14 @@ async fn execute_list(
             table.with(Style::rounded());
             println!("{table}");
         }
-    } else {
-        let json = serde_json::json!({
+    }
+
+    let mut result = CommandResult::success()
+        .with_message(format!("Listed {} jobs", jobs.len()))
+        .with_duration(ctx.elapsed());
+
+    if !ctx.is_human() {
+        result = result.with_data(serde_json::json!({
             "jobs": jobs.iter().map(|j| serde_json::json!({
                 "id": j.id,
                 "command": j.command,
@@ -133,13 +139,10 @@ async fn execute_list(
                 "pid": j.pid,
                 "started_at": j.started_at.to_string(),
             })).collect::<Vec<_>>()
-        });
-        println!("{}", serde_json::to_string_pretty(&json)?);
+        }));
     }
 
-    Ok(CommandResult::success()
-        .with_message(format!("Listed {} jobs", jobs.len()))
-        .with_duration(ctx.elapsed()))
+    Ok(result)
 }
 
 async fn execute_active(job_manager: &JobManager, ctx: &CommandContext) -> Result<CommandResult> {
@@ -166,21 +169,24 @@ async fn execute_active(job_manager: &JobManager, ctx: &CommandContext) -> Resul
             table.with(Style::rounded());
             println!("{table}");
         }
-    } else {
-        let json = serde_json::json!({
+    }
+
+    let mut result = CommandResult::success()
+        .with_message(format!("{} active jobs", active.len()))
+        .with_duration(ctx.elapsed());
+
+    if !ctx.is_human() {
+        result = result.with_data(serde_json::json!({
             "active_jobs": active.iter().map(|j| serde_json::json!({
                 "id": j.id,
                 "command": j.command,
                 "pid": j.pid,
                 "started_at": j.started_at.to_string(),
             })).collect::<Vec<_>>()
-        });
-        println!("{}", serde_json::to_string_pretty(&json)?);
+        }));
     }
 
-    Ok(CommandResult::success()
-        .with_message(format!("{} active jobs", active.len()))
-        .with_duration(ctx.elapsed()))
+    Ok(result)
 }
 
 async fn execute_status(
@@ -258,21 +264,24 @@ async fn execute_status(
                     println!("\n  Last output:\n{tail}");
                 }
             }
-        } else {
-            let json = serde_json::json!({
+        }
+
+        let mut result = CommandResult::success()
+            .with_message(format!("Job {id} status"))
+            .with_duration(ctx.elapsed());
+
+        if !ctx.is_human() {
+            result = result.with_data(serde_json::json!({
                 "id": job.id,
                 "command": job.command,
                 "args": job.args,
                 "status": status_to_str(job.status),
                 "pid": job.pid,
                 "started_at": job.started_at.to_string(),
-            });
-            println!("{}", serde_json::to_string_pretty(&json)?);
+            }));
         }
 
-        Ok(CommandResult::success()
-            .with_message(format!("Job {id} status"))
-            .with_duration(ctx.elapsed()))
+        Ok(result)
     }
 }
 
@@ -292,15 +301,25 @@ async fn execute_output(
         job.read_stdout()?
     };
 
-    println!("{output}");
+    let stream_name = if stderr { "stderr" } else { "stdout" };
 
-    Ok(CommandResult::success()
-        .with_message(format!(
-            "Job {} {} output",
-            id,
-            if stderr { "stderr" } else { "stdout" }
-        ))
-        .with_duration(ctx.elapsed()))
+    if ctx.is_human() {
+        println!("{output}");
+    }
+
+    let mut result = CommandResult::success()
+        .with_message(format!("Job {id} {stream_name} output"))
+        .with_duration(ctx.elapsed());
+
+    if !ctx.is_human() {
+        result = result.with_data(serde_json::json!({
+            "id": id,
+            "stream": stream_name,
+            "content": output,
+        }));
+    }
+
+    Ok(result)
 }
 
 async fn execute_wait(
@@ -319,17 +338,20 @@ async fn execute_wait(
 
     if ctx.is_human() {
         println!("Job {} completed: {}", id, status_to_str(job.status));
-    } else {
-        let json = serde_json::json!({
-            "id": job.id,
-            "status": status_to_str(job.status),
-        });
-        println!("{}", serde_json::to_string_pretty(&json)?);
     }
 
-    Ok(CommandResult::success()
+    let mut result = CommandResult::success()
         .with_message(format!("Job {id} wait completed"))
-        .with_duration(ctx.elapsed()))
+        .with_duration(ctx.elapsed());
+
+    if !ctx.is_human() {
+        result = result.with_data(serde_json::json!({
+            "id": job.id,
+            "status": status_to_str(job.status),
+        }));
+    }
+
+    Ok(result)
 }
 
 async fn execute_cancel(

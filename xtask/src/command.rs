@@ -108,7 +108,7 @@ impl CommandMetadata {
     pub fn check() -> Self {
         Self {
             category: Some("check".to_string()),
-            timeout: Some(Duration::from_mins(1)), // 1 minute
+            timeout: Some(Duration::from_mins(5)), // 5 minutes (preflight + fmt + check + clippy)
             modifies_state: false,
             track_in_history: true,
         }

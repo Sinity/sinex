@@ -299,8 +299,9 @@ impl JobManager {
             .collect())
     }
 
-    /// List recent jobs (up to limit).
+    /// List recent jobs (up to limit), reaping zombies first.
     pub fn list_recent(&self, limit: usize) -> Result<Vec<Job>> {
+        self.reap_zombies()?;
         let db = self
             .db
             .lock()

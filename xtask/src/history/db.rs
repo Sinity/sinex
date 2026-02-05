@@ -147,6 +147,7 @@ impl HistoryDb {
             CREATE INDEX IF NOT EXISTS idx_test_results_name ON test_results(test_name);
             CREATE INDEX IF NOT EXISTS idx_test_results_status ON test_results(status);
             CREATE INDEX IF NOT EXISTS idx_test_results_invocation ON test_results(invocation_id);
+            CREATE INDEX IF NOT EXISTS idx_diagnostics_invocation ON build_diagnostics(invocation_id);
             ",
         )?;
         Ok(())
