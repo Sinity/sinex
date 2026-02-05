@@ -71,9 +71,9 @@ pub enum DepsCommand {
 
     /// Visualize dependency graph
     Graph {
-        /// Output format (dot, json, ascii)
+        /// Render format (dot, json, ascii)
         #[arg(long, default_value = "ascii")]
-        format: String,
+        render_format: String,
 
         /// Focus on specific package
         #[arg(long)]
@@ -356,7 +356,7 @@ impl DepsCommand {
             }
 
             Self::Graph {
-                format,
+                render_format,
                 focus,
                 reverse,
                 depth,
@@ -367,7 +367,7 @@ impl DepsCommand {
 
                 let graph = WorkspaceGraph::new()?;
 
-                let rendered = match format.as_str() {
+                let rendered = match render_format.as_str() {
                     "dot" => {
                         let mut renderer = DotRenderer::new(graph);
                         if let Some(focus_pkg) = focus {

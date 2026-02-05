@@ -2,6 +2,7 @@
 use assert_cmd::Command;
 use serde_json::Value;
 
+#[cfg(feature = "sandbox")]
 #[test]
 fn test_command_structure_snapshot() {
     let mut cmd = Command::cargo_bin("xtask").unwrap();

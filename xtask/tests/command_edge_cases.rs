@@ -529,8 +529,8 @@ fn test_cli_unknown_flag() {
 fn test_cli_missing_required_arg() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    // stack tls generate-client-cert requires --name
-    cmd.arg("stack").arg("tls").arg("generate-client-cert");
+    // xtr tls generate-client-cert requires --name
+    cmd.arg("xtr").arg("tls").arg("generate-client-cert");
 
     cmd.assert().failure().stderr(
         predicate::str::contains("required")
@@ -733,8 +733,8 @@ fn test_test_command_with_invalid_profile() {
 fn test_db_reset_without_confirmation() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
-    // db reset requires --yes flag
-    cmd.arg("stack").arg("reset");
+    // infra reset requires --yes flag
+    cmd.arg("infra").arg("reset");
 
     cmd.assert()
         .failure()
@@ -748,8 +748,7 @@ fn test_schema_deploy_missing_database_url() {
     // Unset DATABASE_URL to ensure it's missing
     cmd.env_remove("DATABASE_URL");
 
-    cmd.arg("db")
-        .arg("schema")
+    cmd.arg("contracts")
         .arg("deploy")
         .arg("--input")
         .arg("schemas/v1");
@@ -767,14 +766,14 @@ fn test_help_works_for_all_subcommands() {
         vec!["check", "--help"],
         vec!["test", "--help"],
         vec!["build", "--help"],
-        vec!["stack", "reset", "--help"],
+        vec!["infra", "reset", "--help"],
         vec!["contracts", "deploy", "--help"],
         vec!["deps", "list", "--help"],
         vec!["deps", "graph", "--help"],
-        vec!["stack", "doctor", "--help"],
+        vec!["status", "--help"],
         vec!["jobs", "list", "--help"],
         vec!["xtr", "patterns", "--help"],
-        vec!["xtr", "ci", "--help"],
+        vec!["xtr", "tls", "--help"],
     ];
 
     for args in subcommands {
