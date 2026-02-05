@@ -2,7 +2,6 @@
 extern crate self as xtask;
 
 use anyhow::Result;
-pub const DEFAULT_TEST_MATERIAL_ID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 use clap::{Parser, Subcommand};
 
 // Build-time metadata from shadow-rs
@@ -174,24 +173,24 @@ pub async fn run_cli() -> Result<()> {
         anyhow::anyhow!("No command provided. Use --help to see available commands, or --list-commands for a summary.")
     })?;
 
-    // Dispatch
-    let (command_name, subcommand, profile) = match &command {
-        Commands::Fix(_) => ("fix", None, None),
-        Commands::Check(_) => ("check", None, None),
-        Commands::Test(_) => ("test", None, None),
-        Commands::Bench(_) => ("bench", None, None),
-        Commands::Build(_) => ("build", None, None),
-        Commands::Run(_) => ("run", None, None),
-        Commands::Infra { .. } => ("infra", None, None),
-        Commands::Db { .. } => ("db", None, None),
-        Commands::Jobs(_) => ("jobs", None, None),
-        Commands::Status(_) => ("status", None, None),
-        Commands::Deps(_) => ("deps", None, None),
-        Commands::History(_) => ("history", None, None),
-        Commands::Snapshot(_) => ("snapshot", None, None),
-        Commands::Contracts(_) => ("contracts", None, None),
-        Commands::Docs(_) => ("docs", None, None),
-        Commands::Xtr(_) => ("xtr", None, None),
+    // Dispatch — extract metadata (including timeout) before consuming the command
+    let (command_name, subcommand, profile, command_timeout) = match &command {
+        Commands::Fix(cmd) => ("fix", None, None, cmd.metadata().timeout),
+        Commands::Check(cmd) => ("check", None, None, cmd.metadata().timeout),
+        Commands::Test(cmd) => ("test", None, None, cmd.metadata().timeout),
+        Commands::Bench(cmd) => ("bench", None, None, cmd.metadata().timeout),
+        Commands::Build(cmd) => ("build", None, None, cmd.metadata().timeout),
+        Commands::Run(cmd) => ("run", None, None, cmd.metadata().timeout),
+        Commands::Infra { .. } => ("infra", None, None, None),
+        Commands::Db { .. } => ("db", None, None, None),
+        Commands::Jobs(cmd) => ("jobs", None, None, cmd.metadata().timeout),
+        Commands::Status(cmd) => ("status", None, None, cmd.metadata().timeout),
+        Commands::Deps(cmd) => ("deps", None, None, cmd.metadata().timeout),
+        Commands::History(cmd) => ("history", None, None, cmd.metadata().timeout),
+        Commands::Snapshot(cmd) => ("snapshot", None, None, cmd.metadata().timeout),
+        Commands::Contracts(cmd) => ("contracts", None, None, cmd.metadata().timeout),
+        Commands::Docs(cmd) => ("docs", None, None, cmd.metadata().timeout),
+        Commands::Xtr(cmd) => ("xtr", None, None, cmd.metadata().timeout),
     };
 
     // Track invocation in history
@@ -213,27 +212,40 @@ pub async fn run_cli() -> Result<()> {
         invocation_id,
     );
 
-    let result = match command {
-        Commands::Fix(cmd) => cmd.execute(&ctx).await,
-        Commands::Check(cmd) => cmd.execute(&ctx).await,
-        Commands::Test(cmd) => cmd.execute(&ctx).await,
-        Commands::Bench(cmd) => cmd.execute(&ctx).await,
-        Commands::Build(cmd) => cmd.execute(&ctx).await,
-        Commands::Run(cmd) => cmd.execute(&ctx).await,
-        Commands::Infra { cmd } => {
-            commands::InfraCommand { subcommand: cmd }
-                .execute(&ctx)
-                .await
+    let execute_fut = async {
+        match command {
+            Commands::Fix(cmd) => cmd.execute(&ctx).await,
+            Commands::Check(cmd) => cmd.execute(&ctx).await,
+            Commands::Test(cmd) => cmd.execute(&ctx).await,
+            Commands::Bench(cmd) => cmd.execute(&ctx).await,
+            Commands::Build(cmd) => cmd.execute(&ctx).await,
+            Commands::Run(cmd) => cmd.execute(&ctx).await,
+            Commands::Infra { cmd } => {
+                commands::InfraCommand { subcommand: cmd }
+                    .execute(&ctx)
+                    .await
+            }
+            Commands::Db { cmd } => commands::DbCommand { subcommand: cmd }.execute(&ctx).await,
+            Commands::Jobs(cmd) => cmd.execute(&ctx).await,
+            Commands::Status(cmd) => cmd.execute(&ctx).await,
+            Commands::Deps(cmd) => cmd.execute(&ctx).await,
+            Commands::History(cmd) => cmd.execute(&ctx).await,
+            Commands::Snapshot(cmd) => cmd.execute(&ctx).await,
+            Commands::Contracts(cmd) => cmd.execute(&ctx).await,
+            Commands::Docs(cmd) => cmd.execute(&ctx).await,
+            Commands::Xtr(cmd) => cmd.execute(&ctx).await,
         }
-        Commands::Db { cmd } => commands::DbCommand { subcommand: cmd }.execute(&ctx).await,
-        Commands::Jobs(cmd) => cmd.execute(&ctx).await,
-        Commands::Status(cmd) => cmd.execute(&ctx).await,
-        Commands::Deps(cmd) => cmd.execute(&ctx).await,
-        Commands::History(cmd) => cmd.execute(&ctx).await,
-        Commands::Snapshot(cmd) => cmd.execute(&ctx).await,
-        Commands::Contracts(cmd) => cmd.execute(&ctx).await,
-        Commands::Docs(cmd) => cmd.execute(&ctx).await,
-        Commands::Xtr(cmd) => cmd.execute(&ctx).await,
+    };
+
+    let result = if let Some(timeout) = command_timeout {
+        match tokio::time::timeout(timeout, execute_fut).await {
+            Ok(result) => result,
+            Err(_) => Err(anyhow::anyhow!(
+                "Command '{command_name}' timed out after {timeout:?}"
+            )),
+        }
+    } else {
+        execute_fut.await
     };
 
     // Update history

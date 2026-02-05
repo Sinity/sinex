@@ -194,24 +194,52 @@ async fn execute_status(
         .ok_or_else(|| anyhow::anyhow!("job {id} not found"))?;
 
     if follow {
-        // Follow mode: tail output until job completes
+        // Follow mode: seek-based tailing (O(delta) per poll, not O(n))
+        use std::io::{Read, Seek, SeekFrom};
+
         let mut last_pos = 0u64;
         loop {
-            // Print new output
-            if let Ok(stdout) = job.read_stdout() {
-                if stdout.len() as u64 > last_pos {
-                    print!("{}", &stdout[last_pos as usize..]);
-                    last_pos = stdout.len() as u64;
+            // Read only new content since last position
+            if let Ok(mut file) = std::fs::File::open(&job.stdout_path) {
+                let _ = file.seek(SeekFrom::Start(last_pos));
+                let mut buf = String::new();
+                if let Ok(n) = file.read_to_string(&mut buf) {
+                    if n > 0 {
+                        print!("{buf}");
+                        last_pos += n as u64;
+                    }
                 }
-            }
-
-            // Reload and check status
-            let job = job_manager.get(id)?.unwrap();
-            if job.is_terminal() {
+            } else if job.is_terminal() {
+                // File gone (archived to DB) — read remainder from DB
+                if let Ok(stdout) = job.read_stdout() {
+                    if stdout.len() as u64 > last_pos {
+                        print!("{}", &stdout[last_pos as usize..]);
+                    }
+                }
                 break;
             }
 
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            // Reload and check status
+            let updated = job_manager.get(id)?;
+            match updated {
+                Some(j) if j.is_terminal() => {
+                    // One more read to catch final output before file is archived
+                    if let Ok(mut file) = std::fs::File::open(&job.stdout_path) {
+                        let _ = file.seek(SeekFrom::Start(last_pos));
+                        let mut buf = String::new();
+                        if let Ok(n) = file.read_to_string(&mut buf) {
+                            if n > 0 {
+                                print!("{buf}");
+                            }
+                        }
+                    }
+                    break;
+                }
+                None => break,
+                _ => {}
+            }
+
+            tokio::time::sleep(Duration::from_millis(250)).await;
         }
 
         Ok(CommandResult::success()
