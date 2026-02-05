@@ -408,7 +408,7 @@ fn list_commands(format: OutputFormat) -> Result<()> {
 
                         let help = arg.help.as_deref().unwrap_or("");
                         // Simple padding
-                        println!("    {:<24} {}", flags, help);
+                        println!("    {flags:<24} {help}");
                     }
                     println!();
                 }
@@ -440,7 +440,7 @@ fn list_commands(format: OutputFormat) -> Result<()> {
                         }
 
                         let help = arg.help.as_deref().unwrap_or("");
-                        println!("      {:<22} {}", flags, help);
+                        println!("      {flags:<22} {help}");
                     }
                     // Add a small spacer after args if there were any
                     println!();

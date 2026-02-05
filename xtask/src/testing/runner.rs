@@ -15,7 +15,7 @@ fn validate_profile(profile: &str) -> Result<()> {
     let content = fs::read_to_string(NEXTEST_CONFIG)
         .with_context(|| format!("failed to read nextest config at {NEXTEST_CONFIG}"))?;
 
-    let profile_header = format!("[profile.{}]", profile);
+    let profile_header = format!("[profile.{profile}]");
     if !content.contains(&profile_header) {
         // List available profiles for better error message
         let available: Vec<&str> = content
@@ -132,15 +132,14 @@ impl<'a> TestRunner<'a> {
         let status = {
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
             loop {
-                match child.try_wait().context("failed to check nextest status")? {
-                    Some(status) => break status,
-                    None => {
-                        if std::time::Instant::now() > deadline {
-                            let _ = child.kill();
-                            bail!("Test execution timed out after 10 minutes waiting for process exit");
-                        }
-                        std::thread::sleep(std::time::Duration::from_millis(100));
+                if let Some(status) = child.try_wait().context("failed to check nextest status")? {
+                    break status;
+                } else {
+                    if std::time::Instant::now() > deadline {
+                        let _ = child.kill();
+                        bail!("Test execution timed out after 10 minutes waiting for process exit");
                     }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
                 }
             }
         };

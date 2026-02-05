@@ -392,10 +392,10 @@ impl MaterialAssembler {
             }
 
             let elapsed = now - state.last_slice_received;
-            if elapsed.whole_seconds() > SLICE_ARRIVAL_TIMEOUT.as_secs() as i64 {
-                if state.pending_end.is_none() || !state.buffered_slices.is_empty() {
-                    stale.push((material_id, elapsed.whole_seconds()));
-                }
+            if elapsed.whole_seconds() > SLICE_ARRIVAL_TIMEOUT.as_secs() as i64
+                && (state.pending_end.is_none() || !state.buffered_slices.is_empty())
+            {
+                stale.push((material_id, elapsed.whole_seconds()));
             }
         }
         stale

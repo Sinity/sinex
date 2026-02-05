@@ -541,18 +541,17 @@ impl IngestService {
         let wait_task = async {
             for (i, handle) in handles.iter_mut().enumerate() {
                 if let Err(e) = handle.await {
-                    match e.try_into_panic() {
-                        Ok(panic) => {
-                            let msg = match panic.downcast_ref::<&'static str>() {
-                                Some(s) => *s,
-                                None => match panic.downcast_ref::<String>() {
-                                    Some(s) => s.as_str(),
-                                    None => "Unknown panic",
-                                },
-                            };
-                            error!("Background task {} panicked: {}", i, msg);
-                        }
-                        Err(_) => debug!("Background task {} was cancelled or failed", i),
+                    if let Ok(panic) = e.try_into_panic() {
+                        let msg = match panic.downcast_ref::<&'static str>() {
+                            Some(s) => *s,
+                            None => match panic.downcast_ref::<String>() {
+                                Some(s) => s.as_str(),
+                                None => "Unknown panic",
+                            },
+                        };
+                        error!("Background task {} panicked: {}", i, msg);
+                    } else {
+                        debug!("Background task {} was cancelled or failed", i)
                     }
                 }
             }

@@ -23,8 +23,10 @@ use std::fmt;
 /// Legacy tokens (without a role suffix) default to Admin for backward compatibility.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum Role {
     /// Read-only access: search, analytics, status queries
+    #[default]
     ReadOnly,
     /// Write access: read + ingest events, create entities, store content
     Write,
@@ -50,8 +52,8 @@ impl Role {
     #[must_use]
     pub fn from_token_suffix(suffix: Option<&str>) -> Self {
         match suffix {
-            Some("readonly") | Some("read") | Some("ro") => Role::ReadOnly,
-            Some("write") | Some("rw") => Role::Write,
+            Some("readonly" | "read" | "ro") => Role::ReadOnly,
+            Some("write" | "rw") => Role::Write,
             Some("admin") | None => Role::Admin, // Legacy tokens = admin
             Some(unknown) => {
                 tracing::warn!(
@@ -147,13 +149,6 @@ impl fmt::Display for Role {
             Role::Write => write!(f, "write"),
             Role::Admin => write!(f, "admin"),
         }
-    }
-}
-
-impl Default for Role {
-    fn default() -> Self {
-        // Default to most restrictive for safety
-        Role::ReadOnly
     }
 }
 

@@ -64,7 +64,7 @@ async fn query_affected_events(
             event_type: row.event_type,
             ts_orig: Some(row.ts_orig),
             ts_ingest: row.ts_ingest,
-            provenance_operation_id: Some(operation_id.clone()),
+            provenance_operation_id: Some(*operation_id),
         })
         .collect();
 

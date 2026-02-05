@@ -31,7 +31,7 @@ impl RawMessage {
             ("suite", "started") => Message::SuiteStarted(SuiteStarted {
                 test_count: self.test_count.unwrap_or(0),
             }),
-            ("suite", "ok") | ("suite", "failed") => Message::SuiteFinished(SuiteFinished {
+            ("suite", "ok" | "failed") => Message::SuiteFinished(SuiteFinished {
                 passed: self.passed.unwrap_or(0),
                 failed: self.failed.unwrap_or(0),
                 ignored: self.ignored.unwrap_or(0),

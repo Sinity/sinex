@@ -85,8 +85,7 @@ pub async fn handle_lifecycle_archive(
     let event_ids = if let Some(ids) = &request.event_ids {
         ids.iter()
             .map(|s| {
-                Ulid::from_str(s)
-                    .map_err(|_| SinexError::validation(format!("Invalid ULID: {}", s)))
+                Ulid::from_str(s).map_err(|_| SinexError::validation(format!("Invalid ULID: {s}")))
             })
             .collect::<Result<Vec<_>>>()?
     } else {
@@ -212,7 +211,7 @@ pub async fn handle_lifecycle_restore(
         .event_ids
         .iter()
         .map(|s| {
-            Ulid::from_str(s).map_err(|_| SinexError::validation(format!("Invalid ULID: {}", s)))
+            Ulid::from_str(s).map_err(|_| SinexError::validation(format!("Invalid ULID: {s}")))
         })
         .collect::<Result<Vec<_>>>()?;
 
@@ -292,9 +291,8 @@ pub async fn handle_lifecycle_restore(
 
 /// Parse a duration string (e.g., "30d", "90d") to a timestamp in the past
 fn parse_duration_to_timestamp(duration_str: &str) -> Result<Option<Timestamp>> {
-    let duration = humantime::parse_duration(duration_str).map_err(|e| {
-        SinexError::validation(format!("Invalid duration '{}': {}", duration_str, e))
-    })?;
+    let duration = humantime::parse_duration(duration_str)
+        .map_err(|e| SinexError::validation(format!("Invalid duration '{duration_str}': {e}")))?;
 
     let ts = Timestamp::now() - time::Duration::seconds(duration.as_secs() as i64);
     Ok(Some(ts))
@@ -470,8 +468,7 @@ pub async fn handle_tombstone_create(
     let event_ids = if let Some(ids) = &request.event_ids {
         ids.iter()
             .map(|s| {
-                Ulid::from_str(s)
-                    .map_err(|_| SinexError::validation(format!("Invalid ULID: {}", s)))
+                Ulid::from_str(s).map_err(|_| SinexError::validation(format!("Invalid ULID: {s}")))
             })
             .collect::<Result<Vec<_>>>()?
     } else {
@@ -726,8 +723,7 @@ pub async fn handle_tombstone_approve(
     let event_ids = if let Some(ids) = &operation.event_ids {
         ids.iter()
             .map(|s| {
-                Ulid::from_str(s)
-                    .map_err(|_| SinexError::validation(format!("Invalid ULID: {}", s)))
+                Ulid::from_str(s).map_err(|_| SinexError::validation(format!("Invalid ULID: {s}")))
             })
             .collect::<Result<Vec<_>>>()?
     } else {
@@ -869,7 +865,7 @@ pub async fn handle_tombstone_cancel(
     // Update operation state
     operation.state = TombstoneOperationState::Cancelled;
     if let Some(reason) = &request.reason {
-        operation.error_details = Some(format!("Cancelled: {}", reason));
+        operation.error_details = Some(format!("Cancelled: {reason}"));
     }
 
     // Persist cancellation
@@ -925,7 +921,7 @@ pub async fn handle_tombstone_list(
     let now = Timestamp::now();
     let mut operations: Vec<TombstoneOperation> = records
         .iter()
-        .filter_map(|r| operation_record_to_tombstone(r))
+        .filter_map(operation_record_to_tombstone)
         .map(|mut op| {
             // Check for expiration on non-terminal operations
             if !op.state.is_terminal() {

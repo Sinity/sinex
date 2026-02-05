@@ -32,9 +32,8 @@ pub fn cleanup_stale_nats_processes(target_port: u16, verbose: bool) -> Result<u
             .args(["-p", &pid.to_string(), "-i", &format!(":{target_port}")])
             .output();
 
-        let uses_target_port = lsof_output
-            .map(|out| out.status.success() && !out.stdout.is_empty())
-            .unwrap_or(false);
+        let uses_target_port =
+            lsof_output.is_ok_and(|out| out.status.success() && !out.stdout.is_empty());
 
         // Also check if the process has been running for a long time (> 2 hours)
         // as a heuristic for "orphaned"
@@ -222,7 +221,7 @@ jetstream {{
         // Clean up any stale nats-server processes that might be blocking our port
         let cleaned = cleanup_stale_nats_processes(self.config.port, verbose)?;
         if cleaned > 0 && verbose {
-            println!("Cleaned up {} stale nats-server process(es)", cleaned);
+            println!("Cleaned up {cleaned} stale nats-server process(es)");
         }
 
         if verbose {

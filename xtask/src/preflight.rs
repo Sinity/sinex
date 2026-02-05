@@ -22,7 +22,7 @@ fn spawn_watchdog(label: &str, interval_secs: u64) -> WatchdogGuard {
                 break;
             }
             elapsed += 1;
-            if elapsed % interval_secs == 0 {
+            if elapsed.is_multiple_of(interval_secs) {
                 eprintln!("  ⏳ {label}... still waiting ({elapsed}s)");
             }
         }
@@ -107,8 +107,7 @@ fn hash_migrations_dir() -> String {
                         .modified()
                         .ok()
                         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0);
+                        .map_or(0, |d| d.as_secs());
                     let size = meta.len();
                     file_info.insert(name, mtime ^ size);
                 }
@@ -405,8 +404,7 @@ fn hash_contracts_dir() -> String {
                         .modified()
                         .ok()
                         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0);
+                        .map_or(0, |d| d.as_secs());
                     let size = meta.len();
                     file_info.insert(name, mtime ^ size);
                 }
@@ -470,9 +468,7 @@ fn auto_deploy_contracts(verbose: bool) -> Result<bool> {
         ])
         .output();
 
-    let tables_exist = check_output
-        .map(|out| out.status.success() && !out.stdout.is_empty())
-        .unwrap_or(false);
+    let tables_exist = check_output.is_ok_and(|out| out.status.success() && !out.stdout.is_empty());
 
     if !tables_exist {
         // Database not ready for contracts yet
