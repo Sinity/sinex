@@ -4,7 +4,39 @@
 //! Commands that need Postgres, NATS, TLS, or migrations can call `ensure_ready()`
 //! to prompt the user and set up infrastructure automatically.
 
-use anyhow::Result;
+use anyhow::{bail, Result};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
+/// Spawn a watchdog thread that prints a "still waiting..." message every `interval` seconds.
+/// Returns a handle that stops the watchdog when dropped.
+fn spawn_watchdog(label: &str, interval_secs: u64) -> WatchdogGuard {
+    let done = Arc::new(AtomicBool::new(false));
+    let done_clone = done.clone();
+    let label = label.to_string();
+    std::thread::spawn(move || {
+        let mut elapsed = 0u64;
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            if done_clone.load(Ordering::Relaxed) {
+                break;
+            }
+            elapsed += 1;
+            if elapsed % interval_secs == 0 {
+                eprintln!("  ⏳ {label}... still waiting ({elapsed}s)");
+            }
+        }
+    });
+    WatchdogGuard(done)
+}
+
+struct WatchdogGuard(Arc<AtomicBool>);
+
+impl Drop for WatchdogGuard {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
 
 /// Check if Postgres is available.
 #[must_use]
@@ -46,10 +78,78 @@ pub fn tls_certs_exist() -> bool {
     check_dir(certs_dir) || check_dir(tls_dir)
 }
 
+/// Get the state directory for caching preflight state.
+fn state_dir() -> std::path::PathBuf {
+    let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    crate_dir.join("../.sinex/preflight")
+}
+
+/// Compute a hash of the migrations directory contents.
+///
+/// This captures file names and their modification times to detect any changes.
+fn hash_migrations_dir() -> String {
+    use std::collections::BTreeMap;
+    use std::hash::{Hash, Hasher};
+
+    let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let migrations_dir = crate_dir.join("../crate/lib/sinex-schema/src/migrations");
+
+    // Use BTreeMap for deterministic ordering
+    let mut file_info: BTreeMap<String, u64> = BTreeMap::new();
+
+    if let Ok(entries) = std::fs::read_dir(&migrations_dir) {
+        for entry in entries.filter_map(Result::ok) {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('m') && name.ends_with(".rs") {
+                // Use file size + mtime as a simple change indicator
+                if let Ok(meta) = entry.metadata() {
+                    let mtime = meta
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    let size = meta.len();
+                    file_info.insert(name, mtime ^ size);
+                }
+            }
+        }
+    }
+
+    // Hash the collected info
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for (name, info) in &file_info {
+        name.hash(&mut hasher);
+        info.hash(&mut hasher);
+    }
+    format!("{:016x}", hasher.finish())
+}
+
+/// Check if migrations directory has changed since last apply.
+fn migrations_changed_since_last_apply() -> bool {
+    let state_dir = state_dir();
+    let hash_file = state_dir.join("migration-hash.txt");
+
+    let current_hash = hash_migrations_dir();
+    let cached_hash = std::fs::read_to_string(&hash_file).ok();
+
+    cached_hash.as_deref() != Some(&current_hash)
+}
+
+/// Record that migrations were applied with current directory state.
+fn record_migrations_applied() {
+    let state_dir = state_dir();
+    if std::fs::create_dir_all(&state_dir).is_ok() {
+        let hash_file = state_dir.join("migration-hash.txt");
+        let _ = std::fs::write(hash_file, hash_migrations_dir());
+    }
+}
+
 /// Check for pending database migrations.
 ///
-/// Compares the count of applied migrations in the database against the
-/// count of migration files on disk.
+/// Uses two strategies:
+/// 1. Compare migration count (DB vs disk) - catches new migrations
+/// 2. Hash-based detection - catches modified migrations
 pub fn has_pending_migrations() -> Result<bool> {
     // Only check if Postgres is already running
     if !is_postgres_ready() {
@@ -63,7 +163,7 @@ pub fn has_pending_migrations() -> Result<bool> {
             Err(_) => return Ok(false),
         };
 
-    // Query migration count from database
+    // Strategy 1: Check migration count
     let output = std::process::Command::new("psql")
         .env("PGHOST", config.run_dir())
         .env("PGPORT", config.postgres.port.to_string())
@@ -79,11 +179,23 @@ pub fn has_pending_migrations() -> Result<bool> {
                 .parse()
                 .unwrap_or(0);
             let file_count = migration_file_count();
-            Ok(db_count < file_count)
+
+            // New migrations exist
+            if db_count < file_count {
+                return Ok(true);
+            }
+
+            // Strategy 2: Check if any migration file has changed since last apply
+            // This catches modifications to existing migration files
+            if migrations_changed_since_last_apply() {
+                return Ok(true);
+            }
+
+            Ok(false)
         }
         _ => {
             // Query failed (table doesn't exist, etc.) - assume OK
-            // Fresh databases will have migrations applied on stack start
+            // Fresh databases will have migrations applied on infra start
             Ok(false)
         }
     }
@@ -151,40 +263,37 @@ pub fn auto_start_stack(verbose: bool) -> Result<bool> {
         return Ok(true);
     }
 
-    // Auto-start without prompting
-    if verbose {
-        if !status.postgres && !status.nats {
-            eprintln!("⚡ Auto-starting stack (Postgres + NATS)...");
-        } else if !status.postgres {
-            eprintln!("⚡ Auto-starting Postgres...");
-        } else {
-            eprintln!("⚡ Auto-starting NATS...");
-        }
+    // Always report what we're starting (even in quiet mode)
+    if !status.postgres && !status.nats {
+        eprintln!("⚡ Auto-starting stack (Postgres + NATS)...");
+    } else if !status.postgres {
+        eprintln!("⚡ Auto-starting Postgres...");
+    } else {
+        eprintln!("⚡ Auto-starting NATS...");
     }
 
+    let start = std::time::Instant::now();
+    let _watchdog = spawn_watchdog("Starting stack", 30);
+
     let result = std::process::Command::new("cargo")
-        .args(["xtask", "stack", "start"])
+        .args(["xtask", "infra", "start"])
         .stdout(if verbose {
             std::process::Stdio::inherit()
         } else {
             std::process::Stdio::null()
         })
-        .stderr(if verbose {
-            std::process::Stdio::inherit()
-        } else {
-            std::process::Stdio::null()
-        })
+        // Always show stderr so errors/warnings are visible
+        .stderr(std::process::Stdio::inherit())
         .status();
 
+    let elapsed = start.elapsed();
     match result {
         Ok(exit) if exit.success() => {
-            if verbose {
-                eprintln!("✓ Stack started");
-            }
+            eprintln!("✓ Stack started ({:.1}s)", elapsed.as_secs_f64());
             Ok(true)
         }
         Ok(_) => {
-            eprintln!("✗ Failed to start stack");
+            eprintln!("✗ Failed to start stack ({:.1}s)", elapsed.as_secs_f64());
             Ok(false)
         }
         Err(e) => {
@@ -223,12 +332,15 @@ pub fn ensure_tls_certs(is_interactive: bool) -> Result<()> {
 /// Auto-apply pending migrations.
 ///
 /// Runs `cargo run -p sinex-schema --bin sinex-schema -- up` to apply migrations.
+/// On success, records the current migration directory hash to prevent
+/// unnecessary re-runs.
 fn auto_apply_migrations(verbose: bool) -> Result<bool> {
     let config = crate::infra::stack::StackConfig::for_current_checkout()?;
 
-    if verbose {
-        eprintln!("⚡ Applying pending database migrations...");
-    }
+    eprintln!("⚡ Applying pending database migrations...");
+
+    let start = std::time::Instant::now();
+    let _watchdog = spawn_watchdog("Applying migrations", 30);
 
     let result = std::process::Command::new("cargo")
         .args([
@@ -247,22 +359,23 @@ fn auto_apply_migrations(verbose: bool) -> Result<bool> {
         } else {
             std::process::Stdio::null()
         })
-        .stderr(if verbose {
-            std::process::Stdio::inherit()
-        } else {
-            std::process::Stdio::null()
-        })
+        // Always show stderr so compilation/connection errors are visible
+        .stderr(std::process::Stdio::inherit())
         .status();
 
+    let elapsed = start.elapsed();
     match result {
         Ok(exit) if exit.success() => {
-            if verbose {
-                eprintln!("✓ Migrations applied");
-            }
+            eprintln!("✓ Migrations applied ({:.1}s)", elapsed.as_secs_f64());
+            // Record successful migration state
+            record_migrations_applied();
             Ok(true)
         }
         Ok(_) => {
-            eprintln!("✗ Failed to apply migrations");
+            eprintln!(
+                "✗ Failed to apply migrations ({:.1}s)",
+                elapsed.as_secs_f64()
+            );
             Ok(false)
         }
         Err(e) => {
@@ -272,18 +385,190 @@ fn auto_apply_migrations(verbose: bool) -> Result<bool> {
     }
 }
 
+/// Compute a hash of the event payload schemas directory.
+fn hash_contracts_dir() -> String {
+    use std::collections::BTreeMap;
+    use std::hash::{Hash, Hasher};
+
+    let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let payloads_dir = crate_dir.join("../crate/lib/sinex-primitives/src/types/events/payloads");
+
+    // Use BTreeMap for deterministic ordering
+    let mut file_info: BTreeMap<String, u64> = BTreeMap::new();
+
+    if let Ok(entries) = std::fs::read_dir(&payloads_dir) {
+        for entry in entries.filter_map(Result::ok) {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.ends_with(".rs") {
+                if let Ok(meta) = entry.metadata() {
+                    let mtime = meta
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    let size = meta.len();
+                    file_info.insert(name, mtime ^ size);
+                }
+            }
+        }
+    }
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for (name, info) in &file_info {
+        name.hash(&mut hasher);
+        info.hash(&mut hasher);
+    }
+    format!("{:016x}", hasher.finish())
+}
+
+/// Check if contracts directory has changed since last deploy.
+fn contracts_changed_since_last_deploy() -> bool {
+    let state_dir = state_dir();
+    let hash_file = state_dir.join("contracts-hash.txt");
+
+    let current_hash = hash_contracts_dir();
+    let cached_hash = std::fs::read_to_string(&hash_file).ok();
+
+    cached_hash.as_deref() != Some(&current_hash)
+}
+
+/// Record that contracts were deployed with current directory state.
+fn record_contracts_deployed() {
+    let state_dir = state_dir();
+    if std::fs::create_dir_all(&state_dir).is_ok() {
+        let hash_file = state_dir.join("contracts-hash.txt");
+        let _ = std::fs::write(hash_file, hash_contracts_dir());
+    }
+}
+
+/// Auto-deploy contracts if schemas have changed.
+///
+/// Only deploys if:
+/// 1. Database is ready (contracts check-ready passes)
+/// 2. Schema files have changed since last deploy
+fn auto_deploy_contracts(verbose: bool) -> Result<bool> {
+    // Skip if no changes detected
+    if !contracts_changed_since_last_deploy() {
+        return Ok(false);
+    }
+
+    let config = match crate::infra::stack::StackConfig::for_current_checkout() {
+        Ok(c) => c,
+        Err(_) => return Ok(false),
+    };
+
+    // Check if database is ready for contracts (tables exist)
+    let check_output = std::process::Command::new("psql")
+        .env("PGHOST", config.run_dir())
+        .env("PGPORT", config.postgres.port.to_string())
+        .env("PGUSER", &config.postgres.user)
+        .env("PGDATABASE", &config.postgres.database)
+        .args([
+            "-tAc",
+            "SELECT 1 FROM pg_tables WHERE schemaname='sinex_schemas' AND tablename='event_payload_schemas'",
+        ])
+        .output();
+
+    let tables_exist = check_output
+        .map(|out| out.status.success() && !out.stdout.is_empty())
+        .unwrap_or(false);
+
+    if !tables_exist {
+        // Database not ready for contracts yet
+        return Ok(false);
+    }
+
+    eprintln!("⚡ Auto-deploying event payload contracts (schemas changed)...");
+
+    let start = std::time::Instant::now();
+    let _watchdog = spawn_watchdog("Deploying contracts", 30);
+
+    let result = std::process::Command::new("cargo")
+        .args([
+            "xtask",
+            "contracts",
+            "deploy",
+            "--database-url",
+            &config.database_url(),
+        ])
+        .stdout(if verbose {
+            std::process::Stdio::inherit()
+        } else {
+            std::process::Stdio::null()
+        })
+        // Always show stderr so errors are visible
+        .stderr(std::process::Stdio::inherit())
+        .status();
+
+    let elapsed = start.elapsed();
+    match result {
+        Ok(exit) if exit.success() => {
+            eprintln!("✓ Contracts deployed ({:.1}s)", elapsed.as_secs_f64());
+            record_contracts_deployed();
+            Ok(true)
+        }
+        Ok(_) => {
+            // Non-fatal: contracts deploy failure shouldn't block tests
+            eprintln!(
+                "⚠️  Contracts deploy failed ({:.1}s, non-fatal)",
+                elapsed.as_secs_f64()
+            );
+            Ok(false)
+        }
+        Err(e) => {
+            eprintln!("⚠️  Contracts deploy failed: {e} (non-fatal)");
+            Ok(false)
+        }
+    }
+}
+
+/// Check for required external tools.
+///
+/// Returns an error with a clear message if any required tools are missing.
+/// This helps users understand they need to enter the devshell.
+///
+/// Only checks for tools that are essential for preflight operations:
+/// - pg_isready: Check if Postgres is running
+/// - psql: Run migrations and queries
+/// - createdb: Create databases
+///
+/// NATS-related tools are checked separately when NATS is needed.
+fn check_required_tools() -> Result<()> {
+    // Core database tools needed for all preflight operations
+    let tools = ["pg_isready", "psql", "createdb"];
+    let missing: Vec<_> = tools
+        .iter()
+        .filter(|t| which::which(t).is_err())
+        .copied()
+        .collect();
+
+    if !missing.is_empty() {
+        bail!(
+            "Missing required tools: {}. Enter devshell with `nix develop` or ensure these are on PATH.",
+            missing.join(", ")
+        );
+    }
+    Ok(())
+}
+
 /// Ensure all infrastructure is ready for a command.
 ///
 /// This is the main entry point for preflight checks. It will:
-/// 1. Check if stack is running, auto-start if not
-/// 2. Generate TLS certs if missing (interactive only)
-/// 3. Auto-apply pending migrations
+/// 1. Check required tools are available
+/// 2. Check if stack is running, auto-start if not
+/// 3. Generate TLS certs if missing (interactive only)
+/// 4. Auto-apply pending migrations
+/// 5. Auto-deploy contracts if payload schemas changed
 pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
+    // 0. Check required tools are available
+    check_required_tools()?;
+
     let is_interactive = ctx.is_human();
     let status = InfraStatus::capture();
 
     // 1. Auto-start stack if not running
-    // Note: stack start also runs migrations, so we only need to check migrations
+    // Note: infra start also runs migrations, so we only need to check migrations
     // in the case where the stack was already running
     if !status.stack_running() {
         auto_start_stack(is_interactive)?;
@@ -300,6 +585,9 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
     if status.migrations_pending {
         auto_apply_migrations(is_interactive)?;
     }
+
+    // 4. Auto-deploy contracts if payload schemas changed
+    auto_deploy_contracts(is_interactive)?;
 
     Ok(())
 }

@@ -54,9 +54,6 @@ use crate::sandbox::events::{cleanup_created_records, CreatedEventInfo, EventPub
 use crate::sandbox::nats::shared_nats_handle;
 use crate::sandbox::nats::EphemeralNats;
 use crate::sandbox::nats::NatsSetup;
-use crate::sandbox::orchestrator::{
-    start_test_ingestd_with_config, TestIngestdConfig, TestIngestdHandle,
-};
 use crate::sandbox::prelude::TestResult;
 use crate::sandbox::snapshot_helper::{self, FailureContext};
 use crate::sandbox::timing::TimingUtils;
@@ -71,8 +68,6 @@ use sinex_db::DbPoolExt;
 use sinex_primitives::events::Publishable;
 use sinex_primitives::{Event, Id, SourceMaterial, Ulid};
 use std::result::Result as StdResult;
-
-use std::str::FromStr;
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
@@ -126,7 +121,6 @@ pub struct Sandbox {
     nats_mode: NatsMode,
     env: SinexEnvironment,
     pipeline_namespace: PipelineNamespace,
-    pipeline_ingestd: Arc<AsyncMutex<Option<TestIngestdHandle>>>,
     _reaper: Arc<NamespaceReaper>,
     /// Lazy-initialized shared NATS for property tests (doesn't consume self)
     lazy_shared_nats: Arc<AsyncOnceCell<(Arc<EphemeralNats>, NatsClient)>>,
@@ -383,22 +377,12 @@ impl Sandbox {
             nats_mode: NatsMode::None,
             env: sinex_primitives::environment(),
             pipeline_namespace: pipeline_namespace.clone(),
-            pipeline_ingestd: Arc::new(AsyncMutex::new(None)),
             _reaper: Arc::new(NamespaceReaper {
                 namespace: pipeline_namespace,
                 nats: Mutex::new(None),
             }),
             lazy_shared_nats: Arc::new(AsyncOnceCell::new()),
         };
-
-        // Register the default test material ID so test_event() works out of the box
-        let material_id =
-            Ulid::from_str(crate::DEFAULT_TEST_MATERIAL_ID).expect("valid constant ULID");
-        ctx.ensure_source_material(
-            Id::<SourceMaterial>::from_ulid(material_id),
-            Some("test-material"),
-        )
-        .await?;
 
         Ok(ctx)
     }
@@ -544,40 +528,6 @@ impl Sandbox {
         PipelineScope::new(self).await
     }
 
-    pub(crate) async fn ensure_pipeline_ingestd(&self) -> TestResult<()> {
-        self.ensure_shared_nats()?;
-        let mut guard = self.pipeline_ingestd.lock().await;
-        if guard.is_some() {
-            return Ok(());
-        }
-
-        let nats = self.nats_handle()?;
-        let namespace = self.pipeline_namespace().prefix().to_string();
-        let mut config = TestIngestdConfig {
-            nats: nats.connection_config(),
-            database_url: self.database_url().to_string(),
-            work_dir: None,
-            namespace: Some(namespace),
-            ..Default::default()
-        };
-        config.batch_size = 32;
-        config.batch_timeout_secs = sinex_primitives::Seconds::from_secs(1);
-        config.consumer_fetch_max_messages = 32;
-        config.consumer_fetch_timeout_ms = 200;
-        let handle = start_test_ingestd_with_config(config, Some(self)).await?;
-        *guard = Some(handle);
-        drop(guard);
-
-        let ingestd_handle = self.pipeline_ingestd.clone();
-        self.register_shutdown_hook("pipeline-ingestd-shutdown", async move {
-            if let Some(mut handle) = ingestd_handle.lock().await.take() {
-                let _ = handle.stop().await;
-            }
-        })
-        .await;
-        Ok(())
-    }
-
     pub(crate) fn ensure_shared_nats(&self) -> TestResult<()> {
         match self.nats_mode {
             NatsMode::Shared => Ok(()),
@@ -602,16 +552,6 @@ impl Sandbox {
         self.quiesce_background_tasks().await?;
         reset_database(&self.pool).await?;
         verify_clean_state(&self.pool).await?;
-
-        // Re-register the default test material ID so test_event() continues to work
-        let material_id =
-            Ulid::from_str(crate::DEFAULT_TEST_MATERIAL_ID).expect("valid constant ULID");
-        self.ensure_source_material(
-            Id::<SourceMaterial>::from_ulid(material_id),
-            Some("test-material"),
-        )
-        .await?;
-
         Ok(())
     }
 
