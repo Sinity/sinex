@@ -270,7 +270,7 @@ unicode-normalization = "0.1"
 schemars = { version = "0.8", features = ["uuid1"] }
 tempfile = "3.0"
 jsonschema = "0.17"
-validator = { version = "0.18", features = ["derive"] }
+validator = { version = "0.20", features = ["derive"] }
 figment = { version = "0.10.19", features = ["toml", "yaml", "json", "env"] }
 humantime-serde = "1.1"
 uncased = "0.9"

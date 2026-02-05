@@ -20,8 +20,8 @@
 //! - Test with malformed but parseable JSON structures
 //! - Focus on the modern `RawEvent::schemaless()` API and database insertion paths
 
+use sinex_primitives::testing::event_fixture;
 use xtask::sandbox::prelude::*;
-use xtask::sandbox::test_event;
 
 use proptest::{strategy::ValueTree, test_runner::TestCaseResult};
 use serde_json::{Map as JsonMap, Value as JsonValue};
@@ -166,7 +166,7 @@ fn fuzzed_events() -> impl Strategy<Value = Event<JsonValue>> {
         malformed_json_values(),  // payload
     )
         .prop_map(|(source, event_type, ts_orig, host, payload)| {
-            let mut event = test_event(
+            let mut event = event_fixture(
                 EventSource::new(source),
                 EventType::new(event_type),
                 payload,
@@ -422,7 +422,7 @@ sinex_proptest! {
             Just("dir.deleted"),
         ],
     ) -> TestResult<()> {
-        let mut event = test_event(
+        let mut event = event_fixture(
             EventSource::new(if source.is_empty() { "fs".to_string() } else { source }),
             EventType::new(event_type.to_string()),
             payload,
@@ -453,7 +453,7 @@ sinex_proptest! {
             Just("session.ended"),
         ],
     ) -> TestResult<()> {
-        let mut event = test_event(
+        let mut event = event_fixture(
             EventSource::new(source.to_string()),
             EventType::new(event_type.to_string()),
             payload,
@@ -475,7 +475,7 @@ sinex_proptest! {
             Just("selected"),
         ],
     ) -> TestResult<()> {
-        let mut event = test_event(
+        let mut event = event_fixture(
             EventSource::new("clipboard".to_string()),
             EventType::new(event_type.to_string()),
             payload,
@@ -506,7 +506,7 @@ sinex_proptest! {
             Just("workspace.destroyed"),
         ],
     ) -> TestResult<()> {
-        let mut event = test_event(
+        let mut event = event_fixture(
             EventSource::new("wm.hyprland".to_string()),
             EventType::new(event_type.to_string()),
             payload,
@@ -537,7 +537,7 @@ sinex_proptest! {
             Just("state.changed"),
         ],
     ) -> TestResult<()> {
-        let mut event = test_event(
+        let mut event = event_fixture(
             EventSource::new(source.to_string()),
             EventType::new(event_type.to_string()),
             payload,
@@ -555,7 +555,7 @@ sinex_proptest! {
     fn test_json_serialization_robustness(
         payload in malformed_json_values()
     ) -> TestResult<()> {
-        let mut event = test_event(
+        let mut event = event_fixture(
             EventSource::new("test".to_string()),
             EventType::new("test.event".to_string()),
             payload,
@@ -585,7 +585,7 @@ sinex_proptest! {
         let _string = ulid.to_string();
 
         // Test that we can create an event with this timestamp
-        let mut event = test_event(
+        let mut event = event_fixture(
             EventSource::new("test".to_string()),
             EventType::new("test.event".to_string()),
             serde_json::json!({}),
@@ -604,7 +604,7 @@ sinex_proptest! {
         event_type in problematic_strings(),
         host in problematic_strings(),
     ) -> TestResult<()> {
-        let mut event = test_event(
+        let mut event = event_fixture(
             EventSource::new(source.clone()),
             EventType::new(event_type),
             serde_json::json!({}),
@@ -697,7 +697,7 @@ async fn test_extreme_payload_database_handling(ctx: TestContext) -> TestResult<
     ];
 
     for (i, payload) in test_cases.into_iter().enumerate() {
-        let event = test_event(
+        let event = event_fixture(
             EventSource::new("fuzzing".to_string()),
             EventType::new("extreme.payload".to_string()),
             payload,
@@ -737,7 +737,7 @@ mod additional_tests {
 
     #[sinex_test]
     async fn test_event_with_null_bytes(ctx: TestContext) -> TestResult<()> {
-        let mut event = test_event(
+        let mut event = event_fixture(
             EventSource::new("test\0null\0bytes".to_string()),
             EventType::new("test\0event".to_string()),
             serde_json::json!({"null_bytes": "test\0data"}),
@@ -763,7 +763,7 @@ mod additional_tests {
             }
         });
 
-        let mut event = test_event(
+        let mut event = event_fixture(
             EventSource::new("test".to_string()),
             EventType::new("test.large".to_string()),
             large_payload,
@@ -787,7 +787,7 @@ mod additional_tests {
             "very_small": f64::MIN,
         });
 
-        let mut event = test_event(
+        let mut event = event_fixture(
             EventSource::new("test".to_string()),
             EventType::new("test.numbers".to_string()),
             payload,
@@ -805,7 +805,7 @@ mod additional_tests {
     fn test_panic_safety_with_catch_unwind() -> TestResult<()> {
         // Test that even if there were a panic, it would be caught
         let result = panic::catch_unwind(|| {
-            let mut event = test_event(
+            let mut event = event_fixture(
                 EventSource::new("\x00\x01\x02".to_string()),
                 EventType::new("💀🔥test".to_string()),
                 serde_json::json!({

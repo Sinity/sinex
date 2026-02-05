@@ -8,10 +8,10 @@
 
 use serde_json::Value;
 use sinex_db::validation::EventValidator;
+use sinex_primitives::testing::event_fixture;
 use sinex_primitives::{Event, EventSource, EventType, HostName, Id, JsonValue, Timestamp, Ulid};
 use time::Duration;
 use xtask::sandbox::prelude::*;
-use xtask::sandbox::test_event;
 type RawEvent = Event<JsonValue>;
 // =============================================================================
 // Property Test Helpers
@@ -43,7 +43,7 @@ fn arbitrary_event() -> impl Strategy<Value = RawEvent> {
         prop::bool::ANY,         // random bool for ts_orig
     )
         .prop_map(|(source, event_type, host, payload, has_ts_orig)| {
-            let mut event = test_event(
+            let mut event = event_fixture(
                 EventSource::new(source),
                 EventType::new(event_type),
                 payload,
@@ -74,7 +74,7 @@ fn empty_source_event() -> impl Strategy<Value = RawEvent> {
         event_payloads(),        // payload
     )
         .prop_map(|(source, event_type, payload)| {
-            let mut event = test_event(
+            let mut event = event_fixture(
                 EventSource::new(source),
                 EventType::new(event_type),
                 payload,
@@ -99,7 +99,7 @@ fn metadata_rich_events() -> impl Strategy<Value = RawEvent> {
                 }
             });
 
-            let mut event = test_event(
+            let mut event = event_fixture(
                 EventSource::new(source),
                 EventType::new(event_type),
                 payload,
@@ -147,7 +147,7 @@ fn boundary_condition_events() -> impl Strategy<Value = RawEvent> {
     ];
 
     proptest::sample::select(edge_cases).prop_map(|(source, event_type, payload)| {
-        let mut event = test_event(
+        let mut event = event_fixture(
             EventSource::new(source),
             EventType::new(event_type),
             payload,
@@ -168,7 +168,7 @@ fn concurrent_operation_events() -> impl Strategy<Value = Vec<RawEvent>> {
                 "timestamp": (*Timestamp::now()).timestamp_millis()
             });
 
-            let mut event = test_event(
+            let mut event = event_fixture(
                 EventSource::new("concurrent_test"),
                 EventType::new("worker.operation"),
                 payload,
@@ -227,7 +227,7 @@ sinex_proptest! {
         host in "[a-zA-Z0-9_.-]{1,255}",
         payload in event_payloads()
     ) -> TestResult<()> {
-        let mut event = test_event(
+        let mut event = event_fixture(
             EventSource::new(source),
             EventType::new(event_type),
             payload,
@@ -252,7 +252,7 @@ sinex_proptest! {
             "size_kb": size_kb
         });
 
-        let mut event = test_event(
+        let mut event = event_fixture(
             EventSource::new("test"),
             EventType::new("payload.size.test"),
             payload,
@@ -364,7 +364,7 @@ sinex_proptest! {
             "size_kb": size_kb
         });
 
-        let mut event = test_event(
+        let mut event = event_fixture(
             EventSource::new("test"),
             EventType::new("payload.size.test"),
             payload,
@@ -573,14 +573,14 @@ mod performance_tests {
         ) -> TestResult<()> {
             // Property: Same invalid input should always produce same error
             if source.is_empty() || event_type.is_empty() {
-                let mut event1 = test_event(
+                let mut event1 = event_fixture(
                     EventSource::new(source.clone()),
                     EventType::new(event_type.clone()),
                     payload.clone(),
                 );
                 event1.id = Some(Id::from_ulid(Ulid::new()));
 
-                let mut event2 = test_event(
+                let mut event2 = event_fixture(
                     EventSource::new(source),
                     EventType::new(event_type),
                     payload,

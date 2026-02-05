@@ -7,9 +7,10 @@ use proptest::prelude::*;
 use serde_json::json;
 use sinex_node_sdk::{Checkpoint, NodeType, ScanArgs, TimeHorizon};
 use sinex_primitives::domain::{EventSource, EventType};
+use sinex_primitives::testing::event_fixture;
 use sinex_primitives::{Event, JsonValue, Timestamp};
 use std::collections::HashMap;
-use xtask::sandbox::{prelude::*, sinex_proptest, test_event};
+use xtask::sandbox::{prelude::*, sinex_proptest};
 
 /// Create property test strategies for events
 fn arb_event_data() -> impl Strategy<Value = (String, String, serde_json::Value)> {
@@ -67,12 +68,12 @@ fn arb_event_data() -> impl Strategy<Value = (String, String, serde_json::Value)
 }
 
 /// Create test events for processing
-fn create_test_event(
+fn create_event_fixture(
     source: &str,
     event_type: &str,
     payload: serde_json::Value,
 ) -> Event<JsonValue> {
-    test_event(
+    event_fixture(
         EventSource::new(source),
         EventType::new(event_type),
         payload,
@@ -172,8 +173,8 @@ sinex_proptest! {
     ) -> TestResult<()> {
         // Property: Same event data should produce equivalent events
         for (source, event_type, payload) in &events {
-            let event1 = create_test_event(source, event_type, payload.clone());
-            let event2 = create_test_event(source, event_type, payload.clone());
+            let event1 = create_event_fixture(source, event_type, payload.clone());
+            let event2 = create_event_fixture(source, event_type, payload.clone());
 
             // Properties that should be identical
             prop_assert_eq!(event1.source, event2.source);
@@ -204,7 +205,7 @@ sinex_proptest! {
     ) -> TestResult<()> {
         // Property: Event creation should handle malformed payloads gracefully
         for payload in &malformed_payloads {
-            let event = create_test_event("test-source", "test.event", payload.clone());
+            let event = create_event_fixture("test-source", "test.event", payload.clone());
 
             // Property: Event should still be created (ID is None for schemaless events)
             prop_assert!(event.id.is_none());
@@ -312,7 +313,7 @@ sinex_proptest! {
         let mut events = Vec::new();
 
         for i in 0..event_count {
-            let event = test_event(
+            let event = event_fixture(
                 EventSource::from_static("automation-test"),
                 EventType::from_static("batch.test"),
                 json!({

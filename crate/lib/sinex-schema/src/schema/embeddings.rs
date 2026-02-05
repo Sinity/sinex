@@ -11,11 +11,16 @@ use sea_orm_migration::prelude::*;
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;
 
-// A constant representing the dimensions of the embedding vectors.
-// This should be chosen based on the primary embedding model used.
-// e.g., OpenAI's text-embedding-ada-002 uses 1536.
-// TODO: Hardcoded to 1536. Needs to be dynamic or configurable (BUG-018).
-const EMBEDDING_DIMENSIONS: u32 = 1536;
+// NOTE: Embedding columns use dynamic `vector` type (no dimension constraint).
+// This allows storing vectors from different embedding models (768, 1536, 3072, etc.).
+//
+// **Indexing Strategy**: Partial HNSW indexes per embedding model.
+// - When a model is registered, a trigger creates partial HNSW indexes
+// - Index uses `(embedding::vector(N))` cast with the model's dimensions
+// - Queries filtered by `embedding_model_id` use the appropriate partial index
+// - This provides O(log n) ANN search while supporting multiple dimension sizes
+//
+// See migration m20260203_000018 for the index creation functions.
 
 // =============================================================================
 // ML Model & Cache Management
@@ -156,7 +161,7 @@ impl EmbeddingCache {
             )
             .col(
                 ColumnDef::new(EmbeddingCache::Embedding)
-                    .custom(Alias::new(format!("vector({EMBEDDING_DIMENSIONS})")))
+                    .custom(Alias::new("vector"))
                     .not_null(),
             )
             .col(ColumnDef::new(EmbeddingCache::TextSample).text()) // First few chars of the text for debugging.
@@ -192,14 +197,13 @@ impl EmbeddingCache {
             .to_owned()]
     }
 
-    /// Creates indexes, including the crucial vector index for similarity search.
+    /// Creates standard indexes for embedding cache lookups.
+    /// Note: HNSW vector indexes are created per-model via trigger on embedding_models insert.
     #[must_use]
     pub fn create_indexes_sql() -> Vec<String> {
         vec![
             // Standard index for quick lookups by text hash and model.
-            format!("CREATE UNIQUE INDEX IF NOT EXISTS ux_embedding_cache_hash_model ON core.embedding_cache (text_hash, embedding_model_id);"),
-            // A vector index is ESSENTIAL for performant similarity search. HNSW is generally preferred for its speed and accuracy.
-            format!("CREATE INDEX IF NOT EXISTS ix_embedding_cache_vector ON core.embedding_cache USING hnsw (embedding vector_cosine_ops);"),
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_embedding_cache_hash_model ON core.embedding_cache (text_hash, embedding_model_id);".to_string(),
         ]
     }
 }
@@ -264,7 +268,7 @@ impl EventEmbeddings {
             ) // The actual text that was embedded.
             .col(
                 ColumnDef::new(EventEmbeddings::Embedding)
-                    .custom(Alias::new(format!("vector({EMBEDDING_DIMENSIONS})")))
+                    .custom(Alias::new("vector"))
                     .not_null(),
             )
             .foreign_key(
@@ -292,11 +296,10 @@ impl EventEmbeddings {
             .to_owned()]
     }
 
+    /// Note: HNSW vector indexes are created per-model via trigger on embedding_models insert.
     #[must_use]
     pub fn create_indexes_sql() -> Vec<String> {
-        vec![
-            format!("CREATE INDEX IF NOT EXISTS ix_event_embeddings_vector ON core.event_embeddings USING hnsw (embedding vector_cosine_ops);"),
-        ]
+        vec![]
     }
 }
 

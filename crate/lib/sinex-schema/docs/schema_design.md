@@ -175,14 +175,22 @@ WHERE source_event_ids IS NOT NULL;
 ```
 
 #### Vector Search Optimization
-```sql
--- pgvector indexes for semantic search
-CREATE INDEX idx_concepts_embedding ON km.concepts 
-USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
 
-CREATE INDEX idx_embeddings_vector ON km.embeddings 
-USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+**Embedding Dimension Strategy**: Vector columns use dynamic `vector` type (no dimension constraint), enabling different embedding models (768, 1536, 3072 dimensions) without schema migrations.
+
+**Partial HNSW Indexes**: Each embedding model gets its own partial HNSW index, automatically created via trigger when the model is registered:
+
+```sql
+-- Auto-created when embedding model is inserted (via trigger)
+CREATE INDEX ix_event_embeddings_hnsw_{model_id} ON core.event_embeddings
+USING hnsw ((embedding::vector(1536)) vector_cosine_ops)
+WHERE embedding_model_id = '{model_id}';
+
+-- Manual creation via function:
+SELECT core.create_embedding_model_index(model_id, dimensions);
 ```
+
+This provides O(log n) ANN search while supporting multiple dimension sizes. Queries must filter by `embedding_model_id` to use the appropriate partial index.
 
 ### Constraint Usage Patterns
 

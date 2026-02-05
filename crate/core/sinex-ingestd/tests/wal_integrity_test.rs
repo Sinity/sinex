@@ -1,5 +1,5 @@
 use serde_json::json;
-use sinex_ingestd::MaterialAssembler;
+use sinex_ingestd::{MaterialAssembler, MaterialReadySet};
 use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
 use std::sync::Arc;
 use xtask::sandbox::prelude::*;
@@ -46,6 +46,7 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
             state_path.clone(),
             Some(namespace.clone()),
             1_000,
+            MaterialReadySet::default(),
         )?;
         let handle = tokio::spawn(async move { assembler.run().await });
 
@@ -108,6 +109,7 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
             state_path.clone(),
             Some(namespace.clone()),
             1_000,
+            MaterialReadySet::default(),
         )?;
         let handle = tokio::spawn(async move { assembler.run().await });
 

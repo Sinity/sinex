@@ -11,7 +11,7 @@ use figment::{
 use serde::{Deserialize, Serialize};
 use sinex_primitives::{
     environment::environment,
-    units::{Bytes, Milliseconds, Seconds},
+    units::{Bytes, Milliseconds},
     validation::{deserialize_validated_utf8_path, validate_path},
 };
 use tracing::{debug, error, info, warn};
@@ -45,11 +45,6 @@ pub struct IngestdConfig {
     #[builder(default = 1000)]
     pub batch_size: usize,
 
-    /// Batch timeout in seconds
-    #[serde(default = "default_batch_timeout_secs")]
-    #[builder(default = default_batch_timeout_secs())]
-    #[validate(custom(function = "validate_batch_timeout_secs"))]
-    pub batch_timeout_secs: Seconds,
     /// Maximum messages to fetch per `JetStream` pull batch
     #[builder(default = default_consumer_fetch_max_messages())]
     #[validate(range(
@@ -187,7 +182,8 @@ impl IngestdConfig {
         nats_require_tls: bool,
         pool_size: u32,
         batch_size: usize,
-        batch_timeout_secs: Seconds,
+        consumer_fetch_max_messages: Option<usize>,
+        consumer_fetch_timeout_ms: Option<u64>,
         dry_run: bool,
         annex_repo_path: Option<String>,
         assembler_state_dir: Option<String>,
@@ -208,11 +204,18 @@ impl IngestdConfig {
         config.database_url = db_url;
         config.database_pool_size = pool_size;
         config.batch_size = batch_size;
-        config.batch_timeout_secs = batch_timeout_secs;
         config.dry_run = dry_run;
         config.skip_schema_sync = skip_schema_sync;
         config.validate_schemas = validate_schemas;
         config.nats = nats_config_clone;
+
+        // Override fetch config if specified
+        if let Some(max_msgs) = consumer_fetch_max_messages {
+            config.consumer_fetch_max_messages = max_msgs;
+        }
+        if let Some(timeout_ms) = consumer_fetch_timeout_ms {
+            config.consumer_fetch_timeout_ms = Milliseconds::from_millis(timeout_ms);
+        }
 
         if let Some(path) = annex_repo_path {
             config.annex_repo_path = Utf8PathBuf::from(path);
@@ -409,7 +412,6 @@ impl Default for IngestdConfig {
             database_pool_size: 50,
             nats: sinex_primitives::nats::NatsConnectionConfig::from_env(),
             batch_size: default_batch_size(),
-            batch_timeout_secs: default_batch_timeout_secs(),
             consumer_fetch_max_messages: default_consumer_fetch_max_messages(),
             consumer_fetch_timeout_ms: default_consumer_fetch_timeout_ms(),
             consumer_max_ack_pending: default_consumer_max_ack_pending(),
@@ -460,10 +462,6 @@ fn default_work_dir() -> Utf8PathBuf {
                 .unwrap_or_else(|_| Utf8PathBuf::from("/tmp/sinex/ingestd"))
         }
     }
-}
-
-fn default_batch_timeout_secs() -> Seconds {
-    Seconds::from_secs(5)
 }
 
 fn default_batch_size() -> usize {
@@ -564,13 +562,6 @@ fn validate_state_dir(path: &Utf8PathBuf) -> Result<(), validator::ValidationErr
     validate_path(path.as_str())
         .map(|_| ())
         .map_err(|_| validator::ValidationError::new("invalid_state_dir"))
-}
-
-fn validate_batch_timeout_secs(value: &Seconds) -> Result<(), ValidationError> {
-    if value.as_secs() == 0 {
-        return Err(ValidationError::new("min"));
-    }
-    Ok(())
 }
 
 fn validate_max_message_size(value: &Bytes) -> Result<(), ValidationError> {

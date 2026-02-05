@@ -4,7 +4,8 @@
 
 // Local crate imports
 use crate::{
-    config::IngestdConfig, validator::EventValidator, IngestdResult, JetStreamTopology, SinexError,
+    config::IngestdConfig, material_ready_set::MaterialReadySet, validator::EventValidator,
+    IngestdResult, JetStreamTopology, SinexError,
 };
 use sinex_primitives::error::ResultExt;
 
@@ -185,10 +186,21 @@ impl IngestService {
     pub async fn run(&mut self) -> IngestdResult<()> {
         info!("Starting ingestion service");
 
+        // Create shared MaterialReadySet for cross-consumer coordination.
+        // This prevents FK violations when events arrive before their material's BEGIN
+        // message is processed (separate NATS streams, no cross-stream ordering).
+        let ready_set = MaterialReadySet::new();
+        if let Some(pool) = &self.db_pool {
+            if let Err(e) = ready_set.seed_from_db(pool).await {
+                warn!("Failed to seed MaterialReadySet from database: {}", e);
+                // Non-fatal: events will be deferred until materials are registered
+            }
+        }
+
         // Start JetStream and MaterialAssembler tasks (critical - failure stops service)
         let js_handle = match (&self.nats_client, &self.db_pool) {
             (Some(nats), Some(pool)) => Some(
-                self.start_jetstream_consumer_task(nats.clone(), pool.clone())
+                self.start_jetstream_consumer_task(nats.clone(), pool.clone(), ready_set.clone())
                     .await,
             ),
             _ => None,
@@ -196,7 +208,7 @@ impl IngestService {
 
         let ma_handle = match (&self.nats_client, &self.db_pool) {
             (Some(nats), Some(pool)) => Some(
-                self.start_material_assembler_task(nats.clone(), pool.clone())
+                self.start_material_assembler_task(nats.clone(), pool.clone(), ready_set.clone())
                     .await,
             ),
             _ => None,
@@ -355,6 +367,7 @@ impl IngestService {
         &self,
         nats_client: NatsClient,
         pool: PgPool,
+        ready_set: MaterialReadySet,
     ) -> JoinHandle<IngestdResult<()>> {
         let shutdown_flag = self.shutdown_flag.clone();
         let validator = self.validator.clone();
@@ -378,7 +391,8 @@ impl IngestService {
                 topology,
             )
             .with_batch_fetch_config(fetch_max, fetch_timeout)
-            .with_max_ack_pending(max_ack_pending);
+            .with_max_ack_pending(max_ack_pending)
+            .with_ready_set(ready_set);
 
             tokio::select! {
                 result = consumer.run() => {
@@ -406,6 +420,7 @@ impl IngestService {
         &self,
         nats_client: NatsClient,
         pool: PgPool,
+        ready_set: MaterialReadySet,
     ) -> JoinHandle<IngestdResult<()>> {
         let shutdown_flag = self.shutdown_flag.clone();
         let annex_repo_path = self.config.annex_repo_path.clone();
@@ -443,6 +458,7 @@ impl IngestService {
                 state_dir,
                 namespace.clone(),
                 slices_max_ack_pending,
+                ready_set,
             ) {
                 Ok(assembler) => assembler,
                 Err(e) => {

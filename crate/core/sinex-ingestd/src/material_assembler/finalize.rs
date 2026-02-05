@@ -510,6 +510,9 @@ impl MaterialAssembler {
         )
         .await?;
 
+        // Signal readiness for any events still waiting on this material's FK target.
+        self.ready_set.mark_ready(material_id);
+
         let blob_id = match self
             .upsert_blob(&final_state, &annex_key, &end.content_hash)
             .await

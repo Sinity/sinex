@@ -8,9 +8,10 @@ use proptest::test_runner::TestCaseError;
 use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::domain::{EventSource, EventType};
+use sinex_primitives::testing::event_fixture;
 use sinex_primitives::{Event, JsonValue};
 use std::time::Duration;
-use xtask::sandbox::{prelude::*, sinex_prop, sinex_proptest, test_event};
+use xtask::sandbox::{prelude::*, sinex_prop, sinex_proptest};
 
 /// Helper to convert `color_eyre::Report` errors to `TestCaseError` for property tests
 fn report_to_test_error<E: std::fmt::Display>(e: E) -> TestCaseError {
@@ -27,7 +28,7 @@ mod strategies {
             proptest::collection::vec(
                 (event_sources(), event_types(), event_payloads()).prop_map(
                     |(source, event_type, payload)| {
-                        test_event(
+                        event_fixture(
                             EventSource::new(&source),
                             EventType::new(&event_type),
                             payload,
@@ -176,7 +177,7 @@ async fn node_handles_intermittent_failures(
 
         if should_fail {
             // Simulate failure by creating invalid event (empty source)
-            let invalid_event = test_event(
+            let invalid_event = event_fixture(
                 EventSource::new(""),
                 EventType::new(event_type),
                 payload.clone(),
@@ -185,7 +186,7 @@ async fn node_handles_intermittent_failures(
             let _ = ctx.pool.events().insert(invalid_event).await;
         } else {
             // Process normal event
-            let event = test_event(
+            let event = event_fixture(
                 EventSource::new(source),
                 EventType::new(event_type),
                 payload.clone(),
@@ -244,7 +245,7 @@ async fn node_manages_resources_efficiently(
             let mut operation_events = 0;
 
             for j in 0..per_op {
-                let event = test_event(
+                let event = event_fixture(
                     EventSource::new(&source),
                     EventType::new(format!("test.event.{j}")),
                     json!({ "operation": i, "event": j }),
@@ -336,7 +337,7 @@ async fn node_batch_processing_is_consistent(
     // Process events in first batch configuration
     let half_point = events.len() / 2;
     for (source, event_type, payload) in events.iter().take(half_point) {
-        let event = test_event(
+        let event = event_fixture(
             EventSource::new(source),
             EventType::new(event_type),
             payload.clone(),
@@ -354,7 +355,7 @@ async fn node_batch_processing_is_consistent(
 
     // Process remaining events (simulating batch size change)
     for (source, event_type, payload) in events.iter().skip(half_point) {
-        let event = test_event(
+        let event = event_fixture(
             EventSource::new(source),
             EventType::new(event_type),
             payload.clone(),
@@ -395,7 +396,7 @@ async fn node_survives_processing_interruptions(
 
     // Phase 1: Normal operation
     for i in 0..events_before_interruption {
-        let event = test_event(
+        let event = event_fixture(
             EventSource::new("interruption_test"),
             EventType::new(format!("before.{i}")),
             json!({ "phase": "before", "index": i }),
@@ -412,7 +413,7 @@ async fn node_survives_processing_interruptions(
 
     // Phase 2: Simulate interruption by creating events that might be delayed
     for i in 0..events_during_interruption {
-        let event = test_event(
+        let event = event_fixture(
             EventSource::new("interruption_test"),
             EventType::new(format!("during.{i}")),
             json!({ "phase": "during", "index": i }),
@@ -428,7 +429,7 @@ async fn node_survives_processing_interruptions(
 
     // Phase 3: Recovery
     for i in 0..events_after_interruption {
-        let event = test_event(
+        let event = event_fixture(
             EventSource::new("interruption_test"),
             EventType::new(format!("after.{i}")),
             json!({ "phase": "after", "index": i }),
@@ -477,7 +478,7 @@ async fn node_maintains_event_ordering_under_load(
 
         let handle = tokio::spawn(async move {
             for event_id in 0..per_source {
-                let event = test_event(
+                let event = event_fixture(
                     EventSource::new(source_name.clone()),
                     EventType::new("ordering.test"),
                     json!({

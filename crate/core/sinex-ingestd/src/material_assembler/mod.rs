@@ -28,7 +28,7 @@ use std::{collections::BTreeMap, path::PathBuf, str::FromStr, sync::Arc};
 use tokio::{fs, fs::File, sync::Mutex};
 use tracing::{info, warn};
 
-use crate::{IngestdResult, SinexError};
+use crate::{material_ready_set::MaterialReadySet, IngestdResult, SinexError};
 use state::{
     is_terminal_status, AssemblerState, FinalizationState, MaterialEndMessage, DLQ_CONSUMER,
     TEMP_FILE_NAME,
@@ -63,6 +63,7 @@ pub struct MaterialAssembler {
     dlq_subject: String,
     slices_max_ack_pending: i64,
     active_assemblies: Arc<tokio::sync::Semaphore>,
+    ready_set: MaterialReadySet,
 }
 
 impl MaterialAssembler {
@@ -74,6 +75,7 @@ impl MaterialAssembler {
         state_root: PathBuf,
         namespace: Option<String>,
         slices_max_ack_pending: i64,
+        ready_set: MaterialReadySet,
     ) -> IngestdResult<Self> {
         if let Err(e) = std::fs::create_dir_all(&state_root) {
             return Err(SinexError::io(format!(
@@ -107,6 +109,7 @@ impl MaterialAssembler {
             dlq_subject,
             slices_max_ack_pending,
             active_assemblies,
+            ready_set,
         })
     }
 
@@ -265,6 +268,7 @@ impl MaterialAssembler {
             dlq_subject: self.dlq_subject.clone(),
             slices_max_ack_pending: self.slices_max_ack_pending,
             active_assemblies: self.active_assemblies.clone(),
+            ready_set: self.ready_set.clone(),
         }
     }
 

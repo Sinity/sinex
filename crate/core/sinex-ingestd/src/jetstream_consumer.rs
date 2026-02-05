@@ -17,10 +17,12 @@ use tokio::time::{timeout, Duration};
 use tracing::{debug, error, info, warn};
 
 use crate::{
+    material_ready_set::MaterialReadySet,
     validator::{EventValidator, ValidationResult},
     IngestdResult, SinexError,
 };
 use sinex_db::postgres_copy::ToPostgresCopy;
+use sinex_primitives::events::builder::Provenance;
 use sinex_primitives::events::Event;
 use tokio::sync::RwLock;
 
@@ -56,6 +58,10 @@ pub struct JetStreamConsumer {
     recent_id_cache: Mutex<RecentIdCache>,
     batch_fetch_max_messages: usize,
     batch_fetch_timeout: Duration,
+    /// Shared coordination set: when present, events whose `source_material_id` hasn't
+    /// been registered yet are NAK'd with a short delay instead of attempting a DB insert
+    /// that would hit an FK violation.
+    ready_set: Option<MaterialReadySet>,
 }
 
 #[derive(Debug, Clone)]
@@ -111,6 +117,11 @@ const CONFIRM_PUBLISH_MAX_ATTEMPTS: usize = 3;
 const CONFIRM_PUBLISH_BACKOFF_BASE: Duration = Duration::from_millis(200);
 const CONFIRM_PUBLISH_BACKOFF_MAX: Duration = Duration::from_secs(2);
 const CONFIRM_RETRY_DELAY: Duration = Duration::from_secs(1);
+/// Retry delay for deferred events whose source material isn't registered yet.
+/// Short delay (200ms) allows the MaterialAssembler to process the BEGIN message
+/// before JetStream redelivers the event. Used by both the proactive ready-set
+/// pre-filter and the reactive FK violation safety net.
+const FK_VIOLATION_RETRY_DELAY: Duration = Duration::from_millis(200);
 const STREAM_CAPACITY_WARNING_THRESHOLD: f64 = 0.8; // Alert at 80% capacity
 const STREAM_CAPACITY_CHECK_INTERVAL: Duration = Duration::from_mins(5); // Check every 5 minutes
 
@@ -167,6 +178,7 @@ struct PreparedEvent {
 struct ConsumerStats {
     events_processed: AtomicU64,
     events_failed: AtomicU64,
+    events_deferred: AtomicU64,
     validation_failures: AtomicU64,
     dlq_routed: AtomicU64,
     confirmation_failures: AtomicU64,
@@ -180,6 +192,7 @@ impl ConsumerStats {
         info!(
             events_processed = self.events_processed.load(Ordering::Relaxed),
             events_failed = self.events_failed.load(Ordering::Relaxed),
+            events_deferred = self.events_deferred.load(Ordering::Relaxed),
             validation_failures = self.validation_failures.load(Ordering::Relaxed),
             nats_errors = self.nats_errors.load(Ordering::Relaxed),
             dlq_routed = self.dlq_routed.load(Ordering::Relaxed),
@@ -217,6 +230,7 @@ impl JetStreamConsumer {
             recent_id_cache: Mutex::new(RecentIdCache::new(RECENT_ID_CACHE_SIZE)),
             batch_fetch_max_messages: DEFAULT_BATCH_FETCH_MAX_MESSAGES,
             batch_fetch_timeout: DEFAULT_BATCH_FETCH_TIMEOUT,
+            ready_set: None,
         }
     }
 
@@ -243,6 +257,15 @@ impl JetStreamConsumer {
     /// Override the maximum unacknowledged messages for the consumer.
     pub fn with_max_ack_pending(mut self, max_ack_pending: i64) -> Self {
         self.max_ack_pending = max_ack_pending.max(1);
+        self
+    }
+
+    /// Attach a `MaterialReadySet` for proactive FK-violation prevention.
+    ///
+    /// When set, events whose `source_material_id` is not yet registered will be
+    /// NAK'd with a short delay instead of hitting a database FK constraint error.
+    pub fn with_ready_set(mut self, ready_set: MaterialReadySet) -> Self {
+        self.ready_set = Some(ready_set);
         self
     }
 
@@ -483,7 +506,53 @@ impl JetStreamConsumer {
 
     #[tracing::instrument(skip(self, batch), fields(batch_size = batch.len()))]
     async fn persist_and_confirm_batch(&self, batch: &[PreparedEvent]) -> IngestdResult<()> {
-        match self.persist_batch_optimized(batch).await {
+        // Pre-filter: defer events whose source material isn't registered yet.
+        // This prevents FK violations without relying on database error handling.
+        let batch = if let Some(ref ready_set) = self.ready_set {
+            let (ready, not_ready): (Vec<&PreparedEvent>, Vec<&PreparedEvent>) =
+                batch.iter().partition(|prepared| {
+                    match &prepared.event.provenance {
+                        // Material provenance: check if the referenced material is registered
+                        Provenance::Material { id, .. } => ready_set.is_ready(id.as_ulid()),
+                        // Synthesis provenance (and any future variants) have no material FK
+                        _ => true,
+                    }
+                });
+
+            if !not_ready.is_empty() {
+                debug!(
+                    deferred = not_ready.len(),
+                    ready = ready.len(),
+                    "Deferring events whose source material is not yet registered"
+                );
+                for prepared in &not_ready {
+                    if let Err(err) = prepared
+                        .message
+                        .ack_with(jetstream::AckKind::Nak(Some(FK_VIOLATION_RETRY_DELAY)))
+                        .await
+                    {
+                        warn!(
+                            event_id = %prepared.parsed_id,
+                            error = %err,
+                            "Failed to NAK deferred event"
+                        );
+                        self.stats.nack_failures.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+                self.stats
+                    .events_deferred
+                    .fetch_add(not_ready.len() as u64, Ordering::Relaxed);
+            }
+
+            if ready.is_empty() {
+                return Ok(());
+            }
+            ready
+        } else {
+            batch.iter().collect()
+        };
+
+        match self.persist_batch_optimized(&batch).await {
             Ok(persisted) => {
                 let persisted_set = persisted
                     .inserted_ids
@@ -499,7 +568,7 @@ impl JetStreamConsumer {
                 }
                 // Publish confirmations for every message in the batch to guarantee downstream delivery
                 let mut confirmation_error: Option<SinexError> = None;
-                for prepared in batch {
+                for prepared in &batch {
                     match self
                         .publish_confirmation_with_retry(&prepared.parsed_id)
                         .await
@@ -530,7 +599,7 @@ impl JetStreamConsumer {
                 }
 
                 if confirmation_error.is_some() {
-                    for prepared in batch {
+                    for prepared in &batch {
                         if let Err(err) = prepared
                             .message
                             .ack_with(jetstream::AckKind::Nak(Some(CONFIRM_RETRY_DELAY)))
@@ -551,7 +620,7 @@ impl JetStreamConsumer {
                 }
 
                 // ACK all messages
-                for prepared in batch {
+                for prepared in &batch {
                     prepared
                         .message
                         .ack()
@@ -565,9 +634,36 @@ impl JetStreamConsumer {
                 info!("Processed and confirmed {} events", batch.len());
             }
             Err(e) => {
+                // Check if this is a transient FK violation (source material not yet registered).
+                // Safety net: the ready set should prevent most FK violations, but races are
+                // possible (e.g. material registered between ready-set check and DB insert).
+                let is_fk_error = e.to_string().contains("FK_VIOLATION");
+                if is_fk_error {
+                    debug!(
+                        batch_size = batch.len(),
+                        "FK violation on batch - source material likely still registering; NAKing with delay"
+                    );
+                    for prepared in &batch {
+                        if let Err(err) = prepared
+                            .message
+                            .ack_with(jetstream::AckKind::Nak(Some(FK_VIOLATION_RETRY_DELAY)))
+                            .await
+                        {
+                            warn!(
+                                event_id = %prepared.parsed_id,
+                                error = %err,
+                                "Failed to NAK after FK violation"
+                            );
+                            self.stats.nack_failures.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+                    // Don't count as failed - this is a transient condition
+                    return Ok(());
+                }
+
                 error!("Failed to persist batch: {}", e);
                 if self.route_db_errors_to_dlq {
-                    for prepared in batch {
+                    for prepared in &batch {
                         if let Err(err) = self
                             .route_to_dlq_and_ack(
                                 &prepared.message,
@@ -583,7 +679,7 @@ impl JetStreamConsumer {
                         }
                     }
                 } else {
-                    for prepared in batch {
+                    for prepared in &batch {
                         if let Err(err) = prepared
                             .message
                             .ack_with(jetstream::AckKind::Nak(None))
@@ -661,7 +757,7 @@ impl JetStreamConsumer {
     #[tracing::instrument(skip(self, batch), fields(batch_size = batch.len()))]
     async fn persist_batch_optimized(
         &self,
-        batch: &[PreparedEvent],
+        batch: &[&PreparedEvent],
     ) -> IngestdResult<PersistBatchResult> {
         if batch.is_empty() {
             return Ok(PersistBatchResult { inserted_ids: None });
@@ -695,6 +791,16 @@ impl JetStreamConsumer {
                     Ok(PersistBatchResult {
                         inserted_ids: Some(inserted_ids),
                     })
+                } else if is_fk_violation(&err) {
+                    // FK violation slipped past the ready set (race or missing seed).
+                    // This is a safety net — log a warning so we can investigate.
+                    warn!(
+                        batch_size = to_persist.len(),
+                        "COPY insert hit FK violation despite ready set check (source_material not yet registered); will retry"
+                    );
+                    Err(SinexError::service(
+                        "FK_VIOLATION: source material not yet registered".to_string(),
+                    ))
                 } else {
                     error!("Failed to persist events batch: {}", err);
                     Err(SinexError::database(format!(
@@ -715,7 +821,7 @@ impl JetStreamConsumer {
         }
     }
 
-    fn filter_cached_batch<'a>(&self, batch: &'a [PreparedEvent]) -> Vec<&'a PreparedEvent> {
+    fn filter_cached_batch<'a>(&self, batch: &[&'a PreparedEvent]) -> Vec<&'a PreparedEvent> {
         let cache = self.recent_id_cache.lock().unwrap_or_else(|poisoned| {
             warn!(
                 "Recent ID cache mutex was poisoned; recovering with potentially inconsistent data"
@@ -731,10 +837,11 @@ impl JetStreamConsumer {
                 }
                 seen.insert(event.parsed_id)
             })
+            .copied()
             .collect()
     }
 
-    fn remember_batch(&self, batch: &[PreparedEvent]) {
+    fn remember_batch(&self, batch: &[&PreparedEvent]) {
         let mut cache = self.recent_id_cache.lock().unwrap_or_else(|poisoned| {
             warn!(
                 "Recent ID cache mutex was poisoned; recovering with potentially inconsistent data"
@@ -1052,6 +1159,15 @@ impl JetStreamConsumer {
 fn is_unique_violation(err: &sqlx::Error) -> bool {
     match err {
         sqlx::Error::Database(db_err) => db_err.code().as_deref() == Some("23505"),
+        _ => false,
+    }
+}
+
+/// Check if error is a foreign key violation (PostgreSQL code 23503)
+/// This typically means the source_material_id doesn't exist yet.
+fn is_fk_violation(err: &sqlx::Error) -> bool {
+    match err {
+        sqlx::Error::Database(db_err) => db_err.code().as_deref() == Some("23503"),
         _ => false,
     }
 }

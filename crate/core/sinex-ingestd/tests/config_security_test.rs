@@ -1,5 +1,4 @@
 use sinex_ingestd::config::IngestdConfig;
-use sinex_primitives::Seconds;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
@@ -11,7 +10,8 @@ async fn test_config_requires_tls_scheme_when_flag_set() -> TestResult<()> {
         false, // require_tls
         10,
         100,
-        Seconds::from_secs(5),
+        None, // consumer_fetch_max_messages
+        None, // consumer_fetch_timeout_ms
         false,
         None,
         None,
@@ -37,7 +37,8 @@ async fn test_config_requires_tls_scheme_when_flag_set() -> TestResult<()> {
         true, // require_tls
         10,
         100,
-        Seconds::from_secs(5),
+        None, // consumer_fetch_max_messages
+        None, // consumer_fetch_timeout_ms
         false,
         None,
         None,
@@ -68,7 +69,8 @@ async fn test_config_requires_tls_scheme_when_flag_set() -> TestResult<()> {
         true, // require_tls
         10,
         100,
-        Seconds::from_secs(5),
+        None, // consumer_fetch_max_messages
+        None, // consumer_fetch_timeout_ms
         false,
         None,
         None,
