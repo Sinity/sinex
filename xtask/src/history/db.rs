@@ -3,6 +3,7 @@
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::Path;
 use time::OffsetDateTime;
 
@@ -543,6 +544,62 @@ impl HistoryDb {
 
         rows.collect::<Result<Vec<_>, _>>()
             .context("failed to collect background jobs")
+    }
+
+    /// Get a single background job by ID (O(1) direct SQL lookup).
+    pub fn get_background_job_by_id(&self, id: i64) -> Result<Option<BackgroundJob>> {
+        self.ensure_job_columns()?;
+
+        self.conn
+            .query_row(
+                r"
+            SELECT id, command, args_json, started_at, pid, stdout_path, stderr_path, status
+            FROM invocations
+            WHERE id = ?1 AND is_background = 1
+            ",
+                params![id],
+                |row| {
+                    let args_json: Option<String> = row.get(2)?;
+                    let started_at_str: String = row.get(3)?;
+                    let pid: Option<u32> = row.get(4)?;
+
+                    Ok(BackgroundJob {
+                        id: row.get(0)?,
+                        command: row.get(1)?,
+                        args: args_json
+                            .and_then(|s| serde_json::from_str(&s).ok())
+                            .unwrap_or_default(),
+                        started_at: OffsetDateTime::parse(
+                            &started_at_str,
+                            &time::format_description::well_known::Rfc3339,
+                        )
+                        .unwrap_or_else(|_| OffsetDateTime::now_utc()),
+                        pid: pid.unwrap_or(0),
+                        stdout_path: row.get(5)?,
+                        stderr_path: row.get(6)?,
+                        status: InvocationStatus::from_str(&row.get::<_, String>(7)?),
+                    })
+                },
+            )
+            .optional()
+            .context("failed to get background job by id")
+    }
+
+    /// Get all background job IDs (for prune orphan directory cleanup).
+    pub fn get_all_background_job_ids(&self) -> Result<HashSet<i64>> {
+        self.ensure_job_columns()?;
+
+        let mut stmt = self.conn.prepare(
+            "SELECT id FROM invocations WHERE is_background = 1",
+        )?;
+
+        let rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
+
+        let mut ids = HashSet::new();
+        for id in rows {
+            ids.insert(id?);
+        }
+        Ok(ids)
     }
 
     /// Get recent background jobs (including completed ones).

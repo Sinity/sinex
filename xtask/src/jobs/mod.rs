@@ -250,20 +250,14 @@ impl JobManager {
         })
     }
 
-    /// Get a job by ID.
+    /// Get a job by ID (direct SQL lookup, O(1)).
     pub fn get(&self, id: i64) -> Result<Option<Job>> {
-        // Query HistoryDb for the job
         let db = self
             .db
             .lock()
             .map_err(|_| anyhow::anyhow!("db lock poisoned"))?;
-        let jobs = db.get_recent_background_jobs(1000)?;
-        for bg in jobs {
-            if bg.id == id {
-                return Ok(Some(Job::from_background_job(bg, &self.jobs_dir)));
-            }
-        }
-        Ok(None)
+        let bg = db.get_background_job_by_id(id)?;
+        Ok(bg.map(|b| Job::from_background_job(b, &self.jobs_dir)))
     }
 
     /// List all jobs.
@@ -306,6 +300,10 @@ impl JobManager {
     }
 
     /// Cancel a running job.
+    ///
+    /// Sends SIGTERM to the process and updates the job status to Cancelled.
+    /// If the process is in a systemd scope (old jobs), this may fail silently
+    /// but the status will still be updated.
     pub fn cancel(&self, id: i64) -> Result<bool> {
         let job = match self.get(id)? {
             Some(j) => j,
@@ -313,11 +311,27 @@ impl JobManager {
         };
 
         if matches!(job.status, InvocationStatus::Running) && job.pid > 0 {
-            // Send SIGTERM
+            // Send SIGTERM - ignore errors since process may be in a systemd scope
+            // or may have already exited
             let pid = nix::unistd::Pid::from_raw(job.pid as i32);
-            let _ = nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGTERM);
+            match nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGTERM) {
+                Ok(()) => {
+                    // Successfully sent signal
+                }
+                Err(nix::errno::Errno::ESRCH) => {
+                    // Process doesn't exist - it already exited
+                }
+                Err(nix::errno::Errno::EPERM) => {
+                    // Permission denied - process may be in a different scope
+                    // Try killing the process group instead
+                    let _ = nix::sys::signal::killpg(pid, nix::sys::signal::Signal::SIGTERM);
+                }
+                Err(_) => {
+                    // Other error - ignore, we'll mark as cancelled anyway
+                }
+            }
 
-            // Update status in HistoryDb
+            // Update status in HistoryDb regardless of signal result
             let db = self
                 .db
                 .lock()
@@ -364,26 +378,20 @@ impl JobManager {
             db.prune_old_jobs(older_than_days)?
         };
 
-        // Also clean up old job directories
+        // Collect valid job IDs (single DB query, lock released before fs ops)
+        let valid_ids = {
+            let db = self
+                .db
+                .lock()
+                .map_err(|_| anyhow::anyhow!("db lock poisoned"))?;
+            db.get_all_background_job_ids()?
+        };
+
+        // Clean orphan directories (no DB lock held)
         if let Ok(entries) = fs::read_dir(&self.jobs_dir) {
             for entry in entries.filter_map(std::result::Result::ok) {
-                if let Ok(_id) = entry.file_name().to_string_lossy().parse::<i64>() {
-                    // If job doesn't exist in HistoryDb, remove the directory
-                    let exists = {
-                        let _db = self
-                            .db
-                            .lock()
-                            .map_err(|_| anyhow::anyhow!("db lock poisoned"))?;
-                        // We can't use self.get(id) here because it also locks!
-                        // But we can check directly using db methods.
-                        // But db.get_recent_background_jobs is not filtering by ID.
-                        // We need a helper or just check recent.
-                        // For now, let's just use a simplified check or skip checking DB to avoid deadlock.
-                        // Actually, we can check if file path corresponds to a job in the list we got BEFORE looping.
-                        true // Skip removal for now to avoid deadlock complexity or implement properly later.
-                    };
-
-                    if !exists {
+                if let Ok(id) = entry.file_name().to_string_lossy().parse::<i64>() {
+                    if !valid_ids.contains(&id) {
                         let _ = fs::remove_dir_all(entry.path());
                     }
                 }
@@ -395,6 +403,9 @@ impl JobManager {
 }
 
 /// Wait for a child process, update `HistoryDb`, and move logs to DB.
+///
+/// Enforces a 4-hour hard ceiling to prevent zombie jobs from accumulating
+/// when spawned processes hang indefinitely.
 async fn wait_for_child_async(
     mut child: tokio::process::Child,
     history_id: i64,
@@ -403,7 +414,19 @@ async fn wait_for_child_async(
     stderr_path: PathBuf,
 ) {
     let start = std::time::Instant::now();
-    let result = child.wait().await;
+    let timeout = Duration::from_secs(4 * 3600); // 4-hour hard ceiling
+
+    let result = match tokio::time::timeout(timeout, child.wait()).await {
+        Ok(result) => result,
+        Err(_) => {
+            // Timed out — kill the child process
+            let _ = child.kill().await;
+            Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "job timed out after 4 hours",
+            ))
+        }
+    };
     let duration = start.elapsed().as_secs_f64();
 
     if let Ok(db) = HistoryDb::open(&db_path) {
