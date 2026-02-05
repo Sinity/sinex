@@ -46,7 +46,7 @@ impl UnusedDetector {
     ///
     /// # Example
     /// ```no_run
-    /// use xtask::deps::UnusedDetector;
+    /// use xtask::deps::unused::UnusedDetector;
     /// let report = UnusedDetector::detect()?;
     /// println!("Found {} unused dependencies", report.unused.len());
     /// # Ok::<(), anyhow::Error>(())

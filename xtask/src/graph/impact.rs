@@ -18,7 +18,8 @@
 //! # Example
 //!
 //! ```no_run
-//! use xtask::graph::{WorkspaceGraph, generate_report};
+//! use xtask::graph::impact::{generate_report};
+//! use xtask::graph::workspace::WorkspaceGraph;
 //!
 //! let graph = WorkspaceGraph::new()?;
 //! let report = generate_report(&graph)?;
@@ -47,15 +48,16 @@ use serde::{Deserialize, Serialize};
 /// # Example
 ///
 /// ```no_run
-/// use xtask::graph::WorkspaceGraph;
+/// use xtask::graph::workspace::WorkspaceGraph;
+/// use xtask::graph::impact::Criticality;
 ///
 /// let graph = WorkspaceGraph::new()?;
 /// let metrics = graph.compute_impact_metrics("sinex-db")?;
 ///
 /// // Check if this is a critical package
 /// match metrics.criticality_level() {
-///     xtask::graph::Criticality::Critical => println!("High risk!"),
-///     xtask::graph::Criticality::High => println!("Significant impact"),
+///     Criticality::Critical => println!("High risk!"),
+///     Criticality::High => println!("Significant impact"),
 ///     _ => println!("Low to moderate impact"),
 /// }
 /// # Ok::<(), anyhow::Error>(())
@@ -87,7 +89,8 @@ pub struct ImpactMetrics {
 /// # Example
 ///
 /// ```no_run
-/// use xtask::graph::{WorkspaceGraph, generate_report};
+/// use xtask::graph::impact::generate_report;
+/// use xtask::graph::workspace::WorkspaceGraph;
 ///
 /// let graph = WorkspaceGraph::new()?;
 /// let report = generate_report(&graph)?;
@@ -124,7 +127,7 @@ pub struct ImpactReport {
 /// # Examples
 ///
 /// ```no_run
-/// use xtask::graph::Criticality;
+/// use xtask::graph::impact::Criticality;
 ///
 /// assert_eq!(Criticality::from_score(0.9), Criticality::Critical);
 /// assert_eq!(Criticality::from_score(0.6), Criticality::High);
@@ -175,7 +178,7 @@ impl Criticality {
     /// # Example
     ///
     /// ```no_run
-    /// use xtask::graph::Criticality;
+    /// use xtask::graph::impact::Criticality;
     ///
     /// assert_eq!(Criticality::from_score(0.9), Criticality::Critical);
     /// assert_eq!(Criticality::from_score(0.6), Criticality::High);
@@ -211,7 +214,7 @@ impl ImpactMetrics {
     /// # Example
     ///
     /// ```no_run
-    /// use xtask::graph::ImpactMetrics;
+    /// use xtask::graph::impact::ImpactMetrics;
     ///
     /// let metrics = ImpactMetrics::new(
     ///     "my-package".to_string(),
@@ -250,7 +253,7 @@ impl ImpactMetrics {
     /// # Example
     ///
     /// ```no_run
-    /// use xtask::graph::{ImpactMetrics, Criticality};
+    /// use xtask::graph::impact::{ImpactMetrics, Criticality};
     ///
     /// let metrics = ImpactMetrics::new("core-lib".to_string(), 80, 5);
     /// match metrics.criticality_level() {
@@ -293,7 +296,8 @@ impl ImpactMetrics {
 /// # Example
 ///
 /// ```no_run
-/// use xtask::graph::{WorkspaceGraph, generate_report, Criticality};
+/// use xtask::graph::impact::generate_report;
+/// use xtask::graph::workspace::WorkspaceGraph;
 ///
 /// let graph = WorkspaceGraph::new()?;
 /// let report = generate_report(&graph)?;

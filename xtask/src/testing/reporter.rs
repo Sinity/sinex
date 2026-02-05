@@ -105,16 +105,21 @@ pub struct TestReporter {
 impl TestReporter {
     #[must_use]
     pub fn new(human: bool) -> Self {
-        let mp = MultiProgress::new();
-        let pb = mp.add(ProgressBar::new(0)); // Will update total when known
-
-        // Match style from original test.rs
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}")
-                .unwrap()
-                .progress_chars("#>-"),
-        );
+        // Use hidden progress bar when not in human mode or when stdout isn't a TTY.
+        // ProgressBar::hidden() is a complete no-op — zero CPU, no output.
+        let pb = if human && crate::output::is_tty() {
+            let mp = MultiProgress::new();
+            let pb = mp.add(ProgressBar::new(0)); // Will update total when known
+            pb.set_style(
+                ProgressStyle::default_bar()
+                    .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}")
+                    .unwrap()
+                    .progress_chars("#>-"),
+            );
+            pb
+        } else {
+            ProgressBar::hidden()
+        };
 
         Self { pb, human }
     }
