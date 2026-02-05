@@ -16,6 +16,15 @@ pub fn affected_packages() -> Result<Vec<String>> {
         return Ok(vec![]);
     }
 
+    // Check for workspace-wide changes that affect everything
+    let workspace_wide = changed
+        .iter()
+        .any(|f| f == "Cargo.toml" || f == "Cargo.lock" || f.starts_with(".config/"));
+
+    if workspace_wide {
+        return all_workspace_packages();
+    }
+
     // Map changed files to packages
     let changed_pkgs = files_to_packages(&changed)?;
 
@@ -30,6 +39,29 @@ pub fn affected_packages() -> Result<Vec<String>> {
     let affected = transitive_dependents(&changed_pkgs, &graph);
 
     Ok(affected.into_iter().collect())
+}
+
+/// Get all workspace package names via cargo metadata.
+fn all_workspace_packages() -> Result<Vec<String>> {
+    let output = Command::new("cargo")
+        .args(["metadata", "--format-version", "1", "--no-deps"])
+        .output()
+        .context("failed to run cargo metadata")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("cargo metadata failed: {stderr}");
+    }
+
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&output.stdout).context("failed to parse cargo metadata")?;
+
+    Ok(metadata["packages"]
+        .as_array()
+        .unwrap_or(&vec![])
+        .iter()
+        .filter_map(|p| p["name"].as_str().map(String::from))
+        .collect())
 }
 
 /// Build a nextest filter expression for the affected packages.
@@ -102,29 +134,35 @@ fn files_to_packages(files: &[String]) -> Result<HashSet<String>> {
 
 /// Map a file path to its package name.
 fn path_to_package(path: &str) -> Option<String> {
-    // Match crate path patterns:
-    // crate/lib/<name>/...  -> sinex-<name> (with hyphens)
-    // crate/core/<name>/... -> sinex-<name>
-    // crate/nodes/<name>/... -> sinex-<name>
-    // crate/tools/<name>/... -> <name>
-
     let parts: Vec<&str> = path.split('/').collect();
 
-    if parts.len() < 3 || parts[0] != "crate" {
-        return None;
+    // crate/{lib,core,nodes,tools,cli}/<name>/... -> package name (with hyphens)
+    if parts.len() >= 3 && parts[0] == "crate" {
+        let category = parts[1];
+        let name = parts[2];
+        let pkg_name = name.replace('_', "-");
+
+        return match category {
+            "lib" | "core" | "nodes" | "tools" => Some(pkg_name),
+            // crate/cli/ contains the sinexctl binary
+            "cli" => Some("sinexctl".to_string()),
+            _ => None,
+        };
     }
 
-    let category = parts[1];
-    let name = parts[2];
-
-    // Convert underscores to hyphens in package name
-    let pkg_name = name.replace('_', "-");
-
-    match category {
-        "lib" | "core" | "nodes" => Some(pkg_name),
-        "tools" => Some(pkg_name),
-        _ => None,
+    // xtask/ changes affect xtask itself
+    if parts.first() == Some(&"xtask") {
+        return Some("xtask".to_string());
     }
+
+    // tests/e2e/ changes affect the e2e test package
+    if parts.len() >= 2 && parts[0] == "tests" && parts[1] == "e2e" {
+        return Some("sinex-e2e-tests".to_string());
+    }
+
+    // Workspace-level files (Cargo.toml, Cargo.lock, .config/) are handled
+    // upstream in affected_packages() as workspace-wide changes.
+    None
 }
 
 /// Build reverse dependency graph: package -> packages that depend on it.
@@ -220,6 +258,7 @@ mod tests {
 
     #[test]
     fn test_path_to_package() {
+        // Standard crate paths
         assert_eq!(
             path_to_package("crate/lib/sinex-db/src/lib.rs"),
             Some("sinex-db".to_string())
@@ -232,8 +271,42 @@ mod tests {
             path_to_package("crate/nodes/sinex-fs-ingestor/src/lib.rs"),
             Some("sinex-fs-ingestor".to_string())
         );
+
+        // CLI crate
+        assert_eq!(
+            path_to_package("crate/cli/src/main.rs"),
+            Some("sinexctl".to_string())
+        );
+        assert_eq!(
+            path_to_package("crate/cli/Cargo.toml"),
+            Some("sinexctl".to_string())
+        );
+
+        // xtask
+        assert_eq!(
+            path_to_package("xtask/src/lib.rs"),
+            Some("xtask".to_string())
+        );
+        assert_eq!(
+            path_to_package("xtask/Cargo.toml"),
+            Some("xtask".to_string())
+        );
+
+        // e2e tests
+        assert_eq!(
+            path_to_package("tests/e2e/tests/some_test.rs"),
+            Some("sinex-e2e-tests".to_string())
+        );
+        assert_eq!(
+            path_to_package("tests/e2e/Cargo.toml"),
+            Some("sinex-e2e-tests".to_string())
+        );
+
+        // Non-package paths return None (workspace-level handled upstream)
         assert_eq!(path_to_package("docs/README.md"), None);
         assert_eq!(path_to_package("Cargo.toml"), None);
+        assert_eq!(path_to_package("Cargo.lock"), None);
+        assert_eq!(path_to_package(".config/nextest.toml"), None);
     }
 
     #[test]

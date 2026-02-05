@@ -64,9 +64,9 @@ pub struct TestCommand {
     #[arg(long)]
     pub dry_run: bool,
 
-    /// Run preflight checks
+    /// Skip automatic infrastructure setup (preflight is ON by default)
     #[arg(long)]
-    pub preflight: bool,
+    pub skip_preflight: bool,
 
     /// Include tests marked `#[ignore]`
     #[arg(long)]
@@ -109,6 +109,68 @@ impl XtaskCommand for TestCommand {
     }
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
+        // Handle background execution (like build/check/fix)
+        if ctx.is_background() {
+            let mut args = Vec::new();
+            if self.debug {
+                args.push("--debug".to_string());
+            }
+            if self.fail_fast {
+                args.push("--fail-fast".to_string());
+            }
+            if self.all {
+                args.push("--all".to_string());
+            }
+            if self.heavy {
+                args.push("--heavy".to_string());
+            }
+            if self.include_ignored {
+                args.push("--include-ignored".to_string());
+            }
+            if self.skip_preflight {
+                args.push("--skip-preflight".to_string());
+            }
+            if self.prime {
+                args.push("--prime".to_string());
+            }
+            if self.fuzz {
+                args.push("--fuzz".to_string());
+            }
+            if self.mutants {
+                args.push("--mutants".to_string());
+            }
+            if self.coverage {
+                args.push("--coverage".to_string());
+            }
+            if self.bench {
+                args.push("--bench".to_string());
+            }
+            if let Some(ref f) = self.filter {
+                args.push("-E".to_string());
+                args.push(f.clone());
+            }
+            if let Some(ref pkgs) = self.package {
+                for p in pkgs {
+                    args.push("-p".to_string());
+                    args.push(p.clone());
+                }
+            }
+            if let Some(threads) = self.threads {
+                args.push(format!("--threads={threads}"));
+            }
+            if let Some(retries) = self.retries {
+                args.push(format!("--retries={retries}"));
+            }
+            if let Some(ref timeout) = self.timeout {
+                args.push(format!("--timeout={timeout}"));
+            }
+            if !self.args.is_empty() {
+                args.push("--".to_string());
+                args.extend(self.args.clone());
+            }
+            return ctx.spawn_background("test", &args).await;
+        }
+
         // Handle --bench flag - delegate to bench infrastructure
         if self.bench {
             // ... (keep existing bench delegation if needed, or remove if unused)
@@ -164,8 +226,8 @@ impl XtaskCommand for TestCommand {
             );
         }
 
-        // Preflight
-        if self.preflight {
+        // Preflight is default ON unless explicitly disabled
+        if !self.skip_preflight {
             crate::preflight::ensure_ready(ctx)?;
         }
 
