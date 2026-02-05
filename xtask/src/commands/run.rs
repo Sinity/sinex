@@ -313,6 +313,9 @@ impl RunCommand {
                     || package.contains("canonicalizer");
                 if is_node {
                     args.extend(["--".to_string(), format!("--instance-id={instance_id}")]);
+                } else if package.contains("gateway") {
+                    // Gateway requires a subcommand - default to rpc-server
+                    args.extend(["--".to_string(), "rpc-server".to_string()]);
                 }
 
                 let job = manager.spawn("cargo", &args).await?;
@@ -384,6 +387,9 @@ impl RunCommand {
             let mut cmd = Command::new(&binary_path);
             if is_node {
                 cmd.arg(format!("--instance-id={instance_id}"));
+            } else if *name == "gateway" {
+                // Gateway requires a subcommand - default to rpc-server
+                cmd.arg("rpc-server");
             }
             let child = cmd
                 .stdout(Stdio::inherit())
@@ -478,6 +484,9 @@ Shutting down remaining processes..."
             || package.contains("canonicalizer");
         if is_node {
             args.extend(["--".to_string(), format!("--instance-id={instance_id}")]);
+        } else if package == "sinex-gateway" {
+            // Gateway requires a subcommand - default to rpc-server
+            args.extend(["--".to_string(), "rpc-server".to_string()]);
         }
 
         let status = Command::new("cargo")
@@ -524,6 +533,9 @@ Shutting down remaining processes..."
             || package.contains("canonicalizer");
         if is_node {
             args.extend(["--".to_string(), format!("--instance-id={instance_id}")]);
+        } else if package == "sinex-gateway" {
+            // Gateway requires a subcommand - default to rpc-server
+            args.extend(["--".to_string(), "rpc-server".to_string()]);
         }
 
         let job = manager.spawn("cargo", &args).await?;

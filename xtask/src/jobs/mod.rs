@@ -269,14 +269,16 @@ impl JobManager {
 
                 let stdout_path = job_dir.join("stdout.log");
                 let stderr_path = job_dir.join("stderr.log");
-                let _ = db.finish_background_job(
+                if let Err(e) = db.finish_background_job(
                     bg.id,
                     status,
                     exit_code,
                     0.0,
                     stdout_path.exists().then_some(stdout_path.as_path()),
                     stderr_path.exists().then_some(stderr_path.as_path()),
-                );
+                ) {
+                    eprintln!("Warning: failed to update job status for {id}: {e}");
+                }
                 // Re-fetch to get updated status
                 let updated = db.get_background_job_by_id(id)?;
                 return Ok(updated.map(|b| Job::from_background_job(b, &self.jobs_dir)));
@@ -348,14 +350,19 @@ impl JobManager {
 
                     let stdout_path = job_dir.join("stdout.log");
                     let stderr_path = job_dir.join("stderr.log");
-                    let _ = db.finish_background_job(
+                    if let Err(e) = db.finish_background_job(
                         job.id,
                         status,
                         exit_code,
                         0.0, // unknown duration
                         stdout_path.exists().then_some(stdout_path.as_path()),
                         stderr_path.exists().then_some(stderr_path.as_path()),
-                    );
+                    ) {
+                        eprintln!(
+                            "Warning: failed to update reaped job status for {}: {e}",
+                            job.id
+                        );
+                    }
                     reaped += 1;
                 }
             }
