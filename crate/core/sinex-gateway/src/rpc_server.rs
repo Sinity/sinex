@@ -5,18 +5,49 @@ use crate::{
     distributed_rate_limit::{DistributedRateLimitConfig, DistributedRateLimiter},
     gateway_metrics::GatewayMetrics,
     handlers::{
-        handle_activity_heatmap, handle_audit_get, handle_coordination_get_leader,
-        handle_coordination_instance_health, handle_coordination_list_instances,
-        handle_create_entities, handle_create_note, handle_dlq_list, handle_dlq_peek,
-        handle_dlq_purge, handle_dlq_requeue, handle_event_count_by_source, handle_link_entities,
-        handle_nodes_drain, handle_nodes_list, handle_nodes_resume, handle_nodes_set_horizon,
-        handle_ops_cancel, handle_ops_get, handle_ops_list, handle_ops_start,
-        handle_replay_approve_operation, handle_replay_cancel_operation,
-        handle_replay_create_operation, handle_replay_execute_operation,
-        handle_replay_list_operations, handle_replay_operation_status,
-        handle_replay_preview_operation, handle_retrieve_blob, handle_search_events,
-        handle_shadow_create, handle_shadow_delete, handle_shadow_list, handle_sources_statistics,
-        handle_store_blob, handle_system_health,
+        handle_activity_heatmap,
+        handle_audit_get,
+        handle_coordination_get_leader,
+        handle_coordination_instance_health,
+        handle_coordination_list_instances,
+        handle_create_entities,
+        handle_create_note,
+        handle_dlq_list,
+        handle_dlq_peek,
+        handle_dlq_purge,
+        handle_dlq_requeue,
+        handle_event_count_by_source,
+        handle_link_entities,
+        handle_nodes_drain,
+        handle_nodes_list,
+        handle_nodes_resume,
+        handle_nodes_set_horizon,
+        handle_ops_cancel,
+        handle_ops_get,
+        handle_ops_list,
+        handle_ops_start,
+        handle_replay_approve_operation,
+        handle_replay_cancel_operation,
+        handle_replay_create_operation,
+        handle_replay_execute_operation,
+        handle_replay_list_operations,
+        handle_replay_operation_status,
+        handle_replay_preview_operation,
+        handle_retrieve_blob,
+        handle_search_events,
+        handle_shadow_create,
+        handle_shadow_delete,
+        handle_shadow_list,
+        handle_sources_statistics,
+        handle_store_blob,
+        handle_system_health,
+        // Two-step tombstone operations (SEC-003)
+        handle_tombstone_approve,
+        handle_tombstone_cancel,
+        handle_tombstone_create,
+        handle_tombstone_list,
+        handle_tombstone_preview,
+        handle_tombstone_status,
     },
     rate_limit::TokenRateLimiter,
     replay_control::ReplayControlClient,
@@ -499,14 +530,20 @@ pub struct RpcAuthContext {
     pub token_prefix: String,
     /// Timestamp when authentication occurred
     pub authenticated_at: Timestamp,
+    /// Role extracted from token (determines permissions)
+    pub role: crate::auth::Role,
 }
 
 impl RpcAuthContext {
     /// Create an auth context from a validated token
+    ///
+    /// Parses the role from the token suffix (e.g., `sinex_xxx:readonly`)
     fn from_token(token: &str) -> Self {
+        let (base, role) = crate::auth::Role::from_token(token);
         Self {
-            token_prefix: token.chars().take(8).collect::<String>(),
+            token_prefix: base.chars().take(8).collect::<String>(),
             authenticated_at: Timestamp::now(),
+            role,
         }
     }
 
@@ -514,12 +551,20 @@ impl RpcAuthContext {
     ///
     /// Native messaging uses stdin/stdout and doesn't go through HTTP auth,
     /// so we use a special "system" context to indicate trusted local calls.
+    /// System context always has Admin role.
     #[must_use]
     pub fn system() -> Self {
         Self {
             token_prefix: "system".to_string(),
             authenticated_at: Timestamp::now(),
+            role: crate::auth::Role::Admin,
         }
+    }
+
+    /// Check if the token has at least the required role permission
+    #[must_use]
+    pub fn has_permission(&self, required: crate::auth::Role) -> bool {
+        self.role.has_permission(required)
     }
 }
 
@@ -551,6 +596,25 @@ struct AppState {
     metrics: Arc<GatewayMetrics>,
 }
 
+/// Check if the auth context has the required role permission
+///
+/// Returns an error suitable for RPC response if permission is denied.
+fn require_role(
+    auth: &RpcAuthContext,
+    required: crate::auth::Role,
+    method: &str,
+) -> color_eyre::eyre::Result<()> {
+    if auth.role.has_permission(required) {
+        Ok(())
+    } else {
+        Err(sinex_primitives::SinexError::permission_denied(format!(
+            "Operation '{}' requires {:?} role, but token has {:?}",
+            method, required, auth.role
+        ))
+        .into())
+    }
+}
+
 /// Shared dispatch function for RPC methods (used by both `rpc_server` and `native_messaging`)
 ///
 /// # Method Dispatch Pattern
@@ -571,77 +635,40 @@ struct AppState {
 /// # Authorization Context
 ///
 /// The `auth` parameter contains authenticated actor information for audit logging
-/// and authorization checks. Dangerous operations (dlq.requeue, ops.cancel, shadow.delete)
-/// should log the `token_prefix` for accountability.
+/// and authorization checks. Role-based access control (RBAC) is enforced:
+///
+/// - **ReadOnly**: Query operations (search, analytics, status)
+/// - **Write**: ReadOnly + mutations (create entities, store blobs)
+/// - **Admin**: Write + destructive operations (tombstone, DLQ, shadow delete)
 pub async fn dispatch_rpc_method(
     services: &ServiceContainer,
     method: &str,
     params: serde_json::Value,
     auth: &RpcAuthContext,
 ) -> color_eyre::eyre::Result<serde_json::Value> {
+    use crate::auth::Role;
+
     match method {
+        // ─────────────────────────────────────────────────────────────
+        // ReadOnly methods (all authenticated users can access)
+        // ─────────────────────────────────────────────────────────────
         "system.health" => handle_system_health(services, params).await,
-        // Analytics methods
+
+        // Analytics methods (ReadOnly)
         "analytics.event_count_by_source" => {
             handle_event_count_by_source(services.analytics.as_ref(), params).await
         }
-
         "analytics.activity_heatmap" => {
             handle_activity_heatmap(services.analytics.as_ref(), params).await
         }
-
         "analytics.sources_statistics" => {
             handle_sources_statistics(services.analytics.as_ref(), params).await
         }
 
-        // PKM methods
-        "pkm.create_note" => handle_create_note(services.pkm.as_ref(), params).await,
-
-        "pkm.create_entities_from_list" => {
-            handle_create_entities(services.pkm.as_ref(), params).await
-        }
-
-        "pkm.link_entities" => handle_link_entities(services.pkm.as_ref(), params).await,
-
-        // Search methods
+        // Search methods (ReadOnly)
         "search.search_events" => handle_search_events(services.search.as_ref(), params).await,
 
-        // Content methods
-        "content.store_blob" => handle_store_blob(services.content.as_ref(), params).await,
-
-        "content.retrieve_blob" => handle_retrieve_blob(services.content.as_ref(), params).await,
-
-        // Replay control surface
-        "replay.create_operation" => {
-            let control = replay_control_client(services)?;
-            handle_replay_create_operation(control, params).await
-        }
-        "replay.preview_operation" => {
-            let control = replay_control_client(services)?;
-            handle_replay_preview_operation(control, params).await
-        }
-        "replay.approve_operation" => {
-            let control = replay_control_client(services)?;
-            handle_replay_approve_operation(control, params).await
-        }
-        "replay.execute_operation" => {
-            let control = replay_control_client(services)?;
-            handle_replay_execute_operation(control, params).await
-        }
-        "replay.cancel_operation" => {
-            let control = replay_control_client(services)?;
-            handle_replay_cancel_operation(control, params).await
-        }
-        "replay.operation_status" => {
-            let control = replay_control_client(services)?;
-            handle_replay_operation_status(control, params).await
-        }
-        "replay.list_operations" => {
-            let control = replay_control_client(services)?;
-            handle_replay_list_operations(control, params).await
-        }
-
-        // Coordination methods
+        // Coordination methods (ReadOnly)
         "coordination.list_instances" => {
             let client = coordination_client(services)?;
             handle_coordination_list_instances(client, params).await
@@ -655,7 +682,31 @@ pub async fn dispatch_rpc_method(
             handle_coordination_instance_health(client, params).await
         }
 
-        // DLQ management methods
+        // Audit trail methods (ReadOnly)
+        "audit.get" => {
+            let pool = services.pool();
+            handle_audit_get(pool, params).await.map_err(Into::into)
+        }
+
+        // Operations log read methods (ReadOnly)
+        "ops.list" => {
+            let pool = services.pool();
+            handle_ops_list(pool, params).await.map_err(Into::into)
+        }
+        "ops.get" => {
+            let pool = services.pool();
+            handle_ops_get(pool, params).await.map_err(Into::into)
+        }
+
+        // Lifecycle status (ReadOnly)
+        "lifecycle.status" => {
+            let pool = services.pool();
+            crate::handlers::handle_lifecycle_status(pool, params)
+                .await
+                .map_err(Into::into)
+        }
+
+        // DLQ read methods (ReadOnly)
         "dlq.list" => {
             let nats = nats_client_required(services)?;
             let env = services.environment();
@@ -666,18 +717,8 @@ pub async fn dispatch_rpc_method(
             let env = services.environment();
             handle_dlq_peek(nats, env, params).await
         }
-        "dlq.requeue" => {
-            let nats = nats_client_required(services)?;
-            let env = services.environment();
-            handle_dlq_requeue(nats, env, params, auth).await
-        }
-        "dlq.purge" => {
-            let nats = nats_client_required(services)?;
-            let env = services.environment();
-            handle_dlq_purge(nats, env, params).await
-        }
 
-        // Node operations methods
+        // Node listing (ReadOnly)
         "nodes.list" => {
             let nats = nats_client_required(services)?;
             let env = services.environment();
@@ -685,7 +726,55 @@ pub async fn dispatch_rpc_method(
                 .await
                 .map_err(Into::into)
         }
+
+        // Shadow listing (ReadOnly)
+        "shadow.list" => {
+            let nats = nats_client_required(services)?;
+            let env = services.environment();
+            handle_shadow_list(nats, env, params).await
+        }
+
+        // Replay status/list (ReadOnly)
+        "replay.operation_status" => {
+            let control = replay_control_client(services)?;
+            handle_replay_operation_status(control, params).await
+        }
+        "replay.list_operations" => {
+            let control = replay_control_client(services)?;
+            handle_replay_list_operations(control, params).await
+        }
+
+        // ─────────────────────────────────────────────────────────────
+        // Write methods (requires Write or Admin role)
+        // ─────────────────────────────────────────────────────────────
+
+        // PKM methods (Write)
+        "pkm.create_note" => {
+            require_role(auth, Role::Write, method)?;
+            handle_create_note(services.pkm.as_ref(), params).await
+        }
+        "pkm.create_entities_from_list" => {
+            require_role(auth, Role::Write, method)?;
+            handle_create_entities(services.pkm.as_ref(), params).await
+        }
+        "pkm.link_entities" => {
+            require_role(auth, Role::Write, method)?;
+            handle_link_entities(services.pkm.as_ref(), params).await
+        }
+
+        // Content methods (Write)
+        "content.store_blob" => {
+            require_role(auth, Role::Write, method)?;
+            handle_store_blob(services.content.as_ref(), params).await
+        }
+        "content.retrieve_blob" => {
+            // Retrieve is read, but grouped with content for clarity
+            handle_retrieve_blob(services.content.as_ref(), params).await
+        }
+
+        // Node operations (Write - affects system but not destructive)
         "nodes.drain" => {
+            require_role(auth, Role::Write, method)?;
             let nats = nats_client_required(services)?;
             let env = services.environment();
             handle_nodes_drain(nats, env, params)
@@ -693,6 +782,7 @@ pub async fn dispatch_rpc_method(
                 .map_err(Into::into)
         }
         "nodes.resume" => {
+            require_role(auth, Role::Write, method)?;
             let nats = nats_client_required(services)?;
             let env = services.environment();
             handle_nodes_resume(nats, env, params)
@@ -700,6 +790,7 @@ pub async fn dispatch_rpc_method(
                 .map_err(Into::into)
         }
         "nodes.set_horizon" => {
+            require_role(auth, Role::Write, method)?;
             let nats = nats_client_required(services)?;
             let env = services.environment();
             handle_nodes_set_horizon(nats, env, params)
@@ -707,70 +798,144 @@ pub async fn dispatch_rpc_method(
                 .map_err(Into::into)
         }
 
-        // Operations log methods
+        // Operations log write (Write)
         "ops.start" => {
+            require_role(auth, Role::Write, method)?;
             let pool = services.pool();
             handle_ops_start(pool, params).await.map_err(Into::into)
         }
-        "ops.list" => {
-            let pool = services.pool();
-            handle_ops_list(pool, params).await.map_err(Into::into)
+
+        // Replay create/preview (Write - doesn't execute yet)
+        "replay.create_operation" => {
+            require_role(auth, Role::Write, method)?;
+            let control = replay_control_client(services)?;
+            handle_replay_create_operation(control, params).await
         }
-        "ops.get" => {
-            let pool = services.pool();
-            handle_ops_get(pool, params).await.map_err(Into::into)
+        "replay.preview_operation" => {
+            require_role(auth, Role::Write, method)?;
+            let control = replay_control_client(services)?;
+            handle_replay_preview_operation(control, params).await
         }
+
+        // ─────────────────────────────────────────────────────────────
+        // Admin methods (requires Admin role - destructive operations)
+        // ─────────────────────────────────────────────────────────────
+
+        // Replay approve/execute/cancel (Admin - actually modifies data)
+        "replay.approve_operation" => {
+            require_role(auth, Role::Admin, method)?;
+            let control = replay_control_client(services)?;
+            handle_replay_approve_operation(control, params).await
+        }
+        "replay.execute_operation" => {
+            require_role(auth, Role::Admin, method)?;
+            let control = replay_control_client(services)?;
+            handle_replay_execute_operation(control, params).await
+        }
+        "replay.cancel_operation" => {
+            require_role(auth, Role::Admin, method)?;
+            let control = replay_control_client(services)?;
+            handle_replay_cancel_operation(control, params).await
+        }
+
+        // DLQ mutation methods (Admin)
+        "dlq.requeue" => {
+            require_role(auth, Role::Admin, method)?;
+            let nats = nats_client_required(services)?;
+            let env = services.environment();
+            handle_dlq_requeue(nats, env, params, auth).await
+        }
+        "dlq.purge" => {
+            require_role(auth, Role::Admin, method)?;
+            let nats = nats_client_required(services)?;
+            let env = services.environment();
+            handle_dlq_purge(nats, env, params).await
+        }
+
+        // Operations cancel (Admin)
         "ops.cancel" => {
+            require_role(auth, Role::Admin, method)?;
             let pool = services.pool();
             handle_ops_cancel(pool, params, auth)
                 .await
                 .map_err(Into::into)
         }
 
-        // Audit trail methods
-        "audit.get" => {
-            let pool = services.pool();
-            handle_audit_get(pool, params).await.map_err(Into::into)
-        }
-
-        // Data lifecycle methods
-        "lifecycle.status" => {
-            let pool = services.pool();
-            crate::handlers::handle_lifecycle_status(pool, params)
-                .await
-                .map_err(Into::into)
-        }
+        // Data lifecycle mutations (Admin - DESTRUCTIVE)
         "lifecycle.archive" => {
+            require_role(auth, Role::Admin, method)?;
             let pool = services.pool();
             crate::handlers::handle_lifecycle_archive(pool, params, auth)
                 .await
                 .map_err(Into::into)
         }
         "lifecycle.restore" => {
+            require_role(auth, Role::Admin, method)?;
             let pool = services.pool();
             crate::handlers::handle_lifecycle_restore(pool, params, auth)
                 .await
                 .map_err(Into::into)
         }
-        "lifecycle.tombstone" => {
+        // Two-step tombstone operations (SEC-003)
+        // Step 1: Create operation with cascade preview
+        "lifecycle.tombstone.create" => {
+            require_role(auth, Role::Admin, method)?;
             let pool = services.pool();
-            crate::handlers::handle_lifecycle_tombstone(pool, params, auth)
+            handle_tombstone_create(pool, params, auth)
+                .await
+                .map_err(Into::into)
+        }
+        // Preview: Re-view cascade analysis
+        "lifecycle.tombstone.preview" => {
+            require_role(auth, Role::Admin, method)?;
+            let pool = services.pool();
+            handle_tombstone_preview(pool, params, auth)
+                .await
+                .map_err(Into::into)
+        }
+        // Step 2: Approve and execute (PERMANENT!)
+        "lifecycle.tombstone.approve" => {
+            require_role(auth, Role::Admin, method)?;
+            let pool = services.pool();
+            handle_tombstone_approve(pool, params, auth)
+                .await
+                .map_err(Into::into)
+        }
+        // Cancel: Abort pending operation
+        "lifecycle.tombstone.cancel" => {
+            require_role(auth, Role::Admin, method)?;
+            let pool = services.pool();
+            handle_tombstone_cancel(pool, params, auth)
+                .await
+                .map_err(Into::into)
+        }
+        // List: Show all tombstone operations
+        "lifecycle.tombstone.list" => {
+            // List is read-only but still admin since it shows sensitive operations
+            require_role(auth, Role::Admin, method)?;
+            let pool = services.pool();
+            handle_tombstone_list(pool, params, auth)
+                .await
+                .map_err(Into::into)
+        }
+        // Status: Get specific operation status
+        "lifecycle.tombstone.status" => {
+            require_role(auth, Role::Admin, method)?;
+            let pool = services.pool();
+            handle_tombstone_status(pool, params, auth)
                 .await
                 .map_err(Into::into)
         }
 
-        // Shadow consumer methods (The Tether)
+        // Shadow consumer mutations (Admin)
         "shadow.create" => {
+            require_role(auth, Role::Admin, method)?;
             let nats = nats_client_required(services)?;
             let env = services.environment();
             handle_shadow_create(nats, env, params).await
         }
-        "shadow.list" => {
-            let nats = nats_client_required(services)?;
-            let env = services.environment();
-            handle_shadow_list(nats, env, params).await
-        }
         "shadow.delete" => {
+            require_role(auth, Role::Admin, method)?;
             let nats = nats_client_required(services)?;
             let env = services.environment();
             handle_shadow_delete(nats, env, params, auth).await
@@ -962,11 +1127,22 @@ async fn handle_rpc(
             // Try to extract structured error info from SinexError
             if let Some(sinex_err) = err.downcast_ref::<sinex_primitives::error::SinexError>() {
                 let (code, message) = sinex_error_to_rpc_code(sinex_err);
-                // TODO: Implement production error sanitization (analysis/rpc_server.md OPP-002)
+
+                // Feature-gated error detail serialization (OPP-002)
+                // In dev mode, include full error for debugging.
+                // In production, only return error_id for log correlation.
+                #[cfg(feature = "dev-errors")]
                 let data = serde_json::json!({
                     "error_id": error_id.to_string(),
-                    "error": sinex_err,
+                    "error": sinex_err,  // Full error details in dev mode
                 });
+
+                #[cfg(not(feature = "dev-errors"))]
+                let data = serde_json::json!({
+                    "error_id": error_id.to_string(),
+                    // No internal error details - check server logs with error_id
+                });
+
                 JsonRpcResponse::error_with_data(request.id, code, message, data)
             } else {
                 JsonRpcResponse::error(
