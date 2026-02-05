@@ -67,6 +67,7 @@ devenv.lock
 # Test artifacts
 test-results/
 tests/e2e/target-ci/
+*.snap.new
 
 # Ephemeral reports
 *_report*.txt
