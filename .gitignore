@@ -67,3 +67,8 @@ devenv.lock
 # Test artifacts
 test-results/
 tests/e2e/target-ci/
+
+# Ephemeral reports
+*_report*.txt
+audit_*.txt
+audit_*.md
