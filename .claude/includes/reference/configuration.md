@@ -9,8 +9,52 @@
 | `--heavy` | Include `#[ignore]` tests |
 | `--prime` | Prime database before testing |
 | `--affected` | Only changed packages |
+| `--bg` | Run in background, return job ID |
 
 **Note:** Performance/stress/external tests are marked `#[ignore]` and skipped by default. Run them with `cargo xtask test --heavy`.
+
+---
+
+## Agent Decision Patterns
+
+### When to Use --json
+
+| Situation | Use --json? | Reason |
+|-----------|-------------|--------|
+| Checking success/failure | Yes | Parse `.status` field programmatically |
+| Extracting specific data | Yes | Structured access to fields |
+| Debugging interactively | No | Human output more readable |
+| Logging for later review | Either | JSON for parsing, human for reading |
+
+### When to Use --bg
+
+| Situation | Use --bg? | Reason |
+|-----------|-----------|--------|
+| Operation > 10 seconds | Yes | Continue working while it runs |
+| Need result immediately | No | Blocking is simpler |
+| Multiple independent tasks | Yes | Spawn all in parallel |
+| Interactive debugging | No | Need real-time output |
+
+### Chaining Pattern
+
+```bash
+# Spawn, extract ID, continue working, later check result
+JOB=$(cargo xtask test --bg --json -p PKG | jq -r '.data.job_id')
+# ... do other work ...
+cargo xtask jobs status "$JOB" --json | jq '.data.status'
+```
+
+### Conditional Execution
+
+```bash
+# Check if tests pass before proceeding
+if cargo xtask test --json 2>&1 | jq -e '.status == "success"' > /dev/null; then
+    echo "Tests passed, proceeding..."
+else
+    echo "Tests failed, investigating..."
+    cargo xtask test --json 2>&1 | jq -r '.errors[].message'
+fi
+```
 
 ---
 
@@ -28,18 +72,6 @@ cargo xtask status --doctor --json
 cargo xtask check --json | jq '.status'           # "success" or "failed"
 cargo xtask test --json | jq '.duration_secs'     # timing info
 cargo xtask deps unused --json | jq '.data.unused' # unused deps
-```
-
-**Agent Decision Pattern:**
-
-```bash
-# Check if tests pass before proceeding
-if cargo xtask test --json 2>&1 | jq -e '.status == "success"' > /dev/null; then
-    echo "Tests passed, proceeding..."
-else
-    echo "Tests failed, investigating..."
-    cargo xtask test --json 2>&1 | jq -r '.errors[].message'
-fi
 ```
 
 ---

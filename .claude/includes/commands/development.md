@@ -23,6 +23,48 @@ cargo xtask fix
 
 ---
 
+## Async Workflow Patterns
+
+### Background Execution
+
+```bash
+# Spawn and continue working immediately
+cargo xtask check --bg      # Returns job ID, runs in background
+cargo xtask test --bg       # Tests compile and run while you work
+cargo xtask build --bg      # Build while editing other files
+
+# Monitor running jobs
+cargo xtask jobs active              # What's running right now?
+cargo xtask jobs list                # Recent job history
+cargo xtask jobs status <ID>         # Status of specific job
+cargo xtask jobs status <ID> --json  # Machine-parseable status
+
+# Retrieve results
+cargo xtask jobs output <ID>         # Full output
+cargo xtask jobs wait <ID>           # Block until complete
+```
+
+### JSON for Agent Consumption
+
+```bash
+# Always use --json when parsing programmatically
+cargo xtask check --json | jq '.status'           # "success" or "failed"
+cargo xtask test --bg --json | jq '.data.job_id'  # Get job ID
+cargo xtask jobs list --json | jq '.data.jobs[]'  # Iterate all jobs
+```
+
+### Decision Pattern
+
+```
+MATCH task:
+  | Quick operation (< 5s)     → run foreground
+  | Need result for next step  → run foreground, parse --json
+  | Can work on other things   → run --bg, continue, check later
+  | Multiple independent tasks → spawn all --bg in parallel
+```
+
+---
+
 ## Testing Commands
 
 ```bash
@@ -50,5 +92,6 @@ cargo xtask test --skip-preflight    # Skip auto-start (if infra already running
 | Heavy/ignored tests | `cargo xtask test --heavy` |
 | Run benchmarks | `cargo xtask test --bench` |
 | Skip auto-start | `cargo xtask test --skip-preflight` |
+| Background test run | `cargo xtask test --bg -p PKG` |
 
 **Note:** `-p` and `-E` are first-class flags. Do NOT use `-- -p` or `-- -E` passthrough.
