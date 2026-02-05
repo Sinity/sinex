@@ -200,9 +200,12 @@ impl JobManager {
         // CARGO_NO_SLICE=1 bypasses the systemd-run wrapper (scripts/cargo) which would
         // otherwise run cargo commands in a systemd scope, making process control (kill, etc.)
         // unreliable. Background jobs need direct process control.
+        // XTASK_JOB_DIR tells the child --fg process to write exit_code on completion.
+        // CARGO_NO_SLICE bypasses the systemd-run wrapper for direct process control.
         let mut cmd = process::Command::new(command);
         cmd.args(args)
             .env("CARGO_NO_SLICE", "1")
+            .env("XTASK_JOB_DIR", &job_dir)
             .stdout(Stdio::from(stdout_file))
             .stderr(Stdio::from(stderr_file));
 
@@ -222,22 +225,6 @@ impl JobManager {
             db.update_job_paths(history_id, &stdout_path, &stderr_path)?;
         }
 
-        // Spawn async task to wait for completion and move logs to DB
-        let db_path = config().history_db_path();
-        let stdout_path_clone = stdout_path.clone();
-        let stderr_path_clone = stderr_path.clone();
-
-        tokio::spawn(async move {
-            wait_for_child_async(
-                child,
-                history_id,
-                db_path,
-                stdout_path_clone,
-                stderr_path_clone,
-            )
-            .await;
-        });
-
         Ok(Job {
             id: history_id,
             command: command.to_string(),
@@ -251,13 +238,52 @@ impl JobManager {
     }
 
     /// Get a job by ID (direct SQL lookup, O(1)).
+    ///
+    /// If the job is "running" but its PID is dead, automatically reaps it.
     pub fn get(&self, id: i64) -> Result<Option<Job>> {
         let db = self
             .db
             .lock()
             .map_err(|_| anyhow::anyhow!("db lock poisoned"))?;
-        let bg = db.get_background_job_by_id(id)?;
-        Ok(bg.map(|b| Job::from_background_job(b, &self.jobs_dir)))
+        let bg = match db.get_background_job_by_id(id)? {
+            Some(bg) => bg,
+            None => return Ok(None),
+        };
+
+        // Reap if running but process is dead
+        if matches!(bg.status, InvocationStatus::Running) && bg.pid > 0 {
+            let pid = nix::unistd::Pid::from_raw(bg.pid as i32);
+            if nix::sys::signal::kill(pid, None).is_err() {
+                let job_dir = self.jobs_dir.join(bg.id.to_string());
+                let exit_code_path = job_dir.join("exit_code");
+                let (status, exit_code) = if let Ok(content) = fs::read_to_string(&exit_code_path) {
+                    let code = content.trim().parse::<i32>().unwrap_or(-1);
+                    if code == 0 {
+                        (InvocationStatus::Success, Some(0))
+                    } else {
+                        (InvocationStatus::Failed, Some(code))
+                    }
+                } else {
+                    (InvocationStatus::Failed, None)
+                };
+
+                let stdout_path = job_dir.join("stdout.log");
+                let stderr_path = job_dir.join("stderr.log");
+                let _ = db.finish_background_job(
+                    bg.id,
+                    status,
+                    exit_code,
+                    0.0,
+                    stdout_path.exists().then_some(stdout_path.as_path()),
+                    stderr_path.exists().then_some(stderr_path.as_path()),
+                );
+                // Re-fetch to get updated status
+                let updated = db.get_background_job_by_id(id)?;
+                return Ok(updated.map(|b| Job::from_background_job(b, &self.jobs_dir)));
+            }
+        }
+
+        Ok(Some(Job::from_background_job(bg, &self.jobs_dir)))
     }
 
     /// List all jobs.
@@ -286,8 +312,60 @@ impl JobManager {
             .collect())
     }
 
-    /// List only active (running) jobs.
+    /// Reap zombie jobs: mark "running" jobs whose PIDs no longer exist as failed.
+    ///
+    /// This handles the case where the xtask process (or systemd scope) died
+    /// without updating the DB. Called automatically by list/get operations.
+    pub fn reap_zombies(&self) -> Result<usize> {
+        let db = self
+            .db
+            .lock()
+            .map_err(|_| anyhow::anyhow!("db lock poisoned"))?;
+        let active = db.get_active_background_jobs()?;
+        let mut reaped = 0;
+
+        for job in active {
+            if job.pid > 0 {
+                let pid = nix::unistd::Pid::from_raw(job.pid as i32);
+                // Signal 0 checks if process exists without sending a signal
+                if nix::sys::signal::kill(pid, None).is_err() {
+                    // Process is dead — check for exit_code file from waiter
+                    let job_dir = self.jobs_dir.join(job.id.to_string());
+                    let exit_code_path = job_dir.join("exit_code");
+                    let (status, exit_code) =
+                        if let Ok(content) = fs::read_to_string(&exit_code_path) {
+                            let code = content.trim().parse::<i32>().unwrap_or(-1);
+                            if code == 0 {
+                                (InvocationStatus::Success, Some(0))
+                            } else {
+                                (InvocationStatus::Failed, Some(code))
+                            }
+                        } else {
+                            // No exit_code file — process crashed or was killed
+                            (InvocationStatus::Failed, None)
+                        };
+
+                    let stdout_path = job_dir.join("stdout.log");
+                    let stderr_path = job_dir.join("stderr.log");
+                    let _ = db.finish_background_job(
+                        job.id,
+                        status,
+                        exit_code,
+                        0.0, // unknown duration
+                        stdout_path.exists().then_some(stdout_path.as_path()),
+                        stderr_path.exists().then_some(stderr_path.as_path()),
+                    );
+                    reaped += 1;
+                }
+            }
+        }
+
+        Ok(reaped)
+    }
+
+    /// List only active (running) jobs, reaping zombies first.
     pub fn list_active(&self) -> Result<Vec<Job>> {
+        self.reap_zombies()?;
         let db = self
             .db
             .lock()
@@ -399,51 +477,6 @@ impl JobManager {
         }
 
         Ok(count)
-    }
-}
-
-/// Wait for a child process, update `HistoryDb`, and move logs to DB.
-///
-/// Enforces a 4-hour hard ceiling to prevent zombie jobs from accumulating
-/// when spawned processes hang indefinitely.
-async fn wait_for_child_async(
-    mut child: tokio::process::Child,
-    history_id: i64,
-    db_path: PathBuf,
-    stdout_path: PathBuf,
-    stderr_path: PathBuf,
-) {
-    let start = std::time::Instant::now();
-    let timeout = Duration::from_secs(4 * 3600); // 4-hour hard ceiling
-
-    let result = match tokio::time::timeout(timeout, child.wait()).await {
-        Ok(result) => result,
-        Err(_) => {
-            // Timed out — kill the child process
-            let _ = child.kill().await;
-            Err(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "job timed out after 4 hours",
-            ))
-        }
-    };
-    let duration = start.elapsed().as_secs_f64();
-
-    if let Ok(db) = HistoryDb::open(&db_path) {
-        let (status, exit_code) = match result {
-            Ok(exit) if exit.success() => (InvocationStatus::Success, Some(0)),
-            Ok(exit) => (InvocationStatus::Failed, exit.code()),
-            Err(_) => (InvocationStatus::Failed, None),
-        };
-        // Store logs in DB and delete files
-        let _ = db.finish_background_job(
-            history_id,
-            status,
-            exit_code,
-            duration,
-            Some(&stdout_path),
-            Some(&stderr_path),
-        );
     }
 }
 

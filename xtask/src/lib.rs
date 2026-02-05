@@ -263,6 +263,26 @@ pub async fn run_cli() -> Result<()> {
         }
     }
 
+    // Write exit_code file for background job tracking.
+    // XTASK_JOB_DIR is set by the bg job spawner so the zombie reaper can
+    // determine success vs failure after the process exits.
+    let exit_code = match &result {
+        Ok(res)
+            if res.status == crate::output::Status::Failed
+                || res.status == crate::output::Status::Partial =>
+        {
+            1
+        }
+        Ok(_) => 0,
+        Err(_) => 1,
+    };
+    if let Ok(job_dir) = std::env::var("XTASK_JOB_DIR") {
+        let _ = std::fs::write(
+            std::path::Path::new(&job_dir).join("exit_code"),
+            format!("{exit_code}\n"),
+        );
+    }
+
     match result {
         Ok(res) => {
             res.print(ctx.writer(), command_name);
