@@ -5,6 +5,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use time::OffsetDateTime;
 
 /// Status of a command invocation.
@@ -60,6 +61,8 @@ pub struct Invocation {
 /// Handle to the history `SQLite` database.
 pub struct HistoryDb {
     pub(super) conn: Connection,
+    /// Guard to ensure job columns migration runs at most once per instance.
+    job_columns_ensured: AtomicBool,
 }
 
 impl HistoryDb {
@@ -78,7 +81,10 @@ impl HistoryDb {
             format!("failed to open history database: {path_display}")
         })?;
 
-        let db = Self { conn };
+        let db = Self {
+            conn,
+            job_columns_ensured: AtomicBool::new(false),
+        };
         db.init_schema()?;
         Ok(db)
     }
@@ -434,15 +440,24 @@ impl HistoryDb {
     // ============ Background Job Methods (Phase 3: Jobs Unification) ============
 
     /// Ensure the background job columns exist (for schema migration).
+    ///
+    /// Runs at most once per `HistoryDb` instance to avoid repeated ALTER TABLE overhead.
     pub fn ensure_job_columns(&self) -> Result<()> {
+        // Fast path: already ensured this instance
+        if self.job_columns_ensured.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+
         // Add columns if they don't exist (SQLite doesn't support IF NOT EXISTS for columns)
         let columns_to_add = [
             ("pid", "INTEGER"),
             ("is_background", "INTEGER DEFAULT 0"),
             ("stdout_path", "TEXT"),
             ("stderr_path", "TEXT"),
-            ("stdout_content", "TEXT"), // Logs stored in DB after completion
+            ("stdout_content", "TEXT"),
             ("stderr_content", "TEXT"),
+            ("cpu_usage_avg", "REAL"),
+            ("memory_usage_max_mb", "REAL"),
         ];
 
         for (col_name, col_type) in columns_to_add {
@@ -459,6 +474,7 @@ impl HistoryDb {
             [],
         );
 
+        self.job_columns_ensured.store(true, Ordering::Relaxed);
         Ok(())
     }
 
@@ -589,9 +605,9 @@ impl HistoryDb {
     pub fn get_all_background_job_ids(&self) -> Result<HashSet<i64>> {
         self.ensure_job_columns()?;
 
-        let mut stmt = self.conn.prepare(
-            "SELECT id FROM invocations WHERE is_background = 1",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id FROM invocations WHERE is_background = 1")?;
 
         let rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
 
