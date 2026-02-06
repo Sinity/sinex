@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 use console::{style, Emoji};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use serde::Deserialize;
@@ -8,34 +8,84 @@ use std::thread;
 use crate::history::HistoryDb;
 
 /// Strict types for Nextest JSON messages (libtest-json format)
-#[derive(Deserialize)]
-#[serde(tag = "type")]
+///
+/// The format is: {"type": "suite"|"test", "event": "started"|"ok"|"failed", ...}
+#[derive(Deserialize, Debug)]
+struct RawMessage {
+    #[serde(rename = "type")]
+    msg_type: String,
+    event: String,
+    #[serde(rename = "test_count")]
+    test_count: Option<usize>,
+    name: Option<String>,
+    #[serde(rename = "exec_time")]
+    exec_time: Option<f64>,
+    passed: Option<usize>,
+    failed: Option<usize>,
+    ignored: Option<usize>,
+}
+
+impl RawMessage {
+    fn into_message(self) -> Message {
+        match (self.msg_type.as_str(), self.event.as_str()) {
+            ("suite", "started") => Message::SuiteStarted(SuiteStarted {
+                test_count: self.test_count.unwrap_or(0),
+            }),
+            ("suite", "ok" | "failed") => Message::SuiteFinished(SuiteFinished {
+                passed: self.passed.unwrap_or(0),
+                failed: self.failed.unwrap_or(0),
+                ignored: self.ignored.unwrap_or(0),
+            }),
+            ("test", "started") => Message::TestStarted(TestStarted {
+                name: self.name.unwrap_or_default(),
+            }),
+            ("test", "ok") => Message::TestFinished(TestFinished {
+                name: self.name.unwrap_or_default(),
+                result: "passed".to_string(),
+                exec_time: self.exec_time,
+            }),
+            ("test", "failed") => Message::TestFinished(TestFinished {
+                name: self.name.unwrap_or_default(),
+                result: "failed".to_string(),
+                exec_time: self.exec_time,
+            }),
+            ("test", "ignored") => Message::TestFinished(TestFinished {
+                name: self.name.unwrap_or_default(),
+                result: "ignored".to_string(),
+                exec_time: self.exec_time,
+            }),
+            _ => Message::Other,
+        }
+    }
+}
+
 enum Message {
-    #[serde(rename = "suite-started")]
     SuiteStarted(SuiteStarted),
-    #[serde(rename = "test-event")]
-    TestEvent(TestEvent),
-    #[serde(other)]
+    SuiteFinished(SuiteFinished),
+    TestStarted(TestStarted),
+    TestFinished(TestFinished),
     Other,
 }
 
-#[derive(Deserialize)]
 struct SuiteStarted {
-    #[serde(rename = "test-count")]
     test_count: usize,
 }
 
-#[derive(Deserialize)]
-pub struct TestEvent {
-    #[serde(rename = "test-event")]
-    pub kind: String, // "test-started", "test-finished"
-    pub name: String,
-    pub package: Option<String>,
-    pub result: Option<String>, // "passed", "failed", "ignored"
-    #[serde(rename = "exec-time")]
-    pub exec_time: Option<f64>,
-    pub stdout: Option<String>,
-    pub stderr: Option<String>,
+#[allow(dead_code)] // Fields parsed from JSON but not currently used
+struct SuiteFinished {
+    passed: usize,
+    failed: usize,
+    ignored: usize,
+}
+
+struct TestStarted {
+    name: String,
+}
+
+struct TestFinished {
+    name: String,
+    result: String,
+    exec_time: Option<f64>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -55,16 +105,21 @@ pub struct TestReporter {
 impl TestReporter {
     #[must_use]
     pub fn new(human: bool) -> Self {
-        let mp = MultiProgress::new();
-        let pb = mp.add(ProgressBar::new(0)); // Will update total when known
-
-        // Match style from original test.rs
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}")
-                .unwrap()
-                .progress_chars("#>-"),
-        );
+        // Use hidden progress bar when not in human mode or when stdout isn't a TTY.
+        // ProgressBar::hidden() is a complete no-op — zero CPU, no output.
+        let pb = if human && crate::output::is_tty() {
+            let mp = MultiProgress::new();
+            let pb = mp.add(ProgressBar::new(0)); // Will update total when known
+            pb.set_style(
+                ProgressStyle::default_bar()
+                    .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}")
+                    .unwrap()
+                    .progress_chars("#>-"),
+            );
+            pb
+        } else {
+            ProgressBar::hidden()
+        };
 
         Self { pb, human }
     }
@@ -82,6 +137,8 @@ impl TestReporter {
     {
         if self.human {
             println!("{}", style("\n🚀 Launching tests...").bold());
+            // Progress bar won't tick until suite-started; indicate compilation phase
+            self.pb.set_message("Compiling test binaries...");
         }
 
         // Spawn stderr handler
@@ -94,19 +151,88 @@ impl TestReporter {
         });
 
         let mut stats = TestStats::default();
+        let mut suite_started = false;
 
         for line_res in stdout.lines() {
             let line = line_res?;
 
-            // Try to parse parsing JSON line
-            if let Ok(msg) = serde_json::from_str::<Message>(&line) {
+            // Try to parse JSON line and convert to our message type
+            if let Ok(raw) = serde_json::from_str::<RawMessage>(&line) {
+                let msg = raw.into_message();
                 match msg {
                     Message::SuiteStarted(s) => {
-                        self.pb.set_length(s.test_count as u64);
-                        stats.total = s.test_count;
+                        suite_started = true;
+                        // Each test binary emits suite-started, so accumulate total
+                        let new_total = stats.total + s.test_count;
+                        self.pb.set_length(new_total as u64);
+                        stats.total = new_total;
                     }
-                    Message::TestEvent(event) => {
-                        self.handle_event(event, &mut stats, history)?;
+                    Message::SuiteFinished(s) => {
+                        // Each test binary emits suite-finished with its own stats
+                        // We track individual test results, so this is mostly for verification
+                        // but we can use it to cross-check
+                        let _ = s; // Already tracked via TestFinished events
+                    }
+                    Message::TestStarted(t) => {
+                        self.pb.set_message(format!("Running {}", t.name));
+                        if !self.human {
+                            eprintln!("  ▸ {}", t.name);
+                        }
+                    }
+                    Message::TestFinished(t) => {
+                        let duration = t.exec_time.unwrap_or(0.0);
+
+                        // Update stats and UI
+                        match t.result.as_str() {
+                            "passed" => {
+                                stats.passed += 1;
+                                self.pb.inc(1);
+                                // Show slow tests (>5s) even in normal mode
+                                if duration > 5.0 {
+                                    let msg = format!(
+                                        "  {} {} ({:.1}s)",
+                                        Emoji("⚡", "~"),
+                                        t.name,
+                                        duration
+                                    );
+                                    self.pb.println(&msg);
+                                    if !self.human {
+                                        eprintln!("{msg}");
+                                    }
+                                }
+                            }
+                            "failed" => {
+                                stats.failed += 1;
+                                self.pb.inc(1);
+                                // Log failure immediately above bar
+                                let msg =
+                                    format!("  {} {} ({:.1}s)", Emoji("❌", "x"), t.name, duration);
+                                self.pb.println(&msg);
+                                if !self.human {
+                                    eprintln!("{msg}");
+                                }
+                            }
+                            "ignored" => {
+                                stats.ignored += 1;
+                                self.pb.inc(1);
+                            }
+                            _ => {
+                                self.pb.inc(1);
+                            }
+                        }
+
+                        // Record to DB
+                        if let Some((db, invocation_id)) = history {
+                            // We ignore errors here to not interrupt testing flow if DB fails
+                            let _ = db.record_test_result(
+                                invocation_id,
+                                &t.name,
+                                "unknown", // Package info not available in this format
+                                &t.result,
+                                duration,
+                                None,
+                            );
+                        }
                     }
                     Message::Other => {}
                 }
@@ -114,86 +240,20 @@ impl TestReporter {
         }
 
         if self.human {
-            self.pb.finish_and_clear();
+            self.pb.finish_with_message("done");
+        }
+
+        // Detect test discovery failures: if no suite-started message was received,
+        // something went wrong (invalid profile, compilation error, etc.)
+        if !suite_started {
+            bail!(
+                "No tests discovered. Possible causes:\n\
+                 - Invalid nextest profile (check .config/nextest.toml)\n\
+                 - Compilation errors (check stderr output above)\n\
+                 - Filter expression matched no tests"
+            );
         }
 
         Ok(stats)
-    }
-
-    fn handle_event(
-        &self,
-        event: TestEvent,
-        stats: &mut TestStats,
-        history: Option<(&HistoryDb, i64)>,
-    ) -> Result<()> {
-        match event.kind.as_str() {
-            "test-started" => {
-                self.pb.set_message(format!("Running {}", event.name));
-            }
-            "test-finished" => {
-                let result = event.result.as_deref().unwrap_or("unknown");
-                let duration = event.exec_time.unwrap_or(0.0);
-
-                // Update stats and UI
-                match result {
-                    "passed" => {
-                        stats.passed += 1;
-                        self.pb.inc(1);
-                    }
-                    "failed" => {
-                        stats.failed += 1;
-                        self.pb.inc(1);
-                        // Log failure immediately above bar
-                        let msg = format!("{} {} ({:.3}s)", Emoji("❌", "x"), event.name, duration);
-                        self.pb.println(msg);
-                    }
-                    "ignored" => {
-                        stats.ignored += 1;
-                        self.pb.inc(1);
-                        // Ignore implies successful skip
-                    }
-                    _ => {
-                        self.pb.inc(1);
-                    }
-                }
-
-                // Record to DB
-                if let Some((db, invocation_id)) = history {
-                    let mut output = String::new();
-                    if let Some(s) = &event.stdout {
-                        if !s.is_empty() {
-                            output.push_str("STDOUT:\n");
-                            output.push_str(s);
-                            output.push('\n');
-                        }
-                    }
-                    if let Some(s) = &event.stderr {
-                        if !s.is_empty() {
-                            output.push_str("STDERR:\n");
-                            output.push_str(s);
-                            output.push('\n');
-                        }
-                    }
-
-                    let output_opt = if output.is_empty() {
-                        None
-                    } else {
-                        Some(output.as_str())
-                    };
-
-                    // We ignore errors here to not interrupt testing flow if DB fails
-                    let _ = db.record_test_result(
-                        invocation_id,
-                        &event.name,
-                        event.package.as_deref().unwrap_or("unknown"),
-                        result,
-                        duration,
-                        output_opt,
-                    );
-                }
-            }
-            _ => {}
-        }
-        Ok(())
     }
 }

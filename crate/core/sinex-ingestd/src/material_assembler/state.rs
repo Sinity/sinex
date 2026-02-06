@@ -317,6 +317,7 @@ pub(super) async fn handle_begin(
         state.metadata = metadata.clone();
         state.started_at = started_at;
         state.has_begin = true;
+        assembler.stats_inc_started(); // Track new assembly start
         assembler.insert_state_handle(material_id, state).await
     };
 
@@ -384,6 +385,10 @@ pub(super) async fn handle_begin(
             started_at,
         )
         .await?;
+
+    // Signal that this material is now registered in the database, unblocking any
+    // events in the JetStreamConsumer batch that reference this material_id via FK.
+    assembler.ready_set.mark_ready(material_id);
 
     let has_pending_end = {
         let state = state_handle.lock().await;

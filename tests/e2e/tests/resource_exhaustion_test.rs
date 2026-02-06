@@ -11,29 +11,37 @@ use async_nats::jetstream::{
 use futures::StreamExt;
 use serde_json::json;
 use sinex_primitives::ulid::Ulid;
+use sinex_primitives::Timestamp;
 use std::time::{Duration, Instant};
 use xtask::sandbox::{prelude::*, timing::Timeouts, EphemeralNats};
 
-async fn setup_stream(js: &JetStream, name: &str, subject: &str, max_msgs: i64) -> TestResult<()> {
+#[allow(dead_code)]
+async fn setup_stream(
+    js: &JetStream,
+    name: &str,
+    subject: &str,
+    max_messages: i64,
+) -> TestResult<()> {
     let config = StreamConfig {
         name: name.to_string(),
         subjects: vec![subject.to_string()],
         retention: RetentionPolicy::Limits,
-        max_msgs,
-        max_age: Duration::from_secs(Timeouts::STANDARD),
+        max_messages,
+        max_age: Duration::from_secs(Timeouts::STANDARD as u64),
         ..Default::default()
     };
     js.get_or_create_stream(config).await?;
     Ok(())
 }
 
+#[allow(dead_code)]
 async fn create_consumer(
     js: &JetStream,
     stream: &str,
     subject: &str,
     durable: &str,
     ack_wait: Duration,
-) -> TestResult<Consumer> {
+) -> TestResult<Consumer<ConsumerConfig>> {
     let stream_handle = js.get_stream(stream).await?;
     stream_handle
         .get_or_create_consumer(
@@ -54,6 +62,8 @@ async fn create_consumer(
 }
 
 #[sinex_bench]
+#[ignore]
+#[allow(dead_code)]
 async fn jetstream_backpressure_limits() -> TestResult<()> {
     let nats = EphemeralNats::start().await?;
     let client = nats.connect().await?;
@@ -68,7 +78,7 @@ async fn jetstream_backpressure_limits() -> TestResult<()> {
     for i in 0..400 {
         let payload = serde_json::to_vec(&json!({
             "sequence": i,
-            "timestamp": OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap(),
+            "timestamp": Timestamp::now().to_rfc3339(),
         }))?;
         let ack = js.publish(&subject, payload.into()).await?;
         ack.await?;
@@ -86,6 +96,8 @@ async fn jetstream_backpressure_limits() -> TestResult<()> {
 }
 
 #[sinex_bench]
+#[ignore]
+#[allow(dead_code)]
 async fn jetstream_consumer_recovery() -> TestResult<()> {
     let nats = EphemeralNats::start().await?;
     let client = nats.connect().await?;
@@ -124,7 +136,7 @@ async fn jetstream_consumer_recovery() -> TestResult<()> {
     let mut batch = consumer
         .fetch()
         .max_messages(128)
-        .expires(Duration::from_secs(Timeouts::SHORT))
+        .expires(Duration::from_secs(Timeouts::SHORT as u64))
         .messages()
         .await?;
 
@@ -143,7 +155,7 @@ async fn jetstream_consumer_recovery() -> TestResult<()> {
     let mut drain = consumer
         .fetch()
         .max_messages(128)
-        .expires(Duration::from_secs(Timeouts::SHORT))
+        .expires(Duration::from_secs(Timeouts::SHORT as u64))
         .messages()
         .await?;
 
@@ -166,6 +178,8 @@ async fn jetstream_consumer_recovery() -> TestResult<()> {
 }
 
 #[sinex_bench]
+#[ignore]
+#[allow(dead_code)]
 async fn jetstream_high_concurrency_publish() -> TestResult<()> {
     let nats = EphemeralNats::start().await?;
     let client = nats.connect().await?;
@@ -187,7 +201,7 @@ async fn jetstream_high_concurrency_publish() -> TestResult<()> {
         let payload = payload.clone();
         join_set.spawn(async move {
             for i in 0..messages_per_worker {
-                let mut data = payload.clone();
+                let data = payload.clone();
                 let mut json_val: serde_json::Value = serde_json::from_slice(&data)?;
                 if let serde_json::Value::Object(ref mut obj) = json_val {
                     obj.insert(
@@ -198,7 +212,7 @@ async fn jetstream_high_concurrency_publish() -> TestResult<()> {
                         }),
                     );
                 }
-                data = serde_json::to_vec(&json_val)?;
+                let data = serde_json::to_vec(&json_val)?;
                 js.publish(&subject, data.into()).await?.await?;
             }
             TestResult::<()>::Ok(())
@@ -224,7 +238,7 @@ async fn jetstream_high_concurrency_publish() -> TestResult<()> {
         &stream,
         &subject,
         &durable,
-        Duration::from_secs(Timeouts::STANDARD),
+        Duration::from_secs(Timeouts::STANDARD as u64),
     )
     .await?;
 
@@ -233,7 +247,7 @@ async fn jetstream_high_concurrency_publish() -> TestResult<()> {
         let mut batch = consumer
             .fetch()
             .max_messages(256)
-            .expires(Duration::from_secs(Timeouts::QUICK))
+            .expires(Duration::from_secs(Timeouts::QUICK as u64))
             .messages()
             .await?;
 

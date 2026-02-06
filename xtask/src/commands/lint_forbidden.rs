@@ -31,8 +31,23 @@ impl XtaskCommand for LintForbiddenCommand {
             println!("========== forbidden pattern scan ==========");
         }
 
-        // Define allowlists for each pattern
-        // These are async unit tests that don't require database/NATS isolation
+        // ═══════════════════════════════════════════════════════════════════════
+        // TEST ATTRIBUTE ALLOWLISTS — ONLY FOR IMPOSSIBLE CASES
+        // ═══════════════════════════════════════════════════════════════════════
+        //
+        // `#[sinex_test]` is UNIVERSAL. If a test doesn't need TestContext, just
+        // don't take it as an argument — the macro supports this.
+        //
+        // These allowlists are ONLY for cases where `#[sinex_test]` literally
+        // cannot be used:
+        // - Testing the test infrastructure itself (sinex-test-utils)
+        // - External tools (xtask) that don't have sandbox access
+        // - Bootstrap code that runs before sandbox is available
+        //
+        // If you're adding a file here, you're probably doing something wrong.
+        // ═══════════════════════════════════════════════════════════════════════
+
+        // Async tests that don't require database/NATS isolation
         let tokio_test_allow = [
             "crate/lib/sinex-test-utils/macros/src/lib.rs",
             "crate/lib/sinex-test-utils/tests/rstest_integration_example.rs",
@@ -60,7 +75,10 @@ impl XtaskCommand for LintForbiddenCommand {
             "xtask/tests/test_commands.rs",
             "xtask/macros/src/lib.rs",
         ];
-        // Sync #[test] allowed for unit tests that don't need async/DB
+        // Pure sync `#[test]` allowed for unit tests that are:
+        // - In-memory only (no DB, no NATS, no network)
+        // - Synchronous (no async runtime needed)
+        // - Testing pure functions, parsing, validation, serialization
         let rust_test_allow = [
             "crate/lib/sinex-test-utils/macros/src/lib.rs",
             "crate/nodes/sinex-desktop-node/src/window_manager.rs",

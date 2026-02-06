@@ -69,42 +69,48 @@ impl Ulid {
             recovered
         });
 
-        let random_part = if now_ms == state.last_timestamp {
-            // Same millisecond: increment random component
-            match state.last_random.checked_add(1) {
-                Some(next_random) if next_random <= 0x3FFF_FFFF_FFFF_FFFF_FFFF => {
-                    state.last_random = next_random;
-                    next_random
-                }
-                _ => {
-                    // Overflow: advance to next millisecond
-                    let next_ts = now_ms.saturating_add(1);
-                    state.last_timestamp = next_ts;
-                    let new_random = rand::thread_rng().gen::<u128>() & 0x3FFF_FFFF_FFFF_FFFF_FFFF;
-                    state.last_random = new_random;
-                    new_random
+        let random_part = match now_ms.cmp(&state.last_timestamp) {
+            std::cmp::Ordering::Equal => {
+                // Same millisecond: increment random component
+                match state.last_random.checked_add(1) {
+                    Some(next_random) if next_random <= 0x3FFF_FFFF_FFFF_FFFF_FFFF => {
+                        state.last_random = next_random;
+                        next_random
+                    }
+                    _ => {
+                        // Overflow: advance to next millisecond
+                        let next_ts = now_ms.saturating_add(1);
+                        state.last_timestamp = next_ts;
+                        let new_random =
+                            rand::thread_rng().gen::<u128>() & 0x3FFF_FFFF_FFFF_FFFF_FFFF;
+                        state.last_random = new_random;
+                        new_random
+                    }
                 }
             }
-        } else if now_ms > state.last_timestamp {
-            // New millisecond: fresh random component
-            let mut rng = rand::thread_rng();
-            let new_random = rng.gen::<u128>() & 0x3FFF_FFFF_FFFF_FFFF_FFFF;
-            state.last_timestamp = now_ms;
-            state.last_random = new_random;
-            new_random
-        } else {
-            // Clock regression: maintain monotonicity
-            match state.last_random.checked_add(1) {
-                Some(next_random) if next_random <= 0x3FFF_FFFF_FFFF_FFFF_FFFF => {
-                    state.last_random = next_random;
-                    next_random
-                }
-                _ => {
-                    let next_ts = state.last_timestamp.saturating_add(1);
-                    state.last_timestamp = next_ts;
-                    let new_random = rand::thread_rng().gen::<u128>() & 0x3FFF_FFFF_FFFF_FFFF_FFFF;
-                    state.last_random = new_random;
-                    new_random
+            std::cmp::Ordering::Greater => {
+                // New millisecond: fresh random component
+                let mut rng = rand::thread_rng();
+                let new_random = rng.gen::<u128>() & 0x3FFF_FFFF_FFFF_FFFF_FFFF;
+                state.last_timestamp = now_ms;
+                state.last_random = new_random;
+                new_random
+            }
+            std::cmp::Ordering::Less => {
+                // Clock regression: maintain monotonicity
+                match state.last_random.checked_add(1) {
+                    Some(next_random) if next_random <= 0x3FFF_FFFF_FFFF_FFFF_FFFF => {
+                        state.last_random = next_random;
+                        next_random
+                    }
+                    _ => {
+                        let next_ts = state.last_timestamp.saturating_add(1);
+                        state.last_timestamp = next_ts;
+                        let new_random =
+                            rand::thread_rng().gen::<u128>() & 0x3FFF_FFFF_FFFF_FFFF_FFFF;
+                        state.last_random = new_random;
+                        new_random
+                    }
                 }
             }
         };
@@ -142,6 +148,7 @@ impl Ulid {
     pub fn timestamp(&self) -> Timestamp {
         let timestamp_ms = self.0.timestamp_ms();
         Timestamp::new(
+            #[allow(clippy::expect_used)]
             OffsetDateTime::from_unix_timestamp_nanos(i128::from(timestamp_ms) * 1_000_000)
                 .expect("ULID timestamp should be valid"),
         )
@@ -191,6 +198,7 @@ impl Ulid {
     /// Create a nil/zero ULID (all zeros)
     #[must_use]
     pub fn nil() -> Self {
+        #[allow(clippy::expect_used)]
         Self::from_bytes([0; 16]).expect("nil ULID should always be valid")
     }
 }

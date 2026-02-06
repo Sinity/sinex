@@ -75,7 +75,7 @@ impl PostgresManager {
             "unix_socket_directories = '{}'",
             self.config.run_dir.display()
         )?;
-        writeln!(conf, "listen_addresses = '127.0.0.1'")?; // TCP enabled for both sandbox and stack mostly
+        writeln!(conf, "listen_addresses = ''")?; // TCP disabled, use Unix sockets only
         writeln!(conf, "port = {}", self.config.port)?;
         writeln!(conf, "max_connections = 200")?;
         writeln!(conf, "shared_preload_libraries = 'timescaledb'")?;

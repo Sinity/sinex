@@ -1,6 +1,68 @@
 //! Testing utilities for domain primitives.
 //!
 //! Provides event fixtures and property testing strategies for domain types.
+//!
+//! # Usage Patterns
+//!
+//! For **pure logic tests** (no DB):
+//! ```rust,ignore
+//! // Simplest: when source/type don't matter
+//! let event = event_stub(json!({"value": 42}));
+//!
+//! // Typed payloads: elegant one-liner
+//! use sinex_primitives::testing::TestablePayload;
+//! let event = FileCreatedPayload { ... }.into_test_event();
+//!
+//! // Full control: specify source/type
+//! let event = event_fixture("fs-watcher", "file.created", json!({...}));
+//! ```
+//!
+//! For **DB tests**: Use `ctx.pipeline().publish()` or `ctx.pipeline().publish_with_timestamp()`.
+
+use crate::events::Publishable;
+
+/// Create a minimal event stub for testing when source/type don't matter.
+///
+/// Uses `"test"` as source and `"test.stub"` as event type.
+///
+/// **WARNING**: Do NOT insert into database. Use for pure logic tests only.
+///
+/// # Example
+/// ```rust,ignore
+/// use sinex_primitives::testing::event_stub;
+///
+/// // When you just need *some* event
+/// let event = event_stub(json!({"value": 42}));
+/// assert!(event.payload["value"] == 42);
+/// ```
+pub fn event_stub(payload: crate::JsonValue) -> crate::Event<crate::JsonValue> {
+    event_fixture("test", "test.stub", payload)
+}
+
+/// Extension trait for creating test events from typed payloads.
+///
+/// # Example
+/// ```rust,ignore
+/// use sinex_primitives::testing::TestablePayload;
+/// use my_crate::FileCreatedPayload;
+///
+/// let payload = FileCreatedPayload { path: "/test".into(), size: 1024 };
+/// let event = payload.into_test_event();  // Source/type inferred from payload
+/// ```
+pub trait TestablePayload: Publishable + Sized {
+    /// Convert this payload into a test event.
+    ///
+    /// **WARNING**: Do NOT insert into database. Use for pure logic tests only.
+    fn into_test_event(self) -> crate::Event<crate::JsonValue> {
+        let payload_json = self
+            .to_json_value()
+            .expect("TestablePayload serialization should not fail");
+        event_fixture(self.source(), self.event_type(), payload_json)
+    }
+}
+
+// Blanket impl for all Publishable types
+impl<T: Publishable + Sized> TestablePayload for T {}
 
 /// Create an event fixture for testing (in-memory only).
 ///

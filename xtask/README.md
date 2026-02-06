@@ -166,7 +166,7 @@ cargo xtask status --doctor --json
 cargo xtask status --summary
 
 # Stack diagnostics
-cargo xtask stack doctor
+cargo xtask status --doctor
 
 # Show currently running background jobs
 cargo xtask jobs active
@@ -231,7 +231,7 @@ The `xtask` crate is organized into several key modules:
 
 ### Infra vs Sandbox
 
-- Use **`infra`** when you need to manage the lifecycle of a service manager itself (e.g., `cargo xtask stack start`).
+- Use **`infra`** when you need to manage the lifecycle of a service manager itself (e.g., `cargo xtask infra start`).
 - Use **`sandbox`** (specifically `Sandbox` and `PipelineScope`) when writing tests that need isolated access to these services.
 
 ## Documentation
@@ -321,7 +321,7 @@ cargo xtask db status --json
 cargo xtask tls check
 
 # Stack diagnostics
-cargo xtask stack doctor
+cargo xtask status --doctor
 ```
 
 ## Exit Codes

@@ -192,7 +192,7 @@ async fn execute_status(
             println!("sinex-dev infra status");
             println!("────────────────────────────────────────");
             println!(
-                "PostgreSQL:  {} (port: {}, socket)",
+                "PostgreSQL:  {} (unix socket, port: {})",
                 if status.postgres.running {
                     "running"
                 } else {

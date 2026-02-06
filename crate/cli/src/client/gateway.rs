@@ -668,26 +668,126 @@ impl GatewayClient {
         serde_json::from_value(result).map_err(Into::into)
     }
 
-    /// Tombstone archived events (PERMANENT!)
-    pub async fn lifecycle_tombstone(
+    // ==================== Two-Step Tombstone Commands (SEC-003) ====================
+
+    /// Create a tombstone operation (Step 1)
+    pub async fn tombstone_create(
         &self,
         source: Option<String>,
         before: Option<String>,
         event_ids: Option<Vec<String>>,
         limit: i64,
         reason: String,
-        dry_run: bool,
-    ) -> Result<LifecycleTombstoneResponse> {
-        let req = LifecycleTombstoneRequest {
+    ) -> Result<TombstoneCreateResponse> {
+        let req = TombstoneCreateRequest {
             source,
             before,
             event_ids,
             limit,
             reason,
-            dry_run,
         };
         let result = self
-            .call_rpc(methods::LIFECYCLE_TOMBSTONE, serde_json::to_value(&req)?)
+            .call_rpc(
+                methods::LIFECYCLE_TOMBSTONE_CREATE,
+                serde_json::to_value(&req)?,
+            )
+            .await?;
+        serde_json::from_value(result).map_err(Into::into)
+    }
+
+    /// Preview cascade analysis for a tombstone operation
+    pub async fn tombstone_preview(
+        &self,
+        operation_id: String,
+    ) -> Result<TombstonePreviewResponse> {
+        let req = TombstonePreviewRequest { operation_id };
+        let result = self
+            .call_rpc(
+                methods::LIFECYCLE_TOMBSTONE_PREVIEW,
+                serde_json::to_value(&req)?,
+            )
+            .await?;
+        serde_json::from_value(result).map_err(Into::into)
+    }
+
+    /// Approve and execute a tombstone operation (Step 2 - PERMANENT!)
+    pub async fn tombstone_approve(
+        &self,
+        operation_id: String,
+        confirm: bool,
+    ) -> Result<TombstoneApproveResponse> {
+        let req = TombstoneApproveRequest {
+            operation_id,
+            yes_i_understand_data_is_gone: confirm,
+        };
+        let result = self
+            .call_rpc(
+                methods::LIFECYCLE_TOMBSTONE_APPROVE,
+                serde_json::to_value(&req)?,
+            )
+            .await?;
+        serde_json::from_value(result).map_err(Into::into)
+    }
+
+    /// Cancel a pending tombstone operation
+    pub async fn tombstone_cancel(
+        &self,
+        operation_id: String,
+        reason: Option<String>,
+    ) -> Result<TombstoneCancelResponse> {
+        let req = TombstoneCancelRequest {
+            operation_id,
+            reason,
+        };
+        let result = self
+            .call_rpc(
+                methods::LIFECYCLE_TOMBSTONE_CANCEL,
+                serde_json::to_value(&req)?,
+            )
+            .await?;
+        serde_json::from_value(result).map_err(Into::into)
+    }
+
+    /// List tombstone operations
+    pub async fn tombstone_list(
+        &self,
+        state: Option<String>,
+        limit: Option<i64>,
+    ) -> Result<TombstoneListResponse> {
+        // Parse state string to enum if provided
+        let state_enum = state.map(|s| match s.to_lowercase().as_str() {
+            "pending" => TombstoneOperationState::Pending,
+            "previewed" => TombstoneOperationState::Previewed,
+            "approved" => TombstoneOperationState::Approved,
+            "executing" => TombstoneOperationState::Executing,
+            "completed" => TombstoneOperationState::Completed,
+            "cancelled" => TombstoneOperationState::Cancelled,
+            "failed" => TombstoneOperationState::Failed,
+            "expired" => TombstoneOperationState::Expired,
+            _ => TombstoneOperationState::Pending, // Default fallback
+        });
+
+        let req = TombstoneListRequest {
+            state: state_enum,
+            limit,
+        };
+        let result = self
+            .call_rpc(
+                methods::LIFECYCLE_TOMBSTONE_LIST,
+                serde_json::to_value(&req)?,
+            )
+            .await?;
+        serde_json::from_value(result).map_err(Into::into)
+    }
+
+    /// Get status of a specific tombstone operation
+    pub async fn tombstone_status(&self, operation_id: String) -> Result<TombstoneStatusResponse> {
+        let req = TombstoneStatusRequest { operation_id };
+        let result = self
+            .call_rpc(
+                methods::LIFECYCLE_TOMBSTONE_STATUS,
+                serde_json::to_value(&req)?,
+            )
             .await?;
         serde_json::from_value(result).map_err(Into::into)
     }

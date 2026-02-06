@@ -64,9 +64,9 @@ pub struct TestCommand {
     #[arg(long)]
     pub dry_run: bool,
 
-    /// Run preflight checks
+    /// Skip automatic infrastructure setup (preflight is ON by default)
     #[arg(long)]
-    pub preflight: bool,
+    pub skip_preflight: bool,
 
     /// Include tests marked `#[ignore]`
     #[arg(long)]
@@ -109,6 +109,68 @@ impl XtaskCommand for TestCommand {
     }
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
+        // Handle background execution (like build/check/fix)
+        if ctx.is_background() {
+            let mut args = Vec::new();
+            if self.debug {
+                args.push("--debug".to_string());
+            }
+            if self.fail_fast {
+                args.push("--fail-fast".to_string());
+            }
+            if self.all {
+                args.push("--all".to_string());
+            }
+            if self.heavy {
+                args.push("--heavy".to_string());
+            }
+            if self.include_ignored {
+                args.push("--include-ignored".to_string());
+            }
+            if self.skip_preflight {
+                args.push("--skip-preflight".to_string());
+            }
+            if self.prime {
+                args.push("--prime".to_string());
+            }
+            if self.fuzz {
+                args.push("--fuzz".to_string());
+            }
+            if self.mutants {
+                args.push("--mutants".to_string());
+            }
+            if self.coverage {
+                args.push("--coverage".to_string());
+            }
+            if self.bench {
+                args.push("--bench".to_string());
+            }
+            if let Some(ref f) = self.filter {
+                args.push("-E".to_string());
+                args.push(f.clone());
+            }
+            if let Some(ref pkgs) = self.package {
+                for p in pkgs {
+                    args.push("-p".to_string());
+                    args.push(p.clone());
+                }
+            }
+            if let Some(threads) = self.threads {
+                args.push(format!("--threads={threads}"));
+            }
+            if let Some(retries) = self.retries {
+                args.push(format!("--retries={retries}"));
+            }
+            if let Some(ref timeout) = self.timeout {
+                args.push(format!("--timeout={timeout}"));
+            }
+            if !self.args.is_empty() {
+                args.push("--".to_string());
+                args.extend(self.args.clone());
+            }
+            return ctx.spawn_background("test", &args).await;
+        }
+
         // Handle --bench flag - delegate to bench infrastructure
         if self.bench {
             // ... (keep existing bench delegation if needed, or remove if unused)
@@ -164,13 +226,16 @@ impl XtaskCommand for TestCommand {
             );
         }
 
-        // Preflight
-        if self.preflight {
+        // Preflight is default ON unless explicitly disabled
+        if !self.skip_preflight {
             crate::preflight::ensure_ready(ctx)?;
         }
 
         // Determine profile
-        let profile = if self.debug { "default" } else { "ci" };
+        // Available profiles in .config/nextest.toml:
+        //   default = 24 threads, fail-fast=false (good for CI/batch runs)
+        //   debug   = 1 thread, 300s slow-timeout (good for investigating tests)
+        let profile = if self.debug { "debug" } else { "default" };
         let use_fail_fast = self.fail_fast;
 
         // Compute affected packages (default ON, --all disables it)
@@ -258,7 +323,9 @@ impl XtaskCommand for TestCommand {
         }
 
         if self.include_ignored || self.all || self.heavy {
-            runner.add_arg("--ignored");
+            // Use --run-ignored=all to run both regular and ignored tests
+            // Note: --ignored alone would run ONLY ignored tests
+            runner.add_arg("--run-ignored=all");
         }
 
         // Pass through args to test binary
@@ -301,15 +368,13 @@ impl XtaskCommand for TestCommand {
     }
 }
 
-/// Check if sufficient disk space is available
+/// Check if sufficient disk space is available on current directory's filesystem
 fn check_disk_space_gb(min_gb: u64) -> bool {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::MetadataExt;
-        if let Ok(metadata) = std::fs::metadata(".") {
-            let blocks = metadata.blocks();
-            let block_size = metadata.blksize();
-            let available_bytes = blocks * block_size;
+        use nix::sys::statvfs::statvfs;
+        if let Ok(stat) = statvfs(".") {
+            let available_bytes = stat.blocks_available() * stat.fragment_size();
             let available_gb = available_bytes / (1024 * 1024 * 1024);
             return available_gb >= min_gb;
         }

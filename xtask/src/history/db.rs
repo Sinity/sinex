@@ -3,7 +3,9 @@
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use time::OffsetDateTime;
 
 /// Status of a command invocation.
@@ -59,6 +61,8 @@ pub struct Invocation {
 /// Handle to the history `SQLite` database.
 pub struct HistoryDb {
     pub(super) conn: Connection,
+    /// Guard to ensure job columns migration runs at most once per instance.
+    job_columns_ensured: AtomicBool,
 }
 
 impl HistoryDb {
@@ -77,7 +81,10 @@ impl HistoryDb {
             format!("failed to open history database: {path_display}")
         })?;
 
-        let db = Self { conn };
+        let db = Self {
+            conn,
+            job_columns_ensured: AtomicBool::new(false),
+        };
         db.init_schema()?;
         Ok(db)
     }
@@ -140,6 +147,7 @@ impl HistoryDb {
             CREATE INDEX IF NOT EXISTS idx_test_results_name ON test_results(test_name);
             CREATE INDEX IF NOT EXISTS idx_test_results_status ON test_results(status);
             CREATE INDEX IF NOT EXISTS idx_test_results_invocation ON test_results(invocation_id);
+            CREATE INDEX IF NOT EXISTS idx_diagnostics_invocation ON build_diagnostics(invocation_id);
             ",
         )?;
         Ok(())
@@ -433,15 +441,24 @@ impl HistoryDb {
     // ============ Background Job Methods (Phase 3: Jobs Unification) ============
 
     /// Ensure the background job columns exist (for schema migration).
+    ///
+    /// Runs at most once per `HistoryDb` instance to avoid repeated ALTER TABLE overhead.
     pub fn ensure_job_columns(&self) -> Result<()> {
+        // Fast path: already ensured this instance
+        if self.job_columns_ensured.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+
         // Add columns if they don't exist (SQLite doesn't support IF NOT EXISTS for columns)
         let columns_to_add = [
             ("pid", "INTEGER"),
             ("is_background", "INTEGER DEFAULT 0"),
             ("stdout_path", "TEXT"),
             ("stderr_path", "TEXT"),
-            ("stdout_content", "TEXT"), // Logs stored in DB after completion
+            ("stdout_content", "TEXT"),
             ("stderr_content", "TEXT"),
+            ("cpu_usage_avg", "REAL"),
+            ("memory_usage_max_mb", "REAL"),
         ];
 
         for (col_name, col_type) in columns_to_add {
@@ -458,6 +475,7 @@ impl HistoryDb {
             [],
         );
 
+        self.job_columns_ensured.store(true, Ordering::Relaxed);
         Ok(())
     }
 
@@ -511,7 +529,7 @@ impl HistoryDb {
 
         let mut stmt = self.conn.prepare(
             r"
-            SELECT id, command, args_json, started_at, pid, stdout_path, stderr_path, status
+            SELECT id, command, args_json, started_at, pid, stdout_path, stderr_path, status, exit_code
             FROM invocations
             WHERE is_background = 1 AND status = 'running'
             ORDER BY started_at DESC
@@ -538,11 +556,69 @@ impl HistoryDb {
                 stdout_path: row.get(5)?,
                 stderr_path: row.get(6)?,
                 status: InvocationStatus::from_str(&row.get::<_, String>(7)?),
+                exit_code: row.get(8)?,
             })
         })?;
 
         rows.collect::<Result<Vec<_>, _>>()
             .context("failed to collect background jobs")
+    }
+
+    /// Get a single background job by ID (O(1) direct SQL lookup).
+    pub fn get_background_job_by_id(&self, id: i64) -> Result<Option<BackgroundJob>> {
+        self.ensure_job_columns()?;
+
+        self.conn
+            .query_row(
+                r"
+            SELECT id, command, args_json, started_at, pid, stdout_path, stderr_path, status, exit_code
+            FROM invocations
+            WHERE id = ?1 AND is_background = 1
+            ",
+                params![id],
+                |row| {
+                    let args_json: Option<String> = row.get(2)?;
+                    let started_at_str: String = row.get(3)?;
+                    let pid: Option<u32> = row.get(4)?;
+
+                    Ok(BackgroundJob {
+                        id: row.get(0)?,
+                        command: row.get(1)?,
+                        args: args_json
+                            .and_then(|s| serde_json::from_str(&s).ok())
+                            .unwrap_or_default(),
+                        started_at: OffsetDateTime::parse(
+                            &started_at_str,
+                            &time::format_description::well_known::Rfc3339,
+                        )
+                        .unwrap_or_else(|_| OffsetDateTime::now_utc()),
+                        pid: pid.unwrap_or(0),
+                        stdout_path: row.get(5)?,
+                        stderr_path: row.get(6)?,
+                        status: InvocationStatus::from_str(&row.get::<_, String>(7)?),
+                        exit_code: row.get(8)?,
+                    })
+                },
+            )
+            .optional()
+            .context("failed to get background job by id")
+    }
+
+    /// Get all background job IDs (for prune orphan directory cleanup).
+    pub fn get_all_background_job_ids(&self) -> Result<HashSet<i64>> {
+        self.ensure_job_columns()?;
+
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id FROM invocations WHERE is_background = 1")?;
+
+        let rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
+
+        let mut ids = HashSet::new();
+        for id in rows {
+            ids.insert(id?);
+        }
+        Ok(ids)
     }
 
     /// Get recent background jobs (including completed ones).
@@ -551,7 +627,7 @@ impl HistoryDb {
 
         let mut stmt = self.conn.prepare(
             r"
-            SELECT id, command, args_json, started_at, pid, stdout_path, stderr_path, status
+            SELECT id, command, args_json, started_at, pid, stdout_path, stderr_path, status, exit_code
             FROM invocations
             WHERE is_background = 1
             ORDER BY started_at DESC
@@ -579,6 +655,7 @@ impl HistoryDb {
                 stdout_path: row.get(5)?,
                 stderr_path: row.get(6)?,
                 status: InvocationStatus::from_str(&row.get::<_, String>(7)?),
+                exit_code: row.get(8)?,
             })
         })?;
 
@@ -812,6 +889,7 @@ pub struct BackgroundJob {
     pub stdout_path: Option<String>,
     pub stderr_path: Option<String>,
     pub status: InvocationStatus,
+    pub exit_code: Option<i32>,
 }
 
 /// A stored build diagnostic.

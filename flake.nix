@@ -332,12 +332,12 @@
                 export SINEX_DEV_STATE_DIR="$PWD/${stateDir}"
                 export SINEX_DEV_PG_PORT="${toString pgPort}"
                 export SINEX_DEV_NATS_PORT="${toString natsPort}"
-                export SINEX_DEV_GATEWAY_PORT="9998"
+                export SINEX_DEV_GATEWAY_PORT="9999"
                 export DATABASE_URL="postgresql:///sinex_dev?host=$SINEX_DEV_STATE_DIR/run&port=${toString pgPort}"
                 export PGHOST="$SINEX_DEV_STATE_DIR/run"
                 export PGPORT="${toString pgPort}"
                 export SINEX_NATS_URL="nats://localhost:${toString natsPort}"
-                export SINEX_RPC_URL="https://127.0.0.1:9998"
+                export SINEX_RPC_URL="https://127.0.0.1:9999"
 
                 sx() { cargo xtask "$@"; }
                 xt() { cargo xtask "$@"; }

@@ -55,9 +55,6 @@ pub use snapshot_helper::*;
 // Re-export test macros
 pub use xtask_macros::{sinex_bench, sinex_prop, sinex_proptest, sinex_serial_test, sinex_test};
 
-// Re-export test event helper
-pub use sinex_primitives::testing::event_fixture as test_event;
-
 /// Configures proptest runner with sandbox defaults
 #[must_use]
 pub fn sinex_prop_runner_config(

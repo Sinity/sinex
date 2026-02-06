@@ -174,7 +174,7 @@ CREATE INDEX IF NOT EXISTS ix_tombstones_purge_operation
 /// IMPORTANT: Caller must have already run cascade analysis to identify the full set
 /// of archived events to tombstone. This function does NOT perform cascade analysis -
 /// it trusts the provided IDs represent a complete, valid cascade.
-const CREATE_CASCADE_TOMBSTONE_FUNCTION: &str = r#"
+const CREATE_CASCADE_TOMBSTONE_FUNCTION: &str = r"
 CREATE OR REPLACE FUNCTION core.execute_cascade_tombstone(
     p_archived_ids ULID[],
     p_reason TEXT,
@@ -223,7 +223,7 @@ COMMENT ON FUNCTION core.execute_cascade_tombstone IS
     'Move archived events to tombstones (one-way operation). '
     'Caller must provide complete cascade set - this function does not analyze dependencies. '
     'Returns count of tombstones created.';
-"#;
+";
 
 /// Function to execute cascade restore operation (Archive → Live).
 ///
@@ -233,7 +233,7 @@ COMMENT ON FUNCTION core.execute_cascade_tombstone IS
 ///
 /// IMPORTANT: Caller must have already run cascade analysis to identify the full set
 /// of archived events to restore. This function does NOT perform cascade analysis.
-const CREATE_CASCADE_RESTORE_FUNCTION: &str = r#"
+const CREATE_CASCADE_RESTORE_FUNCTION: &str = r"
 CREATE OR REPLACE FUNCTION core.execute_cascade_restore(
     p_archived_ids ULID[],
     p_operation_id TEXT
@@ -285,10 +285,10 @@ COMMENT ON FUNCTION core.execute_cascade_restore IS
     'Move archived events back to live (core.events). '
     'Caller must provide complete cascade set - this function does not analyze dependencies. '
     'Returns count of events restored.';
-"#;
+";
 
 /// Function to get lifecycle tier status (for CLI status command).
-const CREATE_LIFECYCLE_STATUS_FUNCTION: &str = r#"
+const CREATE_LIFECYCLE_STATUS_FUNCTION: &str = r"
 CREATE OR REPLACE FUNCTION core.lifecycle_tier_status()
 RETURNS TABLE (
     tier TEXT,
@@ -334,4 +334,4 @@ $$;
 
 COMMENT ON FUNCTION core.lifecycle_tier_status IS
     'Returns summary statistics for each data lifecycle tier (live, archive, tombstone).';
-"#;
+";

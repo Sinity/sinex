@@ -433,7 +433,7 @@ impl<'a> EventRepository<'a> {
             offset_end,
             offset_kind,
             anchor_byte,
-        ) = extract_provenance(&event);
+        ) = extract_provenance(&event)?;
 
         // Convert ULIDs to UUIDs
         let source_event_uuids = source_event_ids
@@ -583,7 +583,7 @@ impl<'a> EventRepository<'a> {
             offset_end,
             offset_kind,
             anchor_byte,
-        ) = extract_provenance(&event);
+        ) = extract_provenance(&event)?;
 
         if let Some(source_event_ids) = source_event_ids.as_ref() {
             ensure_no_synthesis_cycles(&mut **tx, &id, source_event_ids).await?;
@@ -808,7 +808,7 @@ impl<'a> EventRepository<'a> {
                 offset_end,
                 offset_kind,
                 anchor_byte,
-            ) = extract_provenance(event);
+            ) = extract_provenance(event)?;
 
             let source_event_uuids = source_event_ids_raw
                 .map(|ids| ids.into_iter().map(|id| id.as_uuid()).collect::<Vec<_>>());
@@ -1572,6 +1572,233 @@ impl<'a> EventRepository<'a> {
         .map_err(|e| db_error(e, "get archived event ids"))?;
 
         Ok(rows.into_iter().map(Ulid::from).collect())
+    }
+
+    // ========== Live Tier Operations (for Archive) ==========
+
+    /// Get live event IDs matching filters (for archive operation).
+    pub async fn get_live_event_ids(
+        &self,
+        source: Option<&EventSource>,
+        before: Option<Timestamp>,
+        limit: i64,
+    ) -> DbResult<Vec<Ulid>> {
+        let rows = match (source, before) {
+            (Some(s), Some(b)) => {
+                sqlx::query_scalar!(
+                    r#"SELECT id::uuid as "id!" FROM core.events WHERE source = $1 AND ts_orig < $2 ORDER BY ts_orig LIMIT $3"#,
+                    s.as_str(),
+                    b as _,
+                    limit
+                )
+                .fetch_all(self.pool)
+                .await
+            }
+            (Some(s), None) => {
+                sqlx::query_scalar!(
+                    r#"SELECT id::uuid as "id!" FROM core.events WHERE source = $1 ORDER BY ts_orig LIMIT $2"#,
+                    s.as_str(),
+                    limit
+                )
+                .fetch_all(self.pool)
+                .await
+            }
+            (None, Some(b)) => {
+                sqlx::query_scalar!(
+                    r#"SELECT id::uuid as "id!" FROM core.events WHERE ts_orig < $1 ORDER BY ts_orig LIMIT $2"#,
+                    b as _,
+                    limit
+                )
+                .fetch_all(self.pool)
+                .await
+            }
+            (None, None) => {
+                sqlx::query_scalar!(
+                    r#"SELECT id::uuid as "id!" FROM core.events ORDER BY ts_orig LIMIT $1"#,
+                    limit
+                )
+                .fetch_all(self.pool)
+                .await
+            }
+        }
+        .map_err(|e| db_error(e, "get live event ids"))?;
+
+        Ok(rows.into_iter().map(Ulid::from).collect())
+    }
+
+    /// Populate cascade roots from live events table.
+    ///
+    /// Similar to `populate_cascade_roots_from_archive` but sources from core.events
+    /// instead of audit.archived_events. Used for archive cascade analysis.
+    pub async fn populate_cascade_roots_from_live(
+        &self,
+        table_name: &str,
+        live_ids: &[Ulid],
+    ) -> DbResult<()> {
+        if live_ids.is_empty() {
+            return Ok(());
+        }
+
+        let ids: Vec<Uuid> = live_ids.iter().map(|id| id.to_uuid()).collect();
+
+        // Insert live events into cascade table with depth 0
+        sqlx::query(&format!(
+            r#"
+            INSERT INTO {} (id, depth, parent_ids, processed)
+            SELECT e.id, 0, COALESCE(e.source_event_ids, '{{}}'::ULID[]), FALSE
+            FROM core.events e
+            WHERE e.id = ANY($1::ulid[])
+            ON CONFLICT (id) DO NOTHING
+            "#,
+            table_name
+        ))
+        .bind(&ids)
+        .execute(self.pool)
+        .await
+        .map_err(|e| db_error(e, "populate cascade roots from live"))?;
+
+        Ok(())
+    }
+
+    /// Expand cascade graph from live events.
+    ///
+    /// Iteratively finds children in core.events that reference
+    /// events already in the cascade table.
+    pub async fn expand_cascade_from_live(
+        &self,
+        table_name: &str,
+        max_depth: i32,
+    ) -> DbResult<usize> {
+        let mut current_depth = 0;
+
+        while current_depth < max_depth {
+            // Find live events that reference events at current depth
+            let rows_inserted = sqlx::query_scalar::<_, i64>(&format!(
+                r#"
+                WITH new_children AS (
+                    INSERT INTO {} (id, depth, parent_ids, processed)
+                    SELECT DISTINCT e.id, $1 + 1, COALESCE(e.source_event_ids, '{{}}'::ULID[]), FALSE
+                    FROM core.events e
+                    JOIN {} ct ON e.source_event_ids && ARRAY[ct.id]
+                    WHERE ct.depth = $1 AND ct.processed = FALSE
+                    AND NOT EXISTS (SELECT 1 FROM {} ex WHERE ex.id = e.id)
+                    ON CONFLICT (id) DO NOTHING
+                    RETURNING 1
+                )
+                SELECT COUNT(*)::BIGINT FROM new_children
+                "#,
+                table_name, table_name, table_name
+            ))
+            .bind(current_depth)
+            .fetch_one(self.pool)
+            .await
+            .map_err(|e| db_error(e, "expand cascade from live"))?;
+
+            // Mark current depth as processed
+            sqlx::query(&format!(
+                "UPDATE {} SET processed = TRUE WHERE depth = $1",
+                table_name
+            ))
+            .bind(current_depth)
+            .execute(self.pool)
+            .await
+            .map_err(|e| db_error(e, "mark cascade depth processed"))?;
+
+            if rows_inserted == 0 {
+                break;
+            }
+
+            current_depth += 1;
+        }
+
+        Ok(current_depth as usize)
+    }
+
+    /// Execute cascade archive operation.
+    ///
+    /// Archives live events and their cascade by DELETE (trigger handles copy to archive).
+    /// This requires setting session variables for audit context.
+    ///
+    /// # Arguments
+    /// * `live_ids` - IDs of live events to archive (must be complete cascade)
+    /// * `reason` - Human-readable reason for archiving
+    /// * `operation_id` - ULID for audit correlation
+    /// * `archived_by` - Who initiated the archive (token prefix)
+    ///
+    /// # Returns
+    /// Number of events archived
+    pub async fn execute_cascade_archive(
+        &self,
+        live_ids: &[Ulid],
+        reason: &str,
+        operation_id: &str,
+        archived_by: &str,
+    ) -> DbResult<u64> {
+        if live_ids.is_empty() {
+            return Ok(0);
+        }
+
+        let ids: Vec<Uuid> = live_ids.iter().map(|id| id.to_uuid()).collect();
+
+        // Begin transaction and set audit context
+        let mut tx = self.pool.begin().await.map_err(|e| {
+            db_error(
+                e,
+                &format!(
+                    "Failed to begin transaction for archive of {} events",
+                    live_ids.len()
+                ),
+            )
+        })?;
+
+        // Set session variables for audit trail (the trigger reads these)
+        sqlx::query("SELECT pg_catalog.set_config('sinex.operation_id', $1, true)")
+            .bind(operation_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| db_error(e, "set operation_id"))?;
+
+        sqlx::query("SELECT pg_catalog.set_config('sinex.archived_by', $1, true)")
+            .bind(archived_by)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| db_error(e, "set archived_by"))?;
+
+        sqlx::query("SELECT pg_catalog.set_config('sinex.archive_reason', $1, true)")
+            .bind(reason)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| db_error(e, "set archive_reason"))?;
+
+        // Delete events - the trigger fn_archive_before_delete copies them to archive
+        // Process in reverse depth order (children first, then parents) to avoid FK issues
+        let result = sqlx::query("DELETE FROM core.events WHERE id = ANY($1::ulid[])")
+            .bind(&ids)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| db_error(e, "execute cascade archive"))?;
+
+        let archived_count = result.rows_affected();
+
+        tx.commit().await.map_err(|e| {
+            db_error(
+                e,
+                &format!(
+                    "Failed to commit archive transaction (archived {} events)",
+                    archived_count
+                ),
+            )
+        })?;
+
+        tracing::info!(
+            operation_id = %operation_id,
+            archived_by = %archived_by,
+            reason = %reason,
+            archived_count = %archived_count,
+            "Archived events via cascade operation"
+        );
+
+        Ok(archived_count)
     }
 }
 

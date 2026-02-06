@@ -18,8 +18,16 @@ pub use legacy::*;
 pub use audit::handle_audit_get;
 pub use dlq::{handle_dlq_list, handle_dlq_peek, handle_dlq_purge, handle_dlq_requeue};
 pub use lifecycle::{
-    handle_lifecycle_archive, handle_lifecycle_restore, handle_lifecycle_status,
-    handle_lifecycle_tombstone,
+    handle_lifecycle_archive,
+    handle_lifecycle_restore,
+    handle_lifecycle_status,
+    // Tombstone operations (two-step flow)
+    handle_tombstone_approve,
+    handle_tombstone_cancel,
+    handle_tombstone_create,
+    handle_tombstone_list,
+    handle_tombstone_preview,
+    handle_tombstone_status,
 };
 pub use nodes::{
     handle_nodes_drain, handle_nodes_list, handle_nodes_resume, handle_nodes_set_horizon,

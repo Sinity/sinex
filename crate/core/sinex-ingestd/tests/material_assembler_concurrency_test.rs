@@ -4,7 +4,7 @@ use async_nats::jetstream;
 use blake3::Hasher;
 use futures::future::join_all;
 use serde_json::json;
-use sinex_ingestd::{IngestdResult, MaterialAssembler};
+use sinex_ingestd::{IngestdResult, MaterialAssembler, MaterialReadySet};
 use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
 use sinex_primitives::{temporal, Ulid};
 use sqlx::Row;
@@ -47,6 +47,7 @@ async fn start_assembler(
         state_dir.path().to_path_buf(),
         Some(namespace.to_string()),
         1_000,
+        MaterialReadySet::default(),
     )?;
 
     let handle = tokio::spawn(async move { assembler.run().await });

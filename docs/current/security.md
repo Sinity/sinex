@@ -1,45 +1,46 @@
-# Security & Privacy Posture
-> Last Verified: 2025-12-02 (manual review)
+# Security Posture
 
-*Source material: 2025-07-23 security analysis (Redis-era); updated to track
-post-JetStream priorities. Pair this with
-`docs/current/architecture/security-architecture.md` for the broader threat model.*
+> Last Verified: 2026-02-03 (manual review)
+
+*Pair with `docs/current/architecture/security-architecture.md` for the broader threat model.*
 
 ## Current Strengths
 
-- **Input validation:** `sinex_core::db::security` enforces path sanitisation,
+- **Input validation:** `sinex_primitives::types::validation` enforces path sanitisation,
   JSON depth limits, and command-injection guards. Adversarial tests cover
   traversal, null-byte injection, Unicode edge cases, and SQLi attempts.
 - **Process isolation:** NixOS/unit files apply strict systemd hardening
   (NoNewPrivileges, `ProtectSystem=strict`, per-service cgroups, capability
   bounding).
-- **Local IPC surface:** gateway RPC is TLS-only, even on loopback; non-loopback
+- **Transport security:** Gateway RPC is TLS-only, even on loopback; non-loopback
   binds require mTLS. Unix sockets are reserved for external integrations
   (e.g., Hyprland/Kitty) rather than Sinex control-plane traffic.
+- **Token authentication:** Bearer token auth with constant-time comparison and
+  live reload from file. Gateway rejects requests without valid tokens.
+- **Rate limiting:** Per-token rate limiting via governor crate (100 req/sec default,
+  configurable). Protects against runaway clients and abuse.
 
-## Priority Gaps
+## Gaps
 
 | Area | Status | Notes |
 |------|--------|-------|
-| Authentication / Authorization | **Missing** | No API keys, roles, or user management. All services share the same database role. |
+| Authorization / Roles | **Missing** | Token auth exists, but no role differentiation. All valid tokens have full access. |
 | Encryption at rest | **Missing** | pgsodium integration planned but not implemented; data relies solely on full-disk encryption. |
-| Transport security | **Partial** | Gateway RPC is TLS-only; NATS still lacks enforced TLS and CLI helpers require CA configuration for self-signed certs. |
-| Secrets management | **Planned** | agenix workflow defined, but services still read plain env vars. Need rotation policy and usage audit. |
-| Privacy tooling | **Missing** | No PII detection, redaction, or GDPR/RTBF strategies; immutable log complicates compliance. |
-| Rate limiting / abuse prevention | **Missing** | Even after auth, ingress needs quota + DoS protection. |
+| NATS transport | **Partial** | Gateway RPC is TLS-only; NATS connections can use TLS but it's not enforced by default. |
+| Secrets management | **Planned** | agenix workflow defined, but services still read plain env vars. Need rotation policy. |
+| Data cleanup tooling | **Missing** | No automated tooling for deleting old events or redacting sensitive data. |
 
 ## Near-Term Tasks
 
-1. Introduce service accounts with scoped credentials (`DATABASE_URL`
-   namespacing, least-privilege roles) and migrate nodes off the shared
-   superuser.
+1. Introduce role-based authorization: read-only tokens for query clients,
+   write tokens for ingestors, admin tokens for management operations.
 2. Integrate pgsodium for column/key encryption (payload archives, operations
    log) and document key management expectations.
-3. Keep gateway RPC TLS-only and adopt TLS/mTLS for NATS connections.
+3. Enforce TLS for NATS connections; update CLI helpers for CA configuration.
 4. Finalise agenix integration: secrets encoded once, exposed via
    `/run/agenix/...` with rotation hooks.
-5. Ship privacy hygiene tooling: optional redaction pipelines, consent tracking
-   for human data, explicit docs on immutable-log implications.
+5. Add data lifecycle tooling: time-based retention policies, selective deletion,
+   and export utilities for personal data management.
 
 ## Guardrails for Contributors
 
@@ -48,8 +49,8 @@ post-JetStream priorities. Pair this with
   out that they are placeholders.
 - Keep all new ingress TLS-only by default; require an explicit security review
   before exposing non-loopback listeners.
-- Update this file (and `docs/vision/manifesto.md`) whenever a gap moves from
-  red to green—call out the commit or module that closed it.
+- Update this file whenever a gap moves from red to green—call out the commit
+  or module that closed it.
 
 Security is a product story, not a subproject. Track these items alongside core
-feature work so that the “cognitive prosthesis” does not become a liability.
+feature work.

@@ -5,6 +5,7 @@ use crate::common::{
     debug, error, info, interval, path_utils, warn, Command, Duration, JsonValue, NodeResult,
     SinexError, Timestamp, VecDeque,
 };
+use crate::privacy_filter::PrivacyFilter;
 use sinex_node_sdk::stage_as_you_go::StageAsYouGoContext;
 use sinex_primitives::events::payloads::{ClipboardCopiedPayload, ClipboardSelectedPayload};
 use sinex_primitives::events::EventPayload;
@@ -22,11 +23,11 @@ use copypasta::{ClipboardContext, ClipboardProvider};
 /// The full content is always stored in source material.
 const DEFAULT_MAX_PREVIEW_LENGTH: usize = 100;
 
-/// Maximum clipboard content size (warning threshold)
+/// Maximum clipboard content size (hard limit)
 ///
-/// Content larger than this will generate a warning but will still be processed
-/// and stored. This is not a hard limit but a warning indicator for unusually
-/// large clipboard contents (e.g., accidental copying of large files).
+/// Content larger than this will be rejected to prevent OOM attacks and
+/// excessive storage usage. This is a hard limit that will cause content
+/// to be dropped with a warning.
 const DEFAULT_MAX_CONTENT_SIZE: usize = 10 * 1024 * 1024; // 10MB
 
 /// Maximum number of entries in clipboard deduplication history
@@ -108,7 +109,7 @@ impl ClipboardWatcher {
             max_preview_length: DEFAULT_MAX_PREVIEW_LENGTH,
             max_content_size: DEFAULT_MAX_CONTENT_SIZE,
             max_history_entries: DEFAULT_MAX_HISTORY_ENTRIES,
-            enable_primary_selection: true, // PRIMARY selection via arboard GetExtLinux
+            enable_primary_selection: false, // PRIMARY selection disabled by default (privacy concern)
             enable_history: true,
             stage_context: Some(stage_context),
             shutdown_rx,
@@ -116,7 +117,7 @@ impl ClipboardWatcher {
         };
 
         info!(
-            "Clipboard watcher initialized with 100ms polling interval (stage-as-you-go mode, native arboard, PRIMARY selection enabled)"
+            "Clipboard watcher initialized with 100ms polling interval (stage-as-you-go mode, native arboard, PRIMARY selection disabled)"
         );
         Ok(watcher)
     }
@@ -323,6 +324,8 @@ impl ClipboardWatcher {
     }
 
     /// Store clipboard content as source material via Stage-as-You-Go
+    ///
+    /// Applies privacy filtering to redact sensitive content before storage.
     async fn store_clipboard_source_material(
         &self,
         content: &ClipboardContent,
@@ -332,16 +335,42 @@ impl ClipboardWatcher {
             SinexError::lifecycle("Stage-as-you-go context not initialized".to_string())
         })?;
 
-        let data_bytes = content.text.as_bytes();
+        // Apply privacy filter to redact sensitive content
+        let redacted_text = PrivacyFilter::redact_content(&content.text);
+        let data_bytes = redacted_text.as_bytes();
+
+        // Also redact window title if present
+        let redacted_window_title = content
+            .window_title
+            .as_ref()
+            .map(|t| PrivacyFilter::redact_title(t).into_owned());
+
+        // Redact text preview
+        let redacted_preview = content
+            .text_preview
+            .as_ref()
+            .map(|p| PrivacyFilter::redact_content(p).into_owned());
+
+        // Enforce hard size limit to prevent OOM attacks
         if data_bytes.len() > self.max_content_size {
             warn!(
                 size = data_bytes.len(),
                 limit = self.max_content_size,
-                "Clipboard payload exceeds configured size limit; still staging full content"
+                "Clipboard payload exceeds configured size limit; content rejected"
             );
+            return Err(SinexError::validation(format!(
+                "Clipboard content size {} bytes exceeds limit of {} bytes",
+                data_bytes.len(),
+                self.max_content_size
+            )));
         }
 
-        let metadata = self.build_clipboard_metadata(content, selection_type);
+        let metadata = self.build_clipboard_metadata_redacted(
+            content,
+            selection_type,
+            redacted_preview.as_deref(),
+            redacted_window_title.as_deref(),
+        );
         let material_id = stage_context
             .register_in_flight(&self.source_identifier, Some(selection_type), metadata)
             .await?;
@@ -351,7 +380,7 @@ impl ClipboardWatcher {
                 selection_type: selection_type.to_string(),
                 content_type: content.content_type.clone(),
                 content_size: data_bytes.len(),
-                text_preview: content.text_preview.clone(),
+                text_preview: redacted_preview.clone(),
                 source_app: content.source_app.clone(),
                 content_hash: content.hash.clone(),
                 original_hash: self
@@ -376,11 +405,11 @@ impl ClipboardWatcher {
                 operation: "copy".to_string(),
                 content_type: content.content_type.clone(),
                 content_size: data_bytes.len(),
-                text_preview: content.text_preview.clone(),
+                text_preview: redacted_preview.clone(),
                 file_count: content.file_paths.as_ref().map(std::vec::Vec::len),
                 file_paths: content.file_paths.clone(),
                 source_app: content.source_app.clone(),
-                window_title: content.window_title.clone(),
+                window_title: redacted_window_title.clone(),
                 content_hash: content.hash.clone(),
                 original_hash: self
                     .find_original_hash(&content.hash)
@@ -416,7 +445,7 @@ impl ClipboardWatcher {
             .await?;
 
         info!(
-            "Staged clipboard {} source material: {} bytes, hash: {}",
+            "Staged clipboard {} source material: {} bytes, hash: {} (privacy-filtered)",
             selection_type,
             data_bytes.len(),
             &content.hash[..8]
@@ -425,6 +454,28 @@ impl ClipboardWatcher {
         Ok(material_id)
     }
 
+    fn build_clipboard_metadata_redacted(
+        &self,
+        content: &ClipboardContent,
+        selection_type: &str,
+        redacted_preview: Option<&str>,
+        redacted_window_title: Option<&str>,
+    ) -> JsonValue {
+        serde_json::json!({
+            "selection_type": selection_type,
+            "content_type": content.content_type,
+            "content_size": content.size_bytes,
+            "text_preview": redacted_preview,
+            "file_paths": content.file_paths,
+            "source_app": content.source_app,
+            "window_title": redacted_window_title,
+            "content_hash": content.hash,
+            "original_hash": self.find_original_hash(&content.hash).map(std::string::ToString::to_string),
+            "privacy_filtered": true,
+        })
+    }
+
+    #[allow(dead_code)]
     fn build_clipboard_metadata(
         &self,
         content: &ClipboardContent,
@@ -770,15 +821,20 @@ mod tests {
     }
 
     #[sinex_test(timeout = 60)]
-    async fn clipboard_large_content_is_persisted(_ctx: TestContext) -> TestResult<()> {
+    async fn clipboard_large_content_is_rejected(_ctx: TestContext) -> TestResult<()> {
         let (stage_context, _nats, _event_rx) = build_stage_context().await?;
         let watcher = ClipboardWatcher::test_watcher(16, stage_context).await?;
         let large_text = "A".repeat(1024);
         let content = sample_clipboard_content(&large_text, &watcher);
 
-        watcher
+        // Large content should be rejected with a validation error
+        let result = watcher
             .store_clipboard_source_material(&content, "primary")
-            .await?;
+            .await;
+        assert!(
+            result.is_err(),
+            "Large clipboard content should be rejected"
+        );
 
         Ok(())
     }

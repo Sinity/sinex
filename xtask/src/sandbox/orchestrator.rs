@@ -33,6 +33,17 @@ pub struct RunArgs {
     pub env_vars: Vec<(String, String)>,
 }
 
+fn get_target_dir(workspace_root: &std::path::Path) -> std::path::PathBuf {
+    if let Ok(dir) = std::env::var("CARGO_TARGET_DIR") {
+        return std::path::PathBuf::from(dir);
+    }
+    let custom_target = workspace_root.join(".sinex/target");
+    if custom_target.exists() {
+        return custom_target;
+    }
+    workspace_root.join("target")
+}
+
 /// Orchestrator for development mode with hot reload
 pub struct DevOrchestrator {
     args: RunArgs,
@@ -107,14 +118,11 @@ impl DevOrchestrator {
         } else {
             "debug"
         };
-        let binary_path = self
-            .workspace_root
-            .join("target")
-            .join(profile)
-            .join(&self.args.binary);
+        let target_dir = get_target_dir(self.workspace_root.as_std_path());
+        let binary_path = target_dir.join(profile).join(&self.args.binary);
 
-        println!("[build] Build complete: {binary_path}");
-        Ok(binary_path.into())
+        println!("[build] Build complete: {}", binary_path.display());
+        Ok(binary_path)
     }
 
     /// Start the binary process
@@ -415,7 +423,6 @@ pub struct TestIngestdConfig {
     pub work_dir: Option<std::path::PathBuf>,
     pub namespace: Option<String>,
     pub batch_size: usize,
-    pub batch_timeout_secs: sinex_primitives::Seconds,
     pub consumer_fetch_max_messages: usize,
     pub consumer_fetch_timeout_ms: u64,
 }
@@ -428,7 +435,6 @@ impl Default for TestIngestdConfig {
             work_dir: None,
             namespace: None,
             batch_size: 1,
-            batch_timeout_secs: sinex_primitives::Seconds::from_secs(1),
             consumer_fetch_max_messages: 100,
             consumer_fetch_timeout_ms: 1000,
         }
@@ -454,20 +460,36 @@ impl Drop for TestIngestdHandle {
     }
 }
 
+/// Find the workspace root by traversing up from current directory
+fn find_workspace_root() -> Result<PathBuf> {
+    let mut current = std::env::current_dir()?;
+    loop {
+        if current.join("Cargo.toml").exists() {
+            // Check if it's a workspace root by reading content roughly
+            // This is a heuristic; simpler than parsing TOML but usually sufficient for dev tools
+            let content = std::fs::read_to_string(current.join("Cargo.toml")).unwrap_or_default();
+            if content.contains("[workspace]") {
+                return Ok(current);
+            }
+        }
+        if !current.pop() {
+            bail!("Could not find workspace root (Cargo.toml with [workspace])");
+        }
+    }
+}
+
 pub async fn start_test_ingestd_with_config(
     config: TestIngestdConfig,
     _ctx: Option<&crate::sandbox::context::Sandbox>,
 ) -> Result<TestIngestdHandle> {
-    let workspace_root = std::env::current_dir()?;
+    let workspace_root = find_workspace_root()?;
     let profile = if cfg!(debug_assertions) {
         "debug"
     } else {
         "release"
     };
-    let binary_path = workspace_root
-        .join("target")
-        .join(profile)
-        .join("sinex-ingestd");
+    let target_dir = get_target_dir(&workspace_root);
+    let binary_path = target_dir.join(profile).join("sinex-ingestd");
 
     if !binary_path.exists() {
         bail!(
@@ -482,16 +504,23 @@ pub async fn start_test_ingestd_with_config(
         .kill_on_drop(true);
 
     // Set environment variables based on config
+    // Note: Use the env var names that ingestd CLI args expect
     cmd.env("DATABASE_URL", &config.database_url);
-    cmd.env("NATS_URL", &config.nats.url);
+    cmd.env("SINEX_NATS_URL", &config.nats.url);
     if let Some(ns) = &config.namespace {
         cmd.env("SINEX_NAMESPACE", ns);
     }
-    cmd.env("BATCH_SIZE", config.batch_size.to_string());
+    // Consumer fetch config - these control NATS pull batch behavior
     cmd.env(
-        "BATCH_TIMEOUT_SECS",
-        config.batch_timeout_secs.as_secs().to_string(),
+        "SINEX_INGESTD_CONSUMER_FETCH_MAX_MESSAGES",
+        config.consumer_fetch_max_messages.to_string(),
     );
+    cmd.env(
+        "SINEX_INGESTD_CONSUMER_FETCH_TIMEOUT_MS",
+        config.consumer_fetch_timeout_ms.to_string(),
+    );
+    // CLI args for batch size
+    cmd.args(["--batch-size", &config.batch_size.to_string()]);
 
     let child = cmd.spawn()?;
 

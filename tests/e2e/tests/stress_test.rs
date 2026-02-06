@@ -3,10 +3,12 @@
 // Focused stress tests that exercise production checkpoint persistence and
 // event ingestion under concurrent load.
 
-use sinex_db::models::EventFactory;
+use sinex_db::DbPoolExt;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
 use sinex_primitives::ulid::Ulid;
-use sinex_primitives::Timestamp;
+use sinex_primitives::{
+    Event, EventSource, HostName, Id, OffsetKind, Provenance, SourceMaterial, Timestamp,
+};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -84,16 +86,38 @@ async fn test_checkpoint_kv_stress_load(ctx: TestContext) -> TestResult<()> {
 async fn test_event_ingestion_stress(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool().clone();
     let total_events = 200usize;
+
+    // First, create source materials for all events (required for FK constraints)
+    let material_ids: Vec<Id<SourceMaterial>> = (0..total_events).map(|_| Id::new()).collect();
+    for material_id in &material_ids {
+        ctx.ensure_source_material(*material_id, Some("stress.ingestion"))
+            .await?;
+    }
+
     let mut handles = Vec::new();
 
-    for i in 0..total_events {
+    for (i, material_id) in material_ids.into_iter().enumerate() {
         let pool = pool.clone();
         handles.push(tokio::spawn(async move {
-            let mut event = EventFactory::new("stress.ingestion")
-                .create_event("bulk_load", serde_json::json!({"sequence": i}));
-            event.host = "localhost".to_string();
-            event.ingestor_version = Some("1.0.0".to_string());
-            sinex_primitives::db::insert_event_with_validator(&pool, &event, None).await
+            let event = Event {
+                id: None,
+                source: EventSource::new("stress.ingestion"),
+                event_type: sinex_primitives::EventType::new("bulk_load"),
+                payload: serde_json::json!({"sequence": i}),
+                ts_orig: Some(Timestamp::now()),
+                host: HostName::new("localhost"),
+                ingestor_version: Some("1.0.0".to_string()),
+                payload_schema_id: None,
+                provenance: Provenance::Material {
+                    id: material_id,
+                    anchor_byte: 0,
+                    offset_start: None,
+                    offset_end: None,
+                    offset_kind: OffsetKind::Byte,
+                },
+                associated_blob_ids: None,
+            };
+            pool.events().insert(event).await
         }));
     }
 

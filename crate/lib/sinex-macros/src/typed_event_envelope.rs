@@ -33,9 +33,10 @@ pub fn typed_event_envelope(attr: TokenStream, item: TokenStream) -> TokenStream
     let enum_vis = &input.vis;
     let enum_attrs = &input.attrs;
 
-    let data_enum = match &input.data {
-        syn::Data::Enum(data_enum) => data_enum,
-        _ => panic!("typed_event_envelope can only be applied to enums"),
+    #[allow(clippy::panic)]
+    let syn::Data::Enum(data_enum) = &input.data
+    else {
+        panic!("typed_event_envelope can only be applied to enums")
     };
 
     let mut generated = quote! {};

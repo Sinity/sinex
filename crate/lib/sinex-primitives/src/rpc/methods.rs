@@ -73,4 +73,11 @@ pub const SHADOW_DELETE: &str = "shadow.delete";
 pub const LIFECYCLE_STATUS: &str = "lifecycle.status";
 pub const LIFECYCLE_ARCHIVE: &str = "lifecycle.archive";
 pub const LIFECYCLE_RESTORE: &str = "lifecycle.restore";
-pub const LIFECYCLE_TOMBSTONE: &str = "lifecycle.tombstone";
+
+// Tombstone (two-step)
+pub const LIFECYCLE_TOMBSTONE_CREATE: &str = "lifecycle.tombstone.create";
+pub const LIFECYCLE_TOMBSTONE_PREVIEW: &str = "lifecycle.tombstone.preview";
+pub const LIFECYCLE_TOMBSTONE_APPROVE: &str = "lifecycle.tombstone.approve";
+pub const LIFECYCLE_TOMBSTONE_CANCEL: &str = "lifecycle.tombstone.cancel";
+pub const LIFECYCLE_TOMBSTONE_LIST: &str = "lifecycle.tombstone.list";
+pub const LIFECYCLE_TOMBSTONE_STATUS: &str = "lifecycle.tombstone.status";

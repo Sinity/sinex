@@ -149,6 +149,9 @@ pub struct TerminalState {
 struct HistoryState {
     offset_bytes: u64,
     line_number: u64,
+    /// Inode of the file when last processed (Unix only, used to detect rotation vs truncation)
+    #[cfg(unix)]
+    inode: Option<u64>,
     /// For Fish `SQLite` history: last processed ROWID
     fish_row_id: Option<i64>,
 }
@@ -180,11 +183,17 @@ impl HistoryWatcherContext {
     async fn monitor_text_history(self) {
         let mut offset_bytes: u64 = 0;
         let mut line_number: u64 = 0;
+        #[cfg(unix)]
+        let mut last_inode: Option<u64> = None;
         let mut shutdown_rx = self.shutdown_rx.clone();
 
         if let Some(state) = self.load_state().await {
             offset_bytes = state.offset_bytes;
             line_number = state.line_number;
+            #[cfg(unix)]
+            {
+                last_inode = state.inode;
+            }
             debug!(
                 path = %self.path,
                 offset = offset_bytes,
@@ -199,9 +208,18 @@ impl HistoryWatcherContext {
                 break;
             }
 
-            let _ = self
-                .poll_history_once(&mut offset_bytes, &mut line_number)
-                .await;
+            #[cfg(unix)]
+            {
+                let _ = self
+                    .poll_history_once(&mut offset_bytes, &mut line_number, &mut last_inode)
+                    .await;
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = self
+                    .poll_history_once(&mut offset_bytes, &mut line_number)
+                    .await;
+            }
 
             tokio::select! {
                 () = tokio::time::sleep(self.polling_interval) => {},
@@ -286,9 +304,20 @@ impl HistoryWatcherContext {
             None => return,
         };
 
+        // Get current inode for tracking file rotation vs truncation
+        #[cfg(unix)]
+        let current_inode = {
+            use std::os::unix::fs::MetadataExt;
+            std::fs::metadata(self.path.as_std_path())
+                .ok()
+                .map(|m| m.ino())
+        };
+
         let state = HistoryState {
             offset_bytes,
             line_number,
+            #[cfg(unix)]
+            inode: current_inode,
             fish_row_id,
         };
 
@@ -339,6 +368,19 @@ impl HistoryWatcherContext {
                         if let Err(e) = fs::rename(&temp_path, path).await {
                             warn!("Failed to replace history watcher state {:?}: {}", path, e);
                             let _ = fs::remove_file(&temp_path).await;
+                        } else {
+                            // Fsync the parent directory to ensure the rename is durable.
+                            // Without this, the renamed file might not be visible after a crash.
+                            if let Some(parent) = path.parent() {
+                                if let Ok(dir) = std::fs::File::open(parent) {
+                                    if let Err(e) = dir.sync_all() {
+                                        warn!(
+                                            "Failed to fsync parent directory {:?}: {}",
+                                            parent, e
+                                        );
+                                    }
+                                }
+                            }
                         }
                     }
                     Err(e) => {
@@ -367,6 +409,116 @@ impl HistoryWatcherContext {
         Ok(String::from_utf8_lossy(&buffer).to_string())
     }
 
+    /// Poll history file for new content (Unix version with inode tracking)
+    ///
+    /// On Unix, tracks file inode to distinguish between:
+    /// - File rotation (new inode): Reset to offset 0 and re-process from start
+    /// - File truncation (same inode): Adjust offset without re-processing
+    #[cfg(unix)]
+    async fn poll_history_once(
+        &self,
+        offset_bytes: &mut u64,
+        line_number: &mut u64,
+        last_inode: &mut Option<u64>,
+    ) -> usize {
+        use std::os::unix::fs::MetadataExt;
+
+        let mut processed = 0usize;
+        match fs::metadata(&self.path).await {
+            Ok(metadata) => {
+                let file_size = metadata.len();
+                let current_inode = metadata.ino();
+
+                // Update inode tracking
+                let inode_changed = last_inode.map_or(false, |prev| prev != current_inode);
+                *last_inode = Some(current_inode);
+
+                if file_size < *offset_bytes {
+                    if inode_changed {
+                        // File rotation: new file with new inode, reset and re-process
+                        debug!(
+                            path = %self.path,
+                            previous_offset = *offset_bytes,
+                            new_size = file_size,
+                            old_inode = ?last_inode,
+                            new_inode = current_inode,
+                            "History file rotated (new inode); resetting to read new file"
+                        );
+                        *offset_bytes = 0;
+                        *line_number = 0;
+                    } else {
+                        // Same inode but smaller: truncation, adjust offset without re-processing
+                        debug!(
+                            path = %self.path,
+                            previous_offset = *offset_bytes,
+                            new_size = file_size,
+                            inode = current_inode,
+                            "History file truncated (same inode); adjusting offset"
+                        );
+                        *offset_bytes = file_size;
+                        // Keep line_number as-is; we don't know exactly where we are
+                    }
+                    self.persist_state(*offset_bytes, *line_number).await;
+                    return processed;
+                }
+
+                if file_size == *offset_bytes {
+                    return processed;
+                }
+
+                match self.read_new_segment(*offset_bytes).await {
+                    Ok(new_segment) => {
+                        if new_segment.is_empty() {
+                            return processed;
+                        }
+
+                        let mut consumed_bytes: u64 = 0;
+
+                        for line in new_segment.split_inclusive('\n') {
+                            if !line.ends_with('\n') && new_segment.ends_with(line) {
+                                break;
+                            }
+
+                            let trimmed = line.trim_end_matches('\n');
+                            consumed_bytes += line.len() as u64;
+
+                            if trimmed.is_empty() {
+                                continue;
+                            }
+
+                            *line_number += 1;
+
+                            match process_command(self, trimmed, *line_number).await {
+                                Ok(()) => {
+                                    processed += 1;
+                                }
+                                Err(e) => {
+                                    warn!(
+                                        "Failed to process history entry from {}: {}",
+                                        self.path, e
+                                    );
+                                }
+                            };
+                        }
+
+                        if consumed_bytes > 0 {
+                            *offset_bytes = offset_bytes.saturating_add(consumed_bytes);
+                            self.persist_state(*offset_bytes, *line_number).await;
+                        }
+                    }
+                    Err(e) => warn!("History watcher unable to read {}: {}", self.path, e),
+                }
+            }
+            Err(e) => {
+                warn!("History watcher unable to stat {}: {}", self.path, e);
+            }
+        }
+
+        processed
+    }
+
+    /// Poll history file for new content (non-Unix version without inode tracking)
+    #[cfg(not(unix))]
     async fn poll_history_once(&self, offset_bytes: &mut u64, line_number: &mut u64) -> usize {
         let mut processed = 0usize;
         match fs::metadata(&self.path).await {
@@ -453,14 +605,28 @@ impl HistoryWatcherContext {
         } else {
             let mut offset_bytes = 0u64;
             let mut line_number = 0u64;
+            #[cfg(unix)]
+            let mut last_inode: Option<u64> = None;
 
             if let Some(state) = self.load_state().await {
                 offset_bytes = state.offset_bytes;
                 line_number = state.line_number;
+                #[cfg(unix)]
+                {
+                    last_inode = state.inode;
+                }
             }
 
-            self.poll_history_once(&mut offset_bytes, &mut line_number)
-                .await
+            #[cfg(unix)]
+            {
+                self.poll_history_once(&mut offset_bytes, &mut line_number, &mut last_inode)
+                    .await
+            }
+            #[cfg(not(unix))]
+            {
+                self.poll_history_once(&mut offset_bytes, &mut line_number)
+                    .await
+            }
         }
     }
 
@@ -1184,7 +1350,14 @@ mod tests {
 
         let mut offset_bytes = 0u64;
         let mut line_number = 0u64;
+        #[cfg(unix)]
+        let mut last_inode: Option<u64> = None;
 
+        #[cfg(unix)]
+        let _ = watcher_ctx
+            .poll_history_once(&mut offset_bytes, &mut line_number, &mut last_inode)
+            .await;
+        #[cfg(not(unix))]
         let _ = watcher_ctx
             .poll_history_once(&mut offset_bytes, &mut line_number)
             .await;
@@ -1197,6 +1370,11 @@ mod tests {
         history_file.write_all(b"echo third\n").await?;
         history_file.flush().await?;
 
+        #[cfg(unix)]
+        let _ = watcher_ctx
+            .poll_history_once(&mut offset_bytes, &mut line_number, &mut last_inode)
+            .await;
+        #[cfg(not(unix))]
         let _ = watcher_ctx
             .poll_history_once(&mut offset_bytes, &mut line_number)
             .await;

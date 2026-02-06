@@ -454,37 +454,17 @@ Material assembler has no metrics instrumentation.
 
 ---
 
-### 9. Hardcoded Embedding Dimension
+## ✅ NON-ISSUE
 
-**Location:** `crate/lib/sinex-schema/src/schema/embeddings.rs:17` (BUG-018)
+### 9. Hardcoded Embedding Dimension (RESOLVED)
 
-**Severity:** 🟢 LOW - Future Flexibility
+**Location:** `crate/lib/sinex-schema/src/schema/embeddings.rs` (BUG-018)
 
-**Problem:**
-```rust
-// TODO: Hardcoded to 1536. Needs to be dynamic or configurable (BUG-018).
-const EMBEDDING_DIMENSIONS: u32 = 1536;
-```
+**Severity:** ✅ RESOLVED
 
-**Context:** Extensive design doc exists at `docs/architecture/embedding-dimensions.md` recommending model-specific tables.
-
-**Impact:**
-- Locked to OpenAI ada-002 model
-- Can't easily test different embedding models
-- Migration required to switch models
-
-**Current Status:** Not a blocker because:
-- Embeddings feature not yet implemented
-- Design doc already covers solution
-- Schema uses standard pgvector types
-
-**Priority:** P3 - Address when implementing embedding features
-
-**Recommendation:** Follow design doc Option 2 (model-specific tables) when building embedding automaton.
+**Resolution:** Migration `m20260203_000018_dynamic_embedding_dimensions` switched embedding columns to dynamic `vector` type (no dimension constraint). The `embedding_models` table tracks dimensions per model; application-layer validation ensures consistency. See "Embedding Dimension Strategy" in `crate/lib/sinex-schema/docs/schema_design.md`.
 
 ---
-
-## ✅ NON-ISSUE
 
 ### 10. Deprecated ValidateRecord Macro
 

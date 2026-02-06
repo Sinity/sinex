@@ -4,7 +4,7 @@
 //! history database for later analysis via `cargo xtask history diagnostics`.
 
 use crate::affected;
-use crate::cargo_diagnostics::DiagnosticSummary;
+use crate::cargo_diagnostics::{parse_cargo_json_output, DiagnosticSummary};
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::preflight;
 use anyhow::Result;
@@ -41,107 +41,6 @@ impl BuildCommand {
         let stdout = String::from_utf8_lossy(&output.stdout);
         parse_cargo_json_output(&stdout, output.status.success())
     }
-}
-
-/// Parse cargo's JSON output format (duplicated from `cargo_diagnostics` to keep build.rs self-contained)
-fn parse_cargo_json_output(output: &str, success: bool) -> Result<DiagnosticSummary> {
-    let mut diagnostics = Vec::new();
-    let mut errors = 0;
-    let mut warnings = 0;
-
-    for line in output.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
-            if json.get("reason").and_then(|r| r.as_str()) == Some("compiler-message") {
-                if let Some(message) = json.get("message") {
-                    if let Some(diag) = parse_diagnostic_message(message) {
-                        match diag.level.as_str() {
-                            "error" => errors += 1,
-                            "warning" => warnings += 1,
-                            _ => {}
-                        }
-                        diagnostics.push(diag);
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(DiagnosticSummary {
-        errors,
-        warnings,
-        diagnostics,
-        success,
-    })
-}
-
-fn parse_diagnostic_message(
-    msg: &serde_json::Value,
-) -> Option<crate::cargo_diagnostics::CompilerDiagnostic> {
-    let level = msg.get("level")?.as_str()?;
-    let message = msg.get("message")?.as_str()?;
-
-    if level == "note" || level == "help" {
-        return None;
-    }
-
-    let code = msg
-        .get("code")
-        .and_then(|c| c.get("code"))
-        .and_then(|c| c.as_str())
-        .map(std::string::ToString::to_string);
-
-    let rendered = msg
-        .get("rendered")
-        .and_then(|r| r.as_str())
-        .map(std::string::ToString::to_string);
-
-    let (file_path, line, column) = if let Some(spans) = msg.get("spans").and_then(|s| s.as_array())
-    {
-        spans
-            .iter()
-            .find(|s| s.get("is_primary").and_then(serde_json::Value::as_bool) == Some(true))
-            .map_or((None, None, None), |span| {
-                (
-                    span.get("file_name")
-                        .and_then(|f| f.as_str())
-                        .map(std::string::ToString::to_string),
-                    span.get("line_start")
-                        .and_then(serde_json::Value::as_u64)
-                        .map(|l| l as u32),
-                    span.get("column_start")
-                        .and_then(serde_json::Value::as_u64)
-                        .map(|c| c as u32),
-                )
-            })
-    } else {
-        (None, None, None)
-    };
-
-    let suggestion = msg
-        .get("children")
-        .and_then(|c| c.as_array())
-        .and_then(|children| {
-            children
-                .iter()
-                .find(|child| child.get("level").and_then(|l| l.as_str()) == Some("help"))
-                .and_then(|help| help.get("message").and_then(|m| m.as_str()))
-                .map(std::string::ToString::to_string)
-        });
-
-    Some(crate::cargo_diagnostics::CompilerDiagnostic {
-        level: level.to_string(),
-        code,
-        message: message.to_string(),
-        file_path,
-        line,
-        column,
-        rendered,
-        suggestion,
-    })
 }
 
 #[async_trait::async_trait]

@@ -64,13 +64,13 @@ impl Default for CleanupConfig {
                     protected: false,
                     reason: None,
                 },
-                TableCleanupStrategy {
-                    table_name: "core.event_relations",
-                    method: CleanupMethod::Truncate,
-                    disable_triggers: false,
-                    protected: false,
-                    reason: None,
-                },
+                // TableCleanupStrategy {
+                //     table_name: "core.event_relations",
+                //     method: CleanupMethod::Truncate,
+                //     disable_triggers: false,
+                //     protected: false,
+                //     reason: None,
+                // },
                 TableCleanupStrategy {
                     table_name: "core.event_cluster_members",
                     method: CleanupMethod::Truncate,
@@ -92,13 +92,13 @@ impl Default for CleanupConfig {
                     protected: false,
                     reason: None,
                 },
-                TableCleanupStrategy {
-                    table_name: "core.revisions",
-                    method: CleanupMethod::Truncate,
-                    disable_triggers: false,
-                    protected: false,
-                    reason: None,
-                },
+                // TableCleanupStrategy {
+                //     table_name: "core.revisions",
+                //     method: CleanupMethod::Truncate,
+                //     disable_triggers: false,
+                //     protected: false,
+                //     reason: None,
+                // },
                 TableCleanupStrategy {
                     table_name: "core.processor_manifests",
                     method: CleanupMethod::Truncate,
@@ -208,11 +208,11 @@ impl CleanupConfig {
         // Child-to-parent ordering to minimize FK contention.
         const ORDER: &[&str] = &[
             "core.event_annotations",
-            "core.event_relations",
+            // "core.event_relations",
             "core.event_cluster_members",
             "core.event_embeddings",
             "core.entity_relations",
-            "core.revisions",
+            // "core.revisions",
             "core.processor_manifests",
             "sinex_schemas.event_payload_schemas",
             "core.operations_log",
@@ -221,9 +221,9 @@ impl CleanupConfig {
             "core.blobs",
             "core.event_clusters",
             "core.entities",
-            "raw.source_material_registry",
             "raw.temporal_ledger",
             "core.events",
+            "raw.source_material_registry",
         ];
 
         let mut seen = std::collections::HashSet::new();

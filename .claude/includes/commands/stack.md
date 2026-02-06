@@ -19,10 +19,24 @@ cargo xtask db setup                 # Create DB + run migrations
 cargo xtask db migrate               # Apply pending migrations
 cargo xtask db status --json         # Check connectivity
 cargo xtask db reset                 # Reset database
+```
+
+**Note:** Database and migrations are auto-started/applied by preflight (default ON for tests/check).
+
+---
+
+## Event Payload Contracts
+
+```bash
 cargo xtask contracts generate       # Generate JSON schemas from types
 cargo xtask contracts check-ready    # Verify tables exist
 cargo xtask contracts deploy         # Deploy schemas to database
+cargo xtask contracts deploy --dry-run  # Preview changes without deploying
+cargo xtask contracts compat         # Check backward compatibility
+cargo xtask contracts info           # Show schema information
 ```
+
+**Note:** Contracts are auto-deployed when payload schemas change (via preflight).
 
 ---
 
