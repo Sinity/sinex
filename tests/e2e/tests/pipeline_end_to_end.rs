@@ -53,7 +53,7 @@ async fn pipeline_end_to_end(ctx: TestContext) -> TestResult<()> {
                     .info()
                     .await
                     .map_err(|e| SinexError::network(e.to_string()))?;
-                Ok(info.state.messages >= expected)
+                Ok::<bool, SinexError>(info.state.messages >= expected)
             }
         },
         DEFAULT_WAIT_SECS,
