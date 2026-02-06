@@ -33,7 +33,7 @@ async fn create_consumer(
     subject: &str,
     durable: &str,
     ack_wait: Duration,
-) -> TestResult<Consumer> {
+) -> TestResult<Consumer<ConsumerConfig>> {
     let stream_handle = js.get_stream(stream).await?;
     stream_handle
         .get_or_create_consumer(

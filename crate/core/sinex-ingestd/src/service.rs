@@ -371,6 +371,7 @@ impl IngestService {
     ) -> JoinHandle<IngestdResult<()>> {
         let shutdown_flag = self.shutdown_flag.clone();
         let validator = self.validator.clone();
+        let observer = self.observer.clone();
         let env = sinex_environment();
         let topology = JetStreamTopology::new(
             &env,
@@ -392,7 +393,8 @@ impl IngestService {
             )
             .with_batch_fetch_config(fetch_max, fetch_timeout)
             .with_max_ack_pending(max_ack_pending)
-            .with_ready_set(ready_set);
+            .with_ready_set(ready_set)
+            .with_observer(observer);
 
             tokio::select! {
                 result = consumer.run() => {
@@ -423,6 +425,7 @@ impl IngestService {
         ready_set: MaterialReadySet,
     ) -> JoinHandle<IngestdResult<()>> {
         let shutdown_flag = self.shutdown_flag.clone();
+        let observer = self.observer.clone();
         let annex_repo_path = self.config.annex_repo_path.clone();
         let assembler_state_dir = self.config.assembler_state_dir.clone();
         let namespace = self.config.nats_namespace.clone();
@@ -460,7 +463,7 @@ impl IngestService {
                 slices_max_ack_pending,
                 ready_set,
             ) {
-                Ok(assembler) => assembler,
+                Ok(assembler) => assembler.with_observer(observer),
                 Err(e) => {
                     error!(error = %e, "Failed to create MaterialAssembler");
                     return Err(e);
@@ -707,18 +710,16 @@ impl IngestService {
             warn!("Failed to store schemas in KV: {}", e);
         }
 
-        // Broadcast metadata for cache invalidation signal
-        js.publish(subject.clone(), serde_json::to_vec(&entries)?.into())
+        // Broadcast metadata for cache invalidation signal using core NATS pub/sub.
+        // This is fire-and-forget since it's just a notification - no durability needed.
+        nats_client
+            .publish(subject.clone(), serde_json::to_vec(&entries)?.into())
             .await
-            .context(&{ format!("Failed to publish schema broadcast to subject '{subject}'") })
-            .map_err(|e| SinexError::network(format!("Failed to publish schema broadcast: {e}")))?
-            .await
-            .context("Failed to confirm schema broadcast acknowledgement")
-            .map_err(|e| SinexError::network(format!("Failed to confirm schema broadcast: {e}")))?;
+            .map_err(|e| SinexError::network(format!("Failed to publish schema broadcast: {e}")))?;
 
         info!(
             count = entries.len(),
-            "Broadcasted active schemas snapshot to JetStream"
+            "Broadcasted active schemas snapshot to NATS"
         );
 
         Ok(())
@@ -763,7 +764,7 @@ impl IngestService {
 
         // Store each schema in KV
         for schema in schemas {
-            let key = format!("schema:{}", schema.id);
+            let key = format!("schema-{}", schema.id);
             let payload = serde_json::to_vec(&schema.schema_content).map_err(|e| {
                 SinexError::serialization(format!("Failed to serialize schema: {e}"))
             })?;

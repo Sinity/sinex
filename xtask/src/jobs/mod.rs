@@ -36,6 +36,8 @@ pub struct Job {
     pub stdout_path: PathBuf,
     /// Path to stderr log
     pub stderr_path: PathBuf,
+    /// Exit code (if completed)
+    pub exit_code: Option<i32>,
 }
 
 impl Job {
@@ -59,6 +61,7 @@ impl Job {
             status: bg.status,
             stdout_path,
             stderr_path,
+            exit_code: bg.exit_code,
         }
     }
 
@@ -234,6 +237,7 @@ impl JobManager {
             status: InvocationStatus::Running,
             stdout_path,
             stderr_path,
+            exit_code: None, // Job is just starting
         })
     }
 
@@ -508,6 +512,7 @@ mod tests {
             status: InvocationStatus::Running,
             stdout_path: stdout_path.clone(),
             stderr_path: dir.path().join("stderr.log"),
+            exit_code: None,
         };
 
         let result = job.tail_stdout(3).unwrap();

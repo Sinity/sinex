@@ -22,11 +22,40 @@ use dashmap::DashMap;
 use pipeline::MaterialConsumerHandles;
 use sinex_db::{DbPool, DbPoolExt};
 use sinex_node_sdk::annex::GitAnnex;
+use sinex_node_sdk::SelfObserver;
 use sinex_primitives::Timestamp;
 use sinex_primitives::{environment::SinexEnvironment, Id, JsonValue, Ulid};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::BTreeMap, path::PathBuf, str::FromStr, sync::Arc};
 use tokio::{fs, fs::File, sync::Mutex};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
+
+/// Assembly statistics for observability
+#[derive(Debug, Default)]
+struct AssemblyStats {
+    started: AtomicU64,
+    completed: AtomicU64,
+    failed: AtomicU64,
+    timed_out: AtomicU64,
+}
+
+impl AssemblyStats {
+    fn inc_started(&self) {
+        self.started.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn inc_completed(&self) {
+        self.completed.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn inc_failed(&self) {
+        self.failed.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn inc_timed_out(&self) {
+        self.timed_out.fetch_add(1, Ordering::Relaxed);
+    }
+}
 
 use crate::{material_ready_set::MaterialReadySet, IngestdResult, SinexError};
 use state::{
@@ -64,6 +93,10 @@ pub struct MaterialAssembler {
     slices_max_ack_pending: i64,
     active_assemblies: Arc<tokio::sync::Semaphore>,
     ready_set: MaterialReadySet,
+    /// Self-observer for emitting assembly metrics
+    observer: Option<Arc<SelfObserver>>,
+    /// Assembly statistics for observability
+    stats: Arc<AssemblyStats>,
 }
 
 impl MaterialAssembler {
@@ -110,7 +143,36 @@ impl MaterialAssembler {
             slices_max_ack_pending,
             active_assemblies,
             ready_set,
+            observer: None,
+            stats: Arc::new(AssemblyStats::default()),
         })
+    }
+
+    /// Set self-observer for emitting assembly metrics
+    #[must_use]
+    pub fn with_observer(mut self, observer: Arc<SelfObserver>) -> Self {
+        self.observer = Some(observer);
+        self
+    }
+
+    /// Increment the "started" stats counter when a new assembly begins
+    pub(super) fn stats_inc_started(&self) {
+        self.stats.inc_started();
+    }
+
+    /// Increment the "completed" stats counter when assembly succeeds
+    pub(super) fn stats_inc_completed(&self) {
+        self.stats.inc_completed();
+    }
+
+    /// Increment the "failed" stats counter when assembly fails
+    pub(super) fn stats_inc_failed(&self) {
+        self.stats.inc_failed();
+    }
+
+    /// Increment the "timed_out" stats counter when assembly times out
+    fn stats_inc_timed_out(&self) {
+        self.stats.inc_timed_out();
     }
 
     async fn material_is_terminal(&self, material_id: Ulid) -> IngestdResult<bool> {
@@ -269,6 +331,8 @@ impl MaterialAssembler {
             slices_max_ack_pending: self.slices_max_ack_pending,
             active_assemblies: self.active_assemblies.clone(),
             ready_set: self.ready_set.clone(),
+            observer: self.observer.clone(),
+            stats: self.stats.clone(),
         }
     }
 
@@ -365,6 +429,37 @@ impl MaterialAssembler {
 
             interval.tick().await;
 
+            // Emit assembly stats via self-observer
+            if let Some(ref observer) = self.observer {
+                let active = self.assembler_state.len() as u32;
+                let buffered_slices: u32 = self
+                    .assembler_state
+                    .iter()
+                    .map(|e| {
+                        // Try to get count without blocking - use try_lock
+                        e.value()
+                            .try_lock()
+                            .map(|s| s.buffered_slices.len() as u32)
+                            .unwrap_or(0)
+                    })
+                    .sum();
+
+                if let Err(e) = observer
+                    .emit_assembly_stats(
+                        active,
+                        self.stats.started.load(Ordering::Relaxed),
+                        self.stats.completed.load(Ordering::Relaxed),
+                        self.stats.failed.load(Ordering::Relaxed),
+                        self.stats.timed_out.load(Ordering::Relaxed),
+                        None, // avg_duration_ms - would need tracking
+                        buffered_slices,
+                    )
+                    .await
+                {
+                    debug!("Failed to emit assembly stats: {}", e);
+                }
+            }
+
             let stale_materials = self.find_stale_materials().await;
 
             for (material_id, elapsed_secs) in stale_materials {
@@ -407,6 +502,8 @@ impl MaterialAssembler {
             elapsed_secs,
             "Cleaning up stale assembly due to slice arrival timeout"
         );
+
+        self.stats_inc_timed_out();
 
         self.route_material_error(
             material_id,

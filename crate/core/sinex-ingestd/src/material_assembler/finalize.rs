@@ -228,6 +228,7 @@ impl MaterialAssembler {
 
     /// Finalize a failed material: mark as failed, clean up state, and remove from active map
     pub(super) async fn finalize_failed_material(&self, material_id: Ulid, reason: &str) {
+        self.stats_inc_failed(); // Track failed assembly
         let mark = self.mark_material_failed(material_id, reason);
         let cleanup = self.cleanup_state(material_id);
         tokio::join!(mark, cleanup);
@@ -585,6 +586,8 @@ impl MaterialAssembler {
 
         self.cleanup_state(material_id).await;
         let _ = self.assembler_state.remove(&material_id);
+
+        self.stats_inc_completed(); // Track successful assembly
 
         info!(
             material_id = %material_id,

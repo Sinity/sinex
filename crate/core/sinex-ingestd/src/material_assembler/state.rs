@@ -317,6 +317,7 @@ pub(super) async fn handle_begin(
         state.metadata = metadata.clone();
         state.started_at = started_at;
         state.has_begin = true;
+        assembler.stats_inc_started(); // Track new assembly start
         assembler.insert_state_handle(material_id, state).await
     };
 

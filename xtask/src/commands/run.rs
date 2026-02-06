@@ -19,6 +19,12 @@ use crate::config::config;
 use crate::jobs::JobManager;
 use crate::preflight;
 
+/// Check if a package/name refers to a node (ingestor, automaton, or processor).
+/// Nodes support --instance-id flag; core services (ingestd, gateway) don't.
+fn is_node_package(name: &str) -> bool {
+    name.contains("ingestor") || name.contains("automaton") || name.contains("canonicalizer")
+}
+
 /// Known binary targets and their package names
 static BINARIES: &[(&str, &str, &str)] = &[
     // (name, package, binary name)
@@ -308,10 +314,7 @@ impl RunCommand {
                 }
 
                 // Only pass --instance-id to nodes (ingestors, automatons, processors)
-                let is_node = package.contains("ingestor")
-                    || package.contains("automaton")
-                    || package.contains("canonicalizer");
-                if is_node {
+                if is_node_package(package) {
                     args.extend(["--".to_string(), format!("--instance-id={instance_id}")]);
                 } else if package.contains("gateway") {
                     // Gateway requires a subcommand - default to rpc-server
@@ -380,12 +383,8 @@ impl RunCommand {
             }
 
             // Only pass --instance-id to nodes (ingestors, automatons, processors)
-            let is_node = name.contains("ingestor")
-                || name.contains("automaton")
-                || name.contains("canonicalizer");
-
             let mut cmd = Command::new(&binary_path);
-            if is_node {
+            if is_node_package(name) {
                 cmd.arg(format!("--instance-id={instance_id}"));
             } else if *name == "gateway" {
                 // Gateway requires a subcommand - default to rpc-server
@@ -479,10 +478,7 @@ Shutting down remaining processes..."
 
         // Only pass --instance-id to nodes (ingestors, automatons, processors)
         // Core services (ingestd, gateway) don't support this flag
-        let is_node = package.contains("ingestor")
-            || package.contains("automaton")
-            || package.contains("canonicalizer");
-        if is_node {
+        if is_node_package(package) {
             args.extend(["--".to_string(), format!("--instance-id={instance_id}")]);
         } else if package == "sinex-gateway" {
             // Gateway requires a subcommand - default to rpc-server
@@ -528,10 +524,7 @@ Shutting down remaining processes..."
 
         // Only pass --instance-id to nodes (ingestors, automatons, processors)
         // Core services (ingestd, gateway) don't support this flag
-        let is_node = package.contains("ingestor")
-            || package.contains("automaton")
-            || package.contains("canonicalizer");
-        if is_node {
+        if is_node_package(package) {
             args.extend(["--".to_string(), format!("--instance-id={instance_id}")]);
         } else if package == "sinex-gateway" {
             // Gateway requires a subcommand - default to rpc-server

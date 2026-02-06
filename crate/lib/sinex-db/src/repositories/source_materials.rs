@@ -647,6 +647,21 @@ impl<'a> SourceMaterialRepository<'a> {
         .map_err(|e| db_error(e, "get total size by kind"))?;
         Ok(total_size.unwrap_or(0))
     }
+    /// Register an in-flight source material using an atomic upsert.
+    ///
+    /// This uses INSERT ON CONFLICT to avoid serialization failures that occur
+    /// with the previous UPDATE-then-INSERT pattern under REPEATABLE READ isolation.
+    /// The upsert is atomic and idempotent, making it safe for concurrent calls
+    /// from multiple material assembler threads.
+    ///
+    /// # Conflict Resolution
+    ///
+    /// The table has a unique constraint on `source_identifier`, making it the natural key.
+    /// On conflict (same source_identifier):
+    /// - The existing row is updated (id is preserved)
+    /// - Terminal statuses (completed, failed) are preserved
+    /// - Metadata is deep-merged with new values
+    /// - staged_by and staged_on_host are updated if not null
     async fn register_in_flight_internal(
         &self,
         id: Id<SourceMaterial>,
@@ -655,137 +670,93 @@ impl<'a> SourceMaterialRepository<'a> {
         metadata: JsonValue,
         start_time_override: Option<Timestamp>,
     ) -> DbResult<SourceMaterialRecord> {
-        use crate::query_helpers::{
-            set_repeatable_read, with_retry_transaction_idempotent, IdempotentTransaction,
-            RetryConfig,
-        };
-        // Own the arguments for the closure
-        let material_type = material_type.to_string();
-        let source_uri = source_uri.map(|s| s.to_string());
-        with_retry_transaction_idempotent(
-            self.pool,
-            RetryConfig::default(),
-            IdempotentTransaction::new(),
-            move |tx| {
-                let id = id.clone();
-                let material_type = material_type.clone();
-                let source_uri = source_uri.clone();
-                let metadata = metadata.clone();
-                Box::pin(async move {
-                    set_repeatable_read(tx).await?;
-                    let mut material = SourceMaterial::new(material_kinds::ANNEX, source_uri.as_deref().unwrap_or("in-flight"));
-                    material.status = status::SENSING.to_string();
-                    material.timing_info_type = timing_info_types::REALTIME.to_string();
-                    material.merge_metadata(metadata);
-                    if let Some(uri) = source_uri.as_ref() {
-                        material
-                            .metadata_object_mut()
-                            .insert("source_uri".to_string(), JsonValue::String(uri.clone()));
-                    }
-                    material.metadata_object_mut().insert(
-                        "material_type".to_string(),
-                        JsonValue::String(material_type.clone()),
-                    );
-                    // Ensure we have a start time for the session; reuse on conflicts.
-                    let start_time = start_time_override
-                        .or(material.start_time)
-                        .unwrap_or_else(Timestamp::now);
-                    material.start_time = Some(start_time);
-                    material.staged_by = Some("sinex-db".to_string());
-                    material.staged_on_host = Some(gethostname::gethostname().to_string_lossy().to_string());
-                    // 1. Try to update existing record first.
-                    let update_sql = r#"
-                        UPDATE raw.source_material_registry
-                        SET
-                            status = CASE
-                                WHEN raw.source_material_registry.status IN ('completed', 'failed') THEN raw.source_material_registry.status
-                                ELSE $3
-                            END,
-                            metadata = core.jsonb_merge_deep(raw.source_material_registry.metadata, $4),
-                            staged_by = COALESCE($5, raw.source_material_registry.staged_by),
-                            staged_on_host = COALESCE($6, raw.source_material_registry.staged_on_host)
-                        WHERE source_identifier = $1 AND material_kind = $2
-                        RETURNING
-                            id::uuid as id,
-                            material_kind,
-                            source_identifier,
-                            status,
-                            timing_info_type,
-                            metadata,
-                            staged_at,
-                            start_time,
-                            end_time,
-                            staged_by,
-                            staged_on_host,
-                            optional_blob_id::uuid as optional_blob_id
-                    "#;
-                    let update_result = sqlx::query_as::<_, SourceMaterialRecord>(update_sql)
-                        .bind(&material.source_identifier)
-                        .bind(&material.material_kind)
-                        .bind(&material.status)
-                        .bind(&material.metadata)
-                        .bind(&material.staged_by)
-                        .bind(&material.staged_on_host)
-                        .fetch_optional(&mut **tx)
-                        .await
-                        .map_err(|e| db_error(e, "update in-flight source material"))?;
-                    if let Some(record) = update_result {
-                        return Ok(record);
-                    }
-                    // 2. If not found, insert new record.
-                    let insert_sql = r#"
-                        INSERT INTO raw.source_material_registry (
-                            id,
-                            material_kind,
-                            source_identifier,
-                            status,
-                            timing_info_type,
-                            metadata,
-                            start_time,
-                            staged_by,
-                            staged_on_host
-                        ) VALUES (
-                            ($1::uuid)::ulid,
-                            $2,
-                            $3,
-                            $4,
-                            $5,
-                            $6,
-                            $7,
-                            $8,
-                            $9
-                        )
-                        RETURNING
-                            id::uuid as id,
-                            material_kind,
-                            source_identifier,
-                            status,
-                            timing_info_type,
-                            metadata,
-                            staged_at,
-                            start_time,
-                            end_time,
-                            staged_by,
-                            staged_on_host,
-                            optional_blob_id::uuid as optional_blob_id
-                    "#;
-                    sqlx::query_as::<_, SourceMaterialRecord>(insert_sql)
-                        .bind(ulid_to_uuid(*id.as_ulid()))
-                        .bind(&material.material_kind)
-                        .bind(&material.source_identifier)
-                        .bind(&material.status)
-                        .bind(&material.timing_info_type)
-                        .bind(&material.metadata)
-                        .bind(material.start_time)
-                        .bind(&material.staged_by)
-                        .bind(&material.staged_on_host)
-                        .fetch_one(&mut **tx)
-                        .await
-                        .map_err(|e| db_error(e, "insert in-flight source material"))
-                })
-            },
-        )
-        .await
+        // Build the material struct for metadata preparation
+        let mut material =
+            SourceMaterial::new(material_kinds::ANNEX, source_uri.unwrap_or("in-flight"));
+        material.status = status::SENSING.to_string();
+        material.timing_info_type = timing_info_types::REALTIME.to_string();
+        material.merge_metadata(metadata);
+        if let Some(uri) = source_uri {
+            material
+                .metadata_object_mut()
+                .insert("source_uri".to_string(), JsonValue::String(uri.to_string()));
+        }
+        material.metadata_object_mut().insert(
+            "material_type".to_string(),
+            JsonValue::String(material_type.to_string()),
+        );
+        let start_time = start_time_override
+            .or(material.start_time)
+            .unwrap_or_else(Timestamp::now);
+        material.start_time = Some(start_time);
+        material.staged_by = Some("sinex-db".to_string());
+        material.staged_on_host = Some(gethostname::gethostname().to_string_lossy().to_string());
+
+        // Atomic upsert: INSERT with ON CONFLICT DO UPDATE
+        // This avoids serialization failures from REPEATABLE READ isolation
+        // NOTE: source_identifier is the natural key (unique constraint), not id
+        let upsert_sql = r#"
+            INSERT INTO raw.source_material_registry (
+                id,
+                material_kind,
+                source_identifier,
+                status,
+                timing_info_type,
+                metadata,
+                start_time,
+                staged_by,
+                staged_on_host
+            ) VALUES (
+                ($1::uuid)::ulid,
+                $2,
+                $3,
+                $4,
+                $5,
+                $6,
+                $7,
+                $8,
+                $9
+            )
+            ON CONFLICT (source_identifier) DO UPDATE SET
+                -- Preserve terminal statuses (completed, failed)
+                status = CASE
+                    WHEN raw.source_material_registry.status IN ('completed', 'failed')
+                    THEN raw.source_material_registry.status
+                    ELSE EXCLUDED.status
+                END,
+                -- Deep merge metadata, preserving existing values
+                metadata = core.jsonb_merge_deep(raw.source_material_registry.metadata, EXCLUDED.metadata),
+                -- Update staging info
+                staged_by = COALESCE(EXCLUDED.staged_by, raw.source_material_registry.staged_by),
+                staged_on_host = COALESCE(EXCLUDED.staged_on_host, raw.source_material_registry.staged_on_host)
+            RETURNING
+                id::uuid as id,
+                material_kind,
+                source_identifier,
+                status,
+                timing_info_type,
+                metadata,
+                staged_at,
+                start_time,
+                end_time,
+                staged_by,
+                staged_on_host,
+                optional_blob_id::uuid as optional_blob_id
+        "#;
+
+        sqlx::query_as::<_, SourceMaterialRecord>(upsert_sql)
+            .bind(ulid_to_uuid(*id.as_ulid()))
+            .bind(&material.material_kind)
+            .bind(&material.source_identifier)
+            .bind(&material.status)
+            .bind(&material.timing_info_type)
+            .bind(&material.metadata)
+            .bind(material.start_time)
+            .bind(&material.staged_by)
+            .bind(&material.staged_on_host)
+            .fetch_one(self.pool)
+            .await
+            .map_err(|e| db_error(e, "upsert in-flight source material"))
     }
     pub async fn register_in_flight(
         &self,

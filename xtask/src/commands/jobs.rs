@@ -131,6 +131,7 @@ async fn execute_list(
 
     if !ctx.is_human() {
         result = result.with_data(serde_json::json!({
+            "filter": "recent",
             "jobs": jobs.iter().map(|j| serde_json::json!({
                 "id": j.id,
                 "command": j.command,
@@ -138,6 +139,7 @@ async fn execute_list(
                 "status": status_to_str(j.status),
                 "pid": j.pid,
                 "started_at": j.started_at.to_string(),
+                "exit_code": j.exit_code,
             })).collect::<Vec<_>>()
         }));
     }
@@ -177,11 +179,15 @@ async fn execute_active(job_manager: &JobManager, ctx: &CommandContext) -> Resul
 
     if !ctx.is_human() {
         result = result.with_data(serde_json::json!({
-            "active_jobs": active.iter().map(|j| serde_json::json!({
+            "filter": "active",
+            "jobs": active.iter().map(|j| serde_json::json!({
                 "id": j.id,
                 "command": j.command,
+                "args": j.args,
+                "status": status_to_str(j.status),
                 "pid": j.pid,
                 "started_at": j.started_at.to_string(),
+                "exit_code": j.exit_code,
             })).collect::<Vec<_>>()
         }));
     }
@@ -278,6 +284,7 @@ async fn execute_status(
                 "status": status_to_str(job.status),
                 "pid": job.pid,
                 "started_at": job.started_at.to_string(),
+                "exit_code": job.exit_code,
             }));
         }
 
@@ -348,6 +355,7 @@ async fn execute_wait(
         result = result.with_data(serde_json::json!({
             "id": job.id,
             "status": status_to_str(job.status),
+            "exit_code": job.exit_code,
         }));
     }
 
@@ -408,8 +416,13 @@ fn status_to_str(status: InvocationStatus) -> &'static str {
 
 /// Format a time for display
 fn format_time(time: &time::OffsetDateTime) -> String {
-    time.format(&time::format_description::parse("[year]-[month]-[day] [hour]:[minute]").unwrap())
-        .unwrap_or_else(|_| "-".into())
+    use once_cell::sync::Lazy;
+    static TIME_FORMAT: Lazy<Vec<time::format_description::BorrowedFormatItem<'static>>> =
+        Lazy::new(|| {
+            time::format_description::parse("[year]-[month]-[day] [hour]:[minute]")
+                .expect("static format string is valid")
+        });
+    time.format(&*TIME_FORMAT).unwrap_or_else(|_| "-".into())
 }
 
 /// Truncate a string to max length

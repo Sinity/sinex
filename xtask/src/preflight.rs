@@ -302,30 +302,93 @@ pub fn auto_start_stack(verbose: bool) -> Result<bool> {
     }
 }
 
-/// Generate TLS certificates if they don't exist.
+/// Generate TLS certificates if they don't exist and set environment variables.
 pub fn ensure_tls_certs(is_interactive: bool) -> Result<()> {
-    if tls_certs_exist() {
-        return Ok(());
+    let tls_dir = std::path::Path::new(".tls");
+
+    if !tls_certs_exist() {
+        if is_interactive {
+            println!("Generating development TLS certificates...");
+        }
+
+        // Call TLS generation directly instead of spawning subprocess
+        let config = crate::tls::CertConfig {
+            output_dir: tls_dir.to_path_buf(),
+            san: vec!["localhost".to_string(), "127.0.0.1".to_string()],
+            ca_name: "Sinex Dev CA".to_string(),
+            validity_days: 365,
+            force: false,
+        };
+        crate::tls::generate_dev_certs(&config)?;
+
+        if is_interactive {
+            println!("✓ TLS certificates generated");
+        }
     }
 
-    if is_interactive {
-        println!("Generating development TLS certificates...");
-    }
+    // Auto-set TLS environment variables for gateway if not already set
+    set_tls_env_if_missing(tls_dir);
 
-    // Call TLS generation directly instead of spawning subprocess
-    let config = crate::tls::CertConfig {
-        output_dir: std::path::PathBuf::from(".tls"),
-        san: vec!["localhost".to_string(), "127.0.0.1".to_string()],
-        ca_name: "Sinex Dev CA".to_string(),
-        validity_days: 365,
-        force: false,
-    };
-    crate::tls::generate_dev_certs(&config)?;
+    // Auto-set dev RPC token if not already set (for gateway auth)
+    set_dev_token_if_missing();
 
-    if is_interactive {
-        println!("✓ TLS certificates generated");
-    }
     Ok(())
+}
+
+/// Set a development RPC token if not already set.
+/// This allows `cargo xtask run gateway` to work without manual token setup.
+/// Only sets the token in non-production environments.
+fn set_dev_token_if_missing() {
+    // Don't auto-set in production
+    if std::env::var("SINEX_ENVIRONMENT")
+        .ok()
+        .is_some_and(|e| e == "production")
+    {
+        return;
+    }
+
+    // Check if any token source is already set
+    let has_token = std::env::var("SINEX_RPC_TOKEN").is_ok()
+        || std::env::var("SINEX_RPC_TOKEN_FILE").is_ok()
+        || std::env::var("SINEX_GATEWAY_ADMIN_TOKEN_FILE").is_ok();
+
+    if !has_token {
+        // Generate a deterministic dev token based on hostname (for consistency across runs)
+        // but still unique enough that it's clearly a dev token
+        let hostname = gethostname::gethostname().to_string_lossy().to_string();
+        let dev_token = format!("dev-token-{}", hostname);
+        std::env::set_var("SINEX_RPC_TOKEN", &dev_token);
+        eprintln!("⚡ Auto-set SINEX_RPC_TOKEN={} (dev mode)", dev_token);
+    }
+}
+
+/// Set TLS environment variables if they're not already set.
+/// This allows `cargo xtask run gateway` to work without manual `source .env.tls`.
+fn set_tls_env_if_missing(tls_dir: &std::path::Path) {
+    // Check both .tls/ and certs/ directories for certificates
+    let cert_locations = [
+        (tls_dir.join("server.pem"), tls_dir.join("server-key.pem")),
+        (
+            std::path::Path::new("certs").join("server.pem"),
+            std::path::Path::new("certs").join("server-key.pem"),
+        ),
+        (
+            std::path::Path::new("certs").join("server.crt"),
+            std::path::Path::new("certs").join("server.key"),
+        ),
+    ];
+
+    for (cert_path, key_path) in &cert_locations {
+        if cert_path.exists() && key_path.exists() {
+            if std::env::var("SINEX_GATEWAY_TLS_CERT").is_err() {
+                std::env::set_var("SINEX_GATEWAY_TLS_CERT", cert_path);
+            }
+            if std::env::var("SINEX_GATEWAY_TLS_KEY").is_err() {
+                std::env::set_var("SINEX_GATEWAY_TLS_KEY", key_path);
+            }
+            break;
+        }
+    }
 }
 
 /// Auto-apply pending migrations.

@@ -292,7 +292,7 @@ async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> TestResult<()> 
         for i in 0..1000 {
             sqlx::query!(
                 "INSERT INTO core.events (
-            event_id, source, event_type, host, payload)
+            id, source, event_type, host, payload)
                      VALUES ($1::uuid, $2, $3, $4, $5)",
                 Ulid::new().to_uuid(),
                 "exhaustion.test",
@@ -349,7 +349,7 @@ async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> TestResult<()> 
                 for j in 0..10 {
                     sqlx::query!(
                         "INSERT INTO core.events (
-            event_id, source, event_type, host, payload)
+            id, source, event_type, host, payload)
                              VALUES ($1::uuid, $2, $3, $4, $5)",
                         Ulid::new().to_uuid(),
                         format!("concurrent.tx.{}", i),

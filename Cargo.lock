@@ -5603,6 +5603,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "sinex-e2e-tests"
+version = "0.4.2"
+dependencies = [
+ "anyhow",
+ "async-nats",
+ "axum",
+ "base64 0.22.1",
+ "camino",
+ "color-eyre",
+ "futures",
+ "parking_lot",
+ "pretty_assertions",
+ "serde_json",
+ "sinex-db",
+ "sinex-gateway",
+ "sinex-ingestd",
+ "sinex-node-sdk",
+ "sinex-primitives",
+ "sinex-services",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "tokio-stream",
+ "toml 0.8.23",
+ "tracing",
+ "uuid",
+ "validator",
+ "xtask",
+]
+
+[[package]]
 name = "sinex-fs-ingestor"
 version = "0.4.2"
 dependencies = [

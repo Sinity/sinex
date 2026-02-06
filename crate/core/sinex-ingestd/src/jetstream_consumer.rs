@@ -7,6 +7,7 @@ use futures::StreamExt;
 use serde::Serialize;
 use sinex_db::repositories::StreamBatchRow;
 use sinex_db::{repositories::DbPoolExt, DbPool};
+use sinex_node_sdk::SelfObserver;
 use sinex_primitives::Timestamp;
 use sinex_primitives::{environment::SinexEnvironment, ulid::Ulid, JsonValue};
 use sqlx::postgres::PgPoolCopyExt;
@@ -62,6 +63,8 @@ pub struct JetStreamConsumer {
     /// been registered yet are NAK'd with a short delay instead of attempting a DB insert
     /// that would hit an FK violation.
     ready_set: Option<MaterialReadySet>,
+    /// Self-observer for emitting internal metrics
+    observer: Option<Arc<SelfObserver>>,
 }
 
 #[derive(Debug, Clone)]
@@ -231,7 +234,15 @@ impl JetStreamConsumer {
             batch_fetch_max_messages: DEFAULT_BATCH_FETCH_MAX_MESSAGES,
             batch_fetch_timeout: DEFAULT_BATCH_FETCH_TIMEOUT,
             ready_set: None,
+            observer: None,
         }
+    }
+
+    /// Set self-observer for emitting metrics (stream stats, processing stats)
+    #[must_use]
+    pub fn with_observer(mut self, observer: Arc<SelfObserver>) -> Self {
+        self.observer = Some(observer);
+        self
     }
 
     /// Build a consumer with a custom `AckWait` (primarily for tests).
@@ -411,6 +422,23 @@ impl JetStreamConsumer {
             tokio::select! {
                 _ = stats_interval.tick() => {
                     self.stats.log();
+                    // Emit processing stats via self-observer
+                    if let Some(ref observer) = self.observer {
+                        let processed = self.stats.events_processed.load(std::sync::atomic::Ordering::Relaxed);
+                        let failed = self.stats.events_failed.load(std::sync::atomic::Ordering::Relaxed);
+                        let deferred = self.stats.events_deferred.load(std::sync::atomic::Ordering::Relaxed);
+                        let dlq_routed = self.stats.dlq_routed.load(std::sync::atomic::Ordering::Relaxed);
+                        if let Err(e) = observer.emit_node_processing_stats(
+                            "jetstream-consumer",
+                            processed,
+                            deferred + dlq_routed, // events_dropped = deferred + routed to DLQ
+                            None, // avg_latency_ms - not tracked yet
+                            0,    // queue_depth - would need consumer info
+                            failed,
+                        ).await {
+                            warn!("Failed to emit processing stats: {}", e);
+                        }
+                    }
                 }
                 _ = capacity_check_interval.tick() => {
                     self.check_stream_capacity(&stream_name).await;
@@ -1119,6 +1147,25 @@ impl JetStreamConsumer {
                 if let Ok(info) = stream.info().await {
                     let state = info.state;
                     let config = info.config.clone();
+
+                    // Emit stream stats via self-observer
+                    if let Some(ref observer) = self.observer {
+                        if let Err(e) = observer
+                            .emit_stream_stats(
+                                stream_name,
+                                state.messages,
+                                config.max_messages as u64,
+                                state.bytes,
+                                config.max_bytes as u64,
+                                state.consumer_count as u32,
+                                state.first_sequence,
+                                state.last_sequence,
+                            )
+                            .await
+                        {
+                            debug!("Failed to emit stream stats: {}", e);
+                        }
+                    }
 
                     // Check message count capacity
                     if config.max_messages > 0 {

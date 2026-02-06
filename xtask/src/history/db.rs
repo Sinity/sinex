@@ -529,7 +529,7 @@ impl HistoryDb {
 
         let mut stmt = self.conn.prepare(
             r"
-            SELECT id, command, args_json, started_at, pid, stdout_path, stderr_path, status
+            SELECT id, command, args_json, started_at, pid, stdout_path, stderr_path, status, exit_code
             FROM invocations
             WHERE is_background = 1 AND status = 'running'
             ORDER BY started_at DESC
@@ -556,6 +556,7 @@ impl HistoryDb {
                 stdout_path: row.get(5)?,
                 stderr_path: row.get(6)?,
                 status: InvocationStatus::from_str(&row.get::<_, String>(7)?),
+                exit_code: row.get(8)?,
             })
         })?;
 
@@ -570,7 +571,7 @@ impl HistoryDb {
         self.conn
             .query_row(
                 r"
-            SELECT id, command, args_json, started_at, pid, stdout_path, stderr_path, status
+            SELECT id, command, args_json, started_at, pid, stdout_path, stderr_path, status, exit_code
             FROM invocations
             WHERE id = ?1 AND is_background = 1
             ",
@@ -595,6 +596,7 @@ impl HistoryDb {
                         stdout_path: row.get(5)?,
                         stderr_path: row.get(6)?,
                         status: InvocationStatus::from_str(&row.get::<_, String>(7)?),
+                        exit_code: row.get(8)?,
                     })
                 },
             )
@@ -625,7 +627,7 @@ impl HistoryDb {
 
         let mut stmt = self.conn.prepare(
             r"
-            SELECT id, command, args_json, started_at, pid, stdout_path, stderr_path, status
+            SELECT id, command, args_json, started_at, pid, stdout_path, stderr_path, status, exit_code
             FROM invocations
             WHERE is_background = 1
             ORDER BY started_at DESC
@@ -653,6 +655,7 @@ impl HistoryDb {
                 stdout_path: row.get(5)?,
                 stderr_path: row.get(6)?,
                 status: InvocationStatus::from_str(&row.get::<_, String>(7)?),
+                exit_code: row.get(8)?,
             })
         })?;
 
@@ -886,6 +889,7 @@ pub struct BackgroundJob {
     pub stdout_path: Option<String>,
     pub stderr_path: Option<String>,
     pub status: InvocationStatus,
+    pub exit_code: Option<i32>,
 }
 
 /// A stored build diagnostic.

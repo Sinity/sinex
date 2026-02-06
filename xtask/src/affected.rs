@@ -7,6 +7,71 @@ use anyhow::{Context, Result};
 use std::collections::{HashMap, HashSet};
 use std::process::Command;
 
+/// Cached cargo metadata to avoid running the command multiple times.
+struct WorkspaceMetadata {
+    packages: Vec<String>,
+    reverse_deps: HashMap<String, HashSet<String>>,
+}
+
+impl WorkspaceMetadata {
+    /// Load workspace metadata from cargo (single call).
+    fn load() -> Result<Self> {
+        let output = Command::new("cargo")
+            .args(["metadata", "--format-version", "1", "--no-deps"])
+            .output()
+            .context("failed to run cargo metadata")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("cargo metadata failed: {stderr}");
+        }
+
+        let metadata: serde_json::Value =
+            serde_json::from_slice(&output.stdout).context("failed to parse cargo metadata")?;
+
+        let packages_array = metadata["packages"]
+            .as_array()
+            .context("no packages in metadata")?;
+
+        // Extract package names
+        let packages: Vec<String> = packages_array
+            .iter()
+            .filter_map(|p| p["name"].as_str().map(String::from))
+            .collect();
+
+        // Build forward dependency map
+        let mut forward_deps: HashMap<String, HashSet<String>> = HashMap::new();
+        for pkg in packages_array {
+            let name = pkg["name"].as_str().unwrap_or_default().to_string();
+            let deps = pkg["dependencies"]
+                .as_array()
+                .map(|deps| {
+                    deps.iter()
+                        .filter_map(|d| d["name"].as_str().map(std::string::ToString::to_string))
+                        .collect::<HashSet<_>>()
+                })
+                .unwrap_or_default();
+            forward_deps.insert(name, deps);
+        }
+
+        // Build reverse dependency map
+        let mut reverse_deps: HashMap<String, HashSet<String>> = HashMap::new();
+        for (pkg, deps) in &forward_deps {
+            for dep in deps {
+                reverse_deps
+                    .entry(dep.clone())
+                    .or_default()
+                    .insert(pkg.clone());
+            }
+        }
+
+        Ok(Self {
+            packages,
+            reverse_deps,
+        })
+    }
+}
+
 /// Get the list of packages affected by current git changes.
 pub fn affected_packages() -> Result<Vec<String>> {
     // Get changed files
@@ -16,13 +81,16 @@ pub fn affected_packages() -> Result<Vec<String>> {
         return Ok(vec![]);
     }
 
+    // Load workspace metadata once (used for both all-packages and dependency graph)
+    let metadata = WorkspaceMetadata::load()?;
+
     // Check for workspace-wide changes that affect everything
     let workspace_wide = changed
         .iter()
         .any(|f| f == "Cargo.toml" || f == "Cargo.lock" || f.starts_with(".config/"));
 
     if workspace_wide {
-        return all_workspace_packages();
+        return Ok(metadata.packages);
     }
 
     // Map changed files to packages
@@ -32,36 +100,10 @@ pub fn affected_packages() -> Result<Vec<String>> {
         return Ok(vec![]);
     }
 
-    // Build dependency graph (reverse: package -> packages that depend on it)
-    let graph = build_reverse_dependency_graph()?;
-
-    // Compute transitive dependents
-    let affected = transitive_dependents(&changed_pkgs, &graph);
+    // Compute transitive dependents using pre-loaded reverse dependency graph
+    let affected = transitive_dependents(&changed_pkgs, &metadata.reverse_deps);
 
     Ok(affected.into_iter().collect())
-}
-
-/// Get all workspace package names via cargo metadata.
-fn all_workspace_packages() -> Result<Vec<String>> {
-    let output = Command::new("cargo")
-        .args(["metadata", "--format-version", "1", "--no-deps"])
-        .output()
-        .context("failed to run cargo metadata")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("cargo metadata failed: {stderr}");
-    }
-
-    let metadata: serde_json::Value =
-        serde_json::from_slice(&output.stdout).context("failed to parse cargo metadata")?;
-
-    Ok(metadata["packages"]
-        .as_array()
-        .unwrap_or(&vec![])
-        .iter()
-        .filter_map(|p| p["name"].as_str().map(String::from))
-        .collect())
 }
 
 /// Build a nextest filter expression for the affected packages.
@@ -163,59 +205,6 @@ fn path_to_package(path: &str) -> Option<String> {
     // Workspace-level files (Cargo.toml, Cargo.lock, .config/) are handled
     // upstream in affected_packages() as workspace-wide changes.
     None
-}
-
-/// Build reverse dependency graph: package -> packages that depend on it.
-fn build_reverse_dependency_graph() -> Result<HashMap<String, HashSet<String>>> {
-    let mut reverse_deps: HashMap<String, HashSet<String>> = HashMap::new();
-
-    // Read workspace members and their dependencies
-    let output = Command::new("cargo")
-        .args(["metadata", "--format-version", "1", "--no-deps"])
-        .output()
-        .context("failed to run cargo metadata")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("cargo metadata failed: {stderr}");
-    }
-
-    let metadata: serde_json::Value =
-        serde_json::from_slice(&output.stdout).context("failed to parse cargo metadata")?;
-
-    // Get workspace packages
-    let packages = metadata["packages"]
-        .as_array()
-        .context("no packages in metadata")?;
-
-    // Build forward dependency map first
-    let mut forward_deps: HashMap<String, HashSet<String>> = HashMap::new();
-
-    for pkg in packages {
-        let name = pkg["name"].as_str().unwrap_or_default().to_string();
-        let deps = pkg["dependencies"]
-            .as_array()
-            .map(|deps| {
-                deps.iter()
-                    .filter_map(|d| d["name"].as_str().map(std::string::ToString::to_string))
-                    .collect::<HashSet<_>>()
-            })
-            .unwrap_or_default();
-
-        forward_deps.insert(name, deps);
-    }
-
-    // Build reverse dependency map
-    for (pkg, deps) in &forward_deps {
-        for dep in deps {
-            reverse_deps
-                .entry(dep.clone())
-                .or_default()
-                .insert(pkg.clone());
-        }
-    }
-
-    Ok(reverse_deps)
 }
 
 /// Compute transitive dependents of the given packages.

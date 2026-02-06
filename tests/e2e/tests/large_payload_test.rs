@@ -19,7 +19,7 @@ async fn provision(js: &JetStream, stream: &str, subject: &str) -> TestResult<()
         name: stream.to_string(),
         subjects: vec![subject.to_string()],
         retention: RetentionPolicy::Limits,
-        max_msgs: 32,
+        max_messages: 32,
         max_age: StdDuration::from_secs(Timeouts::CI),
         ..Default::default()
     };

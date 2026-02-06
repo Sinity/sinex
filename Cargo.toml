@@ -21,7 +21,7 @@ members = [
   "crate/nodes/sinex-system-ingestor",
   "crate/nodes/sinex-fs-ingestor",
   "crate/nodes/sinex-document-ingestor",
-  # "tests/e2e",  # TODO: Fix e2e tests compilation errors (TestNodePublisher migration, Duration API, etc.)
+  "tests/e2e",  # TODO: Fix e2e tests compilation errors (TestNodePublisher migration, Duration API, etc.)
 
   # Automaton crates (derived processors)
   "crate/nodes/sinex-terminal-command-canonicalizer",

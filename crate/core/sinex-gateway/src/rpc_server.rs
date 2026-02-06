@@ -1245,10 +1245,26 @@ async fn bind_with_reuseport(addr: &str) -> std::io::Result<tokio::net::TcpListe
 }
 
 fn tls_paths_from_env() -> color_eyre::eyre::Result<(String, String, Option<String>)> {
-    let cert = std::env::var("SINEX_GATEWAY_TLS_CERT")
-        .map_err(|_| eyre!("SINEX_GATEWAY_TLS_CERT is required for TCP bindings"))?;
-    let key = std::env::var("SINEX_GATEWAY_TLS_KEY")
-        .map_err(|_| eyre!("SINEX_GATEWAY_TLS_KEY is required for TCP bindings"))?;
+    let cert = std::env::var("SINEX_GATEWAY_TLS_CERT").map_err(|_| {
+        eyre!(
+            "SINEX_GATEWAY_TLS_CERT is required for TCP bindings\n\n\
+            For local development, generate certificates with:\n  \
+            cargo xtask xtr tls generate-dev-certs\n  \
+            cargo xtask xtr tls setup-env\n  \
+            source .env.tls\n\n\
+            For production, provide proper certificates via environment variables."
+        )
+    })?;
+    let key = std::env::var("SINEX_GATEWAY_TLS_KEY").map_err(|_| {
+        eyre!(
+            "SINEX_GATEWAY_TLS_KEY is required for TCP bindings\n\n\
+            For local development, generate certificates with:\n  \
+            cargo xtask xtr tls generate-dev-certs\n  \
+            cargo xtask xtr tls setup-env\n  \
+            source .env.tls\n\n\
+            For production, provide proper certificates via environment variables."
+        )
+    })?;
     let client_ca = std::env::var("SINEX_GATEWAY_TLS_CLIENT_CA").ok();
     Ok((cert, key, client_ca))
 }
