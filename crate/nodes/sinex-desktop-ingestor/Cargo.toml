@@ -13,6 +13,8 @@ blake3      = "1.5"
 urlencoding = "2.1"
 gethostname = "0.4"
 human-panic = "2.0"
+lazy_static = { workspace = true }
+regex       = { workspace = true }
 
 [package.version]
 workspace = true

@@ -24,6 +24,9 @@ pub async fn reset_database(pool: &DbPool) -> TestResult<()> {
     let mut conn = pool.acquire().await?;
     let config = super::cleanup_config::CleanupConfig::default();
 
+    // Track whether we need to restore session_replication_role
+    let mut triggers_disabled = false;
+
     for table in config.ordered_tables() {
         match table.method {
             super::cleanup_config::CleanupMethod::Truncate => {
@@ -35,6 +38,20 @@ pub async fn reset_database(pool: &DbPool) -> TestResult<()> {
                 .await?;
             }
             super::cleanup_config::CleanupMethod::Delete => {
+                // Disable triggers if required (e.g. append-only constraints)
+                if table.disable_triggers && !triggers_disabled {
+                    sqlx::query("SET session_replication_role = 'replica'")
+                        .execute(&mut *conn)
+                        .await?;
+                    triggers_disabled = true;
+                } else if !table.disable_triggers && triggers_disabled {
+                    // Re-enable triggers before operating on tables that expect them
+                    sqlx::query("SET session_replication_role = 'origin'")
+                        .execute(&mut *conn)
+                        .await?;
+                    triggers_disabled = false;
+                }
+
                 sqlx::query(&format!("DELETE FROM {}", table.table_name))
                     .execute(&mut *conn)
                     .await?;
@@ -42,6 +59,14 @@ pub async fn reset_database(pool: &DbPool) -> TestResult<()> {
             super::cleanup_config::CleanupMethod::Skip => {}
         }
     }
+
+    // Always restore default trigger behavior
+    if triggers_disabled {
+        sqlx::query("SET session_replication_role = 'origin'")
+            .execute(&mut *conn)
+            .await?;
+    }
+
     Ok(())
 }
 

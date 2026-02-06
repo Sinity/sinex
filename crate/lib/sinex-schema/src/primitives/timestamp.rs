@@ -109,9 +109,8 @@ impl From<OffsetDateTime> for Timestamp {
 impl From<std::time::SystemTime> for Timestamp {
     fn from(st: std::time::SystemTime) -> Self {
         // Convert SystemTime to OffsetDateTime (fallible, but we use a fallback)
-        match OffsetDateTime::from(st) {
-            dt => Self(dt),
-        }
+        let dt = OffsetDateTime::from(st);
+        Self(dt)
     }
 }
 

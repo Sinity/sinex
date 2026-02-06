@@ -4,10 +4,12 @@
 //! for commands extracted during Phase 2 refactoring.
 
 use xtask::command::{CommandContext, CommandResult, XtaskCommand};
+#[cfg(feature = "sandbox")]
 use xtask::commands::ci::{CiCommand, CiSubcommand};
 use xtask::commands::jobs::{JobsCommand, JobsSubcommand};
 use xtask::output::{OutputFormat, OutputWriter};
 
+#[cfg(feature = "sandbox")]
 #[test]
 fn test_ci_command_name() {
     let cmd = CiCommand {
@@ -18,6 +20,7 @@ fn test_ci_command_name() {
     assert_eq!(cmd.name(), "ci");
 }
 
+#[cfg(feature = "sandbox")]
 #[test]
 fn test_ci_command_metadata() {
     let cmd = CiCommand {

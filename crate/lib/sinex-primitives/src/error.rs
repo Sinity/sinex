@@ -321,10 +321,12 @@ impl SinexError {
         use SinexError::{
             AlreadyExists, Automaton, BlobStorage, Cancelled, ChannelReceive, ChannelSend,
             Checkpoint, Configuration, Coordination, Database, DbPersistenceFailed, InvalidState,
-            Io, Kv, Lifecycle, MaxRetriesExceeded, Nats, NatsAckFailed, NatsPublish, NatsSubscribe,
-            Network, NotFound, Parse, PermissionDenied, Processing, ResourceExhausted,
-            Serialization, Service, Timeout, Unknown, Validation,
+            Io, Kv, Lifecycle, MaxRetriesExceeded, NatsPublish, NatsSubscribe, Network, NotFound,
+            Parse, PermissionDenied, Processing, ResourceExhausted, Serialization, Service,
+            Timeout, Unknown, Validation,
         };
+        #[cfg(feature = "nats")]
+        use SinexError::{Nats, NatsAckFailed};
         let details = match &mut self {
             Database(d)
             | DbPersistenceFailed(d)
@@ -366,10 +368,12 @@ impl SinexError {
         use SinexError::{
             AlreadyExists, Automaton, BlobStorage, Cancelled, ChannelReceive, ChannelSend,
             Checkpoint, Configuration, Coordination, Database, DbPersistenceFailed, InvalidState,
-            Io, Kv, Lifecycle, MaxRetriesExceeded, Nats, NatsAckFailed, NatsPublish, NatsSubscribe,
-            Network, NotFound, Parse, PermissionDenied, Processing, ResourceExhausted,
-            Serialization, Service, Timeout, Unknown, Validation,
+            Io, Kv, Lifecycle, MaxRetriesExceeded, NatsPublish, NatsSubscribe, Network, NotFound,
+            Parse, PermissionDenied, Processing, ResourceExhausted, Serialization, Service,
+            Timeout, Unknown, Validation,
         };
+        #[cfg(feature = "nats")]
+        use SinexError::{Nats, NatsAckFailed};
         let details = match &mut self {
             Database(d)
             | DbPersistenceFailed(d)
@@ -444,10 +448,12 @@ impl SinexError {
         use SinexError::{
             AlreadyExists, Automaton, BlobStorage, Cancelled, ChannelReceive, ChannelSend,
             Checkpoint, Configuration, Coordination, Database, DbPersistenceFailed, InvalidState,
-            Io, Kv, Lifecycle, MaxRetriesExceeded, Nats, NatsAckFailed, NatsPublish, NatsSubscribe,
-            Network, NotFound, Parse, PermissionDenied, Processing, ResourceExhausted,
-            Serialization, Service, Timeout, Unknown, Validation,
+            Io, Kv, Lifecycle, MaxRetriesExceeded, NatsPublish, NatsSubscribe, Network, NotFound,
+            Parse, PermissionDenied, Processing, ResourceExhausted, Serialization, Service,
+            Timeout, Unknown, Validation,
         };
+        #[cfg(feature = "nats")]
+        use SinexError::{Nats, NatsAckFailed};
         match self {
             Database(d)
             | DbPersistenceFailed(d)
@@ -503,10 +509,12 @@ impl SinexError {
         use SinexError::{
             AlreadyExists, Automaton, BlobStorage, Cancelled, ChannelReceive, ChannelSend,
             Checkpoint, Configuration, Coordination, Database, DbPersistenceFailed, InvalidState,
-            Io, Kv, Lifecycle, MaxRetriesExceeded, Nats, NatsAckFailed, NatsPublish, NatsSubscribe,
-            Network, NotFound, Parse, PermissionDenied, Processing, ResourceExhausted,
-            Serialization, Service, Timeout, Unknown, Validation,
+            Io, Kv, Lifecycle, MaxRetriesExceeded, NatsPublish, NatsSubscribe, Network, NotFound,
+            Parse, PermissionDenied, Processing, ResourceExhausted, Serialization, Service,
+            Timeout, Unknown, Validation,
         };
+        #[cfg(feature = "nats")]
+        use SinexError::{Nats, NatsAckFailed};
         match self {
             Database(_) => "Database",
             DbPersistenceFailed(_) => "DbPersistenceFailed",

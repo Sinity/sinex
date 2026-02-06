@@ -7,6 +7,71 @@ use anyhow::{Context, Result};
 use std::collections::{HashMap, HashSet};
 use std::process::Command;
 
+/// Cached cargo metadata to avoid running the command multiple times.
+struct WorkspaceMetadata {
+    packages: Vec<String>,
+    reverse_deps: HashMap<String, HashSet<String>>,
+}
+
+impl WorkspaceMetadata {
+    /// Load workspace metadata from cargo (single call).
+    fn load() -> Result<Self> {
+        let output = Command::new("cargo")
+            .args(["metadata", "--format-version", "1", "--no-deps"])
+            .output()
+            .context("failed to run cargo metadata")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("cargo metadata failed: {stderr}");
+        }
+
+        let metadata: serde_json::Value =
+            serde_json::from_slice(&output.stdout).context("failed to parse cargo metadata")?;
+
+        let packages_array = metadata["packages"]
+            .as_array()
+            .context("no packages in metadata")?;
+
+        // Extract package names
+        let packages: Vec<String> = packages_array
+            .iter()
+            .filter_map(|p| p["name"].as_str().map(String::from))
+            .collect();
+
+        // Build forward dependency map
+        let mut forward_deps: HashMap<String, HashSet<String>> = HashMap::new();
+        for pkg in packages_array {
+            let name = pkg["name"].as_str().unwrap_or_default().to_string();
+            let deps = pkg["dependencies"]
+                .as_array()
+                .map(|deps| {
+                    deps.iter()
+                        .filter_map(|d| d["name"].as_str().map(std::string::ToString::to_string))
+                        .collect::<HashSet<_>>()
+                })
+                .unwrap_or_default();
+            forward_deps.insert(name, deps);
+        }
+
+        // Build reverse dependency map
+        let mut reverse_deps: HashMap<String, HashSet<String>> = HashMap::new();
+        for (pkg, deps) in &forward_deps {
+            for dep in deps {
+                reverse_deps
+                    .entry(dep.clone())
+                    .or_default()
+                    .insert(pkg.clone());
+            }
+        }
+
+        Ok(Self {
+            packages,
+            reverse_deps,
+        })
+    }
+}
+
 /// Get the list of packages affected by current git changes.
 pub fn affected_packages() -> Result<Vec<String>> {
     // Get changed files
@@ -16,6 +81,18 @@ pub fn affected_packages() -> Result<Vec<String>> {
         return Ok(vec![]);
     }
 
+    // Load workspace metadata once (used for both all-packages and dependency graph)
+    let metadata = WorkspaceMetadata::load()?;
+
+    // Check for workspace-wide changes that affect everything
+    let workspace_wide = changed
+        .iter()
+        .any(|f| f == "Cargo.toml" || f == "Cargo.lock" || f.starts_with(".config/"));
+
+    if workspace_wide {
+        return Ok(metadata.packages);
+    }
+
     // Map changed files to packages
     let changed_pkgs = files_to_packages(&changed)?;
 
@@ -23,11 +100,8 @@ pub fn affected_packages() -> Result<Vec<String>> {
         return Ok(vec![]);
     }
 
-    // Build dependency graph (reverse: package -> packages that depend on it)
-    let graph = build_reverse_dependency_graph()?;
-
-    // Compute transitive dependents
-    let affected = transitive_dependents(&changed_pkgs, &graph);
+    // Compute transitive dependents using pre-loaded reverse dependency graph
+    let affected = transitive_dependents(&changed_pkgs, &metadata.reverse_deps);
 
     Ok(affected.into_iter().collect())
 }
@@ -102,82 +176,35 @@ fn files_to_packages(files: &[String]) -> Result<HashSet<String>> {
 
 /// Map a file path to its package name.
 fn path_to_package(path: &str) -> Option<String> {
-    // Match crate path patterns:
-    // crate/lib/<name>/...  -> sinex-<name> (with hyphens)
-    // crate/core/<name>/... -> sinex-<name>
-    // crate/nodes/<name>/... -> sinex-<name>
-    // crate/tools/<name>/... -> <name>
-
     let parts: Vec<&str> = path.split('/').collect();
 
-    if parts.len() < 3 || parts[0] != "crate" {
-        return None;
+    // crate/{lib,core,nodes,tools,cli}/<name>/... -> package name (with hyphens)
+    if parts.len() >= 3 && parts[0] == "crate" {
+        let category = parts[1];
+        let name = parts[2];
+        let pkg_name = name.replace('_', "-");
+
+        return match category {
+            "lib" | "core" | "nodes" | "tools" => Some(pkg_name),
+            // crate/cli/ contains the sinexctl binary
+            "cli" => Some("sinexctl".to_string()),
+            _ => None,
+        };
     }
 
-    let category = parts[1];
-    let name = parts[2];
-
-    // Convert underscores to hyphens in package name
-    let pkg_name = name.replace('_', "-");
-
-    match category {
-        "lib" | "core" | "nodes" => Some(pkg_name),
-        "tools" => Some(pkg_name),
-        _ => None,
-    }
-}
-
-/// Build reverse dependency graph: package -> packages that depend on it.
-fn build_reverse_dependency_graph() -> Result<HashMap<String, HashSet<String>>> {
-    let mut reverse_deps: HashMap<String, HashSet<String>> = HashMap::new();
-
-    // Read workspace members and their dependencies
-    let output = Command::new("cargo")
-        .args(["metadata", "--format-version", "1", "--no-deps"])
-        .output()
-        .context("failed to run cargo metadata")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("cargo metadata failed: {stderr}");
+    // xtask/ changes affect xtask itself
+    if parts.first() == Some(&"xtask") {
+        return Some("xtask".to_string());
     }
 
-    let metadata: serde_json::Value =
-        serde_json::from_slice(&output.stdout).context("failed to parse cargo metadata")?;
-
-    // Get workspace packages
-    let packages = metadata["packages"]
-        .as_array()
-        .context("no packages in metadata")?;
-
-    // Build forward dependency map first
-    let mut forward_deps: HashMap<String, HashSet<String>> = HashMap::new();
-
-    for pkg in packages {
-        let name = pkg["name"].as_str().unwrap_or_default().to_string();
-        let deps = pkg["dependencies"]
-            .as_array()
-            .map(|deps| {
-                deps.iter()
-                    .filter_map(|d| d["name"].as_str().map(std::string::ToString::to_string))
-                    .collect::<HashSet<_>>()
-            })
-            .unwrap_or_default();
-
-        forward_deps.insert(name, deps);
+    // tests/e2e/ changes affect the e2e test package
+    if parts.len() >= 2 && parts[0] == "tests" && parts[1] == "e2e" {
+        return Some("sinex-e2e-tests".to_string());
     }
 
-    // Build reverse dependency map
-    for (pkg, deps) in &forward_deps {
-        for dep in deps {
-            reverse_deps
-                .entry(dep.clone())
-                .or_default()
-                .insert(pkg.clone());
-        }
-    }
-
-    Ok(reverse_deps)
+    // Workspace-level files (Cargo.toml, Cargo.lock, .config/) are handled
+    // upstream in affected_packages() as workspace-wide changes.
+    None
 }
 
 /// Compute transitive dependents of the given packages.
@@ -220,6 +247,7 @@ mod tests {
 
     #[test]
     fn test_path_to_package() {
+        // Standard crate paths
         assert_eq!(
             path_to_package("crate/lib/sinex-db/src/lib.rs"),
             Some("sinex-db".to_string())
@@ -232,8 +260,42 @@ mod tests {
             path_to_package("crate/nodes/sinex-fs-ingestor/src/lib.rs"),
             Some("sinex-fs-ingestor".to_string())
         );
+
+        // CLI crate
+        assert_eq!(
+            path_to_package("crate/cli/src/main.rs"),
+            Some("sinexctl".to_string())
+        );
+        assert_eq!(
+            path_to_package("crate/cli/Cargo.toml"),
+            Some("sinexctl".to_string())
+        );
+
+        // xtask
+        assert_eq!(
+            path_to_package("xtask/src/lib.rs"),
+            Some("xtask".to_string())
+        );
+        assert_eq!(
+            path_to_package("xtask/Cargo.toml"),
+            Some("xtask".to_string())
+        );
+
+        // e2e tests
+        assert_eq!(
+            path_to_package("tests/e2e/tests/some_test.rs"),
+            Some("sinex-e2e-tests".to_string())
+        );
+        assert_eq!(
+            path_to_package("tests/e2e/Cargo.toml"),
+            Some("sinex-e2e-tests".to_string())
+        );
+
+        // Non-package paths return None (workspace-level handled upstream)
         assert_eq!(path_to_package("docs/README.md"), None);
         assert_eq!(path_to_package("Cargo.toml"), None);
+        assert_eq!(path_to_package("Cargo.lock"), None);
+        assert_eq!(path_to_package(".config/nextest.toml"), None);
     }
 
     #[test]

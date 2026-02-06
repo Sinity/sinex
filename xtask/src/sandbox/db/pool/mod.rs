@@ -304,7 +304,7 @@ async fn store_pool_meta(
 #[must_use]
 pub fn migrations_fingerprint() -> Option<String> {
     let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let schema_dir = crate_dir.join("../sinex-schema");
+    let schema_dir = crate_dir.join("../crate/lib/sinex-schema");
     let migrations_dir = schema_dir.join("src/migrations").canonicalize().ok()?;
     let schema_src_dir = schema_dir.join("src/schema").canonicalize().ok()?;
 
@@ -2053,6 +2053,39 @@ async fn clean_database(
             working_pool = fresh_pool;
             schema_recreated = true;
             continue;
+        }
+
+        // Terminate any zombie connections that might interfere with cleanup or verification
+        let _ = sqlx::query(&format!(
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
+             WHERE datname = '{}' AND pid <> pg_backend_pid()",
+            db_name
+        ))
+        .execute(&working_pool)
+        .await;
+
+        // Wait for connections to drain
+        let mut drained = false;
+        for _ in 0..20 {
+            let count: i64 = sqlx::query_scalar(&format!(
+                "SELECT COUNT(*) FROM pg_stat_activity WHERE datname = '{}' AND pid <> pg_backend_pid()",
+                db_name
+            ))
+            .fetch_one(&working_pool)
+            .await
+            .unwrap_or(1); // Assume 1 on error to keep trying
+
+            if count == 0 {
+                drained = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        if !drained {
+            eprintln!(
+                "  ⚠️  Database {} still has connections after termination; cleanup might fail",
+                db_name
+            );
         }
 
         // Use the shared db_common implementation

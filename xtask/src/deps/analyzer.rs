@@ -60,7 +60,7 @@ impl WorkspaceAnalyzer {
     ///
     /// # Example
     /// ```no_run
-    /// use xtask::deps::WorkspaceAnalyzer;
+    /// use xtask::deps::analyzer::WorkspaceAnalyzer;
     /// let analyzer = WorkspaceAnalyzer::new()?;
     /// # Ok::<(), anyhow::Error>(())
     /// ```
@@ -86,7 +86,7 @@ impl WorkspaceAnalyzer {
     ///
     /// # Example
     /// ```no_run
-    /// use xtask::deps::WorkspaceAnalyzer;
+    /// use xtask::deps::analyzer::WorkspaceAnalyzer;
     /// let analyzer = WorkspaceAnalyzer::new()?;
     /// let packages = analyzer.workspace_packages()?;
     /// for pkg in packages {
@@ -125,7 +125,7 @@ impl WorkspaceAnalyzer {
     ///
     /// # Example
     /// ```no_run
-    /// use xtask::deps::WorkspaceAnalyzer;
+    /// use xtask::deps::analyzer::WorkspaceAnalyzer;
     /// let analyzer = WorkspaceAnalyzer::new()?;
     /// let deps = analyzer.all_dependencies()?;
     /// for dep in deps {
@@ -190,7 +190,7 @@ impl WorkspaceAnalyzer {
     ///
     /// # Example
     /// ```no_run
-    /// use xtask::deps::WorkspaceAnalyzer;
+    /// use xtask::deps::analyzer::WorkspaceAnalyzer;
     /// let analyzer = WorkspaceAnalyzer::new()?;
     /// let duplicates = analyzer.find_duplicates()?;
     /// for dup in duplicates {

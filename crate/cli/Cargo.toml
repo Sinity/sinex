@@ -45,6 +45,16 @@ path = "../lib/sinex-primitives"
 path = "../lib/sinex-schema"
 features = ["arbitrary"]
 
+[dependencies.sinex-db]
+path = "../lib/sinex-db"
+
+[dependencies.sqlx]
+workspace = true
+features = ["runtime-tokio", "tls-rustls", "postgres"]
+
+[dependencies.humantime]
+version = "2.1"
+
 [dependencies.clap]
 workspace = true
 features = ["derive", "env"]

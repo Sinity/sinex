@@ -1,5 +1,5 @@
 use sinex_ingestd::IngestdConfig;
-use sinex_primitives::{validation::config_validation::ConfigValidation, Seconds};
+use sinex_primitives::validation::config_validation::ConfigValidation;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
@@ -7,7 +7,6 @@ fn defaults_match_constants() -> TestResult<()> {
     let config = IngestdConfig::default();
     assert_eq!(config.database_pool_size, 50);
     assert_eq!(config.batch_size, 1_000);
-    assert_eq!(config.batch_timeout_secs, Seconds::from_secs(5));
     assert!(!config.dry_run);
     assert!(config.validate_schemas);
     assert!(!config.nats.require_tls);
@@ -35,7 +34,8 @@ fn constructs_from_args() -> TestResult<()> {
         true,
         50,
         200,
-        Seconds::from_secs(10),
+        None, // consumer_fetch_max_messages
+        None, // consumer_fetch_timeout_ms
         true,
         None,
         None,
@@ -46,7 +46,6 @@ fn constructs_from_args() -> TestResult<()> {
     assert!(config.nats.require_tls);
     assert_eq!(config.database_pool_size, 50);
     assert_eq!(config.batch_size, 200);
-    assert_eq!(config.batch_timeout_secs.as_secs(), 10);
     assert!(config.dry_run);
     Ok(())
 }
@@ -67,7 +66,6 @@ fn loads_from_config_file() -> TestResult<()> {
             database_url = "postgresql://example/config"
             database_pool_size = 25
             batch_size = 128
-            batch_timeout_secs = 9
             dry_run = true
 
             [ingestd.nats]
@@ -82,7 +80,6 @@ fn loads_from_config_file() -> TestResult<()> {
     assert!(config.nats.require_tls);
     assert_eq!(config.database_pool_size, 25);
     assert_eq!(config.batch_size, 128);
-    assert_eq!(config.batch_timeout_secs.as_secs(), 9);
     assert!(config.dry_run);
 
     if let Some(url) = original_db {

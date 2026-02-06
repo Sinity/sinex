@@ -41,16 +41,16 @@ impl<'ctx> PipelineScope<'ctx> {
         let namespace = ctx.pipeline_namespace().prefix().to_string();
         let pipeline_permit = Some(acquire_pipeline_permit(&namespace).await?);
 
-        let mut config = TestIngestdConfig {
+        let config = TestIngestdConfig {
             nats: nats.connection_config(),
             database_url: ctx.database_url().to_string(),
             work_dir: None,
             namespace: Some(namespace.clone()),
-            ..Default::default()
+            // Fast test settings: small batches, short timeouts
+            batch_size: 32,
+            consumer_fetch_max_messages: 32,
+            consumer_fetch_timeout_ms: 100, // 100ms fetch timeout - events arrive quickly in tests
         };
-        config.batch_size = 32;
-        config.consumer_fetch_max_messages = 32;
-        config.consumer_fetch_timeout_ms = 200;
 
         let ingestd = start_test_ingestd_with_config(config, Some(ctx)).await?;
 

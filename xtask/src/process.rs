@@ -8,7 +8,7 @@
 //! # Examples
 //!
 //! ```no_run
-//! use xtask::process::ProcessBuilder;
+//! use xtask::process::{ProcessBuilder, ProcessOutput};
 //!
 //! // Simple command execution
 //! let output = ProcessBuilder::new("ls")
@@ -24,6 +24,7 @@
 //! let output = ProcessBuilder::cargo()
 //!     .args(&["build", "--release"])
 //!     .run()?;
+//! # Ok::<(), anyhow::Error>(())
 //! ```
 
 use anyhow::{Context, Result};

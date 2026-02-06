@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use sinex_primitives::domain::ProcessorName;
 use sinex_primitives::error::SinexError;
 use sinex_primitives::{Seconds, Timestamp, Ulid};
+use std::str::FromStr;
 
 use sinex_schema::ulid_conversions::uuid_to_ulid;
 use sqlx::postgres::types::PgRange;
@@ -902,4 +903,184 @@ pub struct SystemHealthReport {
     pub events_table_exists: bool,
 
     pub processor_health: Option<ProcessorHealthSummary>,
+}
+
+// ============================================================================
+// Tombstone Operation Persistence
+// ============================================================================
+
+/// Tombstone operation stored in operations_log.
+///
+/// Uses operation_type = "tombstone" and stores full state in scope JSONB.
+impl<'a> StateRepository<'a> {
+    /// Create a new tombstone operation record.
+    ///
+    /// The full TombstoneOperation is serialized into the `scope` field,
+    /// with `result_status` tracking the operation state.
+    pub async fn create_tombstone_operation(
+        &self,
+        operation_id: &str,
+        operator: &str,
+        scope: JsonValue,
+    ) -> DbResult<OperationRecord> {
+        let id_ulid = Ulid::from_str(operation_id).map_err(|_| {
+            SinexError::validation(format!("Invalid operation ID: {}", operation_id))
+        })?;
+        let id = Id::<Operation>::from_ulid(id_ulid);
+
+        let record = sqlx::query_as!(
+            OperationRecord,
+            r#"
+            INSERT INTO core.operations_log (
+                id, operation_type, operator, scope, result_status
+            ) VALUES (
+                $1::uuid, 'tombstone', $2, $3, 'running'
+            )
+            RETURNING
+                id::uuid as "id!: Id<Operation>",
+                operation_type,
+                operator,
+                scope,
+                result_status,
+                result_message,
+                preview_summary,
+                duration_ms
+            "#,
+            id.to_uuid(),
+            operator,
+            scope
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|e| db_error(e, "create tombstone operation"))?;
+
+        Ok(record)
+    }
+
+    /// Get a tombstone operation by ID.
+    pub async fn get_tombstone_operation(
+        &self,
+        operation_id: &str,
+    ) -> DbResult<Option<OperationRecord>> {
+        let id_ulid = Ulid::from_str(operation_id).map_err(|_| {
+            SinexError::validation(format!("Invalid operation ID: {}", operation_id))
+        })?;
+        let id = Id::<Operation>::from_ulid(id_ulid);
+
+        sqlx::query_as!(
+            OperationRecord,
+            r#"
+            SELECT
+                id::uuid as "id!: Id<Operation>",
+                operation_type,
+                operator,
+                scope,
+                result_status,
+                result_message,
+                preview_summary,
+                duration_ms
+            FROM core.operations_log
+            WHERE id::uuid = $1::uuid AND operation_type = 'tombstone'
+            "#,
+            id.to_uuid()
+        )
+        .fetch_optional(self.pool)
+        .await
+        .map_err(|e| db_error(e, "get tombstone operation"))
+    }
+
+    /// Update a tombstone operation's status and scope.
+    pub async fn update_tombstone_operation(
+        &self,
+        operation_id: &str,
+        result_status: &str,
+        scope: JsonValue,
+        duration_ms: Option<i32>,
+    ) -> DbResult<()> {
+        let id_ulid = Ulid::from_str(operation_id).map_err(|_| {
+            SinexError::validation(format!("Invalid operation ID: {}", operation_id))
+        })?;
+        let id = Id::<Operation>::from_ulid(id_ulid);
+
+        sqlx::query!(
+            r#"
+            UPDATE core.operations_log
+            SET result_status = $2,
+                scope = $3,
+                duration_ms = $4
+            WHERE id::uuid = $1::uuid AND operation_type = 'tombstone'
+            "#,
+            id.to_uuid(),
+            result_status,
+            scope,
+            duration_ms
+        )
+        .execute(self.pool)
+        .await
+        .map_err(|e| db_error(e, "update tombstone operation"))?;
+
+        Ok(())
+    }
+
+    /// List tombstone operations, optionally filtered by status.
+    ///
+    /// Status mapping:
+    /// - "running" → Previewed (awaiting approval)
+    /// - "success" → Completed
+    /// - "failure" → Failed
+    /// - "cancelled" → Cancelled or Expired
+    pub async fn list_tombstone_operations(
+        &self,
+        result_status: Option<&str>,
+        limit: i64,
+    ) -> DbResult<Vec<OperationRecord>> {
+        if let Some(status) = result_status {
+            sqlx::query_as!(
+                OperationRecord,
+                r#"
+                SELECT
+                    id::uuid as "id!: Id<Operation>",
+                    operation_type,
+                    operator,
+                    scope,
+                    result_status,
+                    result_message,
+                    preview_summary,
+                    duration_ms
+                FROM core.operations_log
+                WHERE operation_type = 'tombstone' AND result_status = $1
+                ORDER BY id DESC
+                LIMIT $2
+                "#,
+                status,
+                limit
+            )
+            .fetch_all(self.pool)
+            .await
+            .map_err(|e| db_error(e, "list tombstone operations"))
+        } else {
+            sqlx::query_as!(
+                OperationRecord,
+                r#"
+                SELECT
+                    id::uuid as "id!: Id<Operation>",
+                    operation_type,
+                    operator,
+                    scope,
+                    result_status,
+                    result_message,
+                    preview_summary,
+                    duration_ms
+                FROM core.operations_log
+                WHERE operation_type = 'tombstone'
+                ORDER BY id DESC
+                LIMIT $1
+                "#,
+                limit
+            )
+            .fetch_all(self.pool)
+            .await
+            .map_err(|e| db_error(e, "list tombstone operations"))
+        }
+    }
 }

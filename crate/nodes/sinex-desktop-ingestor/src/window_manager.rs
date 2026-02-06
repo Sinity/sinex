@@ -191,9 +191,10 @@ impl WindowManagerWatcher {
         })?;
 
         // Build socket paths
+        // Sockets are inside the instance directory with leading dot
         let base_path = format!("{xdg_runtime}/hypr/{hyprland_instance_sig}");
-        let event_socket = format!("{base_path}.socket2.sock");
-        let command_socket = format!("{base_path}.socket.sock");
+        let event_socket = format!("{base_path}/.socket2.sock");
+        let command_socket = format!("{base_path}/.socket.sock");
 
         // Test event socket connection
         if UnixStream::connect(&event_socket).await.is_ok() {

@@ -284,6 +284,7 @@ mod tests {
         let test_auth = crate::rpc_server::RpcAuthContext {
             token_prefix: "test****".to_string(),
             authenticated_at: temporal::now(),
+            role: crate::auth::Role::Admin,
         };
 
         // Should fail without event_id or all flag

@@ -134,7 +134,7 @@ impl XtaskCommand for CheckCommand {
                 args.push("--heavy".to_string());
             }
             if self.affected {
-                args.push("--affected".to_string());
+                args.push("--affected=true".to_string());
             }
             if self.skip_tests {
                 args.push("--skip-tests".to_string());

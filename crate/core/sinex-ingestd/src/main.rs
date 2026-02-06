@@ -5,7 +5,6 @@ mod build {
 use clap::Parser;
 use color_eyre::eyre::Result;
 use sinex_ingestd::{IngestService, IngestdConfig};
-use sinex_primitives::units::Seconds;
 use std::io;
 use tracing::{error, info};
 
@@ -42,9 +41,13 @@ struct Args {
     #[arg(long, default_value = "1000")]
     batch_size: usize,
 
-    /// Batch timeout in seconds
-    #[arg(long, default_value = "5")]
-    batch_timeout_secs: Seconds,
+    /// JetStream pull batch max messages
+    #[arg(long, env = "SINEX_INGESTD_CONSUMER_FETCH_MAX_MESSAGES")]
+    consumer_fetch_max_messages: Option<usize>,
+
+    /// JetStream pull batch timeout in milliseconds
+    #[arg(long, env = "SINEX_INGESTD_CONSUMER_FETCH_TIMEOUT_MS")]
+    consumer_fetch_timeout_ms: Option<u64>,
 
     /// Log level
     #[arg(long, default_value = "info")]
@@ -89,7 +92,8 @@ async fn main() -> Result<()> {
         args.nats_require_tls,
         args.pool_size,
         args.batch_size,
-        args.batch_timeout_secs,
+        args.consumer_fetch_max_messages,
+        args.consumer_fetch_timeout_ms,
         args.dry_run,
         args.annex_path,
         args.assembler_state_dir,

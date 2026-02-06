@@ -160,9 +160,9 @@ pub fn write_workspace_report<W: Write>(
 /// # Example
 /// ```no_run
 /// # use anyhow::Result;
-/// # use xtask::deps::UnusedDetector;
+/// # use xtask::deps::unused::UnusedDetector;
 /// let report = UnusedDetector::detect()?;
-/// xtask::deps::write_unused_report(&report, "human")?;
+/// xtask::deps::reports::write_unused_report(&report, "human")?;
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn write_unused_report(report: &crate::deps::UnusedReport, format: &str) -> Result<()> {

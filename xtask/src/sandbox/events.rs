@@ -151,7 +151,7 @@ impl EventPublisher for Sandbox {
     }
 
     async fn publish_prebuilt_event(&self, event: &Event<JsonValue>) -> TestResult<Ulid> {
-        self.ensure_pipeline_ingestd().await?;
+        // Just publish to NATS - caller (PipelineScope) is responsible for ingestd
         let client = self.nats_client();
         let mut envelope = event.clone();
 

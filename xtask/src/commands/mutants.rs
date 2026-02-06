@@ -27,7 +27,7 @@ impl XtaskCommand for MutantsCommand {
         "mutants"
     }
 
-    async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
+    async fn execute(&self, _ctx: &CommandContext) -> Result<CommandResult> {
         // Check if cargo-mutants is available
         let check_result = Command::new("cargo")
             .arg("mutants")

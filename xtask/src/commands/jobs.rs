@@ -123,8 +123,15 @@ async fn execute_list(
             table.with(Style::rounded());
             println!("{table}");
         }
-    } else {
-        let json = serde_json::json!({
+    }
+
+    let mut result = CommandResult::success()
+        .with_message(format!("Listed {} jobs", jobs.len()))
+        .with_duration(ctx.elapsed());
+
+    if !ctx.is_human() {
+        result = result.with_data(serde_json::json!({
+            "filter": "recent",
             "jobs": jobs.iter().map(|j| serde_json::json!({
                 "id": j.id,
                 "command": j.command,
@@ -132,14 +139,12 @@ async fn execute_list(
                 "status": status_to_str(j.status),
                 "pid": j.pid,
                 "started_at": j.started_at.to_string(),
+                "exit_code": j.exit_code,
             })).collect::<Vec<_>>()
-        });
-        println!("{}", serde_json::to_string_pretty(&json)?);
+        }));
     }
 
-    Ok(CommandResult::success()
-        .with_message(format!("Listed {} jobs", jobs.len()))
-        .with_duration(ctx.elapsed()))
+    Ok(result)
 }
 
 async fn execute_active(job_manager: &JobManager, ctx: &CommandContext) -> Result<CommandResult> {
@@ -166,21 +171,28 @@ async fn execute_active(job_manager: &JobManager, ctx: &CommandContext) -> Resul
             table.with(Style::rounded());
             println!("{table}");
         }
-    } else {
-        let json = serde_json::json!({
-            "active_jobs": active.iter().map(|j| serde_json::json!({
-                "id": j.id,
-                "command": j.command,
-                "pid": j.pid,
-                "started_at": j.started_at.to_string(),
-            })).collect::<Vec<_>>()
-        });
-        println!("{}", serde_json::to_string_pretty(&json)?);
     }
 
-    Ok(CommandResult::success()
+    let mut result = CommandResult::success()
         .with_message(format!("{} active jobs", active.len()))
-        .with_duration(ctx.elapsed()))
+        .with_duration(ctx.elapsed());
+
+    if !ctx.is_human() {
+        result = result.with_data(serde_json::json!({
+            "filter": "active",
+            "jobs": active.iter().map(|j| serde_json::json!({
+                "id": j.id,
+                "command": j.command,
+                "args": j.args,
+                "status": status_to_str(j.status),
+                "pid": j.pid,
+                "started_at": j.started_at.to_string(),
+                "exit_code": j.exit_code,
+            })).collect::<Vec<_>>()
+        }));
+    }
+
+    Ok(result)
 }
 
 async fn execute_status(
@@ -194,24 +206,52 @@ async fn execute_status(
         .ok_or_else(|| anyhow::anyhow!("job {id} not found"))?;
 
     if follow {
-        // Follow mode: tail output until job completes
+        // Follow mode: seek-based tailing (O(delta) per poll, not O(n))
+        use std::io::{Read, Seek, SeekFrom};
+
         let mut last_pos = 0u64;
         loop {
-            // Print new output
-            if let Ok(stdout) = job.read_stdout() {
-                if stdout.len() as u64 > last_pos {
-                    print!("{}", &stdout[last_pos as usize..]);
-                    last_pos = stdout.len() as u64;
+            // Read only new content since last position
+            if let Ok(mut file) = std::fs::File::open(&job.stdout_path) {
+                let _ = file.seek(SeekFrom::Start(last_pos));
+                let mut buf = String::new();
+                if let Ok(n) = file.read_to_string(&mut buf) {
+                    if n > 0 {
+                        print!("{buf}");
+                        last_pos += n as u64;
+                    }
                 }
-            }
-
-            // Reload and check status
-            let job = job_manager.get(id)?.unwrap();
-            if job.is_terminal() {
+            } else if job.is_terminal() {
+                // File gone (archived to DB) — read remainder from DB
+                if let Ok(stdout) = job.read_stdout() {
+                    if stdout.len() as u64 > last_pos {
+                        print!("{}", &stdout[last_pos as usize..]);
+                    }
+                }
                 break;
             }
 
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            // Reload and check status
+            let updated = job_manager.get(id)?;
+            match updated {
+                Some(j) if j.is_terminal() => {
+                    // One more read to catch final output before file is archived
+                    if let Ok(mut file) = std::fs::File::open(&job.stdout_path) {
+                        let _ = file.seek(SeekFrom::Start(last_pos));
+                        let mut buf = String::new();
+                        if let Ok(n) = file.read_to_string(&mut buf) {
+                            if n > 0 {
+                                print!("{buf}");
+                            }
+                        }
+                    }
+                    break;
+                }
+                None => break,
+                _ => {}
+            }
+
+            tokio::time::sleep(Duration::from_millis(250)).await;
         }
 
         Ok(CommandResult::success()
@@ -230,21 +270,25 @@ async fn execute_status(
                     println!("\n  Last output:\n{tail}");
                 }
             }
-        } else {
-            let json = serde_json::json!({
+        }
+
+        let mut result = CommandResult::success()
+            .with_message(format!("Job {id} status"))
+            .with_duration(ctx.elapsed());
+
+        if !ctx.is_human() {
+            result = result.with_data(serde_json::json!({
                 "id": job.id,
                 "command": job.command,
                 "args": job.args,
                 "status": status_to_str(job.status),
                 "pid": job.pid,
                 "started_at": job.started_at.to_string(),
-            });
-            println!("{}", serde_json::to_string_pretty(&json)?);
+                "exit_code": job.exit_code,
+            }));
         }
 
-        Ok(CommandResult::success()
-            .with_message(format!("Job {id} status"))
-            .with_duration(ctx.elapsed()))
+        Ok(result)
     }
 }
 
@@ -264,15 +308,25 @@ async fn execute_output(
         job.read_stdout()?
     };
 
-    println!("{output}");
+    let stream_name = if stderr { "stderr" } else { "stdout" };
 
-    Ok(CommandResult::success()
-        .with_message(format!(
-            "Job {} {} output",
-            id,
-            if stderr { "stderr" } else { "stdout" }
-        ))
-        .with_duration(ctx.elapsed()))
+    if ctx.is_human() {
+        println!("{output}");
+    }
+
+    let mut result = CommandResult::success()
+        .with_message(format!("Job {id} {stream_name} output"))
+        .with_duration(ctx.elapsed());
+
+    if !ctx.is_human() {
+        result = result.with_data(serde_json::json!({
+            "id": id,
+            "stream": stream_name,
+            "content": output,
+        }));
+    }
+
+    Ok(result)
 }
 
 async fn execute_wait(
@@ -291,17 +345,21 @@ async fn execute_wait(
 
     if ctx.is_human() {
         println!("Job {} completed: {}", id, status_to_str(job.status));
-    } else {
-        let json = serde_json::json!({
-            "id": job.id,
-            "status": status_to_str(job.status),
-        });
-        println!("{}", serde_json::to_string_pretty(&json)?);
     }
 
-    Ok(CommandResult::success()
+    let mut result = CommandResult::success()
         .with_message(format!("Job {id} wait completed"))
-        .with_duration(ctx.elapsed()))
+        .with_duration(ctx.elapsed());
+
+    if !ctx.is_human() {
+        result = result.with_data(serde_json::json!({
+            "id": job.id,
+            "status": status_to_str(job.status),
+            "exit_code": job.exit_code,
+        }));
+    }
+
+    Ok(result)
 }
 
 async fn execute_cancel(
@@ -358,8 +416,13 @@ fn status_to_str(status: InvocationStatus) -> &'static str {
 
 /// Format a time for display
 fn format_time(time: &time::OffsetDateTime) -> String {
-    time.format(&time::format_description::parse("[year]-[month]-[day] [hour]:[minute]").unwrap())
-        .unwrap_or_else(|_| "-".into())
+    use once_cell::sync::Lazy;
+    static TIME_FORMAT: Lazy<Vec<time::format_description::BorrowedFormatItem<'static>>> =
+        Lazy::new(|| {
+            time::format_description::parse("[year]-[month]-[day] [hour]:[minute]")
+                .expect("static format string is valid")
+        });
+    time.format(&*TIME_FORMAT).unwrap_or_else(|_| "-".into())
 }
 
 /// Truncate a string to max length

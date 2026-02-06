@@ -52,6 +52,7 @@ time        = { workspace = true }
 notify = "6"
 notify-debouncer-mini = "0.4"
 nix = { version = "0.27", features = [
+    "fs",
     "signal",
     "process",
 ] }
@@ -71,12 +72,13 @@ async-trait = { workspace = true }
 async-nats = { workspace = true, optional = true }
 proptest = { workspace = true, optional = true }
 
-sinex-primitives = { path = "../crate/lib/sinex-primitives", features = [
-    "sqlx",
-], optional = true }
+# Core types (Timestamp, etc.) - always available
+sinex-primitives = { path = "../crate/lib/sinex-primitives", default-features = false }
+sinex-schema = { path = "../crate/lib/sinex-schema" }
+
+# Sandbox-only heavy deps
 sinex-db = { path = "../crate/lib/sinex-db", optional = true }
 sinex-node-sdk = { path = "../crate/lib/sinex-node-sdk", optional = true }
-sinex-schema = { path = "../crate/lib/sinex-schema" }
 url = { workspace = true, optional = true }
 rand = "0.8"
 tokio-stream = "0.1"
@@ -119,12 +121,14 @@ shadow-rs = "0.35"
 shadow-rs = "0.35"
 
 [features]
-default = ["sandbox"]
+# NOTE: No default features. The xtask binary doesn't need sandbox.
+# Sandbox is only needed when xtask is used as a library for tests.
+# Test code should depend on xtask with: features = ["sandbox"]
+default = []
 
 sandbox = [
     "async-nats",
     "proptest",
-    "sinex-primitives",
     "sinex-db",
     "sinex-node-sdk",
     "color-eyre",

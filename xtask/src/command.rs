@@ -17,21 +17,22 @@
 //! # Example
 //!
 //! ```no_run
-//! use xtask::command::{XtaskCommand, CommandContext, CommandResult};
+//! use xtask::command::{XtaskCommand, CommandContext, ExecutionResult};
 //! use anyhow::Result;
 //!
 //! struct MyCommand {
 //!     verbose: bool,
 //! }
 //!
+//! #[async_trait::async_trait]
 //! impl XtaskCommand for MyCommand {
 //!     fn name(&self) -> &str {
 //!         "my-command"
 //!     }
 //!
-//!     fn execute(&self, ctx: &CommandContext) -> Result<ExecutionResult> {
+//!     async fn execute(&self, ctx: &CommandContext) -> Result<ExecutionResult> {
 //!         // Command logic here
-//!         Ok(CommandResult::success())
+//!         Ok(ExecutionResult::success())
 //!     }
 //! }
 //! ```
@@ -108,7 +109,7 @@ impl CommandMetadata {
     pub fn check() -> Self {
         Self {
             category: Some("check".to_string()),
-            timeout: Some(Duration::from_mins(1)), // 1 minute
+            timeout: Some(Duration::from_mins(5)), // 5 minutes (preflight + fmt + check + clippy)
             modifies_state: false,
             track_in_history: true,
         }

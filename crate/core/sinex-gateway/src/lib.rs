@@ -6,6 +6,7 @@
 //! Gateway service orchestrating RPC, replay, and stream handling.
 
 // Expose modules for testing and external use
+pub mod auth;
 pub mod cascade_analyzer;
 pub mod client;
 pub mod distributed_rate_limit;

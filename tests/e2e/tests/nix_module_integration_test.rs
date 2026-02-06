@@ -4,7 +4,7 @@
 //! This includes configuration validation, service management, and module behavior.
 
 use serde_json::json;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use xtask::sandbox::{prelude::*, TestResult};
 
 // =============================================================================

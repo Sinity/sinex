@@ -4,7 +4,8 @@
 
 // Local crate imports
 use crate::{
-    config::IngestdConfig, validator::EventValidator, IngestdResult, JetStreamTopology, SinexError,
+    config::IngestdConfig, material_ready_set::MaterialReadySet, validator::EventValidator,
+    IngestdResult, JetStreamTopology, SinexError,
 };
 use sinex_primitives::error::ResultExt;
 
@@ -185,10 +186,21 @@ impl IngestService {
     pub async fn run(&mut self) -> IngestdResult<()> {
         info!("Starting ingestion service");
 
+        // Create shared MaterialReadySet for cross-consumer coordination.
+        // This prevents FK violations when events arrive before their material's BEGIN
+        // message is processed (separate NATS streams, no cross-stream ordering).
+        let ready_set = MaterialReadySet::new();
+        if let Some(pool) = &self.db_pool {
+            if let Err(e) = ready_set.seed_from_db(pool).await {
+                warn!("Failed to seed MaterialReadySet from database: {}", e);
+                // Non-fatal: events will be deferred until materials are registered
+            }
+        }
+
         // Start JetStream and MaterialAssembler tasks (critical - failure stops service)
         let js_handle = match (&self.nats_client, &self.db_pool) {
             (Some(nats), Some(pool)) => Some(
-                self.start_jetstream_consumer_task(nats.clone(), pool.clone())
+                self.start_jetstream_consumer_task(nats.clone(), pool.clone(), ready_set.clone())
                     .await,
             ),
             _ => None,
@@ -196,7 +208,7 @@ impl IngestService {
 
         let ma_handle = match (&self.nats_client, &self.db_pool) {
             (Some(nats), Some(pool)) => Some(
-                self.start_material_assembler_task(nats.clone(), pool.clone())
+                self.start_material_assembler_task(nats.clone(), pool.clone(), ready_set.clone())
                     .await,
             ),
             _ => None,
@@ -355,9 +367,11 @@ impl IngestService {
         &self,
         nats_client: NatsClient,
         pool: PgPool,
+        ready_set: MaterialReadySet,
     ) -> JoinHandle<IngestdResult<()>> {
         let shutdown_flag = self.shutdown_flag.clone();
         let validator = self.validator.clone();
+        let observer = self.observer.clone();
         let env = sinex_environment();
         let topology = JetStreamTopology::new(
             &env,
@@ -378,7 +392,9 @@ impl IngestService {
                 topology,
             )
             .with_batch_fetch_config(fetch_max, fetch_timeout)
-            .with_max_ack_pending(max_ack_pending);
+            .with_max_ack_pending(max_ack_pending)
+            .with_ready_set(ready_set)
+            .with_observer(observer);
 
             tokio::select! {
                 result = consumer.run() => {
@@ -406,8 +422,10 @@ impl IngestService {
         &self,
         nats_client: NatsClient,
         pool: PgPool,
+        ready_set: MaterialReadySet,
     ) -> JoinHandle<IngestdResult<()>> {
         let shutdown_flag = self.shutdown_flag.clone();
+        let observer = self.observer.clone();
         let annex_repo_path = self.config.annex_repo_path.clone();
         let assembler_state_dir = self.config.assembler_state_dir.clone();
         let namespace = self.config.nats_namespace.clone();
@@ -443,8 +461,9 @@ impl IngestService {
                 state_dir,
                 namespace.clone(),
                 slices_max_ack_pending,
+                ready_set,
             ) {
-                Ok(assembler) => assembler,
+                Ok(assembler) => assembler.with_observer(observer),
                 Err(e) => {
                     error!(error = %e, "Failed to create MaterialAssembler");
                     return Err(e);
@@ -525,18 +544,17 @@ impl IngestService {
         let wait_task = async {
             for (i, handle) in handles.iter_mut().enumerate() {
                 if let Err(e) = handle.await {
-                    match e.try_into_panic() {
-                        Ok(panic) => {
-                            let msg = match panic.downcast_ref::<&'static str>() {
-                                Some(s) => *s,
-                                None => match panic.downcast_ref::<String>() {
-                                    Some(s) => s.as_str(),
-                                    None => "Unknown panic",
-                                },
-                            };
-                            error!("Background task {} panicked: {}", i, msg);
-                        }
-                        Err(_) => debug!("Background task {} was cancelled or failed", i),
+                    if let Ok(panic) = e.try_into_panic() {
+                        let msg = match panic.downcast_ref::<&'static str>() {
+                            Some(s) => *s,
+                            None => match panic.downcast_ref::<String>() {
+                                Some(s) => s.as_str(),
+                                None => "Unknown panic",
+                            },
+                        };
+                        error!("Background task {} panicked: {}", i, msg);
+                    } else {
+                        debug!("Background task {} was cancelled or failed", i)
                     }
                 }
             }
@@ -692,18 +710,16 @@ impl IngestService {
             warn!("Failed to store schemas in KV: {}", e);
         }
 
-        // Broadcast metadata for cache invalidation signal
-        js.publish(subject.clone(), serde_json::to_vec(&entries)?.into())
+        // Broadcast metadata for cache invalidation signal using core NATS pub/sub.
+        // This is fire-and-forget since it's just a notification - no durability needed.
+        nats_client
+            .publish(subject.clone(), serde_json::to_vec(&entries)?.into())
             .await
-            .context(&{ format!("Failed to publish schema broadcast to subject '{subject}'") })
-            .map_err(|e| SinexError::network(format!("Failed to publish schema broadcast: {e}")))?
-            .await
-            .context("Failed to confirm schema broadcast acknowledgement")
-            .map_err(|e| SinexError::network(format!("Failed to confirm schema broadcast: {e}")))?;
+            .map_err(|e| SinexError::network(format!("Failed to publish schema broadcast: {e}")))?;
 
         info!(
             count = entries.len(),
-            "Broadcasted active schemas snapshot to JetStream"
+            "Broadcasted active schemas snapshot to NATS"
         );
 
         Ok(())
@@ -748,7 +764,7 @@ impl IngestService {
 
         // Store each schema in KV
         for schema in schemas {
-            let key = format!("schema:{}", schema.id);
+            let key = format!("schema-{}", schema.id);
             let payload = serde_json::to_vec(&schema.schema_content).map_err(|e| {
                 SinexError::serialization(format!("Failed to serialize schema: {e}"))
             })?;

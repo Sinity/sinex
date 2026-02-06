@@ -2,7 +2,7 @@
 
 use async_nats::jetstream;
 use serde_json::json;
-use sinex_ingestd::{IngestdResult, MaterialAssembler};
+use sinex_ingestd::{IngestdResult, MaterialAssembler, MaterialReadySet};
 use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
 use sinex_primitives::temporal;
 use std::sync::Arc;
@@ -55,6 +55,7 @@ async fn start_assembler(
         state_path.clone(),
         Some(ctx.pipeline_namespace().prefix().to_string()),
         1_000,
+        MaterialReadySet::default(),
     )?;
 
     let handle = tokio::spawn(async move { assembler.run().await });

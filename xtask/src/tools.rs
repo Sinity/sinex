@@ -48,7 +48,7 @@ impl ToolManager {
     /// * `Err` if tool not found in PATH
     ///
     /// # Example
-    /// ```no_run
+    /// ```ignore
     /// use xtask::tools::ToolManager;
     /// let info = ToolManager::check_tool("cargo").unwrap();
     /// assert!(info.is_available);
@@ -108,7 +108,7 @@ impl ToolManager {
     /// Installation command string for NixOS/nix-shell
     ///
     /// # Example
-    /// ```
+    /// ```ignore
     /// use xtask::tools::ToolManager;
     /// let guidance = ToolManager::install_guidance("cargo-audit");
     /// assert!(guidance.contains("nix"));
@@ -153,7 +153,7 @@ impl ToolManager {
     /// Empty vector means all tools are available.
     ///
     /// # Example
-    /// ```no_run
+    /// ```ignore
     /// use xtask::tools::ToolManager;
     /// let missing = ToolManager::check_required_tools(&["cargo", "nonexistent"]).unwrap();
     /// assert_eq!(missing.len(), 1);

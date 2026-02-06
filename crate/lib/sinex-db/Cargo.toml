@@ -56,7 +56,7 @@ bon = { workspace = true }
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
 mockall = "0.12"
-xtask = { path = "../../../xtask", features = ["sandbox"] }
+xtask = { path = "../../../xtask", default-features = false, features = ["sandbox"] }
 sinex-primitives = { path = "../sinex-primitives", features = ["testing"] }
 
 [lints]

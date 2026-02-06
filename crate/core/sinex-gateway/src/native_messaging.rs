@@ -19,6 +19,10 @@ const TRUSTED_EXTENSION_ENV: &str = "SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS";
 const TRUSTED_HOSTS_ENV: &str = "SINEX_NATIVE_MESSAGING_TRUSTED_HOSTS";
 /// Environment variable used to enforce a protocol version for native messaging.
 const PROTOCOL_VERSION_ENV: &str = "SINEX_NATIVE_MESSAGING_PROTOCOL_VERSION";
+/// Environment variable for read timeout in seconds (default: 30)
+const READ_TIMEOUT_ENV: &str = "SINEX_NATIVE_MESSAGING_READ_TIMEOUT_SECS";
+/// Default read timeout for native messaging reads (30 seconds)
+const DEFAULT_READ_TIMEOUT_SECS: u64 = 30;
 
 /// Configuration knobs for the native messaging server.
 #[derive(Debug, Clone, Default)]
@@ -361,6 +365,15 @@ impl NativeResponse {
     }
 }
 
+/// Get configured read timeout
+fn read_timeout() -> std::time::Duration {
+    let secs = std::env::var(READ_TIMEOUT_ENV)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(DEFAULT_READ_TIMEOUT_SECS);
+    std::time::Duration::from_secs(secs)
+}
+
 /// Read a message from stdin using native messaging protocol (async)
 async fn read_message_async() -> Result<Option<NativeMessage>> {
     let mut stdin = tokio::io::stdin();
@@ -368,12 +381,16 @@ async fn read_message_async() -> Result<Option<NativeMessage>> {
     // Read message length (4 bytes, little-endian)
     let mut len_bytes = [0u8; 4];
 
-    // Issue 0.1: Wrap read in timeout to prevent indefinite blocking if stream hangs
-    // TODO: Add read timeout to prevent gateway hang if browser crashes (analysis/native_messaging.md)
-    match stdin.read_exact(&mut len_bytes).await {
-        Ok(_) => {}
-        Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
-        Err(e) => return Err(e.into()),
+    // Wrap read in timeout to prevent indefinite blocking if browser crashes
+    let timeout = read_timeout();
+    match tokio::time::timeout(timeout, stdin.read_exact(&mut len_bytes)).await {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
+        Ok(Err(e)) => return Err(e.into()),
+        Err(_) => {
+            warn!("Native messaging read timeout after {:?}", timeout);
+            return Ok(None);
+        }
     }
     let length = u32::from_le_bytes(len_bytes) as usize;
 
@@ -383,7 +400,17 @@ async fn read_message_async() -> Result<Option<NativeMessage>> {
     }
 
     let mut buffer = vec![0u8; length];
-    stdin.read_exact(&mut buffer).await?;
+    match tokio::time::timeout(timeout, stdin.read_exact(&mut buffer)).await {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => return Err(e.into()),
+        Err(_) => {
+            warn!(
+                "Native messaging body read timeout after {:?} (expected {} bytes)",
+                timeout, length
+            );
+            return Ok(None);
+        }
+    }
 
     let message: NativeMessage =
         serde_json::from_slice(&buffer).wrap_err("Failed to parse native message")?;

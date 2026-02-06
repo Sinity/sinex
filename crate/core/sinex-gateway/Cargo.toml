@@ -9,6 +9,7 @@ tokio-rustls   = "0.25"
 rustls-pemfile = "1"
 shadow-rs      = "0.35"
 human-panic    = "2.0"
+humantime      = "2.1"
 sinex-primitives = { path = "../../lib/sinex-primitives" }
 sinex-db = { path = "../../lib/sinex-db" }
 
@@ -21,6 +22,10 @@ rcgen    = "0.13"
 default = [
 ]
 test-support = [
+]
+# Include full error details in RPC responses (for development only!)
+# In production, only error_id is returned to prevent information leakage.
+dev-errors = [
 ]
 
 [package.version]

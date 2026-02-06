@@ -19,6 +19,12 @@ use crate::config::config;
 use crate::jobs::JobManager;
 use crate::preflight;
 
+/// Check if a package/name refers to a node (ingestor, automaton, or processor).
+/// Nodes support --instance-id flag; core services (ingestd, gateway) don't.
+fn is_node_package(name: &str) -> bool {
+    name.contains("ingestor") || name.contains("automaton") || name.contains("canonicalizer")
+}
+
 /// Known binary targets and their package names
 static BINARIES: &[(&str, &str, &str)] = &[
     // (name, package, binary name)
@@ -307,7 +313,13 @@ impl RunCommand {
                     args.push("--release".to_string());
                 }
 
-                args.extend(["--".to_string(), format!("--instance-id={instance_id}")]);
+                // Only pass --instance-id to nodes (ingestors, automatons, processors)
+                if is_node_package(package) {
+                    args.extend(["--".to_string(), format!("--instance-id={instance_id}")]);
+                } else if package.contains("gateway") {
+                    // Gateway requires a subcommand - default to rpc-server
+                    args.extend(["--".to_string(), "rpc-server".to_string()]);
+                }
 
                 let job = manager.spawn("cargo", &args).await?;
                 job_ids.push(job.id);
@@ -370,8 +382,15 @@ impl RunCommand {
                 println!("Starting {name} (instance: {instance_id})...");
             }
 
-            let child = Command::new(&binary_path)
-                .arg(format!("--instance-id={instance_id}"))
+            // Only pass --instance-id to nodes (ingestors, automatons, processors)
+            let mut cmd = Command::new(&binary_path);
+            if is_node_package(name) {
+                cmd.arg(format!("--instance-id={instance_id}"));
+            } else if *name == "gateway" {
+                // Gateway requires a subcommand - default to rpc-server
+                cmd.arg("rpc-server");
+            }
+            let child = cmd
                 .stdout(Stdio::inherit())
                 .stderr(Stdio::inherit())
                 .spawn()
@@ -457,7 +476,14 @@ Shutting down remaining processes..."
             args.push("--release".to_string());
         }
 
-        args.extend(["--".to_string(), format!("--instance-id={instance_id}")]);
+        // Only pass --instance-id to nodes (ingestors, automatons, processors)
+        // Core services (ingestd, gateway) don't support this flag
+        if is_node_package(package) {
+            args.extend(["--".to_string(), format!("--instance-id={instance_id}")]);
+        } else if package == "sinex-gateway" {
+            // Gateway requires a subcommand - default to rpc-server
+            args.extend(["--".to_string(), "rpc-server".to_string()]);
+        }
 
         let status = Command::new("cargo")
             .args(&args)
@@ -496,7 +522,14 @@ Shutting down remaining processes..."
             args.push("--release".to_string());
         }
 
-        args.extend(["--".to_string(), format!("--instance-id={instance_id}")]);
+        // Only pass --instance-id to nodes (ingestors, automatons, processors)
+        // Core services (ingestd, gateway) don't support this flag
+        if is_node_package(package) {
+            args.extend(["--".to_string(), format!("--instance-id={instance_id}")]);
+        } else if package == "sinex-gateway" {
+            // Gateway requires a subcommand - default to rpc-server
+            args.extend(["--".to_string(), "rpc-server".to_string()]);
+        }
 
         let job = manager.spawn("cargo", &args).await?;
 

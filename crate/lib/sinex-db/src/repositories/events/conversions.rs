@@ -139,13 +139,13 @@ pub type ExtractedProvenance = (
     Option<i64>,
 );
 
-pub fn extract_provenance(event: &Event<JsonValue>) -> ExtractedProvenance {
+pub fn extract_provenance(event: &Event<JsonValue>) -> DbResult<ExtractedProvenance> {
     match &event.provenance {
         Provenance::Synthesis {
             source_event_ids, ..
         } => {
             let ulids = source_event_ids.iter().map(|id| *id.as_ulid()).collect();
-            (Some(ulids), None, None, None, None, None)
+            Ok((Some(ulids), None, None, None, None, None))
         }
         Provenance::Material {
             id,
@@ -155,15 +155,17 @@ pub fn extract_provenance(event: &Event<JsonValue>) -> ExtractedProvenance {
             offset_kind,
         } => {
             let kind = Some(offset_kind.as_wire_str().to_string());
-            (
+            Ok((
                 None,
                 Some(*id.as_ulid()),
                 *offset_start,
                 *offset_end,
                 kind,
                 Some(*anchor_byte),
-            )
+            ))
         }
-        _ => panic!("New provenance variant not supported by legacy repository layer"),
+        other => Err(sinex_primitives::SinexError::invalid_state(format!(
+            "Unsupported provenance variant in legacy repository layer: {other:?}"
+        ))),
     }
 }

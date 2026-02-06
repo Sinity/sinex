@@ -129,7 +129,7 @@ pub fn run_cargo_clippy(args: &[&str]) -> anyhow::Result<DiagnosticSummary> {
 }
 
 /// Parse cargo's JSON output format
-fn parse_cargo_json_output(output: &str, success: bool) -> anyhow::Result<DiagnosticSummary> {
+pub fn parse_cargo_json_output(output: &str, success: bool) -> anyhow::Result<DiagnosticSummary> {
     let mut diagnostics = Vec::new();
     let mut errors = 0;
     let mut warnings = 0;

@@ -1,10 +1,52 @@
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
+use std::fs;
 
 use super::monitor::TestMonitor;
 use super::reporter::{TestReporter, TestStats};
 use crate::command::CommandContext;
 use crate::history::HistoryDb;
 use crate::process::ProcessBuilder;
+
+/// Nextest config file path
+const NEXTEST_CONFIG: &str = ".config/nextest.toml";
+
+/// Validate that a nextest profile exists in the config file.
+fn validate_profile(profile: &str) -> Result<()> {
+    let content = fs::read_to_string(NEXTEST_CONFIG)
+        .with_context(|| format!("failed to read nextest config at {NEXTEST_CONFIG}"))?;
+
+    let profile_header = format!("[profile.{profile}]");
+    if !content.contains(&profile_header) {
+        // List available profiles for better error message
+        let available: Vec<&str> = content
+            .lines()
+            .filter_map(|line| {
+                let trimmed = line.trim();
+                if trimmed.starts_with("[profile.") && trimmed.ends_with(']') {
+                    Some(
+                        trimmed
+                            .trim_start_matches("[profile.")
+                            .trim_end_matches(']'),
+                    )
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        bail!(
+            "nextest profile '{}' not found in {}\nAvailable profiles: {}",
+            profile,
+            NEXTEST_CONFIG,
+            if available.is_empty() {
+                "none".to_string()
+            } else {
+                available.join(", ")
+            }
+        );
+    }
+    Ok(())
+}
 
 /// Runner for execution of cargo nextest
 pub struct TestRunner<'a> {
@@ -28,6 +70,9 @@ impl<'a> TestRunner<'a> {
     }
 
     pub fn execute(&self, history: Option<(&HistoryDb, i64)>) -> Result<TestStats> {
+        // Validate profile exists before running to avoid silent failures
+        validate_profile(self.profile)?;
+
         // Build base arguments
         let mut cmd_args = vec![
             "nextest".to_string(),
@@ -55,8 +100,10 @@ impl<'a> TestRunner<'a> {
         let mut monitor = TestMonitor::start();
 
         // Spawn nextest with streaming output
+        // Enable experimental libtest-json output format
         let (child, stdout_reader) = ProcessBuilder::cargo()
             .args(cmd_args.iter().map(String::as_str).collect::<Vec<_>>())
+            .env("NEXTEST_EXPERIMENTAL_LIBTEST_JSON", "1")
             .spawn_with_streaming()?;
 
         // Capture stderr from child (ProcessBuilder pipes it)
@@ -79,8 +126,23 @@ impl<'a> TestRunner<'a> {
         let reporter = TestReporter::new(self.ctx.is_human());
         let stats = reporter.run(stdout_reader, stderr_reader, history)?;
 
-        // Wait for process to finish
-        let status = child.wait().context("failed to wait for nextest")?;
+        // Wait for process to finish with a timeout safety net.
+        // The reporter already blocks on stdout, so this should return quickly.
+        // The timeout guards against edge cases where stdout closes but the process lingers.
+        let status = {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
+            loop {
+                if let Some(status) = child.try_wait().context("failed to check nextest status")? {
+                    break status;
+                } else {
+                    if std::time::Instant::now() > deadline {
+                        let _ = child.kill();
+                        bail!("Test execution timed out after 10 minutes waiting for process exit");
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+            }
+        };
 
         // Stop monitoring
         let metrics = monitor.stop();

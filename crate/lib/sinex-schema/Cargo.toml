@@ -7,6 +7,10 @@ description = "Schema definitions and database migrations for Sinex"
 name = "sinex_schema"
 path = "src/lib.rs"
 
+[[bin]]
+name = "sinex-schema"
+path = "src/main.rs"
+
 [dependencies]
 lazy_static = "1.5"
 

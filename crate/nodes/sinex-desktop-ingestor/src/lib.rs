@@ -6,7 +6,10 @@
 //! Desktop ingestor integrating clipboard and window-sensing feeds.
 
 mod clipboard;
+mod privacy_filter;
 mod window_manager;
+
+pub use privacy_filter::PrivacyFilter;
 
 // New unified processor module
 pub mod unified_processor;

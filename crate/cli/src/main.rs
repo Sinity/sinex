@@ -1,9 +1,9 @@
 use clap::{CommandFactory, Parser, Subcommand};
 use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::{
-    AuditCommand, CompletionsCommand, ConfigCommands, CoreCommands, DlqCommands, ErrorsCommand,
-    GatewayCommands, LifecycleCommands, NodeCommands, OpsCommands, QueryCommand, RecentCommand,
-    ReplayCommands, StatusCommand, TuiCommand, WatchCommand,
+    AuditCommand, CompletionsCommand, ConfigCommands, CoreCommands, DbCommands, DlqCommands,
+    ErrorsCommand, GatewayCommands, LifecycleCommands, NodeCommands, OpsCommands, QueryCommand,
+    RecentCommand, ReplayCommands, StatusCommand, TuiCommand, WatchCommand,
 };
 use sinexctl::model::OutputFormat;
 use sinexctl::{default_rpc_url, Config};
@@ -110,6 +110,12 @@ enum Commands {
         cmd: ConfigCommands,
     },
 
+    /// Direct database access (bypasses gateway)
+    Db {
+        #[command(subcommand)]
+        cmd: DbCommands,
+    },
+
     /// Data lifecycle management (archive, restore, tombstone)
     Lifecycle {
         #[command(subcommand)]
@@ -160,6 +166,11 @@ async fn main() -> color_eyre::Result<()> {
         return cmd.execute(&mut clap_cmd);
     }
 
+    // Handle db commands early (doesn't need a gateway client)
+    if let Commands::Db { cmd } = cli.command {
+        return cmd.execute().await;
+    }
+
     // Load layered config (defaults < config file < env vars)
     let mut config = Config::load().unwrap_or_else(|e| {
         tracing::debug!("Failed to load config file: {}, using defaults", e);
@@ -203,6 +214,7 @@ async fn main() -> color_eyre::Result<()> {
         Commands::Audit(cmd) => cmd.execute(&client).await?,
         Commands::Tui(cmd) => cmd.execute(&client).await?,
         Commands::Config { .. } => unreachable!("Config command handled above"),
+        Commands::Db { .. } => unreachable!("Db command handled above"),
         Commands::Lifecycle { cmd } => cmd.execute(&client).await?,
         Commands::Status(cmd) => cmd.execute(&client).await?,
         Commands::Recent(cmd) => cmd.execute(&client).await?,

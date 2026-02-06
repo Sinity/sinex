@@ -38,6 +38,7 @@ pub async fn wait_for_event_persisted(
     event_id: impl Into<EventId>,
 ) -> TestResult<()> {
     let event_id = event_id.into();
-    // Pipeline events should persist quickly (within 5 seconds)
+    // Pipeline events should persist quickly with fast test config.
+    // 5 seconds is generous; actual should be ~100-200ms.
     WaitHelpers::wait_for_event_id(&ctx.pool, event_id, 5).await
 }

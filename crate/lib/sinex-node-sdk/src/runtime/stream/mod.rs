@@ -411,10 +411,11 @@ pub struct NodeRunner<T: Node> {
     service_info: Option<ServiceInfo>,
     raw_config: Option<HashMap<String, serde_json::Value>>,
     work_dir_utf8: Option<Utf8PathBuf>,
-    shutdown_receiver: Option<tokio::sync::oneshot::Receiver<()>>,
     event_processor_handle: Option<tokio::task::JoinHandle<NodeResult<()>>>,
     event_processor_shutdown: Option<tokio::sync::oneshot::Sender<()>>,
     schema_listener_handle: Option<tokio::task::JoinHandle<()>>,
+    checkpoint_cleanup_handle: Option<tokio::task::JoinHandle<()>>,
+    consumer_handle: Option<tokio::task::JoinHandle<()>>,
     processing_model: ProcessingModel,
     leader_state: Option<LeaderState>,
 }
@@ -434,10 +435,11 @@ impl<T: Node + 'static> NodeRunner<T> {
             service_info: None,
             raw_config: None,
             work_dir_utf8: None,
-            shutdown_receiver: None,
             event_processor_handle: None,
             event_processor_shutdown: None,
             schema_listener_handle: None,
+            checkpoint_cleanup_handle: None,
+            consumer_handle: None,
             processing_model: ProcessingModel::StatelessWorker,
             leader_state: None,
         }
@@ -476,10 +478,8 @@ impl<T: Node + 'static> NodeRunner<T> {
             mpsc::channel::<Event<JsonValue>>(DEFAULT_EVENT_CHANNEL_SIZE);
 
         // Create shutdown channels
-        let (_shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
         let (processor_shutdown_sender, processor_shutdown_receiver) =
             tokio::sync::oneshot::channel();
-        self.shutdown_receiver = Some(shutdown_receiver);
         self.event_processor_shutdown = Some(processor_shutdown_sender);
 
         // Get hostname
@@ -519,10 +519,11 @@ impl<T: Node + 'static> NodeRunner<T> {
             {
                 let cleanup_config = crate::checkpoint::CheckpointCleanupConfig::from_env();
                 let kv_for_cleanup = kv_store.clone();
-                let _cleanup_handle = crate::checkpoint::spawn_checkpoint_cleanup_task(
+                let cleanup_handle = crate::checkpoint::spawn_checkpoint_cleanup_task(
                     kv_for_cleanup,
                     cleanup_config,
                 );
+                self.checkpoint_cleanup_handle = Some(cleanup_handle);
                 tracing::info!("Checkpoint cleanup task started");
             }
         }
@@ -956,6 +957,7 @@ impl<T: Node + 'static> NodeRunner<T> {
                 warn!(error = %err, "Automaton JetStream consumer terminated unexpectedly");
             }
         });
+        self.consumer_handle = Some(consumer_handle);
 
         if !matches!(from, Checkpoint::None) && self.node.capabilities().supports_historical {
             info!("Processing historical backlog before entering continuous mode");
@@ -1012,7 +1014,8 @@ impl<T: Node + 'static> NodeRunner<T> {
                         processed_events += stats.processed as u64;
                     }
                     Err(err) => {
-                        warn!(error = %err, "Automaton batch processing failed");
+                        error!(error = %err, "Automaton batch processing failed - stopping node to prevent data loss");
+                        return Err(err);
                     }
                 }
             }
@@ -1025,8 +1028,10 @@ impl<T: Node + 'static> NodeRunner<T> {
 
         consumer.stop().await;
 
-        if let Err(err) = consumer_handle.await {
-            warn!(error = %err, "Failed to join automaton consumer task");
+        if let Some(handle) = self.consumer_handle.take() {
+            if let Err(err) = handle.await {
+                warn!(error = %err, "Failed to join automaton consumer task");
+            }
         }
 
         Ok(())
@@ -1213,6 +1218,18 @@ impl<T: Node + 'static> NodeRunner<T> {
                     error!(error = %join_err, "Failed to join event processor task");
                 }
             }
+        }
+
+        if let Some(handle) = self.consumer_handle.take() {
+            handle.abort();
+            let _ = handle.await;
+            debug!("Aborted automaton consumer task");
+        }
+
+        if let Some(handle) = self.checkpoint_cleanup_handle.take() {
+            handle.abort();
+            let _ = handle.await;
+            debug!("Aborted checkpoint cleanup task");
         }
 
         self.node.shutdown().await

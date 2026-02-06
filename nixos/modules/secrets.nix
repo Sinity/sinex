@@ -64,12 +64,16 @@ in
     };
   };
 
-  # Use optionalAttrs to completely avoid defining age.* when agenix isn't available
-  config = {
-    sinex.secrets.paths = mkDefault (if shouldConfigureAgenix then mapAttrs (_: spec: spec.path) specs else {});
-    sinex.secrets.exportScript = mkDefault (if shouldConfigureAgenix then exportScript else "");
-  } // optionalAttrs shouldConfigureAgenix {
-    age.identityPaths = mkDefault defaultIdentities;
-    age.secrets = specs;
-  };
+  # optionalAttrs agenixAvailable guards age.* options existing at all (safe: checks options, not config).
+  # mkIf defers cfg.enable evaluation, avoiding infinite recursion from reading config at module top-level.
+  config = mkMerge [
+    (mkIf shouldConfigureAgenix {
+      sinex.secrets.paths = mapAttrs (_: spec: spec.path) specs;
+      sinex.secrets.exportScript = exportScript;
+    })
+    (optionalAttrs agenixAvailable (mkIf shouldConfigureAgenix {
+      age.identityPaths = mkDefault defaultIdentities;
+      age.secrets = specs;
+    }))
+  ];
 }

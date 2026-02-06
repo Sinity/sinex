@@ -291,6 +291,7 @@ pub struct TetherSession {
     client: TetherClient,
     consumer_info: Option<ShadowConsumerInfo>,
     nats_client: Option<async_nats::Client>,
+    stats: std::sync::Arc<TetherStatsInner>,
 }
 
 impl TetherSession {
@@ -304,6 +305,7 @@ impl TetherSession {
             client,
             consumer_info: Some(consumer_info),
             nats_client: None,
+            stats: std::sync::Arc::new(TetherStatsInner::default()),
         })
     }
 
@@ -386,7 +388,16 @@ impl TetherSession {
         while let Some(msg) = tokio::select! {
             next = futures::StreamExt::next(&mut messages) => next,
         } {
-            let msg = msg.map_err(|e| anyhow::anyhow!("Error in message stream: {e}"))?;
+            let msg = match msg {
+                Ok(m) => {
+                    self.stats.inc_received();
+                    m
+                }
+                Err(e) => {
+                    self.stats.inc_errors();
+                    return Err(anyhow::anyhow!("Error in message stream: {e}"));
+                }
+            };
 
             let payload: serde_json::Value = serde_json::from_slice(&msg.payload).unwrap_or_else(
                 |_| serde_json::json!({"raw_data": String::from_utf8_lossy(&msg.payload)}),
@@ -404,18 +415,21 @@ impl TetherSession {
             if tx.send(event).await.is_err() {
                 break; // Channel closed
             }
+            self.stats.inc_forwarded();
 
             // Acknowledge the message
-            msg.ack().await.ok();
+            if msg.ack().await.is_err() {
+                self.stats.inc_errors();
+            }
         }
 
         Ok(())
     }
 
-    /// Get session statistics (stub)
+    /// Get session statistics
     #[allow(dead_code)]
     pub fn stats(&self) -> TetherStats {
-        TetherStats::default()
+        self.stats.snapshot()
     }
 }
 
@@ -445,6 +459,43 @@ impl TetherStats {
     #[must_use]
     pub fn errors(&self) -> u64 {
         self.errors
+    }
+}
+
+/// Internal atomic counters for thread-safe stats collection
+#[derive(Debug, Default)]
+struct TetherStatsInner {
+    events_received: std::sync::atomic::AtomicU64,
+    events_forwarded: std::sync::atomic::AtomicU64,
+    errors: std::sync::atomic::AtomicU64,
+}
+
+impl TetherStatsInner {
+    fn snapshot(&self) -> TetherStats {
+        TetherStats {
+            events_received: self
+                .events_received
+                .load(std::sync::atomic::Ordering::Relaxed),
+            events_forwarded: self
+                .events_forwarded
+                .load(std::sync::atomic::Ordering::Relaxed),
+            errors: self.errors.load(std::sync::atomic::Ordering::Relaxed),
+        }
+    }
+
+    fn inc_received(&self) {
+        self.events_received
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn inc_forwarded(&self) {
+        self.events_forwarded
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn inc_errors(&self) {
+        self.errors
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 }
 

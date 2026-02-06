@@ -5,41 +5,14 @@
 //! Procedural macro toolkit that keeps Sinex ergonomics consistent across crates.
 
 mod database_helpers;
-mod error_context;
 mod event_payload;
 mod event_registry;
 mod id_types;
 mod typed_event_envelope;
-mod validate_record;
 
 use proc_macro::TokenStream;
 
 // Re-export all macros
-
-/// Procedural macro for automatic error context enrichment
-///
-/// Automatically adds function name, module path, and operation context to errors.
-///
-/// # Examples
-///
-/// ```rust
-/// use sinex_macros::with_context;
-///
-/// #[with_context]
-/// fn read_config() -> Result<String, std::io::Error> {
-///     std::fs::read_to_string("config.toml")
-/// }
-///
-/// #[with_context(operation = "database_insert")]
-/// async fn insert_event(event: &RawEvent) -> Result<(), SinexError> {
-///     // function body
-/// }
-/// ```
-#[deprecated(note = "This macro generates non-functional code (BUG-020) and is unused.")]
-#[proc_macro_attribute]
-pub fn with_context(attr: TokenStream, item: TokenStream) -> TokenStream {
-    error_context::with_context(attr, item)
-}
 
 /// Macro for generating event type registries with automatic constant generation
 ///
@@ -176,29 +149,4 @@ pub fn define_id_type(input: TokenStream) -> TokenStream {
 #[proc_macro_derive(EventPayload, attributes(event_payload))]
 pub fn derive_event_payload(input: TokenStream) -> TokenStream {
     event_payload::derive_event_payload_impl(input)
-}
-
-/// Derive macro for `ValidateRecord`
-///
-/// Validates at compile time that a Record struct matches its schema definition.
-///
-/// # Examples
-///
-/// ```rust
-/// use sinex_macros::ValidateRecord;
-/// use sqlx::FromRow;
-///
-/// #[derive(FromRow, ValidateRecord)]
-/// #[validate_against(sinex_schema::Events)]
-/// pub struct EventRecord {
-///     pub id: Ulid,
-///     pub source: String,
-///     pub event_type: String,
-///     // ... other fields matching the schema
-/// }
-/// ```
-#[deprecated(note = "This macro is a no-op stub (BUG-019) and is unused.")]
-#[proc_macro_derive(ValidateRecord, attributes(validate_against))]
-pub fn validate_record(input: TokenStream) -> TokenStream {
-    validate_record::validate_record_impl(input)
 }

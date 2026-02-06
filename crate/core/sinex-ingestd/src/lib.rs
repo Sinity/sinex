@@ -10,6 +10,7 @@
 pub mod config;
 pub mod jetstream_consumer;
 pub mod material_assembler;
+pub mod material_ready_set;
 pub mod prelude;
 pub mod schema_sync;
 pub mod service;
@@ -18,6 +19,7 @@ pub mod validator;
 pub use config::IngestdConfig;
 pub use jetstream_consumer::{JetStreamConsumer, JetStreamTopology};
 pub use material_assembler::MaterialAssembler;
+pub use material_ready_set::MaterialReadySet;
 pub use service::IngestService;
 pub use sinex_db::repositories::schema_management::SchemaSyncResult;
 pub use sinex_db::validation::SchemaInfo;
