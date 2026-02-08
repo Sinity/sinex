@@ -29,8 +29,8 @@ pub use config_validation::{
 
 // Re-export file watching security utilities
 pub use file_watching_security::{
-    check_path_depth, validate_discovered_file, validate_watch_path, validate_watch_paths,
-    FileWatchingSecurityPolicy,
+    check_path_depth, check_sensitive_path, validate_discovered_file, validate_watch_path,
+    validate_watch_paths, FileWatchingSecurityPolicy,
 };
 
 // Export validator crate types for convenience

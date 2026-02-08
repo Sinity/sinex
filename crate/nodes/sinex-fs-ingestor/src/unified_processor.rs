@@ -28,7 +28,10 @@ use sinex_primitives::{
     events::{enums::FileModificationType, EventPayload},
     temporal::Timestamp,
     units::Bytes,
-    validation::{validate_watch_path, FileWatchingSecurityPolicy},
+    validation::{
+        file_watching_security::check_sensitive_path, validate_watch_path,
+        FileWatchingSecurityPolicy,
+    },
     Ulid,
 };
 use sinex_processor_runtime::{
@@ -683,10 +686,30 @@ async fn watch_path(root: String, ctx: WatchContext) -> NodeResult<()> {
 
 #[instrument(skip(ctx, event))]
 async fn handle_event(ctx: &WatchContext, root: &str, event: Event) -> NodeResult<()> {
+    // Filter out sensitive paths (credentials, private keys, etc.)
+    let paths: Vec<_> = event
+        .paths
+        .into_iter()
+        .filter(|p| {
+            if let Some(s) = p.to_str() {
+                let utf8 = camino::Utf8Path::new(s);
+                if let Some(reason) = check_sensitive_path(utf8) {
+                    debug!(path = %p.display(), %reason, "Skipping sensitive file");
+                    return false;
+                }
+            }
+            true
+        })
+        .collect();
+
+    if paths.is_empty() {
+        return Ok(());
+    }
+
     match event.kind {
         EventKind::Create(_) => {
-            for path in event.paths {
-                handle_file_created(ctx, root, &path).await?;
+            for path in &paths {
+                handle_file_created(ctx, root, path).await?;
             }
         }
         EventKind::Modify(mod_kind) => {
@@ -694,23 +717,19 @@ async fn handle_event(ctx: &WatchContext, root: &str, event: Event) -> NodeResul
 
             match mod_kind {
                 ModifyKind::Name(RenameMode::Both) => {
-                    if event.paths.len() == 2 {
-                        let old = &event.paths[0];
-                        let new = &event.paths[1];
-                        handle_file_moved(ctx, root, old, new).await?;
+                    if paths.len() == 2 {
+                        handle_file_moved(ctx, root, &paths[0], &paths[1]).await?;
                     }
                 }
                 ModifyKind::Name(_) => {
                     // Partial rename events - best effort handling
-                    if event.paths.len() == 2 {
-                        let old = &event.paths[0];
-                        let new = &event.paths[1];
-                        handle_file_moved(ctx, root, old, new).await?;
+                    if paths.len() == 2 {
+                        handle_file_moved(ctx, root, &paths[0], &paths[1]).await?;
                     }
                 }
                 ModifyKind::Data(_) | ModifyKind::Metadata(_) | ModifyKind::Any => {
-                    for path in event.paths {
-                        handle_file_modified(ctx, root, &path, FileModificationType::Content)
+                    for path in &paths {
+                        handle_file_modified(ctx, root, path, FileModificationType::Content)
                             .await?;
                     }
                 }
@@ -718,8 +737,8 @@ async fn handle_event(ctx: &WatchContext, root: &str, event: Event) -> NodeResul
             }
         }
         EventKind::Remove(_) => {
-            for path in event.paths {
-                handle_file_deleted(ctx, root, &path).await?;
+            for path in &paths {
+                handle_file_deleted(ctx, root, path).await?;
             }
         }
         _ => {}
