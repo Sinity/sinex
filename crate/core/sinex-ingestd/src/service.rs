@@ -430,6 +430,7 @@ impl IngestService {
         let assembler_state_dir = self.config.assembler_state_dir.clone();
         let namespace = self.config.nats_namespace.clone();
         let slices_max_ack_pending = self.config.material_slices_max_ack_pending;
+        let max_concurrent_assemblies = self.config.max_concurrent_assemblies;
 
         tokio::spawn(async move {
             let annex_config = AnnexConfig {
@@ -461,6 +462,7 @@ impl IngestService {
                 state_dir,
                 namespace.clone(),
                 slices_max_ack_pending,
+                max_concurrent_assemblies,
                 ready_set,
             ) {
                 Ok(assembler) => assembler.with_observer(observer),

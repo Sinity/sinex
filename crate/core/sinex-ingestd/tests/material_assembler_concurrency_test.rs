@@ -47,6 +47,7 @@ async fn start_assembler(
         state_dir.path().to_path_buf(),
         Some(namespace.to_string()),
         1_000,
+        50,
         MaterialReadySet::default(),
     )?;
 

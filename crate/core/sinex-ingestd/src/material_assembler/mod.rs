@@ -73,7 +73,7 @@ use state::{
 ///   locking for each material. Materials do not block each other.
 /// - Each material's Mutex lock is held only for state snapshots (~1ms), never during slow I/O.
 /// - Lock-free reads via `DashMap::get()` for handle retrieval (~100ns).
-/// - Semaphore limits concurrent assemblies to 50 to prevent memory exhaustion.
+/// - Semaphore limits concurrent assemblies (configurable, default 50) to prevent memory exhaustion.
 ///
 /// Critical fix applied in commit c799300cd:
 /// - Locks are explicitly dropped before git-annex imports and database writes.
@@ -108,6 +108,7 @@ impl MaterialAssembler {
         state_root: PathBuf,
         namespace: Option<String>,
         slices_max_ack_pending: i64,
+        max_concurrent_assemblies: usize,
         ready_set: MaterialReadySet,
     ) -> IngestdResult<Self> {
         if let Err(e) = std::fs::create_dir_all(&state_root) {
@@ -127,8 +128,7 @@ impl MaterialAssembler {
         );
 
         // Cap concurrent assemblies to prevent memory exhaustion
-        // TODO: Make this configurable
-        let active_assemblies = Arc::new(tokio::sync::Semaphore::new(50));
+        let active_assemblies = Arc::new(tokio::sync::Semaphore::new(max_concurrent_assemblies));
 
         Ok(Self {
             js,
