@@ -58,6 +58,7 @@ use validator::ValidationError;
 
 const DEFAULT_MAX_CAPTURE_BYTES: Bytes = Bytes::from_mebibytes(10); // 10MB
 const DEFAULT_MAX_DEPTH: usize = 10; // Maximum directory traversal depth
+const DEFAULT_MAX_WATCHES: usize = 65_536; // Inotify watch limit (well under typical Linux max)
 const FS_WATCH_CHANNEL_SIZE: usize = 10_000; // Buffer size for filesystem event channel (high-volume burst protection)
 const FS_CAPTURE_CHUNK_SIZE: usize = 64 * 1024;
 const FS_READ_RETRY_ATTEMPTS: u32 = 3; // Number of retry attempts for transient file read errors
@@ -81,6 +82,14 @@ pub struct FilesystemConfig {
 
     /// Maximum number of bytes captured per event
     pub max_capture_bytes: Bytes,
+
+    /// Maximum total inotify watches across all paths (guards against FD exhaustion)
+    #[serde(default = "default_max_watches")]
+    pub max_watches: usize,
+}
+
+fn default_max_watches() -> usize {
+    DEFAULT_MAX_WATCHES
 }
 
 impl Default for FilesystemConfig {
@@ -90,6 +99,7 @@ impl Default for FilesystemConfig {
             max_depth: Some(DEFAULT_MAX_DEPTH),
             follow_symlinks: false,
             max_capture_bytes: DEFAULT_MAX_CAPTURE_BYTES,
+            max_watches: DEFAULT_MAX_WATCHES,
         }
     }
 }
@@ -109,6 +119,10 @@ impl FilesystemConfig {
         let max_capture_bytes = self.max_capture_bytes.as_u64();
         if !(1024..=512 * 1024 * 1024).contains(&max_capture_bytes) {
             return Err("Max capture bytes must be between 1KB and 512MB".to_string());
+        }
+
+        if !(1..=524_288).contains(&self.max_watches) {
+            return Err("Max watches must be between 1 and 524288".to_string());
         }
 
         Ok(())
@@ -194,6 +208,8 @@ struct WatchContext {
     acquisition: Arc<AcquisitionManager>,
     stage_context: StageAsYouGoContext,
     max_capture_bytes: Bytes,
+    max_watches: usize,
+    max_depth: Option<usize>,
     security_policy: FileWatchingSecurityPolicy,
     dropped_events: Arc<AtomicU64>,
     metrics: Arc<EventMetrics>,
@@ -288,6 +304,8 @@ impl FilesystemProcessor {
                     acquisition,
                     stage_context: stage_with_acquisition,
                     max_capture_bytes: self.config.max_capture_bytes,
+                    max_watches: self.config.max_watches,
+                    max_depth: self.config.max_depth,
                     security_policy: if self.config.follow_symlinks {
                         FileWatchingSecurityPolicy::permissive()
                     } else {
@@ -560,11 +578,52 @@ impl ExplorationProvider for FilesystemProcessor {
     }
 }
 
+/// Estimate the number of inotify watches needed for a directory tree.
+/// Each subdirectory requires one watch when using `RecursiveMode::Recursive`.
+fn estimate_watch_count(path: &Path, max_depth: Option<usize>) -> usize {
+    fn count_dirs(dir: &Path, depth: usize, max_depth: Option<usize>) -> usize {
+        if max_depth.is_some_and(|m| depth >= m) {
+            return 0;
+        }
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return 0;
+        };
+        let mut count = 0;
+        for entry in entries.flatten() {
+            if let Ok(ft) = entry.file_type() {
+                if ft.is_dir() {
+                    count += 1 + count_dirs(&entry.path(), depth + 1, max_depth);
+                }
+            }
+        }
+        count
+    }
+    1 + count_dirs(path, 0, max_depth)
+}
+
 async fn watch_path(root: String, ctx: WatchContext) -> NodeResult<()> {
     let normalized = validate_watch_path(&root, &ctx.security_policy)
         .map_err(|e| SinexError::validation(e.to_string()))?;
 
-    info!("Watching path: {}", normalized.as_str());
+    // SYMLINK-001: Canonicalize to resolve symlinks and detect loops
+    let canonical = std::fs::canonicalize(normalized.as_str()).map_err(|e| {
+        SinexError::validation(format!("Failed to canonicalize watch path '{}': {e}", root))
+    })?;
+
+    // RESOURCE-001: Estimate watch count before committing kernel resources
+    let estimated = estimate_watch_count(&canonical, ctx.max_depth);
+    if estimated > ctx.max_watches {
+        return Err(SinexError::validation(format!(
+            "Watch path '{}' would create ~{} inotify watches, exceeding limit of {}. \
+             Reduce directory depth or increase max_watches config.",
+            root, estimated, ctx.max_watches
+        )));
+    }
+    info!(
+        path = %canonical.display(),
+        estimated_watches = estimated,
+        "Watching path"
+    );
 
     let (tx, mut rx) = mpsc::channel::<Event>(FS_WATCH_CHANNEL_SIZE);
     let drop_counter = Arc::clone(&ctx.dropped_events);
@@ -596,8 +655,8 @@ async fn watch_path(root: String, ctx: WatchContext) -> NodeResult<()> {
         .map_err(|e| SinexError::lifecycle(format!("Failed to create watcher: {e}")))?;
 
     watcher
-        .watch(Path::new(normalized.as_str()), RecursiveMode::Recursive)
-        .map_err(|e| SinexError::lifecycle(format!("Failed to watch path: {e}")))?;
+        .watch(&canonical, RecursiveMode::Recursive)
+        .map_err(|e| SinexError::lifecycle(format!("Failed to watch path '{}': {e}", root)))?;
 
     loop {
         tokio::select! {
@@ -1067,6 +1126,8 @@ mod tests {
             acquisition,
             stage_context,
             max_capture_bytes: Bytes::from_mebibytes(1),
+            max_watches: DEFAULT_MAX_WATCHES,
+            max_depth: Some(DEFAULT_MAX_DEPTH),
             security_policy: FileWatchingSecurityPolicy::permissive(),
             dropped_events: Arc::new(AtomicU64::new(0)),
             metrics: EventMetrics::new(),

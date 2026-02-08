@@ -8,6 +8,7 @@ fn base_config() -> FilesystemConfig {
         max_depth: Some(10),
         follow_symlinks: false,
         max_capture_bytes: Bytes::from_mebibytes(8),
+        ..Default::default()
     }
 }
 
