@@ -2466,6 +2466,18 @@ async fn ensure_default_session_state_conn(conn: &mut PgConnection) -> TestResul
             eprintln!("  ⚠️  Reset row_security to on");
         }
     }
+    // Restore synchronous_commit if apply_test_optimizations() turned it off.
+    if let Ok(sync_commit) = sqlx::query_scalar::<_, String>("SHOW synchronous_commit")
+        .fetch_one(&mut *conn)
+        .await
+    {
+        if sync_commit != "on" {
+            sqlx::query("SET synchronous_commit TO ON")
+                .execute(&mut *conn)
+                .await
+                .map_err(|e| eyre!(e.to_string()))?;
+        }
+    }
 
     let config = CleanupConfig::default();
     for table in config.tables_requiring_trigger_disable() {
