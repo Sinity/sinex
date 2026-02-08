@@ -279,9 +279,8 @@ async fn test_concurrent_event_creation_stress(ctx: TestContext) -> TestResult<(
                     ))
                     .await;
 
-                match result {
-                    Ok(_) => local_successes += 1,
-                    Err(_) => {} // Count failures silently
+                if result.is_ok() {
+                    local_successes += 1;
                 }
             }
             success_count.fetch_add(local_successes, Ordering::SeqCst);
