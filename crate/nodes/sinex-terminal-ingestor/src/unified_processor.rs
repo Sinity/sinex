@@ -323,9 +323,8 @@ impl HistoryWatcherContext {
         fish_row_id: Option<i64>,
         recent_hashes: &[u64],
     ) {
-        let path = match &self.state_path {
-            Some(path) => path,
-            None => return,
+        let Some(path) = &self.state_path else {
+            return;
         };
 
         // Get current inode for tracking file rotation vs truncation

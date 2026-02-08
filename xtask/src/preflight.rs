@@ -516,9 +516,8 @@ fn auto_deploy_contracts(verbose: bool) -> Result<bool> {
         return Ok(false);
     }
 
-    let config = match crate::infra::stack::StackConfig::for_current_checkout() {
-        Ok(c) => c,
-        Err(_) => return Ok(false),
+    let Ok(config) = crate::infra::stack::StackConfig::for_current_checkout() else {
+        return Ok(false);
     };
 
     // Check if database is ready for contracts (tables exist)

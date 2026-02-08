@@ -554,7 +554,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
     async fn handle_scan_command(
         &self,
         node: T,

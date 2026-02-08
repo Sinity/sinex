@@ -1088,9 +1088,8 @@ impl<T: Node + 'static> NodeRunner<T> {
 
         loop {
             // Block until at least one event arrives (or channel closes)
-            let first = match receiver.recv().await {
-                Some(p) => p,
-                None => break,
+            let Some(first) = receiver.recv().await else {
+                break;
             };
 
             // Non-blocking drain: grab whatever else is already queued

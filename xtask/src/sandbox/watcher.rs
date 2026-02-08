@@ -115,9 +115,8 @@ pub enum WatchEvent {
 /// Check if a file change should trigger a rebuild
 fn should_trigger_rebuild(path: &Path) -> bool {
     // Get the file name
-    let file_name = match path.file_name().and_then(|n| n.to_str()) {
-        Some(n) => n,
-        None => return false,
+    let Some(file_name) = path.file_name().and_then(|n| n.to_str()) else {
+        return false;
     };
 
     // Check for Rust files

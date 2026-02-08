@@ -1052,9 +1052,7 @@ async fn handle_rpc(
     }
 
     // Extract token for auth context and rate limiting
-    let token = if let Some(t) = extract_token(&headers) {
-        t
-    } else {
+    let Some(token) = extract_token(&headers) else {
         // This should not happen after auth.verify() passes, but handle gracefully
         state.metrics.record_request_rejected();
         return (

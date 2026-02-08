@@ -67,9 +67,8 @@ pub(super) async fn restore_state(assembler: &MaterialAssembler) -> IngestdResul
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or_default();
-        let material_id = match Ulid::from_str(folder_name) {
-            Ok(id) => id,
-            Err(_) => continue, // Skip non-ULID folders
+        let Ok(material_id) = Ulid::from_str(folder_name) else {
+            continue; // Skip non-ULID folders
         };
 
         if let Some(state) = restore_state_params(assembler, material_id, &path).await? {

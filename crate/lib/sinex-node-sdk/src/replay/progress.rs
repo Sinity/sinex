@@ -3,6 +3,9 @@ use sinex_primitives::temporal::{Duration, Timestamp};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+/// Callback invoked on replay progress updates.
+type ProgressCallback = Arc<dyn Fn(&ReplayProgress) + Send + Sync + 'static>;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayProgress {
     pub total_events: u64,
@@ -38,7 +41,7 @@ pub enum ReplayPhase {
 #[derive(Clone)]
 pub struct ProgressTracker {
     state: Arc<RwLock<ReplayProgress>>,
-    callback: Option<Arc<dyn Fn(&ReplayProgress) + Send + Sync + 'static>>,
+    callback: Option<ProgressCallback>,
 }
 
 impl ProgressTracker {

@@ -136,9 +136,7 @@ async fn test_database_connection_exhaustion_recovery(ctx: TestContext) -> TestR
 
         let task = tokio::spawn(async move {
             // Each task gets its own context for isolation
-            let task_ctx = if let Ok(ctx) = TestContext::new().await {
-                ctx
-            } else {
+            let Ok(task_ctx) = TestContext::new().await else {
                 error_count.fetch_add(1, Ordering::SeqCst);
                 return;
             };
@@ -263,9 +261,8 @@ async fn test_concurrent_event_creation_stress(ctx: TestContext) -> TestResult<(
 
         let task = tokio::spawn(async move {
             // Each task creates its own context
-            let task_ctx = match TestContext::new().await {
-                Ok(ctx) => ctx,
-                Err(_) => return,
+            let Ok(task_ctx) = TestContext::new().await else {
+                return;
             };
 
             // Create a batch of events from this task

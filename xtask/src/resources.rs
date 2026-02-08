@@ -96,9 +96,8 @@ impl ResourceStatus {
 /// Read memory information from /proc/meminfo.
 /// Returns (`available_kb`, `total_kb`).
 fn memory_info() -> (u64, u64) {
-    let content = match std::fs::read_to_string("/proc/meminfo") {
-        Ok(c) => c,
-        Err(_) => return (0, 0),
+    let Ok(content) = std::fs::read_to_string("/proc/meminfo") else {
+        return (0, 0);
     };
 
     let mut available = 0u64;

@@ -59,13 +59,10 @@ pub async fn handle_shadow_create(
         .map_err(|e| eyre!("Failed to get events stream: {}", e))?;
 
     // Require explicit subject filter - no default to prevent unintended access
-    let subject_filter = match request.subject_filter {
-        Some(filter) => filter,
-        None => {
-            return Err(eyre!(
-                "subject_filter is required for shadow consumers (use 'events.>' explicitly if needed)"
-            ));
-        }
+    let Some(subject_filter) = request.subject_filter else {
+        return Err(eyre!(
+            "subject_filter is required for shadow consumers (use 'events.>' explicitly if needed)"
+        ));
     };
 
     // Warn on overly broad patterns
