@@ -337,7 +337,25 @@ impl ClipboardWatcher {
 
         // Apply privacy filter to redact sensitive content
         let redacted_text = PrivacyFilter::redact_content(&content.text);
+        let privacy_filtered = redacted_text.as_ref() != content.text;
         let data_bytes = redacted_text.as_bytes();
+
+        // SEC-CLIP-007: When content was redacted, use a randomized hash to prevent
+        // correlation of identical sensitive content (e.g., password reuse detection).
+        // Internal dedup (check_main_clipboard) still uses the original hash.
+        let safe_hash = if privacy_filtered {
+            blake3::hash(Ulid::new().to_bytes().as_ref())
+                .to_hex()
+                .to_string()
+        } else {
+            content.hash.clone()
+        };
+        let safe_original_hash = if privacy_filtered {
+            None
+        } else {
+            self.find_original_hash(&content.hash)
+                .map(std::string::ToString::to_string)
+        };
 
         // Also redact window title if present
         let redacted_window_title = content
@@ -370,6 +388,8 @@ impl ClipboardWatcher {
             selection_type,
             redacted_preview.as_deref(),
             redacted_window_title.as_deref(),
+            &safe_hash,
+            safe_original_hash.as_deref(),
         );
         let material_id = stage_context
             .register_in_flight(&self.source_identifier, Some(selection_type), metadata)
@@ -382,10 +402,8 @@ impl ClipboardWatcher {
                 content_size: data_bytes.len(),
                 text_preview: redacted_preview.clone(),
                 source_app: content.source_app.clone(),
-                content_hash: content.hash.clone(),
-                original_hash: self
-                    .find_original_hash(&content.hash)
-                    .map(std::string::ToString::to_string),
+                content_hash: safe_hash.clone(),
+                original_hash: safe_original_hash.clone(),
                 annex_key: None,
                 blob_id: None,
             }
@@ -410,10 +428,8 @@ impl ClipboardWatcher {
                 file_paths: content.file_paths.clone(),
                 source_app: content.source_app.clone(),
                 window_title: redacted_window_title.clone(),
-                content_hash: content.hash.clone(),
-                original_hash: self
-                    .find_original_hash(&content.hash)
-                    .map(std::string::ToString::to_string),
+                content_hash: safe_hash.clone(),
+                original_hash: safe_original_hash.clone(),
                 annex_key: None,
                 blob_id: None,
             }
@@ -448,7 +464,7 @@ impl ClipboardWatcher {
             "Staged clipboard {} source material: {} bytes, hash: {} (privacy-filtered)",
             selection_type,
             data_bytes.len(),
-            &content.hash[..8]
+            &safe_hash[..8]
         );
 
         Ok(material_id)
@@ -460,6 +476,8 @@ impl ClipboardWatcher {
         selection_type: &str,
         redacted_preview: Option<&str>,
         redacted_window_title: Option<&str>,
+        safe_hash: &str,
+        safe_original_hash: Option<&str>,
     ) -> JsonValue {
         serde_json::json!({
             "selection_type": selection_type,
@@ -469,28 +487,9 @@ impl ClipboardWatcher {
             "file_paths": content.file_paths,
             "source_app": content.source_app,
             "window_title": redacted_window_title,
-            "content_hash": content.hash,
-            "original_hash": self.find_original_hash(&content.hash).map(std::string::ToString::to_string),
+            "content_hash": safe_hash,
+            "original_hash": safe_original_hash,
             "privacy_filtered": true,
-        })
-    }
-
-    #[allow(dead_code)]
-    fn build_clipboard_metadata(
-        &self,
-        content: &ClipboardContent,
-        selection_type: &str,
-    ) -> JsonValue {
-        serde_json::json!({
-            "selection_type": selection_type,
-            "content_type": content.content_type,
-            "content_size": content.size_bytes,
-            "text_preview": content.text_preview,
-            "file_paths": content.file_paths,
-            "source_app": content.source_app,
-            "window_title": content.window_title,
-            "content_hash": content.hash,
-            "original_hash": self.find_original_hash(&content.hash).map(std::string::ToString::to_string),
         })
     }
 
