@@ -198,12 +198,19 @@ pub async fn handle_dlq_requeue(
 }
 
 /// Handle DLQ purge request - permanently delete DLQ messages
+///
+/// # Authorization
+///
+/// This is a destructive operation that permanently deletes ALL DLQ messages.
+/// The auth context is logged for audit purposes.
 pub async fn handle_dlq_purge(
     nats_client: &async_nats::Client,
     env: &SinexEnvironment,
     params: Value,
+    auth: &crate::rpc_server::RpcAuthContext,
 ) -> Result<Value> {
     use async_nats::jetstream;
+    use tracing::info;
 
     let purge_params: DlqPurgeRequest =
         serde_json::from_value(params).wrap_err("Invalid DLQ purge parameters")?;
@@ -226,6 +233,12 @@ pub async fn handle_dlq_purge(
         .await
         .map_err(|e| eyre!("Failed to get stream info: {}", e))?;
     let messages_before = info.state.messages;
+
+    info!(
+        token_prefix = %auth.token_prefix,
+        messages_to_purge = messages_before,
+        "DLQ purge operation initiated"
+    );
 
     // Purge the stream
     stream
@@ -302,8 +315,14 @@ mod tests {
         let client = nats.connect().await?;
         let env = environment();
 
+        let test_auth = crate::rpc_server::RpcAuthContext {
+            token_prefix: "test****".to_string(),
+            authenticated_at: temporal::now(),
+            role: crate::auth::Role::Admin,
+        };
+
         // Should fail without confirm flag
-        let err = handle_dlq_purge(&client, &env, json!({"confirm": false}))
+        let err = handle_dlq_purge(&client, &env, json!({"confirm": false}), &test_auth)
             .await
             .unwrap_err();
         assert!(err.to_string().contains("requires 'confirm: true'"));

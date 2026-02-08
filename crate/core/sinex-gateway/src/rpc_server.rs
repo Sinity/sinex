@@ -777,7 +777,7 @@ pub async fn dispatch_rpc_method(
             require_role(auth, Role::Write, method)?;
             let nats = nats_client_required(services)?;
             let env = services.environment();
-            handle_nodes_drain(nats, env, params)
+            handle_nodes_drain(nats, env, params, auth)
                 .await
                 .map_err(Into::into)
         }
@@ -785,7 +785,7 @@ pub async fn dispatch_rpc_method(
             require_role(auth, Role::Write, method)?;
             let nats = nats_client_required(services)?;
             let env = services.environment();
-            handle_nodes_resume(nats, env, params)
+            handle_nodes_resume(nats, env, params, auth)
                 .await
                 .map_err(Into::into)
         }
@@ -793,7 +793,7 @@ pub async fn dispatch_rpc_method(
             require_role(auth, Role::Write, method)?;
             let nats = nats_client_required(services)?;
             let env = services.environment();
-            handle_nodes_set_horizon(nats, env, params)
+            handle_nodes_set_horizon(nats, env, params, auth)
                 .await
                 .map_err(Into::into)
         }
@@ -849,7 +849,7 @@ pub async fn dispatch_rpc_method(
             require_role(auth, Role::Admin, method)?;
             let nats = nats_client_required(services)?;
             let env = services.environment();
-            handle_dlq_purge(nats, env, params).await
+            handle_dlq_purge(nats, env, params, auth).await
         }
 
         // Operations cancel (Admin)
