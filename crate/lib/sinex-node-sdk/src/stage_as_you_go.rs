@@ -434,9 +434,11 @@ impl StageAsYouGoContext {
             None
         };
 
+        // Get metadata without removing — defer removal until after successful finalization
+        // so reconciliation can still find/retry on failure
         let material_info = {
-            let mut registry = self.material_registry.lock().await;
-            registry.remove(&id)
+            let registry = self.material_registry.lock().await;
+            registry.get(&id).cloned()
         };
 
         let manager = self
@@ -468,6 +470,13 @@ impl StageAsYouGoContext {
             content_preview.clone(),
         )
         .await?;
+
+        // Remove from registry only after successful finalization
+        {
+            let mut registry = self.material_registry.lock().await;
+            registry.remove(&id);
+        }
+
         info!(
             material_id = %id,
             bytes = content.len(),

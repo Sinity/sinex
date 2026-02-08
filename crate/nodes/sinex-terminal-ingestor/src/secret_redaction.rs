@@ -70,6 +70,34 @@ lazy_static! {
                 .expect("Generic API key regex pattern is valid at compile-time"),
             placeholder: "<API_KEY>",
         },
+        // Slack tokens (xoxb-, xoxp-, xoxs-, xoxa-, xoxr-)
+        RedactionPattern {
+            name: "slack_token",
+            regex: Regex::new(r"\b(xox[bpsar]-[A-Za-z0-9-]{10,})\b")
+                .expect("Slack token regex pattern is valid at compile-time"),
+            placeholder: "<SLACK_TOKEN>",
+        },
+        // JWT tokens (three base64url-encoded segments separated by dots)
+        RedactionPattern {
+            name: "jwt_token",
+            regex: Regex::new(r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b")
+                .expect("JWT token regex pattern is valid at compile-time"),
+            placeholder: "<JWT_TOKEN>",
+        },
+        // Google API keys (AIza...)
+        RedactionPattern {
+            name: "google_api_key",
+            regex: Regex::new(r"\bAIza[A-Za-z0-9_-]{35}\b")
+                .expect("Google API key regex pattern is valid at compile-time"),
+            placeholder: "<GOOGLE_API_KEY>",
+        },
+        // Azure connection strings
+        RedactionPattern {
+            name: "azure_connection_string",
+            regex: Regex::new(r"(?i)AccountKey=[A-Za-z0-9/+=]{44,}")
+                .expect("Azure connection string regex pattern is valid at compile-time"),
+            placeholder: "AccountKey=<REDACTED>",
+        },
         // Generic assignment patterns for common secret variable names
         // Uses word boundary \b to avoid matching substrings like "database_password"
         RedactionPattern {
@@ -282,5 +310,35 @@ mod tests {
         assert!(stats.matched_patterns.len() >= 2);
         assert!(stats.matched_patterns.contains(&"url_credentials"));
         assert!(stats.matched_patterns.contains(&"cli_flag_secret"));
+    }
+
+    #[test]
+    fn test_redact_slack_token() {
+        let input = "SLACK_TOKEN=xoxb-123456789012-1234567890123-abcdefghijklmnopqrstuvwx";
+        let result = SecretRedactor::redact(input);
+        assert!(result.contains("<SLACK_TOKEN>"));
+    }
+
+    #[test]
+    fn test_redact_jwt_token() {
+        let input = "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";
+        let result = SecretRedactor::redact(input);
+        assert!(result.contains("<JWT_TOKEN>"));
+        assert!(!result.contains("eyJhbGci"));
+    }
+
+    #[test]
+    fn test_redact_google_api_key() {
+        let input = "GOOGLE_KEY=AIzaSyA1234567890abcdefghijklmnopqrstuv";
+        let result = SecretRedactor::redact(input);
+        assert!(result.contains("<GOOGLE_API_KEY>"));
+    }
+
+    #[test]
+    fn test_redact_azure_connection_string() {
+        let input = "DefaultEndpointsProtocol=https;AccountName=myaccount;AccountKey=abc123def456ghi789jkl012mno345pqr678stu901vwxyz+A==";
+        let result = SecretRedactor::redact(input);
+        assert!(result.contains("AccountKey=<REDACTED>"));
+        assert!(!result.contains("abc123def456"));
     }
 }
