@@ -134,11 +134,7 @@ impl ErrorDetails {
 
 impl Serialize for ErrorDetails {
     fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
-        let mut state = serializer.serialize_struct("ErrorDetails", 3)?;
-
-        state.serialize_field("message", &self.message)?;
-
-        // Sanitize context keys
+        // Sanitize context keys (allowlist)
         const SAFE_KEYS: &[&str] = &[
             "table_name",
             "field_name",
@@ -159,6 +155,14 @@ impl Serialize for ErrorDetails {
             .iter()
             .filter(|(k, _)| SAFE_KEYS.contains(&k.as_str()))
             .collect();
+
+        // Compute actual field count after filtering
+        let field_count = 1
+            + usize::from(!safe_context.is_empty())
+            + usize::from(!self.sources.is_empty());
+        let mut state = serializer.serialize_struct("ErrorDetails", field_count)?;
+
+        state.serialize_field("message", &self.message)?;
 
         if !safe_context.is_empty() {
             state.serialize_field("context", &safe_context)?;
