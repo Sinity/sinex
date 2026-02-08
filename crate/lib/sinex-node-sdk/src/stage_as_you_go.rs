@@ -11,7 +11,7 @@ use sinex_primitives::Id;
 use sinex_primitives::JsonValue;
 use sinex_primitives::Ulid;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc;
@@ -153,29 +153,20 @@ mod tests {
 
 struct ReconciliationTask {
     shutdown: watch::Sender<bool>,
-    join_handle: StdMutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl ReconciliationTask {
-    fn new(shutdown: watch::Sender<bool>, handle: tokio::task::JoinHandle<()>) -> Self {
-        Self {
-            shutdown,
-            join_handle: StdMutex::new(Some(handle)),
-        }
+    fn new(shutdown: watch::Sender<bool>, _handle: tokio::task::JoinHandle<()>) -> Self {
+        Self { shutdown }
     }
 }
 
 impl Drop for ReconciliationTask {
     fn drop(&mut self) {
+        // Signal graceful shutdown — the task checks this via select! and exits
+        // on its next loop iteration. We intentionally do NOT abort() here because
+        // that would interrupt in-flight reconciliation (database operations).
         let _ = self.shutdown.send(true);
-        if let Some(handle) = self
-            .join_handle
-            .lock()
-            .ok()
-            .and_then(|mut guard| guard.take())
-        {
-            handle.abort();
-        }
     }
 }
 
