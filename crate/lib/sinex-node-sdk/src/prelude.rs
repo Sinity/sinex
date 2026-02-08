@@ -17,7 +17,7 @@ pub use crate::{Checkpoint, CheckpointManager, CheckpointState};
 #[cfg(feature = "messaging")]
 pub use crate::{Node, TimeHorizon};
 #[cfg(feature = "messaging")]
-pub use crate::{NodeCapabilities, NodeType, ScanArgs, ScanEstimate, ScanReport};
+pub use crate::{NodeCapabilities, NodeType, RunnerLifecycle, ScanArgs, ScanEstimate, ScanReport};
 
 // Configuration and coordination
 pub use crate::{AutomatonConfig, EventSourceConfig, NodeConfig};

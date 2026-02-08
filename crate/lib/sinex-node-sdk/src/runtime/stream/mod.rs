@@ -404,9 +404,46 @@ impl Default for ScanEstimate {
     }
 }
 
+/// Lifecycle state of a [`NodeRunner`].
+///
+/// Guards against re-entrant calls to `initialize`, `run_service`/`run_scan`,
+/// and `shutdown`. State transitions are strictly forward-only:
+///
+/// ```text
+/// Created ──► Initializing ──► Initialized ──► Running ──► ShutDown
+///                                                  │
+///                                                  └──► ShutDown (via shutdown())
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunnerLifecycle {
+    /// Freshly constructed, not yet initialized.
+    Created,
+    /// `initialize_with_transport` is executing.
+    Initializing,
+    /// Initialization complete; ready for `run_service` / `run_scan`.
+    Initialized,
+    /// `run_service` or `run_scan` is executing.
+    Running,
+    /// `shutdown` has completed (or was never initialized).
+    ShutDown,
+}
+
+impl std::fmt::Display for RunnerLifecycle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Created => write!(f, "Created"),
+            Self::Initializing => write!(f, "Initializing"),
+            Self::Initialized => write!(f, "Initialized"),
+            Self::Running => write!(f, "Running"),
+            Self::ShutDown => write!(f, "ShutDown"),
+        }
+    }
+}
+
 /// Unified runner for nodes
 pub struct NodeRunner<T: Node> {
     node: T,
+    lifecycle: RunnerLifecycle,
     handles: Option<NodeHandles>,
     service_info: Option<ServiceInfo>,
     raw_config: Option<HashMap<String, serde_json::Value>>,
@@ -431,6 +468,7 @@ impl<T: Node + 'static> NodeRunner<T> {
     pub fn new(node: T) -> Self {
         Self {
             node,
+            lifecycle: RunnerLifecycle::Created,
             handles: None,
             service_info: None,
             raw_config: None,
@@ -443,6 +481,11 @@ impl<T: Node + 'static> NodeRunner<T> {
             processing_model: ProcessingModel::StatelessWorker,
             leader_state: None,
         }
+    }
+
+    /// Returns the current lifecycle state of this runner.
+    pub fn lifecycle(&self) -> RunnerLifecycle {
+        self.lifecycle
     }
 
     /// Reconstruct the current runtime state if the runner has been initialized
@@ -470,6 +513,24 @@ impl<T: Node + 'static> NodeRunner<T> {
         work_dir: std::path::PathBuf,
         dry_run: bool,
     ) -> NodeResult<()> {
+        // Re-entrancy guard: only allow initialization from Created state
+        match self.lifecycle {
+            RunnerLifecycle::Created => {}
+            RunnerLifecycle::Initializing => {
+                return Err(SinexError::lifecycle(
+                    "Node is already being initialized (concurrent initialize call detected)"
+                        .to_string(),
+                ));
+            }
+            RunnerLifecycle::Initialized | RunnerLifecycle::Running | RunnerLifecycle::ShutDown => {
+                return Err(SinexError::lifecycle(format!(
+                    "Cannot initialize node: runner is in '{}' state (expected 'Created')",
+                    self.lifecycle,
+                )));
+            }
+        }
+        self.lifecycle = RunnerLifecycle::Initializing;
+
         // DATABASE_URL is optional - processors that need it will call
         // require_db_pool() which provides a clear error message.
 
@@ -625,7 +686,10 @@ impl<T: Node + 'static> NodeRunner<T> {
             work_dir_utf8.clone(),
         );
 
-        self.node.initialize(init_context).await?;
+        if let Err(e) = self.node.initialize(init_context).await {
+            self.lifecycle = RunnerLifecycle::Created;
+            return Err(e);
+        }
 
         self.handles = Some(handles);
         self.service_info = Some(service_info);
@@ -639,6 +703,8 @@ impl<T: Node + 'static> NodeRunner<T> {
             event_receiver,
             processor_shutdown_receiver,
         ));
+
+        self.lifecycle = RunnerLifecycle::Initialized;
 
         info!(
             service = %service_name,
@@ -658,8 +724,13 @@ impl<T: Node + 'static> NodeRunner<T> {
         until: TimeHorizon,
         args: ScanArgs,
     ) -> NodeResult<ScanReport> {
-        if self.handles.is_none() {
-            return Err(SinexError::lifecycle("Node not initialized".to_string()));
+        match self.lifecycle {
+            RunnerLifecycle::Initialized | RunnerLifecycle::Running => {}
+            other => {
+                return Err(SinexError::lifecycle(format!(
+                    "Cannot run scan: runner is in '{other}' state (expected 'Initialized' or 'Running')",
+                )));
+            }
         }
 
         info!(
@@ -697,9 +768,20 @@ impl<T: Node + 'static> NodeRunner<T> {
 
     /// Run in service mode with startup sequence
     pub async fn run_service(&mut self) -> NodeResult<()> {
-        if self.handles.is_none() {
-            return Err(SinexError::lifecycle("Node not initialized".to_string()));
+        match self.lifecycle {
+            RunnerLifecycle::Initialized => {}
+            RunnerLifecycle::Running => {
+                return Err(SinexError::lifecycle(
+                    "Node is already running (concurrent run_service call detected)".to_string(),
+                ));
+            }
+            other => {
+                return Err(SinexError::lifecycle(format!(
+                    "Cannot run service: runner is in '{other}' state (expected 'Initialized')",
+                )));
+            }
         }
+        self.lifecycle = RunnerLifecycle::Running;
 
         let node_type = self.node.node_type();
         info!(
@@ -1287,8 +1369,25 @@ impl<T: Node + 'static> NodeRunner<T> {
         self.node.estimate_scan_scope(from, until, args).await
     }
 
-    /// Graceful shutdown
+    /// Graceful shutdown.
+    ///
+    /// Idempotent: safe to call multiple times or on a never-initialized runner.
     pub async fn shutdown(&mut self) -> NodeResult<()> {
+        match self.lifecycle {
+            RunnerLifecycle::ShutDown => {
+                debug!("shutdown() called on already shut-down runner; no-op");
+                return Ok(());
+            }
+            RunnerLifecycle::Created => {
+                debug!("shutdown() called on never-initialized runner; no-op");
+                self.lifecycle = RunnerLifecycle::ShutDown;
+                return Ok(());
+            }
+            // Initializing, Initialized, Running — all proceed with shutdown
+            _ => {}
+        }
+        self.lifecycle = RunnerLifecycle::ShutDown;
+
         info!("Shutting down stream processor runner");
 
         // Abort and await schema listener task if running
