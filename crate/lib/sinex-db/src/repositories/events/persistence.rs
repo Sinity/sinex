@@ -932,15 +932,64 @@ impl<'a> EventRepository<'a> {
         &self,
         batch: &[StreamBatchRow],
     ) -> DbResult<StreamBatchInsertResult> {
-        // Warning: This batch method bypasses `ensure_no_synthesis_cycles`.
-        // While efficient, it risks introducing circular synthesis dependencies.
-        // Consider implementing a batched cycle check or ensuring upstream validation.
-        // See: crate::lib::sinex-db::docs::event_persistence.md
+        use crate::query_helpers::set_repeatable_read;
 
         if batch.is_empty() {
             return Ok(StreamBatchInsertResult::default());
         }
 
+        // Check whether any rows carry synthesis provenance (source_event_ids).
+        // Material-only batches (the common case for ingestors) skip cycle
+        // detection entirely for maximum throughput.
+        let has_synthesis = batch.iter().any(|row| {
+            row.source_event_ids
+                .as_ref()
+                .is_some_and(|ids| !ids.is_empty())
+        });
+
+        if has_synthesis {
+            // Wrap in a REPEATABLE READ transaction so the cycle check and
+            // insert see a consistent snapshot (same pattern as single-event insert).
+            let mut tx = self
+                .pool
+                .begin()
+                .await
+                .map_err(|e| db_error(e, "begin stream batch transaction"))?;
+            set_repeatable_read(&mut tx).await?;
+
+            for row in batch {
+                if let Some(ref source_ids) = row.source_event_ids {
+                    if !source_ids.is_empty() {
+                        let source_ulids: Vec<Ulid> =
+                            source_ids.iter().map(|uuid| Ulid::from(*uuid)).collect();
+                        let event_id: Id<Event<JsonValue>> = Id::from(row.id);
+                        ensure_no_synthesis_cycles(&mut *tx, &event_id, &source_ulids).await?;
+                    }
+                }
+            }
+
+            let result = Self::execute_batch_insert(&mut *tx, batch).await?;
+            tx.commit()
+                .await
+                .map_err(|e| db_error(e, "commit stream batch"))?;
+            Ok(result)
+        } else {
+            // Fast path: no synthesis provenance, no cycle detection needed.
+            Self::execute_batch_insert(self.pool, batch).await
+        }
+    }
+
+    /// Build and execute the batch INSERT query against the given executor.
+    ///
+    /// Extracted so both the transactional (synthesis) and direct (material)
+    /// paths can share the same query construction logic.
+    async fn execute_batch_insert<'e, E>(
+        executor: E,
+        batch: &[StreamBatchRow],
+    ) -> DbResult<StreamBatchInsertResult>
+    where
+        E: Executor<'e, Database = Postgres>,
+    {
         // Build vectors for QueryBuilder
         let mut ids = Vec::with_capacity(batch.len());
         let mut sources = Vec::with_capacity(batch.len());
@@ -1016,16 +1065,17 @@ impl<'a> EventRepository<'a> {
 
         builder.push(" ON CONFLICT (id) DO NOTHING RETURNING id::uuid");
 
-        let rows: Vec<(Uuid,)> = builder
-            .build_query_as()
-            .fetch_all(self.pool)
-            .await
-            .map_err(|e| {
-                db_error(
-                    e,
-                    &format!("Failed to insert stream batch of {} events", batch.len()),
-                )
-            })?;
+        let rows: Vec<(Uuid,)> =
+            builder
+                .build_query_as()
+                .fetch_all(executor)
+                .await
+                .map_err(|e| {
+                    db_error(
+                        e,
+                        &format!("Failed to insert stream batch of {} events", batch.len()),
+                    )
+                })?;
 
         let inserted_ids: Vec<Ulid> = rows.into_iter().map(|(uuid,)| Ulid::from(uuid)).collect();
 
