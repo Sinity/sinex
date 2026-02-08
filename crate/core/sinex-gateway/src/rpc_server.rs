@@ -1278,27 +1278,27 @@ fn load_rustls_config(
     let key_file = &mut BufReader::new(File::open(key_path)?);
 
     let cert_chain: Vec<CertificateDer<'static>> = certs(cert_file)
-        .map_err(|_| eyre!("Failed to read TLS certificate"))?
+        .map_err(|e| eyre!("Failed to read TLS certificate from {cert_path}: {e}"))?
         .into_iter()
         .map(CertificateDer::from)
         .collect();
 
     let mut keys: Vec<PrivateKeyDer<'static>> = pkcs8_private_keys(key_file)
-        .map_err(|_| eyre!("Failed to read TLS private key (pkcs8)"))?
+        .map_err(|e| eyre!("Failed to read TLS private key (pkcs8) from {key_path}: {e}"))?
         .into_iter()
         .map(|raw| {
             PrivateKeyDer::try_from(raw)
-                .map_err(|_| eyre!("Failed to parse TLS private key (pkcs8): invalid DER"))
+                .map_err(|e| eyre!("Failed to parse TLS private key (pkcs8): {e}"))
         })
         .collect::<Result<_, _>>()?;
     if keys.is_empty() {
         let mut key_file = BufReader::new(File::open(key_path)?);
         keys = rsa_private_keys(&mut key_file)
-            .map_err(|_| eyre!("Failed to read TLS private key (rsa)"))?
+            .map_err(|e| eyre!("Failed to read TLS private key (rsa) from {key_path}: {e}"))?
             .into_iter()
             .map(|raw| {
                 PrivateKeyDer::try_from(raw)
-                    .map_err(|_| eyre!("Failed to parse TLS private key (rsa): invalid DER"))
+                    .map_err(|e| eyre!("Failed to parse TLS private key (rsa): {e}"))
             })
             .collect::<Result<_, _>>()?;
     }
@@ -1311,7 +1311,7 @@ fn load_rustls_config(
     if let Some(ca_path) = client_ca_path {
         let mut ca_reader = BufReader::new(File::open(ca_path)?);
         let client_certs: Vec<CertificateDer<'static>> = certs(&mut ca_reader)
-            .map_err(|_| eyre!("Failed to read client CA bundle"))?
+            .map_err(|e| eyre!("Failed to read client CA bundle from {ca_path}: {e}"))?
             .into_iter()
             .map(CertificateDer::from)
             .collect();
