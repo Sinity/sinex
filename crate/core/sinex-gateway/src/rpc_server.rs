@@ -338,11 +338,12 @@ impl GatewayAuth {
                                         }
                                     }
                                     EventKind::Remove(_) => {
-                                        // File was deleted - disable auth (with warning)
-                                        let mut token_lock = token_clone.blocking_write();
-                                        *token_lock = None;
-                                        // TODO: Consider shutting down after grace period if not recreated (analysis/rpc_server.md Insight 2)
-                                        warn!("RPC token file {:?} deleted - authentication disabled!", path_for_closure);
+                                        // File was deleted — keep last valid token (fail-closed).
+                                        // Do NOT clear the token, as that would disable auth entirely,
+                                        // allowing unauthenticated access. If the file is recreated,
+                                        // the Create/Modify handler will reload it.
+                                        error!("RPC token file {:?} deleted! Keeping last valid token. \
+                                               Re-create the file to update the token.", path_for_closure);
                                     }
                                     _ => {
                                         // Ignore other events (access, metadata changes, etc.)
