@@ -514,48 +514,6 @@ pub struct ServiceMetrics {
     pub shutdown_requested: bool,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::panic;
-    use std::time::Duration;
-    use tokio::time::timeout;
-    use xtask::sandbox::sinex_test;
-
-    #[sinex_test]
-    async fn shutdown_future_notifies_without_polling() -> Result<(), Box<dyn std::error::Error>> {
-        let manager = LifecycleManager::new("test-service".to_string());
-        let mut wait_future = Box::pin(manager.shutdown_future());
-
-        manager.shutdown_flag.store(true, Ordering::Relaxed);
-        manager
-            .shutdown_watch_tx
-            .send(true)
-            .expect("send shutdown signal");
-
-        timeout(Duration::from_millis(10), &mut wait_future)
-            .await
-            .expect("shutdown future should resolve immediately");
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn status_lock_survives_panics() -> Result<(), Box<dyn std::error::Error>> {
-        let manager = LifecycleManager::new("test-service".to_string());
-        let status_handle = manager.status.clone();
-
-        let _ = panic::catch_unwind(panic::AssertUnwindSafe(|| {
-            let _guard = status_handle.lock();
-            panic!("poison status mutex");
-        }));
-
-        assert_eq!(manager.status(), ServiceStatus::Starting);
-        manager.set_status(ServiceStatus::Running);
-        assert_eq!(manager.status(), ServiceStatus::Running);
-        Ok(())
-    }
-}
-
 /// Helper macro for creating a main function with lifecycle management
 #[macro_export]
 macro_rules! node_main {
@@ -660,4 +618,46 @@ macro_rules! node_main {
             result.map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
         }
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::panic;
+    use std::time::Duration;
+    use tokio::time::timeout;
+    use xtask::sandbox::sinex_test;
+
+    #[sinex_test]
+    async fn shutdown_future_notifies_without_polling() -> Result<(), Box<dyn std::error::Error>> {
+        let manager = LifecycleManager::new("test-service".to_string());
+        let mut wait_future = Box::pin(manager.shutdown_future());
+
+        manager.shutdown_flag.store(true, Ordering::Relaxed);
+        manager
+            .shutdown_watch_tx
+            .send(true)
+            .expect("send shutdown signal");
+
+        timeout(Duration::from_millis(10), &mut wait_future)
+            .await
+            .expect("shutdown future should resolve immediately");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn status_lock_survives_panics() -> Result<(), Box<dyn std::error::Error>> {
+        let manager = LifecycleManager::new("test-service".to_string());
+        let status_handle = manager.status.clone();
+
+        let _ = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+            let _guard = status_handle.lock();
+            panic!("poison status mutex");
+        }));
+
+        assert_eq!(manager.status(), ServiceStatus::Starting);
+        manager.set_status(ServiceStatus::Running);
+        assert_eq!(manager.status(), ServiceStatus::Running);
+        Ok(())
+    }
 }

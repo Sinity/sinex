@@ -323,3 +323,203 @@ pub(super) struct HistoryReport {
     pub run_id: i64,
     pub scenarios: Vec<ScenarioHistorySummary>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bench::runner::RunResult;
+    use tempfile::TempDir;
+
+    fn test_db() -> (TempDir, HistoryDb) {
+        let dir = TempDir::new().unwrap();
+        let db = HistoryDb::open(&dir.path().join("bench.db")).unwrap();
+        (dir, db)
+    }
+
+    fn sample_results() -> Vec<ScenarioResult> {
+        vec![ScenarioResult {
+            scenario: Scenario { threads: 12 },
+            runs: vec![
+                RunResult {
+                    success: true,
+                    elapsed_ms: 100.0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                },
+                RunResult {
+                    success: true,
+                    elapsed_ms: 105.0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                },
+                RunResult {
+                    success: true,
+                    elapsed_ms: 95.0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                },
+            ],
+            stats: RunStats::from_samples(&[100.0, 105.0, 95.0]),
+        }]
+    }
+
+    #[test]
+    fn test_open_creates_schema() {
+        let (_dir, _db) = test_db();
+        // If we get here without error, schema was created
+    }
+
+    #[test]
+    fn test_open_idempotent() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("bench.db");
+        let _db1 = HistoryDb::open(&path).unwrap();
+        let _db2 = HistoryDb::open(&path).unwrap();
+    }
+
+    #[test]
+    fn test_save_run() {
+        let (_dir, db) = test_db();
+        let results = sample_results();
+        let run_id = db
+            .save_run(
+                "sweeps", "fast", "abc123", "main", false, "1.75.0", &results,
+            )
+            .unwrap();
+        assert!(run_id > 0);
+    }
+
+    #[test]
+    fn test_get_trend_empty() {
+        let (_dir, db) = test_db();
+        let scenario = Scenario { threads: 12 };
+        let trend = db.get_trend(&scenario, 5).unwrap();
+        assert!(trend.is_empty());
+    }
+
+    #[test]
+    fn test_get_trend_after_save() {
+        let (_dir, db) = test_db();
+        let results = sample_results();
+        db.save_run(
+            "sweeps", "fast", "abc123", "main", false, "1.75.0", &results,
+        )
+        .unwrap();
+
+        let scenario = Scenario { threads: 12 };
+        let trend = db.get_trend(&scenario, 5).unwrap();
+        assert_eq!(trend.len(), 1);
+        assert!((trend[0].median_ms - 100.0).abs() < 1.0);
+        assert_eq!(trend[0].git_sha, "abc123");
+    }
+
+    #[test]
+    fn test_get_trend_respects_limit() {
+        let (_dir, db) = test_db();
+        let results = sample_results();
+        for i in 0..10 {
+            db.save_run(
+                "sweeps",
+                "fast",
+                &format!("sha{i}"),
+                "main",
+                false,
+                "1.75.0",
+                &results,
+            )
+            .unwrap();
+        }
+
+        let scenario = Scenario { threads: 12 };
+        let trend = db.get_trend(&scenario, 3).unwrap();
+        assert_eq!(trend.len(), 3);
+    }
+
+    #[test]
+    fn test_get_baseline() {
+        let (_dir, db) = test_db();
+        let results = sample_results();
+        db.save_run(
+            "sweeps", "fast", "abc123", "main", false, "1.75.0", &results,
+        )
+        .unwrap();
+
+        let scenario = Scenario { threads: 12 };
+        let baseline = db.get_baseline(&scenario, None).unwrap();
+        assert!(baseline.is_some());
+        let stats = baseline.unwrap();
+        assert!((stats.median_ms - 100.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_get_baseline_excludes_run_id() {
+        let (_dir, db) = test_db();
+        let results = sample_results();
+        let run_id = db
+            .save_run(
+                "sweeps", "fast", "abc123", "main", false, "1.75.0", &results,
+            )
+            .unwrap();
+
+        let scenario = Scenario { threads: 12 };
+        let baseline = db.get_baseline(&scenario, Some(run_id)).unwrap();
+        // Only one run, excluding it should give None
+        assert!(baseline.is_none());
+    }
+
+    #[test]
+    fn test_summarize_scenarios() {
+        let (_dir, db) = test_db();
+        let results = sample_results();
+        let run_id = db
+            .save_run(
+                "sweeps", "fast", "abc123", "main", false, "1.75.0", &results,
+            )
+            .unwrap();
+
+        let summaries = db
+            .summarize_scenarios(&results, Some(run_id), 10.0, 5)
+            .unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].scenario_key, "t=12");
+    }
+
+    #[test]
+    fn test_multiple_scenarios() {
+        let (_dir, db) = test_db();
+        let results = vec![
+            ScenarioResult {
+                scenario: Scenario { threads: 12 },
+                runs: vec![RunResult {
+                    success: true,
+                    elapsed_ms: 100.0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                }],
+                stats: RunStats::from_samples(&[100.0]),
+            },
+            ScenarioResult {
+                scenario: Scenario { threads: 24 },
+                runs: vec![RunResult {
+                    success: true,
+                    elapsed_ms: 80.0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                }],
+                stats: RunStats::from_samples(&[80.0]),
+            },
+        ];
+
+        db.save_run(
+            "sweeps", "fast", "abc123", "main", false, "1.75.0", &results,
+        )
+        .unwrap();
+
+        let trend_12 = db.get_trend(&Scenario { threads: 12 }, 5).unwrap();
+        let trend_24 = db.get_trend(&Scenario { threads: 24 }, 5).unwrap();
+        assert_eq!(trend_12.len(), 1);
+        assert_eq!(trend_24.len(), 1);
+        assert!((trend_12[0].median_ms - 100.0).abs() < 1.0);
+        assert!((trend_24[0].median_ms - 80.0).abs() < 1.0);
+    }
+}

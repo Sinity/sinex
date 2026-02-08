@@ -111,9 +111,10 @@ pub mod path_utils {
         if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
             let sanitized_name = sinex_primitives::sanitize_filename_component(filename)
                 .unwrap_or_else(|_| filename.to_string());
-            path.parent()
-                .map(|parent| parent.join(&sanitized_name).to_string_lossy().to_string())
-                .unwrap_or_else(|| sanitized_name)
+            path.parent().map_or_else(
+                || sanitized_name.clone(),
+                |parent| parent.join(&sanitized_name).to_string_lossy().to_string(),
+            )
         } else {
             path_str.to_string()
         }

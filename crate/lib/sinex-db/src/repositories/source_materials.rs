@@ -67,6 +67,7 @@ impl SourceMaterial {
             staged_on_host: None,
         }
     }
+    #[allow(clippy::expect_used)] // invariant: metadata set to object on line above
     fn metadata_object_mut(&mut self) -> &mut JsonMap<String, JsonValue> {
         if !self.metadata.is_object() {
             self.metadata = json!({});
@@ -79,7 +80,7 @@ impl SourceMaterial {
         match extra {
             JsonValue::Object(map) => {
                 let target = self.metadata_object_mut();
-                for (key, value) in map.into_iter() {
+                for (key, value) in map {
                     target.insert(key, value);
                 }
             }
@@ -283,7 +284,7 @@ impl<'a> Repository<'a> for SourceMaterialRepository<'a> {
 impl<'a> EnhancedRepository<'a> for SourceMaterialRepository<'a> {
     type Table = SourceMaterialRegistry;
 }
-impl<'a> SourceMaterialRepository<'a> {
+impl SourceMaterialRepository<'_> {
     /// Register a new source material
     pub async fn register_material(
         &self,
@@ -301,7 +302,7 @@ impl<'a> SourceMaterialRepository<'a> {
             RetryConfig::default(),
             IdempotentTransaction::new(),
             move |tx| {
-                let id = id.clone();
+                let id = id;
                 let material = material.clone();
                 let start_time_offset = material.start_time;
                 let end_time_offset = material.end_time;
@@ -629,7 +630,7 @@ impl<'a> SourceMaterialRepository<'a> {
         // Atomic upsert: INSERT with ON CONFLICT DO UPDATE
         // This avoids serialization failures from REPEATABLE READ isolation
         // NOTE: source_identifier is the natural key (unique constraint), not id
-        let upsert_sql = r#"
+        let upsert_sql = r"
             INSERT INTO raw.source_material_registry (
                 id,
                 material_kind,
@@ -676,7 +677,7 @@ impl<'a> SourceMaterialRepository<'a> {
                 staged_by,
                 staged_on_host,
                 optional_blob_id::uuid as optional_blob_id
-        "#;
+        ";
 
         sqlx::query_as::<_, SourceMaterialRecord>(upsert_sql)
             .bind(ulid_to_uuid(*id.as_ulid()))
@@ -729,9 +730,11 @@ impl<'a> SourceMaterialRepository<'a> {
             map.insert(
                 "failed_at".to_string(),
                 JsonValue::String(
+                    #[allow(clippy::expect_used)]
+                    // RFC3339 formatting can't fail on valid timestamps
                     Timestamp::now()
                         .format(&format_description::well_known::Rfc3339)
-                        .unwrap(),
+                        .expect("RFC3339 format always valid for timestamps"),
                 ),
             );
             JsonValue::Object(map)

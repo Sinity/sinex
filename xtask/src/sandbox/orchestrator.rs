@@ -364,7 +364,7 @@ impl DevOrchestrator {
                 Some(event) = rx.recv() => {
                     match event {
                         WatchEvent::FileChanged(path) => {
-                            println!("[watch] Change detected: {path:?}");
+                            println!("[watch] Change detected: {}", path.display());
                             println!("[watch] Rebuilding...");
                             self.restart().await?;
                         }

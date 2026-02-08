@@ -92,8 +92,7 @@ impl BlobManager {
         let mut material = if blob
             .mime_type
             .as_deref()
-            .map(|mime| mime.starts_with("text/"))
-            .unwrap_or(false)
+            .is_some_and(|mime| mime.starts_with("text/"))
         {
             SourceMaterialRegistration::blob_text(filename.clone())
         } else {
@@ -236,6 +235,9 @@ impl BlobManager {
             })?;
         info!("Added to git-annex with key: {}", annex_key.key);
 
+        // Verify stored content matches original hash to detect write corruption
+        self.verify_post_write(&annex_key.key, &blake3_hash).await?;
+
         // Create blob record in database
         let filename =
             original_filename.unwrap_or_else(|| validated_path.file_name().unwrap_or("unknown"));
@@ -343,6 +345,9 @@ impl BlobManager {
                 SinexError::processing(format!("Failed to add buffered upload to git-annex: {e}"))
             })?;
         info!("Added to git-annex with key: {}", annex_key.key);
+
+        // Verify stored content matches original hash to detect write corruption
+        self.verify_post_write(&annex_key.key, &blake3_hash).await?;
 
         if let Err(e) = tokio::fs::remove_file(&temp_file_path).await {
             warn!(
@@ -591,7 +596,28 @@ impl BlobManager {
             .await
     }
 
-    /// Find content path in repository for annex key
+    /// Verify that stored blob content matches the expected BLAKE3 hash.
+    ///
+    /// Called after `git-annex add` to detect silent corruption during write.
+    /// Re-reads the content from the annex backend and compares the hash
+    /// against the one computed from the original input.
+    async fn verify_post_write(&self, annex_key: &str, expected_blake3: &str) -> NodeResult<()> {
+        let path = self.find_symlink_path(annex_key).await?;
+        let stored_content = tokio::fs::read(&path).await.map_err(|e| {
+            SinexError::blob_storage(format!(
+                "Post-write verification: failed to re-read {annex_key}: {e}"
+            ))
+        })?;
+        let computed = blake3::hash(&stored_content).to_hex();
+        if computed.as_str() != expected_blake3 {
+            return Err(SinexError::blob_storage(format!(
+                "Post-write verification failed for {annex_key}: expected BLAKE3 {expected_blake3}, got {computed}"
+            )));
+        }
+        debug!(annex_key, "Post-write BLAKE3 verification passed");
+        Ok(())
+    }
+
     /// Find content path in repository for annex key
     async fn find_symlink_path(&self, annex_key: &str) -> NodeResult<Utf8PathBuf> {
         let output = AsyncCommand::new("git-annex")

@@ -88,8 +88,7 @@ impl SelfObserverConfig {
     /// Create configuration from environment variables
     pub fn from_env(component: &str) -> Self {
         let enabled = std::env::var("SINEX_SELF_OBSERVATION_ENABLED")
-            .map(|v| v.to_lowercase() != "false" && v != "0")
-            .unwrap_or(true);
+            .map_or(true, |v| v.to_lowercase() != "false" && v != "0");
 
         let min_interval_secs = std::env::var("SINEX_SELF_OBSERVATION_INTERVAL_SECS")
             .ok()

@@ -221,10 +221,10 @@ fn test_load_root_ca_malformed_certificate() {
     let result = load_root_ca(&ca_path);
     // This may succeed with empty store or fail depending on rustls_pemfile behavior
     // The important thing is it doesn't panic
-    match result {
-        Ok(store) => assert!(store.is_empty()),
-        Err(_) => {} // Also acceptable
+    if let Ok(store) = result {
+        assert!(store.is_empty());
     }
+    // Err is also acceptable — the point is it doesn't panic
 }
 
 #[test]
@@ -338,6 +338,96 @@ fn test_load_token_file_permission_denied() {
         // This is acceptable in test environments
     }
 }
+
+// ============================================================================
+// Happy Path Tests (with real generated certificates)
+// ============================================================================
+
+#[test]
+fn test_load_root_ca_with_valid_cert() {
+    use xtask::tls::{generate_dev_certs, CertConfig};
+
+    let dir = TestDir::new();
+    let config = CertConfig {
+        output_dir: dir.path().to_path_buf(),
+        san: vec!["localhost".to_string()],
+        ca_name: "Auth Test CA".to_string(),
+        validity_days: 30,
+        force: false,
+    };
+    generate_dev_certs(&config).unwrap();
+
+    let store = load_root_ca(&dir.path().join("ca.pem")).unwrap();
+    assert!(
+        !store.is_empty(),
+        "Root store should contain the CA certificate"
+    );
+}
+
+#[test]
+fn test_load_client_cert_with_valid_cert_and_key() {
+    use xtask::tls::{generate_dev_certs, CertConfig};
+
+    let dir = TestDir::new();
+    let config = CertConfig {
+        output_dir: dir.path().to_path_buf(),
+        san: vec!["localhost".to_string()],
+        ca_name: "Client Auth Test CA".to_string(),
+        validity_days: 30,
+        force: false,
+    };
+    generate_dev_certs(&config).unwrap();
+
+    let (certs, _key) = load_client_cert(
+        &dir.path().join("client.pem"),
+        &dir.path().join("client-key.pem"),
+    )
+    .unwrap();
+
+    assert!(
+        !certs.is_empty(),
+        "Should load at least one client certificate"
+    );
+}
+
+#[test]
+fn test_load_root_ca_then_load_client_cert_from_same_ca() {
+    use xtask::tls::{generate_dev_certs, CertConfig};
+
+    let dir = TestDir::new();
+    let config = CertConfig {
+        output_dir: dir.path().to_path_buf(),
+        san: vec!["localhost".to_string()],
+        ca_name: "Full mTLS Test CA".to_string(),
+        validity_days: 30,
+        force: false,
+    };
+    generate_dev_certs(&config).unwrap();
+
+    // Load CA
+    let store = load_root_ca(&dir.path().join("ca.pem")).unwrap();
+    assert!(!store.is_empty());
+
+    // Load client cert signed by that CA
+    let (certs, _key) = load_client_cert(
+        &dir.path().join("client.pem"),
+        &dir.path().join("client-key.pem"),
+    )
+    .unwrap();
+    assert!(!certs.is_empty());
+
+    // Load server cert too (different cert, same CA)
+    let (server_certs, _server_key) = load_client_cert(
+        &dir.path().join("server.pem"),
+        &dir.path().join("server-key.pem"),
+    )
+    .unwrap();
+    assert!(!server_certs.is_empty());
+}
+
+// ============================================================================
+// Unix Permission Tests
+// ============================================================================
 
 #[cfg(unix)]
 #[test]

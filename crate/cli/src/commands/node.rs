@@ -89,24 +89,24 @@ impl NodeCommands {
             }
             Self::Drain { node, reason } => {
                 with_spinner_result(
-                    format!("Draining node {}...", node),
-                    format!("Node {} drained", node),
+                    format!("Draining node {node}..."),
+                    format!("Node {node} drained"),
                     client.drain_node(node, reason.as_deref()),
                 )
                 .await?;
             }
             Self::Resume { node } => {
                 with_spinner_result(
-                    format!("Resuming node {}...", node),
-                    format!("Node {} resumed", node),
+                    format!("Resuming node {node}..."),
+                    format!("Node {node} resumed"),
                     client.resume_node(node),
                 )
                 .await?;
             }
             Self::SetHorizon { node, horizon } => {
                 with_spinner_result(
-                    format!("Setting horizon for {}...", node),
-                    format!("Node {} horizon set to {}", node, horizon),
+                    format!("Setting horizon for {node}..."),
+                    format!("Node {node} horizon set to {horizon}"),
                     client.set_node_horizon(node, horizon),
                 )
                 .await?;
@@ -126,7 +126,7 @@ fn format_node_status_table(response: &InstanceHealthResponse) -> String {
     ));
     output.push_str(&format!("  Type: {}\n", response.instance.node_type));
     if let Some(ref hostname) = response.instance.hostname {
-        output.push_str(&format!("  Hostname: {}\n", hostname));
+        output.push_str(&format!("  Hostname: {hostname}\n"));
     }
     output.push_str(&format!(
         "  Status: {}\n",
@@ -137,7 +137,7 @@ fn format_node_status_table(response: &InstanceHealthResponse) -> String {
         }
     ));
     if let Some(ref heartbeat) = response.instance.last_heartbeat {
-        output.push_str(&format!("  Last Heartbeat: {}\n", heartbeat));
+        output.push_str(&format!("  Last Heartbeat: {heartbeat}\n"));
     }
     output.push_str(&format!(
         "  Leader: {}\n",
@@ -148,7 +148,7 @@ fn format_node_status_table(response: &InstanceHealthResponse) -> String {
         }
     ));
     if let Some(ref err) = response.last_error {
-        output.push_str(&format!("  Last Error: {}\n", err));
+        output.push_str(&format!("  Last Error: {err}\n"));
     }
     output
 }

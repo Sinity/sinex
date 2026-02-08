@@ -96,9 +96,7 @@ impl NativeMessagingConfig {
         }
 
         // TODO: Implement capability-based access control (analysis/native_messaging.md)
-        let incoming_id = if let Some(id) = message.extension_id.as_deref() {
-            id
-        } else {
+        let Some(incoming_id) = message.extension_id.as_deref() else {
             warn!(
                 event = "native_messaging.auth",
                 reason = "missing_extension_id",
@@ -122,9 +120,7 @@ impl NativeMessagingConfig {
             })?;
 
         if let Some(expected_secret) = &trusted.secret {
-            let provided = if let Some(secret) = message.extension_secret.as_deref() {
-                secret
-            } else {
+            let Some(provided) = message.extension_secret.as_deref() else {
                 warn!(
                     event = "native_messaging.auth",
                     extension_id = incoming_id,
@@ -158,9 +154,7 @@ impl NativeMessagingConfig {
             return Ok(());
         }
 
-        let host = if let Some(host) = message.host.as_deref() {
-            host
-        } else {
+        let Some(host) = message.host.as_deref() else {
             warn!(
                 event = "native_messaging.auth",
                 reason = "missing_host",
@@ -188,14 +182,11 @@ impl NativeMessagingConfig {
     }
 
     fn enforce_protocol_version(&self, message: &NativeMessage) -> Result<()> {
-        let expected = match self.expected_protocol_version.as_deref() {
-            Some(version) => version,
-            None => return Ok(()),
+        let Some(expected) = self.expected_protocol_version.as_deref() else {
+            return Ok(());
         };
 
-        let provided = if let Some(version) = message.protocol_version.as_deref() {
-            version
-        } else {
+        let Some(provided) = message.protocol_version.as_deref() else {
             warn!(
                 event = "native_messaging.auth",
                 expected_version = expected,

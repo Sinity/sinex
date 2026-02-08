@@ -112,8 +112,8 @@ impl NatsArgs {
     fn to_config(&self) -> sinex_primitives::nats::NatsConnectionConfig {
         let mut config = sinex_primitives::nats::NatsConnectionConfig::from_env();
 
-        config.url = self.url.clone();
-        config.name = self.name.clone();
+        config.url.clone_from(&self.url);
+        config.name.clone_from(&self.name);
 
         // Auto-detect TLS from URL scheme if not explicitly set
         let url_requires_tls =
@@ -554,7 +554,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
     async fn handle_scan_command(
         &self,
         node: T,
@@ -674,19 +674,13 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
             println!(
                 "  Time range: {} to {}",
                 start
-                    .format(
-                        &time::format_description::parse(
-                            "[year]-[month]-[day] [hour]:[minute]:[second]"
-                        )
-                        .unwrap()
-                    )
-                    .unwrap_or_default(),
-                end.format(
-                    &time::format_description::parse(
+                    .format(time::macros::format_description!(
                         "[year]-[month]-[day] [hour]:[minute]:[second]"
-                    )
-                    .unwrap()
-                )
+                    ))
+                    .unwrap_or_default(),
+                end.format(time::macros::format_description!(
+                    "[year]-[month]-[day] [hour]:[minute]:[second]"
+                ))
                 .unwrap_or_default()
             );
         }
@@ -742,12 +736,9 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
                         "  Last updated: {}",
                         state
                             .last_updated
-                            .format(
-                                &time::format_description::parse(
-                                    "[year]-[month]-[day] [hour]:[minute]:[second]"
-                                )
-                                .unwrap()
-                            )
+                            .format(time::macros::format_description!(
+                                "[year]-[month]-[day] [hour]:[minute]:[second]"
+                            ))
                             .unwrap_or_default()
                     );
                     if let Some(total) = state.total_items {
@@ -762,12 +753,9 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
                                 "    - {}: {}",
                                 activity
                                     .timestamp
-                                    .format(
-                                        &time::format_description::parse(
-                                            "[hour]:[minute]:[second]"
-                                        )
-                                        .unwrap()
-                                    )
+                                    .format(time::macros::format_description!(
+                                        "[hour]:[minute]:[second]"
+                                    ))
                                     .unwrap_or_default(),
                                 activity.description
                             );
@@ -798,24 +786,18 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
                             "    Started: {}",
                             entry
                                 .started_at
-                                .format(
-                                    &time::format_description::parse(
-                                        "[year]-[month]-[day] [hour]:[minute]:[second]"
-                                    )
-                                    .unwrap()
-                                )
+                                .format(time::macros::format_description!(
+                                    "[year]-[month]-[day] [hour]:[minute]:[second]"
+                                ))
                                 .unwrap_or_default()
                         );
                         if let Some(completed) = entry.completed_at {
                             println!(
                                 "    Completed: {}",
                                 completed
-                                    .format(
-                                        &time::format_description::parse(
-                                            "[year]-[month]-[day] [hour]:[minute]:[second]"
-                                        )
-                                        .unwrap()
-                                    )
+                                    .format(time::macros::format_description!(
+                                        "[year]-[month]-[day] [hour]:[minute]:[second]"
+                                    ))
                                     .unwrap_or_default()
                             );
                         }
@@ -841,22 +823,16 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
                         analysis
                             .time_range
                             .0
-                            .format(
-                                &time::format_description::parse(
-                                    "[year]-[month]-[day] [hour]:[minute]:[second]"
-                                )
-                                .unwrap()
-                            )
+                            .format(time::macros::format_description!(
+                                "[year]-[month]-[day] [hour]:[minute]:[second]"
+                            ))
                             .unwrap_or_default(),
                         analysis
                             .time_range
                             .1
-                            .format(
-                                &time::format_description::parse(
-                                    "[year]-[month]-[day] [hour]:[minute]:[second]"
-                                )
-                                .unwrap()
-                            )
+                            .format(time::macros::format_description!(
+                                "[year]-[month]-[day] [hour]:[minute]:[second]"
+                            ))
                             .unwrap_or_default()
                     );
                     println!("  Source total: {}", analysis.source_total);
@@ -917,6 +893,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
             .unwrap_or_else(|| "sinex-node".to_string())
     }
 
+    #[allow(clippy::panic)] // Internal invariant: environment-generated paths must validate
     fn resolve_work_dir(args: &NodeCli) -> SanitizedPath {
         args.work_dir.clone().unwrap_or_else(|| {
             let env = sinex_primitives::environment();

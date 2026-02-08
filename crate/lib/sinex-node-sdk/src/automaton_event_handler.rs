@@ -126,7 +126,7 @@ mod tests {
 
             let provisional = ProvisionalEvent {
                 event_id,
-                source: EventSource::new(format!("test{}", i)),
+                source: EventSource::new(format!("test{i}")),
                 event_type: EventType::new("test.event"),
                 payload: serde_json::json!({"index": i}),
                 ts_orig: sinex_primitives::temporal::now(),

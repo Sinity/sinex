@@ -13,7 +13,7 @@ pub fn format_list<T: Serialize>(
 ) -> Result<()> {
     if items.is_empty() {
         match format {
-            OutputFormat::Table => println!("{}", empty_msg),
+            OutputFormat::Table => println!("{empty_msg}"),
             OutputFormat::Json => println!("[]"),
             OutputFormat::Yaml => println!("[]"),
         }
@@ -53,7 +53,7 @@ pub fn format_single<T: Serialize>(
 /// Standard empty message formatting
 pub fn empty_result(format: &OutputFormat, message: &str) {
     match format {
-        OutputFormat::Table => println!("{}", message),
+        OutputFormat::Table => println!("{message}"),
         OutputFormat::Json => println!("null"),
         OutputFormat::Yaml => println!("null"),
     }
@@ -159,7 +159,7 @@ impl<T: Serialize> CommandOutput<T> {
             }
             Self::Success { message } => match format {
                 OutputFormat::Table => {
-                    println!("{}", message);
+                    println!("{message}");
                     Ok(())
                 }
                 OutputFormat::Json => {

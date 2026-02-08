@@ -59,13 +59,10 @@ pub async fn handle_shadow_create(
         .map_err(|e| eyre!("Failed to get events stream: {}", e))?;
 
     // Require explicit subject filter - no default to prevent unintended access
-    let subject_filter = match request.subject_filter {
-        Some(filter) => filter,
-        None => {
-            return Err(eyre!(
-                "subject_filter is required for shadow consumers (use 'events.>' explicitly if needed)"
-            ));
-        }
+    let Some(subject_filter) = request.subject_filter else {
+        return Err(eyre!(
+            "subject_filter is required for shadow consumers (use 'events.>' explicitly if needed)"
+        ));
     };
 
     // Warn on overly broad patterns
@@ -78,14 +75,17 @@ pub async fn handle_shadow_create(
     }
 
     // Determine deliver policy
-    let deliver_policy = if let Some(seq) = request.from_sequence {
-        jetstream::consumer::DeliverPolicy::ByStartSequence {
+    let deliver_policy = match request.from_sequence {
+        Some(seq) => jetstream::consumer::DeliverPolicy::ByStartSequence {
             start_sequence: seq,
+        },
+        None => {
+            if request.from_beginning {
+                jetstream::consumer::DeliverPolicy::All
+            } else {
+                jetstream::consumer::DeliverPolicy::New
+            }
         }
-    } else if request.from_beginning {
-        jetstream::consumer::DeliverPolicy::All
-    } else {
-        jetstream::consumer::DeliverPolicy::New
     };
 
     // Create durable consumer with explicit ack for proper tracking

@@ -70,8 +70,7 @@ impl NatsPublisher {
         let event_id = event
             .id
             .as_ref()
-            .map(|id| id.to_string())
-            .unwrap_or_else(|| Ulid::new().to_string());
+            .map_or_else(|| Ulid::new().to_string(), |id| id.to_string());
 
         // Build DLQ entry with error context
         let dlq_entry = serde_json::json!({
@@ -94,7 +93,7 @@ impl NatsPublisher {
 
         // Add headers for retry tracking
         let mut headers = async_nats::HeaderMap::new();
-        headers.insert("Nats-Msg-Id", format!("dlq-{}", event_id).as_str());
+        headers.insert("Nats-Msg-Id", format!("dlq-{event_id}").as_str());
         headers.insert(
             "Original-Subject",
             self.env

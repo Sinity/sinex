@@ -313,7 +313,7 @@ mod tests {
             let event_id = EventId::new();
             let event = ProvisionalEvent {
                 event_id,
-                source: EventSource::new(format!("test-{}", i)),
+                source: EventSource::new(format!("test-{i}")),
                 event_type: EventType::new("test.event"),
                 payload: serde_json::json!({"index": i}),
                 ts_orig: sinex_primitives::temporal::now(),
@@ -321,8 +321,7 @@ mod tests {
             };
             assert!(
                 buffer.add_provisional(event).await,
-                "Should accept event {}",
-                i
+                "Should accept event {i}"
             );
         }
 

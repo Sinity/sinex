@@ -9,21 +9,21 @@
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
-#[ignore]
+#[ignore = "requires NATS JetStream infrastructure"]
 async fn test_stream_creation_idempotent(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
 }
 
 #[sinex_test]
-#[ignore]
+#[ignore = "requires NATS JetStream infrastructure"]
 async fn test_consumer_creation_idempotent(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
 }
 
 #[sinex_test]
-#[ignore]
+#[ignore = "requires NATS JetStream infrastructure"]
 async fn test_concurrent_stream_creation(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())

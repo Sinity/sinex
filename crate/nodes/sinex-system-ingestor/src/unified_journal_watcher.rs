@@ -12,6 +12,7 @@
 
 use sinex_db::models::Event;
 use sinex_primitives::fs::atomic_write;
+use sinex_primitives::secret_redaction::SecretRedactor;
 use sinex_primitives::JsonValue;
 use time::OffsetDateTime;
 
@@ -325,6 +326,7 @@ impl UnifiedJournalWatcher {
                 duration_ms: start_time.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
             };
 
+            #[allow(clippy::expect_used)] // Typed payload serialization is infallible
             let sync_event = Event::new(
                 EventJournalSyncCompletedPayload {
                     sync_type: sync_payload.sync_type,
@@ -412,7 +414,7 @@ impl UnifiedJournalWatcher {
             args.push("--system");
         }
 
-        let child = Command::new("journalctl")
+        let mut child = Command::new("journalctl")
             .args(&args)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -424,13 +426,12 @@ impl UnifiedJournalWatcher {
         // Store child process for lifecycle management
         let child_id = child.id();
         info!("Spawned journalctl process with PID: {:?}", child_id);
-        self.child_process = Some(child);
 
-        let child_ref = self.child_process.as_mut().unwrap();
-        let stdout = child_ref
+        let stdout = child
             .stdout
             .take()
             .ok_or_else(|| sinex_node_sdk::SinexError::processing("No stdout".to_string()))?;
+        self.child_process = Some(child);
 
         let mut reader = BufReader::new(stdout);
         let mut line = String::new();
@@ -545,8 +546,8 @@ impl UnifiedJournalWatcher {
         let message = obj
             .get("MESSAGE")
             .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
+            .map(|s| SecretRedactor::redact(s).into_owned())
+            .unwrap_or_default();
 
         // Parse timestamp
         let timestamp: OffsetDateTime = if timestamp_us > 0 {
@@ -584,7 +585,7 @@ impl UnifiedJournalWatcher {
         let cmdline = obj
             .get("_CMDLINE")
             .and_then(|v| v.as_str())
-            .map(std::string::ToString::to_string);
+            .map(|s| SecretRedactor::redact(s).into_owned());
         let exe = obj
             .get("_EXE")
             .and_then(|v| v.as_str())
@@ -641,7 +642,7 @@ impl UnifiedJournalWatcher {
                 )
             {
                 if let Some(s) = value.as_str() {
-                    fields.insert(key.clone(), s.to_string());
+                    fields.insert(key.clone(), SecretRedactor::redact(s).into_owned());
                 }
             }
         }
@@ -954,7 +955,7 @@ impl UnifiedJournalWatcher {
         if let Err(err) = tx.send(event).await {
             let drops = self.channel_drops.fetch_add(1, Ordering::Relaxed) + 1;
             // Rate-limit drop warnings: log at 1, 10, 100, 1000, then every 1000
-            if drops == 1 || drops == 10 || drops == 100 || drops % 1000 == 0 {
+            if drops == 1 || drops == 10 || drops == 100 || drops.is_multiple_of(1000) {
                 warn!(
                     channel_drops = drops,
                     context = context,

@@ -197,7 +197,7 @@ impl EphemeralNats {
     #[must_use]
     pub fn connection_config(&self) -> NatsConnectionConfig {
         let mut config = NatsConnectionConfig::default();
-        config.url = self.url.clone();
+        config.url.clone_from(&self.url);
         config.require_tls = self.tls.is_some();
         if let Some(tls) = &self.tls {
             config.ca_cert = Some(tls.ca_cert.clone());
@@ -261,7 +261,7 @@ impl EphemeralNats {
         }
 
         let mut config = NatsConnectionConfig::default();
-        config.url = self.url.clone();
+        config.url.clone_from(&self.url);
         config.require_tls = self.tls.is_some();
         if let Some(tls) = &self.tls {
             config.ca_cert = Some(tls.ca_cert.clone());
@@ -555,6 +555,18 @@ impl Drop for EphemeralNats {
             if let Some(mut child) = guard.take() {
                 let _ = child.start_kill();
             }
+        } else {
+            // Lock is contended (e.g., shutdown hook running concurrently).
+            // Spawn a background task to acquire the lock and kill the process,
+            // preventing silent leaks when try_lock fails.
+            let process = Arc::clone(&self.process);
+            tokio::spawn(async move {
+                let mut guard = process.lock().await;
+                if let Some(mut child) = guard.take() {
+                    let _ = child.start_kill();
+                    let _ = tokio::time::timeout(Duration::from_secs(2), child.wait()).await;
+                }
+            });
         }
     }
 }
@@ -611,16 +623,17 @@ impl SharedNatsProfile {
 }
 
 async fn get_or_init_shared(id: &str, builder: EphemeralNatsBuilder) -> Result<Arc<EphemeralNats>> {
-    if let Some(existing) = SHARED_NATS_REGISTRY.lock().await.get(id).cloned() {
+    // Hold the lock across check + spawn + insert to prevent TOCTOU race.
+    // The spawn takes a few seconds, but shared NATS init is rare (once per profile per test run)
+    // and correctness is more important than parallelism here.
+    let mut guard = SHARED_NATS_REGISTRY.lock().await;
+    if let Some(existing) = guard.get(id).cloned() {
         return Ok(existing);
     }
 
     let instance = Arc::new(builder.start().await?);
-    let mut guard = SHARED_NATS_REGISTRY.lock().await;
-    Ok(guard
-        .entry(id.to_string())
-        .or_insert_with(|| instance.clone())
-        .clone())
+    guard.insert(id.to_string(), instance.clone());
+    Ok(instance)
 }
 
 /// Obtain (or lazily start) a shared `EphemeralNats` instance for the given profile.

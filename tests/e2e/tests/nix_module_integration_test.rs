@@ -61,8 +61,7 @@ async fn test_nixos_module_config_validation(ctx: TestContext) -> TestResult<()>
     for source in ["filesystem", "terminal", "desktop", "system"] {
         assert!(
             event_sources_config.get(source).is_some(),
-            "Node configuration should expose {} source config",
-            source
+            "Node configuration should expose {source} source config"
         );
     }
 
@@ -103,8 +102,7 @@ async fn test_nixos_service_definitions() -> TestResult<()> {
     for service in expected_services {
         assert!(
             service_definitions.contains_key(service),
-            "Service {} should be defined",
-            service
+            "Service {service} should be defined"
         );
 
         let service_def = &service_definitions[service];
@@ -112,41 +110,34 @@ async fn test_nixos_service_definitions() -> TestResult<()> {
         // Validate service has required systemd fields
         assert!(
             service_def.get("description").is_some(),
-            "{} should have description",
-            service
+            "{service} should have description"
         );
         assert!(
             service_def.get("wantedBy").is_some(),
-            "{} should specify wantedBy",
-            service
+            "{service} should specify wantedBy"
         );
         assert!(
             service_def.get("after").is_some(),
-            "{} should specify dependencies",
-            service
+            "{service} should specify dependencies"
         );
         assert!(
             service_def.get("serviceConfig").is_some(),
-            "{} should have serviceConfig",
-            service
+            "{service} should have serviceConfig"
         );
 
         // Validate serviceConfig has essential fields
         let service_config = &service_def["serviceConfig"];
         assert!(
             service_config.get("ExecStart").is_some(),
-            "{} should have ExecStart",
-            service
+            "{service} should have ExecStart"
         );
         assert!(
             service_config.get("Restart").is_some(),
-            "{} should have Restart policy",
-            service
+            "{service} should have Restart policy"
         );
         assert!(
             service_config.get("User").is_some(),
-            "{} should specify User",
-            service
+            "{service} should specify User"
         );
     }
 
@@ -168,8 +159,7 @@ async fn test_nixos_module_options_schema() -> TestResult<()> {
     for category in expected_categories {
         assert!(
             module_options.as_object().unwrap().contains_key(category),
-            "Module should have {} options",
-            category
+            "Module should have {category} options"
         );
 
         let option_def = &module_options[category];
@@ -178,11 +168,10 @@ async fn test_nixos_module_options_schema() -> TestResult<()> {
         if let Some(obj) = option_def.as_object() {
             if !obj.contains_key("_meta") {
                 // Skip meta entries
-                assert!(obj.get("type").is_some(), "{} should have type", category);
+                assert!(obj.get("type").is_some(), "{category} should have type");
                 assert!(
                     obj.get("description").is_some(),
-                    "{} should have description",
-                    category
+                    "{category} should have description"
                 );
             }
         }
@@ -199,8 +188,7 @@ async fn test_nixos_module_options_schema() -> TestResult<()> {
             .expect("source options should be defined");
         assert!(
             options.contains_key("enable"),
-            "{} source should expose an enable option",
-            source_type
+            "{source_type} source should expose an enable option"
         );
     }
 
@@ -244,8 +232,7 @@ async fn test_service_dependency_chain() -> TestResult<()> {
         let deps = &dependency_chain[watcher];
         assert!(
             deps.contains(&"sinex-ingestd.service".to_string()),
-            "{} should depend on ingestd",
-            watcher
+            "{watcher} should depend on ingestd"
         );
     }
 
@@ -275,11 +262,9 @@ async fn test_systemd_service_configuration() -> TestResult<()> {
 
         // Validate security settings
         if let Some(dynamic_user) = service_config_obj.get("DynamicUser") {
-            assert_eq!(
-                dynamic_user.as_bool().unwrap_or(false),
-                false,
-                "{} should not use DynamicUser (uses static sinex user)",
-                service_name
+            assert!(
+                !dynamic_user.as_bool().unwrap_or(false),
+                "{service_name} should not use DynamicUser (uses static sinex user)"
             );
         }
 
@@ -287,17 +272,14 @@ async fn test_systemd_service_configuration() -> TestResult<()> {
         let restart = service_config_obj["Restart"].as_str().unwrap();
         assert!(
             restart == "always" || restart == "on-failure",
-            "{} should have appropriate restart policy, got: {}",
-            service_name,
-            restart
+            "{service_name} should have appropriate restart policy, got: {restart}"
         );
 
         // Validate user/group
         assert_eq!(
             service_config_obj["User"].as_str().unwrap(),
             "sinex",
-            "{} should run as sinex user",
-            service_name
+            "{service_name} should run as sinex user"
         );
 
         // Validate environment variables are set
@@ -306,7 +288,7 @@ async fn test_systemd_service_configuration() -> TestResult<()> {
             let has_db_url = env_vars
                 .iter()
                 .any(|var| var.as_str().unwrap().starts_with("DATABASE_URL="));
-            assert!(has_db_url, "{} should have DATABASE_URL set", service_name);
+            assert!(has_db_url, "{service_name} should have DATABASE_URL set");
         }
     }
 
@@ -443,8 +425,7 @@ async fn test_node_source_configuration() -> TestResult<()> {
             let path_str = path.as_str().unwrap();
             assert!(
                 path_str.starts_with('/'),
-                "Watch paths should be absolute: {}",
-                path_str
+                "Watch paths should be absolute: {path_str}"
             );
         }
     }
@@ -496,8 +477,7 @@ async fn test_nixos_system_integration_points() -> TestResult<()> {
     for (service_name, _config) in services.as_object().unwrap() {
         assert!(
             service_name.starts_with("sinex-"),
-            "Sinex services should have sinex- prefix: {}",
-            service_name
+            "Sinex services should have sinex- prefix: {service_name}"
         );
     }
 
@@ -557,8 +537,7 @@ async fn test_module_upgrade_compatibility() -> TestResult<()> {
                 .get("services")
                 .and_then(|s| s.get("sinex"))
                 .is_some(),
-            "Version {} should have services.sinex configuration",
-            version
+            "Version {version} should have services.sinex configuration"
         );
 
         let sinex_config = &config["services"]["sinex"];
@@ -568,9 +547,7 @@ async fn test_module_upgrade_compatibility() -> TestResult<()> {
         for option in core_options {
             assert!(
                 sinex_config.get(option).is_some(),
-                "Version {} should have {} option",
-                version,
-                option
+                "Version {version} should have {option} option"
             );
         }
 
@@ -580,9 +557,7 @@ async fn test_module_upgrade_compatibility() -> TestResult<()> {
         for field in required_db_fields {
             assert!(
                 db_config.get(field).is_some(),
-                "Version {} database config should have {} field",
-                version,
-                field
+                "Version {version} database config should have {field} field"
             );
         }
     }
@@ -900,7 +875,7 @@ fn create_test_dependency_chain() -> HashMap<String, Vec<String>> {
 fn assert_no_circular_dependencies(deps: &HashMap<String, Vec<String>>) -> TestResult<()> {
     use std::collections::HashSet;
 
-    for (service, _dependencies) in deps {
+    for service in deps.keys() {
         let mut visited = HashSet::new();
         let mut path = Vec::new();
 
@@ -988,12 +963,12 @@ fn create_test_database_module_config() -> serde_json::Value {
                     "timescaledb",
                     "pg_jsonschema"
                 ],
-                "initialScript": r#"
+                "initialScript": r"
                     CREATE USER sinex;
                     CREATE DATABASE sinex OWNER sinex;
                     GRANT ALL PRIVILEGES ON DATABASE sinex TO sinex;
                     ALTER USER sinex CREATEDB;
-                "#,
+                ",
                 "authentication": "local sinex sinex peer"
             }
         }
@@ -1006,7 +981,7 @@ fn generate_connection_string(_config: &serde_json::Value) -> String {
     let dbname = "sinex";
     let user = "sinex";
 
-    format!("postgresql://{}@{}:{}/{}", user, host, port, dbname)
+    format!("postgresql://{user}@{host}:{port}/{dbname}")
 }
 
 fn create_test_sources_config() -> serde_json::Value {

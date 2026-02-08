@@ -33,7 +33,7 @@ impl StatusCommand {
                 println!(
                     "Gateway: {} {}",
                     style("●").red(),
-                    style(format!("unreachable - {}", e)).red()
+                    style(format!("unreachable - {e}")).red()
                 );
                 return Ok(());
             }
@@ -61,7 +61,7 @@ impl StatusCommand {
                     healthy,
                     total,
                     if unhealthy > 0 {
-                        format!(", {} unhealthy", unhealthy)
+                        format!(", {unhealthy} unhealthy")
                     } else {
                         String::new()
                     }
@@ -85,7 +85,7 @@ impl StatusCommand {
                 println!(
                     "Nodes:   {} {}",
                     style("●").red(),
-                    style(format!("error - {}", e)).red()
+                    style(format!("error - {e}")).red()
                 );
             }
         }
@@ -112,7 +112,7 @@ impl StatusCommand {
                 println!(
                     "DLQ:     {} {}",
                     style("●").red(),
-                    style(format!("error - {}", e)).red()
+                    style(format!("error - {e}")).red()
                 );
             }
         }
@@ -139,7 +139,7 @@ impl StatusCommand {
                 println!(
                     "Events:  {} {}",
                     style("●").red(),
-                    style(format!("error - {}", e)).red()
+                    style(format!("error - {e}")).red()
                 );
             }
         }
@@ -205,7 +205,9 @@ impl RecentCommand {
         for event in &events {
             let timestamp = event
                 .timestamp
-                .format(&time::format_description::parse("[hour]:[minute]:[second]").unwrap())
+                .format(time::macros::format_description!(
+                    "[hour]:[minute]:[second]"
+                ))
                 .unwrap_or_else(|_| "invalid".to_string());
             let source = style(&event.source).cyan();
             let event_type = style(&event.event_type).yellow();
@@ -285,12 +287,9 @@ impl ErrorsCommand {
         for event in &events {
             let timestamp = event
                 .timestamp
-                .format(
-                    &time::format_description::parse(
-                        "[year]-[month]-[day] [hour]:[minute]:[second]",
-                    )
-                    .unwrap(),
-                )
+                .format(time::macros::format_description!(
+                    "[year]-[month]-[day] [hour]:[minute]:[second]"
+                ))
                 .unwrap_or_else(|_| "invalid".to_string());
             let source = style(&event.source).cyan();
             let event_type = style(&event.event_type).red();
@@ -365,10 +364,9 @@ impl WatchCommand {
                         if seen_ids.insert(event.event_id.to_string()) {
                             let timestamp = event
                                 .timestamp
-                                .format(
-                                    &time::format_description::parse("[hour]:[minute]:[second]")
-                                        .unwrap(),
-                                )
+                                .format(time::macros::format_description!(
+                                    "[hour]:[minute]:[second]"
+                                ))
                                 .unwrap_or_else(|_| "invalid".to_string());
                             let source = style(&event.source).cyan();
                             let event_type = style(&event.event_type).yellow();
@@ -389,7 +387,7 @@ impl WatchCommand {
                     }
                 }
                 Err(e) => {
-                    eprintln!("{}", style(format!("Error fetching events: {}", e)).red());
+                    eprintln!("{}", style(format!("Error fetching events: {e}")).red());
                 }
             }
 

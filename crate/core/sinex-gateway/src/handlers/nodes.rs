@@ -30,14 +30,11 @@ pub async fn handle_nodes_list(
     let kv_bucket_name = env.nats_kv_bucket_name("sinex_node_state");
 
     // Try to get the KV bucket - if it doesn't exist, return empty list
-    let kv = match js.get_key_value(&kv_bucket_name).await {
-        Ok(kv) => kv,
-        Err(_) => {
-            // Bucket doesn't exist yet, return empty node list
-            return Ok(json!({
-                "nodes": [],
-            }));
-        }
+    let Ok(kv) = js.get_key_value(&kv_bucket_name).await else {
+        // Bucket doesn't exist yet, return empty node list
+        return Ok(json!({
+            "nodes": [],
+        }));
     };
 
     // Get all keys in the bucket (each key is a node ID)

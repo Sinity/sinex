@@ -491,7 +491,6 @@ async fn duplicate_events_are_idempotent(ctx: TestContext) -> TestResult<()> {
     WaitHelpers::wait_for_condition(
         || {
             let pool = ctx.pool.clone();
-            let event_id = event_id;
             async move {
                 let duplicate_count: Option<i64> = sqlx::query_scalar(
                     "SELECT COUNT(*) FROM core.events WHERE id = $1::uuid::ulid",

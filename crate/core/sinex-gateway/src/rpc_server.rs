@@ -692,11 +692,13 @@ pub async fn dispatch_rpc_method(
         // Operations log read methods (ReadOnly)
         "ops.list" => {
             let pool = services.pool();
-            handle_ops_list(pool, params).await.map_err(Into::into)
+            handle_ops_list(pool, params, auth)
+                .await
+                .map_err(Into::into)
         }
         "ops.get" => {
             let pool = services.pool();
-            handle_ops_get(pool, params).await.map_err(Into::into)
+            handle_ops_get(pool, params, auth).await.map_err(Into::into)
         }
 
         // Lifecycle status (ReadOnly)
@@ -803,7 +805,9 @@ pub async fn dispatch_rpc_method(
         "ops.start" => {
             require_role(auth, Role::Write, method)?;
             let pool = services.pool();
-            handle_ops_start(pool, params).await.map_err(Into::into)
+            handle_ops_start(pool, params, auth)
+                .await
+                .map_err(Into::into)
         }
 
         // Replay create/preview (Write - doesn't execute yet)
@@ -1048,9 +1052,7 @@ async fn handle_rpc(
     }
 
     // Extract token for auth context and rate limiting
-    let token = if let Some(t) = extract_token(&headers) {
-        t
-    } else {
+    let Some(token) = extract_token(&headers) else {
         // This should not happen after auth.verify() passes, but handle gracefully
         state.metrics.record_request_rejected();
         return (

@@ -40,7 +40,7 @@ async fn replay_runtime_service_emits_events(ctx: TestContext) -> color_eyre::Re
         loop {
             match event_rx.recv().await {
                 Some(event) if event.source.as_str() == "runtime-replay" => return Ok(event),
-                Some(_) => continue,
+                Some(_) => {}
                 None => return Err(eyre!("No replay events received")),
             }
         }

@@ -20,28 +20,28 @@ use std::time::Duration;
 // =============================================================================
 
 #[sinex_test]
-#[ignore]
+#[ignore = "requires baseline comparison infrastructure"]
 async fn test_regression_detector_mechanism(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
 }
 
 #[sinex_test]
-#[ignore]
+#[ignore = "requires baseline comparison infrastructure"]
 async fn test_e2e_real_database_performance(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
 }
 
 #[sinex_test]
-#[ignore]
+#[ignore = "requires baseline comparison infrastructure"]
 async fn test_performance_baseline_validation(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
 }
 
 #[sinex_test]
-#[ignore]
+#[ignore = "requires baseline comparison infrastructure"]
 async fn test_latency_outlier_detection(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())

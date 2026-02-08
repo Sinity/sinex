@@ -5,7 +5,7 @@ use std::sync::Arc;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
-#[ignore]
+#[ignore = "requires WAL integrity testing infrastructure"]
 async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();
@@ -46,6 +46,7 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
             state_path.clone(),
             Some(namespace.clone()),
             1_000,
+            50,
             MaterialReadySet::default(),
         )?;
         let handle = tokio::spawn(async move { assembler.run().await });
@@ -109,6 +110,7 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
             state_path.clone(),
             Some(namespace.clone()),
             1_000,
+            50,
             MaterialReadySet::default(),
         )?;
         let handle = tokio::spawn(async move { assembler.run().await });

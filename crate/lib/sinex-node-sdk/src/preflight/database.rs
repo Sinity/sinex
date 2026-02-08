@@ -303,8 +303,7 @@ async fn test_extension_installability(pool: &PgPool, extension_name: &str) -> N
     let mut tx = pool.begin().await.map_err(SinexError::from)?;
 
     let result = sqlx::query(&format!(
-        "CREATE EXTENSION IF NOT EXISTS \"{}\"",
-        extension_name
+        "CREATE EXTENSION IF NOT EXISTS \"{extension_name}\""
     ))
     .execute(&mut *tx)
     .await;
@@ -328,7 +327,7 @@ async fn test_extension_loading(pool: &PgPool, messages: &mut Vec<String>) -> No
     ];
 
     for extension in extensions {
-        match sqlx::query(&format!("CREATE EXTENSION IF NOT EXISTS \"{}\"", extension))
+        match sqlx::query(&format!("CREATE EXTENSION IF NOT EXISTS \"{extension}\""))
             .execute(&mut *tx)
             .await
         {
@@ -363,8 +362,7 @@ async fn test_extension_functionality(
         .map_err(SinexError::from)?;
     let uuid_str = uuid_result
         .uuid
-        .map(|u| u.to_string())
-        .unwrap_or_else(|| "OK".to_string());
+        .map_or_else(|| "OK".to_string(), |u| u.to_string());
     messages.push(format!("✓ UUID generation: {uuid_str}"));
 
     // Test ULID generation - using transaction directly
@@ -526,7 +524,10 @@ async fn discover_migration_files() -> NodeResult<Vec<MigrationFile>> {
         if path.is_dir() {
             let dir_name = entry.file_name();
             let dir_name = dir_name.to_str().ok_or_else(|| {
-                SinexError::processing(format!("Invalid migration directory name: {path:?}"))
+                SinexError::processing(format!(
+                    "Invalid migration directory name: {}",
+                    path.display()
+                ))
             })?;
 
             let module_path = path.join("mod.rs");
@@ -536,7 +537,8 @@ async fn discover_migration_files() -> NodeResult<Vec<MigrationFile>> {
 
             let utf8_path = Utf8PathBuf::from_path_buf(module_path.clone()).map_err(|_| {
                 SinexError::processing(format!(
-                    "Migration path is not valid UTF-8: {module_path:?}"
+                    "Migration path is not valid UTF-8: {}",
+                    module_path.display()
                 ))
             })?;
 
@@ -551,14 +553,13 @@ async fn discover_migration_files() -> NodeResult<Vec<MigrationFile>> {
         }
 
         let utf8_path = Utf8PathBuf::from_path_buf(path.clone()).map_err(|_| {
-            SinexError::processing(format!("Migration path is not valid UTF-8: {path:?}"))
+            SinexError::processing(format!(
+                "Migration path is not valid UTF-8: {}",
+                path.display()
+            ))
         })?;
 
-        if utf8_path
-            .file_name()
-            .map(|n| n == "mod.rs")
-            .unwrap_or(false)
-        {
+        if utf8_path.file_name() == Some("mod.rs") {
             continue;
         }
 

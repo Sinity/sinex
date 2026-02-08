@@ -42,8 +42,7 @@ pub fn db_error(e: sqlx::Error, operation: &str) -> SinexError {
                         "error_code",
                         db_err
                             .code()
-                            .map(|c| c.to_string())
-                            .unwrap_or_else(|| "unknown".to_string()),
+                            .map_or_else(|| "unknown".to_string(), |c| c.to_string()),
                     )
                     .with_source(db_err.to_string())
             };
@@ -91,7 +90,7 @@ pub async fn set_statement_timeout<'e, E>(executor: E, timeout_ms: i32) -> DbRes
 where
     E: sqlx::Executor<'e, Database = sqlx::Postgres>,
 {
-    sqlx::query(&format!("SET LOCAL statement_timeout = {}", timeout_ms))
+    sqlx::query(&format!("SET LOCAL statement_timeout = {timeout_ms}"))
         .execute(executor)
         .await
         .map_err(|e| db_error(e, "set statement timeout"))?;

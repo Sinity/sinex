@@ -539,6 +539,7 @@ fn environment_override() -> Option<SinexEnvironment> {
 }
 
 /// Get the global environment instance
+#[allow(clippy::panic)] // Fatal: application cannot function without environment
 pub fn environment() -> SinexEnvironment {
     #[cfg(any(test, feature = "testing"))]
     if let Some(env) = environment_override() {

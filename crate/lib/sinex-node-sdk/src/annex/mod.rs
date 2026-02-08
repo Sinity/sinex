@@ -704,7 +704,6 @@ fn parse_add_output_for_key(stdout: &[u8]) -> Option<AnnexKey> {
                         raw_key = %key,
                         "Failed to parse annex key from add output"
                     );
-                    continue;
                 }
             }
         }

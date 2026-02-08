@@ -7,6 +7,8 @@
 //! - Message reordering
 //! - Slow consumers
 
+#![allow(dead_code)] // ChaosCounterNode infrastructure ready for future chaos-through-node tests
+
 use sinex_node_sdk::simple_node::{ErrorAction, SimpleNode, SimpleNodeError};
 use sinex_primitives::events::Event;
 use sinex_primitives::testing::event_fixture;
@@ -109,7 +111,7 @@ async fn process_events_through_chaos(chaos: &ChaosContext, count: usize) -> (us
                 if e.payload != original_payload
                     && e.payload
                         .as_str()
-                        .map_or(false, |s| s.starts_with("CORRUPTED_"))
+                        .is_some_and(|s| s.starts_with("CORRUPTED_"))
                 {
                     corrupted += 1;
                 }
@@ -226,14 +228,10 @@ async fn test_node_handles_message_reordering(_ctx: TestContext) -> TestResult<(
         "All events should be processed despite reordering"
     );
 
-    // Check that some reordering occurred
+    // Check that reordering metrics are tracked (probabilistic, so just verify recording)
     let metrics = chaos.metrics().snapshot();
-    // Note: reordering is probabilistic, so we just check it's recorded
-    // In practice with 30% rate and 30 events, we expect some reordering
-    assert!(
-        metrics.reordered >= 0,
-        "Reordering metrics should be tracked"
-    );
+    // metrics.reordered is u64, always >= 0; the important thing is the snapshot succeeds
+    let _ = metrics.reordered;
 
     Ok(())
 }
@@ -259,8 +257,7 @@ async fn test_node_handles_slow_consumer_scenario(_ctx: TestContext) -> TestResu
     // Total time should be at least 5 * 10ms = 50ms (plus some overhead)
     assert!(
         elapsed >= Duration::from_millis(40),
-        "Slow consumer delay should be applied: {:?}",
-        elapsed
+        "Slow consumer delay should be applied: {elapsed:?}"
     );
 
     Ok(())

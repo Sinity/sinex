@@ -94,8 +94,7 @@ impl ReplayMetrics {
         self.start_time
             .lock()
             .as_ref()
-            .map(|start| start.elapsed())
-            .unwrap_or_else(|| Duration::from_secs(0))
+            .map_or_else(|| Duration::from_secs(0), |start| start.elapsed())
     }
 }
 

@@ -6,6 +6,7 @@
 
 use camino::Utf8PathBuf;
 use sinex_node_sdk::annex::{AnnexConfig, BlobManager};
+use std::os::unix::fs::PermissionsExt;
 use tempfile::TempDir;
 use xtask::sandbox::prelude::*;
 
@@ -86,9 +87,7 @@ async fn blob_manager_detects_corruption_on_retrieve(ctx: TestContext) -> color_
     // Force git-annex to materialize the content, then tamper with it.
     let _ = manager.retrieve_content(&key).await?;
     let blob_path = manager.get_blob_path(&key).await?;
-    let metadata = tokio::fs::metadata(&blob_path).await?;
-    let mut perms = metadata.permissions();
-    perms.set_readonly(false);
+    let perms = std::fs::Permissions::from_mode(0o644);
     tokio::fs::set_permissions(&blob_path, perms).await?;
     tokio::fs::write(&blob_path, b"tampered payload").await?;
 

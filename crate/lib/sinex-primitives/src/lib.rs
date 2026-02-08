@@ -16,6 +16,7 @@ pub mod nats;
 pub mod non_empty;
 pub mod query;
 pub mod rpc;
+pub mod secret_redaction;
 pub mod temporal;
 pub mod testing;
 pub mod units;

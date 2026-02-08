@@ -118,9 +118,7 @@ impl HeartbeatEmitter {
             cpu_seconds,
             timestamp: Instant::now(),
         });
-        let cpu_cores = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1);
+        let cpu_cores = std::thread::available_parallelism().map_or(1, |n| n.get());
 
         Self {
             service_name,

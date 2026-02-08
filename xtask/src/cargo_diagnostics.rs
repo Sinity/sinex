@@ -59,7 +59,7 @@ impl DiagnosticSummary {
             .into_iter()
             .map(|(code, count)| LintCount { code, count })
             .collect();
-        result.sort_by(|a, b| b.count.cmp(&a.count));
+        result.sort_by_key(|x| std::cmp::Reverse(x.count));
         result
     }
 
@@ -87,7 +87,7 @@ impl DiagnosticSummary {
             .into_iter()
             .map(|(path, count)| FileCount { path, count })
             .collect();
-        result.sort_by(|a, b| b.count.cmp(&a.count));
+        result.sort_by_key(|x| std::cmp::Reverse(x.count));
         result
     }
 

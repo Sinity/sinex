@@ -219,12 +219,9 @@ impl StageAsYouGoContext {
         let config = StageCleanupConfig::new(stale_ttl, interval);
         self.cleanup_config = Some(config);
 
-        let manager = match self.acquisition_manager.clone() {
-            Some(manager) => manager,
-            None => {
-                warn!("Stage-as-You-Go reconciliation skipped: acquisition manager missing");
-                return self;
-            }
+        let Some(manager) = self.acquisition_manager.clone() else {
+            warn!("Stage-as-You-Go reconciliation skipped: acquisition manager missing");
+            return self;
         };
 
         self.start_reconciliation_task(manager, config);
@@ -235,8 +232,7 @@ impl StageAsYouGoContext {
     pub async fn reconcile_inflight(&self) -> NodeResult<StageReconciliationSummary> {
         let ttl = self
             .cleanup_config
-            .map(|cfg| cfg.stale_ttl)
-            .unwrap_or(DEFAULT_STALE_TTL);
+            .map_or(DEFAULT_STALE_TTL, |cfg| cfg.stale_ttl);
         self.reconcile_inflight_older_than(ttl).await
     }
 
@@ -428,7 +424,7 @@ impl StageAsYouGoContext {
     ) -> NodeResult<()> {
         // Checksum is now computed when creating the blob
 
-        let content_preview = if mime_type.map(|m| m.starts_with("text/")).unwrap_or(false) {
+        let content_preview = if mime_type.is_some_and(|m| m.starts_with("text/")) {
             Some(String::from_utf8_lossy(&content[..content.len().min(500)]).to_string())
         } else {
             None
@@ -497,7 +493,7 @@ impl StageAsYouGoContext {
     where
         R: tokio::io::AsyncRead + Unpin,
     {
-        let is_text = mime_type.map(|m| m.starts_with("text/")).unwrap_or(false);
+        let is_text = mime_type.is_some_and(|m| m.starts_with("text/"));
         let mut preview_bytes: Vec<u8> = Vec::new();
         let mut total_bytes: i64 = 0;
 
@@ -707,15 +703,14 @@ pub struct LogFileStageProcessor {
 }
 
 impl StageAsYouGoContext {
+    #[allow(clippy::expect_used)] // Post-normalization: value guaranteed to be Object
     fn build_finalize_metadata(
         info: Option<&StageMaterialInfo>,
         total_bytes: i64,
         content_preview: Option<String>,
         encoding: Option<&str>,
     ) -> JsonValue {
-        let mut base = info
-            .map(|i| i.metadata.clone())
-            .unwrap_or_else(|| json!({}));
+        let mut base = info.map_or_else(|| json!({}), |i| i.metadata.clone());
         if !base.is_object() {
             base = json!({});
         }
@@ -753,6 +748,7 @@ fn normalize_metadata(value: JsonValue) -> JsonValue {
 }
 
 impl StageAsYouGoContext {
+    #[allow(clippy::expect_used)] // Post-normalization: value guaranteed to be Object
     fn prepare_initial_metadata(
         material_type: &str,
         source_uri: Option<&str>,

@@ -321,7 +321,6 @@ async fn jetstream_consumer_survives_transient_db_failure(ctx: TestContext) -> T
     let _ = WaitHelpers::wait_for_condition(
         || {
             let pool = ctx.pool.clone();
-            let event_id = event_id;
             async move {
                 let exists = pool.events().get_by_id(event_id.into()).await?.is_some();
                 Ok::<bool, SinexError>(exists)

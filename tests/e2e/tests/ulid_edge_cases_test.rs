@@ -15,14 +15,14 @@ use xtask::sandbox::prelude::*;
 // =============================================================================
 
 #[sinex_test]
-#[ignore]
+#[ignore = "requires ULID edge case infrastructure"]
 async fn test_ulid_max_timestamp_representation(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
 }
 
 #[sinex_test]
-#[ignore]
+#[ignore = "requires ULID edge case infrastructure"]
 async fn test_ulid_timestamp_wraparound_behavior(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
@@ -33,14 +33,14 @@ async fn test_ulid_timestamp_wraparound_behavior(_ctx: TestContext) -> TestResul
 // =============================================================================
 
 #[sinex_test]
-#[ignore]
+#[ignore = "requires ULID edge case infrastructure"]
 async fn test_ulid_monotonic_generation_extreme_rate(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
 }
 
 #[sinex_test]
-#[ignore]
+#[ignore = "requires ULID edge case infrastructure"]
 async fn test_ulid_generation_same_millisecond_ordering(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
@@ -51,14 +51,14 @@ async fn test_ulid_generation_same_millisecond_ordering(_ctx: TestContext) -> Te
 // =============================================================================
 
 #[sinex_test]
-#[ignore]
+#[ignore = "requires ULID edge case infrastructure"]
 async fn test_ulid_concurrent_generation_safety(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
 }
 
 #[sinex_test]
-#[ignore]
+#[ignore = "requires ULID edge case infrastructure"]
 async fn test_ulid_random_component_distribution(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())

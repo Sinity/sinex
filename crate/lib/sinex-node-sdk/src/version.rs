@@ -351,8 +351,7 @@ mod tests {
         // Allow for some small delta due to execution time
         assert!(
             (3599..=3605).contains(&age),
-            "Age {} should be close to 3600",
-            age
+            "Age {age} should be close to 3600"
         );
     }
 

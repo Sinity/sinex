@@ -171,7 +171,7 @@ async fn test_event_processing_memory_usage(ctx: TestContext) -> TestResult<()> 
     let batch_sizes = vec![10, 50, 100, 500, 1000];
 
     for batch_size in batch_sizes {
-        println!("\n📦 Processing batch of {} events", batch_size);
+        println!("\n📦 Processing batch of {batch_size} events");
 
         metrics.record_measurement(&format!("Before batch {batch_size}"));
 

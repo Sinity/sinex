@@ -205,16 +205,18 @@ fn migration_file_count() -> usize {
     let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let migrations_dir = crate_dir.join("../crate/lib/sinex-schema/src/migrations");
 
-    std::fs::read_dir(&migrations_dir).map_or(17, |entries| {
-        entries
-            .filter_map(std::result::Result::ok)
-            .filter(|e| {
-                let name = e.file_name();
-                let name = name.to_string_lossy();
-                name.starts_with('m') && name.ends_with(".rs")
-            })
-            .count()
-    })
+    let Ok(entries) = std::fs::read_dir(&migrations_dir) else {
+        return 17;
+    };
+
+    entries
+        .filter_map(std::result::Result::ok)
+        .filter(|e| {
+            let name = e.file_name();
+            let name = name.to_string_lossy();
+            name.starts_with('m') && name.ends_with(".rs")
+        })
+        .count()
 }
 
 /// Infrastructure status for preflight checks.
@@ -356,9 +358,9 @@ fn set_dev_token_if_missing() {
         // Generate a deterministic dev token based on hostname (for consistency across runs)
         // but still unique enough that it's clearly a dev token
         let hostname = gethostname::gethostname().to_string_lossy().to_string();
-        let dev_token = format!("dev-token-{}", hostname);
+        let dev_token = format!("dev-token-{hostname}");
         std::env::set_var("SINEX_RPC_TOKEN", &dev_token);
-        eprintln!("⚡ Auto-set SINEX_RPC_TOKEN={} (dev mode)", dev_token);
+        eprintln!("⚡ Auto-set SINEX_RPC_TOKEN={dev_token} (dev mode)");
     }
 }
 
@@ -514,9 +516,8 @@ fn auto_deploy_contracts(verbose: bool) -> Result<bool> {
         return Ok(false);
     }
 
-    let config = match crate::infra::stack::StackConfig::for_current_checkout() {
-        Ok(c) => c,
-        Err(_) => return Ok(false),
+    let Ok(config) = crate::infra::stack::StackConfig::for_current_checkout() else {
+        return Ok(false);
     };
 
     // Check if database is ready for contracts (tables exist)

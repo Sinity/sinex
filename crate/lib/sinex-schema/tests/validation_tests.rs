@@ -973,7 +973,6 @@ mod performance_constraint_tests {
                     {
                         if code.as_ref() == "40P01" {
                             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-                            continue;
                         }
                     }
                 }

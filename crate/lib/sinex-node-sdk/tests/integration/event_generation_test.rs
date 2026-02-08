@@ -303,8 +303,8 @@ async fn test_concurrent_event_generation(ctx: TestContext) -> TestResult<()> {
         // Use shared pool
         let repo = cmd_pool.events();
         let commands = ["ls", "pwd", "date", "whoami", "uname"];
-        for i in 0..5 {
-            let data = TestEventData::command_event(i, commands[i]);
+        for (i, cmd) in commands.iter().enumerate() {
+            let data = TestEventData::command_event(i, cmd);
             let event_res = DynamicPayload::new(data.source, data.event_type, data.payload)
                 .from_material_at(Id::<SourceMaterial>::new(), 0)
                 .build();

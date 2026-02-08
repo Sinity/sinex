@@ -1,14 +1,11 @@
 //! Integration tests for node coordination using the KV-based leader election.
 
-#[path = "../support/mod.rs"]
-mod support;
-
+use crate::support::runtime::TestRuntimeBuilder;
 use sinex_node_sdk::SinexError;
 use sinex_node_sdk::Ulid;
 use sinex_node_sdk::{InstanceMode, NodeCoordination};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
-use support::runtime::TestRuntimeBuilder;
 use tokio::time::{timeout, Duration};
 use xtask::sandbox::{sinex_test, TestContext};
 

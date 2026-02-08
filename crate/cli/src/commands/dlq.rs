@@ -89,7 +89,10 @@ impl DlqCommands {
                 let msg = if *all {
                     "Requeuing all messages...".to_string()
                 } else {
-                    format!("Requeuing event {}...", event_id.as_ref().unwrap())
+                    format!(
+                        "Requeuing event {}...",
+                        event_id.as_deref().unwrap_or("unknown")
+                    )
                 };
 
                 let response = with_spinner_result(
@@ -188,7 +191,7 @@ fn format_dlq_messages_table(messages: &[DlqMessagePeek]) -> String {
         ));
         output.push_str(&format!("  Subject: {}\n", msg.subject));
         if let Some(ref orig) = msg.original_subject {
-            output.push_str(&format!("  Original subject: {}\n", orig));
+            output.push_str(&format!("  Original subject: {orig}\n"));
         }
         output.push_str(&format!("  Preview: {}\n", msg.payload_preview));
         if i < messages.len() - 1 {

@@ -1,6 +1,6 @@
 //! Test fixtures and helpers for sinex-cli testing
 
-#![allow(dead_code)]
+#![allow(dead_code, clippy::expect_used)]
 
 use std::fs;
 use std::io::Write;

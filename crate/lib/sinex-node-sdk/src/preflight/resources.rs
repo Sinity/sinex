@@ -54,7 +54,7 @@ pub async fn verify_system_resources() -> NodeResult<(VerificationStatus, Value,
             // Check if system is under high load
             if let Some(load) = cpu_info.get("load_average_1min").and_then(|v| v.as_f64()) {
                 if load > 8.0 {
-                    messages.push(format!("⚠ High system load detected: {:.2}", load));
+                    messages.push(format!("⚠ High system load detected: {load:.2}"));
                     has_warnings = true;
                 }
             }
@@ -129,18 +129,15 @@ async fn verify_memory_availability(messages: &mut Vec<String>) -> NodeResult<Va
 
     if available_memory_gb < min_required_gb {
         return Err(SinexError::processing(format!(
-            "Insufficient memory: {:.2}GB available, {:.2}GB required",
-            available_memory_gb, min_required_gb
+            "Insufficient memory: {available_memory_gb:.2}GB available, {min_required_gb:.2}GB required"
         )));
     } else if available_memory_gb < recommended_gb {
         messages.push(format!(
-            "⚠ Low memory: {:.2}GB available, {:.2}GB recommended",
-            available_memory_gb, recommended_gb
+            "⚠ Low memory: {available_memory_gb:.2}GB available, {recommended_gb:.2}GB recommended"
         ));
     } else {
         messages.push(format!(
-            "✓ Memory sufficient: {:.2}GB available",
-            available_memory_gb
+            "✓ Memory sufficient: {available_memory_gb:.2}GB available"
         ));
     }
 
@@ -411,23 +408,23 @@ async fn test_localhost_connectivity() -> NodeResult<()> {
         .map_err(|e| SinexError::processing(format!("Failed to parse localhost address: {e}")))?;
 
     // Try to connect with a short timeout
-    match tokio::time::timeout(
+    if tokio::time::timeout(
         Duration::from_millis(100),
         tokio::net::TcpStream::connect(addr),
     )
     .await
     .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "Connection timeout"))
     .and_then(|result| result)
+    .is_ok()
     {
-        Ok(_) => Ok(()),
-        Err(_) => {
-            // SSH not running is normal, just test that localhost is reachable
-            // Try a different approach - just verify localhost resolves
-            "localhost:80".to_socket_addrs().map_err(|e| {
-                SinexError::processing(format!("Localhost name resolution failed: {e}"))
-            })?;
-            Ok(())
-        }
+        Ok(())
+    } else {
+        // SSH not running is normal, just test that localhost is reachable
+        // Try a different approach - just verify localhost resolves
+        "localhost:80".to_socket_addrs().map_err(|e| {
+            SinexError::processing(format!("Localhost name resolution failed: {e}"))
+        })?;
+        Ok(())
     }
 }
 

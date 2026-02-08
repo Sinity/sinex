@@ -251,7 +251,7 @@ pub fn checkpoint_bucket_name(prefix: Option<&str>) -> String {
         env.nats_kv_bucket_name(base_bucket)
     };
 
-    format!("KV_{}", namespaced_base)
+    format!("KV_{namespaced_base}")
 }
 
 /// Parse a checkpoint KV key into (processor, group, consumer) components.
@@ -691,8 +691,7 @@ impl CheckpointCleanupConfig {
     /// - `SINEX_CHECKPOINT_CLEANUP_INTERVAL_HOURS`: Run interval in hours (default: 24)
     pub fn from_env() -> Self {
         let enabled = std::env::var("SINEX_CHECKPOINT_CLEANUP_ENABLED")
-            .map(|v| v.to_lowercase() == "true" || v == "1")
-            .unwrap_or(false);
+            .is_ok_and(|v| v.to_lowercase() == "true" || v == "1");
 
         let max_age_days: u64 = std::env::var("SINEX_CHECKPOINT_CLEANUP_MAX_AGE_DAYS")
             .ok()

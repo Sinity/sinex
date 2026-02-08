@@ -21,14 +21,14 @@ use xtask::sandbox::prelude::*;
 use std::time::Duration;
 
 #[sinex_test]
-#[ignore]
+#[ignore = "requires dedicated performance environment"]
 async fn test_resource_limits_under_load(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
 }
 
 #[sinex_test]
-#[ignore]
+#[ignore = "requires dedicated performance environment"]
 async fn test_memory_monitoring_high_volume(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())

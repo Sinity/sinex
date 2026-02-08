@@ -112,7 +112,8 @@ impl<'ctx> TestRuntimeBuilder<'ctx> {
         let runtime = NodeRuntimeState::new(service_info, handles, raw_config, work_dir);
 
         // Track the runtime's background pieces for deterministic teardown.
-        ctx.register_background_handle("node-runtime", nats.process_handle());
+        ctx.register_background_handle("node-runtime", nats.process_handle())
+            .await;
 
         Ok(TestRuntime {
             runtime,

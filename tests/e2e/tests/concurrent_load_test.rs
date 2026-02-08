@@ -223,11 +223,9 @@ async fn test_concurrent_event_ingestion(ctx: TestContext) -> TestResult<()> {
     let mut total_successes = 0;
     let mut total_errors = 0;
 
-    for result in results {
-        if let Ok((successes, errors)) = result {
-            total_successes += successes;
-            total_errors += errors;
-        }
+    for (successes, errors) in results.into_iter().flatten() {
+        total_successes += successes;
+        total_errors += errors;
     }
 
     println!("\n📊 Concurrent ingestion results:");

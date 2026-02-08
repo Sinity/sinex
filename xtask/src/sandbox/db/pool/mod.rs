@@ -581,7 +581,6 @@ impl TestDatabase {
 }
 
 /// Database statistics for debugging
-
 /// Cleanup task for background processing
 #[derive(Debug)]
 struct CleanupTask {
@@ -2058,8 +2057,7 @@ async fn clean_database(
         // Terminate any zombie connections that might interfere with cleanup or verification
         let _ = sqlx::query(&format!(
             "SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
-             WHERE datname = '{}' AND pid <> pg_backend_pid()",
-            db_name
+             WHERE datname = '{db_name}' AND pid <> pg_backend_pid()"
         ))
         .execute(&working_pool)
         .await;
@@ -2068,8 +2066,7 @@ async fn clean_database(
         let mut drained = false;
         for _ in 0..20 {
             let count: i64 = sqlx::query_scalar(&format!(
-                "SELECT COUNT(*) FROM pg_stat_activity WHERE datname = '{}' AND pid <> pg_backend_pid()",
-                db_name
+                "SELECT COUNT(*) FROM pg_stat_activity WHERE datname = '{db_name}' AND pid <> pg_backend_pid()"
             ))
             .fetch_one(&working_pool)
             .await
@@ -2083,8 +2080,7 @@ async fn clean_database(
         }
         if !drained {
             eprintln!(
-                "  ⚠️  Database {} still has connections after termination; cleanup might fail",
-                db_name
+                "  ⚠️  Database {db_name} still has connections after termination; cleanup might fail"
             );
         }
 
@@ -2464,6 +2460,18 @@ async fn ensure_default_session_state_conn(conn: &mut PgConnection) -> TestResul
                 .await
                 .map_err(|e| eyre!(e.to_string()))?;
             eprintln!("  ⚠️  Reset row_security to on");
+        }
+    }
+    // Restore synchronous_commit if apply_test_optimizations() turned it off.
+    if let Ok(sync_commit) = sqlx::query_scalar::<_, String>("SHOW synchronous_commit")
+        .fetch_one(&mut *conn)
+        .await
+    {
+        if sync_commit != "on" {
+            sqlx::query("SET synchronous_commit TO ON")
+                .execute(&mut *conn)
+                .await
+                .map_err(|e| eyre!(e.to_string()))?;
         }
     }
 
@@ -2958,7 +2966,11 @@ async fn ensure_template_database(
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         let drop_query = format!("DROP DATABASE IF EXISTS {template_name} WITH (FORCE)");
-        if let Ok(_) = sqlx::query(&drop_query).execute(&mut admin_conn).await {
+        if sqlx::query(&drop_query)
+            .execute(&mut admin_conn)
+            .await
+            .is_ok()
+        {
         } else {
             let fallback = format!("DROP DATABASE IF EXISTS {template_name}");
             sqlx::query(&fallback).execute(&mut admin_conn).await?;

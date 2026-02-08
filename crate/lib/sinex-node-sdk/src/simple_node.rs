@@ -522,7 +522,7 @@ where
         let context = SimpleNodeContext {
             source: event.source.to_string(),
             event_type: event.event_type.to_string(),
-            ts_orig: event.ts_orig.map(|t| t),
+            ts_orig: event.ts_orig,
             event_id: source_event_id.into(),
         };
 
@@ -560,7 +560,7 @@ where
             Ok(Some(output)) => {
                 // Build output event
                 let output_payload = serde_json::to_value(&output).map_err(|e| {
-                    SinexError::processing(format!("Failed to serialize output: {}", e))
+                    SinexError::processing(format!("Failed to serialize output: {e}"))
                 })?;
 
                 let output_event = Event {
@@ -808,8 +808,7 @@ where
 
                 // Check if health monitoring is enabled (default: yes)
                 let health_enabled = std::env::var("SINEX_HEALTH_MONITORING_ENABLED")
-                    .map(|v| v != "false" && v != "0")
-                    .unwrap_or(true);
+                    .map_or(true, |v| v != "false" && v != "0");
 
                 if health_enabled {
                     let config = SelfObserverConfig {
@@ -844,7 +843,7 @@ where
         self.processor
             .on_initialize(&self.persisted_state.state)
             .await
-            .map_err(|e| SinexError::processing(format!("Initialize hook failed: {}", e)))?;
+            .map_err(|e| SinexError::processing(format!("Initialize hook failed: {e}")))?;
 
         info!(
             processor = %self.processor.name(),

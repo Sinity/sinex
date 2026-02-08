@@ -87,6 +87,7 @@ impl SchemaCache {
     fn len(&self) -> usize {
         self.cache.read().len()
     }
+    #[allow(clippy::iter_not_returning_iterator)] // returns collected results, not an iterator
     fn iter<R, F>(&self, f: F) -> Vec<R>
     where
         F: Fn((&Ulid, &SchemaCacheEntry)) -> R,
@@ -104,7 +105,7 @@ impl SchemaLookup {
         Self::default()
     }
     fn get(&self, key: &(Arc<String>, Arc<String>)) -> Option<Ulid> {
-        self.lookup.read().get(key).cloned()
+        self.lookup.read().get(key).copied()
     }
     fn bulk_update(&self, new_lookup: LookupMap) {
         *self.lookup.write() = new_lookup;
@@ -228,7 +229,7 @@ impl EventValidator {
         self.ensure_object_payload(&event.payload)?;
         self.validate_domain_specific_rules(event)?;
         self.validate_ulid_timestamp(event)?;
-        self.validate_provenance(&event.provenance())?;
+        self.validate_provenance(event.provenance())?;
         if !self.validation_enabled {
             return Ok(());
         }
@@ -286,16 +287,14 @@ impl EventValidator {
         }
         let source_key = Arc::new(source.to_string());
         let event_key = Arc::new(event_type.to_string());
-        let schema_id = match self
+        let Some(schema_id) = self
             .schema_lookup
             .get(&(source_key.clone(), event_key.clone()))
-        {
-            Some(id) => id,
-            None => return SchemaValidationOutcome::NoSchema,
+        else {
+            return SchemaValidationOutcome::NoSchema;
         };
-        let cache_entry = match self.schema_cache.get(&schema_id) {
-            Some(entry) => entry,
-            None => return SchemaValidationOutcome::SchemaNotFound { schema_id },
+        let Some(cache_entry) = self.schema_cache.get(&schema_id) else {
+            return SchemaValidationOutcome::SchemaNotFound { schema_id };
         };
         let schema = cache_entry.compiled_schema.clone();
         let validation_result = schema.validate(payload);
@@ -326,7 +325,7 @@ impl EventValidator {
                 source_event_ids, ..
             } => {
                 let mut seen = HashSet::new();
-                for event_id in source_event_ids.iter() {
+                for event_id in source_event_ids {
                     if !seen.insert(*event_id.as_ulid()) {
                         return Err(ValidationError::InvalidValue {
                             field: "provenance.source_event_ids".to_string(),
@@ -497,8 +496,7 @@ async fn fetch_latest_active_schemas(pool: &DbPool) -> SinexResult<Vec<SchemaRec
         .await
         .map_err(|e| {
             sinex_primitives::error::SinexError::database(format!(
-                "failed to load active schemas for EventValidator: {}",
-                e
+                "failed to load active schemas for EventValidator: {e}"
             ))
         })?;
 
@@ -523,8 +521,7 @@ async fn fetch_all_active_schemas(pool: &DbPool) -> SinexResult<Vec<SchemaRecord
         .await
         .map_err(|e| {
             sinex_primitives::error::SinexError::database(format!(
-                "failed to load schema versions: {}",
-                e
+                "failed to load schema versions: {e}"
             ))
         })?;
 
