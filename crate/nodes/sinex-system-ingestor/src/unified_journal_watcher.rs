@@ -435,7 +435,14 @@ impl UnifiedJournalWatcher {
 
         loop {
             line.clear();
-            match reader.read_line(&mut line).await {
+            let read_result = tokio::select! {
+                result = reader.read_line(&mut line) => result,
+                () = self.cancel_token.cancelled() => {
+                    info!("Journal follow cancelled by shutdown signal");
+                    break;
+                }
+            };
+            match read_result {
                 Ok(0) => break, // EOF
                 Ok(_) => {
                     if !line.trim().is_empty() {

@@ -52,6 +52,7 @@ use tokio::{
         Mutex,
     },
 };
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, instrument, warn};
 use validator::ValidationError;
 
@@ -196,6 +197,7 @@ struct WatchContext {
     security_policy: FileWatchingSecurityPolicy,
     dropped_events: Arc<AtomicU64>,
     metrics: Arc<EventMetrics>,
+    cancel_token: CancellationToken,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -209,6 +211,7 @@ pub struct FilesystemProcessor {
     watch_handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
     dropped_events: Arc<AtomicU64>,
     metrics: Arc<EventMetrics>,
+    cancel_token: CancellationToken,
 }
 
 impl FilesystemProcessor {
@@ -222,6 +225,7 @@ impl FilesystemProcessor {
             watch_handles: Arc::new(Mutex::new(Vec::new())),
             dropped_events: Arc::new(AtomicU64::new(0)),
             metrics: EventMetrics::new(),
+            cancel_token: CancellationToken::new(),
         }
     }
 
@@ -235,6 +239,7 @@ impl FilesystemProcessor {
             watch_handles: Arc::new(Mutex::new(Vec::new())),
             dropped_events: Arc::new(AtomicU64::new(0)),
             metrics: EventMetrics::new(),
+            cancel_token: CancellationToken::new(),
         }
     }
 
@@ -290,6 +295,7 @@ impl FilesystemProcessor {
                     },
                     dropped_events: Arc::clone(&self.dropped_events),
                     metrics: Arc::clone(&self.metrics),
+                    cancel_token: self.cancel_token.clone(),
                 },
             );
         }
@@ -487,9 +493,12 @@ impl SimpleIngestor for FilesystemProcessor {
     }
 
     async fn shutdown(&mut self, _state: &Self::State) -> NodeResult<()> {
+        // Signal all watchers to stop gracefully
+        self.cancel_token.cancel();
+
+        // Wait for all watcher tasks to finish
         let mut guard = self.watch_handles.lock().await;
         for handle in guard.drain(..) {
-            handle.abort();
             let _ = handle.await;
         }
 
@@ -586,10 +595,23 @@ async fn watch_path(root: String, ctx: WatchContext) -> NodeResult<()> {
         .watch(Path::new(normalized.as_str()), RecursiveMode::Recursive)
         .map_err(|e| SinexError::lifecycle(format!("Failed to watch path: {e}")))?;
 
-    while let Some(event) = rx.recv().await {
-        if let Err(e) = handle_event(&ctx, &root, event).await {
-            ctx.metrics.record_error();
-            warn!("Failed to process filesystem event: {}", e);
+    loop {
+        tokio::select! {
+            event = rx.recv() => {
+                match event {
+                    Some(event) => {
+                        if let Err(e) = handle_event(&ctx, &root, event).await {
+                            ctx.metrics.record_error();
+                            warn!("Failed to process filesystem event: {}", e);
+                        }
+                    }
+                    None => break, // Channel closed
+                }
+            }
+            () = ctx.cancel_token.cancelled() => {
+                info!(path = %root, "Filesystem watcher received shutdown signal");
+                break;
+            }
         }
     }
 
@@ -1044,6 +1066,7 @@ mod tests {
             security_policy: FileWatchingSecurityPolicy::permissive(),
             dropped_events: Arc::new(AtomicU64::new(0)),
             metrics: EventMetrics::new(),
+            cancel_token: CancellationToken::new(),
         };
 
         let temp_root = tempdir()?;
