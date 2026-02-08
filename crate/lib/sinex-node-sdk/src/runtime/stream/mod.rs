@@ -989,61 +989,99 @@ impl<T: Node + 'static> NodeRunner<T> {
         let mut last_checkpoint_time = std::time::Instant::now();
         let mut last_event_id: Option<Ulid> = None;
 
-        while let Some(provisional) = receiver.recv().await {
-            let event_id = provisional.event_id;
-            let event = {
-                #[cfg(feature = "db")]
-                match &db_pool {
-                    Some(pool) => match Self::fetch_persisted_event(pool, &event_id).await? {
-                        Some(event) => Some(event),
-                        None => {
-                            warn!(
-                                "Confirmed event {:?} missing from database; skipping",
-                                event_id
-                            );
-                            None
-                        }
-                    },
-                    None => match Self::build_event_from_provisional(&provisional) {
+        // Batch processing: accumulate up to BATCH_SIZE events before processing.
+        // Block on the first event, then non-blocking drain whatever else is queued.
+        const BATCH_SIZE: usize = 100;
+
+        loop {
+            // Block until at least one event arrives (or channel closes)
+            let first = match receiver.recv().await {
+                Some(p) => p,
+                None => break,
+            };
+
+            // Non-blocking drain: grab whatever else is already queued
+            let mut provisionals = vec![first];
+            while provisionals.len() < BATCH_SIZE {
+                match receiver.try_recv() {
+                    Ok(p) => provisionals.push(p),
+                    Err(_) => break,
+                }
+            }
+
+            // Resolve each provisional to a full Event
+            let mut events = Vec::with_capacity(provisionals.len());
+            let mut batch_last_event_id = None;
+
+            for provisional in &provisionals {
+                let event_id = &provisional.event_id;
+                let event = {
+                    #[cfg(feature = "db")]
+                    match &db_pool {
+                        Some(pool) => match Self::fetch_persisted_event(pool, event_id).await? {
+                            Some(event) => Some(event),
+                            None => {
+                                warn!(
+                                    "Confirmed event {:?} missing from database; skipping",
+                                    event_id
+                                );
+                                None
+                            }
+                        },
+                        None => match Self::build_event_from_provisional(provisional) {
+                            Ok(event) => Some(event),
+                            Err(err) => {
+                                warn!(error = %err, "Failed to build event from provisional payload");
+                                None
+                            }
+                        },
+                    }
+                    #[cfg(not(feature = "db"))]
+                    match Self::build_event_from_provisional(provisional) {
                         Ok(event) => Some(event),
                         Err(err) => {
                             warn!(error = %err, "Failed to build event from provisional payload");
                             None
                         }
-                    },
-                }
-                #[cfg(not(feature = "db"))]
-                match Self::build_event_from_provisional(&provisional) {
-                    Ok(event) => Some(event),
-                    Err(err) => {
-                        warn!(error = %err, "Failed to build event from provisional payload");
-                        None
                     }
-                }
-            };
+                };
 
-            if let Some(event) = event {
-                match self.node.process_event_batch(vec![event]).await {
-                    Ok(stats) => {
-                        processed_events += stats.processed as u64;
-                        events_since_checkpoint += stats.processed as u64;
-                        last_event_id = Some(*event_id.as_ulid());
+                if let Some(event) = event {
+                    batch_last_event_id = Some(*event_id.as_ulid());
+                    events.push(event);
+                }
+            }
+
+            if events.is_empty() {
+                continue;
+            }
+
+            let batch_size = events.len();
+            match self.node.process_event_batch(events).await {
+                Ok(stats) => {
+                    processed_events += stats.processed as u64;
+                    events_since_checkpoint += stats.processed as u64;
+                    if let Some(eid) = batch_last_event_id {
+                        last_event_id = Some(eid);
                     }
-                    Err(err) => {
-                        // Save checkpoint before bailing so we don't lose ALL progress
-                        if let Some(eid) = last_event_id {
-                            checkpoint_state.checkpoint = Checkpoint::Internal {
-                                event_id: eid,
-                                message_count: processed_events,
-                            };
-                            checkpoint_state.processed_count = processed_events;
-                            checkpoint_state.last_activity =
-                                sinex_primitives::temporal::Timestamp::now();
-                            let _ = checkpoint_manager.save_checkpoint(&checkpoint_state).await;
-                        }
-                        error!(error = %err, "Automaton batch processing failed - stopping node to prevent data loss");
-                        return Err(err);
+                    if batch_size > 1 {
+                        debug!(batch_size, processed_events, "Processed event batch");
                     }
+                }
+                Err(err) => {
+                    // Save checkpoint before bailing so we don't lose ALL progress
+                    if let Some(eid) = last_event_id {
+                        checkpoint_state.checkpoint = Checkpoint::Internal {
+                            event_id: eid,
+                            message_count: processed_events,
+                        };
+                        checkpoint_state.processed_count = processed_events;
+                        checkpoint_state.last_activity =
+                            sinex_primitives::temporal::Timestamp::now();
+                        let _ = checkpoint_manager.save_checkpoint(&checkpoint_state).await;
+                    }
+                    error!(error = %err, batch_size, "Automaton batch processing failed - stopping node to prevent data loss");
+                    return Err(err);
                 }
             }
 
