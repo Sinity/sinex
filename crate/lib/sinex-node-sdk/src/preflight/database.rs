@@ -604,16 +604,24 @@ fn parse_migration_metadata(name: &str) -> (i64, String) {
 
 async fn validate_migration_syntax(migration: &MigrationFile) -> NodeResult<()> {
     // Sea-orm migrations are Rust files that get compiled
-    // So we just check that the file exists
+    // So we check that the file exists and is readable
     debug!("Validating migration syntax for: {}", migration.description);
 
-    // Basic validation - check that file exists and is readable
-    if !Utf8Path::new(&migration.path).exists() {
+    let path = Utf8Path::new(&migration.path);
+    if !path.exists() {
         return Err(SinexError::processing(format!(
             "Migration file not found: {}",
             migration.path
         )));
     }
+
+    // Verify the file is readable (catches permission issues early)
+    fs::metadata(path.as_std_path()).map_err(|e| {
+        SinexError::processing(format!(
+            "Migration file not accessible: {} ({})",
+            migration.path, e
+        ))
+    })?;
 
     Ok(())
 }
@@ -621,15 +629,40 @@ async fn validate_migration_syntax(migration: &MigrationFile) -> NodeResult<()> 
 async fn test_migration_compatibility(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
 ) -> NodeResult<()> {
-    // Test that the database schema is compatible with expected operations
+    // Test that the database supports operations required by migrations.
+    // Sea-orm migrations are compiled Rust code, so we can't execute them
+    // in a dry-run transaction. Instead, verify essential prerequisites.
 
-    // Test basic table operations
-    sqlx::query!("SELECT 1 as compatibility_test")
-        .fetch_one(&mut **tx)
-        .await
-        .map_err(SinexError::from)?;
+    // Verify core schema exists (migrations create tables within it)
+    let core_schema_exists: (bool,) = sqlx::query_as(
+        "SELECT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = 'core')",
+    )
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(SinexError::from)?;
 
-    // Additional compatibility tests would go here
+    if !core_schema_exists.0 {
+        return Err(SinexError::processing(
+            "Schema 'core' does not exist. Initial migration may not have been applied.",
+        ));
+    }
+
+    // Verify required extensions are installed (migrations depend on them)
+    let required_extensions = ["pgx_ulid", "timescaledb", "vector", "pg_jsonschema"];
+    for ext in required_extensions {
+        let ext_installed: (bool,) =
+            sqlx::query_as("SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname = $1)")
+                .bind(ext)
+                .fetch_one(&mut **tx)
+                .await
+                .map_err(SinexError::from)?;
+
+        if !ext_installed.0 {
+            return Err(SinexError::processing(format!(
+                "Required extension '{ext}' is not installed. Migrations require it."
+            )));
+        }
+    }
 
     Ok(())
 }
@@ -652,6 +685,7 @@ async fn verify_schema_compatibility(
     ];
 
     let mut table_status = HashMap::new();
+    let mut missing_tables = Vec::new();
 
     for table_name in critical_tables {
         let exists = check_table_exists(pool, table_name).await?;
@@ -660,13 +694,20 @@ async fn verify_schema_compatibility(
         if exists {
             messages.push(format!("✓ Critical table '{table_name}' exists"));
         } else {
-            messages.push(format!(
-                "ℹ Critical table '{table_name}' does not exist (will be created)"
-            ));
+            messages.push(format!("✗ Critical table '{table_name}' is MISSING"));
+            missing_tables.push(table_name);
         }
     }
 
     details.insert("table_compatibility", json!(table_status));
+
+    if !missing_tables.is_empty() {
+        return Err(SinexError::processing(format!(
+            "Missing {} critical table(s): {}. Run migrations before starting the node.",
+            missing_tables.len(),
+            missing_tables.join(", ")
+        )));
+    }
 
     Ok(())
 }
