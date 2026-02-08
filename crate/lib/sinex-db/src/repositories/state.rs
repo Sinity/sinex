@@ -65,10 +65,10 @@ fn processor_heartbeat_stale_after() -> Duration {
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|value| *value > 0)
-        .map(Duration::from_secs)
-        .unwrap_or(Duration::from_secs(
-            DEFAULT_PROCESS_HEARTBEAT_STALE_SECS.as_secs(),
-        ))
+        .map_or(
+            Duration::from_secs(DEFAULT_PROCESS_HEARTBEAT_STALE_SECS.as_secs()),
+            Duration::from_secs,
+        )
 }
 
 impl<'a> Repository<'a> for StateRepository<'a> {
@@ -88,7 +88,7 @@ impl<'a> EnhancedRepository<'a> for StateRepository<'a> {
 // Note: Removed TransactionSupport implementation due to lifetime complexity.
 // Use the transaction methods directly on StateRepositoryTx instead.
 
-impl<'a> StateRepository<'a> {
+impl StateRepository<'_> {
     // ===== Operations Log Helpers for Replay =====
 
     /// Start a replay operation via core.start_operation and return the operation Id
@@ -297,7 +297,6 @@ impl<'a> StateRepository<'a> {
             RetryConfig::default(),
             IdempotentTransaction::new(),
             |tx| {
-                let id = id.clone();
                 let operation_type = operation_type.clone();
                 let operator = operator.clone();
                 let scope = scope.clone();
@@ -903,7 +902,7 @@ pub struct SystemHealthReport {
 /// Tombstone operation stored in operations_log.
 ///
 /// Uses operation_type = "tombstone" and stores full state in scope JSONB.
-impl<'a> StateRepository<'a> {
+impl StateRepository<'_> {
     /// Create a new tombstone operation record.
     ///
     /// The full TombstoneOperation is serialized into the `scope` field,
@@ -914,9 +913,8 @@ impl<'a> StateRepository<'a> {
         operator: &str,
         scope: JsonValue,
     ) -> DbResult<OperationRecord> {
-        let id_ulid = Ulid::from_str(operation_id).map_err(|_| {
-            SinexError::validation(format!("Invalid operation ID: {}", operation_id))
-        })?;
+        let id_ulid = Ulid::from_str(operation_id)
+            .map_err(|_| SinexError::validation(format!("Invalid operation ID: {operation_id}")))?;
         let id = Id::<Operation>::from_ulid(id_ulid);
 
         let record = sqlx::query_as!(
@@ -953,9 +951,8 @@ impl<'a> StateRepository<'a> {
         &self,
         operation_id: &str,
     ) -> DbResult<Option<OperationRecord>> {
-        let id_ulid = Ulid::from_str(operation_id).map_err(|_| {
-            SinexError::validation(format!("Invalid operation ID: {}", operation_id))
-        })?;
+        let id_ulid = Ulid::from_str(operation_id)
+            .map_err(|_| SinexError::validation(format!("Invalid operation ID: {operation_id}")))?;
         let id = Id::<Operation>::from_ulid(id_ulid);
 
         sqlx::query_as!(
@@ -988,9 +985,8 @@ impl<'a> StateRepository<'a> {
         scope: JsonValue,
         duration_ms: Option<i32>,
     ) -> DbResult<()> {
-        let id_ulid = Ulid::from_str(operation_id).map_err(|_| {
-            SinexError::validation(format!("Invalid operation ID: {}", operation_id))
-        })?;
+        let id_ulid = Ulid::from_str(operation_id)
+            .map_err(|_| SinexError::validation(format!("Invalid operation ID: {operation_id}")))?;
         let id = Id::<Operation>::from_ulid(id_ulid);
 
         sqlx::query!(

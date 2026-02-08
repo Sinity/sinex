@@ -152,8 +152,7 @@ impl ReplayService {
         let replay_handle = self.build_replay_emitter()?;
         let emitter = replay_handle
             .as_ref()
-            .map(|handle| handle.emitter.clone())
-            .unwrap_or_else(|| emitter.clone());
+            .map_or_else(|| emitter.clone(), |handle| handle.emitter.clone());
 
         let result = self
             .replay_events_with_progress(

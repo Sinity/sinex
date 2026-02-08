@@ -169,7 +169,7 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
     let events_stream = topology.events_stream.clone();
 
     let publisher_handle = tokio::spawn(async move {
-        let subject = format!("{}.load.event", events_stream);
+        let subject = format!("{events_stream}.load.event");
         let mut idx = 0;
         while !shutdown_flag_clone.load(Ordering::SeqCst) {
             let payload = serde_json::to_vec(&json!({
@@ -238,7 +238,7 @@ async fn test_concurrent_service_shutdown(ctx: TestContext) -> TestResult<()> {
     })
     .await?;
 
-    let subject = format!("{}.events", stream_name);
+    let subject = format!("{stream_name}.events");
 
     // Create multiple consumers
     let stream = js.get_stream(&stream_name).await?;
@@ -247,8 +247,8 @@ async fn test_concurrent_service_shutdown(ctx: TestContext) -> TestResult<()> {
     for i in 0..5 {
         let consumer = stream
             .create_consumer(jetstream::consumer::pull::Config {
-                name: Some(format!("shutdown-consumer-{}", i)),
-                durable_name: Some(format!("shutdown-consumer-{}", i)),
+                name: Some(format!("shutdown-consumer-{i}")),
+                durable_name: Some(format!("shutdown-consumer-{i}")),
                 ack_policy: jetstream::consumer::AckPolicy::Explicit,
                 ..Default::default()
             })
@@ -258,7 +258,7 @@ async fn test_concurrent_service_shutdown(ctx: TestContext) -> TestResult<()> {
 
     // Publish some messages
     for i in 0..50 {
-        js.publish(subject.clone(), format!("message-{}", i).into())
+        js.publish(subject.clone(), format!("message-{i}").into())
             .await?
             .await?;
     }
@@ -427,7 +427,7 @@ async fn test_shutdown_data_consistency(ctx: TestContext) -> TestResult<()> {
         ) {
             assert_eq!(
                 checksum,
-                format!("check-{}", idx),
+                format!("check-{idx}"),
                 "Checksum should match index"
             );
         }
@@ -459,11 +459,11 @@ async fn test_shutdown_timeout_handling(ctx: TestContext) -> TestResult<()> {
     })
     .await?;
 
-    let subject = format!("{}.events", stream_name);
+    let subject = format!("{stream_name}.events");
 
     // Publish messages
     for i in 0..20 {
-        js.publish(subject.clone(), format!("message-{}", i).into())
+        js.publish(subject.clone(), format!("message-{i}").into())
             .await?
             .await?;
     }

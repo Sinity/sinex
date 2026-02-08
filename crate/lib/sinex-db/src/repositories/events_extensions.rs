@@ -14,7 +14,7 @@ use sinex_primitives::Timestamp;
 use sqlx::types::Json;
 use tracing::instrument;
 
-impl<'a> EventRepository<'a> {
+impl EventRepository<'_> {
     /// Get events by source and time range
     #[instrument(skip(self), fields(source = %source.as_str()))]
     pub async fn get_by_source_and_time_range(
@@ -130,14 +130,14 @@ impl<'a> EventRepository<'a> {
     ) -> DbResult<i64> {
         // EXPLAIN output shape is not supported by sqlx macros; use runtime query.
         let plan: Json<serde_json::Value> = sqlx::query_scalar(
-            r#"
+            r"
             EXPLAIN (FORMAT JSON)
             SELECT 1
             FROM core.events
             WHERE source = $1
               AND ts_ingest >= $2
               AND ts_ingest <= $3
-            "#,
+            ",
         )
         .bind(source.as_str())
         .bind(Timestamp::from_unix_timestamp(start.unix_timestamp()).unwrap_or(Timestamp::now()))

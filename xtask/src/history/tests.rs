@@ -141,7 +141,7 @@ pub(super) fn parse_nextest_output(output: &str) -> Vec<TestResult> {
                     output,
                 });
             }
-            Err(_) => continue, // Skip unparseable lines
+            Err(_) => {} // Skip unparseable lines
         }
     }
 
@@ -557,6 +557,7 @@ pub struct RuntimeEstimate {
 }
 
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod tests {
     use super::*;
 

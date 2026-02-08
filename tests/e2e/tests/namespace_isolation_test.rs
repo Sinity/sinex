@@ -1,16 +1,12 @@
 // NOTE: Tests temporarily ignored pending API migration
 
-use anyhow::ensure;
-use serde_json::json;
-use sinex_primitives::{DynamicPayload, Ulid};
 use xtask::sandbox::prelude::*;
-use xtask::sandbox::timing::WaitHelpers;
 
 // FIXME: API removed, needs migration
 // use xtask::sandbox::PipelineNamespace;
 
 #[sinex_test]
-#[ignore]
+#[ignore = "requires multi-namespace infrastructure"]
 async fn pipeline_namespace_subjects_are_isolated(ctx: TestContext) -> TestResult<()> {
     // FIXME: PipelineNamespace and related APIs no longer available
     // let ctx = ctx.with_nats().await?;

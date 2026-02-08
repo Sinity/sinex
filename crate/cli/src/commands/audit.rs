@@ -54,10 +54,10 @@ impl AuditCommand {
                 println!("  Status: {}", op.result_status);
                 println!("  Operator: {}", op.operator);
                 if let Some(msg) = &op.result_message {
-                    println!("  Message: {}", msg);
+                    println!("  Message: {msg}");
                 }
                 if let Some(duration) = op.duration_ms {
-                    println!("  Duration: {}ms", duration);
+                    println!("  Duration: {duration}ms");
                 }
 
                 let events = &response.audit_trail.affected_events;

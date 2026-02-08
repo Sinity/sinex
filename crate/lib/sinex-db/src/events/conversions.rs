@@ -88,9 +88,10 @@ impl EventRecordExt for EventRecord {
             }
             (Some(_event_ids), None, _) => {
                 return Err(db_error(
-                    sqlx::Error::Protocol(
-                        format!("source_event_ids present but empty for event {}", self.id).into(),
-                    ),
+                    sqlx::Error::Protocol(format!(
+                        "source_event_ids present but empty for event {}",
+                        self.id
+                    )),
                     "convert event record provenance",
                 ));
             }

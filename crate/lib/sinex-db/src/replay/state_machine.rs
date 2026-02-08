@@ -129,7 +129,7 @@ impl Default for ReplayCheckpoint {
             last_event_id: None,
             batch_number: 0,
             savepoint_id: None,
-            updated_at: sinex_primitives::temporal::now().into(),
+            updated_at: sinex_primitives::temporal::now(),
         }
     }
 }
@@ -182,7 +182,7 @@ impl ReplayStateMachine {
         if let Some(window) = scope.time_window {
             window
         } else {
-            let end = sinex_primitives::temporal::now().into();
+            let end = sinex_primitives::temporal::now();
             let start = end - time::Duration::hours(24);
             (start, end)
         }
@@ -236,14 +236,10 @@ impl ReplayStateMachine {
         scope: ReplayScope,
         actor: String,
     ) -> Result<ReplayOperation> {
-        let now = sinex_primitives::temporal::now().into();
+        let now = sinex_primitives::temporal::now();
         let state_repo = self.pool.state();
         let op_id = state_repo
-            .start_replay_operation(
-                &actor,
-                serde_json::to_value(&scope)?,
-                scope.time_window.clone(),
-            )
+            .start_replay_operation(&actor, serde_json::to_value(&scope)?, scope.time_window)
             .await
             .map_err(|e| {
                 SinexError::database("Failed to start replay operation")
@@ -361,12 +357,12 @@ impl ReplayStateMachine {
             return Err(
                 SinexError::invalid_state("Invalid state transition for replay operation")
                     .with_context("from_state", format!("{:?}", meta.state))
-                    .with_context("to_state", format!("{:?}", new_state))
+                    .with_context("to_state", format!("{new_state:?}"))
                     .with_operation("transition_state"),
             );
         }
 
-        let now = sinex_primitives::temporal::now().into();
+        let now = sinex_primitives::temporal::now();
         meta.state = new_state;
         if meta.started_at.is_none() && matches!(new_state, ReplayState::Executing) {
             meta.started_at = Some(now);
@@ -517,7 +513,7 @@ impl ReplayStateMachine {
 
     /// Approve operation for execution
     pub async fn approve(&self, operation_id: Ulid, approver: String) -> Result<()> {
-        let now = sinex_primitives::temporal::now().into();
+        let now = sinex_primitives::temporal::now();
         let row = sqlx::query!(
             r#"
             SELECT preview_summary
@@ -614,7 +610,7 @@ impl ReplayStateMachine {
         .await?;
         let mut meta = Self::decode_meta_json(row.try_get("preview_summary").unwrap_or(None))?;
         meta.state = ReplayState::Failed;
-        meta.finished_at = Some(sinex_primitives::temporal::now().into());
+        meta.finished_at = Some(sinex_primitives::temporal::now());
         meta.outcome = Some("failed".into());
         meta.error_details = Some(error.clone());
         let (status, msg) = Self::map_state_to_status(&meta.state);
@@ -646,7 +642,7 @@ impl ReplayStateMachine {
             return Ok(());
         }
         meta.state = ReplayState::Cancelled;
-        meta.finished_at = Some(sinex_primitives::temporal::now().into());
+        meta.finished_at = Some(sinex_primitives::temporal::now());
         meta.outcome = Some("cancelled".into());
         meta.error_details = Some(reason.clone());
         let (status, msg) = Self::map_state_to_status(&meta.state);
@@ -811,7 +807,7 @@ impl ReplayStateMachine {
                 state: ReplayState::Planning,
                 checkpoint: ReplayCheckpoint::default(),
                 actor: "unknown".into(),
-                created_at: sinex_primitives::temporal::now().into(),
+                created_at: sinex_primitives::temporal::now(),
                 approved_by: None,
                 approved_at: None,
                 executor_node: None,

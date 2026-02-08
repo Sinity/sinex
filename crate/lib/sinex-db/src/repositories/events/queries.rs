@@ -1,5 +1,4 @@
 use super::conversions::{records_to_events, EventRecordExt, EventSearchRow};
-use super::event_select_columns;
 use super::persistence::{
     BatchViolation, CommandCount, EventAnnotation, EventRepository, EventTypeCount,
     InvalidPayloadEvent, InvalidTimestamp, SourceActivity, SuspiciousEvent,
@@ -14,7 +13,7 @@ use sinex_primitives::{Id, Pagination};
 use sqlx::{types::Json, Postgres, QueryBuilder, Row};
 use tracing::{instrument, warn};
 
-impl<'a> EventRepository<'a> {
+impl EventRepository<'_> {
     #[instrument(skip(self), fields(event_id = %id))]
     pub async fn get_by_id(&self, id: Id<Event<JsonValue>>) -> DbResult<Option<Event<JsonValue>>> {
         let record = sqlx::query_as::<_, EventRecord>(concat!(
@@ -27,7 +26,7 @@ impl<'a> EventRepository<'a> {
         .await
         .map_err(|e| db_error(e, "get event by id"))?;
 
-        Ok(record.map(|r| r.try_to_event()).transpose()?)
+        record.map(|r| r.try_to_event()).transpose()
     }
 
     #[instrument(skip(self))]
@@ -141,10 +140,10 @@ impl<'a> EventRepository<'a> {
     pub async fn estimate_count_by_source(&self, source: &EventSource) -> DbResult<i64> {
         // EXPLAIN output shape is not supported by sqlx macros; use runtime query.
         let plan: Json<serde_json::Value> = sqlx::query_scalar(
-            r#"
+            r"
             EXPLAIN (FORMAT JSON)
             SELECT 1 FROM core.events WHERE source = $1
-            "#,
+            ",
         )
         .bind(source.as_str())
         .fetch_one(self.pool)
@@ -171,10 +170,10 @@ impl<'a> EventRepository<'a> {
     pub async fn estimate_count_by_event_type(&self, event_type: &EventType) -> DbResult<i64> {
         // EXPLAIN output shape is not supported by sqlx macros; use runtime query.
         let plan: Json<serde_json::Value> = sqlx::query_scalar(
-            r#"
+            r"
             EXPLAIN (FORMAT JSON)
             SELECT 1 FROM core.events WHERE event_type = $1
-            "#,
+            ",
         )
         .bind(event_type.as_str())
         .fetch_one(self.pool)
@@ -245,10 +244,10 @@ impl<'a> EventRepository<'a> {
     ) -> DbResult<i64> {
         // EXPLAIN output shape is not supported by sqlx macros; use runtime query.
         let plan: Json<serde_json::Value> = sqlx::query_scalar(
-            r#"
+            r"
             EXPLAIN (FORMAT JSON)
             SELECT 1 FROM core.events WHERE ts_ingest >= $1 AND ts_ingest <= $2
-            "#,
+            ",
         )
         .bind(start)
         .bind(end)
@@ -757,7 +756,7 @@ impl<'a> EventRepository<'a> {
         limit: i64,
     ) -> DbResult<Vec<CommandCount>> {
         let rows = sqlx::query(
-            r#"
+            r"
             SELECT
                 payload->>'command' as command,
                 COUNT(*) as count
@@ -769,7 +768,7 @@ impl<'a> EventRepository<'a> {
             GROUP BY payload->>'command'
             ORDER BY count DESC
             LIMIT $3
-            "#,
+            ",
         )
         .bind(start)
         .bind(end)
@@ -797,7 +796,7 @@ impl<'a> EventRepository<'a> {
     /// Get top commands all time
     pub async fn top_commands_all_time(&self, limit: i64) -> DbResult<Vec<CommandCount>> {
         let rows = sqlx::query(
-            r#"
+            r"
             SELECT
                 payload->>'command' as command,
                 COUNT(*) as count
@@ -807,7 +806,7 @@ impl<'a> EventRepository<'a> {
             GROUP BY payload->>'command'
             ORDER BY count DESC
             LIMIT $1
-            "#,
+            ",
         )
         .bind(limit)
         .fetch_all(self.pool)
@@ -1023,7 +1022,7 @@ impl<'a> EventRepository<'a> {
         let uuids: Vec<uuid::Uuid> = ids.iter().map(|id| ulid_to_uuid(*id.as_ulid())).collect();
 
         let records = sqlx::query_as::<_, EventRecord>(
-            r#"
+            r"
             SELECT
                 id,
                 source,
@@ -1043,7 +1042,7 @@ impl<'a> EventRepository<'a> {
             FROM core.events
             WHERE id::uuid = ANY($1::uuid[])
             ORDER BY ts_ingest DESC
-            "#,
+            ",
         )
         .bind(&uuids)
         .fetch_all(self.pool)
@@ -1071,7 +1070,7 @@ impl<'a> EventRepository<'a> {
         let source_strings: Vec<String> = sources.iter().map(|s| s.as_str().to_string()).collect();
 
         let records = sqlx::query_as::<_, EventRecord>(
-            r#"
+            r"
             SELECT
                 id,
                 source,
@@ -1097,7 +1096,7 @@ impl<'a> EventRepository<'a> {
             WHERE rn <= $2
             ORDER BY source, ts_ingest DESC
             LIMIT $3
-            "#,
+            ",
         )
         .bind(&source_strings)
         .bind(limit_per_source)

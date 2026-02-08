@@ -343,6 +343,7 @@ pub fn provenance_from_ids(ids: &[EventId]) -> Provenance {
 /// parent events to link to (e.g., periodic aggregation with no recent events).
 /// The bootstrap ID is a well-known sentinel that indicates "derived without
 /// specific lineage".
+#[allow(clippy::expect_used)] // Constant byte array, infallible ULID construction
 pub fn bootstrap_provenance() -> Provenance {
     let bootstrap = EventId::from_ulid(
         Ulid::from_bytes([

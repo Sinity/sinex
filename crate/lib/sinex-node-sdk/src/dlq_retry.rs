@@ -128,7 +128,7 @@ impl DlqRetryHandler {
                     }
 
                     // Rate limit: pause between batches to avoid overwhelming downstream
-                    if processed % self.config.batch_size as u64 == 0 {
+                    if processed.is_multiple_of(self.config.batch_size as u64) {
                         tokio::time::sleep(Duration::from_millis(DEFAULT_DLQ_INTER_BATCH_DELAY_MS))
                             .await;
                     }

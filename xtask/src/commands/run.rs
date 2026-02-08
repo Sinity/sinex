@@ -723,7 +723,7 @@ async fn execute_tether(
     // Spawn streaming task
     let stream_handle = tokio::spawn(async move {
         if let Err(e) = session_clone.stream_events(tx).await {
-            eprintln!("[tether] Streaming error: {}", e);
+            eprintln!("[tether] Streaming error: {e}");
         }
         session_clone
     });

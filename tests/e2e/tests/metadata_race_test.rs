@@ -1,7 +1,7 @@
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
-#[ignore]
+#[ignore = "requires concurrent metadata access testing"]
 async fn test_metadata_update_race_condition(_ctx: TestContext) -> TestResult<()> {
     /* Broken: This test uses SourceMaterialRepository which doesn't exist in the current API.
     // The crate previously relied on sinex_db::repositories::SourceMaterialRepository

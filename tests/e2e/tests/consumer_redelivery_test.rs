@@ -43,7 +43,7 @@ async fn test_nak_triggers_redelivery(ctx: TestContext) -> TestResult<()> {
     })
     .await?;
 
-    let subject = format!("{}.events", stream_name);
+    let subject = format!("{stream_name}.events");
 
     // Publish a test message
     js.publish(subject.clone(), "test-message".into())
@@ -146,11 +146,11 @@ async fn test_redelivery_after_consumer_disconnect(ctx: TestContext) -> TestResu
     })
     .await?;
 
-    let subject = format!("{}.events", stream_name);
+    let subject = format!("{stream_name}.events");
 
     // Publish messages
     for i in 0..5 {
-        js.publish(subject.clone(), format!("message-{}", i).into())
+        js.publish(subject.clone(), format!("message-{i}").into())
             .await
             .map_err(|e| eyre!(e))?
             .await
@@ -245,8 +245,7 @@ async fn test_redelivery_after_consumer_disconnect(ctx: TestContext) -> TestResu
 
     assert!(
         redelivered_count >= 3,
-        "Unacked messages should be redelivered: got {}",
-        redelivered_count
+        "Unacked messages should be redelivered: got {redelivered_count}"
     );
 
     // Cleanup
@@ -274,7 +273,7 @@ async fn test_redelivery_count_tracking(ctx: TestContext) -> TestResult<()> {
     })
     .await?;
 
-    let subject = format!("{}.events", stream_name);
+    let subject = format!("{stream_name}.events");
 
     // Publish test message
     js.publish(subject.clone(), "count-test".into())
@@ -388,7 +387,7 @@ async fn test_dlq_routing_after_max_retries(ctx: TestContext) -> TestResult<()> 
     })
     .await?;
 
-    let subject = format!("{}.events", stream_name);
+    let subject = format!("{stream_name}.events");
 
     // Publish test message
     js.publish(subject.clone(), "dlq-test".into())
@@ -463,8 +462,7 @@ async fn test_dlq_routing_after_max_retries(ctx: TestContext) -> TestResult<()> 
     // Should have hit max_deliver limit
     assert_eq!(
         delivery_attempts, 3,
-        "Should have exactly 3 delivery attempts (max_deliver=3), got {}",
-        delivery_attempts
+        "Should have exactly 3 delivery attempts (max_deliver=3), got {delivery_attempts}"
     );
 
     // Message should no longer be available (exhausted max_deliver)
@@ -527,11 +525,11 @@ async fn test_parallel_consumer_redelivery(ctx: TestContext) -> TestResult<()> {
     })
     .await?;
 
-    let subject = format!("{}.events", stream_name);
+    let subject = format!("{stream_name}.events");
 
     // Publish multiple messages
     for i in 0..10 {
-        js.publish(subject.clone(), format!("message-{}", i).into())
+        js.publish(subject.clone(), format!("message-{i}").into())
             .await
             .map_err(|e| eyre!(e))?
             .await
@@ -579,7 +577,7 @@ async fn test_parallel_consumer_redelivery(ctx: TestContext) -> TestResult<()> {
                             // Alternate NAK/ACK based on total count for variety
                             let total =
                                 acked.load(Ordering::Relaxed) + nacked.load(Ordering::Relaxed);
-                            if total % 2 == 0 {
+                            if total.is_multiple_of(2) {
                                 let _ = msg
                                     .ack_with(async_nats::jetstream::AckKind::Nak(None))
                                     .await;
@@ -614,8 +612,7 @@ async fn test_parallel_consumer_redelivery(ctx: TestContext) -> TestResult<()> {
     // Should have processed at least all messages (some redelivered)
     assert!(
         total_acked >= 10,
-        "Should have acked at least 10 messages: got {}",
-        total_acked
+        "Should have acked at least 10 messages: got {total_acked}"
     );
 
     // Cleanup

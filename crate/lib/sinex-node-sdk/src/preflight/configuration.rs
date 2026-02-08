@@ -118,86 +118,79 @@ async fn verify_environment_variables(messages: &mut Vec<String>) -> NodeResult<
     ];
 
     for (var_name, description, required) in required_vars {
-        match std::env::var(var_name) {
-            Ok(value) => {
-                // Redact sensitive values
-                let display_value = if var_name.contains("PASSWORD") || var_name.contains("SECRET")
-                {
-                    "***".to_string()
-                } else if var_name == "DATABASE_URL" {
-                    redact_database_url(&value)
-                } else {
-                    value.clone()
-                };
+        if let Ok(value) = std::env::var(var_name) {
+            // Redact sensitive values
+            let display_value = if var_name.contains("PASSWORD") || var_name.contains("SECRET") {
+                "***".to_string()
+            } else if var_name == "DATABASE_URL" {
+                redact_database_url(&value)
+            } else {
+                value.clone()
+            };
 
-                env_vars.insert(
-                    var_name.to_string(),
-                    json!({
-                        "value": display_value,
-                        "description": description,
-                        "required": required,
-                        "present": true
-                    }),
-                );
+            env_vars.insert(
+                var_name.to_string(),
+                json!({
+                    "value": display_value,
+                    "description": description,
+                    "required": required,
+                    "present": true
+                }),
+            );
 
-                messages.push(format!("✓ Environment variable '{var_name}' is set"));
-            }
-            Err(_) => {
-                env_vars.insert(
-                    var_name.to_string(),
-                    json!({
-                        "description": description,
-                        "required": required,
-                        "present": false
-                    }),
-                );
+            messages.push(format!("✓ Environment variable '{var_name}' is set"));
+        } else {
+            env_vars.insert(
+                var_name.to_string(),
+                json!({
+                    "description": description,
+                    "required": required,
+                    "present": false
+                }),
+            );
 
-                if required {
-                    missing_vars.push(var_name.to_string());
-                    messages.push(format!(
-                        "✗ Required environment variable '{var_name}' is missing"
-                    ));
-                    has_issues = true;
-                } else {
-                    messages.push(format!(
-                        "ℹ Optional environment variable '{var_name}' is not set"
-                    ));
-                }
+            if required {
+                missing_vars.push(var_name.to_string());
+                messages.push(format!(
+                    "✗ Required environment variable '{var_name}' is missing"
+                ));
+                has_issues = true;
+            } else {
+                messages.push(format!(
+                    "ℹ Optional environment variable '{var_name}' is not set"
+                ));
             }
         }
     }
 
     for (var_name, description) in optional_vars {
-        match std::env::var(var_name) {
-            Ok(value) => {
-                let display_value = value.clone();
+        if let Ok(value) = std::env::var(var_name) {
+            let display_value = value.clone();
 
-                env_vars.insert(
-                    var_name.to_string(),
-                    json!({
-                        "value": display_value,
-                        "description": description,
-                        "required": false,
-                        "present": true
-                    }),
-                );
+            env_vars.insert(
+                var_name.to_string(),
+                json!({
+                    "value": display_value,
+                    "description": description,
+                    "required": false,
+                    "present": true
+                }),
+            );
 
-                messages.push(format!(
-                    "✓ Optional environment variable '{var_name}' is set"
-                ));
-            }
-            Err(_) => {
-                env_vars.insert(
-                    var_name.to_string(),
-                    json!({
-                        "description": description,
-                        "required": false,
-                        "present": false
-                    }),
-                );
+            messages.push(format!(
+                "✓ Optional environment variable '{var_name}' is set"
+            ));
+        } else {
+            env_vars.insert(
+                var_name.to_string(),
+                json!({
+                    "description": description,
+                    "required": false,
+                    "present": false
+                }),
+            );
 
-                debug!("Optional environment variable '{}' is not set", var_name);
-            }
+            debug!("Optional environment variable '{}' is not set", var_name);
         }
     }
 

@@ -190,9 +190,8 @@ fn test_process_builder_psql_helper_without_db() {
 
     // This might succeed or fail depending on system setup,
     // but the important thing is the helper method exists and works
-    match result {
-        Ok(output) => assert!(output.stdout.contains("psql")),
-        Err(_) => {} // OK if psql not available
+    if let Ok(output) = result {
+        assert!(output.stdout.contains("psql"));
     }
 }
 

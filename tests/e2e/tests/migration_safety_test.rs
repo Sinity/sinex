@@ -22,21 +22,21 @@ use xtask::sandbox::prelude::*;
 use std::time::Duration;
 
 #[sinex_test]
-#[ignore]
+#[ignore = "requires multi-version migration infrastructure"]
 async fn test_data_migration_safety(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
 }
 
 #[sinex_test]
-#[ignore]
+#[ignore = "requires multi-version migration infrastructure"]
 async fn test_migration_idempotency(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
 }
 
 #[sinex_test]
-#[ignore]
+#[ignore = "requires multi-version migration infrastructure"]
 async fn test_data_preservation_during_migration(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())

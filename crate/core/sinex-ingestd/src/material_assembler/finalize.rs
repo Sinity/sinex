@@ -250,9 +250,8 @@ impl MaterialAssembler {
                 return Ok(());
             }
 
-            let end_preview = match state.pending_end.clone() {
-                Some(end) => end,
-                None => return Ok(()),
+            let Some(end_preview) = state.pending_end.clone() else {
+                return Ok(());
             };
 
             if !state.has_begin {

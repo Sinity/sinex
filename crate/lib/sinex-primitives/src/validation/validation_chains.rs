@@ -53,9 +53,10 @@ fn validate_host(host: &str) -> Result<(), ValidationError> {
 }
 
 // Regex for safe relative paths (no directory traversal)
-lazy_static::lazy_static! {
-    static ref SAFE_PATH_REGEX: regex::Regex = regex::Regex::new(r"^[a-zA-Z0-9_\-/]+$").expect("valid compile-time regex pattern");
-}
+#[allow(clippy::expect_used)] // Compile-time constant regex
+static SAFE_PATH_REGEX: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"^[a-zA-Z0-9_\-/]+$").expect("valid compile-time regex pattern")
+});
 
 /// File path validation
 #[derive(Debug, Clone, Serialize, Deserialize, Validate)]

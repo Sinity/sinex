@@ -7,6 +7,7 @@ pub struct ProgressReporter {
 
 impl ProgressReporter {
     /// Create a new progress reporter with a progress bar
+    #[allow(clippy::unwrap_used)]
     pub fn new(total: u64, message: &str) -> Self {
         let bar = ProgressBar::new(total);
         bar.set_style(
@@ -48,6 +49,7 @@ pub struct Spinner {
 
 impl Spinner {
     /// Create a new spinner with a message
+    #[allow(clippy::unwrap_used)]
     pub fn new(message: &str) -> Self {
         let bar = ProgressBar::new_spinner();
         bar.set_style(
@@ -69,7 +71,7 @@ impl Spinner {
 
     /// Finish the spinner with a success message
     pub fn finish_with_message(&self, message: &str) {
-        self.bar.finish_with_message(format!("✓ {}", message));
+        self.bar.finish_with_message(format!("✓ {message}"));
     }
 
     /// Finish the spinner, clearing it
@@ -79,7 +81,7 @@ impl Spinner {
 
     /// Abandon the spinner with an error message
     pub fn abandon_with_message(&self, message: &str) {
-        self.bar.abandon_with_message(format!("✗ {}", message));
+        self.bar.abandon_with_message(format!("✗ {message}"));
     }
 }
 
@@ -128,7 +130,7 @@ where
             Ok(value)
         }
         Err(error) => {
-            spinner.abandon_with_message(&format!("Failed: {}", error));
+            spinner.abandon_with_message(&format!("Failed: {error}"));
             Err(error)
         }
     }

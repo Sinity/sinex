@@ -817,6 +817,188 @@ fn test_generate_certs_in_readonly_directory() {
 }
 
 // ============================================================================
+// Key Mismatch and Chain Validation Tests
+// ============================================================================
+
+#[test]
+fn test_tls_check_detects_key_mismatch() {
+    use xtask::tls::check_tls_config;
+
+    let temp_dir = TempDir::new().unwrap();
+    let dir1 = temp_dir.path().join("set1");
+    let dir2 = temp_dir.path().join("set2");
+
+    // Generate two independent certificate sets
+    let config1 = CertConfig {
+        output_dir: dir1.clone(),
+        san: vec!["localhost".to_string()],
+        ca_name: "CA Set 1".to_string(),
+        validity_days: 30,
+        force: false,
+    };
+    let config2 = CertConfig {
+        output_dir: dir2.clone(),
+        san: vec!["localhost".to_string()],
+        ca_name: "CA Set 2".to_string(),
+        validity_days: 30,
+        force: false,
+    };
+
+    generate_dev_certs(&config1).unwrap();
+    generate_dev_certs(&config2).unwrap();
+
+    // Use cert from set1 but key from set2 — should detect mismatch
+    let result = check_tls_config(
+        Some(dir1.join("server.pem")),
+        Some(dir2.join("server-key.pem")),
+        None,
+        false,
+        false,
+    )
+    .unwrap();
+
+    assert!(
+        !result.valid,
+        "Should be invalid when key doesn't match cert"
+    );
+    assert_eq!(
+        result.key_matches,
+        Some(false),
+        "key_matches should be false"
+    );
+    assert!(
+        result.issues.iter().any(|i| i.contains("does not match")),
+        "Should report key mismatch in issues: {:?}",
+        result.issues
+    );
+}
+
+#[test]
+fn test_tls_check_chain_rejects_wrong_ca() {
+    use xtask::tls::check_tls_config;
+
+    let temp_dir = TempDir::new().unwrap();
+    let dir1 = temp_dir.path().join("real");
+    let dir2 = temp_dir.path().join("impostor");
+
+    // Generate two independent CAs
+    let config1 = CertConfig {
+        output_dir: dir1.clone(),
+        san: vec!["localhost".to_string()],
+        ca_name: "Real CA".to_string(),
+        validity_days: 30,
+        force: false,
+    };
+    let config2 = CertConfig {
+        output_dir: dir2.clone(),
+        san: vec!["localhost".to_string()],
+        ca_name: "Impostor CA".to_string(),
+        validity_days: 30,
+        force: false,
+    };
+
+    generate_dev_certs(&config1).unwrap();
+    generate_dev_certs(&config2).unwrap();
+
+    // Server cert from set1 checked against CA from set2 — chain should fail
+    let result = check_tls_config(
+        Some(dir1.join("server.pem")),
+        Some(dir1.join("server-key.pem")),
+        Some(dir2.join("ca.pem")),
+        true, // verify_chain = true
+        false,
+    )
+    .unwrap();
+
+    assert!(
+        !result.valid,
+        "Should be invalid when cert is not signed by provided CA"
+    );
+    assert!(
+        result
+            .issues
+            .iter()
+            .any(|i| i.contains("not signed by the CA")),
+        "Should report chain validation failure: {:?}",
+        result.issues
+    );
+}
+
+#[test]
+fn test_tls_check_valid_chain_passes() {
+    use xtask::tls::check_tls_config;
+
+    let temp_dir = TempDir::new().unwrap();
+    let output_path = temp_dir.path().to_path_buf();
+
+    let config = CertConfig {
+        output_dir: output_path.clone(),
+        san: vec!["localhost".to_string()],
+        ca_name: "Valid Chain CA".to_string(),
+        validity_days: 30,
+        force: false,
+    };
+
+    generate_dev_certs(&config).unwrap();
+
+    // Server cert checked against its actual CA — should pass
+    let result = check_tls_config(
+        Some(output_path.join("server.pem")),
+        Some(output_path.join("server-key.pem")),
+        Some(output_path.join("ca.pem")),
+        true, // verify_chain = true
+        false,
+    )
+    .unwrap();
+
+    assert!(result.valid, "Valid chain should pass: {:?}", result.issues);
+    assert_eq!(result.key_matches, Some(true), "Key should match its cert");
+    assert!(result.certificate.is_some(), "Should have certificate info");
+    assert!(result.ca.is_some(), "Should have CA info");
+
+    let ca_info = result.ca.unwrap();
+    assert!(ca_info.is_ca, "CA cert should be marked as CA");
+    assert!(!ca_info.is_expired, "CA cert should not be expired");
+}
+
+#[test]
+fn test_tls_check_ca_not_marked_warns() {
+    use xtask::tls::check_tls_config;
+
+    let temp_dir = TempDir::new().unwrap();
+    let output_path = temp_dir.path().to_path_buf();
+
+    let config = CertConfig {
+        output_dir: output_path.clone(),
+        san: vec!["localhost".to_string()],
+        ca_name: "CA Warning Test".to_string(),
+        validity_days: 30,
+        force: false,
+    };
+
+    generate_dev_certs(&config).unwrap();
+
+    // Use the server cert (not a CA) as the CA argument — should warn
+    let result = check_tls_config(
+        Some(output_path.join("server.pem")),
+        Some(output_path.join("server-key.pem")),
+        Some(output_path.join("server.pem")), // not a CA!
+        false,
+        false,
+    )
+    .unwrap();
+
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|w| w.contains("not marked as a CA")),
+        "Should warn when CA cert is not actually a CA: {:?}",
+        result.warnings
+    );
+}
+
+// ============================================================================
 // Validity Period Tests
 // ============================================================================
 

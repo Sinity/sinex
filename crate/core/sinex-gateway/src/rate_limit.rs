@@ -1,4 +1,5 @@
 #![doc = include_str!("../docs/rate_limit.md")]
+#![allow(clippy::expect_used)] // All expects are on compile-time NonZeroU32 constants
 
 use dashmap::DashMap;
 use governor::{

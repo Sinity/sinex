@@ -58,7 +58,6 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
     WaitHelpers::wait_for_condition(
         || {
             let handler = automaton_handler.clone();
-            let event_id = event_id;
             async move {
                 let processed_ids = handler.processed_event_ids().await;
                 Ok::<bool, SinexError>(processed_ids.contains(&event_id))

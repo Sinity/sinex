@@ -26,9 +26,7 @@ use tokio::time::{sleep, timeout, Duration, Instant};
 use tracing::{debug, info, warn};
 use xtask::sandbox::{sinex_test, TestContext};
 
-#[path = "../support/mod.rs"]
-mod support;
-use support::runtime::TestRuntimeBuilder;
+use crate::support::runtime::TestRuntimeBuilder;
 
 /// Test complete node lifecycle from birth to death
 #[sinex_test]

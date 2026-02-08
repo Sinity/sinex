@@ -114,15 +114,14 @@ impl FilesystemNode {
                 use std::os::unix::fs::PermissionsExt;
 
                 let event = if metadata.is_file() {
-                    let modified_time = metadata
-                        .modified()
-                        .ok()
-                        .map(|t| {
+                    let modified_time = metadata.modified().ok().map_or_else(
+                        sinex_primitives::temporal::Timestamp::now,
+                        |t| {
                             let odt: sinex_primitives::temporal::OffsetDateTime = t.into();
                             let dt: Timestamp = odt.into();
                             dt
-                        })
-                        .unwrap_or_else(sinex_primitives::temporal::Timestamp::now);
+                        },
+                    );
 
                     let payload = FileDiscoveredPayload {
                         path: SanitizedPath::new_unchecked(
@@ -142,15 +141,14 @@ impl FilesystemNode {
                         .build()?
                         .to_json_event()?
                 } else if metadata.is_dir() {
-                    let modified_time = metadata
-                        .modified()
-                        .ok()
-                        .map(|t| {
+                    let modified_time = metadata.modified().ok().map_or_else(
+                        sinex_primitives::temporal::Timestamp::now,
+                        |t| {
                             let odt: sinex_primitives::temporal::OffsetDateTime = t.into();
                             let dt: Timestamp = odt.into();
                             dt
-                        })
-                        .unwrap_or_else(sinex_primitives::temporal::Timestamp::now);
+                        },
+                    );
 
                     let payload = DirDiscoveredPayload {
                         path: SanitizedPath::new_unchecked(
@@ -379,7 +377,7 @@ impl Node for FilesystemNode {
         })
     }
 
-    fn node_name(&self) -> &str {
+    fn node_name(&self) -> &'static str {
         "filesystem-example"
     }
 

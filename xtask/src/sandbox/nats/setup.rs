@@ -138,7 +138,8 @@ impl NatsSetup {
         let shutdown_proc = nats.process_handle();
 
         self.ctx
-            .register_background_handle("nats-server", shutdown_proc.clone());
+            .register_background_handle("nats-server", shutdown_proc.clone())
+            .await;
         self.ctx
             .register_shutdown_hook("nats-shutdown", async move {
                 if let Some(mut child) = shutdown_proc.lock().await.take() {

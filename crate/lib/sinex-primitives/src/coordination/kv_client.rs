@@ -176,25 +176,53 @@ impl CoordinationKvClient {
     }
 
     /// Step down from leadership.
+    ///
+    /// Uses CAS `update` to atomically verify ownership before deleting,
+    /// preventing a race where another instance acquires leadership between
+    /// the ownership check and the delete.
     pub async fn release_leadership(&self, candidate_id: &str) -> Result<(), SinexError> {
         let bucket = self.leadership_bucket().await?;
         let key = &self.service_name;
 
         let entry = bucket
-            .get(key)
+            .entry(key)
             .await
-            .map_err(|e| SinexError::kv(format!("Failed to get leadership key: {e}")))?;
+            .map_err(|e| SinexError::kv(format!("Failed to get leadership key entry: {e}")))?;
 
         if let Some(entry) = entry {
-            let current_leader = std::str::from_utf8(&entry).unwrap_or("");
+            use async_nats::jetstream::kv::Operation;
+
+            // Only act on live entries (not already deleted/purged)
+            if !matches!(entry.operation, Operation::Put) {
+                return Ok(());
+            }
+
+            let current_leader = std::str::from_utf8(&entry.value).unwrap_or("");
             if current_leader == candidate_id {
-                // Warning: TOCTTOU race condition (BUG-002). Between the check and delete,
-                // another instance could have acquired leadership. NATS KV delete is unconditional.
-                bucket
-                    .delete(key)
+                // CAS update to prove we still own this key at this revision.
+                // If another instance claimed leadership between our entry() read
+                // and now, this fails safely with a revision conflict.
+                match bucket
+                    .update(key, candidate_id.to_string().into(), entry.revision)
                     .await
-                    .map_err(|e| SinexError::kv(format!("Failed to release leadership: {e}")))?;
-                info!("Released leadership for {}", self.service_name);
+                {
+                    Ok(_new_rev) => {
+                        // Ownership verified atomically. Delete is now safe — the only
+                        // possible race is a sub-millisecond window between sequential
+                        // awaits in the same task.
+                        bucket.delete(key).await.map_err(|e| {
+                            SinexError::kv(format!("Failed to release leadership: {e}"))
+                        })?;
+                        info!("Released leadership for {}", self.service_name);
+                    }
+                    Err(err) => {
+                        warn!(
+                            error = %err,
+                            "Leadership already transferred for {}, skipping release",
+                            self.service_name
+                        );
+                    }
+                }
             }
         }
         Ok(())

@@ -31,12 +31,12 @@ async fn test_advisory_lock_acquire_release(ctx: TestContext) -> Result<()> {
     let lock_key = format!("test-lock-{}", uuid::Uuid::new_v4());
 
     // Acquire lock
-    let lock_guard = AdvisoryLock::try_acquire(&ctx.pool(), &lock_key)
+    let lock_guard = AdvisoryLock::try_acquire(ctx.pool(), &lock_key)
         .await?
         .expect("Should acquire lock");
 
     // Verify lock is held
-    let is_locked = AdvisoryLock::is_locked(&ctx.pool(), &lock_key).await?;
+    let is_locked = AdvisoryLock::is_locked(ctx.pool(), &lock_key).await?;
     assert!(is_locked, "Lock should be held after acquisition");
 
     // Release lock
@@ -56,7 +56,7 @@ async fn test_advisory_lock_acquire_release(ctx: TestContext) -> Result<()> {
 
     // Verify lock is released (should be able to acquire again)
     let lock_guard2: Option<ResourceGuard<AdvisoryLock>> =
-        AdvisoryLock::try_acquire(&ctx.pool(), &lock_key).await?;
+        AdvisoryLock::try_acquire(ctx.pool(), &lock_key).await?;
     assert!(
         lock_guard2.is_some(),
         "Should be able to acquire lock after release"
@@ -125,10 +125,9 @@ async fn test_advisory_lock_timeout(ctx: TestContext) -> Result<()> {
     let lock_key = format!("timeout-lock-{}", uuid::Uuid::new_v4());
 
     // Acquire lock first
-    let _lock_guard: ResourceGuard<AdvisoryLock> =
-        AdvisoryLock::try_acquire(&ctx.pool(), &lock_key)
-            .await?
-            .expect("Should acquire lock");
+    let _lock_guard: ResourceGuard<AdvisoryLock> = AdvisoryLock::try_acquire(ctx.pool(), &lock_key)
+        .await?
+        .expect("Should acquire lock");
 
     // Try to acquire with timeout from another task
     let pool = ctx.pool().clone();
@@ -185,7 +184,7 @@ async fn test_node_instance_registration(ctx: TestContext) -> Result<()> {
             env.nats_kv_bucket_name("sinex_instances")
         ))
         .await?;
-    let key = format!("{}.{}", service_name, instance_id);
+    let key = format!("{service_name}.{instance_id}");
     let entry = bucket.entry(&key).await?;
 
     assert!(entry.is_some(), "Instance should be registered in KV");
@@ -227,8 +226,8 @@ async fn test_multiple_node_instances(ctx: TestContext) -> Result<()> {
 
         let metadata = InstanceMetadata {
             instance_id: instance_id.clone(),
-            hostname: format!("host-{}", i),
-            version: format!("1.0.{}", i),
+            hostname: format!("host-{i}"),
+            version: format!("1.0.{i}"),
             started_at: sinex_primitives::Timestamp::now().unix_timestamp(),
             last_heartbeat: sinex_primitives::Timestamp::now().unix_timestamp(),
         };
@@ -248,12 +247,12 @@ async fn test_multiple_node_instances(ctx: TestContext) -> Result<()> {
     // KV bucket keys method usually requires listing or watching.
     // For test simplicity, we just check each key directly.
     for (i, instance_id) in instance_ids.iter().enumerate() {
-        let key = format!("{}.{}", service_name, instance_id);
+        let key = format!("{service_name}.{instance_id}");
         let entry = bucket.entry(&key).await?;
-        assert!(entry.is_some(), "Instance {} should exist", i);
+        assert!(entry.is_some(), "Instance {i} should exist");
 
         let meta: InstanceMetadata = serde_json::from_slice(&entry.unwrap().value)?;
-        assert_eq!(meta.version, format!("1.0.{}", i));
+        assert_eq!(meta.version, format!("1.0.{i}"));
     }
 
     Ok(())
@@ -301,11 +300,11 @@ async fn test_heartbeat_revision_update(ctx: TestContext) -> Result<()> {
 
     // Capture initial state
     let entry_fresh_1 = bucket
-        .entry(&format!("{}.{}", service_name, fresh_id))
+        .entry(&format!("{service_name}.{fresh_id}"))
         .await?
         .unwrap();
     let entry_stale_1 = bucket
-        .entry(&format!("{}.{}", service_name, stale_id))
+        .entry(&format!("{service_name}.{stale_id}"))
         .await?
         .unwrap();
 
@@ -316,11 +315,11 @@ async fn test_heartbeat_revision_update(ctx: TestContext) -> Result<()> {
 
     // Verify fresh has new revision, stale is same
     let entry_fresh_2 = bucket
-        .entry(&format!("{}.{}", service_name, fresh_id))
+        .entry(&format!("{service_name}.{fresh_id}"))
         .await?
         .unwrap();
     let entry_stale_2 = bucket
-        .entry(&format!("{}.{}", service_name, stale_id))
+        .entry(&format!("{service_name}.{stale_id}"))
         .await?
         .unwrap();
 
@@ -446,7 +445,7 @@ async fn test_concurrent_coordination_stress(ctx: TestContext) -> Result<()> {
 
             let meta = InstanceMetadata {
                 instance_id: instance_id.clone(),
-                hostname: format!("host-{}", task_id),
+                hostname: format!("host-{task_id}"),
                 version: "1.0.0".to_string(),
                 started_at: sinex_primitives::Timestamp::now().unix_timestamp(),
                 last_heartbeat: sinex_primitives::Timestamp::now().unix_timestamp(),

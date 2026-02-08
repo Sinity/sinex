@@ -22,6 +22,7 @@ use sinex_primitives::{
         BluetoothEventType, DBusBus, DeviceType, MountEventType, NetworkConnectionType,
         NetworkEventType, NetworkState, PlaybackStatus, PowerEventType,
     },
+    secret_redaction::SecretRedactor,
     JsonValue,
 };
 use time::OffsetDateTime;
@@ -135,6 +136,24 @@ struct MonitorConfig {
 }
 
 /// Helper to create processing errors with consistent formatting
+/// Recursively redact string values within a JSON structure using `SecretRedactor`.
+fn redact_json_strings(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::String(s) => {
+            serde_json::Value::String(SecretRedactor::redact(s).into_owned())
+        }
+        serde_json::Value::Array(arr) => {
+            serde_json::Value::Array(arr.iter().map(redact_json_strings).collect())
+        }
+        serde_json::Value::Object(obj) => serde_json::Value::Object(
+            obj.iter()
+                .map(|(k, v)| (k.clone(), redact_json_strings(v)))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
 fn dbus_error(message: &str, source: impl std::fmt::Display) -> sinex_node_sdk::SinexError {
     sinex_node_sdk::SinexError::processing(format!("{message}: {source}"))
 }
@@ -626,7 +645,7 @@ impl DbusWatcher {
             Self::send_event(tx, event, "dbus_mount_event", material).await?;
         }
 
-        // Always emit generic signal events
+        // Always emit generic signal events (with redacted args)
         let event = Event::new(
             DbusSignalPayload {
                 bus: parse_bus_type(bus_type),
@@ -634,7 +653,7 @@ impl DbusWatcher {
                 path: path.to_string(),
                 interface: interface.to_string(),
                 signal: member.to_string(),
-                args: args.clone(),
+                args: redact_json_strings(args),
                 timestamp: timestamp.into(),
             },
             material.initial_provenance(),
@@ -828,14 +847,14 @@ impl DbusWatcher {
             let summary = arg_array
                 .get(3)
                 .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
+                .map(|s| SecretRedactor::redact(s).into_owned())
+                .unwrap_or_default();
 
             let body = arg_array
                 .get(4)
                 .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
+                .map(|s| SecretRedactor::redact(s).into_owned())
+                .unwrap_or_default();
 
             let actions = arg_array
                 .get(5)
@@ -887,7 +906,7 @@ impl DbusWatcher {
         }
     }
 
-    /// Parse notification hints from D-Bus arguments
+    /// Parse notification hints from D-Bus arguments, redacting sensitive string values
     fn parse_notification_hints(
         hints_value: &serde_json::Value,
     ) -> Option<HashMap<String, serde_json::Value>> {
@@ -897,7 +916,14 @@ impl DbusWatcher {
                     .iter()
                     .filter_map(|entry| entry.as_object())
                     .flat_map(|obj| obj.iter())
-                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .map(|(k, v)| {
+                        let redacted = if let Some(s) = v.as_str() {
+                            serde_json::Value::String(SecretRedactor::redact(s).into_owned())
+                        } else {
+                            v.clone()
+                        };
+                        (k.clone(), redacted)
+                    })
                     .collect(),
             )
         } else {

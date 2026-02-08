@@ -134,13 +134,12 @@ impl<'a> TestRunner<'a> {
             loop {
                 if let Some(status) = child.try_wait().context("failed to check nextest status")? {
                     break status;
-                } else {
-                    if std::time::Instant::now() > deadline {
-                        let _ = child.kill();
-                        bail!("Test execution timed out after 10 minutes waiting for process exit");
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(100));
                 }
+                if std::time::Instant::now() > deadline {
+                    let _ = child.kill();
+                    bail!("Test execution timed out after 10 minutes waiting for process exit");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
             }
         };
 

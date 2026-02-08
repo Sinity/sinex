@@ -91,15 +91,12 @@ enabled = false
 
     match valid_config_test {
         Ok(Ok((has_db, has_collector, has_sources, buffer_size, max_conn))) => {
-            println!(
-                "  ✓ Valid configuration parsed in {:?}",
-                config_validation_duration
-            );
-            println!("    Database config: {}", has_db);
-            println!("    Collector config: {}", has_collector);
-            println!("    Event sources config: {}", has_sources);
-            println!("    Channel buffer: {}", buffer_size);
-            println!("    Max connections: {}", max_conn);
+            println!("  ✓ Valid configuration parsed in {config_validation_duration:?}");
+            println!("    Database config: {has_db}");
+            println!("    Collector config: {has_collector}");
+            println!("    Event sources config: {has_sources}");
+            println!("    Channel buffer: {buffer_size}");
+            println!("    Max connections: {max_conn}");
 
             assert!(has_db, "Should have database configuration");
             assert!(has_collector, "Should have collector configuration");
@@ -108,7 +105,7 @@ enabled = false
             assert!(max_conn > 0, "Max connections should be positive");
         }
         Ok(Err(e)) => {
-            println!("  Valid config validation failed: {}", e);
+            println!("  Valid config validation failed: {e}");
         }
         Err(_) => {
             println!("  Valid config validation timed out");
@@ -119,10 +116,10 @@ enabled = false
     let invalid_configs = [
         // Missing required sections
         (
-            r#"
+            r"
 [collector]
 channel_buffer_size = 1000
-"#,
+",
             "missing_database_section",
         ),
         // Invalid data types
@@ -174,7 +171,7 @@ channel_buffer_size = 10000
     let mut invalid_config_results = Vec::new();
 
     for (i, (invalid_config, test_name)) in invalid_configs.iter().enumerate() {
-        let invalid_config_file = config_dir.join(format!("invalid_{}.toml", i));
+        let invalid_config_file = config_dir.join(format!("invalid_{i}.toml"));
         fs::write(&invalid_config_file, invalid_config)?;
 
         let validation_result = timeout(Duration::from_secs(Timeouts::QUICK), async {
@@ -216,9 +213,9 @@ channel_buffer_size = 10000
         invalid_config_results.push((test_name, validation_accepted));
 
         if validation_accepted {
-            println!("  WARNING: Invalid config '{}' was accepted", test_name);
+            println!("  WARNING: Invalid config '{test_name}' was accepted");
         } else {
-            println!("  ✓ Invalid config '{}' rejected correctly", test_name);
+            println!("  ✓ Invalid config '{test_name}' rejected correctly");
         }
     }
 
@@ -239,7 +236,7 @@ channel_buffer_size = 10000
             .and_then(|v| v.as_integer())
             .unwrap_or(0);
 
-        println!("    Initial buffer size: {}", initial_buffer_size);
+        println!("    Initial buffer size: {initial_buffer_size}");
 
         // Simulate configuration change
         let updated_config =
@@ -259,7 +256,7 @@ channel_buffer_size = 10000
             .and_then(|v| v.as_integer())
             .unwrap_or(0);
 
-        println!("    Updated buffer size: {}", updated_buffer_size);
+        println!("    Updated buffer size: {updated_buffer_size}");
 
         // Verify change was detected and parsed correctly
         pretty_assertions::assert_ne!(
@@ -282,7 +279,7 @@ channel_buffer_size = 10000
             println!("  ✓ Configuration hot reload simulation successful");
         }
         Ok(Err(e)) => {
-            println!("  Configuration hot reload failed: {}", e);
+            println!("  Configuration hot reload failed: {e}");
         }
         Err(_) => {
             println!("  Configuration hot reload timed out");

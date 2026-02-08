@@ -86,7 +86,6 @@ pub(super) fn spawn_begin_consumer(
 ) -> JoinHandle<IngestdResult<()>> {
     let js = assembler.js.clone();
     let assembler = assembler.clone_for_task();
-    let shutdown_flag = shutdown_flag;
 
     tokio::spawn(async move {
         let stream_name = namespaced_stream(&assembler, "SOURCE_MATERIAL_BEGIN");
@@ -196,7 +195,6 @@ pub(super) fn spawn_slices_consumer(
 ) -> JoinHandle<IngestdResult<()>> {
     let js = assembler.js.clone();
     let assembler = assembler.clone_for_task();
-    let shutdown_flag = shutdown_flag;
 
     // Semaphore to limit concurrent batch processing and prevent memory exhaustion
     let batch_semaphore = Arc::new(tokio::sync::Semaphore::new(
@@ -347,7 +345,6 @@ pub(super) fn spawn_end_consumer(
 ) -> JoinHandle<IngestdResult<()>> {
     let js = assembler.js.clone();
     let assembler = assembler.clone_for_task();
-    let shutdown_flag = shutdown_flag;
 
     tokio::spawn(async move {
         let stream_name = namespaced_stream(&assembler, "SOURCE_MATERIAL_END");

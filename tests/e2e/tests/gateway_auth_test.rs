@@ -254,7 +254,7 @@ fn test_read_token_empty_after_trim() -> TestResult<()> {
 
     let token = rpc_test_support::read_token_from_env().unwrap();
 
-    assert_eq!(token, Some("".to_string()));
+    assert_eq!(token, Some(String::new()));
 
     // The actual GatewayAuth::from_env() should reject this
     // because token.trim().is_empty() would be true

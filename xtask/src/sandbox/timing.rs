@@ -339,9 +339,8 @@ impl WaitHelpers {
                 let expected = check_expected.clone();
                 async move {
                     let events = pool.events().get_recent(expected.len() as i64).await?;
-                    let ids = match collect_event_ids(events) {
-                        Some(ids) => ids,
-                        None => return Ok(false),
+                    let Some(ids) = collect_event_ids(events) else {
+                        return Ok(false);
                     };
                     Ok(ids.as_slice() == expected.as_slice())
                 }
@@ -401,9 +400,8 @@ impl WaitHelpers {
                         .events()
                         .get_by_source(&event_source, pagination)
                         .await?;
-                    let ids = match collect_event_ids(events) {
-                        Some(ids) => ids,
-                        None => return Ok(false),
+                    let Some(ids) = collect_event_ids(events) else {
+                        return Ok(false);
                     };
                     Ok(ids.as_slice() == expected.as_slice())
                 }
@@ -473,9 +471,8 @@ impl WaitHelpers {
                         .events()
                         .get_by_event_type(&event_type, pagination)
                         .await?;
-                    let ids = match collect_event_ids(events) {
-                        Some(ids) => ids,
-                        None => return Ok(false),
+                    let Some(ids) = collect_event_ids(events) else {
+                        return Ok(false);
                     };
                     Ok(ids.as_slice() == expected.as_slice())
                 }

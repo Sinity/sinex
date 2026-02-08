@@ -158,10 +158,10 @@ async fn db_health(pool: &DbPool) -> Result<()> {
     println!("  Events: {}", result.event_count);
     println!("  Sources: {}", result.source_count);
     if let Some(oldest) = &result.oldest_event {
-        println!("  Oldest event: {}", oldest);
+        println!("  Oldest event: {oldest}");
     }
     if let Some(newest) = &result.newest_event {
-        println!("  Newest event: {}", newest);
+        println!("  Newest event: {newest}");
     }
 
     Ok(())
@@ -325,7 +325,7 @@ async fn db_stats(pool: &DbPool, by_type: bool, format: OutputFormat) -> Result<
         (label, total, stats),
         |(label, total, stats): &(&str, i64, Vec<StatRow>)| {
             let mut output = String::new();
-            output.push_str(&format!("{} (total: {} events):\n\n", label, total));
+            output.push_str(&format!("{label} (total: {total} events):\n\n"));
 
             output.push_str(&format!("{:<40} {:>10}\n", "NAME", "COUNT"));
             output.push_str(&"-".repeat(52));

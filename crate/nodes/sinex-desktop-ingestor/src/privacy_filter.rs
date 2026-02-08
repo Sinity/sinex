@@ -3,6 +3,7 @@
 //! Redacts sensitive information from clipboard content and window titles
 //! before storage. This protects against accidental capture of credentials,
 //! API keys, and other sensitive data.
+#![allow(clippy::expect_used)] // All expects are on compile-time constant regex patterns
 
 use lazy_static::lazy_static;
 use regex::Regex;

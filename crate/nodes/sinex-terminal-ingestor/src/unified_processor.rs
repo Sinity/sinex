@@ -145,6 +145,10 @@ pub struct TerminalState {
     pub host: String,
 }
 
+/// Maximum number of command hashes to retain for deduplication.
+/// Covers ~10K most recent commands, which is sufficient to handle history rotation/truncation.
+const DEDUP_HASH_CAPACITY: usize = 10_000;
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct HistoryState {
     offset_bytes: u64,
@@ -154,6 +158,11 @@ struct HistoryState {
     inode: Option<u64>,
     /// For Fish `SQLite` history: last processed ROWID
     fish_row_id: Option<i64>,
+    /// Rolling window of command content hashes for deduplication across file rotation/truncation.
+    /// When a history file is rotated (new inode), old commands may reappear; this set prevents
+    /// duplicate events from being emitted.
+    #[serde(default)]
+    recent_hashes: Vec<u64>,
 }
 
 #[derive(Clone)]
@@ -185,11 +194,13 @@ impl HistoryWatcherContext {
         let mut line_number: u64 = 0;
         #[cfg(unix)]
         let mut last_inode: Option<u64> = None;
+        let mut recent_hashes: Vec<u64> = Vec::new();
         let mut shutdown_rx = self.shutdown_rx.clone();
 
         if let Some(state) = self.load_state().await {
             offset_bytes = state.offset_bytes;
             line_number = state.line_number;
+            recent_hashes = state.recent_hashes;
             #[cfg(unix)]
             {
                 last_inode = state.inode;
@@ -198,6 +209,7 @@ impl HistoryWatcherContext {
                 path = %self.path,
                 offset = offset_bytes,
                 line_number,
+                dedup_hashes = recent_hashes.len(),
                 "Restored terminal watcher state"
             );
         }
@@ -211,13 +223,18 @@ impl HistoryWatcherContext {
             #[cfg(unix)]
             {
                 let _ = self
-                    .poll_history_once(&mut offset_bytes, &mut line_number, &mut last_inode)
+                    .poll_history_once(
+                        &mut offset_bytes,
+                        &mut line_number,
+                        &mut last_inode,
+                        &mut recent_hashes,
+                    )
                     .await;
             }
             #[cfg(not(unix))]
             {
                 let _ = self
-                    .poll_history_once(&mut offset_bytes, &mut line_number)
+                    .poll_history_once(&mut offset_bytes, &mut line_number, &mut recent_hashes)
                     .await;
             }
 
@@ -235,13 +252,16 @@ impl HistoryWatcherContext {
 
     async fn monitor_fish_sqlite(self) {
         let mut fish_row_id: i64 = 0;
+        let mut recent_hashes: Vec<u64> = Vec::new();
         let mut shutdown_rx = self.shutdown_rx.clone();
 
         if let Some(state) = self.load_state().await {
             fish_row_id = state.fish_row_id.unwrap_or(0);
+            recent_hashes = state.recent_hashes;
             debug!(
                 path = %self.path,
                 fish_row_id,
+                dedup_hashes = recent_hashes.len(),
                 "Restored Fish history watcher state"
             );
         }
@@ -252,7 +272,9 @@ impl HistoryWatcherContext {
                 break;
             }
 
-            let _ = self.poll_fish_history_once(&mut fish_row_id).await;
+            let _ = self
+                .poll_fish_history_once(&mut fish_row_id, &mut recent_hashes)
+                .await;
 
             tokio::select! {
                 () = tokio::time::sleep(self.polling_interval) => {},
@@ -284,13 +306,14 @@ impl HistoryWatcherContext {
         }
     }
 
-    async fn persist_state(&self, offset_bytes: u64, line_number: u64) {
-        self.persist_state_full(offset_bytes, line_number, None)
+    async fn persist_state(&self, offset_bytes: u64, line_number: u64, recent_hashes: &[u64]) {
+        self.persist_state_full(offset_bytes, line_number, None, recent_hashes)
             .await;
     }
 
-    async fn persist_fish_state(&self, fish_row_id: i64) {
-        self.persist_state_full(0, 0, Some(fish_row_id)).await;
+    async fn persist_fish_state(&self, fish_row_id: i64, recent_hashes: &[u64]) {
+        self.persist_state_full(0, 0, Some(fish_row_id), recent_hashes)
+            .await;
     }
 
     async fn persist_state_full(
@@ -298,10 +321,10 @@ impl HistoryWatcherContext {
         offset_bytes: u64,
         line_number: u64,
         fish_row_id: Option<i64>,
+        recent_hashes: &[u64],
     ) {
-        let path = match &self.state_path {
-            Some(path) => path,
-            None => return,
+        let Some(path) = &self.state_path else {
+            return;
         };
 
         // Get current inode for tracking file rotation vs truncation
@@ -319,6 +342,7 @@ impl HistoryWatcherContext {
             #[cfg(unix)]
             inode: current_inode,
             fish_row_id,
+            recent_hashes: recent_hashes.to_vec(),
         };
 
         match serde_json::to_vec_pretty(&state) {
@@ -420,6 +444,7 @@ impl HistoryWatcherContext {
         offset_bytes: &mut u64,
         line_number: &mut u64,
         last_inode: &mut Option<u64>,
+        recent_hashes: &mut Vec<u64>,
     ) -> usize {
         use std::os::unix::fs::MetadataExt;
 
@@ -430,7 +455,7 @@ impl HistoryWatcherContext {
                 let current_inode = metadata.ino();
 
                 // Update inode tracking
-                let inode_changed = last_inode.map_or(false, |prev| prev != current_inode);
+                let inode_changed = last_inode.is_some_and(|prev| prev != current_inode);
                 *last_inode = Some(current_inode);
 
                 if file_size < *offset_bytes {
@@ -458,7 +483,8 @@ impl HistoryWatcherContext {
                         *offset_bytes = file_size;
                         // Keep line_number as-is; we don't know exactly where we are
                     }
-                    self.persist_state(*offset_bytes, *line_number).await;
+                    self.persist_state(*offset_bytes, *line_number, recent_hashes)
+                        .await;
                     return processed;
                 }
 
@@ -488,7 +514,8 @@ impl HistoryWatcherContext {
 
                             *line_number += 1;
 
-                            match process_command(self, trimmed, *line_number).await {
+                            match process_command(self, trimmed, *line_number, recent_hashes).await
+                            {
                                 Ok(()) => {
                                     processed += 1;
                                 }
@@ -503,7 +530,8 @@ impl HistoryWatcherContext {
 
                         if consumed_bytes > 0 {
                             *offset_bytes = offset_bytes.saturating_add(consumed_bytes);
-                            self.persist_state(*offset_bytes, *line_number).await;
+                            self.persist_state(*offset_bytes, *line_number, recent_hashes)
+                                .await;
                         }
                     }
                     Err(e) => warn!("History watcher unable to read {}: {}", self.path, e),
@@ -519,7 +547,12 @@ impl HistoryWatcherContext {
 
     /// Poll history file for new content (non-Unix version without inode tracking)
     #[cfg(not(unix))]
-    async fn poll_history_once(&self, offset_bytes: &mut u64, line_number: &mut u64) -> usize {
+    async fn poll_history_once(
+        &self,
+        offset_bytes: &mut u64,
+        line_number: &mut u64,
+        recent_hashes: &mut Vec<u64>,
+    ) -> usize {
         let mut processed = 0usize;
         match fs::metadata(&self.path).await {
             Ok(metadata) => {
@@ -534,7 +567,8 @@ impl HistoryWatcherContext {
                     );
                     *offset_bytes = 0;
                     *line_number = 0;
-                    self.persist_state(*offset_bytes, *line_number).await;
+                    self.persist_state(*offset_bytes, *line_number, recent_hashes)
+                        .await;
                     return processed;
                 }
 
@@ -564,7 +598,8 @@ impl HistoryWatcherContext {
 
                             *line_number += 1;
 
-                            match process_command(self, trimmed, *line_number).await {
+                            match process_command(self, trimmed, *line_number, recent_hashes).await
+                            {
                                 Ok(()) => {
                                     processed += 1;
                                 }
@@ -579,7 +614,8 @@ impl HistoryWatcherContext {
 
                         if consumed_bytes > 0 {
                             *offset_bytes = offset_bytes.saturating_add(consumed_bytes);
-                            self.persist_state(*offset_bytes, *line_number).await;
+                            self.persist_state(*offset_bytes, *line_number, recent_hashes)
+                                .await;
                         }
                     }
                     Err(e) => warn!("History watcher unable to read {}: {}", self.path, e),
@@ -596,21 +632,26 @@ impl HistoryWatcherContext {
     async fn scan_history_once(&self) -> usize {
         if self.is_fish_sqlite {
             let mut fish_row_id = 0i64;
+            let mut recent_hashes: Vec<u64> = Vec::new();
 
             if let Some(state) = self.load_state().await {
                 fish_row_id = state.fish_row_id.unwrap_or(0);
+                recent_hashes = state.recent_hashes;
             }
 
-            self.poll_fish_history_once(&mut fish_row_id).await
+            self.poll_fish_history_once(&mut fish_row_id, &mut recent_hashes)
+                .await
         } else {
             let mut offset_bytes = 0u64;
             let mut line_number = 0u64;
+            let mut recent_hashes: Vec<u64> = Vec::new();
             #[cfg(unix)]
             let mut last_inode: Option<u64> = None;
 
             if let Some(state) = self.load_state().await {
                 offset_bytes = state.offset_bytes;
                 line_number = state.line_number;
+                recent_hashes = state.recent_hashes;
                 #[cfg(unix)]
                 {
                     last_inode = state.inode;
@@ -619,18 +660,27 @@ impl HistoryWatcherContext {
 
             #[cfg(unix)]
             {
-                self.poll_history_once(&mut offset_bytes, &mut line_number, &mut last_inode)
-                    .await
+                self.poll_history_once(
+                    &mut offset_bytes,
+                    &mut line_number,
+                    &mut last_inode,
+                    &mut recent_hashes,
+                )
+                .await
             }
             #[cfg(not(unix))]
             {
-                self.poll_history_once(&mut offset_bytes, &mut line_number)
+                self.poll_history_once(&mut offset_bytes, &mut line_number, &mut recent_hashes)
                     .await
             }
         }
     }
 
-    async fn poll_fish_history_once(&self, fish_row_id: &mut i64) -> usize {
+    async fn poll_fish_history_once(
+        &self,
+        fish_row_id: &mut i64,
+        recent_hashes: &mut Vec<u64>,
+    ) -> usize {
         use crate::fish_history;
 
         let mut processed = 0usize;
@@ -642,7 +692,9 @@ impl HistoryWatcherContext {
                         continue;
                     }
 
-                    match process_command(self, &entry.command, last_row_id as u64).await {
+                    match process_command(self, &entry.command, last_row_id as u64, recent_hashes)
+                        .await
+                    {
                         Ok(()) => {
                             processed += 1;
                         }
@@ -657,7 +709,7 @@ impl HistoryWatcherContext {
 
                 if last_row_id > *fish_row_id {
                     *fish_row_id = last_row_id;
-                    self.persist_fish_state(*fish_row_id).await;
+                    self.persist_fish_state(*fish_row_id, recent_hashes).await;
                 }
             }
             Err(e) => {
@@ -673,6 +725,7 @@ async fn process_command(
     ctx: &HistoryWatcherContext,
     command: &str,
     line_number: u64,
+    recent_hashes: &mut Vec<u64>,
 ) -> NodeResult<()> {
     // Validate command is valid UTF-8 and reject binary data
     if command.contains('\0') {
@@ -696,6 +749,29 @@ async fn process_command(
         );
         return Ok(());
     }
+
+    // Deduplication: hash command text and check against recent history.
+    // This prevents duplicate events when history files are rotated or truncated.
+    use std::hash::{Hash, Hasher};
+    let command_hash = {
+        let mut hasher = std::hash::DefaultHasher::new();
+        command.hash(&mut hasher);
+        hasher.finish()
+    };
+    if recent_hashes.contains(&command_hash) {
+        debug!(
+            path = %ctx.path,
+            line_number,
+            "Skipping duplicate command (hash match)"
+        );
+        return Ok(());
+    }
+    // Add hash to dedup set after we've decided to emit.
+    // Bounded to prevent unbounded memory growth.
+    if recent_hashes.len() >= DEDUP_HASH_CAPACITY {
+        recent_hashes.remove(0);
+    }
+    recent_hashes.push(command_hash);
 
     // Redact sensitive information
     let (redacted_command, redaction_stats) = SecretRedactor::redact_with_stats(command);
@@ -1220,7 +1296,8 @@ mod tests {
         };
 
         let command = "echo 'hello world'";
-        process_command(&watcher_ctx, command, 42).await?;
+        let mut recent_hashes = Vec::new();
+        process_command(&watcher_ctx, command, 42, &mut recent_hashes).await?;
 
         let event = timeout(Duration::from_secs(5), event_rx.recv())
             .await?
@@ -1241,9 +1318,8 @@ mod tests {
         xtask::sandbox::timing::WaitHelpers::wait_for_condition(
             || {
                 let pool = ctx.pool.clone();
-                let material_ulid = material_ulid;
-                let expected = expected_bytes;
                 async move {
+                    let expected = expected_bytes;
                     if let Some(material) = pool
                         .source_materials()
                         .get_by_id(Id::from_ulid(material_ulid))
@@ -1361,16 +1437,22 @@ mod tests {
 
         let mut offset_bytes = 0u64;
         let mut line_number = 0u64;
+        let mut recent_hashes: Vec<u64> = Vec::new();
         #[cfg(unix)]
         let mut last_inode: Option<u64> = None;
 
         #[cfg(unix)]
         let _ = watcher_ctx
-            .poll_history_once(&mut offset_bytes, &mut line_number, &mut last_inode)
+            .poll_history_once(
+                &mut offset_bytes,
+                &mut line_number,
+                &mut last_inode,
+                &mut recent_hashes,
+            )
             .await;
         #[cfg(not(unix))]
         let _ = watcher_ctx
-            .poll_history_once(&mut offset_bytes, &mut line_number)
+            .poll_history_once(&mut offset_bytes, &mut line_number, &mut recent_hashes)
             .await;
 
         let mut history_file: tokio::fs::File = tokio::fs::OpenOptions::new()
@@ -1383,11 +1465,16 @@ mod tests {
 
         #[cfg(unix)]
         let _ = watcher_ctx
-            .poll_history_once(&mut offset_bytes, &mut line_number, &mut last_inode)
+            .poll_history_once(
+                &mut offset_bytes,
+                &mut line_number,
+                &mut last_inode,
+                &mut recent_hashes,
+            )
             .await;
         #[cfg(not(unix))]
         let _ = watcher_ctx
-            .poll_history_once(&mut offset_bytes, &mut line_number)
+            .poll_history_once(&mut offset_bytes, &mut line_number, &mut recent_hashes)
             .await;
 
         #[cfg(test)]

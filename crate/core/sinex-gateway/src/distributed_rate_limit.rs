@@ -7,6 +7,7 @@
 //! - Consistent rate limits across multiple gateway instances
 //! - State survives hot reload / rolling upgrades
 //! - No quota reset bypass attacks
+#![allow(clippy::expect_used)] // All expects are on compile-time NonZeroU32 constants
 
 use async_nats::jetstream::kv::{Config as KvConfig, Store};
 use async_nats::jetstream::Context;

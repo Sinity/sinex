@@ -27,14 +27,14 @@
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
-#[ignore]
+#[ignore = "chaos test requiring controlled failure injection"]
 async fn test_thundering_herd_extreme_load(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
 }
 
 #[sinex_test]
-#[ignore]
+#[ignore = "chaos test requiring controlled failure injection"]
 async fn test_temporal_chaos_ordering_and_consistency(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())

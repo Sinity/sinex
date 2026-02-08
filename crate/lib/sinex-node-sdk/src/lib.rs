@@ -204,8 +204,7 @@ impl VersionInfo {
         use version::{node_commit_hash, node_version};
 
         let version = node_version()
-            .map(|v| v.to_string())
-            .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
+            .map_or_else(|_| env!("CARGO_PKG_VERSION").to_string(), |v| v.to_string());
         let git_revision = node_commit_hash();
         // For binary_hash, use commit hash as a proxy (same as git revision)
         let binary_hash = git_revision.clone();
@@ -213,7 +212,7 @@ impl VersionInfo {
         Self {
             git_revision,
             binary_hash,
-            component_version: format!("{}-v{}", component_name, version),
+            component_version: format!("{component_name}-v{version}"),
         }
     }
 }

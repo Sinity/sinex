@@ -108,7 +108,9 @@ impl App {
             recent_events: Vec::new(),
             gateway_version: String::from("unknown"),
             loading: false,
-            last_refresh: Instant::now() - std::time::Duration::from_secs(refresh_interval + 1),
+            last_refresh: Instant::now()
+                .checked_sub(std::time::Duration::from_secs(refresh_interval + 1))
+                .unwrap_or(Instant::now()),
             error: None,
             selected_index: 0,
         }
@@ -170,7 +172,7 @@ impl App {
         match self.client.version().await {
             Ok(v) => self.gateway_version = v,
             Err(e) => {
-                self.error = Some(format!("Failed to connect: {}", e));
+                self.error = Some(format!("Failed to connect: {e}"));
                 self.loading = false;
                 return;
             }
@@ -180,7 +182,7 @@ impl App {
         match self.client.list_nodes(None).await {
             Ok(nodes) => self.nodes = nodes,
             Err(e) => {
-                self.error = Some(format!("Failed to fetch nodes: {}", e));
+                self.error = Some(format!("Failed to fetch nodes: {e}"));
             }
         }
 
@@ -189,7 +191,7 @@ impl App {
             Ok(stats) => self.dlq_stats = Some(stats),
             Err(e) => {
                 if self.error.is_none() {
-                    self.error = Some(format!("Failed to fetch DLQ: {}", e));
+                    self.error = Some(format!("Failed to fetch DLQ: {e}"));
                 }
             }
         }
@@ -208,7 +210,7 @@ impl App {
             Ok(events) => self.recent_events = events,
             Err(e) => {
                 if self.error.is_none() {
-                    self.error = Some(format!("Failed to fetch events: {}", e));
+                    self.error = Some(format!("Failed to fetch events: {e}"));
                 }
             }
         }
@@ -343,7 +345,7 @@ fn render_tabs(f: &mut Frame, area: Rect, app: &App) {
         } else {
             Style::default().fg(Color::White)
         };
-        tab_spans.push(Span::styled(format!(" {} ", name), style));
+        tab_spans.push(Span::styled(format!(" {name} "), style));
         if i < tabs.len() - 1 {
             tab_spans.push(Span::raw(" │ "));
         }
@@ -364,13 +366,13 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App) {
     let refresh_info = if app.refresh_interval > 0 {
         let elapsed = app.last_refresh.elapsed().as_secs();
         let next_in = app.refresh_interval.saturating_sub(elapsed);
-        format!("Auto-refresh in {}s", next_in)
+        format!("Auto-refresh in {next_in}s")
     } else {
         "Auto-refresh: off".to_string()
     };
 
     let status_text = if let Some(err) = &app.error {
-        format!("Error: {} | Press 'r' to retry", err)
+        format!("Error: {err} | Press 'r' to retry")
     } else {
         format!(
             "Gateway v{} | {} | ↑↓/jk:navigate Tab/←→:switch r:refresh q:quit",
@@ -404,22 +406,18 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
         .filter(|n| n.last_heartbeat.is_some())
         .count();
     let total_nodes = app.nodes.len();
-    let dlq_total = app
-        .dlq_stats
-        .as_ref()
-        .map(|s| s.total_messages)
-        .unwrap_or(0);
+    let dlq_total = app.dlq_stats.as_ref().map_or(0, |s| s.total_messages);
     let events_count = app.recent_events.len();
 
     let overview_items = vec![
         ListItem::new(format!("Gateway Version: {}", app.gateway_version)),
         ListItem::new(""),
-        ListItem::new(format!("Healthy Nodes: {}/{}", healthy_nodes, total_nodes)),
-        ListItem::new(format!("Recent Events (1h): {}", events_count)),
+        ListItem::new(format!("Healthy Nodes: {healthy_nodes}/{total_nodes}")),
+        ListItem::new(format!("Recent Events (1h): {events_count}")),
         ListItem::new(format!(
             "DLQ Messages: {}",
             if dlq_total > 0 {
-                format!("{} ⚠", dlq_total)
+                format!("{dlq_total} ⚠")
             } else {
                 "0 ✓".to_string()
             }
@@ -489,8 +487,7 @@ fn render_nodes(f: &mut Frame, area: Rect, app: &App) {
             let heartbeat_str = n
                 .last_heartbeat
                 .as_ref()
-                .map(|hb| format_heartbeat_age(&(*hb).into()))
-                .unwrap_or_else(|| "none".to_string());
+                .map_or_else(|| "none".to_string(), format_heartbeat_age);
             ListItem::new(format!(
                 "{} {} | Type: {} | Heartbeat: {}{}",
                 status_icon, name, n.node_type, heartbeat_str, leader
@@ -525,7 +522,9 @@ fn render_events(f: &mut Frame, area: Rect, app: &App) {
             };
             let timestamp = e
                 .timestamp
-                .format(&time::format_description::parse("[hour]:[minute]:[second]").unwrap())
+                .format(time::macros::format_description!(
+                    "[hour]:[minute]:[second]"
+                ))
                 .unwrap_or_else(|_| "invalid".to_string());
             let snippet = if e.snippet.len() > 60 {
                 format!("{}...", &e.snippet[..57])

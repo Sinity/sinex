@@ -38,7 +38,7 @@ fn format_health_table(health: &SystemHealthResponse) -> String {
         "System Health: {} {}\n",
         status_icon, health.status
     ));
-    output.push_str("\n");
+    output.push('\n');
     output.push_str("Components:\n");
     output.push_str(&format!(
         "  Database: {} (connected: {})\n",
@@ -55,7 +55,7 @@ fn format_health_table(health: &SystemHealthResponse) -> String {
         health.components.replay_control.connected
     ));
     if let Some(ref err) = health.components.replay_control.last_error {
-        output.push_str(&format!("    Last error: {}\n", err));
+        output.push_str(&format!("    Last error: {err}\n"));
     }
 
     output

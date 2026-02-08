@@ -8,21 +8,21 @@
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
-#[ignore]
+#[ignore = "chaos test requiring controlled failure injection"]
 async fn test_file_permission_revoked_while_watching(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
 }
 
 #[sinex_test]
-#[ignore]
+#[ignore = "chaos test requiring controlled failure injection"]
 async fn test_directory_unmounted_while_watching(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
 }
 
 #[sinex_test]
-#[ignore]
+#[ignore = "chaos test requiring controlled failure injection"]
 async fn test_filesystem_chaos_concurrent_operations(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())

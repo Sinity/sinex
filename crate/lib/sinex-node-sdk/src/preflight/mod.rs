@@ -34,8 +34,7 @@ pub(crate) async fn run_command_with_timeout(program: &str, args: &[&str]) -> No
 pub(crate) async fn command_succeeds(program: &str, args: &[&str]) -> bool {
     run_command_with_timeout(program, args)
         .await
-        .map(|output| output.status.success())
-        .unwrap_or(false)
+        .is_ok_and(|output| output.status.success())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

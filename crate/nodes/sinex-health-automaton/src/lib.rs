@@ -196,7 +196,7 @@ impl SimpleNode for HealthAggregator {
         // Track status transition
         let status_changed = component_health.current_status != current_status;
         if status_changed {
-            component_health.current_status = current_status.clone();
+            component_health.current_status.clone_from(&current_status);
             component_health.status_since = now;
             component_health.transition_count += 1;
         }

@@ -106,7 +106,7 @@ impl OpsCommands {
                     .transpose()?;
 
                 let operation_id = with_spinner_result(
-                    format!("Starting {} operation...", operation_type),
+                    format!("Starting {operation_type} operation..."),
                     "Operation started",
                     client.ops_start(operation_type, operator, scope_json),
                 )
@@ -145,14 +145,14 @@ impl OpsCommands {
                 reason,
             } => {
                 with_spinner_result(
-                    format!("Cancelling operation {}...", operation_id),
-                    format!("Operation {} cancelled", operation_id),
+                    format!("Cancelling operation {operation_id}..."),
+                    format!("Operation {operation_id} cancelled"),
                     client.ops_cancel(operation_id, reason.clone()),
                 )
                 .await?;
 
                 if let Some(r) = reason {
-                    println!("Reason: {}", r);
+                    println!("Reason: {r}");
                 }
             }
         }
@@ -216,7 +216,7 @@ fn format_ops_get_table(operation: &Value) -> String {
     }
     if let Some(scope) = operation.get("scope") {
         if let Ok(pretty_scope) = serde_json::to_string_pretty(scope) {
-            output.push_str(&format!("  Scope: {}\n", pretty_scope));
+            output.push_str(&format!("  Scope: {pretty_scope}\n"));
         }
     }
     output

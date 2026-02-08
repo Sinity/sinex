@@ -441,12 +441,12 @@ impl AcquisitionManager {
 
         let subject = self.env.nats_subject_with_namespace(
             self.namespace.as_deref(),
-            &format!("source_material.slices.{}", material_id),
+            &format!("source_material.slices.{material_id}"),
         );
 
         // Add headers
         let mut headers = async_nats::HeaderMap::new();
-        let msg_id = format!("{}-{}", material_id, slice_index);
+        let msg_id = format!("{material_id}-{slice_index}");
         let slice_index_str = slice_index.to_string();
         let offset_str = offset.to_string();
         let chunk_hash = blake3::hash(data).to_hex();

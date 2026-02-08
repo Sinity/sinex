@@ -92,6 +92,7 @@ where
     cleanup: Option<F>,
 }
 
+#[allow(clippy::expect_used)] // Type-state invariant: resource is only None after take()
 impl<T, F> SimpleGuard<T, F>
 where
     F: FnOnce(T),

@@ -202,33 +202,30 @@ async fn verify_binary_availability(messages: &mut Vec<String>) -> NodeResult<Va
     }
 
     for (binary_name, description) in optional_binaries {
-        match check_binary_availability(binary_name).await {
-            Ok(binary_data) => {
-                binary_info.insert(
-                    binary_name.to_string(),
-                    json!({
-                        "available": true,
-                        "description": description,
-                        "required": false,
-                        "path": binary_data.path,
-                        "version": binary_data.version
-                    }),
-                );
+        if let Ok(binary_data) = check_binary_availability(binary_name).await {
+            binary_info.insert(
+                binary_name.to_string(),
+                json!({
+                    "available": true,
+                    "description": description,
+                    "required": false,
+                    "path": binary_data.path,
+                    "version": binary_data.version
+                }),
+            );
 
-                messages.push(format!("✓ Optional binary '{binary_name}' available"));
-            }
-            Err(_) => {
-                binary_info.insert(
-                    binary_name.to_string(),
-                    json!({
-                        "available": false,
-                        "description": description,
-                        "required": false
-                    }),
-                );
+            messages.push(format!("✓ Optional binary '{binary_name}' available"));
+        } else {
+            binary_info.insert(
+                binary_name.to_string(),
+                json!({
+                    "available": false,
+                    "description": description,
+                    "required": false
+                }),
+            );
 
-                debug!("Optional binary '{}' not found", binary_name);
-            }
+            debug!("Optional binary '{}' not found", binary_name);
         }
     }
 
@@ -686,7 +683,7 @@ async fn verify_service_configuration(messages: &mut Vec<String>) -> NodeResult<
                 let file_name_str = file_name.to_string_lossy();
 
                 if file_name_str.starts_with("sinex-") && file_name_str.ends_with(".service") {
-                    found_unit_files.push(format!("{}/{}", unit_path, file_name_str));
+                    found_unit_files.push(format!("{unit_path}/{file_name_str}"));
                 }
             }
         }

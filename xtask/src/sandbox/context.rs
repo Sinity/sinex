@@ -135,9 +135,9 @@ impl Drop for NamespaceReaper {
     fn drop(&mut self) {
         if let Some(client) = self.nats.lock().take() {
             let prefix = self.namespace.prefix().to_string();
-            // Spawn a detached task to clean up JetStream streams
-            // We can't await here, so we fire-and-forget
-            tokio::spawn(async move {
+            // Spawn NATS stream cleanup and register the handle so
+            // await_pending_cleanups() will wait for it before the next test.
+            let handle = tokio::spawn(async move {
                 let js = async_nats::jetstream::new(client);
 
                 // List all streams and delete those starting with our prefix
@@ -148,6 +148,11 @@ impl Drop for NamespaceReaper {
                     }
                 }
             });
+
+            CLEANUP_HANDLES
+                .lock()
+                .expect("CLEANUP_HANDLES lock poisoned")
+                .push(handle);
         }
     }
 }
@@ -412,6 +417,7 @@ impl Sandbox {
 
     /// Get the NATS client for this test context
     #[must_use]
+    #[allow(clippy::panic)] // Deliberate: programmer error if NATS not initialized
     pub fn nats_client(&self) -> NatsClient {
         // First check the primary nats_client field
         if let Some(client) = &self.nats_client {
@@ -696,34 +702,30 @@ impl Sandbox {
     }
 
     /// Register a background resource (e.g., process handle) as a tracked task.
-    pub fn register_background_handle<T>(&self, label: impl Into<String>, handle: T)
+    ///
+    /// The registration is awaited directly so the task is guaranteed to be in
+    /// the registry before the caller continues — no detached spawn race.
+    pub async fn register_background_handle<T>(&self, label: impl Into<String>, handle: T)
     where
         T: Send + 'static,
     {
-        let registry = self.background.clone();
-        let lbl = label.into();
-        tokio::spawn(async move {
-            registry.lock().await.add_task(
-                lbl,
-                tokio::spawn(async move {
-                    let _ = handle;
-                    let () = tokio::task::yield_now().await;
-                }),
-            );
+        let task_handle = tokio::spawn(async move {
+            let _ = handle;
+            let () = tokio::task::yield_now().await;
         });
+        self.background.lock().await.add_task(label, task_handle);
     }
 
     /// Spawn and track a background task that will be awaited during cleanup.
-    pub fn spawn_background<F>(&self, label: impl Into<String>, fut: F)
+    ///
+    /// The registration is awaited directly so the task is guaranteed to be in
+    /// the registry before the caller continues — no detached spawn race.
+    pub async fn spawn_background<F>(&self, label: impl Into<String>, fut: F)
     where
         F: std::future::Future<Output = ()> + Send + 'static,
     {
-        let registry = self.background.clone();
-        let lbl = label.into();
         let handle = tokio::spawn(fut);
-        tokio::spawn(async move {
-            registry.lock().await.add_task(lbl, handle);
-        });
+        self.background.lock().await.add_task(label, handle);
     }
 
     /// Register a custom shutdown hook to run before the context gives the database back.
@@ -1065,25 +1067,17 @@ impl Drop for Sandbox {
             if let Ok(handle) = Handle::try_current() {
                 let cleanup_pool = pool;
                 let cleanup_records = records;
-                let mut join_handle = Some(handle.spawn(async move {
+                let join_handle = handle.spawn(async move {
                     if let Err(err) = cleanup_created_records(cleanup_pool, cleanup_records).await {
                         warn!("Sandbox cleanup failed: {}", err);
                     }
-                }));
+                });
 
-                if let Ok(mut guard) = CLEANUP_HANDLES.try_lock() {
-                    if let Some(join) = join_handle.take() {
-                        guard.push(join);
-                    }
-                }
-
-                if let Some(join) = join_handle {
-                    handle.spawn(async move {
-                        if let Err(err) = join.await {
-                            warn!("Detached cleanup task failed: {}", err);
-                        }
-                    });
-                }
+                // Always succeeds: CLEANUP_HANDLES uses std::sync::Mutex, not try_lock().
+                CLEANUP_HANDLES
+                    .lock()
+                    .expect("CLEANUP_HANDLES lock poisoned")
+                    .push(join_handle);
             } else {
                 // Issue 116: No runtime available, spawn blocking thread with its own runtime
                 let (tx, rx) = mpsc::channel();

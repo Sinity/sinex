@@ -1012,11 +1012,10 @@ impl<T: Node + 'static> NodeRunner<T> {
         // No db_pool variable if db feature is off
         let transport = handles.transport().clone();
 
-        let service_name = self
-            .service_info
-            .as_ref()
-            .map(|info| info.service_name().to_string())
-            .unwrap_or_else(|| self.node.node_name().to_string());
+        let service_name = self.service_info.as_ref().map_or_else(
+            || self.node.node_name().to_string(),
+            |info| info.service_name().to_string(),
+        );
 
         let (sender, mut receiver) =
             mpsc::channel::<ProvisionalEvent>(CONFIRMED_EVENT_CHANNEL_CAPACITY);
@@ -1089,9 +1088,8 @@ impl<T: Node + 'static> NodeRunner<T> {
 
         loop {
             // Block until at least one event arrives (or channel closes)
-            let first = match receiver.recv().await {
-                Some(p) => p,
-                None => break,
+            let Some(first) = receiver.recv().await else {
+                break;
             };
 
             // Non-blocking drain: grab whatever else is already queued
@@ -1111,31 +1109,38 @@ impl<T: Node + 'static> NodeRunner<T> {
                 let event_id = &provisional.event_id;
                 let event = {
                     #[cfg(feature = "db")]
-                    match &db_pool {
-                        Some(pool) => match Self::fetch_persisted_event(pool, event_id).await? {
-                            Some(event) => Some(event),
-                            None => {
-                                warn!(
-                                    "Confirmed event {:?} missing from database; skipping",
-                                    event_id
-                                );
-                                None
+                    {
+                        match &db_pool {
+                            Some(pool) => {
+                                if let Some(event) =
+                                    Self::fetch_persisted_event(pool, event_id).await?
+                                {
+                                    Some(event)
+                                } else {
+                                    warn!(
+                                        "Confirmed event {:?} missing from database; skipping",
+                                        event_id
+                                    );
+                                    None
+                                }
                             }
-                        },
-                        None => match Self::build_event_from_provisional(provisional) {
+                            None => match Self::build_event_from_provisional(provisional) {
+                                Ok(event) => Some(event),
+                                Err(err) => {
+                                    warn!(error = %err, "Failed to build event from provisional payload");
+                                    None
+                                }
+                            },
+                        }
+                    }
+                    #[cfg(not(feature = "db"))]
+                    {
+                        match Self::build_event_from_provisional(provisional) {
                             Ok(event) => Some(event),
                             Err(err) => {
                                 warn!(error = %err, "Failed to build event from provisional payload");
                                 None
                             }
-                        },
-                    }
-                    #[cfg(not(feature = "db"))]
-                    match Self::build_event_from_provisional(provisional) {
-                        Ok(event) => Some(event),
-                        Err(err) => {
-                            warn!(error = %err, "Failed to build event from provisional payload");
-                            None
                         }
                     }
                 };
@@ -1288,10 +1293,7 @@ impl<T: Node + 'static> NodeRunner<T> {
 
         let published: PublishedEventPayload = serde_json::from_value(provisional.payload.clone())
             .map_err(|err| {
-                SinexError::processing(format!(
-                    "Failed to parse provisional event payload: {}",
-                    err
-                ))
+                SinexError::processing(format!("Failed to parse provisional event payload: {err}"))
             })?;
 
         // Parse provenance fields for flat Event struct

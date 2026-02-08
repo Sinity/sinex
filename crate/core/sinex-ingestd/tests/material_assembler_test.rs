@@ -55,6 +55,7 @@ async fn start_assembler(
         state_path.clone(),
         Some(ctx.pipeline_namespace().prefix().to_string()),
         1_000,
+        50,
         MaterialReadySet::default(),
     )?;
 

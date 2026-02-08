@@ -136,9 +136,7 @@ async fn test_database_connection_exhaustion_recovery(ctx: TestContext) -> TestR
 
         let task = tokio::spawn(async move {
             // Each task gets its own context for isolation
-            let task_ctx = if let Ok(ctx) = TestContext::new().await {
-                ctx
-            } else {
+            let Ok(task_ctx) = TestContext::new().await else {
                 error_count.fetch_add(1, Ordering::SeqCst);
                 return;
             };
@@ -263,9 +261,8 @@ async fn test_concurrent_event_creation_stress(ctx: TestContext) -> TestResult<(
 
         let task = tokio::spawn(async move {
             // Each task creates its own context
-            let task_ctx = match TestContext::new().await {
-                Ok(ctx) => ctx,
-                Err(_) => return,
+            let Ok(task_ctx) = TestContext::new().await else {
+                return;
             };
 
             // Create a batch of events from this task
@@ -279,9 +276,8 @@ async fn test_concurrent_event_creation_stress(ctx: TestContext) -> TestResult<(
                     ))
                     .await;
 
-                match result {
-                    Ok(_) => local_successes += 1,
-                    Err(_) => {} // Count failures silently
+                if result.is_ok() {
+                    local_successes += 1;
                 }
             }
             success_count.fetch_add(local_successes, Ordering::SeqCst);
@@ -411,10 +407,11 @@ fn get_current_memory_usage() -> usize {
     if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
         for line in status.lines() {
             if line.starts_with("VmRSS:") {
-                if let Some(size_str) = line.split_whitespace().nth(1) {
-                    if let Ok(size_kb) = size_str.parse::<usize>() {
-                        return size_kb * 1024; // Convert to bytes
-                    }
+                let Some(size_str) = line.split_whitespace().nth(1) else {
+                    continue;
+                };
+                if let Ok(size_kb) = size_str.parse::<usize>() {
+                    return size_kb * 1024; // Convert to bytes
                 }
             }
         }

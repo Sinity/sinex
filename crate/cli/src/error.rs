@@ -178,12 +178,11 @@ mod tests {
         let enhanced_str = enhanced.to_string();
 
         // Debug: print the enhanced error
-        eprintln!("Enhanced error: {}", enhanced_str);
+        eprintln!("Enhanced error: {enhanced_str}");
 
         assert!(
             enhanced_str.contains("sinexctl ops list"),
-            "Enhanced error does not contain expected text. Got: {}",
-            enhanced_str
+            "Enhanced error does not contain expected text. Got: {enhanced_str}"
         );
     }
 }

@@ -245,7 +245,7 @@ impl<'a> SchemaCacheRepository<'a> {
 mod tests {
     use super::*;
     use crate::repositories::schema_management::{NewEventSchema, SchemaManagementRepository};
-    use xtask::sandbox::{sinex_test, TestContext, TestResult};
+    use xtask::sandbox::{sinex_test, TestResult};
 
     async fn setup_test_schema(pool: &PgPool) -> TestResult<Ulid> {
         let repo = SchemaManagementRepository::new(pool);
@@ -267,8 +267,8 @@ mod tests {
     #[sinex_test]
     async fn test_lookup_schema_id(ctx: TestContext) -> TestResult<()> {
         let pool = ctx.pool();
-        let schema_id = setup_test_schema(&pool).await?;
-        let cache_repo = SchemaCacheRepository::new(&pool);
+        let schema_id = setup_test_schema(pool).await?;
+        let cache_repo = SchemaCacheRepository::new(pool);
 
         let source = EventSource::from("test-source".to_string());
         let event_type = EventType::from("test.event".to_string());
@@ -282,8 +282,8 @@ mod tests {
     #[sinex_test]
     async fn test_lookup_schema_version(ctx: TestContext) -> TestResult<()> {
         let pool = ctx.pool();
-        let schema_id = setup_test_schema(&pool).await?;
-        let cache_repo = SchemaCacheRepository::new(&pool);
+        let schema_id = setup_test_schema(pool).await?;
+        let cache_repo = SchemaCacheRepository::new(pool);
 
         let version = cache_repo.lookup_schema_version(schema_id).await?;
         assert_eq!(version, Some("v1".to_string()));
@@ -294,8 +294,8 @@ mod tests {
     #[sinex_test]
     async fn test_get_schema_content(ctx: TestContext) -> TestResult<()> {
         let pool = ctx.pool();
-        let schema_id = setup_test_schema(&pool).await?;
-        let cache_repo = SchemaCacheRepository::new(&pool);
+        let schema_id = setup_test_schema(pool).await?;
+        let cache_repo = SchemaCacheRepository::new(pool);
 
         let content = cache_repo.get_schema_content(schema_id).await?;
         assert!(content.is_some());
@@ -308,8 +308,8 @@ mod tests {
     #[sinex_test]
     async fn test_fetch_latest_active_schemas(ctx: TestContext) -> TestResult<()> {
         let pool = ctx.pool();
-        setup_test_schema(&pool).await?;
-        let cache_repo = SchemaCacheRepository::new(&pool);
+        setup_test_schema(pool).await?;
+        let cache_repo = SchemaCacheRepository::new(pool);
 
         let schemas = cache_repo.fetch_latest_active_schemas().await?;
         assert!(!schemas.is_empty());
@@ -325,8 +325,8 @@ mod tests {
     #[sinex_test]
     async fn test_get_schemas_by_ids(ctx: TestContext) -> TestResult<()> {
         let pool = ctx.pool();
-        let schema_id = setup_test_schema(&pool).await?;
-        let cache_repo = SchemaCacheRepository::new(&pool);
+        let schema_id = setup_test_schema(pool).await?;
+        let cache_repo = SchemaCacheRepository::new(pool);
 
         let schemas = cache_repo.get_schemas_by_ids(&[schema_id]).await?;
         assert_eq!(schemas.len(), 1);
@@ -338,8 +338,8 @@ mod tests {
     #[sinex_test]
     async fn test_preload_schema_metadata(ctx: TestContext) -> TestResult<()> {
         let pool = ctx.pool();
-        let schema_id = setup_test_schema(&pool).await?;
-        let cache_repo = SchemaCacheRepository::new(&pool);
+        let schema_id = setup_test_schema(pool).await?;
+        let cache_repo = SchemaCacheRepository::new(pool);
 
         let metadata = cache_repo.preload_schema_metadata().await?;
         assert!(!metadata.is_empty());

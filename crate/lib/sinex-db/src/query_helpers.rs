@@ -42,6 +42,12 @@ impl Default for RetryConfig {
 #[derive(Debug, Clone, Copy)]
 pub struct IdempotentTransaction;
 
+impl Default for IdempotentTransaction {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IdempotentTransaction {
     pub fn new() -> Self {
         Self
@@ -100,7 +106,6 @@ where
                 );
                 sleep(delay).await;
                 delay = std::cmp::min(delay.mul_f64(config.exponential_base), config.max_delay);
-                continue;
             }
             Err(e) => {
                 let _ = tx.rollback().await;
