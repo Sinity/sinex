@@ -808,8 +808,7 @@ where
 
                 // Check if health monitoring is enabled (default: yes)
                 let health_enabled = std::env::var("SINEX_HEALTH_MONITORING_ENABLED")
-                    .map(|v| v != "false" && v != "0")
-                    .unwrap_or(true);
+                    .map_or(true, |v| v != "false" && v != "0");
 
                 if health_enabled {
                     let config = SelfObserverConfig {

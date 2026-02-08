@@ -406,7 +406,7 @@ async fn test_database_extensions(pool: &PgPool, _messages: &mut [String]) -> No
         "extensions": tested_extensions,
         "total_tested": tested_extensions.len(),
         "working": working_count,
-        "has_required": tested_extensions.get("pgx_ulid").map(|v| v.get("status") == Some(&json!("working"))).unwrap_or(false)
+        "has_required": tested_extensions.get("pgx_ulid").map_or(false, |v| v.get("status") == Some(&json!("working")))
     }))
 }
 

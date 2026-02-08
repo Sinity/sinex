@@ -232,8 +232,7 @@ impl StageAsYouGoContext {
     pub async fn reconcile_inflight(&self) -> NodeResult<StageReconciliationSummary> {
         let ttl = self
             .cleanup_config
-            .map(|cfg| cfg.stale_ttl)
-            .unwrap_or(DEFAULT_STALE_TTL);
+            .map_or(DEFAULT_STALE_TTL, |cfg| cfg.stale_ttl);
         self.reconcile_inflight_older_than(ttl).await
     }
 
@@ -425,7 +424,7 @@ impl StageAsYouGoContext {
     ) -> NodeResult<()> {
         // Checksum is now computed when creating the blob
 
-        let content_preview = if mime_type.map(|m| m.starts_with("text/")).unwrap_or(false) {
+        let content_preview = if mime_type.map_or(false, |m| m.starts_with("text/")) {
             Some(String::from_utf8_lossy(&content[..content.len().min(500)]).to_string())
         } else {
             None
@@ -494,7 +493,7 @@ impl StageAsYouGoContext {
     where
         R: tokio::io::AsyncRead + Unpin,
     {
-        let is_text = mime_type.map(|m| m.starts_with("text/")).unwrap_or(false);
+        let is_text = mime_type.map_or(false, |m| m.starts_with("text/"));
         let mut preview_bytes: Vec<u8> = Vec::new();
         let mut total_bytes: i64 = 0;
 
@@ -710,9 +709,7 @@ impl StageAsYouGoContext {
         content_preview: Option<String>,
         encoding: Option<&str>,
     ) -> JsonValue {
-        let mut base = info
-            .map(|i| i.metadata.clone())
-            .unwrap_or_else(|| json!({}));
+        let mut base = info.map_or_else(|| json!({}), |i| i.metadata.clone());
         if !base.is_object() {
             base = json!({});
         }

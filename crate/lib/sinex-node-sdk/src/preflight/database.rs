@@ -363,8 +363,7 @@ async fn test_extension_functionality(
         .map_err(SinexError::from)?;
     let uuid_str = uuid_result
         .uuid
-        .map(|u| u.to_string())
-        .unwrap_or_else(|| "OK".to_string());
+        .map_or_else(|| "OK".to_string(), |u| u.to_string());
     messages.push(format!("✓ UUID generation: {uuid_str}"));
 
     // Test ULID generation - using transaction directly
@@ -554,11 +553,7 @@ async fn discover_migration_files() -> NodeResult<Vec<MigrationFile>> {
             SinexError::processing(format!("Migration path is not valid UTF-8: {path:?}"))
         })?;
 
-        if utf8_path
-            .file_name()
-            .map(|n| n == "mod.rs")
-            .unwrap_or(false)
-        {
+        if utf8_path.file_name().map_or(false, |n| n == "mod.rs") {
             continue;
         }
 

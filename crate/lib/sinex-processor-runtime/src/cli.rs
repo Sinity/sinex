@@ -112,8 +112,8 @@ impl NatsArgs {
     fn to_config(&self) -> sinex_primitives::nats::NatsConnectionConfig {
         let mut config = sinex_primitives::nats::NatsConnectionConfig::from_env();
 
-        config.url = self.url.clone();
-        config.name = self.name.clone();
+        config.url.clone_from(&self.url);
+        config.name.clone_from(&self.name);
 
         // Auto-detect TLS from URL scheme if not explicitly set
         let url_requires_tls =

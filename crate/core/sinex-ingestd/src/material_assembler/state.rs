@@ -350,8 +350,8 @@ pub(super) async fn handle_begin(
             return Ok(());
         }
 
-        state.material_kind = material_kind.clone();
-        state.source_identifier = source_identifier.clone();
+        state.material_kind.clone_from(&material_kind);
+        state.source_identifier.clone_from(&source_identifier);
         state.metadata = merge_metadata(&state.metadata, &metadata);
         state.started_at = started_at;
         state.has_begin = true;

@@ -691,8 +691,7 @@ impl CheckpointCleanupConfig {
     /// - `SINEX_CHECKPOINT_CLEANUP_INTERVAL_HOURS`: Run interval in hours (default: 24)
     pub fn from_env() -> Self {
         let enabled = std::env::var("SINEX_CHECKPOINT_CLEANUP_ENABLED")
-            .map(|v| v.to_lowercase() == "true" || v == "1")
-            .unwrap_or(false);
+            .map_or(false, |v| v.to_lowercase() == "true" || v == "1");
 
         let max_age_days: u64 = std::env::var("SINEX_CHECKPOINT_CLEANUP_MAX_AGE_DAYS")
             .ok()

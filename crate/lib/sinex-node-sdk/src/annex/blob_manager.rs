@@ -92,8 +92,7 @@ impl BlobManager {
         let mut material = if blob
             .mime_type
             .as_deref()
-            .map(|mime| mime.starts_with("text/"))
-            .unwrap_or(false)
+            .map_or(false, |mime| mime.starts_with("text/"))
         {
             SourceMaterialRegistration::blob_text(filename.clone())
         } else {

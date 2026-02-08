@@ -1012,11 +1012,10 @@ impl<T: Node + 'static> NodeRunner<T> {
         // No db_pool variable if db feature is off
         let transport = handles.transport().clone();
 
-        let service_name = self
-            .service_info
-            .as_ref()
-            .map(|info| info.service_name().to_string())
-            .unwrap_or_else(|| self.node.node_name().to_string());
+        let service_name = self.service_info.as_ref().map_or_else(
+            || self.node.node_name().to_string(),
+            |info| info.service_name().to_string(),
+        );
 
         let (sender, mut receiver) =
             mpsc::channel::<ProvisionalEvent>(CONFIRMED_EVENT_CHANNEL_CAPACITY);

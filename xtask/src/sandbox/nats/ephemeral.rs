@@ -197,7 +197,7 @@ impl EphemeralNats {
     #[must_use]
     pub fn connection_config(&self) -> NatsConnectionConfig {
         let mut config = NatsConnectionConfig::default();
-        config.url = self.url.clone();
+        config.url.clone_from(&self.url);
         config.require_tls = self.tls.is_some();
         if let Some(tls) = &self.tls {
             config.ca_cert = Some(tls.ca_cert.clone());
@@ -261,7 +261,7 @@ impl EphemeralNats {
         }
 
         let mut config = NatsConnectionConfig::default();
-        config.url = self.url.clone();
+        config.url.clone_from(&self.url);
         config.require_tls = self.tls.is_some();
         if let Some(tls) = &self.tls {
             config.ca_cert = Some(tls.ca_cert.clone());
