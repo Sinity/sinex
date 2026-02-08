@@ -249,9 +249,8 @@ impl JobManager {
             .db
             .lock()
             .map_err(|_| anyhow::anyhow!("db lock poisoned"))?;
-        let bg = match db.get_background_job_by_id(id)? {
-            Some(bg) => bg,
-            None => return Ok(None),
+        let Some(bg) = db.get_background_job_by_id(id)? else {
+            return Ok(None);
         };
 
         // Reap if running but process is dead
@@ -260,15 +259,16 @@ impl JobManager {
             if nix::sys::signal::kill(pid, None).is_err() {
                 let job_dir = self.jobs_dir.join(bg.id.to_string());
                 let exit_code_path = job_dir.join("exit_code");
-                let (status, exit_code) = if let Ok(content) = fs::read_to_string(&exit_code_path) {
-                    let code = content.trim().parse::<i32>().unwrap_or(-1);
-                    if code == 0 {
-                        (InvocationStatus::Success, Some(0))
-                    } else {
-                        (InvocationStatus::Failed, Some(code))
+                let (status, exit_code) = match fs::read_to_string(&exit_code_path) {
+                    Ok(content) => {
+                        let code = content.trim().parse::<i32>().unwrap_or(-1);
+                        if code == 0 {
+                            (InvocationStatus::Success, Some(0))
+                        } else {
+                            (InvocationStatus::Failed, Some(code))
+                        }
                     }
-                } else {
-                    (InvocationStatus::Failed, None)
+                    Err(_) => (InvocationStatus::Failed, None),
                 };
 
                 let stdout_path = job_dir.join("stdout.log");
@@ -339,18 +339,20 @@ impl JobManager {
                     // Process is dead — check for exit_code file from waiter
                     let job_dir = self.jobs_dir.join(job.id.to_string());
                     let exit_code_path = job_dir.join("exit_code");
-                    let (status, exit_code) =
-                        if let Ok(content) = fs::read_to_string(&exit_code_path) {
+                    let (status, exit_code) = match fs::read_to_string(&exit_code_path) {
+                        Ok(content) => {
                             let code = content.trim().parse::<i32>().unwrap_or(-1);
                             if code == 0 {
                                 (InvocationStatus::Success, Some(0))
                             } else {
                                 (InvocationStatus::Failed, Some(code))
                             }
-                        } else {
+                        }
+                        Err(_) => {
                             // No exit_code file — process crashed or was killed
                             (InvocationStatus::Failed, None)
-                        };
+                        }
+                    };
 
                     let stdout_path = job_dir.join("stdout.log");
                     let stderr_path = job_dir.join("stderr.log");
@@ -395,9 +397,8 @@ impl JobManager {
     /// If the process is in a systemd scope (old jobs), this may fail silently
     /// but the status will still be updated.
     pub fn cancel(&self, id: i64) -> Result<bool> {
-        let job = match self.get(id)? {
-            Some(j) => j,
-            None => return Ok(false),
+        let Some(job) = self.get(id)? else {
+            return Ok(false);
         };
 
         if matches!(job.status, InvocationStatus::Running) && job.pid > 0 {

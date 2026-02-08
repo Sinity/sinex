@@ -521,13 +521,12 @@ fn sanitize_work_dir(path_str: &str) -> Utf8PathBuf {
     let mut components = Vec::new();
     for component in absolute.components() {
         match component {
-            Component::CurDir => continue, // Skip .
+            Component::CurDir => {} // Skip .
             Component::ParentDir => {
                 // Pop if possible, but never go above root
                 if let Some(last) = components.last() {
                     if !matches!(last, Component::RootDir | Component::Prefix(_)) {
                         components.pop();
-                        continue;
                     }
                 }
                 // If we can't pop, just skip the ..

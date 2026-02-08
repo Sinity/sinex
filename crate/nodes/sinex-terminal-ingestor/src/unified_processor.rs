@@ -1319,9 +1319,8 @@ mod tests {
         xtask::sandbox::timing::WaitHelpers::wait_for_condition(
             || {
                 let pool = ctx.pool.clone();
-                let material_ulid = material_ulid;
-                let expected = expected_bytes;
                 async move {
+                    let expected = expected_bytes;
                     if let Some(material) = pool
                         .source_materials()
                         .get_by_id(Id::from_ulid(material_ulid))

@@ -320,7 +320,6 @@ impl WorkTracker {
             tokio::select! {
                 _ = self.work_complete_notify.notified() => {
                     // Work may be complete, loop will check
-                    continue;
                 }
                 _ = tokio::time::sleep(remaining) => {
                     // Timeout reached

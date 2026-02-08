@@ -378,13 +378,13 @@ impl MaterialAssembler {
 
         tokio::select! {
             result = &mut consumers.begin => {
-                return Self::handle_task_exit("material begin consumer", result, &shutdown_flag);
+                Self::handle_task_exit("material begin consumer", result, &shutdown_flag)
             }
             result = &mut consumers.slices => {
-                return Self::handle_task_exit("material slice consumer", result, &shutdown_flag);
+                Self::handle_task_exit("material slice consumer", result, &shutdown_flag)
             }
             result = &mut consumers.end => {
-                return Self::handle_task_exit("material end consumer", result, &shutdown_flag);
+                Self::handle_task_exit("material end consumer", result, &shutdown_flag)
             }
             result = cleanup_task => {
                 match result {

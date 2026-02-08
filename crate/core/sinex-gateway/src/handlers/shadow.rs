@@ -78,14 +78,17 @@ pub async fn handle_shadow_create(
     }
 
     // Determine deliver policy
-    let deliver_policy = if let Some(seq) = request.from_sequence {
-        jetstream::consumer::DeliverPolicy::ByStartSequence {
+    let deliver_policy = match request.from_sequence {
+        Some(seq) => jetstream::consumer::DeliverPolicy::ByStartSequence {
             start_sequence: seq,
+        },
+        None => {
+            if request.from_beginning {
+                jetstream::consumer::DeliverPolicy::All
+            } else {
+                jetstream::consumer::DeliverPolicy::New
+            }
         }
-    } else if request.from_beginning {
-        jetstream::consumer::DeliverPolicy::All
-    } else {
-        jetstream::consumer::DeliverPolicy::New
     };
 
     // Create durable consumer with explicit ack for proper tracking

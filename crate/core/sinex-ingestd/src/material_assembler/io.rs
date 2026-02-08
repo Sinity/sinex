@@ -358,13 +358,11 @@ async fn load_buffered_slices(buffers_dir: &PathBuf) -> IngestdResult<BTreeMap<i
             continue;
         }
 
-        let offset = if let Some(offset) = buf_path
+        let Some(offset) = buf_path
             .file_stem()
             .and_then(|stem| stem.to_str())
             .and_then(|stem| stem.parse::<i64>().ok())
-        {
-            offset
-        } else {
+        else {
             warn!(
                 path = %buf_path.display(),
                 "Skipping buffered slice with invalid filename"

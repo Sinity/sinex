@@ -219,12 +219,9 @@ impl StageAsYouGoContext {
         let config = StageCleanupConfig::new(stale_ttl, interval);
         self.cleanup_config = Some(config);
 
-        let manager = match self.acquisition_manager.clone() {
-            Some(manager) => manager,
-            None => {
-                warn!("Stage-as-You-Go reconciliation skipped: acquisition manager missing");
-                return self;
-            }
+        let Some(manager) = self.acquisition_manager.clone() else {
+            warn!("Stage-as-You-Go reconciliation skipped: acquisition manager missing");
+            return self;
         };
 
         self.start_reconciliation_task(manager, config);

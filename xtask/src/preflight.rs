@@ -205,16 +205,18 @@ fn migration_file_count() -> usize {
     let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let migrations_dir = crate_dir.join("../crate/lib/sinex-schema/src/migrations");
 
-    std::fs::read_dir(&migrations_dir).map_or(17, |entries| {
-        entries
-            .filter_map(std::result::Result::ok)
-            .filter(|e| {
-                let name = e.file_name();
-                let name = name.to_string_lossy();
-                name.starts_with('m') && name.ends_with(".rs")
-            })
-            .count()
-    })
+    let Ok(entries) = std::fs::read_dir(&migrations_dir) else {
+        return 17;
+    };
+
+    entries
+        .filter_map(std::result::Result::ok)
+        .filter(|e| {
+            let name = e.file_name();
+            let name = name.to_string_lossy();
+            name.starts_with('m') && name.ends_with(".rs")
+        })
+        .count()
 }
 
 /// Infrastructure status for preflight checks.

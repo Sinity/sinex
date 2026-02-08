@@ -7,6 +7,8 @@
 //! - Message reordering
 //! - Slow consumers
 
+#![allow(dead_code)] // ChaosCounterNode infrastructure ready for future chaos-through-node tests
+
 use sinex_node_sdk::simple_node::{ErrorAction, SimpleNode, SimpleNodeError};
 use sinex_primitives::events::Event;
 use sinex_primitives::testing::event_fixture;

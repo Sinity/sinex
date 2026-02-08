@@ -497,7 +497,6 @@ async fn test_sequential_ingestion(ctx: TestContext) -> Result<()> {
                         "Transient failure during sequential ingestion, retrying"
                     );
                     sleep(Duration::from_millis(20 * attempts as u64)).await;
-                    continue;
                 }
                 Err(e) => {
                     tracing::error!(error = %e, "Sequential ingestion failed");

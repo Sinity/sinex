@@ -411,10 +411,11 @@ fn get_current_memory_usage() -> usize {
     if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
         for line in status.lines() {
             if line.starts_with("VmRSS:") {
-                if let Some(size_str) = line.split_whitespace().nth(1) {
-                    if let Ok(size_kb) = size_str.parse::<usize>() {
-                        return size_kb * 1024; // Convert to bytes
-                    }
+                let Some(size_str) = line.split_whitespace().nth(1) else {
+                    continue;
+                };
+                if let Ok(size_kb) = size_str.parse::<usize>() {
+                    return size_kb * 1024; // Convert to bytes
                 }
             }
         }

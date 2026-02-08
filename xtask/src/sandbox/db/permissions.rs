@@ -41,9 +41,8 @@ impl PermissionGranter {
 }
 
 pub async fn grant_pool_database_permissions(db_name: &str) -> TestResult<()> {
-    let granter = match PermissionGranter::from_env()? {
-        Some(g) => g,
-        None => return Ok(()),
+    let Some(granter) = PermissionGranter::from_env()? else {
+        return Ok(());
     };
 
     // Construct URL for the specific database using superuser credentials

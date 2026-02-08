@@ -1111,31 +1111,37 @@ impl<T: Node + 'static> NodeRunner<T> {
                 let event_id = &provisional.event_id;
                 let event = {
                     #[cfg(feature = "db")]
-                    match &db_pool {
-                        Some(pool) => match Self::fetch_persisted_event(pool, event_id).await? {
-                            Some(event) => Some(event),
-                            None => {
-                                warn!(
-                                    "Confirmed event {:?} missing from database; skipping",
-                                    event_id
-                                );
-                                None
+                    {
+                        match &db_pool {
+                            Some(pool) => {
+                                match Self::fetch_persisted_event(pool, event_id).await? {
+                                    Some(event) => Some(event),
+                                    None => {
+                                        warn!(
+                                            "Confirmed event {:?} missing from database; skipping",
+                                            event_id
+                                        );
+                                        None
+                                    }
+                                }
                             }
-                        },
-                        None => match Self::build_event_from_provisional(provisional) {
+                            None => match Self::build_event_from_provisional(provisional) {
+                                Ok(event) => Some(event),
+                                Err(err) => {
+                                    warn!(error = %err, "Failed to build event from provisional payload");
+                                    None
+                                }
+                            },
+                        }
+                    }
+                    #[cfg(not(feature = "db"))]
+                    {
+                        match Self::build_event_from_provisional(provisional) {
                             Ok(event) => Some(event),
                             Err(err) => {
                                 warn!(error = %err, "Failed to build event from provisional payload");
                                 None
                             }
-                        },
-                    }
-                    #[cfg(not(feature = "db"))]
-                    match Self::build_event_from_provisional(provisional) {
-                        Ok(event) => Some(event),
-                        Err(err) => {
-                            warn!(error = %err, "Failed to build event from provisional payload");
-                            None
                         }
                     }
                 };
