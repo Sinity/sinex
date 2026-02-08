@@ -51,6 +51,7 @@ pub struct LifecycleManager {
     heartbeat_interval_seconds: Seconds,
     health_reporter: Option<Arc<HealthReporter>>,
     health_thresholds: Option<HealthThresholds>,
+    started_at: std::time::Instant,
 }
 
 impl LifecycleManager {
@@ -69,6 +70,7 @@ impl LifecycleManager {
             heartbeat_interval_seconds: Seconds::from_secs(30), // Default 30 second heartbeats
             health_reporter: None,
             health_thresholds: None,
+            started_at: std::time::Instant::now(),
         }
     }
 
@@ -476,9 +478,7 @@ impl LifecycleManager {
         ServiceMetrics {
             service_name: self.service_name.clone(),
             status: self.status(),
-            uptime: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default(),
+            uptime: self.started_at.elapsed(),
             shutdown_requested: self.is_shutdown_requested(),
         }
     }
