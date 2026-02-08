@@ -5731,6 +5731,7 @@ dependencies = [
  "camino",
  "clap",
  "color-eyre",
+ "crc32fast",
  "dashmap",
  "dirs",
  "figment",

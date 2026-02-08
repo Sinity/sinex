@@ -244,6 +244,7 @@ impl MaterialAssembler {
             temp_path,
             temp_file: Some(temp_file),
             wal_file: None,
+            wal_seq: 0,
             expected_offset: 0,
             slice_count: 0,
             buffered_slices: BTreeMap::new(),

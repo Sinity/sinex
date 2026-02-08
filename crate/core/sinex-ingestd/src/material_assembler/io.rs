@@ -6,8 +6,8 @@
 
 use super::{
     state::{
-        AssemblerState, FinalizationState, MaterialEndMessage, WalEntry, BUFFER_DIR_NAME,
-        TEMP_FILE_NAME, WAL_FILE_NAME,
+        AssemblerState, FinalizationState, MaterialEndMessage, WalEntry, WalEntryEnvelope,
+        BUFFER_DIR_NAME, TEMP_FILE_NAME, WAL_FILE_NAME,
     },
     MaterialAssembler, MAX_BUFFERED_SLICES,
 };
@@ -99,7 +99,7 @@ async fn restore_state_params(
         .await
         .map_err(|e| SinexError::io(format!("Failed to open WAL for {material_id}: {e}")))?;
 
-    // Replay WAL
+    // Replay WAL — supports both envelope format (with CRC) and legacy bare entries
     let mut state_snapshot = ReplayedState::default();
     let mut content_buffer = Vec::new();
     wal_file
@@ -107,21 +107,100 @@ async fn restore_state_params(
         .await
         .map_err(|e| SinexError::io(format!("Failed to read WAL for {material_id}: {e}")))?;
 
-    let cursor = std::io::Cursor::new(content_buffer);
-    let deserializer = serde_json::Deserializer::from_reader(cursor);
-    let iterator = deserializer.into_iter::<WalEntry>();
+    let content = String::from_utf8_lossy(&content_buffer);
+    let mut max_seq: u64 = 0;
+    let mut legacy_entries = 0u64;
 
-    for item in iterator {
-        match item {
-            Ok(entry) => state_snapshot.apply(entry),
-            Err(e) => {
-                warn!(material_id = %material_id, "WAL replay error (ignoring remainder): {}", e);
+    for (line_num, line) in content.lines().enumerate() {
+        if line.is_empty() {
+            continue;
+        }
+
+        // Try envelope format first (has seq + crc fields)
+        if let Ok(envelope) = serde_json::from_str::<WalEntryEnvelope>(line) {
+            // Verify CRC: re-serialize the entry and compare checksum
+            let entry_json = match serde_json::to_vec(&envelope.entry) {
+                Ok(json) => json,
+                Err(e) => {
+                    warn!(
+                        material_id = %material_id,
+                        line = line_num + 1,
+                        "WAL entry re-serialization failed (stopping replay): {e}"
+                    );
+                    break;
+                }
+            };
+            let computed_crc = crc32fast::hash(&entry_json);
+            if computed_crc != envelope.crc {
+                warn!(
+                    material_id = %material_id,
+                    line = line_num + 1,
+                    seq = envelope.seq,
+                    expected_crc = envelope.crc,
+                    computed_crc = computed_crc,
+                    "WAL CRC mismatch — corruption detected, stopping replay"
+                );
                 break;
             }
+            if envelope.seq > max_seq {
+                max_seq = envelope.seq;
+            }
+            state_snapshot.apply(envelope.entry);
+        } else if let Ok(entry) = serde_json::from_str::<WalEntry>(line) {
+            // Legacy format: bare WalEntry without envelope
+            legacy_entries += 1;
+            state_snapshot.apply(entry);
+        } else {
+            warn!(
+                material_id = %material_id,
+                line = line_num + 1,
+                "WAL replay error — invalid JSON, stopping replay"
+            );
+            break;
         }
     }
-    // Note: In a real robust WAL, we'd handle partial reads/checksums here.
-    // For now we assume JSON stream is valid or we stop at error.
+
+    if legacy_entries > 0 {
+        info!(
+            material_id = %material_id,
+            legacy_entries,
+            "Replayed legacy WAL entries without CRC (will be upgraded on next write)"
+        );
+    }
+
+    // Resume sequence numbering from where the WAL left off
+    let next_seq = if max_seq > 0 {
+        max_seq + 1
+    } else {
+        legacy_entries
+    };
+    // Validate temp file size matches WAL state — catches crash-during-write corruption
+    // where the WAL recorded a slice but the temp file has incomplete data (or is missing).
+    if state_snapshot.expected_offset > 0 {
+        if !temp_path.exists() {
+            warn!(
+                material_id = %material_id,
+                expected_bytes = state_snapshot.expected_offset,
+                "WAL indicates assembled data but temp file is missing; cleaning up stale state"
+            );
+            cleanup_state(assembler, material_id).await;
+            return Ok(None);
+        }
+        let actual_size = fs::metadata(&temp_path)
+            .await
+            .map(|m| m.len() as i64)
+            .unwrap_or(0);
+        if actual_size != state_snapshot.expected_offset {
+            warn!(
+                material_id = %material_id,
+                expected = state_snapshot.expected_offset,
+                actual = actual_size,
+                "Temp file size mismatch after WAL replay; cleaning up inconsistent state"
+            );
+            cleanup_state(assembler, material_id).await;
+            return Ok(None);
+        }
+    }
 
     // Check terminal status
     let is_terminal = assembler.material_is_terminal(material_id).await?;
@@ -165,6 +244,7 @@ async fn restore_state_params(
         temp_path,
         temp_file,
         wal_file: Some(wal_append),
+        wal_seq: next_seq,
         expected_offset: state_snapshot.expected_offset,
         slice_count: state_snapshot.slice_count,
         buffered_slices,
@@ -179,10 +259,10 @@ async fn restore_state_params(
         metadata: state_snapshot.metadata,
         has_begin: state_snapshot.has_begin,
         hasher,
-        pending_write: None, // pending writes are ephemeral optimizations, not persisted directly in WAL unless as Slices
+        pending_write: None,
         pending_end: state_snapshot.pending_end,
         finalizing: state_snapshot.finalizing,
-        last_slice_received: Timestamp::now(), // Reset on restore
+        last_slice_received: Timestamp::now(),
         _permit: None,
     }))
 }
@@ -301,8 +381,11 @@ async fn load_buffered_slices(buffers_dir: &PathBuf) -> IngestdResult<BTreeMap<i
     Ok(buffered_slices)
 }
 
-/// Append an entry to the WAL.
-/// This replaces the full-state rewrite pattern.
+/// Append an entry to the WAL, wrapped in a `WalEntryEnvelope` with CRC32 checksum.
+///
+/// Each entry is serialized as `{"seq":N,"crc":CHECKSUM,"entry":{...}}\n` and fsync'd.
+/// The CRC is computed over the serialized `entry` JSON, allowing recovery to detect
+/// corruption (bit-flips, partial writes) before applying the entry.
 pub(super) async fn append_wal_entry(
     _assembler: &MaterialAssembler,
     state: &mut AssemblerState,
@@ -315,9 +398,8 @@ pub(super) async fn append_wal_entry(
             .map_err(|e| SinexError::io(format!("Failed to ensure assembler state dir: {e}")))?;
 
         let mut opts = fs::OpenOptions::new();
-        opts.create(true).append(true).write(true); // .read(true) not needed for append
+        opts.create(true).append(true).write(true);
 
-        // On mac/linux, append ensures writes prevent tearing/overwrite, but we rely on simple appends here.
         let file = opts
             .open(&state.state_dir.join(WAL_FILE_NAME))
             .await
@@ -325,8 +407,17 @@ pub(super) async fn append_wal_entry(
         state.wal_file = Some(file);
     }
 
-    let serialized = serde_json::to_string(&entry).map_err(|e| {
+    // Serialize the entry, compute CRC, wrap in envelope
+    let entry_json = serde_json::to_vec(&entry).map_err(|e| {
         SinexError::serialization("failed to serialize WAL entry").with_std_error(&e)
+    })?;
+    let crc = crc32fast::hash(&entry_json);
+    let seq = state.wal_seq;
+    state.wal_seq += 1;
+
+    let envelope = WalEntryEnvelope { seq, crc, entry };
+    let serialized = serde_json::to_string(&envelope).map_err(|e| {
+        SinexError::serialization("failed to serialize WAL envelope").with_std_error(&e)
     })?;
 
     if let Some(file) = state.wal_file.as_mut() {
