@@ -50,11 +50,11 @@ async fn wait_for_material_row(
     let deadline = Instant::now() + Duration::from_secs(Timeouts::QUICK);
     loop {
         let row = sqlx::query(
-            r#"
+            r"
             SELECT status, optional_blob_id
             FROM raw.source_material_registry
             WHERE id = $1::uuid::ulid
-            "#,
+            ",
         )
         .bind(Uuid::from(material_id))
         .fetch_optional(&ctx.pool)
@@ -63,9 +63,10 @@ async fn wait_for_material_row(
         if let Some(row) = row {
             return Ok(row);
         }
-        if Instant::now() > deadline {
-            panic!("material {} was never registered by ingestd", material_id);
-        }
+        assert!(
+            Instant::now() <= deadline,
+            "material {material_id} was never registered by ingestd"
+        );
         sleep(Duration::from_millis(50)).await;
     }
 }
@@ -342,9 +343,10 @@ async fn test_concurrent_material_acquisition_with_random_crashes(ctx: TestConte
         if completed == successful && sensing == crashed {
             break (completed, sensing);
         }
-        if Instant::now() > deadline {
-            panic!("ingestd did not settle counts (completed={completed} sensing={sensing})");
-        }
+        assert!(
+            Instant::now() <= deadline,
+            "ingestd did not settle counts (completed={completed} sensing={sensing})"
+        );
         sleep(Duration::from_millis(100)).await;
     };
 

@@ -1243,8 +1243,8 @@ mod tests {
         // Start 3 background jobs
         let ids: Vec<i64> = (0..3)
             .map(|i| {
-                let stdout = dir.path().join(format!("job{}_stdout.log", i));
-                let stderr = dir.path().join(format!("job{}_stderr.log", i));
+                let stdout = dir.path().join(format!("job{i}_stdout.log"));
+                let stderr = dir.path().join(format!("job{i}_stderr.log"));
                 db.start_background_job("build", &[], 66666 + i as u32, &stdout, &stderr)
                     .unwrap()
             })
@@ -1266,8 +1266,8 @@ mod tests {
 
         // Start 5 background jobs
         for i in 0..5 {
-            let stdout = dir.path().join(format!("job5_{}_stdout.log", i));
-            let stderr = dir.path().join(format!("job5_{}_stderr.log", i));
+            let stdout = dir.path().join(format!("job5_{i}_stdout.log"));
+            let stderr = dir.path().join(format!("job5_{i}_stderr.log"));
             db.start_background_job("test", &[], 55555 + i as u32, &stdout, &stderr)
                 .unwrap();
         }

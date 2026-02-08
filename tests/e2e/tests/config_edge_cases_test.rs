@@ -35,8 +35,7 @@ async fn test_config_pool_size_minimum() -> Result<()> {
     let validation = validator::Validate::validate(&config);
     assert!(
         validation.is_ok(),
-        "Pool size of 1 should be valid: {:?}",
-        validation
+        "Pool size of 1 should be valid: {validation:?}"
     );
 
     Ok(())
@@ -55,8 +54,7 @@ async fn test_config_pool_size_maximum() -> Result<()> {
     let validation = validator::Validate::validate(&config);
     assert!(
         validation.is_ok(),
-        "Pool size of 1000 should be valid: {:?}",
-        validation
+        "Pool size of 1000 should be valid: {validation:?}"
     );
 
     Ok(())
@@ -92,8 +90,7 @@ async fn test_config_batch_size_minimum() -> Result<()> {
     let validation = validator::Validate::validate(&config);
     assert!(
         validation.is_ok(),
-        "Batch size of 1 should be valid: {:?}",
-        validation
+        "Batch size of 1 should be valid: {validation:?}"
     );
 
     Ok(())
@@ -179,7 +176,7 @@ async fn test_config_database_url_must_be_postgres() -> Result<()> {
 #[sinex_test]
 async fn test_config_nats_url_empty() -> Result<()> {
     let config = IngestdConfig::builder()
-        .nats(NatsConnectionConfig::builder().url("".to_string()).build())
+        .nats(NatsConnectionConfig::builder().url(String::new()).build())
         .database_url("postgresql:///test")
         .build();
 
@@ -245,7 +242,7 @@ mod async_validation {
             .database_url(ctx.database_url().to_string())
             .nats(
                 NatsConnectionConfig::builder()
-                    .url(ctx.nats_url().expect("nats url").to_string())
+                    .url(ctx.nats_url().expect("nats url").clone())
                     .build(),
             )
             .build();
@@ -390,8 +387,7 @@ async fn test_config_all_boundaries_valid() -> Result<()> {
     let validation = validator::Validate::validate(&config);
     assert!(
         validation.is_ok(),
-        "All minimum boundaries should be valid: {:?}",
-        validation
+        "All minimum boundaries should be valid: {validation:?}"
     );
 
     Ok(())
@@ -405,7 +401,7 @@ async fn test_config_multiple_validation_errors() -> Result<()> {
         .batch_size(0) // Invalid
         .max_message_size(Bytes::from_bytes(100)) // Invalid (< 1024)
         .database_url("mysql://localhost/db") // Invalid (not PostgreSQL)
-        .nats(NatsConnectionConfig::builder().url("".to_string()).build()) // Invalid (empty)
+        .nats(NatsConnectionConfig::builder().url(String::new()).build()) // Invalid (empty)
         .nats_stream_name("") // Invalid (empty)
         .build();
 
@@ -414,7 +410,7 @@ async fn test_config_multiple_validation_errors() -> Result<()> {
 
     // The error should contain multiple field failures
     let err = validation.unwrap_err();
-    let err_str = format!("{:?}", err);
+    let err_str = format!("{err:?}");
 
     // Check that multiple fields are mentioned
     // Note: validator crate aggregates errors by field

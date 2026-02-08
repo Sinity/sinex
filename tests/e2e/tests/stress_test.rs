@@ -55,10 +55,7 @@ async fn test_checkpoint_kv_stress_load(ctx: TestContext) -> TestResult<()> {
 
     let duration = start.elapsed();
     let successful = successes.load(Ordering::Relaxed);
-    println!(
-        "Checkpoint KV stress: {} updates in {:?}",
-        successful, duration
-    );
+    println!("Checkpoint KV stress: {successful} updates in {duration:?}");
 
     assert_eq!(
         successful, total_updates,

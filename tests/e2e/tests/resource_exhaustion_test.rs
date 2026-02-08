@@ -8,12 +8,8 @@ use async_nats::jetstream::{
     stream::{Config as StreamConfig, RetentionPolicy},
     Context as JetStream,
 };
-use futures::StreamExt;
-use serde_json::json;
-use sinex_primitives::ulid::Ulid;
-use sinex_primitives::Timestamp;
-use std::time::{Duration, Instant};
-use xtask::sandbox::{prelude::*, timing::Timeouts, EphemeralNats};
+use std::time::Duration;
+use xtask::sandbox::{prelude::*, timing::Timeouts};
 
 #[allow(dead_code)]
 async fn setup_stream(
@@ -27,7 +23,7 @@ async fn setup_stream(
         subjects: vec![subject.to_string()],
         retention: RetentionPolicy::Limits,
         max_messages,
-        max_age: Duration::from_secs(Timeouts::STANDARD as u64),
+        max_age: Duration::from_secs(Timeouts::STANDARD),
         ..Default::default()
     };
     js.get_or_create_stream(config).await?;

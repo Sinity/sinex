@@ -2058,8 +2058,7 @@ async fn clean_database(
         // Terminate any zombie connections that might interfere with cleanup or verification
         let _ = sqlx::query(&format!(
             "SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
-             WHERE datname = '{}' AND pid <> pg_backend_pid()",
-            db_name
+             WHERE datname = '{db_name}' AND pid <> pg_backend_pid()"
         ))
         .execute(&working_pool)
         .await;
@@ -2068,8 +2067,7 @@ async fn clean_database(
         let mut drained = false;
         for _ in 0..20 {
             let count: i64 = sqlx::query_scalar(&format!(
-                "SELECT COUNT(*) FROM pg_stat_activity WHERE datname = '{}' AND pid <> pg_backend_pid()",
-                db_name
+                "SELECT COUNT(*) FROM pg_stat_activity WHERE datname = '{db_name}' AND pid <> pg_backend_pid()"
             ))
             .fetch_one(&working_pool)
             .await
@@ -2083,8 +2081,7 @@ async fn clean_database(
         }
         if !drained {
             eprintln!(
-                "  ⚠️  Database {} still has connections after termination; cleanup might fail",
-                db_name
+                "  ⚠️  Database {db_name} still has connections after termination; cleanup might fail"
             );
         }
 

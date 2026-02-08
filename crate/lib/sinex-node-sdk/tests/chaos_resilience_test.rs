@@ -109,7 +109,7 @@ async fn process_events_through_chaos(chaos: &ChaosContext, count: usize) -> (us
                 if e.payload != original_payload
                     && e.payload
                         .as_str()
-                        .map_or(false, |s| s.starts_with("CORRUPTED_"))
+                        .is_some_and(|s| s.starts_with("CORRUPTED_"))
                 {
                     corrupted += 1;
                 }
@@ -259,8 +259,7 @@ async fn test_node_handles_slow_consumer_scenario(_ctx: TestContext) -> TestResu
     // Total time should be at least 5 * 10ms = 50ms (plus some overhead)
     assert!(
         elapsed >= Duration::from_millis(40),
-        "Slow consumer delay should be applied: {:?}",
-        elapsed
+        "Slow consumer delay should be applied: {elapsed:?}"
     );
 
     Ok(())
