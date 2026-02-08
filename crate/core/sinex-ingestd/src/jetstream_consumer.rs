@@ -745,6 +745,24 @@ impl JetStreamConsumer {
 
     /// Validate event against JSON schema
     async fn validate_event(&self, event: &Event<JsonValue>) -> IngestdResult<()> {
+        // Validate domain type formats before payload validation
+        if let Err(reason) = event.source.validate() {
+            return Err(SinexError::validation(format!(
+                "Invalid event source '{}': {reason}",
+                event.source
+            ))
+            .with_operation("jetstream_consumer.validate_event")
+            .with_context("source", event.source.to_string()));
+        }
+        if let Err(reason) = event.event_type.validate() {
+            return Err(SinexError::validation(format!(
+                "Invalid event type '{}': {reason}",
+                event.event_type
+            ))
+            .with_operation("jetstream_consumer.validate_event")
+            .with_context("event_type", event.event_type.to_string()));
+        }
+
         let guard = self.validator.read().await;
         let validation =
             guard.validate_payload_for(&event.source, &event.event_type, &event.payload);
@@ -765,13 +783,15 @@ impl JetStreamConsumer {
                 }
             }
             ValidationResult::SchemaNotFound { schema_id } => {
-                warn!(
-                    source = %event.source,
-                    event_type = %event.event_type,
-                    schema = %schema_id,
-                    "Schema referenced in lookup was not found; accepting event"
-                );
-                Ok(())
+                // Fail closed: reject events when their schema cannot be found.
+                // Previously this accepted with a warning, which allowed invalid payloads
+                // to be ingested silently.
+                Err(SinexError::validation(format!(
+                    "Schema '{}' not found for {}.{} — rejecting event (fail-closed)",
+                    schema_id, event.source, event.event_type
+                ))
+                .with_operation("jetstream_consumer.validate_event")
+                .with_context("schema_id", schema_id.to_string()))
             }
             ValidationResult::Invalid { errors } => Err(SinexError::validation(format!(
                 "Schema validation failed: {}",

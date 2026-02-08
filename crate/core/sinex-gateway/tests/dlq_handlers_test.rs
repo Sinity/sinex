@@ -6,9 +6,12 @@
 
 use async_nats::jetstream;
 use serde_json::json;
+use sinex_gateway::auth::Role;
 use sinex_gateway::handlers::dlq::{handle_dlq_list, handle_dlq_purge};
+use sinex_gateway::rpc_server::RpcAuthContext;
 use sinex_primitives::environment;
 use sinex_primitives::rpc::dlq::{DlqListResponse, DlqPurgeResponse};
+use sinex_primitives::temporal;
 use xtask::sandbox::{nats::EphemeralNats, prelude::*};
 
 async fn setup_dlq_stream(
@@ -128,8 +131,14 @@ async fn dlq_purge_requires_confirm_parameter() -> TestResult<()> {
 
     setup_dlq_stream(&client, &env).await?;
 
+    let test_auth = RpcAuthContext {
+        token_prefix: "test****".to_string(),
+        authenticated_at: temporal::now(),
+        role: Role::Admin,
+    };
+
     // Try purge without confirm
-    let err = handle_dlq_purge(&client, &env, json!({"confirm": false}))
+    let err = handle_dlq_purge(&client, &env, json!({"confirm": false}), &test_auth)
         .await
         .unwrap_err();
 
@@ -146,6 +155,12 @@ async fn dlq_purge_clears_all_messages() -> TestResult<()> {
 
     setup_dlq_stream(&client, &env).await?;
 
+    let test_auth = RpcAuthContext {
+        token_prefix: "test****".to_string(),
+        authenticated_at: temporal::now(),
+        role: Role::Admin,
+    };
+
     // Publish some messages
     for i in 0..5 {
         publish_dlq_message(&client, &env, &format!("event-{i}"), r#"{"test": true}"#, 1).await?;
@@ -159,7 +174,7 @@ async fn dlq_purge_clears_all_messages() -> TestResult<()> {
     assert_eq!(before.total_messages, 5);
 
     // Purge with confirmation
-    let result = handle_dlq_purge(&client, &env, json!({"confirm": true})).await?;
+    let result = handle_dlq_purge(&client, &env, json!({"confirm": true}), &test_auth).await?;
     let response: DlqPurgeResponse = serde_json::from_value(result)?;
 
     assert_eq!(response.purged_count, 5);
@@ -181,8 +196,14 @@ async fn dlq_purge_handles_empty_stream() -> TestResult<()> {
 
     setup_dlq_stream(&client, &env).await?;
 
+    let test_auth = RpcAuthContext {
+        token_prefix: "test****".to_string(),
+        authenticated_at: temporal::now(),
+        role: Role::Admin,
+    };
+
     // Purge empty stream should succeed
-    let result = handle_dlq_purge(&client, &env, json!({"confirm": true})).await?;
+    let result = handle_dlq_purge(&client, &env, json!({"confirm": true}), &test_auth).await?;
     let response: DlqPurgeResponse = serde_json::from_value(result)?;
 
     assert_eq!(response.purged_count, 0);
@@ -199,8 +220,14 @@ async fn dlq_purge_requires_missing_confirm_field() -> TestResult<()> {
 
     setup_dlq_stream(&client, &env).await?;
 
+    let test_auth = RpcAuthContext {
+        token_prefix: "test****".to_string(),
+        authenticated_at: temporal::now(),
+        role: Role::Admin,
+    };
+
     // Try purge without confirm field at all - should fail validation
-    let err = handle_dlq_purge(&client, &env, json!({}))
+    let err = handle_dlq_purge(&client, &env, json!({}), &test_auth)
         .await
         .unwrap_err();
 
@@ -219,6 +246,12 @@ async fn dlq_list_after_publish_and_purge_cycle() -> TestResult<()> {
 
     setup_dlq_stream(&client, &env).await?;
 
+    let test_auth = RpcAuthContext {
+        token_prefix: "test****".to_string(),
+        authenticated_at: temporal::now(),
+        role: Role::Admin,
+    };
+
     // First cycle
     for i in 0..3 {
         publish_dlq_message(&client, &env, &format!("cycle1-{i}"), r#"{"cycle": 1}"#, 1).await?;
@@ -230,7 +263,7 @@ async fn dlq_list_after_publish_and_purge_cycle() -> TestResult<()> {
     assert_eq!(mid1.total_messages, 3);
 
     // Purge
-    handle_dlq_purge(&client, &env, json!({"confirm": true})).await?;
+    handle_dlq_purge(&client, &env, json!({"confirm": true}), &test_auth).await?;
 
     // Second cycle
     for i in 0..2 {

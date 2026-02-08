@@ -56,6 +56,23 @@ impl Default for CleanupConfig {
                     protected: false,
                     reason: Some("Archive trigger must be bypassed during test cleanup"),
                 },
+                // Archive/tombstone tables (principled forgetting lifecycle)
+                TableCleanupStrategy {
+                    table_name: "core.event_tombstones",
+                    method: CleanupMethod::Delete,
+                    disable_triggers: false,
+                    protected: false,
+                    reason: Some("Tombstone tier of principled forgetting; no outbound FKs"),
+                },
+                TableCleanupStrategy {
+                    table_name: "audit.archived_events",
+                    method: CleanupMethod::Delete,
+                    disable_triggers: false,
+                    protected: false,
+                    reason: Some(
+                        "Archive tier of principled forgetting; must clean before core.events",
+                    ),
+                },
                 // Regular tables (can use TRUNCATE for speed)
                 TableCleanupStrategy {
                     table_name: "core.event_annotations",
@@ -86,6 +103,22 @@ impl Default for CleanupConfig {
                     reason: None,
                 },
                 TableCleanupStrategy {
+                    table_name: "core.embedding_cache",
+                    method: CleanupMethod::Truncate,
+                    disable_triggers: false,
+                    protected: false,
+                    reason: Some("Embedding cache; FK to embedding_models, can grow unbounded"),
+                },
+                TableCleanupStrategy {
+                    table_name: "core.embedding_models",
+                    method: CleanupMethod::Truncate,
+                    disable_triggers: false,
+                    protected: false,
+                    reason: Some(
+                        "Reference data for embedding providers; parent of cache + embeddings",
+                    ),
+                },
+                TableCleanupStrategy {
                     table_name: "core.entity_relations",
                     method: CleanupMethod::Truncate,
                     disable_triggers: false,
@@ -112,6 +145,20 @@ impl Default for CleanupConfig {
                     disable_triggers: false,
                     protected: false,
                     reason: None,
+                },
+                TableCleanupStrategy {
+                    table_name: "sinex_schemas.validation_cache",
+                    method: CleanupMethod::Truncate,
+                    disable_triggers: false,
+                    protected: false,
+                    reason: Some("Composite FK to events + schemas; can grow unbounded"),
+                },
+                TableCleanupStrategy {
+                    table_name: "sinex_schemas.gitops_schema_sources",
+                    method: CleanupMethod::Truncate,
+                    disable_triggers: false,
+                    protected: false,
+                    reason: Some("GitOps schema sync config; has updated_at trigger"),
                 },
                 TableCleanupStrategy {
                     table_name: "core.operations_log",
@@ -207,20 +254,28 @@ impl CleanupConfig {
     pub fn ordered_tables(&self) -> Vec<&TableCleanupStrategy> {
         // Child-to-parent ordering to minimize FK contention.
         const ORDER: &[&str] = &[
+            // Children first (FK dependents)
+            "core.event_tombstones",
             "core.event_annotations",
             // "core.event_relations",
             "core.event_cluster_members",
+            "core.embedding_cache",
             "core.event_embeddings",
             "core.entity_relations",
             // "core.revisions",
+            "core.embedding_models",
             "core.processor_manifests",
+            "sinex_schemas.validation_cache",
             "sinex_schemas.event_payload_schemas",
+            "sinex_schemas.gitops_schema_sources",
             "core.operations_log",
             "core.tags",
             "core.tagged_items",
             "core.blobs",
             "core.event_clusters",
             "core.entities",
+            // Archive + parent tables last
+            "audit.archived_events",
             "raw.temporal_ledger",
             "core.events",
             "raw.source_material_registry",

@@ -69,13 +69,28 @@ pub async fn handle_nodes_list(
 }
 
 /// Handle POST /nodes/{id}/drain - pause node processing
+///
+/// # Authorization
+///
+/// Node drain is a production-impacting operation. The auth context is
+/// logged for audit purposes.
 pub async fn handle_nodes_drain(
     nats_client: &async_nats::Client,
     env: &SinexEnvironment,
     params: Value,
+    auth: &crate::rpc_server::RpcAuthContext,
 ) -> Result<Value> {
+    use tracing::info;
+
     let drain_params: NodeDrainRequest = serde_json::from_value(params)
         .map_err(|e| SinexError::serialization("invalid drain request").with_std_error(&e))?;
+
+    info!(
+        token_prefix = %auth.token_prefix,
+        node_id = %drain_params.node_id,
+        reason = ?drain_params.reason,
+        "Node drain initiated"
+    );
 
     // Publish drain command to NATS control subject
     let subject = env.nats_subject(&format!(
@@ -114,13 +129,27 @@ pub async fn handle_nodes_drain(
 }
 
 /// Handle POST /nodes/{id}/resume - resume node processing
+///
+/// # Authorization
+///
+/// Node resume is a production-impacting operation. The auth context is
+/// logged for audit purposes.
 pub async fn handle_nodes_resume(
     nats_client: &async_nats::Client,
     env: &SinexEnvironment,
     params: Value,
+    auth: &crate::rpc_server::RpcAuthContext,
 ) -> Result<Value> {
+    use tracing::info;
+
     let resume_params: NodeResumeRequest = serde_json::from_value(params)
         .map_err(|e| SinexError::serialization("invalid resume request").with_std_error(&e))?;
+
+    info!(
+        token_prefix = %auth.token_prefix,
+        node_id = %resume_params.node_id,
+        "Node resume initiated"
+    );
 
     // Publish resume command to NATS control subject
     let subject = env.nats_subject(&format!(
@@ -158,13 +187,28 @@ pub async fn handle_nodes_resume(
 }
 
 /// Handle POST /nodes/{id}/set-horizon - set processing horizon
+///
+/// # Authorization
+///
+/// Setting the replay horizon can cause data reprocessing or loss.
+/// The auth context is logged for audit purposes.
 pub async fn handle_nodes_set_horizon(
     nats_client: &async_nats::Client,
     env: &SinexEnvironment,
     params: Value,
+    auth: &crate::rpc_server::RpcAuthContext,
 ) -> Result<Value> {
+    use tracing::info;
+
     let horizon_params: NodeSetHorizonRequest = serde_json::from_value(params)
         .map_err(|e| SinexError::serialization("invalid set-horizon request").with_std_error(&e))?;
+
+    info!(
+        token_prefix = %auth.token_prefix,
+        node_id = %horizon_params.node_id,
+        horizon = %horizon_params.horizon,
+        "Node set-horizon initiated"
+    );
 
     // Publish set-horizon command to NATS control subject
     let subject = env.nats_subject(&format!(
@@ -207,7 +251,16 @@ pub async fn handle_nodes_set_horizon(
 mod tests {
     use super::*;
     use sinex_primitives::environment;
+    use sinex_primitives::temporal;
     use xtask::sandbox::{sinex_test, EphemeralNats};
+
+    fn test_auth() -> crate::rpc_server::RpcAuthContext {
+        crate::rpc_server::RpcAuthContext {
+            token_prefix: "test****".to_string(),
+            authenticated_at: temporal::now(),
+            role: crate::auth::Role::Admin,
+        }
+    }
 
     #[sinex_test]
     async fn nodes_list_returns_empty_when_no_bucket(
@@ -234,7 +287,7 @@ mod tests {
             "reason": "maintenance",
         });
 
-        let result = handle_nodes_drain(&client, &env, params).await?;
+        let result = handle_nodes_drain(&client, &env, params, &test_auth()).await?;
         assert_eq!(result["status"], "drain_requested");
         assert_eq!(result["node_id"], "test-node-123");
 
@@ -252,7 +305,7 @@ mod tests {
             "node_id": "test-node-456",
         });
 
-        let result = handle_nodes_resume(&client, &env, params).await?;
+        let result = handle_nodes_resume(&client, &env, params, &test_auth()).await?;
         assert_eq!(result["status"], "resume_requested");
         assert_eq!(result["node_id"], "test-node-456");
 
@@ -272,7 +325,7 @@ mod tests {
             "horizon": "not-a-timestamp",
         });
 
-        let err = handle_nodes_set_horizon(&client, &env, invalid_params)
+        let err = handle_nodes_set_horizon(&client, &env, invalid_params, &test_auth())
             .await
             .unwrap_err();
         assert!(err.to_string().contains("serialization"));
@@ -283,7 +336,7 @@ mod tests {
             "horizon": "2024-01-15T10:00:00Z",
         });
 
-        let result = handle_nodes_set_horizon(&client, &env, valid_params).await?;
+        let result = handle_nodes_set_horizon(&client, &env, valid_params, &test_auth()).await?;
         assert_eq!(result["status"], "horizon_update_requested");
 
         Ok(())

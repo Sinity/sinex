@@ -84,8 +84,7 @@ pub struct CascadeAnalyzerConfig {
     pub max_depth: usize,
     /// Whether to include weak dependencies
     pub include_weak_dependencies: bool,
-    /// Memory limit for analysis (bytes)
-    // TODO: Enforce this limit in analyze_cascades_in_transaction (see cascade_analyzer.md)
+    /// Memory limit for analysis (bytes). Enforced during analysis — returns error if exceeded.
     pub memory_limit_bytes: Option<usize>,
     /// Timeout for analysis operations (prevents indefinite transaction hold)
     pub timeout: Duration,
@@ -286,6 +285,22 @@ impl StreamingCascadeAnalyzer {
         let depth_histogram = self.calculate_depth_histogram_tx(tx, &temp_table).await?;
         let total_affected = self.count_affected_events_tx(tx, &temp_table).await?;
 
+        // Enforce memory limit before doing expensive violation/cycle detection
+        let memory_estimate = total_affected * 256;
+        if let Some(limit) = self.config.memory_limit_bytes {
+            if memory_estimate > limit {
+                self.cleanup_temp_tables_tx(tx, &temp_table).await?;
+                return Err(eyre!(
+                    "Cascade analysis would require ~{} bytes ({} events × 256), \
+                     exceeding memory limit of {} bytes. \
+                     Consider increasing SINEX_CASCADE_MEMORY_LIMIT_BYTES or reducing scope.",
+                    memory_estimate,
+                    total_affected,
+                    limit,
+                ));
+            }
+        }
+
         // Find integrity violations
         let integrity_violations = self.find_integrity_violations_tx(tx, &temp_table).await?;
 
@@ -296,9 +311,6 @@ impl StreamingCascadeAnalyzer {
 
         // Clean up temp tables (within transaction)
         self.cleanup_temp_tables_tx(tx, &temp_table).await?;
-
-        // Estimate memory usage
-        let memory_estimate = total_affected * 256; // Rough estimate: 256 bytes per event
 
         Ok(CascadeAnalysis {
             max_depth,

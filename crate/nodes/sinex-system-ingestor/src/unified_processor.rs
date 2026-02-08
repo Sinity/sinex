@@ -128,8 +128,12 @@ impl Default for SystemPersistentState {
     }
 }
 
-/// Capacity for watcher → emitter channels; we prefer bounded buffers to avoid unbounded growth.
-const WATCHER_CHANNEL_CAPACITY: usize = 1024;
+/// Per-watcher channel capacities, tuned to their event rate characteristics.
+/// D-Bus can burst 1000+ events/sec during app launches; journal/systemd are lower throughput.
+const DBUS_CHANNEL_CAPACITY: usize = 8192;
+const JOURNAL_CHANNEL_CAPACITY: usize = 2048;
+const SYSTEMD_CHANNEL_CAPACITY: usize = 512;
+const UDEV_CHANNEL_CAPACITY: usize = 2048;
 
 /// Unified system processor implementing `SimpleIngestor`
 #[derive(Default)]
@@ -494,7 +498,7 @@ impl SystemProcessor {
         material: WatcherMaterialContext,
     ) -> NodeResult<WatcherHandle<WatcherMaterialContext>> {
         let emitter = self.emitter_clone()?;
-        let (tx, rx) = mpsc::channel(WATCHER_CHANNEL_CAPACITY);
+        let (tx, rx) = mpsc::channel(DBUS_CHANNEL_CAPACITY);
         let forwarder = spawn_forwarder("system.dbus.signal", rx, emitter);
         let mut watcher = DbusWatcher::new(self.config.dbus_config.clone()).await?;
         let watcher_material = material.clone();
@@ -517,11 +521,9 @@ impl SystemProcessor {
     ) -> NodeResult<WatcherHandle<WatcherMaterialContext>> {
         let emitter = self.emitter_clone()?;
 
-        // Create two channels: one for journal events, one for systemd events
-        let (journal_tx, journal_rx) = mpsc::channel(WATCHER_CHANNEL_CAPACITY);
-        let (systemd_tx, systemd_rx) = mpsc::channel(WATCHER_CHANNEL_CAPACITY);
+        let (journal_tx, journal_rx) = mpsc::channel(JOURNAL_CHANNEL_CAPACITY);
+        let (systemd_tx, systemd_rx) = mpsc::channel(SYSTEMD_CHANNEL_CAPACITY);
 
-        // Create forwarders for both channels
         let journal_forwarder =
             spawn_forwarder("system.journal.entry", journal_rx, emitter.clone());
         let systemd_forwarder = spawn_forwarder("system.systemd.unit_state", systemd_rx, emitter);
@@ -566,7 +568,7 @@ impl SystemProcessor {
         material: WatcherMaterialContext,
     ) -> NodeResult<WatcherHandle<WatcherMaterialContext>> {
         let emitter = self.emitter_clone()?;
-        let (tx, rx) = mpsc::channel(WATCHER_CHANNEL_CAPACITY);
+        let (tx, rx) = mpsc::channel(UDEV_CHANNEL_CAPACITY);
         let forwarder = spawn_forwarder("system.udev.device", rx, emitter);
         let mut watcher = UdevWatcher::new(true).await?;
         let watcher_material = material.clone();
@@ -597,11 +599,9 @@ impl SystemProcessor {
 
         let emitter = self.emitter_clone()?;
 
-        // Create two channels: one for journal events, one for systemd events
-        let (journal_tx, journal_rx) = mpsc::channel(WATCHER_CHANNEL_CAPACITY);
-        let (systemd_tx, systemd_rx) = mpsc::channel(WATCHER_CHANNEL_CAPACITY);
+        let (journal_tx, journal_rx) = mpsc::channel(JOURNAL_CHANNEL_CAPACITY);
+        let (systemd_tx, systemd_rx) = mpsc::channel(SYSTEMD_CHANNEL_CAPACITY);
 
-        // Create forwarders for both channels
         let journal_forwarder =
             spawn_forwarder("system.journal.entry", journal_rx, emitter.clone());
         let systemd_forwarder = spawn_forwarder("system.systemd.unit_state", systemd_rx, emitter);
@@ -709,50 +709,18 @@ impl SimpleIngestor for SystemProcessor {
         Ok(())
     }
 
-    async fn scan_snapshot(&self, _state: &Self::State, _args: ScanArgs) -> NodeResult<ScanReport> {
+    async fn scan_snapshot(
+        &mut self,
+        state: &mut Self::State,
+        _args: ScanArgs,
+    ) -> NodeResult<ScanReport> {
         let start_time = std::time::Instant::now();
 
-        // Clone self to allow taking snapshot (needs mutable access to update state in original implementation, but here state is external)
-        // Wait, original implementation updated `self.last_state`.
-        // `SimpleIngestor` `state` is mutable only in `run_continuous` or explicitly passed.
-        // `scan_snapshot` signature is `&self`.
-        // But `state` passed here is `&Self::State`. It is unexpected that `state` is updated in `scan_snapshot`?
-        // In `SimpleIngestor::scan_snapshot`: `state: &Self::State`. It's immutable.
-        // But `DesktopProcessor` refactor used `scan_snapshot(&self, state: &Self::State, args: ScanArgs)`.
-        // It returned `ScanReport`.
-
-        // If `take_snapshot` updates state, it needs `&mut self` or `&mut state`.
-        // `DesktopProcessor` refactor didn't update state in `scan_snapshot`?
-        // Ah, `DesktopProcessor` refactor:
-        // `async fn scan_snapshot(&self, state: &Self::State, args: ScanArgs) -> NodeResult<ScanReport>`
-        // It constructed `DesktopState` and returned it in `ScanReport`? No, `ScanReport` doesn't carry state.
-
-        // In `DesktopProcessor` refactor:
-        // `scan_snapshot` gathered data and returned `ScanReport`.
-        // It did NOT update `state.last_state`.
-        // This seems to be a deviation from original `take_snapshot` which updated `self.last_state`.
-
-        // If we want to persist the snapshot, we need `&mut state`.
-        // `SimpleIngestor` trait has `scan_snapshot(&self, state: &Self::State, args: ScanArgs)`.
-        // It prevents updating state.
-        // Effectively, `scan_snapshot` is just an operation.
-
-        // However, `get_source_state` relies on `state.last_state`.
-        // If we never update `state.last_state`, `get_source_state` will always be empty.
-        // Currently `SimpleIngestor` relies on `run_continuous` or `scan_historical` to update state?
-        // Or maybe we should improve `SimpleIngestor` to allow state update in `scan_snapshot`?
-        // Changing trait signature is heavy.
-
-        // `DesktopProcessor` `scan_snapshot` implementation:
-        // constructed `ScanReport`.
-        // Where is `state` updated?
-        // It seems it wasn't!
-
-        // We might need to address this limitation.
-        // For now, I'll follow `DesktopProcessor` pattern.
+        let snapshot = self.take_snapshot(state).await?;
+        let source_count = snapshot.enabled_sources.len() as u64;
 
         Ok(ScanReport {
-            events_processed: 0,
+            events_processed: source_count,
             duration: start_time.elapsed(),
             final_checkpoint: Checkpoint::timestamp(Timestamp::now(), None),
             time_range: Some((Timestamp::now(), Timestamp::now())),

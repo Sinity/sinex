@@ -11,7 +11,7 @@ use sinex_primitives::Id;
 use sinex_primitives::JsonValue;
 use sinex_primitives::Ulid;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc;
@@ -40,7 +40,6 @@ pub struct StageAsYouGoContext {
 #[derive(Debug, Clone)]
 struct StageMaterialInfo {
     metadata: JsonValue,
-    _registered_at: sinex_primitives::temporal::Timestamp,
     last_activity: sinex_primitives::temporal::Timestamp,
 }
 
@@ -154,29 +153,20 @@ mod tests {
 
 struct ReconciliationTask {
     shutdown: watch::Sender<bool>,
-    join_handle: StdMutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl ReconciliationTask {
-    fn new(shutdown: watch::Sender<bool>, handle: tokio::task::JoinHandle<()>) -> Self {
-        Self {
-            shutdown,
-            join_handle: StdMutex::new(Some(handle)),
-        }
+    fn new(shutdown: watch::Sender<bool>, _handle: tokio::task::JoinHandle<()>) -> Self {
+        Self { shutdown }
     }
 }
 
 impl Drop for ReconciliationTask {
     fn drop(&mut self) {
+        // Signal graceful shutdown — the task checks this via select! and exits
+        // on its next loop iteration. We intentionally do NOT abort() here because
+        // that would interrupt in-flight reconciliation (database operations).
         let _ = self.shutdown.send(true);
-        if let Some(handle) = self
-            .join_handle
-            .lock()
-            .ok()
-            .and_then(|mut guard| guard.take())
-        {
-            handle.abort();
-        }
     }
 }
 
@@ -354,11 +344,9 @@ impl StageAsYouGoContext {
             "Registered in-flight source material via JetStream"
         );
 
-        let now = sinex_primitives::temporal::Timestamp::now();
         let info = StageMaterialInfo {
             metadata,
-            _registered_at: now,
-            last_activity: now,
+            last_activity: sinex_primitives::temporal::Timestamp::now(),
         };
 
         self.material_registry
@@ -446,9 +434,11 @@ impl StageAsYouGoContext {
             None
         };
 
+        // Get metadata without removing — defer removal until after successful finalization
+        // so reconciliation can still find/retry on failure
         let material_info = {
-            let mut registry = self.material_registry.lock().await;
-            registry.remove(&id)
+            let registry = self.material_registry.lock().await;
+            registry.get(&id).cloned()
         };
 
         let manager = self
@@ -480,6 +470,13 @@ impl StageAsYouGoContext {
             content_preview.clone(),
         )
         .await?;
+
+        // Remove from registry only after successful finalization
+        {
+            let mut registry = self.material_registry.lock().await;
+            registry.remove(&id);
+        }
+
         info!(
             material_id = %id,
             bytes = content.len(),

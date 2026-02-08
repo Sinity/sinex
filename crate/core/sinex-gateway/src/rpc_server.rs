@@ -338,11 +338,12 @@ impl GatewayAuth {
                                         }
                                     }
                                     EventKind::Remove(_) => {
-                                        // File was deleted - disable auth (with warning)
-                                        let mut token_lock = token_clone.blocking_write();
-                                        *token_lock = None;
-                                        // TODO: Consider shutting down after grace period if not recreated (analysis/rpc_server.md Insight 2)
-                                        warn!("RPC token file {:?} deleted - authentication disabled!", path_for_closure);
+                                        // File was deleted — keep last valid token (fail-closed).
+                                        // Do NOT clear the token, as that would disable auth entirely,
+                                        // allowing unauthenticated access. If the file is recreated,
+                                        // the Create/Modify handler will reload it.
+                                        error!("RPC token file {:?} deleted! Keeping last valid token. \
+                                               Re-create the file to update the token.", path_for_closure);
                                     }
                                     _ => {
                                         // Ignore other events (access, metadata changes, etc.)
@@ -777,7 +778,7 @@ pub async fn dispatch_rpc_method(
             require_role(auth, Role::Write, method)?;
             let nats = nats_client_required(services)?;
             let env = services.environment();
-            handle_nodes_drain(nats, env, params)
+            handle_nodes_drain(nats, env, params, auth)
                 .await
                 .map_err(Into::into)
         }
@@ -785,7 +786,7 @@ pub async fn dispatch_rpc_method(
             require_role(auth, Role::Write, method)?;
             let nats = nats_client_required(services)?;
             let env = services.environment();
-            handle_nodes_resume(nats, env, params)
+            handle_nodes_resume(nats, env, params, auth)
                 .await
                 .map_err(Into::into)
         }
@@ -793,7 +794,7 @@ pub async fn dispatch_rpc_method(
             require_role(auth, Role::Write, method)?;
             let nats = nats_client_required(services)?;
             let env = services.environment();
-            handle_nodes_set_horizon(nats, env, params)
+            handle_nodes_set_horizon(nats, env, params, auth)
                 .await
                 .map_err(Into::into)
         }
@@ -849,7 +850,7 @@ pub async fn dispatch_rpc_method(
             require_role(auth, Role::Admin, method)?;
             let nats = nats_client_required(services)?;
             let env = services.environment();
-            handle_dlq_purge(nats, env, params).await
+            handle_dlq_purge(nats, env, params, auth).await
         }
 
         // Operations cancel (Admin)
@@ -1278,27 +1279,27 @@ fn load_rustls_config(
     let key_file = &mut BufReader::new(File::open(key_path)?);
 
     let cert_chain: Vec<CertificateDer<'static>> = certs(cert_file)
-        .map_err(|_| eyre!("Failed to read TLS certificate"))?
+        .map_err(|e| eyre!("Failed to read TLS certificate from {cert_path}: {e}"))?
         .into_iter()
         .map(CertificateDer::from)
         .collect();
 
     let mut keys: Vec<PrivateKeyDer<'static>> = pkcs8_private_keys(key_file)
-        .map_err(|_| eyre!("Failed to read TLS private key (pkcs8)"))?
+        .map_err(|e| eyre!("Failed to read TLS private key (pkcs8) from {key_path}: {e}"))?
         .into_iter()
         .map(|raw| {
             PrivateKeyDer::try_from(raw)
-                .map_err(|_| eyre!("Failed to parse TLS private key (pkcs8): invalid DER"))
+                .map_err(|e| eyre!("Failed to parse TLS private key (pkcs8): {e}"))
         })
         .collect::<Result<_, _>>()?;
     if keys.is_empty() {
         let mut key_file = BufReader::new(File::open(key_path)?);
         keys = rsa_private_keys(&mut key_file)
-            .map_err(|_| eyre!("Failed to read TLS private key (rsa)"))?
+            .map_err(|e| eyre!("Failed to read TLS private key (rsa) from {key_path}: {e}"))?
             .into_iter()
             .map(|raw| {
                 PrivateKeyDer::try_from(raw)
-                    .map_err(|_| eyre!("Failed to parse TLS private key (rsa): invalid DER"))
+                    .map_err(|e| eyre!("Failed to parse TLS private key (rsa): {e}"))
             })
             .collect::<Result<_, _>>()?;
     }
@@ -1311,7 +1312,7 @@ fn load_rustls_config(
     if let Some(ca_path) = client_ca_path {
         let mut ca_reader = BufReader::new(File::open(ca_path)?);
         let client_certs: Vec<CertificateDer<'static>> = certs(&mut ca_reader)
-            .map_err(|_| eyre!("Failed to read client CA bundle"))?
+            .map_err(|e| eyre!("Failed to read client CA bundle from {ca_path}: {e}"))?
             .into_iter()
             .map(CertificateDer::from)
             .collect();

@@ -295,16 +295,9 @@ impl ChannelConfirmedEventHandler {
 #[async_trait::async_trait]
 impl crate::confirmation_handler::ConfirmedEventHandler for ChannelConfirmedEventHandler {
     async fn handle_confirmed(&self, event: &ProvisionalEvent) -> NodeResult<()> {
-        match self.sender.try_send(event.clone()) {
-            Ok(()) => Ok(()),
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                tracing::warn!("Confirmed event channel full; dropping event");
-                Ok(())
-            }
-            Err(mpsc::error::TrySendError::Closed(_)) => Err(SinexError::processing(
-                "Failed to forward confirmed event: channel closed",
-            )),
-        }
+        self.sender.send(event.clone()).await.map_err(|_| {
+            SinexError::processing("Failed to forward confirmed event: channel closed")
+        })
     }
 }
 

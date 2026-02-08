@@ -97,6 +97,9 @@ workspace = true
 [dependencies.blake3]
 workspace = true
 
+[dependencies.crc32fast]
+workspace = true
+
 [dependencies.base64]
 workspace = true
 

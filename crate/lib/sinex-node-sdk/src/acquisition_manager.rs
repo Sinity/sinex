@@ -35,8 +35,6 @@ pub struct RotationPolicy {
     pub max_bytes: Bytes,
     /// Maximum age before rotation (seconds)
     pub max_age_seconds: Seconds,
-    /// Overlap period during rotation (milliseconds)
-    pub overlap_duration_ms: u64,
 }
 
 impl Default for RotationPolicy {
@@ -44,7 +42,6 @@ impl Default for RotationPolicy {
         Self {
             max_bytes: Bytes::from_mebibytes(100),     // 100MB
             max_age_seconds: Seconds::from_secs(3600), // 1 hour
-            overlap_duration_ms: 100,                  // 100ms overlap
         }
     }
 }
@@ -75,6 +72,23 @@ pub struct SourceMaterialHandle {
 impl SourceMaterialHandle {
     pub fn temp_path(&self) -> &Path {
         &self.temp_path
+    }
+}
+
+impl Drop for SourceMaterialHandle {
+    fn drop(&mut self) {
+        // Clean up temp file to prevent disk leaks on panic or forgotten finalize()
+        drop(self.temp_file.take());
+        if self.temp_path.exists() {
+            if let Err(e) = std::fs::remove_file(&self.temp_path) {
+                tracing::warn!(
+                    path = %self.temp_path.display(),
+                    material_id = %self.material_id,
+                    error = %e,
+                    "Failed to clean up temp file in SourceMaterialHandle Drop"
+                );
+            }
+        }
     }
 }
 
@@ -303,16 +317,27 @@ impl AcquisitionManager {
     }
 
     async fn ensure_streams_ready(&self) -> NodeResult<()> {
-        if self.streams_ready.load(Ordering::SeqCst) {
+        // Use compare_exchange to avoid duplicate bootstrap from concurrent callers
+        if self
+            .streams_ready
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            // Another caller already set it to true (bootstrap done or in progress)
             return Ok(());
         }
 
-        AcquisitionManager::bootstrap_streams_with_namespace(
+        if let Err(e) = AcquisitionManager::bootstrap_streams_with_namespace(
             &self.nats_client,
             self.namespace.as_deref(),
         )
-        .await?;
-        self.streams_ready.store(true, Ordering::SeqCst);
+        .await
+        {
+            // Reset flag so next caller can retry
+            self.streams_ready.store(false, Ordering::SeqCst);
+            return Err(e);
+        }
+
         Ok(())
     }
 
@@ -391,6 +416,11 @@ impl AcquisitionManager {
         Ok(())
     }
 
+    /// NATS maximum message payload size. Messages exceeding this will be rejected.
+    /// The actual NATS default is 1MB but we use a conservative limit to account for
+    /// headers and protocol overhead.
+    const MAX_NATS_PAYLOAD_BYTES: usize = 512 * 1024;
+
     /// Publish material slice to NATS
     async fn publish_slice(
         &self,
@@ -399,6 +429,16 @@ impl AcquisitionManager {
         data: &[u8],
         offset: i64,
     ) -> NodeResult<()> {
+        if data.len() > Self::MAX_NATS_PAYLOAD_BYTES {
+            return Err(SinexError::validation(format!(
+                "Material slice {} exceeds NATS max payload ({} bytes > {} bytes). \
+                 Caller must split data into smaller chunks.",
+                slice_index,
+                data.len(),
+                Self::MAX_NATS_PAYLOAD_BYTES
+            )));
+        }
+
         let subject = self.env.nats_subject_with_namespace(
             self.namespace.as_deref(),
             &format!("source_material.slices.{}", material_id),

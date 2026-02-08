@@ -51,6 +51,8 @@ pub struct LifecycleManager {
     heartbeat_interval_seconds: Seconds,
     health_reporter: Option<Arc<HealthReporter>>,
     health_thresholds: Option<HealthThresholds>,
+    started_at: std::time::Instant,
+    shutdown_grace_period: tokio::time::Duration,
 }
 
 impl LifecycleManager {
@@ -69,6 +71,8 @@ impl LifecycleManager {
             heartbeat_interval_seconds: Seconds::from_secs(30), // Default 30 second heartbeats
             health_reporter: None,
             health_thresholds: None,
+            started_at: std::time::Instant::now(),
+            shutdown_grace_period: tokio::time::Duration::from_secs(5),
         }
     }
 
@@ -94,6 +98,12 @@ impl LifecycleManager {
     /// Enable health monitoring with custom thresholds
     pub fn with_health_monitoring(mut self, thresholds: HealthThresholds) -> Self {
         self.health_thresholds = Some(thresholds);
+        self
+    }
+
+    /// Set the shutdown grace period (default: 5s)
+    pub fn with_shutdown_grace_period(mut self, duration: tokio::time::Duration) -> Self {
+        self.shutdown_grace_period = duration;
         self
     }
 
@@ -303,6 +313,7 @@ impl LifecycleManager {
 
         // Start health check task
         let shutdown_flag_health = shutdown_flag.clone();
+        let shutdown_watch_health = self.shutdown_watch_tx.clone();
         join_set.spawn(async move {
             let mut interval = tokio::time::interval(health_interval);
 
@@ -315,7 +326,7 @@ impl LifecycleManager {
 
                 let healthy = health_check().await;
                 if !healthy {
-                    error!(service = %service_name, "Health check failed");
+                    error!(service = %service_name, "Health check failed, triggering shutdown");
                     *status.lock() = ServiceStatus::Failed;
 
                     // Notify systemd of failure
@@ -323,6 +334,11 @@ impl LifecycleManager {
                         false,
                         &[sd_notify::NotifyState::Status("Health check failed")],
                     );
+
+                    // Trigger shutdown so the service doesn't continue as a zombie
+                    shutdown_flag_health.store(true, Ordering::Relaxed);
+                    let _ = shutdown_watch_health.send(true);
+                    break;
                 }
             }
 
@@ -395,20 +411,27 @@ impl LifecycleManager {
             }
             _ = tokio::signal::ctrl_c() => {
                 info!(service = %self.service_name, "Received Ctrl+C");
-
-                // Issue 88 fix: Emit final heartbeat before shutdown to ensure observability
-                if let Some(emitter) = &self.heartbeat_emitter {
-                    let _ = emitter.emit_heartbeat(Some(serde_json::json!({
-                        "shutdown_reason": "ctrl_c",
-                        "final_heartbeat": true
-                    }))).await;
-                }
-
                 self.shutdown_flag.store(true, Ordering::Relaxed);
                 let _ = self.shutdown_watch_tx.send(true);
                 Ok(())
             }
         };
+
+        // Emit final heartbeat on any shutdown path (SIGTERM, SIGINT, Ctrl+C, health failure)
+        // so production monitoring always sees shutdown events
+        if let Some(emitter) = &self.heartbeat_emitter {
+            let shutdown_reason = if self.status() == ServiceStatus::Failed {
+                "health_check_failure"
+            } else {
+                "shutdown"
+            };
+            let _ = emitter
+                .emit_heartbeat(Some(serde_json::json!({
+                    "shutdown_reason": shutdown_reason,
+                    "final_heartbeat": true
+                })))
+                .await;
+        }
 
         // Cancel background tasks
         join_set.shutdown().await;
@@ -451,7 +474,7 @@ impl LifecycleManager {
         }
 
         // Give tasks time to complete gracefully
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        tokio::time::sleep(self.shutdown_grace_period).await;
 
         self.set_status(ServiceStatus::Stopped);
 
@@ -476,9 +499,7 @@ impl LifecycleManager {
         ServiceMetrics {
             service_name: self.service_name.clone(),
             status: self.status(),
-            uptime: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default(),
+            uptime: self.started_at.elapsed(),
             shutdown_requested: self.is_shutdown_requested(),
         }
     }

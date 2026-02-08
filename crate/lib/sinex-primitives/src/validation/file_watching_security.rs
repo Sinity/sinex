@@ -237,6 +237,86 @@ pub fn validate_discovered_file(
     Ok(validated_within_root)
 }
 
+/// Directory components that indicate sensitive content.
+/// Files under these directories should not be ingested to avoid leaking credentials.
+const SENSITIVE_DIR_COMPONENTS: &[&str] = &[
+    ".ssh",
+    ".gnupg",
+    ".gpg",
+    ".pki",
+    ".password-store",
+    ".mozilla", // Firefox profiles contain session tokens
+    ".config/chromium",
+    ".aws",
+    ".docker",
+    ".kube",
+    ".helm",
+    ".terraform",
+    ".vault-token",
+];
+
+/// File name patterns that indicate sensitive content regardless of directory.
+const SENSITIVE_FILE_NAMES: &[&str] = &[
+    ".env",
+    ".env.local",
+    ".env.production",
+    ".netrc",
+    ".npmrc",
+    ".pypirc",
+    "credentials",
+    "credentials.json",
+    "token.json",
+    "service-account.json",
+    "known_hosts",     // not secret, but privacy-relevant
+    "authorized_keys", // not secret, but privacy-relevant
+];
+
+/// File extensions that indicate sensitive content.
+const SENSITIVE_EXTENSIONS: &[&str] = &["pem", "key", "p12", "pfx", "jks", "keystore"];
+
+/// Check if a file path points to potentially sensitive content.
+///
+/// Returns `Some(reason)` if the path matches a sensitive pattern, `None` otherwise.
+/// This is used by ingestors to skip files that could contain credentials or private keys.
+#[must_use]
+pub fn check_sensitive_path(path: &Path) -> Option<&'static str> {
+    let path_str = path.as_str();
+
+    // Check directory components
+    for component in SENSITIVE_DIR_COMPONENTS {
+        // Match as exact path component (e.g. "/.ssh/" or ends with "/.ssh")
+        let with_slashes = format!("/{component}/");
+        if path_str.contains(&with_slashes) || path_str.ends_with(&format!("/{component}")) {
+            return Some("path contains sensitive directory");
+        }
+    }
+
+    // Check file name
+    if let Some(file_name) = path.file_name() {
+        for name in SENSITIVE_FILE_NAMES {
+            if file_name == *name {
+                return Some("file name matches sensitive pattern");
+            }
+        }
+
+        // Check if file starts with id_ (SSH key pattern: id_rsa, id_ed25519, etc.)
+        if file_name.starts_with("id_") && !file_name.ends_with(".pub") {
+            return Some("file matches SSH private key pattern");
+        }
+    }
+
+    // Check extension
+    if let Some(ext) = path.extension() {
+        for sensitive_ext in SENSITIVE_EXTENSIONS {
+            if ext == *sensitive_ext {
+                return Some("file extension indicates cryptographic material");
+            }
+        }
+    }
+
+    None
+}
+
 /// Check if a path depth exceeds policy limits
 pub fn check_path_depth(path: &Path, max_depth: Option<usize>) -> Result<()> {
     if let Some(max) = max_depth {

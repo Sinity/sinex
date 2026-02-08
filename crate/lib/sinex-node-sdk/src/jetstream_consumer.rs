@@ -505,11 +505,12 @@ impl JetStreamEventConsumer {
     fn parse_provisional_event(msg: &jetstream::Message) -> NodeResult<ProvisionalEvent> {
         let payload: serde_json::Value = serde_json::from_slice(&msg.payload)?;
 
-        let event_id = payload["id"]
+        let id_str = payload["id"]
             .as_str()
-            .ok_or_else(|| SinexError::processing("Missing event id".to_string()))?
+            .ok_or_else(|| SinexError::processing("Missing event id".to_string()))?;
+        let event_id = id_str
             .parse()
-            .map_err(|_| SinexError::processing("Invalid event id".to_string()))?;
+            .map_err(|e| SinexError::processing(format!("Invalid event id '{id_str}': {e}")))?;
 
         let source = payload["source"]
             .as_str()
@@ -521,12 +522,11 @@ impl JetStreamEventConsumer {
             .ok_or_else(|| SinexError::processing("Missing event_type".to_string()))?;
         let event_type = EventType::new(event_type);
 
-        let ts_orig = sinex_primitives::temporal::parse_rfc3339(
-            payload["ts_orig"]
-                .as_str()
-                .ok_or_else(|| SinexError::processing("Missing ts_orig".to_string()))?,
-        )
-        .map_err(|_| SinexError::processing("Invalid ts_orig".to_string()))?;
+        let ts_orig_str = payload["ts_orig"]
+            .as_str()
+            .ok_or_else(|| SinexError::processing("Missing ts_orig".to_string()))?;
+        let ts_orig = sinex_primitives::temporal::parse_rfc3339(ts_orig_str)
+            .map_err(|e| SinexError::processing(format!("Invalid ts_orig '{ts_orig_str}': {e}")))?;
 
         Ok(ProvisionalEvent {
             event_id,
@@ -541,22 +541,23 @@ impl JetStreamEventConsumer {
     fn parse_confirmation(msg: &jetstream::Message) -> NodeResult<EventConfirmation> {
         let payload: serde_json::Value = serde_json::from_slice(&msg.payload)?;
 
-        let event_id = payload["event_id"]
+        let eid_str = payload["event_id"]
             .as_str()
-            .ok_or_else(|| SinexError::processing("Missing event_id".to_string()))?
+            .ok_or_else(|| SinexError::processing("Missing event_id".to_string()))?;
+        let event_id = eid_str
             .parse()
-            .map_err(|_| SinexError::processing("Invalid event_id".to_string()))?;
+            .map_err(|e| SinexError::processing(format!("Invalid event_id '{eid_str}': {e}")))?;
 
         let persisted = payload["persisted"]
             .as_bool()
             .ok_or_else(|| SinexError::processing("Missing persisted".to_string()))?;
 
-        let ts_ingest = sinex_primitives::temporal::parse_rfc3339(
-            payload["ts_ingest"]
-                .as_str()
-                .ok_or_else(|| SinexError::processing("Missing ts_ingest".to_string()))?,
-        )
-        .map_err(|_| SinexError::processing("Invalid ts_ingest".to_string()))?;
+        let ts_ingest_str = payload["ts_ingest"]
+            .as_str()
+            .ok_or_else(|| SinexError::processing("Missing ts_ingest".to_string()))?;
+        let ts_ingest = sinex_primitives::temporal::parse_rfc3339(ts_ingest_str).map_err(|e| {
+            SinexError::processing(format!("Invalid ts_ingest '{ts_ingest_str}': {e}"))
+        })?;
 
         Ok(EventConfirmation {
             event_id,

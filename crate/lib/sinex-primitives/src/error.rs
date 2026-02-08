@@ -134,11 +134,7 @@ impl ErrorDetails {
 
 impl Serialize for ErrorDetails {
     fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
-        let mut state = serializer.serialize_struct("ErrorDetails", 3)?;
-
-        state.serialize_field("message", &self.message)?;
-
-        // Sanitize context keys
+        // Sanitize context keys (allowlist)
         const SAFE_KEYS: &[&str] = &[
             "table_name",
             "field_name",
@@ -160,12 +156,26 @@ impl Serialize for ErrorDetails {
             .filter(|(k, _)| SAFE_KEYS.contains(&k.as_str()))
             .collect();
 
+        // Compute actual field count after filtering
+        let field_count =
+            1 + usize::from(!safe_context.is_empty()) + usize::from(!self.sources.is_empty());
+        let mut state = serializer.serialize_struct("ErrorDetails", field_count)?;
+
+        state.serialize_field("message", &self.message)?;
+
         if !safe_context.is_empty() {
             state.serialize_field("context", &safe_context)?;
         }
 
         if !self.sources.is_empty() {
-            state.serialize_field("sources", &self.sources)?;
+            // Sanitize source error chain to avoid leaking internal details
+            // (SQL queries, file paths, stack traces) in serialized output
+            let sanitized_sources: Vec<String> = self
+                .sources
+                .iter()
+                .map(|s| sanitize_error_source(s))
+                .collect();
+            state.serialize_field("sources", &sanitized_sources)?;
         }
 
         state.end()
@@ -683,6 +693,51 @@ where
     }
 }
 
+/// Sanitize an error source string to prevent leaking internal details.
+///
+/// Removes SQL fragments, file system paths, and connection strings while
+/// preserving the general error category for debugging.
+fn sanitize_error_source(source: &str) -> String {
+    // Truncate excessively long sources
+    let source = if source.len() > 256 {
+        &source[..256]
+    } else {
+        source
+    };
+
+    // Redact SQL query fragments
+    if source.contains("SELECT ")
+        || source.contains("INSERT ")
+        || source.contains("UPDATE ")
+        || source.contains("DELETE ")
+    {
+        return "database query error (details redacted)".to_string();
+    }
+
+    // Redact file paths (Unix and Windows)
+    if source.contains("/home/")
+        || source.contains("/var/")
+        || source.contains("/tmp/")
+        || source.contains("C:\\")
+    {
+        // Keep the error type but redact the path
+        if let Some(colon_pos) = source.find(": /") {
+            return format!("{}: [path redacted]", &source[..colon_pos]);
+        }
+        return "file operation error (path redacted)".to_string();
+    }
+
+    // Redact connection strings
+    if source.contains("postgresql://")
+        || source.contains("postgres://")
+        || source.contains("nats://")
+    {
+        return "connection error (details redacted)".to_string();
+    }
+
+    source.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -698,5 +753,23 @@ mod tests {
 
         assert!(context.get("table_name").is_some());
         assert!(context.get("secret_info").is_none());
+    }
+
+    #[test]
+    fn test_source_sanitization() {
+        let err = ErrorDetails::new("db error")
+            .with_source("SELECT * FROM core.events WHERE id = '01HZ...'")
+            .with_source("connection to postgresql://user:pass@localhost failed")
+            .with_source("file not found: /home/user/.config/sinex/secrets.toml")
+            .with_source("timeout after 30s");
+
+        let json = serde_json::to_value(&err).unwrap();
+        let sources = json.get("sources").unwrap().as_array().unwrap();
+
+        assert_eq!(sources[0], "database query error (details redacted)");
+        assert_eq!(sources[1], "connection error (details redacted)");
+        assert!(sources[2].as_str().unwrap().contains("redacted"));
+        // Non-sensitive sources pass through
+        assert_eq!(sources[3], "timeout after 30s");
     }
 }

@@ -28,7 +28,10 @@ use sinex_primitives::{
     events::{enums::FileModificationType, EventPayload},
     temporal::Timestamp,
     units::Bytes,
-    validation::{validate_watch_path, FileWatchingSecurityPolicy},
+    validation::{
+        file_watching_security::check_sensitive_path, validate_watch_path,
+        FileWatchingSecurityPolicy,
+    },
     Ulid,
 };
 use sinex_processor_runtime::{
@@ -52,11 +55,13 @@ use tokio::{
         Mutex,
     },
 };
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, instrument, warn};
 use validator::ValidationError;
 
 const DEFAULT_MAX_CAPTURE_BYTES: Bytes = Bytes::from_mebibytes(10); // 10MB
 const DEFAULT_MAX_DEPTH: usize = 10; // Maximum directory traversal depth
+const DEFAULT_MAX_WATCHES: usize = 65_536; // Inotify watch limit (well under typical Linux max)
 const FS_WATCH_CHANNEL_SIZE: usize = 10_000; // Buffer size for filesystem event channel (high-volume burst protection)
 const FS_CAPTURE_CHUNK_SIZE: usize = 64 * 1024;
 const FS_READ_RETRY_ATTEMPTS: u32 = 3; // Number of retry attempts for transient file read errors
@@ -80,6 +85,14 @@ pub struct FilesystemConfig {
 
     /// Maximum number of bytes captured per event
     pub max_capture_bytes: Bytes,
+
+    /// Maximum total inotify watches across all paths (guards against FD exhaustion)
+    #[serde(default = "default_max_watches")]
+    pub max_watches: usize,
+}
+
+fn default_max_watches() -> usize {
+    DEFAULT_MAX_WATCHES
 }
 
 impl Default for FilesystemConfig {
@@ -89,6 +102,7 @@ impl Default for FilesystemConfig {
             max_depth: Some(DEFAULT_MAX_DEPTH),
             follow_symlinks: false,
             max_capture_bytes: DEFAULT_MAX_CAPTURE_BYTES,
+            max_watches: DEFAULT_MAX_WATCHES,
         }
     }
 }
@@ -108,6 +122,10 @@ impl FilesystemConfig {
         let max_capture_bytes = self.max_capture_bytes.as_u64();
         if !(1024..=512 * 1024 * 1024).contains(&max_capture_bytes) {
             return Err("Max capture bytes must be between 1KB and 512MB".to_string());
+        }
+
+        if !(1..=524_288).contains(&self.max_watches) {
+            return Err("Max watches must be between 1 and 524288".to_string());
         }
 
         Ok(())
@@ -193,9 +211,12 @@ struct WatchContext {
     acquisition: Arc<AcquisitionManager>,
     stage_context: StageAsYouGoContext,
     max_capture_bytes: Bytes,
+    max_watches: usize,
+    max_depth: Option<usize>,
     security_policy: FileWatchingSecurityPolicy,
     dropped_events: Arc<AtomicU64>,
     metrics: Arc<EventMetrics>,
+    cancel_token: CancellationToken,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -209,6 +230,7 @@ pub struct FilesystemProcessor {
     watch_handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
     dropped_events: Arc<AtomicU64>,
     metrics: Arc<EventMetrics>,
+    cancel_token: CancellationToken,
 }
 
 impl FilesystemProcessor {
@@ -222,6 +244,7 @@ impl FilesystemProcessor {
             watch_handles: Arc::new(Mutex::new(Vec::new())),
             dropped_events: Arc::new(AtomicU64::new(0)),
             metrics: EventMetrics::new(),
+            cancel_token: CancellationToken::new(),
         }
     }
 
@@ -235,6 +258,7 @@ impl FilesystemProcessor {
             watch_handles: Arc::new(Mutex::new(Vec::new())),
             dropped_events: Arc::new(AtomicU64::new(0)),
             metrics: EventMetrics::new(),
+            cancel_token: CancellationToken::new(),
         }
     }
 
@@ -283,6 +307,8 @@ impl FilesystemProcessor {
                     acquisition,
                     stage_context: stage_with_acquisition,
                     max_capture_bytes: self.config.max_capture_bytes,
+                    max_watches: self.config.max_watches,
+                    max_depth: self.config.max_depth,
                     security_policy: if self.config.follow_symlinks {
                         FileWatchingSecurityPolicy::permissive()
                     } else {
@@ -290,6 +316,7 @@ impl FilesystemProcessor {
                     },
                     dropped_events: Arc::clone(&self.dropped_events),
                     metrics: Arc::clone(&self.metrics),
+                    cancel_token: self.cancel_token.clone(),
                 },
             );
         }
@@ -421,7 +448,11 @@ impl SimpleIngestor for FilesystemProcessor {
         Ok(())
     }
 
-    async fn scan_snapshot(&self, _state: &Self::State, _args: ScanArgs) -> NodeResult<ScanReport> {
+    async fn scan_snapshot(
+        &mut self,
+        _state: &mut Self::State,
+        _args: ScanArgs,
+    ) -> NodeResult<ScanReport> {
         let state = self.snapshot_state();
         let report = ScanReport {
             events_processed: 0,
@@ -487,9 +518,12 @@ impl SimpleIngestor for FilesystemProcessor {
     }
 
     async fn shutdown(&mut self, _state: &Self::State) -> NodeResult<()> {
+        // Signal all watchers to stop gracefully
+        self.cancel_token.cancel();
+
+        // Wait for all watcher tasks to finish
         let mut guard = self.watch_handles.lock().await;
         for handle in guard.drain(..) {
-            handle.abort();
             let _ = handle.await;
         }
 
@@ -547,11 +581,52 @@ impl ExplorationProvider for FilesystemProcessor {
     }
 }
 
+/// Estimate the number of inotify watches needed for a directory tree.
+/// Each subdirectory requires one watch when using `RecursiveMode::Recursive`.
+fn estimate_watch_count(path: &Path, max_depth: Option<usize>) -> usize {
+    fn count_dirs(dir: &Path, depth: usize, max_depth: Option<usize>) -> usize {
+        if max_depth.is_some_and(|m| depth >= m) {
+            return 0;
+        }
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return 0;
+        };
+        let mut count = 0;
+        for entry in entries.flatten() {
+            if let Ok(ft) = entry.file_type() {
+                if ft.is_dir() {
+                    count += 1 + count_dirs(&entry.path(), depth + 1, max_depth);
+                }
+            }
+        }
+        count
+    }
+    1 + count_dirs(path, 0, max_depth)
+}
+
 async fn watch_path(root: String, ctx: WatchContext) -> NodeResult<()> {
     let normalized = validate_watch_path(&root, &ctx.security_policy)
         .map_err(|e| SinexError::validation(e.to_string()))?;
 
-    info!("Watching path: {}", normalized.as_str());
+    // SYMLINK-001: Canonicalize to resolve symlinks and detect loops
+    let canonical = std::fs::canonicalize(normalized.as_str()).map_err(|e| {
+        SinexError::validation(format!("Failed to canonicalize watch path '{}': {e}", root))
+    })?;
+
+    // RESOURCE-001: Estimate watch count before committing kernel resources
+    let estimated = estimate_watch_count(&canonical, ctx.max_depth);
+    if estimated > ctx.max_watches {
+        return Err(SinexError::validation(format!(
+            "Watch path '{}' would create ~{} inotify watches, exceeding limit of {}. \
+             Reduce directory depth or increase max_watches config.",
+            root, estimated, ctx.max_watches
+        )));
+    }
+    info!(
+        path = %canonical.display(),
+        estimated_watches = estimated,
+        "Watching path"
+    );
 
     let (tx, mut rx) = mpsc::channel::<Event>(FS_WATCH_CHANNEL_SIZE);
     let drop_counter = Arc::clone(&ctx.dropped_events);
@@ -583,13 +658,26 @@ async fn watch_path(root: String, ctx: WatchContext) -> NodeResult<()> {
         .map_err(|e| SinexError::lifecycle(format!("Failed to create watcher: {e}")))?;
 
     watcher
-        .watch(Path::new(normalized.as_str()), RecursiveMode::Recursive)
-        .map_err(|e| SinexError::lifecycle(format!("Failed to watch path: {e}")))?;
+        .watch(&canonical, RecursiveMode::Recursive)
+        .map_err(|e| SinexError::lifecycle(format!("Failed to watch path '{}': {e}", root)))?;
 
-    while let Some(event) = rx.recv().await {
-        if let Err(e) = handle_event(&ctx, &root, event).await {
-            ctx.metrics.record_error();
-            warn!("Failed to process filesystem event: {}", e);
+    loop {
+        tokio::select! {
+            event = rx.recv() => {
+                match event {
+                    Some(event) => {
+                        if let Err(e) = handle_event(&ctx, &root, event).await {
+                            ctx.metrics.record_error();
+                            warn!("Failed to process filesystem event: {}", e);
+                        }
+                    }
+                    None => break, // Channel closed
+                }
+            }
+            () = ctx.cancel_token.cancelled() => {
+                info!(path = %root, "Filesystem watcher received shutdown signal");
+                break;
+            }
         }
     }
 
@@ -598,10 +686,30 @@ async fn watch_path(root: String, ctx: WatchContext) -> NodeResult<()> {
 
 #[instrument(skip(ctx, event))]
 async fn handle_event(ctx: &WatchContext, root: &str, event: Event) -> NodeResult<()> {
+    // Filter out sensitive paths (credentials, private keys, etc.)
+    let paths: Vec<_> = event
+        .paths
+        .into_iter()
+        .filter(|p| {
+            if let Some(s) = p.to_str() {
+                let utf8 = camino::Utf8Path::new(s);
+                if let Some(reason) = check_sensitive_path(utf8) {
+                    debug!(path = %p.display(), %reason, "Skipping sensitive file");
+                    return false;
+                }
+            }
+            true
+        })
+        .collect();
+
+    if paths.is_empty() {
+        return Ok(());
+    }
+
     match event.kind {
         EventKind::Create(_) => {
-            for path in event.paths {
-                handle_file_created(ctx, root, &path).await?;
+            for path in &paths {
+                handle_file_created(ctx, root, path).await?;
             }
         }
         EventKind::Modify(mod_kind) => {
@@ -609,23 +717,19 @@ async fn handle_event(ctx: &WatchContext, root: &str, event: Event) -> NodeResul
 
             match mod_kind {
                 ModifyKind::Name(RenameMode::Both) => {
-                    if event.paths.len() == 2 {
-                        let old = &event.paths[0];
-                        let new = &event.paths[1];
-                        handle_file_moved(ctx, root, old, new).await?;
+                    if paths.len() == 2 {
+                        handle_file_moved(ctx, root, &paths[0], &paths[1]).await?;
                     }
                 }
                 ModifyKind::Name(_) => {
                     // Partial rename events - best effort handling
-                    if event.paths.len() == 2 {
-                        let old = &event.paths[0];
-                        let new = &event.paths[1];
-                        handle_file_moved(ctx, root, old, new).await?;
+                    if paths.len() == 2 {
+                        handle_file_moved(ctx, root, &paths[0], &paths[1]).await?;
                     }
                 }
                 ModifyKind::Data(_) | ModifyKind::Metadata(_) | ModifyKind::Any => {
-                    for path in event.paths {
-                        handle_file_modified(ctx, root, &path, FileModificationType::Content)
+                    for path in &paths {
+                        handle_file_modified(ctx, root, path, FileModificationType::Content)
                             .await?;
                     }
                 }
@@ -633,8 +737,8 @@ async fn handle_event(ctx: &WatchContext, root: &str, event: Event) -> NodeResul
             }
         }
         EventKind::Remove(_) => {
-            for path in event.paths {
-                handle_file_deleted(ctx, root, &path).await?;
+            for path in &paths {
+                handle_file_deleted(ctx, root, path).await?;
             }
         }
         _ => {}
@@ -1041,9 +1145,12 @@ mod tests {
             acquisition,
             stage_context,
             max_capture_bytes: Bytes::from_mebibytes(1),
+            max_watches: DEFAULT_MAX_WATCHES,
+            max_depth: Some(DEFAULT_MAX_DEPTH),
             security_policy: FileWatchingSecurityPolicy::permissive(),
             dropped_events: Arc::new(AtomicU64::new(0)),
             metrics: EventMetrics::new(),
+            cancel_token: CancellationToken::new(),
         };
 
         let temp_root = tempdir()?;

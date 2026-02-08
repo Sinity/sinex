@@ -173,8 +173,8 @@ pub use simple_node::{
 };
 #[cfg(feature = "messaging")]
 pub use stream_processor::{
-    Checkpoint, EventSender, EventStream, Node, NodeCapabilities, NodeRunner, NodeType, ScanArgs,
-    ScanEstimate, ScanReport, TimeHorizon,
+    Checkpoint, EventSender, EventStream, Node, NodeCapabilities, NodeRunner, NodeType,
+    RunnerLifecycle, ScanArgs, ScanEstimate, ScanReport, TimeHorizon,
 };
 pub use version::{NodeInstance, NodeVersion};
 #[cfg(feature = "messaging")]
