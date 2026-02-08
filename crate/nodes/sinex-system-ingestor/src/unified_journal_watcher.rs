@@ -12,6 +12,7 @@
 
 use sinex_db::models::Event;
 use sinex_primitives::fs::atomic_write;
+use sinex_primitives::secret_redaction::SecretRedactor;
 use sinex_primitives::JsonValue;
 use time::OffsetDateTime;
 
@@ -545,8 +546,8 @@ impl UnifiedJournalWatcher {
         let message = obj
             .get("MESSAGE")
             .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
+            .map(|s| SecretRedactor::redact(s).into_owned())
+            .unwrap_or_default();
 
         // Parse timestamp
         let timestamp: OffsetDateTime = if timestamp_us > 0 {
@@ -584,7 +585,7 @@ impl UnifiedJournalWatcher {
         let cmdline = obj
             .get("_CMDLINE")
             .and_then(|v| v.as_str())
-            .map(std::string::ToString::to_string);
+            .map(|s| SecretRedactor::redact(s).into_owned());
         let exe = obj
             .get("_EXE")
             .and_then(|v| v.as_str())
@@ -641,7 +642,7 @@ impl UnifiedJournalWatcher {
                 )
             {
                 if let Some(s) = value.as_str() {
-                    fields.insert(key.clone(), s.to_string());
+                    fields.insert(key.clone(), SecretRedactor::redact(s).into_owned());
                 }
             }
         }
