@@ -226,39 +226,36 @@ impl NodeSchemaValidator {
                 .copied()
         };
 
-        let schema_id = match schema_id_opt {
-            Some(id) => id,
-            None => {
-                // Cache miss - try DB fallback or error in edge mode
-                if self.is_edge_mode() {
-                    // Edge mode: strict validation - must have schema in cache
-                    return Err(crate::SinexError::validation(format!(
-                        "Schema not available in cache for {}.{} (edge mode - no DB fallback)",
-                        source, event_type
-                    )));
-                } else {
-                    // Full mode: try to fetch from DB
-                    match self.fetch_schema_from_db(source, event_type).await {
-                        Ok(Some(id)) => id,
-                        Ok(None) => {
-                            // No schema registered in DB - allow (permissive for unregistered types)
-                            debug!(
-                                source = %source,
-                                event_type = %event_type,
-                                "No schema registered for event type, allowing"
-                            );
-                            return Ok(());
-                        }
-                        Err(e) => {
-                            warn!(
-                                source = %source,
-                                event_type = %event_type,
-                                error = %e,
-                                "Failed to fetch schema from DB, allowing event"
-                            );
-                            return Ok(());
-                        }
-                    }
+        let schema_id = if let Some(id) = schema_id_opt {
+            id
+        } else {
+            // Cache miss - try DB fallback or error in edge mode
+            if self.is_edge_mode() {
+                // Edge mode: strict validation - must have schema in cache
+                return Err(crate::SinexError::validation(format!(
+                    "Schema not available in cache for {source}.{event_type} (edge mode - no DB fallback)"
+                )));
+            }
+            // Full mode: try to fetch from DB
+            match self.fetch_schema_from_db(source, event_type).await {
+                Ok(Some(id)) => id,
+                Ok(None) => {
+                    // No schema registered in DB - allow (permissive for unregistered types)
+                    debug!(
+                        source = %source,
+                        event_type = %event_type,
+                        "No schema registered for event type, allowing"
+                    );
+                    return Ok(());
+                }
+                Err(e) => {
+                    warn!(
+                        source = %source,
+                        event_type = %event_type,
+                        error = %e,
+                        "Failed to fetch schema from DB, allowing event"
+                    );
+                    return Ok(());
                 }
             }
         };
@@ -266,18 +263,17 @@ impl NodeSchemaValidator {
         // Get compiled validator
         let validator = {
             let schemas = self.schemas.read();
-            match schemas.get(&schema_id) {
-                Some(s) => s.validator.clone(),
-                None => {
-                    // Shouldn't happen (lookup and schema cache should be in sync)
-                    warn!(
-                        source = %source,
-                        event_type = %event_type,
-                        schema_id = %schema_id,
-                        "Schema found in lookup but not in cache"
-                    );
-                    return Ok(());
-                }
+            if let Some(s) = schemas.get(&schema_id) {
+                s.validator.clone()
+            } else {
+                // Shouldn't happen (lookup and schema cache should be in sync)
+                warn!(
+                    source = %source,
+                    event_type = %event_type,
+                    schema_id = %schema_id,
+                    "Schema found in lookup but not in cache"
+                );
+                return Ok(());
             }
         };
 
@@ -348,7 +344,7 @@ impl NodeSchemaValidator {
         })?;
 
         // Fetch full schema JSON from NATS KV
-        let key = format!("schema:{}", schema_id_str);
+        let key = format!("schema:{schema_id_str}");
         let schema_json = match kv_store.get(&key).await {
             Ok(Some(kv_entry)) => match serde_json::from_slice::<JsonValue>(&kv_entry) {
                 Ok(json) => json,

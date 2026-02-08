@@ -93,7 +93,7 @@ impl NatsPublisher {
 
         // Add headers for retry tracking
         let mut headers = async_nats::HeaderMap::new();
-        headers.insert("Nats-Msg-Id", format!("dlq-{}", event_id).as_str());
+        headers.insert("Nats-Msg-Id", format!("dlq-{event_id}").as_str());
         headers.insert(
             "Original-Subject",
             self.env

@@ -424,7 +424,7 @@ impl StageAsYouGoContext {
     ) -> NodeResult<()> {
         // Checksum is now computed when creating the blob
 
-        let content_preview = if mime_type.map_or(false, |m| m.starts_with("text/")) {
+        let content_preview = if mime_type.is_some_and(|m| m.starts_with("text/")) {
             Some(String::from_utf8_lossy(&content[..content.len().min(500)]).to_string())
         } else {
             None
@@ -493,7 +493,7 @@ impl StageAsYouGoContext {
     where
         R: tokio::io::AsyncRead + Unpin,
     {
-        let is_text = mime_type.map_or(false, |m| m.starts_with("text/"));
+        let is_text = mime_type.is_some_and(|m| m.starts_with("text/"));
         let mut preview_bytes: Vec<u8> = Vec::new();
         let mut total_bytes: i64 = 0;
 

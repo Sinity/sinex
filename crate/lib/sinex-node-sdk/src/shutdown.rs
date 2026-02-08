@@ -183,7 +183,7 @@ impl ShutdownHandler {
 /// Default checkpoint file path for a processor.
 pub fn default_checkpoint_path(processor_name: &str) -> PathBuf {
     let runtime_dir = std::env::var("SINEX_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
-    PathBuf::from(runtime_dir).join(format!("{}.checkpoint.json", processor_name))
+    PathBuf::from(runtime_dir).join(format!("{processor_name}.checkpoint.json"))
 }
 
 /// Configuration for shutdown behavior.

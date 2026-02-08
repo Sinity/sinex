@@ -1113,15 +1113,16 @@ impl<T: Node + 'static> NodeRunner<T> {
                     {
                         match &db_pool {
                             Some(pool) => {
-                                match Self::fetch_persisted_event(pool, event_id).await? {
-                                    Some(event) => Some(event),
-                                    None => {
-                                        warn!(
-                                            "Confirmed event {:?} missing from database; skipping",
-                                            event_id
-                                        );
-                                        None
-                                    }
+                                if let Some(event) =
+                                    Self::fetch_persisted_event(pool, event_id).await?
+                                {
+                                    Some(event)
+                                } else {
+                                    warn!(
+                                        "Confirmed event {:?} missing from database; skipping",
+                                        event_id
+                                    );
+                                    None
                                 }
                             }
                             None => match Self::build_event_from_provisional(provisional) {
@@ -1293,10 +1294,7 @@ impl<T: Node + 'static> NodeRunner<T> {
 
         let published: PublishedEventPayload = serde_json::from_value(provisional.payload.clone())
             .map_err(|err| {
-                SinexError::processing(format!(
-                    "Failed to parse provisional event payload: {}",
-                    err
-                ))
+                SinexError::processing(format!("Failed to parse provisional event payload: {err}"))
             })?;
 
         // Parse provenance fields for flat Event struct

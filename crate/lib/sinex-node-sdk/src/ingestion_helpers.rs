@@ -447,11 +447,8 @@ impl SnapshotDiff {
         } else if let (Some(old_obj), Some(new_obj)) = (old_data.as_object(), new_data.as_object())
         {
             // Check all columns if no specific tracking
-            let all_keys: std::collections::HashSet<_> = old_obj
-                .keys()
-                .chain(new_obj.keys())
-                .map(|s| s.clone())
-                .collect();
+            let all_keys: std::collections::HashSet<_> =
+                old_obj.keys().chain(new_obj.keys()).cloned().collect();
             &all_keys.into_iter().collect::<Vec<_>>()
         } else {
             return vec!["_value".to_string()]; // Non-object comparison

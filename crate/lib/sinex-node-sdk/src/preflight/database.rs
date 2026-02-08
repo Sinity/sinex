@@ -303,8 +303,7 @@ async fn test_extension_installability(pool: &PgPool, extension_name: &str) -> N
     let mut tx = pool.begin().await.map_err(SinexError::from)?;
 
     let result = sqlx::query(&format!(
-        "CREATE EXTENSION IF NOT EXISTS \"{}\"",
-        extension_name
+        "CREATE EXTENSION IF NOT EXISTS \"{extension_name}\""
     ))
     .execute(&mut *tx)
     .await;
@@ -328,7 +327,7 @@ async fn test_extension_loading(pool: &PgPool, messages: &mut Vec<String>) -> No
     ];
 
     for extension in extensions {
-        match sqlx::query(&format!("CREATE EXTENSION IF NOT EXISTS \"{}\"", extension))
+        match sqlx::query(&format!("CREATE EXTENSION IF NOT EXISTS \"{extension}\""))
             .execute(&mut *tx)
             .await
         {
@@ -553,7 +552,7 @@ async fn discover_migration_files() -> NodeResult<Vec<MigrationFile>> {
             SinexError::processing(format!("Migration path is not valid UTF-8: {path:?}"))
         })?;
 
-        if utf8_path.file_name().map_or(false, |n| n == "mod.rs") {
+        if utf8_path.file_name() == Some("mod.rs") {
             continue;
         }
 

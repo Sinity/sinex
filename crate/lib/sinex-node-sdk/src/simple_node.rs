@@ -560,7 +560,7 @@ where
             Ok(Some(output)) => {
                 // Build output event
                 let output_payload = serde_json::to_value(&output).map_err(|e| {
-                    SinexError::processing(format!("Failed to serialize output: {}", e))
+                    SinexError::processing(format!("Failed to serialize output: {e}"))
                 })?;
 
                 let output_event = Event {
@@ -843,7 +843,7 @@ where
         self.processor
             .on_initialize(&self.persisted_state.state)
             .await
-            .map_err(|e| SinexError::processing(format!("Initialize hook failed: {}", e)))?;
+            .map_err(|e| SinexError::processing(format!("Initialize hook failed: {e}")))?;
 
         info!(
             processor = %self.processor.name(),

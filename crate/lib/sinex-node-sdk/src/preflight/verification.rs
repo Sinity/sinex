@@ -406,7 +406,7 @@ async fn test_database_extensions(pool: &PgPool, _messages: &mut [String]) -> No
         "extensions": tested_extensions,
         "total_tested": tested_extensions.len(),
         "working": working_count,
-        "has_required": tested_extensions.get("pgx_ulid").map_or(false, |v| v.get("status") == Some(&json!("working")))
+        "has_required": tested_extensions.get("pgx_ulid").is_some_and(|v| v.get("status") == Some(&json!("working")))
     }))
 }
 
@@ -417,8 +417,7 @@ async fn verify_service_integration(_messages: &mut [String]) -> NodeResult<Valu
     nats_config.url = nats_url;
     let client = nats_config.connect().await.map_err(|e| {
         SinexError::processing(format!(
-            "Failed to connect to NATS for checkpoint verification: {}",
-            e
+            "Failed to connect to NATS for checkpoint verification: {e}"
         ))
     })?;
     let js = async_nats::jetstream::new(client);
@@ -438,7 +437,7 @@ async fn verify_service_integration(_messages: &mut [String]) -> NodeResult<Valu
         Err(_) => js.get_key_value(&bucket).await,
     }
     .map_err(|e| {
-        SinexError::processing(format!("Failed to create/open checkpoint KV bucket: {}", e))
+        SinexError::processing(format!("Failed to create/open checkpoint KV bucket: {e}"))
     })?;
 
     let consumer_name = format!("preflight-{}", Ulid::new());
@@ -458,12 +457,14 @@ async fn verify_service_integration(_messages: &mut [String]) -> NodeResult<Valu
         revision: 0,
     };
 
-    manager.save_checkpoint(&state).await.map_err(|e| {
-        SinexError::processing(format!("Failed to persist checkpoint to KV: {}", e))
-    })?;
-    manager.reset_checkpoint().await.map_err(|e| {
-        SinexError::processing(format!("Failed to delete checkpoint from KV: {}", e))
-    })?;
+    manager
+        .save_checkpoint(&state)
+        .await
+        .map_err(|e| SinexError::processing(format!("Failed to persist checkpoint to KV: {e}")))?;
+    manager
+        .reset_checkpoint()
+        .await
+        .map_err(|e| SinexError::processing(format!("Failed to delete checkpoint from KV: {e}")))?;
 
     Ok(json!({
         "checkpoint_kv": true,

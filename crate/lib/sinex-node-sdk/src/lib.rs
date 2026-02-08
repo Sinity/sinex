@@ -212,7 +212,7 @@ impl VersionInfo {
         Self {
             git_revision,
             binary_hash,
-            component_version: format!("{}-v{}", component_name, version),
+            component_version: format!("{component_name}-v{version}"),
         }
     }
 }
