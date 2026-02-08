@@ -90,7 +90,11 @@ pub trait SimpleIngestor: Send + Sync + 'static {
     ) -> NodeResult<()>;
 
     /// Perform a snapshot scan.
-    async fn scan_snapshot(&self, state: &Self::State, args: ScanArgs) -> NodeResult<ScanReport>;
+    async fn scan_snapshot(
+        &mut self,
+        state: &mut Self::State,
+        args: ScanArgs,
+    ) -> NodeResult<ScanReport>;
 
     /// Perform a historical scan.
     async fn scan_historical(
@@ -287,7 +291,7 @@ impl<I: SimpleIngestor> Node for SimpleIngestorWrapper<I> {
         let report = match until {
             TimeHorizon::Snapshot => {
                 self.ingestor
-                    .scan_snapshot(&self.state.user_state, args)
+                    .scan_snapshot(&mut self.state.user_state, args)
                     .await?
             }
             TimeHorizon::Historical { .. } => {

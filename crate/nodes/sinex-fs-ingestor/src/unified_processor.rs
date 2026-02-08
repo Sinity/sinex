@@ -427,7 +427,11 @@ impl SimpleIngestor for FilesystemProcessor {
         Ok(())
     }
 
-    async fn scan_snapshot(&self, _state: &Self::State, _args: ScanArgs) -> NodeResult<ScanReport> {
+    async fn scan_snapshot(
+        &mut self,
+        _state: &mut Self::State,
+        _args: ScanArgs,
+    ) -> NodeResult<ScanReport> {
         let state = self.snapshot_state();
         let report = ScanReport {
             events_processed: 0,

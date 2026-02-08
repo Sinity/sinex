@@ -975,7 +975,11 @@ impl SimpleIngestor for TerminalProcessor {
         Ok(())
     }
 
-    async fn scan_snapshot(&self, _state: &Self::State, _args: ScanArgs) -> NodeResult<ScanReport> {
+    async fn scan_snapshot(
+        &mut self,
+        _state: &mut Self::State,
+        _args: ScanArgs,
+    ) -> NodeResult<ScanReport> {
         let monitored: Vec<Utf8PathBuf> = self
             .config
             .history_sources

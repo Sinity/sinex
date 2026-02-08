@@ -334,17 +334,15 @@ impl SimpleIngestor for DesktopProcessor {
     }
 
     #[instrument(skip(self, state), fields(processor = "desktop"))]
-    async fn scan_snapshot(&self, state: &Self::State, _args: ScanArgs) -> NodeResult<ScanReport> {
+    async fn scan_snapshot(
+        &mut self,
+        state: &mut Self::State,
+        _args: ScanArgs,
+    ) -> NodeResult<ScanReport> {
         let start_time = std::time::Instant::now();
 
-        // Use state.health for reporting
         let snapshot = self.take_snapshot(&state.health).await?;
-
-        // Note: SimpleIngestor doesn't pass &mut state to scan_snapshot, so we can't update last_state in persistent state?
-        // Wait, SimpleIngestor trait definition: `async fn scan_snapshot(&self, state: &Self::State, ...)`
-        // It takes immutable state! That's a limitation for snapshotting.
-        // But internal watchers need to be initialized?
-        // If we want to support snapshots that might init watchers, we might need interior mutability or just transient watchers.
+        state.last_state = Some(snapshot.clone());
 
         let report = ScanReport {
             events_processed: snapshot.enabled_sources.len() as u64,
