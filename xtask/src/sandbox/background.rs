@@ -1,13 +1,17 @@
 use futures::future::BoxFuture;
 use std::mem;
+use std::sync::Mutex;
 use std::time::Duration;
-use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinHandle;
 use tracing::warn;
 
-pub(crate) static CLEANUP_HANDLES: std::sync::LazyLock<
-    AsyncMutex<Vec<tokio::task::JoinHandle<()>>>,
-> = std::sync::LazyLock::new(|| AsyncMutex::new(Vec::new()));
+/// Global registry for cleanup task handles spawned during Drop.
+///
+/// Uses `std::sync::Mutex` (not tokio) so that synchronous `Drop` impls can
+/// always register handles via `.lock()` — no `try_lock()` failures. The
+/// critical section is only `Vec::push()`, so contention is negligible.
+pub(crate) static CLEANUP_HANDLES: std::sync::LazyLock<Mutex<Vec<tokio::task::JoinHandle<()>>>> =
+    std::sync::LazyLock::new(|| Mutex::new(Vec::new()));
 
 pub(crate) const CLEANUP_AWAIT_SECS: u64 = 2;
 pub(crate) const BACKGROUND_TIMEOUT_SECS: u64 = 10;
@@ -15,9 +19,12 @@ pub(crate) const BACKGROUND_TIMEOUT_SECS: u64 = 10;
 pub(crate) async fn await_pending_cleanups() {
     let timeout = Duration::from_secs(CLEANUP_AWAIT_SECS);
 
-    let mut handles = CLEANUP_HANDLES.lock().await;
-    let pending = mem::take(&mut *handles);
-    drop(handles);
+    let pending = {
+        let mut guard = CLEANUP_HANDLES
+            .lock()
+            .expect("CLEANUP_HANDLES lock poisoned");
+        mem::take(&mut *guard)
+    };
 
     for mut handle in pending {
         match tokio::time::timeout(timeout, &mut handle).await {
