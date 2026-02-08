@@ -80,6 +80,10 @@ pub async fn handle_lifecycle_archive(
     };
 
     let source = request.source.as_ref().map(|s| EventSource::new(s.clone()));
+    if let Some(ref src) = source {
+        src.validate()
+            .map_err(|reason| SinexError::validation(format!("Invalid source: {reason}")))?;
+    }
 
     // Get live event IDs matching filters
     let event_ids = if let Some(ids) = &request.event_ids {
@@ -463,6 +467,10 @@ pub async fn handle_tombstone_create(
     };
 
     let source = request.source.as_ref().map(|s| EventSource::new(s.clone()));
+    if let Some(ref src) = source {
+        src.validate()
+            .map_err(|reason| SinexError::validation(format!("Invalid source: {reason}")))?;
+    }
 
     // Get archived event IDs matching filters
     let event_ids = if let Some(ids) = &request.event_ids {
@@ -719,6 +727,10 @@ pub async fn handle_tombstone_approve(
         .source
         .as_ref()
         .map(|s| EventSource::new(s.clone()));
+    if let Some(ref src) = source {
+        src.validate()
+            .map_err(|reason| SinexError::validation(format!("Invalid source: {reason}")))?;
+    }
 
     let event_ids = if let Some(ids) = &operation.event_ids {
         ids.iter()
