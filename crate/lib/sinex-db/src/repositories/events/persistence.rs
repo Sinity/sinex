@@ -770,6 +770,10 @@ impl<'a> EventRepository<'a> {
             }
         }
 
+        // Collect events needing synthesis cycle detection (populated during
+        // vector build, checked after transaction begins).
+        let mut synthesis_checks: Vec<(Id<Event<JsonValue>>, Vec<Ulid>)> = Vec::new();
+
         let mut ids = Vec::with_capacity(events.len());
         let mut sources = Vec::with_capacity(events.len());
         let mut event_types = Vec::with_capacity(events.len());
@@ -809,6 +813,16 @@ impl<'a> EventRepository<'a> {
                 offset_kind,
                 anchor_byte,
             ) = extract_provenance(event)?;
+
+            // Track events with synthesis provenance for cycle detection
+            if let Some(ref ulids) = source_event_ids_raw {
+                if !ulids.is_empty() {
+                    synthesis_checks.push((
+                        event.id.clone().unwrap(), // guaranteed set above
+                        ulids.clone(),
+                    ));
+                }
+            }
 
             let source_event_uuids = source_event_ids_raw
                 .map(|ids| ids.into_iter().map(|id| id.as_uuid()).collect::<Vec<_>>());
@@ -858,6 +872,11 @@ impl<'a> EventRepository<'a> {
         })?;
 
         crate::query_helpers::set_repeatable_read(&mut tx).await?;
+
+        // Enforce synthesis cycle detection (parity with insert/insert_stream_batch)
+        for (event_id, source_ulids) in &synthesis_checks {
+            ensure_no_synthesis_cycles(&mut *tx, event_id, source_ulids).await?;
+        }
 
         // QueryBuilder is required here because UNNEST cannot represent ragged arrays
         // (source_event_ids/associated_blob_ids) and `query!` rejects array nulls.
