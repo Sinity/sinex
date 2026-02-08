@@ -347,22 +347,7 @@ define_validated_string_type!(
     SanitizedPath
 );
 
-define_validated_string_type!(
-    #[doc = "A path known to be relative"]
-    RelativePath
-);
-
-define_validated_string_type!(
-    #[doc = "A URI that is guaranteed to be absolute"]
-    AbsoluteUri
-);
-
 // Hash types
-define_validated_string_type!(
-    #[doc = "BLAKE3 hash (64 hex characters)"]
-    Blake3Hash
-);
-
 define_validated_string_type!(
     #[doc = "SHA256 hash (64 hex characters)"]
     Sha256Hash
@@ -665,117 +650,6 @@ impl FromStr for SanitizedPath {
     }
 }
 
-impl RelativePath {
-    /// Validate that the path is relative
-    pub fn validate(path: &str) -> Result<(), String> {
-        if path.is_empty() {
-            return Err("Path cannot be empty".into());
-        }
-
-        let utf8_path = Utf8Path::new(path);
-        if utf8_path.is_absolute() {
-            return Err("Path must be relative".into());
-        }
-
-        // Check for directory traversal attempts
-        if path.contains("..") {
-            return Err("Path cannot contain directory traversal sequences (..)".into());
-        }
-
-        Ok(())
-    }
-}
-
-impl FromStr for RelativePath {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::validate(s)?;
-        Ok(Self(Cow::Owned(s.to_string())))
-    }
-}
-
-impl AbsoluteUri {
-    /// Validate that the URI is absolute
-    pub fn validate(uri: &str) -> Result<(), String> {
-        if uri.is_empty() {
-            return Err("URI cannot be empty".into());
-        }
-
-        use url::Url;
-        let parsed = Url::parse(uri).map_err(|e| format!("Invalid URI: {e}"))?;
-
-        if !parsed.scheme().is_empty() && parsed.cannot_be_a_base() {
-            return Err("URI must be absolute".into());
-        }
-
-        Ok(())
-    }
-}
-
-impl FromStr for AbsoluteUri {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::validate(s)?;
-        Ok(Self(Cow::Owned(s.to_string())))
-    }
-}
-
-impl Blake3Hash {
-    /// Validate BLAKE3 hash format (64 hex characters)
-    pub fn validate(hash: &str) -> Result<(), String> {
-        if hash.is_empty() {
-            return Err("BLAKE3 hash cannot be empty".into());
-        }
-
-        if hash.len() != 64 {
-            return Err("BLAKE3 hash must be exactly 64 characters".into());
-        }
-
-        if !hash.chars().all(|c| c.is_ascii_hexdigit()) {
-            return Err("BLAKE3 hash must contain only hexadecimal characters".into());
-        }
-
-        // Check for obviously invalid patterns
-        let lower_hash = hash.to_lowercase();
-        if lower_hash.chars().all(|c| c == '0') {
-            return Err("Hash appears to be a zero placeholder".into());
-        }
-        if lower_hash.chars().all(|c| c == 'f') {
-            return Err("Hash appears to be an all-F placeholder".into());
-        }
-
-        // Check for suspiciously repetitive patterns (same character repeating)
-        let mut prev_char = '\0';
-        let mut same_char_count = 0;
-        let mut max_same_char_run = 0;
-        for c in lower_hash.chars() {
-            if c == prev_char {
-                same_char_count += 1;
-                max_same_char_run = max_same_char_run.max(same_char_count);
-            } else {
-                same_char_count = 1;
-                prev_char = c;
-            }
-        }
-        if max_same_char_run > 8 {
-            return Err("Hash contains suspiciously long runs of the same character".into());
-        }
-
-        Ok(())
-    }
-}
-
-impl FromStr for Blake3Hash {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::validate(s)?;
-        Ok(Self(Cow::Owned(s.to_lowercase())))
-    }
-}
-
 impl Sha256Hash {
     /// Validate SHA256 hash format (64 hex characters)
     pub fn validate(hash: &str) -> Result<(), String> {
@@ -820,11 +694,11 @@ impl FromStr for Sha256Hash {
 #[cfg(feature = "sqlx")]
 mod sqlx_impls {
     use super::{
-        AbsoluteUri, AnnexKey, Blake3Hash, BranchName, CommandText, CommitHash, ConsumerGroup,
-        ConsumerName, EntityTypeName, EventSource, EventType, GlobPattern, HostName, Hostname,
-        IngestorName, InstanceId, IpAddress, JobId, NatsSubject, NodeId, ProcessorName,
-        RegexPattern, RelationType, RelativePath, RemoteName, SanitizedPath, SchemaName,
-        SchemaVersion, ServiceName, Sha256Hash, ShellName, UserId,
+        AnnexKey, BranchName, CommandText, CommitHash, ConsumerGroup, ConsumerName, EntityTypeName,
+        EventSource, EventType, GlobPattern, HostName, Hostname, IngestorName, InstanceId,
+        IpAddress, JobId, NatsSubject, NodeId, ProcessorName, RegexPattern, RelationType,
+        RemoteName, SanitizedPath, SchemaName, SchemaVersion, ServiceName, Sha256Hash, ShellName,
+        UserId,
     };
 
     // Register string types without validation
@@ -856,9 +730,6 @@ mod sqlx_impls {
 
     // Register validated string types
     impl_sqlx_for_validated_string_type!(SanitizedPath);
-    impl_sqlx_for_validated_string_type!(RelativePath);
-    impl_sqlx_for_validated_string_type!(AbsoluteUri);
-    impl_sqlx_for_validated_string_type!(Blake3Hash);
     impl_sqlx_for_validated_string_type!(Sha256Hash);
     impl_sqlx_for_validated_string_type!(AnnexKey);
     impl_sqlx_for_validated_string_type!(NatsSubject);

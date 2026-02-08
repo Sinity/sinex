@@ -27,19 +27,12 @@ members = [
   "crate/nodes/sinex-terminal-command-canonicalizer",
   "crate/nodes/sinex-health-automaton",
   "crate/nodes/sinex-analytics-automaton",
-  "crate/nodes/sinex-search-automaton",
-  "crate/nodes/sinex-content-automaton",
-  "crate/nodes/sinex-pkm-automaton",
 
   # Developer tooling
   "xtask",
 
   # CLI tools
   "crate/cli",
-
-  # Keep experimental automata disabled until stabilized
-  # "crate/nodes/sinex-content-automaton",
-  # "crate/nodes/sinex-pkm-automaton",
 
   # Test modules are integration tests within the main workspace
   # "test/*", # Removed - tests are integration tests, not separate workspace members

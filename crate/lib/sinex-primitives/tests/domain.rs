@@ -2,8 +2,8 @@ use std::str::FromStr;
 
 use color_eyre::eyre::eyre;
 use sinex_primitives::domain::{
-    AbsoluteUri, AnnexKey, Blake3Hash, EventSource, EventType, JobId, NatsSubject, RelativePath,
-    SanitizedPath, SchemaVersion, ServiceName, Sha256Hash,
+    AnnexKey, EventSource, EventType, JobId, NatsSubject, SanitizedPath, SchemaVersion,
+    ServiceName, Sha256Hash,
 };
 use sinex_primitives::events::payloads::{
     desktop::DesktopMonitoringStartedPayload, filesystem::FileCreatedPayload,
@@ -75,52 +75,6 @@ fn sanitized_path_validation_blocks_traversal() -> TestResult<()> {
     assert!(SanitizedPath::from_str("").is_err());
     assert!(SanitizedPath::from_str("../etc/passwd").is_err());
     assert!(SanitizedPath::from_str("/path/with/../traversal").is_err());
-    Ok(())
-}
-
-#[sinex_test]
-fn relative_path_validation_restricts_absolute_inputs() -> TestResult<()> {
-    assert!(RelativePath::from_str("file.txt").is_ok());
-    assert!(RelativePath::from_str("dir/file.txt").is_ok());
-    assert!(RelativePath::from_str("./file.txt").is_ok());
-
-    assert!(RelativePath::from_str("").is_err());
-    assert!(RelativePath::from_str("/absolute/path").is_err());
-    assert!(RelativePath::from_str("../parent").is_err());
-    Ok(())
-}
-
-#[sinex_test]
-fn absolute_uri_validation_checks_scheme() -> TestResult<()> {
-    assert!(AbsoluteUri::from_str("https://example.com").is_ok());
-    assert!(AbsoluteUri::from_str("file:///path/to/file").is_ok());
-    assert!(AbsoluteUri::from_str("postgresql://user:pass@host:5432/db").is_ok());
-
-    assert!(AbsoluteUri::from_str("").is_err());
-    assert!(AbsoluteUri::from_str("not-a-uri").is_err());
-    assert!(AbsoluteUri::from_str("relative/path").is_err());
-    Ok(())
-}
-
-#[sinex_test]
-fn blake3_hash_validation_enforces_length_and_hex() -> TestResult<()> {
-    let valid_hash = "a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3";
-    assert!(Blake3Hash::from_str(valid_hash).is_ok());
-    assert!(Blake3Hash::from_str(&valid_hash.to_uppercase()).is_ok());
-
-    assert!(Blake3Hash::from_str("").is_err());
-    assert!(Blake3Hash::from_str("too_short").is_err());
-    assert!(Blake3Hash::from_str(
-        "a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3X"
-    )
-    .is_err());
-    assert!(Blake3Hash::from_str(
-        "g665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3"
-    )
-    .is_err());
-
-    let hash = Blake3Hash::from_str(&valid_hash.to_uppercase()).unwrap();
-    assert_eq!(hash.as_str(), valid_hash);
     Ok(())
 }
 

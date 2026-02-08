@@ -5488,28 +5488,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sinex-content-automaton"
-version = "0.4.2"
-dependencies = [
- "async-trait",
- "clap",
- "color-eyre",
- "human-panic",
- "mimalloc",
- "serde",
- "serde_json",
- "sinex-node-sdk",
- "sinex-primitives",
- "sinex-processor-runtime",
- "sinex-services",
- "sqlx",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "xtask",
-]
-
-[[package]]
 name = "sinex-db"
 version = "0.1.0"
 dependencies = [
@@ -5850,30 +5828,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sinex-pkm-automaton"
-version = "0.4.2"
-dependencies = [
- "anyhow",
- "async-trait",
- "camino",
- "clap",
- "color-eyre",
- "human-panic",
- "mimalloc",
- "serde",
- "serde_json",
- "sinex-node-sdk",
- "sinex-primitives",
- "sinex-processor-runtime",
- "sinex-services",
- "sqlx",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "xtask",
-]
-
-[[package]]
 name = "sinex-primitives"
 version = "0.1.0"
 dependencies = [
@@ -5896,7 +5850,6 @@ dependencies = [
  "percent-encoding",
  "proptest",
  "regex",
- "rusqlite",
  "schemars",
  "serde",
  "serde_json",
@@ -5967,29 +5920,6 @@ dependencies = [
  "tracing",
  "ulid",
  "uuid",
- "xtask",
-]
-
-[[package]]
-name = "sinex-search-automaton"
-version = "0.4.2"
-dependencies = [
- "async-trait",
- "camino",
- "clap",
- "color-eyre",
- "human-panic",
- "mimalloc",
- "serde",
- "serde_json",
- "sinex-node-sdk",
- "sinex-primitives",
- "sinex-processor-runtime",
- "sinex-services",
- "sqlx",
- "tokio",
- "tracing",
- "tracing-subscriber",
  "xtask",
 ]
 
