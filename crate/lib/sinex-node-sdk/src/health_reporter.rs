@@ -176,6 +176,7 @@ impl HealthReporter {
     /// Check current health and emit status event if changed
     ///
     /// Returns the current status after checking.
+    #[allow(clippy::expect_used)] // RwLock poison means prior panic — propagating is correct
     pub async fn check_and_emit(&self) -> Result<ProcessStatus> {
         let new_status = self.calculate_status();
         let mut last_status_guard = self

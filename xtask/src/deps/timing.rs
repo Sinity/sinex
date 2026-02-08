@@ -135,7 +135,7 @@ impl TimingAnalyzer {
     #[allow(dead_code)]
     fn parse_timing_json(timing_json: &PathBuf) -> Result<TimingReport> {
         if !timing_json.exists() {
-            anyhow::bail!("Timing JSON file not found at {timing_json:?}");
+            anyhow::bail!("Timing JSON file not found at {}", timing_json.display());
         }
 
         let contents =

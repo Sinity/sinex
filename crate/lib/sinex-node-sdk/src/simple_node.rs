@@ -522,7 +522,7 @@ where
         let context = SimpleNodeContext {
             source: event.source.to_string(),
             event_type: event.event_type.to_string(),
-            ts_orig: event.ts_orig.map(|t| t),
+            ts_orig: event.ts_orig,
             event_id: source_event_id.into(),
         };
 

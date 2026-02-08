@@ -893,6 +893,7 @@ impl<T: sinex_node_sdk::stream_processor::Node + ExplorationProvider + 'static> 
             .unwrap_or_else(|| "sinex-node".to_string())
     }
 
+    #[allow(clippy::panic)] // Internal invariant: environment-generated paths must validate
     fn resolve_work_dir(args: &NodeCli) -> SanitizedPath {
         args.work_dir.clone().unwrap_or_else(|| {
             let env = sinex_primitives::environment();

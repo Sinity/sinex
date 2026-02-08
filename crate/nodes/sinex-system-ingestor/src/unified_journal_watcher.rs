@@ -326,6 +326,7 @@ impl UnifiedJournalWatcher {
                 duration_ms: start_time.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
             };
 
+            #[allow(clippy::expect_used)] // Typed payload serialization is infallible
             let sync_event = Event::new(
                 EventJournalSyncCompletedPayload {
                     sync_type: sync_payload.sync_type,

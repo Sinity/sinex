@@ -81,6 +81,7 @@ async fn main() -> Result<()> {
 
     let shutdown_task = {
         let shutdown_tx = shutdown_tx.clone();
+        #[allow(clippy::expect_used)] // Fatal: signal handlers must be installable
         tokio::spawn(async move {
             let ctrl_c = async {
                 tokio::signal::ctrl_c()

@@ -120,6 +120,7 @@ impl ShutdownHandler {
         let sender = self.sender.clone();
 
         // Spawn task to handle signals
+        #[allow(clippy::expect_used)] // Fatal: signal handlers must be installable
         tokio::spawn(async move {
             let mut sigterm =
                 signal(SignalKind::terminate()).expect("Failed to install SIGTERM handler");

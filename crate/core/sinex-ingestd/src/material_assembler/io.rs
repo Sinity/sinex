@@ -524,63 +524,68 @@ pub(super) async fn handle_slice(
     // Update last slice received timestamp
     state.last_slice_received = Timestamp::now();
 
-    if offset == state.expected_offset {
-        append_slice_data(assembler, &mut state, material_id, &data).await?;
-        flush_buffered_slices(assembler, &mut state, material_id).await?;
-    } else if offset > state.expected_offset {
-        if state.buffered_slices.len() >= MAX_BUFFERED_SLICES {
-            // ... error handling for max buffer ...
-            // (Truncated for brevity in this single-tool edit, but I should preserve the logic)
-            // I will assume logic is similar but we need to route error.
-            // Re-implementing simplified logic for this massive replace:
-            // Actually I must preserve the logic.
-            let buffered_count = state.buffered_slices.len();
-            let expected_offset = state.expected_offset;
-            let buffered_offsets: Vec<_> = state.buffered_slices.keys().copied().collect();
-            state.finalizing = true;
-            drop(state); // unlock
-
-            assembler
-                .route_material_error(
-                    material_id,
-                    "buffered_slice_limit_exceeded",
-                    serde_json::json!({
-                        "offset": offset,
-                        "expected_offset": expected_offset,
-                        "buffered_count": buffered_count,
-                        "buffered_offsets": buffered_offsets,
-                        "max_buffered_slices": MAX_BUFFERED_SLICES
-                    }),
-                )
-                .await;
-            assembler
-                .finalize_failed_material(material_id, "buffered_slice_limit_exceeded")
-                .await;
-            return Ok(());
+    use std::cmp::Ordering;
+    match offset.cmp(&state.expected_offset) {
+        Ordering::Equal => {
+            append_slice_data(assembler, &mut state, material_id, &data).await?;
+            flush_buffered_slices(assembler, &mut state, material_id).await?;
         }
+        Ordering::Greater => {
+            if state.buffered_slices.len() >= MAX_BUFFERED_SLICES {
+                // ... error handling for max buffer ...
+                // (Truncated for brevity in this single-tool edit, but I should preserve the logic)
+                // I will assume logic is similar but we need to route error.
+                // Re-implementing simplified logic for this massive replace:
+                // Actually I must preserve the logic.
+                let buffered_count = state.buffered_slices.len();
+                let expected_offset = state.expected_offset;
+                let buffered_offsets: Vec<_> = state.buffered_slices.keys().copied().collect();
+                state.finalizing = true;
+                drop(state); // unlock
 
-        let buffer_path = persist_buffered_slice(&mut state, offset, &data).await?;
-        state.buffered_slices.insert(offset, buffer_path.clone());
+                assembler
+                    .route_material_error(
+                        material_id,
+                        "buffered_slice_limit_exceeded",
+                        serde_json::json!({
+                            "offset": offset,
+                            "expected_offset": expected_offset,
+                            "buffered_count": buffered_count,
+                            "buffered_offsets": buffered_offsets,
+                            "max_buffered_slices": MAX_BUFFERED_SLICES
+                        }),
+                    )
+                    .await;
+                assembler
+                    .finalize_failed_material(material_id, "buffered_slice_limit_exceeded")
+                    .await;
+                return Ok(());
+            }
 
-        // Log buffering event
-        append_wal_entry(
-            assembler,
-            &mut state,
-            WalEntry::BufferedSlice {
+            let buffer_path = persist_buffered_slice(&mut state, offset, &data).await?;
+            state.buffered_slices.insert(offset, buffer_path.clone());
+
+            // Log buffering event
+            append_wal_entry(
+                assembler,
+                &mut state,
+                WalEntry::BufferedSlice {
+                    offset,
+                    path: buffer_path,
+                },
+            )
+            .await?;
+
+            debug!(
+                material_id = %material_id,
                 offset,
-                path: buffer_path,
-            },
-        )
-        .await?;
-
-        debug!(
-            material_id = %material_id,
-            offset,
-            expected = state.expected_offset,
-            "Buffered out-of-order slice"
-        );
-    } else {
-        debug!(material_id = %material_id, offset, expected = state.expected_offset, "Ignoring duplicate or overlapping slice");
+                expected = state.expected_offset,
+                "Buffered out-of-order slice"
+            );
+        }
+        Ordering::Less => {
+            debug!(material_id = %material_id, offset, expected = state.expected_offset, "Ignoring duplicate or overlapping slice");
+        }
     }
 
     // No longer calling persist_state() here!

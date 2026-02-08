@@ -417,6 +417,7 @@ impl Sandbox {
 
     /// Get the NATS client for this test context
     #[must_use]
+    #[allow(clippy::panic)] // Deliberate: programmer error if NATS not initialized
     pub fn nats_client(&self) -> NatsClient {
         // First check the primary nats_client field
         if let Some(client) = &self.nats_client {

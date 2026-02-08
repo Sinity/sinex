@@ -184,6 +184,7 @@ impl NodeHandles {
 
     /// Get database pool or panic with a helpful error message
     #[cfg(feature = "db")]
+    #[allow(clippy::expect_used)] // Intentional: "require" methods panic by contract
     pub fn require_db_pool(&self) -> &PgPool {
         self.db_pool.as_ref().expect(
             "Database pool required but not available. \

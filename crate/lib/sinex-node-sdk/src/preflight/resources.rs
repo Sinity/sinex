@@ -408,13 +408,14 @@ async fn test_localhost_connectivity() -> NodeResult<()> {
         .map_err(|e| SinexError::processing(format!("Failed to parse localhost address: {e}")))?;
 
     // Try to connect with a short timeout
-    if let Ok(_) = tokio::time::timeout(
+    if tokio::time::timeout(
         Duration::from_millis(100),
         tokio::net::TcpStream::connect(addr),
     )
     .await
     .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "Connection timeout"))
     .and_then(|result| result)
+    .is_ok()
     {
         Ok(())
     } else {

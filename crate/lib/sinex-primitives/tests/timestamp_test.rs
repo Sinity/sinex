@@ -18,7 +18,7 @@ async fn test_timestamp_boundaries(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().build().await?;
     let scope = ctx.pipeline().await?;
 
-    let timestamp_cases = vec![
+    let timestamp_cases = &[
         // Unix epoch
         Timestamp::from_unix_timestamp(0).unwrap(),
         // Far future (year 9999)
@@ -86,7 +86,7 @@ async fn test_out_of_order_timestamps(ctx: TestContext) -> TestResult<()> {
     let source = "out_of_order_test";
 
     // Insert events in reverse chronological order
-    let timestamps = vec![
+    let timestamps = &[
         base_time + Duration::seconds(30), // Latest timestamp
         base_time + Duration::seconds(20), // Middle timestamp
         base_time + Duration::seconds(10), // Earliest timestamp
@@ -155,7 +155,7 @@ async fn test_timestamp_precision(ctx: TestContext) -> color_eyre::Result<()> {
     let source = format!("precision_test_{}", Ulid::new());
 
     // Test various precision levels
-    let precision_cases = vec![
+    let precision_cases = &[
         // Second precision
         Timestamp::new(time::OffsetDateTime::new_utc(
             time::Date::from_calendar_date(2024, time::Month::January, 1).unwrap(),

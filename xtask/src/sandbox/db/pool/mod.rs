@@ -581,7 +581,6 @@ impl TestDatabase {
 }
 
 /// Database statistics for debugging
-
 /// Cleanup task for background processing
 #[derive(Debug)]
 struct CleanupTask {
@@ -2967,7 +2966,11 @@ async fn ensure_template_database(
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         let drop_query = format!("DROP DATABASE IF EXISTS {template_name} WITH (FORCE)");
-        if let Ok(_) = sqlx::query(&drop_query).execute(&mut admin_conn).await {
+        if sqlx::query(&drop_query)
+            .execute(&mut admin_conn)
+            .await
+            .is_ok()
+        {
         } else {
             let fallback = format!("DROP DATABASE IF EXISTS {template_name}");
             sqlx::query(&fallback).execute(&mut admin_conn).await?;

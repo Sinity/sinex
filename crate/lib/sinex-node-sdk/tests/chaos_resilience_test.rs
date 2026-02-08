@@ -228,14 +228,10 @@ async fn test_node_handles_message_reordering(_ctx: TestContext) -> TestResult<(
         "All events should be processed despite reordering"
     );
 
-    // Check that some reordering occurred
+    // Check that reordering metrics are tracked (probabilistic, so just verify recording)
     let metrics = chaos.metrics().snapshot();
-    // Note: reordering is probabilistic, so we just check it's recorded
-    // In practice with 30% rate and 30 events, we expect some reordering
-    assert!(
-        metrics.reordered >= 0,
-        "Reordering metrics should be tracked"
-    );
+    // metrics.reordered is u64, always >= 0; the important thing is the snapshot succeeds
+    let _ = metrics.reordered;
 
     Ok(())
 }

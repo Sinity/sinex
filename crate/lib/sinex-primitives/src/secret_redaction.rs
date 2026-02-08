@@ -3,6 +3,7 @@
 //! Provides regex-based pattern matching to redact credentials, API keys, tokens,
 //! and other secrets from strings before they are stored as events. Used by both
 //! terminal-ingestor (command history) and system-ingestor (journal entries).
+#![allow(clippy::expect_used)] // All expects are on compile-time constant regex patterns
 
 use lazy_static::lazy_static;
 use regex::Regex;

@@ -703,6 +703,7 @@ pub struct LogFileStageProcessor {
 }
 
 impl StageAsYouGoContext {
+    #[allow(clippy::expect_used)] // Post-normalization: value guaranteed to be Object
     fn build_finalize_metadata(
         info: Option<&StageMaterialInfo>,
         total_bytes: i64,
@@ -747,6 +748,7 @@ fn normalize_metadata(value: JsonValue) -> JsonValue {
 }
 
 impl StageAsYouGoContext {
+    #[allow(clippy::expect_used)] // Post-normalization: value guaranteed to be Object
     fn prepare_initial_metadata(
         material_type: &str,
         source_uri: Option<&str>,

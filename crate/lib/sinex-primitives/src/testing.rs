@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used)] // Test utilities use expect() on constant values and infallible serialization
 //! Testing utilities for domain primitives.
 //!
 //! Provides event fixtures and property testing strategies for domain types.

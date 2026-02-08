@@ -141,8 +141,8 @@ async fn test_phase1_database_connectivity_timeout() -> TestResult<()> {
             Ok(Err(_)) => {
                 // Connection error is also acceptable
             }
-            Err(_) => {
-                panic!("Database connectivity test should have internal timeout handling");
+            Err(e) => {
+                panic!("Database connectivity test should have internal timeout handling: {e}");
             }
         }
 
