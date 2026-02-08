@@ -80,10 +80,13 @@ impl RunnerConfirmedEventHandler {
 #[async_trait]
 impl ConfirmedEventHandler for RunnerConfirmedEventHandler {
     async fn handle_confirmed(&self, event: &ProvisionalEvent) -> NodeResult<()> {
-        self.sender.send(event.clone()).await.map_err(|err| {
-            SinexError::processing(format!(
-                "Failed to forward confirmed event to automaton: {err}"
-            ))
+        self.sender.send(event.clone()).await.map_err(|_| {
+            // Channel closed = receiver dropped = shutdown in progress.
+            // Return a shutdown-specific error so callers can distinguish
+            // normal shutdown from unexpected processing failures.
+            SinexError::lifecycle(
+                "Confirmed event channel closed (node is shutting down)".to_string(),
+            )
         })
     }
 }
@@ -858,7 +861,7 @@ impl<T: Node + 'static> NodeRunner<T> {
             let current_checkpoint = self.node.current_checkpoint().await?;
 
             // This should run indefinitely until shutdown
-            let _continuous_report = self
+            let continuous_report = self
                 .node
                 .scan(
                     current_checkpoint,
@@ -866,6 +869,14 @@ impl<T: Node + 'static> NodeRunner<T> {
                     ScanArgs::default(),
                 )
                 .await?;
+
+            // If continuous scan returns, it means it exited unexpectedly.
+            // Log so operators can investigate (M4: silent exit prevention).
+            warn!(
+                events_processed = continuous_report.events_processed,
+                "Continuous scan returned unexpectedly - service will exit. \
+                 This may indicate the scan implementation does not block indefinitely."
+            );
         } else {
             warn!("Node does not support continuous mode - service will exit");
         }
@@ -928,10 +939,11 @@ impl<T: Node + 'static> NodeRunner<T> {
                     let kv_clone = kv_client.clone();
                     let instance_id_clone = instance_id.clone();
                     let heartbeat_handle = tokio::spawn(async move {
-                        let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+                        // 3s interval with default 10s TTL gives 7s margin for network delays.
+                        // Previous 5s interval left only 5s margin — too tight for cross-DC latency.
+                        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3));
                         loop {
                             interval.tick().await;
-                            // Basic heartbeat logic - just keep refreshing leadership
                             if let Err(e) = kv_clone.acquire_leadership(&instance_id_clone).await {
                                 warn!("Heartbeat failed: {e}");
                             }
