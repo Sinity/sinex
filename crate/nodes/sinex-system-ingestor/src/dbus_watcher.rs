@@ -321,8 +321,6 @@ impl DbusWatcher {
 
         // Create bounded channel for D-Bus messages to prevent task explosion
         let (msg_tx, msg_rx) = mpsc::channel::<DbusMessageData>(DBUS_MESSAGE_CHANNEL_SIZE);
-        let msg_tx_clone = msg_tx.clone();
-
         // Activity tracker for connection health monitoring
         let activity_tracker = Arc::new(std::sync::Mutex::new(std::time::Instant::now()));
 
@@ -383,16 +381,12 @@ impl DbusWatcher {
                 };
 
                 // Send to worker pool via bounded channel
-                // Try fast-path; if full, drop oldest to avoid unbounded growth
-                if let Err(mpsc::error::TrySendError::Full(_)) = msg_tx.try_send(msg_data.clone()) {
-                    // Drop one to make room, then enqueue the newest
-                    let _ = msg_tx_clone.try_send(msg_data.clone());
-                    if let Err(e) = msg_tx.try_send(msg_data) {
-                        warn!(
-                            "D-Bus message channel at capacity, dropping message due to backpressure: {}",
-                            e
-                        );
-                    }
+                // If channel is full, drop newest message (backpressure)
+                if let Err(mpsc::error::TrySendError::Full(_)) = msg_tx.try_send(msg_data) {
+                    warn!(
+                        "D-Bus message channel full (capacity {}), dropping newest message",
+                        DBUS_MESSAGE_CHANNEL_SIZE
+                    );
                 }
 
                 true
@@ -709,21 +703,29 @@ impl DbusWatcher {
         true
     }
 
+    /// Maximum recursion depth for D-Bus argument parsing.
+    /// Prevents stack overflow from deeply nested messages.
+    const MAX_DBUS_PARSE_DEPTH: usize = 32;
+
     /// Convert D-Bus message arguments to JSON
     fn message_args_to_json(msg: &dbus::Message) -> serde_json::Value {
         let mut args = Vec::new();
         let mut iter = msg.iter_init();
 
         while iter.next() {
-            args.push(Self::parse_dbus_argument(&mut iter));
+            args.push(Self::parse_dbus_argument(&mut iter, 0));
         }
 
         serde_json::Value::Array(args)
     }
 
-    /// Parse individual D-Bus argument to JSON
-    fn parse_dbus_argument(iter: &mut dbus::arg::Iter) -> serde_json::Value {
+    /// Parse individual D-Bus argument to JSON with depth limiting
+    fn parse_dbus_argument(iter: &mut dbus::arg::Iter, depth: usize) -> serde_json::Value {
         use dbus::arg::ArgType;
+
+        if depth >= Self::MAX_DBUS_PARSE_DEPTH {
+            return serde_json::Value::String("[max_depth_exceeded]".to_string());
+        }
 
         match iter.arg_type() {
             ArgType::String => iter.get::<&str>().map_or(serde_json::Value::Null, |s| {
@@ -738,10 +740,10 @@ impl DbusWatcher {
             ArgType::Boolean => iter
                 .get::<bool>()
                 .map_or(serde_json::Value::Null, serde_json::Value::Bool),
-            ArgType::Array => Self::parse_dbus_array(iter),
-            ArgType::DictEntry => Self::parse_dbus_dict_entry(iter),
-            ArgType::Variant => Self::parse_dbus_variant(iter),
-            ArgType::Struct => Self::parse_dbus_struct(iter),
+            ArgType::Array => Self::parse_dbus_array(iter, depth + 1),
+            ArgType::DictEntry => Self::parse_dbus_dict_entry(iter, depth + 1),
+            ArgType::Variant => Self::parse_dbus_variant(iter, depth + 1),
+            ArgType::Struct => Self::parse_dbus_struct(iter, depth + 1),
             ArgType::ObjectPath => iter
                 .get::<dbus::Path>()
                 .map_or(serde_json::Value::Null, |p| {
@@ -752,12 +754,12 @@ impl DbusWatcher {
     }
 
     /// Parse D-Bus array to JSON
-    fn parse_dbus_array(iter: &mut dbus::arg::Iter) -> serde_json::Value {
+    fn parse_dbus_array(iter: &mut dbus::arg::Iter, depth: usize) -> serde_json::Value {
         let mut array_values = Vec::new();
 
         if let Some(mut array_iter) = iter.recurse(dbus::arg::ArgType::Array) {
             while array_iter.next() {
-                array_values.push(Self::parse_dbus_argument(&mut array_iter));
+                array_values.push(Self::parse_dbus_argument(&mut array_iter, depth));
             }
         }
 
@@ -765,14 +767,14 @@ impl DbusWatcher {
     }
 
     /// Parse D-Bus dict entry to JSON
-    fn parse_dbus_dict_entry(iter: &mut dbus::arg::Iter) -> serde_json::Value {
+    fn parse_dbus_dict_entry(iter: &mut dbus::arg::Iter, depth: usize) -> serde_json::Value {
         let mut dict_obj = serde_json::Map::new();
 
         if let Some(mut dict_iter) = iter.recurse(dbus::arg::ArgType::DictEntry) {
             if dict_iter.next() {
-                let key = Self::parse_dbus_argument(&mut dict_iter);
+                let key = Self::parse_dbus_argument(&mut dict_iter, depth);
                 if dict_iter.next() {
-                    let value = Self::parse_dbus_argument(&mut dict_iter);
+                    let value = Self::parse_dbus_argument(&mut dict_iter, depth);
 
                     let key_str = match key {
                         serde_json::Value::String(s) => s,
@@ -788,10 +790,10 @@ impl DbusWatcher {
     }
 
     /// Parse D-Bus variant to JSON
-    fn parse_dbus_variant(iter: &mut dbus::arg::Iter) -> serde_json::Value {
+    fn parse_dbus_variant(iter: &mut dbus::arg::Iter, depth: usize) -> serde_json::Value {
         if let Some(mut variant_iter) = iter.recurse(dbus::arg::ArgType::Variant) {
             if variant_iter.next() {
-                return Self::parse_dbus_argument(&mut variant_iter);
+                return Self::parse_dbus_argument(&mut variant_iter, depth);
             }
         }
 
@@ -799,12 +801,12 @@ impl DbusWatcher {
     }
 
     /// Parse D-Bus struct to JSON
-    fn parse_dbus_struct(iter: &mut dbus::arg::Iter) -> serde_json::Value {
+    fn parse_dbus_struct(iter: &mut dbus::arg::Iter, depth: usize) -> serde_json::Value {
         let mut struct_values = Vec::new();
 
         if let Some(mut struct_iter) = iter.recurse(dbus::arg::ArgType::Struct) {
             while struct_iter.next() {
-                struct_values.push(Self::parse_dbus_argument(&mut struct_iter));
+                struct_values.push(Self::parse_dbus_argument(&mut struct_iter, depth));
             }
         }
 

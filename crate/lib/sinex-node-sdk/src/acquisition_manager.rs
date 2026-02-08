@@ -75,6 +75,23 @@ impl SourceMaterialHandle {
     }
 }
 
+impl Drop for SourceMaterialHandle {
+    fn drop(&mut self) {
+        // Clean up temp file to prevent disk leaks on panic or forgotten finalize()
+        drop(self.temp_file.take());
+        if self.temp_path.exists() {
+            if let Err(e) = std::fs::remove_file(&self.temp_path) {
+                tracing::warn!(
+                    path = %self.temp_path.display(),
+                    material_id = %self.material_id,
+                    error = %e,
+                    "Failed to clean up temp file in SourceMaterialHandle Drop"
+                );
+            }
+        }
+    }
+}
+
 /// Message for source_material.begin subject
 #[derive(Debug, Serialize)]
 struct MaterialBeginMessage {
