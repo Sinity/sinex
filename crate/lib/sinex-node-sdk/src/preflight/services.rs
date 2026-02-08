@@ -10,10 +10,10 @@
 
 use crate::{NodeResult, SinexError};
 use serde_json::{json, Value};
-use std::{collections::HashMap, fmt, process::Command, str::FromStr};
+use std::{collections::HashMap, fmt, str::FromStr};
 use tracing::{debug, info};
 
-use super::VerificationStatus;
+use super::{run_command_with_timeout, VerificationStatus};
 
 /// SystemD service status enumeration
 #[derive(Debug, Clone, PartialEq)]
@@ -253,11 +253,7 @@ struct BinaryInfo {
 }
 
 async fn check_binary_availability(binary_name: &str) -> NodeResult<BinaryInfo> {
-    // First check if binary exists in PATH
-    let which_output = Command::new("which")
-        .arg(binary_name)
-        .output()
-        .map_err(|e| SinexError::processing(format!("Failed to execute 'which' command: {e}")))?;
+    let which_output = run_command_with_timeout("which", &[binary_name]).await?;
 
     if !which_output.status.success() {
         return Err(SinexError::processing(format!(
@@ -269,18 +265,16 @@ async fn check_binary_availability(binary_name: &str) -> NodeResult<BinaryInfo> 
         .trim()
         .to_string();
 
-    // Try to get version information
     let version = get_binary_version(binary_name, &path).await;
 
     Ok(BinaryInfo { path, version })
 }
 
 async fn get_binary_version(binary_name: &str, _path: &str) -> Option<String> {
-    // Try common version flags
-    let version_flags = vec!["--version", "-V", "version"];
+    let version_flags = ["--version", "-V", "version"];
 
     for flag in version_flags {
-        if let Ok(output) = Command::new(binary_name).arg(flag).output() {
+        if let Ok(output) = run_command_with_timeout(binary_name, &[flag]).await {
             if output.status.success() {
                 let version_output = String::from_utf8_lossy(&output.stdout);
                 let first_line = version_output.lines().next().unwrap_or("").trim();
@@ -379,14 +373,15 @@ async fn verify_systemd_services(messages: &mut Vec<String>) -> NodeResult<Value
 }
 
 async fn check_systemd_service(service_name: &str) -> NodeResult<Value> {
-    let status_output = Command::new("systemctl")
-        .args([
+    let status_output = run_command_with_timeout(
+        "systemctl",
+        &[
             "show",
             service_name,
             "--property=ActiveState,SubState,LoadState",
-        ])
-        .output()
-        .map_err(|e| SinexError::processing(format!("Failed to execute systemctl show: {e}")))?;
+        ],
+    )
+    .await?;
 
     if !status_output.status.success() {
         return Err(SinexError::processing(format!(
@@ -490,12 +485,8 @@ async fn verify_postgresql_service(messages: &mut Vec<String>) -> NodeResult<Val
 async fn test_postgresql_connectivity() -> NodeResult<Value> {
     let database_url = super::resolve_database_url()?;
 
-    let test_output = Command::new("psql")
-        .arg(&database_url)
-        .arg("-c")
-        .arg("SELECT version();")
-        .output()
-        .map_err(|e| SinexError::processing(format!("Failed to execute psql test command: {e}")))?;
+    let test_output =
+        run_command_with_timeout("psql", &[&database_url, "-c", "SELECT version();"]).await?;
 
     if test_output.status.success() {
         let version_output = String::from_utf8_lossy(&test_output.stdout);

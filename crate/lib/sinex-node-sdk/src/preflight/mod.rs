@@ -9,7 +9,34 @@ pub mod verification;
 // validate_toml_file is now private to the configuration module
 use crate::{NodeResult, SinexError};
 pub use services::verify_service_dependencies;
+use sinex_primitives::constants::timeouts;
+use std::process::Output;
 pub use verification::run_preflight_checks;
+
+/// Run an external command with a timeout to prevent indefinite hangs during preflight.
+pub(crate) async fn run_command_with_timeout(program: &str, args: &[&str]) -> NodeResult<Output> {
+    let fut = tokio::process::Command::new(program).args(args).output();
+
+    match tokio::time::timeout(timeouts::PREFLIGHT_COMMAND_TIMEOUT, fut).await {
+        Ok(Ok(output)) => Ok(output),
+        Ok(Err(e)) => Err(SinexError::processing(format!(
+            "Failed to execute '{program}': {e}"
+        ))),
+        Err(_) => Err(SinexError::processing(format!(
+            "Command '{program} {}' timed out after {}s",
+            args.join(" "),
+            timeouts::PREFLIGHT_COMMAND_TIMEOUT.as_secs()
+        ))),
+    }
+}
+
+/// Check if a command succeeds within the preflight timeout. Returns false on timeout or error.
+pub(crate) async fn command_succeeds(program: &str, args: &[&str]) -> bool {
+    run_command_with_timeout(program, args)
+        .await
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum VerificationStatus {

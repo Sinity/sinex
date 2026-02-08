@@ -22,6 +22,9 @@ pub mod timeouts {
     /// Timeout for database operations in tests
     pub const TEST_DATABASE_TIMEOUT: Duration = Duration::from_secs(30);
 
+    /// Timeout for external commands during preflight checks (which, systemctl, psql)
+    pub const PREFLIGHT_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
+
     /// Default retry backoff initial delay
     pub const RETRY_INITIAL_DELAY: Duration = Duration::from_millis(10);
 
