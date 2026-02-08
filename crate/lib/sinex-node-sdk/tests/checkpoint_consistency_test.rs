@@ -35,10 +35,10 @@ async fn ensure_processor_manifest(pool: &DbPool, processor_name: &str) -> TestR
 
     let proc_name = ProcessorName::new(processor_name.to_string());
 
-    // Check if already exists by trying to get active processors and looking for it
+    // Check if already exists
     let existing = pool
         .state()
-        .get_active_processors()
+        .get_all_processors()
         .await?
         .into_iter()
         .any(|p| p.processor_name == processor_name);
