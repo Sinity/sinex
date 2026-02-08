@@ -305,6 +305,7 @@ impl LifecycleManager {
 
         // Start health check task
         let shutdown_flag_health = shutdown_flag.clone();
+        let shutdown_watch_health = self.shutdown_watch_tx.clone();
         join_set.spawn(async move {
             let mut interval = tokio::time::interval(health_interval);
 
@@ -317,7 +318,7 @@ impl LifecycleManager {
 
                 let healthy = health_check().await;
                 if !healthy {
-                    error!(service = %service_name, "Health check failed");
+                    error!(service = %service_name, "Health check failed, triggering shutdown");
                     *status.lock() = ServiceStatus::Failed;
 
                     // Notify systemd of failure
@@ -325,6 +326,11 @@ impl LifecycleManager {
                         false,
                         &[sd_notify::NotifyState::Status("Health check failed")],
                     );
+
+                    // Trigger shutdown so the service doesn't continue as a zombie
+                    shutdown_flag_health.store(true, Ordering::Relaxed);
+                    let _ = shutdown_watch_health.send(true);
+                    break;
                 }
             }
 
@@ -397,20 +403,27 @@ impl LifecycleManager {
             }
             _ = tokio::signal::ctrl_c() => {
                 info!(service = %self.service_name, "Received Ctrl+C");
-
-                // Issue 88 fix: Emit final heartbeat before shutdown to ensure observability
-                if let Some(emitter) = &self.heartbeat_emitter {
-                    let _ = emitter.emit_heartbeat(Some(serde_json::json!({
-                        "shutdown_reason": "ctrl_c",
-                        "final_heartbeat": true
-                    }))).await;
-                }
-
                 self.shutdown_flag.store(true, Ordering::Relaxed);
                 let _ = self.shutdown_watch_tx.send(true);
                 Ok(())
             }
         };
+
+        // Emit final heartbeat on any shutdown path (SIGTERM, SIGINT, Ctrl+C, health failure)
+        // so production monitoring always sees shutdown events
+        if let Some(emitter) = &self.heartbeat_emitter {
+            let shutdown_reason = if self.status() == ServiceStatus::Failed {
+                "health_check_failure"
+            } else {
+                "shutdown"
+            };
+            let _ = emitter
+                .emit_heartbeat(Some(serde_json::json!({
+                    "shutdown_reason": shutdown_reason,
+                    "final_heartbeat": true
+                })))
+                .await;
+        }
 
         // Cancel background tasks
         join_set.shutdown().await;

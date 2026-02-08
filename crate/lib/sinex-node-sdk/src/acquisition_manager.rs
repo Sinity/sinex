@@ -317,16 +317,27 @@ impl AcquisitionManager {
     }
 
     async fn ensure_streams_ready(&self) -> NodeResult<()> {
-        if self.streams_ready.load(Ordering::SeqCst) {
+        // Use compare_exchange to avoid duplicate bootstrap from concurrent callers
+        if self
+            .streams_ready
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            // Another caller already set it to true (bootstrap done or in progress)
             return Ok(());
         }
 
-        AcquisitionManager::bootstrap_streams_with_namespace(
+        if let Err(e) = AcquisitionManager::bootstrap_streams_with_namespace(
             &self.nats_client,
             self.namespace.as_deref(),
         )
-        .await?;
-        self.streams_ready.store(true, Ordering::SeqCst);
+        .await
+        {
+            // Reset flag so next caller can retry
+            self.streams_ready.store(false, Ordering::SeqCst);
+            return Err(e);
+        }
+
         Ok(())
     }
 
