@@ -531,8 +531,11 @@ async fn append_slice_data(
             file.write_all(data).await.map_err(|e| {
                 SinexError::io(format!("Failed to write slice for {material_id}: {e}"))
             })?;
-            file.flush().await.map_err(|e| {
-                SinexError::io(format!("Failed to flush slice for {material_id}: {e}"))
+            // fsync temp file BEFORE writing WAL entry. Without this, crash after WAL write
+            // but before data reaches disk = WAL says "slice received" but temp file is incomplete
+            // → hash mismatch on recovery → material marked failed.
+            file.sync_all().await.map_err(|e| {
+                SinexError::io(format!("Failed to sync slice for {material_id}: {e}"))
             })?;
         }
     }
@@ -619,8 +622,10 @@ async fn persist_buffered_slice(
     file.write_all(data)
         .await
         .map_err(|e| SinexError::io(format!("Failed to persist buffered slice: {e}")))?;
-    // PERF: Removed sync_all() to avoid IO saturation. Durability is handled by JS + WAL.
-    // file.sync_all().await...
+    // PERF: No fsync on buffered slices — JetStream retransmits on loss, so these are
+    // reconstructable. The WAL records that we're expecting this offset; if the buffer file
+    // is corrupt/empty after crash, recovery re-requests from JetStream. Trade-off: higher
+    // throughput vs. slightly longer recovery on crash during heavy out-of-order ingestion.
     fs::rename(&temp_path, &buffer_path)
         .await
         .map_err(|e| SinexError::io(format!("Failed to persist buffered slice: {e}")))?;

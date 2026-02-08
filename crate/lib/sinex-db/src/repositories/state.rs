@@ -550,7 +550,7 @@ impl<'a> StateRepository<'a> {
                 COUNT(*) as "total!",
                 COUNT(*) FILTER (WHERE result_status = 'success') as "successful!",
                 COUNT(*) FILTER (WHERE result_status = 'failure') as "failed!",
-                COUNT(*) FILTER (WHERE result_status = 'partial') as "cancelled!",
+                COUNT(*) FILTER (WHERE result_status = 'cancelled') as "cancelled!",
                 AVG(duration_ms) as "avg_duration_ms"
             FROM core.operations_log
             "#

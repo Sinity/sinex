@@ -765,13 +765,15 @@ impl JetStreamConsumer {
                 }
             }
             ValidationResult::SchemaNotFound { schema_id } => {
-                warn!(
-                    source = %event.source,
-                    event_type = %event.event_type,
-                    schema = %schema_id,
-                    "Schema referenced in lookup was not found; accepting event"
-                );
-                Ok(())
+                // Fail closed: reject events when their schema cannot be found.
+                // Previously this accepted with a warning, which allowed invalid payloads
+                // to be ingested silently.
+                Err(SinexError::validation(format!(
+                    "Schema '{}' not found for {}.{} — rejecting event (fail-closed)",
+                    schema_id, event.source, event.event_type
+                ))
+                .with_operation("jetstream_consumer.validate_event")
+                .with_context("schema_id", schema_id.to_string()))
             }
             ValidationResult::Invalid { errors } => Err(SinexError::validation(format!(
                 "Schema validation failed: {}",
