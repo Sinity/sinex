@@ -405,6 +405,11 @@ impl AcquisitionManager {
         Ok(())
     }
 
+    /// NATS maximum message payload size. Messages exceeding this will be rejected.
+    /// The actual NATS default is 1MB but we use a conservative limit to account for
+    /// headers and protocol overhead.
+    const MAX_NATS_PAYLOAD_BYTES: usize = 512 * 1024;
+
     /// Publish material slice to NATS
     async fn publish_slice(
         &self,
@@ -413,6 +418,16 @@ impl AcquisitionManager {
         data: &[u8],
         offset: i64,
     ) -> NodeResult<()> {
+        if data.len() > Self::MAX_NATS_PAYLOAD_BYTES {
+            return Err(SinexError::validation(format!(
+                "Material slice {} exceeds NATS max payload ({} bytes > {} bytes). \
+                 Caller must split data into smaller chunks.",
+                slice_index,
+                data.len(),
+                Self::MAX_NATS_PAYLOAD_BYTES
+            )));
+        }
+
         let subject = self.env.nats_subject_with_namespace(
             self.namespace.as_deref(),
             &format!("source_material.slices.{}", material_id),
