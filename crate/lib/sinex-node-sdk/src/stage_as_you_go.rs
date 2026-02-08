@@ -40,7 +40,6 @@ pub struct StageAsYouGoContext {
 #[derive(Debug, Clone)]
 struct StageMaterialInfo {
     metadata: JsonValue,
-    _registered_at: sinex_primitives::temporal::Timestamp,
     last_activity: sinex_primitives::temporal::Timestamp,
 }
 
@@ -354,11 +353,9 @@ impl StageAsYouGoContext {
             "Registered in-flight source material via JetStream"
         );
 
-        let now = sinex_primitives::temporal::Timestamp::now();
         let info = StageMaterialInfo {
             metadata,
-            _registered_at: now,
-            last_activity: now,
+            last_activity: sinex_primitives::temporal::Timestamp::now(),
         };
 
         self.material_registry

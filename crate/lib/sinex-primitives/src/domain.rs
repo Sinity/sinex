@@ -347,12 +347,6 @@ define_validated_string_type!(
     SanitizedPath
 );
 
-// Hash types
-define_validated_string_type!(
-    #[doc = "SHA256 hash (64 hex characters)"]
-    Sha256Hash
-);
-
 // Semantic identifiers
 define_string_type!(
     #[doc = "Service identification"]
@@ -650,43 +644,6 @@ impl FromStr for SanitizedPath {
     }
 }
 
-impl Sha256Hash {
-    /// Validate SHA256 hash format (64 hex characters)
-    pub fn validate(hash: &str) -> Result<(), String> {
-        if hash.is_empty() {
-            return Err("SHA256 hash cannot be empty".into());
-        }
-
-        if hash.len() != 64 {
-            return Err("SHA256 hash must be exactly 64 characters".into());
-        }
-
-        if !hash.chars().all(|c| c.is_ascii_hexdigit()) {
-            return Err("SHA256 hash must contain only hexadecimal characters".into());
-        }
-
-        // Check for obviously invalid patterns
-        let lower_hash = hash.to_lowercase();
-        if lower_hash.chars().all(|c| c == '0') {
-            return Err("Hash appears to be a zero placeholder".into());
-        }
-        if lower_hash.chars().all(|c| c == 'f') {
-            return Err("Hash appears to be an all-F placeholder".into());
-        }
-
-        Ok(())
-    }
-}
-
-impl FromStr for Sha256Hash {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::validate(s)?;
-        Ok(Self(Cow::Owned(s.to_lowercase())))
-    }
-}
-
 // ─────────────────────────────────────────────────────────────
 // SQLx Feature Support
 // ─────────────────────────────────────────────────────────────
@@ -697,8 +654,7 @@ mod sqlx_impls {
         AnnexKey, BranchName, CommandText, CommitHash, ConsumerGroup, ConsumerName, EntityTypeName,
         EventSource, EventType, GlobPattern, HostName, Hostname, IngestorName, InstanceId,
         IpAddress, JobId, NatsSubject, NodeId, ProcessorName, RegexPattern, RelationType,
-        RemoteName, SanitizedPath, SchemaName, SchemaVersion, ServiceName, Sha256Hash, ShellName,
-        UserId,
+        RemoteName, SanitizedPath, SchemaName, SchemaVersion, ServiceName, ShellName, UserId,
     };
 
     // Register string types without validation
@@ -730,7 +686,6 @@ mod sqlx_impls {
 
     // Register validated string types
     impl_sqlx_for_validated_string_type!(SanitizedPath);
-    impl_sqlx_for_validated_string_type!(Sha256Hash);
     impl_sqlx_for_validated_string_type!(AnnexKey);
     impl_sqlx_for_validated_string_type!(NatsSubject);
 }

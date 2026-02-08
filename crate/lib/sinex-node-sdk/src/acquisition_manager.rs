@@ -35,8 +35,6 @@ pub struct RotationPolicy {
     pub max_bytes: Bytes,
     /// Maximum age before rotation (seconds)
     pub max_age_seconds: Seconds,
-    /// Overlap period during rotation (milliseconds)
-    pub overlap_duration_ms: u64,
 }
 
 impl Default for RotationPolicy {
@@ -44,7 +42,6 @@ impl Default for RotationPolicy {
         Self {
             max_bytes: Bytes::from_mebibytes(100),     // 100MB
             max_age_seconds: Seconds::from_secs(3600), // 1 hour
-            overlap_duration_ms: 100,                  // 100ms overlap
         }
     }
 }

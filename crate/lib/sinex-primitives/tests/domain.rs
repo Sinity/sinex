@@ -2,8 +2,7 @@ use std::str::FromStr;
 
 use color_eyre::eyre::eyre;
 use sinex_primitives::domain::{
-    AnnexKey, EventSource, EventType, JobId, NatsSubject, SanitizedPath, SchemaVersion,
-    ServiceName, Sha256Hash,
+    AnnexKey, EventSource, EventType, JobId, NatsSubject, SanitizedPath, SchemaVersion, ServiceName,
 };
 use sinex_primitives::events::payloads::{
     desktop::DesktopMonitoringStartedPayload, filesystem::FileCreatedPayload,
@@ -75,28 +74,6 @@ fn sanitized_path_validation_blocks_traversal() -> TestResult<()> {
     assert!(SanitizedPath::from_str("").is_err());
     assert!(SanitizedPath::from_str("../etc/passwd").is_err());
     assert!(SanitizedPath::from_str("/path/with/../traversal").is_err());
-    Ok(())
-}
-
-#[sinex_test]
-fn sha256_hash_validation_matches_expectations() -> TestResult<()> {
-    let valid_hash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
-    assert!(Sha256Hash::from_str(valid_hash).is_ok());
-    assert!(Sha256Hash::from_str(&valid_hash.to_uppercase()).is_ok());
-
-    assert!(Sha256Hash::from_str("").is_err());
-    assert!(Sha256Hash::from_str("too_short").is_err());
-    assert!(Sha256Hash::from_str(
-        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855X"
-    )
-    .is_err());
-    assert!(Sha256Hash::from_str(
-        "g3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    )
-    .is_err());
-
-    let hash = Sha256Hash::from_str(&valid_hash.to_uppercase()).unwrap();
-    assert_eq!(hash.as_str(), valid_hash);
     Ok(())
 }
 
