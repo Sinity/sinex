@@ -157,9 +157,8 @@ impl Serialize for ErrorDetails {
             .collect();
 
         // Compute actual field count after filtering
-        let field_count = 1
-            + usize::from(!safe_context.is_empty())
-            + usize::from(!self.sources.is_empty());
+        let field_count =
+            1 + usize::from(!safe_context.is_empty()) + usize::from(!self.sources.is_empty());
         let mut state = serializer.serialize_struct("ErrorDetails", field_count)?;
 
         state.serialize_field("message", &self.message)?;

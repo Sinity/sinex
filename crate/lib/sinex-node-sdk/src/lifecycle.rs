@@ -52,6 +52,7 @@ pub struct LifecycleManager {
     health_reporter: Option<Arc<HealthReporter>>,
     health_thresholds: Option<HealthThresholds>,
     started_at: std::time::Instant,
+    shutdown_grace_period: tokio::time::Duration,
 }
 
 impl LifecycleManager {
@@ -71,6 +72,7 @@ impl LifecycleManager {
             health_reporter: None,
             health_thresholds: None,
             started_at: std::time::Instant::now(),
+            shutdown_grace_period: tokio::time::Duration::from_secs(5),
         }
     }
 
@@ -96,6 +98,12 @@ impl LifecycleManager {
     /// Enable health monitoring with custom thresholds
     pub fn with_health_monitoring(mut self, thresholds: HealthThresholds) -> Self {
         self.health_thresholds = Some(thresholds);
+        self
+    }
+
+    /// Set the shutdown grace period (default: 5s)
+    pub fn with_shutdown_grace_period(mut self, duration: tokio::time::Duration) -> Self {
+        self.shutdown_grace_period = duration;
         self
     }
 
@@ -466,7 +474,7 @@ impl LifecycleManager {
         }
 
         // Give tasks time to complete gracefully
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        tokio::time::sleep(self.shutdown_grace_period).await;
 
         self.set_status(ServiceStatus::Stopped);
 
