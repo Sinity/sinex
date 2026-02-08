@@ -44,7 +44,17 @@ impl From<OperationRow> for Operation {
 }
 
 /// Handle POST /ops/start - start a new operation
-pub async fn handle_ops_start(pool: &PgPool, params: Value) -> Result<Value> {
+///
+/// # Authorization
+///
+/// Write operations are logged for audit purposes.
+pub async fn handle_ops_start(
+    pool: &PgPool,
+    params: Value,
+    auth: &crate::rpc_server::RpcAuthContext,
+) -> Result<Value> {
+    use tracing::info;
+
     let request: OpsStartRequest = serde_json::from_value(params)?;
 
     // Parse scope as JSONB if provided
@@ -64,6 +74,14 @@ pub async fn handle_ops_start(pool: &PgPool, params: Value) -> Result<Value> {
     .map_err(|e| SinexError::service(format!("Failed to start operation: {e}")))?;
 
     let operation_id = Id::<Operation>::from_uuid(operation_uuid);
+
+    info!(
+        token_prefix = %auth.token_prefix,
+        operation_id = %operation_id,
+        operation_type = %request.operation_type,
+        operator = %request.operator,
+        "Operation started"
+    );
 
     // Fetch the created operation
     let row = sqlx::query_as!(
@@ -95,7 +113,19 @@ pub async fn handle_ops_start(pool: &PgPool, params: Value) -> Result<Value> {
 }
 
 /// Handle GET /ops - list operations with optional filtering
-pub async fn handle_ops_list(pool: &PgPool, params: Value) -> Result<Value> {
+///
+/// # Authorization
+///
+/// Read-only operation. Auth context accepted for audit trail consistency.
+pub async fn handle_ops_list(
+    pool: &PgPool,
+    params: Value,
+    auth: &crate::rpc_server::RpcAuthContext,
+) -> Result<Value> {
+    use tracing::debug;
+
+    debug!(token_prefix = %auth.token_prefix, "Operations list requested");
+
     let request: OpsListRequest = serde_json::from_value(params).unwrap_or_default();
 
     let limit = if request.limit > 0 {
@@ -208,8 +238,24 @@ pub async fn handle_ops_list(pool: &PgPool, params: Value) -> Result<Value> {
 }
 
 /// Handle GET /ops/{id} - get operation details
-pub async fn handle_ops_get(pool: &PgPool, params: Value) -> Result<Value> {
+///
+/// # Authorization
+///
+/// Read-only operation. Auth context accepted for audit trail consistency.
+pub async fn handle_ops_get(
+    pool: &PgPool,
+    params: Value,
+    auth: &crate::rpc_server::RpcAuthContext,
+) -> Result<Value> {
+    use tracing::debug;
+
     let request: OpsGetRequest = serde_json::from_value(params)?;
+
+    debug!(
+        token_prefix = %auth.token_prefix,
+        operation_id = %request.operation_id,
+        "Operation get requested"
+    );
 
     let operation_id = request
         .operation_id
@@ -360,13 +406,14 @@ mod tests {
 
     #[sinex_test]
     async fn ops_start_creates_operation(ctx: &TestContext) -> TestResult<()> {
+        let auth = crate::rpc_server::RpcAuthContext::system();
         let params = json!({
             "operation_type": "test-operation",
             "operator": "test-user",
             "scope": {"key": "value"},
         });
 
-        let result = handle_ops_start(ctx.pool(), params).await?;
+        let result = handle_ops_start(ctx.pool(), params, &auth).await?;
         let response: OpsStartResponse = serde_json::from_value(result)?;
 
         assert!(!response.operation.id.is_empty());
@@ -378,15 +425,17 @@ mod tests {
 
     #[sinex_test]
     async fn ops_list_returns_operations(ctx: &TestContext) -> TestResult<()> {
+        let auth = crate::rpc_server::RpcAuthContext::system();
+
         // Create a test operation first
         let start_params = json!({
             "operation_type": "test-op",
             "operator": "tester",
         });
-        handle_ops_start(ctx.pool(), start_params).await?;
+        handle_ops_start(ctx.pool(), start_params, &auth).await?;
 
         // List all operations
-        let result = handle_ops_list(ctx.pool(), json!({})).await?;
+        let result = handle_ops_list(ctx.pool(), json!({}), &auth).await?;
         let response: OpsListResponse = serde_json::from_value(result)?;
 
         assert!(!response.operations.is_empty());
@@ -396,6 +445,8 @@ mod tests {
 
     #[sinex_test]
     async fn ops_get_returns_operation(ctx: &TestContext) -> TestResult<()> {
+        let auth = crate::rpc_server::RpcAuthContext::system();
+
         // Create a test operation
         let start_result = handle_ops_start(
             ctx.pool(),
@@ -403,6 +454,7 @@ mod tests {
                 "operation_type": "test-get",
                 "operator": "tester",
             }),
+            &auth,
         )
         .await?;
 
@@ -410,7 +462,8 @@ mod tests {
         let operation_id = &start_response.operation.id;
 
         // Get the operation
-        let result = handle_ops_get(ctx.pool(), json!({ "operation_id": operation_id })).await?;
+        let result =
+            handle_ops_get(ctx.pool(), json!({ "operation_id": operation_id }), &auth).await?;
         let response: OpsGetResponse = serde_json::from_value(result)?;
 
         assert_eq!(response.operation.id, *operation_id);
@@ -420,6 +473,8 @@ mod tests {
 
     #[sinex_test]
     async fn ops_cancel_stops_running_operation(ctx: &TestContext) -> TestResult<()> {
+        let auth = crate::rpc_server::RpcAuthContext::system();
+
         // Create a running operation
         let start_result = handle_ops_start(
             ctx.pool(),
@@ -427,6 +482,7 @@ mod tests {
                 "operation_type": "test-cancel",
                 "operator": "tester",
             }),
+            &auth,
         )
         .await?;
 
@@ -434,7 +490,6 @@ mod tests {
         let operation_id = &start_response.operation.id;
 
         // Cancel it
-        let auth = crate::rpc_server::RpcAuthContext::system();
         let result = handle_ops_cancel(
             ctx.pool(),
             json!({
@@ -459,6 +514,8 @@ mod tests {
 
     #[sinex_test]
     async fn ops_cancel_rejects_non_running_operation(ctx: &TestContext) -> TestResult<()> {
+        let auth = crate::rpc_server::RpcAuthContext::system();
+
         // Create and immediately cancel an operation
         let start_result = handle_ops_start(
             ctx.pool(),
@@ -466,6 +523,7 @@ mod tests {
                 "operation_type": "test-double-cancel",
                 "operator": "tester",
             }),
+            &auth,
         )
         .await?;
 
@@ -473,7 +531,6 @@ mod tests {
         let operation_id = &start_response.operation.id;
 
         // Cancel once
-        let auth = crate::rpc_server::RpcAuthContext::system();
         handle_ops_cancel(
             ctx.pool(),
             json!({
