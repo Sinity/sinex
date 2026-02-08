@@ -66,6 +66,7 @@ const FS_WATCH_CHANNEL_SIZE: usize = 10_000; // Buffer size for filesystem event
 const FS_CAPTURE_CHUNK_SIZE: usize = 64 * 1024;
 const FS_READ_RETRY_ATTEMPTS: u32 = 3; // Number of retry attempts for transient file read errors
 const FS_READ_RETRY_BASE_DELAY_MS: u64 = 100; // Base delay for exponential backoff (100ms, 500ms, 1s)
+const FS_MAX_CONCURRENT_CAPTURES: usize = 64; // Cap concurrent file reads across all watchers to avoid FD exhaustion
 const MATERIAL_REASON_CREATED: &str = "fs-watcher:file-created";
 const MATERIAL_REASON_MODIFIED: &str = "fs-watcher:file-modified";
 const MATERIAL_REASON_DELETED: &str = "fs-watcher:file-deleted";
@@ -217,6 +218,8 @@ struct WatchContext {
     dropped_events: Arc<AtomicU64>,
     metrics: Arc<EventMetrics>,
     cancel_token: CancellationToken,
+    /// Semaphore limiting concurrent file reads across all watchers to prevent FD exhaustion
+    capture_semaphore: Arc<tokio::sync::Semaphore>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -231,6 +234,7 @@ pub struct FilesystemProcessor {
     dropped_events: Arc<AtomicU64>,
     metrics: Arc<EventMetrics>,
     cancel_token: CancellationToken,
+    capture_semaphore: Arc<tokio::sync::Semaphore>,
 }
 
 impl FilesystemProcessor {
@@ -245,6 +249,7 @@ impl FilesystemProcessor {
             dropped_events: Arc::new(AtomicU64::new(0)),
             metrics: EventMetrics::new(),
             cancel_token: CancellationToken::new(),
+            capture_semaphore: Arc::new(tokio::sync::Semaphore::new(FS_MAX_CONCURRENT_CAPTURES)),
         }
     }
 
@@ -259,6 +264,7 @@ impl FilesystemProcessor {
             dropped_events: Arc::new(AtomicU64::new(0)),
             metrics: EventMetrics::new(),
             cancel_token: CancellationToken::new(),
+            capture_semaphore: Arc::new(tokio::sync::Semaphore::new(FS_MAX_CONCURRENT_CAPTURES)),
         }
     }
 
@@ -317,6 +323,7 @@ impl FilesystemProcessor {
                     dropped_events: Arc::clone(&self.dropped_events),
                     metrics: Arc::clone(&self.metrics),
                     cancel_token: self.cancel_token.clone(),
+                    capture_semaphore: Arc::clone(&self.capture_semaphore),
                 },
             );
         }
@@ -991,6 +998,13 @@ async fn capture_material_from_file_inner(
     path: &Path,
     reason: &str,
 ) -> NodeResult<Ulid> {
+    // Acquire semaphore permit to bound concurrent file descriptors across all watchers
+    let _permit = ctx
+        .capture_semaphore
+        .acquire()
+        .await
+        .map_err(|_| SinexError::processing("Capture semaphore closed".to_string()))?;
+
     let identifier = path.to_string_lossy();
     let mut handle = ctx
         .acquisition
@@ -1151,6 +1165,7 @@ mod tests {
             dropped_events: Arc::new(AtomicU64::new(0)),
             metrics: EventMetrics::new(),
             cancel_token: CancellationToken::new(),
+            capture_semaphore: Arc::new(tokio::sync::Semaphore::new(FS_MAX_CONCURRENT_CAPTURES)),
         };
 
         let temp_root = tempdir()?;
