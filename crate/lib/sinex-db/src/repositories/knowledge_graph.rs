@@ -410,11 +410,12 @@ impl<'a> KnowledgeGraphRepository<'a> {
                 created_at as "created_at!: sinex_primitives::temporal::Timestamp",
                 updated_at as "updated_at!: sinex_primitives::temporal::Timestamp"
             FROM core.entities
-            WHERE 
-                LOWER(name) = $1 
+            WHERE
+                LOWER(name) = $1
                 OR LOWER(canonical_name) = $1
                 OR $1 = ANY(SELECT LOWER(unnest(aliases)))
             ORDER BY created_at DESC
+            LIMIT 1000
             "#,
             normalized
         )
@@ -809,11 +810,12 @@ impl<'a> KnowledgeGraphRepository<'a> {
                         created_at as "created_at!: sinex_primitives::temporal::Timestamp",
                         updated_at as "updated_at!: sinex_primitives::temporal::Timestamp"
                     FROM core.entity_relations
-                    WHERE 
+                    WHERE
                         (from_entity_id = $1 OR to_entity_id = $1)
                         AND relation_type = $2
                         AND is_active = true
                     ORDER BY created_at DESC
+                    LIMIT 10000
                     "#,
                     *entity_id.as_ulid() as _,
                     rt
@@ -837,10 +839,11 @@ impl<'a> KnowledgeGraphRepository<'a> {
                         created_at as "created_at!: sinex_primitives::temporal::Timestamp",
                         updated_at as "updated_at!: sinex_primitives::temporal::Timestamp"
                     FROM core.entity_relations
-                    WHERE 
+                    WHERE
                         (from_entity_id = $1 OR to_entity_id = $1)
                         AND relation_type = $2
                     ORDER BY created_at DESC
+                    LIMIT 10000
                     "#,
                     *entity_id.as_ulid() as _,
                     rt
@@ -864,10 +867,11 @@ impl<'a> KnowledgeGraphRepository<'a> {
                         created_at as "created_at!: sinex_primitives::temporal::Timestamp",
                         updated_at as "updated_at!: sinex_primitives::temporal::Timestamp"
                     FROM core.entity_relations
-                    WHERE 
+                    WHERE
                         (from_entity_id = $1 OR to_entity_id = $1)
                         AND is_active = true
                     ORDER BY created_at DESC
+                    LIMIT 10000
                     "#,
                     *entity_id.as_ulid() as _
                 )
@@ -890,9 +894,10 @@ impl<'a> KnowledgeGraphRepository<'a> {
                         created_at as "created_at!: sinex_primitives::temporal::Timestamp",
                         updated_at as "updated_at!: sinex_primitives::temporal::Timestamp"
                     FROM core.entity_relations
-                    WHERE 
+                    WHERE
                         from_entity_id::uuid = $1 OR to_entity_id::uuid = $1
                     ORDER BY created_at DESC
+                    LIMIT 10000
                     "#,
                     *entity_id.as_ulid() as _
                 )
