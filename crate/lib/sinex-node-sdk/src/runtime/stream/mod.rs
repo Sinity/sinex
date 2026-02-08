@@ -973,7 +973,21 @@ impl<T: Node + 'static> NodeRunner<T> {
                 .await?;
         }
 
+        // Periodic checkpoint saves: prevent data loss on crash by persisting
+        // progress every CHECKPOINT_EVENT_INTERVAL events or CHECKPOINT_TIME_INTERVAL.
+        const CHECKPOINT_EVENT_INTERVAL: u64 = 100;
+        const CHECKPOINT_TIME_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+
+        let checkpoint_manager = handles.checkpoint_manager();
+        let mut checkpoint_state = checkpoint_manager.load_checkpoint().await.unwrap_or_else(|e| {
+            warn!(error = %e, "Failed to load checkpoint state for periodic saves; starting fresh");
+            crate::checkpoint::CheckpointState::default()
+        });
+
         let mut processed_events = 0u64;
+        let mut events_since_checkpoint = 0u64;
+        let mut last_checkpoint_time = std::time::Instant::now();
+        let mut last_event_id: Option<Ulid> = None;
 
         while let Some(provisional) = receiver.recv().await {
             let event_id = provisional.event_id;
@@ -1012,12 +1026,65 @@ impl<T: Node + 'static> NodeRunner<T> {
                 match self.node.process_event_batch(vec![event]).await {
                     Ok(stats) => {
                         processed_events += stats.processed as u64;
+                        events_since_checkpoint += stats.processed as u64;
+                        last_event_id = Some(*event_id.as_ulid());
                     }
                     Err(err) => {
+                        // Save checkpoint before bailing so we don't lose ALL progress
+                        if let Some(eid) = last_event_id {
+                            checkpoint_state.checkpoint = Checkpoint::Internal {
+                                event_id: eid,
+                                message_count: processed_events,
+                            };
+                            checkpoint_state.processed_count = processed_events;
+                            checkpoint_state.last_activity =
+                                sinex_primitives::temporal::Timestamp::now();
+                            let _ = checkpoint_manager.save_checkpoint(&checkpoint_state).await;
+                        }
                         error!(error = %err, "Automaton batch processing failed - stopping node to prevent data loss");
                         return Err(err);
                     }
                 }
+            }
+
+            // Periodic checkpoint save: every N events or M seconds
+            if events_since_checkpoint >= CHECKPOINT_EVENT_INTERVAL
+                || last_checkpoint_time.elapsed() >= CHECKPOINT_TIME_INTERVAL
+            {
+                if let Some(eid) = last_event_id {
+                    checkpoint_state.checkpoint = Checkpoint::Internal {
+                        event_id: eid,
+                        message_count: processed_events,
+                    };
+                    checkpoint_state.processed_count = processed_events;
+                    checkpoint_state.last_activity = sinex_primitives::temporal::Timestamp::now();
+                    match checkpoint_manager.save_checkpoint(&checkpoint_state).await {
+                        Ok(revision) => {
+                            checkpoint_state.revision = revision;
+                            events_since_checkpoint = 0;
+                            last_checkpoint_time = std::time::Instant::now();
+                            debug!(processed_events, revision, "Periodic checkpoint saved");
+                        }
+                        Err(err) => {
+                            warn!(error = %err, "Failed to save periodic checkpoint; will retry next interval");
+                        }
+                    }
+                }
+            }
+        }
+
+        // Save final checkpoint on clean exit
+        if let Some(eid) = last_event_id {
+            checkpoint_state.checkpoint = Checkpoint::Internal {
+                event_id: eid,
+                message_count: processed_events,
+            };
+            checkpoint_state.processed_count = processed_events;
+            checkpoint_state.last_activity = sinex_primitives::temporal::Timestamp::now();
+            if let Err(err) = checkpoint_manager.save_checkpoint(&checkpoint_state).await {
+                warn!(error = %err, "Failed to save final checkpoint on shutdown");
+            } else {
+                info!(processed_events, "Final checkpoint saved on clean shutdown");
             }
         }
 
