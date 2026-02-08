@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 /// Information stored in the lock file
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(clippy::unsafe_derive_deserialize)] // is_alive() uses kill(pid, 0) which is safe for any PID
 pub struct LockInfo {
     /// PID of the process holding the lock
     pub pid: u32,
