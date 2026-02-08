@@ -138,6 +138,17 @@ impl<'a> SchemaManagementRepository<'a> {
             schema_version,
             schema_content,
         } = new_schema;
+
+        // Validate schema version format (must be semver X.Y.Z)
+        SchemaVersion::new(&schema_version)
+            .validate()
+            .map_err(|e| {
+                SinexError::validation(format!(
+                    "Invalid schema version '{}': {}",
+                    schema_version, e
+                ))
+            })?;
+
         let content_hash = NewEventSchema {
             source: source.clone(),
             event_type: event_type.clone(),
@@ -882,6 +893,16 @@ impl SchemaCandidate {
         schema_version: String,
         schema_content: JsonValue,
     ) -> Result<Self, sinex_primitives::error::SinexError> {
+        // Validate schema version format (must be semver X.Y.Z)
+        SchemaVersion::new(&schema_version)
+            .validate()
+            .map_err(|e| {
+                SinexError::validation(format!(
+                    "Invalid schema version '{}': {}",
+                    schema_version, e
+                ))
+            })?;
+
         let schema = NewEventSchema {
             source,
             event_type,
