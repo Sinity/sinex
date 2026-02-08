@@ -410,11 +410,12 @@ impl<'a> KnowledgeGraphRepository<'a> {
                 created_at as "created_at!: sinex_primitives::temporal::Timestamp",
                 updated_at as "updated_at!: sinex_primitives::temporal::Timestamp"
             FROM core.entities
-            WHERE 
-                LOWER(name) = $1 
+            WHERE
+                LOWER(name) = $1
                 OR LOWER(canonical_name) = $1
                 OR $1 = ANY(SELECT LOWER(unnest(aliases)))
             ORDER BY created_at DESC
+            LIMIT 1000
             "#,
             normalized
         )
@@ -660,7 +661,30 @@ impl<'a> KnowledgeGraphRepository<'a> {
         .await
         .map_err(|e| db_error(e, "update merged source entity"))?;
 
-        // Update all relations pointing to source to point to target
+        // Rewire relations from source to target, deduplicating to avoid
+        // violating the uk_entity_relations_triple unique constraint.
+        // For each direction, first delete relations that would become
+        // duplicates, then update the remaining ones.
+
+        // Delete outgoing relations from source that duplicate target's outgoing
+        sqlx::query!(
+            r#"
+            DELETE FROM core.entity_relations
+            WHERE from_entity_id::uuid = $1
+              AND (to_entity_id, relation_type) IN (
+                SELECT to_entity_id, relation_type
+                FROM core.entity_relations
+                WHERE from_entity_id::uuid = $2
+              )
+            "#,
+            *source.id.as_ulid() as _,
+            *target.id.as_ulid() as _
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| db_error(e, "deduplicate outgoing relations before merge"))?;
+
+        // Update remaining outgoing relations from source to target
         sqlx::query!(
             r#"
             UPDATE core.entity_relations
@@ -674,6 +698,25 @@ impl<'a> KnowledgeGraphRepository<'a> {
         .await
         .map_err(|e| db_error(e, "update source relations"))?;
 
+        // Delete incoming relations to source that duplicate target's incoming
+        sqlx::query!(
+            r#"
+            DELETE FROM core.entity_relations
+            WHERE to_entity_id::uuid = $1
+              AND (from_entity_id, relation_type) IN (
+                SELECT from_entity_id, relation_type
+                FROM core.entity_relations
+                WHERE to_entity_id::uuid = $2
+              )
+            "#,
+            *source.id.as_ulid() as _,
+            *target.id.as_ulid() as _
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| db_error(e, "deduplicate incoming relations before merge"))?;
+
+        // Update remaining incoming relations to source to target
         sqlx::query!(
             r#"
             UPDATE core.entity_relations
@@ -809,11 +852,12 @@ impl<'a> KnowledgeGraphRepository<'a> {
                         created_at as "created_at!: sinex_primitives::temporal::Timestamp",
                         updated_at as "updated_at!: sinex_primitives::temporal::Timestamp"
                     FROM core.entity_relations
-                    WHERE 
+                    WHERE
                         (from_entity_id = $1 OR to_entity_id = $1)
                         AND relation_type = $2
                         AND is_active = true
                     ORDER BY created_at DESC
+                    LIMIT 10000
                     "#,
                     *entity_id.as_ulid() as _,
                     rt
@@ -837,10 +881,11 @@ impl<'a> KnowledgeGraphRepository<'a> {
                         created_at as "created_at!: sinex_primitives::temporal::Timestamp",
                         updated_at as "updated_at!: sinex_primitives::temporal::Timestamp"
                     FROM core.entity_relations
-                    WHERE 
+                    WHERE
                         (from_entity_id = $1 OR to_entity_id = $1)
                         AND relation_type = $2
                     ORDER BY created_at DESC
+                    LIMIT 10000
                     "#,
                     *entity_id.as_ulid() as _,
                     rt
@@ -864,10 +909,11 @@ impl<'a> KnowledgeGraphRepository<'a> {
                         created_at as "created_at!: sinex_primitives::temporal::Timestamp",
                         updated_at as "updated_at!: sinex_primitives::temporal::Timestamp"
                     FROM core.entity_relations
-                    WHERE 
+                    WHERE
                         (from_entity_id = $1 OR to_entity_id = $1)
                         AND is_active = true
                     ORDER BY created_at DESC
+                    LIMIT 10000
                     "#,
                     *entity_id.as_ulid() as _
                 )
@@ -890,9 +936,10 @@ impl<'a> KnowledgeGraphRepository<'a> {
                         created_at as "created_at!: sinex_primitives::temporal::Timestamp",
                         updated_at as "updated_at!: sinex_primitives::temporal::Timestamp"
                     FROM core.entity_relations
-                    WHERE 
+                    WHERE
                         from_entity_id::uuid = $1 OR to_entity_id::uuid = $1
                     ORDER BY created_at DESC
+                    LIMIT 10000
                     "#,
                     *entity_id.as_ulid() as _
                 )

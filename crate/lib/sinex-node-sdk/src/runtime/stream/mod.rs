@@ -80,10 +80,13 @@ impl RunnerConfirmedEventHandler {
 #[async_trait]
 impl ConfirmedEventHandler for RunnerConfirmedEventHandler {
     async fn handle_confirmed(&self, event: &ProvisionalEvent) -> NodeResult<()> {
-        self.sender.send(event.clone()).await.map_err(|err| {
-            SinexError::processing(format!(
-                "Failed to forward confirmed event to automaton: {err}"
-            ))
+        self.sender.send(event.clone()).await.map_err(|_| {
+            // Channel closed = receiver dropped = shutdown in progress.
+            // Return a shutdown-specific error so callers can distinguish
+            // normal shutdown from unexpected processing failures.
+            SinexError::lifecycle(
+                "Confirmed event channel closed (node is shutting down)".to_string(),
+            )
         })
     }
 }
@@ -404,9 +407,46 @@ impl Default for ScanEstimate {
     }
 }
 
+/// Lifecycle state of a [`NodeRunner`].
+///
+/// Guards against re-entrant calls to `initialize`, `run_service`/`run_scan`,
+/// and `shutdown`. State transitions are strictly forward-only:
+///
+/// ```text
+/// Created ──► Initializing ──► Initialized ──► Running ──► ShutDown
+///                                                  │
+///                                                  └──► ShutDown (via shutdown())
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunnerLifecycle {
+    /// Freshly constructed, not yet initialized.
+    Created,
+    /// `initialize_with_transport` is executing.
+    Initializing,
+    /// Initialization complete; ready for `run_service` / `run_scan`.
+    Initialized,
+    /// `run_service` or `run_scan` is executing.
+    Running,
+    /// `shutdown` has completed (or was never initialized).
+    ShutDown,
+}
+
+impl std::fmt::Display for RunnerLifecycle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Created => write!(f, "Created"),
+            Self::Initializing => write!(f, "Initializing"),
+            Self::Initialized => write!(f, "Initialized"),
+            Self::Running => write!(f, "Running"),
+            Self::ShutDown => write!(f, "ShutDown"),
+        }
+    }
+}
+
 /// Unified runner for nodes
 pub struct NodeRunner<T: Node> {
     node: T,
+    lifecycle: RunnerLifecycle,
     handles: Option<NodeHandles>,
     service_info: Option<ServiceInfo>,
     raw_config: Option<HashMap<String, serde_json::Value>>,
@@ -431,6 +471,7 @@ impl<T: Node + 'static> NodeRunner<T> {
     pub fn new(node: T) -> Self {
         Self {
             node,
+            lifecycle: RunnerLifecycle::Created,
             handles: None,
             service_info: None,
             raw_config: None,
@@ -443,6 +484,11 @@ impl<T: Node + 'static> NodeRunner<T> {
             processing_model: ProcessingModel::StatelessWorker,
             leader_state: None,
         }
+    }
+
+    /// Returns the current lifecycle state of this runner.
+    pub fn lifecycle(&self) -> RunnerLifecycle {
+        self.lifecycle
     }
 
     /// Reconstruct the current runtime state if the runner has been initialized
@@ -470,6 +516,24 @@ impl<T: Node + 'static> NodeRunner<T> {
         work_dir: std::path::PathBuf,
         dry_run: bool,
     ) -> NodeResult<()> {
+        // Re-entrancy guard: only allow initialization from Created state
+        match self.lifecycle {
+            RunnerLifecycle::Created => {}
+            RunnerLifecycle::Initializing => {
+                return Err(SinexError::lifecycle(
+                    "Node is already being initialized (concurrent initialize call detected)"
+                        .to_string(),
+                ));
+            }
+            RunnerLifecycle::Initialized | RunnerLifecycle::Running | RunnerLifecycle::ShutDown => {
+                return Err(SinexError::lifecycle(format!(
+                    "Cannot initialize node: runner is in '{}' state (expected 'Created')",
+                    self.lifecycle,
+                )));
+            }
+        }
+        self.lifecycle = RunnerLifecycle::Initializing;
+
         // DATABASE_URL is optional - processors that need it will call
         // require_db_pool() which provides a clear error message.
 
@@ -625,7 +689,10 @@ impl<T: Node + 'static> NodeRunner<T> {
             work_dir_utf8.clone(),
         );
 
-        self.node.initialize(init_context).await?;
+        if let Err(e) = self.node.initialize(init_context).await {
+            self.lifecycle = RunnerLifecycle::Created;
+            return Err(e);
+        }
 
         self.handles = Some(handles);
         self.service_info = Some(service_info);
@@ -639,6 +706,8 @@ impl<T: Node + 'static> NodeRunner<T> {
             event_receiver,
             processor_shutdown_receiver,
         ));
+
+        self.lifecycle = RunnerLifecycle::Initialized;
 
         info!(
             service = %service_name,
@@ -658,8 +727,13 @@ impl<T: Node + 'static> NodeRunner<T> {
         until: TimeHorizon,
         args: ScanArgs,
     ) -> NodeResult<ScanReport> {
-        if self.handles.is_none() {
-            return Err(SinexError::lifecycle("Node not initialized".to_string()));
+        match self.lifecycle {
+            RunnerLifecycle::Initialized | RunnerLifecycle::Running => {}
+            other => {
+                return Err(SinexError::lifecycle(format!(
+                    "Cannot run scan: runner is in '{other}' state (expected 'Initialized' or 'Running')",
+                )));
+            }
         }
 
         info!(
@@ -697,9 +771,20 @@ impl<T: Node + 'static> NodeRunner<T> {
 
     /// Run in service mode with startup sequence
     pub async fn run_service(&mut self) -> NodeResult<()> {
-        if self.handles.is_none() {
-            return Err(SinexError::lifecycle("Node not initialized".to_string()));
+        match self.lifecycle {
+            RunnerLifecycle::Initialized => {}
+            RunnerLifecycle::Running => {
+                return Err(SinexError::lifecycle(
+                    "Node is already running (concurrent run_service call detected)".to_string(),
+                ));
+            }
+            other => {
+                return Err(SinexError::lifecycle(format!(
+                    "Cannot run service: runner is in '{other}' state (expected 'Initialized')",
+                )));
+            }
         }
+        self.lifecycle = RunnerLifecycle::Running;
 
         let node_type = self.node.node_type();
         info!(
@@ -776,7 +861,7 @@ impl<T: Node + 'static> NodeRunner<T> {
             let current_checkpoint = self.node.current_checkpoint().await?;
 
             // This should run indefinitely until shutdown
-            let _continuous_report = self
+            let continuous_report = self
                 .node
                 .scan(
                     current_checkpoint,
@@ -784,6 +869,14 @@ impl<T: Node + 'static> NodeRunner<T> {
                     ScanArgs::default(),
                 )
                 .await?;
+
+            // If continuous scan returns, it means it exited unexpectedly.
+            // Log so operators can investigate (M4: silent exit prevention).
+            warn!(
+                events_processed = continuous_report.events_processed,
+                "Continuous scan returned unexpectedly - service will exit. \
+                 This may indicate the scan implementation does not block indefinitely."
+            );
         } else {
             warn!("Node does not support continuous mode - service will exit");
         }
@@ -846,10 +939,11 @@ impl<T: Node + 'static> NodeRunner<T> {
                     let kv_clone = kv_client.clone();
                     let instance_id_clone = instance_id.clone();
                     let heartbeat_handle = tokio::spawn(async move {
-                        let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+                        // 3s interval with default 10s TTL gives 7s margin for network delays.
+                        // Previous 5s interval left only 5s margin — too tight for cross-DC latency.
+                        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3));
                         loop {
                             interval.tick().await;
-                            // Basic heartbeat logic - just keep refreshing leadership
                             if let Err(e) = kv_clone.acquire_leadership(&instance_id_clone).await {
                                 warn!("Heartbeat failed: {e}");
                             }
@@ -973,51 +1067,156 @@ impl<T: Node + 'static> NodeRunner<T> {
                 .await?;
         }
 
-        let mut processed_events = 0u64;
+        // Periodic checkpoint saves: prevent data loss on crash by persisting
+        // progress every CHECKPOINT_EVENT_INTERVAL events or CHECKPOINT_TIME_INTERVAL.
+        const CHECKPOINT_EVENT_INTERVAL: u64 = 100;
+        const CHECKPOINT_TIME_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 
-        while let Some(provisional) = receiver.recv().await {
-            let event_id = provisional.event_id;
-            let event = {
-                #[cfg(feature = "db")]
-                match &db_pool {
-                    Some(pool) => match Self::fetch_persisted_event(pool, &event_id).await? {
-                        Some(event) => Some(event),
-                        None => {
-                            warn!(
-                                "Confirmed event {:?} missing from database; skipping",
-                                event_id
-                            );
-                            None
-                        }
-                    },
-                    None => match Self::build_event_from_provisional(&provisional) {
+        let checkpoint_manager = handles.checkpoint_manager();
+        let mut checkpoint_state = checkpoint_manager.load_checkpoint().await.unwrap_or_else(|e| {
+            warn!(error = %e, "Failed to load checkpoint state for periodic saves; starting fresh");
+            crate::checkpoint::CheckpointState::default()
+        });
+
+        let mut processed_events = 0u64;
+        let mut events_since_checkpoint = 0u64;
+        let mut last_checkpoint_time = std::time::Instant::now();
+        let mut last_event_id: Option<Ulid> = None;
+
+        // Batch processing: accumulate up to BATCH_SIZE events before processing.
+        // Block on the first event, then non-blocking drain whatever else is queued.
+        const BATCH_SIZE: usize = 100;
+
+        loop {
+            // Block until at least one event arrives (or channel closes)
+            let first = match receiver.recv().await {
+                Some(p) => p,
+                None => break,
+            };
+
+            // Non-blocking drain: grab whatever else is already queued
+            let mut provisionals = vec![first];
+            while provisionals.len() < BATCH_SIZE {
+                match receiver.try_recv() {
+                    Ok(p) => provisionals.push(p),
+                    Err(_) => break,
+                }
+            }
+
+            // Resolve each provisional to a full Event
+            let mut events = Vec::with_capacity(provisionals.len());
+            let mut batch_last_event_id = None;
+
+            for provisional in &provisionals {
+                let event_id = &provisional.event_id;
+                let event = {
+                    #[cfg(feature = "db")]
+                    match &db_pool {
+                        Some(pool) => match Self::fetch_persisted_event(pool, event_id).await? {
+                            Some(event) => Some(event),
+                            None => {
+                                warn!(
+                                    "Confirmed event {:?} missing from database; skipping",
+                                    event_id
+                                );
+                                None
+                            }
+                        },
+                        None => match Self::build_event_from_provisional(provisional) {
+                            Ok(event) => Some(event),
+                            Err(err) => {
+                                warn!(error = %err, "Failed to build event from provisional payload");
+                                None
+                            }
+                        },
+                    }
+                    #[cfg(not(feature = "db"))]
+                    match Self::build_event_from_provisional(provisional) {
                         Ok(event) => Some(event),
                         Err(err) => {
                             warn!(error = %err, "Failed to build event from provisional payload");
                             None
                         }
-                    },
-                }
-                #[cfg(not(feature = "db"))]
-                match Self::build_event_from_provisional(&provisional) {
-                    Ok(event) => Some(event),
-                    Err(err) => {
-                        warn!(error = %err, "Failed to build event from provisional payload");
-                        None
                     }
-                }
-            };
+                };
 
-            if let Some(event) = event {
-                match self.node.process_event_batch(vec![event]).await {
-                    Ok(stats) => {
-                        processed_events += stats.processed as u64;
+                if let Some(event) = event {
+                    batch_last_event_id = Some(*event_id.as_ulid());
+                    events.push(event);
+                }
+            }
+
+            if events.is_empty() {
+                continue;
+            }
+
+            let batch_size = events.len();
+            match self.node.process_event_batch(events).await {
+                Ok(stats) => {
+                    processed_events += stats.processed as u64;
+                    events_since_checkpoint += stats.processed as u64;
+                    if let Some(eid) = batch_last_event_id {
+                        last_event_id = Some(eid);
                     }
-                    Err(err) => {
-                        error!(error = %err, "Automaton batch processing failed - stopping node to prevent data loss");
-                        return Err(err);
+                    if batch_size > 1 {
+                        debug!(batch_size, processed_events, "Processed event batch");
                     }
                 }
+                Err(err) => {
+                    // Save checkpoint before bailing so we don't lose ALL progress
+                    if let Some(eid) = last_event_id {
+                        checkpoint_state.checkpoint = Checkpoint::Internal {
+                            event_id: eid,
+                            message_count: processed_events,
+                        };
+                        checkpoint_state.processed_count = processed_events;
+                        checkpoint_state.last_activity =
+                            sinex_primitives::temporal::Timestamp::now();
+                        let _ = checkpoint_manager.save_checkpoint(&checkpoint_state).await;
+                    }
+                    error!(error = %err, batch_size, "Automaton batch processing failed - stopping node to prevent data loss");
+                    return Err(err);
+                }
+            }
+
+            // Periodic checkpoint save: every N events or M seconds
+            if events_since_checkpoint >= CHECKPOINT_EVENT_INTERVAL
+                || last_checkpoint_time.elapsed() >= CHECKPOINT_TIME_INTERVAL
+            {
+                if let Some(eid) = last_event_id {
+                    checkpoint_state.checkpoint = Checkpoint::Internal {
+                        event_id: eid,
+                        message_count: processed_events,
+                    };
+                    checkpoint_state.processed_count = processed_events;
+                    checkpoint_state.last_activity = sinex_primitives::temporal::Timestamp::now();
+                    match checkpoint_manager.save_checkpoint(&checkpoint_state).await {
+                        Ok(revision) => {
+                            checkpoint_state.revision = revision;
+                            events_since_checkpoint = 0;
+                            last_checkpoint_time = std::time::Instant::now();
+                            debug!(processed_events, revision, "Periodic checkpoint saved");
+                        }
+                        Err(err) => {
+                            warn!(error = %err, "Failed to save periodic checkpoint; will retry next interval");
+                        }
+                    }
+                }
+            }
+        }
+
+        // Save final checkpoint on clean exit
+        if let Some(eid) = last_event_id {
+            checkpoint_state.checkpoint = Checkpoint::Internal {
+                event_id: eid,
+                message_count: processed_events,
+            };
+            checkpoint_state.processed_count = processed_events;
+            checkpoint_state.last_activity = sinex_primitives::temporal::Timestamp::now();
+            if let Err(err) = checkpoint_manager.save_checkpoint(&checkpoint_state).await {
+                warn!(error = %err, "Failed to save final checkpoint on shutdown");
+            } else {
+                info!(processed_events, "Final checkpoint saved on clean shutdown");
             }
         }
 
@@ -1182,8 +1381,25 @@ impl<T: Node + 'static> NodeRunner<T> {
         self.node.estimate_scan_scope(from, until, args).await
     }
 
-    /// Graceful shutdown
+    /// Graceful shutdown.
+    ///
+    /// Idempotent: safe to call multiple times or on a never-initialized runner.
     pub async fn shutdown(&mut self) -> NodeResult<()> {
+        match self.lifecycle {
+            RunnerLifecycle::ShutDown => {
+                debug!("shutdown() called on already shut-down runner; no-op");
+                return Ok(());
+            }
+            RunnerLifecycle::Created => {
+                debug!("shutdown() called on never-initialized runner; no-op");
+                self.lifecycle = RunnerLifecycle::ShutDown;
+                return Ok(());
+            }
+            // Initializing, Initialized, Running — all proceed with shutdown
+            _ => {}
+        }
+        self.lifecycle = RunnerLifecycle::ShutDown;
+
         info!("Shutting down stream processor runner");
 
         // Abort and await schema listener task if running

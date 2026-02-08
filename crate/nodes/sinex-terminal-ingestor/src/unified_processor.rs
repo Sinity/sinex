@@ -698,7 +698,14 @@ async fn process_command(
     }
 
     // Redact sensitive information
-    let redacted_command = SecretRedactor::redact(command);
+    let (redacted_command, redaction_stats) = SecretRedactor::redact_with_stats(command);
+    if redaction_stats.any_redacted() {
+        tracing::info!(
+            patterns = ?redaction_stats.matched_patterns,
+            path = %ctx.path,
+            "Redacted secrets from command"
+        );
+    }
     let final_command = redacted_command.as_ref();
     let bytes = final_command.as_bytes();
 
@@ -968,7 +975,11 @@ impl SimpleIngestor for TerminalProcessor {
         Ok(())
     }
 
-    async fn scan_snapshot(&self, _state: &Self::State, _args: ScanArgs) -> NodeResult<ScanReport> {
+    async fn scan_snapshot(
+        &mut self,
+        _state: &mut Self::State,
+        _args: ScanArgs,
+    ) -> NodeResult<ScanReport> {
         let monitored: Vec<Utf8PathBuf> = self
             .config
             .history_sources

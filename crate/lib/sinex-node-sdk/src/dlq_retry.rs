@@ -15,6 +15,7 @@ const DEFAULT_DLQ_BATCH_SIZE: usize = 10;
 const DEFAULT_DLQ_MAX_RETRIES: u32 = 3;
 const DEFAULT_DLQ_RETRY_DELAY: Seconds = Seconds::from_secs(60);
 const DEFAULT_DLQ_ACK_WAIT: Seconds = Seconds::from_secs(60);
+const DEFAULT_DLQ_INTER_BATCH_DELAY_MS: u64 = 200;
 
 /// Configuration for DLQ retry operations
 #[derive(Debug, Clone)]
@@ -92,6 +93,7 @@ impl DlqRetryHandler {
             .map_err(|e| SinexError::processing(format!("Failed to get DLQ messages: {e}")))?;
 
         let mut retried = 0;
+        let mut processed = 0u64;
 
         while let Some(result) = messages.next().await {
             match result {
@@ -108,19 +110,27 @@ impl DlqRetryHandler {
                         if let Err(e) = msg.ack().await {
                             error!("Failed to ack permanently failed message: {e}");
                         }
-                        continue;
-                    }
-
-                    match self.retry_message(&js, &msg, retry_count).await {
-                        Ok(()) => {
-                            retried += 1;
-                            if let Err(e) = msg.ack().await {
-                                error!("Failed to ack retried message: {e}");
+                        processed += 1;
+                    } else {
+                        match self.retry_message(&js, &msg, retry_count).await {
+                            Ok(()) => {
+                                retried += 1;
+                                processed += 1;
+                                if let Err(e) = msg.ack().await {
+                                    error!("Failed to ack retried message: {e}");
+                                }
+                            }
+                            Err(e) => {
+                                error!("Failed to retry message: {e}");
+                                processed += 1;
                             }
                         }
-                        Err(e) => {
-                            error!("Failed to retry message: {e}");
-                        }
+                    }
+
+                    // Rate limit: pause between batches to avoid overwhelming downstream
+                    if processed % self.config.batch_size as u64 == 0 {
+                        tokio::time::sleep(Duration::from_millis(DEFAULT_DLQ_INTER_BATCH_DELAY_MS))
+                            .await;
                     }
                 }
                 Err(e) => {

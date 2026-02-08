@@ -446,51 +446,21 @@ async fn verify_event_source_config(source_name: &str, description: &str) -> Nod
 }
 
 async fn check_clipboard_availability() -> bool {
-    // Check if we can access clipboard tools
-    tokio::process::Command::new("which")
-        .arg("xclip")
-        .output()
-        .await
-        .map(|output| output.status.success())
-        .unwrap_or(false)
-        || tokio::process::Command::new("which")
-            .arg("wl-clipboard")
-            .output()
-            .await
-            .map(|output| output.status.success())
-            .unwrap_or(false)
+    super::command_succeeds("which", &["xclip"]).await
+        || super::command_succeeds("which", &["wl-clipboard"]).await
 }
 
 async fn check_kitty_availability() -> bool {
-    // Check if Kitty is available and has socket support
-    std::env::var("KITTY_LISTEN_ON").is_ok()
-        || tokio::process::Command::new("which")
-            .arg("kitty")
-            .output()
-            .await
-            .map(|output| output.status.success())
-            .unwrap_or(false)
+    std::env::var("KITTY_LISTEN_ON").is_ok() || super::command_succeeds("which", &["kitty"]).await
 }
 
 async fn check_hyprland_availability() -> bool {
-    // Check if Hyprland is running
     std::env::var("HYPRLAND_INSTANCE_SIGNATURE").is_ok()
-        || tokio::process::Command::new("hyprctl")
-            .arg("version")
-            .output()
-            .await
-            .map(|output| output.status.success())
-            .unwrap_or(false)
+        || super::command_succeeds("hyprctl", &["version"]).await
 }
 
 async fn check_atuin_availability() -> bool {
-    // Check if Atuin is installed and configured
-    tokio::process::Command::new("which")
-        .arg("atuin")
-        .output()
-        .await
-        .map(|output| output.status.success())
-        .unwrap_or(false)
+    super::command_succeeds("which", &["atuin"]).await
 }
 
 async fn verify_service_configuration_compatibility(
@@ -538,12 +508,7 @@ async fn verify_service_configuration_compatibility(
 }
 
 async fn check_systemd_compatibility() -> NodeResult<Value> {
-    // Check if systemd is available and running
-    let systemd_version = tokio::process::Command::new("systemctl")
-        .arg("--version")
-        .output()
-        .await
-        .map_err(|e| SinexError::processing(format!("Failed to check systemd version: {e}")))?;
+    let systemd_version = super::run_command_with_timeout("systemctl", &["--version"]).await?;
 
     if !systemd_version.status.success() {
         return Err(SinexError::processing(

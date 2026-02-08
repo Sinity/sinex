@@ -24,7 +24,6 @@ pub mod pool;
 pub mod query_helpers;
 pub mod replay;
 pub mod repositories;
-pub mod sanitization;
 pub mod security;
 pub mod validation;
 

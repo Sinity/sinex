@@ -44,6 +44,10 @@ use tracing::{debug, error, info, warn};
 
 use crate::watcher_lifecycle::{WatcherHealth, WatcherLifecycle};
 
+/// Maximum line length from journalctl output (256 KB).
+/// Protects against memory exhaustion from corrupted/malicious journal entries.
+const MAX_JOURNAL_LINE_BYTES: usize = 256 * 1024;
+
 /// Convert local `SystemdUnitType` to core `SystemdUnitType`
 fn convert_unit_type(local: SystemdUnitType) -> CoreSystemdUnitType {
     match local {
@@ -435,9 +439,25 @@ impl UnifiedJournalWatcher {
 
         loop {
             line.clear();
-            match reader.read_line(&mut line).await {
+            let read_result = tokio::select! {
+                result = reader.read_line(&mut line) => result,
+                () = self.cancel_token.cancelled() => {
+                    info!("Journal follow cancelled by shutdown signal");
+                    break;
+                }
+            };
+            match read_result {
                 Ok(0) => break, // EOF
                 Ok(_) => {
+                    // Guard against oversized lines from corrupted journal
+                    if line.len() > MAX_JOURNAL_LINE_BYTES {
+                        warn!(
+                            line_bytes = line.len(),
+                            limit = MAX_JOURNAL_LINE_BYTES,
+                            "Skipping oversized journal line"
+                        );
+                        continue;
+                    }
                     if !line.trim().is_empty() {
                         match serde_json::from_str::<serde_json::Value>(&line) {
                             Ok(entry) => {
@@ -933,12 +953,15 @@ impl UnifiedJournalWatcher {
         material.decorate_event(&mut event).await?;
         if let Err(err) = tx.send(event).await {
             let drops = self.channel_drops.fetch_add(1, Ordering::Relaxed) + 1;
-            warn!(
-                channel_drops = drops,
-                context = context,
-                "Event channel backpressure: dropped event ({})",
-                err
-            );
+            // Rate-limit drop warnings: log at 1, 10, 100, 1000, then every 1000
+            if drops == 1 || drops == 10 || drops == 100 || drops % 1000 == 0 {
+                warn!(
+                    channel_drops = drops,
+                    context = context,
+                    "Event channel backpressure: dropped event ({})",
+                    err
+                );
+            }
         }
         Ok(())
     }

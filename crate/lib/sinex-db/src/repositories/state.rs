@@ -550,7 +550,7 @@ impl<'a> StateRepository<'a> {
                 COUNT(*) as "total!",
                 COUNT(*) FILTER (WHERE result_status = 'success') as "successful!",
                 COUNT(*) FILTER (WHERE result_status = 'failure') as "failed!",
-                COUNT(*) FILTER (WHERE result_status = 'partial') as "cancelled!",
+                COUNT(*) FILTER (WHERE result_status = 'cancelled') as "cancelled!",
                 AVG(duration_ms) as "avg_duration_ms"
             FROM core.operations_log
             "#
@@ -630,15 +630,6 @@ impl<'a> StateRepository<'a> {
         .fetch_all(self.pool)
         .await
         .map_err(|e| db_error(e, "get all processors"))
-    }
-
-    /// Get all currently active processors
-    pub async fn get_active_processors(&self) -> DbResult<Vec<ProcessorManifest>> {
-        // TODO: The schema needs a 'status' or 'is_active' column.
-        // For now, we return all processors as requested by the original (incorrect) implementation,
-        // but note the missing filter.
-        // If the table is append-only, maybe we want 'LATEST' versions per processor_name?
-        self.get_all_processors().await
     }
 
     /// Get processors by type

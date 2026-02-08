@@ -17,9 +17,6 @@ use super::MaterialAssembler;
 use crate::{IngestdResult, SinexError};
 
 pub(super) const BUFFER_DIR_NAME: &str = "buffers";
-#[allow(dead_code)] // Future use for state persistence
-pub(super) const STATE_FILE_NAME: &str = "state.json";
-
 pub(super) const WAL_FILE_NAME: &str = "state.wal";
 pub(super) const TEMP_FILE_NAME: &str = "material.bin";
 pub(super) const DLQ_CONSUMER: &str = "ingestd";
@@ -63,6 +60,22 @@ pub(super) enum WalEntry {
     Checkpoint(PersistedState),
 }
 
+/// Envelope wrapping a WAL entry with integrity metadata.
+///
+/// Each WAL line is serialized as a `WalEntryEnvelope` containing:
+/// - `seq`: Monotonic sequence number for gap detection
+/// - `crc`: CRC32 of the serialized `entry` JSON for corruption detection
+/// - `entry`: The actual WAL entry
+///
+/// Recovery verifies the CRC before applying each entry. Legacy WAL entries
+/// (bare `WalEntry` without envelope) are accepted with a migration warning.
+#[derive(Debug, Serialize, Deserialize)]
+pub(super) struct WalEntryEnvelope {
+    pub seq: u64,
+    pub crc: u32,
+    pub entry: WalEntry,
+}
+
 /// Persisted assembler state (stored on disk for restart recovery)
 #[derive(Debug, Serialize, Deserialize)]
 pub(super) struct PersistedState {
@@ -91,6 +104,8 @@ pub(super) struct AssemblerState {
     pub temp_file: Option<tokio::fs::File>,
     /// Append-only log file
     pub wal_file: Option<tokio::fs::File>,
+    /// Next WAL sequence number (monotonically increasing per material)
+    pub wal_seq: u64,
     pub expected_offset: i64,
     pub slice_count: usize,
     pub buffered_slices: BTreeMap<i64, PathBuf>,
@@ -132,10 +147,6 @@ pub(super) struct FinalizationState {
 impl AssemblerState {
     pub(super) fn buffers_dir(&self) -> PathBuf {
         self.state_dir.join(BUFFER_DIR_NAME)
-    }
-
-    pub(super) fn _state_file(&self) -> PathBuf {
-        self.state_dir.join(STATE_FILE_NAME)
     }
 
     pub(super) fn finalization_view(&self) -> FinalizationState {
@@ -422,6 +433,7 @@ mod tests {
             temp_path: temp_dir.path().join(TEMP_FILE_NAME),
             temp_file: None,
             wal_file: None,
+            wal_seq: 0,
             expected_offset: 0,
             slice_count: 0,
             buffered_slices: BTreeMap::new(),

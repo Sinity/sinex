@@ -9,6 +9,7 @@ async fn processor_initialization(ctx: TestContext) -> TestResult<()> {
         max_depth: Some(5),
         follow_symlinks: false,
         max_capture_bytes: Bytes::from_mebibytes(1),
+        ..Default::default()
     };
 
     let processor = FilesystemProcessor::with_config(config.clone());
@@ -28,6 +29,7 @@ async fn config_validation(ctx: TestContext) -> TestResult<()> {
         max_depth: Some(10),
         follow_symlinks: false,
         max_capture_bytes: Bytes::from_mebibytes(1),
+        ..Default::default()
     };
     assert!(valid_config.validate_config().is_ok());
 

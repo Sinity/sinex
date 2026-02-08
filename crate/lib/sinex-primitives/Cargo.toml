@@ -51,7 +51,6 @@ sinex-schema = { path = "../sinex-schema" }
 uuid = { workspace = true, features = ["serde", "v4"] }
 bon = { workspace = true }
 notify = { workspace = true }
-rusqlite = { workspace = true }
 tokio-retry = { workspace = true }
 
 # Optional DB support

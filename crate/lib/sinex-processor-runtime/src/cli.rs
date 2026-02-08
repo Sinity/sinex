@@ -229,9 +229,18 @@ pub enum NodeCommand {
     },
 }
 
+/// Maximum checkpoint JSON string size (1 MB). Prevents DoS via massive inputs.
+const MAX_CHECKPOINT_JSON_BYTES: usize = 1_024 * 1_024;
+
 /// Parse checkpoint as JSON
 fn parse_checkpoint_json(checkpoint_str: &str) -> NodeResult<Checkpoint> {
-    // TODO: Add size limit to prevent DoS via massive JSON checkpoint strings
+    if checkpoint_str.len() > MAX_CHECKPOINT_JSON_BYTES {
+        return Err(SinexError::validation(format!(
+            "Checkpoint JSON exceeds maximum size ({} bytes > {} bytes)",
+            checkpoint_str.len(),
+            MAX_CHECKPOINT_JSON_BYTES
+        )));
+    }
     let val: serde_json::Value =
         serde_json::from_str(checkpoint_str).map_err(SinexError::serialization)?;
     serde_json::from_value(val).map_err(SinexError::serialization)

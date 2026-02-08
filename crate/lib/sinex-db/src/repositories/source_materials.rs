@@ -459,41 +459,6 @@ impl<'a> SourceMaterialRepository<'a> {
         .await
         .map_err(|e| db_error(e, "get recent materials"))
     }
-    /// Get materials filtered by canonical material kind
-    pub async fn get_by_kind(
-        &self,
-        material_kind: &str,
-        limit: Option<i64>,
-    ) -> DbResult<Vec<SourceMaterialRecord>> {
-        let limit = limit.unwrap_or(100);
-        sqlx::query_as!(
-            SourceMaterialRecord,
-            r#"
-            SELECT
-                id::uuid as "id!: crate::Ulid",
-                material_kind,
-                source_identifier,
-                status,
-                timing_info_type,
-                metadata,
-                staged_at as "staged_at: Timestamp",
-                start_time as "start_time: Timestamp",
-                end_time as "end_time: Timestamp",
-                staged_by,
-                staged_on_host,
-                optional_blob_id::uuid as "optional_blob_id?: crate::Ulid"
-            FROM raw.source_material_registry
-            WHERE material_kind = $1
-            ORDER BY staged_at DESC
-            LIMIT $2
-            "#,
-            material_kind,
-            limit
-        )
-        .fetch_all(self.pool)
-        .await
-        .map_err(|e| db_error(e, "get materials by kind"))
-    }
     /// Search materials by metadata containment
     pub async fn search_by_metadata(
         &self,
@@ -615,37 +580,6 @@ impl<'a> SourceMaterialRepository<'a> {
         .fetch_optional(self.pool)
         .await
         .map_err(|e| db_error(e, "update material metadata"))
-    }
-    /// Count materials by canonical kind
-    pub async fn count_by_kind(&self, material_kind: &str) -> DbResult<i64> {
-        let result = sqlx::query!(
-            r#"
-            SELECT COUNT(*) as count
-            FROM raw.source_material_registry
-            WHERE material_kind = $1
-            "#,
-            material_kind
-        )
-        .fetch_one(self.pool)
-        .await
-        .map_err(|e| db_error(e, "count materials by kind"))?;
-        Ok(result.count.unwrap_or(0))
-    }
-    /// Get total size of materials by canonical kind (sourced from core.blobs)
-    pub async fn get_total_size_by_kind(&self, material_kind: &str) -> DbResult<i64> {
-        let total_size: Option<i64> = sqlx::query_scalar(
-            r#"
-            SELECT COALESCE(SUM(b.size_bytes), 0)::BIGINT
-            FROM raw.source_material_registry sm
-            LEFT JOIN core.blobs b ON sm.optional_blob_id::uuid = b.id::uuid
-            WHERE sm.material_kind = $1
-            "#,
-        )
-        .bind(material_kind)
-        .fetch_one(self.pool)
-        .await
-        .map_err(|e| db_error(e, "get total size by kind"))?;
-        Ok(total_size.unwrap_or(0))
     }
     /// Register an in-flight source material using an atomic upsert.
     ///

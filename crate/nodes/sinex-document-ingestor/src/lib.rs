@@ -361,7 +361,11 @@ impl SimpleIngestor for DocumentProcessor {
         Ok(())
     }
 
-    async fn scan_snapshot(&self, _state: &Self::State, args: ScanArgs) -> NodeResult<ScanReport> {
+    async fn scan_snapshot(
+        &mut self,
+        _state: &mut Self::State,
+        args: ScanArgs,
+    ) -> NodeResult<ScanReport> {
         if args.dry_run {
             info!(targets = args.targets.len(), "Dry-run document ingestion");
             Ok(ScanReport {

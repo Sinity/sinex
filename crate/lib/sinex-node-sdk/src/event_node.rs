@@ -300,26 +300,22 @@ impl EventBatcher {
     ) -> BatchPublishResult {
         let mut success_count = 0;
         let mut failure_count = 0;
-        let mut idx = 0;
+        let mut failed_events = Vec::new();
 
-        while idx < events.len() {
-            let publish_result = {
-                let event = &events[idx];
-                publisher.publish(event).await
-            };
-
-            match publish_result {
+        for event in events.drain(..) {
+            match publisher.publish(&event).await {
                 Ok(_) => {
                     success_count += 1;
-                    events.remove(idx);
                 }
                 Err(e) => {
-                    error!(event_id = ?events[idx].id, error = %e, "Failed to publish event");
+                    error!(event_id = ?event.id, error = %e, "Failed to publish event");
                     failure_count += 1;
-                    idx += 1;
+                    failed_events.push(event);
                 }
             }
         }
+
+        *events = failed_events;
 
         if failure_count == 0 {
             debug!(published = success_count, "Batch sent via NATS");
