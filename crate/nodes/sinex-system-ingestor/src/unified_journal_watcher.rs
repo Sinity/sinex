@@ -44,6 +44,10 @@ use tracing::{debug, error, info, warn};
 
 use crate::watcher_lifecycle::{WatcherHealth, WatcherLifecycle};
 
+/// Maximum line length from journalctl output (256 KB).
+/// Protects against memory exhaustion from corrupted/malicious journal entries.
+const MAX_JOURNAL_LINE_BYTES: usize = 256 * 1024;
+
 /// Convert local `SystemdUnitType` to core `SystemdUnitType`
 fn convert_unit_type(local: SystemdUnitType) -> CoreSystemdUnitType {
     match local {
@@ -445,6 +449,15 @@ impl UnifiedJournalWatcher {
             match read_result {
                 Ok(0) => break, // EOF
                 Ok(_) => {
+                    // Guard against oversized lines from corrupted journal
+                    if line.len() > MAX_JOURNAL_LINE_BYTES {
+                        warn!(
+                            line_bytes = line.len(),
+                            limit = MAX_JOURNAL_LINE_BYTES,
+                            "Skipping oversized journal line"
+                        );
+                        continue;
+                    }
                     if !line.trim().is_empty() {
                         match serde_json::from_str::<serde_json::Value>(&line) {
                             Ok(entry) => {
