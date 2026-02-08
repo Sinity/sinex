@@ -8,7 +8,7 @@ use xtask::sandbox::prelude::*;
 
 /// Placeholder for future performance testing
 #[sinex_test]
-#[ignore]
+#[ignore = "performance tests should use cargo xtask bench"]
 async fn database_performance_placeholder(_ctx: TestContext) -> TestResult<()> {
     // Performance tests should be implemented using cargo xtask bench
     // rather than in the standard test suite

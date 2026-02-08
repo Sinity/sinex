@@ -1,6 +1,5 @@
 use super::conversions::{extract_provenance, EventRecordExt};
 use crate::models::{Event, JsonValue};
-use crate::query_helpers::ulid_to_uuid;
 use crate::repositories::common::{db_error, DbResult, EnhancedRepository, Repository};
 use crate::schema::Events;
 use crate::{EventRecord, SinexError};
@@ -275,7 +274,7 @@ impl<'a> EventRepository<'a> {
         .map_err(|e| {
             db_error(
                 e,
-                &format!("Failed to prepare cascade session '{}'", session_id),
+                &format!("Failed to prepare cascade session '{session_id}'"),
             )
         })
     }
@@ -287,7 +286,7 @@ impl<'a> EventRepository<'a> {
     ) -> DbResult<()> {
         let ids: Vec<Uuid> = event_ids.iter().map(|id| id.to_uuid()).collect();
         sqlx::query_scalar::<_, i64>(
-            r#"SELECT core.cascade_populate_roots($1, $2::ulid[]) as inserted"#,
+            r"SELECT core.cascade_populate_roots($1, $2::ulid[]) as inserted",
         )
         .bind(table_name)
         .bind(&ids)
@@ -329,8 +328,7 @@ impl<'a> EventRepository<'a> {
             db_error(
                 e,
                 &format!(
-                    "Failed to expand cascade graph for table '{}' (max_depth={})",
-                    table_name, max_depth
+                    "Failed to expand cascade graph for table '{table_name}' (max_depth={max_depth})"
                 ),
             )
         })?
@@ -420,10 +418,7 @@ impl<'a> EventRepository<'a> {
         if event.id.is_none() {
             event.id = event_id;
         }
-        let id = event
-            .id
-            .get_or_insert_with(Id::<Event<JsonValue>>::new)
-            .clone();
+        let id = *event.id.get_or_insert_with(Id::<Event<JsonValue>>::new);
 
         // Extract provenance into separate fields
         let (
@@ -467,7 +462,7 @@ impl<'a> EventRepository<'a> {
             RetryConfig::default(),
             IdempotentTransaction::new(),
             move |tx| {
-                let id = id.clone();
+                let id = id;
                 let source_event_ids = source_event_ids.clone();
                 let source_material_id = source_material_id;
                 let source_event_uuids = source_event_uuids.clone();
@@ -570,10 +565,7 @@ impl<'a> EventRepository<'a> {
         if event.id.is_none() {
             event.id = event_id;
         }
-        let id = event
-            .id
-            .get_or_insert_with(Id::<Event<JsonValue>>::new)
-            .clone();
+        let id = *event.id.get_or_insert_with(Id::<Event<JsonValue>>::new);
 
         // Extract provenance into separate fields for database
         let (
@@ -662,7 +654,7 @@ impl<'a> EventRepository<'a> {
         .await
         .map_err(|e| db_error(e, "insert event with tx"))?;
 
-        Ok(record.try_to_event()?)
+        record.try_to_event()
     }
 
     #[instrument(skip(self, events), fields(batch_size = events.len()))]
@@ -815,10 +807,11 @@ impl<'a> EventRepository<'a> {
             ) = extract_provenance(event)?;
 
             // Track events with synthesis provenance for cycle detection
+            #[allow(clippy::expect_used)] // id guaranteed set during batch preparation above
             if let Some(ref ulids) = source_event_ids_raw {
                 if !ulids.is_empty() {
                     synthesis_checks.push((
-                        event.id.clone().unwrap(), // guaranteed set above
+                        event.id.expect("event id set during batch preparation"),
                         ulids.clone(),
                     ));
                 }
@@ -837,9 +830,7 @@ impl<'a> EventRepository<'a> {
             let ts_orig_subnano = ts_orig.map(|ts| (ts.nanosecond() % 1_000) as i32);
             let ts_orig = ts_orig.map(|ts| {
                 let truncated = (ts.nanosecond() / 1_000) * 1_000;
-                ts.replace_nanosecond(truncated)
-                    .map(Timestamp::new)
-                    .unwrap_or(ts)
+                ts.replace_nanosecond(truncated).map_or(ts, Timestamp::new)
             });
 
             ids.push(event_id);
@@ -889,24 +880,24 @@ impl<'a> EventRepository<'a> {
             ) ",
         );
         builder.push_values(0..ids.len(), |mut b, idx| {
-            b.push_bind(&ids[idx]).push_unseparated("::uuid::ulid");
+            b.push_bind(ids[idx]).push_unseparated("::uuid::ulid");
             b.push_bind(&sources[idx]);
             b.push_bind(&event_types[idx]);
             b.push_bind(&hosts[idx]);
             b.push_bind(&payloads[idx]);
-            b.push_bind(&ts_orig_values[idx]);
-            b.push_bind(&ts_orig_subnanos[idx]);
+            b.push_bind(ts_orig_values[idx]);
+            b.push_bind(ts_orig_subnanos[idx]);
             b.push_bind(&ingestor_versions[idx]);
-            b.push_bind(&payload_schema_ids[idx])
+            b.push_bind(payload_schema_ids[idx])
                 .push_unseparated("::uuid::ulid");
             b.push_bind(&source_event_ids[idx])
                 .push_unseparated("::uuid[]::ulid[]");
-            b.push_bind(&source_material_ids[idx])
+            b.push_bind(source_material_ids[idx])
                 .push_unseparated("::uuid::ulid");
-            b.push_bind(&offset_starts[idx]);
-            b.push_bind(&offset_ends[idx]);
+            b.push_bind(offset_starts[idx]);
+            b.push_bind(offset_ends[idx]);
             b.push_bind(&offset_kinds[idx]);
-            b.push_bind(&anchor_bytes[idx]);
+            b.push_bind(anchor_bytes[idx]);
             b.push_bind(&associated_blob_ids[idx])
                 .push_unseparated("::uuid[]::ulid[]");
         });
@@ -1060,22 +1051,22 @@ impl<'a> EventRepository<'a> {
         );
 
         builder.push_values(0..batch.len(), |mut b, idx| {
-            b.push_bind(&ids[idx]).push_unseparated("::uuid::ulid");
+            b.push_bind(ids[idx]).push_unseparated("::uuid::ulid");
             b.push_bind(&sources[idx]);
             b.push_bind(&event_types[idx]);
-            b.push_bind(&ts_orig_values[idx]);
-            b.push_bind(&ts_orig_subnanos[idx]);
+            b.push_bind(ts_orig_values[idx]);
+            b.push_bind(ts_orig_subnanos[idx]);
             b.push_bind(&hosts[idx]);
             b.push_bind(&payloads[idx]);
-            b.push_bind(&source_material_ids[idx])
+            b.push_bind(source_material_ids[idx])
                 .push_unseparated("::uuid::ulid");
-            b.push_bind(&anchor_bytes[idx]);
-            b.push_bind(&offset_starts[idx]);
-            b.push_bind(&offset_ends[idx]);
+            b.push_bind(anchor_bytes[idx]);
+            b.push_bind(offset_starts[idx]);
+            b.push_bind(offset_ends[idx]);
             b.push_bind(&offset_kinds[idx]);
             b.push_bind(&source_event_ids[idx])
                 .push_unseparated("::uuid[]::ulid[]");
-            b.push_bind(&payload_schema_ids[idx])
+            b.push_bind(payload_schema_ids[idx])
                 .push_unseparated("::uuid::ulid");
             b.push_bind(&ingestor_versions[idx]);
             b.push_bind(&associated_blob_ids[idx])
@@ -1225,11 +1216,12 @@ impl<'a> EventRepository<'a> {
         use std::time::{SystemTime, UNIX_EPOCH};
 
         // Generate a unique operation ID for audit tracking
+        #[allow(clippy::expect_used)] // system clock is always after UNIX epoch
         let operation_id = format!(
             "cleanup_{}_{}",
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .expect("system clock after UNIX epoch")
                 .as_millis(),
             rand::random::<u32>()
         );
@@ -1309,8 +1301,7 @@ impl<'a> EventRepository<'a> {
             db_error(
                 e,
                 &format!(
-                    "Failed to commit event deletion transaction (deleted {} events)",
-                    deleted_count
+                    "Failed to commit event deletion transaction (deleted {deleted_count} events)"
                 ),
             )
         })?;
@@ -1360,7 +1351,7 @@ impl<'a> EventRepository<'a> {
     pub async fn lifecycle_tier_status(&self) -> DbResult<Vec<LifecycleTierStatus>> {
         // Use runtime query since the function is created by migration
         let rows = sqlx::query_as::<_, LifecycleTierStatus>(
-            r#"
+            r"
             SELECT
                 tier,
                 event_count,
@@ -1368,7 +1359,7 @@ impl<'a> EventRepository<'a> {
                 newest_ts,
                 distinct_sources
             FROM core.lifecycle_tier_status()
-            "#,
+            ",
         )
         .fetch_all(self.pool)
         .await
@@ -1402,7 +1393,7 @@ impl<'a> EventRepository<'a> {
         let ids: Vec<Uuid> = archived_ids.iter().map(|id| id.to_uuid()).collect();
         // Use runtime query since the function is created by migration
         let count: i64 = sqlx::query_scalar(
-            r#"SELECT core.execute_cascade_tombstone($1::ulid[], $2, $3::uuid::ulid)"#,
+            r"SELECT core.execute_cascade_tombstone($1::ulid[], $2, $3::uuid::ulid)",
         )
         .bind(&ids)
         .bind(reason)
@@ -1435,13 +1426,12 @@ impl<'a> EventRepository<'a> {
 
         let ids: Vec<Uuid> = archived_ids.iter().map(|id| id.to_uuid()).collect();
         // Use runtime query since the function is created by migration
-        let count: i64 =
-            sqlx::query_scalar(r#"SELECT core.execute_cascade_restore($1::ulid[], $2)"#)
-                .bind(&ids)
-                .bind(operation_id)
-                .fetch_one(self.pool)
-                .await
-                .map_err(|e| db_error(e, "execute cascade restore"))?;
+        let count: i64 = sqlx::query_scalar(r"SELECT core.execute_cascade_restore($1::ulid[], $2)")
+            .bind(&ids)
+            .bind(operation_id)
+            .fetch_one(self.pool)
+            .await
+            .map_err(|e| db_error(e, "execute cascade restore"))?;
 
         Ok(count as u64)
     }
@@ -1463,14 +1453,13 @@ impl<'a> EventRepository<'a> {
 
         // Insert archived events into cascade table with depth 0
         sqlx::query(&format!(
-            r#"
-            INSERT INTO {} (id, depth, parent_ids, processed)
+            r"
+            INSERT INTO {table_name} (id, depth, parent_ids, processed)
             SELECT ae.id, 0, COALESCE(ae.source_event_ids, '{{}}'::ULID[]), FALSE
             FROM audit.archived_events ae
             WHERE ae.id = ANY($1::ulid[])
             ON CONFLICT (id) DO NOTHING
-            "#,
-            table_name
+            "
         ))
         .bind(&ids)
         .execute(self.pool)
@@ -1494,20 +1483,19 @@ impl<'a> EventRepository<'a> {
         while current_depth < max_depth {
             // Find archived events that reference events at current depth
             let rows_inserted = sqlx::query_scalar::<_, i64>(&format!(
-                r#"
+                r"
                 WITH new_children AS (
-                    INSERT INTO {} (id, depth, parent_ids, processed)
+                    INSERT INTO {table_name} (id, depth, parent_ids, processed)
                     SELECT DISTINCT ae.id, $1 + 1, COALESCE(ae.source_event_ids, '{{}}'::ULID[]), FALSE
                     FROM audit.archived_events ae
-                    JOIN {} ct ON ae.source_event_ids && ARRAY[ct.id]
+                    JOIN {table_name} ct ON ae.source_event_ids && ARRAY[ct.id]
                     WHERE ct.depth = $1 AND ct.processed = FALSE
-                    AND NOT EXISTS (SELECT 1 FROM {} ex WHERE ex.id = ae.id)
+                    AND NOT EXISTS (SELECT 1 FROM {table_name} ex WHERE ex.id = ae.id)
                     ON CONFLICT (id) DO NOTHING
                     RETURNING 1
                 )
                 SELECT COUNT(*)::BIGINT FROM new_children
-                "#,
-                table_name, table_name, table_name
+                "
             ))
             .bind(current_depth)
             .fetch_one(self.pool)
@@ -1516,8 +1504,7 @@ impl<'a> EventRepository<'a> {
 
             // Mark current depth as processed
             sqlx::query(&format!(
-                "UPDATE {} SET processed = TRUE WHERE depth = $1",
-                table_name
+                "UPDATE {table_name} SET processed = TRUE WHERE depth = $1"
             ))
             .bind(current_depth)
             .execute(self.pool)
@@ -1537,8 +1524,7 @@ impl<'a> EventRepository<'a> {
     /// Get all event IDs in a cascade table (for execution).
     pub async fn get_cascade_ids(&self, table_name: &str) -> DbResult<Vec<Ulid>> {
         let rows = sqlx::query_scalar::<_, Uuid>(&format!(
-            "SELECT id::uuid FROM {} ORDER BY depth DESC",
-            table_name
+            "SELECT id::uuid FROM {table_name} ORDER BY depth DESC"
         ))
         .fetch_all(self.pool)
         .await
@@ -1554,35 +1540,19 @@ impl<'a> EventRepository<'a> {
         before: Option<Timestamp>,
     ) -> DbResult<i64> {
         // Build query dynamically based on filters
-        let (query, needs_source, needs_before) = match (source.is_some(), before.is_some()) {
-            (true, true) => (
-                "SELECT COUNT(*)::BIGINT FROM audit.archived_events WHERE source = $1 AND ts_orig < $2",
-                true,
-                true,
-            ),
-            (true, false) => (
-                "SELECT COUNT(*)::BIGINT FROM audit.archived_events WHERE source = $1",
-                true,
-                false,
-            ),
-            (false, true) => (
-                "SELECT COUNT(*)::BIGINT FROM audit.archived_events WHERE ts_orig < $1",
-                false,
-                true,
-            ),
-            (false, false) => (
-                "SELECT COUNT(*)::BIGINT FROM audit.archived_events",
-                false,
-                false,
-            ),
+        let query = match (source.is_some(), before.is_some()) {
+            (true, true) => "SELECT COUNT(*)::BIGINT FROM audit.archived_events WHERE source = $1 AND ts_orig < $2",
+            (true, false) => "SELECT COUNT(*)::BIGINT FROM audit.archived_events WHERE source = $1",
+            (false, true) => "SELECT COUNT(*)::BIGINT FROM audit.archived_events WHERE ts_orig < $1",
+            (false, false) => "SELECT COUNT(*)::BIGINT FROM audit.archived_events",
         };
 
         let mut q = sqlx::query_scalar::<_, i64>(query);
-        if needs_source {
-            q = q.bind(source.unwrap().as_str());
+        if let Some(s) = source {
+            q = q.bind(s.as_str());
         }
-        if needs_before {
-            q = q.bind(*before.unwrap());
+        if let Some(b) = before {
+            q = q.bind(*b);
         }
 
         let count = q
@@ -1712,14 +1682,13 @@ impl<'a> EventRepository<'a> {
 
         // Insert live events into cascade table with depth 0
         sqlx::query(&format!(
-            r#"
-            INSERT INTO {} (id, depth, parent_ids, processed)
+            r"
+            INSERT INTO {table_name} (id, depth, parent_ids, processed)
             SELECT e.id, 0, COALESCE(e.source_event_ids, '{{}}'::ULID[]), FALSE
             FROM core.events e
             WHERE e.id = ANY($1::ulid[])
             ON CONFLICT (id) DO NOTHING
-            "#,
-            table_name
+            "
         ))
         .bind(&ids)
         .execute(self.pool)
@@ -1743,20 +1712,19 @@ impl<'a> EventRepository<'a> {
         while current_depth < max_depth {
             // Find live events that reference events at current depth
             let rows_inserted = sqlx::query_scalar::<_, i64>(&format!(
-                r#"
+                r"
                 WITH new_children AS (
-                    INSERT INTO {} (id, depth, parent_ids, processed)
+                    INSERT INTO {table_name} (id, depth, parent_ids, processed)
                     SELECT DISTINCT e.id, $1 + 1, COALESCE(e.source_event_ids, '{{}}'::ULID[]), FALSE
                     FROM core.events e
-                    JOIN {} ct ON e.source_event_ids && ARRAY[ct.id]
+                    JOIN {table_name} ct ON e.source_event_ids && ARRAY[ct.id]
                     WHERE ct.depth = $1 AND ct.processed = FALSE
-                    AND NOT EXISTS (SELECT 1 FROM {} ex WHERE ex.id = e.id)
+                    AND NOT EXISTS (SELECT 1 FROM {table_name} ex WHERE ex.id = e.id)
                     ON CONFLICT (id) DO NOTHING
                     RETURNING 1
                 )
                 SELECT COUNT(*)::BIGINT FROM new_children
-                "#,
-                table_name, table_name, table_name
+                "
             ))
             .bind(current_depth)
             .fetch_one(self.pool)
@@ -1765,8 +1733,7 @@ impl<'a> EventRepository<'a> {
 
             // Mark current depth as processed
             sqlx::query(&format!(
-                "UPDATE {} SET processed = TRUE WHERE depth = $1",
-                table_name
+                "UPDATE {table_name} SET processed = TRUE WHERE depth = $1"
             ))
             .bind(current_depth)
             .execute(self.pool)
@@ -1852,10 +1819,7 @@ impl<'a> EventRepository<'a> {
         tx.commit().await.map_err(|e| {
             db_error(
                 e,
-                &format!(
-                    "Failed to commit archive transaction (archived {} events)",
-                    archived_count
-                ),
+                &format!("Failed to commit archive transaction (archived {archived_count} events)"),
             )
         })?;
 
@@ -1912,7 +1876,7 @@ impl<'a, 't> EventRepositoryTx<'a, 't> {
     ) -> DbResult<()> {
         let ids: Vec<Uuid> = event_ids.iter().map(|id| id.to_uuid()).collect();
         sqlx::query_scalar::<_, i64>(
-            r#"SELECT core.cascade_populate_roots($1, $2::ulid[]) as inserted"#,
+            r"SELECT core.cascade_populate_roots($1, $2::ulid[]) as inserted",
         )
         .bind(table_name)
         .bind(&ids)

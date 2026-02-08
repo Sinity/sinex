@@ -3,10 +3,7 @@
 //! This library provides the core logic for the `sinexctl` command-line tool.
 //! It handles RPC communication with the Sinex gateway and formatting of output.
 
-// TODO: Enable strict clippy after cleanup
-#![allow(clippy::all)]
-#![allow(clippy::pedantic)]
-#![allow(clippy::nursery)]
+// Strict clippy enabled — workspace lints apply
 
 pub mod auth;
 pub mod client;

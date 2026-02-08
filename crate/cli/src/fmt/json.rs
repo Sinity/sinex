@@ -73,7 +73,7 @@ mod tests {
     fn format_json_lines_multiple() {
         let items = vec![json!({"id": 1}), json!({"id": 2}), json!({"id": 3})];
         let result = format_json_lines(&items).unwrap();
-        let lines: Vec<&str> = result.trim().split('\n').collect();
+        let lines: Vec<&str> = result.trim().lines().collect();
         assert_eq!(lines.len(), 3);
         // Each line should be valid JSON
         for line in lines {

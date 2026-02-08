@@ -340,8 +340,7 @@ impl TombstoneCreateCommand {
                 .operation
                 .cascade_analysis
                 .as_ref()
-                .map(|a| a.cascade_total)
-                .unwrap_or(0)
+                .map_or(0, |a| a.cascade_total)
         );
         println!();
         println!("To approve and execute, run within 1 hour:");
@@ -414,7 +413,7 @@ impl TombstoneApproveCommand {
         println!("  Operation ID:  {}", response.operation.operation_id);
         println!("  State:         {:?}", response.operation.state);
         if let Some(count) = response.operation.tombstoned_count {
-            println!("  Tombstoned:    {} events", count);
+            println!("  Tombstoned:    {count} events");
         }
         println!();
         println!("Data has been permanently deleted.");
@@ -528,17 +527,13 @@ impl TombstoneListCommand {
         println!("Tombstone Operations");
         println!("{}", "═".repeat(100));
         println!(
-            "{:<28} {:<12} {:<10} {:<20} {}",
-            "Operation ID", "State", "Events", "Created", "Reason"
+            "{:<28} {:<12} {:<10} {:<20} Reason",
+            "Operation ID", "State", "Events", "Created"
         );
         println!("{}", "─".repeat(100));
 
         for op in &response.operations {
-            let event_count = op
-                .cascade_analysis
-                .as_ref()
-                .map(|a| a.cascade_total)
-                .unwrap_or(0);
+            let event_count = op.cascade_analysis.as_ref().map_or(0, |a| a.cascade_total);
             let reason = if op.reason.len() > 30 {
                 format!("{}...", &op.reason[..27])
             } else {
@@ -593,22 +588,22 @@ impl TombstoneStatusCommand {
         println!();
 
         if let Some(by) = &op.approved_by {
-            println!("  Approved by:  {}", by);
+            println!("  Approved by:  {by}");
         }
         if let Some(at) = &op.approved_at {
-            println!("  Approved at:  {}", at);
+            println!("  Approved at:  {at}");
         }
         if let Some(at) = &op.started_at {
-            println!("  Started at:   {}", at);
+            println!("  Started at:   {at}");
         }
         if let Some(at) = &op.finished_at {
-            println!("  Finished at:  {}", at);
+            println!("  Finished at:  {at}");
         }
         if let Some(count) = op.tombstoned_count {
-            println!("  Tombstoned:   {} events", count);
+            println!("  Tombstoned:   {count} events");
         }
         if let Some(err) = &op.error_details {
-            println!("  Error:        {}", err);
+            println!("  Error:        {err}");
         }
 
         if let Some(analysis) = &op.cascade_analysis {
@@ -625,7 +620,7 @@ impl TombstoneStatusCommand {
 
 /// Parse duration argument (e.g., "30d", "90d", "1y")
 fn parse_duration_arg(s: &str) -> std::result::Result<Duration, String> {
-    parse_duration(s).map_err(|e| format!("Invalid duration '{}': {}", s, e))
+    parse_duration(s).map_err(|e| format!("Invalid duration '{s}': {e}"))
 }
 
 // ==================== Table Formatters ====================
@@ -653,7 +648,7 @@ fn format_status_table(
             .map(|c| c.to_uppercase().collect::<String>() + &tier.tier[1..])
             .unwrap_or_default();
 
-        output.push_str(&format!("{} {} Tier\n", tier_icon, tier_name));
+        output.push_str(&format!("{tier_icon} {tier_name} Tier\n"));
         output.push_str(&format!(
             "  Events:  {:>12}\n",
             format_count(tier.event_count)
@@ -661,8 +656,8 @@ fn format_status_table(
         output.push_str(&format!("  Sources: {:>12}\n", tier.distinct_sources));
 
         if let (Some(oldest), Some(newest)) = (&tier.oldest_ts, &tier.newest_ts) {
-            output.push_str(&format!("  Oldest:  {}\n", oldest));
-            output.push_str(&format!("  Newest:  {}\n", newest));
+            output.push_str(&format!("  Oldest:  {oldest}\n"));
+            output.push_str(&format!("  Newest:  {newest}\n"));
         } else {
             output.push_str("  (empty)\n");
         }

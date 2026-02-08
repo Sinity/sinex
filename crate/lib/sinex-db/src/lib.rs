@@ -7,12 +7,7 @@
 
 // Allow async fn in traits - we use trait_variant for Send bounds where needed
 #![allow(async_fn_in_trait)]
-// TODO: Enable strict clippy after cleanup
-// sinex-db has accumulated lint issues that need dedicated cleanup
-#![allow(clippy::all)]
-#![allow(clippy::pedantic)]
-#![allow(clippy::nursery)]
-#![allow(unused_imports)]
+// Strict clippy enabled — workspace lints apply
 
 pub mod advisory_lock;
 pub mod error;

@@ -6,19 +6,15 @@ use serde::{Deserialize, Serialize};
 /// Output format for CLI commands
 #[derive(Debug, Clone, Copy, ValueEnum, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum OutputFormat {
     /// Human-readable table (default)
+    #[default]
     Table,
     /// JSON output (one object per line)
     Json,
     /// YAML output
     Yaml,
-}
-
-impl Default for OutputFormat {
-    fn default() -> Self {
-        Self::Table
-    }
 }
 
 /// Node role enum (matches backend)

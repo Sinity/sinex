@@ -189,7 +189,7 @@ impl SecurityValidator {
         }
 
         // Check for TOML bomb (deeply nested keys)
-        if content.lines().filter(|line| line.starts_with("[")).count() > 50 {
+        if content.lines().filter(|line| line.starts_with('[')).count() > 50 {
             return Err(SecurityError::ResourceLimit(
                 "Excessive TOML nesting detected (potential TOML bomb)".to_string(),
             ));

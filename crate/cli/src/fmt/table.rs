@@ -15,8 +15,7 @@ pub fn format_table_nodes(nodes: &[InstanceInfo]) -> String {
         let heartbeat = node
             .last_heartbeat
             .as_ref()
-            .map(|hb| format_heartbeat_age(&(*hb).into()))
-            .unwrap_or_else(|| style("none").dim().to_string());
+            .map_or_else(|| style("none").dim().to_string(), format_heartbeat_age);
 
         builder.push_record([
             node.node_type.to_string(),
@@ -289,7 +288,7 @@ mod tests {
         let result = format_table_nodes(&[node]);
         assert!(result.contains("automaton"));
         assert!(result.contains("SHORTID"));
-        assert!(result.contains("-")); // hostname fallback
+        assert!(result.contains('-')); // hostname fallback
     }
 
     // --- format_table_replay tests ---

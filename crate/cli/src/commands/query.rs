@@ -131,24 +131,21 @@ async fn interactive_query(client: &GatewayClient, format: OutputFormat) -> Resu
         .with_starting_cursor(1) // Default to "Last hour"
         .prompt()?;
 
-    let (since, until) = match time_choice {
-        "Custom range..." => {
-            let since_str = Text::new("Since (e.g., 1h, 2d, 2025-01-15):")
-                .with_help_message("Relative: 1h, 2d, 1w | Absolute: 2025-01-15")
-                .prompt()?;
-            let until_str = Text::new("Until (press Enter for now):")
-                .with_help_message("Leave empty for current time")
-                .prompt_skippable()?
-                .filter(|s| !s.is_empty());
+    let (since, until) = if time_choice == "Custom range..." {
+        let since_str = Text::new("Since (e.g., 1h, 2d, 2025-01-15):")
+            .with_help_message("Relative: 1h, 2d, 1w | Absolute: 2025-01-15")
+            .prompt()?;
+        let until_str = Text::new("Until (press Enter for now):")
+            .with_help_message("Leave empty for current time")
+            .prompt_skippable()?
+            .filter(|s| !s.is_empty());
 
-            let since_time = parse_time(&since_str)?;
-            let until_time = until_str.map(|s| parse_time(&s)).transpose()?;
-            (since_time, until_time)
-        }
-        _ => {
-            let since_time = parse_preset_time(time_choice);
-            (since_time, None)
-        }
+        let since_time = parse_time(&since_str)?;
+        let until_time = until_str.map(|s| parse_time(&s)).transpose()?;
+        (since_time, until_time)
+    } else {
+        let since_time = parse_preset_time(time_choice);
+        (since_time, None)
     };
 
     // Fetch available sources from nodes if possible
@@ -225,13 +222,13 @@ async fn interactive_query(client: &GatewayClient, format: OutputFormat) -> Resu
     println!("{}", style("Equivalent CLI command:").dim());
     print!("  sinexctl query");
     if let Some(ref t) = text {
-        print!(" -q '{}'", t);
+        print!(" -q '{t}'");
     }
     for src in &selected_sources {
-        print!(" --source {}", src);
+        print!(" --source {src}");
     }
     for et in &selected_types {
-        print!(" --event-type {}", et);
+        print!(" --event-type {et}");
     }
     // Convert time to CLI arg format
     let since_arg = match time_choice {
@@ -245,9 +242,9 @@ async fn interactive_query(client: &GatewayClient, format: OutputFormat) -> Resu
             .format(&time::format_description::well_known::Rfc3339)
             .unwrap_or_else(|_| "invalid".to_string()),
     };
-    print!(" -s {}", since_arg);
+    print!(" -s {since_arg}");
     if limit != 100 {
-        print!(" -n {}", limit);
+        print!(" -n {limit}");
     }
     println!();
     println!();
@@ -274,6 +271,7 @@ fn parse_preset_time(preset: &str) -> Timestamp {
 /// Supports:
 /// - Relative: "1h", "2d", "30m", "1w"
 /// - Absolute: "2025-01-15", "2025-01-15T10:00:00Z"
+#[allow(clippy::expect_used)]
 fn parse_time(s: &str) -> Result<Timestamp> {
     // Try relative time first using sinex-primitives's parse_relative_duration
     if let Some(time_duration) = parse_relative_duration(s) {
@@ -288,12 +286,13 @@ fn parse_time(s: &str) -> Result<Timestamp> {
     }
 
     // Try date-only format (YYYY-MM-DD)
-    if let Ok(date) = time::Date::parse(
-        s,
-        &time::format_description::parse("[year]-[month]-[day]").unwrap(),
-    ) {
+    if let Ok(date) =
+        time::Date::parse(s, time::macros::format_description!("[year]-[month]-[day]"))
+    {
         return Ok(Timestamp::from(
-            date.with_hms(0, 0, 0).unwrap().assume_utc(),
+            date.with_hms(0, 0, 0)
+                .expect("midnight is always valid")
+                .assume_utc(),
         ));
     }
 
@@ -314,10 +313,9 @@ fn format_table_results(results: &[SearchResult]) -> String {
     for result in results {
         let timestamp = result
             .timestamp
-            .format(
-                &time::format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]")
-                    .unwrap(),
-            )
+            .format(time::macros::format_description!(
+                "[year]-[month]-[day] [hour]:[minute]:[second]"
+            ))
             .unwrap_or_else(|_| "invalid".to_string());
         let snippet = truncate_string(&result.snippet, 60);
 
@@ -341,7 +339,7 @@ fn truncate_string(s: &str, max_len: usize) -> String {
         s.to_string()
     } else {
         let truncated: String = s.chars().take(max_len - 3).collect();
-        format!("{}...", truncated)
+        format!("{truncated}...")
     }
 }
 
@@ -390,35 +388,35 @@ mod tests {
     proptest! {
         #[test]
         fn prop_relative_hours_parses(hours in 1i64..1000) {
-            let input = format!("{}h", hours);
+            let input = format!("{hours}h");
             let result = parse_relative_duration(&input);
             prop_assert_eq!(result, Some(Duration::hours(hours)));
         }
 
         #[test]
         fn prop_relative_days_parses(days in 1i64..365) {
-            let input = format!("{}d", days);
+            let input = format!("{days}d");
             let result = parse_relative_duration(&input);
             prop_assert_eq!(result, Some(Duration::days(days)));
         }
 
         #[test]
         fn prop_relative_minutes_parses(mins in 1i64..10000) {
-            let input = format!("{}m", mins);
+            let input = format!("{mins}m");
             let result = parse_relative_duration(&input);
             prop_assert_eq!(result, Some(Duration::minutes(mins)));
         }
 
         #[test]
         fn prop_relative_seconds_parses(secs in 1i64..100000) {
-            let input = format!("{}s", secs);
+            let input = format!("{secs}s");
             let result = parse_relative_duration(&input);
             prop_assert_eq!(result, Some(Duration::seconds(secs)));
         }
 
         #[test]
         fn prop_relative_weeks_parses(weeks in 1i64..52) {
-            let input = format!("{}w", weeks);
+            let input = format!("{weeks}w");
             let result = parse_relative_duration(&input);
             prop_assert_eq!(result, Some(Duration::weeks(weeks)));
         }
@@ -446,29 +444,29 @@ mod tests {
 
         #[test]
         fn prop_relative_duration_with_long_form_hour(hours in 1i64..100) {
-            let input = format!("{}hour", hours);
+            let input = format!("{hours}hour");
             let result = parse_relative_duration(&input);
             prop_assert_eq!(result, Some(Duration::hours(hours)));
 
-            let input_plural = format!("{}hours", hours);
+            let input_plural = format!("{hours}hours");
             let result_plural = parse_relative_duration(&input_plural);
             prop_assert_eq!(result_plural, Some(Duration::hours(hours)));
         }
 
         #[test]
         fn prop_relative_duration_with_long_form_day(days in 1i64..100) {
-            let input = format!("{}day", days);
+            let input = format!("{days}day");
             let result = parse_relative_duration(&input);
             prop_assert_eq!(result, Some(Duration::days(days)));
 
-            let input_plural = format!("{}days", days);
+            let input_plural = format!("{days}days");
             let result_plural = parse_relative_duration(&input_plural);
             prop_assert_eq!(result_plural, Some(Duration::days(days)));
         }
 
         #[test]
         fn prop_parse_time_relative_produces_past_datetime(hours in 1i64..100) {
-            let input = format!("{}h", hours);
+            let input = format!("{hours}h");
             let now = Timestamp::now();
             let result = parse_time(&input).unwrap();
             // Result should be in the past
@@ -489,8 +487,7 @@ mod tests {
             second in 0u32..60
         ) {
             let input = format!(
-                "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-                year, month, day, hour, minute, second
+                "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z"
             );
             let result = parse_time(&input);
             prop_assert!(result.is_ok(), "Failed to parse: {}", input);
@@ -502,7 +499,7 @@ mod tests {
             month in 1u32..=12,
             day in 1u32..=28  // Safe for all months
         ) {
-            let input = format!("{:04}-{:02}-{:02}", year, month, day);
+            let input = format!("{year:04}-{month:02}-{day:02}");
             let result = parse_time(&input);
             prop_assert!(result.is_ok(), "Failed to parse: {}", input);
         }
@@ -539,7 +536,7 @@ mod tests {
 
         for preset in presets {
             let result = parse_preset_time(preset);
-            assert!(result < now, "Preset '{}' should return past time", preset);
+            assert!(result < now, "Preset '{preset}' should return past time");
         }
 
         // Verify approximate durations
@@ -547,8 +544,7 @@ mod tests {
         let diff = (now - hour_ago).whole_minutes();
         assert!(
             (58..=62).contains(&diff),
-            "Last hour should be ~60 mins ago, got {}",
-            diff
+            "Last hour should be ~60 mins ago, got {diff}"
         );
     }
 }

@@ -296,7 +296,7 @@ impl<'a> EnhancedRepository<'a> for KnowledgeGraphRepository<'a> {
     type Table = Entities;
 }
 
-impl<'a> KnowledgeGraphRepository<'a> {
+impl KnowledgeGraphRepository<'_> {
     /// Create a new entity
     pub async fn create_entity(&self, entity: CreateEntity) -> DbResult<EntityRecord> {
         self.create_entity_with_executor(self.pool, entity).await
@@ -1191,14 +1191,14 @@ fn merge_source_event_ids(
     let mut seen = HashSet::new();
 
     for id in &target.source_event_ids {
-        merged.push(id.clone());
+        merged.push(*id);
         seen.insert(*id.as_ulid());
     }
 
     for id in &source.source_event_ids {
         if seen.insert(*id.as_ulid()) {
-            merged.push(id.clone());
-            added.push(id.clone());
+            merged.push(*id);
+            added.push(*id);
         }
     }
 
@@ -1224,7 +1224,7 @@ fn merge_json_value_in_place(
         (serde_json::Value::Object(target_map), serde_json::Value::Object(source_map)) => {
             for (key, source_value) in source_map {
                 let next_path = if path.is_empty() {
-                    key.to_string()
+                    key.clone()
                 } else {
                     format!("{path}.{key}")
                 };

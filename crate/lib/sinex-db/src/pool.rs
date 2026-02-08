@@ -51,19 +51,18 @@ pub async fn acquire_with_timeout(
         );
     }
 
-    match result {
-        Ok(result) => result.map_err(SinexError::from),
-        Err(_) => {
-            tracing::error!(
-                timeout_ms = timeout.whole_milliseconds(),
-                pool_size = pool.size(),
-                pool_idle = pool.num_idle(),
-                "Database pool acquire timed out"
-            );
-            Err(SinexError::timeout(format!(
-                "Timed out acquiring database connection after {timeout:?}"
-            )))
-        }
+    if let Ok(result) = result {
+        result.map_err(SinexError::from)
+    } else {
+        tracing::error!(
+            timeout_ms = timeout.whole_milliseconds(),
+            pool_size = pool.size(),
+            pool_idle = pool.num_idle(),
+            "Database pool acquire timed out"
+        );
+        Err(SinexError::timeout(format!(
+            "Timed out acquiring database connection after {timeout:?}"
+        )))
     }
 }
 
@@ -195,9 +194,9 @@ pub async fn create_pool_with_config(database_url: &str, config: &PoolConfig) ->
                 let timeout_value = if statement_timeout_secs == 0 {
                     "0".to_string()
                 } else {
-                    format!("{}s", statement_timeout_secs)
+                    format!("{statement_timeout_secs}s")
                 };
-                sqlx::query(&format!("SET statement_timeout = '{}'", timeout_value))
+                sqlx::query(&format!("SET statement_timeout = '{timeout_value}'"))
                     .execute(&mut *conn)
                     .await?;
                 Ok(())
@@ -217,9 +216,9 @@ pub fn get_database_url() -> Result<String> {
     let base_url = env::var("DATABASE_URL")
         .map_err(|_| SinexError::configuration("DATABASE_URL environment variable is required"))?;
 
-    Ok(environment().database_url(&base_url).map_err(|e| {
+    environment().database_url(&base_url).map_err(|e| {
         SinexError::configuration("failed to construct database URL").with_std_error(&e)
-    })?)
+    })
 }
 
 pub async fn create_pool_strict() -> Result<DbPool> {

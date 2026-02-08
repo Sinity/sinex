@@ -78,7 +78,7 @@ async fn events_repository_preserves_provenance(ctx: TestContext) -> TestResult<
             assert_eq!(source_event_ids.len(), 1);
             assert_eq!(source_event_ids[0], source_id);
         }
-        _ => panic!("Expected synthesis provenance"),
+        other => unreachable!("Expected synthesis provenance, got: {other:?}"),
     }
     Ok(())
 }

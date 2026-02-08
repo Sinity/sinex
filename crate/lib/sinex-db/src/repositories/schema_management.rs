@@ -33,8 +33,7 @@ impl NewEventSchema {
         hasher.update(b":");
         let serialized = serde_json::to_vec(&self.schema_content).map_err(|e| {
             sinex_primitives::error::SinexError::validation(format!(
-                "Failed to serialize schema content for hashing: {}",
-                e
+                "Failed to serialize schema content for hashing: {e}"
             ))
         })?;
         hasher.update(&serialized);
@@ -83,7 +82,7 @@ impl<'a> SchemaManagementRepository<'a> {
         I: IntoIterator<Item = ((String, String, String), JsonValue)>,
     {
         let mut candidates = Vec::new();
-        for ((source, event_type, version), schema_content) in discovered.into_iter() {
+        for ((source, event_type, version), schema_content) in discovered {
             candidates.push(SchemaCandidate::new(
                 source,
                 event_type,
@@ -105,8 +104,7 @@ impl<'a> SchemaManagementRepository<'a> {
                 if record
                     .content_hash
                     .as_ref()
-                    .map(|hash| hash == &candidate.content_hash)
-                    .unwrap_or(false)
+                    .is_some_and(|hash| hash == &candidate.content_hash)
                 {
                     unchanged += 1;
                 } else {
@@ -143,10 +141,7 @@ impl<'a> SchemaManagementRepository<'a> {
         SchemaVersion::new(&schema_version)
             .validate()
             .map_err(|e| {
-                SinexError::validation(format!(
-                    "Invalid schema version '{}': {}",
-                    schema_version, e
-                ))
+                SinexError::validation(format!("Invalid schema version '{schema_version}': {e}"))
             })?;
 
         let content_hash = NewEventSchema {
@@ -517,7 +512,7 @@ impl<'a> SchemaManagementRepository<'a> {
             Err(e) => ValidationResult {
                 is_valid: false,
                 errors: vec![ValidationError {
-                    path: "".to_string(),
+                    path: String::new(),
                     message: format!("Invalid schema: {e}"),
                     error_type: "schema_error".to_string(),
                 }],
@@ -636,7 +631,7 @@ impl<'a> SchemaManagementRepository<'a> {
             Err(e) => ValidationResult {
                 is_valid: false,
                 errors: vec![ValidationError {
-                    path: "".to_string(),
+                    path: String::new(),
                     message: format!("Invalid schema: {e}"),
                     error_type: "schema_error".to_string(),
                 }],
@@ -897,10 +892,7 @@ impl SchemaCandidate {
         SchemaVersion::new(&schema_version)
             .validate()
             .map_err(|e| {
-                SinexError::validation(format!(
-                    "Invalid schema version '{}': {}",
-                    schema_version, e
-                ))
+                SinexError::validation(format!("Invalid schema version '{schema_version}': {e}"))
             })?;
 
         let schema = NewEventSchema {

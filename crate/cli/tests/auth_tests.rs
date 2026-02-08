@@ -221,10 +221,10 @@ fn test_load_root_ca_malformed_certificate() {
     let result = load_root_ca(&ca_path);
     // This may succeed with empty store or fail depending on rustls_pemfile behavior
     // The important thing is it doesn't panic
-    match result {
-        Ok(store) => assert!(store.is_empty()),
-        Err(_) => {} // Also acceptable
+    if let Ok(store) = result {
+        assert!(store.is_empty());
     }
+    // Err is also acceptable — the point is it doesn't panic
 }
 
 #[test]

@@ -231,7 +231,7 @@ impl GatewayClient {
                 error.message,
                 error
                     .data
-                    .map(|d| format!("\nDetails: {}", d))
+                    .map(|d| format!("\nDetails: {d}"))
                     .unwrap_or_default()
             ));
         }
@@ -354,7 +354,7 @@ impl GatewayClient {
             horizon
                 .parse::<i64>()
                 .ok()
-                .and_then(|ts| Timestamp::from_unix_timestamp(ts))
+                .and_then(Timestamp::from_unix_timestamp)
                 .ok_or_else(|| color_eyre::eyre::eyre!("Invalid horizon format"))
         })?;
 

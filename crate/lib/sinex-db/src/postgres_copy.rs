@@ -103,7 +103,7 @@ fn write_i64_field(buf: &mut Vec<u8>, val: Option<i64>) {
         Some(v) => {
             // itoa is faster but std fmt is fine for now
             use std::io::Write;
-            let _ = write!(buf, "{}", v);
+            let _ = write!(buf, "{v}");
         }
         None => buf.extend_from_slice(b"\\N"),
     }
