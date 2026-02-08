@@ -8,14 +8,14 @@
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
-#[ignore]
+#[ignore = "requires large dataset infrastructure"]
 async fn test_jetstream_large_payload_roundtrip(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
 }
 
 #[sinex_test]
-#[ignore]
+#[ignore = "requires large dataset infrastructure"]
 async fn test_jetstream_large_batch_drain(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())

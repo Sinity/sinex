@@ -21,7 +21,7 @@ use xtask::sandbox::prelude::*;
 
 /// Test event payload approaching 1GB PostgreSQL JSONB limit
 #[sinex_test]
-#[ignore]
+#[ignore = "requires full stack boundary testing"]
 async fn test_event_payload_approaching_1gb_limit(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
@@ -29,7 +29,7 @@ async fn test_event_payload_approaching_1gb_limit(_ctx: TestContext) -> TestResu
 
 /// Test connection pool exhaustion
 #[sinex_test]
-#[ignore]
+#[ignore = "requires full stack boundary testing"]
 async fn test_connection_pool_exhaustion(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
@@ -37,7 +37,7 @@ async fn test_connection_pool_exhaustion(_ctx: TestContext) -> TestResult<()> {
 
 /// Test database transaction boundary limits
 #[sinex_test]
-#[ignore]
+#[ignore = "requires full stack boundary testing"]
 async fn test_database_transaction_boundary_limits(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
@@ -45,7 +45,7 @@ async fn test_database_transaction_boundary_limits(_ctx: TestContext) -> TestRes
 
 /// Test database query complexity limits
 #[sinex_test]
-#[ignore]
+#[ignore = "requires full stack boundary testing"]
 async fn test_database_query_complexity_limits(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
@@ -57,7 +57,7 @@ async fn test_database_query_complexity_limits(_ctx: TestContext) -> TestResult<
 
 /// Test database DNS timeout
 #[sinex_test(timeout = 30)]
-#[ignore]
+#[ignore = "requires full stack boundary testing"]
 async fn test_database_dns_timeout(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
@@ -65,7 +65,7 @@ async fn test_database_dns_timeout(_ctx: TestContext) -> TestResult<()> {
 
 /// Test network partition during processing
 #[sinex_test(timeout = 15)]
-#[ignore]
+#[ignore = "requires full stack boundary testing"]
 async fn test_network_partition_during_processing(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
@@ -73,7 +73,7 @@ async fn test_network_partition_during_processing(_ctx: TestContext) -> TestResu
 
 /// Test connection limit exhaustion
 #[sinex_test]
-#[ignore]
+#[ignore = "requires full stack boundary testing"]
 async fn test_connection_limit_exhaustion(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
@@ -85,7 +85,7 @@ async fn test_connection_limit_exhaustion(_ctx: TestContext) -> TestResult<()> {
 
 /// Test ULID timestamp conversion overflow
 #[sinex_test]
-#[ignore]
+#[ignore = "requires full stack boundary testing"]
 async fn test_ulid_timestamp_conversion_overflow_bug(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
@@ -93,7 +93,7 @@ async fn test_ulid_timestamp_conversion_overflow_bug(_ctx: TestContext) -> TestR
 
 /// Test ULID high frequency ordering limitations
 #[sinex_test]
-#[ignore]
+#[ignore = "requires full stack boundary testing"]
 async fn test_ulid_high_frequency_ordering_limitation(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
@@ -101,7 +101,7 @@ async fn test_ulid_high_frequency_ordering_limitation(_ctx: TestContext) -> Test
 
 /// Test numeric overflow in event counters
 #[sinex_test]
-#[ignore]
+#[ignore = "requires full stack boundary testing"]
 async fn test_numeric_overflow_in_event_counters(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
@@ -109,7 +109,7 @@ async fn test_numeric_overflow_in_event_counters(_ctx: TestContext) -> TestResul
 
 /// Test floating point precision boundaries
 #[sinex_test]
-#[ignore]
+#[ignore = "requires full stack boundary testing"]
 async fn test_floating_point_precision_boundaries(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
@@ -121,7 +121,7 @@ async fn test_floating_point_precision_boundaries(_ctx: TestContext) -> TestResu
 
 /// Test memory allocation boundaries
 #[sinex_test]
-#[ignore]
+#[ignore = "requires full stack boundary testing"]
 async fn test_memory_allocation_boundaries(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
@@ -129,7 +129,7 @@ async fn test_memory_allocation_boundaries(_ctx: TestContext) -> TestResult<()> 
 
 /// Test concurrent resource exhaustion
 #[sinex_test]
-#[ignore]
+#[ignore = "requires full stack boundary testing"]
 async fn test_concurrent_resource_exhaustion(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())

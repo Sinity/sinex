@@ -17,7 +17,7 @@ use xtask::sandbox::prelude::*;
 
 /// Test graceful degradation under database connectivity issues
 #[sinex_test]
-#[ignore]
+#[ignore = "requires database degradation simulation"]
 async fn test_graceful_degradation_database_failure(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
@@ -25,7 +25,7 @@ async fn test_graceful_degradation_database_failure(_ctx: TestContext) -> TestRe
 
 /// Test connection pool recovery after exhaustion
 #[sinex_test]
-#[ignore]
+#[ignore = "requires database degradation simulation"]
 async fn test_connection_pool_recovery(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
@@ -33,7 +33,7 @@ async fn test_connection_pool_recovery(_ctx: TestContext) -> TestResult<()> {
 
 /// Test system recovery after database failures
 #[sinex_test]
-#[ignore]
+#[ignore = "requires database degradation simulation"]
 async fn test_system_recovery_after_failure(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())

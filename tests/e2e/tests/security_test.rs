@@ -39,7 +39,7 @@ enum ExpectedBehavior {
 
 /// Test filesystem monitoring against path traversal attacks
 #[sinex_test]
-#[ignore]
+#[ignore = "requires security testing infrastructure"]
 async fn test_filesystem_path_traversal_protection(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
@@ -47,7 +47,7 @@ async fn test_filesystem_path_traversal_protection(_ctx: TestContext) -> TestRes
 
 /// Test comprehensive path traversal scenarios
 #[sinex_test]
-#[ignore]
+#[ignore = "requires security testing infrastructure"]
 async fn test_comprehensive_path_traversal_scenarios(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
@@ -59,7 +59,7 @@ async fn test_comprehensive_path_traversal_scenarios(_ctx: TestContext) -> TestR
 
 /// Test SQL injection protection
 #[sinex_test]
-#[ignore]
+#[ignore = "requires security testing infrastructure"]
 async fn test_sql_injection_protection(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
@@ -71,7 +71,7 @@ async fn test_sql_injection_protection(_ctx: TestContext) -> TestResult<()> {
 
 /// Test unicode normalization attacks
 #[sinex_test]
-#[ignore]
+#[ignore = "requires security testing infrastructure"]
 async fn test_unicode_normalization_attacks(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
@@ -79,7 +79,7 @@ async fn test_unicode_normalization_attacks(_ctx: TestContext) -> TestResult<()>
 
 /// Test null byte injection
 #[sinex_test]
-#[ignore]
+#[ignore = "requires security testing infrastructure"]
 async fn test_null_byte_injection(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
@@ -91,7 +91,7 @@ async fn test_null_byte_injection(_ctx: TestContext) -> TestResult<()> {
 
 /// Test resource exhaustion protection
 #[sinex_test]
-#[ignore]
+#[ignore = "requires security testing infrastructure"]
 async fn test_resource_exhaustion_protection(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
@@ -103,7 +103,7 @@ async fn test_resource_exhaustion_protection(_ctx: TestContext) -> TestResult<()
 
 /// Test malicious input validation
 #[sinex_test]
-#[ignore]
+#[ignore = "requires security testing infrastructure"]
 async fn test_malicious_input_validation(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
@@ -115,7 +115,7 @@ async fn test_malicious_input_validation(_ctx: TestContext) -> TestResult<()> {
 
 /// Test query interface against exploitation attempts
 #[sinex_test]
-#[ignore]
+#[ignore = "requires security testing infrastructure"]
 async fn test_query_interface_exploits(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())

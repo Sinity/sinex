@@ -62,7 +62,7 @@ async fn create_consumer(
 }
 
 #[sinex_bench]
-#[ignore]
+#[ignore = "stress test requiring resource monitoring"]
 #[allow(dead_code)]
 async fn jetstream_backpressure_limits() -> TestResult<()> {
     let nats = EphemeralNats::start().await?;
@@ -96,7 +96,7 @@ async fn jetstream_backpressure_limits() -> TestResult<()> {
 }
 
 #[sinex_bench]
-#[ignore]
+#[ignore = "stress test requiring resource monitoring"]
 #[allow(dead_code)]
 async fn jetstream_consumer_recovery() -> TestResult<()> {
     let nats = EphemeralNats::start().await?;
@@ -178,7 +178,7 @@ async fn jetstream_consumer_recovery() -> TestResult<()> {
 }
 
 #[sinex_bench]
-#[ignore]
+#[ignore = "stress test requiring resource monitoring"]
 #[allow(dead_code)]
 async fn jetstream_high_concurrency_publish() -> TestResult<()> {
     let nats = EphemeralNats::start().await?;

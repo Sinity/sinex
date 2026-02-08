@@ -10,7 +10,7 @@ use xtask::sandbox::timing::WaitHelpers;
 // use xtask::sandbox::PipelineNamespace;
 
 #[sinex_test]
-#[ignore]
+#[ignore = "requires multi-namespace infrastructure"]
 async fn pipeline_namespace_subjects_are_isolated(ctx: TestContext) -> TestResult<()> {
     // FIXME: PipelineNamespace and related APIs no longer available
     // let ctx = ctx.with_nats().await?;

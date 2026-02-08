@@ -32,14 +32,14 @@ use std::time::{Duration, Instant};
 // ==================== DATABASE PERFORMANCE TESTS ====================
 
 #[sinex_test(timeout = 60)]
-#[ignore]
+#[ignore = "requires dedicated performance environment"]
 async fn test_database_insertion_performance(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
 }
 
 #[sinex_test(timeout = 60)]
-#[ignore]
+#[ignore = "requires dedicated performance environment"]
 async fn test_concurrent_insertion_performance(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
@@ -48,7 +48,7 @@ async fn test_concurrent_insertion_performance(_ctx: TestContext) -> TestResult<
 // ==================== QUERY LATENCY TESTS ====================
 
 #[sinex_test(timeout = 60)]
-#[ignore]
+#[ignore = "requires dedicated performance environment"]
 async fn test_query_latency_under_load(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
@@ -57,7 +57,7 @@ async fn test_query_latency_under_load(_ctx: TestContext) -> TestResult<()> {
 // ==================== MEMORY USAGE TESTS ====================
 
 #[sinex_test(timeout = 60)]
-#[ignore]
+#[ignore = "requires dedicated performance environment"]
 async fn test_memory_usage_under_load(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
@@ -66,7 +66,7 @@ async fn test_memory_usage_under_load(_ctx: TestContext) -> TestResult<()> {
 // ==================== SCALING TESTS ====================
 
 #[sinex_test(timeout = 120)]
-#[ignore]
+#[ignore = "requires dedicated performance environment"]
 async fn test_scaling_behavior(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
@@ -75,7 +75,7 @@ async fn test_scaling_behavior(_ctx: TestContext) -> TestResult<()> {
 // ==================== WORKER COORDINATION TESTS ====================
 
 #[sinex_test(timeout = 60)]
-#[ignore]
+#[ignore = "requires dedicated performance environment"]
 async fn test_worker_coordination_overhead(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
@@ -84,7 +84,7 @@ async fn test_worker_coordination_overhead(_ctx: TestContext) -> TestResult<()> 
 // ==================== THROUGHPUT TESTS ====================
 
 #[sinex_test(timeout = 120)]
-#[ignore]
+#[ignore = "requires dedicated performance environment"]
 async fn test_sustained_throughput(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
@@ -93,7 +93,7 @@ async fn test_sustained_throughput(_ctx: TestContext) -> TestResult<()> {
 // ==================== BATCH PROCESSING TESTS ====================
 
 #[sinex_test(timeout = 60)]
-#[ignore]
+#[ignore = "requires dedicated performance environment"]
 async fn test_batch_processing_efficiency(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
@@ -102,7 +102,7 @@ async fn test_batch_processing_efficiency(_ctx: TestContext) -> TestResult<()> {
 // ==================== RESOURCE CONTENTION TESTS ====================
 
 #[sinex_test(timeout = 60)]
-#[ignore]
+#[ignore = "requires dedicated performance environment"]
 async fn test_resource_contention_handling(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
@@ -111,14 +111,14 @@ async fn test_resource_contention_handling(_ctx: TestContext) -> TestResult<()> 
 // ==================== PIPELINE PERFORMANCE TESTS ====================
 
 #[sinex_test(timeout = 120)]
-#[ignore]
+#[ignore = "requires dedicated performance environment"]
 async fn test_pipeline_event_throughput(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
 }
 
 #[sinex_test(timeout = 60)]
-#[ignore]
+#[ignore = "requires dedicated performance environment"]
 async fn test_pipeline_latency_measurement(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())

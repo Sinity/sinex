@@ -8,7 +8,7 @@
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
-#[ignore]
+#[ignore = "requires event ordering infrastructure"]
 async fn test_pipeline_preserves_ingest_order_over_ts_orig(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())

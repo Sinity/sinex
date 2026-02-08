@@ -11,21 +11,21 @@
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
-#[ignore]
+#[ignore = "requires NATS JetStream infrastructure"]
 async fn jetstream_publish_throughput(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
 }
 
 #[sinex_test]
-#[ignore]
+#[ignore = "requires NATS JetStream infrastructure"]
 async fn jetstream_concurrent_consumer_distribution(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
 }
 
 #[sinex_test]
-#[ignore]
+#[ignore = "requires NATS JetStream infrastructure"]
 async fn jetstream_redelivery_on_expired_ack(_ctx: TestContext) -> TestResult<()> {
     // FIXME: Test body removed pending API migration
     Ok(())
