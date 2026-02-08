@@ -554,7 +554,7 @@ impl IngestService {
                         };
                         error!("Background task {} panicked: {}", i, msg);
                     } else {
-                        debug!("Background task {} was cancelled or failed", i)
+                        debug!("Background task {} was cancelled or failed", i);
                     }
                 }
             }

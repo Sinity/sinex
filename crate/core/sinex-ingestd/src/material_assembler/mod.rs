@@ -440,8 +440,7 @@ impl MaterialAssembler {
                         // Try to get count without blocking - use try_lock
                         e.value()
                             .try_lock()
-                            .map(|s| s.buffered_slices.len() as u32)
-                            .unwrap_or(0)
+                            .map_or(0, |s| s.buffered_slices.len() as u32)
                     })
                     .sum();
 

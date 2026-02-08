@@ -356,9 +356,9 @@ fn set_dev_token_if_missing() {
         // Generate a deterministic dev token based on hostname (for consistency across runs)
         // but still unique enough that it's clearly a dev token
         let hostname = gethostname::gethostname().to_string_lossy().to_string();
-        let dev_token = format!("dev-token-{}", hostname);
+        let dev_token = format!("dev-token-{hostname}");
         std::env::set_var("SINEX_RPC_TOKEN", &dev_token);
-        eprintln!("⚡ Auto-set SINEX_RPC_TOKEN={} (dev mode)", dev_token);
+        eprintln!("⚡ Auto-set SINEX_RPC_TOKEN={dev_token} (dev mode)");
     }
 }
 

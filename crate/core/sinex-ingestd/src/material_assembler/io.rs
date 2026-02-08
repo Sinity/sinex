@@ -186,10 +186,7 @@ async fn restore_state_params(
             cleanup_state(assembler, material_id).await;
             return Ok(None);
         }
-        let actual_size = fs::metadata(&temp_path)
-            .await
-            .map(|m| m.len() as i64)
-            .unwrap_or(0);
+        let actual_size = fs::metadata(&temp_path).await.map_or(0, |m| m.len() as i64);
         if actual_size != state_snapshot.expected_offset {
             warn!(
                 material_id = %material_id,

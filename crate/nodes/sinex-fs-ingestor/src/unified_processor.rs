@@ -617,7 +617,7 @@ async fn watch_path(root: String, ctx: WatchContext) -> NodeResult<()> {
 
     // SYMLINK-001: Canonicalize to resolve symlinks and detect loops
     let canonical = std::fs::canonicalize(normalized.as_str()).map_err(|e| {
-        SinexError::validation(format!("Failed to canonicalize watch path '{}': {e}", root))
+        SinexError::validation(format!("Failed to canonicalize watch path '{root}': {e}"))
     })?;
 
     // RESOURCE-001: Estimate watch count before committing kernel resources
@@ -666,7 +666,7 @@ async fn watch_path(root: String, ctx: WatchContext) -> NodeResult<()> {
 
     watcher
         .watch(&canonical, RecursiveMode::Recursive)
-        .map_err(|e| SinexError::lifecycle(format!("Failed to watch path '{}': {e}", root)))?;
+        .map_err(|e| SinexError::lifecycle(format!("Failed to watch path '{root}': {e}")))?;
 
     loop {
         tokio::select! {

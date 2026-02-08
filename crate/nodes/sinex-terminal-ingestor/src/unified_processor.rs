@@ -456,7 +456,7 @@ impl HistoryWatcherContext {
                 let current_inode = metadata.ino();
 
                 // Update inode tracking
-                let inode_changed = last_inode.map_or(false, |prev| prev != current_inode);
+                let inode_changed = last_inode.is_some_and(|prev| prev != current_inode);
                 *last_inode = Some(current_inode);
 
                 if file_size < *offset_bytes {

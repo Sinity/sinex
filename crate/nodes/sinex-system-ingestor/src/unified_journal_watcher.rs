@@ -955,7 +955,7 @@ impl UnifiedJournalWatcher {
         if let Err(err) = tx.send(event).await {
             let drops = self.channel_drops.fetch_add(1, Ordering::Relaxed) + 1;
             // Rate-limit drop warnings: log at 1, 10, 100, 1000, then every 1000
-            if drops == 1 || drops == 10 || drops == 100 || drops % 1000 == 0 {
+            if drops == 1 || drops == 10 || drops == 100 || drops.is_multiple_of(1000) {
                 warn!(
                     channel_drops = drops,
                     context = context,
