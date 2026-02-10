@@ -82,9 +82,9 @@ impl<'a> TestRunner<'a> {
             "--workspace".to_string(),
             "--profile".to_string(),
             self.profile.to_string(),
-            // Output format for parsing
+            // Output format for parsing (libtest-json-plus includes test stdout for failures)
             "--message-format".to_string(),
-            "libtest-json".to_string(),
+            "libtest-json-plus".to_string(),
             // Output behavior
             "--failure-output".to_string(),
             "immediate-final".to_string(),

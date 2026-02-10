@@ -60,6 +60,24 @@ pub trait EventPublisher {
     /// Publish a test event through the ingestion pipeline.
     async fn publish<P: Publishable>(&self, payload: P) -> TestResult<Event<JsonValue>>;
 
+    /// Publish a test event with a specific timestamp override.
+    ///
+    /// Used by dataset seeding to create events with deterministic, ordered timestamps
+    /// rather than defaulting to `Timestamp::now()`.
+    async fn publish_at<P: Publishable>(
+        &self,
+        payload: P,
+        timestamp: Timestamp,
+    ) -> TestResult<Event<JsonValue>> {
+        self.publish_event_internal(
+            payload.source(),
+            payload.event_type(),
+            payload.to_json_value()?,
+            Some(timestamp),
+        )
+        .await
+    }
+
     /// Internal implementation for event publishing.
     async fn publish_event_internal(
         &self,

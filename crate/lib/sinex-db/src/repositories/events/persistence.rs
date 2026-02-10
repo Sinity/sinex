@@ -1117,8 +1117,8 @@ impl<'a> EventRepository<'a> {
                 $1, $2, $3, $4, $5, $6
             )
             RETURNING
-                id as "id: Id<EventAnnotation>",
-                event_id as "event_id: Id<Event<JsonValue>>",
+                id::uuid as "id!: Id<EventAnnotation>",
+                event_id::uuid as "event_id!: Id<Event<JsonValue>>",
                 annotation_type as "annotation_type!",
                 content as "content!",
                 metadata as "metadata!",
@@ -1149,10 +1149,10 @@ impl<'a> EventRepository<'a> {
             r#"
             UPDATE core.event_annotations
             SET content = $2, updated_at = CURRENT_TIMESTAMP
-            WHERE id = $1
+            WHERE id::uuid = $1
             RETURNING
-                id as "id: Id<EventAnnotation>",
-                event_id as "event_id: Id<Event<JsonValue>>",
+                id::uuid as "id!: Id<EventAnnotation>",
+                event_id::uuid as "event_id!: Id<Event<JsonValue>>",
                 annotation_type as "annotation_type!",
                 content as "content!",
                 metadata as "metadata!",
@@ -1182,7 +1182,7 @@ impl<'a> EventRepository<'a> {
         _deletion_reason: &str,
     ) -> DbResult<bool> {
         let result = sqlx::query!(
-            "DELETE FROM core.event_annotations WHERE id = $1",
+            "DELETE FROM core.event_annotations WHERE id::uuid = $1",
             *id.as_ulid() as _
         )
         .execute(self.pool)

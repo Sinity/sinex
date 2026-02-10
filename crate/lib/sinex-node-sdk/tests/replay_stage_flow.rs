@@ -9,10 +9,10 @@ use support::runtime::TestRuntimeBuilder;
 use tokio::time::timeout;
 use xtask::sandbox::prelude::*;
 
-#[sinex_serial_test]
+#[sinex_test]
 async fn replay_emits_events_through_emitter(ctx: TestContext) -> color_eyre::Result<()> {
     let ctx = ctx.with_nats().shared().await?;
-    ctx.ensure_clean().await?;
+    let _scope = ctx.pipeline().await?;
     let start_time = Timestamp::now();
     let source = format!("terminal-history-{}", Ulid::new());
 
@@ -78,10 +78,10 @@ async fn replay_emits_events_through_emitter(ctx: TestContext) -> color_eyre::Re
     Ok(())
 }
 
-#[sinex_serial_test]
+#[sinex_test]
 async fn custom_filters_emit_only_matching_events(ctx: TestContext) -> color_eyre::Result<()> {
     let ctx = ctx.with_nats().shared().await?;
-    ctx.ensure_clean().await?;
+    let _scope = ctx.pipeline().await?;
     let start_time = Timestamp::now();
     let run_id = Ulid::new();
 

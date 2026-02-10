@@ -1141,12 +1141,15 @@ mod tests {
     async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
         let nats = EphemeralNats::start().await?;
 
-        ctx.publish(DynamicPayload::new(
+        let material_id = ctx.create_source_material(Some("replay-outcome")).await?;
+        let event = DynamicPayload::new(
             "fs-test",
             "file.created",
             json!({ "path": "/tmp/replay.txt" }),
-        ))
-        .await?;
+        )
+        .from_material(material_id)
+        .build()?;
+        ctx.pool.events().insert(event).await?;
 
         let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
         let nats_client = nats.connect().await?;

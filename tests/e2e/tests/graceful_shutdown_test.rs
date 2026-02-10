@@ -73,6 +73,14 @@ async fn test_ingestd_graceful_shutdown_completes_inflight(ctx: TestContext) -> 
     )
     .await?;
 
+    // Wait for ingestd to attach a consumer — proves it's actively pulling messages.
+    nats.wait_for_consumer_on_stream(
+        &js,
+        &topology.events_stream,
+        Duration::from_secs(Timeouts::STANDARD),
+    )
+    .await?;
+
     // Publish events before shutdown directly to JetStream
     let subject = format!("{}.graceful.event", topology.events_stream);
     for idx in 0..5 {
@@ -157,6 +165,13 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
         &js,
         &topology.events_stream,
         Duration::from_secs(Timeouts::SHORT),
+    )
+    .await?;
+
+    nats.wait_for_consumer_on_stream(
+        &js,
+        &topology.events_stream,
+        Duration::from_secs(Timeouts::STANDARD),
     )
     .await?;
 
@@ -371,6 +386,13 @@ async fn test_shutdown_data_consistency(ctx: TestContext) -> TestResult<()> {
         &js,
         &topology.events_stream,
         Duration::from_secs(Timeouts::SHORT),
+    )
+    .await?;
+
+    nats.wait_for_consumer_on_stream(
+        &js,
+        &topology.events_stream,
+        Duration::from_secs(Timeouts::STANDARD),
     )
     .await?;
 

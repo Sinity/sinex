@@ -425,6 +425,9 @@ pub struct TestIngestdConfig {
     pub batch_size: usize,
     pub consumer_fetch_max_messages: usize,
     pub consumer_fetch_timeout_ms: u64,
+    /// Database connection pool size for the spawned ingestd.
+    /// Defaults to 4 (test-appropriate; production default is 50).
+    pub database_pool_size: u32,
 }
 
 impl Default for TestIngestdConfig {
@@ -437,6 +440,7 @@ impl Default for TestIngestdConfig {
             batch_size: 1,
             consumer_fetch_max_messages: 100,
             consumer_fetch_timeout_ms: 1000,
+            database_pool_size: 4,
         }
     }
 }
@@ -480,7 +484,7 @@ fn find_workspace_root() -> Result<PathBuf> {
 
 pub async fn start_test_ingestd_with_config(
     config: TestIngestdConfig,
-    _ctx: Option<&crate::sandbox::context::Sandbox>,
+    ctx: Option<&crate::sandbox::context::Sandbox>,
 ) -> Result<TestIngestdHandle> {
     let workspace_root = find_workspace_root()?;
     let profile = if cfg!(debug_assertions) {
@@ -499,6 +503,14 @@ pub async fn start_test_ingestd_with_config(
     }
 
     let mut cmd = Command::new(binary_path);
+    // Auto-kill ingestd when parent test process exits.
+    #[cfg(target_os = "linux")]
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
+            Ok(())
+        });
+    }
     cmd.stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
@@ -519,17 +531,46 @@ pub async fn start_test_ingestd_with_config(
         "SINEX_INGESTD_CONSUMER_FETCH_TIMEOUT_MS",
         config.consumer_fetch_timeout_ms.to_string(),
     );
-    // CLI args for batch size
+    // CLI args for batch size and pool size
     cmd.args(["--batch-size", &config.batch_size.to_string()]);
+    cmd.args(["--pool-size", &config.database_pool_size.to_string()]);
 
     let child = cmd.spawn()?;
 
-    // In a real implementation we'd wait for readiness here.
-    // For now we assume it starts fast enough or tests will wait.
-    let stream_name = format!(
-        "{}_RAW_EVENTS",
-        config.namespace.as_deref().unwrap_or("SINEX")
+    // Compute the stream name using the same logic as ingestd:
+    // environment-prefixed base name, with optional namespace suffix.
+    let env = sinex_primitives::environment::environment();
+    let stream_name = env.nats_stream_name_with_namespace(
+        config.namespace.as_deref(),
+        &env.nats_stream_name("SINEX_RAW_EVENTS"),
     );
+
+    // Wait for ingestd to create the JetStream stream AND attach a consumer.
+    // Without stream wait: tests publish before the stream exists → silent message loss.
+    // Without consumer wait: stream exists but ingestd isn't pulling yet → events
+    // pile up in NATS and never reach the database before test timeout.
+    if let Some(sandbox) = ctx {
+        // Only wait for stream if sandbox has NATS initialized via with_nats().
+        // Tests that create their own EphemeralNats pass ctx for the DB pool
+        // but don't initialize NATS on the sandbox.
+        if let Ok(nats) = sandbox.nats_handle() {
+            let client = sandbox.nats_client();
+            let js = nats.jetstream_with_client(client);
+            nats.wait_for_stream(&js, &stream_name, Duration::from_secs(Timeouts::STANDARD))
+                .await
+                .wrap_err_with(|| format!("ingestd failed to create stream {stream_name}"))?;
+
+            // Wait for ingestd to create a consumer on the stream. This proves
+            // the process has completed startup and is actively pulling messages.
+            nats.wait_for_consumer_on_stream(
+                &js,
+                &stream_name,
+                Duration::from_secs(Timeouts::STANDARD),
+            )
+            .await
+            .wrap_err_with(|| format!("ingestd consumer not ready on stream {stream_name}"))?;
+        }
+    }
 
     Ok(TestIngestdHandle { child, stream_name })
 }

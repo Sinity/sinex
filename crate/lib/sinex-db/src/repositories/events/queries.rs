@@ -449,8 +449,8 @@ impl EventRepository<'_> {
             EventAnnotation,
             r#"
             SELECT
-                id as "id: Id<EventAnnotation>",
-                event_id as "event_id: Id<Event<JsonValue>>",
+                id::uuid as "id!: Id<EventAnnotation>",
+                event_id::uuid as "event_id!: Id<Event<JsonValue>>",
                 annotation_type as "annotation_type!",
                 content as "content!",
                 metadata as "metadata!",
@@ -458,7 +458,7 @@ impl EventRepository<'_> {
                 created_at as "created_at: Timestamp",
                 updated_at as "updated_at: Timestamp"
             FROM core.event_annotations
-            WHERE event_id = $1
+            WHERE event_id::uuid = $1
             ORDER BY created_at DESC
             "#,
             *id.as_ulid() as _
@@ -480,8 +480,8 @@ impl EventRepository<'_> {
             EventAnnotation,
             r#"
             SELECT
-                id as "id: Id<EventAnnotation>",
-                event_id as "event_id: Id<Event<JsonValue>>",
+                id::uuid as "id!: Id<EventAnnotation>",
+                event_id::uuid as "event_id!: Id<Event<JsonValue>>",
                 annotation_type as "annotation_type!",
                 content as "content!",
                 metadata as "metadata!",
@@ -520,8 +520,8 @@ impl EventRepository<'_> {
             EventAnnotation,
             r#"
             SELECT
-                id as "id: Id<EventAnnotation>",
-                event_id as "event_id: Id<Event<JsonValue>>",
+                id::uuid as "id!: Id<EventAnnotation>",
+                event_id::uuid as "event_id!: Id<Event<JsonValue>>",
                 annotation_type as "annotation_type!",
                 content as "content!",
                 metadata as "metadata!",
@@ -685,7 +685,7 @@ impl EventRepository<'_> {
             SuspiciousEvent,
             r#"
             SELECT
-                id as "event_id: Id<Event<JsonValue>>",
+                id::uuid as "event_id!: Id<Event<JsonValue>>",
                 source as "source!",
                 event_type as "event_type!",
                 payload as "payload!",
@@ -718,7 +718,7 @@ impl EventRepository<'_> {
             InvalidTimestamp,
             r#"
             SELECT
-                id as "event_id: Id<Event<JsonValue>>",
+                id::uuid as "event_id!: Id<Event<JsonValue>>",
                 ts_orig as "ts_orig: Timestamp",
                 ts_ingest as "ts_ingest: Timestamp"
             FROM core.events

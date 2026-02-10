@@ -200,6 +200,7 @@ impl IngestdConfig {
         dry_run: bool,
         annex_repo_path: Option<String>,
         assembler_state_dir: Option<String>,
+        namespace: Option<String>,
     ) -> Self {
         let skip_schema_sync = env_flag("SINEX_SKIP_SCHEMA_SYNC").unwrap_or(false);
         let validate_schemas = env_flag("SINEX_VALIDATE_SCHEMAS").unwrap_or(true);
@@ -221,6 +222,7 @@ impl IngestdConfig {
         config.skip_schema_sync = skip_schema_sync;
         config.validate_schemas = validate_schemas;
         config.nats = nats_config_clone;
+        config.nats_namespace = namespace;
 
         // Override fetch config if specified
         if let Some(max_msgs) = consumer_fetch_max_messages {
@@ -247,6 +249,14 @@ impl IngestdConfig {
             && self.batch_size != default_batch_size
         {
             self.consumer_fetch_max_messages = self.batch_size;
+        }
+
+        // When a namespace is set (test isolation), apply it to the stream name
+        // so each test gets its own JetStream stream.
+        if let Some(ref ns) = self.nats_namespace {
+            let env = environment();
+            self.nats_stream_name =
+                env.nats_stream_name_with_namespace(Some(ns), &self.nats_stream_name);
         }
 
         self

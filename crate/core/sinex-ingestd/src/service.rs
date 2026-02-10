@@ -563,7 +563,18 @@ impl IngestService {
         };
 
         if tokio::time::timeout(timeout, wait_task).await.is_err() {
-            warn!("Timed out waiting for background tasks after {:?}", timeout);
+            warn!(
+                "Timed out waiting for background tasks after {:?}, aborting {} remaining",
+                timeout,
+                handles.len()
+            );
+            for handle in &handles {
+                handle.abort();
+            }
+            // Await aborted handles so their destructors run before we return.
+            for handle in handles {
+                let _ = handle.await;
+            }
         } else {
             info!("All background tasks finished");
         }

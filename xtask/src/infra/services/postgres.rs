@@ -77,7 +77,7 @@ impl PostgresManager {
         )?;
         writeln!(conf, "listen_addresses = ''")?; // TCP disabled, use Unix sockets only
         writeln!(conf, "port = {}", self.config.port)?;
-        writeln!(conf, "max_connections = 200")?;
+        writeln!(conf, "max_connections = 800")?;
         writeln!(conf, "shared_preload_libraries = 'timescaledb'")?;
         writeln!(conf, "log_destination = 'stderr'")?;
         writeln!(conf, "logging_collector = on")?;

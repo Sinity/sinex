@@ -73,7 +73,7 @@ async-nats = { workspace = true, optional = true }
 proptest = { workspace = true, optional = true }
 
 # Core types (Timestamp, etc.) - always available
-sinex-primitives = { path = "../crate/lib/sinex-primitives", default-features = false }
+sinex-primitives = { path = "../crate/lib/sinex-primitives", default-features = false, features = ["testing"] }
 sinex-schema = { path = "../crate/lib/sinex-schema" }
 
 # Sandbox-only heavy deps

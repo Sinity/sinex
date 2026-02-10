@@ -1156,6 +1156,8 @@ impl<T: Node + 'static> NodeRunner<T> {
             }
 
             let batch_size = events.len();
+            // Clone the batch so we can retry per-event if the whole batch fails.
+            let events_backup = events.clone();
             match self.node.process_event_batch(events).await {
                 Ok(stats) => {
                     processed_events += stats.processed as u64;
@@ -1167,20 +1169,52 @@ impl<T: Node + 'static> NodeRunner<T> {
                         debug!(batch_size, processed_events, "Processed event batch");
                     }
                 }
-                Err(err) => {
-                    // Save checkpoint before bailing so we don't lose ALL progress
-                    if let Some(eid) = last_event_id {
-                        checkpoint_state.checkpoint = Checkpoint::Internal {
-                            event_id: eid,
-                            message_count: processed_events,
-                        };
-                        checkpoint_state.processed_count = processed_events;
-                        checkpoint_state.last_activity =
-                            sinex_primitives::temporal::Timestamp::now();
-                        let _ = checkpoint_manager.save_checkpoint(&checkpoint_state).await;
+                Err(batch_err) => {
+                    // Batch failed — fall back to per-event processing with DLQ routing.
+                    // This prevents a single bad event from killing the entire node.
+                    warn!(
+                        error = %batch_err,
+                        batch_size,
+                        "Batch processing failed; falling back to per-event processing with DLQ routing"
+                    );
+                    let node_name = self.node.node_name().to_string();
+                    let mut succeeded = 0u64;
+                    for event in events_backup {
+                        match self.node.process_event_batch(vec![event.clone()]).await {
+                            Ok(stats) => {
+                                succeeded += stats.processed as u64;
+                            }
+                            Err(event_err) => {
+                                let event_id = event.id;
+                                warn!(
+                                    error = %event_err,
+                                    ?event_id,
+                                    "Event processing failed; routing to DLQ"
+                                );
+                                if let Err(dlq_err) = transport
+                                    .send_to_dlq(&event, &event_err.to_string(), &node_name)
+                                    .await
+                                {
+                                    error!(
+                                        error = %event_err,
+                                        dlq_error = %dlq_err,
+                                        ?event_id,
+                                        "Failed to route event to DLQ"
+                                    );
+                                }
+                            }
+                        }
                     }
-                    error!(error = %err, batch_size, "Automaton batch processing failed - stopping node to prevent data loss");
-                    return Err(err);
+                    processed_events += succeeded;
+                    events_since_checkpoint += succeeded;
+                    // Count DLQ'd events as processed for checkpoint purposes
+                    let dlq_count = batch_size as u64 - succeeded;
+                    processed_events += dlq_count;
+                    events_since_checkpoint += dlq_count;
+                    if let Some(eid) = batch_last_event_id {
+                        last_event_id = Some(eid);
+                    }
+                    info!(succeeded, dlq_count, "Per-event fallback complete");
                 }
             }
 

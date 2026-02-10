@@ -12,9 +12,9 @@
 # default: Standard runs
 # -----------------------------------------------------------------------------
 fail-fast          = false
-test-threads       = 24
+test-threads       = 32
 retries            = 0
-slow-timeout       = { period = "60s", terminate-after = 1 }
+slow-timeout       = { period = "60s", terminate-after = 2 }
 failure-output     = "immediate-final"
 success-output     = "never"
 status-level       = "pass"
@@ -24,6 +24,35 @@ final-status-level = "fail"
 path                 = ".sinex/nextest/junit.xml"
 store-success-output = false
 store-failure-output = true
+
+# E2E and integration tests get longer timeouts (full pipeline setup)
+[[profile.default.overrides]]
+filter = "package(sinex-e2e-tests)"
+slow-timeout = { period = "120s", terminate-after = 2 }
+
+# Heavy integration tests in core packages also need more time
+[[profile.default.overrides]]
+filter = "package(sinex-ingestd) & test(/integration|pipeline|stress|chaos/)"
+slow-timeout = { period = "120s", terminate-after = 2 }
+
+[[profile.default.overrides]]
+filter = "package(sinex-node-sdk) & test(/integration|material_acquisition|replay|blob|checkpoint|property/)"
+slow-timeout = { period = "120s", terminate-after = 2 }
+
+# xtask command edge case tests spawn cargo subprocesses (check, test)
+[[profile.default.overrides]]
+filter = "package(xtask) & test(/command_edge_cases/)"
+slow-timeout = { period = "120s", terminate-after = 2 }
+
+# Schema and DB tests need time for pool provisioning under load
+[[profile.default.overrides]]
+filter = "package(sinex-db) | package(sinex-schema)"
+slow-timeout = { period = "90s", terminate-after = 2 }
+
+# Services tests use DB + may wait for events
+[[profile.default.overrides]]
+filter = "package(sinex-services)"
+slow-timeout = { period = "90s", terminate-after = 2 }
 
 # -----------------------------------------------------------------------------
 # debug: Single-threaded debugging

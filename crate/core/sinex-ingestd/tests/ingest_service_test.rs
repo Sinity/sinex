@@ -22,10 +22,9 @@ use xtask::sandbox::prelude::*;
 // ============================================================================
 
 /// Test ingest service initialization patterns
-#[sinex_serial_test]
+#[sinex_test]
 async fn test_ingest_service_startup(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing ingest service startup and initialization");
-    ctx.ensure_clean().await?;
 
     // Verify database connectivity for ingest service
     let pool = &ctx.pool;
@@ -58,6 +57,8 @@ async fn test_ingest_service_startup(ctx: TestContext) -> Result<()> {
 /// Test event ingestion through the service API
 #[sinex_test]
 async fn test_event_ingestion_flow(ctx: TestContext) -> Result<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     tracing::info!("Testing event ingestion through service API");
 
     // Create test event that would come from a node
@@ -106,11 +107,11 @@ async fn test_event_ingestion_flow(ctx: TestContext) -> Result<()> {
 }
 
 /// Test batch ingestion functionality
-#[sinex_serial_test]
+#[sinex_test]
 async fn test_batch_ingestion(ctx: TestContext) -> Result<()> {
-    tracing::info!("Testing batch event ingestion");
     let ctx = ctx.with_nats().shared().await?;
-    ctx.ensure_clean().await?;
+    let _scope = ctx.pipeline().await?;
+    tracing::info!("Testing batch event ingestion");
 
     // Create multiple events as would be sent in a batch
     let batch_events = vec![
@@ -181,8 +182,9 @@ async fn test_batch_ingestion(ctx: TestContext) -> Result<()> {
 /// Test event validation during ingestion
 #[sinex_test]
 async fn test_ingestion_validation(ctx: TestContext) -> Result<()> {
-    tracing::info!("Testing event validation during ingestion");
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
+    tracing::info!("Testing event validation during ingestion");
 
     // Test valid event with complete payload
     let valid_event = ctx
@@ -241,11 +243,11 @@ async fn test_ingestion_validation(ctx: TestContext) -> Result<()> {
 }
 
 /// Test source and event type patterns
-#[sinex_serial_test]
+#[sinex_test]
 async fn test_source_and_type_patterns(ctx: TestContext) -> Result<()> {
-    tracing::info!("Testing source and event type patterns");
     let ctx = ctx.with_nats().shared().await?;
-    ctx.ensure_clean().await?;
+    let _scope = ctx.pipeline().await?;
+    tracing::info!("Testing source and event type patterns");
 
     // Test events with different sources and types for pattern validation
     let test_patterns = vec![
@@ -347,11 +349,11 @@ async fn test_source_and_type_patterns(ctx: TestContext) -> Result<()> {
 // ============================================================================
 
 /// Test ingestion performance characteristics
-#[sinex_serial_test]
+#[sinex_test]
 async fn test_ingestion_performance(ctx: TestContext) -> Result<()> {
-    tracing::info!("Testing ingestion service performance");
     let ctx = ctx.with_nats().shared().await?;
-    ctx.ensure_clean().await?;
+    let _scope = ctx.pipeline().await?;
+    tracing::info!("Testing ingestion service performance");
 
     let start_time = std::time::Instant::now();
     let run_id = Ulid::new();
@@ -450,11 +452,11 @@ async fn test_ingestion_performance(ctx: TestContext) -> Result<()> {
 }
 
 /// Test sequential ingestion handling (modified from concurrent due to TestContext constraints)
-#[sinex_serial_test]
+#[sinex_test]
 async fn test_sequential_ingestion(ctx: TestContext) -> Result<()> {
-    tracing::info!("Testing sequential event ingestion");
     let ctx = ctx.with_nats().shared().await?;
-    ctx.ensure_clean().await?;
+    let _scope = ctx.pipeline().await?;
+    tracing::info!("Testing sequential event ingestion");
 
     let source = format!("sequential-ingest-{}", Ulid::new());
 
@@ -543,21 +545,22 @@ async fn test_sequential_ingestion(ctx: TestContext) -> Result<()> {
 #[sinex_test]
 async fn test_ingestion_error_handling(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing ingestion service error handling and recovery");
+    let material_id = ctx.create_source_material(Some("error-handling")).await?;
 
-    // Test successful ingestion
-    let valid_event = ctx
-        .publish(DynamicPayload::new(
-            "error-test",
-            "error.handling",
-            serde_json::json!({
-                "test_case": "valid_event",
-                "data": "This should ingest successfully"
-            }),
-        ))
-        .await;
-
+    // Test successful ingestion via direct DB insert
+    let valid_event = DynamicPayload::new(
+        "error-test",
+        "error.handling",
+        serde_json::json!({
+            "test_case": "valid_event",
+            "data": "This should ingest successfully"
+        }),
+    )
+    .from_material(material_id)
+    .build()?;
+    let valid_result = ctx.pool.events().insert(valid_event).await;
     assert!(
-        valid_event.is_ok(),
+        valid_result.is_ok(),
         "Valid event should be ingested successfully"
     );
 
@@ -566,22 +569,12 @@ async fn test_ingestion_error_handling(ctx: TestContext) -> Result<()> {
         ("empty_payload", serde_json::json!({})),
         (
             "large_string",
-            serde_json::json!({
-                "large_data": "x".repeat(5000)
-            }),
+            serde_json::json!({"large_data": "x".repeat(5000)}),
         ),
         (
             "deeply_nested",
             serde_json::json!({
-                "level1": {
-                    "level2": {
-                        "level3": {
-                            "level4": {
-                                "data": "deeply nested payload"
-                            }
-                        }
-                    }
-                }
+                "level1": {"level2": {"level3": {"level4": {"data": "deeply nested payload"}}}}
             }),
         ),
         (
@@ -600,12 +593,11 @@ async fn test_ingestion_error_handling(ctx: TestContext) -> Result<()> {
     ];
 
     let mut processed_count = 0;
-    for (case_name, payload) in edge_cases {
-        let edge_event_result = ctx
-            .publish(DynamicPayload::new("error-test", "edge.case", payload))
-            .await;
-
-        match edge_event_result {
+    for (i, (case_name, payload)) in edge_cases.into_iter().enumerate() {
+        let event = DynamicPayload::new("error-test", "edge.case", payload)
+            .from_material_at(material_id, (i + 1) as i64)
+            .build()?;
+        match ctx.pool.events().insert(event).await {
             Ok(_) => {
                 processed_count += 1;
                 tracing::debug!(case = %case_name, "Edge case processed successfully");
@@ -621,26 +613,26 @@ async fn test_ingestion_error_handling(ctx: TestContext) -> Result<()> {
         "Most edge cases should be handled gracefully"
     );
 
-    // Verify service recovery after edge case processing
-    let recovery_event = ctx
-        .publish(DynamicPayload::new(
-            "error-test",
-            "error.recovery",
-            serde_json::json!({
-                "test_case": "post_recovery",
-                "data": "Service should continue working after error handling"
-            }),
-        ))
-        .await;
-
+    // Verify DB recovery after edge case processing
+    let recovery_event = DynamicPayload::new(
+        "error-test",
+        "error.recovery",
+        serde_json::json!({
+            "test_case": "post_recovery",
+            "data": "Service should continue working after error handling"
+        }),
+    )
+    .from_material_at(material_id, 10)
+    .build()?;
+    let recovery_result = ctx.pool.events().insert(recovery_event).await;
     assert!(
-        recovery_event.is_ok(),
+        recovery_result.is_ok(),
         "Service should recover and continue processing"
     );
 
     tracing::info!(
         edge_cases_processed = processed_count,
-        recovery_successful = recovery_event.is_ok(),
+        recovery_successful = recovery_result.is_ok(),
         "Ingestion error handling validated"
     );
 
@@ -652,10 +644,12 @@ async fn test_ingestion_error_handling(ctx: TestContext) -> Result<()> {
 // ============================================================================
 
 /// Test schema patterns during ingestion
-#[sinex_serial_test]
+#[sinex_test]
 async fn test_schema_validation_patterns(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing schema validation patterns during ingestion");
-    ctx.ensure_clean().await?;
+    let material_id = ctx
+        .create_source_material(Some("schema-validation"))
+        .await?;
 
     // Test events with different schema patterns
     let schema_test_events = vec![
@@ -688,13 +682,14 @@ async fn test_schema_validation_patterns(ctx: TestContext) -> Result<()> {
         ),
     ];
 
-    for (source, event_type, payload) in schema_test_events {
-        let event = ctx
-            .publish(DynamicPayload::new(source, event_type, payload))
-            .await?;
+    for (i, (source, event_type, payload)) in schema_test_events.into_iter().enumerate() {
+        let event = DynamicPayload::new(source, event_type, payload)
+            .from_material_at(material_id, i as i64)
+            .build()?;
+        let inserted = ctx.pool.events().insert(event).await?;
 
         assert!(
-            event.id.is_some(),
+            inserted.id.is_some(),
             "Event with source {source} and type {event_type} should be stored"
         );
     }
@@ -705,10 +700,12 @@ async fn test_schema_validation_patterns(ctx: TestContext) -> Result<()> {
 }
 
 /// Test payload validation patterns
-#[sinex_serial_test]
+#[sinex_test]
 async fn test_payload_validation_patterns(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing payload validation patterns");
-    ctx.ensure_clean().await?;
+    let material_id = ctx
+        .create_source_material(Some("payload-validation"))
+        .await?;
 
     // Test various payload structures that should be valid
     let validation_patterns = vec![
@@ -747,17 +744,14 @@ async fn test_payload_validation_patterns(ctx: TestContext) -> Result<()> {
         ),
     ];
 
-    for (pattern_name, payload) in validation_patterns {
-        let event = ctx
-            .publish(DynamicPayload::new(
-                "validation-test",
-                "payload.test",
-                payload,
-            ))
-            .await?;
+    for (i, (pattern_name, payload)) in validation_patterns.into_iter().enumerate() {
+        let event = DynamicPayload::new("validation-test", "payload.test", payload)
+            .from_material_at(material_id, i as i64)
+            .build()?;
+        let inserted = ctx.pool.events().insert(event).await?;
 
         assert!(
-            event.id.is_some(),
+            inserted.id.is_some(),
             "Payload pattern '{pattern_name}' should be valid"
         );
 
@@ -774,9 +768,10 @@ async fn test_payload_validation_patterns(ctx: TestContext) -> Result<()> {
 // ============================================================================
 
 /// Test service health indicators
-#[sinex_serial_test]
+#[sinex_test]
 async fn test_service_health_monitoring(ctx: TestContext) -> Result<()> {
-    ctx.ensure_clean().await?;
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let source = format!("health-monitor-{}", Ulid::new());
     tracing::info!("Testing service health monitoring");
 
@@ -858,12 +853,11 @@ async fn test_service_health_monitoring(ctx: TestContext) -> Result<()> {
 }
 
 /// Test resource management during ingestion
-#[sinex_serial_test]
+#[sinex_test]
 async fn test_resource_management(ctx: TestContext) -> Result<()> {
-    tracing::info!("Testing resource management during ingestion");
     let ctx = ctx.with_nats().shared().await?;
-    ctx.ensure_clean().await?;
-    ctx.ensure_clean().await?;
+    let _scope = ctx.pipeline().await?;
+    tracing::info!("Testing resource management during ingestion");
 
     let source = format!("resource-test-{}", Ulid::new());
 
@@ -956,9 +950,9 @@ async fn test_resource_management(ctx: TestContext) -> Result<()> {
 /// Test timeout and deadline handling
 #[sinex_test]
 async fn test_timeout_and_deadline_handling(ctx: TestContext) -> Result<()> {
-    tracing::info!("Testing timeout and deadline handling");
     let ctx = ctx.with_nats().shared().await?;
-    ctx.ensure_clean().await?;
+    let _scope = ctx.pipeline().await?;
+    tracing::info!("Testing timeout and deadline handling");
 
     // Test normal operation within reasonable timeouts
     let timeout_duration = Duration::from_secs(5);

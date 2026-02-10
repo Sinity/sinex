@@ -28,20 +28,29 @@ pub struct HealthMetrics {
 }
 
 impl HealthMetrics {
-    /// Calculate error rate over the sliding window
+    /// Calculate error rate over the sliding window.
+    ///
+    /// Returns 0.0 when no errors have been recorded, or when the most recent
+    /// error is older than `window_seconds`. Otherwise returns the cumulative
+    /// error rate (errors / total events). This is a conservative approximation:
+    /// once errors leave the window the rate drops to zero, but while any error
+    /// is inside the window the all-time rate is reported.
     pub fn error_rate(&self, window_seconds: u64) -> f64 {
-        let now_monotonic = Instant::now().duration_since(get_process_start()).as_secs();
+        let errors = self.errors.load(Ordering::Relaxed);
+        if errors == 0 {
+            return 0.0;
+        }
 
         let last_error = self.last_error_monotonic.load(Ordering::Relaxed);
+        let now_monotonic = Instant::now().duration_since(get_process_start()).as_secs();
 
-        // If last error is outside the window, error rate is 0
-        if last_error > 0 && now_monotonic.saturating_sub(last_error) > window_seconds {
+        // If the most recent error is at or beyond the window boundary, rate is 0.
+        // Uses >= to avoid flakiness from as_secs() truncation at the boundary.
+        if now_monotonic.saturating_sub(last_error) >= window_seconds {
             return 0.0;
         }
 
         let total = self.events_processed.load(Ordering::Relaxed);
-        let errors = self.errors.load(Ordering::Relaxed);
-
         if total == 0 {
             0.0
         } else {
@@ -230,9 +239,12 @@ mod tests {
         // No events processed
         assert_eq!(metrics.error_rate(300), 0.0);
 
-        // Process some successful events
+        // Process some events with errors — set last_error_monotonic to "now"
+        // so the window check doesn't expire them.
+        let now = Instant::now().duration_since(get_process_start()).as_secs();
         metrics.events_processed.store(100, Ordering::Relaxed);
         metrics.errors.store(5, Ordering::Relaxed);
+        metrics.last_error_monotonic.store(now, Ordering::Relaxed);
 
         // Error rate should be 5%
         assert!((metrics.error_rate(300) - 0.05).abs() < 0.001);
@@ -254,6 +266,7 @@ mod tests {
     fn test_process_status_calculation() {
         let thresholds = HealthThresholds::default();
         let metrics = HealthMetrics::default();
+        let now = Instant::now().duration_since(get_process_start()).as_secs();
 
         // Healthy: 0% errors
         metrics.events_processed.store(100, Ordering::Relaxed);
@@ -262,6 +275,7 @@ mod tests {
 
         // Degraded: 5% errors
         metrics.errors.store(5, Ordering::Relaxed);
+        metrics.last_error_monotonic.store(now, Ordering::Relaxed);
         let rate = metrics.error_rate(300);
         assert!(rate >= thresholds.error_rate_degraded);
         assert!(rate < thresholds.error_rate_failed);

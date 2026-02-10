@@ -15,6 +15,7 @@ async fn test_config_requires_tls_scheme_when_flag_set() -> TestResult<()> {
         false,
         None,
         None,
+        None, // namespace
     );
     // Case 1: Require TLS = false, plaintext URL = OK
     // Validate tries to connect. Since we don't have a NATS server at localhost:4222 guaranteed,
@@ -42,6 +43,7 @@ async fn test_config_requires_tls_scheme_when_flag_set() -> TestResult<()> {
         false,
         None,
         None,
+        None, // namespace
     );
     assert!(config.nats.require_tls, "require_tls should be true");
     assert!(
@@ -74,6 +76,7 @@ async fn test_config_requires_tls_scheme_when_flag_set() -> TestResult<()> {
         false,
         None,
         None,
+        None, // namespace
     );
     // Note: validate() will fail on connection test unless we mock it or have a server,
     // but we want to check the *static* validation logic first.

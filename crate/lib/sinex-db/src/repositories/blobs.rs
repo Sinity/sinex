@@ -144,7 +144,7 @@ impl BlobRepository {
                 last_verified_at as "last_verified_at: Timestamp",
                 verification_status
             FROM core.blobs
-            WHERE id = $1
+            WHERE id::uuid = $1
             "#,
             id_uuid as _
         )

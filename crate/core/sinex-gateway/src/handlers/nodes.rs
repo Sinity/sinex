@@ -325,7 +325,7 @@ mod tests {
         let err = handle_nodes_set_horizon(&client, &env, invalid_params, &test_auth())
             .await
             .unwrap_err();
-        assert!(err.to_string().contains("serialization"));
+        assert!(err.to_string().contains("Serialization"));
 
         // Valid timestamp should succeed
         let valid_params = json!({

@@ -1,6 +1,7 @@
 //! Pipeline coordination and synchronization.
 
 use crate::sandbox::prelude::*;
+use crate::sandbox::timing::Timeouts;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 /// Overrides for event metadata during test publishing.
@@ -16,7 +17,7 @@ static PIPELINE_SEMAPHORE: std::sync::LazyLock<Arc<Semaphore>> = std::sync::Lazy
     let permits = std::env::var("SINEX_TEST_PIPELINE_CONCURRENCY")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(4);
+        .unwrap_or(8);
     Arc::new(Semaphore::new(permits))
 });
 
@@ -38,7 +39,9 @@ pub async fn wait_for_event_persisted(
     event_id: impl Into<EventId>,
 ) -> TestResult<()> {
     let event_id = event_id.into();
-    // Pipeline events should persist quickly with fast test config.
-    // 5 seconds is generous; actual should be ~100-200ms.
-    WaitHelpers::wait_for_event_id(&ctx.pool, event_id, 5).await
+    // Under nextest each test is a separate process, so the in-process semaphore
+    // doesn't limit real concurrency (controlled by nextest test-threads = 32).
+    // With 32 concurrent ingestd processes + DB slots, events regularly need
+    // 15-25s to flow through NATS → ingestd → DB.
+    WaitHelpers::wait_for_event_id(&ctx.pool, event_id, Timeouts::STANDARD).await
 }

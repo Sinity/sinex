@@ -15,6 +15,7 @@ use xtask::sandbox::prelude::*;
 #[sinex_test]
 async fn test_process_heartbeat_emitter_basic_functionality(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     tracing::info!("Testing basic process heartbeat emitter functionality");
 
     // Create heartbeat event using modern TestContext
@@ -71,6 +72,7 @@ async fn test_process_heartbeat_emitter_basic_functionality(ctx: TestContext) ->
 #[sinex_test]
 async fn test_process_lifecycle_events(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     tracing::info!("Testing complete process lifecycle events");
 
     let process_name = "lifecycle_test";
@@ -211,6 +213,7 @@ async fn test_process_lifecycle_events(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 async fn test_process_heartbeat_with_custom_metrics(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     tracing::info!("Testing process heartbeat with custom metrics");
 
     let process_name = "custom_metrics_test";
@@ -279,6 +282,7 @@ async fn test_process_heartbeat_with_custom_metrics(ctx: TestContext) -> TestRes
 #[sinex_test]
 async fn test_health_aggregator_process_discovery(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     tracing::info!("Testing health aggregator process discovery");
 
     // Create multiple processes with different states
@@ -394,6 +398,7 @@ async fn test_health_aggregator_process_discovery(ctx: TestContext) -> TestResul
 #[sinex_test]
 async fn test_process_failure_detection(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     tracing::info!("Testing process failure detection through events");
 
     let process_name = "failing_process";
@@ -573,6 +578,7 @@ async fn test_process_failure_detection(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 async fn test_high_frequency_heartbeats(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     tracing::info!("Testing high frequency heartbeat processing");
 
     let process_name = "high_freq_test";

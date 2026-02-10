@@ -25,7 +25,6 @@ async fn cascade_prereqs_available(pool: &PgPool) -> color_eyre::Result<bool> {
 
 #[sinex_test]
 async fn detects_cycles_beyond_default_depth(ctx: TestContext) -> color_eyre::Result<()> {
-    ctx.ensure_clean().await?;
     let pool = ctx.pool.clone();
     color_eyre::eyre::ensure!(
         cascade_prereqs_available(&pool).await?,
@@ -101,7 +100,6 @@ async fn detects_cycles_beyond_default_depth(ctx: TestContext) -> color_eyre::Re
 
 #[sinex_test]
 async fn handles_mixed_uuid_arrays(ctx: TestContext) -> color_eyre::Result<()> {
-    ctx.ensure_clean().await?;
     let pool = ctx.pool.clone();
     color_eyre::eyre::ensure!(
         cascade_prereqs_available(&pool).await?,
@@ -187,7 +185,6 @@ async fn handles_mixed_uuid_arrays(ctx: TestContext) -> color_eyre::Result<()> {
 
 #[sinex_test]
 async fn timeout_prevents_indefinite_transaction_hold(ctx: TestContext) -> color_eyre::Result<()> {
-    ctx.ensure_clean().await?;
     let pool = ctx.pool.clone();
     color_eyre::eyre::ensure!(
         cascade_prereqs_available(&pool).await?,

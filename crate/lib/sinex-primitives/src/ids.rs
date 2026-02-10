@@ -152,13 +152,17 @@ mod sqlx_impl {
     use sqlx::encode::IsNull;
     use sqlx::error::BoxDynError;
     use sqlx::postgres::{PgArgumentBuffer, PgHasArrayType, PgTypeInfo, PgValueRef};
-    use sqlx::{Decode, Encode, Postgres, Type};
+    use sqlx::{Decode, Encode, Postgres, Type, TypeInfo};
     use std::error::Error as StdError;
 
     // Generic implementation for all Id<T> types
     impl<T> Type<Postgres> for Id<T> {
         fn type_info() -> PgTypeInfo {
             <uuid::Uuid as Type<Postgres>>::type_info()
+        }
+
+        fn compatible(ty: &PgTypeInfo) -> bool {
+            ty.name() == "ulid" || <uuid::Uuid as Type<Postgres>>::compatible(ty)
         }
     }
 
@@ -179,8 +183,21 @@ mod sqlx_impl {
 
     impl<'r, T> Decode<'r, Postgres> for Id<T> {
         fn decode(value: PgValueRef<'r>) -> Result<Self, BoxDynError> {
+            // pgx_ulid sends ULID binary data in platform-native byte order
+            // (little-endian on x86_64), but Uuid::decode expects network byte
+            // order (big-endian). Detect ULID columns and reverse bytes.
+            let is_ulid_column = {
+                use sqlx::ValueRef;
+                value.type_info().name() == "ulid"
+            };
             let uuid = <uuid::Uuid as Decode<Postgres>>::decode(value)?;
-            Ok(Self::from_uuid(uuid))
+            if is_ulid_column {
+                let mut bytes = *uuid.as_bytes();
+                bytes.reverse();
+                Ok(Self::from_uuid(uuid::Uuid::from_bytes(bytes)))
+            } else {
+                Ok(Self::from_uuid(uuid))
+            }
         }
     }
 }

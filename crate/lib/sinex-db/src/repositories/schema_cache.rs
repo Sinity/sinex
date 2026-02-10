@@ -36,9 +36,9 @@ impl<'a> SchemaCacheRepository<'a> {
         Self { pool }
     }
 
-    /// Look up the schema ID for a given source and event type
+    /// Look up the schema ID for a given source and event type.
     ///
-    /// This queries for the latest active schema (v1 hardcoded for now).
+    /// Returns the most recently updated active schema.
     /// Callers should cache the result to avoid repeated DB queries.
     pub async fn lookup_schema_id(
         &self,
@@ -51,8 +51,8 @@ impl<'a> SchemaCacheRepository<'a> {
             FROM sinex_schemas.event_payload_schemas
             WHERE source = $1
               AND event_type = $2
-              AND schema_version = 'v1'
               AND is_active = true
+            ORDER BY updated_at DESC
             LIMIT 1
             "#,
             source.as_str(),
@@ -252,7 +252,7 @@ mod tests {
         let schema = NewEventSchema {
             source: "test-source".to_string(),
             event_type: "test.event".to_string(),
-            schema_version: "v1".to_string(),
+            schema_version: "1.0.0".to_string(),
             schema_content: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -286,7 +286,7 @@ mod tests {
         let cache_repo = SchemaCacheRepository::new(pool);
 
         let version = cache_repo.lookup_schema_version(schema_id).await?;
-        assert_eq!(version, Some("v1".to_string()));
+        assert_eq!(version, Some("1.0.0".to_string()));
 
         Ok(())
     }
@@ -351,7 +351,7 @@ mod tests {
         assert_eq!(*id, schema_id);
         assert_eq!(source, "test-source");
         assert_eq!(event_type, "test.event");
-        assert_eq!(version, "v1");
+        assert_eq!(version, "1.0.0");
 
         Ok(())
     }
