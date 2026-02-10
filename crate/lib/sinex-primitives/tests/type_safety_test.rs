@@ -54,6 +54,7 @@ async fn test_generic_id_type_isolation(ctx: TestContext) -> Result<()> {
 async fn test_id_database_integration_type_safety(ctx: TestContext) -> Result<()> {
     // Create an event and verify its ID type is preserved through database operations
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
 
     // Create an event and verify its ID type is preserved through database operations
     let event = ctx
@@ -98,6 +99,7 @@ async fn test_id_collection_type_safety(ctx: TestContext) -> Result<()> {
     ctx.ensure_clean().await?;
 
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
 
     // Create multiple events
     let source = format!("collection-test-{}", Ulid::new());
@@ -166,6 +168,7 @@ async fn test_id_collection_type_safety(ctx: TestContext) -> Result<()> {
 #[sinex_test]
 async fn test_event_source_type_safety(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
 
     // Test EventSource construction and validation
     let static_source = EventSource::from_static("test-source");
@@ -228,6 +231,7 @@ async fn test_event_source_type_safety(ctx: TestContext) -> Result<()> {
 #[sinex_test]
 async fn test_event_type_safety(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
 
     // Test EventType construction and validation
     let static_type = EventType::from_static("static.test");
@@ -281,6 +285,7 @@ async fn test_event_type_safety(ctx: TestContext) -> Result<()> {
 #[sinex_test]
 async fn test_domain_string_const_support(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
 
     // Test compile-time constants for domain strings
     const TEST_SOURCE: EventSource = EventSource::from_static("const-source");
@@ -313,6 +318,7 @@ async fn test_domain_string_const_support(ctx: TestContext) -> Result<()> {
 #[sinex_test]
 async fn test_payload_validation_type_safety(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
 
     // Test that payload validation preserves type safety
     let valid_payload = json!({
@@ -355,6 +361,7 @@ async fn test_payload_validation_type_safety(ctx: TestContext) -> Result<()> {
 #[sinex_test]
 async fn test_nested_payload_type_preservation(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
 
     // Test deeply nested payload structure preservation
     let complex_payload = json!({
@@ -512,6 +519,7 @@ async fn test_repository_query_type_safety(ctx: TestContext) -> Result<()> {
 #[sinex_test]
 async fn test_repository_id_query_type_safety(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
 
     // Create an event
     let event = ctx
@@ -606,6 +614,7 @@ async fn test_concurrent_type_safety(ctx: TestContext) -> Result<()> {
     use tokio::task::JoinSet;
 
     let ctx = Arc::new(ctx.with_nats().shared().await?);
+    let _scope = ctx.pipeline().await?;
     let mut join_set = JoinSet::new();
 
     // Create events concurrently with different type combinations
@@ -708,6 +717,7 @@ async fn test_type_safety_boundary_conditions(ctx: TestContext) -> Result<()> {
     // Test type safety at system boundaries
 
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
 
     // Empty but valid domain strings
     let minimal_event = ctx

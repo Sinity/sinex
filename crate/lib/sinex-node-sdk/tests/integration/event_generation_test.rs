@@ -58,6 +58,7 @@ impl TestEventData {
 async fn test_event_basic_generation(ctx: TestContext) -> TestResult<()> {
     // Enable shared NATS for proper event pipeline
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
 
     // Create events using TestContext
     let mut events = Vec::new();
@@ -96,6 +97,7 @@ async fn test_event_basic_generation(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 async fn test_event_generation_payload_varieties(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
 
     // Test simple string payload
     let string_event = ctx
@@ -176,6 +178,7 @@ async fn test_event_generation_payload_varieties(ctx: TestContext) -> TestResult
 #[sinex_test]
 async fn test_filesystem_event_generation(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
 
     let mut generated_events = Vec::new();
 
@@ -215,6 +218,7 @@ async fn test_filesystem_event_generation(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 async fn test_command_event_generation(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
 
     let commands = [
         "ls -la",
@@ -380,6 +384,7 @@ async fn test_concurrent_event_generation(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 async fn test_event_generation_performance(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
 
     let event_count = 100; // Reduced for faster test execution
     let start_time = std::time::Instant::now();
@@ -433,6 +438,7 @@ async fn test_event_generation_performance(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 async fn test_event_generation_payload_sizes(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
 
     // Generate small payload event
     let small_event = ctx
@@ -493,6 +499,7 @@ async fn test_event_generation_payload_sizes(ctx: TestContext) -> TestResult<()>
 #[sinex_test]
 async fn test_event_generation_edge_cases(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
 
     // Test with special characters in event type
     let special_event = ctx

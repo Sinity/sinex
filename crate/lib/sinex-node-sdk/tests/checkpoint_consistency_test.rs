@@ -55,6 +55,7 @@ async fn ensure_processor_manifest(pool: &DbPool, processor_name: &str) -> TestR
 async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let pool = ctx.pool().clone();
     let kv = ctx.checkpoint_kv().await?;
 
@@ -133,6 +134,7 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult<
 async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let pool = ctx.pool().clone();
     let kv = ctx.checkpoint_kv().await?;
 
@@ -361,6 +363,7 @@ async fn test_checkpoint_failover_propagates_state(ctx: TestContext) -> TestResu
 #[sinex_test]
 async fn test_stale_checkpoint_detection(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let pool = ctx.pool().clone();
     let kv = ctx.checkpoint_kv().await?;
 
