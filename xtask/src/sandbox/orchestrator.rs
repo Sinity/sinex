@@ -568,9 +568,7 @@ pub async fn start_test_ingestd_with_config(
                 Duration::from_secs(Timeouts::STANDARD),
             )
             .await
-            .wrap_err_with(|| {
-                format!("ingestd consumer not ready on stream {stream_name}")
-            })?;
+            .wrap_err_with(|| format!("ingestd consumer not ready on stream {stream_name}"))?;
         }
     }
 

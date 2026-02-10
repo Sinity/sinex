@@ -49,12 +49,8 @@ async fn setup_ingestd(
     let js = ctx.jetstream().await?;
     let env = ctx.env();
     let begin_stream = env.nats_stream_name("SOURCE_MATERIAL_BEGIN");
-    nats.wait_for_consumer_on_stream(
-        &js,
-        &begin_stream,
-        Duration::from_secs(Timeouts::STANDARD),
-    )
-    .await?;
+    nats.wait_for_consumer_on_stream(&js, &begin_stream, Duration::from_secs(Timeouts::STANDARD))
+        .await?;
 
     Ok((ctx, ingest_handle, nats_client))
 }

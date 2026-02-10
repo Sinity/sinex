@@ -915,9 +915,9 @@ async fn jetstream_consumer_dlq_reason_classification(ctx: TestContext) -> TestR
         "Expected parse error (raw bytes) in DLQ: {errors:?}"
     );
     assert!(
-        errors.iter().any(|e| {
-            e.contains("Invalid timestamp") || e.contains("invalid-timestamp")
-        }),
+        errors
+            .iter()
+            .any(|e| { e.contains("Invalid timestamp") || e.contains("invalid-timestamp") }),
         "Expected timestamp-related error in DLQ: {errors:?}"
     );
     assert!(
