@@ -13,7 +13,8 @@ use serde_json::json;
 use sinex_gateway::{rpc_server, ServiceContainer};
 use tempfile::TempDir;
 use tokio::time::{sleep, Duration, Instant};
-use xtask::sandbox::{sinex_test, timing::Timeouts};
+use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::Timeouts;
 
 static ENV_LOCK: std::sync::LazyLock<Mutex<()>> = std::sync::LazyLock::new(|| Mutex::new(()));
 
