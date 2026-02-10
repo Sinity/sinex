@@ -499,6 +499,35 @@ impl EphemeralNats {
         }
     }
 
+    /// Wait until at least one consumer exists on the given JetStream stream.
+    ///
+    /// This ensures that the process creating consumers (e.g. ingestd) has fully
+    /// started and is actively pulling messages. Without this, tests may publish
+    /// events to a stream before anyone is consuming them.
+    pub async fn wait_for_consumer_on_stream(
+        &self,
+        js: &jetstream::Context,
+        stream_name: &str,
+        timeout_duration: Duration,
+    ) -> Result<()> {
+        let deadline = Instant::now() + timeout_duration;
+        loop {
+            if let Ok(mut stream) = js.get_stream(stream_name).await {
+                if let Ok(info) = stream.info().await {
+                    if info.state.consumer_count > 0 {
+                        return Ok(());
+                    }
+                }
+            }
+            if Instant::now() >= deadline {
+                return Err(eyre!(
+                    "no consumer found on stream {stream_name} within {timeout_duration:?}"
+                ));
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+    }
+
     fn resolve_binary() -> Result<PathBuf> {
         if let Ok(explicit) = std::env::var("NATS_SERVER_BIN") {
             let path = Path::new(&explicit);

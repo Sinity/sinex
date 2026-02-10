@@ -545,9 +545,10 @@ pub async fn start_test_ingestd_with_config(
         &env.nats_stream_name("SINEX_RAW_EVENTS"),
     );
 
-    // Wait for ingestd to create the JetStream stream before returning.
-    // Without this, tests publish via NATS core (fire-and-forget) before
-    // the stream exists, causing messages to be silently lost.
+    // Wait for ingestd to create the JetStream stream AND attach a consumer.
+    // Without stream wait: tests publish before the stream exists → silent message loss.
+    // Without consumer wait: stream exists but ingestd isn't pulling yet → events
+    // pile up in NATS and never reach the database before test timeout.
     if let Some(sandbox) = ctx {
         // Only wait for stream if sandbox has NATS initialized via with_nats().
         // Tests that create their own EphemeralNats pass ctx for the DB pool
@@ -558,6 +559,18 @@ pub async fn start_test_ingestd_with_config(
             nats.wait_for_stream(&js, &stream_name, Duration::from_secs(Timeouts::STANDARD))
                 .await
                 .wrap_err_with(|| format!("ingestd failed to create stream {stream_name}"))?;
+
+            // Wait for ingestd to create a consumer on the stream. This proves
+            // the process has completed startup and is actively pulling messages.
+            nats.wait_for_consumer_on_stream(
+                &js,
+                &stream_name,
+                Duration::from_secs(Timeouts::STANDARD),
+            )
+            .await
+            .wrap_err_with(|| {
+                format!("ingestd consumer not ready on stream {stream_name}")
+            })?;
         }
     }
 
