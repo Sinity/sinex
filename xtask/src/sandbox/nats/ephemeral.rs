@@ -1,7 +1,5 @@
 use std::collections::HashMap;
 use std::net::TcpListener;
-#[cfg(target_os = "linux")]
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;

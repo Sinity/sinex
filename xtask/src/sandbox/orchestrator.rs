@@ -6,8 +6,6 @@
 use crate::sandbox::prelude::*;
 use crate::sandbox::watcher::{FileWatcher, WatchEvent};
 use camino::Utf8PathBuf;
-#[cfg(target_os = "linux")]
-use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -427,6 +425,9 @@ pub struct TestIngestdConfig {
     pub batch_size: usize,
     pub consumer_fetch_max_messages: usize,
     pub consumer_fetch_timeout_ms: u64,
+    /// Database connection pool size for the spawned ingestd.
+    /// Defaults to 4 (test-appropriate; production default is 50).
+    pub database_pool_size: u32,
 }
 
 impl Default for TestIngestdConfig {
@@ -439,6 +440,7 @@ impl Default for TestIngestdConfig {
             batch_size: 1,
             consumer_fetch_max_messages: 100,
             consumer_fetch_timeout_ms: 1000,
+            database_pool_size: 4,
         }
     }
 }
@@ -529,8 +531,9 @@ pub async fn start_test_ingestd_with_config(
         "SINEX_INGESTD_CONSUMER_FETCH_TIMEOUT_MS",
         config.consumer_fetch_timeout_ms.to_string(),
     );
-    // CLI args for batch size
+    // CLI args for batch size and pool size
     cmd.args(["--batch-size", &config.batch_size.to_string()]);
+    cmd.args(["--pool-size", &config.database_pool_size.to_string()]);
 
     let child = cmd.spawn()?;
 

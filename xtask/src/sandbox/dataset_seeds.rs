@@ -5,7 +5,10 @@
 
 use crate::sandbox::prelude::*;
 use serde_json::{json, Value as JsonValue};
-use sinex_primitives::events::DynamicPayload;
+use sinex_primitives::events::payloads::{
+    FileCreatedPayload, FileModifiedPayload, KittyCommandExecutedPayload,
+};
+use sinex_primitives::events::{DynamicPayload, Publishable};
 use sinex_primitives::temporal::{Duration, Timestamp};
 use sinex_schema::ulid::Ulid;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -75,7 +78,7 @@ pub struct EventSpec {
 }
 
 impl EventSpec {
-    /// Create a new event spec
+    /// Create a new event spec with raw source/type strings and empty payload.
     pub fn new(source: impl Into<String>, event_type: impl Into<String>) -> Self {
         Self {
             source: source.into(),
@@ -83,6 +86,20 @@ impl EventSpec {
             payload: json!({}),
             timestamp: None,
         }
+    }
+
+    /// Create an event spec from a typed payload.
+    ///
+    /// Captures the correct source, event type, and JSON representation from
+    /// the typed payload's `Publishable` impl, ensuring the JSON matches
+    /// the payload's schema rather than being a hand-crafted approximation.
+    pub fn from_typed(payload: &impl Publishable) -> sinex_primitives::error::Result<Self> {
+        Ok(Self {
+            source: payload.source().to_string(),
+            event_type: payload.event_type().to_string(),
+            payload: payload.to_json_value()?,
+            timestamp: None,
+        })
     }
 
     /// Set payload
@@ -109,12 +126,12 @@ pub async fn seed_events_via_scope(
     let mut ids = Vec::with_capacity(events.len());
 
     for spec in events {
-        let _timestamp = spec.timestamp.unwrap_or_else(|| clock.tick(100));
+        let timestamp = spec.timestamp.unwrap_or_else(|| clock.tick(100));
 
         let payload =
             DynamicPayload::new(spec.source.as_str(), spec.event_type.as_str(), spec.payload);
 
-        let event = ctx.publish(payload).await?;
+        let event = ctx.publish_at(payload, timestamp).await?;
         if let Some(id) = event.id {
             ids.push(*id.as_ulid() as Ulid);
         }
@@ -135,24 +152,22 @@ pub struct AnalyticsDataset {
 }
 
 impl AnalyticsDataset {
-    /// Create minimal semantic dataset for analytics tests
-    #[must_use]
-    pub fn semantic_min() -> Self {
+    /// Create minimal semantic dataset for analytics tests.
+    ///
+    /// Uses typed payloads where available to ensure JSON matches the payload schema.
+    /// Shell commands use `KittyCommandExecutedPayload` (source "shell.kitty"),
+    /// filesystem events use `FileCreatedPayload`/`FileModifiedPayload` (source "fs-watcher").
+    pub fn semantic_min() -> sinex_primitives::error::Result<Self> {
         let events = vec![
-            EventSpec::new("shell.bash", "command.executed")
-                .with_payload(json!({"command": "ls", "exit_code": 0})),
-            EventSpec::new("shell.bash", "command.executed")
-                .with_payload(json!({"command": "git status", "exit_code": 0})),
-            EventSpec::new("shell.bash", "command.executed")
-                .with_payload(json!({"command": "ls", "exit_code": 0})),
-            EventSpec::new("fs-watcher", "file.created")
-                .with_payload(json!({"path": "/tmp/test.txt", "size": 100})),
-            EventSpec::new("fs-watcher", "file.modified")
-                .with_payload(json!({"path": "/tmp/test.txt", "size": 150})),
+            EventSpec::from_typed(&KittyCommandExecutedPayload::test_default("ls"))?,
+            EventSpec::from_typed(&KittyCommandExecutedPayload::test_default("git status"))?,
+            EventSpec::from_typed(&KittyCommandExecutedPayload::test_default("ls"))?,
+            EventSpec::from_typed(&FileCreatedPayload::test_default("/tmp/test.txt"))?,
+            EventSpec::from_typed(&FileModifiedPayload::test_default("/tmp/test.txt"))?,
         ];
 
         let mut expected_source_counts = std::collections::HashMap::new();
-        expected_source_counts.insert("shell.bash".to_string(), 3);
+        expected_source_counts.insert("shell.kitty".to_string(), 3);
         expected_source_counts.insert("fs-watcher".to_string(), 2);
 
         let mut expected_event_type_counts = std::collections::HashMap::new();
@@ -164,14 +179,14 @@ impl AnalyticsDataset {
         expected_command_counts.insert("ls".to_string(), 2);
         expected_command_counts.insert("git status".to_string(), 1);
 
-        Self {
+        Ok(Self {
             name: "analytics-semantic-min".to_string(),
             expected_total: 5,
             events,
             expected_source_counts,
             expected_event_type_counts,
             expected_command_counts,
-        }
+        })
     }
 
     /// Create performance dataset with many events
@@ -211,22 +226,20 @@ pub struct QueryDataset {
 }
 
 impl QueryDataset {
-    /// Create minimal semantic dataset for query/search tests
-    #[must_use]
-    pub fn semantic_min() -> Self {
+    /// Create minimal semantic dataset for query/search tests.
+    ///
+    /// Uses typed payloads where available.
+    pub fn semantic_min() -> sinex_primitives::error::Result<Self> {
         let events = vec![
-            EventSpec::new("shell.bash", "command.executed")
-                .with_payload(json!({"command": "cargo build", "exit_code": 0})),
-            EventSpec::new("shell.bash", "command.executed")
-                .with_payload(json!({"command": "cargo test", "exit_code": 0})),
-            EventSpec::new("fs-watcher", "file.created")
-                .with_payload(json!({"path": "/project/src/main.rs", "size": 500})),
+            EventSpec::from_typed(&KittyCommandExecutedPayload::test_default("cargo build"))?,
+            EventSpec::from_typed(&KittyCommandExecutedPayload::test_default("cargo test"))?,
+            EventSpec::from_typed(&FileCreatedPayload::test_default("/project/src/main.rs"))?,
         ];
-        Self {
+        Ok(Self {
             name: "query-semantic-min".to_string(),
             expected_total: events.len(),
             events,
-        }
+        })
     }
 }
 
@@ -235,7 +248,7 @@ pub async fn seed_analytics_dataset_semantic_min_via_scope(
     ctx: &Sandbox,
     clock: &SeedClock,
 ) -> TestResult<AnalyticsDataset> {
-    let dataset = AnalyticsDataset::semantic_min();
+    let dataset = AnalyticsDataset::semantic_min()?;
     seed_events_via_scope(ctx, clock, dataset.events.clone()).await?;
     Ok(dataset)
 }
@@ -256,7 +269,7 @@ pub async fn seed_query_dataset_semantic_min_via_scope(
     ctx: &Sandbox,
     clock: &SeedClock,
 ) -> TestResult<QueryDataset> {
-    let dataset = QueryDataset::semantic_min();
+    let dataset = QueryDataset::semantic_min()?;
     seed_events_via_scope(ctx, clock, dataset.events.clone()).await?;
     Ok(dataset)
 }
@@ -279,5 +292,25 @@ mod tests {
         assert_eq!(spec.source, "source");
         assert_eq!(spec.event_type, "type");
         assert_eq!(spec.payload["key"], "value");
+    }
+
+    #[test]
+    fn test_event_spec_from_typed_captures_source_and_type() {
+        let spec = EventSpec::from_typed(&FileCreatedPayload::test_default("/test")).unwrap();
+        assert_eq!(spec.source, "fs-watcher");
+        assert_eq!(spec.event_type, "file.created");
+        // Typed payload serializes with correct structure
+        assert!(spec.payload.get("path").is_some());
+        assert!(spec.payload.get("size").is_some());
+        assert!(spec.payload.get("created_at").is_some());
+    }
+
+    #[test]
+    fn test_analytics_dataset_semantic_min_uses_typed_payloads() {
+        let dataset = AnalyticsDataset::semantic_min().unwrap();
+        assert_eq!(dataset.expected_total, 5);
+        // Shell commands should have correct source from KittyCommandExecutedPayload
+        assert_eq!(dataset.expected_source_counts.get("shell.kitty"), Some(&3));
+        assert_eq!(dataset.expected_source_counts.get("fs-watcher"), Some(&2));
     }
 }

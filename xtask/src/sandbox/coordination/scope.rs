@@ -50,6 +50,7 @@ impl<'ctx> PipelineScope<'ctx> {
             batch_size: 32,
             consumer_fetch_max_messages: 32,
             consumer_fetch_timeout_ms: 100, // 100ms fetch timeout - events arrive quickly in tests
+            database_pool_size: 4,          // Test-appropriate; production default is 50
         };
 
         let ingestd = start_test_ingestd_with_config(config, Some(ctx)).await?;
