@@ -239,10 +239,10 @@ async fn health_reporter_with_custom_thresholds(ctx: TestContext) -> TestResult<
 
     let observer = Arc::new(SelfObserver::new(nats_client, config));
 
-    // Stricter thresholds
+    // Stricter thresholds: degraded at 1%, failed at 2%
     let thresholds = HealthThresholds {
         error_rate_degraded: 0.01, // 1%
-        error_rate_failed: 0.05,   // 5%
+        error_rate_failed: 0.02,   // 2%
         window_seconds: 5,
     };
 
@@ -252,11 +252,11 @@ async fn health_reporter_with_custom_thresholds(ctx: TestContext) -> TestResult<
         thresholds,
     ));
 
-    // Process 100 events with 2 errors (2% → should fail with stricter threshold)
-    for _ in 0..98 {
+    // Process 100 events with 3 errors (3% → should fail with stricter 2% threshold)
+    for _ in 0..97 {
         reporter.record_success();
     }
-    for _ in 0..2 {
+    for _ in 0..3 {
         let error = SinexError::processing("test error");
         reporter.record_error(&error);
     }
