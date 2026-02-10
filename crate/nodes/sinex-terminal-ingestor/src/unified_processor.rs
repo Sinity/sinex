@@ -1248,7 +1248,6 @@ mod tests {
 
     #[sinex_test]
     async fn process_command_emits_event(ctx: TestContext) -> TestResult<()> {
-
         let TestRuntime {
             runtime,
             mut event_rx,

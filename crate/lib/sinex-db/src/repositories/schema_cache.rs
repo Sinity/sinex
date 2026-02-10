@@ -36,9 +36,9 @@ impl<'a> SchemaCacheRepository<'a> {
         Self { pool }
     }
 
-    /// Look up the schema ID for a given source and event type
+    /// Look up the schema ID for a given source and event type.
     ///
-    /// This queries for the latest active schema (v1 hardcoded for now).
+    /// Returns the most recently updated active schema.
     /// Callers should cache the result to avoid repeated DB queries.
     pub async fn lookup_schema_id(
         &self,
@@ -51,8 +51,8 @@ impl<'a> SchemaCacheRepository<'a> {
             FROM sinex_schemas.event_payload_schemas
             WHERE source = $1
               AND event_type = $2
-              AND schema_version = 'v1'
               AND is_active = true
+            ORDER BY updated_at DESC
             LIMIT 1
             "#,
             source.as_str(),

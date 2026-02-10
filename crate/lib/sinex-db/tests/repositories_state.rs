@@ -63,7 +63,7 @@ async fn state_repository_collects_operation_statistics(ctx: TestContext) -> Tes
         ("success", None),
         ("success", None),
         ("failure", Some("Test error".to_string())),
-        ("partial", None),
+        ("cancelled", None),
     ];
 
     for (status, message) in operations {
