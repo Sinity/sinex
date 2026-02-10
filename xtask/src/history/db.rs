@@ -81,6 +81,13 @@ impl HistoryDb {
             format!("failed to open history database: {path_display}")
         })?;
 
+        // WAL mode enables concurrent readers during writes (critical for
+        // querying test history while a test run is in progress).
+        conn.execute_batch(
+            "PRAGMA journal_mode=WAL;
+             PRAGMA busy_timeout=5000;",
+        )?;
+
         let db = Self {
             conn,
             job_columns_ensured: AtomicBool::new(false),
