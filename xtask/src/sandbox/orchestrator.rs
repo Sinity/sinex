@@ -6,6 +6,8 @@
 use crate::sandbox::prelude::*;
 use crate::sandbox::watcher::{FileWatcher, WatchEvent};
 use camino::Utf8PathBuf;
+#[cfg(target_os = "linux")]
+use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
