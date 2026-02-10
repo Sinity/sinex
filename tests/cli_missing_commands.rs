@@ -3,7 +3,7 @@ use std::net::TcpListener;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::sync::watch;
-use xtask::sandbox::{sinex_test, TestContext};
+use xtask::sandbox::{sinex_test, timing::Timeouts, TestContext};
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -60,8 +60,10 @@ async fn start_test_gateway(
         }
     });
 
-    // Wait for the server to actually bind and accept connections
-    wait_for_port(port, Duration::from_secs(5)).await?;
+    // Wait for the server to actually bind and accept connections.
+    // Under heavy parallel test load the gateway may take longer to initialize
+    // (pool creation, NATS connection attempts, etc.), so use a generous timeout.
+    wait_for_port(port, Duration::from_secs(Timeouts::MEDIUM)).await?;
 
     Ok((port, shutdown_tx, server_handle))
 }

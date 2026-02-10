@@ -39,7 +39,23 @@ async fn setup_ingestd(
     };
 
     let ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;
-    sleep(Duration::from_millis(200)).await;
+
+    // Wait for ingestd's MaterialAssembler to attach a consumer on the BEGIN stream.
+    // start_test_ingestd_with_config already waits for the RAW_EVENTS consumer, but
+    // the MaterialAssembler starts slightly after. Without this, begin_material()
+    // messages may arrive before the assembler is consuming, causing wait_for_material_row
+    // to time out.
+    let nats = ctx.nats_handle()?;
+    let js = ctx.jetstream().await?;
+    let env = ctx.env();
+    let begin_stream = env.nats_stream_name("SOURCE_MATERIAL_BEGIN");
+    nats.wait_for_consumer_on_stream(
+        &js,
+        &begin_stream,
+        Duration::from_secs(Timeouts::STANDARD),
+    )
+    .await?;
+
     Ok((ctx, ingest_handle, nats_client))
 }
 
