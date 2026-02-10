@@ -12,7 +12,7 @@ use sinex_services::ContentService;
 use tempfile::TempDir;
 use tokio::sync::mpsc;
 use which::which;
-use xtask::sandbox::{sinex_serial_test, sinex_test, TestResult};
+use xtask::sandbox::{sinex_test, TestResult};
 
 struct EnvVarGuard {
     key: &'static str,
@@ -85,9 +85,8 @@ async fn blob_routes_should_enforce_auth_and_quota(ctx: TestContext) -> TestResu
     Ok(())
 }
 
-#[sinex_serial_test]
+#[sinex_test]
 async fn content_store_blob_does_not_insert_events(ctx: TestContext) -> TestResult<()> {
-    ctx.ensure_clean().await?;
     require_git_annex()?;
 
     let annex_dir = TempDir::new()?;

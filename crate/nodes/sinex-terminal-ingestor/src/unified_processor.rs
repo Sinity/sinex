@@ -1246,9 +1246,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_serial_test]
+    #[sinex_test]
     async fn process_command_emits_event(ctx: TestContext) -> TestResult<()> {
-        ctx.ensure_clean().await?;
 
         let TestRuntime {
             runtime,

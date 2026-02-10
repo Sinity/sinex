@@ -7,7 +7,6 @@ use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn test_agent_event_subscription_queries(ctx: TestContext) -> Result<()> {
-    ctx.ensure_clean().await?;
     // Create multiple agents with different subscriptions
     let agents = vec![
         (
