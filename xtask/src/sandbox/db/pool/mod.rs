@@ -2170,6 +2170,7 @@ async fn clean_database(
 
                 eprintln!("  ✅ Database cleanup recovered after forced truncation");
                 ensure_default_session_state(&working_pool).await?;
+                seed_test_fixtures(&working_pool).await?;
                 slot.quarantined.store(false, Ordering::SeqCst);
                 slot.record_clean_result(Ok(()), residuals.clone());
                 return Ok(());
@@ -2531,7 +2532,7 @@ pub async fn ensure_default_session_state(pool: &DbPool) -> TestResult<()> {
 /// (`01H00000000000000000000000`) that must exist in `raw.source_material_registry`
 /// for FK constraints on `core.events.source_material_id` to pass. Since cleanup
 /// truncates all tables, we re-seed this after every cleanup cycle.
-async fn seed_test_fixtures(pool: &DbPool) -> TestResult<()> {
+pub async fn seed_test_fixtures(pool: &DbPool) -> TestResult<()> {
     sqlx::query(
         "INSERT INTO raw.source_material_registry \
             (id, material_kind, source_identifier, status, timing_info_type) \

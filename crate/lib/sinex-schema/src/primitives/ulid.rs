@@ -339,8 +339,21 @@ mod sqlx_impl {
         fn decode(
             value: PgValueRef<'_>,
         ) -> Result<Self, Box<dyn std::error::Error + Send + Sync + 'static>> {
+            // pgx_ulid sends ULID binary data in platform-native byte order
+            // (little-endian on x86_64), but Uuid::decode expects network byte
+            // order (big-endian). Detect ULID columns and reverse bytes.
+            let is_ulid_column = {
+                use sqlx::ValueRef;
+                value.type_info().name() == "ulid"
+            };
             let uuid = Uuid::decode(value)?;
-            Ok(Self::from_uuid(uuid))
+            if is_ulid_column {
+                let mut bytes = *uuid.as_bytes();
+                bytes.reverse();
+                Ok(Self::from_uuid(Uuid::from_bytes(bytes)))
+            } else {
+                Ok(Self::from_uuid(uuid))
+            }
         }
     }
 }

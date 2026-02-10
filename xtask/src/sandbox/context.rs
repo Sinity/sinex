@@ -351,16 +351,22 @@ impl Sandbox {
 
         await_pending_cleanups().await;
 
-        if let Err(err) = verify_clean_state(&pool).await {
-            let diagnostics = db.cleanup_diagnostics();
-            return Err(err).wrap_err_with(|| {
-                format_cleanup_failure_context(
-                    "database slot not clean on acquisition",
+        // Verify the slot is clean. Under nextest (separate processes per test), the
+        // background cleanup thread of the PREVIOUS test process may not have finished
+        // before the process exited. If we find residual data, clean inline rather than
+        // erroring — this is the normal case, not an exceptional one.
+        if let Err(_) = verify_clean_state(&pool).await {
+            reset_database(&pool).await.map_err(|e| {
+                let diagnostics = db.cleanup_diagnostics();
+                e.wrap_err(format_cleanup_failure_context(
+                    "inline cleanup after dirty acquisition failed",
                     test_name,
                     &diagnostics,
                     None,
-                )
-            });
+                ))
+            })?;
+            // Re-seed fixture data after inline cleanup
+            crate::sandbox::db::pool::seed_test_fixtures(&pool).await?;
         }
 
         let baseline_events = pool.events().count_all().await?;

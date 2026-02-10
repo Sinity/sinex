@@ -6,9 +6,10 @@ pub async fn verify_clean_state(pool: &DbPool) -> TestResult<()> {
     let counts = get_row_counts(pool).await?;
     let mut failures = Vec::new();
     for (table, count) in counts {
-        // The template DB seeds a well-known fixture material for FK constraints
-        // (see pool/mod.rs create_template_database). Allow exactly 1 row.
-        if table == "raw.source_material_registry" && count <= 1 {
+        // raw.source_material_registry is managed by seed_test_fixtures() which
+        // inserts well-known fixture rows after every cleanup cycle. Skip it entirely
+        // since its contents are always re-established.
+        if table == "raw.source_material_registry" {
             continue;
         }
         if count > 0 {
