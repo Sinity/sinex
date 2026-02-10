@@ -1,7 +1,8 @@
 //! Audit trail types
 
-use crate::events::{Event, SourceMaterial};
+use crate::events::Event;
 use crate::ids::Id;
+use crate::rpc::ops::Operation;
 use crate::temporal::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -9,7 +10,7 @@ use serde_json::Value;
 /// Operation record from the operations log
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OperationRecord {
-    pub id: Id<SourceMaterial>,
+    pub id: Id<Operation>,
     pub operation_type: String,
     pub operator: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -33,7 +34,7 @@ pub struct EventSummary {
     pub ts_orig: Option<Timestamp>,
     pub ts_ingest: Timestamp,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provenance_operation_id: Option<Id<SourceMaterial>>,
+    pub provenance_operation_id: Option<Id<Operation>>,
 }
 
 /// Audit trail combining operation and affected events
@@ -51,7 +52,7 @@ pub struct AuditTrail {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditGetRequest {
     /// Operation ID to get audit trail for
-    pub operation_id: Id<SourceMaterial>,
+    pub operation_id: Id<Operation>,
 }
 
 /// Response: audit.get

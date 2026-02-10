@@ -18,6 +18,19 @@ fn report_to_test_error<E: std::fmt::Display>(e: E) -> TestCaseError {
     TestCaseError::Fail(e.to_string().into())
 }
 
+/// Register the well-known material ID used by `event_fixture()` so FK constraints pass.
+async fn ensure_fixture_material(ctx: &TestContext) -> Result<(), TestCaseError> {
+    use sinex_primitives::events::SourceMaterial;
+    use sinex_primitives::Id;
+    use std::str::FromStr;
+
+    let ulid = sinex_primitives::ulid::Ulid::from_str("01H00000000000000000000000").unwrap();
+    let material_id = Id::<SourceMaterial>::from(ulid);
+    ctx.ensure_source_material(material_id, None)
+        .await
+        .map_err(report_to_test_error)
+}
+
 /// Property test strategies for event data
 mod strategies {
     use super::*;
@@ -98,6 +111,7 @@ async fn node_event_processing_preserves_order(
     ctx.reset_database_slot()
         .await
         .map_err(report_to_test_error)?;
+    ensure_fixture_material(ctx).await?;
 
     if events.is_empty() {
         return Ok::<(), TestCaseError>(());
@@ -164,6 +178,7 @@ async fn node_handles_intermittent_failures(
     ctx.reset_database_slot()
         .await
         .map_err(report_to_test_error)?;
+    ensure_fixture_material(ctx).await?;
 
     if events.is_empty() {
         return Ok::<(), TestCaseError>(());
@@ -230,6 +245,7 @@ async fn node_manages_resources_efficiently(
     ctx.reset_database_slot()
         .await
         .map_err(report_to_test_error)?;
+    ensure_fixture_material(ctx).await?;
 
     // Generate events for concurrent processing
     let mut total_events = 0;
@@ -329,6 +345,7 @@ async fn node_batch_processing_is_consistent(
     ctx.reset_database_slot()
         .await
         .map_err(report_to_test_error)?;
+    ensure_fixture_material(ctx).await?;
 
     if events.is_empty() {
         return Ok::<(), TestCaseError>(());
@@ -393,6 +410,7 @@ async fn node_survives_processing_interruptions(
     ctx.reset_database_slot()
         .await
         .map_err(report_to_test_error)?;
+    ensure_fixture_material(ctx).await?;
 
     // Phase 1: Normal operation
     for i in 0..events_before_interruption {
@@ -466,6 +484,7 @@ async fn node_maintains_event_ordering_under_load(
     ctx.reset_database_slot()
         .await
         .map_err(report_to_test_error)?;
+    ensure_fixture_material(ctx).await?;
 
     let mut handles = Vec::new();
 

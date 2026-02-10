@@ -12,7 +12,7 @@
 # default: Standard runs
 # -----------------------------------------------------------------------------
 fail-fast          = false
-test-threads       = 24
+test-threads       = 64
 retries            = 0
 slow-timeout       = { period = "60s", terminate-after = 2 }
 failure-output     = "immediate-final"
