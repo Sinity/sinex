@@ -1,6 +1,6 @@
 //! Database Integration Tests
 //!
-//! Comprehensive integration tests for database functionality using modern infrastructure.
+//! Comprehensive integration tests for database functionality using the NATS pipeline.
 //! Tests cover:
 //! - Basic database operations and transactions
 //! - ULID primary key integration
@@ -8,7 +8,8 @@
 //! - Connection pool operations
 //!
 //! Uses #[`sinex_test`] for automatic transaction isolation and `TestContext`
-//! for unified database access patterns.
+//! for unified database access patterns. All events flow through PipelineScope
+//! (NATS → ingestd → PostgreSQL) for realistic end-to-end validation.
 
 use serde_json::json;
 use sinex_db::{DbPoolExt, DynamicPayload, Ulid};
@@ -17,19 +18,17 @@ use sinex_primitives::events::EventPayload;
 use sinex_primitives::EventSource;
 use std::time::Duration as StdDuration;
 use xtask::sandbox::prelude::*;
-use xtask::sandbox::timing::WaitHelpers;
 
 // =============================================================================
 // BASIC DATABASE OPERATIONS
 // =============================================================================
 
-/// Test batch insertion of multiple events using modern patterns
-#[sinex_serial_test]
+/// Test batch insertion of multiple events through the pipeline
+#[sinex_test]
 async fn test_batch_event_insertion(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    ctx.ensure_clean().await?;
+    let _scope = ctx.pipeline().await?;
     let source = format!("fs-watcher-{}", Ulid::new());
-    // Create test events using modern test utilities
     let mut inserted_events = Vec::new();
     let event_type = FileCreatedPayload::EVENT_TYPE.as_str().to_string();
 
@@ -48,9 +47,8 @@ async fn test_batch_event_insertion(ctx: TestContext) -> TestResult<()> {
         inserted_events.push(event);
     }
 
-    // Verify all events were inserted.
+    // Verify all events were inserted (each publish already waited for persistence)
     let expected = inserted_events.len();
-    WaitHelpers::wait_for_source_events(&ctx.pool, &source, expected, 10).await?;
     let persisted = ctx
         .pool
         .events()
@@ -79,11 +77,11 @@ async fn test_batch_event_insertion(ctx: TestContext) -> TestResult<()> {
     Ok(())
 }
 
-/// Test querying events by source using modern patterns
-#[sinex_serial_test]
+/// Test querying events by source through the pipeline
+#[sinex_test]
 async fn test_query_events_by_source(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    ctx.ensure_clean().await?;
+    let _scope = ctx.pipeline().await?;
     let fs_source = format!("fs-watcher-{}", Ulid::new());
     let terminal_source = format!("shell-{}", Ulid::new());
 
@@ -113,9 +111,6 @@ async fn test_query_events_by_source(ctx: TestContext) -> TestResult<()> {
             ),
         )
         .await?;
-
-    // Wait for both filesystem events to be visible before asserting.
-    WaitHelpers::wait_for_source_events(ctx.pool(), &fs_source, 2, 20).await?;
 
     // Query filesystem events using direct repository access
     let filesystem_events = ctx
@@ -147,6 +142,7 @@ async fn test_query_events_by_source(ctx: TestContext) -> TestResult<()> {
 #[traced_test]
 async fn test_ulid_time_ordering(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     tracing::info!("Testing ULID time ordering");
 
     // Insert events with a small delay to ensure different timestamps
@@ -183,12 +179,12 @@ async fn test_ulid_time_ordering(ctx: TestContext) -> TestResult<()> {
 // ULID INTEGRATION TESTS
 // =============================================================================
 
-#[sinex_serial_test]
+#[sinex_test]
 #[traced_test]
 async fn test_ulid_ordering_in_database(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     tracing::info!("Testing ULID ordering in database queries");
-    ctx.ensure_clean().await?;
 
     // Insert multiple events and collect their IDs
     let mut ulids = Vec::new();
@@ -206,15 +202,6 @@ async fn test_ulid_ordering_in_database(ctx: TestContext) -> TestResult<()> {
         // Small delay to ensure ULID monotonic ordering
         tokio::time::sleep(StdDuration::from_millis(1)).await;
     }
-
-    let expected_events = ulids.len();
-    WaitHelpers::wait_for_source_events(
-        ctx.pool(),
-        FileCreatedPayload::SOURCE.as_str(),
-        expected_events,
-        10,
-    )
-    .await?;
 
     // Query filesystem events to verify they exist using direct repository access
     let filesystem_events = ctx
@@ -260,12 +247,12 @@ async fn test_ulid_uuid_conversion_consistency() -> TestResult<()> {
 // =============================================================================
 
 /// Test basic event creation functionality
-#[sinex_serial_test]
+#[sinex_test]
 #[traced_test]
 async fn test_basic_event_creation_patterns(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     tracing::info!("Testing various event creation patterns");
-    ctx.ensure_clean().await?;
 
     // Test simple event creation
     let simple_event = ctx
@@ -313,10 +300,11 @@ async fn test_basic_event_creation_patterns(ctx: TestContext) -> TestResult<()> 
 // =============================================================================
 
 /// Test event creation with various payload types
-#[sinex_serial_test]
+#[sinex_test]
 async fn test_event_payload_validation(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    ctx.ensure_clean().await?;
+    let _scope = ctx.pipeline().await?;
+
     // Test with different payload structures
     let simple_event = ctx
         .publish(DynamicPayload::new(

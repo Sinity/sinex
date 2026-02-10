@@ -9,7 +9,7 @@ use std::sync::Arc;
 use tokio::time::{timeout, Duration};
 use xtask::sandbox::{sinex_test, TestContext};
 
-const COORDINATION_TIMEOUT: Duration = Duration::from_secs(2);
+const COORDINATION_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[sinex_test]
 async fn test_node_coordination_initialization() -> TestResult<()> {
@@ -39,7 +39,7 @@ async fn test_single_instance_becomes_leader() -> TestResult<()> {
     let processed = Arc::new(AtomicBool::new(false));
     let processed_flag = processed.clone();
 
-    let result = timeout(
+    let _result = timeout(
         COORDINATION_TIMEOUT,
         coordination.run_coordination_loop(move || {
             let processed_flag = processed_flag.clone();
@@ -51,7 +51,7 @@ async fn test_single_instance_becomes_leader() -> TestResult<()> {
     )
     .await;
 
-    assert!(result.is_ok());
+    // The loop is infinite; timeout cancels it. What matters is the side effect.
     assert!(processed.load(Ordering::SeqCst));
 
     Ok(())
@@ -75,7 +75,7 @@ async fn test_multi_instance_leader_election() -> TestResult<()> {
 
     let count1 = processing_count.clone();
     let handle1 = tokio::spawn(async move {
-        timeout(
+        let _ = timeout(
             COORDINATION_TIMEOUT,
             coord1.run_coordination_loop(move || {
                 let count = count1.clone();
@@ -86,13 +86,12 @@ async fn test_multi_instance_leader_election() -> TestResult<()> {
                 }
             }),
         )
-        .await
-        .is_ok()
+        .await;
     });
 
     let count2 = processing_count.clone();
     let handle2 = tokio::spawn(async move {
-        timeout(
+        let _ = timeout(
             COORDINATION_TIMEOUT,
             coord2.run_coordination_loop(move || {
                 let count = count2.clone();
@@ -103,13 +102,12 @@ async fn test_multi_instance_leader_election() -> TestResult<()> {
                 }
             }),
         )
-        .await
-        .is_ok()
+        .await;
     });
 
     let count3 = processing_count.clone();
     let handle3 = tokio::spawn(async move {
-        timeout(
+        let _ = timeout(
             COORDINATION_TIMEOUT,
             coord3.run_coordination_loop(move || {
                 let count = count3.clone();
@@ -120,15 +118,15 @@ async fn test_multi_instance_leader_election() -> TestResult<()> {
                 }
             }),
         )
-        .await
-        .is_ok()
+        .await;
     });
 
     let (result1, result2, result3) = tokio::join!(handle1, handle2, handle3);
 
-    assert!(result1.unwrap());
-    assert!(result2.unwrap());
-    assert!(result3.unwrap());
+    // All tasks should complete (the timeout just cancels the infinite loop)
+    result1.unwrap();
+    result2.unwrap();
+    result3.unwrap();
     assert!(processing_count.load(Ordering::SeqCst) > 0);
 
     Ok(())

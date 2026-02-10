@@ -503,14 +503,11 @@ impl ChaosContext {
         // Maybe corrupt
         let event = self.maybe_corrupt(event);
 
-        // Buffer for reordering
+        // Buffer for reordering.
+        // Returns Some(events) even if empty (event buffered for later),
+        // None only means "dropped" (decided above).
         let events = self.buffer_for_reorder(event);
-
-        if events.is_empty() {
-            None
-        } else {
-            Some(events)
-        }
+        Some(events)
     }
 }
 

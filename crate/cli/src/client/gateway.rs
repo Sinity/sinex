@@ -603,12 +603,12 @@ impl GatewayClient {
         &self,
         operation_id: &str,
     ) -> Result<sinex_primitives::rpc::audit::AuditGetResponse> {
-        use sinex_primitives::events::SourceMaterial;
         use sinex_primitives::rpc::audit::{AuditGetRequest, AuditGetResponse};
+        use sinex_primitives::rpc::ops::Operation;
         use sinex_primitives::Id;
 
         let op_id = operation_id
-            .parse::<Id<SourceMaterial>>()
+            .parse::<Id<Operation>>()
             .map_err(|e| color_eyre::eyre::eyre!("Invalid operation ID: {}", e))?;
 
         let request = AuditGetRequest {

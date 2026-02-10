@@ -71,6 +71,7 @@ async fn test_version_tracking_stress() -> TestResult<()> {
 #[sinex_test]
 async fn test_database_high_load_resilience(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let start_memory = get_current_memory_usage();
 
     // Create many events to test database resilience
@@ -193,6 +194,7 @@ async fn test_database_connection_exhaustion_recovery(ctx: TestContext) -> TestR
 #[sinex_test]
 async fn test_event_creation_extreme_payloads(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
 
     let test_cases = vec![
         // Empty payload

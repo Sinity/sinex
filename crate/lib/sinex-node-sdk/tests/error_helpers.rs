@@ -19,12 +19,12 @@ fn io_error_with_context_includes_message() -> TestResult<()> {
     for (kind, context) in cases {
         let err = std::io::Error::new(kind, "original error message");
         match io_error_with_context(err, context) {
-            SinexError::Processing(details) => {
+            SinexError::Io(details) => {
                 let message = details.message();
                 assert!(message.contains(context));
                 assert!(message.contains("original error message"));
             }
-            other => panic!("Expected Processing error, got {other:?}"),
+            other => panic!("Expected Io error, got {other:?}"),
         }
     }
 
@@ -35,8 +35,8 @@ fn io_error_with_context_includes_message() -> TestResult<()> {
 fn io_error_with_empty_context_still_includes_source() -> TestResult<()> {
     let err = std::io::Error::new(ErrorKind::NotFound, "test error");
     match io_error_with_context(err, "") {
-        SinexError::Processing(details) => assert!(details.message().contains("test error")),
-        other => panic!("Expected Processing error, got {other:?}"),
+        SinexError::Io(details) => assert!(details.message().contains("test error")),
+        other => panic!("Expected Io error, got {other:?}"),
     }
     Ok(())
 }

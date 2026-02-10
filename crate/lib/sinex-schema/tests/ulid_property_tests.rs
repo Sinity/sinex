@@ -74,13 +74,17 @@ mod ulid_property_tests {
         fn prop_timestamp_extraction_is_reasonable(ulid in ulid_strategy()) -> TestResult<()> {
             let timestamp = ulid.timestamp();
 
-            // Should be within the representable ULID timestamp range (48-bit ms)
+            // Should be non-negative (at or after Unix epoch)
             let min_time = Timestamp::from_unix_timestamp(0).unwrap();
-            let max_ms = ((1u64 << 48) - 1) as i64;
-            let max_time = Timestamp::from_unix_timestamp_millis(max_ms).unwrap();
-
             prop_assert!(timestamp >= min_time);
-            prop_assert!(timestamp <= max_time);
+
+            // The full 48-bit ULID timestamp range (~year 10889) exceeds
+            // OffsetDateTime's representable range (~year 9999), so only
+            // check the upper bound when it's representable.
+            let max_ms = ((1u64 << 48) - 1) as i64;
+            if let Some(max_time) = Timestamp::from_unix_timestamp_millis(max_ms) {
+                prop_assert!(timestamp <= max_time);
+            }
             Ok(())
         }
 

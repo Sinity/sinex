@@ -13,6 +13,7 @@ use futures::StreamExt;
 use proptest::prelude::*;
 use proptest::test_runner::TestCaseError;
 use serde_json::{json, Value};
+use sinex_db::repositories::SourceMaterialExt;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
 use sinex_primitives::{DynamicPayload, Ulid};
 use std::sync::LazyLock;
@@ -136,15 +137,30 @@ async fn queue_event_insertion_preserves_order(
         .await
         .map_err(report_to_test_error)?;
 
+    // Create source material for provenance
+    let material = sinex_db::repositories::SourceMaterial::blob();
+    let material_record = material
+        .register(&ctx.pool)
+        .await
+        .map_err(report_to_test_error)?;
+    let material_id: Id<sinex_primitives::SourceMaterial> = Id::from(material_record.id);
+
     for batch in 0..batch_count {
         for index in 0..batch_size {
-            ctx.publish(DynamicPayload::new(
+            let event = DynamicPayload::new(
                 "queue.test",
                 "batch.event",
                 json!({ "batch": batch, "index": index }),
-            ))
-            .await
-            .map_err(report_to_test_error)?;
+            )
+            .from_material_at(material_id, (batch * batch_size + index) as i64)
+            .build()
+            .map_err(|e| TestCaseError::fail(e.to_string()))?;
+
+            ctx.pool
+                .events()
+                .insert(event)
+                .await
+                .map_err(report_to_test_error)?;
         }
     }
 

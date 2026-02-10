@@ -61,6 +61,7 @@ async fn test_pipeline_smoke(ctx: TestContext) -> Result<()> {
 async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> {
     ctx.ensure_clean().await?;
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     tracing::info!("Testing complete event ingestion pipeline");
     let run_id = sinex_primitives::Ulid::new();
 
@@ -240,9 +241,9 @@ async fn test_complete_event_ingestion_pipeline(ctx: TestContext) -> Result<()> 
 #[sinex_serial_test]
 async fn test_concurrent_pipeline_processing(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing concurrent pipeline processing");
-    let ctx = ctx.with_nats().shared().await?;
+    let ctx = Arc::new(ctx.with_nats().shared().await?);
     ctx.ensure_clean().await?;
-    let ctx = Arc::new(ctx);
+    let _scope = ctx.pipeline().await?;
 
     let concurrent_streams = 4;
     let events_per_stream = 8;
@@ -383,6 +384,7 @@ async fn test_pipeline_data_transformation(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing pipeline data transformation and enrichment");
     ctx.ensure_clean().await?;
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
 
     // Create raw events that should be processed and enriched
     let raw_events = [
@@ -563,6 +565,7 @@ async fn test_pipeline_error_handling(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing pipeline error handling and recovery");
     ctx.ensure_clean().await?;
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
 
     let pipeline_start = Instant::now();
     let mut successful_events = Vec::new();

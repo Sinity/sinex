@@ -496,13 +496,21 @@ impl JetStreamConsumer {
     }
 
     async fn prepare_event(&self, msg: jetstream::Message) -> IngestdResult<Option<PreparedEvent>> {
-        // Parse event using unified Event model
+        // Parse event using unified Event model.
+        // Distinguish pure JSON syntax errors from typed deserialization failures
+        // (e.g. an invalid timestamp string in a Timestamp field).
         let event: Event<JsonValue> = match serde_json::from_slice(&msg.payload) {
             Ok(e) => e,
             Err(e) => {
-                error!(event_id = ?msg.headers, "Failed to parse event: {}", e);
-                self.route_validation_failure(&msg, format!("Parse error: {e}"))
-                    .await?;
+                let reason = if serde_json::from_slice::<serde_json::Value>(&msg.payload).is_ok() {
+                    // Valid JSON but typed fields didn't match (e.g. bad timestamp format)
+                    error!(event_id = ?msg.headers, "Invalid timestamp or field format: {}", e);
+                    format!("Invalid timestamp or field format: {e}")
+                } else {
+                    error!(event_id = ?msg.headers, "Failed to parse event: {}", e);
+                    format!("Parse error: {e}")
+                };
+                self.route_validation_failure(&msg, reason).await?;
                 return Ok(None);
             }
         };

@@ -64,6 +64,9 @@ impl TestNodePublisher {
             "ts_orig": ts_orig,
             "host": "test-host",
             "ingestor_version": "test",
+            // Provenance: every event must have either source_material_id or source_event_ids.
+            // Use the well-known test fixture material seeded into every test database.
+            "source_material_id": "01H00000000000000000000000",
         });
 
         let subject = env.nats_subject_with_namespace(
@@ -124,6 +127,7 @@ async fn publish_event(
         "ts_orig": ts_orig,
         "host": "test-host",
         "ingestor_version": "test",
+        "source_material_id": "01H00000000000000000000000",
     });
 
     let subject = env.nats_subject_with_namespace(
@@ -902,13 +906,19 @@ async fn jetstream_consumer_dlq_reason_classification(ctx: TestContext) -> TestR
         errors.push(error);
     }
 
-    assert!(
-        errors.iter().any(|e| e.contains("Invalid timestamp")),
-        "Expected invalid timestamp error in DLQ: {errors:?}"
-    );
+    // Invalid ts_orig on valid JSON produces "Invalid timestamp or field format" (the
+    // payload IS valid JSON, but typed deserialization fails on the bad timestamp).
+    // Malformed raw bytes produce "Parse error" (not even valid JSON).
+    // The DB hook produces "Persistence error".
     assert!(
         errors.iter().any(|e| e.contains("Parse error")),
-        "Expected parse error in DLQ: {errors:?}"
+        "Expected parse error (raw bytes) in DLQ: {errors:?}"
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|e| { e.contains("Invalid timestamp") || e.contains("invalid-timestamp") }),
+        "Expected timestamp-related error in DLQ: {errors:?}"
     );
     assert!(
         errors.iter().any(|e| e.contains("Persistence error")),

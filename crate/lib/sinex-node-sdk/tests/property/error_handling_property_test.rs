@@ -41,7 +41,7 @@ sinex_proptest! {
         let io_error = std::io::Error::new(kind, msg.clone());
         let node_error = io_error_with_context(io_error, &ctx);
 
-        if let SinexError::Processing(details) = node_error {
+        if let SinexError::Io(details) = node_error {
             let rendered = details.message();
             // Should at least contain the separator if both are empty,
             // or the content of whichever is non-empty.
@@ -55,7 +55,7 @@ sinex_proptest! {
                 prop_assert!(rendered.contains(&msg));
             }
         } else {
-            prop_assert!(false, "expected processing error variant");
+            prop_assert!(false, "expected Io error variant from io_error_with_context");
         }
         Ok(())
     }

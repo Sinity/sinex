@@ -240,7 +240,7 @@ impl IdempotenceKey {
             r#"
             SELECT EXISTS(
                 SELECT 1 FROM core.events 
-                WHERE source_material_id = $1 
+                WHERE source_material_id::uuid = $1
                 AND anchor_byte = $2
             ) as "exists!"
             "#,

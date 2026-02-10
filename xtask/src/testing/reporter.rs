@@ -7,9 +7,10 @@ use std::thread;
 
 use crate::history::HistoryDb;
 
-/// Strict types for Nextest JSON messages (libtest-json format)
+/// Strict types for Nextest JSON messages (libtest-json-plus format)
 ///
 /// The format is: {"type": "suite"|"test", "event": "started"|"ok"|"failed", ...}
+/// With libtest-json-plus, failed tests include a "stdout" field with captured output.
 #[derive(Deserialize, Debug)]
 struct RawMessage {
     #[serde(rename = "type")]
@@ -20,6 +21,7 @@ struct RawMessage {
     name: Option<String>,
     #[serde(rename = "exec_time")]
     exec_time: Option<f64>,
+    stdout: Option<String>,
     passed: Option<usize>,
     failed: Option<usize>,
     ignored: Option<usize>,
@@ -43,16 +45,19 @@ impl RawMessage {
                 name: self.name.unwrap_or_default(),
                 result: "passed".to_string(),
                 exec_time: self.exec_time,
+                output: None, // Don't store output for passing tests
             }),
             ("test", "failed") => Message::TestFinished(TestFinished {
                 name: self.name.unwrap_or_default(),
                 result: "failed".to_string(),
                 exec_time: self.exec_time,
+                output: self.stdout, // Capture failure output from libtest-json-plus
             }),
             ("test", "ignored") => Message::TestFinished(TestFinished {
                 name: self.name.unwrap_or_default(),
                 result: "ignored".to_string(),
                 exec_time: self.exec_time,
+                output: None,
             }),
             _ => Message::Other,
         }
@@ -86,6 +91,8 @@ struct TestFinished {
     name: String,
     result: String,
     exec_time: Option<f64>,
+    /// Captured stdout/stderr from test (available via libtest-json-plus for failures)
+    output: Option<String>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -221,16 +228,22 @@ impl TestReporter {
                             }
                         }
 
-                        // Record to DB
+                        // Record to DB (including failure output if available)
                         if let Some((db, invocation_id)) = history {
+                            let output = t.output.as_deref();
+
+                            // Extract package from test name (e.g. "sinex_db::repo::test_name"
+                            // → "sinex_db", or "tests/e2e.rs::test_name" → "tests")
+                            let package = t.name.split("::").next().unwrap_or("unknown");
+
                             // We ignore errors here to not interrupt testing flow if DB fails
                             let _ = db.record_test_result(
                                 invocation_id,
                                 &t.name,
-                                "unknown", // Package info not available in this format
+                                package,
                                 &t.result,
                                 duration,
-                                None,
+                                output,
                             );
                         }
                     }

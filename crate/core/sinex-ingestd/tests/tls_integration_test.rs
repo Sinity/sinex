@@ -33,6 +33,7 @@ async fn publish_test_event(
         "ts_orig": ts_orig,
         "host": "test-host",
         "ingestor_version": "test",
+        "source_material_id": "01H00000000000000000000000",
     });
 
     let subject = env.nats_subject(&format!(

@@ -165,7 +165,8 @@ async fn jetstream_pipeline_dedupes_duplicate_event_ids() -> TestResult<()> {
             "ts_orig": temporal::now().format_rfc3339(),
             "host": "test-host",
             "payload": { "seq": idx },
-            "ingestor_version": "test-node"
+            "ingestor_version": "test-node",
+            "source_material_id": "01H00000000000000000000000"
         });
 
         let mut headers = HeaderMap::new();

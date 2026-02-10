@@ -326,6 +326,7 @@ async fn checkpoint_data_integrity_is_preserved(
 
     let mut expected_data = test_data.clone();
     let mut processed_count = 0u64;
+    let mut has_persisted = false;
 
     // Execute operations sequence
     for (i, operation) in operations.iter().enumerate() {
@@ -347,6 +348,7 @@ async fn checkpoint_data_integrity_is_preserved(
                     .save_checkpoint(&state)
                     .await
                     .map_err(report_to_test_error)?;
+                has_persisted = true;
             }
             "load" => {
                 let stats = checkpoint_manager
@@ -354,7 +356,10 @@ async fn checkpoint_data_integrity_is_preserved(
                     .await
                     .map_err(report_to_test_error)?;
                 prop_assert_eq!(stats.max_processed, processed_count);
-                prop_assert!(stats.last_update.is_some());
+                // last_update is only populated after at least one save/update
+                if has_persisted {
+                    prop_assert!(stats.last_update.is_some());
+                }
             }
             "update" => {
                 processed_count += 1;
@@ -376,6 +381,7 @@ async fn checkpoint_data_integrity_is_preserved(
                     .save_checkpoint(&state)
                     .await
                     .map_err(report_to_test_error)?;
+                has_persisted = true;
             }
             _ => unreachable!(),
         }
@@ -387,7 +393,9 @@ async fn checkpoint_data_integrity_is_preserved(
         .await
         .map_err(report_to_test_error)?;
     prop_assert_eq!(final_state.max_processed, processed_count);
-    prop_assert!(final_state.last_update.is_some());
+    if has_persisted {
+        prop_assert!(final_state.last_update.is_some());
+    }
     Ok(())
 }
 

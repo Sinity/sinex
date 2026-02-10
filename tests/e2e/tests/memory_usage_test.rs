@@ -161,6 +161,8 @@ impl MemoryMetrics {
 #[sinex_test]
 #[ignore = "memory benchmark - run with --heavy"]
 async fn test_event_processing_memory_usage(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let mut metrics = MemoryMetrics::new();
 
     println!("🧠 Testing memory usage during event processing");

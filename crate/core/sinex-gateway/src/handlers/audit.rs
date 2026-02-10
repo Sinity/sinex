@@ -5,7 +5,8 @@
 //! - Follow provenance links from operation to affected events
 
 use serde_json::Value;
-use sinex_primitives::events::{Event, SourceMaterial};
+use sinex_primitives::events::Event;
+use sinex_primitives::rpc::ops::Operation;
 use sinex_primitives::{Id, SinexError, Timestamp};
 use sqlx::PgPool;
 
@@ -27,7 +28,7 @@ const MAX_AFFECTED_EVENTS: i64 = 100;
 /// 3. Querying archived_events whose archived_at falls within this window
 async fn query_affected_events(
     pool: &PgPool,
-    operation_id: &Id<SourceMaterial>,
+    operation_id: &Id<Operation>,
     duration_ms: Option<i32>,
 ) -> Result<Vec<EventSummary>> {
     // The operation ULID contains its creation timestamp
@@ -37,7 +38,7 @@ async fn query_affected_events(
     let rows = sqlx::query!(
         r#"
         SELECT
-            id as "id: Id<Event>",
+            id::uuid as "id!: Id<Event>",
             source,
             event_type,
             ts_orig as "ts_orig: Timestamp",
@@ -74,7 +75,7 @@ async fn query_affected_events(
 /// Internal DB row type for operation records
 #[derive(Debug, sqlx::FromRow)]
 struct OperationRow {
-    id: Id<SourceMaterial>,
+    id: Id<Operation>,
     operation_type: String,
     operator: String,
     scope: Option<Value>,
@@ -96,7 +97,7 @@ pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
         OperationRow,
         r#"
         SELECT
-            id as "id: Id<SourceMaterial>",
+            id::uuid as "id!: Id<Operation>",
             operation_type as "operation_type!",
             operator as "operator!",
             scope,
@@ -105,7 +106,7 @@ pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
             preview_summary,
             duration_ms
         FROM core.operations_log
-        WHERE id = $1
+        WHERE id::uuid = $1
         "#,
         operation_id as _
     )
@@ -168,7 +169,7 @@ mod tests {
         .fetch_one(ctx.pool())
         .await?;
 
-        let operation_id = Id::<SourceMaterial>::from_uuid(operation_uuid);
+        let operation_id = Id::<Operation>::from_uuid(operation_uuid);
 
         // Fetch audit trail
         let result = handle_audit_get(ctx.pool(), json!({ "operation_id": operation_id })).await?;
@@ -186,7 +187,7 @@ mod tests {
 
     #[sinex_test]
     async fn audit_get_fails_for_missing_operation(ctx: &TestContext) -> TestResult<()> {
-        let fake_id = Id::<SourceMaterial>::new();
+        let fake_id = Id::<Operation>::new();
 
         let err = handle_audit_get(ctx.pool(), json!({ "operation_id": fake_id }))
             .await

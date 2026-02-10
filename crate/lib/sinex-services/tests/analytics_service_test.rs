@@ -165,7 +165,7 @@ async fn test_get_event_count_by_source_no_time_filter(ctx: TestContext) -> Test
     Ok(())
 }
 
-#[sinex_serial_test]
+#[sinex_test]
 async fn test_get_event_count_by_source_with_time_filter(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
@@ -226,7 +226,7 @@ async fn analytics_queries_block_each_other_with_single_connection(
     Ok(())
 }
 
-#[sinex_serial_test]
+#[sinex_test]
 async fn test_get_event_count_by_type_no_time_filter(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
@@ -267,7 +267,7 @@ async fn test_get_event_count_by_type_with_time_filter(ctx: TestContext) -> Test
     Ok(())
 }
 
-#[sinex_serial_test]
+#[sinex_test]
 async fn test_get_events_over_time_hourly_intervals(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
@@ -299,7 +299,7 @@ async fn test_get_events_over_time_hourly_intervals(ctx: TestContext) -> TestRes
     Ok(())
 }
 
-#[sinex_serial_test]
+#[sinex_test]
 async fn test_get_events_over_time_different_intervals(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
@@ -329,7 +329,7 @@ async fn test_get_events_over_time_different_intervals(ctx: TestContext) -> Test
     Ok(())
 }
 
-#[sinex_serial_test]
+#[sinex_test]
 async fn test_get_top_commands_no_time_filter(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
@@ -359,7 +359,7 @@ async fn test_get_top_commands_no_time_filter(ctx: TestContext) -> TestResult<()
     Ok(())
 }
 
-#[sinex_serial_test]
+#[sinex_test]
 async fn test_get_top_commands_with_limit(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
@@ -379,7 +379,7 @@ async fn test_get_top_commands_with_limit(ctx: TestContext) -> TestResult<()> {
     Ok(())
 }
 
-#[sinex_serial_test]
+#[sinex_test]
 async fn test_get_top_commands_with_time_filter(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
@@ -455,7 +455,7 @@ async fn test_analytics_with_single_event(ctx: TestContext) -> TestResult<()> {
     Ok(())
 }
 
-#[sinex_serial_test]
+#[sinex_test]
 async fn test_analytics_time_range_edge_cases(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
@@ -492,7 +492,7 @@ async fn test_analytics_time_range_edge_cases(ctx: TestContext) -> TestResult<()
     Ok(())
 }
 
-#[sinex_serial_test]
+#[sinex_test]
 async fn test_get_top_commands_only_command_events(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
@@ -522,7 +522,7 @@ async fn test_get_top_commands_only_command_events(ctx: TestContext) -> TestResu
     Ok(())
 }
 
-#[sinex_serial_test]
+#[sinex_test]
 async fn test_analytics_aggregation_accuracy(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
@@ -583,7 +583,7 @@ async fn test_analytics_aggregation_accuracy(ctx: TestContext) -> TestResult<()>
     Ok(())
 }
 
-#[sinex_serial_test]
+#[sinex_test]
 async fn test_activity_heatmap(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let scope = ctx.pipeline().await?;
@@ -641,7 +641,7 @@ async fn test_pipeline_services_smoke(ctx: TestContext) -> TestResult<()> {
     Ok(())
 }
 
-#[sinex_serial_test]
+#[sinex_test]
 #[ignore = "long"]
 async fn test_analytics_large_dataset_performance(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;

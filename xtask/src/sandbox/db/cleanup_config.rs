@@ -141,10 +141,10 @@ impl Default for CleanupConfig {
                 },
                 TableCleanupStrategy {
                     table_name: "sinex_schemas.event_payload_schemas",
-                    method: CleanupMethod::Truncate,
+                    method: CleanupMethod::Skip,
                     disable_triggers: false,
-                    protected: false,
-                    reason: None,
+                    protected: true,
+                    reason: Some("Infrastructure reference data deployed by contracts preflight; preserved across tests like migrations"),
                 },
                 TableCleanupStrategy {
                     table_name: "sinex_schemas.validation_cache",
