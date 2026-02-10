@@ -458,7 +458,7 @@ impl EventRepository<'_> {
                 created_at as "created_at: Timestamp",
                 updated_at as "updated_at: Timestamp"
             FROM core.event_annotations
-            WHERE event_id = $1
+            WHERE event_id::uuid = $1
             ORDER BY created_at DESC
             "#,
             *id.as_ulid() as _

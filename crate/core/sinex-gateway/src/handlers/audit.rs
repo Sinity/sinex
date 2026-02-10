@@ -105,7 +105,7 @@ pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
             preview_summary,
             duration_ms
         FROM core.operations_log
-        WHERE id = $1
+        WHERE id::uuid = $1
         "#,
         operation_id as _
     )

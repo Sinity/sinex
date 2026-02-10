@@ -97,7 +97,7 @@ pub async fn handle_ops_start(
             preview_summary,
             duration_ms
         FROM core.operations_log
-        WHERE id = $1
+        WHERE id::uuid = $1
         "#,
         operation_id as _
     )
@@ -275,7 +275,7 @@ pub async fn handle_ops_get(
             preview_summary,
             duration_ms
         FROM core.operations_log
-        WHERE id = $1
+        WHERE id::uuid = $1
         "#,
         operation_id as _
     )
@@ -321,7 +321,7 @@ pub async fn handle_ops_cancel(
         r#"
         SELECT result_status
         FROM core.operations_log
-        WHERE id = $1
+        WHERE id::uuid = $1
         "#,
         operation_id as _
     )
@@ -359,7 +359,7 @@ pub async fn handle_ops_cancel(
         SET result_status = 'cancelled',
             result_message = $2,
             duration_ms = EXTRACT(MILLISECONDS FROM (NOW() - (id::timestamp)))::integer
-        WHERE id = $1
+        WHERE id::uuid = $1
         "#,
         operation_id as _,
         reason
@@ -382,7 +382,7 @@ pub async fn handle_ops_cancel(
             preview_summary,
             duration_ms
         FROM core.operations_log
-        WHERE id = $1
+        WHERE id::uuid = $1
         "#,
         operation_id as _
     )

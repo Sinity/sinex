@@ -252,7 +252,7 @@ mod tests {
         let schema = NewEventSchema {
             source: "test-source".to_string(),
             event_type: "test.event".to_string(),
-            schema_version: "v1".to_string(),
+            schema_version: "1.0.0".to_string(),
             schema_content: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -286,7 +286,7 @@ mod tests {
         let cache_repo = SchemaCacheRepository::new(pool);
 
         let version = cache_repo.lookup_schema_version(schema_id).await?;
-        assert_eq!(version, Some("v1".to_string()));
+        assert_eq!(version, Some("1.0.0".to_string()));
 
         Ok(())
     }
@@ -351,7 +351,7 @@ mod tests {
         assert_eq!(*id, schema_id);
         assert_eq!(source, "test-source");
         assert_eq!(event_type, "test.event");
-        assert_eq!(version, "v1");
+        assert_eq!(version, "1.0.0");
 
         Ok(())
     }
