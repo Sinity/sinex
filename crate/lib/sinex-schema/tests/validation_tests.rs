@@ -85,99 +85,95 @@ async fn finalize_constraint_context(ctx: &TestContext) -> TestResult<()> {
 #[cfg(test)]
 mod constraint_validation_tests {
     use super::*;
-    use tokio::sync::OnceCell;
 
     pub async fn setup_test_tables(pool: &PgPool) {
-        static TABLES_READY: OnceCell<()> = OnceCell::const_new();
-        TABLES_READY
-            .get_or_try_init(|| async {
-                // Ensure we start from a clean slate in the reusable database.
-                // Drop then recreate the tables inside a transaction to avoid partial state
-                // when the pool is under contention.
-                let mut tx = pool.begin().await?;
-                sqlx::query("CREATE SCHEMA IF NOT EXISTS core")
-                    .execute(&mut *tx)
-                    .await
-                    .ok();
-                sqlx::query("CREATE SCHEMA IF NOT EXISTS raw")
-                    .execute(&mut *tx)
-                    .await
-                    .ok();
-                sqlx::query("CREATE SCHEMA IF NOT EXISTS sinex_schemas")
-                    .execute(&mut *tx)
-                    .await
-                    .ok();
-                sqlx::query("CREATE SCHEMA IF NOT EXISTS audit")
-                    .execute(&mut *tx)
-                    .await
-                    .ok();
-                sqlx::query("DROP TABLE IF EXISTS core.events CASCADE")
-                    .execute(&mut *tx)
-                    .await
-                    .ok();
-                sqlx::query("DROP TABLE IF EXISTS sinex_schemas.event_payload_schemas CASCADE")
-                    .execute(&mut *tx)
-                    .await
-                    .ok();
-                sqlx::query("DROP TABLE IF EXISTS raw.source_material_registry CASCADE")
-                    .execute(&mut *tx)
-                    .await
-                    .ok();
-                sqlx::query("DROP TABLE IF EXISTS core.blobs CASCADE")
-                    .execute(&mut *tx)
-                    .await
-                    .ok();
-                sqlx::query("DROP TABLE IF EXISTS audit.archived_events CASCADE")
-                    .execute(&mut *tx)
-                    .await
-                    .ok();
+        // Each test gets its own DB slot, so we must set up tables on every call.
+        // All operations are idempotent (DROP IF EXISTS + CREATE).
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query("CREATE SCHEMA IF NOT EXISTS core")
+            .execute(&mut *tx)
+            .await
+            .ok();
+        sqlx::query("CREATE SCHEMA IF NOT EXISTS raw")
+            .execute(&mut *tx)
+            .await
+            .ok();
+        sqlx::query("CREATE SCHEMA IF NOT EXISTS sinex_schemas")
+            .execute(&mut *tx)
+            .await
+            .ok();
+        sqlx::query("CREATE SCHEMA IF NOT EXISTS audit")
+            .execute(&mut *tx)
+            .await
+            .ok();
+        sqlx::query("DROP TABLE IF EXISTS core.events CASCADE")
+            .execute(&mut *tx)
+            .await
+            .ok();
+        sqlx::query("DROP TABLE IF EXISTS sinex_schemas.event_payload_schemas CASCADE")
+            .execute(&mut *tx)
+            .await
+            .ok();
+        sqlx::query("DROP TABLE IF EXISTS raw.source_material_registry CASCADE")
+            .execute(&mut *tx)
+            .await
+            .ok();
+        sqlx::query("DROP TABLE IF EXISTS core.blobs CASCADE")
+            .execute(&mut *tx)
+            .await
+            .ok();
+        sqlx::query("DROP TABLE IF EXISTS audit.archived_events CASCADE")
+            .execute(&mut *tx)
+            .await
+            .ok();
 
-                sqlx::query(&Blobs::create_table_statement().to_string(PostgresQueryBuilder))
-                    .execute(&mut *tx)
-                    .await?;
-                sqlx::query(
-                    &SourceMaterialRegistry::create_table_statement()
-                        .to_string(PostgresQueryBuilder),
-                )
-                .execute(&mut *tx)
-                .await?;
-                sqlx::query(
-                    &EventPayloadSchemas::create_table_statement()
-                        .to_string(PostgresQueryBuilder),
-                )
-                .execute(&mut *tx)
-                .await?;
-                sqlx::query(&Events::create_table_statement().to_string(PostgresQueryBuilder))
-                    .execute(&mut *tx)
-                    .await?;
-                let archived_sql = ArchivedEvents::create_table_sql();
-                tx.execute(archived_sql.as_str()).await?;
-                sqlx::query(
-                    r"
-                    DO $$
-                    BEGIN
-                        ALTER TABLE core.events DROP CONSTRAINT IF EXISTS events_source_nonblank;
-                        ALTER TABLE core.events DROP CONSTRAINT IF EXISTS events_source_check;
-                        ALTER TABLE core.events DROP CONSTRAINT IF EXISTS core_events_source_check;
-                        ALTER TABLE core.events ADD CONSTRAINT events_source_nonblank CHECK (length(BTRIM(source, E' \t\n\r\v\f')) > 0);
-
-                        ALTER TABLE core.events DROP CONSTRAINT IF EXISTS events_event_type_nonblank;
-                        ALTER TABLE core.events DROP CONSTRAINT IF EXISTS events_event_type_check;
-                        ALTER TABLE core.events DROP CONSTRAINT IF EXISTS core_events_event_type_check;
-                        ALTER TABLE core.events ADD CONSTRAINT events_event_type_nonblank CHECK (length(BTRIM(event_type, E' \t\n\r\v\f')) > 0);
-                    END
-                    $$;
-                    ",
-                )
-                .execute(&mut *tx)
-                .await?;
-                tx.execute(ArchivedEvents::create_archive_trigger_sql()).await?;
-                tx.execute(Events::create_no_update_trigger_sql()).await?;
-                tx.commit().await?;
-                Ok::<(), sqlx::Error>(())
-            })
+        sqlx::query(&Blobs::create_table_statement().to_string(PostgresQueryBuilder))
+            .execute(&mut *tx)
             .await
             .unwrap();
+        sqlx::query(
+            &SourceMaterialRegistry::create_table_statement().to_string(PostgresQueryBuilder),
+        )
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        sqlx::query(&EventPayloadSchemas::create_table_statement().to_string(PostgresQueryBuilder))
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        sqlx::query(&Events::create_table_statement().to_string(PostgresQueryBuilder))
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        let archived_sql = ArchivedEvents::create_table_sql();
+        tx.execute(archived_sql.as_str()).await.unwrap();
+        sqlx::query(
+            r"
+            DO $$
+            BEGIN
+                ALTER TABLE core.events DROP CONSTRAINT IF EXISTS events_source_nonblank;
+                ALTER TABLE core.events DROP CONSTRAINT IF EXISTS events_source_check;
+                ALTER TABLE core.events DROP CONSTRAINT IF EXISTS core_events_source_check;
+                ALTER TABLE core.events ADD CONSTRAINT events_source_nonblank CHECK (length(BTRIM(source, E' \t\n\r\v\f')) > 0);
+
+                ALTER TABLE core.events DROP CONSTRAINT IF EXISTS events_event_type_nonblank;
+                ALTER TABLE core.events DROP CONSTRAINT IF EXISTS events_event_type_check;
+                ALTER TABLE core.events DROP CONSTRAINT IF EXISTS core_events_event_type_check;
+                ALTER TABLE core.events ADD CONSTRAINT events_event_type_nonblank CHECK (length(BTRIM(event_type, E' \t\n\r\v\f')) > 0);
+            END
+            $$;
+            ",
+        )
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        tx.execute(ArchivedEvents::create_archive_trigger_sql())
+            .await
+            .unwrap();
+        tx.execute(Events::create_no_update_trigger_sql())
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
 
         truncate_constraint_tables(pool).await.unwrap();
     }
