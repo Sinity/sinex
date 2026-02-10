@@ -499,6 +499,14 @@ pub async fn start_test_ingestd_with_config(
     }
 
     let mut cmd = Command::new(binary_path);
+    // Auto-kill ingestd when parent test process exits.
+    #[cfg(target_os = "linux")]
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
+            Ok(())
+        });
+    }
     cmd.stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);

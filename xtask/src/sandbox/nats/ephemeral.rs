@@ -126,6 +126,16 @@ impl EphemeralNatsBuilder {
                 };
 
                 let mut cmd = Command::new(&binary);
+                // Auto-kill the nats-server when the parent test process exits.
+                // Without this, shared NATS instances (held in a static registry)
+                // become orphans because Rust doesn't guarantee static destructors.
+                #[cfg(target_os = "linux")]
+                unsafe {
+                    cmd.pre_exec(|| {
+                        libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
+                        Ok(())
+                    });
+                }
                 cmd.arg("--jetstream")
                     .arg("--store_dir")
                     .arg(store_dir.path())
