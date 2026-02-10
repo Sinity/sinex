@@ -502,8 +502,7 @@ impl JetStreamConsumer {
         let event: Event<JsonValue> = match serde_json::from_slice(&msg.payload) {
             Ok(e) => e,
             Err(e) => {
-                let reason = if serde_json::from_slice::<serde_json::Value>(&msg.payload).is_ok()
-                {
+                let reason = if serde_json::from_slice::<serde_json::Value>(&msg.payload).is_ok() {
                     // Valid JSON but typed fields didn't match (e.g. bad timestamp format)
                     error!(event_id = ?msg.headers, "Invalid timestamp or field format: {}", e);
                     format!("Invalid timestamp or field format: {e}")

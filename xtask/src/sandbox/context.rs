@@ -75,6 +75,7 @@ use std::time::{Duration, Instant};
 use tokio::runtime::{Handle, RuntimeFlavor};
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::sync::OnceCell as AsyncOnceCell;
+use tokio::sync::OwnedSemaphorePermit;
 use tokio::task::JoinHandle;
 use tracing::warn;
 
@@ -105,7 +106,16 @@ fn format_cleanup_failure_context(
     )
 }
 
+/// Holds a lazily-started ingestd instance for tests that call `ctx.publish()`
+/// without explicitly creating a `PipelineScope`.
+struct AutoPipelineInner {
+    _ingestd: crate::sandbox::orchestrator::TestIngestdHandle,
+    _permit: OwnedSemaphorePermit,
+}
+
 pub struct Sandbox {
+    /// Lazy ingestd for `ctx.publish()` — dropped first to kill the process before pool closes.
+    auto_pipeline: Arc<AsyncMutex<Option<AutoPipelineInner>>>,
     /// Direct access to the database pool - use this for repositories
     pub pool: DbPool,
     db: TestDatabase,
@@ -368,6 +378,7 @@ impl Sandbox {
         let pipeline_namespace = PipelineNamespace::new(test_name);
 
         let ctx = Self {
+            auto_pipeline: Arc::new(AsyncMutex::new(None)),
             pool,
             db,
             test_name: test_name.to_string(),
@@ -532,6 +543,43 @@ impl Sandbox {
     /// Create a pipeline scope that resets the DB slot and starts ingestd.
     pub async fn pipeline(&self) -> TestResult<PipelineScope<'_>> {
         PipelineScope::new(self).await
+    }
+
+    /// Lazily start an ingestd instance for tests that call `ctx.publish()`
+    /// without explicitly creating a `PipelineScope`.
+    ///
+    /// This is idempotent — the first call starts ingestd, subsequent calls
+    /// are no-ops. The ingestd process is killed automatically when Sandbox
+    /// drops (via `AutoPipelineInner` field ordering).
+    pub(crate) async fn ensure_auto_pipeline(&self) -> TestResult<()> {
+        let mut guard = self.auto_pipeline.lock().await;
+        if guard.is_some() {
+            return Ok(());
+        }
+
+        let nats = self.nats_handle()?;
+        let namespace = self.pipeline_namespace().prefix().to_string();
+        let permit = crate::sandbox::nats::acquire_pipeline_permit(&namespace).await?;
+
+        let config = crate::sandbox::orchestrator::TestIngestdConfig {
+            nats: nats.connection_config(),
+            database_url: self.database_url().to_string(),
+            work_dir: None,
+            namespace: Some(namespace),
+            batch_size: 32,
+            consumer_fetch_max_messages: 32,
+            consumer_fetch_timeout_ms: 100,
+        };
+
+        let ingestd =
+            crate::sandbox::orchestrator::start_test_ingestd_with_config(config, Some(self))
+                .await?;
+
+        *guard = Some(AutoPipelineInner {
+            _ingestd: ingestd,
+            _permit: permit,
+        });
+        Ok(())
     }
 
     pub(crate) fn ensure_shared_nats(&self) -> TestResult<()> {

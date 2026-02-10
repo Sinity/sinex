@@ -905,7 +905,10 @@ async fn jetstream_consumer_dlq_reason_classification(ctx: TestContext) -> TestR
     // Invalid ts_orig fails during serde deserialization, producing a "Parse error"
     // that includes the offending value. Raw bytes also produce a "Parse error".
     // The DB hook produces a "Persistence error".
-    let parse_errors: Vec<_> = errors.iter().filter(|e| e.contains("Parse error")).collect();
+    let parse_errors: Vec<_> = errors
+        .iter()
+        .filter(|e| e.contains("Parse error"))
+        .collect();
     assert!(
         parse_errors.len() >= 2,
         "Expected at least 2 parse errors (timestamp + raw bytes) in DLQ: {errors:?}"
