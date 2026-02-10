@@ -10,6 +10,7 @@ use xtask::sandbox::prelude::*;
 #[sinex_test]
 async fn replay_outcomes_surface_in_analytics(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
 
     // Publish test event via NATS pipeline
     ctx.publish(DynamicPayload::new(

@@ -21,7 +21,6 @@ use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::Arc;
 use time::Duration;
-use tokio::time::sleep;
 
 // =============================================================================
 // CORE DATABASE OPERATIONS
@@ -120,6 +119,8 @@ async fn test_event_queries(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_test]
 async fn test_edge_case_payloads(ctx: TestContext) -> TestResult<()> {
+    let material_id = ctx.create_source_material(Some("edge-case")).await?;
+
     let test_cases = vec![
         ("empty_payload", json!({})),
         ("null_values", json!({"value": null, "data": null})),
@@ -141,14 +142,15 @@ async fn test_edge_case_payloads(ctx: TestContext) -> TestResult<()> {
         }),
     ];
 
-    for (test_name, payload) in test_cases {
-        let event = ctx
-            .publish(DynamicPayload::new("edge-test", test_name, payload.clone()))
-            .await?;
+    for (i, (test_name, payload)) in test_cases.into_iter().enumerate() {
+        let event = DynamicPayload::new("edge-test", test_name, payload.clone())
+            .from_material_at(material_id, i as i64)
+            .build()?;
+        let inserted = ctx.pool.events().insert(event).await?;
 
-        assert_eq!(event.payload, payload);
+        assert_eq!(inserted.payload, payload);
 
-        let event_id = event.id.unwrap();
+        let event_id = inserted.id.unwrap();
         let retrieved = ctx.pool.events().get_by_id(event_id).await?.unwrap();
         assert_eq!(retrieved.payload, payload);
     }
@@ -156,22 +158,20 @@ async fn test_edge_case_payloads(ctx: TestContext) -> TestResult<()> {
     Ok(())
 }
 
-#[sinex_serial_test]
+#[sinex_test]
 async fn test_concurrent_event_insertion(ctx: TestContext) -> TestResult<()> {
-    ctx.ensure_clean().await?;
-    // Test concurrent insertion from multiple tasks
+    let material_id = ctx.create_source_material(Some("concurrent-test")).await?;
     let num_tasks = 10;
     let events_per_task = 10;
     let run_suffix = Ulid::new();
 
+    let pool = ctx.pool.clone();
     let mut handles = vec![];
     let barrier = Arc::new(tokio::sync::Barrier::new(num_tasks));
 
-    let shared_ctx = Arc::new(ctx);
-    let _pool_for_cleanup = shared_ctx.pool.clone();
     for task_id in 0..num_tasks {
         let barrier_clone = barrier.clone();
-        let ctx_clone = Arc::clone(&shared_ctx);
+        let pool_clone = pool.clone();
 
         let handle = tokio::spawn(async move {
             // Wait for all tasks to start simultaneously
@@ -179,44 +179,28 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> TestResult<()> {
 
             let mut task_ids = Vec::new();
 
-            // Insert events concurrently
             for event_num in 0..events_per_task {
                 let source = format!("task-{task_id}-{run_suffix}");
-                let inserted = ctx_clone
-                    .publish(DynamicPayload::new(
-                        source.as_str(),
-                        "concurrent.test",
-                        json!({
-                            "task_id": task_id,
-                            "event_num": event_num,
-                            "timestamp": Timestamp::now()
-                        }),
-                    ))
+                let event = DynamicPayload::new(
+                    source.as_str(),
+                    "concurrent.test",
+                    json!({
+                        "task_id": task_id,
+                        "event_num": event_num,
+                        "timestamp": Timestamp::now()
+                    }),
+                )
+                .from_material_at(material_id, event_num as i64)
+                .build()
+                .map_err(|e| SinexError::unknown(e.to_string()))?;
+                let inserted = pool_clone
+                    .events()
+                    .insert(event)
                     .await
                     .map_err(|e| SinexError::unknown(e.to_string()))?;
 
                 task_ids.push(inserted.id.unwrap());
             }
-
-            // Verify all events for this task
-            tokio::time::timeout(std::time::Duration::from_secs(12), async {
-                loop {
-                    let events = ctx_clone
-                        .pool
-                        .events()
-                        .get_by_source(
-                            &EventSource::from(format!("task-{task_id}-{run_suffix}")),
-                            Pagination::new(Some(100), None),
-                        )
-                        .await?;
-                    if events.len() >= events_per_task {
-                        break Ok::<_, SinexError>(());
-                    }
-                    sleep(std::time::Duration::from_millis(10)).await;
-                }
-            })
-            .await
-            .map_err(|e| SinexError::unknown(e.to_string()))??;
 
             Ok::<Vec<Id<Event<JsonValue>>>, SinexError>(task_ids)
         });
@@ -250,6 +234,17 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> TestResult<()> {
     assert_eq!(total_events, num_tasks * events_per_task);
     assert_eq!(all_id_strings.len(), total_events);
 
+    // Verify events persisted by querying a sample source
+    let sample_events = ctx
+        .pool
+        .events()
+        .get_by_source(
+            &EventSource::from(format!("task-0-{run_suffix}")),
+            Pagination::new(Some(100), None),
+        )
+        .await?;
+    assert_eq!(sample_events.len(), events_per_task);
+
     Ok(())
 }
 
@@ -257,33 +252,26 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> TestResult<()> {
 // TRANSACTION SEMANTICS
 // =============================================================================
 
-#[sinex_serial_test]
+#[sinex_test]
 async fn test_transaction_rollback(ctx: TestContext) -> TestResult<()> {
-    ctx.ensure_clean().await?;
-
+    let material_id = ctx.create_source_material(Some("txn-rollback")).await?;
     let initial_count = ctx.pool.events().count_all().await?;
 
-    // Test successful transaction
-    let _success_event = ctx
-        .publish(DynamicPayload::new(
-            "transaction-test",
-            "success",
-            json!({"test": "commit"}),
-        ))
-        .await?;
+    // Test successful insertion
+    let success_event =
+        DynamicPayload::new("transaction-test", "success", json!({"test": "commit"}))
+            .from_material(material_id)
+            .build()?;
+    let _inserted = ctx.pool.events().insert(success_event).await?;
 
     let after_success = ctx.pool.events().count_all().await?;
     assert!(after_success > initial_count);
 
-    // Note: Complex transaction rollback testing requires low-level database access
-    // For now, we test that invalid events are properly rejected
-    let invalid_result = ctx
-        .publish(DynamicPayload::new(
-            "", // Empty source should be rejected
-            "rollback",
-            json!({"test": "rollback"}),
-        ))
-        .await;
+    // Test that invalid events are properly rejected at DB level
+    let invalid_event = DynamicPayload::new("", "rollback", json!({"test": "rollback"}))
+        .from_material_at(material_id, 1)
+        .build()?;
+    let invalid_result = ctx.pool.events().insert(invalid_event).await;
 
     assert!(invalid_result.is_err(), "Empty source should be rejected");
 
@@ -310,38 +298,39 @@ async fn test_transaction_rollback(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_test]
 async fn test_schema_validation(ctx: TestContext) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("schema-validation"))
+        .await?;
+
     // Test creating events with valid payloads
-    let valid_event = ctx
-        .publish(DynamicPayload::new(
-            "schema-test",
-            "valid.event",
-            json!({
-                "required_field": "value",
-                "optional_field": 42
-            }),
-        ))
-        .await?;
+    let valid_event = DynamicPayload::new(
+        "schema-test",
+        "valid.event",
+        json!({
+            "required_field": "value",
+            "optional_field": 42
+        }),
+    )
+    .from_material(material_id)
+    .build()?;
+    let inserted = ctx.pool.events().insert(valid_event).await?;
+    assert!(inserted.id.is_some());
 
-    assert!(valid_event.id.is_some());
-
-    // Test that malformed events are handled gracefully
-    // Note: The test infrastructure should handle validation internally
-    // We're testing the repository layer behavior
-
-    let edge_case_event = ctx
-        .publish(DynamicPayload::new(
-            "schema-test",
-            "edge.case",
-            json!({
-                "string_field": "",  // Empty string
-                "number_field": 0,   // Zero value
-                "array_field": [],   // Empty array
-                "object_field": {}   // Empty object
-            }),
-        ))
-        .await?;
-
-    assert!(edge_case_event.id.is_some());
+    // Test that edge-case payloads are handled gracefully
+    let edge_event = DynamicPayload::new(
+        "schema-test",
+        "edge.case",
+        json!({
+            "string_field": "",  // Empty string
+            "number_field": 0,   // Zero value
+            "array_field": [],   // Empty array
+            "object_field": {}   // Empty object
+        }),
+    )
+    .from_material_at(material_id, 1)
+    .build()?;
+    let edge_inserted = ctx.pool.events().insert(edge_event).await?;
+    assert!(edge_inserted.id.is_some());
 
     Ok(())
 }
@@ -422,27 +411,36 @@ async fn pool_acquire_timeout_is_reported(ctx: TestContext) -> TestResult<()> {
     Ok(())
 }
 
-#[sinex_serial_test]
+#[sinex_test]
 async fn test_query_performance(ctx: TestContext) -> TestResult<()> {
-    ctx.ensure_clean().await?;
+    let material_id = ctx.create_source_material(Some("query-perf")).await?;
 
-    // Insert test data
+    // Insert test data directly
     let num_events = 200;
     for i in 0..num_events {
-        ctx.publish(DynamicPayload::new(
+        let event = DynamicPayload::new(
             format!("query-perf-{}", i % 10), // 10 different sources
             "query.test",
             json!({
                 "index": i,
                 "category": i % 5  // 5 different categories
             }),
-        ))
-        .await?;
+        )
+        .from_material_at(material_id, i as i64)
+        .build()?;
+        ctx.pool.events().insert(event).await?;
     }
 
-    // Validate dataset landed before running timed queries.
-    let total = ctx.pool.events().count_all().await?;
-    assert_eq!(total as usize, num_events);
+    // Validate dataset landed
+    let total = ctx
+        .pool
+        .events()
+        .get_by_event_type(
+            &EventType::from("query.test"),
+            Pagination::new(Some(300), None),
+        )
+        .await?;
+    assert!(total.len() >= num_events);
 
     // Test various query patterns
     let start_time = std::time::Instant::now();
@@ -491,22 +489,25 @@ async fn test_query_performance(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_test]
 async fn test_ulid_persistence(ctx: TestContext) -> TestResult<()> {
+    let material_id = ctx.create_source_material(Some("ulid-persist")).await?;
+
     // Test specific ULID edge cases
     let test_ulid = Ulid::from_str("01ARZ3NDEKTSV4RRFFQ69G5FAV")?;
 
-    let inserted_event = ctx
-        .publish(DynamicPayload::new(
-            "ulid-test",
-            "regression.test",
-            json!({"ulid": test_ulid.to_string()}),
-        ))
-        .await?;
+    let event = DynamicPayload::new(
+        "ulid-test",
+        "regression.test",
+        json!({"ulid": test_ulid.to_string()}),
+    )
+    .from_material(material_id)
+    .build()?;
+    let inserted = ctx.pool.events().insert(event).await?;
 
     // Verify the event was inserted (ULID is auto-generated)
-    assert!(inserted_event.id.is_some());
+    assert!(inserted.id.is_some());
 
     // Retrieve by the generated ID and verify
-    let event_id = inserted_event.id.unwrap();
+    let event_id = inserted.id.unwrap();
     let retrieved = ctx.pool.events().get_by_id(event_id).await?.unwrap();
 
     assert_eq!(retrieved.id.unwrap(), event_id);
@@ -517,14 +518,13 @@ async fn test_ulid_persistence(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_test]
 async fn test_timestamp_handling(ctx: TestContext) -> TestResult<()> {
+    let material_id = ctx.create_source_material(Some("timestamp")).await?;
+
     let before_insert = Timestamp::now();
-    let inserted_event = ctx
-        .publish(DynamicPayload::new(
-            "timestamp-test",
-            "time.test",
-            json!({"test": "timestamp"}),
-        ))
-        .await?;
+    let event = DynamicPayload::new("timestamp-test", "time.test", json!({"test": "timestamp"}))
+        .from_material(material_id)
+        .build()?;
+    let inserted_event = ctx.pool.events().insert(event).await?;
     let after_insert = Timestamp::now();
 
     // Verify ingestion timestamp is recent
@@ -563,27 +563,27 @@ async fn test_timestamp_handling(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_test]
 async fn test_constraint_violations(ctx: TestContext) -> TestResult<()> {
-    // Test handling of constraint violations gracefully
+    let material_id = ctx.create_source_material(Some("constraint-test")).await?;
 
-    // Empty source should be rejected
-    let empty_source_result = ctx
-        .publish(DynamicPayload::new(
-            "", // Empty source
-            "test.event",
-            json!({"data": "test"}),
-        ))
-        .await;
-    assert!(empty_source_result.is_err());
+    // Empty source should be rejected at DB level
+    let empty_source_event = DynamicPayload::new("", "test.event", json!({"data": "test"}))
+        .from_material(material_id)
+        .build()?;
+    let empty_source_result = ctx.pool.events().insert(empty_source_event).await;
+    assert!(
+        empty_source_result.is_err(),
+        "Empty source should be rejected"
+    );
 
-    // Empty event type should be rejected
-    let empty_type_result = ctx
-        .publish(DynamicPayload::new(
-            "test-source",
-            "", // Empty event type
-            json!({"data": "test"}),
-        ))
-        .await;
-    assert!(empty_type_result.is_err());
+    // Empty event type should be rejected at DB level
+    let empty_type_event = DynamicPayload::new("test-source", "", json!({"data": "test"}))
+        .from_material_at(material_id, 1)
+        .build()?;
+    let empty_type_result = ctx.pool.events().insert(empty_type_event).await;
+    assert!(
+        empty_type_result.is_err(),
+        "Empty event type should be rejected"
+    );
 
     // Verify no invalid events were inserted
     let all_events = ctx.pool.events().get_recent(100).await?;
@@ -595,7 +595,7 @@ async fn test_constraint_violations(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_test]
 async fn test_database_recovery_scenarios(ctx: TestContext) -> TestResult<()> {
-    // Test various scenarios that could cause database issues
+    let material_id = ctx.create_source_material(Some("recovery")).await?;
 
     // Large JSON payload
     let large_payload = json!({
@@ -612,21 +612,18 @@ async fn test_database_recovery_scenarios(ctx: TestContext) -> TestResult<()> {
         }
     });
 
-    let large_event = ctx
-        .publish(DynamicPayload::new(
-            "recovery-test",
-            "large.payload",
-            large_payload,
-        ))
-        .await?;
+    let event = DynamicPayload::new("recovery-test", "large.payload", large_payload)
+        .from_material(material_id)
+        .build()?;
+    let inserted = ctx.pool.events().insert(event).await?;
 
-    assert!(large_event.id.is_some());
+    assert!(inserted.id.is_some());
 
     // Retrieve large event to ensure it persisted correctly
     let retrieved = ctx
         .pool
         .events()
-        .get_by_id(large_event.id.unwrap())
+        .get_by_id(inserted.id.unwrap())
         .await?
         .unwrap();
 

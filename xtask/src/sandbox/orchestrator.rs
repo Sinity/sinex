@@ -480,7 +480,7 @@ fn find_workspace_root() -> Result<PathBuf> {
 
 pub async fn start_test_ingestd_with_config(
     config: TestIngestdConfig,
-    _ctx: Option<&crate::sandbox::context::Sandbox>,
+    ctx: Option<&crate::sandbox::context::Sandbox>,
 ) -> Result<TestIngestdHandle> {
     let workspace_root = find_workspace_root()?;
     let profile = if cfg!(debug_assertions) {
@@ -524,12 +524,22 @@ pub async fn start_test_ingestd_with_config(
 
     let child = cmd.spawn()?;
 
-    // In a real implementation we'd wait for readiness here.
-    // For now we assume it starts fast enough or tests will wait.
     let stream_name = format!(
         "{}_RAW_EVENTS",
         config.namespace.as_deref().unwrap_or("SINEX")
     );
+
+    // Wait for ingestd to create the JetStream stream before returning.
+    // Without this, tests publish via NATS core (fire-and-forget) before
+    // the stream exists, causing messages to be silently lost.
+    if let Some(sandbox) = ctx {
+        let nats = sandbox.nats_handle()?;
+        let client = sandbox.nats_client();
+        let js = nats.jetstream_with_client(client);
+        nats.wait_for_stream(&js, &stream_name, Duration::from_secs(Timeouts::STANDARD))
+            .await
+            .wrap_err_with(|| format!("ingestd failed to create stream {stream_name}"))?;
+    }
 
     Ok(TestIngestdHandle { child, stream_name })
 }
