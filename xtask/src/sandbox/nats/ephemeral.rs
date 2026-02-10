@@ -554,17 +554,46 @@ impl Drop for EphemeralNats {
         if let Ok(mut guard) = self.process.try_lock() {
             if let Some(mut child) = guard.take() {
                 let _ = child.start_kill();
+                // Synchronously reap the child to prevent zombie processes.
+                // try_wait() is non-blocking on tokio::process::Child.
+                // If the process hasn't exited yet, spawn an OS thread (NOT a
+                // tokio task — the runtime may be shutting down) to poll until reaped.
+                match child.try_wait() {
+                    Ok(Some(_)) => {} // Already exited, reaped
+                    _ => {
+                        // SIGKILL sent but process not yet exited — poll in OS thread
+                        std::thread::spawn(move || {
+                            for _ in 0..40 {
+                                match child.try_wait() {
+                                    Ok(Some(_)) => return,
+                                    _ => std::thread::sleep(std::time::Duration::from_millis(50)),
+                                }
+                            }
+                            // After 2s of polling, give up. Process will be reaped
+                            // when the test process exits (init inherits zombies).
+                        });
+                    }
+                }
             }
         } else {
             // Lock is contended (e.g., shutdown hook running concurrently).
-            // Spawn a background task to acquire the lock and kill the process,
-            // preventing silent leaks when try_lock fails.
+            // Spawn an OS thread (not tokio task) to kill the process, so it
+            // works even when the tokio runtime is shutting down.
             let process = Arc::clone(&self.process);
-            tokio::spawn(async move {
-                let mut guard = process.lock().await;
-                if let Some(mut child) = guard.take() {
-                    let _ = child.start_kill();
-                    let _ = tokio::time::timeout(Duration::from_secs(2), child.wait()).await;
+            std::thread::spawn(move || {
+                // Build a small runtime just for this cleanup
+                if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    rt.block_on(async move {
+                        let mut guard = process.lock().await;
+                        if let Some(mut child) = guard.take() {
+                            let _ = child.start_kill();
+                            let _ =
+                                tokio::time::timeout(Duration::from_secs(2), child.wait()).await;
+                        }
+                    });
                 }
             });
         }

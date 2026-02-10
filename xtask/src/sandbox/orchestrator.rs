@@ -536,12 +536,16 @@ pub async fn start_test_ingestd_with_config(
     // Without this, tests publish via NATS core (fire-and-forget) before
     // the stream exists, causing messages to be silently lost.
     if let Some(sandbox) = ctx {
-        let nats = sandbox.nats_handle()?;
-        let client = sandbox.nats_client();
-        let js = nats.jetstream_with_client(client);
-        nats.wait_for_stream(&js, &stream_name, Duration::from_secs(Timeouts::STANDARD))
-            .await
-            .wrap_err_with(|| format!("ingestd failed to create stream {stream_name}"))?;
+        // Only wait for stream if sandbox has NATS initialized via with_nats().
+        // Tests that create their own EphemeralNats pass ctx for the DB pool
+        // but don't initialize NATS on the sandbox.
+        if let Ok(nats) = sandbox.nats_handle() {
+            let client = sandbox.nats_client();
+            let js = nats.jetstream_with_client(client);
+            nats.wait_for_stream(&js, &stream_name, Duration::from_secs(Timeouts::STANDARD))
+                .await
+                .wrap_err_with(|| format!("ingestd failed to create stream {stream_name}"))?;
+        }
     }
 
     Ok(TestIngestdHandle { child, stream_name })

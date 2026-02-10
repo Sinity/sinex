@@ -143,15 +143,24 @@ impl Ulid {
         Self(InnerUlid::from_parts(timestamp_ms, rand::random()))
     }
 
-    /// Get the timestamp component
+    /// Get the timestamp component.
+    ///
+    /// ULIDs with timestamps beyond `OffsetDateTime`'s representable range
+    /// (~year 9999) are clamped to the maximum representable value.
     #[must_use]
     pub fn timestamp(&self) -> Timestamp {
         let timestamp_ms = self.0.timestamp_ms();
-        Timestamp::new(
-            #[allow(clippy::expect_used)]
-            OffsetDateTime::from_unix_timestamp_nanos(i128::from(timestamp_ms) * 1_000_000)
-                .expect("ULID timestamp should be valid"),
-        )
+        let nanos = i128::from(timestamp_ms) * 1_000_000;
+        match OffsetDateTime::from_unix_timestamp_nanos(nanos) {
+            Ok(dt) => Timestamp::new(dt),
+            Err(_) => {
+                // Timestamp exceeds OffsetDateTime range — clamp to max
+                Timestamp::new(OffsetDateTime::new_utc(
+                    time::Date::MAX,
+                    time::Time::from_hms(23, 59, 59).unwrap_or(time::Time::MIDNIGHT),
+                ))
+            }
+        }
     }
 
     /// Convert to UUID for `PostgreSQL` storage

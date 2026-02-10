@@ -781,11 +781,31 @@ fn path_contains_traversal(path: &Utf8PathBuf) -> bool {
 }
 
 impl AnnexKey {
-    /// Validate git-annex key format
+    /// Validate git-annex key format.
+    ///
+    /// Git-annex keys have the form `BACKEND[-sNNN][-mNNN]--FILENAME`, where
+    /// `--` separates the backend/metadata prefix from the key name.
     pub fn validate(key: &str) -> Result<(), String> {
         if key.is_empty() {
             return Err("Annex key cannot be empty".into());
         }
+
+        // Must contain exactly one `--` separator
+        let parts: Vec<&str> = key.splitn(3, "--").collect();
+        if parts.len() < 2 {
+            return Err("Annex key must contain '--' separator".into());
+        }
+        if parts[0].is_empty() {
+            return Err("Annex key must have a backend prefix before '--'".into());
+        }
+        if parts[1].is_empty() {
+            return Err("Annex key must have a name after '--'".into());
+        }
+        // Reject multiple `--` separators
+        if parts.len() > 2 {
+            return Err("Annex key must contain exactly one '--' separator".into());
+        }
+
         Ok(())
     }
 }
@@ -800,13 +820,34 @@ impl FromStr for AnnexKey {
 }
 
 impl NatsSubject {
-    /// Validate NATS subject format
+    /// Validate NATS subject format.
+    ///
+    /// NATS subjects are dot-delimited hierarchies (e.g. `events.filesystem.created`).
+    /// Each segment must be non-empty and contain only alphanumeric, hyphen, or underscore.
     pub fn validate(subject: &str) -> Result<(), String> {
         if subject.is_empty() {
             return Err("NATS subject cannot be empty".into());
         }
-        if subject.contains(' ') {
-            return Err("NATS subject cannot contain spaces".into());
+        if subject.starts_with('.') {
+            return Err("NATS subject cannot start with '.'".into());
+        }
+        if subject.ends_with('.') {
+            return Err("NATS subject cannot end with '.'".into());
+        }
+        if subject.contains("..") {
+            return Err("NATS subject cannot contain empty segments ('..')".into());
+        }
+        for segment in subject.split('.') {
+            if segment.is_empty() {
+                return Err("NATS subject segments cannot be empty".into());
+            }
+            for ch in segment.chars() {
+                if !ch.is_alphanumeric() && ch != '-' && ch != '_' && ch != '*' && ch != '>' {
+                    return Err(format!(
+                        "NATS subject segment contains invalid character '{ch}'"
+                    ));
+                }
+            }
         }
         Ok(())
     }
