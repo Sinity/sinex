@@ -11,6 +11,7 @@ use std::time::Duration;
 use serde_json::json;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
+use xtask::sandbox::prelude::*;
 
 use common::{MockGatewayClient, MockResponse, TestDir, TokenFixture};
 use sinex_primitives::rpc::dlq::DlqListResponse;
@@ -23,8 +24,8 @@ use sinexctl::client::{ClientConfig, GatewayClient, RetryConfig};
 // MockGatewayClient Tests
 // ============================================================================
 
-#[tokio::test]
-async fn test_mock_client_default_responses() {
+#[sinex_test]
+async fn test_mock_client_default_responses() -> TestResult<()> {
     let client = MockGatewayClient::new();
 
     // Default ping response
@@ -38,10 +39,11 @@ async fn test_mock_client_default_responses() {
     assert_eq!(health.status, "healthy");
     assert!(health.components.database.connected);
     assert!(health.components.nats.connected);
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_mock_client_custom_health_response() {
+#[sinex_test]
+async fn test_mock_client_custom_health_response() -> TestResult<()> {
     let client = MockGatewayClient::new();
 
     let custom_health = SystemHealthResponse {
@@ -71,10 +73,11 @@ async fn test_mock_client_custom_health_response() {
     let health = client.health().await.unwrap();
     assert_eq!(health.status, "degraded");
     assert!(!health.components.nats.connected);
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_mock_client_dlq_operations() {
+#[sinex_test]
+async fn test_mock_client_dlq_operations() -> TestResult<()> {
     let client = MockGatewayClient::new();
 
     // Set custom DLQ list response
@@ -95,10 +98,11 @@ async fn test_mock_client_dlq_operations() {
     // Verify call was recorded
     let calls = client.get_calls();
     assert!(calls.iter().any(|(method, _)| method == "dlq_list"));
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_mock_client_dlq_peek() {
+#[sinex_test]
+async fn test_mock_client_dlq_peek() -> TestResult<()> {
     let client = MockGatewayClient::new();
 
     let peek_result = client.dlq_peek(Some(5)).await.unwrap();
@@ -108,10 +112,11 @@ async fn test_mock_client_dlq_peek() {
     let calls = client.get_calls();
     assert_eq!(calls.last().unwrap().0, "dlq_peek");
     assert!(calls.last().unwrap().1[0].contains('5'));
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_mock_client_dlq_requeue() {
+#[sinex_test]
+async fn test_mock_client_dlq_requeue() -> TestResult<()> {
     let client = MockGatewayClient::new();
 
     let event_ids = vec!["event-1".to_string(), "event-2".to_string()];
@@ -123,10 +128,11 @@ async fn test_mock_client_dlq_requeue() {
     let (method, args) = calls.last().unwrap();
     assert_eq!(method, "dlq_requeue");
     assert_eq!(args, &event_ids);
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_mock_client_replay_operations() {
+#[sinex_test]
+async fn test_mock_client_replay_operations() -> TestResult<()> {
     let client = MockGatewayClient::new();
 
     // List replay operations
@@ -144,10 +150,11 @@ async fn test_mock_client_replay_operations() {
     assert!(calls
         .iter()
         .any(|(m, args)| m == "replay_status" && args[0] == "op-123"));
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_mock_client_search() {
+#[sinex_test]
+async fn test_mock_client_search() -> TestResult<()> {
     use sinexctl::model::search::SearchQuery;
 
     let client = MockGatewayClient::new();
@@ -164,10 +171,11 @@ async fn test_mock_client_search() {
     // Verify call recorded
     let calls = client.get_calls();
     assert!(calls.iter().any(|(m, _)| m == "search_events"));
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_mock_client_thread_safe() {
+#[sinex_test]
+async fn test_mock_client_thread_safe() -> TestResult<()> {
     let client = MockGatewayClient::new();
     let client_clone = client.clone();
 
@@ -195,14 +203,15 @@ async fn test_mock_client_thread_safe() {
 
     let calls = client.get_calls();
     assert_eq!(calls.len(), 20);
+    Ok(())
 }
 
 // ============================================================================
 // GatewayClient Creation Tests
 // ============================================================================
 
-#[tokio::test]
-async fn test_gateway_client_creation_with_token() {
+#[sinex_test]
+async fn test_gateway_client_creation_with_token() -> TestResult<()> {
     let dir = TestDir::new();
     let token_path = dir.create_file("token", TokenFixture::valid());
 
@@ -215,10 +224,11 @@ async fn test_gateway_client_creation_with_token() {
 
     let result = GatewayClient::new(config);
     assert!(result.is_ok());
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_gateway_client_creation_without_token_fails() {
+#[sinex_test]
+async fn test_gateway_client_creation_without_token_fails() -> TestResult<()> {
     // Clear environment
     std::env::remove_var("SINEX_RPC_TOKEN");
 
@@ -234,10 +244,11 @@ async fn test_gateway_client_creation_without_token_fails() {
     assert!(result.is_err());
     let err = result.err().unwrap().to_string();
     assert!(err.contains("No authentication token"));
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_gateway_client_with_explicit_token() {
+#[sinex_test]
+async fn test_gateway_client_with_explicit_token() -> TestResult<()> {
     let config = ClientConfig {
         url: "https://localhost:9999".to_string(),
         token: Some("explicit-token".to_string()),
@@ -247,14 +258,15 @@ async fn test_gateway_client_with_explicit_token() {
 
     let result = GatewayClient::new(config);
     assert!(result.is_ok());
+    Ok(())
 }
 
 // ============================================================================
 // HTTP Error Handling Tests (with wiremock)
 // ============================================================================
 
-#[tokio::test]
-async fn test_gateway_client_handles_http_error() {
+#[sinex_test]
+async fn test_gateway_client_handles_http_error() -> TestResult<()> {
     let mock_server = MockServer::start().await;
 
     Mock::given(method("POST"))
@@ -276,10 +288,11 @@ async fn test_gateway_client_handles_http_error() {
 
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("HTTP 500"));
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_gateway_client_handles_401_unauthorized() {
+#[sinex_test]
+async fn test_gateway_client_handles_401_unauthorized() -> TestResult<()> {
     let mock_server = MockServer::start().await;
 
     Mock::given(method("POST"))
@@ -301,10 +314,11 @@ async fn test_gateway_client_handles_401_unauthorized() {
 
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("401"));
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_gateway_client_handles_rpc_error() {
+#[sinex_test]
+async fn test_gateway_client_handles_rpc_error() -> TestResult<()> {
     let mock_server = MockServer::start().await;
 
     Mock::given(method("POST"))
@@ -334,10 +348,11 @@ async fn test_gateway_client_handles_rpc_error() {
     let err = result.unwrap_err().to_string();
     assert!(err.contains("-32601"));
     assert!(err.contains("Method not found"));
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_gateway_client_handles_rpc_error_with_data() {
+#[sinex_test]
+async fn test_gateway_client_handles_rpc_error_with_data() -> TestResult<()> {
     let mock_server = MockServer::start().await;
 
     Mock::given(method("POST"))
@@ -368,10 +383,11 @@ async fn test_gateway_client_handles_rpc_error_with_data() {
     let err = result.unwrap_err().to_string();
     assert!(err.contains("Invalid params"));
     assert!(err.contains("processor_id"));
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_gateway_client_handles_malformed_response() {
+#[sinex_test]
+async fn test_gateway_client_handles_malformed_response() -> TestResult<()> {
     let mock_server = MockServer::start().await;
 
     Mock::given(method("POST"))
@@ -391,10 +407,11 @@ async fn test_gateway_client_handles_malformed_response() {
     let result = client.ping().await;
 
     assert!(result.is_err());
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_gateway_client_handles_missing_result() {
+#[sinex_test]
+async fn test_gateway_client_handles_missing_result() -> TestResult<()> {
     let mock_server = MockServer::start().await;
 
     Mock::given(method("POST"))
@@ -419,14 +436,15 @@ async fn test_gateway_client_handles_missing_result() {
 
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("missing result"));
+    Ok(())
 }
 
 // ============================================================================
 // Timeout Tests
 // ============================================================================
 
-#[tokio::test]
-async fn test_gateway_client_timeout() {
+#[sinex_test]
+async fn test_gateway_client_timeout() -> TestResult<()> {
     let mock_server = MockServer::start().await;
 
     Mock::given(method("POST"))
@@ -459,14 +477,15 @@ async fn test_gateway_client_timeout() {
             || err.contains("error sending request"),
         "Expected timeout error, got: {err}"
     );
+    Ok(())
 }
 
 // ============================================================================
 // Retry Logic Tests
 // ============================================================================
 
-#[tokio::test]
-async fn test_gateway_client_retry_on_5xx() {
+#[sinex_test]
+async fn test_gateway_client_retry_on_5xx() -> TestResult<()> {
     let mock_server = MockServer::start().await;
     let attempt_count = Arc::new(AtomicU32::new(0));
     let attempt_count_clone = attempt_count.clone();
@@ -505,10 +524,11 @@ async fn test_gateway_client_retry_on_5xx() {
 
     assert!(result.is_ok());
     assert_eq!(attempt_count.load(Ordering::SeqCst), 3);
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_gateway_client_no_retry_on_4xx() {
+#[sinex_test]
+async fn test_gateway_client_no_retry_on_4xx() -> TestResult<()> {
     let mock_server = MockServer::start().await;
     let attempt_count = Arc::new(AtomicU32::new(0));
     let attempt_count_clone = attempt_count.clone();
@@ -539,10 +559,11 @@ async fn test_gateway_client_no_retry_on_4xx() {
     assert!(result.is_err());
     // Should only attempt once for client errors
     assert_eq!(attempt_count.load(Ordering::SeqCst), 1);
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_gateway_client_retry_exhausted() {
+#[sinex_test]
+async fn test_gateway_client_retry_exhausted() -> TestResult<()> {
     let mock_server = MockServer::start().await;
     let attempt_count = Arc::new(AtomicU32::new(0));
     let attempt_count_clone = attempt_count.clone();
@@ -574,10 +595,11 @@ async fn test_gateway_client_retry_exhausted() {
     assert!(result.is_err());
     // Should attempt exactly max_attempts times
     assert_eq!(attempt_count.load(Ordering::SeqCst), 3);
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_gateway_client_retry_on_rate_limit() {
+#[sinex_test]
+async fn test_gateway_client_retry_on_rate_limit() -> TestResult<()> {
     let mock_server = MockServer::start().await;
     let attempt_count = Arc::new(AtomicU32::new(0));
     let attempt_count_clone = attempt_count.clone();
@@ -616,6 +638,7 @@ async fn test_gateway_client_retry_on_rate_limit() {
 
     assert!(result.is_ok());
     assert_eq!(attempt_count.load(Ordering::SeqCst), 2);
+    Ok(())
 }
 
 // ============================================================================
@@ -656,8 +679,8 @@ fn test_client_config_from_app_config() {
 // Successful RPC Call Tests
 // ============================================================================
 
-#[tokio::test]
-async fn test_gateway_client_successful_ping() {
+#[sinex_test]
+async fn test_gateway_client_successful_ping() -> TestResult<()> {
     let mock_server = MockServer::start().await;
 
     Mock::given(method("POST"))
@@ -681,10 +704,11 @@ async fn test_gateway_client_successful_ping() {
     let result = client.ping().await.unwrap();
 
     assert_eq!(result, "pong");
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_gateway_client_successful_version() {
+#[sinex_test]
+async fn test_gateway_client_successful_version() -> TestResult<()> {
     let mock_server = MockServer::start().await;
 
     Mock::given(method("POST"))
@@ -708,10 +732,11 @@ async fn test_gateway_client_successful_version() {
     let result = client.version().await.unwrap();
 
     assert_eq!(result, "1.2.3");
+    Ok(())
 }
 
-#[tokio::test]
-async fn test_gateway_client_successful_health() {
+#[sinex_test]
+async fn test_gateway_client_successful_health() -> TestResult<()> {
     let mock_server = MockServer::start().await;
 
     Mock::given(method("POST"))
@@ -757,4 +782,5 @@ async fn test_gateway_client_successful_health() {
     assert_eq!(health.status, "healthy");
     assert!(health.components.database.connected);
     assert!(health.components.nats.connected);
+    Ok(())
 }
