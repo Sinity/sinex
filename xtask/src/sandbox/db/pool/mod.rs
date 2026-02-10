@@ -321,6 +321,10 @@ pub fn migrations_fingerprint() -> Option<String> {
     entries.sort();
 
     let mut hasher = Sha256::new();
+    // Bump this version when template seed data changes (forces template rebuild).
+    // This is separate from schema migrations — it tracks data that must exist in
+    // every test template (e.g. well-known fixture IDs for FK constraints).
+    hasher.update(b"seed-version:2\n");
     for path in entries {
         if path.is_file() {
             // Hash filename first
@@ -2106,6 +2110,7 @@ async fn clean_database(
 
                 eprintln!("  ✅ Database cleanup verified - all tables empty");
                 ensure_default_session_state(&working_pool).await?;
+                seed_test_fixtures(&working_pool).await?;
                 slot.quarantined.store(false, Ordering::SeqCst);
                 slot.record_clean_result(Ok(()), residuals.clone());
                 return Ok(());
@@ -2518,6 +2523,24 @@ async fn ensure_default_session_state_conn(conn: &mut PgConnection) -> TestResul
 pub async fn ensure_default_session_state(pool: &DbPool) -> TestResult<()> {
     let mut conn = pool.acquire().await?;
     ensure_default_session_state_conn(conn.as_mut()).await
+}
+
+/// Seed well-known test fixture data after cleanup.
+///
+/// `sinex_primitives::testing::event_fixture()` uses a hardcoded material_id
+/// (`01H00000000000000000000000`) that must exist in `raw.source_material_registry`
+/// for FK constraints on `core.events.source_material_id` to pass. Since cleanup
+/// truncates all tables, we re-seed this after every cleanup cycle.
+async fn seed_test_fixtures(pool: &DbPool) -> TestResult<()> {
+    sqlx::query(
+        "INSERT INTO raw.source_material_registry \
+            (id, material_kind, source_identifier, status, timing_info_type) \
+         VALUES ('01H00000000000000000000000'::ulid, 'annex', 'test-fixture-material', 'completed', 'realtime') \
+         ON CONFLICT (id) DO NOTHING",
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 /// Final backstop cleanup when standard reset fails (e.g., FK contention).
@@ -3088,6 +3111,18 @@ async fn ensure_template_database(
                     }
                 }
             }
+
+            // Seed well-known test fixture data that must exist for FK constraints.
+            // sinex_primitives::testing::event_fixture() uses material_id 01H00000000000000000000000
+            // which must exist in raw.source_material_registry for the core.events FK to pass.
+            sqlx::query(
+                "INSERT INTO raw.source_material_registry \
+                    (id, material_kind, source_identifier, status, timing_info_type) \
+                 VALUES ('01H00000000000000000000000'::ulid, 'annex', 'test-fixture-material', 'completed', 'realtime') \
+                 ON CONFLICT (id) DO NOTHING"
+            )
+            .execute(&template_pool)
+            .await?;
 
             // Optimize template for faster copying
             optimize_template_for_tests(&template_pool).await?;
