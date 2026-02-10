@@ -425,6 +425,7 @@ async fn test_stale_checkpoint_detection(ctx: TestContext) -> TestResult<()> {
 async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let pool = ctx.pool().clone();
     let kv = ctx.checkpoint_kv().await?;
 
@@ -757,6 +758,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult<()> 
 #[sinex_test]
 async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let pool = ctx.pool().clone();
     let kv = ctx.checkpoint_kv().await?;
 

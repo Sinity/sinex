@@ -916,15 +916,17 @@ mod tests {
 
     #[sinex_test]
     async fn test_wait_helpers_event_count(ctx: Sandbox) -> TestResult<()> {
-        ctx.ensure_clean().await?;
-        // Insert some events
+        use sinex_db::DbPoolExt;
+
+        // Create source material once
+        let material_id = ctx.create_source_material(Some("event-count-test")).await?;
+
+        // Insert some events directly to DB
         for i in 0..5 {
-            ctx.publish(DynamicPayload::new(
-                "wait-test",
-                "test.event",
-                json!({"index": i}),
-            ))
-            .await?;
+            let event = DynamicPayload::new("wait-test", "test.event", json!({"index": i}))
+                .from_material_at(material_id, i as i64)
+                .build()?;
+            ctx.pool.events().insert(event).await?;
         }
 
         // Wait for event count
@@ -934,29 +936,31 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_serial_test]
+    #[sinex_test]
     async fn test_wait_helpers_source_events(ctx: Sandbox) -> TestResult<()> {
+        use sinex_db::DbPoolExt;
+
         retry_with_snapshot(
             "timing_utils::test_wait_helpers_source_events",
             &ctx,
             || async {
-                // Insert events from different sources
-                for i in 0..3 {
-                    ctx.publish(DynamicPayload::new(
-                        "source-a",
-                        "test.event",
-                        json!({"index": i}),
-                    ))
+                let material_id = ctx
+                    .create_source_material(Some("source-events-test"))
                     .await?;
+
+                // Insert events from different sources directly to DB
+                for i in 0..3 {
+                    let event = DynamicPayload::new("source-a", "test.event", json!({"index": i}))
+                        .from_material_at(material_id, i as i64)
+                        .build()?;
+                    ctx.pool.events().insert(event).await?;
                 }
 
                 for i in 0..2 {
-                    ctx.publish(DynamicPayload::new(
-                        "source-b",
-                        "test.event",
-                        json!({"index": i}),
-                    ))
-                    .await?;
+                    let event = DynamicPayload::new("source-b", "test.event", json!({"index": i}))
+                        .from_material_at(material_id, (10 + i) as i64)
+                        .build()?;
+                    ctx.pool.events().insert(event).await?;
                 }
 
                 // Wait for specific source
@@ -965,12 +969,11 @@ mod tests {
                 if count_a < 3 {
                     let missing = 3 - count_a;
                     for i in 0..missing {
-                        ctx.publish(DynamicPayload::new(
-                            "source-a",
-                            "test.event",
-                            json!({"index": 10 + i}),
-                        ))
-                        .await?;
+                        let event =
+                            DynamicPayload::new("source-a", "test.event", json!({"index": 10 + i}))
+                                .from_material_at(material_id, (100 + i) as i64)
+                                .build()?;
+                        ctx.pool.events().insert(event).await?;
                     }
                     count_a =
                         WaitHelpers::wait_for_source_events(&ctx.pool, "source-a", 3, 10).await?;
@@ -982,12 +985,11 @@ mod tests {
                 if count_b < 2 {
                     let missing = 2 - count_b;
                     for i in 0..missing {
-                        ctx.publish(DynamicPayload::new(
-                            "source-b",
-                            "test.event",
-                            json!({"index": 20 + i}),
-                        ))
-                        .await?;
+                        let event =
+                            DynamicPayload::new("source-b", "test.event", json!({"index": 20 + i}))
+                                .from_material_at(material_id, (200 + i) as i64)
+                                .build()?;
+                        ctx.pool.events().insert(event).await?;
                     }
                     count_b =
                         WaitHelpers::wait_for_source_events(&ctx.pool, "source-b", 2, 10).await?;
@@ -1105,18 +1107,23 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_serial_test]
+    #[sinex_test]
     async fn test_timing_utils_integration(ctx: Sandbox) -> TestResult<()> {
+        use sinex_db::DbPoolExt;
+
         let timing = ctx.timing();
 
-        // Insert events
-        for i in 0..3 {
-            ctx.publish(DynamicPayload::new(
-                "timing-test",
-                "integration",
-                json!({"index": i}),
-            ))
+        // Create source material once
+        let material_id = ctx
+            .create_source_material(Some("timing-integration-test"))
             .await?;
+
+        // Insert events directly to DB
+        for i in 0..3 {
+            let event = DynamicPayload::new("timing-test", "integration", json!({"index": i}))
+                .from_material_at(material_id, i as i64)
+                .build()?;
+            ctx.pool.events().insert(event).await?;
         }
 
         // Use timing utils to wait
@@ -1125,12 +1132,10 @@ mod tests {
             .unwrap_or(0);
         if count < 3 {
             for j in 0..(3 - count) {
-                ctx.publish(DynamicPayload::new(
-                    "timing-test",
-                    "integration",
-                    json!({"topup": j}),
-                ))
-                .await?;
+                let event = DynamicPayload::new("timing-test", "integration", json!({"topup": j}))
+                    .from_material_at(material_id, (100 + j) as i64)
+                    .build()?;
+                ctx.pool.events().insert(event).await?;
             }
         }
 

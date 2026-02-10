@@ -1,6 +1,5 @@
 ---
 source: xtask/tests/command_consistency.rs
-assertion_line: 23
 expression: json
 ---
 {
@@ -317,9 +316,9 @@ expression: json
         },
         {
           "global": false,
-          "help": "Run preflight checks",
-          "long": "preflight",
-          "name": "preflight",
+          "help": "Skip automatic infrastructure setup (preflight is ON by default)",
+          "long": "skip-preflight",
+          "name": "skip_preflight",
           "possible_values": [
             "true",
             "false"
@@ -1416,151 +1415,6 @@ expression: json
           "hidden": false,
           "name": "reset",
           "subcommands": []
-        },
-        {
-          "about": "Schema management (alias for contracts)",
-          "args": [],
-          "hidden": false,
-          "name": "schema",
-          "subcommands": [
-            {
-              "about": "Generate event payload schemas from Rust types",
-              "args": [
-                {
-                  "global": false,
-                  "help": "Output directory for generated schemas",
-                  "long": "output",
-                  "name": "output",
-                  "possible_values": [],
-                  "required": false,
-                  "short": "o",
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": "Sync schemas to database after generation",
-                  "long": "sync",
-                  "name": "sync",
-                  "possible_values": [
-                    "true",
-                    "false"
-                  ],
-                  "required": false,
-                  "short": "s",
-                  "takes_value": false
-                }
-              ],
-              "hidden": false,
-              "name": "generate",
-              "subcommands": []
-            },
-            {
-              "about": "Deploy schemas to database",
-              "args": [
-                {
-                  "global": false,
-                  "help": "Input directory containing schemas",
-                  "long": "input",
-                  "name": "input",
-                  "possible_values": [],
-                  "required": false,
-                  "short": "i",
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": "Database URL to deploy to",
-                  "long": "database-url",
-                  "name": "database_url",
-                  "possible_values": [],
-                  "required": true,
-                  "short": null,
-                  "takes_value": true
-                }
-              ],
-              "hidden": false,
-              "name": "deploy",
-              "subcommands": []
-            },
-            {
-              "about": "Check backward compatibility of schema changes",
-              "args": [
-                {
-                  "global": false,
-                  "help": "Base branch/commit to compare against",
-                  "long": "base",
-                  "name": "base",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": "Glob pattern for schema files",
-                  "long": "glob",
-                  "name": "glob",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                }
-              ],
-              "hidden": false,
-              "name": "compat",
-              "subcommands": []
-            },
-            {
-              "about": "Verify required tables exist in database",
-              "args": [
-                {
-                  "global": false,
-                  "help": "Database name",
-                  "long": "database",
-                  "name": "database",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                },
-                {
-                  "global": false,
-                  "help": "Superuser for connection",
-                  "long": "superuser",
-                  "name": "superuser",
-                  "possible_values": [],
-                  "required": false,
-                  "short": null,
-                  "takes_value": true
-                }
-              ],
-              "hidden": false,
-              "name": "check-ready",
-              "subcommands": []
-            },
-            {
-              "about": "Show schema information",
-              "args": [
-                {
-                  "global": false,
-                  "help": null,
-                  "long": null,
-                  "name": "query",
-                  "possible_values": [
-                    "list-schemas",
-                    "list-grantable-schemas",
-                    "describe-schemas"
-                  ],
-                  "required": true,
-                  "short": null,
-                  "takes_value": true
-                }
-              ],
-              "hidden": false,
-              "name": "info",
-              "subcommands": []
-            }
-          ]
         }
       ]
     },
@@ -1938,9 +1792,9 @@ expression: json
           "args": [
             {
               "global": false,
-              "help": "Output format (dot, json, ascii)",
-              "long": "format",
-              "name": "format",
+              "help": "Render format (dot, json, ascii)",
+              "long": "render-format",
+              "name": "render_format",
               "possible_values": [],
               "required": false,
               "short": null,
@@ -2402,6 +2256,19 @@ expression: json
               "required": true,
               "short": null,
               "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Preview changes without deploying",
+              "long": "dry-run",
+              "name": "dry_run",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
             }
           ],
           "hidden": false,
@@ -2639,7 +2506,7 @@ expression: json
           "subcommands": []
         },
         {
-          "about": "CI pipeline commands",
+          "about": "CI pipeline commands (requires sandbox feature)",
           "args": [],
           "hidden": false,
           "name": "ci",

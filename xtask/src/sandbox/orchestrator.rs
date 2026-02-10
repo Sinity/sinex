@@ -524,9 +524,12 @@ pub async fn start_test_ingestd_with_config(
 
     let child = cmd.spawn()?;
 
-    let stream_name = format!(
-        "{}_RAW_EVENTS",
-        config.namespace.as_deref().unwrap_or("SINEX")
+    // Compute the stream name using the same logic as ingestd:
+    // environment-prefixed base name, with optional namespace suffix.
+    let env = sinex_primitives::environment::environment();
+    let stream_name = env.nats_stream_name_with_namespace(
+        config.namespace.as_deref(),
+        &env.nats_stream_name("SINEX_RAW_EVENTS"),
     );
 
     // Wait for ingestd to create the JetStream stream before returning.

@@ -39,6 +39,7 @@ fn constructs_from_args() -> TestResult<()> {
         true,
         None,
         None,
+        None, // namespace
     );
 
     assert_eq!(config.database_url, "postgresql://custom/db");

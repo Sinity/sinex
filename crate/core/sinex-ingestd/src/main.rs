@@ -68,6 +68,10 @@ struct Args {
     /// Directory used to persist assembler state between restarts
     #[arg(long, env = "SINEX_ASSEMBLER_STATE_DIR")]
     assembler_state_dir: Option<String>,
+
+    /// NATS namespace for subject/stream isolation (used by test infrastructure)
+    #[arg(long, env = "SINEX_NAMESPACE")]
+    namespace: Option<String>,
 }
 
 #[tokio::main]
@@ -97,6 +101,7 @@ async fn main() -> Result<()> {
         args.dry_run,
         args.annex_path,
         args.assembler_state_dir,
+        args.namespace,
     );
 
     if args.validate_config {

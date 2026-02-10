@@ -421,10 +421,10 @@ async fn test_nested_payload_type_preservation(ctx: TestContext) -> Result<()> {
 // REPOSITORY PATTERN TYPE SAFETY TESTS
 // =============================================================================
 
-#[sinex_serial_test]
+#[sinex_test]
 async fn test_repository_query_type_safety(ctx: TestContext) -> Result<()> {
-    ctx.ensure_clean().await?;
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
 
     let primary_source = format!("repo-primary-{}", Ulid::new());
     let secondary_source = format!("repo-secondary-{}", Ulid::new());

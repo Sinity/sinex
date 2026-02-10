@@ -48,6 +48,7 @@ async fn test_checkpoint_recovery_from_empty_state(ctx: TestContext) -> TestResu
 async fn test_checkpoint_manager_basic_functionality(ctx: TestContext) -> TestResult<()> {
     // Test basic checkpoint manager functionality
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let service_name = "basic-functionality-test".to_string();
     let consumer_group = "basic-functionality-group".to_string();
 
@@ -208,6 +209,7 @@ async fn test_checkpoint_database_integration(ctx: TestContext) -> TestResult<()
 async fn test_checkpoint_with_events_context(ctx: TestContext) -> TestResult<()> {
     // Test checkpoint functionality in the context of actual events
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let service_name = "events-context-test".to_string();
     let consumer_group = "events-context-group".to_string();
 

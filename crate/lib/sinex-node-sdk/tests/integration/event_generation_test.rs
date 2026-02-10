@@ -263,6 +263,7 @@ async fn test_command_event_generation(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 async fn test_concurrent_event_generation(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
     let pool = ctx.pool().clone();
 
     // Generate events concurrently using channels
