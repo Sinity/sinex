@@ -306,6 +306,8 @@ async fn test_clipboard_payload_system(ctx: TestContext) -> TestResult<()> {
 /// Test that sources consistently map to appropriate event types
 #[sinex_test]
 async fn test_source_event_type_mapping(ctx: TestContext) -> TestResult<()> {
+    let _scope = ctx.pipeline().await?;
+
     let test_cases = vec![
         (
             "fs-watcher",

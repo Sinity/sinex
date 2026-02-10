@@ -5,6 +5,7 @@
 
 use crate::sandbox::prelude::*;
 use serde_json::{json, Value as JsonValue};
+use sinex_primitives::domain::SanitizedPath;
 use sinex_primitives::events::payloads::{
     FileCreatedPayload, FileModifiedPayload, KittyCommandExecutedPayload,
 };
@@ -162,8 +163,12 @@ impl AnalyticsDataset {
             EventSpec::from_typed(&KittyCommandExecutedPayload::test_default("ls"))?,
             EventSpec::from_typed(&KittyCommandExecutedPayload::test_default("git status"))?,
             EventSpec::from_typed(&KittyCommandExecutedPayload::test_default("ls"))?,
-            EventSpec::from_typed(&FileCreatedPayload::test_default("/tmp/test.txt"))?,
-            EventSpec::from_typed(&FileModifiedPayload::test_default("/tmp/test.txt"))?,
+            EventSpec::from_typed(&FileCreatedPayload::test_default(
+                SanitizedPath::new_unchecked("/tmp/test.txt"),
+            ))?,
+            EventSpec::from_typed(&FileModifiedPayload::test_default(
+                SanitizedPath::new_unchecked("/tmp/test.txt"),
+            ))?,
         ];
 
         let mut expected_source_counts = std::collections::HashMap::new();
@@ -233,7 +238,9 @@ impl QueryDataset {
         let events = vec![
             EventSpec::from_typed(&KittyCommandExecutedPayload::test_default("cargo build"))?,
             EventSpec::from_typed(&KittyCommandExecutedPayload::test_default("cargo test"))?,
-            EventSpec::from_typed(&FileCreatedPayload::test_default("/project/src/main.rs"))?,
+            EventSpec::from_typed(&FileCreatedPayload::test_default(
+                SanitizedPath::new_unchecked("/project/src/main.rs"),
+            ))?,
         ];
         Ok(Self {
             name: "query-semantic-min".to_string(),
@@ -296,7 +303,10 @@ mod tests {
 
     #[test]
     fn test_event_spec_from_typed_captures_source_and_type() {
-        let spec = EventSpec::from_typed(&FileCreatedPayload::test_default("/test")).unwrap();
+        let spec = EventSpec::from_typed(&FileCreatedPayload::test_default(
+            SanitizedPath::new_unchecked("/test"),
+        ))
+        .unwrap();
         assert_eq!(spec.source, "fs-watcher");
         assert_eq!(spec.event_type, "file.created");
         // Typed payload serializes with correct structure
