@@ -93,8 +93,6 @@ impl EventPublisher for Sandbox {
     ) -> TestResult<Event<JsonValue>> {
         // Ensure NATS is available (lazy initialization for property tests)
         let _client = self.ensure_nats().await?;
-        // Ensure ingestd is running to consume events from NATS and persist them.
-        self.ensure_auto_pipeline().await?;
 
         let mut sanitized_payload = payload;
         Sandbox::sanitize_payload(&mut sanitized_payload);
