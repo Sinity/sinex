@@ -16,7 +16,7 @@ static PIPELINE_SEMAPHORE: std::sync::LazyLock<Arc<Semaphore>> = std::sync::Lazy
     let permits = std::env::var("SINEX_TEST_PIPELINE_CONCURRENCY")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(16);
+        .unwrap_or(32);
     Arc::new(Semaphore::new(permits))
 });
 

@@ -9,7 +9,7 @@ use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::testing::event_fixture;
-use sinex_primitives::{Event, JsonValue};
+use sinex_primitives::{Event, JsonValue, Timestamp};
 use std::time::Duration;
 use xtask::sandbox::{prelude::*, sinex_prop, sinex_proptest};
 
@@ -503,7 +503,7 @@ async fn node_maintains_event_ordering_under_load(
                     json!({
                         "source_id": source_id,
                         "event_id": event_id,
-                        "timestamp": OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000
+                        "timestamp": Timestamp::now().format_rfc3339()
                     }),
                 );
 
@@ -526,14 +526,14 @@ async fn node_maintains_event_ordering_under_load(
     let total_events = concurrent_sources * events_per_source;
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    // Verify event ordering within each source
+    // Verify event ordering within each source — query exactly what we expect
     let all_events = ctx
         .pool
         .events()
-        .get_recent((total_events * 2) as i64)
+        .get_recent(total_events as i64)
         .await
         .map_err(report_to_test_error)?;
-    assert_eq!(all_events.len(), total_events);
+    prop_assert_eq!(all_events.len(), total_events);
 
     // Group events by source and verify ordering within each source
     let mut events_by_source: std::collections::HashMap<String, Vec<_>> =
