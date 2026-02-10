@@ -208,7 +208,8 @@ impl HistoryDb {
 
     /// Finish a background job and store its log content in the DB.
     ///
-    /// This reads the log files, stores content in DB, then deletes the files.
+    /// This reads the log files and stores content in DB. Log files are preserved
+    /// on disk for direct inspection and are only removed by `cargo xtask jobs prune`.
     pub fn finish_background_job(
         &self,
         id: i64,
@@ -244,19 +245,8 @@ impl HistoryDb {
             ],
         )?;
 
-        // Delete log files now that content is in DB
-        if let Some(path) = stdout_path {
-            let _ = std::fs::remove_file(path);
-        }
-        if let Some(path) = stderr_path {
-            let _ = std::fs::remove_file(path);
-        }
-        // Try to remove parent directory (job dir) if empty
-        if let Some(path) = stdout_path {
-            if let Some(parent) = path.parent() {
-                let _ = std::fs::remove_dir(parent);
-            }
-        }
+        // Keep log files on disk alongside DB storage for direct inspection.
+        // Files are only removed by `cargo xtask jobs prune`.
 
         Ok(())
     }

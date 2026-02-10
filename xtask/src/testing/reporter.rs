@@ -230,19 +230,17 @@ impl TestReporter {
 
                         // Record to DB (including failure output if available)
                         if let Some((db, invocation_id)) = history {
-                            // Truncate output to 10KB to prevent DB bloat
-                            let output = t.output.as_deref().map(|s| {
-                                if s.len() > 10_240 {
-                                    &s[s.len() - 10_240..]
-                                } else {
-                                    s
-                                }
-                            });
+                            let output = t.output.as_deref();
+
+                            // Extract package from test name (e.g. "sinex_db::repo::test_name"
+                            // → "sinex_db", or "tests/e2e.rs::test_name" → "tests")
+                            let package = t.name.split("::").next().unwrap_or("unknown");
+
                             // We ignore errors here to not interrupt testing flow if DB fails
                             let _ = db.record_test_result(
                                 invocation_id,
                                 &t.name,
-                                "unknown", // Package info not available in this format
+                                package,
                                 &t.result,
                                 duration,
                                 output,
