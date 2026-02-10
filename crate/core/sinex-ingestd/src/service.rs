@@ -571,6 +571,10 @@ impl IngestService {
             for handle in &handles {
                 handle.abort();
             }
+            // Await aborted handles so their destructors run before we return.
+            for handle in handles {
+                let _ = handle.await;
+            }
         } else {
             info!("All background tasks finished");
         }
