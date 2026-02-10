@@ -11,9 +11,9 @@ use crate::sandbox::prelude::{EventId, TestResult};
 use crate::sandbox::timing::{WaitHelpers, DEFAULT_WAIT_SECS};
 use crate::sandbox::Sandbox;
 use crate::EventOverrides;
-use sinex_primitives::events::Publishable;
+use sinex_primitives::events::{Publishable, SourceMaterial};
 use sinex_primitives::Timestamp;
-use sinex_primitives::{DynamicPayload, EventType};
+use sinex_primitives::{DynamicPayload, EventType, Id};
 use std::collections::VecDeque;
 use std::time::Instant;
 use tokio::runtime::Handle;
@@ -146,6 +146,12 @@ impl<'ctx> PipelineScope<'ctx> {
             None
         };
 
+        // Register a source material for FK constraints before publishing.
+        let material_id = Id::<SourceMaterial>::new();
+        self.ctx
+            .ensure_source_material(material_id, Some(source.as_str()))
+            .await?;
+
         // Construct event manually to handle overrides
         let event = sinex_primitives::events::Event::<serde_json::Value> {
             id: overrides.id.map(sinex_primitives::Id::from_ulid),
@@ -159,7 +165,7 @@ impl<'ctx> PipelineScope<'ctx> {
             ingestor_version: Some("test-ingestd".to_string()),
             payload_schema_id: None,
             provenance: sinex_primitives::events::Provenance::Material {
-                id: sinex_primitives::Id::new(),
+                id: material_id,
                 anchor_byte: 0,
                 offset_start: None,
                 offset_end: None,

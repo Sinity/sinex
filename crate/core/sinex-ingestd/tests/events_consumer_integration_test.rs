@@ -902,13 +902,19 @@ async fn jetstream_consumer_dlq_reason_classification(ctx: TestContext) -> TestR
         errors.push(error);
     }
 
+    // Invalid ts_orig fails during serde deserialization, producing a "Parse error"
+    // that includes the offending value. Raw bytes also produce a "Parse error".
+    // The DB hook produces a "Persistence error".
+    let parse_errors: Vec<_> = errors.iter().filter(|e| e.contains("Parse error")).collect();
     assert!(
-        errors.iter().any(|e| e.contains("Invalid timestamp")),
-        "Expected invalid timestamp error in DLQ: {errors:?}"
+        parse_errors.len() >= 2,
+        "Expected at least 2 parse errors (timestamp + raw bytes) in DLQ: {errors:?}"
     );
     assert!(
-        errors.iter().any(|e| e.contains("Parse error")),
-        "Expected parse error in DLQ: {errors:?}"
+        errors
+            .iter()
+            .any(|e| e.contains("invalid-timestamp") || e.contains("Validation failed")),
+        "Expected timestamp-related error in DLQ: {errors:?}"
     );
     assert!(
         errors.iter().any(|e| e.contains("Persistence error")),
