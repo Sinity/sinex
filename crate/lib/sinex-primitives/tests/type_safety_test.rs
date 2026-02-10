@@ -563,6 +563,9 @@ async fn test_repository_id_query_type_safety(ctx: TestContext) -> Result<()> {
 
 #[sinex_test]
 async fn test_event_creation_pipeline_type_safety(ctx: TestContext) -> Result<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
+
     // Test that types are preserved through the entire event creation pipeline
 
     // 1. Domain type construction

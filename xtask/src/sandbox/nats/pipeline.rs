@@ -16,7 +16,7 @@ static PIPELINE_SEMAPHORE: std::sync::LazyLock<Arc<Semaphore>> = std::sync::Lazy
     let permits = std::env::var("SINEX_TEST_PIPELINE_CONCURRENCY")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(32);
+        .unwrap_or(8);
     Arc::new(Semaphore::new(permits))
 });
 
@@ -39,6 +39,6 @@ pub async fn wait_for_event_persisted(
 ) -> TestResult<()> {
     let event_id = event_id.into();
     // Pipeline events should persist quickly with fast test config.
-    // 5 seconds is generous; actual should be ~100-200ms.
-    WaitHelpers::wait_for_event_id(&ctx.pool, event_id, 5).await
+    // Under concurrent load (8 pipeline permits), allow up to 10s.
+    WaitHelpers::wait_for_event_id(&ctx.pool, event_id, 10).await
 }

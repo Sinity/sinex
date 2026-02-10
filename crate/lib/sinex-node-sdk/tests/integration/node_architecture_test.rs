@@ -68,6 +68,7 @@ async fn test_phase1_unified_stream_processor_trait(ctx: TestContext) -> TestRes
 async fn test_phase1_single_writer_pattern(ctx: TestContext) -> TestResult<()> {
     info!("Testing Phase 1.2: Single-writer pattern through ingestd");
 
+    let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
 
     // Phase 1.2: Enforce that all events flow through ingestd
@@ -113,6 +114,7 @@ async fn test_phase1_single_writer_pattern(ctx: TestContext) -> TestResult<()> {
 async fn test_phase1_schema_contracts(ctx: TestContext) -> TestResult<()> {
     info!("Testing Phase 1.3: Schema contract enforcement");
 
+    let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
 
     // Phase 1.3: Test schema validation and contracts
@@ -206,6 +208,7 @@ async fn test_node_sdk_components(ctx: TestContext) -> TestResult<()> {
 async fn test_node_event_flow_simulation(ctx: TestContext) -> TestResult<()> {
     info!("Testing simulated node event flow");
 
+    let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
 
     // Simulate the flow described in the refactoring plan:
@@ -267,6 +270,7 @@ async fn test_node_event_flow_simulation(ctx: TestContext) -> TestResult<()> {
 async fn test_phase2_acquisition_integration(ctx: TestContext) -> TestResult<()> {
     info!("Testing Phase 2: Acquisition Layer");
 
+    let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
 
     // Phase 2.1: Test source material tracking
