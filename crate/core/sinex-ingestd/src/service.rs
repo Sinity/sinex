@@ -563,7 +563,14 @@ impl IngestService {
         };
 
         if tokio::time::timeout(timeout, wait_task).await.is_err() {
-            warn!("Timed out waiting for background tasks after {:?}", timeout);
+            warn!(
+                "Timed out waiting for background tasks after {:?}, aborting {} remaining",
+                timeout,
+                handles.len()
+            );
+            for handle in &handles {
+                handle.abort();
+            }
         } else {
             info!("All background tasks finished");
         }
