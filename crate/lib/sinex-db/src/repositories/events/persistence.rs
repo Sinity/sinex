@@ -1117,8 +1117,8 @@ impl<'a> EventRepository<'a> {
                 $1, $2, $3, $4, $5, $6
             )
             RETURNING
-                id as "id: Id<EventAnnotation>",
-                event_id as "event_id: Id<Event<JsonValue>>",
+                id::uuid as "id!: Id<EventAnnotation>",
+                event_id::uuid as "event_id!: Id<Event<JsonValue>>",
                 annotation_type as "annotation_type!",
                 content as "content!",
                 metadata as "metadata!",
@@ -1151,8 +1151,8 @@ impl<'a> EventRepository<'a> {
             SET content = $2, updated_at = CURRENT_TIMESTAMP
             WHERE id::uuid = $1
             RETURNING
-                id as "id: Id<EventAnnotation>",
-                event_id as "event_id: Id<Event<JsonValue>>",
+                id::uuid as "id!: Id<EventAnnotation>",
+                event_id::uuid as "event_id!: Id<Event<JsonValue>>",
                 annotation_type as "annotation_type!",
                 content as "content!",
                 metadata as "metadata!",

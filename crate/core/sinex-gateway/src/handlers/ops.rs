@@ -88,7 +88,7 @@ pub async fn handle_ops_start(
         OperationRow,
         r#"
         SELECT
-            id as "id: Id<Operation>",
+            id::uuid as "id!: Id<Operation>",
             operation_type as "operation_type!",
             operator as "operator!",
             scope,
@@ -140,7 +140,7 @@ pub async fn handle_ops_list(
             OperationRow,
             r#"
             SELECT
-                id as "id: Id<Operation>",
+                id::uuid as "id!: Id<Operation>",
                 operation_type as "operation_type!",
                 operator as "operator!",
                 scope,
@@ -165,7 +165,7 @@ pub async fn handle_ops_list(
             OperationRow,
             r#"
             SELECT
-                id as "id: Id<Operation>",
+                id::uuid as "id!: Id<Operation>",
                 operation_type as "operation_type!",
                 operator as "operator!",
                 scope,
@@ -188,7 +188,7 @@ pub async fn handle_ops_list(
             OperationRow,
             r#"
             SELECT
-                id as "id: Id<Operation>",
+                id::uuid as "id!: Id<Operation>",
                 operation_type as "operation_type!",
                 operator as "operator!",
                 scope,
@@ -211,7 +211,7 @@ pub async fn handle_ops_list(
             OperationRow,
             r#"
             SELECT
-                id as "id: Id<Operation>",
+                id::uuid as "id!: Id<Operation>",
                 operation_type as "operation_type!",
                 operator as "operator!",
                 scope,
@@ -266,7 +266,7 @@ pub async fn handle_ops_get(
         OperationRow,
         r#"
         SELECT
-            id as "id: Id<Operation>",
+            id::uuid as "id!: Id<Operation>",
             operation_type as "operation_type!",
             operator as "operator!",
             scope,
@@ -373,7 +373,7 @@ pub async fn handle_ops_cancel(
         OperationRow,
         r#"
         SELECT
-            id as "id: Id<Operation>",
+            id::uuid as "id!: Id<Operation>",
             operation_type as "operation_type!",
             operator as "operator!",
             scope,

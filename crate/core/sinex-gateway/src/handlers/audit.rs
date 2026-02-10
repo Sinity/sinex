@@ -38,7 +38,7 @@ async fn query_affected_events(
     let rows = sqlx::query!(
         r#"
         SELECT
-            id as "id: Id<Event>",
+            id::uuid as "id!: Id<Event>",
             source,
             event_type,
             ts_orig as "ts_orig: Timestamp",
@@ -97,7 +97,7 @@ pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
         OperationRow,
         r#"
         SELECT
-            id as "id: Id<Operation>",
+            id::uuid as "id!: Id<Operation>",
             operation_type as "operation_type!",
             operator as "operator!",
             scope,
