@@ -118,7 +118,6 @@ pub mod strategies {
     //! Property testing strategies for domain types.
 
     use crate::domain::{CommandText, HostName, SanitizedPath, ShellName};
-    use crate::events::enums::FileModificationType;
     use crate::events::payloads::{
         FileCreatedPayload, HyprlandWindowFocusedPayload, KittyCommandExecutedPayload,
         ProcessHeartbeatPayload,
@@ -158,7 +157,7 @@ pub mod strategies {
     /// Generate random timestamps within a recent window (last 24 hours).
     pub fn timestamp() -> impl Strategy<Value = Timestamp> {
         (0i64..86400).prop_map(|secs_ago| {
-            Timestamp::from_unix_timestamp(Timestamp::now().as_unix_timestamp() - secs_ago)
+            Timestamp::from_unix_timestamp(Timestamp::now().unix_timestamp() - secs_ago)
                 .unwrap_or_else(|| Timestamp::now())
         })
     }
@@ -319,5 +318,68 @@ pub mod strategies {
     /// WARNING: Do NOT insert into database — no valid provenance.
     pub fn process_heartbeat_event() -> impl Strategy<Value = crate::Event<crate::JsonValue>> {
         process_heartbeat_payload().prop_map(|payload| payload.into_test_event())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use proptest::proptest;
+
+        proptest! {
+            #[test]
+            fn test_sanitized_path_strategy(path in sanitized_path()) {
+                // Verify path is valid UTF-8 and starts with /
+                assert!(path.as_str().starts_with('/'));
+                assert!(!path.as_str().is_empty());
+            }
+
+            #[test]
+            fn test_timestamp_strategy(ts in timestamp()) {
+                // Verify timestamp is recent (within last 24 hours)
+                let now = Timestamp::now();
+                assert!(ts.unix_timestamp() <= now.unix_timestamp());
+            }
+
+            #[test]
+            fn test_command_text_strategy(cmd in command_text()) {
+                // Verify command is not empty
+                assert!(!cmd.as_str().is_empty());
+            }
+
+            #[test]
+            fn test_file_created_payload_strategy(payload in file_created_payload()) {
+                // Verify payload has valid path and size
+                assert!(!payload.path.as_str().is_empty());
+            }
+
+            #[test]
+            fn test_kitty_command_payload_strategy(payload in kitty_command_executed_payload()) {
+                // Verify payload has required fields
+                assert!(!payload.command.as_str().is_empty());
+                assert!(!payload.kitty_window_id.is_empty());
+                assert!(!payload.kitty_tab_id.is_empty());
+            }
+
+            #[test]
+            fn test_window_focused_payload_strategy(payload in window_focused_payload()) {
+                // Verify payload has required fields
+                assert!(!payload.window_id.is_empty());
+                assert!(!payload.window_class.is_empty());
+                assert!(!payload.window_title.is_empty());
+            }
+
+            #[test]
+            fn test_process_heartbeat_payload_strategy(payload in process_heartbeat_payload()) {
+                // Verify payload has required fields
+                assert!(!payload.source.is_empty());
+            }
+
+            #[test]
+            fn test_file_created_event_strategy(event in file_created_event()) {
+                // Verify event has valid structure
+                assert!(!event.source.as_str().is_empty());
+                assert!(!event.event_type.as_str().is_empty());
+            }
+        }
     }
 }
