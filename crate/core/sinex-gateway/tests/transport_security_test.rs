@@ -94,7 +94,9 @@ fn write_tls_bundle(dir: &Path) -> Result<CertBundle> {
 
     let server_cert_path = dir.join("gateway-cert.pem");
     let server_key_path = dir.join("gateway-key.pem");
-    std::fs::write(&server_cert_path, server_pem)?;
+    // Write full chain (leaf + CA) so rustls presents the complete chain to clients
+    let chain_pem = format!("{server_pem}{ca_pem}");
+    std::fs::write(&server_cert_path, chain_pem)?;
     std::fs::write(&server_key_path, server_key_pem)?;
 
     Ok(CertBundle {
