@@ -47,10 +47,9 @@ impl<'ctx> PipelineScope<'ctx> {
             work_dir: None,
             namespace: Some(namespace.clone()),
             // Fast test settings: small batches, short timeouts
-            batch_size: 32,
             consumer_fetch_max_messages: 32,
-            consumer_fetch_timeout_ms: 100, // 100ms fetch timeout - events arrive quickly in tests
-            database_pool_size: 4,          // Test-appropriate; production default is 50
+            consumer_fetch_timeout_ms: 500, // 500ms allows batching while keeping test latency low
+            database_pool_size: 10, // Needs headroom for JetStream consumer + MaterialAssembler + schema reload
         };
 
         let ingestd = start_test_ingestd_with_config(config, Some(ctx)).await?;
@@ -178,6 +177,7 @@ impl<'ctx> PipelineScope<'ctx> {
         let publish_start = Instant::now();
         let event_id: sinex_schema::ulid::Ulid = self.ctx.publish_prebuilt_event(&event).await?;
         let publish_ms = publish_start.elapsed().as_millis();
+
         let wait_start = Instant::now();
         wait_for_event_persisted(self.ctx, event_id).await?;
         let wait_ms = wait_start.elapsed().as_millis();
@@ -381,7 +381,9 @@ impl<'ctx> PipelineScope<'ctx> {
 
 impl Drop for PipelineScope<'_> {
     fn drop(&mut self) {
-        if std::thread::panicking() {
+        // Always dump diagnostic logs when dropping without explicit shutdown
+        // (panicking OR error return from test)
+        if self.ingestd.is_some() {
             self.dump_failure_logs();
         }
 

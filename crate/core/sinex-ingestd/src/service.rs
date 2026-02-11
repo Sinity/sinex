@@ -189,13 +189,27 @@ impl IngestService {
         // Create shared MaterialReadySet for cross-consumer coordination.
         // This prevents FK violations when events arrive before their material's BEGIN
         // message is processed (separate NATS streams, no cross-stream ordering).
-        let ready_set = MaterialReadySet::new();
-        if let Some(pool) = &self.db_pool {
-            if let Err(e) = ready_set.seed_from_db(pool).await {
-                warn!("Failed to seed MaterialReadySet from database: {}", e);
-                // Non-fatal: events will be deferred until materials are registered
+        //
+        // In test mode (namespace set), skip MaterialReadySet: tests pre-register source
+        // materials directly in the database via ensure_source_material() before publishing
+        // events. The MaterialReadySet only knows about materials that existed at startup
+        // or arrived via the MaterialAssembler NATS stream, so test-inserted materials
+        // would cause all events to be NAK'd and never persisted.
+        let ready_set = if self.config.nats_namespace.is_none() {
+            let set = MaterialReadySet::new();
+            if let Some(pool) = &self.db_pool {
+                if let Err(e) = set.seed_from_db(pool).await {
+                    warn!("Failed to seed MaterialReadySet from database: {}", e);
+                    // Non-fatal: events will be deferred until materials are registered
+                }
             }
-        }
+            Some(set)
+        } else {
+            info!(
+                "MaterialReadySet disabled (test namespace mode — materials pre-registered in DB)"
+            );
+            None
+        };
 
         // Start JetStream and MaterialAssembler tasks (critical - failure stops service)
         let js_handle = match (&self.nats_client, &self.db_pool) {
@@ -367,7 +381,7 @@ impl IngestService {
         &self,
         nats_client: NatsClient,
         pool: PgPool,
-        ready_set: MaterialReadySet,
+        ready_set: Option<MaterialReadySet>,
     ) -> JoinHandle<IngestdResult<()>> {
         let shutdown_flag = self.shutdown_flag.clone();
         let validator = self.validator.clone();
@@ -385,7 +399,7 @@ impl IngestService {
         let max_ack_pending = self.config.consumer_max_ack_pending;
 
         tokio::spawn(async move {
-            let consumer = crate::JetStreamConsumer::new(
+            let mut consumer = crate::JetStreamConsumer::new(
                 nats_client,
                 pool.clone(),
                 validator.clone(),
@@ -393,8 +407,11 @@ impl IngestService {
             )
             .with_batch_fetch_config(fetch_max, fetch_timeout)
             .with_max_ack_pending(max_ack_pending)
-            .with_ready_set(ready_set)
             .with_observer(observer);
+
+            if let Some(set) = ready_set {
+                consumer = consumer.with_ready_set(set);
+            }
 
             tokio::select! {
                 result = consumer.run() => {
@@ -422,7 +439,7 @@ impl IngestService {
         &self,
         nats_client: NatsClient,
         pool: PgPool,
-        ready_set: MaterialReadySet,
+        ready_set: Option<MaterialReadySet>,
     ) -> JoinHandle<IngestdResult<()>> {
         let shutdown_flag = self.shutdown_flag.clone();
         let observer = self.observer.clone();

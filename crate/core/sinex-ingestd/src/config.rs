@@ -40,11 +40,6 @@ pub struct IngestdConfig {
     #[builder(default)]
     pub nats: sinex_primitives::nats::NatsConnectionConfig,
 
-    /// Batch size for database writes
-    #[validate(range(min = 1, message = "Batch size must be greater than 0"))]
-    #[builder(default = 1000)]
-    pub batch_size: usize,
-
     /// Maximum messages to fetch per `JetStream` pull batch
     #[builder(default = default_consumer_fetch_max_messages())]
     #[validate(range(
@@ -194,7 +189,6 @@ impl IngestdConfig {
         nats_url: String,
         nats_require_tls: bool,
         pool_size: u32,
-        batch_size: usize,
         consumer_fetch_max_messages: Option<usize>,
         consumer_fetch_timeout_ms: Option<u64>,
         dry_run: bool,
@@ -217,7 +211,6 @@ impl IngestdConfig {
         let mut config = Self::default();
         config.database_url = db_url;
         config.database_pool_size = pool_size;
-        config.batch_size = batch_size;
         config.dry_run = dry_run;
         config.skip_schema_sync = skip_schema_sync;
         config.validate_schemas = validate_schemas;
@@ -244,13 +237,6 @@ impl IngestdConfig {
     }
 
     fn normalize(mut self) -> Self {
-        let default_batch_size = Self::default().batch_size;
-        if self.consumer_fetch_max_messages == default_consumer_fetch_max_messages()
-            && self.batch_size != default_batch_size
-        {
-            self.consumer_fetch_max_messages = self.batch_size;
-        }
-
         // When a namespace is set (test isolation), apply it to the stream name
         // so each test gets its own JetStream stream.
         if let Some(ref ns) = self.nats_namespace {
@@ -379,26 +365,12 @@ impl IngestdConfig {
             .acquire_timeout(std::time::Duration::from_secs(30))
             .idle_timeout(std::time::Duration::from_mins(10))
             .max_lifetime(std::time::Duration::from_mins(30))
-            .before_acquire(|conn, _meta| {
-                Box::pin(async move {
-                    // Clean up any lingering transaction state before returning to caller.
-                    // This handles cases where connections are returned to the pool with
-                    // aborted transactions (e.g., after a failed query or lost connection).
-                    // Note: Must execute as separate queries because prepared statements
-                    // can't contain multiple commands.
-                    if let Err(e) = sqlx::query("ROLLBACK").execute(&mut *conn).await {
-                        // If ROLLBACK fails, the connection is truly broken.
-                        warn!("Connection ROLLBACK failed, discarding: {e}");
-                        return Ok(false);
-                    }
-                    // Reset session state to defaults (timeout, search_path, etc.)
-                    if let Err(e) = sqlx::query("RESET ALL").execute(&mut *conn).await {
-                        warn!("Connection RESET ALL failed, discarding: {e}");
-                        return Ok(false);
-                    }
-                    Ok(true)
-                })
-            })
+        // NOTE: before_acquire hook with ROLLBACK + RESET ALL was removed.
+        // sqlx 0.8.x has a bug where the before_acquire callback deadlocks
+        // the pool when connections have been through certain protocol exchanges
+        // (COPY IN, and potentially others). sqlx handles connection health
+        // internally via its test_before_acquire mechanism, which is sufficient.
+        // See: https://github.com/launchbadge/sqlx/issues/3117
     }
 }
 
@@ -434,7 +406,6 @@ impl Default for IngestdConfig {
             database_url: default_database_url(),
             database_pool_size: 50,
             nats: sinex_primitives::nats::NatsConnectionConfig::from_env(),
-            batch_size: default_batch_size(),
             consumer_fetch_max_messages: default_consumer_fetch_max_messages(),
             consumer_fetch_timeout_ms: default_consumer_fetch_timeout_ms(),
             consumer_max_ack_pending: default_consumer_max_ack_pending(),
@@ -486,10 +457,6 @@ fn default_work_dir() -> Utf8PathBuf {
                 .unwrap_or_else(|_| Utf8PathBuf::from("/tmp/sinex/ingestd"))
         }
     }
-}
-
-fn default_batch_size() -> usize {
-    1000
 }
 
 fn default_consumer_fetch_max_messages() -> usize {

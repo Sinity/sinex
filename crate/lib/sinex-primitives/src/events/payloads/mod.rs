@@ -31,6 +31,9 @@ pub mod shell;
 pub mod system;
 pub mod window;
 
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
+
 // Re-export all payloads for convenience
 pub use automaton::*;
 pub use blob::*;
@@ -43,3 +46,6 @@ pub use process::*;
 pub use shell::*;
 pub use system::*;
 pub use window::*;
+
+#[cfg(any(test, feature = "testing"))]
+pub use testing::*;

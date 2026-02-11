@@ -127,7 +127,7 @@ mod tests {
             kv,
             service_name.to_string(),
             "test".to_string(),
-            format!("{service_name}-{}", Ulid::new()),
+            format!("{service_name}-{}", Ulid::new().to_string().to_lowercase()),
         ));
 
         let handles = NodeHandles::new(

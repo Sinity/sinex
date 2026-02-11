@@ -191,7 +191,11 @@ impl EventPublisher for Sandbox {
         let base_subject = format!("events.raw.{}", event.source);
         let subject = self.pipeline_namespace().subject(&base_subject);
 
-        client.publish(subject, payload.into()).await?;
+        client.publish(subject.clone(), payload.into()).await?;
+        client
+            .flush()
+            .await
+            .map_err(|e| eyre!("NATS flush failed: {e}"))?;
 
         Ok(event_id)
     }

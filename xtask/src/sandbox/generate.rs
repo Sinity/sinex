@@ -475,7 +475,7 @@ impl NodeGenerator {
 
         bail!(
             "Could not extract Rust code from LLM response. Response:\n{}",
-            &response[..response.len().min(500)]
+            &response[..response.floor_char_boundary(500)]
         )
     }
 

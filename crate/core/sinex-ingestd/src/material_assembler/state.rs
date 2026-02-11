@@ -399,7 +399,9 @@ pub(super) async fn handle_begin(
 
     // Signal that this material is now registered in the database, unblocking any
     // events in the JetStreamConsumer batch that reference this material_id via FK.
-    assembler.ready_set.mark_ready(material_id);
+    if let Some(ref ready_set) = assembler.ready_set {
+        ready_set.mark_ready(material_id);
+    }
 
     let has_pending_end = {
         let state = state_handle.lock().await;
