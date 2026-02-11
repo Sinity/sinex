@@ -263,6 +263,7 @@ url = "2"
 unicode-normalization = "0.1"
 schemars = { version = "0.8", features = ["uuid1"] }
 tempfile = "3.0"
+rcgen = "0.13"
 jsonschema = "0.17"
 validator = { version = "0.20", features = ["derive"] }
 figment = { version = "0.10.19", features = ["toml", "yaml", "json", "env"] }
@@ -313,6 +314,8 @@ once_cell = { workspace = true }
 async-nats = { workspace = true }
 sinex-gateway = { path = "crate/core/sinex-gateway" }
 xtask = { path = "xtask", default-features = false, features = ["sandbox"] }
+rcgen = { workspace = true }
+tempfile = { workspace = true }
 
 [dependencies]
 # Test utilities and dependencies for workspace-level integration tests

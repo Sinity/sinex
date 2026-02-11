@@ -2,6 +2,7 @@ use sinex_gateway::{rpc_server, ServiceContainer};
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::time::Duration;
+use tempfile::NamedTempFile;
 use tokio::sync::watch;
 use xtask::sandbox::{sinex_test, timing::Timeouts, TestContext};
 
@@ -38,13 +39,39 @@ async fn wait_for_port(port: u16, timeout: Duration) -> color_eyre::Result<()> {
     }
 }
 
-/// Start a test gateway, returning (port, `shutdown_tx`, `server_handle`).
+/// Resources held for the lifetime of a test gateway.
 ///
-/// The caller MUST hold onto `shutdown_tx` — dropping it may cause the server
-/// to detect sender loss and shut down.
-async fn start_test_gateway(
-    ctx: &TestContext,
-) -> color_eyre::Result<(u16, watch::Sender<bool>, tokio::task::JoinHandle<()>)> {
+/// The caller MUST hold onto this struct — dropping `shutdown_tx` stops the
+/// server, and dropping the temp files removes the TLS certificates.
+struct TestGateway {
+    port: u16,
+    _shutdown_tx: watch::Sender<bool>,
+    handle: tokio::task::JoinHandle<()>,
+    _cert_file: NamedTempFile,
+    _key_file: NamedTempFile,
+}
+
+/// Start a test gateway with auto-generated TLS certificates.
+async fn start_test_gateway(ctx: &TestContext) -> color_eyre::Result<TestGateway> {
+    // Generate self-signed TLS certificates for the gateway.
+    let subject_alt_names = vec!["localhost".to_string(), "127.0.0.1".to_string()];
+    let cert = rcgen::generate_simple_self_signed(subject_alt_names)?;
+    let cert_file = NamedTempFile::new()?;
+    let key_file = NamedTempFile::new()?;
+    tokio::fs::write(cert_file.path(), cert.cert.pem()).await?;
+    tokio::fs::write(key_file.path(), cert.key_pair.serialize_pem()).await?;
+
+    std::env::set_var(
+        "SINEX_GATEWAY_TLS_CERT",
+        cert_file.path().to_string_lossy().to_string(),
+    );
+    std::env::set_var(
+        "SINEX_GATEWAY_TLS_KEY",
+        key_file.path().to_string_lossy().to_string(),
+    );
+    std::env::remove_var("SINEX_GATEWAY_TLS_CLIENT_CA");
+    std::env::set_var("SINEX_RPC_TOKEN", "test-token");
+
     // ServiceContainer::new tries to connect to NATS for replay control.
     // In test context, NATS may not be available. Allow bypass so it's non-fatal.
     std::env::set_var("SINEX_ALLOW_REPLAY_CONTROL_BYPASS", "1");
@@ -65,17 +92,24 @@ async fn start_test_gateway(
     // (pool creation, NATS connection attempts, etc.), so use a generous timeout.
     wait_for_port(port, Duration::from_secs(Timeouts::MEDIUM)).await?;
 
-    Ok((port, shutdown_tx, server_handle))
+    Ok(TestGateway {
+        port,
+        _shutdown_tx: shutdown_tx,
+        handle: server_handle,
+        _cert_file: cert_file,
+        _key_file: key_file,
+    })
 }
 
 #[sinex_test]
 async fn exo_dlq_list_command_reports_entries(ctx: TestContext) -> color_eyre::Result<()> {
-    let (port, _shutdown_tx, handle) = start_test_gateway(&ctx).await?;
-    let url = format!("http://127.0.0.1:{port}/rpc");
+    let gw = start_test_gateway(&ctx).await?;
+    let url = format!("https://127.0.0.1:{}/rpc", gw.port);
 
     let output = std::process::Command::new(sinexctl_binary())
         .arg("--token")
         .arg("test-token")
+        .arg("--insecure")
         .arg("--rpc-url")
         .arg(&url)
         .arg("dlq")
@@ -83,7 +117,7 @@ async fn exo_dlq_list_command_reports_entries(ctx: TestContext) -> color_eyre::R
         .output()
         .expect("sinexctl binary should be executable");
 
-    handle.abort();
+    gw.handle.abort();
 
     assert!(
         output.status.success(),
@@ -99,12 +133,13 @@ async fn exo_confirmations_tail_command_streams_events(ctx: TestContext) -> colo
     // `sinexctl watch` is an infinite polling loop — it never exits.
     // We spawn it as a child process and verify it starts successfully
     // (connects to the gateway), then kill it after a brief window.
-    let (port, _shutdown_tx, server_handle) = start_test_gateway(&ctx).await?;
-    let url = format!("http://127.0.0.1:{port}/rpc");
+    let gw = start_test_gateway(&ctx).await?;
+    let url = format!("https://127.0.0.1:{}/rpc", gw.port);
 
     let mut child = std::process::Command::new(sinexctl_binary())
         .arg("--token")
         .arg("test-token")
+        .arg("--insecure")
         .arg("--rpc-url")
         .arg(&url)
         .arg("watch")
@@ -144,19 +179,20 @@ async fn exo_confirmations_tail_command_streams_events(ctx: TestContext) -> colo
         }
     }
 
-    server_handle.abort();
+    gw.handle.abort();
     Ok(())
 }
 
 #[sinex_test]
 async fn exo_dlq_metrics_command_reports_stats(ctx: TestContext) -> color_eyre::Result<()> {
-    let (port, _shutdown_tx, handle) = start_test_gateway(&ctx).await?;
-    let url = format!("http://127.0.0.1:{port}/rpc");
+    let gw = start_test_gateway(&ctx).await?;
+    let url = format!("https://127.0.0.1:{}/rpc", gw.port);
 
     // Test `dlq peek` as a distinct DLQ operation (no `dlq metrics` subcommand exists)
     let output = std::process::Command::new(sinexctl_binary())
         .arg("--token")
         .arg("test-token")
+        .arg("--insecure")
         .arg("--rpc-url")
         .arg(&url)
         .arg("dlq")
@@ -166,7 +202,7 @@ async fn exo_dlq_metrics_command_reports_stats(ctx: TestContext) -> color_eyre::
         .output()
         .expect("sinexctl binary should be executable");
 
-    handle.abort();
+    gw.handle.abort();
 
     assert!(
         output.status.success(),
