@@ -649,7 +649,7 @@ async fn test_migration_compatibility(
     }
 
     // Verify required extensions are installed (migrations depend on them)
-    let required_extensions = ["pgx_ulid", "timescaledb", "vector", "pg_jsonschema"];
+    let required_extensions = ["ulid", "timescaledb", "vector", "pg_jsonschema"];
     for ext in required_extensions {
         let ext_installed: (bool,) =
             sqlx::query_as("SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname = $1)")
