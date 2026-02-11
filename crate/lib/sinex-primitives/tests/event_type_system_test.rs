@@ -13,7 +13,6 @@
 use xtask::sandbox::prelude::*;
 
 // Additional imports for specific payload types
-use futures::future;
 use sinex_db::models::event::SourceMaterial;
 use sinex_primitives::domain::{SanitizedPath, ShellName};
 use sinex_primitives::events::enums::FileModificationType;
@@ -22,7 +21,7 @@ use sinex_primitives::events::payloads::{
     FileModifiedPayload, KittyCommandExecutedPayload,
 };
 use sinex_primitives::events::EventPayload;
-use sinex_primitives::{units::ExitCode, DynamicPayload, Event, Id, JsonValue, Provenance, Ulid};
+use sinex_primitives::{units::ExitCode, DynamicPayload, Id, Provenance, Ulid};
 use std::collections::HashSet;
 
 async fn ensure_material(ctx: &TestContext, label: &str) -> TestResult<Id<SourceMaterial>> {
@@ -93,9 +92,10 @@ async fn test_source_naming_conventions() -> TestResult<()> {
     for source in dot_sources {
         let constant = EventSource::from_static(source);
         assert_eq!(constant.as_str(), source);
+        // Dot-separated sources are valid (e.g., shell.kitty identifies shell+terminal combos)
         assert!(
-            EventSource::new(source).validate().is_err(),
-            "Dot-separated source {source} should require explicit allowance"
+            EventSource::new(source).validate().is_ok(),
+            "Dot-separated source {source} should be valid"
         );
     }
 
@@ -413,77 +413,28 @@ async fn test_source_event_type_mapping(ctx: TestContext) -> TestResult<()> {
 /// Test concurrent event creation maintains type safety
 #[sinex_test]
 async fn test_concurrent_event_creation(ctx: TestContext) -> TestResult<()> {
-    use std::sync::Arc;
-    use tokio::task;
+    let ctx = ctx.with_nats().shared().await?;
+    let scope = ctx.pipeline().await?;
 
-    let ctx = Arc::new(ctx);
-    let mut handles = vec![];
-
-    // Create multiple tasks that create different types of events concurrently
+    // Publish multiple typed events through the pipeline
     for i in 0..5 {
-        let ctx_clone = Arc::clone(&ctx);
-        let handle = task::spawn(async move {
-            let mut events: Vec<Event<JsonValue>> = Vec::new();
+        // Filesystem event
+        let fs_payload = FileCreatedPayload::test_default(sp(format!("/test/file{i}.txt")))
+            .with_size((i as u64) * 1024);
+        ctx.publish(fs_payload).await?;
 
-            // Create filesystem event
-            let fs_payload = FileCreatedPayload::test_default(sp(format!("/test/file{i}.txt")))
-                .with_size((i as u64) * 1024);
-            let fs_material = Id::<SourceMaterial>::from_ulid(Ulid::new());
-            ctx_clone
-                .ensure_source_material(fs_material, Some(&format!("fs-{i}")))
-                .await?;
-            let prov = Provenance::from_material(fs_material, 0, None, None);
-            events.push(fs_payload.into_event(prov).to_json_event().unwrap());
-
-            // Create shell event
-            let shell_payload = KittyCommandExecutedPayload::test_default(format!("cmd{i}"))
-                .with_kitty_ids(format!("win{i}"), format!("tab{i}"));
-            let shell_material = Id::<SourceMaterial>::from_ulid(Ulid::new());
-            ctx_clone
-                .ensure_source_material(shell_material, Some(&format!("shell-{i}")))
-                .await?;
-            let prov = Provenance::from_material(shell_material, 0, None, None);
-            events.push(shell_payload.into_event(prov).to_json_event().unwrap());
-
-            // Insert all events
-            for event in &events {
-                ctx_clone.pool.events().insert(event.clone()).await?;
-            }
-
-            Ok::<(Vec<Event<JsonValue>>, usize), color_eyre::eyre::Error>((events, i))
-        });
-        handles.push(handle);
+        // Shell command event
+        let shell_payload = KittyCommandExecutedPayload::test_default(format!("cmd{i}"))
+            .with_kitty_ids(format!("win{i}"), format!("tab{i}"));
+        ctx.publish(shell_payload).await?;
     }
 
-    // Wait for all tasks to complete
-    let results = future::join_all(handles).await;
+    // Wait for all 10 events through the pipeline
+    scope.wait_for_event_count(10).await?;
 
-    // Verify all tasks completed successfully
-    assert_eq!(results.len(), 5);
-    let mut all_events = Vec::new();
-
-    for (i, result) in results.into_iter().enumerate() {
-        let (events, task_num) = result.unwrap()?;
-        assert_eq!(task_num, i);
-        assert_eq!(events.len(), 2, "Each task should create 2 events");
-        all_events.extend(events);
-    }
-
-    // Verify we have the expected number of events
-    assert_eq!(all_events.len(), 10, "Should have 10 total events");
-
-    // Verify event types are distributed correctly
-    let fs_events: Vec<_> = all_events
-        .iter()
-        .filter(|e| e.source.as_str() == "fs-watcher")
-        .collect();
-    let shell_events: Vec<_> = all_events
-        .iter()
-        .filter(|e| e.source.as_str() == "shell.kitty")
-        .collect();
-
-    assert_eq!(fs_events.len(), 5, "Should have 5 filesystem events");
-    assert_eq!(shell_events.len(), 5, "Should have 5 shell events");
+    // Verify distribution by source
+    scope.wait_for_source_events("fs-watcher", 5).await?;
+    scope.wait_for_source_events("shell.kitty", 5).await?;
 
     Ok(())
 }
@@ -491,64 +442,35 @@ async fn test_concurrent_event_creation(ctx: TestContext) -> TestResult<()> {
 /// Test that event IDs are unique even under concurrent creation
 #[sinex_test]
 async fn test_event_id_uniqueness_concurrent(ctx: TestContext) -> TestResult<()> {
-    use std::collections::HashSet;
-    use std::sync::Arc;
-    use tokio::task;
+    let ctx = ctx.with_nats().shared().await?;
+    let scope = ctx.pipeline().await?;
 
-    let ctx = Arc::new(ctx);
-    let mut handles = vec![];
-
-    // Create many tasks that create events concurrently
+    // Publish 30 events through the pipeline (10 batches of 3)
     for i in 0..10 {
-        let ctx_clone = Arc::clone(&ctx);
-        let handle = task::spawn(async move {
-            let mut event_ids = Vec::new();
-
-            // Create multiple events per task
-            for j in 0..3 {
-                let payload =
-                    FileCreatedPayload::test_default(sp(format!("/test/file{i}_{j}.txt")));
-                let material_id = Id::<SourceMaterial>::from_ulid(Ulid::new());
-                ctx_clone
-                    .ensure_source_material(material_id, Some(&format!("fs-{i}-{j}")))
-                    .await?;
-                let prov = Provenance::from_material(material_id, 0, None, None);
-                let event = payload.into_event(prov);
-                let event_json = event.to_json_event().unwrap();
-                let inserted = ctx_clone.pool.events().insert(event_json).await?;
-                let id = inserted
-                    .id
-                    .expect("repository should assign an ID to inserted events");
-                event_ids.push(id);
-            }
-
-            Ok::<Vec<Id<Event<JsonValue>>>, color_eyre::eyre::Error>(event_ids)
-        });
-        handles.push(handle);
-    }
-
-    // Wait for all tasks to complete
-    let results = future::join_all(handles).await;
-
-    // Collect all event IDs using ULID strings
-    let mut all_ids = HashSet::new();
-    for result in results {
-        let ids = result.unwrap()?;
-        for id in ids {
-            let id_string = id.to_string();
-            assert!(
-                all_ids.insert(id_string.clone()),
-                "Event ID {id_string} should be unique"
-            );
+        for j in 0..3 {
+            let payload = FileCreatedPayload::test_default(sp(format!("/test/file{i}_{j}.txt")));
+            ctx.publish(payload).await?;
         }
     }
 
-    // Verify we have the expected number of unique IDs
-    assert_eq!(
-        all_ids.len(),
-        30,
-        "Should have 30 unique event IDs (10 tasks * 3 events each)"
-    );
+    // Wait for all 30 events
+    scope.wait_for_event_count(30).await?;
+
+    // Verify all IDs are unique by querying from DB
+    let events = ctx.pool().events().get_recent(50).await?;
+    assert_eq!(events.len(), 30, "Should have 30 events in the DB");
+
+    let mut all_ids = HashSet::new();
+    for event in &events {
+        let id = event.id.expect("persisted events must have an ID");
+        assert!(
+            all_ids.insert(id.to_string()),
+            "Event ID {} should be unique",
+            id
+        );
+    }
+
+    assert_eq!(all_ids.len(), 30, "Should have 30 unique event IDs");
 
     Ok(())
 }

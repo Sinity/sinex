@@ -13,7 +13,6 @@ use futures::StreamExt;
 use proptest::prelude::*;
 use proptest::test_runner::TestCaseError;
 use serde_json::{json, Value};
-use sinex_db::repositories::SourceMaterialExt;
 use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
 use sinex_primitives::{DynamicPayload, Ulid};
 use std::sync::LazyLock;
@@ -137,13 +136,11 @@ async fn queue_event_insertion_preserves_order(
         .await
         .map_err(report_to_test_error)?;
 
-    // Create source material for provenance
-    let material = sinex_db::repositories::SourceMaterial::blob();
-    let material_record = material
-        .register(&ctx.pool)
+    // Ensure source material for provenance (idempotent across proptest cases)
+    let material_id = Id::<sinex_primitives::SourceMaterial>::new();
+    ctx.ensure_source_material(material_id, Some("queue-proptest"))
         .await
         .map_err(report_to_test_error)?;
-    let material_id: Id<sinex_primitives::SourceMaterial> = Id::from(material_record.id);
 
     for batch in 0..batch_count {
         for index in 0..batch_size {
@@ -182,8 +179,8 @@ fn jetstream_delivery_preserves_sequence() -> TestResult<()> {
         let client = nats.connect().await?;
         let jetstream = nats.jetstream_with_client(client.clone());
 
-        let stream_name = format!("PROP_STREAM_{}", Ulid::new());
-        let subject = format!("prop.queue.{}", Ulid::new());
+        let stream_name = format!("PROP_STREAM_{}", Ulid::new().to_string().to_lowercase());
+        let subject = format!("prop.queue.{}", Ulid::new().to_string().to_lowercase());
 
         let stream_cfg = StreamConfig {
             name: stream_name.clone(),
@@ -200,7 +197,7 @@ fn jetstream_delivery_preserves_sequence() -> TestResult<()> {
             jetstream.publish(subject.clone(), payload.into()).await?;
         }
 
-        let consumer_name = format!("consumer-{}", Ulid::new());
+        let consumer_name = format!("consumer-{}", Ulid::new().to_string().to_lowercase());
         let consumer_cfg = ConsumerConfig {
             name: Some(consumer_name.clone()),
             durable_name: None,

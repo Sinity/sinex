@@ -5,6 +5,8 @@
 
 use color_eyre::eyre::ensure;
 use serde_json::json;
+use sinex_primitives::events::payloads::FileCreatedPayload;
+use sinex_primitives::SanitizedPath;
 use sinex_services::{SearchQuery, SearchService};
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -92,10 +94,15 @@ async fn test_query_by_time_range(ctx: TestContext) -> TestResult<()> {
     };
 
     let results = service.search_events(query).await?;
-    // Events may or may not be in this timeframe depending on seeding
-    for result in &results {
-        assert!(result.timestamp <= reference_now);
-    }
+    // SeedClock starts at now-1h, so all 3 events have ts_orig within [now-2h, now-1h+300ms].
+    // The time_range filter operates on ts_orig, so all should be returned.
+    assert_eq!(
+        results.len(),
+        3,
+        "All seeded events should fall within the 1-hour window"
+    );
+    // Note: result.timestamp is ts_ingest (server ingestion time), not ts_orig,
+    // so it can't be compared against the seed clock's reference_now.
 
     scope.shutdown().await?;
     Ok(())
@@ -149,8 +156,9 @@ async fn test_query_combined_filters(ctx: TestContext) -> TestResult<()> {
     seed_events_via_scope(
         scope.ctx(),
         &clock,
-        vec![EventSpec::new("fs-watcher", "file.created")
-            .with_payload(json!({"path": "/project/src/main.rs", "size": 500}))],
+        vec![EventSpec::from_typed(&FileCreatedPayload::test_default(
+            SanitizedPath::new_unchecked("/project/src/main.rs"),
+        ))?],
     )
     .await?;
     scope.wait_for_source_events("fs-watcher", 1).await?;

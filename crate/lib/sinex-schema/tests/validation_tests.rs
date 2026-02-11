@@ -17,7 +17,7 @@ struct MaterialFixture {
 }
 
 fn unique_source_identifier() -> String {
-    format!("test-material-{}", Ulid::new())
+    format!("test-material-{}", Ulid::new().to_string().to_lowercase())
 }
 
 async fn insert_sample_material(ctx: &TestContext) -> MaterialFixture {
@@ -627,7 +627,7 @@ mod constraint_validation_tests {
         setup_test_tables(pool).await;
 
         let material = insert_sample_material(&ctx).await;
-        let source = format!("test-source-{}", Ulid::new());
+        let source = format!("test-source-{}", Ulid::new().to_string().to_lowercase());
 
         // Test valid JSON payloads
         let valid_payloads = [

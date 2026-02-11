@@ -77,42 +77,6 @@ async fn test_config_pool_size_exceeds_maximum() -> Result<()> {
     Ok(())
 }
 
-/// Test batch_size minimum boundary.
-#[sinex_test]
-async fn test_config_batch_size_minimum() -> Result<()> {
-    let config = IngestdConfig::builder()
-        .batch_size(1)
-        .database_url("postgresql:///test")
-        .build();
-
-    assert_eq!(config.batch_size, 1);
-
-    let validation = validator::Validate::validate(&config);
-    assert!(
-        validation.is_ok(),
-        "Batch size of 1 should be valid: {validation:?}"
-    );
-
-    Ok(())
-}
-
-/// Test batch_size zero - should fail validation.
-#[sinex_test]
-async fn test_config_batch_size_zero() -> Result<()> {
-    let config = IngestdConfig::builder()
-        .batch_size(0)
-        .database_url("postgresql:///test")
-        .build();
-
-    let validation = validator::Validate::validate(&config);
-    assert!(
-        validation.is_err(),
-        "Batch size of 0 should fail validation"
-    );
-
-    Ok(())
-}
-
 /// Test max_message_size boundaries.
 #[sinex_test]
 async fn test_config_max_message_size_boundaries() -> Result<()> {
@@ -369,7 +333,6 @@ async fn test_config_all_boundaries_valid() -> Result<()> {
 
     let config = IngestdConfig::builder()
         .database_pool_size(1)
-        .batch_size(1)
         .max_message_size(Bytes::from_bytes(1024))
         .database_url("postgresql:///test")
         .nats(
@@ -398,7 +361,6 @@ async fn test_config_all_boundaries_valid() -> Result<()> {
 async fn test_config_multiple_validation_errors() -> Result<()> {
     let config = IngestdConfig::builder()
         .database_pool_size(0) // Invalid
-        .batch_size(0) // Invalid
         .max_message_size(Bytes::from_bytes(100)) // Invalid (< 1024)
         .database_url("mysql://localhost/db") // Invalid (not PostgreSQL)
         .nats(NatsConnectionConfig::builder().url(String::new()).build()) // Invalid (empty)

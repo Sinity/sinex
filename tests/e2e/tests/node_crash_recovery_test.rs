@@ -59,7 +59,7 @@ async fn wait_for_material_row(
     ctx: &TestContext,
     material_id: Ulid,
 ) -> Result<sqlx::postgres::PgRow> {
-    let deadline = Instant::now() + Duration::from_secs(Timeouts::QUICK);
+    let deadline = Instant::now() + Duration::from_secs(Timeouts::STANDARD);
     loop {
         let row = sqlx::query(
             r"

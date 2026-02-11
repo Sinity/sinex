@@ -9,7 +9,6 @@ async fn test_config_requires_tls_scheme_when_flag_set() -> TestResult<()> {
         "nats://localhost:4222".to_string(),
         false, // require_tls
         10,
-        100,
         None, // consumer_fetch_max_messages
         None, // consumer_fetch_timeout_ms
         false,
@@ -37,7 +36,6 @@ async fn test_config_requires_tls_scheme_when_flag_set() -> TestResult<()> {
         "nats://localhost:4222".to_string(),
         true, // require_tls
         10,
-        100,
         None, // consumer_fetch_max_messages
         None, // consumer_fetch_timeout_ms
         false,
@@ -70,7 +68,6 @@ async fn test_config_requires_tls_scheme_when_flag_set() -> TestResult<()> {
         "tls://localhost:4222".to_string(),
         true, // require_tls
         10,
-        100,
         None, // consumer_fetch_max_messages
         None, // consumer_fetch_timeout_ms
         false,

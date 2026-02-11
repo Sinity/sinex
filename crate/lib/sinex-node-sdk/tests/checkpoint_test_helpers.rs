@@ -237,7 +237,7 @@ pub(crate) async fn fetch_event_ulid_at(
 ) -> TestResult<Ulid> {
     for attempt in 0..3 {
         if let Some(id_uuid) = sqlx::query_scalar::<_, uuid::Uuid>(
-            "SELECT id FROM core.events WHERE source = $1 ORDER BY id OFFSET $2 LIMIT 1",
+            "SELECT id::uuid FROM core.events WHERE source = $1 ORDER BY id OFFSET $2 LIMIT 1",
         )
         .bind(source)
         .bind(offset)

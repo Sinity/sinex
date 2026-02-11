@@ -38,7 +38,10 @@ async fn test_node_complete_lifecycle(ctx: TestContext) -> color_eyre::Result<()
         .await?;
     let mut coordination = NodeCoordination::from_runtime(
         &runtime.runtime,
-        format!("lifecycle-{}", sinex_node_sdk::Ulid::new()),
+        format!(
+            "lifecycle-{}",
+            sinex_node_sdk::Ulid::new().to_string().to_lowercase()
+        ),
     )
     .await?;
 
@@ -170,7 +173,10 @@ async fn test_node_error_recovery(ctx: TestContext) -> color_eyre::Result<()> {
         .await?;
     let mut coordination = NodeCoordination::from_runtime(
         &runtime.runtime,
-        format!("recovery-{}", sinex_node_sdk::Ulid::new()),
+        format!(
+            "recovery-{}",
+            sinex_node_sdk::Ulid::new().to_string().to_lowercase()
+        ),
     )
     .await?;
 
@@ -240,7 +246,10 @@ async fn test_node_state_transitions(ctx: TestContext) -> color_eyre::Result<()>
         .await?;
     let mut coordination = NodeCoordination::from_runtime(
         &runtime.runtime,
-        format!("states-{}", sinex_node_sdk::Ulid::new()),
+        format!(
+            "states-{}",
+            sinex_node_sdk::Ulid::new().to_string().to_lowercase()
+        ),
     )
     .await?;
 
@@ -327,7 +336,10 @@ async fn test_node_configuration_lifecycle(ctx: TestContext) -> color_eyre::Resu
 
         let coordination = NodeCoordination::from_runtime(
             &runtime.runtime,
-            format!("config-{i}-{}", sinex_node_sdk::Ulid::new()),
+            format!(
+                "config-{i}-{}",
+                sinex_node_sdk::Ulid::new().to_string().to_lowercase()
+            ),
         )
         .await?;
 
@@ -359,7 +371,10 @@ async fn test_node_graceful_shutdown(ctx: TestContext) -> color_eyre::Result<()>
         .await?;
     let mut coordination = NodeCoordination::from_runtime(
         &runtime.runtime,
-        format!("shutdown-{}", sinex_node_sdk::Ulid::new()),
+        format!(
+            "shutdown-{}",
+            sinex_node_sdk::Ulid::new().to_string().to_lowercase()
+        ),
     )
     .await?;
 
@@ -461,7 +476,10 @@ async fn test_node_concurrent_lifecycle(_ctx: TestContext) -> color_eyre::Result
 
             let mut coordination = NodeCoordination::from_runtime(
                 &runtime.runtime,
-                format!("concurrent-{i}-{}", sinex_node_sdk::Ulid::new()),
+                format!(
+                    "concurrent-{i}-{}",
+                    sinex_node_sdk::Ulid::new().to_string().to_lowercase()
+                ),
             )
             .await?;
 

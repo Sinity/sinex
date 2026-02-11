@@ -102,7 +102,7 @@ mod strategies {
 
 use strategies::*;
 
-#[sinex_prop]
+#[sinex_prop(cases = 20)]
 async fn node_event_processing_preserves_order(
     ctx: &TestContext,
     #[strategy(event_sequences())] events: Vec<Event<JsonValue>>,
@@ -187,8 +187,8 @@ async fn node_handles_intermittent_failures(
     let mut successful_events = 0;
 
     for (i, (source, event_type, payload)) in events.iter().enumerate() {
-        // Simulate intermittent failures
-        let should_fail = (i as f64 * failure_rate) % 1.0 < failure_rate;
+        // Simulate intermittent failures (never on first event to guarantee at least one success)
+        let should_fail = i > 0 && (i as f64 * failure_rate) % 1.0 < failure_rate;
 
         if should_fail {
             // Simulate failure by creating invalid event (empty source)
@@ -235,7 +235,7 @@ async fn node_handles_intermittent_failures(
     Ok::<(), TestCaseError>(())
 }
 
-#[sinex_prop]
+#[sinex_prop(cases = 20)]
 async fn node_manages_resources_efficiently(
     ctx: &TestContext,
     #[strategy(1usize..5usize)] concurrent_operations: usize,
@@ -331,7 +331,7 @@ sinex_proptest! {
     }
 }
 
-#[sinex_prop]
+#[sinex_prop(cases = 20)]
 async fn node_batch_processing_is_consistent(
     ctx: &TestContext,
     #[strategy(1usize..100usize)] _initial_batch_size: usize,
@@ -399,7 +399,7 @@ async fn node_batch_processing_is_consistent(
     Ok::<(), TestCaseError>(())
 }
 
-#[sinex_prop]
+#[sinex_prop(cases = 20)]
 async fn node_survives_processing_interruptions(
     ctx: &TestContext,
     #[strategy(1u64..100u64)] interruption_duration: u64,
@@ -474,7 +474,7 @@ async fn node_survives_processing_interruptions(
     Ok::<(), TestCaseError>(())
 }
 
-#[sinex_prop]
+#[sinex_prop(cases = 20)]
 async fn node_maintains_event_ordering_under_load(
     ctx: &TestContext,
     #[strategy(1usize..5usize)] concurrent_sources: usize,

@@ -1,5 +1,6 @@
 ---
 source: xtask/tests/command_consistency.rs
+assertion_line: 25
 expression: json
 ---
 {

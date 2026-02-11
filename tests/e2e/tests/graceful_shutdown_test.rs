@@ -50,7 +50,6 @@ async fn test_ingestd_graceful_shutdown_completes_inflight(ctx: TestContext) -> 
         )
         .nats_stream_name(base_stream)
         .nats_consumer_name(consumer_name)
-        .batch_size(8)
         .consumer_fetch_max_messages(16)
         .consumer_fetch_timeout_ms(100.into())
         .validate_schemas(false)
@@ -82,7 +81,9 @@ async fn test_ingestd_graceful_shutdown_completes_inflight(ctx: TestContext) -> 
     .await?;
 
     // Publish events before shutdown directly to JetStream
-    let subject = format!("{}.graceful.event", topology.events_stream);
+    // Use the events_subject (e.g., "events.raw.>") not the stream name
+    let subject_prefix = topology.events_subject.trim_end_matches(".>");
+    let subject = format!("{subject_prefix}.graceful.event");
     for idx in 0..5 {
         let payload = serde_json::to_vec(&json!({
             "source": "graceful-source",
@@ -145,7 +146,6 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
         )
         .nats_stream_name(base_stream)
         .nats_consumer_name(consumer_name)
-        .batch_size(16)
         .consumer_fetch_max_messages(32)
         .consumer_fetch_timeout_ms(100.into())
         .validate_schemas(false)
@@ -181,10 +181,10 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
     let shutdown_flag_clone = shutdown_flag.clone();
     let published_count_clone = published_count.clone();
     let js_clone = ctx.jetstream().await?;
-    let events_stream = topology.events_stream.clone();
+    let events_subject_prefix = topology.events_subject.trim_end_matches(".>").to_string();
 
     let publisher_handle = tokio::spawn(async move {
-        let subject = format!("{events_stream}.load.event");
+        let subject = format!("{events_subject_prefix}.load.event");
         let mut idx = 0;
         while !shutdown_flag_clone.load(Ordering::SeqCst) {
             let payload = serde_json::to_vec(&json!({
@@ -366,7 +366,6 @@ async fn test_shutdown_data_consistency(ctx: TestContext) -> TestResult<()> {
         )
         .nats_stream_name(base_stream)
         .nats_consumer_name(consumer_name)
-        .batch_size(4)
         .consumer_fetch_max_messages(8)
         .consumer_fetch_timeout_ms(100.into())
         .validate_schemas(false)
@@ -397,7 +396,8 @@ async fn test_shutdown_data_consistency(ctx: TestContext) -> TestResult<()> {
     .await?;
 
     // Publish events with structured data directly to JetStream
-    let subject = format!("{}.consistency.event", topology.events_stream);
+    let subject_prefix = topology.events_subject.trim_end_matches(".>");
+    let subject = format!("{subject_prefix}.consistency.event");
     for idx in 0..10 {
         let payload = serde_json::to_vec(&json!({
             "source": "consistency-source",
