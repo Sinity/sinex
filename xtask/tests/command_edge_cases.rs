@@ -554,7 +554,11 @@ fn test_cli_redundant_json_options() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
     // --json and --format json are redundant but should both work
-    cmd.arg("--json").arg("--format").arg("json").arg("check");
+    cmd.arg("--json")
+        .arg("--format")
+        .arg("json")
+        .arg("check")
+        .arg("--skip-preflight");
 
     // This might succeed or fail depending on format checks
     // The key is it shouldn't crash or give an obscure error
@@ -713,6 +717,7 @@ fn test_test_command_with_invalid_profile() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
     cmd.arg("test")
+        .arg("--skip-preflight")
         .arg("--")
         .arg("--profile")
         .arg("nonexistent_profile");
@@ -789,11 +794,12 @@ fn test_check_skip_options() {
     let mut cmd = cargo_bin_cmd!("xtask");
 
     cmd.arg("check")
+        .arg("--skip-preflight")
         .arg("--skip-fmt")
         .arg("--lint=false")
         .arg("--forbidden=false");
 
-    // With everything skipped, should succeed quickly (doing nothing)
+    // With everything skipped (including preflight), should succeed quickly
     cmd.assert().success();
 }
 

@@ -537,6 +537,9 @@ pub async fn start_test_ingestd_with_config(
     if let Some(ns) = &config.namespace {
         cmd.env("SINEX_NAMESPACE", ns);
     }
+    if let Some(wd) = &config.work_dir {
+        cmd.env("SINEX_INGESTD_WORK_DIR", wd);
+    }
     cmd.env(
         "SINEX_INGESTD_CONSUMER_FETCH_MAX_MESSAGES",
         config.consumer_fetch_max_messages.to_string(),

@@ -28,6 +28,9 @@ pub struct PipelineScope<'ctx> {
     ctx: &'ctx Sandbox,
     ingestd: Option<crate::sandbox::orchestrator::TestIngestdHandle>,
     pipeline_permit: Option<OwnedSemaphorePermit>,
+    /// Per-test work directory for ingestd. Held here so the TempDir isn't
+    /// dropped (and cleaned up) while ingestd is still running.
+    _work_dir: tempfile::TempDir,
 }
 
 impl<'ctx> PipelineScope<'ctx> {
@@ -41,10 +44,14 @@ impl<'ctx> PipelineScope<'ctx> {
         let namespace = ctx.pipeline_namespace().prefix().to_string();
         let pipeline_permit = Some(acquire_pipeline_permit(&namespace).await?);
 
+        // Create an isolated work directory per test so WAL files from previous
+        // tests don't contaminate this run (avoids 10-20s WAL restoration overhead).
+        let work_dir = tempfile::tempdir()?;
+
         let config = TestIngestdConfig {
             nats: nats.connection_config(),
             database_url: ctx.database_url().to_string(),
-            work_dir: None,
+            work_dir: Some(work_dir.path().to_path_buf()),
             namespace: Some(namespace.clone()),
             // Fast test settings: small batches, short timeouts
             consumer_fetch_max_messages: 32,
@@ -58,6 +65,7 @@ impl<'ctx> PipelineScope<'ctx> {
             ctx,
             ingestd: Some(ingestd),
             pipeline_permit,
+            _work_dir: work_dir,
         })
     }
 
