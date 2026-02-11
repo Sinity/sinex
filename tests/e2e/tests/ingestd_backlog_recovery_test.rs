@@ -2,6 +2,9 @@ use camino::Utf8PathBuf;
 use serde_json::json;
 use sinex_ingestd::{config::IngestdConfig, service::IngestService, JetStreamTopology};
 use sinex_primitives::nats::NatsConnectionConfig;
+use sinex_primitives::{
+    Event, EventSource, EventType, HostName, Id, OffsetKind, Provenance, SourceMaterial,
+};
 use tempfile::TempDir;
 use tokio::time::{timeout, Duration};
 use xtask::sandbox::prelude::*;
@@ -63,16 +66,47 @@ async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResul
         .map_err(|_| color_eyre::eyre::eyre!("ingestd runner shutdown timed out"))?;
     join_result??;
 
-    // Publish events directly to JetStream while service is offline
+    // Publish properly formatted events directly to JetStream while service is offline
     let js = ctx.jetstream().await?;
     let subject_prefix = topology.events_subject.trim_end_matches(".>");
     let subject = format!("{subject_prefix}.backlog.event");
+
+    // Pre-register a source material for FK constraints
+    let material_id = Id::<SourceMaterial>::new();
+    let identifier = format!("backlog-source-{material_id}");
+    sqlx::query!(
+        r#"
+        INSERT INTO raw.source_material_registry
+            (id, material_kind, source_identifier, status, timing_info_type)
+        VALUES ($1::uuid::ulid, 'annex', $2, 'completed', 'realtime')
+        ON CONFLICT (id) DO NOTHING
+        "#,
+        material_id.to_uuid(),
+        identifier,
+    )
+    .execute(&ctx.pool)
+    .await?;
+
     for idx in 0..3 {
-        let payload = serde_json::to_vec(&json!({
-            "source": "backlog-source",
-            "type": "backlog.event",
-            "seq": idx
-        }))?;
+        let event = Event::<serde_json::Value> {
+            id: Some(Id::new()),
+            source: EventSource::new("backlog-source"),
+            event_type: EventType::new("backlog.event"),
+            payload: json!({"seq": idx}),
+            ts_orig: Some(sinex_primitives::Timestamp::now()),
+            host: HostName::new("test-host"),
+            ingestor_version: Some("test".to_string()),
+            payload_schema_id: None,
+            provenance: Provenance::Material {
+                id: material_id,
+                anchor_byte: 0,
+                offset_start: None,
+                offset_end: None,
+                offset_kind: OffsetKind::Byte,
+            },
+            associated_blob_ids: None,
+        };
+        let payload = serde_json::to_vec(&event)?;
         js.publish(subject.clone(), payload.into()).await?.await?;
     }
 
