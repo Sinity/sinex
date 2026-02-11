@@ -322,9 +322,10 @@ impl XtaskCommand for TestCommand {
             }
         }
 
-        if self.include_ignored || self.all || self.heavy {
+        if self.include_ignored || self.heavy {
             // Use --run-ignored=all to run both regular and ignored tests
             // Note: --ignored alone would run ONLY ignored tests
+            // Note: --all only affects package selection (all vs affected), not ignored tests
             runner.add_arg("--run-ignored=all");
         }
 

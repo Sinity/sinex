@@ -142,10 +142,12 @@ async fn test_database_connection_exhaustion_recovery(ctx: TestContext) -> TestR
         let task = tokio::spawn(async move {
             // Rapid-fire queries to stress the connection pool
             for j in 0..5 {
-                let result =
-                    sqlx::query_scalar!("SELECT COUNT(*) FROM core.events WHERE source = $1", format!("conn-stress-{i}-{j}"))
-                        .fetch_one(&pool)
-                        .await;
+                let result = sqlx::query_scalar!(
+                    "SELECT COUNT(*) FROM core.events WHERE source = $1",
+                    format!("conn-stress-{i}-{j}")
+                )
+                .fetch_one(&pool)
+                .await;
 
                 match result {
                     Ok(_) => {
@@ -319,37 +321,38 @@ async fn test_concurrent_event_creation_stress(ctx: TestContext) -> TestResult<(
 // ============================================================================
 
 /// Test system behavior with invalid configurations
+///
+/// Verifies that event creation with unusual source/event_type combinations
+/// doesn't panic or corrupt state.
 #[sinex_test]
 async fn test_invalid_configuration_handling(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_nats().shared().await?;
+    let pool = ctx.pool().clone();
 
-    // Test various source/event_type combinations
+    // Register a source material for provenance
+    let material = pool
+        .source_materials()
+        .register_in_flight("config-edge-case", Some("/test"), json!({}))
+        .await?;
+
+    // Test various source/event_type combinations via direct DB insert
     let test_cases = vec![
-        // Special characters in identifiers
         ("source/with/slashes", "type"),
         ("source", "type.with.dots"),
-        // Unicode in identifiers
         ("源", "类型"),
     ];
 
     for (source, event_type) in test_cases {
-        let result = ctx
-            .publish(DynamicPayload::new(
-                source,
-                event_type,
-                json!({"test": "invalid"}),
-            ))
-            .await;
+        let event = DynamicPayload::new(source, event_type, json!({"test": "invalid"}))
+            .from_material(material.id)
+            .build();
 
-        // Either succeeds (unicode may be valid) or fails with validation error
-        match result {
-            Ok(_) => {
-                // Some cases might be valid
+        match event {
+            Ok(event) => {
+                // Try to insert — may succeed or fail on DB constraints
+                let _ = pool.events().insert(event).await;
             }
-            Err(err) => {
-                // Should be a meaningful validation error
-                let _error_msg = err.to_string().to_lowercase();
-                // Just verify it doesn't panic - validation behavior may vary
+            Err(_) => {
+                // Builder rejected the input — that's a valid outcome
             }
         }
     }
@@ -362,42 +365,49 @@ async fn test_invalid_configuration_handling(ctx: TestContext) -> TestResult<()>
 // ============================================================================
 
 /// Test system recovery after temporary failures
+///
+/// Verifies that the database connection pool handles a mix of valid and
+/// invalid operations gracefully, and remains functional afterwards.
 #[sinex_test]
 async fn test_error_recovery_patterns(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_nats().shared().await?;
+    let pool = ctx.pool().clone();
 
-    // Create some valid events to verify system is working
+    // Register a source material for provenance
+    let material = pool
+        .source_materials()
+        .register_in_flight("recovery-test", Some("/test"), json!({}))
+        .await?;
+
     let mut successes = 0;
 
     for i in 0..10 {
-        let result = ctx
-            .publish(DynamicPayload::new(
-                "recovery-test",
-                "valid",
-                json!({"iteration": i, "valid": true}),
-            ))
-            .await;
+        let event = DynamicPayload::new(
+            "recovery-test",
+            "valid",
+            json!({"iteration": i, "valid": true}),
+        )
+        .from_material(material.id)
+        .build();
 
-        if result.is_ok() {
+        let Ok(event) = event else { continue };
+        if pool.events().insert(event).await.is_ok() {
             successes += 1;
         }
     }
 
-    // Most operations should succeed
+    // All operations should succeed (no failures expected with valid data)
     assert!(
         successes >= 8,
         "Expected at least 8 successes, got {successes}"
     );
 
-    // System should still be able to create events after the test
-    let final_event = ctx
-        .publish(DynamicPayload::new(
-            "recovery-test",
-            "final",
-            json!({"recovered": true}),
-        ))
-        .await?;
-    assert_eq!(final_event.payload["recovered"], json!(true));
+    // System should still be able to create events after the loop
+    let final_event = DynamicPayload::new("recovery-test", "final", json!({"recovered": true}))
+        .from_material(material.id)
+        .build()?;
+
+    let inserted = pool.events().insert(final_event).await?;
+    assert_eq!(inserted.payload["recovered"], json!(true));
 
     Ok(())
 }

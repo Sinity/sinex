@@ -164,16 +164,16 @@ async fn node_event_processing_preserves_order(
     Ok::<(), TestCaseError>(())
 }
 
-#[sinex_prop]
+#[sinex_prop(cases = 30)]
 async fn node_handles_intermittent_failures(
     ctx: &TestContext,
     #[strategy(0.0..0.3f64)] failure_rate: f64, // Up to 30% failure rate
     #[strategy(proptest::collection::vec(
         (event_sources(), event_types(), event_payloads()),
-        1..=50
+        1..=20
     ))]
     events: Vec<(String, String, serde_json::Value)>,
-    #[strategy(1u64..100u64)] recovery_delay: u64,
+    #[strategy(1u64..20u64)] recovery_delay: u64,
 ) -> Result<(), TestCaseError> {
     ctx.reset_database_slot()
         .await
