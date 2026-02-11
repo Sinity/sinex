@@ -77,9 +77,15 @@ async fn test_ingestd_graceful_shutdown_completes_inflight(ctx: TestContext) -> 
     let js = ctx.jetstream().await?;
     let env = ctx.env();
 
+    // nats_namespace MUST be set so MaterialReadySet is disabled.
+    // Without it, ingestd NAKs all events because test-registered materials
+    // aren't in the ready set (they were inserted directly, not via NATS).
+    let namespace = format!("graceful-{}", uuid::Uuid::new_v4().simple());
+
     let base_stream = env.nats_stream_name("SINEX_GRACEFUL_EVENTS");
     let consumer_name = "ingestd-graceful".to_string();
-    let topology = JetStreamTopology::new(env, base_stream.clone(), consumer_name.clone(), None);
+    let topology =
+        JetStreamTopology::new(env, base_stream.clone(), consumer_name.clone(), Some(&namespace));
 
     let work_dir = TempDir::new()?;
     let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir.path().to_path_buf())
@@ -98,8 +104,9 @@ async fn test_ingestd_graceful_shutdown_completes_inflight(ctx: TestContext) -> 
         )
         .nats_stream_name(base_stream)
         .nats_consumer_name(consumer_name)
+        .nats_namespace(Some(namespace))
         .consumer_fetch_max_messages(16)
-        .consumer_fetch_timeout_ms(100.into())
+        .consumer_fetch_timeout_ms(500.into())
         .validate_schemas(false)
         .skip_schema_sync(true)
         .work_dir(work_dir_utf8.clone())
@@ -143,8 +150,8 @@ async fn test_ingestd_graceful_shutdown_completes_inflight(ctx: TestContext) -> 
         js.publish(subject.clone(), payload.into()).await?.await?;
     }
 
-    // Small delay to allow some processing
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    // Allow processing time — ingestd batches events and persists them
+    tokio::time::sleep(Duration::from_secs(3)).await;
 
     // Initiate shutdown
     service.shutdown().await?;
@@ -175,9 +182,13 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
     let js = ctx.jetstream().await?;
     let env = ctx.env();
 
+    // nats_namespace MUST be set so MaterialReadySet is disabled.
+    let namespace = format!("load-{}", uuid::Uuid::new_v4().simple());
+
     let base_stream = env.nats_stream_name("SINEX_LOAD_EVENTS");
     let consumer_name = "ingestd-load".to_string();
-    let topology = JetStreamTopology::new(env, base_stream.clone(), consumer_name.clone(), None);
+    let topology =
+        JetStreamTopology::new(env, base_stream.clone(), consumer_name.clone(), Some(&namespace));
 
     let work_dir = TempDir::new()?;
     let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir.path().to_path_buf())
@@ -196,8 +207,9 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
         )
         .nats_stream_name(base_stream)
         .nats_consumer_name(consumer_name)
+        .nats_namespace(Some(namespace))
         .consumer_fetch_max_messages(32)
-        .consumer_fetch_timeout_ms(100.into())
+        .consumer_fetch_timeout_ms(500.into())
         .validate_schemas(false)
         .skip_schema_sync(true)
         .work_dir(work_dir_utf8.clone())
@@ -424,9 +436,17 @@ async fn test_shutdown_data_consistency(ctx: TestContext) -> TestResult<()> {
     let js = ctx.jetstream().await?;
     let env = ctx.env();
 
+    // nats_namespace MUST be set so MaterialReadySet is disabled.
+    let namespace = format!("consistency-{}", uuid::Uuid::new_v4().simple());
+
     let base_stream = env.nats_stream_name("SINEX_CONSISTENCY_EVENTS");
     let consumer_name = "ingestd-consistency".to_string();
-    let topology = JetStreamTopology::new(env, base_stream.clone(), consumer_name.clone(), None);
+    let topology = JetStreamTopology::new(
+        env,
+        base_stream.clone(),
+        consumer_name.clone(),
+        Some(&namespace),
+    );
 
     let work_dir = TempDir::new()?;
     let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir.path().to_path_buf())
@@ -445,8 +465,9 @@ async fn test_shutdown_data_consistency(ctx: TestContext) -> TestResult<()> {
         )
         .nats_stream_name(base_stream)
         .nats_consumer_name(consumer_name)
+        .nats_namespace(Some(namespace))
         .consumer_fetch_max_messages(8)
-        .consumer_fetch_timeout_ms(100.into())
+        .consumer_fetch_timeout_ms(500.into())
         .validate_schemas(false)
         .skip_schema_sync(true)
         .work_dir(work_dir_utf8.clone())
@@ -492,8 +513,8 @@ async fn test_shutdown_data_consistency(ctx: TestContext) -> TestResult<()> {
         js.publish(subject.clone(), payload.into()).await?.await?;
     }
 
-    // Allow some processing
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    // Allow processing time
+    tokio::time::sleep(Duration::from_secs(3)).await;
 
     // Shutdown
     service.shutdown().await?;
