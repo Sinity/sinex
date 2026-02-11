@@ -88,6 +88,7 @@ impl XtaskCommand for LintForbiddenCommand {
             "crate/lib/sinex-db/src/models/event.rs",
             "crate/lib/sinex-db/src/query_helpers.rs",
             // sinex-primitives paths (after crate reorganization - no /types/ subdir)
+            "crate/lib/sinex-primitives/src/testing.rs", // proptest! macro generates #[test]
             "crate/lib/sinex-primitives/src/units.rs",
             "crate/lib/sinex-primitives/src/error.rs",
             "crate/lib/sinex-primitives/src/validation/query_validation.rs",
