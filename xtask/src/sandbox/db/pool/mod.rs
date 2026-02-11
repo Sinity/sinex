@@ -324,7 +324,7 @@ pub fn migrations_fingerprint() -> Option<String> {
     // Bump this version when template seed data changes (forces template rebuild).
     // This is separate from schema migrations — it tracks data that must exist in
     // every test template (e.g. well-known fixture IDs for FK constraints).
-    hasher.update(b"seed-version:2\n");
+    hasher.update(b"seed-version:3\n");
     for path in entries {
         if path.is_file() {
             // Hash filename first
@@ -2336,6 +2336,21 @@ async fn schema_mismatch_reason(pool: &DbPool) -> TestResult<Option<String>> {
     if !payload_has_updated_at {
         return Ok(Some(
             "missing sinex_schemas.event_payload_schemas.updated_at column".to_string(),
+        ));
+    }
+
+    // Check for critical indexes that ON CONFLICT clauses depend on
+    let has_sm_unique_idx = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (SELECT 1 FROM pg_indexes \
+         WHERE schemaname = 'raw' AND tablename = 'source_material_registry' \
+           AND indexname = 'uk_sm_registry_source_identifier')",
+    )
+    .fetch_one(pool)
+    .await?;
+    if !has_sm_unique_idx {
+        return Ok(Some(
+            "missing uk_sm_registry_source_identifier index on raw.source_material_registry"
+                .to_string(),
         ));
     }
 
