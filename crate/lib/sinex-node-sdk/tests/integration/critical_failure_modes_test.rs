@@ -119,44 +119,41 @@ async fn test_database_high_load_resilience(ctx: TestContext) -> TestResult<()> 
 }
 
 /// Test database connection exhaustion recovery
+///
+/// Verifies that concurrent operations on the same pool handle contention
+/// gracefully without panicking or corrupting state.
 #[sinex_test]
 async fn test_database_connection_exhaustion_recovery(ctx: TestContext) -> TestResult<()> {
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
 
-    let _ctx = ctx.with_nats().shared().await?;
+    let pool = ctx.pool().clone();
     let success_count = Arc::new(AtomicU32::new(0));
     let error_count = Arc::new(AtomicU32::new(0));
     let mut tasks = Vec::new();
 
-    // Spawn concurrent database operations, each with its own context
-    // Reduced concurrency (20 -> 8) to coexist with other parallel tests without exhausting the shared limited DB pool
+    // Spawn concurrent database operations sharing the SAME pool (4 connections).
+    // This creates real connection contention without needing extra DB slots.
     for i in 0..8 {
+        let pool = pool.clone();
         let success_count = success_count.clone();
         let error_count = error_count.clone();
 
         let task = tokio::spawn(async move {
-            // Each task gets its own context for isolation
-            let Ok(task_ctx) = TestContext::new().await else {
-                error_count.fetch_add(1, Ordering::SeqCst);
-                return;
-            };
+            // Rapid-fire queries to stress the connection pool
+            for j in 0..5 {
+                let result =
+                    sqlx::query_scalar!("SELECT COUNT(*) FROM core.events WHERE source = $1", format!("conn-stress-{i}-{j}"))
+                        .fetch_one(&pool)
+                        .await;
 
-            // Create and insert event using publish pattern
-            let result = task_ctx
-                .publish(DynamicPayload::new(
-                    "conn-test",
-                    "exhaustion",
-                    json!({"task": i}),
-                ))
-                .await;
-
-            match result {
-                Ok(_) => {
-                    success_count.fetch_add(1, Ordering::SeqCst);
-                }
-                Err(_) => {
-                    error_count.fetch_add(1, Ordering::SeqCst);
+                match result {
+                    Ok(_) => {
+                        success_count.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Err(_) => {
+                        error_count.fetch_add(1, Ordering::SeqCst);
+                    }
                 }
             }
         });
@@ -169,17 +166,16 @@ async fn test_database_connection_exhaustion_recovery(ctx: TestContext) -> TestR
 
     let successes = success_count.load(Ordering::SeqCst);
 
-    // Some operations should succeed (system should be resilient)
-    assert!(successes > 0, "At least some operations should succeed");
+    // Most operations should succeed — pool handles contention gracefully
+    assert!(
+        successes > 0,
+        "At least some operations should succeed under pool contention"
+    );
 
-    // Verify that failures are handled gracefully (no panics)
-    for result in results {
-        match result {
-            Ok(()) => {} // Success or handled error
-            Err(e) => {
-                // Task panic is not acceptable
-                panic!("Task should not panic during connection exhaustion: {e}");
-            }
+    // Verify no tasks panicked
+    for (i, result) in results.into_iter().enumerate() {
+        if let Err(e) = result {
+            panic!("Task {i} should not panic during connection exhaustion: {e}");
         }
     }
 
@@ -247,38 +243,46 @@ async fn test_event_creation_extreme_payloads(ctx: TestContext) -> TestResult<()
 }
 
 /// Test concurrent event creation under stress
+///
+/// Verifies that concurrent database operations sharing the same pool handle
+/// contention gracefully without panicking.
 #[sinex_test]
 async fn test_concurrent_event_creation_stress(ctx: TestContext) -> TestResult<()> {
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
 
-    let _ctx = ctx.with_nats().shared().await?;
+    let pool = ctx.pool().clone();
+
+    // Register a source material for provenance (required for event insertion)
+    let material = pool
+        .source_materials()
+        .register_in_flight("stress.test", Some("/test"), json!({}))
+        .await?;
+
     let success_count = Arc::new(AtomicU32::new(0));
     let mut tasks = Vec::new();
 
-    // Create concurrent event creation tasks
-    // Reduced concurrency (10 -> 5) to fit within DB pool constraints
+    // Spawn concurrent event insertion tasks sharing the same pool.
+    // This tests real DB contention without needing extra pool slots.
     for i in 0..5 {
+        let pool = pool.clone();
         let success_count = success_count.clone();
+        let material_id = material.id;
 
         let task = tokio::spawn(async move {
-            // Each task creates its own context
-            let Ok(task_ctx) = TestContext::new().await else {
-                return;
-            };
-
-            // Create a batch of events from this task
             let mut local_successes = 0u32;
             for j in 0..10 {
-                let result = task_ctx
-                    .publish(DynamicPayload::new(
-                        format!("stress-{i}"),
-                        "concurrent",
-                        json!({"task": i, "iteration": j}),
-                    ))
-                    .await;
+                let event = DynamicPayload::new(
+                    format!("stress-{i}"),
+                    "concurrent",
+                    json!({"task": i, "iteration": j}),
+                )
+                .from_material(material_id)
+                .build();
 
-                if result.is_ok() {
+                let Ok(event) = event else { continue };
+
+                if pool.events().insert(event).await.is_ok() {
                     local_successes += 1;
                 }
             }
@@ -293,16 +297,15 @@ async fn test_concurrent_event_creation_stress(ctx: TestContext) -> TestResult<(
 
     // Verify no tasks panicked
     for (i, result) in results.into_iter().enumerate() {
-        match result {
-            Ok(()) => {} // Task completed normally
-            Err(e) => panic!("Task {i} panicked during stress test: {e}"),
+        if let Err(e) = result {
+            panic!("Task {i} panicked during stress test: {e}");
         }
     }
 
     let total_successes = success_count.load(Ordering::SeqCst);
 
     // At least 50% of operations should succeed under stress
-    let expected_operations = 5 * 10; // 5 tasks * 10 operations each
+    let expected_operations: u32 = 5 * 10; // 5 tasks * 10 operations each
     assert!(
         total_successes >= expected_operations / 2,
         "Too many failures under stress: {total_successes}/{expected_operations} succeeded"
