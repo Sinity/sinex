@@ -117,7 +117,15 @@ pub fn event_fixture(
 pub mod strategies {
     //! Property testing strategies for domain types.
 
-    use crate::{EventSource, EventType, Ulid};
+    use crate::domain::{CommandText, HostName, SanitizedPath, ShellName};
+    use crate::events::enums::FileModificationType;
+    use crate::events::payloads::{
+        FileCreatedPayload, HyprlandWindowFocusedPayload, KittyCommandExecutedPayload,
+        ProcessHeartbeatPayload,
+    };
+    use crate::testing::TestablePayload;
+    use crate::units::{ExitCode, Nanoseconds, SequenceNumber};
+    use crate::{EventSource, EventType, Timestamp, Ulid};
     use proptest::prelude::*;
 
     /// Generate random event sources.
@@ -133,5 +141,183 @@ pub mod strategies {
     /// Generate random ULIDs.
     pub fn ulid_strategy() -> impl Strategy<Value = Ulid> {
         any::<u128>().prop_map(|bits| Ulid::from_bytes(bits.to_be_bytes()).unwrap())
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Supporting Type Strategies
+    // ─────────────────────────────────────────────────────────────
+
+    /// Generate valid sanitized paths for testing.
+    pub fn sanitized_path() -> impl Strategy<Value = SanitizedPath> {
+        r"/[a-z]{1,8}(/[a-z0-9._-]{1,12}){0,4}".prop_map(|s| {
+            SanitizedPath::from_str_validated(&s)
+                .unwrap_or_else(|_| SanitizedPath::from_static("/tmp/test"))
+        })
+    }
+
+    /// Generate random timestamps within a recent window (last 24 hours).
+    pub fn timestamp() -> impl Strategy<Value = Timestamp> {
+        (0i64..86400).prop_map(|secs_ago| {
+            Timestamp::from_unix_timestamp(Timestamp::now().as_unix_timestamp() - secs_ago)
+                .unwrap_or_else(|| Timestamp::now())
+        })
+    }
+
+    /// Generate random HostName values.
+    pub fn hostname() -> impl Strategy<Value = HostName> {
+        "[a-z][a-z0-9-]{2,15}".prop_map(HostName::new)
+    }
+
+    /// Generate random CommandText values.
+    pub fn command_text() -> impl Strategy<Value = CommandText> {
+        r"[a-z]{1,8}( [a-z0-9/_.-]{1,20}){0,5}".prop_map(|s| CommandText::new(s))
+    }
+
+    /// Generate random ShellName values.
+    pub fn shell_name() -> impl Strategy<Value = ShellName> {
+        r"(bash|zsh|fish|sh)".prop_map(ShellName::new)
+    }
+
+    /// Generate random ExitCode values (including success and failure codes).
+    pub fn exit_code() -> impl Strategy<Value = ExitCode> {
+        prop_oneof![
+            Just(ExitCode::SUCCESS),
+            (1i32..=255i32).prop_map(ExitCode::from_raw),
+        ]
+    }
+
+    /// Generate random SequenceNumber values.
+    pub fn sequence_number() -> impl Strategy<Value = SequenceNumber> {
+        any::<u64>().prop_map(SequenceNumber::from_raw)
+    }
+
+    /// Generate random Nanoseconds values (0-1 hour in nanoseconds).
+    pub fn nanoseconds() -> impl Strategy<Value = Nanoseconds> {
+        (0i64..3_600_000_000_000i64).prop_map(Nanoseconds::from_nanos)
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // High-Traffic Payload Strategies
+    // ─────────────────────────────────────────────────────────────
+
+    /// Generate random FileCreatedPayload values.
+    pub fn file_created_payload() -> impl Strategy<Value = FileCreatedPayload> {
+        (
+            sanitized_path(),
+            0u64..10_000_000u64,
+            timestamp(),
+            proptest::option::of(0u32..0o777),
+        )
+            .prop_map(|(path, size, created_at, permissions)| FileCreatedPayload {
+                path,
+                size,
+                created_at,
+                permissions,
+            })
+    }
+
+    /// Generate random KittyCommandExecutedPayload values.
+    pub fn kitty_command_executed_payload() -> impl Strategy<Value = KittyCommandExecutedPayload> {
+        (
+            command_text(),
+            proptest::option::of(sanitized_path()),
+            proptest::option::of(exit_code()),
+            proptest::option::of(0u64..600_000u64),
+            proptest::option::of(shell_name()),
+            "[0-9]{1,6}",
+            "[0-9]{1,6}",
+        )
+            .prop_map(
+                |(
+                    command,
+                    working_directory,
+                    exit_status,
+                    execution_time_ms,
+                    shell_type,
+                    window_id,
+                    tab_id,
+                )| {
+                    KittyCommandExecutedPayload {
+                        command,
+                        working_directory,
+                        exit_status,
+                        execution_time_ms,
+                        shell_type,
+                        kitty_window_id: window_id,
+                        kitty_tab_id: tab_id,
+                    }
+                },
+            )
+    }
+
+    /// Generate random HyprlandWindowFocusedPayload values.
+    pub fn window_focused_payload() -> impl Strategy<Value = HyprlandWindowFocusedPayload> {
+        (
+            "[0-9a-f]{8,16}",
+            "[a-zA-Z][a-zA-Z0-9._-]{2,30}",
+            "[A-Z][a-zA-Z0-9 ._-]{2,50}",
+            0i32..20i32,
+            proptest::option::of("[0-9a-f]{8,16}"),
+        )
+            .prop_map(
+                |(window_id, window_class, window_title, workspace_id, previous_window_id)| {
+                    HyprlandWindowFocusedPayload {
+                        window_id,
+                        window_class,
+                        window_title,
+                        workspace_id,
+                        previous_window_id,
+                    }
+                },
+            )
+    }
+
+    /// Generate random ProcessHeartbeatPayload values.
+    pub fn process_heartbeat_payload() -> impl Strategy<Value = ProcessHeartbeatPayload> {
+        use crate::events::payloads::ProcessStatus;
+
+        (
+            "[a-z][a-z0-9-]{2,20}",
+            sequence_number(),
+            prop_oneof![
+                Just(ProcessStatus::Healthy),
+                Just(ProcessStatus::Degraded),
+                Just(ProcessStatus::Failed),
+            ],
+        )
+            .prop_map(|(source, sequence, status)| ProcessHeartbeatPayload {
+                source,
+                sequence,
+                status,
+                metrics: None,
+            })
+    }
+
+    /// Generate a complete Event<JsonValue> with random FileCreatedPayload for property testing.
+    ///
+    /// WARNING: Do NOT insert into database — no valid provenance.
+    pub fn file_created_event() -> impl Strategy<Value = crate::Event<crate::JsonValue>> {
+        file_created_payload().prop_map(|payload| payload.into_test_event())
+    }
+
+    /// Generate a complete Event<JsonValue> with random KittyCommandExecutedPayload for property testing.
+    ///
+    /// WARNING: Do NOT insert into database — no valid provenance.
+    pub fn kitty_command_executed_event() -> impl Strategy<Value = crate::Event<crate::JsonValue>> {
+        kitty_command_executed_payload().prop_map(|payload| payload.into_test_event())
+    }
+
+    /// Generate a complete Event<JsonValue> with random HyprlandWindowFocusedPayload for property testing.
+    ///
+    /// WARNING: Do NOT insert into database — no valid provenance.
+    pub fn window_focused_event() -> impl Strategy<Value = crate::Event<crate::JsonValue>> {
+        window_focused_payload().prop_map(|payload| payload.into_test_event())
+    }
+
+    /// Generate a complete Event<JsonValue> with random ProcessHeartbeatPayload for property testing.
+    ///
+    /// WARNING: Do NOT insert into database — no valid provenance.
+    pub fn process_heartbeat_event() -> impl Strategy<Value = crate::Event<crate::JsonValue>> {
+        process_heartbeat_payload().prop_map(|payload| payload.into_test_event())
     }
 }
