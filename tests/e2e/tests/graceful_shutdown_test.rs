@@ -84,8 +84,12 @@ async fn test_ingestd_graceful_shutdown_completes_inflight(ctx: TestContext) -> 
 
     let base_stream = env.nats_stream_name("SINEX_GRACEFUL_EVENTS");
     let consumer_name = "ingestd-graceful".to_string();
-    let topology =
-        JetStreamTopology::new(env, base_stream.clone(), consumer_name.clone(), Some(&namespace));
+    let topology = JetStreamTopology::new(
+        env,
+        base_stream.clone(),
+        consumer_name.clone(),
+        Some(&namespace),
+    );
 
     let work_dir = TempDir::new()?;
     let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir.path().to_path_buf())
@@ -104,7 +108,7 @@ async fn test_ingestd_graceful_shutdown_completes_inflight(ctx: TestContext) -> 
         )
         .nats_stream_name(base_stream)
         .nats_consumer_name(consumer_name)
-        .nats_namespace(Some(namespace))
+        .nats_namespace(namespace)
         .consumer_fetch_max_messages(16)
         .consumer_fetch_timeout_ms(500.into())
         .validate_schemas(false)
@@ -187,8 +191,12 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
 
     let base_stream = env.nats_stream_name("SINEX_LOAD_EVENTS");
     let consumer_name = "ingestd-load".to_string();
-    let topology =
-        JetStreamTopology::new(env, base_stream.clone(), consumer_name.clone(), Some(&namespace));
+    let topology = JetStreamTopology::new(
+        env,
+        base_stream.clone(),
+        consumer_name.clone(),
+        Some(&namespace),
+    );
 
     let work_dir = TempDir::new()?;
     let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir.path().to_path_buf())
@@ -207,7 +215,7 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
         )
         .nats_stream_name(base_stream)
         .nats_consumer_name(consumer_name)
-        .nats_namespace(Some(namespace))
+        .nats_namespace(namespace)
         .consumer_fetch_max_messages(32)
         .consumer_fetch_timeout_ms(500.into())
         .validate_schemas(false)
@@ -465,7 +473,7 @@ async fn test_shutdown_data_consistency(ctx: TestContext) -> TestResult<()> {
         )
         .nats_stream_name(base_stream)
         .nats_consumer_name(consumer_name)
-        .nats_namespace(Some(namespace))
+        .nats_namespace(namespace)
         .consumer_fetch_max_messages(8)
         .consumer_fetch_timeout_ms(500.into())
         .validate_schemas(false)

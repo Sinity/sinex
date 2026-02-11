@@ -245,11 +245,17 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
     // Test 1: Graceful connection cleanup
     let shutdown_start = Instant::now();
 
-    // Create multiple active connections
-    let active_connections = 10;
-    let mut connections = Vec::new();
+    // Register source material FIRST (before holding connections, needs a free one)
+    let material = pool
+        .source_materials()
+        .register_in_flight("shutdown.test", Some("/test"), json!({}))
+        .await?;
 
-    for i in 0..active_connections {
+    // Hold a couple of connections to simulate active usage.
+    // Test pool slots have max_connections=4, so hold 2 to leave headroom
+    // for repository operations and transactions.
+    let mut connections = Vec::new();
+    for i in 0..2 {
         match pool.acquire().await {
             Ok(conn) => {
                 connections.push(conn);
@@ -262,31 +268,23 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
         }
     }
 
-    // Register source material for test events
-    let material = pool
-        .source_materials()
-        .register_in_flight("shutdown.test", Some("/test"), json!({}))
-        .await?;
-
-    // Simulate ongoing transactions
+    // Simulate ongoing transactions (drop held connections first to free pool)
+    drop(connections);
     let mut transactions = Vec::new();
     for i in 0..3 {
-        if connections.len() > i {
-            if let Ok(mut tx) = pool.begin().await {
-                // Start transaction with some work
-                let event = DynamicPayload::new(
-                    "shutdown.test",
-                    "active_transaction",
-                    json!({"tx_id": i, "shutdown_test": true}),
-                )
-                .from_material(material.id)
-                .build()?;
+        if let Ok(mut tx) = pool.begin().await {
+            let event = DynamicPayload::new(
+                "shutdown.test",
+                "active_transaction",
+                json!({"tx_id": i, "shutdown_test": true}),
+            )
+            .from_material(material.id)
+            .build()?;
 
-                pool.events().insert_with_tx(&mut tx, event).await.ok();
+            pool.events().insert_with_tx(&mut tx, event).await.ok();
 
-                transactions.push(tx);
-                println!("    Started transaction {i}");
-            }
+            transactions.push(tx);
+            println!("    Started transaction {i}");
         }
     }
 
@@ -310,10 +308,8 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
     }
     let transaction_completion_duration = transaction_completion_start.elapsed();
 
-    // Step 2: Release connections gracefully
-    let connection_release_start = Instant::now();
-    drop(connections);
-    let connection_release_duration = connection_release_start.elapsed();
+    // Step 2: Connections already released before transactions started
+    let connection_release_duration = Duration::ZERO;
 
     // Step 3: Verify database state after shutdown
     let post_shutdown_verification = timeout(Duration::from_secs(Timeouts::SHORT), async {

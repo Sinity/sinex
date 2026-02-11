@@ -80,17 +80,36 @@ async fn start_test_gateway(ctx: &TestContext) -> color_eyre::Result<TestGateway
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let port = reserve_port()?;
     let tcp_listen = format!("127.0.0.1:{port}");
-    let server_handle = tokio::spawn({
+    let mut server_handle = tokio::spawn({
         let services = services.clone();
         async move {
-            let _ = rpc_server::run(Some(tcp_listen.as_str()), services, vec![], shutdown_rx).await;
+            if let Err(e) =
+                rpc_server::run(Some(tcp_listen.as_str()), services, vec![], shutdown_rx).await
+            {
+                eprintln!("Gateway startup failed: {e:#}");
+            }
         }
     });
 
-    // Wait for the server to actually bind and accept connections.
-    // Under heavy parallel test load the gateway may take longer to initialize
-    // (pool creation, NATS connection attempts, etc.), so use a generous timeout.
-    wait_for_port(port, Duration::from_secs(Timeouts::MEDIUM)).await?;
+    // Race port readiness against server exit — if the server errors during
+    // setup, we detect it immediately instead of waiting the full timeout.
+    let port_timeout = Duration::from_secs(Timeouts::STANDARD);
+    tokio::select! {
+        result = wait_for_port(port, port_timeout) => {
+            result?;
+        }
+        join_result = &mut server_handle => {
+            // Server task exited before port was ready — it failed during setup
+            match join_result {
+                Ok(()) => return Err(color_eyre::eyre::eyre!(
+                    "Gateway server exited before binding port {port} (check stderr for details)"
+                )),
+                Err(e) => return Err(color_eyre::eyre::eyre!(
+                    "Gateway server task panicked: {e}"
+                )),
+            }
+        }
+    }
 
     Ok(TestGateway {
         port,
