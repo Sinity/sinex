@@ -357,6 +357,26 @@ impl<'ctx> PipelineScope<'ctx> {
             }
         }
 
+        // Read the file-based ingestd debug log (written by the orchestrator subprocess).
+        // The log file is named after the TEST process PID, not the child process PID.
+        let debug_log = format!("/tmp/sinex-ingestd-{}.log", std::process::id());
+        if let Ok(content) = std::fs::read_to_string(&debug_log) {
+            if !content.is_empty() {
+                let lines: Vec<&str> = content.lines().collect();
+                let start = lines.len().saturating_sub(LOG_TAIL);
+                eprintln!(
+                    "--- ingestd log tail ({} lines, showing last {}) ---",
+                    lines.len(),
+                    lines.len() - start
+                );
+                for line in &lines[start..] {
+                    eprintln!("{line}");
+                }
+                return;
+            }
+        }
+
+        // Fallback: check in-process captured logs
         let logs = self.ctx.captured_logs();
         let mut ingestd_lines: VecDeque<String> = VecDeque::with_capacity(LOG_TAIL);
         for line in logs {

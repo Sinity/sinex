@@ -1,6 +1,5 @@
 ---
 source: xtask/tests/command_consistency.rs
-assertion_line: 25
 expression: json
 ---
 {
@@ -948,6 +947,57 @@ expression: json
           "args": [],
           "hidden": false,
           "name": "list",
+          "subcommands": []
+        },
+        {
+          "about": "Connect to a remote environment via The Tether",
+          "args": [
+            {
+              "global": false,
+              "help": "Target environment (e.g., \"prod\", \"staging\")",
+              "long": null,
+              "name": "target",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Subject filter for events (default: events.>)",
+              "long": "filter",
+              "name": "filter",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Start from the beginning of the stream",
+              "long": "from-beginning",
+              "name": "from_beginning",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Start from a specific sequence number",
+              "long": "from-sequence",
+              "name": "from_sequence",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "hidden": false,
+          "name": "tether",
           "subcommands": []
         }
       ]
@@ -2454,6 +2504,182 @@ expression: json
           "hidden": false,
           "name": "patterns",
           "subcommands": []
+        },
+        {
+          "about": "CI pipeline commands (requires sandbox feature)",
+          "args": [],
+          "hidden": false,
+          "name": "ci",
+          "subcommands": [
+            {
+              "about": "Start an ephemeral Postgres and run the given command with env vars set",
+              "args": [
+                {
+                  "global": false,
+                  "help": null,
+                  "long": "port",
+                  "name": "port",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": null,
+                  "long": "data-dir",
+                  "name": "data_dir",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": null,
+                  "long": "socket-dir",
+                  "name": "socket_dir",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": null,
+                  "long": "keep-data",
+                  "name": "keep_data",
+                  "possible_values": [
+                    "true",
+                    "false"
+                  ],
+                  "required": false,
+                  "short": null,
+                  "takes_value": false
+                },
+                {
+                  "global": false,
+                  "help": null,
+                  "long": "app-user",
+                  "name": "app_user",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": null,
+                  "long": "superuser",
+                  "name": "superuser",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": null,
+                  "long": "database",
+                  "name": "database",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": null,
+                  "long": "operation-id",
+                  "name": "operation_id",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": null,
+                  "long": null,
+                  "name": "command",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                }
+              ],
+              "hidden": false,
+              "name": "postgres",
+              "subcommands": []
+            },
+            {
+              "about": "Full workspace validation (schema setup + lint + tests)",
+              "args": [
+                {
+                  "global": false,
+                  "help": null,
+                  "long": "target-dir",
+                  "name": "target_dir",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                }
+              ],
+              "hidden": false,
+              "name": "workspace",
+              "subcommands": []
+            },
+            {
+              "about": "Schema-only pipeline (migrate, check-ready, regenerate)",
+              "args": [
+                {
+                  "global": false,
+                  "help": null,
+                  "long": "target-dir",
+                  "name": "target_dir",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": null,
+                  "long": "skip-clean",
+                  "name": "skip_clean",
+                  "possible_values": [
+                    "true",
+                    "false"
+                  ],
+                  "required": false,
+                  "short": null,
+                  "takes_value": false
+                }
+              ],
+              "hidden": false,
+              "name": "schema-only",
+              "subcommands": []
+            },
+            {
+              "about": "Schema validation pipeline (migrate, check-ready, seed registry, sync)",
+              "args": [
+                {
+                  "global": false,
+                  "help": null,
+                  "long": "target-dir",
+                  "name": "target_dir",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                }
+              ],
+              "hidden": false,
+              "name": "schema-sync",
+              "subcommands": []
+            }
+          ]
         },
         {
           "about": "Generate shell completions",
