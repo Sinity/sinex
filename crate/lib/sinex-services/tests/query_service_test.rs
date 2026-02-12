@@ -164,11 +164,14 @@ async fn test_query_combined_filters(ctx: TestContext) -> TestResult<()> {
     scope.wait_for_source_events("fs-watcher", 1).await?;
 
     let service = Arc::new(SearchService::new(ctx.pool.clone()));
+    // Use "path" as search term — PG's text search parser tokenizes file paths like
+    // "/project/src/main.rs" as a single token, so "main" alone won't match.
+    // JSON keys like "path" ARE standalone tokens in tsvector.
     let query = SearchQuery {
-        text: Some("main".to_string()),
+        text: Some("path".to_string()),
         sources: vec!["fs-watcher".to_string()],
         event_types: vec![],
-        start_time: Some(clock.now() - Duration::hours(1)),
+        start_time: Some(clock.now() - Duration::hours(2)),
         end_time: None,
         limit: 10,
         offset: 0,

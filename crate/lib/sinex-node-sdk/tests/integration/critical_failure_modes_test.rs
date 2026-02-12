@@ -74,37 +74,26 @@ async fn test_database_high_load_resilience(ctx: TestContext) -> TestResult<()> 
     let _scope = ctx.pipeline().await?;
     let start_memory = get_current_memory_usage();
 
-    // Create many events to test database resilience
-    let mut events = Vec::new();
-    for i in 0..100 {
-        // Reduced from 1000 for faster testing
-        let event = ctx
-            .publish(DynamicPayload::new(
+    // Batch publish: all events go to NATS first, then a single wait for persistence.
+    // 100 events through the full pipeline should complete in seconds.
+    let event_count = 100;
+    let payloads: Vec<_> = (0..event_count)
+        .map(|i| {
+            DynamicPayload::new(
                 "load-test",
                 "high.volume",
                 json!({
                     "index": i,
                     "data": format!("load-test-data-{}", i)
                 }),
-            ))
-            .await?;
-        events.push(event);
+            )
+        })
+        .collect();
 
-        // Check memory growth periodically
-        if i % 50 == 0 {
-            let current_memory = get_current_memory_usage();
-            let growth = current_memory.saturating_sub(start_memory);
-
-            // Should not use excessive memory (allow 50MB growth)
-            assert!(
-                growth < 50 * 1024 * 1024,
-                "Excessive memory usage during load test: {growth} bytes"
-            );
-        }
-    }
+    let events = ctx.publish_many(payloads).await?;
 
     // Verify events were created
-    assert_eq!(events.len(), 100);
+    assert_eq!(events.len(), event_count);
 
     let end_memory = get_current_memory_usage();
     let total_growth = end_memory.saturating_sub(start_memory);

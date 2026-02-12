@@ -318,14 +318,14 @@ async fn test_event_generation_performance(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
 
-    let event_count = 100; // Reduced for faster test execution
+    // Batch publish: all events go to NATS first, then a single wait for persistence.
+    // 100 events through the full pipeline should complete in seconds, not minutes.
+    let event_count = 100;
     let start_time = std::time::Instant::now();
 
-    let mut all_events = Vec::new();
-
-    for i in 0..event_count {
-        let event = ctx
-            .publish(DynamicPayload::new(
+    let payloads: Vec<_> = (0..event_count)
+        .map(|i| {
+            DynamicPayload::new(
                 "perf-test",
                 "performance.test",
                 serde_json::json!({
@@ -337,10 +337,11 @@ async fn test_event_generation_performance(ctx: TestContext) -> TestResult<()> {
                         "total_events": event_count
                     }
                 }),
-            ))
-            .await?;
-        all_events.push(event);
-    }
+            )
+        })
+        .collect();
+
+    let all_events = ctx.publish_many(payloads).await?;
 
     let generation_time = start_time.elapsed();
     let generation_rate = event_count as f64 / generation_time.as_secs_f64();
