@@ -13,7 +13,7 @@ use crate::sandbox::Sandbox;
 use crate::EventOverrides;
 use sinex_primitives::events::{Publishable, SourceMaterial};
 use sinex_primitives::Timestamp;
-use sinex_primitives::{DynamicPayload, EventType, Id};
+use sinex_primitives::{EventType, Id};
 use std::collections::VecDeque;
 use std::time::Instant;
 use tokio::runtime::Handle;
@@ -139,15 +139,16 @@ impl<'ctx> PipelineScope<'ctx> {
         .await
     }
 
-    /// Internal implementation for publish with overrides.
-    async fn publish_with_overrides_internal(
+    /// Prepare and publish an event to NATS without waiting for DB persistence.
+    ///
+    /// This is the fast path used by batch methods. Returns the event ID.
+    async fn prepare_and_publish_to_nats(
         &self,
         source: sinex_primitives::EventSource,
         event_type: sinex_primitives::EventType,
         payload: serde_json::Value,
         overrides: EventOverrides,
     ) -> TestResult<EventId> {
-        let op_start = Instant::now();
         let timestamp_override = if let Some(ts) = overrides.ts_orig {
             Some(Timestamp::parse_rfc3339(&ts)?)
         } else {
@@ -163,8 +164,8 @@ impl<'ctx> PipelineScope<'ctx> {
         // Construct event manually to handle overrides
         let event = sinex_primitives::events::Event::<serde_json::Value> {
             id: overrides.id.map(sinex_primitives::Id::from_ulid),
-            source: source.clone(),
-            event_type: event_type.clone(),
+            source,
+            event_type,
             payload,
             ts_orig: timestamp_override,
             host: sinex_primitives::domain::HostName::new(
@@ -182,8 +183,24 @@ impl<'ctx> PipelineScope<'ctx> {
             associated_blob_ids: None,
         };
 
-        let publish_start = Instant::now();
         let event_id: sinex_schema::ulid::Ulid = self.ctx.publish_prebuilt_event(&event).await?;
+        Ok(event_id.into())
+    }
+
+    /// Internal implementation for publish with overrides (publishes + waits for persistence).
+    async fn publish_with_overrides_internal(
+        &self,
+        source: sinex_primitives::EventSource,
+        event_type: sinex_primitives::EventType,
+        payload: serde_json::Value,
+        overrides: EventOverrides,
+    ) -> TestResult<EventId> {
+        let op_start = Instant::now();
+
+        let publish_start = Instant::now();
+        let event_id = self
+            .prepare_and_publish_to_nats(source.clone(), event_type.clone(), payload, overrides)
+            .await?;
         let publish_ms = publish_start.elapsed().as_millis();
 
         let wait_start = Instant::now();
@@ -201,7 +218,7 @@ impl<'ctx> PipelineScope<'ctx> {
             total_ms,
             "pipeline publish complete"
         );
-        Ok(event_id.into())
+        Ok(event_id)
     }
 
     /// Publish an event with a concrete timestamp and wait until persisted.
@@ -262,6 +279,9 @@ impl<'ctx> PipelineScope<'ctx> {
     // ========================================================================
 
     /// Publish multiple events and wait for all to be persisted.
+    ///
+    /// Uses fire-and-forget NATS publishes (no per-event DB wait), then a single
+    /// batch wait at the end. Much faster than calling `publish()` in a loop.
     pub async fn publish_batch<F>(
         &self,
         count: usize,
@@ -276,7 +296,12 @@ impl<'ctx> PipelineScope<'ctx> {
         for i in 0..count {
             let payload = payload_fn(i);
             let id = self
-                .publish(DynamicPayload::new(source, event_type, payload))
+                .prepare_and_publish_to_nats(
+                    sinex_primitives::EventSource::new(source),
+                    sinex_primitives::EventType::new(event_type),
+                    payload,
+                    EventOverrides::default(),
+                )
                 .await?;
             ids.push(id);
         }
@@ -328,8 +353,17 @@ impl<'ctx> PipelineScope<'ctx> {
         for i in 0..count {
             let timestamp = Timestamp::new(*start + step * (i as i32));
             let payload = payload_fn(i);
+            let overrides = EventOverrides {
+                ts_orig: Some(timestamp.format_rfc3339()),
+                ..Default::default()
+            };
             let id = self
-                .publish_with_timestamp(DynamicPayload::new(source, event_type, payload), timestamp)
+                .prepare_and_publish_to_nats(
+                    sinex_primitives::EventSource::new(source),
+                    sinex_primitives::EventType::new(event_type),
+                    payload,
+                    overrides,
+                )
                 .await?;
             ids.push(id);
         }

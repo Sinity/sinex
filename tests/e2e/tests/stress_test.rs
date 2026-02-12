@@ -94,11 +94,16 @@ async fn test_event_ingestion_stress(ctx: TestContext) -> TestResult<()> {
             .await?;
     }
 
+    // Bound concurrent DB access — the test pool has ~4 connections, so
+    // spawning 200 unbounded tasks causes pool acquire timeouts.
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(16));
     let mut handles = Vec::new();
 
     for (i, material_id) in material_ids.into_iter().enumerate() {
         let pool = pool.clone();
+        let semaphore = semaphore.clone();
         handles.push(tokio::spawn(async move {
+            let _permit = semaphore.acquire().await.unwrap();
             let event = Event {
                 id: None,
                 source: EventSource::new("stress.ingestion"),

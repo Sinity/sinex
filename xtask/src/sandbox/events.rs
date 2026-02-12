@@ -200,3 +200,82 @@ impl EventPublisher for Sandbox {
         Ok(event_id)
     }
 }
+
+impl Sandbox {
+    /// Publish multiple events through the pipeline as a batch.
+    ///
+    /// **Much faster than calling `publish()` in a loop**: all events are published
+    /// to NATS first (O(N) NATS publishes, ~1ms each), then a single wait confirms
+    /// the last event is persisted in the database.
+    ///
+    /// Returns the pre-built events (as submitted to NATS). For 100 events this
+    /// completes in ~2-5 seconds vs ~50+ seconds with sequential `publish()`.
+    pub async fn publish_many<P: Publishable>(
+        &self,
+        payloads: impl IntoIterator<Item = P>,
+    ) -> TestResult<Vec<Event<JsonValue>>> {
+        let _client = self.ensure_nats().await?;
+
+        let mut events = Vec::new();
+        let mut cleanup_records: Vec<(Ulid, Ulid)> = Vec::new();
+
+        // Phase 1: Publish all events to NATS without waiting for DB persistence.
+        // Each NATS publish takes ~1ms, so 100 events ≈ 100ms.
+        for payload in payloads {
+            let source = payload.source();
+            let event_type = payload.event_type();
+            let mut sanitized_payload = payload.to_json_value()?;
+            Sandbox::sanitize_payload(&mut sanitized_payload);
+
+            let material_id = Id::<SourceMaterial>::new();
+            self.ensure_source_material(material_id, Some(source.as_str()))
+                .await?;
+            let material_ulid = *material_id.as_ulid();
+
+            let event = Event::<JsonValue> {
+                id: Some(Id::new()),
+                source,
+                event_type,
+                payload: sanitized_payload,
+                ts_orig: Some(Timestamp::now()),
+                host: HostName::new(gethostname::gethostname().to_string_lossy().to_string()),
+                ingestor_version: Some("test-ingestor".to_string()),
+                payload_schema_id: None,
+                provenance: Provenance::Material {
+                    id: material_id,
+                    anchor_byte: 0,
+                    offset_start: None,
+                    offset_end: None,
+                    offset_kind: OffsetKind::Byte,
+                },
+                associated_blob_ids: None,
+            };
+
+            let event_ulid = self.publish_prebuilt_event(&event).await?;
+            cleanup_records.push((event_ulid, material_ulid));
+            events.push(event);
+        }
+
+        if events.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Phase 2: Wait for the last event to be persisted.
+        // Since ingestd processes events in JetStream order (single consumer),
+        // once the last event is in DB, all preceding events are guaranteed to be there.
+        // Safety: `cleanup_records` is non-empty because we checked `events.is_empty()` above.
+        let last_event_ulid = cleanup_records
+            .last()
+            .expect("non-empty after is_empty check")
+            .0;
+        let last_event_id = Id::<Event<JsonValue>>::from_ulid(last_event_ulid);
+        WaitHelpers::wait_for_event_id(self.pool(), last_event_id, DEFAULT_WAIT_SECS).await?;
+
+        // Phase 3: Record all events for cleanup
+        for (event_ulid, material_ulid) in &cleanup_records {
+            self.record_created_event(*event_ulid, Some(*material_ulid));
+        }
+
+        Ok(events)
+    }
+}
