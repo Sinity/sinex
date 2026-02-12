@@ -42,6 +42,9 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
     );
     let automaton_handle = tokio::spawn(async move { automaton_consumer.run().await });
 
+    // Allow the automaton consumer to subscribe to the confirmations stream
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
     // Use PipelineScope's publish method instead of TestNodePublisher
     let event_id = scope
         .publish(DynamicPayload::new(

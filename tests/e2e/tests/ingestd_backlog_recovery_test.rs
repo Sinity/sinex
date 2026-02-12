@@ -39,7 +39,7 @@ async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResul
         .nats_stream_name(base_stream)
         .nats_consumer_name(consumer_name)
         .consumer_fetch_max_messages(32)
-        .consumer_fetch_timeout_ms(200.into())
+        .consumer_fetch_timeout_ms(50.into())
         .validate_schemas(false)
         .skip_schema_sync(true)
         .work_dir(work_dir_utf8.clone())
@@ -114,8 +114,7 @@ async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResul
     let mut restart_runner = restart_service.clone();
     let restart_handle = tokio::spawn(async move { restart_runner.run().await });
 
-    let wait_secs = Timeouts::LONG;
-    WaitHelpers::wait_for_event_count(&ctx.pool, 3, wait_secs).await?;
+    WaitHelpers::wait_for_event_count(&ctx.pool, 3, Timeouts::STANDARD).await?;
 
     restart_service.shutdown().await?;
     let restart_join = timeout(Duration::from_secs(Timeouts::QUICK), restart_handle)

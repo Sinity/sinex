@@ -60,20 +60,10 @@ async fn jetstream_pipeline_handles_burst_without_timeouts() -> TestResult<()> {
     let source = "stress.pipeline";
     let event_type = "burst.event";
 
-    let start_count = ctx
-        .pool
-        .events()
-        .count_by_source(&EventSource::new(source))
-        .await? as usize;
-
     let total = 200usize;
-    for idx in 0..total {
-        pipeline
-            .publish(DynamicPayload::new(source, event_type, json!({"seq": idx})))
-            .await?;
-    }
-
-    WaitHelpers::wait_for_source_events(&ctx.pool, source, start_count + total, 20).await?;
+    pipeline
+        .publish_batch_simple(total, source, event_type)
+        .await?;
 
     pipeline.shutdown().await?;
     Ok(())

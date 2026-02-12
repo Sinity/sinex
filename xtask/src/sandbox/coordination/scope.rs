@@ -55,7 +55,7 @@ impl<'ctx> PipelineScope<'ctx> {
             namespace: Some(namespace.clone()),
             // Fast test settings: small batches, short timeouts
             consumer_fetch_max_messages: 32,
-            consumer_fetch_timeout_ms: 500, // 500ms allows batching while keeping test latency low
+            consumer_fetch_timeout_ms: 50, // 50ms: minimize fetch latency in tests
             database_pool_size: 10, // Needs headroom for JetStream consumer + MaterialAssembler + schema reload
         };
 

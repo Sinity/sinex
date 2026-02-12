@@ -10,7 +10,7 @@ use xtask::sandbox::{
     nats::{shared_ephemeral_nats, SharedNatsProfile},
     prelude::*,
     sinex_test, start_test_ingestd_with_config,
-    timing::WaitHelpers,
+    timing::{Timeouts, WaitHelpers},
     TestIngestdConfig,
 };
 
@@ -103,7 +103,7 @@ async fn tls_enabled_event_pipeline(ctx: TestContext) -> TestResult<()> {
     .await?;
 
     // Wait for the event to be persisted
-    WaitHelpers::wait_for_event_id(&ctx.pool, event_id.into(), 10).await?;
+    WaitHelpers::wait_for_event_id(&ctx.pool, event_id.into(), Timeouts::STANDARD).await?;
 
     // Verify the event exists in the database
     let event = ctx

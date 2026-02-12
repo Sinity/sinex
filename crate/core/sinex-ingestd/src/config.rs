@@ -464,7 +464,7 @@ fn default_consumer_fetch_max_messages() -> usize {
 }
 
 fn default_consumer_fetch_timeout_ms() -> Milliseconds {
-    Milliseconds::from_millis(1_000)
+    Milliseconds::from_millis(100)
 }
 
 fn default_consumer_max_ack_pending() -> i64 {

@@ -437,7 +437,7 @@ impl Default for TestIngestdConfig {
             work_dir: None,
             namespace: None,
             consumer_fetch_max_messages: 100,
-            consumer_fetch_timeout_ms: 1000,
+            consumer_fetch_timeout_ms: 50,
             database_pool_size: 4,
         }
     }

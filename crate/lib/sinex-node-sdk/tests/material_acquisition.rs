@@ -457,7 +457,7 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
         nats: nats.connection_config(),
         database_url: ctx.database_url().to_string(),
         work_dir: Some(work_dir_path.clone()),
-        consumer_fetch_timeout_ms: 200,
+        consumer_fetch_timeout_ms: 50,
         ..Default::default()
     };
 
@@ -518,55 +518,37 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
 
     let expected_size = (b"first-chunk".len() + b"second-chunk".len()) as i64;
 
-    // Wait deterministically for material completion and ledger offset to reflect all slices.
+    // Wait for material completion and ledger offset to reflect all slices.
     let pool = ctx.pool.clone();
-    let mut completed = false;
-    for attempt in 0..3 {
-        let wait_result = WaitHelpers::wait_for_condition(
-            || {
-                let pool = pool.clone();
-                async move {
-                    if let Some(material) = pool
-                        .source_materials()
-                        .get_by_id(Id::from_ulid(material_id))
-                        .await?
-                    {
-                        if material.status.as_str() == "completed" {
-                            let ledger_bytes: Option<i64> = sqlx::query_scalar!(
-                                "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid ORDER BY ts_capture DESC LIMIT 1",
-                                ulid_to_uuid(material_id)
-                            )
-                            .fetch_optional(&pool)
-                            .await
-                            .map_err(|e| SinexError::database(e.to_string()))?;
+    WaitHelpers::wait_for_condition(
+        || {
+            let pool = pool.clone();
+            async move {
+                if let Some(material) = pool
+                    .source_materials()
+                    .get_by_id(Id::from_ulid(material_id))
+                    .await?
+                {
+                    if material.status.as_str() == "completed" {
+                        let ledger_bytes: Option<i64> = sqlx::query_scalar!(
+                            "SELECT offset_end FROM raw.temporal_ledger WHERE source_material_id = $1::uuid::ulid ORDER BY ts_capture DESC LIMIT 1",
+                            ulid_to_uuid(material_id)
+                        )
+                        .fetch_optional(&pool)
+                        .await
+                        .map_err(|e| SinexError::database(e.to_string()))?;
 
-                            return Ok::<bool, SinexError>(ledger_bytes.unwrap_or_default() >= expected_size);
-                        }
+                        return Ok::<bool, SinexError>(
+                            ledger_bytes.unwrap_or_default() >= expected_size,
+                        );
                     }
-                    Ok::<bool, SinexError>(false)
                 }
-            },
-            DEFAULT_WAIT_SECS,
-        )
-        .await;
-
-        match wait_result {
-            Ok(()) => {
-                completed = true;
-                break;
+                Ok::<bool, SinexError>(false)
             }
-            Err(err) if attempt < 2 => {
-                tracing::warn!(attempt, error = %err, "Material completion not observed yet; retrying");
-                tokio::task::yield_now().await;
-            }
-            Err(err) => return Err(err),
-        }
-    }
-
-    ensure!(
-        completed,
-        "material completion did not reach expected ledger size after retries"
-    );
+        },
+        DEFAULT_WAIT_SECS,
+    )
+    .await?;
 
     let record = ctx
         .pool
