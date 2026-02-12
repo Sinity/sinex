@@ -2117,6 +2117,31 @@ expression: json
               "subcommands": []
             },
             {
+              "about": "Comprehensive analysis of the most recent test run",
+              "args": [],
+              "hidden": false,
+              "name": "analyze",
+              "subcommands": []
+            },
+            {
+              "about": "Show captured output for a test (pass or fail)",
+              "args": [
+                {
+                  "global": false,
+                  "help": "Test name pattern to search for",
+                  "long": null,
+                  "name": "pattern",
+                  "possible_values": [],
+                  "required": true,
+                  "short": null,
+                  "takes_value": true
+                }
+              ],
+              "hidden": false,
+              "name": "output",
+              "subcommands": []
+            },
+            {
               "about": null,
               "args": [],
               "hidden": false,

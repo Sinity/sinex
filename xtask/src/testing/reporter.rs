@@ -45,7 +45,7 @@ impl RawMessage {
                 name: self.name.unwrap_or_default(),
                 result: "passed".to_string(),
                 exec_time: self.exec_time,
-                output: None, // Don't store output for passing tests
+                output: self.stdout, // Store output for ALL tests (not just failures)
             }),
             ("test", "failed") => Message::TestFinished(TestFinished {
                 name: self.name.unwrap_or_default(),

@@ -30,20 +30,28 @@ cargo xtask history diagnostics [--level LEVEL] [--file PATTERN]  # Build diagno
 
 ```bash
 cargo xtask history tests failures [--limit N] [--output] # Failing tests from most recent run
-cargo xtask history tests slowest [--limit N]              # Slowest tests by avg duration
+cargo xtask history tests analyze                          # Comprehensive analysis (buckets, timeouts, failures)
+cargo xtask history tests output <pattern>                 # Show captured output for matching tests (pass or fail)
+cargo xtask history tests slowest [--limit N]              # Slowest tests by avg duration (excludes timeouts)
 cargo xtask history tests flaky [--limit N]                # Flaky tests (fail→pass on retry)
 cargo xtask history tests getting-slower [--threshold-pct N] [--window N]  # Tests regressing in speed
 cargo xtask history tests trends [--pattern X] [--package P] [--runs N]    # Duration trends over time
 cargo xtask history tests eta                              # Estimated test suite runtime
 ```
 
+**Note:** `slowest`, `getting-slower`, and `eta` only count passing tests — failed/timed-out tests
+would inflate durations with timeout ceilings rather than reflecting real execution time.
+
+**Note:** ALL test output (pass and fail) is stored in the history DB. Use `output` to retrieve it.
+
 ### Agent Debugging Workflow
 
 ```bash
-# After a failed test run, get failure details immediately:
-cargo xtask history tests failures              # Human: table of failing tests
-cargo xtask history tests failures --output     # Human: includes captured stdout/stderr
-cargo xtask test --json | jq '.data.failures'   # Agent: structured failure data with output
+# After a failed test run:
+cargo xtask history tests analyze               # Overview: buckets, probable timeouts, failures by package
+cargo xtask history tests failures --output     # Failing tests with captured stdout/stderr
+cargo xtask history tests output test_name      # Get output for any test (pass or fail)
+cargo xtask test --json | jq '.data.failures'   # Structured failure data with output
 
 # Investigate specific patterns:
 cargo xtask history tests flaky                 # Tests that pass on retry (infrastructure issues?)
