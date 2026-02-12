@@ -570,19 +570,15 @@ fn auto_deploy_contracts(verbose: bool) -> Result<bool> {
         }
         Ok(_) => {
             // Non-fatal: contracts deploy failure shouldn't block tests.
-            // Record hash so we don't retry on every invocation until schemas change.
-            record_contracts_deployed();
+            // Don't record hash — will retry next invocation so transient failures self-heal.
             eprintln!(
-                "⚠️  Contracts deploy failed ({:.1}s, non-fatal, won't retry until schemas change)",
+                "⚠️  Contracts deploy failed ({:.1}s, non-fatal, will retry next run)",
                 elapsed.as_secs_f64()
             );
             Ok(false)
         }
         Err(e) => {
-            record_contracts_deployed();
-            eprintln!(
-                "⚠️  Contracts deploy failed: {e} (non-fatal, won't retry until schemas change)"
-            );
+            eprintln!("⚠️  Contracts deploy failed: {e} (non-fatal, will retry next run)");
             Ok(false)
         }
     }
