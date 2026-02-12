@@ -236,15 +236,17 @@ impl TestReporter {
                             // → "sinex_db", or "tests/e2e.rs::test_name" → "tests")
                             let package = t.name.split("::").next().unwrap_or("unknown");
 
-                            // We ignore errors here to not interrupt testing flow if DB fails
-                            let _ = db.record_test_result(
+                            // Log but don't fail — test recording shouldn't interrupt tests
+                            if let Err(e) = db.record_test_result(
                                 invocation_id,
                                 &t.name,
                                 package,
                                 &t.result,
                                 duration,
                                 output,
-                            );
+                            ) {
+                                eprintln!("⚠️  Failed to record test result for {}: {e}", t.name);
+                            }
                         }
                     }
                     Message::Other => {}

@@ -259,7 +259,9 @@ pub async fn run_cli() -> Result<()> {
                 Ok(res) => res.duration_secs.unwrap_or(ctx.elapsed().as_secs_f64()),
                 Err(_) => ctx.elapsed().as_secs_f64(),
             };
-            let _ = db.finish_invocation(id, status, None, duration);
+            if let Err(e) = db.finish_invocation(id, status, None, duration) {
+                eprintln!("⚠️  Failed to record invocation result: {e}");
+            }
         }
     }
 

@@ -93,6 +93,7 @@ impl HistoryDb {
             job_columns_ensured: AtomicBool::new(false),
         };
         db.init_schema()?;
+        db.cleanup_stale_invocations();
         Ok(db)
     }
 
@@ -211,6 +212,29 @@ impl HistoryDb {
         )?;
 
         Ok(())
+    }
+
+    /// Mark invocations stuck in 'running' for over 1 hour as 'cancelled'.
+    ///
+    /// Called on `open()` to prevent orphaned invocations from accumulating
+    /// when a process crashes before calling `finish_invocation()`.
+    fn cleanup_stale_invocations(&self) {
+        let cleaned = self.conn.execute(
+            r"
+            UPDATE invocations
+            SET status = 'cancelled',
+                finished_at = datetime('now'),
+                duration_secs = (julianday('now') - julianday(started_at)) * 86400
+            WHERE status = 'running'
+              AND started_at < datetime('now', '-1 hour')
+            ",
+            [],
+        );
+        if let Ok(count) = cleaned {
+            if count > 0 {
+                eprintln!("ℹ️  Cleaned up {count} stale 'running' invocation(s) older than 1 hour");
+            }
+        }
     }
 
     /// Finish a background job and store its log content in the DB.
