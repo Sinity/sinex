@@ -500,7 +500,7 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
                 Ok(expected_offset >= first_chunk.len() as i64)
             }
         },
-        DEFAULT_WAIT_SECS,
+        10,
     )
     .await?;
 
@@ -546,7 +546,7 @@ async fn material_acquisition_restart_recovery(mut ctx: TestContext) -> Result<(
                 Ok::<bool, SinexError>(false)
             }
         },
-        DEFAULT_WAIT_SECS,
+        10,
     )
     .await?;
 

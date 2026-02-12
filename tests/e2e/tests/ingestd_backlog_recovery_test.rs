@@ -10,7 +10,7 @@ use tokio::time::{timeout, Duration};
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 
-#[sinex_test(timeout = 60)]
+#[sinex_test(timeout = 30)]
 async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().await?;
     let nats = ctx.nats_handle()?;
@@ -114,7 +114,7 @@ async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResul
     let mut restart_runner = restart_service.clone();
     let restart_handle = tokio::spawn(async move { restart_runner.run().await });
 
-    WaitHelpers::wait_for_event_count(&ctx.pool, 3, Timeouts::STANDARD).await?;
+    WaitHelpers::wait_for_event_count(&ctx.pool, 3, 10).await?;
 
     restart_service.shutdown().await?;
     let restart_join = timeout(Duration::from_secs(Timeouts::QUICK), restart_handle)

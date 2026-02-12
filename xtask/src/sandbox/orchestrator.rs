@@ -534,6 +534,18 @@ pub async fn start_test_ingestd_with_config(
     ));
     cmd.env("DATABASE_URL", &config.database_url);
     cmd.env("SINEX_NATS_URL", &config.nats.url);
+    if config.nats.require_tls {
+        cmd.env("SINEX_NATS_REQUIRE_TLS", "true");
+    }
+    if let Some(ca) = &config.nats.ca_cert {
+        cmd.env("SINEX_NATS_CA_CERT", ca);
+    }
+    if let Some(cert) = &config.nats.client_cert {
+        cmd.env("SINEX_NATS_CLIENT_CERT", cert);
+    }
+    if let Some(key) = &config.nats.client_key {
+        cmd.env("SINEX_NATS_CLIENT_KEY", key);
+    }
     if let Some(ns) = &config.namespace {
         cmd.env("SINEX_NAMESPACE", ns);
     }

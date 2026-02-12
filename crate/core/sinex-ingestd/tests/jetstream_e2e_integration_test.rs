@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::info;
 use xtask::sandbox::prelude::*;
-use xtask::sandbox::timing::{WaitHelpers, DEFAULT_WAIT_SECS};
+use xtask::sandbox::timing::WaitHelpers;
 
 #[sinex_test(timeout = 60)]
 async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
@@ -66,7 +66,7 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
                 Ok::<bool, SinexError>(processed_ids.contains(&event_id))
             }
         },
-        DEFAULT_WAIT_SECS,
+        10,
     )
     .await?;
 

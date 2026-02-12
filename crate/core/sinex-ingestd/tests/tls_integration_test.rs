@@ -6,11 +6,12 @@
 use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_primitives::Ulid;
+use std::time::Duration;
 use xtask::sandbox::{
     nats::{shared_ephemeral_nats, SharedNatsProfile},
     prelude::*,
     sinex_test, start_test_ingestd_with_config,
-    timing::{Timeouts, WaitHelpers},
+    timing::WaitHelpers,
     TestIngestdConfig,
 };
 
@@ -90,6 +91,16 @@ async fn tls_enabled_event_pipeline(ctx: TestContext) -> TestResult<()> {
     // Connect directly using TLS config to publish events
     let nats_client = conn_config.connect().await?;
 
+    // Wait for ingestd's JetStream stream + consumer to be ready.
+    // start_test_ingestd_with_config skipped its readiness check because ctx has
+    // no NATS handle (TLS NATS is obtained independently). Without this wait,
+    // events published via NATS Core are silently lost (no JetStream stream yet).
+    let js = async_nats::jetstream::new(nats_client.clone());
+    nats.wait_for_stream(&js, &ingest_handle.stream_name, Duration::from_secs(10))
+        .await?;
+    nats.wait_for_consumer_on_stream(&js, &ingest_handle.stream_name, Duration::from_secs(10))
+        .await?;
+
     // Publish a test event
     let event_id = publish_test_event(
         &nats_client,
@@ -102,8 +113,7 @@ async fn tls_enabled_event_pipeline(ctx: TestContext) -> TestResult<()> {
     )
     .await?;
 
-    // Wait for the event to be persisted
-    WaitHelpers::wait_for_event_id(&ctx.pool, event_id.into(), Timeouts::STANDARD).await?;
+    WaitHelpers::wait_for_event_id(&ctx.pool, event_id.into(), 10).await?;
 
     // Verify the event exists in the database
     let event = ctx
