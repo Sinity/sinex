@@ -32,6 +32,7 @@ rusqlite = { version = "0.32", features = [
     "bundled",
 ] }
 console = "0.15"
+quick-xml = "0.38"
 indicatif = "0.17"
 num_cpus = "1.16"
 atty = "0.2"

@@ -478,6 +478,38 @@ impl HistoryDb {
         Ok(())
     }
 
+    /// Back-fill test outputs from JUnit XML for an invocation.
+    ///
+    /// Updates `test_results.output` for tests that currently have NULL output.
+    /// This is used after parsing JUnit XML to populate passing test output,
+    /// since `libtest-json-plus` only includes stdout for failed tests.
+    pub fn backfill_test_outputs(
+        &self,
+        invocation_id: i64,
+        outputs: &std::collections::HashMap<String, String>,
+    ) -> Result<usize> {
+        let mut updated = 0usize;
+        let mut stmt = self.conn.prepare(
+            r"
+            UPDATE test_results
+            SET output = ?1
+            WHERE invocation_id = ?2 AND test_name LIKE ?3 AND output IS NULL
+            ",
+        )?;
+
+        for (test_name, output) in outputs {
+            // The JUnit `name` attribute is the test function path (e.g.,
+            // "repositories::events::tests::test_basic") which matches the
+            // libtest-json `name` field stored in test_results.test_name.
+            // Use suffix match with LIKE to handle potential differences.
+            let pattern = format!("%{test_name}");
+            let rows = stmt.execute(params![output, invocation_id, pattern])?;
+            updated += rows;
+        }
+
+        Ok(updated)
+    }
+
     /// Record system resource metrics for an invocation.
     pub fn record_system_metrics(
         &self,
