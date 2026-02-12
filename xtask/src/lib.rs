@@ -252,6 +252,12 @@ pub async fn run_cli() -> Result<()> {
     if let Some(id) = invocation_id {
         if let Ok(db) = history_db {
             let status = match &result {
+                Ok(res)
+                    if res.status == crate::output::Status::Failed
+                        || res.status == crate::output::Status::Partial =>
+                {
+                    crate::history::InvocationStatus::Failed
+                }
                 Ok(_) => crate::history::InvocationStatus::Success,
                 Err(_) => crate::history::InvocationStatus::Failed,
             };

@@ -2086,6 +2086,37 @@ expression: json
               "subcommands": []
             },
             {
+              "about": "Show failing tests from the most recent test run",
+              "args": [
+                {
+                  "global": false,
+                  "help": null,
+                  "long": "limit",
+                  "name": "limit",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": "Show captured failure output (can be verbose)",
+                  "long": "output",
+                  "name": "output",
+                  "possible_values": [
+                    "true",
+                    "false"
+                  ],
+                  "required": false,
+                  "short": null,
+                  "takes_value": false
+                }
+              ],
+              "hidden": false,
+              "name": "failures",
+              "subcommands": []
+            },
+            {
               "about": null,
               "args": [],
               "hidden": false,

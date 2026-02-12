@@ -76,6 +76,21 @@ impl HistoryDb {
             })?;
         }
 
+        // Detect and recover from corrupted (0-byte) database files.
+        // SQLite treats a 0-byte file as valid (empty DB) but our WAL/schema
+        // setup may leave it in an inconsistent state. Delete and recreate.
+        if path.exists() {
+            if let Ok(meta) = std::fs::metadata(path) {
+                if meta.len() == 0 {
+                    eprintln!(
+                        "⚠️  History database at {} is empty (0 bytes), recreating",
+                        path.display()
+                    );
+                    let _ = std::fs::remove_file(path);
+                }
+            }
+        }
+
         let conn = Connection::open(path).with_context(|| {
             let path_display = path.display();
             format!("failed to open history database: {path_display}")
@@ -83,10 +98,43 @@ impl HistoryDb {
 
         // WAL mode enables concurrent readers during writes (critical for
         // querying test history while a test run is in progress).
+        // busy_timeout prevents SQLITE_BUSY on concurrent access from parallel xtask processes.
         conn.execute_batch(
             "PRAGMA journal_mode=WAL;
              PRAGMA busy_timeout=5000;",
         )?;
+
+        // Verify database integrity on open. If corrupted, delete and recreate.
+        let integrity_ok = conn
+            .query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0))
+            .map(|result| result == "ok")
+            .unwrap_or(false);
+        if !integrity_ok {
+            drop(conn);
+            eprintln!(
+                "⚠️  History database at {} failed integrity check, recreating",
+                path.display()
+            );
+            let _ = std::fs::remove_file(path);
+            // Remove WAL and SHM files too
+            let wal_path = path.with_extension("db-wal");
+            let shm_path = path.with_extension("db-shm");
+            let _ = std::fs::remove_file(&wal_path);
+            let _ = std::fs::remove_file(&shm_path);
+            let conn = Connection::open(path).with_context(|| {
+                format!("failed to recreate history database: {}", path.display())
+            })?;
+            conn.execute_batch(
+                "PRAGMA journal_mode=WAL;
+                 PRAGMA busy_timeout=5000;",
+            )?;
+            let db = Self {
+                conn,
+                job_columns_ensured: AtomicBool::new(false),
+            };
+            db.init_schema()?;
+            return Ok(db);
+        }
 
         let db = Self {
             conn,

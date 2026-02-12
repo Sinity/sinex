@@ -229,13 +229,13 @@ impl HistoryDb {
             r"
             SELECT DISTINCT t1.test_name, t1.package, t1.invocation_id
             FROM test_results t1
-            WHERE t1.status = 'fail'
+            WHERE t1.status = 'failed'
               AND EXISTS (
                 SELECT 1 FROM test_results t2
                 WHERE t2.invocation_id = t1.invocation_id
                   AND t2.test_name = t1.test_name
                   AND t2.attempt > t1.attempt
-                  AND t2.status = 'pass'
+                  AND t2.status = 'passed'
               )
             ORDER BY t1.invocation_id DESC
             LIMIT ?1
@@ -255,11 +255,12 @@ impl HistoryDb {
             SELECT t.test_name, t.package, COALESCE(t.duration_secs, 0) as duration
             FROM test_results t
             INNER JOIN (
-                SELECT MAX(id) as max_inv
-                FROM invocations
-                WHERE command = 'test'
+                SELECT MAX(i.id) as max_inv
+                FROM invocations i
+                WHERE i.command = 'test'
+                  AND EXISTS (SELECT 1 FROM test_results tr WHERE tr.invocation_id = i.id)
             ) latest ON t.invocation_id = latest.max_inv
-            WHERE t.status = 'fail'
+            WHERE t.status = 'failed'
             ORDER BY t.test_name
             LIMIT ?1
             ",
@@ -278,11 +279,12 @@ impl HistoryDb {
             SELECT t.test_name, t.package, COALESCE(t.duration_secs, 0) as duration, t.output
             FROM test_results t
             INNER JOIN (
-                SELECT MAX(id) as max_inv
-                FROM invocations
-                WHERE command = 'test'
+                SELECT MAX(i.id) as max_inv
+                FROM invocations i
+                WHERE i.command = 'test'
+                  AND EXISTS (SELECT 1 FROM test_results tr WHERE tr.invocation_id = i.id)
             ) latest ON t.invocation_id = latest.max_inv
-            WHERE t.status = 'fail'
+            WHERE t.status = 'failed'
             ORDER BY t.test_name
             LIMIT ?1
             ",
