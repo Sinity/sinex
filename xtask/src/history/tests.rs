@@ -249,14 +249,13 @@ impl HistoryDb {
     }
 
     /// Get frequently failing tests.
-    #[allow(dead_code)]
     pub fn get_failing_tests(&self, limit: usize) -> Result<Vec<(String, String, f64)>> {
         let mut stmt = self.conn.prepare(
             r"
             SELECT t.test_name, t.package, COALESCE(t.duration_secs, 0) as duration
             FROM test_results t
             INNER JOIN (
-                SELECT MAX(invocation_id) as max_inv
+                SELECT MAX(id) as max_inv
                 FROM invocations
                 WHERE command = 'test'
             ) latest ON t.invocation_id = latest.max_inv
@@ -270,6 +269,36 @@ impl HistoryDb {
 
         rows.collect::<Result<Vec<_>, _>>()
             .context("failed to collect failing tests")
+    }
+
+    /// Get failing tests from the most recent test run, with captured output.
+    pub fn get_failing_tests_with_output(&self, limit: usize) -> Result<Vec<FailingTest>> {
+        let mut stmt = self.conn.prepare(
+            r"
+            SELECT t.test_name, t.package, COALESCE(t.duration_secs, 0) as duration, t.output
+            FROM test_results t
+            INNER JOIN (
+                SELECT MAX(id) as max_inv
+                FROM invocations
+                WHERE command = 'test'
+            ) latest ON t.invocation_id = latest.max_inv
+            WHERE t.status = 'fail'
+            ORDER BY t.test_name
+            LIMIT ?1
+            ",
+        )?;
+
+        let rows = stmt.query_map([limit], |row| {
+            Ok(FailingTest {
+                test_name: row.get(0)?,
+                package: row.get(1)?,
+                duration_secs: row.get(2)?,
+                output: row.get(3)?,
+            })
+        })?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .context("failed to collect failing tests with output")
     }
 
     /// Get slowest tests by average duration.
@@ -504,6 +533,15 @@ impl HistoryDb {
             breakdown,
         })
     }
+}
+
+/// A failing test from the most recent test run, with captured output.
+#[derive(Debug, Clone, Serialize)]
+pub struct FailingTest {
+    pub test_name: String,
+    pub package: String,
+    pub duration_secs: f64,
+    pub output: Option<String>,
 }
 
 /// Test that is getting slower over time.

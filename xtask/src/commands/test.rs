@@ -347,12 +347,23 @@ impl XtaskCommand for TestCommand {
         let stats = runner.execute(history_ctx)?;
 
         if stats.failed > 0 {
+            // Query per-test failure details from history DB for structured output
+            let failures = history_ctx
+                .and_then(|(db, _)| db.get_failing_tests_with_output(50).ok())
+                .unwrap_or_default();
+
             Ok(CommandResult::failure(crate::output::StructuredError {
                 code: "TEST_REGS".to_string(),
                 message: format!("{} tests failed", stats.failed),
                 location: None,
                 suggestion: None,
             })
+            .with_data(serde_json::json!({
+                "passed": stats.passed,
+                "failed": stats.failed,
+                "ignored": stats.ignored,
+                "failures": failures,
+            }))
             .with_duration(ctx.elapsed()))
         } else {
             Ok(CommandResult::success()

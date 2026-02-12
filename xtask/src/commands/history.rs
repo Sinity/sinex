@@ -85,6 +85,14 @@ pub enum HistoryTestsSubcommand {
         #[arg(long, default_value = "30")]
         runs: usize,
     },
+    /// Show failing tests from the most recent test run
+    Failures {
+        #[arg(long, default_value = "20")]
+        limit: usize,
+        /// Show captured failure output (can be verbose)
+        #[arg(long)]
+        output: bool,
+    },
     Eta,
 }
 
@@ -291,6 +299,9 @@ fn execute_tests(
             package,
             runs,
         } => execute_tests_trends(db, pattern.as_deref(), package.as_deref(), *runs, ctx),
+        HistoryTestsSubcommand::Failures { limit, output } => {
+            execute_tests_failures(db, *limit, *output, ctx)
+        }
         HistoryTestsSubcommand::Eta => execute_tests_eta(db, ctx),
     }
 }
@@ -495,6 +506,57 @@ fn execute_diagnostics(
 
     Ok(CommandResult::success()
         .with_message(format!("Found {} diagnostics", diagnostics.len()))
+        .with_duration(ctx.elapsed()))
+}
+
+fn execute_tests_failures(
+    db: &HistoryDb,
+    limit: usize,
+    show_output: bool,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let tests = db.get_failing_tests_with_output(limit)?;
+
+    if ctx.is_human() {
+        if tests.is_empty() {
+            println!("No failing tests in the most recent run.");
+        } else {
+            let mut builder = Builder::new();
+            builder.push_record(["TEST", "PACKAGE", "DURATION"]);
+            for test in &tests {
+                let display_name = if test.test_name.len() > 48 {
+                    format!("...{}", &test.test_name[test.test_name.len() - 45..])
+                } else {
+                    test.test_name.clone()
+                };
+                builder.push_record([
+                    display_name,
+                    test.package.clone(),
+                    format!("{:.3}s", test.duration_secs),
+                ]);
+            }
+            let mut table = builder.build();
+            table.with(Style::rounded());
+            println!("{table}");
+
+            if show_output {
+                println!();
+                for test in &tests {
+                    if let Some(output) = &test.output {
+                        println!("── {} ({}) ──", test.test_name, test.package);
+                        println!("{output}");
+                        println!();
+                    }
+                }
+            }
+        }
+    } else {
+        let json = serde_json::to_string_pretty(&tests)?;
+        println!("{json}");
+    }
+
+    Ok(CommandResult::success()
+        .with_message(format!("Found {} failing tests", tests.len()))
         .with_duration(ctx.elapsed()))
 }
 
