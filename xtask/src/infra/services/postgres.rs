@@ -44,7 +44,14 @@ impl PostgresManager {
 
         let status = self
             .pg_command("initdb")
-            .args(["--auth=trust", "--no-locale", "--encoding=UTF8", "-D"])
+            .args([
+                "--auth=trust",
+                "--no-locale",
+                "--encoding=UTF8",
+                "-U",
+                "postgres",
+                "-D",
+            ])
             .arg(&self.config.data_dir)
             .stdout(if verbose {
                 Stdio::inherit()
