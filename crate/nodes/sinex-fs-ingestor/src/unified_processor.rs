@@ -24,7 +24,7 @@ use sinex_node_sdk::{
     NodeResult, SinexError,
 };
 use sinex_primitives::{
-    domain::{HostName, SanitizedPath},
+    domain::{HostName, RecordedPath, SanitizedPath},
     events::{enums::FileModificationType, EventPayload},
     temporal::Timestamp,
     units::Bytes,
@@ -1068,9 +1068,9 @@ async fn capture_material_from_file_inner(
     Ok(material_id)
 }
 
-fn sanitize_path(path: &Path) -> NodeResult<SanitizedPath> {
-    SanitizedPath::from_str_validated(&path.to_string_lossy())
-        .map_err(|e| SinexError::validation(format!("Path validation failed: {e}")))
+fn sanitize_path(path: &Path) -> NodeResult<RecordedPath> {
+    RecordedPath::from_observed(path.to_string_lossy().to_string())
+        .map_err(|e| SinexError::validation(format!("Path recording failed: {e}")))
 }
 
 fn file_permissions(metadata: &StdMetadata) -> Option<u32> {

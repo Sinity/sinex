@@ -347,6 +347,11 @@ define_validated_string_type!(
     SanitizedPath
 );
 
+define_validated_string_type!(
+    #[doc = "A path recorded from observational data (filesystem events, shell CWDs). Preserved verbatim except null bytes."]
+    RecordedPath
+);
+
 // Semantic identifiers
 define_string_type!(
     #[doc = "Service identification"]
@@ -640,6 +645,61 @@ impl FromStr for SanitizedPath {
     }
 }
 
+impl RecordedPath {
+    /// Create a new RecordedPath, rejecting only null bytes
+    pub fn from_observed(path: impl Into<String>) -> Result<Self, String> {
+        let s = path.into();
+        if s.contains('\0') {
+            return Err("Recorded path cannot contain null bytes".into());
+        }
+        if s.is_empty() {
+            return Err("Recorded path cannot be empty".into());
+        }
+        Ok(Self(Cow::Owned(s)))
+    }
+
+    /// Create a validated RecordedPath from a string
+    pub fn from_str_validated(s: &str) -> Result<Self, String> {
+        Self::from_observed(s)
+    }
+}
+
+impl FromStr for RecordedPath {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::from_str_validated(s)
+    }
+}
+
+impl From<&std::path::Path> for RecordedPath {
+    fn from(path: &std::path::Path) -> Self {
+        // Use from_observed which validates
+        Self::from_observed(path.to_string_lossy().to_string())
+            .expect("Path should not contain null bytes")
+    }
+}
+
+impl From<std::path::PathBuf> for RecordedPath {
+    fn from(path: std::path::PathBuf) -> Self {
+        Self::from(&path as &std::path::Path)
+    }
+}
+
+impl From<&str> for RecordedPath {
+    fn from(s: &str) -> Self {
+        Self::from_observed(s)
+            .expect("RecordedPath::from(&str) value should not contain null bytes")
+    }
+}
+
+impl From<String> for RecordedPath {
+    fn from(s: String) -> Self {
+        Self::from_observed(s)
+            .expect("RecordedPath::from(String) value should not contain null bytes")
+    }
+}
+
 // ─────────────────────────────────────────────────────────────
 // SQLx Feature Support
 // ─────────────────────────────────────────────────────────────
@@ -649,8 +709,9 @@ mod sqlx_impls {
     use super::{
         AnnexKey, BranchName, CommandText, CommitHash, ConsumerGroup, ConsumerName, EntityTypeName,
         EventSource, EventType, GlobPattern, HostName, Hostname, IngestorName, InstanceId,
-        IpAddress, JobId, NatsSubject, NodeId, ProcessorName, RegexPattern, RelationType,
-        RemoteName, SanitizedPath, SchemaName, SchemaVersion, ServiceName, ShellName, UserId,
+        IpAddress, JobId, NatsSubject, NodeId, ProcessorName, RecordedPath, RegexPattern,
+        RelationType, RemoteName, SanitizedPath, SchemaName, SchemaVersion, ServiceName, ShellName,
+        UserId,
     };
 
     // Register string types without validation
@@ -682,6 +743,7 @@ mod sqlx_impls {
 
     // Register validated string types
     impl_sqlx_for_validated_string_type!(SanitizedPath);
+    impl_sqlx_for_validated_string_type!(RecordedPath);
     impl_sqlx_for_validated_string_type!(AnnexKey);
     impl_sqlx_for_validated_string_type!(NatsSubject);
 }

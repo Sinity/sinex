@@ -14,7 +14,7 @@ use xtask::sandbox::prelude::*;
 
 // Additional imports for specific payload types
 use sinex_db::models::event::SourceMaterial;
-use sinex_primitives::domain::{SanitizedPath, ShellName};
+use sinex_primitives::domain::{RecordedPath, ShellName};
 use sinex_primitives::events::enums::FileModificationType;
 use sinex_primitives::events::payloads::{
     AtuinCommandExecutedPayload, ClipboardCopiedPayload, FileCreatedPayload, FileDeletedPayload,
@@ -30,8 +30,8 @@ async fn ensure_material(ctx: &TestContext, label: &str) -> TestResult<Id<Source
     Ok(material_id)
 }
 
-fn sp(path: impl AsRef<str>) -> SanitizedPath {
-    SanitizedPath::from_str_validated(path.as_ref()).expect("test paths must be valid")
+fn rp(path: impl AsRef<str>) -> RecordedPath {
+    RecordedPath::from_observed(path.as_ref()).expect("test paths must be valid")
 }
 
 // =============================================================================
@@ -182,7 +182,7 @@ async fn test_event_type_hierarchical_structure() -> TestResult<()> {
 #[sinex_test]
 async fn test_filesystem_payload_system(ctx: TestContext) -> TestResult<()> {
     // Test FileCreatedPayload
-    let file_payload = FileCreatedPayload::test_default(sp("/test/file.txt"))
+    let file_payload = FileCreatedPayload::test_default(rp("/test/file.txt"))
         .with_size(1024u64)
         .with_permissions(0o644u32);
 
@@ -202,7 +202,7 @@ async fn test_filesystem_payload_system(ctx: TestContext) -> TestResult<()> {
     assert_eq!(file_event.payload.path.as_str(), "/test/file.txt");
 
     // Test FileModifiedPayload
-    let modified_payload = FileModifiedPayload::test_default(sp("/test/modified.txt"))
+    let modified_payload = FileModifiedPayload::test_default(rp("/test/modified.txt"))
         .with_size(2048u64)
         .with_modification_type(FileModificationType::Content);
 
@@ -238,7 +238,7 @@ async fn test_shell_payload_system(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
     // Test KittyCommandExecutedPayload
     let kitty_payload = KittyCommandExecutedPayload::test_default("ls -la")
-        .with_working_directory(Some(sp("/home/user")))
+        .with_working_directory(Some(rp("/home/user")))
         .with_exit_status(Some(ExitCode::SUCCESS))
         .with_execution_time_ms(150)
         .with_shell_type(Some(ShellName::new("bash".to_string())));
@@ -256,7 +256,7 @@ async fn test_shell_payload_system(ctx: TestContext) -> TestResult<()> {
     assert_eq!(kitty_event.payload.command.as_str(), "ls -la");
 
     // Test AtuinCommandExecutedPayload
-    let atuin_payload = AtuinCommandExecutedPayload::test_default("git status", sp("/repo"))
+    let atuin_payload = AtuinCommandExecutedPayload::test_default("git status", rp("/repo"))
         .with_exit_code(0)
         .with_duration_ns(2000000)
         .with_hostname("dev-machine");
@@ -419,7 +419,7 @@ async fn test_concurrent_event_creation(ctx: TestContext) -> TestResult<()> {
     // Publish multiple typed events through the pipeline
     for i in 0..5 {
         // Filesystem event
-        let fs_payload = FileCreatedPayload::test_default(sp(format!("/test/file{i}.txt")))
+        let fs_payload = FileCreatedPayload::test_default(rp(format!("/test/file{i}.txt")))
             .with_size((i as u64) * 1024);
         ctx.publish(fs_payload).await?;
 
@@ -448,7 +448,7 @@ async fn test_event_id_uniqueness_concurrent(ctx: TestContext) -> TestResult<()>
     // Publish 30 events through the pipeline (10 batches of 3)
     for i in 0..10 {
         for j in 0..3 {
-            let payload = FileCreatedPayload::test_default(sp(format!("/test/file{i}_{j}.txt")));
+            let payload = FileCreatedPayload::test_default(rp(format!("/test/file{i}_{j}.txt")));
             ctx.publish(payload).await?;
         }
     }
@@ -483,7 +483,7 @@ async fn test_event_id_uniqueness_concurrent(ctx: TestContext) -> TestResult<()>
 #[sinex_test]
 async fn test_payload_validation_system(ctx: TestContext) -> TestResult<()> {
     // Test that valid payloads work correctly
-    let valid_payload = FileCreatedPayload::test_default(sp("/valid/path.txt"))
+    let valid_payload = FileCreatedPayload::test_default(rp("/valid/path.txt"))
         .with_size(1024u64)
         .with_permissions(0o644u32);
 
@@ -513,9 +513,9 @@ async fn test_payload_validation_system(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 async fn test_event_type_constants_consistency(ctx: TestContext) -> TestResult<()> {
     // Test that the EventPayload macro generates consistent event types
-    let file_created = FileCreatedPayload::test_default(sp("/test"));
-    let file_modified = FileModifiedPayload::test_default(sp("/test"));
-    let file_deleted = FileDeletedPayload::test_default(sp("/test"));
+    let file_created = FileCreatedPayload::test_default(rp("/test"));
+    let file_modified = FileModifiedPayload::test_default(rp("/test"));
+    let file_deleted = FileDeletedPayload::test_default(rp("/test"));
 
     // Create events and check their types
     let fs_material = ensure_material(&ctx, "event-constants-fs").await?;
@@ -537,7 +537,7 @@ async fn test_event_type_constants_consistency(ctx: TestContext) -> TestResult<(
 
     // Test shell events too
     let kitty_executed = KittyCommandExecutedPayload::test_default("test");
-    let atuin_executed = AtuinCommandExecutedPayload::test_default("test", sp("/"));
+    let atuin_executed = AtuinCommandExecutedPayload::test_default("test", rp("/"));
 
     let shell_material = ensure_material(&ctx, "event-constants-shell").await?;
     let shell_prov = Provenance::from_material(shell_material, 0, None, None);

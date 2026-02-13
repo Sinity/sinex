@@ -1,5 +1,5 @@
 use serde_json::{json, Value as JsonValue};
-use sinex_primitives::domain::SanitizedPath;
+use sinex_primitives::domain::RecordedPath;
 use sinex_primitives::events::payloads::{FileCreatedPayload, KittyCommandExecutedPayload};
 use sinex_primitives::events::{EventId, SourceMaterial};
 use sinex_primitives::Id;
@@ -9,7 +9,7 @@ use xtask::sandbox::sinex_test;
 #[sinex_test]
 fn material_event_builder_sets_fields() -> TestResult<()> {
     let payload = FileCreatedPayload::test_default(
-        SanitizedPath::from_str_validated("/test.txt").map_err(|e| color_eyre::eyre::eyre!(e))?,
+        RecordedPath::from_observed("/test.txt").map_err(|e| color_eyre::eyre::eyre!(e))?,
     );
     let event = Event::builder(payload)
         .from_material(Id::<SourceMaterial>::new(), 42)

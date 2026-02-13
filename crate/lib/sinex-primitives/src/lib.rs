@@ -28,7 +28,7 @@ pub mod buffers {
 }
 
 pub mod prelude {
-    pub use crate::domain::{EventSource, EventType, HostName};
+    pub use crate::domain::{EventSource, EventType, HostName, RecordedPath};
     pub use crate::environment::SinexEnvironment;
     pub use crate::error::{Result, SinexError};
     pub use crate::events::builder::{OffsetKind, Provenance};
@@ -41,7 +41,7 @@ pub mod prelude {
 
 // Re-export commonly used types at crate root
 pub use constants::filesystem;
-pub use domain::{EventSource, EventType, HostName, SanitizedPath};
+pub use domain::{EventSource, EventType, HostName, RecordedPath, SanitizedPath};
 pub use environment::{environment, SinexEnvironment};
 pub use error::{Result, SinexError};
 pub use events::builder::{OffsetKind, Provenance};

@@ -117,7 +117,7 @@ pub fn event_fixture(
 pub mod strategies {
     //! Property testing strategies for domain types.
 
-    use crate::domain::{CommandText, HostName, SanitizedPath, ShellName};
+    use crate::domain::{CommandText, HostName, RecordedPath, SanitizedPath, ShellName};
     use crate::events::payloads::{
         FileCreatedPayload, HyprlandWindowFocusedPayload, KittyCommandExecutedPayload,
         ProcessHeartbeatPayload,
@@ -208,7 +208,7 @@ pub mod strategies {
             proptest::option::of(0u32..0o777),
         )
             .prop_map(|(path, size, created_at, permissions)| FileCreatedPayload {
-                path,
+                path: RecordedPath::from_observed(path.as_str()).unwrap(),
                 size,
                 created_at,
                 permissions,
@@ -238,7 +238,8 @@ pub mod strategies {
                 )| {
                     KittyCommandExecutedPayload {
                         command,
-                        working_directory,
+                        working_directory: working_directory
+                            .map(|p| RecordedPath::from_observed(p.as_str()).unwrap()),
                         exit_status,
                         execution_time_ms,
                         shell_type,

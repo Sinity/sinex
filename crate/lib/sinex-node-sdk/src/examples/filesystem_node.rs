@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use sinex_primitives::events::payloads::{DirDiscoveredPayload, FileDiscoveredPayload};
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::SanitizedPath;
+use sinex_primitives::{RecordedPath, SanitizedPath};
 use std::collections::HashMap;
 use tokio::fs;
 use tracing::{debug, info, warn};
@@ -124,9 +124,8 @@ impl FilesystemNode {
                     );
 
                     let payload = FileDiscoveredPayload {
-                        path: SanitizedPath::new_unchecked(
-                            entry_path.to_string_lossy().to_string(),
-                        ),
+                        path: RecordedPath::from_observed(entry_path.to_string_lossy().to_string())
+                            .expect("Path should not contain null bytes"),
                         size: metadata.len(),
                         modified_at: modified_time,
                         permissions: Some(metadata.permissions().mode()),
@@ -151,9 +150,8 @@ impl FilesystemNode {
                     );
 
                     let payload = DirDiscoveredPayload {
-                        path: SanitizedPath::new_unchecked(
-                            entry_path.to_string_lossy().to_string(),
-                        ),
+                        path: RecordedPath::from_observed(entry_path.to_string_lossy().to_string())
+                            .expect("Path should not contain null bytes"),
                         modified_at: modified_time,
                     };
 

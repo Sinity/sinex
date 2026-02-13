@@ -7,7 +7,7 @@ use sinex_primitives::domain::{EventSource, EventType, SchemaVersion};
 use sinex_primitives::{Id, Timestamp, Ulid};
 
 use serde::{Deserialize, Serialize};
-use sqlx::{Executor, FromRow, PgPool, Postgres, QueryBuilder, Transaction};
+use sqlx::{Executor, FromRow, PgPool, Postgres, QueryBuilder, Row, Transaction};
 use tracing::instrument;
 use uuid::Uuid;
 
@@ -1952,6 +1952,70 @@ impl<'a, 't> EventRepositoryTx<'a, 't> {
                 .map(|row| (row.live_event_id, row.archived_event_id))
                 .collect()
         })
+    }
+
+    pub async fn cascade_integrity_violations_paginated(
+        &mut self,
+        table_name: &str,
+        limit: i32,
+        offset: i32,
+    ) -> DbResult<Vec<(Ulid, Ulid)>> {
+        #[derive(sqlx::FromRow)]
+        struct ViolationRow {
+            live_event_id: Ulid,
+            archived_event_id: Ulid,
+        }
+
+        let rows = sqlx::query_as::<_, ViolationRow>(
+            "SELECT live_event_id, archived_event_id FROM core.cascade_find_integrity_violations_paginated($1, $2, $3)"
+        )
+        .bind(table_name)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&mut **self.tx)
+        .await
+        .map_err(|e| db_error(e, "find cascade integrity violations paginated"))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| (row.live_event_id, row.archived_event_id))
+            .collect())
+    }
+
+    pub async fn get_event_dependencies(
+        &mut self,
+        table_name: &str,
+    ) -> DbResult<Vec<(Ulid, Vec<Ulid>)>> {
+        let query = format!(
+            r#"
+            SELECT
+                id::uuid as event_id,
+                parent_ids::uuid[] as parent_ids
+            FROM {}
+            "#,
+            table_name
+        );
+
+        let rows = sqlx::query(&query)
+            .fetch_all(&mut **self.tx)
+            .await
+            .map_err(|e| db_error(e, "get event dependencies"))?;
+
+        let mut result = Vec::new();
+        for row in rows {
+            let event_id: Uuid = row
+                .try_get("event_id")
+                .map_err(|e| db_error(e, "parse event_id"))?;
+            let parent_ids: Vec<Uuid> = row
+                .try_get("parent_ids")
+                .map_err(|e| db_error(e, "parse parent_ids"))?;
+            result.push((
+                Ulid::from(event_id),
+                parent_ids.into_iter().map(Ulid::from).collect(),
+            ));
+        }
+
+        Ok(result)
     }
 
     pub async fn cleanup_cascade_session(&mut self, table_name: &str) -> DbResult<()> {

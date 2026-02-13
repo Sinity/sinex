@@ -3,7 +3,7 @@
 //! Note: Payloads are source-specific. A command from Kitty is different
 //! from a command from Atuin, even if they have similar fields.
 
-use crate::domain::{CommandText, HostName, SanitizedPath, ShellName};
+use crate::domain::{CommandText, HostName, RecordedPath, ShellName};
 use crate::events::enums::{ScanType, TerminalType};
 use crate::units::{ExitCode, Nanoseconds, ProcessId};
 use crate::Timestamp;
@@ -17,7 +17,7 @@ define_event_payload! {
     /// Kitty command executed event emitted by shell integration.
     pub struct KittyCommandExecutedPayload {
         command: CommandText,
-        working_directory: Option<SanitizedPath>,
+        working_directory: Option<RecordedPath>,
         exit_status: Option<ExitCode>,
         execution_time_ms: Option<u64>,
         shell_type: Option<ShellName>,
@@ -30,7 +30,7 @@ define_event_payload! {
     /// Kitty command completion event.
     pub struct KittyCommandCompletedPayload {
         command: CommandText,
-        working_directory: SanitizedPath,
+        working_directory: RecordedPath,
         exit_status: ExitCode,
         duration_ms: u64,
         shell_pid: ProcessId,
@@ -47,7 +47,7 @@ define_event_payload! {
         window_id: String,
         tab_id: String,
         shell_type: ShellName,
-        working_directory: SanitizedPath,
+        working_directory: RecordedPath,
         env_vars: Option<HashMap<String, String>>,
     } => ("terminal.kitty", "session.started");
 }
@@ -68,7 +68,7 @@ define_event_payload! {
     /// Atuin command execution captured from history ingestion.
     pub struct AtuinCommandExecutedPayload {
         command_string: CommandText,
-        cwd: SanitizedPath,
+        cwd: RecordedPath,
         exit_code: ExitCode,
         duration_ns: Nanoseconds,
         atuin_history_id: String,
@@ -99,7 +99,7 @@ impl KittyCommandExecutedPayload {
 
 #[cfg(any(test, feature = "testing"))]
 impl AtuinCommandExecutedPayload {
-    pub fn test_default(command: impl Into<String>, cwd: impl Into<SanitizedPath>) -> Self {
+    pub fn test_default(command: impl Into<String>, cwd: impl Into<RecordedPath>) -> Self {
         Self {
             command_string: command.into().into(),
             cwd: cwd.into(),

@@ -11,7 +11,7 @@ use sinex_db::{
     acquire_with_timeout, create_pool_with_config, DynamicPayload, Event, Id, JsonValue,
     PoolConfig, Provenance, SinexError, Timestamp, Ulid,
 };
-use sinex_primitives::domain::{EventSource, EventType, SanitizedPath};
+use sinex_primitives::domain::{EventSource, EventType, RecordedPath};
 use sinex_primitives::events::payloads::{FileCreatedPayload, KittyCommandExecutedPayload};
 use sinex_primitives::{Pagination, Seconds};
 use xtask::sandbox::prelude::*;
@@ -32,8 +32,7 @@ async fn test_event_persistence_basics(ctx: TestContext) -> TestResult<()> {
     let material_id = ctx.create_source_material(Some("db-test-material")).await?;
 
     let mut payload = FileCreatedPayload::test_default(
-        SanitizedPath::from_str_validated("/tmp/test.txt")
-            .map_err(|e| color_eyre::eyre::eyre!(e))?,
+        RecordedPath::from_observed("/tmp/test.txt").map_err(|e| color_eyre::eyre::eyre!(e))?,
     );
     payload.size = 1024;
     payload.permissions = Some(0o644);
@@ -70,7 +69,7 @@ async fn test_event_queries(ctx: TestContext) -> TestResult<()> {
         .await?;
 
     let fs_payload = FileCreatedPayload::test_default(
-        SanitizedPath::from_str_validated("/tmp/1.txt").map_err(|e| color_eyre::eyre::eyre!(e))?,
+        RecordedPath::from_observed("/tmp/1.txt").map_err(|e| color_eyre::eyre::eyre!(e))?,
     );
     let fs_event = Event::new(
         fs_payload,
