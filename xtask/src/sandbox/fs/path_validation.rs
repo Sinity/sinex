@@ -151,20 +151,21 @@ fn validate_not_system_critical(path: &Utf8Path) -> PathValidationResult<()> {
 
     // List of critical system paths that tests should never access
     let forbidden_paths = [
-        "/etc",
-        "/bin",
-        "/sbin",
-        "/usr/bin",
-        "/usr/sbin",
-        "/boot",
-        "/dev",
-        "/proc",
-        "/sys",
-        "/var/lib",
-        "/var/log",
-        "/opt",
-        "/root",
-        "/home", // Don't allow direct access to user homes
+        "/etc",       // System configuration files
+        "/bin",       // Essential system binaries
+        "/sbin",      // System administration binaries
+        "/usr/bin",   // User binaries
+        "/usr/sbin",  // System binaries
+        "/boot",      // Boot partition and bootloader files
+        "/dev",       // Device nodes
+        "/proc",      // Linux proc filesystem
+        "/sys",       // Linux sysfs
+        "/var/lib",   // System state data
+        "/var/log",   // System logs
+        "/opt",       // Optional software packages
+        "/root",      // Root user home directory
+        "/home",      // User home directories
+        "/nix/store", // NixOS immutable package store
     ];
 
     for forbidden in &forbidden_paths {

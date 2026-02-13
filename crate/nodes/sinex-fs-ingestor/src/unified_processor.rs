@@ -623,6 +623,14 @@ async fn watch_path(root: String, ctx: WatchContext) -> NodeResult<()> {
     // RESOURCE-001: Estimate watch count before committing kernel resources
     let estimated = estimate_watch_count(&canonical, ctx.max_depth);
     if estimated > ctx.max_watches {
+        // TODO(audit-13): Fall back to periodic polling mode instead of rejecting.
+        // When inotify watches would exceed the limit, switch to PollWatcher from
+        // the `notify` crate (notify::PollWatcher) with a configurable interval
+        // (e.g. SINEX_FS_POLL_INTERVAL_SECS, default 5s). This trades latency for
+        // coverage — polls are slower but don't consume kernel inotify descriptors.
+        // Implementation: construct PollWatcher here, use same event channel (tx),
+        // log a warning about degraded mode. NixOS users should also increase
+        // fs.inotify.max_user_watches via boot.kernel.sysctl.
         return Err(SinexError::validation(format!(
             "Watch path '{}' would create ~{} inotify watches, exceeding limit of {}. \
              Reduce directory depth or increase max_watches config.",

@@ -45,9 +45,10 @@ use tracing::{debug, error, info, warn};
 
 use crate::watcher_lifecycle::{WatcherHealth, WatcherLifecycle};
 
-/// Maximum line length from journalctl output (256 KB).
+/// Default maximum line length from journalctl output (256 KB).
 /// Protects against memory exhaustion from corrupted/malicious journal entries.
-const MAX_JOURNAL_LINE_BYTES: usize = 256 * 1024;
+/// Can be overridden via SINEX_JOURNAL_MAX_LINE_BYTES environment variable.
+const DEFAULT_MAX_JOURNAL_LINE_BYTES: usize = 256 * 1024;
 
 /// Convert local `SystemdUnitType` to core `SystemdUnitType`
 fn convert_unit_type(local: SystemdUnitType) -> CoreSystemdUnitType {
@@ -84,6 +85,7 @@ pub struct UnifiedJournalWatcher {
     systemd_enabled: bool,
     systemd_units: HashSet<String>,
     last_cursor: Option<String>,
+    max_line_bytes: usize,
     // Lifecycle tracking
     cancel_token: CancellationToken,
     last_event_time: Arc<Mutex<Option<Instant>>>,
@@ -121,6 +123,14 @@ impl UnifiedJournalWatcher {
             ));
         }
 
+        // Load max line bytes from environment or use default
+        let max_line_bytes = std::env::var("SINEX_JOURNAL_MAX_LINE_BYTES")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(DEFAULT_MAX_JOURNAL_LINE_BYTES);
+
+        info!("Journal max line size configured: {} bytes", max_line_bytes);
+
         // Load last cursor if cursor file exists
         let last_cursor = if let Some(ref cursor_file) = journal_config.cursor_file {
             tokio::fs::read_to_string(cursor_file)
@@ -141,6 +151,7 @@ impl UnifiedJournalWatcher {
             systemd_enabled,
             systemd_units: HashSet::new(),
             last_cursor,
+            max_line_bytes,
             cancel_token: CancellationToken::new(),
             last_event_time: Arc::new(Mutex::new(None)),
             event_count: Arc::new(AtomicU64::new(0)),
@@ -451,11 +462,35 @@ impl UnifiedJournalWatcher {
                 Ok(0) => break, // EOF
                 Ok(_) => {
                     // Guard against oversized lines from corrupted journal
-                    if line.len() > MAX_JOURNAL_LINE_BYTES {
+                    if line.len() > self.max_line_bytes {
+                        // Extract cursor and unit name for DLQ metadata if possible
+                        let (cursor, unit) = line
+                            .trim()
+                            .parse::<serde_json::Value>()
+                            .ok()
+                            .and_then(|entry| {
+                                let cursor = entry
+                                    .get("__CURSOR")
+                                    .and_then(|v| v.as_str())
+                                    .map(String::from);
+                                let unit = entry
+                                    .get("_SYSTEMD_UNIT")
+                                    .and_then(|v| v.as_str())
+                                    .map(String::from);
+                                cursor.map(|c| (c, unit))
+                            })
+                            .unwrap_or_else(|| ("unknown".to_string(), None));
+
+                        // TODO: Route to DLQ when NatsPublisher is available in watcher context
+                        // DLQ entry should include: event_id, error="journal_line_too_large",
+                        // metadata with original_size, limit, cursor, journal_unit
                         warn!(
                             line_bytes = line.len(),
-                            limit = MAX_JOURNAL_LINE_BYTES,
-                            "Skipping oversized journal line"
+                            limit = self.max_line_bytes,
+                            cursor = %cursor,
+                            journal_unit = ?unit,
+                            reason = "journal_line_too_large",
+                            "Oversized journal line - would route to DLQ (not yet integrated)"
                         );
                         continue;
                     }

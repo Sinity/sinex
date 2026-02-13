@@ -1,29 +1,65 @@
 //! Secret redaction for sensitive information in captured text.
 //!
-//! Provides regex-based pattern matching to redact credentials, API keys, tokens,
-//! and other secrets from strings before they are stored as events. Used by both
-//! terminal-ingestor (command history) and system-ingestor (journal entries).
+//! Two redaction interfaces are provided:
+//!
+//! - [`SecretRedactor`] — zero-sized struct with **static** methods and
+//!   hardcoded `lazy_static!` patterns.  All existing call-sites continue
+//!   to work unchanged.
+//!
+//! - [`ConfigurableRedactor`] — **instance-based** redactor constructed from
+//!   a [`RedactionConfig`](crate::redaction_config::RedactionConfig).  Allows
+//!   runtime customisation of patterns, title-vs-content separation, and
+//!   optional statistics tracking.
 #![allow(clippy::expect_used)] // All expects are on compile-time constant regex patterns
 
 use lazy_static::lazy_static;
 use regex::Regex;
 use std::borrow::Cow;
 
-/// Statistics from a redaction pass, tracking which patterns matched
-#[derive(Debug, Default)]
+use crate::redaction_config::RedactionConfig;
+
+// ---------------------------------------------------------------------------
+// RedactionStats
+// ---------------------------------------------------------------------------
+
+/// Statistics from a redaction pass, tracking which patterns matched.
+#[derive(Debug, Default, Clone)]
 pub struct RedactionStats {
-    /// Names of patterns that matched during redaction
+    /// Names of patterns that matched during redaction.
     pub matched_patterns: Vec<&'static str>,
 }
 
 impl RedactionStats {
-    /// Returns true if any secrets were redacted
+    /// Returns true if any secrets were redacted.
     pub fn any_redacted(&self) -> bool {
         !self.matched_patterns.is_empty()
     }
 }
 
+/// Owned variant of [`RedactionStats`] used by [`ConfigurableRedactor`]
+/// where pattern names are not `&'static str`.
+#[derive(Debug, Default, Clone)]
+pub struct OwnedRedactionStats {
+    /// Names of patterns that matched during redaction.
+    pub matched_patterns: Vec<String>,
+}
+
+impl OwnedRedactionStats {
+    /// Returns true if any secrets were redacted.
+    pub fn any_redacted(&self) -> bool {
+        !self.matched_patterns.is_empty()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SecretRedactor (static API — unchanged)
+// ---------------------------------------------------------------------------
+
 /// Redactor for sensitive information in captured text (commands, log messages, etc.)
+///
+/// All methods are **static** (associated functions) and use hardcoded
+/// `lazy_static!` patterns.  This API exists for backward-compatibility; new
+/// consumers should prefer [`ConfigurableRedactor`].
 pub struct SecretRedactor;
 
 struct RedactionPattern {
@@ -150,5 +186,264 @@ impl SecretRedactor {
         }
 
         (result, stats)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ConfigurableRedactor (instance-based API)
+// ---------------------------------------------------------------------------
+
+/// A compiled redaction pattern for use by [`ConfigurableRedactor`].
+struct CompiledPattern {
+    name: String,
+    regex: Regex,
+    replacement: String,
+}
+
+/// Instance-based redactor that uses patterns from a [`RedactionConfig`].
+///
+/// Unlike [`SecretRedactor`], this struct holds its own compiled pattern set
+/// and can be configured at runtime.
+pub struct ConfigurableRedactor {
+    enabled: bool,
+    content_patterns: Vec<CompiledPattern>,
+    title_patterns: Vec<CompiledPattern>,
+    track_stats: bool,
+}
+
+impl ConfigurableRedactor {
+    /// Create a new redactor from the given configuration.
+    ///
+    /// All regex patterns in the config are compiled eagerly.  Returns an error
+    /// if any pattern fails to compile.
+    pub fn new(config: &RedactionConfig) -> Result<Self, String> {
+        let content_patterns = Self::compile_patterns(&config.patterns)?;
+        let title_patterns = Self::compile_patterns(&config.title_patterns)?;
+        Ok(Self {
+            enabled: config.enabled,
+            content_patterns,
+            title_patterns,
+            track_stats: config.track_stats,
+        })
+    }
+
+    /// Create a no-op redactor that passes all input through unchanged.
+    #[must_use]
+    pub fn noop() -> Self {
+        Self {
+            enabled: false,
+            content_patterns: Vec::new(),
+            title_patterns: Vec::new(),
+            track_stats: false,
+        }
+    }
+
+    /// Create a redactor with all reference/default patterns.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any reference pattern fails to compile (which would be a bug
+    /// in the hardcoded patterns).
+    #[must_use]
+    pub fn with_defaults() -> Self {
+        Self::new(&RedactionConfig::with_defaults())
+            .expect("reference redaction patterns must compile")
+    }
+
+    /// Redact sensitive content using the content pattern set.
+    #[must_use]
+    pub fn redact_content<'a>(&self, input: &'a str) -> Cow<'a, str> {
+        self.redact_content_with_stats(input).0
+    }
+
+    /// Redact content and return owned statistics about which patterns matched.
+    #[must_use]
+    pub fn redact_content_with_stats<'a>(
+        &self,
+        input: &'a str,
+    ) -> (Cow<'a, str>, OwnedRedactionStats) {
+        self.apply_patterns(input, &self.content_patterns)
+    }
+
+    /// Redact a window/tab title using the title pattern set.
+    #[must_use]
+    pub fn redact_title<'a>(&self, input: &'a str) -> Cow<'a, str> {
+        self.apply_patterns(input, &self.title_patterns).0
+    }
+
+    /// Heuristic check for highly sensitive content (private keys, credential
+    /// JSON, etc.).
+    #[must_use]
+    pub fn is_highly_sensitive(&self, input: &str) -> bool {
+        if !self.enabled {
+            return false;
+        }
+        // Check for private key content
+        if input.contains("-----BEGIN") && input.contains("PRIVATE KEY") {
+            return true;
+        }
+        // Check for JSON with obvious credential fields
+        if input.contains("\"password\"") || input.contains("\"secret\"") {
+            return true;
+        }
+        false
+    }
+
+    // -- private helpers --
+
+    fn compile_patterns(
+        patterns: &[crate::redaction_config::RedactionPattern],
+    ) -> Result<Vec<CompiledPattern>, String> {
+        patterns
+            .iter()
+            .map(|p| {
+                let regex =
+                    Regex::new(&p.regex).map_err(|e| format!("pattern '{}': {e}", p.name))?;
+                Ok(CompiledPattern {
+                    name: p.name.clone(),
+                    regex,
+                    replacement: p.replacement.clone(),
+                })
+            })
+            .collect()
+    }
+
+    fn apply_patterns<'a>(
+        &self,
+        input: &'a str,
+        patterns: &[CompiledPattern],
+    ) -> (Cow<'a, str>, OwnedRedactionStats) {
+        if !self.enabled {
+            return (Cow::Borrowed(input), OwnedRedactionStats::default());
+        }
+
+        let mut result = Cow::Borrowed(input);
+        let mut stats = OwnedRedactionStats::default();
+
+        for pattern in patterns {
+            if pattern.regex.is_match(&result) {
+                let redacted = pattern
+                    .regex
+                    .replace_all(&result, pattern.replacement.as_str());
+                result = Cow::Owned(redacted.into_owned());
+                if self.track_stats {
+                    stats.matched_patterns.push(pattern.name.clone());
+                }
+            }
+        }
+
+        (result, stats)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use xtask::sandbox::prelude::*;
+
+    #[sinex_test]
+    async fn configurable_redactor_with_defaults_matches_static() -> TestResult<()> {
+        let cr = ConfigurableRedactor::with_defaults();
+        let inputs = [
+            "export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE",
+            "git clone https://user:password123@github.com/repo.git",
+            "GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "./deploy --token abcdef123456 --verbose",
+        ];
+        for input in inputs {
+            // ConfigurableRedactor content redaction should produce the same
+            // result as the static SecretRedactor for overlapping patterns.
+            let static_result = SecretRedactor::redact(input);
+            let instance_result = cr.redact_content(input);
+            assert_eq!(
+                static_result, instance_result,
+                "mismatch for input: {input}"
+            );
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn configurable_redactor_noop_passes_through() -> TestResult<()> {
+        let cr = ConfigurableRedactor::noop();
+        let input = "export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE";
+        assert_eq!(cr.redact_content(input), input);
+        assert!(!cr.is_highly_sensitive("-----BEGIN RSA PRIVATE KEY-----"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn configurable_redactor_redacts_titles() -> TestResult<()> {
+        let cr = ConfigurableRedactor::with_defaults();
+        let input = "KeePassXC - Password for bank.example.com";
+        let result = cr.redact_title(input);
+        assert!(
+            result.contains("<PASSWORD_MANAGER>") || result.contains("<PASSWORD_ENTRY>"),
+            "expected title redaction, got: {result}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn configurable_redactor_custom_patterns() -> TestResult<()> {
+        let config = RedactionConfig {
+            enabled: true,
+            patterns: vec![crate::redaction_config::RedactionPattern {
+                name: "custom".into(),
+                regex: r"\bfoo\b".into(),
+                replacement: "<BAR>".into(),
+            }],
+            title_patterns: Vec::new(),
+            track_stats: true,
+        };
+        let cr = ConfigurableRedactor::new(&config).unwrap();
+        let (result, stats) = cr.redact_content_with_stats("hello foo world");
+        assert_eq!(result, "hello <BAR> world");
+        assert!(stats.any_redacted());
+        assert_eq!(stats.matched_patterns, vec!["custom"]);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn configurable_redactor_disabled_config() -> TestResult<()> {
+        let config = RedactionConfig {
+            enabled: false,
+            patterns: RedactionConfig::reference_patterns(),
+            title_patterns: RedactionConfig::reference_title_patterns(),
+            track_stats: false,
+        };
+        let cr = ConfigurableRedactor::new(&config).unwrap();
+        let input = "export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE";
+        assert_eq!(cr.redact_content(input), input);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn configurable_redactor_is_highly_sensitive() -> TestResult<()> {
+        let cr = ConfigurableRedactor::with_defaults();
+        assert!(cr.is_highly_sensitive("-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA..."));
+        assert!(cr.is_highly_sensitive(r#"{"password": "hunter2"}"#));
+        assert!(!cr.is_highly_sensitive("normal text"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn configurable_redactor_invalid_regex() -> TestResult<()> {
+        let config = RedactionConfig {
+            enabled: true,
+            patterns: vec![crate::redaction_config::RedactionPattern {
+                name: "bad".into(),
+                regex: r"[invalid".into(),
+                replacement: "x".into(),
+            }],
+            title_patterns: Vec::new(),
+            track_stats: false,
+        };
+        assert!(ConfigurableRedactor::new(&config).is_err());
+        Ok(())
     }
 }

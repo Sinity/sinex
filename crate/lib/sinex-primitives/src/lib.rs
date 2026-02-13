@@ -15,6 +15,7 @@ pub mod ids;
 pub mod nats;
 pub mod non_empty;
 pub mod query;
+pub mod redaction_config;
 pub mod rpc;
 pub mod secret_redaction;
 pub mod temporal;

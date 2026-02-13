@@ -1,0 +1,633 @@
+//! Database provisioning — creation, cloning, permissions, admin connections.
+
+use crate::sandbox::prelude::*;
+use sqlx::pool::PoolConnection;
+use sqlx::postgres::PgConnection;
+use sqlx::Row;
+use sqlx::{Connection, Error, Postgres};
+use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::time::Duration;
+use time::OffsetDateTime;
+use url::Url;
+
+use super::config::SLOT_MAX_CONNECTIONS;
+use super::meta::{PoolMeta, TemplateMeta};
+use super::template::migrations_fingerprint;
+
+// ── Outcome type ────────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum CreateDatabaseOutcome {
+    Created,
+    AlreadyExists,
+}
+
+// ── Existence checks ────────────────────────────────────────────────────────
+
+pub(super) async fn database_exists(
+    conn: &mut PoolConnection<Postgres>,
+    name: &str,
+) -> TestResult<bool> {
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)")
+            .bind(name)
+            .fetch_one(conn.as_mut())
+            .await?;
+    Ok(exists)
+}
+
+pub(super) async fn database_exists_admin(conn: &mut PgConnection, name: &str) -> TestResult<bool> {
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)")
+            .bind(name)
+            .fetch_one(&mut *conn)
+            .await?;
+    Ok(exists)
+}
+
+// ── Quoting / error detection ───────────────────────────────────────────────
+
+pub(super) fn quote_ident(ident: &str) -> String {
+    format!("\"{}\"", ident.replace('"', "\"\""))
+}
+
+pub(super) fn is_missing_database_error(err: &sqlx::Error) -> bool {
+    match err {
+        sqlx::Error::Database(db_err) => {
+            db_err
+                .code()
+                .as_ref()
+                .is_some_and(|c| c.as_ref() == "3D000")
+                || db_err.message().contains("does not exist")
+        }
+        _ => err.to_string().contains("does not exist"),
+    }
+}
+
+pub(super) fn is_timescaledb_missing_library_error_message(message: &str) -> bool {
+    // Nix-packaged TimescaleDB uses versioned shared objects (e.g. `timescaledb-2.23.0`).
+    // Stale cloned databases can keep referencing the old filename and fail to run even `SELECT 1`.
+    let msg = message.to_ascii_lowercase();
+    msg.contains("could not access file \"$libdir/timescaledb-")
+        || (msg.contains("could not access file")
+            && msg.contains("timescaledb-")
+            && msg.contains("no such file"))
+        || (msg.contains("could not load library")
+            && msg.contains("timescaledb")
+            && msg.contains("no such file"))
+}
+
+pub(super) fn is_timescaledb_missing_library_error(err: &sqlx::Error) -> bool {
+    match err {
+        sqlx::Error::Database(db_err) => {
+            is_timescaledb_missing_library_error_message(db_err.message())
+        }
+        _ => is_timescaledb_missing_library_error_message(&err.to_string()),
+    }
+}
+
+// ── Drop / wait helpers ─────────────────────────────────────────────────────
+
+pub(super) async fn drop_database_if_exists(
+    conn: &mut PoolConnection<Postgres>,
+    name: &str,
+) -> TestResult<()> {
+    let quoted = quote_ident(name);
+    let drop_force = sqlx::query(&format!("DROP DATABASE IF EXISTS {quoted} WITH (FORCE)"))
+        .execute(conn.as_mut())
+        .await;
+
+    if let Err(force_err) = drop_force {
+        let fallback = sqlx::query(&format!("DROP DATABASE IF EXISTS {quoted}"))
+            .execute(conn.as_mut())
+            .await;
+
+        if let Err(drop_err) = fallback {
+            return Err(eyre!(format!(
+                "Failed to drop database {name}: {force_err}; fallback error: {drop_err}"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+pub(super) async fn drop_database_if_exists_admin(
+    conn: &mut PgConnection,
+    name: &str,
+) -> TestResult<()> {
+    let quoted = quote_ident(name);
+    let drop_force = sqlx::query(&format!("DROP DATABASE IF EXISTS {quoted} WITH (FORCE)"))
+        .execute(&mut *conn)
+        .await;
+
+    if let Err(force_err) = drop_force {
+        let fallback = sqlx::query(&format!("DROP DATABASE IF EXISTS {quoted}"))
+            .execute(&mut *conn)
+            .await;
+
+        if let Err(drop_err) = fallback {
+            return Err(eyre!(format!(
+                "Failed to drop database {name}: {force_err}; fallback error: {drop_err}"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+pub(super) async fn wait_for_database_absence(
+    conn: &mut PoolConnection<Postgres>,
+    name: &str,
+) -> TestResult<()> {
+    const MAX_ATTEMPTS: usize = 20;
+    for attempt in 0..MAX_ATTEMPTS {
+        if !database_exists(conn, name).await? {
+            return Ok(());
+        }
+
+        let delay = Duration::from_millis(50 + (attempt as u64 * 10));
+        tokio::time::sleep(delay).await;
+    }
+
+    Err(eyre!(format!(
+        "Database {name} still present after drop attempts"
+    )))
+}
+
+pub(super) async fn wait_for_database_absence_admin(
+    conn: &mut PgConnection,
+    name: &str,
+) -> TestResult<()> {
+    const MAX_ATTEMPTS: usize = 20;
+    for attempt in 0..MAX_ATTEMPTS {
+        if !database_exists_admin(conn, name).await? {
+            return Ok(());
+        }
+
+        let delay = Duration::from_millis(50 + (attempt as u64 * 10));
+        tokio::time::sleep(delay).await;
+    }
+
+    Err(eyre!(format!(
+        "Database {name} still present after drop attempts"
+    )))
+}
+
+// ── Permissions ─────────────────────────────────────────────────────────────
+
+/// Grant schema permissions to app user on a newly created pool database.
+///
+/// This uses the centralized permissions module which automatically grants on ALL
+/// schemas including public (for `seaql_migrations`), eliminating hardcoded schema lists.
+pub(super) async fn grant_pool_database_permissions(db_name: &str) -> TestResult<()> {
+    crate::sandbox::db::permissions::grant_pool_database_permissions(db_name).await
+}
+
+// ── Create from template ────────────────────────────────────────────────────
+
+pub(super) async fn create_database_from_template(
+    conn: &mut PoolConnection<Postgres>,
+    name: &str,
+    template_name: &str,
+) -> TestResult<CreateDatabaseOutcome> {
+    // Prevent concurrent template recreation while cloning.
+    let template_lock_id = advisory_lock_key(template_name);
+    sqlx::query("SELECT pg_advisory_lock_shared($1)")
+        .bind(template_lock_id)
+        .execute(conn.as_mut())
+        .await?;
+
+    // Serialize CREATE DATABASE ... TEMPLATE ... calls; Postgres can error when the template is
+    // concurrently used as a copy source.
+    let clone_lock_id = advisory_lock_key(&format!("{template_name}::clone"));
+    sqlx::query("SELECT pg_advisory_lock($1)")
+        .bind(clone_lock_id)
+        .execute(conn.as_mut())
+        .await?;
+
+    let quoted_name = quote_ident(name);
+    let quoted_template = quote_ident(template_name);
+
+    let result = match sqlx::query(&format!(
+        "CREATE DATABASE {quoted_name} WITH TEMPLATE {quoted_template}"
+    ))
+    .execute(conn.as_mut())
+    .await
+    {
+        Ok(_) => {
+            // Grant permissions on the newly created database in CI environment
+            let _ = grant_pool_database_permissions(name).await;
+            Ok(CreateDatabaseOutcome::Created)
+        }
+        Err(err) => {
+            if let Error::Database(db_err) = &err {
+                let duplicate_code = db_err.code().as_ref().is_some_and(|c| {
+                    let code = c.as_ref();
+                    code == "42P04" || code == "23505"
+                });
+                if duplicate_code || db_err.message().contains("already exists") {
+                    Ok(CreateDatabaseOutcome::AlreadyExists)
+                } else {
+                    Err(eyre!(err.to_string()))
+                }
+            } else {
+                Err(eyre!(err.to_string()))
+            }
+        }
+    };
+
+    let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
+        .bind(clone_lock_id)
+        .execute(conn.as_mut())
+        .await;
+
+    let _ = sqlx::query("SELECT pg_advisory_unlock_shared($1)")
+        .bind(template_lock_id)
+        .execute(conn.as_mut())
+        .await;
+
+    result
+}
+
+pub(super) async fn create_database_from_template_admin(
+    admin_conn: &mut PgConnection,
+    name: &str,
+    template_name: &str,
+) -> TestResult<CreateDatabaseOutcome> {
+    // Serialize CREATE DATABASE ... TEMPLATE ... calls; Postgres can error when the template is
+    // concurrently used as a copy source.
+    let clone_lock_id = advisory_lock_key(&format!("{template_name}::clone"));
+    sqlx::query("SELECT pg_advisory_lock($1)")
+        .bind(clone_lock_id)
+        .execute(&mut *admin_conn)
+        .await?;
+
+    let quoted_name = quote_ident(name);
+    let quoted_template = quote_ident(template_name);
+
+    let result = match sqlx::query(&format!(
+        "CREATE DATABASE {quoted_name} WITH TEMPLATE {quoted_template}"
+    ))
+    .execute(&mut *admin_conn)
+    .await
+    {
+        Ok(_) => {
+            let _ = grant_pool_database_permissions(name).await;
+            Ok(CreateDatabaseOutcome::Created)
+        }
+        Err(err) => {
+            if let Error::Database(db_err) = &err {
+                let duplicate_code = db_err.code().as_ref().is_some_and(|c| {
+                    let code = c.as_ref();
+                    code == "42P04" || code == "23505"
+                });
+                if duplicate_code || db_err.message().contains("already exists") {
+                    Ok(CreateDatabaseOutcome::AlreadyExists)
+                } else {
+                    Err(eyre!(err.to_string()))
+                }
+            } else {
+                Err(eyre!(err.to_string()))
+            }
+        }
+    };
+
+    let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
+        .bind(clone_lock_id)
+        .execute(&mut *admin_conn)
+        .await;
+
+    result
+}
+
+// ── Lazy provisioning / recreation ──────────────────────────────────────────
+
+pub(super) async fn ensure_pool_database_exists(db_name: &str, slot_url: &str) -> TestResult<()> {
+    let admin_url = admin_url_from_slot(slot_url)?;
+    let base_url = base_url_from_slot(slot_url)?;
+    let mut template_guard =
+        super::template::ensure_template_database(&admin_url, &base_url, SLOT_MAX_CONNECTIONS)
+            .await?;
+    let template_name = template_guard.info.name.clone();
+    let template_extensions = template_guard.info.extensions.clone();
+    let start = std::time::Instant::now();
+
+    let provision_result: TestResult<()> = async {
+        if !database_exists_admin(&mut template_guard.admin_conn, db_name).await? {
+            match create_database_from_template_admin(
+                &mut template_guard.admin_conn,
+                db_name,
+                &template_name,
+            )
+            .await?
+            {
+                CreateDatabaseOutcome::Created => {
+                    eprintln!(
+                        "  Created missing pool database: {db_name} (clone: {:?})",
+                        start.elapsed()
+                    );
+                }
+                CreateDatabaseOutcome::AlreadyExists => {}
+            }
+        }
+        let _ = grant_pool_database_permissions(db_name).await;
+        let meta = PoolMeta {
+            fingerprint: migrations_fingerprint(),
+            extensions: template_extensions.clone(),
+            dirty: false,
+            updated_at_rfc3339: OffsetDateTime::now_utc()
+                .format(&time::format_description::well_known::Rfc3339)
+                .expect("format timestamp as RFC3339"),
+            last_error: None,
+        };
+        let _ = store_pool_meta(&mut template_guard.admin_conn, db_name, &meta).await;
+        Ok(())
+    }
+    .await;
+
+    let release_result = template_guard.release().await;
+    match provision_result {
+        Ok(()) => {
+            release_result?;
+            Ok(())
+        }
+        Err(e) => {
+            let _ = release_result;
+            Err(e)
+        }
+    }
+}
+
+pub(super) async fn recreate_pool_database(db_name: &str, slot_url: &str) -> TestResult<()> {
+    let admin_url = admin_url_from_slot(slot_url)?;
+    let base_url = base_url_from_slot(slot_url)?;
+    let mut template_guard =
+        super::template::ensure_template_database(&admin_url, &base_url, SLOT_MAX_CONNECTIONS)
+            .await?;
+    let template_name = template_guard.info.name.clone();
+    let template_extensions = template_guard.info.extensions.clone();
+
+    let recreate_result: TestResult<()> = async {
+        // Prevent multiple processes from concurrently dropping/recreating the same pool DB.
+        // We rely on closing `template_guard.admin_conn` to release this lock.
+        let recreate_lock_id = advisory_lock_key(&format!("{db_name}::recreate"));
+        let _ = sqlx::query("SELECT pg_advisory_lock($1)")
+            .bind(recreate_lock_id)
+            .execute(&mut template_guard.admin_conn)
+            .await;
+
+        drop_database_if_exists_admin(&mut template_guard.admin_conn, db_name).await?;
+        wait_for_database_absence_admin(&mut template_guard.admin_conn, db_name).await?;
+
+        create_database_from_template_admin(
+            &mut template_guard.admin_conn,
+            db_name,
+            &template_name,
+        )
+        .await?;
+        let _ = grant_pool_database_permissions(db_name).await;
+        let db_url = base_url.replace("/sinex_dev", &format!("/{db_name}"));
+        super::reset::ensure_pool_db_invariants(&db_url).await?;
+        let meta = PoolMeta {
+            fingerprint: migrations_fingerprint(),
+            extensions: template_extensions.clone(),
+            dirty: false,
+            updated_at_rfc3339: OffsetDateTime::now_utc()
+                .format(&time::format_description::well_known::Rfc3339)
+                .expect("format timestamp as RFC3339"),
+            last_error: None,
+        };
+        let _ = store_pool_meta(&mut template_guard.admin_conn, db_name, &meta).await;
+        Ok(())
+    }
+    .await;
+
+    let release_result = template_guard.release().await;
+    match recreate_result {
+        Ok(()) => {
+            release_result?;
+            Ok(())
+        }
+        Err(e) => {
+            let _ = release_result;
+            Err(e)
+        }
+    }
+}
+
+// ── Meta load / store ───────────────────────────────────────────────────────
+
+pub(super) async fn load_template_meta(
+    conn: &mut PgConnection,
+    template_name: &str,
+) -> TestResult<Option<TemplateMeta>> {
+    let comment: Option<String> = sqlx::query_scalar(
+        "SELECT shobj_description(d.oid, 'pg_database') \
+         FROM pg_database d \
+         WHERE d.datname = $1",
+    )
+    .bind(template_name)
+    .fetch_optional(conn)
+    .await?
+    .flatten();
+
+    let Some(comment) = comment else {
+        return Ok(None);
+    };
+
+    match serde_json::from_str::<TemplateMeta>(&comment) {
+        Ok(meta) => Ok(Some(meta)),
+        Err(_) => Ok(None),
+    }
+}
+
+pub(super) async fn load_pool_meta(
+    conn: &mut PgConnection,
+    db_name: &str,
+) -> TestResult<Option<PoolMeta>> {
+    let comment: Option<String> = sqlx::query_scalar(
+        "SELECT shobj_description(d.oid, 'pg_database') \
+         FROM pg_database d \
+         WHERE d.datname = $1",
+    )
+    .bind(db_name)
+    .fetch_optional(conn)
+    .await?
+    .flatten();
+
+    let Some(comment) = comment else {
+        return Ok(None);
+    };
+
+    match serde_json::from_str::<PoolMeta>(&comment) {
+        Ok(meta) => Ok(Some(meta)),
+        Err(_) => Ok(None),
+    }
+}
+
+pub(super) async fn default_extension_versions(
+    conn: &mut PgConnection,
+) -> TestResult<HashMap<String, String>> {
+    // We only care about extensions that can invalidate a previously-created template/pool DB
+    // across a NixOS upgrade (due to versioned shared-object filenames).
+    //
+    // Do this query on an admin connection (not the template DB) so we don't block cloning with
+    // a live session connected to the template.
+    let rows = sqlx::query(
+        "SELECT name, default_version \
+         FROM pg_available_extensions \
+         WHERE name IN ('timescaledb','ulid','pgx_ulid','pg_jsonschema','vector')",
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+
+    let mut versions = HashMap::new();
+    for row in rows {
+        let name: String = row.try_get("name")?;
+        let default_version: Option<String> = row.try_get("default_version")?;
+        if let Some(v) = default_version {
+            versions.insert(name, v);
+        }
+    }
+    Ok(versions)
+}
+
+pub(super) async fn store_template_meta(
+    conn: &mut PgConnection,
+    template_name: &str,
+    meta: &TemplateMeta,
+) -> TestResult<()> {
+    let payload = serde_json::to_string(meta)
+        .map_err(|e| eyre!(format!("Failed to serialize template meta: {e}")))?;
+
+    // Postgres doesn't accept bind parameters in `COMMENT ON ... IS '<literal>'`,
+    // so embed a properly escaped string literal. JSON doesn't normally contain
+    // single quotes, but escape defensively anyway.
+    let escaped = payload.replace('\'', "''");
+    let quoted = quote_ident(template_name);
+    sqlx::query(&format!("COMMENT ON DATABASE {quoted} IS '{escaped}'"))
+        .execute(conn)
+        .await?;
+
+    Ok(())
+}
+
+pub(super) async fn store_pool_meta(
+    conn: &mut PgConnection,
+    db_name: &str,
+    meta: &PoolMeta,
+) -> TestResult<()> {
+    let payload = serde_json::to_string(meta)
+        .map_err(|e| eyre!(format!("Failed to serialize pool meta: {e}")))?;
+
+    // Postgres doesn't accept bind parameters in `COMMENT ON ... IS '<literal>'`,
+    // so embed a properly escaped string literal. JSON doesn't normally contain
+    // single quotes, but escape defensively anyway.
+    let escaped = payload.replace('\'', "''");
+    let quoted = quote_ident(db_name);
+    sqlx::query(&format!("COMMENT ON DATABASE {quoted} IS '{escaped}'"))
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
+// ── Admin connection helpers ────────────────────────────────────────────────
+
+pub(super) async fn connect_admin_with_retry(admin_url: &str) -> TestResult<PgConnection> {
+    let mut delay = Duration::from_millis(100);
+    let mut last_error: Option<sqlx::Error> = None;
+    const MAX_ATTEMPTS: usize = 10;
+
+    for attempt in 0..MAX_ATTEMPTS {
+        match tokio::time::timeout(Duration::from_secs(5), PgConnection::connect(admin_url)).await {
+            Ok(Ok(conn)) => return Ok(conn),
+            Ok(Err(err)) => {
+                let err_str = err.to_string();
+                if !err_str.to_lowercase().contains("too many clients") {
+                    return Err(eyre!(format!(
+                        "Admin connection failed: {err_str}. Ensure the local PostgreSQL instance is running and accessible (try `just db-setup`, `pg_ctl start`, or set DATABASE_URL to a reachable server)."
+                    )));
+                }
+                last_error = Some(err);
+                eprintln!(
+                    "⚠️  Admin connection refused (too many clients); retrying in {:?} (attempt {}/{})",
+                    delay,
+                    attempt + 1,
+                    MAX_ATTEMPTS
+                );
+            }
+            Err(_) => {
+                return Err(eyre!(
+                    "Admin connection timeout. Ensure PostgreSQL is running locally.",
+                ));
+            }
+        }
+
+        tokio::time::sleep(delay).await;
+        delay = (delay * 2).min(Duration::from_secs(2));
+    }
+
+    Err(eyre!(format!(
+        "Admin connection failed after retries: {}. Ensure PostgreSQL is running and reachable for tests.",
+        last_error.map_or_else(|| "unknown error".to_string(), |e| e.to_string())
+    )))
+}
+
+pub(super) async fn detect_connection_budget(admin_url: &str) -> Option<u32> {
+    let mut conn = connect_admin_with_retry(admin_url).await.ok()?;
+    let max_connections: i64 =
+        sqlx::query_scalar("SELECT current_setting('max_connections')::bigint")
+            .fetch_one(&mut conn)
+            .await
+            .ok()?;
+
+    let reserved: i64 =
+        sqlx::query_scalar("SELECT current_setting('superuser_reserved_connections')::bigint")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap_or(3);
+
+    // Leave headroom for template provisioning, cleanup tasks, and ad-hoc diagnostics.
+    const SAFETY_MARGIN: i64 = 16;
+
+    let effective = max_connections
+        .saturating_sub(reserved)
+        .saturating_sub(SAFETY_MARGIN);
+    if effective <= 0 {
+        return None;
+    }
+
+    Some(effective as u32)
+}
+
+// ── URL manipulation ────────────────────────────────────────────────────────
+
+pub(super) fn admin_url_from_slot(slot_url: &str) -> TestResult<String> {
+    let mut url = Url::parse(slot_url).map_err(|e| eyre!(format!("Invalid slot url: {e}")))?;
+    url.set_path("/postgres");
+    Ok(url.to_string())
+}
+
+pub(super) fn base_url_from_slot(slot_url: &str) -> TestResult<String> {
+    let mut url = Url::parse(slot_url).map_err(|e| eyre!(format!("Invalid slot url: {e}")))?;
+    url.set_path("/sinex_dev");
+    Ok(url.to_string())
+}
+
+pub(super) fn url_with_db_name(raw_url: &str, db_name: &str) -> TestResult<String> {
+    let mut url = Url::parse(raw_url).map_err(|e| eyre!(format!("Invalid database url: {e}")))?;
+    url.set_path(&format!("/{db_name}"));
+    Ok(url.to_string())
+}
+
+// ── Advisory lock key ───────────────────────────────────────────────────────
+
+pub(super) fn advisory_lock_key(name: &str) -> i64 {
+    let mut hasher = DefaultHasher::new();
+    name.hash(&mut hasher);
+    // mask to positive i64 to match PostgreSQL advisory lock expectations
+    (hasher.finish() & 0x7FFF_FFFF_FFFF_FFFF) as i64
+}
