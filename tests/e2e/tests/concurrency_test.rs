@@ -78,7 +78,7 @@ async fn test_event_causality_violation(ctx: TestContext) -> TestResult<()> {
     // Verify ULIDs are strictly increasing
     let ulids: Vec<_> = events
         .iter()
-        .map(|e| e.id.expect("published event should have ID").as_ulid())
+        .map(|e| *e.id.expect("published event should have ID").as_ulid())
         .collect();
 
     for i in 1..ulids.len() {

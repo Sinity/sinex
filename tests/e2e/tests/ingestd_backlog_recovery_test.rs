@@ -104,7 +104,7 @@ async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResul
     let mut runner = service.clone();
     let handle = tokio::spawn(async move { runner.run().await });
 
-    WaitHelpers::wait_for_event_count(&ctx.pool, 3, 10).await?;
+    WaitHelpers::wait_for_event_count(&ctx.pool, 3, Timeouts::STANDARD).await?;
 
     service.shutdown().await?;
     let join_result = timeout(Duration::from_secs(Timeouts::QUICK), handle)
