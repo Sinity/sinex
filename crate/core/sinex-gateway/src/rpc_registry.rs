@@ -364,6 +364,31 @@ pub(crate) fn build_registry() -> RpcRegistry {
                 })
             },
         )
+        // Processor lifecycle (Write - modifies processor state)
+        .register(
+            "processors.heartbeat",
+            Role::Write,
+            |params, services, _auth| {
+                Box::pin(async move {
+                    let pool = services.pool();
+                    handle_processors_heartbeat(pool, params)
+                        .await
+                        .map_err(Into::into)
+                })
+            },
+        )
+        .register(
+            "processors.mark_inactive",
+            Role::Write,
+            |params, services, _auth| {
+                Box::pin(async move {
+                    let pool = services.pool();
+                    handle_processors_mark_inactive(pool, params)
+                        .await
+                        .map_err(Into::into)
+                })
+            },
+        )
         // Operations log write (Write)
         .register("ops.start", Role::Write, |params, services, auth| {
             Box::pin(async move {
@@ -567,6 +592,31 @@ pub(crate) fn build_registry() -> RpcRegistry {
                 Box::pin(async move {
                     let pool = services.pool();
                     handle_gitops_list_sources(pool, params)
+                        .await
+                        .map_err(Into::into)
+                })
+            },
+        )
+        // Processor status methods (ReadOnly)
+        .register(
+            "processors.list_active",
+            Role::ReadOnly,
+            |params, services, _auth| {
+                Box::pin(async move {
+                    let pool = services.pool();
+                    handle_processors_list_active(pool, params)
+                        .await
+                        .map_err(Into::into)
+                })
+            },
+        )
+        .register(
+            "processors.health",
+            Role::ReadOnly,
+            |params, services, _auth| {
+                Box::pin(async move {
+                    let pool = services.pool();
+                    handle_processors_health(pool, params)
                         .await
                         .map_err(Into::into)
                 })
