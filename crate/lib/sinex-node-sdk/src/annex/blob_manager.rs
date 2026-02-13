@@ -25,7 +25,7 @@ use tracing::{debug, info, warn};
 
 use super::{
     path_validator::{create_secure_temp_path, validate_path_exists, VerifiedPath},
-    AnnexConfig, GitAnnex,
+    AnnexConfig, AnnexKey, GitAnnex,
 };
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command as AsyncCommand;
@@ -158,91 +158,54 @@ impl BlobManager {
         Ok(())
     }
 
-    /// Ingest a file into the blob management system
-    pub async fn ingest_file(
+    /// Check for existing blob by BLAKE3 hash. If found, update the filename
+    /// registry, emit a deduplicated event, and return the existing metadata.
+    async fn check_dedup(
         &self,
-        file_path: &VerifiedPath,
-        original_filename: Option<&str>,
-    ) -> NodeResult<BlobMetadata> {
-        // Validate file path before processing to prevent path traversal attacks
-        validate_path_exists(file_path.as_path())
-            .map_err(|e| SinexError::blob_storage(e).with_operation("validate_path"))?;
-        let validated_path = file_path.as_path();
+        blake3_hash: &str,
+        filename: &str,
+    ) -> NodeResult<Option<BlobMetadata>> {
+        let existing = match self.find_blob_by_blake3(blake3_hash).await? {
+            Some(blob) => blob,
+            None => return Ok(None),
+        };
 
-        info!("Ingesting file: {:?}", validated_path);
-        let _start = Instant::now();
+        let existing_key = existing.annex_key().clone();
+        info!("Content already exists in blob store with key: {existing_key}");
 
-        // Compute BLAKE3 hash for deduplication
-        let blake3_hash = GitAnnex::compute_blake3_hash(validated_path)
+        self.add_original_filename(&existing_key, filename).await?;
+
+        if let Err(e) = self
+            .publish_blob_event(
+                "blob.ingested",
+                BlobIngestedPayload {
+                    blob_id: existing_key,
+                    size_bytes: existing.size_bytes,
+                    mime_type: existing.mime_type.clone(),
+                    checksum_blake3: blake3_hash.to_string(),
+                    deduplicated: true,
+                    original_filename: filename.to_string(),
+                },
+                &existing,
+            )
             .await
-            .map_err(|e| SinexError::blob_storage(e).with_operation("compute_hash"))?;
-        debug!("Computed BLAKE3 hash: {blake3_hash}");
-
-        // Check if blob already exists
-        if let Some(existing) = self.find_blob_by_blake3(&blake3_hash).await? {
-            let existing_key = existing.annex_key().clone();
-            info!(
-                "File already exists in blob store with key: {}",
-                existing_key
-            );
-
-            // Update original_filenames array if this is a new filename
-            if let Some(filename) = original_filename {
-                self.add_original_filename(&existing_key, filename).await?;
-            }
-
-            if let Err(e) = self
-                .publish_blob_event(
-                    "blob.ingested",
-                    BlobIngestedPayload {
-                        blob_id: existing_key.clone(),
-                        size_bytes: existing.size_bytes,
-                        mime_type: existing.mime_type.clone(),
-                        checksum_blake3: blake3_hash,
-                        deduplicated: true,
-                        original_filename: original_filename
-                            .or(existing.original_filename.as_deref())
-                            .unwrap_or("unknown")
-                            .to_string(),
-                    },
-                    &existing,
-                )
-                .await
-            {
-                warn!(
-                    error = %e,
-                    "Failed to emit blob.ingested event for deduplicated annex file"
-                );
-            }
-
-            return Ok(existing);
+        {
+            warn!(error = %e, "Failed to emit blob.ingested event for deduplicated blob");
         }
 
-        // Get file metadata
-        let file_metadata = tokio::fs::metadata(validated_path)
-            .await
-            .map_err(SinexError::io)?;
-        let size_bytes = file_metadata.len() as i64;
+        Ok(Some(existing))
+    }
 
-        // Detect MIME type
-        let mime_type = Self::detect_mime_type(validated_path)
-            .map_err(|e| SinexError::blob_storage(e).with_operation("detect_mime_type"))?;
-
-        // Add to git-annex
-        let annex_key =
-            self.annex.add_file(validated_path).await.map_err(|e| {
-                SinexError::processing(format!("Failed to add file to git-annex: {e}"))
-            })?;
-        info!("Added to git-annex with key: {}", annex_key.key);
-
-        // Verify stored content matches original hash to detect write corruption
-        self.verify_post_write(&annex_key.key, &blake3_hash).await?;
-
-        // Create blob record in database
-        let filename =
-            original_filename.unwrap_or_else(|| validated_path.file_name().unwrap_or("unknown"));
-
-        // Parse the annex key to get backend and hash
+    /// Register a new blob after content has been added to git-annex.
+    /// Parses the annex key, inserts the DB record, and emits the ingested event.
+    async fn register_new_blob(
+        &self,
+        annex_key: &AnnexKey,
+        filename: &str,
+        size_bytes: i64,
+        mime_type: String,
+        blake3_hash: String,
+    ) -> NodeResult<BlobMetadata> {
         let (backend, _, _) = Blob::parse_annex_key(&annex_key.key)
             .ok_or_else(|| SinexError::processing("Invalid annex key format".to_string()))?;
 
@@ -257,23 +220,69 @@ impl BlobManager {
 
         let blob_metadata = self.insert_blob(&blob).await?;
         let blob_key = blob_metadata.annex_key().clone();
-        info!("Successfully ingested blob: {}", blob_key);
+        info!("Successfully ingested blob: {blob_key}");
 
-        self.publish_blob_event(
-            "blob.ingested",
-            BlobIngestedPayload {
-                blob_id: blob_key.clone(),
-                size_bytes,
-                mime_type: Some(mime_type),
-                checksum_blake3: blake3_hash,
-                deduplicated: false,
-                original_filename: filename.to_string(),
-            },
-            &blob_metadata,
-        )
-        .await?;
+        if let Err(e) = self
+            .publish_blob_event(
+                "blob.ingested",
+                BlobIngestedPayload {
+                    blob_id: blob_key,
+                    size_bytes,
+                    mime_type: Some(mime_type),
+                    checksum_blake3: blake3_hash,
+                    deduplicated: false,
+                    original_filename: filename.to_string(),
+                },
+                &blob_metadata,
+            )
+            .await
+        {
+            warn!(error = %e, "Failed to emit blob.ingested event for new blob");
+        }
 
         Ok(blob_metadata)
+    }
+
+    /// Ingest a file into the blob management system
+    pub async fn ingest_file(
+        &self,
+        file_path: &VerifiedPath,
+        original_filename: Option<&str>,
+    ) -> NodeResult<BlobMetadata> {
+        validate_path_exists(file_path.as_path())
+            .map_err(|e| SinexError::blob_storage(e).with_operation("validate_path"))?;
+        let validated_path = file_path.as_path();
+
+        info!("Ingesting file: {:?}", validated_path);
+
+        let blake3_hash = GitAnnex::compute_blake3_hash(validated_path)
+            .await
+            .map_err(|e| SinexError::blob_storage(e).with_operation("compute_hash"))?;
+
+        let effective_filename =
+            original_filename.unwrap_or_else(|| validated_path.file_name().unwrap_or("unknown"));
+
+        if let Some(existing) = self.check_dedup(&blake3_hash, effective_filename).await? {
+            return Ok(existing);
+        }
+
+        let file_metadata = tokio::fs::metadata(validated_path)
+            .await
+            .map_err(SinexError::io)?;
+        let size_bytes = file_metadata.len() as i64;
+
+        let mime_type = Self::detect_mime_type(validated_path)
+            .map_err(|e| SinexError::blob_storage(e).with_operation("detect_mime_type"))?;
+
+        let annex_key = self.annex.add_file(validated_path).await.map_err(|e| {
+            SinexError::processing(format!("Failed to add file to git-annex: {e}"))
+        })?;
+        info!("Added to git-annex with key: {}", annex_key.key);
+
+        self.verify_post_write(&annex_key.key, &blake3_hash).await?;
+
+        self.register_new_blob(&annex_key, effective_filename, size_bytes, mime_type, blake3_hash)
+            .await
     }
 
     /// Ingest content from bytes (for in-memory content like clipboard)
@@ -284,48 +293,14 @@ impl BlobManager {
         content_type: &str,
     ) -> NodeResult<BlobMetadata> {
         info!("Ingesting {} bytes as {}", content.len(), filename);
-        let _start = Instant::now();
 
-        // Compute BLAKE3 hash for deduplication
         let blake3_hash = blake3::hash(content).to_hex().to_string();
-        debug!("Computed BLAKE3 hash: {blake3_hash}");
 
-        // Check if blob already exists
-        if let Some(existing) = self.find_blob_by_blake3(&blake3_hash).await? {
-            let existing_key = existing.annex_key().clone();
-            info!(
-                "Content already exists in blob store with key: {}",
-                existing_key
-            );
-
-            // Update original_filenames array if this is a new filename
-            self.add_original_filename(&existing_key, filename).await?;
-
-            if let Err(e) = self
-                .publish_blob_event(
-                    "blob.ingested",
-                    BlobIngestedPayload {
-                        blob_id: existing_key.clone(),
-                        size_bytes: existing.size_bytes,
-                        mime_type: existing.mime_type.clone(),
-                        checksum_blake3: blake3_hash,
-                        deduplicated: true,
-                        original_filename: filename.to_string(),
-                    },
-                    &existing,
-                )
-                .await
-            {
-                warn!(
-                    error = %e,
-                    "Failed to emit blob.ingested event for deduplicated blob bytes"
-                );
-            }
-
+        if let Some(existing) = self.check_dedup(&blake3_hash, filename).await? {
             return Ok(existing);
         }
 
-        // Create a unique temporary file without predictable naming to avoid symlink attacks
+        // Write to secure temp file for git-annex ingestion
         let temp_file_path = create_secure_temp_path("sinex_blob", "tmp")
             .map_err(|e| SinexError::io(std::io::Error::other(e)))?;
 
@@ -336,7 +311,6 @@ impl BlobManager {
         temp_file.sync_all().await.map_err(SinexError::io)?;
         drop(temp_file);
 
-        // Add to git-annex
         let annex_key = self
             .annex
             .add_file(temp_file_path.as_path())
@@ -346,7 +320,6 @@ impl BlobManager {
             })?;
         info!("Added to git-annex with key: {}", annex_key.key);
 
-        // Verify stored content matches original hash to detect write corruption
         self.verify_post_write(&annex_key.key, &blake3_hash).await?;
 
         if let Err(e) = tokio::fs::remove_file(&temp_file_path).await {
@@ -357,48 +330,14 @@ impl BlobManager {
             );
         }
 
-        // Create blob record in database
-        let size_bytes = content.len() as i64;
-
-        // Parse the annex key to get backend and hash
-        let (backend, _, _) = Blob::parse_annex_key(&annex_key.key)
-            .ok_or_else(|| SinexError::processing("Invalid annex key format".to_string()))?;
-
-        let blob = Blob::builder()
-            .annex_backend(backend)
-            .content_hash(annex_key.hash.clone())
-            .original_filename(filename.to_string())
-            .size_bytes(size_bytes)
-            .mime_type(content_type.to_string())
-            .checksum_blake3(blake3_hash.clone())
-            .build();
-
-        let blob_metadata = self.insert_blob(&blob).await?;
-        let blob_key = blob_metadata.annex_key().clone();
-        info!("Successfully ingested blob: {}", blob_key);
-
-        if let Err(e) = self
-            .publish_blob_event(
-                "blob.ingested",
-                BlobIngestedPayload {
-                    blob_id: blob_key.clone(),
-                    size_bytes,
-                    mime_type: Some(content_type.to_string()),
-                    checksum_blake3: blake3_hash,
-                    deduplicated: false,
-                    original_filename: filename.to_string(),
-                },
-                &blob_metadata,
-            )
-            .await
-        {
-            warn!(
-                error = %e,
-                "Failed to emit blob.ingested event for newly ingested file"
-            );
-        }
-
-        Ok(blob_metadata)
+        self.register_new_blob(
+            &annex_key,
+            filename,
+            content.len() as i64,
+            content_type.to_string(),
+            blake3_hash,
+        )
+        .await
     }
 
     /// Retrieve blob content as bytes
