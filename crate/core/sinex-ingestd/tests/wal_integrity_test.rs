@@ -4,8 +4,7 @@ use sinex_node_sdk::annex::{AnnexConfig, GitAnnex};
 use std::sync::Arc;
 use xtask::sandbox::prelude::*;
 
-#[sinex_test]
-#[ignore = "requires WAL integrity testing infrastructure"]
+#[sinex_test(timeout = 30)]
 async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let nats_client = ctx.nats_client();

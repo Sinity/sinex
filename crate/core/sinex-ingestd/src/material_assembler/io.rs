@@ -235,6 +235,17 @@ async fn restore_state_params(
     let hasher = rebuild_hasher(&temp_path).await?;
     let buffered_slices = load_buffered_slices(&state_dir.join(BUFFER_DIR_NAME)).await?;
 
+    // Acquire semaphore permit for restored assemblies (same as new assemblies)
+    let permit = assembler
+        .active_assemblies
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| {
+            SinexError::service(format!(
+                "Too many active assemblies during restore (material {material_id})"
+            ))
+        })?;
+
     Ok(Some(AssemblerState {
         material_id,
         temp_path,
@@ -259,7 +270,7 @@ async fn restore_state_params(
         pending_end: state_snapshot.pending_end,
         finalizing: state_snapshot.finalizing,
         last_slice_received: Timestamp::now(),
-        _permit: None,
+        _permit: Some(permit),
     }))
 }
 

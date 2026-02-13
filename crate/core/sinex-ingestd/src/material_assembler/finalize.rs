@@ -229,6 +229,12 @@ impl MaterialAssembler {
     /// Finalize a failed material: mark as failed, clean up state, and remove from active map
     pub(super) async fn finalize_failed_material(&self, material_id: Ulid, reason: &str) {
         self.stats_inc_failed(); // Track failed assembly
+        tracing::warn!(
+            target: "sinex_metrics",
+            metric = "assembly_failure",
+            material_id = %material_id,
+            failure_reason = reason,
+        );
         let mark = self.mark_material_failed(material_id, reason);
         let cleanup = self.cleanup_state(material_id);
         tokio::join!(mark, cleanup);
@@ -590,12 +596,26 @@ impl MaterialAssembler {
 
         self.stats_inc_completed(); // Track successful assembly
 
+        // Compute assembly duration from started_at to now
+        let assembly_duration = Timestamp::now() - final_state.started_at;
+        let duration_ms = assembly_duration.whole_milliseconds().max(0) as u64;
+
+        tracing::info!(
+            target: "sinex_metrics",
+            metric = "assembly_completed",
+            duration_ms = duration_ms,
+            material_id = %material_id,
+            slice_count = slice_count,
+            size_bytes = end.total_size_bytes,
+        );
+
         info!(
             material_id = %material_id,
             annex_key = %annex_key.key,
             path = %final_path.display(),
             size_bytes = end.total_size_bytes,
             slices = slice_count,
+            duration_ms = duration_ms,
             "Material assembly complete and persisted to annex"
         );
 

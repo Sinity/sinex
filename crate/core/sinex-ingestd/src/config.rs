@@ -148,6 +148,38 @@ pub struct IngestdConfig {
     #[serde(default)]
     #[builder(default = false)]
     pub strict_validation: bool,
+
+    /// Maximum buffered out-of-order slices per material assembly
+    ///
+    /// Set via: `SINEX_INGESTD_MAX_BUFFERED_SLICES=100`
+    #[serde(default = "default_max_buffered_slices")]
+    #[builder(default = default_max_buffered_slices())]
+    #[validate(range(min = 1, max = 10000))]
+    pub max_buffered_slices: usize,
+
+    /// Slice arrival timeout in seconds
+    ///
+    /// Set via: `SINEX_INGESTD_SLICE_TIMEOUT_SECS=300`
+    #[serde(default = "default_slice_timeout_secs")]
+    #[builder(default = default_slice_timeout_secs())]
+    #[validate(range(min = 10, max = 86400))]
+    pub slice_timeout_secs: u64,
+
+    /// Orphaned file age threshold in seconds
+    ///
+    /// Set via: `SINEX_INGESTD_ORPHAN_THRESHOLD_SECS=3600`
+    #[serde(default = "default_orphan_threshold_secs")]
+    #[builder(default = default_orphan_threshold_secs())]
+    #[validate(range(min = 60, max = 604800))]
+    pub orphan_threshold_secs: u64,
+
+    /// Batch processing semaphore permits (concurrent batch writes)
+    ///
+    /// Set via: `SINEX_INGESTD_BATCH_PERMITS=10`
+    #[serde(default = "default_batch_permits")]
+    #[builder(default = default_batch_permits())]
+    #[validate(range(min = 1, max = 100))]
+    pub batch_permits: usize,
 }
 
 impl IngestdConfig {
@@ -422,6 +454,10 @@ impl Default for IngestdConfig {
             annex_repo_path: default_annex_repo_path(),
             assembler_state_dir: default_assembler_state_dir(),
             strict_validation: false,
+            max_buffered_slices: default_max_buffered_slices(),
+            slice_timeout_secs: default_slice_timeout_secs(),
+            orphan_threshold_secs: default_orphan_threshold_secs(),
+            batch_permits: default_batch_permits(),
         }
     }
 }
@@ -575,4 +611,20 @@ fn validate_fetch_timeout(value: &Milliseconds) -> Result<(), ValidationError> {
         ));
     }
     Ok(())
+}
+
+fn default_max_buffered_slices() -> usize {
+    100
+}
+
+fn default_slice_timeout_secs() -> u64 {
+    300 // 5 minutes
+}
+
+fn default_orphan_threshold_secs() -> u64 {
+    3600 // 1 hour
+}
+
+fn default_batch_permits() -> usize {
+    10
 }
