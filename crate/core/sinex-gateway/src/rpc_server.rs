@@ -160,7 +160,7 @@ fn sinex_error_to_rpc_code(err: &sinex_primitives::error::SinexError) -> (i32, S
     use sinex_primitives::error::SinexError;
 
     match err {
-        // Client errors (4xx equivalent)
+        // ── Client errors (safe to expose details — these describe caller mistakes) ──
         SinexError::Validation(details) => (-32800, details.to_string()),
         SinexError::NotFound(details) => (-32801, details.to_string()),
         SinexError::AlreadyExists(details) => (-32802, details.to_string()),
@@ -168,41 +168,31 @@ fn sinex_error_to_rpc_code(err: &sinex_primitives::error::SinexError) -> (i32, S
         SinexError::PermissionDenied(details) => (-32804, details.to_string()),
         SinexError::Parse(details) => (-32805, details.to_string()),
 
-        // Server/infrastructure errors (5xx equivalent)
-        SinexError::Database(details) => (-32810, format!("Database error: {details}")),
-        SinexError::Network(details) => (-32811, format!("Network error: {details}")),
-        SinexError::Timeout(details) => (-32812, format!("Timeout: {details}")),
-        SinexError::ResourceExhausted(details) => {
-            (-32813, format!("Resource exhausted: {details}"))
+        // ── Server-internal errors (genericized — details may contain DB strings, paths, etc.) ──
+        SinexError::Database(_) => (-32810, "Internal database error".to_string()),
+        SinexError::Network(_) => (-32811, "Internal network error".to_string()),
+        SinexError::Timeout(_) => (-32812, "Operation timed out".to_string()),
+        SinexError::ResourceExhausted(_) => (-32813, "Server resource limit reached".to_string()),
+
+        SinexError::Service(_) => (-32820, "Internal service error".to_string()),
+        SinexError::Io(_) => (-32821, "Internal server error".to_string()),
+        SinexError::Configuration(_) => (-32822, "Server configuration error".to_string()),
+        SinexError::Serialization(_) => (-32823, "Internal serialization error".to_string()),
+
+        SinexError::Cancelled(_) => (-32830, "Operation cancelled".to_string()),
+        SinexError::MaxRetriesExceeded(_) => (-32831, "Operation failed after retries".to_string()),
+
+        SinexError::ChannelSend(_) | SinexError::ChannelReceive(_) => {
+            (-32840, "Internal server error".to_string())
         }
 
-        // Service/processing errors
-        SinexError::Service(details) => (-32820, format!("Service error: {details}")),
-        SinexError::Io(details) => (-32821, format!("IO error: {details}")),
-        SinexError::Configuration(details) => (-32822, format!("Configuration error: {details}")),
-        SinexError::Serialization(details) => (-32823, format!("Serialization error: {details}")),
+        SinexError::Kv(_)
+        | SinexError::Automaton(_)
+        | SinexError::Checkpoint(_)
+        | SinexError::Lifecycle(_)
+        | SinexError::Processing(_) => (-32850, "Internal server error".to_string()),
 
-        // Cancellation and lifecycle
-        SinexError::Cancelled(details) => (-32830, format!("Cancelled: {details}")),
-        SinexError::MaxRetriesExceeded(details) => {
-            (-32831, format!("Max retries exceeded: {details}"))
-        }
-
-        // Channel errors
-        SinexError::ChannelSend(details) => (-32840, format!("Channel send error: {details}")),
-        SinexError::ChannelReceive(details) => {
-            (-32841, format!("Channel receive error: {details}"))
-        }
-
-        // Domain-specific errors
-        SinexError::Kv(details) => (-32850, format!("KV store error: {details}")),
-        SinexError::Automaton(details) => (-32851, format!("Automaton error: {details}")),
-        SinexError::Checkpoint(details) => (-32852, format!("Checkpoint error: {details}")),
-        SinexError::Lifecycle(details) => (-32853, format!("Lifecycle error: {details}")),
-        SinexError::Processing(details) => (-32854, format!("Processing error: {details}")),
-
-        // Fallback
-        SinexError::Unknown(details) => (-32899, format!("Unknown error: {details}")),
+        SinexError::Unknown(_) => (-32899, "Internal server error".to_string()),
 
         // Non-exhaustive catch-all (future variants)
         _ => (-32603, "Internal server error".to_string()),
