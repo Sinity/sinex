@@ -10,9 +10,9 @@
 Out of 10 production TODOs investigated, the findings break down as:
 
 - **🔴 Critical (3)**: Security/correctness issues requiring immediate fixes
-- **🟡 Important (4)**: Production-readiness issues to fix before deployment
+- **🟡 Important (2)**: Production-readiness issues to fix before deployment
 - **🟢 Nice-to-have (2)**: Improvements that can wait
-- **✅ Fixed/Non-issue (1)**: Already resolved or not actionable
+- **✅ Fixed/Non-issue (3)**: Already resolved or not actionable
 
 ---
 
@@ -181,50 +181,20 @@ SINEX_GATEWAY_CORS_ORIGINS=http://localhost:3000,http://localhost:8080
 
 ## 🟡 IMPORTANT - Fix Before Production
 
-### 4. Native Messaging Capability-Based Access
+### 4. Native Messaging Capability-Based Access (PARTIALLY RESOLVED)
 
-**Location:** `crate/core/sinex-gateway/src/native_messaging.rs:94`
+**Location:** `crate/core/sinex-gateway/src/native_messaging.rs`
 
-**Severity:** 🟡 IMPORTANT - Security Enhancement
+**Severity:** 🟡 IMPORTANT - Security Enhancement (partially addressed)
 
-**Problem:**
-```rust
-// TODO: Implement capability-based access control (analysis/native_messaging.md)
-let incoming_id = if let Some(id) = message.extension_id.as_deref() {
-    id
-} else { ... }
-```
+**Resolution (partial):** Per-extension role-based auth implemented via `SINEX_NATIVE_MESSAGING_EXTENSION_ROLES` env var (JSON map of extension ID → Role). Unknown extensions default to `ReadOnly` instead of `Admin`. `RpcAuthContext::extension()` constructor provides audit attribution. Commit: `377c93ff`.
 
-Current implementation only checks extension ID against allowlist. No fine-grained permissions like:
-- Read-only vs read-write access
-- Scoped to specific event types
-- Rate limiting per extension
-- API endpoint restrictions
+**Remaining work:**
+- Fine-grained method-level permissions (allowed_methods per extension)
+- Per-extension rate limiting
+- Event type scoping
 
-**Impact:**
-- All-or-nothing trust model
-- Compromised extension has full access
-- No defense in depth
-- Harder to audit extension behavior
-
-**Fix Strategy:**
-1. Define capability model:
-```rust
-#[derive(Debug, Clone, Deserialize)]
-struct ExtensionCapabilities {
-    id: String,
-    secret: Option<String>,
-    allowed_methods: Vec<String>,  // ["search_events", "query_analytics"]
-    read_only: bool,
-    rate_limit_per_minute: u32,
-    allowed_event_types: Option<Vec<String>>,
-}
-```
-
-2. Enforce at method dispatch
-3. Add capability validation middleware
-
-**Priority:** P1 - Before production, but after P0 fixes
+**Priority:** P2 - Core role-based auth is in place; method-level capabilities are post-launch enhancement
 
 ---
 
@@ -288,136 +258,23 @@ loop {
 
 ---
 
-### 6. Cascade Analyzer Tarjan's Algorithm
+### 6. Cascade Analyzer Tarjan's Algorithm (RESOLVED)
 
-**Location:** `crate/core/sinex-gateway/src/cascade_analyzer.rs:436`
+**Location:** `crate/core/sinex-gateway/src/cascade_analyzer.rs`
 
-**Severity:** 🟡 IMPORTANT - Correctness
+**Severity:** ✅ RESOLVED
 
-**Problem:**
-```rust
-// TODO: In production, implement proper Tarjan's algorithm
-let max_cycle_depth = self.config.max_depth.max(1);
-let query = format!(r"
-    WITH RECURSIVE cycle_check AS (
-        ...
-        WHERE NOT cc.has_cycle
-        AND array_length(cc.path, 1) < {max_cycle_depth}
-```
-
-Recursive CTE approach for cycle detection:
-- Only detects cycles up to `max_cycle_depth`
-- False negatives for deeper cycles
-- Performance degrades with graph depth
-- Not the standard algorithm for cycle detection
-
-**Impact:**
-- Circular dependencies may go undetected
-- Data integrity issues masked
-- Archive operations may corrupt data
-
-**Fix Strategy:**
-Implement Tarjan's strongly connected components algorithm:
-
-```rust
-// Use petgraph crate
-use petgraph::algo::tarjan_scc;
-use petgraph::graphmap::DiGraphMap;
-
-async fn detect_circular_dependencies_tx(
-    &self,
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    table_name: &str,
-) -> Result<Vec<CircularDependency>> {
-    // 1. Load all edges from DB
-    let edges = load_all_edges(tx, table_name).await?;
-
-    // 2. Build graph
-    let mut graph = DiGraphMap::new();
-    for (from, to) in edges {
-        graph.add_edge(from, to, ());
-    }
-
-    // 3. Find SCCs (O(V+E) guaranteed)
-    let sccs = tarjan_scc(&graph);
-
-    // 4. Convert to CircularDependency records
-    sccs.into_iter()
-        .filter(|scc| scc.len() > 1) // Cycles only
-        .map(|scc| CircularDependency::from_scc(scc))
-        .collect()
-}
-```
-
-**Priority:** P1 - Required for data integrity guarantees
+**Resolution:** Replaced recursive CTE (O(n*d), max_depth bounded) with `petgraph::algo::tarjan_scc()` — O(V+E), guaranteed to find all cycles regardless of depth. Loads edges into `DiGraphMap<Uuid, ()>`, runs Tarjan's SCC, filters components with len > 1. Commit: `f4a88347`.
 
 ---
 
-### 7. State Repository Missing Status Column
+### 7. State Repository Missing Status Column (RESOLVED)
 
-**Location:** `crate/lib/sinex-db/src/repositories/state.rs:708`
+**Location:** `crate/lib/sinex-db/src/repositories/state.rs`
 
-**Severity:** 🟡 IMPORTANT - Schema Deficiency
+**Severity:** ✅ RESOLVED
 
-**Problem:**
-```rust
-/// Get all currently active processors.
-pub async fn get_active_processors(&self) -> DbResult<Vec<ProcessorManifest>> {
-    // TODO: The schema needs a 'status' or 'is_active' column.
-    // For now, we return all processors as requested by the original (incorrect) implementation,
-    // but note the missing filter.
-    self.get_all_processors().await
-}
-```
-
-The `core.processors` table has no way to distinguish:
-- Active vs inactive processors
-- Running vs stopped instances
-- Latest version vs historical registrations
-
-**Impact:**
-- Can't query "which processors are currently running"
-- Monitoring dashboards show stale data
-- Coordination logic may use outdated processor info
-- Operations team has no visibility
-
-**Fix:**
-
-1. **Schema migration:**
-```sql
--- Migration: Add processor status tracking
-ALTER TABLE core.processors
-ADD COLUMN status TEXT NOT NULL DEFAULT 'registered'
-    CHECK (status IN ('registered', 'active', 'inactive', 'failed'));
-
-ALTER TABLE core.processors
-ADD COLUMN last_heartbeat_at TIMESTAMPTZ;
-
-CREATE INDEX idx_processors_status ON core.processors(status);
-CREATE INDEX idx_processors_heartbeat ON core.processors(last_heartbeat_at DESC);
-```
-
-2. **Update repository:**
-```rust
-pub async fn get_active_processors(&self) -> DbResult<Vec<ProcessorManifest>> {
-    sqlx::query_as!(
-        ProcessorManifest,
-        r#"
-        SELECT *
-        FROM core.processors
-        WHERE status = 'active'
-          AND (last_heartbeat_at IS NULL
-               OR last_heartbeat_at > NOW() - INTERVAL '5 minutes')
-        ORDER BY last_heartbeat_at DESC
-        "#
-    )
-    .fetch_all(self.pool.as_ref())
-    .await
-    .map_err(Into::into)
-}
-```
-
-**Priority:** P1 - Before production monitoring
+**Resolution:** DB migration added `status` and `last_heartbeat_at` columns to `core.processors` with appropriate indexes. Repository methods (`get_active_processors`, `get_processor_health`, `update_processor_heartbeat`, `mark_processor_inactive`) implemented in `state.rs:668-794`. Four RPC handlers wired in `handlers/processors.rs` and registered in `rpc_registry.rs`. Commits: `14fbc268`, `221e7511`.
 
 ---
 
