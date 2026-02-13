@@ -38,3 +38,15 @@ pub struct WindowManagerHistoricalPayload {
     pub scan_type: String,
     pub note: String,
 }
+
+// Test helpers for external tests
+#[cfg(any(test, feature = "testing"))]
+impl DesktopMonitoringStartedPayload {
+    pub fn test_default() -> Self {
+        Self {
+            clipboard_enabled: true,
+            window_manager_enabled: true,
+            start_time: crate::temporal::now(),
+        }
+    }
+}

@@ -422,7 +422,6 @@ pub struct TestIngestdConfig {
     pub database_url: String,
     pub work_dir: Option<std::path::PathBuf>,
     pub namespace: Option<String>,
-    pub batch_size: usize,
     pub consumer_fetch_max_messages: usize,
     pub consumer_fetch_timeout_ms: u64,
     /// Database connection pool size for the spawned ingestd.
@@ -437,9 +436,8 @@ impl Default for TestIngestdConfig {
             database_url: "postgresql:///sinex_test?host=/run/postgresql".to_string(),
             work_dir: None,
             namespace: None,
-            batch_size: 1,
             consumer_fetch_max_messages: 100,
-            consumer_fetch_timeout_ms: 1000,
+            consumer_fetch_timeout_ms: 50,
             database_pool_size: 4,
         }
     }
@@ -448,12 +446,27 @@ impl Default for TestIngestdConfig {
 pub struct TestIngestdHandle {
     child: tokio::process::Child,
     pub stream_name: String,
+    stderr_reader: Option<tokio::task::JoinHandle<String>>,
 }
 
 impl TestIngestdHandle {
     pub async fn stop(&mut self) -> Result<()> {
         let _ = self.child.kill().await;
         let _ = self.child.wait().await;
+        // Dump debug log file
+        let debug_log = format!("/tmp/sinex-ingestd-{}.log", std::process::id());
+        if let Ok(content) = std::fs::read_to_string(&debug_log) {
+            if !content.is_empty() {
+                let end = content.floor_char_boundary(3000);
+                let truncated = &content[..end];
+                eprintln!("📋 ingestd log ({} bytes):\n{truncated}", content.len());
+            } else {
+                eprintln!("📋 ingestd log: EMPTY");
+            }
+        }
+        if let Some(reader) = self.stderr_reader.take() {
+            let _ = reader.await;
+        }
         Ok(())
     }
 }
@@ -502,8 +515,10 @@ pub async fn start_test_ingestd_with_config(
         );
     }
 
-    let mut cmd = Command::new(binary_path);
-    // Auto-kill ingestd when parent test process exits.
+    // Capture both stdout and stderr to a debug log file.
+    // tracing_subscriber::fmt() defaults to stdout in 0.3.x, so we need >{file} 2>&1.
+    let debug_log = format!("/tmp/sinex-ingestd-{}.log", std::process::id());
+    let mut cmd = Command::new("bash");
     #[cfg(target_os = "linux")]
     unsafe {
         cmd.pre_exec(|| {
@@ -511,18 +526,38 @@ pub async fn start_test_ingestd_with_config(
             Ok(())
         });
     }
-    cmd.stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-
-    // Set environment variables based on config
-    // Note: Use the env var names that ingestd CLI args expect
+    cmd.arg("-c").arg(format!(
+        "exec {} --pool-size {} >{} 2>&1",
+        binary_path.display(),
+        config.database_pool_size,
+        debug_log,
+    ));
     cmd.env("DATABASE_URL", &config.database_url);
     cmd.env("SINEX_NATS_URL", &config.nats.url);
+    if config.nats.require_tls {
+        cmd.env("SINEX_NATS_REQUIRE_TLS", "true");
+    }
+    if let Some(ca) = &config.nats.ca_cert {
+        cmd.env("SINEX_NATS_CA_CERT", ca);
+    }
+    if let Some(cert) = &config.nats.client_cert {
+        cmd.env("SINEX_NATS_CLIENT_CERT", cert);
+    }
+    if let Some(key) = &config.nats.client_key {
+        cmd.env("SINEX_NATS_CLIENT_KEY", key);
+    }
     if let Some(ns) = &config.namespace {
         cmd.env("SINEX_NAMESPACE", ns);
     }
-    // Consumer fetch config - these control NATS pull batch behavior
+    if let Some(wd) = &config.work_dir {
+        // Set assembler state dir and annex path to per-test work directory.
+        // NOTE: We use SINEX_ASSEMBLER_STATE_DIR and SINEX_ANNEX_PATH which are
+        // clap-level env vars (read directly by the binary's Args struct).
+        // Do NOT use SINEX_INGESTD_WORK_DIR — Figment's .split('_') maps it to
+        // "work.dir" (nested key) which doesn't match the flat "work_dir" field.
+        cmd.env("SINEX_ASSEMBLER_STATE_DIR", wd.join("assembler_state"));
+        cmd.env("SINEX_ANNEX_PATH", wd.join("annex"));
+    }
     cmd.env(
         "SINEX_INGESTD_CONSUMER_FETCH_MAX_MESSAGES",
         config.consumer_fetch_max_messages.to_string(),
@@ -531,11 +566,18 @@ pub async fn start_test_ingestd_with_config(
         "SINEX_INGESTD_CONSUMER_FETCH_TIMEOUT_MS",
         config.consumer_fetch_timeout_ms.to_string(),
     );
-    // CLI args for batch size and pool size
-    cmd.args(["--batch-size", &config.batch_size.to_string()]);
-    cmd.args(["--pool-size", &config.database_pool_size.to_string()]);
+    // Disable schema validation and schema sync for test instances.
+    // Test events use DynamicPayload with arbitrary payloads that don't conform
+    // to registered JSON schemas. Without this, events fail validation and get
+    // routed to the DLQ instead of being persisted.
+    cmd.env("SINEX_VALIDATE_SCHEMAS", "false");
+    cmd.env("SINEX_SKIP_SCHEMA_SYNC", "true");
+    cmd.stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
 
     let child = cmd.spawn()?;
+    let stderr_reader = None;
 
     // Compute the stream name using the same logic as ingestd:
     // environment-prefixed base name, with optional namespace suffix.
@@ -572,5 +614,9 @@ pub async fn start_test_ingestd_with_config(
         }
     }
 
-    Ok(TestIngestdHandle { child, stream_name })
+    Ok(TestIngestdHandle {
+        child,
+        stream_name,
+        stderr_reader,
+    })
 }

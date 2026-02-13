@@ -4,7 +4,7 @@
 // detect memory leaks, and verify memory efficiency under various load conditions.
 // These tests help identify memory bottlenecks and optimization opportunities.
 
-use sinex_db::DbPoolExt;
+use futures::future::join_all;
 use sinex_primitives::{DynamicPayload, Timestamp};
 use std::time::Instant;
 use xtask::sandbox::prelude::*;
@@ -229,7 +229,6 @@ async fn test_event_processing_memory_usage(ctx: TestContext) -> TestResult<()> 
 #[sinex_test]
 #[ignore = "memory benchmark - run with --heavy"]
 async fn test_concurrent_memory_usage(ctx: TestContext) -> TestResult<()> {
-    let pool = ctx.pool().clone();
     let shared_metrics = Arc::new(tokio::sync::Mutex::new(MemoryMetrics::new()));
 
     println!("🔄 Testing memory usage under concurrent processing");
@@ -242,21 +241,21 @@ async fn test_concurrent_memory_usage(ctx: TestContext) -> TestResult<()> {
         metrics.record_measurement("Concurrent test start");
     }
 
-    let worker_handles = (0..concurrent_workers)
-        .map(|worker_id| {
-            let ctx_pool = pool.clone();
-            let metrics = shared_metrics.clone();
+    let ctx = &ctx;
+    let worker_futures = (0..concurrent_workers).map(|worker_id| {
+        let metrics = shared_metrics.clone();
 
-            tokio::spawn(async move {
-                // Record memory before worker starts
-                {
-                    let mut metrics_lock = metrics.lock().await;
-                    metrics_lock.record_measurement(&format!("Worker {worker_id} start"));
-                }
+        async move {
+            // Record memory before worker starts
+            {
+                let mut metrics_lock = metrics.lock().await;
+                metrics_lock.record_measurement(&format!("Worker {worker_id} start"));
+            }
 
-                // Generate and insert events for this worker
-                for event_id in 0..events_per_worker {
-                    let event = sinex_primitives::testing::event_fixture(
+            // Generate and publish events for this worker
+            for event_id in 0..events_per_worker {
+                if let Err(e) = ctx
+                    .publish(DynamicPayload::new(
                         format!("memory-test-worker-{worker_id}"),
                         "memory.concurrent.test",
                         json!({
@@ -265,35 +264,32 @@ async fn test_concurrent_memory_usage(ctx: TestContext) -> TestResult<()> {
                             "data": format!("memory-test-data-{worker_id}-{event_id}"),
                             "large_field": "x".repeat(1024), // 1KB of data per event
                         }),
-                    );
-
-                    // Note: This inserts to DB directly (for memory testing, not pipeline testing)
-                    if let Err(e) = ctx_pool.events().insert(event).await {
-                        println!("Worker {worker_id} event {event_id} failed: {e}");
-                    }
-
-                    // Record memory periodically during processing
-                    if event_id % 50 == 0 {
-                        let mut metrics_lock = metrics.lock().await;
-                        metrics_lock.record_measurement(&format!(
-                            "Worker {worker_id} processed {event_id}"
-                        ));
-                    }
-                }
-
-                // Record memory after processing
+                    ))
+                    .await
                 {
-                    let mut metrics_lock = metrics.lock().await;
-                    metrics_lock.record_measurement(&format!("Worker {worker_id} completed"));
+                    println!("Worker {worker_id} event {event_id} failed: {e}");
                 }
 
-                worker_id
-            })
-        })
-        .collect::<Vec<_>>();
+                // Record memory periodically during processing
+                if event_id % 50 == 0 {
+                    let mut metrics_lock = metrics.lock().await;
+                    metrics_lock
+                        .record_measurement(&format!("Worker {worker_id} processed {event_id}"));
+                }
+            }
+
+            // Record memory after processing
+            {
+                let mut metrics_lock = metrics.lock().await;
+                metrics_lock.record_measurement(&format!("Worker {worker_id} completed"));
+            }
+
+            worker_id
+        }
+    });
 
     // Wait for all workers to complete
-    let results = futures::future::join_all(worker_handles).await;
+    let results = join_all(worker_futures).await;
 
     {
         let mut metrics = shared_metrics.lock().await;
@@ -319,6 +315,7 @@ async fn test_concurrent_memory_usage(ctx: TestContext) -> TestResult<()> {
     }
 
     // Verify database consistency
+    let pool = ctx.pool().clone();
     let total_events = pool.events().count_all().await?;
 
     println!("📊 Database consistency: {total_events} events stored");
@@ -331,7 +328,6 @@ async fn test_concurrent_memory_usage(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 #[ignore = "memory benchmark - run with --heavy"]
 async fn test_large_payload_memory_usage(ctx: TestContext) -> TestResult<()> {
-    let pool = ctx.pool().clone();
     let mut metrics = MemoryMetrics::new();
 
     println!("📦 Testing memory usage with large payloads");
@@ -356,7 +352,7 @@ async fn test_large_payload_memory_usage(ctx: TestContext) -> TestResult<()> {
         println!("  Processing {event_count} events with {size_label} payloads");
 
         for i in 0..event_count {
-            let event = sinex_primitives::testing::event_fixture(
+            ctx.publish(DynamicPayload::new(
                 "large-payload-test",
                 format!("large.payload.{size_label}"),
                 json!({
@@ -368,9 +364,8 @@ async fn test_large_payload_memory_usage(ctx: TestContext) -> TestResult<()> {
                         "test_type": "memory_usage"
                     }
                 }),
-            );
-
-            pool.events().insert(event).await?;
+            ))
+            .await?;
 
             if i % 10 == 0 {
                 metrics.record_measurement(&format!("{size_label} payload event {i}"));
@@ -408,7 +403,6 @@ async fn test_large_payload_memory_usage(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 #[ignore = "memory benchmark - run with --heavy"]
 async fn test_memory_stress_conditions(ctx: TestContext) -> TestResult<()> {
-    let pool = ctx.pool().clone();
     let mut metrics = MemoryMetrics::new();
 
     println!("🔥 Testing memory usage under stress conditions");
@@ -431,7 +425,7 @@ async fn test_memory_stress_conditions(ctx: TestContext) -> TestResult<()> {
 
         // Process some events with this data
         for i in 0..10 {
-            let event = sinex_primitives::testing::event_fixture(
+            ctx.publish(DynamicPayload::new(
                 "memory-stress-test",
                 "memory.stress.test",
                 json!({
@@ -439,9 +433,8 @@ async fn test_memory_stress_conditions(ctx: TestContext) -> TestResult<()> {
                     "event": i,
                     "sample_data": &temp_data[i * 10..(i + 1) * 10],
                 }),
-            );
-
-            pool.events().insert(event).await?;
+            ))
+            .await?;
         }
 
         metrics.record_measurement(&format!("Stress cycle {cycle} processed"));
@@ -463,7 +456,7 @@ async fn test_memory_stress_conditions(ctx: TestContext) -> TestResult<()> {
     let mut operation_count = 0;
 
     while start_time.elapsed() < sustained_load_duration {
-        let event = sinex_primitives::testing::event_fixture(
+        ctx.publish(DynamicPayload::new(
             "sustained-memory-test",
             "memory.sustained.test",
             json!({
@@ -471,9 +464,8 @@ async fn test_memory_stress_conditions(ctx: TestContext) -> TestResult<()> {
                 "timestamp": Timestamp::now().to_string(),
                 "payload_data": "y".repeat(512), // 512 bytes per event
             }),
-        );
-
-        pool.events().insert(event).await?;
+        ))
+        .await?;
 
         operation_count += 1;
 

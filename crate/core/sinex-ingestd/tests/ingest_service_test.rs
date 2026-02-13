@@ -69,8 +69,8 @@ async fn test_event_ingestion_flow(ctx: TestContext) -> Result<()> {
             serde_json::json!({
                 "path": "/tmp/test_file.txt",
                 "size": 1024,
-                "timestamp": sinex_primitives::temporal::format_rfc3339(Timestamp::now()),
-                "permissions": "0644"
+                "created_at": sinex_primitives::temporal::format_rfc3339(Timestamp::now()),
+                "permissions": 644
             }),
         ))
         .await?;
@@ -120,7 +120,8 @@ async fn test_batch_ingestion(ctx: TestContext) -> Result<()> {
             "file.created",
             serde_json::json!({
                 "path": "/tmp/batch_file_1.txt",
-                "size": 512
+                "size": 512,
+                "created_at": sinex_primitives::temporal::format_rfc3339(Timestamp::now())
             }),
         ))
         .await?,
@@ -194,8 +195,8 @@ async fn test_ingestion_validation(ctx: TestContext) -> Result<()> {
             serde_json::json!({
                 "path": "/tmp/valid_file.txt",
                 "size": 1024,
-                "timestamp": sinex_primitives::temporal::format_rfc3339(Timestamp::now()),
-                "permissions": "0644",
+                "created_at": sinex_primitives::temporal::format_rfc3339(Timestamp::now()),
+                "permissions": 644,
                 "inode": 12345
             }),
         ))
@@ -256,7 +257,8 @@ async fn test_source_and_type_patterns(ctx: TestContext) -> Result<()> {
             "file.created",
             serde_json::json!({
                 "path": "/tmp/pattern_test.txt",
-                "size": 256
+                "size": 256,
+                "created_at": sinex_primitives::temporal::format_rfc3339(Timestamp::now())
             }),
         ),
         (
@@ -356,7 +358,7 @@ async fn test_ingestion_performance(ctx: TestContext) -> Result<()> {
     tracing::info!("Testing ingestion service performance");
 
     let start_time = std::time::Instant::now();
-    let run_id = Ulid::new();
+    let run_id = Ulid::new().to_string().to_lowercase();
     let source = format!("performance-test-{run_id}");
 
     // Generate a small batch of events to test throughput without hitting test timeouts.
@@ -458,7 +460,10 @@ async fn test_sequential_ingestion(ctx: TestContext) -> Result<()> {
     let _scope = ctx.pipeline().await?;
     tracing::info!("Testing sequential event ingestion");
 
-    let source = format!("sequential-ingest-{}", Ulid::new());
+    let source = format!(
+        "sequential-ingest-{}",
+        Ulid::new().to_string().to_lowercase()
+    );
 
     // Generate events to test ingestion capacity
     let mut successful_ingests = 0;
@@ -772,7 +777,7 @@ async fn test_payload_validation_patterns(ctx: TestContext) -> Result<()> {
 async fn test_service_health_monitoring(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
-    let source = format!("health-monitor-{}", Ulid::new());
+    let source = format!("health-monitor-{}", Ulid::new().to_string().to_lowercase());
     tracing::info!("Testing service health monitoring");
 
     // Test basic health indicators through event processing
@@ -859,7 +864,7 @@ async fn test_resource_management(ctx: TestContext) -> Result<()> {
     let _scope = ctx.pipeline().await?;
     tracing::info!("Testing resource management during ingestion");
 
-    let source = format!("resource-test-{}", Ulid::new());
+    let source = format!("resource-test-{}", Ulid::new().to_string().to_lowercase());
 
     // Generate events with varying resource requirements
     let resource_patterns = vec![

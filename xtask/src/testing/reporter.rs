@@ -45,7 +45,7 @@ impl RawMessage {
                 name: self.name.unwrap_or_default(),
                 result: "passed".to_string(),
                 exec_time: self.exec_time,
-                output: None, // Don't store output for passing tests
+                output: self.stdout, // Store output for ALL tests (not just failures)
             }),
             ("test", "failed") => Message::TestFinished(TestFinished {
                 name: self.name.unwrap_or_default(),
@@ -236,15 +236,17 @@ impl TestReporter {
                             // → "sinex_db", or "tests/e2e.rs::test_name" → "tests")
                             let package = t.name.split("::").next().unwrap_or("unknown");
 
-                            // We ignore errors here to not interrupt testing flow if DB fails
-                            let _ = db.record_test_result(
+                            // Log but don't fail — test recording shouldn't interrupt tests
+                            if let Err(e) = db.record_test_result(
                                 invocation_id,
                                 &t.name,
                                 package,
                                 &t.result,
                                 duration,
                                 output,
-                            );
+                            ) {
+                                eprintln!("⚠️  Failed to record test result for {}: {e}", t.name);
+                            }
                         }
                     }
                     Message::Other => {}

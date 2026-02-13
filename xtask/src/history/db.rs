@@ -76,6 +76,21 @@ impl HistoryDb {
             })?;
         }
 
+        // Detect and recover from corrupted (0-byte) database files.
+        // SQLite treats a 0-byte file as valid (empty DB) but our WAL/schema
+        // setup may leave it in an inconsistent state. Delete and recreate.
+        if path.exists() {
+            if let Ok(meta) = std::fs::metadata(path) {
+                if meta.len() == 0 {
+                    eprintln!(
+                        "⚠️  History database at {} is empty (0 bytes), recreating",
+                        path.display()
+                    );
+                    let _ = std::fs::remove_file(path);
+                }
+            }
+        }
+
         let conn = Connection::open(path).with_context(|| {
             let path_display = path.display();
             format!("failed to open history database: {path_display}")
@@ -83,16 +98,50 @@ impl HistoryDb {
 
         // WAL mode enables concurrent readers during writes (critical for
         // querying test history while a test run is in progress).
+        // busy_timeout prevents SQLITE_BUSY on concurrent access from parallel xtask processes.
         conn.execute_batch(
             "PRAGMA journal_mode=WAL;
              PRAGMA busy_timeout=5000;",
         )?;
+
+        // Verify database integrity on open. If corrupted, delete and recreate.
+        let integrity_ok = conn
+            .query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0))
+            .map(|result| result == "ok")
+            .unwrap_or(false);
+        if !integrity_ok {
+            drop(conn);
+            eprintln!(
+                "⚠️  History database at {} failed integrity check, recreating",
+                path.display()
+            );
+            let _ = std::fs::remove_file(path);
+            // Remove WAL and SHM files too
+            let wal_path = path.with_extension("db-wal");
+            let shm_path = path.with_extension("db-shm");
+            let _ = std::fs::remove_file(&wal_path);
+            let _ = std::fs::remove_file(&shm_path);
+            let conn = Connection::open(path).with_context(|| {
+                format!("failed to recreate history database: {}", path.display())
+            })?;
+            conn.execute_batch(
+                "PRAGMA journal_mode=WAL;
+                 PRAGMA busy_timeout=5000;",
+            )?;
+            let db = Self {
+                conn,
+                job_columns_ensured: AtomicBool::new(false),
+            };
+            db.init_schema()?;
+            return Ok(db);
+        }
 
         let db = Self {
             conn,
             job_columns_ensured: AtomicBool::new(false),
         };
         db.init_schema()?;
+        db.cleanup_stale_invocations();
         Ok(db)
     }
 
@@ -211,6 +260,29 @@ impl HistoryDb {
         )?;
 
         Ok(())
+    }
+
+    /// Mark invocations stuck in 'running' for over 1 hour as 'cancelled'.
+    ///
+    /// Called on `open()` to prevent orphaned invocations from accumulating
+    /// when a process crashes before calling `finish_invocation()`.
+    fn cleanup_stale_invocations(&self) {
+        let cleaned = self.conn.execute(
+            r"
+            UPDATE invocations
+            SET status = 'cancelled',
+                finished_at = datetime('now'),
+                duration_secs = (julianday('now') - julianday(started_at)) * 86400
+            WHERE status = 'running'
+              AND started_at < datetime('now', '-1 hour')
+            ",
+            [],
+        );
+        if let Ok(count) = cleaned {
+            if count > 0 {
+                eprintln!("ℹ️  Cleaned up {count} stale 'running' invocation(s) older than 1 hour");
+            }
+        }
     }
 
     /// Finish a background job and store its log content in the DB.
@@ -404,6 +476,38 @@ impl HistoryDb {
             params![invocation_id, test_name, package, status, duration_secs, output],
         )?;
         Ok(())
+    }
+
+    /// Back-fill test outputs from JUnit XML for an invocation.
+    ///
+    /// Updates `test_results.output` for tests that currently have NULL output.
+    /// This is used after parsing JUnit XML to populate passing test output,
+    /// since `libtest-json-plus` only includes stdout for failed tests.
+    pub fn backfill_test_outputs(
+        &self,
+        invocation_id: i64,
+        outputs: &std::collections::HashMap<String, String>,
+    ) -> Result<usize> {
+        let mut updated = 0usize;
+        let mut stmt = self.conn.prepare(
+            r"
+            UPDATE test_results
+            SET output = ?1
+            WHERE invocation_id = ?2 AND test_name LIKE ?3 AND output IS NULL
+            ",
+        )?;
+
+        for (test_name, output) in outputs {
+            // The JUnit `name` attribute is the test function path (e.g.,
+            // "repositories::events::tests::test_basic") which matches the
+            // libtest-json `name` field stored in test_results.test_name.
+            // Use suffix match with LIKE to handle potential differences.
+            let pattern = format!("%{test_name}");
+            let rows = stmt.execute(params![output, invocation_id, pattern])?;
+            updated += rows;
+        }
+
+        Ok(updated)
     }
 
     /// Record system resource metrics for an invocation.

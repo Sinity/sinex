@@ -229,13 +229,13 @@ impl HistoryDb {
             r"
             SELECT DISTINCT t1.test_name, t1.package, t1.invocation_id
             FROM test_results t1
-            WHERE t1.status = 'fail'
+            WHERE t1.status = 'failed'
               AND EXISTS (
                 SELECT 1 FROM test_results t2
                 WHERE t2.invocation_id = t1.invocation_id
                   AND t2.test_name = t1.test_name
                   AND t2.attempt > t1.attempt
-                  AND t2.status = 'pass'
+                  AND t2.status = 'passed'
               )
             ORDER BY t1.invocation_id DESC
             LIMIT ?1
@@ -249,18 +249,18 @@ impl HistoryDb {
     }
 
     /// Get frequently failing tests.
-    #[allow(dead_code)]
     pub fn get_failing_tests(&self, limit: usize) -> Result<Vec<(String, String, f64)>> {
         let mut stmt = self.conn.prepare(
             r"
             SELECT t.test_name, t.package, COALESCE(t.duration_secs, 0) as duration
             FROM test_results t
             INNER JOIN (
-                SELECT MAX(invocation_id) as max_inv
-                FROM invocations
-                WHERE command = 'test'
+                SELECT MAX(i.id) as max_inv
+                FROM invocations i
+                WHERE i.command = 'test'
+                  AND EXISTS (SELECT 1 FROM test_results tr WHERE tr.invocation_id = i.id)
             ) latest ON t.invocation_id = latest.max_inv
-            WHERE t.status = 'fail'
+            WHERE t.status = 'failed'
             ORDER BY t.test_name
             LIMIT ?1
             ",
@@ -272,13 +272,48 @@ impl HistoryDb {
             .context("failed to collect failing tests")
     }
 
+    /// Get failing tests from the most recent test run, with captured output.
+    pub fn get_failing_tests_with_output(&self, limit: usize) -> Result<Vec<FailingTest>> {
+        let mut stmt = self.conn.prepare(
+            r"
+            SELECT t.test_name, t.package, COALESCE(t.duration_secs, 0) as duration, t.output
+            FROM test_results t
+            INNER JOIN (
+                SELECT MAX(i.id) as max_inv
+                FROM invocations i
+                WHERE i.command = 'test'
+                  AND EXISTS (SELECT 1 FROM test_results tr WHERE tr.invocation_id = i.id)
+            ) latest ON t.invocation_id = latest.max_inv
+            WHERE t.status = 'failed'
+            ORDER BY t.test_name
+            LIMIT ?1
+            ",
+        )?;
+
+        let rows = stmt.query_map([limit], |row| {
+            Ok(FailingTest {
+                test_name: row.get(0)?,
+                package: row.get(1)?,
+                duration_secs: row.get(2)?,
+                output: row.get(3)?,
+            })
+        })?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .context("failed to collect failing tests with output")
+    }
+
     /// Get slowest tests by average duration.
+    ///
+    /// Only counts passing tests — failed/timed-out tests would inflate durations
+    /// with timeout ceilings rather than reflecting real execution time.
     pub fn get_slowest_tests(&self, limit: usize) -> Result<Vec<(String, String, f64, i64)>> {
         let mut stmt = self.conn.prepare(
             r"
             SELECT test_name, package, AVG(duration_secs) as avg_duration, COUNT(*) as runs
             FROM test_results
             WHERE duration_secs IS NOT NULL
+              AND status IN ('passed', 'pass', 'ok')
             GROUP BY test_name, package
             ORDER BY avg_duration DESC
             LIMIT ?1
@@ -324,6 +359,7 @@ impl HistoryDb {
                 JOIN invocations i ON t.invocation_id = i.id
                 WHERE t.duration_secs IS NOT NULL
                   AND i.command = 'test'
+                  AND t.status IN ('passed', 'pass', 'ok')
             ),
             older_half AS (
                 SELECT test_name, package, AVG(duration_secs) as avg_duration, COUNT(*) as cnt
@@ -460,6 +496,7 @@ impl HistoryDb {
             WHERE t.duration_secs IS NOT NULL
               AND i.command = 'test'
               AND i.started_at > datetime('now', '-7 days')
+              AND t.status IN ('passed', 'pass', 'ok')
             GROUP BY t.package
             ",
         )?;
@@ -504,6 +541,270 @@ impl HistoryDb {
             breakdown,
         })
     }
+}
+
+/// Comprehensive test suite analysis from the most recent run.
+#[derive(Debug, Clone, Serialize)]
+pub struct TestSuiteAnalysis {
+    /// Duration distribution buckets
+    pub duration_buckets: Vec<DurationBucket>,
+    /// Tests that appear to have timed out (failed with duration near a timeout ceiling)
+    pub probable_timeouts: Vec<ProbableTimeout>,
+    /// Failure summary grouped by package
+    pub failure_summary: Vec<PackageFailureSummary>,
+    /// Total counts
+    pub total_passed: usize,
+    pub total_failed: usize,
+    pub total_ignored: usize,
+    pub total_duration_secs: f64,
+    /// Invocation metadata
+    pub invocation_id: i64,
+    pub started_at: String,
+}
+
+/// A duration distribution bucket.
+#[derive(Debug, Clone, Serialize)]
+pub struct DurationBucket {
+    pub label: String,
+    pub min_secs: f64,
+    pub max_secs: f64,
+    pub count: usize,
+    pub tests: Vec<String>,
+}
+
+/// A test that probably timed out rather than doing real work.
+#[derive(Debug, Clone, Serialize)]
+pub struct ProbableTimeout {
+    pub test_name: String,
+    pub package: String,
+    pub duration_secs: f64,
+    pub status: String,
+}
+
+/// Failure summary for a package.
+#[derive(Debug, Clone, Serialize)]
+pub struct PackageFailureSummary {
+    pub package: String,
+    pub failed_count: usize,
+    pub passed_count: usize,
+    pub failure_rate_pct: f64,
+    pub failed_tests: Vec<String>,
+}
+
+impl HistoryDb {
+    /// Comprehensive analysis of the most recent test run.
+    ///
+    /// Produces bucketed duration distributions, probable timeout detection,
+    /// and per-package failure summaries.
+    pub fn analyze_last_run(&self) -> Result<Option<TestSuiteAnalysis>> {
+        // Get the latest test invocation
+        let inv = self.conn.query_row(
+            r"
+            SELECT i.id, i.started_at
+            FROM invocations i
+            WHERE i.command = 'test'
+              AND EXISTS (SELECT 1 FROM test_results tr WHERE tr.invocation_id = i.id)
+            ORDER BY i.started_at DESC
+            LIMIT 1
+            ",
+            [],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+        );
+
+        let (inv_id, started_at) = match inv {
+            Ok(pair) => pair,
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
+
+        // Get all test results for this invocation
+        let mut stmt = self.conn.prepare(
+            r"
+            SELECT test_name, package, status, COALESCE(duration_secs, 0) as duration
+            FROM test_results
+            WHERE invocation_id = ?1
+            ORDER BY duration DESC
+            ",
+        )?;
+
+        struct Row {
+            test_name: String,
+            package: String,
+            status: String,
+            duration: f64,
+        }
+
+        let rows: Vec<Row> = stmt
+            .query_map([inv_id], |row| {
+                Ok(Row {
+                    test_name: row.get(0)?,
+                    package: row.get(1)?,
+                    status: row.get(2)?,
+                    duration: row.get(3)?,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        // Counts
+        let total_passed = rows
+            .iter()
+            .filter(|r| matches!(r.status.as_str(), "passed" | "pass" | "ok"))
+            .count();
+        let total_failed = rows
+            .iter()
+            .filter(|r| matches!(r.status.as_str(), "failed" | "fail"))
+            .count();
+        let total_ignored = rows
+            .iter()
+            .filter(|r| matches!(r.status.as_str(), "ignored" | "skip"))
+            .count();
+        let total_duration_secs: f64 = rows.iter().map(|r| r.duration).sum();
+
+        // Duration buckets
+        let bucket_defs = [
+            ("< 1s", 0.0, 1.0),
+            ("1-5s", 1.0, 5.0),
+            ("5-10s", 5.0, 10.0),
+            ("10-30s", 10.0, 30.0),
+            ("30-60s", 30.0, 60.0),
+            ("60-120s", 60.0, 120.0),
+            ("> 120s", 120.0, f64::MAX),
+        ];
+
+        let duration_buckets: Vec<DurationBucket> = bucket_defs
+            .iter()
+            .map(|(label, min, max)| {
+                let tests: Vec<String> = rows
+                    .iter()
+                    .filter(|r| r.duration >= *min && r.duration < *max)
+                    .map(|r| format!("{}::{} ({:.1}s)", r.package, r.test_name, r.duration))
+                    .collect();
+                DurationBucket {
+                    label: label.to_string(),
+                    min_secs: *min,
+                    max_secs: if *max == f64::MAX { 999.0 } else { *max },
+                    count: tests.len(),
+                    tests,
+                }
+            })
+            .collect();
+
+        // Probable timeouts: failed tests with duration near common timeout ceilings
+        // (10s, 30s, 60s, 90s, 120s, 180s, 300s)
+        let timeout_ceilings = [10.0, 30.0, 60.0, 90.0, 120.0, 180.0, 300.0];
+        let probable_timeouts: Vec<ProbableTimeout> = rows
+            .iter()
+            .filter(|r| {
+                matches!(r.status.as_str(), "failed" | "fail")
+                    && timeout_ceilings
+                        .iter()
+                        .any(|c| (r.duration - c).abs() < 2.0)
+            })
+            .map(|r| ProbableTimeout {
+                test_name: r.test_name.clone(),
+                package: r.package.clone(),
+                duration_secs: r.duration,
+                status: r.status.clone(),
+            })
+            .collect();
+
+        // Per-package failure summary
+        let mut pkg_map: std::collections::HashMap<String, (usize, usize, Vec<String>)> =
+            std::collections::HashMap::new();
+        for r in &rows {
+            let entry = pkg_map.entry(r.package.clone()).or_default();
+            if matches!(r.status.as_str(), "failed" | "fail") {
+                entry.0 += 1;
+                entry.2.push(r.test_name.clone());
+            } else if matches!(r.status.as_str(), "passed" | "pass" | "ok") {
+                entry.1 += 1;
+            }
+        }
+
+        let mut failure_summary: Vec<PackageFailureSummary> = pkg_map
+            .into_iter()
+            .filter(|(_, (failed, _, _))| *failed > 0)
+            .map(|(package, (failed, passed, tests))| {
+                let total = failed + passed;
+                PackageFailureSummary {
+                    package,
+                    failed_count: failed,
+                    passed_count: passed,
+                    failure_rate_pct: if total > 0 {
+                        (failed as f64 / total as f64) * 100.0
+                    } else {
+                        0.0
+                    },
+                    failed_tests: tests,
+                }
+            })
+            .collect();
+        failure_summary.sort_by(|a, b| b.failed_count.cmp(&a.failed_count));
+
+        Ok(Some(TestSuiteAnalysis {
+            duration_buckets,
+            probable_timeouts,
+            failure_summary,
+            total_passed,
+            total_failed,
+            total_ignored,
+            total_duration_secs,
+            invocation_id: inv_id,
+            started_at,
+        }))
+    }
+
+    /// Get test output for a specific test from the most recent run.
+    pub fn get_test_output(&self, test_pattern: &str) -> Result<Vec<TestOutputEntry>> {
+        let pattern = format!("%{test_pattern}%");
+        let mut stmt = self.conn.prepare(
+            r"
+            SELECT t.test_name, t.package, t.status, COALESCE(t.duration_secs, 0), t.output
+            FROM test_results t
+            INNER JOIN (
+                SELECT MAX(i.id) as max_inv
+                FROM invocations i
+                WHERE i.command = 'test'
+                  AND EXISTS (SELECT 1 FROM test_results tr WHERE tr.invocation_id = i.id)
+            ) latest ON t.invocation_id = latest.max_inv
+            WHERE t.test_name LIKE ?1
+            ORDER BY t.test_name
+            ",
+        )?;
+
+        let rows = stmt.query_map([&pattern], |row| {
+            Ok(TestOutputEntry {
+                test_name: row.get(0)?,
+                package: row.get(1)?,
+                status: row.get(2)?,
+                duration_secs: row.get(3)?,
+                output: row.get(4)?,
+            })
+        })?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .context("failed to collect test output")
+    }
+}
+
+/// Test output entry from the most recent run.
+#[derive(Debug, Clone, Serialize)]
+pub struct TestOutputEntry {
+    pub test_name: String,
+    pub package: String,
+    pub status: String,
+    pub duration_secs: f64,
+    pub output: Option<String>,
+}
+
+/// A failing test from the most recent test run, with captured output.
+#[derive(Debug, Clone, Serialize)]
+pub struct FailingTest {
+    pub test_name: String,
+    pub package: String,
+    pub duration_secs: f64,
+    pub output: Option<String>,
 }
 
 /// Test that is getting slower over time.

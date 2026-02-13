@@ -368,24 +368,21 @@ fn arb_ulid_from_time_range(start: Timestamp, end: Timestamp) -> impl Strategy<V
 
 async fn insert_event_with_ulid(
     ctx: &TestContext,
+    material_id: Id<SourceMaterial>,
     source: &str,
     event_type: &str,
     payload: JsonValue,
     event_id: Ulid,
     ts: Timestamp,
+    anchor_byte: i64,
 ) -> Result<Ulid, TestCaseError> {
-    let material_id = Id::<SourceMaterial>::new();
-    let provenance = Provenance::from_material(material_id, 0, None, None);
+    let provenance = Provenance::from_material(material_id, anchor_byte, None, None);
     let mut event = DynamicPayload::new(source, event_type, payload)
         .with_provenance(provenance)
         .build()
         .expect("infallible: provenance set via with_provenance")
         .at_time(ts);
     event.id = Some(Id::from_ulid(event_id));
-
-    ctx.ensure_source_material(material_id, None)
-        .await
-        .map_err(|err| TestCaseError::fail(format!("{err:?}")))?;
 
     let inserted = ctx
         .pool
@@ -409,6 +406,13 @@ async fn test_ulid_range_query_property(
         Ulid::new().to_string().to_lowercase()
     );
     let source = EventSource::new(source_name.clone());
+
+    // Create ONE source material for all events in this case
+    let material_id = Id::<SourceMaterial>::new();
+    ctx.ensure_source_material(material_id, Some("ulid-range-proptest"))
+        .await
+        .map_err(|err| TestCaseError::fail(format!("{err:?}")))?;
+
     let mut batch1_ulids = Vec::with_capacity(batch1_size);
     let mut batch2_ulids = Vec::with_capacity(batch2_size);
 
@@ -418,11 +422,13 @@ async fn test_ulid_range_query_property(
         let event_id = Ulid::from_datetime(current_time);
         let inserted = insert_event_with_ulid(
             ctx,
+            material_id,
             &source_name,
             "batch1_event",
             json!({"batch": 1, "sequence": i}),
             event_id,
             current_time,
+            i as i64,
         )
         .await?;
         prop_assert_eq!(inserted, event_id);
@@ -438,11 +444,13 @@ async fn test_ulid_range_query_property(
         let event_id = Ulid::from_datetime(current_time);
         let inserted = insert_event_with_ulid(
             ctx,
+            material_id,
             &source_name,
             "batch2_event",
             json!({"batch": 2, "sequence": i}),
             event_id,
             current_time,
+            (batch1_size + i) as i64,
         )
         .await?;
         prop_assert_eq!(inserted, event_id);

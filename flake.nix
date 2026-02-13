@@ -288,6 +288,7 @@
 
                 # Cargo development tools
                 cargo-nextest
+                cargo-insta
                 cargo-llvm-cov
                 cargo-audit
                 cargo-machete

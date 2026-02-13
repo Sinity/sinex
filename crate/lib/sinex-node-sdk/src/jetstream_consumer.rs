@@ -350,55 +350,15 @@ impl JetStreamEventConsumer {
 
         while *running.read().await {
             match messages.next().await {
-                Some(Ok(msg)) => match Self::parse_provisional_event(&msg) {
-                    Ok(event) => {
-                        // Memory protection: if buffer is full, NAK to apply backpressure
-                        if !buffer.add_provisional(event.clone()).await {
-                            warn!(
-                                event_id = %event.event_id,
-                                "Buffer at capacity, NAKing message to apply backpressure"
-                            );
-                            // NAK with delay to prevent tight redelivery loop
-                            let nak_delay = Some(std::time::Duration::from_millis(500));
-                            if let Err(e) = msg
-                                .ack_with(async_nats::jetstream::AckKind::Nak(nak_delay))
-                                .await
-                            {
-                                error!("Failed to NAK message during backpressure: {}", e);
-                            }
-                            continue;
-                        }
-
-                        let mut handler_success = true;
-                        if enable_provisional {
-                            if let Some(ref handler) = provisional_handler {
-                                if let Err(e) = handler.handle_provisional(&event).await {
-                                    warn!("Provisional handler failed: {}", e);
-                                    handler_success = false;
-                                }
-                            }
-                        }
-
-                        if handler_success {
-                            if let Err(e) = msg.ack().await {
-                                error!("Failed to ack message: {}", e);
-                            }
-                        } else {
-                            // NAK with delay to allow transient issues to resolve
-                            let _ = msg
-                                .ack_with(async_nats::jetstream::AckKind::Nak(Some(
-                                    Duration::from_secs(5),
-                                )))
-                                .await;
-                        }
-                    }
-                    Err(e) => {
-                        error!("Failed to parse provisional event: {}", e);
-                        if let Err(ack_err) = msg.ack().await {
-                            error!("Failed to ack bad message: {}", ack_err);
-                        }
-                    }
-                },
+                Some(Ok(msg)) => {
+                    Self::handle_raw_message(
+                        msg,
+                        &buffer,
+                        &provisional_handler,
+                        enable_provisional,
+                    )
+                    .await;
+                }
                 Some(Err(e)) => {
                     error!("Error receiving message: {}", e);
                 }
@@ -410,6 +370,63 @@ impl JetStreamEventConsumer {
         }
 
         Ok(())
+    }
+
+    /// Handle a single raw JetStream message: parse, buffer, ack/nak.
+    async fn handle_raw_message(
+        msg: jetstream::Message,
+        buffer: &ConfirmationBuffer,
+        provisional_handler: &Option<Arc<dyn ProvisionalEventHandler>>,
+        enable_provisional: bool,
+    ) {
+        let event = match Self::parse_provisional_event(&msg) {
+            Ok(event) => event,
+            Err(e) => {
+                error!("Failed to parse provisional event: {}", e);
+                if let Err(ack_err) = msg.ack().await {
+                    error!("Failed to ack bad message: {}", ack_err);
+                }
+                return;
+            }
+        };
+
+        // Memory protection: if buffer is full, NAK to apply backpressure
+        if !buffer.add_provisional(event.clone()).await {
+            warn!(
+                event_id = %event.event_id,
+                "Buffer at capacity, NAKing message to apply backpressure"
+            );
+            let nak_delay = Some(std::time::Duration::from_millis(500));
+            if let Err(e) = msg
+                .ack_with(async_nats::jetstream::AckKind::Nak(nak_delay))
+                .await
+            {
+                error!("Failed to NAK message during backpressure: {}", e);
+            }
+            return;
+        }
+
+        let mut handler_success = true;
+        if enable_provisional {
+            if let Some(ref handler) = provisional_handler {
+                if let Err(e) = handler.handle_provisional(&event).await {
+                    warn!("Provisional handler failed: {}", e);
+                    handler_success = false;
+                }
+            }
+        }
+
+        if handler_success {
+            if let Err(e) = msg.ack().await {
+                error!("Failed to ack message: {}", e);
+            }
+        } else {
+            let _ = msg
+                .ack_with(async_nats::jetstream::AckKind::Nak(Some(
+                    Duration::from_secs(5),
+                )))
+                .await;
+        }
     }
 
     async fn consume_confirmations(
@@ -425,38 +442,9 @@ impl JetStreamEventConsumer {
 
         while *running.read().await {
             match messages.next().await {
-                Some(Ok(msg)) => match Self::parse_confirmation(&msg) {
-                    Ok(confirmation) => {
-                        let mut handler_success = true;
-                        if let Some(event) = buffer.confirm(confirmation.event_id).await {
-                            if let Err(e) = confirmed_handler.handle_confirmed(&event).await {
-                                error!("Confirmed handler failed: {}", e);
-                                handler_success = false;
-                            }
-                        } else {
-                            debug!("Confirmation for unknown event: {}", confirmation.event_id);
-                        }
-
-                        if handler_success {
-                            if let Err(e) = msg.ack().await {
-                                error!("Failed to ack confirmation: {}", e);
-                            }
-                        } else {
-                            // NAK so we can retry confirmed processing
-                            let _ = msg
-                                .ack_with(async_nats::jetstream::AckKind::Nak(Some(
-                                    Duration::from_secs(5),
-                                )))
-                                .await;
-                        }
-                    }
-                    Err(e) => {
-                        error!("Failed to parse confirmation: {}", e);
-                        if let Err(ack_err) = msg.ack().await {
-                            error!("Failed to ack bad confirmation: {}", ack_err);
-                        }
-                    }
-                },
+                Some(Ok(msg)) => {
+                    Self::handle_confirmation_message(msg, &buffer, &*confirmed_handler).await;
+                }
                 Some(Err(e)) => {
                     error!("Error receiving confirmation: {}", e);
                 }
@@ -468,6 +456,46 @@ impl JetStreamEventConsumer {
         }
 
         Ok(())
+    }
+
+    /// Handle a single confirmation message: match to buffered event, dispatch, ack/nak.
+    async fn handle_confirmation_message(
+        msg: jetstream::Message,
+        buffer: &ConfirmationBuffer,
+        confirmed_handler: &dyn ConfirmedEventHandler,
+    ) {
+        let confirmation = match Self::parse_confirmation(&msg) {
+            Ok(c) => c,
+            Err(e) => {
+                error!("Failed to parse confirmation: {}", e);
+                if let Err(ack_err) = msg.ack().await {
+                    error!("Failed to ack bad confirmation: {}", ack_err);
+                }
+                return;
+            }
+        };
+
+        let mut handler_success = true;
+        if let Some(event) = buffer.confirm(confirmation.event_id).await {
+            if let Err(e) = confirmed_handler.handle_confirmed(&event).await {
+                error!("Confirmed handler failed: {}", e);
+                handler_success = false;
+            }
+        } else {
+            debug!("Confirmation for unknown event: {}", confirmation.event_id);
+        }
+
+        if handler_success {
+            if let Err(e) = msg.ack().await {
+                error!("Failed to ack confirmation: {}", e);
+            }
+        } else {
+            let _ = msg
+                .ack_with(async_nats::jetstream::AckKind::Nak(Some(
+                    Duration::from_secs(5),
+                )))
+                .await;
+        }
     }
 
     async fn check_timeouts(

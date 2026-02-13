@@ -352,7 +352,9 @@ pub fn pg_stop(config: &StackConfig, verbose: bool) -> Result<()> {
 
 pub fn pg_setup_database(config: &StackConfig, verbose: bool) -> Result<()> {
     let mgr = PostgresManager::new(config.to_shared_pg());
-    let initial_user = std::env::var("USER").unwrap_or_else(|_| config.postgres.superuser.clone());
+    // Always use "postgres" as the initial user — initdb creates this superuser via -U postgres,
+    // regardless of which OS user is running the process (root, sinity, etc.)
+    let initial_user = config.postgres.superuser.clone();
 
     mgr.ensure_user(&config.postgres.superuser, true, &initial_user)?;
     mgr.ensure_user(&config.postgres.user, true, &config.postgres.superuser)?;

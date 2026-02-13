@@ -44,7 +44,14 @@ impl PostgresManager {
 
         let status = self
             .pg_command("initdb")
-            .args(["--auth=trust", "--no-locale", "--encoding=UTF8", "-D"])
+            .args([
+                "--auth=trust",
+                "--no-locale",
+                "--encoding=UTF8",
+                "-U",
+                "postgres",
+                "-D",
+            ])
             .arg(&self.config.data_dir)
             .stdout(if verbose {
                 Stdio::inherit()
@@ -93,10 +100,16 @@ impl PostgresManager {
 
     pub fn start(&self, verbose: bool) -> Result<()> {
         if self.is_running() {
-            if verbose {
-                println!("PostgreSQL already running");
+            // PID exists — but verify it's actually accepting connections
+            if self.is_accepting_connections() {
+                if verbose {
+                    println!("PostgreSQL already running");
+                }
+                return Ok(());
             }
-            return Ok(());
+            // PID alive but not accepting connections — stale/zombie Postgres
+            eprintln!("⚠️  Stale PostgreSQL detected (PID alive but not accepting connections). Recovering...");
+            self.force_cleanup(verbose);
         }
 
         if verbose {
@@ -187,6 +200,52 @@ impl PostgresManager {
             }
         }
         false
+    }
+
+    /// Check if PostgreSQL is accepting connections via pg_isready.
+    fn is_accepting_connections(&self) -> bool {
+        self.pg_command("pg_isready")
+            .args(["-h", self.config.run_dir.to_str().unwrap()])
+            .arg("-p")
+            .arg(self.config.port.to_string())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    }
+
+    /// Force-clean a stale PostgreSQL: kill the process, remove PID file and socket.
+    fn force_cleanup(&self, verbose: bool) {
+        let pid_file = self.config.data_dir.join("postmaster.pid");
+        if let Ok(content) = fs::read_to_string(&pid_file) {
+            if let Some(first_line) = content.lines().next() {
+                if let Ok(pid) = first_line.parse::<i32>() {
+                    if verbose {
+                        eprintln!("  Sending SIGKILL to stale PID {pid}");
+                    }
+                    unsafe { libc::kill(pid, libc::SIGKILL) };
+                    // Brief pause for kernel to reap
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                }
+            }
+        }
+
+        // Clean up stale files so pg_ctl start succeeds
+        let _ = fs::remove_file(&pid_file);
+        let socket = self
+            .config
+            .run_dir
+            .join(format!(".s.PGSQL.{}", self.config.port));
+        let lock = self
+            .config
+            .run_dir
+            .join(format!(".s.PGSQL.{}.lock", self.config.port));
+        let _ = fs::remove_file(&socket);
+        let _ = fs::remove_file(&lock);
+
+        if verbose {
+            eprintln!("  Cleaned up stale PID file and sockets");
+        }
     }
 
     pub fn psql(&self, user: &str, db: &str, sql: &str) -> Result<String> {

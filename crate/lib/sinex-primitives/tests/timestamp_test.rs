@@ -152,7 +152,7 @@ async fn test_timestamp_precision(ctx: TestContext) -> color_eyre::Result<()> {
     let ctx = ctx.with_nats().build().await?;
     let scope = ctx.pipeline().await?;
 
-    let source = format!("precision_test_{}", Ulid::new());
+    let source = format!("precision_test_{}", Ulid::new().to_string().to_lowercase());
 
     // Test various precision levels
     let precision_cases = &[

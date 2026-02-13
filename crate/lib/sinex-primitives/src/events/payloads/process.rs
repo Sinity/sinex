@@ -120,3 +120,43 @@ pub struct SensorDeactivatedPayload {
     pub events_generated: EventCount,
     pub reason: DeactivationReason,
 }
+
+// Test helpers for external tests
+#[cfg(any(test, feature = "testing"))]
+impl ProcessStartedPayload {
+    pub fn test_default() -> Self {
+        Self {
+            process_name: "test-process".into(),
+            process_type: NodeType::Ingestor,
+            pid: ProcessId::from(0u32),
+            version: "0.0.0".into(),
+            config: serde_json::json!({}),
+        }
+    }
+}
+
+#[cfg(any(test, feature = "testing"))]
+impl ProcessHeartbeatPayload {
+    pub fn test_default() -> Self {
+        Self {
+            source: "test-process".into(),
+            sequence: SequenceNumber::from_raw(0),
+            status: ProcessStatus::Healthy,
+            metrics: None,
+        }
+    }
+}
+
+#[cfg(any(test, feature = "testing"))]
+impl ProcessShutdownPayload {
+    pub fn test_default() -> Self {
+        Self {
+            process_name: "test-process".into(),
+            process_type: NodeType::Ingestor,
+            pid: ProcessId::from(0u32),
+            uptime_seconds: 0,
+            shutdown_reason: ShutdownReason::Requested,
+            exit_code: ExitCode::SUCCESS,
+        }
+    }
+}

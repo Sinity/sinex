@@ -402,7 +402,7 @@ sinex_proptest! {
             prop_assert!(!event_type_str.ends_with('.'));
             prop_assert!(!event_type_str.contains(".."));
             prop_assert!(event_type_str.chars().all(|c|
-                c.is_ascii_lowercase() || c == '.' || c == '_' || c == '-'
+                c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '_' || c == '-'
             ));
         } else {
             let violates_rules = event_type_str.is_empty()
@@ -410,7 +410,7 @@ sinex_proptest! {
                 || event_type_str.ends_with('.')
                 || event_type_str.contains("..")
                 || !event_type_str.chars().all(|c|
-                    c.is_ascii_lowercase() || c == '.' || c == '_' || c == '-'
+                    c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '_' || c == '-'
                 );
             prop_assert!(
                 violates_rules,
@@ -428,12 +428,12 @@ sinex_proptest! {
         if let Ok(()) = source.validate() {
             prop_assert!(!source_str.is_empty());
             prop_assert!(source_str.chars().all(|c|
-                c.is_ascii_lowercase() || c == '-' || c == '_'
+                c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_' || c == '.'
             ));
         } else {
             let violates_rules = source_str.is_empty()
                 || !source_str.chars().all(|c|
-                    c.is_ascii_lowercase() || c == '-' || c == '_'
+                    c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_' || c == '.'
                 );
             prop_assert!(
                 violates_rules,

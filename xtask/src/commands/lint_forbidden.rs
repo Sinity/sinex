@@ -88,6 +88,7 @@ impl XtaskCommand for LintForbiddenCommand {
             "crate/lib/sinex-db/src/models/event.rs",
             "crate/lib/sinex-db/src/query_helpers.rs",
             // sinex-primitives paths (after crate reorganization - no /types/ subdir)
+            "crate/lib/sinex-primitives/src/testing.rs", // proptest! macro generates #[test]
             "crate/lib/sinex-primitives/src/units.rs",
             "crate/lib/sinex-primitives/src/error.rs",
             "crate/lib/sinex-primitives/src/validation/query_validation.rs",
@@ -166,11 +167,14 @@ impl XtaskCommand for LintForbiddenCommand {
             "crate/lib/sinex-test-utils/src/session_guards.rs",
             "crate/lib/sinex-test-utils/src/permissions.rs",
             "xtask/src/main.rs",
+            // sinex-schema binary uses runtime queries for sync (no compile-time DB)
+            "crate/lib/sinex-schema/src/main.rs",
         ];
         let sqlx_query_as_allow = [
             "crate/lib/sinex-db/src/repositories/common.rs",
             "crate/lib/sinex-node-sdk/src/preflight/database.rs",
             "xtask/src/main.rs",
+            "crate/lib/sinex-schema/src/main.rs",
         ];
 
         let mut violations: Vec<String> = Vec::new();

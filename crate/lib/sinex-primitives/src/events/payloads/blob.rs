@@ -62,3 +62,31 @@ pub struct StorageStatisticsPayload {
     pub failed_verifications: i64,
     pub storage_backend: String, // "git-annex"
 }
+
+// Test helpers for external tests
+#[cfg(any(test, feature = "testing"))]
+impl BlobStoredPayload {
+    pub fn test_default() -> Self {
+        Self {
+            blob_id: "test-blob-id".into(),
+            content_type: "application/octet-stream".into(),
+            size_bytes: 0,
+            hash_sha256: "test-hash".into(),
+            stored_at: crate::temporal::now(),
+        }
+    }
+}
+
+#[cfg(any(test, feature = "testing"))]
+impl BlobIngestedPayload {
+    pub fn test_default() -> Self {
+        Self {
+            blob_id: "test-blob-id".into(),
+            size_bytes: 0,
+            mime_type: None,
+            checksum_blake3: "test-checksum".into(),
+            deduplicated: false,
+            original_filename: "test-file".into(),
+        }
+    }
+}

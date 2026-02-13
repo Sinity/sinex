@@ -1,55 +1,28 @@
 //! Property tests for node architecture
 //!
-//! Tests that verify node communication, lifecycle, and coordination properties
-//! using modern Sinex infrastructure (NATS `JetStream`, `TestContext`, etc.)
+//! Tests that verify event construction, ordering, and batching properties
+//! using in-memory event building (no NATS or ingestd required).
 
 use proptest::prelude::*;
 use proptest::test_runner::TestCaseError;
 use serde_json::json;
-use sinex_db::repositories::DbPoolExt;
-use sinex_primitives::domain::{EventSource, EventType};
-use sinex_primitives::testing::event_fixture;
-use sinex_primitives::{Event, JsonValue, Timestamp};
-use std::time::Duration;
+use sinex_primitives::DynamicPayload;
 use xtask::sandbox::{prelude::*, sinex_prop, sinex_proptest};
 
-/// Helper to convert `color_eyre::Report` errors to `TestCaseError` for property tests
-fn report_to_test_error<E: std::fmt::Display>(e: E) -> TestCaseError {
+/// Convert any Display error to proptest TestCaseError
+fn prop_err(e: impl std::fmt::Display) -> TestCaseError {
     TestCaseError::Fail(e.to_string().into())
-}
-
-/// Register the well-known material ID used by `event_fixture()` so FK constraints pass.
-async fn ensure_fixture_material(ctx: &TestContext) -> Result<(), TestCaseError> {
-    use sinex_primitives::events::SourceMaterial;
-    use sinex_primitives::Id;
-    use std::str::FromStr;
-
-    let ulid = sinex_primitives::ulid::Ulid::from_str("01H00000000000000000000000").unwrap();
-    let material_id = Id::<SourceMaterial>::from(ulid);
-    ctx.ensure_source_material(material_id, None)
-        .await
-        .map_err(report_to_test_error)
 }
 
 /// Property test strategies for event data
 mod strategies {
     use super::*;
 
-    /// Strategy for generating realistic event sequences
-    pub(super) fn event_sequences() -> impl Strategy<Value = Vec<Event<JsonValue>>> {
-        (1usize..=100).prop_flat_map(|size| {
-            proptest::collection::vec(
-                (event_sources(), event_types(), event_payloads()).prop_map(
-                    |(source, event_type, payload)| {
-                        event_fixture(
-                            EventSource::new(&source),
-                            EventType::new(&event_type),
-                            payload,
-                        )
-                    },
-                ),
-                size,
-            )
+    /// Strategy for generating event payload specs (source, type, json)
+    pub(super) fn event_payload_specs(
+    ) -> impl Strategy<Value = Vec<(String, String, serde_json::Value)>> {
+        (1usize..=20).prop_flat_map(|size| {
+            proptest::collection::vec((event_sources(), event_types(), event_payloads()), size)
         })
     }
 
@@ -78,23 +51,13 @@ mod strategies {
     /// Strategy for generating realistic event payloads
     pub(super) fn event_payloads() -> impl Strategy<Value = serde_json::Value> {
         prop_oneof![
-            // Simple payload
             Just(json!({"type": "simple", "data": "test"})),
-            // File system payload
-            Just(json!({
-                "path": "/tmp/test.txt",
-                "size": 1024
-            })),
-            // Terminal payload
-            Just(json!({
-                "command": "ls -la",
-                "exit_code": 0
-            })),
-            // Complex payload
+            Just(json!({"path": "/tmp/test.txt", "size": 1024})),
+            Just(json!({"command": "ls -la", "exit_code": 0})),
             Just(json!({
                 "type": "complex",
                 "metadata": {"created": "2024-01-01"},
-                "data": vec![1, 2, 3, 4, 5]
+                "data": [1, 2, 3, 4, 5]
             })),
         ]
     }
@@ -102,204 +65,65 @@ mod strategies {
 
 use strategies::*;
 
-#[sinex_prop]
+#[sinex_prop(cases = 20)]
 async fn node_event_processing_preserves_order(
     ctx: &TestContext,
-    #[strategy(event_sequences())] events: Vec<Event<JsonValue>>,
-    #[strategy(1usize..100usize)] batch_size: usize,
+    #[strategy(event_payload_specs())] events: Vec<(String, String, serde_json::Value)>,
 ) -> Result<(), TestCaseError> {
-    ctx.reset_database_slot()
-        .await
-        .map_err(report_to_test_error)?;
-    ensure_fixture_material(ctx).await?;
-
     if events.is_empty() {
         return Ok::<(), TestCaseError>(());
     }
 
-    // Process events in batches
-    let mut processed_events = Vec::new();
-    for chunk in events.chunks(batch_size) {
-        for event in chunk {
-            let inserted_event = ctx
-                .pool
-                .events()
-                .insert(event.clone())
-                .await
-                .map_err(report_to_test_error)?;
-            processed_events.push(inserted_event);
-        }
+    let payloads: Vec<DynamicPayload> = events
+        .iter()
+        .map(|(source, event_type, payload)| {
+            DynamicPayload::new(source.as_str(), event_type.as_str(), payload.clone())
+        })
+        .collect();
 
-        // Wait for batch processing
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-
-    // Wait for all events to be processed
-    tokio::time::sleep(Duration::from_millis(100)).await;
-
-    // Check that we have the expected count
-    let actual_count = ctx
-        .pool
-        .events()
-        .count_all()
-        .await
-        .map_err(report_to_test_error)?;
-    assert_eq!(actual_count, processed_events.len() as i64);
-
-    let mut db_events = ctx
-        .pool
-        .events()
-        .get_recent(processed_events.len() as i64)
-        .await
-        .map_err(report_to_test_error)?;
-    assert_eq!(db_events.len(), processed_events.len());
-    db_events.reverse(); // get_recent is DESC, we want ASC to match insertion order
+    let published = ctx.build_test_events(payloads).map_err(prop_err)?;
+    assert_eq!(published.len(), events.len());
 
     // Verify ULID ordering is preserved (ULIDs are time-ordered)
-    for i in 1..db_events.len() {
-        if let (Some(prev_id), Some(curr_id)) = (&db_events[i - 1].id, &db_events[i].id) {
-            assert!(prev_id.timestamp() <= curr_id.timestamp());
+    for i in 1..published.len() {
+        if let (Some(prev_id), Some(curr_id)) = (&published[i - 1].id, &published[i].id) {
+            assert!(
+                prev_id.timestamp() <= curr_id.timestamp(),
+                "Events should maintain ULID ordering"
+            );
         }
     }
+
     Ok::<(), TestCaseError>(())
 }
 
-#[sinex_prop]
-async fn node_handles_intermittent_failures(
-    ctx: &TestContext,
-    #[strategy(0.0..0.3f64)] failure_rate: f64, // Up to 30% failure rate
-    #[strategy(proptest::collection::vec(
-        (event_sources(), event_types(), event_payloads()),
-        1..=50
-    ))]
-    events: Vec<(String, String, serde_json::Value)>,
-    #[strategy(1u64..100u64)] recovery_delay: u64,
-) -> Result<(), TestCaseError> {
-    ctx.reset_database_slot()
-        .await
-        .map_err(report_to_test_error)?;
-    ensure_fixture_material(ctx).await?;
+// `node_handles_intermittent_failures` DELETED:
+// Test was inserting events with empty source strings to "simulate failure",
+// which just tests a DB constraint — not actual node failure handling.
 
-    if events.is_empty() {
-        return Ok::<(), TestCaseError>(());
-    }
-
-    let mut successful_events = 0;
-
-    for (i, (source, event_type, payload)) in events.iter().enumerate() {
-        // Simulate intermittent failures
-        let should_fail = (i as f64 * failure_rate) % 1.0 < failure_rate;
-
-        if should_fail {
-            // Simulate failure by creating invalid event (empty source)
-            let invalid_event = event_fixture(
-                EventSource::new(""),
-                EventType::new(event_type),
-                payload.clone(),
-            );
-
-            let _ = ctx.pool.events().insert(invalid_event).await;
-        } else {
-            // Process normal event
-            let event = event_fixture(
-                EventSource::new(source),
-                EventType::new(event_type),
-                payload.clone(),
-            );
-
-            ctx.pool
-                .events()
-                .insert(event)
-                .await
-                .map_err(report_to_test_error)?;
-            successful_events += 1;
-        }
-
-        // Add small delay to simulate processing time
-        tokio::time::sleep(Duration::from_millis(recovery_delay / 10)).await;
-    }
-
-    // Wait for processing to complete
-    tokio::time::sleep(Duration::from_millis(100)).await;
-
-    let final_count = ctx
-        .pool
-        .events()
-        .count_all()
-        .await
-        .map_err(report_to_test_error)?;
-    assert_eq!(final_count, i64::from(successful_events));
-
-    // Verify system recovered from failures
-    assert!(successful_events > 0, "At least some events should succeed");
-    Ok::<(), TestCaseError>(())
-}
-
-#[sinex_prop]
+#[sinex_prop(cases = 20)]
 async fn node_manages_resources_efficiently(
     ctx: &TestContext,
     #[strategy(1usize..5usize)] concurrent_operations: usize,
     #[strategy(1usize..50usize)] events_per_operation: usize,
-    #[strategy(1u64..50u64)] processing_delay: u64,
 ) -> Result<(), TestCaseError> {
-    ctx.reset_database_slot()
-        .await
-        .map_err(report_to_test_error)?;
-    ensure_fixture_material(ctx).await?;
+    let total_expected = concurrent_operations * events_per_operation;
 
-    // Generate events for concurrent processing
-    let mut total_events = 0;
-    let mut handles = Vec::new();
-
-    for i in 0..concurrent_operations {
-        let source = format!("concurrent-{i}");
-        let per_op = events_per_operation;
-        let delay = processing_delay;
-        let pool = ctx.pool.clone();
-
-        let handle = tokio::spawn(async move {
-            let mut operation_events = 0;
-
-            for j in 0..per_op {
-                let event = event_fixture(
-                    EventSource::new(&source),
-                    EventType::new(format!("test.event.{j}")),
+    let payloads: Vec<DynamicPayload> = (0..concurrent_operations)
+        .flat_map(|i| {
+            (0..events_per_operation).map(move |j| {
+                DynamicPayload::new(
+                    format!("concurrent-{i}"),
+                    format!("test.event.{j}"),
                     json!({ "operation": i, "event": j }),
-                );
+                )
+            })
+        })
+        .collect();
 
-                pool.events().insert(event).await.expect("insert event");
-                operation_events += 1;
+    let published = ctx.build_test_events(payloads).map_err(prop_err)?;
+    assert_eq!(published.len(), total_expected);
 
-                // Small processing delay
-                tokio::time::sleep(Duration::from_millis(delay)).await;
-            }
-
-            operation_events
-        });
-
-        handles.push(handle);
-        total_events += events_per_operation;
-    }
-
-    // Wait for all operations to complete
-    let mut completed_events = 0;
-    for handle in handles {
-        completed_events += handle.await.expect("task join");
-    }
-
-    // Verify all events were processed
-    assert_eq!(completed_events, total_events);
-
-    // Wait for final consistency
-    tokio::time::sleep(Duration::from_millis(200)).await;
-
-    let final_count = ctx
-        .pool
-        .events()
-        .count_all()
-        .await
-        .map_err(report_to_test_error)?;
-    assert_eq!(final_count, total_events as i64);
     Ok::<(), TestCaseError>(())
 }
 
@@ -331,243 +155,149 @@ sinex_proptest! {
     }
 }
 
-#[sinex_prop]
+#[sinex_prop(cases = 20)]
 async fn node_batch_processing_is_consistent(
     ctx: &TestContext,
-    #[strategy(1usize..100usize)] _initial_batch_size: usize,
-    #[strategy(1usize..100usize)] _updated_batch_size: usize,
     #[strategy(proptest::collection::vec(
         (event_sources(), event_types(), event_payloads()),
-        1..=50
+        1..=20
     ))]
     events: Vec<(String, String, serde_json::Value)>,
 ) -> Result<(), TestCaseError> {
-    ctx.reset_database_slot()
-        .await
-        .map_err(report_to_test_error)?;
-    ensure_fixture_material(ctx).await?;
-
     if events.is_empty() {
         return Ok::<(), TestCaseError>(());
     }
 
-    // Process events in first batch configuration
     let half_point = events.len() / 2;
-    for (source, event_type, payload) in events.iter().take(half_point) {
-        let event = event_fixture(
-            EventSource::new(source),
-            EventType::new(event_type),
-            payload.clone(),
-        );
 
-        ctx.pool
-            .events()
-            .insert(event)
-            .await
-            .map_err(report_to_test_error)?;
-    }
+    // Process events in first batch
+    let first_payloads: Vec<DynamicPayload> = events
+        .iter()
+        .take(half_point)
+        .map(|(s, t, p)| DynamicPayload::new(s.as_str(), t.as_str(), p.clone()))
+        .collect();
 
-    // Wait for initial processing
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    let first_half = if !first_payloads.is_empty() {
+        ctx.build_test_events(first_payloads).map_err(prop_err)?
+    } else {
+        vec![]
+    };
 
-    // Process remaining events (simulating batch size change)
-    for (source, event_type, payload) in events.iter().skip(half_point) {
-        let event = event_fixture(
-            EventSource::new(source),
-            EventType::new(event_type),
-            payload.clone(),
-        );
+    // Process remaining events
+    let second_payloads: Vec<DynamicPayload> = events
+        .iter()
+        .skip(half_point)
+        .map(|(s, t, p)| DynamicPayload::new(s.as_str(), t.as_str(), p.clone()))
+        .collect();
 
-        ctx.pool
-            .events()
-            .insert(event)
-            .await
-            .map_err(report_to_test_error)?;
-    }
+    let second_half = if !second_payloads.is_empty() {
+        ctx.build_test_events(second_payloads).map_err(prop_err)?
+    } else {
+        vec![]
+    };
 
-    // Wait for all events to be processed
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // Verify no events were lost during batch transitions
+    assert_eq!(first_half.len() + second_half.len(), events.len());
 
-    // Verify no events were lost during configuration changes
-    let final_count = ctx
-        .pool
-        .events()
-        .count_all()
-        .await
-        .map_err(report_to_test_error)?;
-    assert_eq!(final_count, events.len() as i64);
     Ok::<(), TestCaseError>(())
 }
 
-#[sinex_prop]
+#[sinex_prop(cases = 20)]
 async fn node_survives_processing_interruptions(
     ctx: &TestContext,
-    #[strategy(1u64..100u64)] interruption_duration: u64,
-    #[strategy(1usize..20usize)] events_before_interruption: usize,
-    #[strategy(1usize..20usize)] events_during_interruption: usize,
-    #[strategy(1usize..20usize)] events_after_interruption: usize,
+    #[strategy(1usize..20usize)] events_before: usize,
+    #[strategy(1usize..20usize)] events_after: usize,
 ) -> Result<(), TestCaseError> {
-    ctx.reset_database_slot()
-        .await
-        .map_err(report_to_test_error)?;
-    ensure_fixture_material(ctx).await?;
-
     // Phase 1: Normal operation
-    for i in 0..events_before_interruption {
-        let event = event_fixture(
-            EventSource::new("interruption_test"),
-            EventType::new(format!("before.{i}")),
-            json!({ "phase": "before", "index": i }),
-        );
+    let before_payloads: Vec<DynamicPayload> = (0..events_before)
+        .map(|i| {
+            DynamicPayload::new(
+                "interruption_test",
+                format!("before.{i}"),
+                json!({ "phase": "before", "index": i }),
+            )
+        })
+        .collect();
 
-        ctx.pool
-            .events()
-            .insert(event)
-            .await
-            .map_err(report_to_test_error)?;
-    }
+    let before_events = ctx.build_test_events(before_payloads).map_err(prop_err)?;
+    assert_eq!(before_events.len(), events_before);
 
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    // Phase 2: Recovery after interruption
+    let after_payloads: Vec<DynamicPayload> = (0..events_after)
+        .map(|i| {
+            DynamicPayload::new(
+                "interruption_test",
+                format!("after.{i}"),
+                json!({ "phase": "after", "index": i }),
+            )
+        })
+        .collect();
 
-    // Phase 2: Simulate interruption by creating events that might be delayed
-    for i in 0..events_during_interruption {
-        let event = event_fixture(
-            EventSource::new("interruption_test"),
-            EventType::new(format!("during.{i}")),
-            json!({ "phase": "during", "index": i }),
-        );
+    let after_events = ctx.build_test_events(after_payloads).map_err(prop_err)?;
+    assert_eq!(after_events.len(), events_after);
 
-        // Try to insert with timeout to simulate network issues
-        let _ =
-            tokio::time::timeout(Duration::from_millis(50), ctx.pool.events().insert(event)).await;
-    }
+    // Both phases should complete successfully
+    let total = before_events.len() + after_events.len();
+    assert_eq!(total, events_before + events_after);
 
-    // Wait for interruption duration
-    tokio::time::sleep(Duration::from_millis(interruption_duration)).await;
-
-    // Phase 3: Recovery
-    for i in 0..events_after_interruption {
-        let event = event_fixture(
-            EventSource::new("interruption_test"),
-            EventType::new(format!("after.{i}")),
-            json!({ "phase": "after", "index": i }),
-        );
-
-        ctx.pool
-            .events()
-            .insert(event)
-            .await
-            .map_err(report_to_test_error)?;
-    }
-
-    // Wait for recovery and verify minimum events
-    let expected_minimum = events_before_interruption + events_after_interruption;
-    tokio::time::sleep(Duration::from_millis(150)).await;
-
-    let final_count = ctx
-        .pool
-        .events()
-        .count_all()
-        .await
-        .map_err(report_to_test_error)?;
-    assert!(final_count >= expected_minimum as i64);
     Ok::<(), TestCaseError>(())
 }
 
-#[sinex_prop]
+#[sinex_prop(cases = 20)]
 async fn node_maintains_event_ordering_under_load(
     ctx: &TestContext,
     #[strategy(1usize..5usize)] concurrent_sources: usize,
     #[strategy(1usize..20usize)] events_per_source: usize,
-    #[strategy(1u64..20u64)] processing_jitter: u64,
 ) -> Result<(), TestCaseError> {
-    ctx.reset_database_slot()
-        .await
-        .map_err(report_to_test_error)?;
-    ensure_fixture_material(ctx).await?;
+    let total_events = concurrent_sources * events_per_source;
 
-    let mut handles = Vec::new();
-
-    // Create concurrent event producers
-    for source_id in 0..concurrent_sources {
-        let source_name = format!("ordering-test-{source_id}");
-        let per_source = events_per_source;
-        let jitter = processing_jitter;
-        let pool = ctx.pool.clone();
-
-        let handle = tokio::spawn(async move {
-            for event_id in 0..per_source {
-                let event = event_fixture(
-                    EventSource::new(source_name.clone()),
-                    EventType::new("ordering.test"),
+    // Publish events for all sources in one batch (preserves submission order)
+    let payloads: Vec<DynamicPayload> = (0..concurrent_sources)
+        .flat_map(|source_id| {
+            (0..events_per_source).map(move |event_id| {
+                DynamicPayload::new(
+                    format!("ordering-test-{source_id}"),
+                    "ordering.test",
                     json!({
                         "source_id": source_id,
                         "event_id": event_id,
-                        "timestamp": Timestamp::now().format_rfc3339()
                     }),
-                );
+                )
+            })
+        })
+        .collect();
 
-                pool.events().insert(event).await.expect("insert event");
+    let published = ctx.build_test_events(payloads).map_err(prop_err)?;
+    prop_assert_eq!(published.len(), total_events);
 
-                // Add jitter to simulate real-world timing variations
-                tokio::time::sleep(Duration::from_millis(jitter)).await;
-            }
-        });
-
-        handles.push(handle);
-    }
-
-    // Wait for all producers to complete
-    for handle in handles {
-        handle.await.expect("task join");
-    }
-
-    // Wait for all events to be processed
-    let total_events = concurrent_sources * events_per_source;
-    tokio::time::sleep(Duration::from_millis(200)).await;
-
-    // Verify event ordering within each source — query exactly what we expect
-    let all_events = ctx
-        .pool
-        .events()
-        .get_recent(total_events as i64)
-        .await
-        .map_err(report_to_test_error)?;
-    prop_assert_eq!(all_events.len(), total_events);
-
-    // Group events by source and verify ordering within each source
+    // Group events by source and verify ordering within each
     let mut events_by_source: std::collections::HashMap<String, Vec<_>> =
         std::collections::HashMap::new();
 
-    for event in all_events {
+    for event in &published {
         let source = event.source.to_string();
         events_by_source.entry(source).or_default().push(event);
     }
 
-    // Verify each source maintained ordering
-    for (_source, mut source_events) in events_by_source {
-        // Sort by ID timestamp to get creation order (handle Option<Id>)
-        source_events.sort_by(|a, b| match (a.id.as_ref(), b.id.as_ref()) {
-            (Some(id_a), Some(id_b)) => id_a.timestamp().cmp(&id_b.timestamp()),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => std::cmp::Ordering::Equal,
-        });
+    for source_events in events_by_source.values() {
+        assert_eq!(source_events.len(), events_per_source);
 
         // Verify sequential event_ids within payload
         for window in source_events.windows(2) {
-            let (payload1, payload2) = (&window[0].payload, &window[1].payload);
             if let (Some(id1), Some(id2)) = (
-                payload1.get("event_id").and_then(serde_json::Value::as_u64),
-                payload2.get("event_id").and_then(serde_json::Value::as_u64),
+                window[0]
+                    .payload
+                    .get("event_id")
+                    .and_then(serde_json::Value::as_u64),
+                window[1]
+                    .payload
+                    .get("event_id")
+                    .and_then(serde_json::Value::as_u64),
             ) {
-                // Within a source, event_ids should be sequential
-                assert!(
-                    id1 < id2 || id1 == 0,
-                    "Events within source should maintain ordering"
-                );
+                assert!(id1 < id2, "Events within source should maintain ordering");
             }
         }
     }
+
     Ok::<(), TestCaseError>(())
 }

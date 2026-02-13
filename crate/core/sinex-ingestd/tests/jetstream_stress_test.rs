@@ -1,9 +1,9 @@
 //! `JetStream` stress/regression tests for ingestd pipeline throughput.
 
-use async_nats::{jetstream, HeaderMap};
+use async_nats::jetstream;
 use serde_json::json;
 use sinex_db::DbPoolExt;
-use sinex_primitives::{error::SinexError, temporal, EventSource, Ulid};
+use sinex_primitives::{error::SinexError, EventSource, Ulid};
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::WaitHelpers;
 
@@ -60,20 +60,10 @@ async fn jetstream_pipeline_handles_burst_without_timeouts() -> TestResult<()> {
     let source = "stress.pipeline";
     let event_type = "burst.event";
 
-    let start_count = ctx
-        .pool
-        .events()
-        .count_by_source(&EventSource::new(source))
-        .await? as usize;
-
     let total = 200usize;
-    for idx in 0..total {
-        pipeline
-            .publish(DynamicPayload::new(source, event_type, json!({"seq": idx})))
-            .await?;
-    }
-
-    WaitHelpers::wait_for_source_events(&ctx.pool, source, start_count + total, 20).await?;
+    pipeline
+        .publish_batch_simple(total, source, event_type)
+        .await?;
 
     pipeline.shutdown().await?;
     Ok(())
@@ -142,42 +132,29 @@ async fn jetstream_pipeline_dedupes_duplicate_event_ids() -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let pipeline = ctx.pipeline().await?;
 
-    let namespace = ctx.pipeline_namespace().prefix().to_string();
     let source = "stress.dedupe";
     let event_type = "dedupe.event";
     let event_id = Ulid::new();
-    let subject = ctx.env().nats_subject_with_namespace(
-        Some(&namespace),
-        &format!("events.raw.{source}.{event_type}"),
-    );
+    let overrides = EventOverrides {
+        id: Some(event_id),
+        ..Default::default()
+    };
 
     let start_count = ctx
         .pool
         .events()
         .count_by_source(&EventSource::new(source))
         .await? as usize;
-    let js = ctx.nats_handle()?.jetstream_with_client(ctx.nats_client());
-    for idx in 0..50 {
-        let message = json!({
-            "id": event_id.to_string(),
-            "source": source,
-            "event_type": event_type,
-            "ts_orig": temporal::now().format_rfc3339(),
-            "host": "test-host",
-            "payload": { "seq": idx },
-            "ingestor_version": "test-node",
-            "source_material_id": "01H00000000000000000000000"
-        });
 
-        let mut headers = HeaderMap::new();
-        headers.insert("Nats-Msg-Id", Ulid::new().to_string().as_str());
-        js.publish_with_headers(
-            subject.clone(),
-            headers,
-            serde_json::to_vec(&message)?.into(),
-        )
-        .await?
-        .await?;
+    // Publish 50 events with the same event_id through the pipeline.
+    // Each gets a unique NATS message, but the DB should dedup on event_id.
+    for _idx in 0..50 {
+        pipeline
+            .publish_with_overrides(
+                DynamicPayload::new(source, event_type, json!({"dedup": true})),
+                overrides.clone(),
+            )
+            .await?;
     }
 
     WaitHelpers::wait_for_source_events(&ctx.pool, source, start_count + 1, 20).await?;

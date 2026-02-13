@@ -120,7 +120,7 @@ impl NatsSetup {
             let mut b = EphemeralNats::builder();
             if self.secure {
                 let fixture_dir =
-                    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/tls");
+                    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/tls");
                 let fixture_dir = fixture_dir.canonicalize().unwrap_or(fixture_dir);
                 b = b.with_tls_fixtures_path(fixture_dir);
             }

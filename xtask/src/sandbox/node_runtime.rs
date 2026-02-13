@@ -87,7 +87,11 @@ impl<'ctx> TestRuntimeBuilder<'ctx> {
             kv,
             service_name.clone(),
             "test".to_string(),
-            format!("{}-{}", service_name, Ulid::new()),
+            format!(
+                "{}-{}",
+                service_name,
+                Ulid::new().to_string().to_lowercase()
+            ),
         ));
 
         let handles = NodeHandles::new(

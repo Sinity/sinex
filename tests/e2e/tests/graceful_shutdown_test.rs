@@ -14,12 +14,60 @@ use camino::Utf8PathBuf;
 use serde_json::json;
 use sinex_ingestd::{config::IngestdConfig, service::IngestService, JetStreamTopology};
 use sinex_primitives::nats::NatsConnectionConfig;
+use sinex_primitives::{
+    Event, EventSource, EventType, HostName, Id, OffsetKind, Provenance, SourceMaterial,
+};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::time::{timeout, Duration};
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::Timeouts;
+
+/// Build a properly formatted Event<JsonValue> and serialize to bytes for JetStream publishing.
+/// Also pre-registers the source material in the DB for FK constraints.
+async fn build_test_event_bytes(
+    pool: &sinex_db::DbPool,
+    source: &str,
+    event_type: &str,
+    payload: serde_json::Value,
+) -> TestResult<Vec<u8>> {
+    let material_id = Id::<SourceMaterial>::new();
+    let identifier = format!("{source}-{material_id}");
+    sqlx::query!(
+        r#"
+        INSERT INTO raw.source_material_registry
+            (id, material_kind, source_identifier, status, timing_info_type)
+        VALUES ($1::uuid::ulid, 'annex', $2, 'completed', 'realtime')
+        ON CONFLICT (id) DO NOTHING
+        "#,
+        material_id.to_uuid(),
+        identifier,
+    )
+    .execute(pool)
+    .await?;
+
+    let event = Event::<serde_json::Value> {
+        id: Some(Id::new()),
+        source: EventSource::new(source),
+        event_type: EventType::new(event_type),
+        payload,
+        ts_orig: Some(sinex_primitives::Timestamp::now()),
+        host: HostName::new("test-host"),
+        ingestor_version: Some("test".to_string()),
+        payload_schema_id: None,
+        provenance: Provenance::Material {
+            id: material_id,
+            anchor_byte: 0,
+            offset_start: None,
+            offset_end: None,
+            offset_kind: OffsetKind::Byte,
+        },
+        associated_blob_ids: None,
+    };
+
+    Ok(serde_json::to_vec(&event)?)
+}
 
 /// Test that ingestd completes in-flight processing before shutdown.
 #[sinex_test(timeout = 60)]
@@ -29,9 +77,19 @@ async fn test_ingestd_graceful_shutdown_completes_inflight(ctx: TestContext) -> 
     let js = ctx.jetstream().await?;
     let env = ctx.env();
 
+    // nats_namespace MUST be set so MaterialReadySet is disabled.
+    // Without it, ingestd NAKs all events because test-registered materials
+    // aren't in the ready set (they were inserted directly, not via NATS).
+    let namespace = format!("graceful-{}", uuid::Uuid::new_v4().simple());
+
     let base_stream = env.nats_stream_name("SINEX_GRACEFUL_EVENTS");
     let consumer_name = "ingestd-graceful".to_string();
-    let topology = JetStreamTopology::new(env, base_stream.clone(), consumer_name.clone(), None);
+    let topology = JetStreamTopology::new(
+        env,
+        base_stream.clone(),
+        consumer_name.clone(),
+        Some(&namespace),
+    );
 
     let work_dir = TempDir::new()?;
     let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir.path().to_path_buf())
@@ -50,9 +108,9 @@ async fn test_ingestd_graceful_shutdown_completes_inflight(ctx: TestContext) -> 
         )
         .nats_stream_name(base_stream)
         .nats_consumer_name(consumer_name)
-        .batch_size(8)
+        .nats_namespace(namespace)
         .consumer_fetch_max_messages(16)
-        .consumer_fetch_timeout_ms(100.into())
+        .consumer_fetch_timeout_ms(50.into())
         .validate_schemas(false)
         .skip_schema_sync(true)
         .work_dir(work_dir_utf8.clone())
@@ -82,18 +140,22 @@ async fn test_ingestd_graceful_shutdown_completes_inflight(ctx: TestContext) -> 
     .await?;
 
     // Publish events before shutdown directly to JetStream
-    let subject = format!("{}.graceful.event", topology.events_stream);
+    // Use the events_subject (e.g., "events.raw.>") not the stream name
+    let subject_prefix = topology.events_subject.trim_end_matches(".>");
+    let subject = format!("{subject_prefix}.graceful.event");
     for idx in 0..5 {
-        let payload = serde_json::to_vec(&json!({
-            "source": "graceful-source",
-            "type": "graceful.event",
-            "seq": idx
-        }))?;
+        let payload = build_test_event_bytes(
+            &ctx.pool,
+            "graceful-source",
+            "graceful.event",
+            json!({"seq": idx}),
+        )
+        .await?;
         js.publish(subject.clone(), payload.into()).await?.await?;
     }
 
-    // Small delay to allow some processing
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // Allow processing time — ingestd batches events and persists them
+    tokio::time::sleep(Duration::from_secs(3)).await;
 
     // Initiate shutdown
     service.shutdown().await?;
@@ -124,9 +186,17 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
     let js = ctx.jetstream().await?;
     let env = ctx.env();
 
+    // nats_namespace MUST be set so MaterialReadySet is disabled.
+    let namespace = format!("load-{}", uuid::Uuid::new_v4().simple());
+
     let base_stream = env.nats_stream_name("SINEX_LOAD_EVENTS");
     let consumer_name = "ingestd-load".to_string();
-    let topology = JetStreamTopology::new(env, base_stream.clone(), consumer_name.clone(), None);
+    let topology = JetStreamTopology::new(
+        env,
+        base_stream.clone(),
+        consumer_name.clone(),
+        Some(&namespace),
+    );
 
     let work_dir = TempDir::new()?;
     let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir.path().to_path_buf())
@@ -145,9 +215,9 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
         )
         .nats_stream_name(base_stream)
         .nats_consumer_name(consumer_name)
-        .batch_size(16)
+        .nats_namespace(namespace)
         .consumer_fetch_max_messages(32)
-        .consumer_fetch_timeout_ms(100.into())
+        .consumer_fetch_timeout_ms(50.into())
         .validate_schemas(false)
         .skip_schema_sync(true)
         .work_dir(work_dir_utf8.clone())
@@ -175,24 +245,53 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
     )
     .await?;
 
+    // Pre-register source material for FK constraints (one material for all events in this test)
+    let material_id = Id::<SourceMaterial>::new();
+    let identifier = format!("load-source-{material_id}");
+    sqlx::query!(
+        r#"
+        INSERT INTO raw.source_material_registry
+            (id, material_kind, source_identifier, status, timing_info_type)
+        VALUES ($1::uuid::ulid, 'annex', $2, 'completed', 'realtime')
+        ON CONFLICT (id) DO NOTHING
+        "#,
+        material_id.to_uuid(),
+        identifier,
+    )
+    .execute(&ctx.pool)
+    .await?;
+
     // Start continuous publisher
     let shutdown_flag = Arc::new(AtomicBool::new(false));
     let published_count = Arc::new(AtomicU32::new(0));
     let shutdown_flag_clone = shutdown_flag.clone();
     let published_count_clone = published_count.clone();
     let js_clone = ctx.jetstream().await?;
-    let events_stream = topology.events_stream.clone();
+    let events_subject_prefix = topology.events_subject.trim_end_matches(".>").to_string();
 
     let publisher_handle = tokio::spawn(async move {
-        let subject = format!("{events_stream}.load.event");
-        let mut idx = 0;
+        let subject = format!("{events_subject_prefix}.load.event");
+        let mut idx = 0u64;
         while !shutdown_flag_clone.load(Ordering::SeqCst) {
-            let payload = serde_json::to_vec(&json!({
-                "source": "load-source",
-                "type": "load.event",
-                "seq": idx
-            }));
-            if let Ok(p) = payload {
+            let event = Event::<serde_json::Value> {
+                id: Some(Id::new()),
+                source: EventSource::new("load-source"),
+                event_type: EventType::new("load.event"),
+                payload: json!({"seq": idx}),
+                ts_orig: Some(sinex_primitives::Timestamp::now()),
+                host: HostName::new("test-host"),
+                ingestor_version: Some("test".to_string()),
+                payload_schema_id: None,
+                provenance: Provenance::Material {
+                    id: material_id,
+                    anchor_byte: 0,
+                    offset_start: None,
+                    offset_end: None,
+                    offset_kind: OffsetKind::Byte,
+                },
+                associated_blob_ids: None,
+            };
+            if let Ok(p) = serde_json::to_vec(&event) {
                 let _ = js_clone.publish(subject.clone(), p.into()).await;
             }
             published_count_clone.fetch_add(1, Ordering::SeqCst);
@@ -345,9 +444,17 @@ async fn test_shutdown_data_consistency(ctx: TestContext) -> TestResult<()> {
     let js = ctx.jetstream().await?;
     let env = ctx.env();
 
+    // nats_namespace MUST be set so MaterialReadySet is disabled.
+    let namespace = format!("consistency-{}", uuid::Uuid::new_v4().simple());
+
     let base_stream = env.nats_stream_name("SINEX_CONSISTENCY_EVENTS");
     let consumer_name = "ingestd-consistency".to_string();
-    let topology = JetStreamTopology::new(env, base_stream.clone(), consumer_name.clone(), None);
+    let topology = JetStreamTopology::new(
+        env,
+        base_stream.clone(),
+        consumer_name.clone(),
+        Some(&namespace),
+    );
 
     let work_dir = TempDir::new()?;
     let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir.path().to_path_buf())
@@ -366,9 +473,9 @@ async fn test_shutdown_data_consistency(ctx: TestContext) -> TestResult<()> {
         )
         .nats_stream_name(base_stream)
         .nats_consumer_name(consumer_name)
-        .batch_size(4)
+        .nats_namespace(namespace)
         .consumer_fetch_max_messages(8)
-        .consumer_fetch_timeout_ms(100.into())
+        .consumer_fetch_timeout_ms(50.into())
         .validate_schemas(false)
         .skip_schema_sync(true)
         .work_dir(work_dir_utf8.clone())
@@ -397,20 +504,25 @@ async fn test_shutdown_data_consistency(ctx: TestContext) -> TestResult<()> {
     .await?;
 
     // Publish events with structured data directly to JetStream
-    let subject = format!("{}.consistency.event", topology.events_stream);
+    let subject_prefix = topology.events_subject.trim_end_matches(".>");
+    let subject = format!("{subject_prefix}.consistency.event");
     for idx in 0..10 {
-        let payload = serde_json::to_vec(&json!({
-            "source": "consistency-source",
-            "type": "consistency.event",
-            "index": idx,
-            "checksum": format!("check-{}", idx),
-            "data": format!("data-{}", idx)
-        }))?;
+        let payload = build_test_event_bytes(
+            &ctx.pool,
+            "consistency-source",
+            "consistency.event",
+            json!({
+                "index": idx,
+                "checksum": format!("check-{}", idx),
+                "data": format!("data-{}", idx)
+            }),
+        )
+        .await?;
         js.publish(subject.clone(), payload.into()).await?.await?;
     }
 
-    // Allow some processing
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // Allow processing time
+    tokio::time::sleep(Duration::from_secs(3)).await;
 
     // Shutdown
     service.shutdown().await?;

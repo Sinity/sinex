@@ -1,6 +1,7 @@
 //! History command - query build/test execution history
 
 use anyhow::Result;
+use console::style;
 use tabled::{builder::Builder, settings::Style};
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
@@ -84,6 +85,23 @@ pub enum HistoryTestsSubcommand {
         package: Option<String>,
         #[arg(long, default_value = "30")]
         runs: usize,
+    },
+    /// Show failing tests from the most recent test run
+    Failures {
+        #[arg(long, default_value = "20")]
+        limit: usize,
+        /// Show captured failure output (can be verbose)
+        #[arg(long)]
+        output: bool,
+    },
+    /// Comprehensive analysis of the most recent test run
+    ///
+    /// Shows duration distribution, probable timeouts, and per-package failure summaries.
+    Analyze,
+    /// Show captured output for a test (pass or fail)
+    Output {
+        /// Test name pattern to search for
+        pattern: String,
     },
     Eta,
 }
@@ -291,6 +309,11 @@ fn execute_tests(
             package,
             runs,
         } => execute_tests_trends(db, pattern.as_deref(), package.as_deref(), *runs, ctx),
+        HistoryTestsSubcommand::Failures { limit, output } => {
+            execute_tests_failures(db, *limit, *output, ctx)
+        }
+        HistoryTestsSubcommand::Analyze => execute_tests_analyze(db, ctx),
+        HistoryTestsSubcommand::Output { pattern } => execute_tests_output(db, pattern, ctx),
         HistoryTestsSubcommand::Eta => execute_tests_eta(db, ctx),
     }
 }
@@ -495,6 +518,186 @@ fn execute_diagnostics(
 
     Ok(CommandResult::success()
         .with_message(format!("Found {} diagnostics", diagnostics.len()))
+        .with_duration(ctx.elapsed()))
+}
+
+fn execute_tests_failures(
+    db: &HistoryDb,
+    limit: usize,
+    show_output: bool,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let tests = db.get_failing_tests_with_output(limit)?;
+
+    if ctx.is_human() {
+        if tests.is_empty() {
+            println!("No failing tests in the most recent run.");
+        } else {
+            let mut builder = Builder::new();
+            builder.push_record(["TEST", "PACKAGE", "DURATION"]);
+            for test in &tests {
+                let display_name = if test.test_name.len() > 48 {
+                    format!("...{}", &test.test_name[test.test_name.len() - 45..])
+                } else {
+                    test.test_name.clone()
+                };
+                builder.push_record([
+                    display_name,
+                    test.package.clone(),
+                    format!("{:.3}s", test.duration_secs),
+                ]);
+            }
+            let mut table = builder.build();
+            table.with(Style::rounded());
+            println!("{table}");
+
+            if show_output {
+                println!();
+                for test in &tests {
+                    if let Some(output) = &test.output {
+                        println!("── {} ({}) ──", test.test_name, test.package);
+                        println!("{output}");
+                        println!();
+                    }
+                }
+            }
+        }
+    } else {
+        let json = serde_json::to_string_pretty(&tests)?;
+        println!("{json}");
+    }
+
+    Ok(CommandResult::success()
+        .with_message(format!("Found {} failing tests", tests.len()))
+        .with_duration(ctx.elapsed()))
+}
+
+fn execute_tests_analyze(db: &HistoryDb, ctx: &CommandContext) -> Result<CommandResult> {
+    let analysis = db.analyze_last_run()?;
+
+    match analysis {
+        None => {
+            if ctx.is_human() {
+                println!("No test run data found.");
+            }
+            Ok(CommandResult::success()
+                .with_message("No test run data")
+                .with_duration(ctx.elapsed()))
+        }
+        Some(analysis) => {
+            if ctx.is_human() {
+                println!("{}", style("━━━ Test Suite Analysis ━━━").bold());
+                println!(
+                    "Invocation #{}, started {}",
+                    analysis.invocation_id, analysis.started_at
+                );
+                println!(
+                    "  {} passed, {} failed, {} ignored",
+                    style(analysis.total_passed).green(),
+                    if analysis.total_failed > 0 {
+                        style(analysis.total_failed).red().to_string()
+                    } else {
+                        style(analysis.total_failed).to_string()
+                    },
+                    analysis.total_ignored
+                );
+                println!("  Total duration: {:.1}s", analysis.total_duration_secs);
+
+                // Duration distribution
+                println!("\n{}", style("Duration Distribution:").bold());
+                for bucket in &analysis.duration_buckets {
+                    if bucket.count > 0 {
+                        let bar = "█".repeat(std::cmp::min(bucket.count, 50));
+                        println!("  {:>8} │ {:>4} │ {}", bucket.label, bucket.count, bar);
+                    }
+                }
+
+                // Probable timeouts
+                if !analysis.probable_timeouts.is_empty() {
+                    println!("\n{}", style("⚠ Probable Timeouts:").yellow().bold());
+                    for t in &analysis.probable_timeouts {
+                        println!(
+                            "  {}::{} ({:.1}s, {})",
+                            t.package, t.test_name, t.duration_secs, t.status
+                        );
+                    }
+                }
+
+                // Per-package failure summary
+                if !analysis.failure_summary.is_empty() {
+                    println!("\n{}", style("Failures by Package:").red().bold());
+                    let mut builder = Builder::new();
+                    builder.push_record(["PACKAGE", "FAILED", "PASSED", "RATE", "TESTS"]);
+                    for pkg in &analysis.failure_summary {
+                        let tests_display = if pkg.failed_tests.len() <= 3 {
+                            pkg.failed_tests.join(", ")
+                        } else {
+                            let first_three = &pkg.failed_tests[..3];
+                            format!(
+                                "{}, +{} more",
+                                first_three.join(", "),
+                                pkg.failed_tests.len() - 3
+                            )
+                        };
+                        builder.push_record([
+                            pkg.package.clone(),
+                            pkg.failed_count.to_string(),
+                            pkg.passed_count.to_string(),
+                            format!("{:.1}%", pkg.failure_rate_pct),
+                            tests_display,
+                        ]);
+                    }
+                    let mut table = builder.build();
+                    table.with(Style::rounded());
+                    println!("{table}");
+                }
+            } else {
+                let json = serde_json::to_string_pretty(&analysis)?;
+                println!("{json}");
+            }
+
+            Ok(CommandResult::success()
+                .with_message(format!(
+                    "Analysis: {} passed, {} failed",
+                    analysis.total_passed, analysis.total_failed
+                ))
+                .with_data(serde_json::to_value(&analysis)?)
+                .with_duration(ctx.elapsed()))
+        }
+    }
+}
+
+fn execute_tests_output(
+    db: &HistoryDb,
+    pattern: &str,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let entries = db.get_test_output(pattern)?;
+
+    if ctx.is_human() {
+        if entries.is_empty() {
+            println!("No tests matching '{pattern}' found in the most recent run.");
+        } else {
+            for entry in &entries {
+                println!(
+                    "── {} ({}, {}, {:.3}s) ──",
+                    entry.test_name, entry.package, entry.status, entry.duration_secs
+                );
+                if let Some(output) = &entry.output {
+                    println!("{output}");
+                } else {
+                    println!("  (no captured output)");
+                }
+                println!();
+            }
+        }
+    } else {
+        let json = serde_json::to_string_pretty(&entries)?;
+        println!("{json}");
+    }
+
+    Ok(CommandResult::success()
+        .with_message(format!("Found {} matching tests", entries.len()))
         .with_duration(ctx.elapsed()))
 }
 

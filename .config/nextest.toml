@@ -22,7 +22,7 @@ final-status-level = "fail"
 
 [profile.default.junit]
 path                 = ".sinex/nextest/junit.xml"
-store-success-output = false
+store-success-output = true
 store-failure-output = true
 
 # E2E and integration tests get longer timeouts (full pipeline setup)

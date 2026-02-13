@@ -263,3 +263,34 @@ pub struct ReplayStatsPayload {
     /// Events affected by replays
     pub events_affected: u64,
 }
+
+// Test helpers for external tests
+#[cfg(any(test, feature = "testing"))]
+impl MetricCounterPayload {
+    pub fn test_default() -> Self {
+        Self {
+            name: "test.counter".into(),
+            value: 0,
+            delta: None,
+            labels: HashMap::new(),
+            component: "test".into(),
+        }
+    }
+}
+
+#[cfg(any(test, feature = "testing"))]
+impl StreamStatsPayload {
+    pub fn test_default() -> Self {
+        Self {
+            stream: "test-stream".into(),
+            messages: 0,
+            max_messages: 0,
+            bytes: 0,
+            max_bytes: 0,
+            consumer_count: 0,
+            fill_pct: 0.0,
+            first_seq: 0,
+            last_seq: 0,
+        }
+    }
+}

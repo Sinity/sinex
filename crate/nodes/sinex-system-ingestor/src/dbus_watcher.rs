@@ -687,7 +687,7 @@ impl DbusWatcher {
                 path: path.to_string(),
                 interface: interface.to_string(),
                 method: member.to_string(),
-                args: args.clone(),
+                args: redact_json_strings(args),
                 timestamp: timestamp.into(),
             },
             material.initial_provenance(),

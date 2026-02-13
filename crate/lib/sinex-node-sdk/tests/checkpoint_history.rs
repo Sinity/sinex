@@ -5,7 +5,7 @@ use xtask::sandbox::prelude::*;
 #[sinex_test]
 async fn checkpoint_history_stats_and_reset(ctx: TestContext) -> color_eyre::Result<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let processor_name = format!("history-test-{}", Ulid::new());
+    let processor_name = format!("history-test-{}", Ulid::new().to_string().to_lowercase());
     let consumer_group = "history-group";
     let consumer_name = "history-consumer";
 

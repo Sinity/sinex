@@ -19,8 +19,6 @@ Ingestd environment overrides are prefixed with `SINEX_INGESTD_`.
 
 - `consumer_fetch_max_messages` (default: 100): Max messages per pull batch. Set via
   `SINEX_INGESTD_CONSUMER_FETCH_MAX_MESSAGES` or `ingestd.consumer_fetch_max_messages`.
-  The legacy `batch_size` value is treated as an alias when `consumer_fetch_max_messages`
-  is left at its default.
 - `consumer_max_ack_pending` (default: 100): Max in-flight (unacked) messages for the primary
   ingestd consumer. Set via `SINEX_INGESTD_CONSUMER_MAX_ACK_PENDING` or
   `ingestd.consumer_max_ack_pending`.

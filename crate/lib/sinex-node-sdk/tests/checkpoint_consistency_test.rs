@@ -60,7 +60,7 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult<
     let kv = ctx.checkpoint_kv().await?;
 
     // Create test automaton
-    let processor_name = format!("test_automaton_{}", Ulid::new());
+    let processor_name = format!("test_automaton_{}", Ulid::new().to_string().to_lowercase());
 
     ensure_processor_manifest(&pool, &processor_name).await?;
 
@@ -139,7 +139,10 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult<()> {
     let kv = ctx.checkpoint_kv().await?;
 
     // Create test automaton
-    let processor_name = format!("gap_test_automaton_{}", Ulid::new());
+    let processor_name = format!(
+        "gap_test_automaton_{}",
+        Ulid::new().to_string().to_lowercase()
+    );
 
     ensure_processor_manifest(&pool, &processor_name).await?;
 
@@ -287,8 +290,11 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult<()> {
 #[sinex_serial_test]
 async fn test_checkpoint_failover_propagates_state(ctx: TestContext) -> TestResult<()> {
     ctx.ensure_clean().await?;
-    let service_name = format!("failover_service_{}", Ulid::new());
-    let consumer_group = format!("failover_group_{}", Ulid::new());
+    let service_name = format!(
+        "failover_service_{}",
+        Ulid::new().to_string().to_lowercase()
+    );
+    let consumer_group = format!("failover_group_{}", Ulid::new().to_string().to_lowercase());
 
     let ctx = ctx.with_nats().shared().await?;
     let kv = ctx.checkpoint_kv().await?;
@@ -368,7 +374,10 @@ async fn test_stale_checkpoint_detection(ctx: TestContext) -> TestResult<()> {
     let kv = ctx.checkpoint_kv().await?;
 
     // Create test automaton
-    let processor_name = format!("stale_test_automaton_{}", Ulid::new());
+    let processor_name = format!(
+        "stale_test_automaton_{}",
+        Ulid::new().to_string().to_lowercase()
+    );
 
     ensure_processor_manifest(&pool, &processor_name).await?;
 
@@ -434,7 +443,13 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
 
     // Create multiple test automatons
     let processor_names: Vec<String> = (0..3)
-        .map(|i| format!("cross_test_automaton_{}_{}", i, Ulid::new()))
+        .map(|i| {
+            format!(
+                "cross_test_automaton_{}_{}",
+                i,
+                Ulid::new().to_string().to_lowercase()
+            )
+        })
         .collect();
 
     for name in &processor_names {
@@ -615,7 +630,10 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult<()> 
     let kv = ctx.checkpoint_kv().await?;
 
     // Create test automaton for recovery scenarios
-    let processor_name = format!("recovery_test_automaton_{}", Ulid::new());
+    let processor_name = format!(
+        "recovery_test_automaton_{}",
+        Ulid::new().to_string().to_lowercase()
+    );
 
     ensure_processor_manifest(&pool, &processor_name).await?;
 
@@ -766,7 +784,10 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult<()>
     let kv = ctx.checkpoint_kv().await?;
 
     // Create test automaton
-    let processor_name = format!("data_loss_test_automaton_{}", Ulid::new());
+    let processor_name = format!(
+        "data_loss_test_automaton_{}",
+        Ulid::new().to_string().to_lowercase()
+    );
 
     ensure_processor_manifest(&pool, &processor_name).await?;
 

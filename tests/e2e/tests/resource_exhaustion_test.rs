@@ -65,8 +65,8 @@ async fn jetstream_backpressure_limits() -> TestResult<()> {
     let client = nats.connect().await?;
     let js = JetStream::new(client);
 
-    let stream = format!("perf_limits_{}", Ulid::new());
-    let subject = format!("perf.limits.{}", Ulid::new());
+    let stream = format!("perf_limits_{}", Ulid::new().to_string().to_lowercase());
+    let subject = format!("perf.limits.{}", Ulid::new().to_string().to_lowercase());
     // Keep the retention small so we hit the cap quickly.
     setup_stream(&js, &stream, &subject, 200).await?;
 
@@ -99,8 +99,8 @@ async fn jetstream_consumer_recovery() -> TestResult<()> {
     let client = nats.connect().await?;
     let js = JetStream::new(client.clone());
 
-    let stream = format!("perf_recovery_{}", Ulid::new());
-    let subject = format!("perf.recovery.{}", Ulid::new());
+    let stream = format!("perf_recovery_{}", Ulid::new().to_string().to_lowercase());
+    let subject = format!("perf.recovery.{}", Ulid::new().to_string().to_lowercase());
     setup_stream(&js, &stream, &subject, 1_000).await?;
 
     // Seed a modest workload.
@@ -181,8 +181,14 @@ async fn jetstream_high_concurrency_publish() -> TestResult<()> {
     let client = nats.connect().await?;
     let js = JetStream::new(client.clone());
 
-    let stream = format!("perf_concurrency_{}", Ulid::new());
-    let subject = format!("perf.concurrency.{}", Ulid::new());
+    let stream = format!(
+        "perf_concurrency_{}",
+        Ulid::new().to_string().to_lowercase()
+    );
+    let subject = format!(
+        "perf.concurrency.{}",
+        Ulid::new().to_string().to_lowercase()
+    );
     setup_stream(&js, &stream, &subject, 10_000).await?;
 
     let workers = 5usize;
@@ -228,7 +234,10 @@ async fn jetstream_high_concurrency_publish() -> TestResult<()> {
         throughput
     );
 
-    let durable = format!("perf_concurrency_consumer_{}", Ulid::new());
+    let durable = format!(
+        "perf_concurrency_consumer_{}",
+        Ulid::new().to_string().to_lowercase()
+    );
     let consumer = create_consumer(
         &js,
         &stream,

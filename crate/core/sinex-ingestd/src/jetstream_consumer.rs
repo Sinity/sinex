@@ -3,14 +3,13 @@
 //! See `crate::docs::ingestion_pipeline` for architectural details.
 
 use async_nats::{jetstream, Client as NatsClient};
-use futures::StreamExt;
+use futures::{future::join_all, StreamExt};
 use serde::Serialize;
 use sinex_db::repositories::StreamBatchRow;
 use sinex_db::{repositories::DbPoolExt, DbPool};
 use sinex_node_sdk::SelfObserver;
 use sinex_primitives::Timestamp;
 use sinex_primitives::{environment::SinexEnvironment, ulid::Ulid, JsonValue};
-use sqlx::postgres::PgPoolCopyExt;
 use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -22,7 +21,6 @@ use crate::{
     validator::{EventValidator, ValidationResult},
     IngestdResult, SinexError,
 };
-use sinex_db::postgres_copy::ToPostgresCopy;
 use sinex_primitives::events::builder::Provenance;
 use sinex_primitives::events::Event;
 use tokio::sync::RwLock;
@@ -588,7 +586,8 @@ impl JetStreamConsumer {
             batch.iter().collect()
         };
 
-        match self.persist_batch_optimized(&batch).await {
+        let persist_result = self.persist_batch_optimized(&batch).await;
+        match persist_result {
             Ok(persisted) => {
                 let persisted_set = persisted
                     .inserted_ids
@@ -602,13 +601,18 @@ impl JetStreamConsumer {
                 if let Some(delay) = self.processing_delay {
                     tokio::time::sleep(delay).await;
                 }
-                // Publish confirmations for every message in the batch to guarantee downstream delivery
-                let mut confirmation_error: Option<SinexError> = None;
-                for prepared in &batch {
-                    match self
-                        .publish_confirmation_with_retry(&prepared.parsed_id)
-                        .await
-                    {
+                // Publish confirmations concurrently for the entire batch.
+                // This is the primary throughput optimization: O(1) wall-clock time
+                // instead of O(n) serial NATS round-trips per batch.
+                let confirmation_futs: Vec<_> = batch
+                    .iter()
+                    .map(|prepared| self.publish_confirmation_with_retry(&prepared.parsed_id))
+                    .collect();
+                let confirmation_results = join_all(confirmation_futs).await;
+
+                let mut has_confirmation_failure = false;
+                for (result, prepared) in confirmation_results.iter().zip(batch.iter()) {
+                    match result {
                         Ok(()) => {
                             if let Some(set) = &persisted_set {
                                 if !set.contains(&prepared.parsed_id) {
@@ -628,19 +632,23 @@ impl JetStreamConsumer {
                             self.stats
                                 .confirmation_failures
                                 .fetch_add(1, Ordering::Relaxed);
-                            confirmation_error = Some(err);
-                            break;
+                            has_confirmation_failure = true;
                         }
                     }
                 }
 
-                if confirmation_error.is_some() {
-                    for prepared in &batch {
-                        if let Err(err) = prepared
-                            .message
-                            .ack_with(jetstream::AckKind::Nak(Some(CONFIRM_RETRY_DELAY)))
-                            .await
-                        {
+                if has_confirmation_failure {
+                    let nak_futs: Vec<_> = batch
+                        .iter()
+                        .map(|prepared| {
+                            prepared
+                                .message
+                                .ack_with(jetstream::AckKind::Nak(Some(CONFIRM_RETRY_DELAY)))
+                        })
+                        .collect();
+                    let nak_results = join_all(nak_futs).await;
+                    for (result, prepared) in nak_results.iter().zip(batch.iter()) {
+                        if let Err(err) = result {
                             warn!(
                                 event_id = %prepared.parsed_id,
                                 error = %err,
@@ -655,13 +663,16 @@ impl JetStreamConsumer {
                     return Ok(());
                 }
 
-                // ACK all messages
-                for prepared in &batch {
-                    prepared
-                        .message
-                        .ack()
-                        .await
-                        .map_err(|e| SinexError::network(format!("Failed to ack: {e}")))?;
+                // ACK all messages concurrently
+                let ack_futs: Vec<_> = batch
+                    .iter()
+                    .map(|prepared| prepared.message.ack())
+                    .collect();
+                let ack_results = join_all(ack_futs).await;
+                for result in &ack_results {
+                    if let Err(e) = result {
+                        return Err(SinexError::network(format!("Failed to ack: {e}")));
+                    }
                 }
 
                 self.stats
@@ -830,38 +841,38 @@ impl JetStreamConsumer {
             return Ok(PersistBatchResult { inserted_ids: None });
         }
 
-        let copy_attempt = timeout(DB_WRITE_TIMEOUT, self.persist_batch_copy(&to_persist)).await;
-        match copy_attempt {
-            Ok(Ok(_rows)) => {
+        // Use INSERT ON CONFLICT directly instead of COPY.
+        // sqlx 0.8.x has a protocol-level bug where connections used for COPY IN
+        // are returned to the pool with corrupted state (ReadyForQuery not consumed),
+        // causing all subsequent pool.acquire() calls to deadlock.
+        // INSERT ON CONFLICT is slightly slower but avoids the protocol corruption.
+        let insert_result = timeout(
+            DB_WRITE_TIMEOUT,
+            self.persist_batch_insert_on_conflict(&to_persist),
+        )
+        .await;
+        match insert_result {
+            Ok(Ok(inserted_ids)) => {
                 self.remember_batch(batch);
-                Ok(PersistBatchResult { inserted_ids: None })
+                Ok(PersistBatchResult {
+                    inserted_ids: Some(inserted_ids),
+                })
             }
             Ok(Err(err)) => {
-                if is_unique_violation(&err) {
+                let err_str = err.to_string();
+                if err_str.contains("FK_VIOLATION")
+                    || err_str.contains("violates foreign key constraint")
+                {
                     warn!(
                         batch_size = to_persist.len(),
-                        "COPY insert hit duplicate IDs; falling back to INSERT ... ON CONFLICT"
-                    );
-                    let inserted_ids = self.persist_batch_insert_on_conflict(&to_persist).await?;
-                    self.remember_batch(batch);
-                    Ok(PersistBatchResult {
-                        inserted_ids: Some(inserted_ids),
-                    })
-                } else if is_fk_violation(&err) {
-                    // FK violation slipped past the ready set (race or missing seed).
-                    // This is a safety net — log a warning so we can investigate.
-                    warn!(
-                        batch_size = to_persist.len(),
-                        "COPY insert hit FK violation despite ready set check (source_material not yet registered); will retry"
+                        "INSERT hit FK violation (source_material not yet registered); will retry"
                     );
                     Err(SinexError::service(
                         "FK_VIOLATION: source material not yet registered".to_string(),
                     ))
                 } else {
                     error!("Failed to persist events batch: {}", err);
-                    Err(SinexError::database(format!(
-                        "Failed to persist events batch: {err}"
-                    )))
+                    Err(err)
                 }
             }
             Err(_) => {
@@ -907,34 +918,6 @@ impl JetStreamConsumer {
         for event in batch {
             cache.insert(event.parsed_id);
         }
-    }
-
-    async fn persist_batch_copy(&self, batch: &[&PreparedEvent]) -> Result<u64, sqlx::Error> {
-        let mut copy = self
-            .pool
-            .copy_in_raw(
-                "COPY core.events \
-                (id, source, event_type, ts_orig, ts_orig_subnano, host, payload, source_material_id, \
-                 anchor_byte, offset_start, offset_end, offset_kind, source_event_ids, \
-                 payload_schema_id, ingestor_version, associated_blob_ids) \
-                 FROM STDIN WITH (FORMAT text)",
-            )
-            .await?;
-
-        let mut row_buf = Vec::with_capacity(1024);
-        for prepared in batch {
-            row_buf.clear();
-            if let Err(err) = prepared.event.write_copy_row(&mut row_buf) {
-                let _ = copy.abort("COPY row encoding failed").await;
-                return Err(err);
-            }
-            if let Err(err) = copy.send(row_buf.as_slice()).await {
-                let _ = copy.abort("COPY row send failed").await;
-                return Err(err);
-            }
-        }
-
-        copy.finish().await
     }
 
     async fn persist_batch_insert_on_conflict(
@@ -1228,21 +1211,5 @@ impl JetStreamConsumer {
                 debug!("Failed to check stream capacity for {}: {}", stream_name, e);
             }
         }
-    }
-}
-
-fn is_unique_violation(err: &sqlx::Error) -> bool {
-    match err {
-        sqlx::Error::Database(db_err) => db_err.code().as_deref() == Some("23505"),
-        _ => false,
-    }
-}
-
-/// Check if error is a foreign key violation (PostgreSQL code 23503)
-/// This typically means the source_material_id doesn't exist yet.
-fn is_fk_violation(err: &sqlx::Error) -> bool {
-    match err {
-        sqlx::Error::Database(db_err) => db_err.code().as_deref() == Some("23503"),
-        _ => false,
     }
 }

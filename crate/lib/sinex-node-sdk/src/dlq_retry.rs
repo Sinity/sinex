@@ -98,34 +98,10 @@ impl DlqRetryHandler {
         while let Some(result) = messages.next().await {
             match result {
                 Ok(msg) => {
-                    let retry_count = msg
-                        .headers
-                        .as_ref()
-                        .and_then(|h| h.get("Retry-Count"))
-                        .and_then(|v| v.as_str().parse::<u32>().ok())
-                        .unwrap_or(0);
-
-                    if retry_count >= self.config.max_retries {
-                        warn!("Message exceeded max retries ({retry_count}), permanently failing");
-                        if let Err(e) = msg.ack().await {
-                            error!("Failed to ack permanently failed message: {e}");
-                        }
-                        processed += 1;
-                    } else {
-                        match self.retry_message(&js, &msg, retry_count).await {
-                            Ok(()) => {
-                                retried += 1;
-                                processed += 1;
-                                if let Err(e) = msg.ack().await {
-                                    error!("Failed to ack retried message: {e}");
-                                }
-                            }
-                            Err(e) => {
-                                error!("Failed to retry message: {e}");
-                                processed += 1;
-                            }
-                        }
+                    if self.handle_dlq_message(&js, &msg).await? {
+                        retried += 1;
                     }
+                    processed += 1;
 
                     // Rate limit: pause between batches to avoid overwhelming downstream
                     if processed.is_multiple_of(self.config.batch_size as u64) {
@@ -197,6 +173,42 @@ impl DlqRetryHandler {
         }
 
         Ok(())
+    }
+
+    /// Process a single DLQ message: check retry count, retry or permanently fail.
+    /// Returns `true` if the message was successfully retried.
+    async fn handle_dlq_message(
+        &self,
+        js: &jetstream::Context,
+        msg: &jetstream::Message,
+    ) -> NodeResult<bool> {
+        let retry_count = msg
+            .headers
+            .as_ref()
+            .and_then(|h| h.get("Retry-Count"))
+            .and_then(|v| v.as_str().parse::<u32>().ok())
+            .unwrap_or(0);
+
+        if retry_count >= self.config.max_retries {
+            warn!("Message exceeded max retries ({retry_count}), permanently failing");
+            if let Err(e) = msg.ack().await {
+                error!("Failed to ack permanently failed message: {e}");
+            }
+            return Ok(false);
+        }
+
+        match self.retry_message(js, msg, retry_count).await {
+            Ok(()) => {
+                if let Err(e) = msg.ack().await {
+                    error!("Failed to ack retried message: {e}");
+                }
+                Ok(true)
+            }
+            Err(e) => {
+                error!("Failed to retry message: {e}");
+                Ok(false)
+            }
+        }
     }
 
     async fn retry_message(

@@ -14,7 +14,10 @@ async fn replay_emits_events_through_emitter(ctx: TestContext) -> color_eyre::Re
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
     let start_time = Timestamp::now();
-    let source = format!("terminal-history-{}", Ulid::new());
+    let source = format!(
+        "terminal-history-{}",
+        Ulid::new().to_string().to_lowercase()
+    );
 
     publish_event(
         &ctx,
@@ -83,7 +86,7 @@ async fn custom_filters_emit_only_matching_events(ctx: TestContext) -> color_eyr
     let ctx = ctx.with_nats().shared().await?;
     let _scope = ctx.pipeline().await?;
     let start_time = Timestamp::now();
-    let run_id = Ulid::new();
+    let run_id = Ulid::new().to_string().to_lowercase();
 
     publish_event(
         &ctx,

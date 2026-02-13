@@ -528,7 +528,7 @@ async fn test_analytics_aggregation_accuracy(ctx: TestContext) -> TestResult<()>
     let scope = ctx.pipeline().await?;
     let clock = SeedClock::new();
     let service: Arc<AnalyticsService> = Arc::new(AnalyticsService::new(ctx.pool.clone()));
-    let run_id = Ulid::new();
+    let run_id = Ulid::new().to_string().to_lowercase();
 
     let test_sources = [
         format!("source_a_{run_id}"),
