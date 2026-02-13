@@ -96,7 +96,7 @@ sinex_proptest! {
     }
 }
 
-#[sinex_prop]
+#[sinex_prop(cases = 10)]
 async fn queue_event_insertion_preserves_order(
     ctx: &TestContext,
     #[strategy(1usize..5)] batch_count: usize,

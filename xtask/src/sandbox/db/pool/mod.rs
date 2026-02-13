@@ -26,7 +26,7 @@ use url::Url;
 
 const MIN_POOL_SIZE: usize = 64;
 const POOL_SIZE_MULTIPLIER: usize = 2;
-const SLOT_MAX_CONNECTIONS: u32 = 4;
+const SLOT_MAX_CONNECTIONS: u32 = 8;
 const ADMIN_MAX_CONNECTIONS: u32 = 8;
 
 pub mod meta;
@@ -1031,7 +1031,7 @@ impl DatabasePool {
 
                     if let Ok(db_pool) = sqlx::postgres::PgPoolOptions::new()
                         .max_connections(slot_max_conns.max(1))
-                        .acquire_timeout(Duration::from_secs(2))
+                        .acquire_timeout(Duration::from_secs(5))
                         .connect(&db_url)
                         .await
                     {
@@ -1323,8 +1323,7 @@ impl DatabasePool {
                 // Try to connect to this database. Under nextest we provision pool databases
                 // lazily; if the DB is missing, create it from the shared template then retry.
                 let connect_opts = || {
-                    Self::slot_pool_options(self.slot_max_connections, Duration::from_secs(2))
-                        // Shorter timeout for faster iteration
+                    Self::slot_pool_options(self.slot_max_connections, Duration::from_secs(5))
                         .connect(&slot.url)
                 };
 
@@ -2050,9 +2049,10 @@ async fn clean_database(
                         "Schema mismatch recreate failed for {db_name}: {recreate_err}"
                     ))
                 })?;
-            let fresh_pool = DatabasePool::slot_pool_options(4, Duration::from_secs(5))
-                .connect(db_url)
-                .await?;
+            let fresh_pool =
+                DatabasePool::slot_pool_options(SLOT_MAX_CONNECTIONS, Duration::from_secs(5))
+                    .connect(db_url)
+                    .await?;
             working_pool = fresh_pool;
             schema_recreated = true;
             continue;
@@ -2108,9 +2108,12 @@ async fn clean_database(
                             ))
                         })?;
                     // Fresh pool for the recreated database
-                    let fresh_pool = DatabasePool::slot_pool_options(4, Duration::from_secs(5))
-                        .connect(db_url)
-                        .await?;
+                    let fresh_pool = DatabasePool::slot_pool_options(
+                        SLOT_MAX_CONNECTIONS,
+                        Duration::from_secs(5),
+                    )
+                    .connect(db_url)
+                    .await?;
                     working_pool = fresh_pool;
                     continue;
                 }

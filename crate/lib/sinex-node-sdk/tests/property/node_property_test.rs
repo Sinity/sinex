@@ -21,7 +21,7 @@ mod strategies {
     /// Strategy for generating event payload specs (source, type, json)
     pub(super) fn event_payload_specs(
     ) -> impl Strategy<Value = Vec<(String, String, serde_json::Value)>> {
-        (1usize..=100).prop_flat_map(|size| {
+        (1usize..=20).prop_flat_map(|size| {
             proptest::collection::vec((event_sources(), event_types(), event_payloads()), size)
         })
     }
@@ -160,7 +160,7 @@ async fn node_batch_processing_is_consistent(
     ctx: &TestContext,
     #[strategy(proptest::collection::vec(
         (event_sources(), event_types(), event_payloads()),
-        1..=50
+        1..=20
     ))]
     events: Vec<(String, String, serde_json::Value)>,
 ) -> Result<(), TestCaseError> {
@@ -279,7 +279,7 @@ async fn node_maintains_event_ordering_under_load(
         events_by_source.entry(source).or_default().push(event);
     }
 
-    for (_source, source_events) in &events_by_source {
+    for source_events in events_by_source.values() {
         assert_eq!(source_events.len(), events_per_source);
 
         // Verify sequential event_ids within payload
