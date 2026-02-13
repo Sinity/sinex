@@ -365,16 +365,29 @@ async fn test_concurrent_material_acquisition_with_random_crashes(ctx: TestConte
     assert_eq!(completed_count, successful);
     assert_eq!(sensing_count, crashed);
 
-    let ledger_count: Option<i64> = sqlx::query_scalar!(
-        r#"
-        SELECT COUNT(*) FROM raw.temporal_ledger tl
-        JOIN raw.source_material_registry smr ON tl.source_material_id = smr.id
-        WHERE smr.source_identifier LIKE 'concurrent-source-%'
-        "#
-    )
-    .fetch_one(&ctx.pool)
-    .await?;
-    assert_eq!(ledger_count.unwrap_or(0) as u64, successful);
+    // Ledger entries are written in a separate transaction after finalization,
+    // so poll until they appear rather than reading once.
+    let ledger_deadline = Instant::now() + Duration::from_secs(Timeouts::SHORT);
+    loop {
+        let ledger_count: Option<i64> = sqlx::query_scalar!(
+            r#"
+            SELECT COUNT(*) FROM raw.temporal_ledger tl
+            JOIN raw.source_material_registry smr ON tl.source_material_id = smr.id
+            WHERE smr.source_identifier LIKE 'concurrent-source-%'
+            "#
+        )
+        .fetch_one(&ctx.pool)
+        .await?;
+        let count = ledger_count.unwrap_or(0) as u64;
+        if count == successful {
+            break;
+        }
+        assert!(
+            Instant::now() <= ledger_deadline,
+            "temporal_ledger entries did not settle (got={count}, expected={successful})"
+        );
+        sleep(Duration::from_millis(100)).await;
+    }
 
     ingest_handle.stop().await?;
     Ok(())

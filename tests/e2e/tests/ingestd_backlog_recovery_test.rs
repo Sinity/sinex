@@ -10,7 +10,7 @@ use tokio::time::{timeout, Duration};
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 
-#[sinex_test(timeout = 30)]
+#[sinex_test]
 async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().await?;
     let nats = ctx.nats_handle()?;

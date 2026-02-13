@@ -39,9 +39,12 @@ async fn test_pipeline_preserves_ingest_order_over_ts_orig(ctx: TestContext) -> 
         "Should retrieve exactly 50 events from database"
     );
 
-    // Verify order matches publication order exactly by comparing ULIDs
-    for (i, (published, retrieved_event)) in
-        published_events.iter().zip(retrieved.iter()).enumerate()
+    // Verify order matches publication order exactly by comparing ULIDs.
+    // get_by_source returns ORDER BY ts_ingest DESC, so reverse to match publication order.
+    for (i, (published, retrieved_event)) in published_events
+        .iter()
+        .zip(retrieved.iter().rev())
+        .enumerate()
     {
         let pub_id = published.id.unwrap();
         let ret_id = retrieved_event.id.unwrap();
